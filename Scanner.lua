@@ -342,6 +342,59 @@ local function ResetCharacter(char)
 
 end
 
+-- Skill lines: secondary skills, riding, and the primary professions.
+--
+-- Split out of ScanCharacter so it can be driven directly in tests. All of
+-- ScanCharacter needs ~30 stubbed APIs; this needs two, and it is where the
+-- tuple-to-struct change actually bites.
+function AltStable.ScanSkills(char)
+    local primaryCount = 0
+
+    for i = 1, GetNumSkillLines() do
+
+        local skillName, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
+
+        if not isHeader and skillName then
+
+            if skillName == "Fishing" then
+                char.fishing = rank or 0
+                char.fishingMax = maxRank or 0
+
+            elseif skillName == "Cooking" then
+                char.cooking = rank or 0
+                char.cookingMax = maxRank or 0
+
+            elseif skillName == "First Aid" then
+                char.firstAid = rank or 0
+                char.firstAidMax = maxRank or 0
+
+            elseif skillName == "Riding" then
+                char.riding = rank or 0
+                char.ridingMax = maxRank or 0
+
+            elseif PRIMARY_PROFESSIONS[skillName] then
+
+                primaryCount = primaryCount + 1
+
+                -- Flat field for new column layout
+                char["prof_"..skillName]    = rank or 0
+                char["profmax_"..skillName] = maxRank or 0
+
+                if primaryCount == 1 then
+                    char.prof1 = skillName
+                    char.prof1Skill = rank or 0
+                    char.prof1Max = maxRank or 0
+
+                elseif primaryCount == 2 then
+                    char.prof2 = skillName
+                    char.prof2Skill = rank or 0
+                    char.prof2Max = maxRank or 0
+                end
+            end
+        end
+    end
+end
+
 function AltStable.ScanCharacter()
 
     AltStableDB = AltStableDB or {}
@@ -571,51 +624,7 @@ function AltStable.ScanCharacter()
     -- Scan professions
     --------------------------------------------------------
 
-    local primaryCount = 0
-
-    for i = 1, GetNumSkillLines() do
-
-        local skillName, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
-
-        if not isHeader and skillName then
-
-            if skillName == "Fishing" then
-                char.fishing = rank or 0
-                char.fishingMax = maxRank or 0
-
-            elseif skillName == "Cooking" then
-                char.cooking = rank or 0
-                char.cookingMax = maxRank or 0
-
-            elseif skillName == "First Aid" then
-                char.firstAid = rank or 0
-                char.firstAidMax = maxRank or 0
-
-            elseif skillName == "Riding" then
-                char.riding = rank or 0
-                char.ridingMax = maxRank or 0
-
-            elseif PRIMARY_PROFESSIONS[skillName] then
-
-                primaryCount = primaryCount + 1
-
-                -- Flat field for new column layout
-                char["prof_"..skillName]    = rank or 0
-                char["profmax_"..skillName] = maxRank or 0
-
-                if primaryCount == 1 then
-                    char.prof1 = skillName
-                    char.prof1Skill = rank or 0
-                    char.prof1Max = maxRank or 0
-
-                elseif primaryCount == 2 then
-                    char.prof2 = skillName
-                    char.prof2Skill = rank or 0
-                    char.prof2Max = maxRank or 0
-                end
-            end
-        end
-    end
+    AltStable.ScanSkills(char)
 
     --------------------------------------------------------
     -- Reputations
