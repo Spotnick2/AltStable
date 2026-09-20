@@ -5,4 +5,17 @@
 ## Version: @project-version@
 ## SavedVariables: AltStableDB AltStableConfig
 
+Libs\LibStub\LibStub.lua
+Libs\LibDeflate\LibDeflate.lua
+Libs\ChatThrottleLib\ChatThrottleLib.lua
 Compat.lua
+Theme.lua
+Core.lua
+Scanner.lua
+Reputations.lua
+Config.lua
+Toasts.lua
+Columns.lua
+RowRenderer.lua
+SheetUI.lua
+Export.lua
