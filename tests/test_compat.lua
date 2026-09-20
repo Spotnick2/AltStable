@@ -36,7 +36,7 @@ WoW.items[19019] = {
     icon = 135349, classID = 2, subClassID = 7, stats = { ITEM_MOD_AGILITY_SHORT = 5 },
 }
 
-local API = dofile("Compat.lua")
+local API = dofile("Compat.lua")  -- reassigned later by the negative-path sections
 
 ------------------------------------------------------------
 -- Every mapping resolved
@@ -84,11 +84,16 @@ eq("GetItemInfoInstant [5] icon", iIcon, 134414)
 ------------------------------------------------------------
 -- Tuple-preserving mappings must be DIRECT aliases
 --
--- Not a style point. Any wrapper that round-trips through a table -
--- `function(...) local r = {fn(...)} return unpack(r) end` - silently changes
+-- A plain forwarding wrapper - `function(...) return fn(...) end` - would be
+-- perfectly arity-safe. The dangerous shape is the one that round-trips
+-- through a table: `local r = {fn(...)} return unpack(r)` silently changes
 -- arity, because `#` on a table containing nil holes is undefined in Lua 5.1.
--- It is invisible in a spot check and corrupts every trailing return.
--- Asserting identity makes that impossible to introduce by accident.
+-- That is invisible in a spot check and corrupts every trailing return.
+--
+-- So identity is a policy ("this layer only forwards"), not a law of nature.
+-- It is the cheapest way to make the dangerous shape impossible to add by
+-- accident. If real instrumentation is ever wanted here, replace these with
+-- behavioural arity tests rather than weakening them.
 ------------------------------------------------------------
 
 check("GetItemInfo is a direct alias", API.GetItemInfo == C_Item.GetItemInfo)
@@ -236,9 +241,163 @@ for _, g in ipairs({
     "GetContainerNumSlots", "GetContainerItemInfo", "GetContainerItemLink",
     "UnitDefense", "SendAddonMessage", "RegisterAddonMessagePrefix",
     "IsAddOnLoaded", "LoadAddOn", "GetAddOnMetadata",
+    -- The global GetItemIcon is gone; only C_Item.GetItemIcon exists, and it
+    -- takes an ItemLocation.
+    "GetItemIcon",
 }) do
     check("global " .. g .. " is absent, as on the live client", _G[g] == nil)
 end
+
+check("MAX_PLAYER_LEVEL is nil; GetMaxPlayerLevel() is the source", _G.MAX_PLAYER_LEVEL == nil)
+
+------------------------------------------------------------
+-- Full tuple shape, not just the early positions
+--
+-- A wrapper that truncates trailing returns passes an early-positions-only
+-- check. Pin the tail, including the nil at 16.
+------------------------------------------------------------
+
+eq("GetItemInfoInstant returns 7 values", select("#", API.GetItemInfoInstant(6948)), 7)
+
+local r = { n = select("#", API.GetItemInfo(19019)) }
+for i = 1, r.n do r[i] = (select(i, API.GetItemInfo(19019))) end
+eq("  [8] stackCount", r[8], 1)
+eq("  [9] equipLoc", r[9], "INVTYPE_WEAPON")
+eq("  [10] icon", r[10], 135349)
+eq("  [12] classID", r[12], 2)
+eq("  [13] subClassID", r[13], 7)
+eq("  [16] setID is nil, mid-tuple", r[16], nil)
+eq("  [17] isCraftingReagent is false, not nil", r[17], false)
+eq("  [18] trailing value survives", r[18], "")
+
+------------------------------------------------------------
+-- Struct APIs return exactly ONE value
+--
+-- "the second assignment is nil" cannot tell a single return from a padded
+-- tuple. Arity is the real contract.
+------------------------------------------------------------
+
+eq("GetSkillLineInfo returns exactly 1 value", select("#", API.GetSkillLineInfo(2)), 1)
+eq("GetFactionDataByIndex returns exactly 1 value", select("#", API.GetFactionDataByIndex(2)), 1)
+
+WoW.containers[0] = {
+    name = "Backpack", size = 20,
+    [1] = { itemID = 4604, itemName = "Forest Mushroom Cap", stackCount = 8, quality = 1,
+            hyperlink = "|Hitem:4604|h[Forest Mushroom Cap]|h", iconFileID = 134534 },
+}
+eq("GetContainerNumSlots", API.GetContainerNumSlots(0), 20)
+eq("GetContainerItemInfo returns exactly 1 value", select("#", API.GetContainerItemInfo(0, 1)), 1)
+local ci = API.GetContainerItemInfo(0, 1)
+eq("  .itemID", ci.itemID, 4604)
+eq("  .stackCount", ci.stackCount, 8)
+eq("empty slot is nil", API.GetContainerItemInfo(0, 2), nil)
+
+------------------------------------------------------------
+-- Bag ids must actually derive from the enum
+--
+-- The happy-path values are identical to Classic's 0..5, so a hardcoded list
+-- would pass. Move the enum and require the output to move with it.
+------------------------------------------------------------
+
+local realBagIndex = Enum.BagIndex
+Enum.BagIndex = {
+    Keyring = -7, Backpack = 100, Bag_1 = 101, Bag_2 = 102,
+    Bag_3 = 103, Bag_4 = 104, ReagentBag = 105,
+}
+local moved = dofile("Compat.lua")
+local mb = moved.GetCarriedBagIDs()
+check("carried bags follow a renumbered enum",
+      mb and #mb == 6 and mb[1] == 100 and mb[6] == 105,
+      "got " .. (mb and table.concat(mb, ",") or "nil"))
+eq("keyring follows the enum too", moved.GetKeyringBagID(), -7)
+
+-- A missing key must refuse, not quietly return a shorter list.
+Enum.BagIndex = { Keyring = -1, Backpack = 0, Bag_1 = 1, Bag_3 = 3, Bag_4 = 4, ReagentBag = 5 }
+local partial = dofile("Compat.lua")
+local pb, pReason = partial.GetCarriedBagIDs()
+eq("a missing bag key returns nil, not a short list", pb, nil)
+check("  and says which key", type(pReason) == "string" and pReason:find("Bag_2") ~= nil, tostring(pReason))
+
+Enum.BagIndex = nil
+local noEnum = dofile("Compat.lua")
+eq("no Enum.BagIndex refuses rather than assuming Classic ids", (noEnum.GetCarriedBagIDs()), nil)
+eq("  keyring is nil too", noEnum.GetKeyringBagID(), nil)
+
+Enum.BagIndex = realBagIndex
+
+------------------------------------------------------------
+-- Bank: failure must stay distinguishable from "no tabs purchased"
+--
+-- Collapsing both to {} would let a transient failure read as an empty bank
+-- and wipe a stored snapshot.
+------------------------------------------------------------
+
+API = dofile("Compat.lua")
+WoW.bankTabs = {}
+local okEmpty, okReason = API.GetCharacterBankTabIDs()
+check("success with no tabs returns a table", type(okEmpty) == "table" and #okEmpty == 0)
+eq("  and no reason", okReason, nil)
+
+local realFetch = C_Bank.FetchPurchasedBankTabIDs
+
+C_Bank.FetchPurchasedBankTabIDs = nil
+local v, why = API.GetCharacterBankTabIDs()
+eq("missing fetch function returns nil", v, nil)
+check("  with a reason", type(why) == "string" and why:find("FetchPurchasedBankTabIDs") ~= nil, tostring(why))
+
+C_Bank.FetchPurchasedBankTabIDs = function() error("boom") end
+v, why = API.GetCharacterBankTabIDs()
+eq("a thrown error returns nil", v, nil)
+check("  with a reason", type(why) == "string" and why:find("errored") ~= nil, tostring(why))
+
+C_Bank.FetchPurchasedBankTabIDs = function() return 42 end
+v, why = API.GetCharacterBankTabIDs()
+eq("a non-table result returns nil", v, nil)
+
+C_Bank.FetchPurchasedBankTabIDs = function() return { 6, "seven", 8 } end
+v, why = API.GetCharacterBankTabIDs()
+eq("a malformed list is rejected whole, not filtered", v, nil)
+check("  naming the bad index", type(why) == "string" and why:find("index 2") ~= nil, tostring(why))
+
+C_Bank.FetchPurchasedBankTabIDs = realFetch
+
+local realBankType = Enum.BankType
+Enum.BankType = nil
+eq("missing Enum.BankType returns nil", (API.GetCharacterBankTabIDs()), nil)
+Enum.BankType = realBankType
+
+------------------------------------------------------------
+-- Events the client rejects must be rejected in tests too
+------------------------------------------------------------
+
+local frame = CreateFrame("Frame")
+check("a valid event registers", pcall(frame.RegisterEvent, frame, "BAG_UPDATE"))
+check("PLAYERBANKBAGSLOTS_CHANGED is rejected, as measured",
+      not pcall(frame.RegisterEvent, frame, "PLAYERBANKBAGSLOTS_CHANGED"))
+check("TRADE_SKILL_UPDATE is rejected, as measured",
+      not pcall(frame.RegisterEvent, frame, "TRADE_SKILL_UPDATE"))
+check("OnTooltipSetItem hook throws, as measured",
+      not pcall(frame.HookScript, frame, "OnTooltipSetItem", function() end))
+
+------------------------------------------------------------
+-- Capability reporting on a client that is missing something
+------------------------------------------------------------
+
+local realGetItemInfo = C_Item.GetItemInfo
+C_Item.GetItemInfo = nil
+WoW.chatOut = {}
+local degraded = dofile("Compat.lua")
+
+eq("the missing API is reported", #degraded.missing, 1)
+eq("  by exact name", degraded.missing[1], "C_Item.GetItemInfo")
+eq("  and the member is nil, not a stub", degraded.GetItemInfo, nil)
+check("AssertCapabilities returns false", degraded.AssertCapabilities() == false)
+check("  and says so loudly", #WoW.chatOut > 0 and WoW.chatOut[1]:find("C_Item.GetItemInfo") ~= nil,
+      "expected a chat diagnostic naming the missing API")
+
+C_Item.GetItemInfo = realGetItemInfo
+API = dofile("Compat.lua")
+eq("restored client reports nothing missing", #API.missing, 0)
 
 ------------------------------------------------------------
 

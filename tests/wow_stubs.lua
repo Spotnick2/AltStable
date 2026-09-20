@@ -34,6 +34,7 @@ local WoW = {
     sent        = {},
     maxLevel    = 60,
     defense     = { 1, 0 },
+    chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
 }
 
 function WoW.reset()
@@ -42,15 +43,33 @@ function WoW.reset()
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.maxLevel = 60
     WoW.defense = { 1, 0 }
+    WoW.chatOut = {}
 end
 
 ------------------------------------------------------------
 -- Frames / timers
 ------------------------------------------------------------
 
+-- Events the live client REJECTS. Measured: RegisterEvent throws on these.
+-- A stub that accepted every event would contradict our own notes and let a
+-- dead handler ship.
+local INVALID_EVENTS = {
+    PLAYERBANKBAGSLOTS_CHANGED = true,
+    TRADE_SKILL_UPDATE         = true,
+}
+WoW.INVALID_EVENTS = INVALID_EVENTS
+
 local function makeFrame()
     local f = {}
     local function chain() return f end
+    f.RegisterEvent = function(self, ev)
+        if INVALID_EVENTS[ev] then
+            error('Frame:RegisterEvent(): Attempt to register unknown event "' .. tostring(ev) .. '"', 2)
+        end
+        self["_ev_" .. tostring(ev)] = true
+        return self
+    end
+    f.IsEventRegistered = function(self, ev) return self["_ev_" .. tostring(ev)] == true end
     f.SetScript = function(self, ev, fn) self["_script_" .. tostring(ev)] = fn; return self end
     f.GetScript = function(self, ev) return self["_script_" .. tostring(ev)] end
     -- Unlike the AltTracker stubs, HookScript REJECTS unknown script types the
@@ -85,7 +104,7 @@ function WoW.flushTimers()
     for _, fn in ipairs(t) do fn() end
 end
 
-DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut or {}, m) end }
+DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut, m) end }
 
 ------------------------------------------------------------
 -- Enums, measured from the live client

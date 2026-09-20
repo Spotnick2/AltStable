@@ -149,12 +149,22 @@ API.GetBagName            = need(C_Container, "C_Container", "GetBagName")
 -- Bags the character carries: backpack, the four bag slots, and the reagent
 -- bag. The keyring is excluded deliberately - it is a separate concern and
 -- callers that want keys should ask for it by name.
+--
+-- Returns `ids` on success, or `nil, reason` if the enum is unusable. No
+-- permissive fallback on purpose: a hardcoded {0,1,2,3,4,5} would be right for
+-- today's client but would silently reassert Classic numbering exactly when
+-- the enum tells us it changed, and an incomplete list reads to a caller as a
+-- successful scan of a smaller inventory. Refusing is recoverable; quietly
+-- scanning the wrong bags is not.
 function API.GetCarriedBagIDs()
     local E = Enum and Enum.BagIndex
-    if not E then return { 0, 1, 2, 3, 4, 5 } end
-    local ids = { E.Backpack }
-    for i = 1, 4 do ids[#ids + 1] = E["Bag_" .. i] end
-    if E.ReagentBag then ids[#ids + 1] = E.ReagentBag end
+    if type(E) ~= "table" then return nil, "Enum.BagIndex unavailable" end
+    local ids = {}
+    for _, key in ipairs({ "Backpack", "Bag_1", "Bag_2", "Bag_3", "Bag_4", "ReagentBag" }) do
+        local id = E[key]
+        if type(id) ~= "number" then return nil, "Enum.BagIndex." .. key .. " missing" end
+        ids[#ids + 1] = id
+    end
     return ids
 end
 
@@ -171,15 +181,32 @@ end
 -- and a prompt describing storage "shared with all members in your Account".
 -- If those are ever enabled and folded into each character's bank map, shared
 -- items get counted once per alt and every cross-alt total inflates.
+--
+-- Returns `ids` on success — `{}` genuinely meaning "no tabs purchased" — or
+-- `nil, reason` on failure. Keeping those distinct matters downstream: Warband
+-- must tell "enumeration failed, keep the last good snapshot" apart from
+-- "enumeration succeeded, the bank is empty". Collapsing both to `{}` would
+-- let a transient failure quietly wipe a character's stored bank contents.
 function API.GetCharacterBankTabIDs()
-    if not (C_Bank and Enum and Enum.BankType) then return {} end
+    if not (Enum and Enum.BankType and type(Enum.BankType.Character) == "number") then
+        return nil, "Enum.BankType.Character unavailable"
+    end
+    if type(C_Bank) ~= "table" then return nil, "C_Bank unavailable" end
     local fetch = C_Bank.FetchPurchasedBankTabIDs
-    if type(fetch) ~= "function" then return {} end
+    if type(fetch) ~= "function" then return nil, "C_Bank.FetchPurchasedBankTabIDs unavailable" end
+
     local ok, ids = pcall(fetch, Enum.BankType.Character)
-    if not ok or type(ids) ~= "table" then return {} end
+    if not ok then return nil, "FetchPurchasedBankTabIDs errored: " .. tostring(ids) end
+    if type(ids) ~= "table" then return nil, "expected a table, got " .. type(ids) end
+
     local out = {}
-    for _, id in ipairs(ids) do
-        if type(id) == "number" then out[#out + 1] = id end
+    for i, id in ipairs(ids) do
+        -- Reject a malformed response whole rather than filtering it into a
+        -- plausible-looking partial inventory.
+        if type(id) ~= "number" then
+            return nil, "malformed tab id at index " .. i .. " (" .. type(id) .. ")"
+        end
+        out[#out + 1] = id
     end
     return out
 end
@@ -200,15 +227,20 @@ API.GetAddOnMetadata = need(C_AddOns, "C_AddOns", "GetAddOnMetadata")
 -- Vanilla defense skill genuinely exists on this client.
 API.UnitDefenseSkill = needGlobal("UnitDefenseSkill")
 
--- MAX_PLAYER_LEVEL is nil here. GetMaxPlayerLevel() returns 60. Reading it
+-- MAX_PLAYER_LEVEL is nil here; GetMaxPlayerLevel() returns 60. Reading it
 -- rather than hardcoding means the level cap follows the client through
 -- content patches instead of needing a code change.
+--
+-- No MAX_PLAYER_LEVEL fallback: it is measured nil on this client, and a
+-- truthy-test on it would happily accept a string or 0 from some future build.
+-- Missing is reported through the capability check like any other required API.
+local getMaxPlayerLevel = needGlobal("GetMaxPlayerLevel")
+
 function API.GetMaxPlayerLevel()
-    if type(_G.GetMaxPlayerLevel) == "function" then
-        local ok, v = pcall(_G.GetMaxPlayerLevel)
-        if ok and type(v) == "number" and v > 0 then return v end
-    end
-    return _G.MAX_PLAYER_LEVEL or 60
+    if not getMaxPlayerLevel then return nil, "GetMaxPlayerLevel unavailable" end
+    local ok, v = pcall(getMaxPlayerLevel)
+    if ok and type(v) == "number" and v > 0 then return v end
+    return nil, "GetMaxPlayerLevel returned " .. tostring(v)
 end
 
 ----------------------------------------------------------------------------
