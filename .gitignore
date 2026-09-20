@@ -1,0 +1,27 @@
+# Packaged zips. Release artifacts belong in GitHub Releases (the packager
+# attaches them to the tag) and on CurseForge — never committed.
+dist/
+
+# Probe / SavedVariables captures pulled off the client. These carry real
+# character names, GUIDs and realm data, and this repo is public.
+*.sv.lua
+AltStableProbeDB*.lua
+docs/captures/
+
+# Local scratch
+*.log
+*.zip
+settings.ini
+
+# Agent/editor local state
+.claude/
+.vscode/
+.idea/
+
+# Python tooling
+__pycache__/
+*.pyc
+
+# .NET build output, if any tooling lands here later
+[Bb]in/
+[Oo]bj/
