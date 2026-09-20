@@ -164,7 +164,6 @@ end
 local displayList = {}
 local sortColumn  = "level"
 local sortAsc     = false
-local hideLow     = true  -- runtime value; set from config in CreateFrameIfNeeded()
 local collapsed   = {}
 
 local totalChars = 0
@@ -1004,9 +1003,7 @@ local function BuildDisplayList()
     local allChars = {}
     for _, char in next, store do
         if type(char)=="table" and char.name then
-            if not hideLow or (char.level or 0)>=58 then
-                table.insert(allChars, char)
-            end
+            table.insert(allChars, char)
         end
     end
     table.sort(allChars, function(a,b)
@@ -1143,7 +1140,7 @@ local function UpdateTotalsBar()
     local totalIlvl, ilvlCount = 0, 0
     local store = GetCharacterStore()
     for _, char in next, store do
-        if type(char)=="table" and char.name and (not hideLow or (char.level or 0)>=58) then
+        if type(char)=="table" and char.name then
             if char.ilvl and char.ilvl > 0 then
                 totalIlvl = totalIlvl + char.ilvl
                 ilvlCount  = ilvlCount  + 1
@@ -1700,12 +1697,7 @@ end
 local function CreateFrameIfNeeded()
     if frame then return end
 
-    -- Restore persisted hideLow preference; default to true if never saved
     AltStableConfig = AltStableConfig or {}
-    if AltStableConfig.hideLow == nil then
-        AltStableConfig.hideLow = true
-    end
-    hideLow = AltStableConfig.hideLow
 
     ComputeFrozenWidth()
     BuildScrollableColsForSection(activeSection)
@@ -2050,7 +2042,7 @@ local function CreateFrameIfNeeded()
     sidebar._pluginBtnY = btnY  -- tracked so late-registering plugins can append
 
     -- Returns the vertical space the sidebar needs to display all of its
-    -- buttons + the bottom controls (filter row + hideLow checkbox) without
+    -- buttons + the bottom controls (the filter row) without
     -- the bottom items overlapping the topmost data rows or the totals bar.
     --
     -- Used by ComputeContentSize so the frame is at least sidebar-tall when
@@ -2061,10 +2053,10 @@ local function CreateFrameIfNeeded()
     --
     -- Math: btnY starts at -8 (top inset) and decrements by 27 per button.
     -- _pluginBtnY is the next-empty-Y after all buttons. The bottom controls
-    -- (sbDiv2 at y=42 from BOTTOMLEFT, filter row, checkbox row) reserve
-    -- 64px below the last button. 8px breathing space at the very bottom.
+    -- (sbDiv2 at y=24 from BOTTOMLEFT, filter row) reserve 42px below the
+    -- last button. 8px breathing space at the very bottom.
     local SIDEBAR_TOP_INSET     = 8
-    local SIDEBAR_BOTTOM_FOOTER = 64
+    local SIDEBAR_BOTTOM_FOOTER = 42
     local SIDEBAR_BOTTOM_BREATH = 8
     AltStable.GetSidebarRequiredHeight = function()
         if not sidebar or not sidebar._pluginBtnY then return 0 end
@@ -2879,15 +2871,15 @@ local function CreateFrameIfNeeded()
 
     local sbDiv2=sidebar:CreateTexture(nil,"ARTWORK")
     sbDiv2:SetHeight(1)
-    sbDiv2:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,42)
-    sbDiv2:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,42)
+    sbDiv2:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,24)
+    sbDiv2:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,24)
     sbDiv2:SetColorTexture(unpack(AltStable.C.SEP))
 
     -- "Filter" label row (compact)
     local filterRow=CreateFrame("Frame",nil,sidebar)
     filterRow:SetHeight(20)
-    filterRow:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,22)
-    filterRow:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,22)
+    filterRow:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,4)
+    filterRow:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,4)
     local filterIcon=filterRow:CreateTexture(nil,"OVERLAY")
     filterIcon:SetSize(11,11); filterIcon:SetPoint("LEFT",8,0)
     SetSidebarIconTexture(filterIcon, (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\filter.tga", true)
@@ -2895,23 +2887,6 @@ local function CreateFrameIfNeeded()
     local filterLbl=filterRow:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
     filterLbl:SetPoint("LEFT",22,0); filterLbl:SetText("Filter")
     filterLbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-
-    -- "Hide below 58" styled checkbox
-    local check=CreateFrame("CheckButton",nil,sidebar,"UICheckButtonTemplate")
-    check:SetSize(18,18)
-    check:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",4,4)
-    check:SetChecked(hideLow)
-    check.text:SetText("Hide below 58")
-    check.text:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    check:SetScript("OnClick",function(self)
-        hideLow=self:GetChecked()
-        AltStableConfig.hideLow = hideLow
-        BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-        ResizeFrameToContent()
-        if AltStable.RefreshSheet then
-            AltStable.RefreshSheet()
-        end
-    end)
 
     --------------------------------------------------------
     -- Totals bar
