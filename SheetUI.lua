@@ -2048,8 +2048,8 @@ local function CreateFrameIfNeeded()
     sidebar._pluginBtnY = btnY  -- tracked so late-registering plugins can append
 
     -- Returns the vertical space the sidebar needs to display all of its
-    -- buttons + the bottom controls (the filter row) without
-    -- the bottom items overlapping the topmost data rows or the totals bar.
+    -- buttons without the bottom items overlapping the topmost data rows or
+    -- the totals bar.
     --
     -- Used by ComputeContentSize so the frame is at least sidebar-tall when
     -- the data grid would otherwise be shorter (few characters, all on one
@@ -2058,11 +2058,11 @@ local function CreateFrameIfNeeded()
     -- minimum frame height grow automatically.
     --
     -- Math: btnY starts at -8 (top inset) and decrements by 27 per button.
-    -- _pluginBtnY is the next-empty-Y after all buttons. The bottom controls
-    -- (sbDiv2 at y=24 from BOTTOMLEFT, filter row) reserve 42px below the
-    -- last button. 8px breathing space at the very bottom.
+    -- _pluginBtnY is the next-empty-Y after all buttons. There are no bottom
+    -- controls any more, so nothing is reserved below the last button beyond
+    -- 8px of breathing space.
     local SIDEBAR_TOP_INSET     = 8
-    local SIDEBAR_BOTTOM_FOOTER = 42
+    local SIDEBAR_BOTTOM_FOOTER = 0
     local SIDEBAR_BOTTOM_BREATH = 8
     AltStable.GetSidebarRequiredHeight = function()
         if not sidebar or not sidebar._pluginBtnY then return 0 end
@@ -2876,25 +2876,6 @@ local function CreateFrameIfNeeded()
     AltStable._SwitchToOptions = function()
         if optSect then SwitchSection(optSect) end
     end
-
-    local sbDiv2=sidebar:CreateTexture(nil,"ARTWORK")
-    sbDiv2:SetHeight(1)
-    sbDiv2:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,24)
-    sbDiv2:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,24)
-    sbDiv2:SetColorTexture(unpack(AltStable.C.SEP))
-
-    -- "Filter" label row (compact)
-    local filterRow=CreateFrame("Frame",nil,sidebar)
-    filterRow:SetHeight(20)
-    filterRow:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,4)
-    filterRow:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,4)
-    local filterIcon=filterRow:CreateTexture(nil,"OVERLAY")
-    filterIcon:SetSize(11,11); filterIcon:SetPoint("LEFT",8,0)
-    SetSidebarIconTexture(filterIcon, (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\filter.tga", true)
-    filterIcon:SetVertexColor(unpack(AltStable.C.TEXT_DIM))
-    local filterLbl=filterRow:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    filterLbl:SetPoint("LEFT",22,0); filterLbl:SetText("Filter")
-    filterLbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
 
     --------------------------------------------------------
     -- Totals bar
