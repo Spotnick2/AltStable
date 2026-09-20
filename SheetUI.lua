@@ -161,6 +161,12 @@ local function GetPool(sectionId)
     return rowPools[sectionId]
 end
 
+-- Only created when devMode is on (see the ROSTER (DEV) block below), so every
+-- use must be nil-guarded. Declared here rather than in the block: it was a
+-- block-local while the options OnShow handler read it as a global, so with
+-- devMode off the panel threw on every open.
+local optModelDebugCheck
+
 local displayList = {}
 local sortColumn  = "level"
 local sortAsc     = false
@@ -2378,7 +2384,7 @@ local function CreateFrameIfNeeded()
         optCharsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
         Y = Y - 20
 
-        local optModelDebugCheck = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
+        optModelDebugCheck = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
         optModelDebugCheck:SetSize(18, 18)
         optModelDebugCheck:SetPoint("TOPLEFT", P - 2, Y + 2)
         optModelDebugCheck:SetChecked(AltStableRosterDB and AltStableRosterDB._debugModelStatus and true or false)
@@ -2815,7 +2821,9 @@ local function CreateFrameIfNeeded()
         optSliderUpdating = false
         local rosterDebug = (AltStableRosterDB and AltStableRosterDB._debugModelStatus)
             or (AltStableAltsDB and AltStableAltsDB._debugModelStatus)
-        optModelDebugCheck:SetChecked(rosterDebug and true or false)
+        if optModelDebugCheck then
+            optModelDebugCheck:SetChecked(rosterDebug and true or false)
+        end
         for key, cb in pairs(optPluginChecks) do
             cb:SetChecked(cb._getter())
         end
