@@ -72,9 +72,51 @@ The residual risk is narrower than the plan assumed: two characters can share a 
 the full name including surname still looks unique. Names are keys only for peer watermarks and
 whitelist matching, and those use the full string.
 
-**Still unverified — the one open question:** what `CHAT_MSG_ADDON` hands over as `sender`, and
-whether a whisper routes to a target containing a space. Run `/asprobe whisper <Name>` with both
-accounts logged in. Until that's answered, don't finalise the whitelist/watermark keying.
+### RESOLVED — cross-account whisper test, two accounts online
+
+```
+sender side:    whisper PING -> "Example Surname"          sent
+                RECV prefix=ASPROBE channel=WHISPER
+                     sender="Example Surname"  text="PONG|Example Surname"
+
+receiver side:  RECV prefix=ASPROBE channel=WHISPER
+                     sender="Second Surname"   text="PING|Second Surname"
+                replied PONG to sender string exactly as received
+```
+
+Three answers, all favourable:
+
+1. **A whisper target containing a space routes.**
+   `C_ChatInfo.SendAddonMessage(prefix, msg, "WHISPER", "Example Surname")` was delivered.
+2. **`CHAT_MSG_ADDON` `sender` is the FULL name including the surname, space-separated, with no
+   realm suffix** (same-realm): `sender="Second Surname"`. Not the first name, not hyphenated.
+3. **The round trip works** — replying to the `sender` string verbatim also routed, so the string
+   the event hands you is directly usable as a whisper target.
+
+**The sync design survives unmodified.** `PeerShort()` splits on `-` to strip a realm; the sender
+string contains a space and no hyphen, so it passes through intact, and the resulting watermark /
+whitelist key is the *full* name — which is unique even when two characters share a first name.
+No redesign needed.
+
+Cross-realm (`"Name Surname-RealmName"`) is untested, but `PeerShort` would strip the suffix
+correctly by inspection.
+
+### But two-word names DO break the slash parser
+
+`Core.lua:1845`:
+```lua
+local cmd, target = args:match("^(%S+)%s+(%S+)$")
+if not cmd then cmd = args:match("^(%S+)$") end
+```
+`(%S+)` captures a single whitespace-free token, and the pattern is anchored at both ends. So
+`/alts sync Second Surname` is three tokens, matches **neither** pattern, leaves `cmd = ""` and the
+command **silently does nothing**. Same for `/alts whitelist <name>`.
+
+Fix: capture the rest of the line and trim —
+```lua
+local cmd, target = args:match("^(%S+)%s+(.+)$")
+```
+Every place that accepts a character name from user input needs the same treatment.
 
 ---
 
@@ -298,11 +340,21 @@ UnitXPMax("player")         ->  400
 
 ## Still to measure
 
-1. **`/asprobe whisper <Name>` with both accounts online** — the `CHAT_MSG_ADDON` sender string, and
-   whether a whisper target containing a space routes. Blocks the sync keying decision.
-2. **Bank** — walk to a banker and open it; the probe now captures automatically.
-3. **Saved instances** — `GetNumSavedInstances()` was 0. Needs a re-run while saved to a raid, to
-   confirm `GetSavedInstanceEncounterInfo` ordering is stable (the Instances boss mask depends on it).
-4. **Professions** — re-run on a character that has some. Both probed characters returned
+1. **Bank** — walk to a banker and open it; the probe now captures automatically.
+2. **Saved instances — DEFERRED TO POST-LAUNCH.** `GetNumSavedInstances()` was 0 and a raid lockout
+   isn't obtainable on the beta, so `GetSavedInstanceEncounterInfo` ordering can't be confirmed.
+
+   Consequence is limited to one feature, not the whole plugin. `GetSavedInstanceInfo` returns
+   `encounterProgress` and `numEncounters` directly, so the **lockout grid and "X/Y bosses" progress
+   need no ordering assumption**. Only the *named* per-boss kill list does: `Core.lua:1063` encodes
+   kills as a positional bitmask by encounter index, and `AltTrackerInstances.lua:518` maps those
+   indices onto a static boss-name list. If Forever's ordering differs, that renders confidently
+   wrong names.
+
+   **First beta therefore ships aggregate progress only.** The named-boss mask is written but not
+   displayed until a real lockout confirms ordering. The logic stays covered offline by
+   `tests/test_instances.lua` with stubbed returns; it's the live data assumption that's unverified,
+   not the code.
+3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
-5. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
+4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.

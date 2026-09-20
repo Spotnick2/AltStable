@@ -246,11 +246,36 @@ This breaks anything that treats a character name as a unique key:
 - whitelists and friend/peer matching
 - any `name`-based identity check (e.g. "reject this record if the name changed for this GUID")
 
-**Key on GUID, not name.** `UnitGUID` is stable and unique; names are neither. If you must display
-or target by name, probe which API actually returns the surname —
-`UnitName` / `UnitFullName` / `UnitNameUnmodified` / `GetUnitName(unit, true)` / `C_PlayerInfo.GetName`
-all exist and may not agree — and check what `CHAT_MSG_ADDON` hands you as the `sender` string
-before parsing it.
+**Key on GUID for storage.** `UnitGUID` is stable and unique; a first name is neither.
+
+**For addon messaging, measured with two accounts online, the news is good:**
+
+```
+SendAddonMessage(prefix, msg, "WHISPER", "Example Surname")   -> delivered
+CHAT_MSG_ADDON  ->  sender = "Example Surname"                (full name, space-separated,
+                                                               no realm suffix, same realm)
+```
+
+- A whisper target **containing a space routes fine**.
+- `CHAT_MSG_ADDON`'s `sender` carries the **full name including the surname** — not the first name,
+  not hyphenated — and replying to that string verbatim routes back.
+- So code that strips a realm by splitting on `-` still works, and the resulting key is unique.
+
+**The thing that actually breaks: slash-command argument parsing.** The near-universal idiom
+
+```lua
+local cmd, target = args:match("^(%S+)%s+(%S+)$")   -- BROKEN: target is one token
+```
+
+silently fails on `/mycmd sync Example Surname` — three tokens match neither the two-token pattern
+nor the one-token fallback, so the handler falls through and does nothing at all. Use:
+
+```lua
+local cmd, target = args:match("^(%S+)%s+(.+)$")    -- rest of line, then trim
+```
+
+Audit every place a character name arrives from user input, a saved config list, or a parsed system
+message.
 
 ### Bag IDs moved
 

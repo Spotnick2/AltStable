@@ -591,15 +591,43 @@ local function WireRecord(s)
     Out(s)
 end
 
+-- Send the same ping to every plausible spelling of the target, each tagged
+-- with the form that produced it. Whichever tags come back as PONG are the
+-- forms that actually route - no guessing about space vs hyphen.
 local function SendPing(target)
     if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
         Out("|cffff5555C_ChatInfo.SendAddonMessage absent|r"); return
     end
     local me = (UnitFullName and UnitFullName("player")) or UnitName("player") or "?"
-    local ok, err = pcall(C_ChatInfo.SendAddonMessage, WPREFIX, "PING|" .. tostring(me), "WHISPER", target)
-    WireRecord(("whisper PING -> %-24s %s"):format(target, ok and "sent (no error)" or ("ERROR: " .. tostring(err))))
-    WireRecord("  >> if the other account is logged in with this probe, it will reply PONG")
-    WireRecord("  >> a silent non-delivery means the target string was wrong - try the surname form")
+
+    local variants, seen = {}, {}
+    local function add(label, t)
+        if t and t ~= "" and not seen[t] then
+            seen[t] = true
+            variants[#variants + 1] = { label = label, target = t }
+        end
+    end
+    add("as-typed", target)
+    add("space",      (target:gsub("%-", " ")))
+    add("hyphen",     (target:gsub(" ", "-")))
+    add("first-only", target:match("^(%S+)"))
+
+    WireRecord(("whisper test -> %d target form(s), 0.4s apart"):format(#variants))
+    for idx, v in ipairs(variants) do
+        local function fire()
+            local ok, err = pcall(C_ChatInfo.SendAddonMessage, WPREFIX,
+                "PING|" .. v.label .. "|" .. tostring(me), "WHISPER", v.target)
+            WireRecord(("  [%-10s] %-28s %s"):format(v.label, v.target,
+                ok and "sent" or ("ERROR: " .. tostring(err))))
+        end
+        if C_Timer and C_Timer.After and idx > 1 then
+            C_Timer.After((idx - 1) * 0.4, fire)
+        else
+            fire()
+        end
+    end
+    WireRecord("  >> 'sent' only means the client accepted it, NOT that it was delivered.")
+    WireRecord("  >> A PONG line naming a form is the proof that form routes.")
 end
 
 wire:RegisterEvent("CHAT_MSG_ADDON")
@@ -622,11 +650,16 @@ wire:SetScript("OnEvent", function(_, event, prefix, text, channel, sender)
     -- `sender` verbatim is the whole point of this test.
     WireRecord(("|cff55ff55RECV|r prefix=%s channel=%s sender=%s text=%s"):format(
         tostring(prefix), tostring(channel), ValStr(sender, 1), ValStr(text, 1)))
-    local kind = tostring(text):match("^(%u+)")
+    local kind, label = tostring(text):match("^(%u+)|([^|]*)")
     if kind == "PING" then
         local me = (UnitFullName and UnitFullName("player")) or UnitName("player") or "?"
-        pcall(C_ChatInfo.SendAddonMessage, WPREFIX, "PONG|" .. tostring(me), "WHISPER", sender)
-        WireRecord("  replied PONG to sender string exactly as received")
+        -- Reply to `sender` verbatim. If that string does not itself route, the
+        -- PONG never arrives - which is also a result worth having.
+        pcall(C_ChatInfo.SendAddonMessage, WPREFIX,
+            "PONG|" .. tostring(label) .. "|" .. tostring(me), "WHISPER", sender)
+        WireRecord(("  got PING (form=%s), replied PONG to sender verbatim"):format(tostring(label)))
+    elseif kind == "PONG" then
+        WireRecord(("  |cff55ff55ROUND-TRIP OK|r  target form '%s' routes, and the sender string replies"):format(tostring(label)))
     end
 end)
 if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
