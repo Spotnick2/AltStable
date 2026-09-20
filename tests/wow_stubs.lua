@@ -72,7 +72,7 @@ local function makeFrame()
     f.IsEventRegistered = function(self, ev) return self["_ev_" .. tostring(ev)] == true end
     f.SetScript = function(self, ev, fn) self["_script_" .. tostring(ev)] = fn; return self end
     f.GetScript = function(self, ev) return self["_script_" .. tostring(ev)] end
-    -- Unlike the AltTracker stubs, HookScript REJECTS unknown script types the
+    -- Unlike the AltStable stubs, HookScript REJECTS unknown script types the
     -- way the live client does. OnTooltipSetItem throws there, and a stub that
     -- accepted everything is precisely why the old Warband tests could not
     -- catch that (issue #10).
