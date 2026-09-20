@@ -400,6 +400,37 @@ API = dofile("Compat.lua")
 eq("restored client reports nothing missing", #API.missing, 0)
 
 ------------------------------------------------------------
+-- strsplit stub fidelity
+--
+-- Not adapter code, but the harness has to parse the way the client does.
+-- PeerShort strips a realm by splitting on "-", and the sync wire format is
+-- "CMD|payload" - so a stub that invents empty fields would make consumer
+-- tests validate parsing that does not match reality.
+------------------------------------------------------------
+
+local function splitCount(sep, s) return select("#", strsplit(sep, s)) end
+
+eq("no delimiter yields one field", splitCount("-", "NoDelimiter"), 1)
+eq("  and it is the whole string", (strsplit("-", "NoDelimiter")), "NoDelimiter")
+
+eq("a surname plus realm splits into two", splitCount("-", "Example Surname-RealmName"), 2)
+local nameField, realmField = strsplit("-", "Example Surname-RealmName")
+eq("  [1] keeps the space-separated surname", nameField, "Example Surname")
+eq("  [2] is the realm", realmField, "RealmName")
+
+eq("wire format keeps its 4 fields", splitCount("|", "CHUNK5|sid|1/3|body"), 4)
+local c1, c2, c3, c4 = strsplit("|", "CHUNK5|sid|1/3|body")
+eq("  [1]", c1, "CHUNK5")
+eq("  [3]", c3, "1/3")
+eq("  [4]", c4, "body")
+
+-- Genuine empties must survive; only invented ones are the bug.
+eq("adjacent delimiters keep a real empty field", splitCount("|", "a||b"), 3)
+eq("  and it is empty", (select(2, strsplit("|", "a||b"))), "")
+eq("a trailing delimiter keeps its empty field", splitCount("|", "a|"), 2)
+eq("a leading delimiter keeps its empty field", splitCount("|", "|a"), 2)
+
+------------------------------------------------------------
 
 print(("test_compat: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

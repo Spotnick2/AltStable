@@ -262,9 +262,30 @@ function UnitLevel() return 1 end
 function GetTime() return 0 end
 function time() return 0 end
 
+-- WoW's strsplit takes a SET of delimiter characters and returns the fields
+-- between them, preserving genuinely empty fields (adjacent or trailing
+-- delimiters) but inventing none.
+--
+-- The obvious `gmatch("[^sep]*")` implementation is wrong: the `*` matches an
+-- empty string at each delimiter AND again at end-of-string, so every field
+-- after the first is shifted. Measured with that version:
+--
+--   strsplit("-", "Name Surname-Realm")   -> "Name Surname", "", "Realm", ""
+--   strsplit("|", "CHUNK5|sid|1/3|body")  -> 8 fields instead of 4
+--
+-- That would have quietly corrupted both the realm-stripping in PeerShort and
+-- every wire-format assertion in the eventual test_comm port.
 function strsplit(sep, str)
-    local out = {}
-    for piece in tostring(str):gmatch("([^" .. sep .. "]*)") do out[#out + 1] = piece end
+    str = tostring(str)
+    local out, start = {}, 1
+    local pattern = "[" .. sep .. "]"
+    while true do
+        local s, e = str:find(pattern, start)
+        if not s then break end
+        out[#out + 1] = str:sub(start, s - 1)
+        start = e + 1
+    end
+    out[#out + 1] = str:sub(start)
     return unpack(out)
 end
 
