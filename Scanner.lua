@@ -1,5 +1,12 @@
 AltStable = AltStable or {}
 
+-- Retail-API adapters. Taken as file-locals so call sites below read the same
+-- as they always did; see Compat.lua for why these are not globals.
+local API = AltStable.API
+local GetNumSkillLines = API.GetNumSkillLines
+local GetSkillLineInfo = API.GetSkillLineInfo
+local UnitDefenseSkill = API.UnitDefenseSkill
+
 local PRIMARY_PROFESSIONS = {
     ["Alchemy"] = true,
     ["Blacksmithing"] = true,
@@ -352,9 +359,17 @@ function AltStable.ScanSkills(char)
 
     for i = 1, GetNumSkillLines() do
 
-        local skillName, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
+        -- One struct, not the old 7-value tuple. Destructuring positionally
+        -- here would yield nil for every field and silently record no
+        -- professions at all, which is why this is read by name.
+        local info = GetSkillLineInfo(i)
+        local skillName = info and info.name
+        local rank      = info and info.rank
+        -- maxRank is dynamic for weapon and defense skills (5 x level), so it
+        -- is read per line rather than assumed to be a cap.
+        local maxRank   = info and info.maxRank
 
-        if not isHeader and skillName then
+        if info and not info.isHeader and skillName then
 
             if skillName == "Fishing" then
                 char.fishing = rank or 0
@@ -609,7 +624,7 @@ function AltStable.ScanCharacter()
         char.stat_haste = Round2(GetCombatRatingBonus(CR_HASTE_MELEE))
     end
 
-    local baseDef, modDef = UnitDefense("player")
+    local baseDef, modDef = UnitDefenseSkill("player")
     char.stat_defense = (baseDef or 0) + (modDef or 0)
 
     char.stat_resilience = 0
