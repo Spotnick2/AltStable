@@ -1,4 +1,7 @@
 AltStable = AltStable or {}
+
+-- Retail-API adapter; see Compat.lua.
+local GetItemInfo = AltStable.API.GetItemInfo
 AltStableDB = AltStableDB or {}
 
 ------------------------------------------------------------
@@ -1848,16 +1851,31 @@ local function CaptureReferenceScreenshot()
 end
 AltStable.CaptureReferenceScreenshot = CaptureReferenceScreenshot
 
+-- Split "<cmd> <target>" where the target may contain spaces.
+--
+-- Forever characters have a surname, so a name is two words: "Karuzo Elegia".
+-- The old pattern captured the target as a single %S+ token and was anchored
+-- at both ends, so a three-token line matched NEITHER that nor the one-token
+-- fallback - cmd came back empty and the command silently did nothing.
+function AltStable.ParseSlashArgs(args)
+    args = tostring(args or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local cmd, target = args:match("^(%S+)%s+(.+)$")
+    if not cmd then
+        cmd = args:match("^(%S+)$")
+    end
+    if target then
+        target = target:gsub("^%s+", ""):gsub("%s+$", "")
+        if target == "" then target = nil end
+    end
+    return (cmd and cmd:lower() or ""), target
+end
+
 SLASH_ALTSTABLE1 = "/alts"
 SLASH_ALTSTABLE2 = "/altstable"
 
 SlashCmdList["ALTSTABLE"] = function(args)
 
-    local cmd, target = args:match("^(%S+)%s+(%S+)$")
-    if not cmd then
-        cmd = args:match("^(%S+)$")
-    end
-    cmd = cmd and cmd:lower() or ""
+    local cmd, target = AltStable.ParseSlashArgs(args)
 
     ----------------------------------------------------
     -- /alts sync [PlayerName]

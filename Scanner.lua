@@ -6,6 +6,8 @@ local API = AltStable.API
 local GetNumSkillLines = API.GetNumSkillLines
 local GetSkillLineInfo = API.GetSkillLineInfo
 local UnitDefenseSkill = API.UnitDefenseSkill
+local GetItemInfo      = API.GetItemInfo
+local GetItemStats     = API.GetItemStats
 
 local PRIMARY_PROFESSIONS = {
     ["Alchemy"] = true,

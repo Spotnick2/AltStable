@@ -256,6 +256,45 @@ C_ChatInfo = {
 -- Plain globals that survived
 ------------------------------------------------------------
 
+-- Identity, in the measured Forever shape: the surname is part of the name
+-- string and SPACE-separated, and UnitName's second return is the realm only
+-- for a cross-realm unit. GetPlayerInfoByGUID deliberately returns the FIRST
+-- NAME ONLY at position 6, because the live client does and the two sources
+-- disagreeing is a real trap.
+WoW.player = { name = "Example Surname", realm = "Classic Beta PvE",
+               normalizedRealm = "ClassicBetaPvE", guid = "Player-1234-0000AAAA",
+               class = "PRIEST", classLocalized = "Priest", race = "Scourge" }
+
+function UnitName(unit) if unit == "player" then return WoW.player.name, nil end end
+function UnitFullName(unit) if unit == "player" then return WoW.player.name, WoW.player.normalizedRealm end end
+function UnitNameUnmodified(unit) return UnitName(unit) end
+function GetUnitName(unit) return (UnitName(unit)) end
+function UnitGUID(unit) if unit == "player" then return WoW.player.guid end end
+function UnitNameFromGUID() return WoW.player.name end
+function GetPlayerInfoByGUID()
+    local first = WoW.player.name:match("^(%S+)")
+    return WoW.player.classLocalized, WoW.player.class, "Undead", WoW.player.race, 1, first, ""
+end
+function GetRealmName() return WoW.player.realm end
+function GetNormalizedRealmName() return WoW.player.normalizedRealm end
+function UnitClass(unit) if unit == "player" then return WoW.player.classLocalized, WoW.player.class end end
+function UnitRace(unit) if unit == "player" then return "Undead", WoW.player.race end end
+function UnitSex() return 3 end
+function UnitFactionGroup() return "Horde", "Horde" end
+function IsLoggedIn() return WoW.loggedIn ~= false end
+function GetMoney() return 0 end
+function IsInGuild() return false end
+
+SlashCmdList = {}
+UISpecialFrames = {}
+function ChatFrame_AddMessageEventFilter() end
+ChatThrottleLib = {
+    SendAddonMessage = function(_, _, prefix, text, channel, target)
+        return C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
+    end,
+}
+function GetGuildInfo() return nil end
+
 function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return 1 end
