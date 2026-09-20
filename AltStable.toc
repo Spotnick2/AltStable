@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: AltStable Forever edition
+## Notes: Cross-alt tracker for World of Warcraft: Forever.
+## Author: Spotnick
+## Version: @project-version@
+## SavedVariables: AltStableDB AltStableConfig
+
+Compat.lua
