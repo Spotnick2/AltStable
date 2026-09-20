@@ -1,0 +1,308 @@
+# Forever API contracts — measured, not guessed
+
+Probe runs 2026-09-20 on build **1.60.1.69913**, against two low-level characters on the
+"Classic Beta PvE" realm. Character names and GUIDs below are placeholders; the values are as
+measured. Produced by `Tools/AltStableProbe`.
+
+Everything below is an observed return value. Where it contradicts an assumption in the migration
+plan, that's called out.
+
+---
+
+## Client
+
+```
+GetBuildInfo()  ->  "1.60.1", "69913", "Sep 17 2026", 16001, "", " "
+WOW_PROJECT_ID  ->  1  (== WOW_PROJECT_MAINLINE)
+```
+
+`## Interface: 16001` confirmed from the client itself.
+
+**Level cap: use `GetMaxPlayerLevel()` — it returns `60`. `MAX_PLAYER_LEVEL` is `nil`.**
+Every hardcoded `70` in the port becomes `GetMaxPlayerLevel()`, not a literal `60`.
+
+`GetAverageItemLevel()` returns **three** values (total, equipped, pvp), and they are
+**fractional** — Second returned `0.3125, 0.3125, 0.3125`. Anything formatting item level must
+round; Classic's values were effectively integral.
+
+---
+
+## Identity — surnames are real, and they are space-separated
+
+```
+UnitName("player")          ->  "Example Surname",  nil
+UnitFullName("player")      ->  "Example Surname",  "ClassicBetaPvE"
+UnitNameUnmodified("player")->  "Example Surname",  nil
+GetUnitName("player", true) ->  "Example Surname"
+UnitGUID("player")          ->  "Player-1234-0000AAAA"
+GetRealmName()              ->  "Classic Beta PvE"
+GetNormalizedRealmName()    ->  "ClassicBetaPvE"
+C_PlayerInfo.ShouldDisplaySurname()  ->  true
+```
+
+Findings that matter:
+
+1. **The surname is part of the name string, separated by a SPACE** — `"Example Surname"`, not
+   `Example-Surname`. The hyphenated form only appears in WTF folder names on disk.
+2. **`GetPlayerInfoByGUID` returns the FIRST NAME ONLY** at position 6:
+   ```
+   GetPlayerInfoByGUID(guid) -> "Paladin","PALADIN","Undead","Scourge",3,"Example","",1
+   ```
+   So the two identity sources disagree. Anything displaying names from a GUID silently drops the
+   surname.
+3. **`C_PlayerInfo.GetName` takes a PlayerLocation, not a unit token** — `GetName("player")` errors.
+   Another false friend.
+
+Confirmed on a second character:
+```
+UnitName("player")        ->  "Second Surname"
+UnitGUID("player")        ->  "Player-1234-0000BBBB"
+GetPlayerInfoByGUID(guid) ->  ..., [6]="Second", [7]="", ...
+```
+Same realm ID (`1234`) for both characters, and the same split: full name with surname from
+`UnitName`, first name only from `GetPlayerInfoByGUID`.
+
+### What this means for sync
+
+Better than feared. `PeerShort()` splits on `-` to strip the realm, and a Forever name contains a
+space rather than a hyphen — so `"Example Surname"` passes through intact and `"Example Surname-Realm"`
+still splits correctly. **The existing realm-stripping logic is not broken by surnames.**
+
+The residual risk is narrower than the plan assumed: two characters can share a *first* name, but
+the full name including surname still looks unique. Names are keys only for peer watermarks and
+whitelist matching, and those use the full string.
+
+**Still unverified — the one open question:** what `CHAT_MSG_ADDON` hands over as `sender`, and
+whether a whisper routes to a target containing a space. Run `/asprobe whisper <Name>` with both
+accounts logged in. Until that's answered, don't finalise the whitelist/watermark keying.
+
+---
+
+## Skills — a STRUCT, not a tuple
+
+**This contradicts the plan.** The plan said to verify tuple positions 1/2/4/7. There is no tuple:
+
+```
+C_SkillInfo.GetNumSkillLines()  ->  15
+C_SkillInfo.GetSkillLineInfo(2) ->  {
+    name="Holy", isHeader=false, rank=1, maxRank=1, skillID=594,
+    skillLineCategoryID=7, parentSkillLineID=0, description="",
+    modifier=0, minLevel=0, isCollapsed=false, isAbandonable=false,
+    costType=0, rankCost=0, stepCost=0, tempPoints=0
+}
+```
+
+`Scanner.lua:578` —
+`local skillName, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)` — must become struct
+field access. A same-name alias would have yielded **empty professions with no error**, exactly the
+failure the probe existed to catch.
+
+The list includes headers (`isHeader=true`) interleaved with entries, same as Classic. Languages
+carry `rank=300, maxRank=300`.
+
+**Weapon/defense `maxRank` scales with level** (5 x level): at level 1 it was `5`, at level 3 `15`.
+So a profession/skill column must read `maxRank` per row rather than assuming a cap — and the
+TBC-era hardcoded `375` in `RowRenderer.lua:1053,1064` is wrong twice over (Vanilla caps at 300,
+and skill maxima are dynamic).
+
+---
+
+## Professions
+
+```
+GetProfessions()  ->  nil × 7        (character has no professions)
+C_TradeSkillUI.GetAllProfessionTradeSkillLines()
+   ->  {164, 165, 171, 182, 186, 197, 202, 333, 393, 2933, 2934, 2937, 2938,
+        2940, 2941, 2944, 2945, 2946, 2947, 2948}
+```
+
+The low IDs are the familiar Vanilla skill lines (164 Blacksmithing, 165 Leatherworking,
+171 Alchemy, 182 Herbalism, 186 Mining, 197 Tailoring, 202 Engineering, 333 Enchanting,
+393 Skinning). The `29xx` block is Retail-era. Needs a re-run on a character *with* professions
+before the Professions plugin is designed — deferred anyway.
+
+---
+
+## Reputation — also a struct, and ByID reaches beyond the visible list
+
+```
+C_Reputation.GetNumFactions()  ->  5
+C_Reputation.GetFactionDataByIndex(3) -> {
+    name="Orgrimmar", factionID=76, reaction=4, currentStanding=2000,
+    currentReactionThreshold=0, nextReactionThreshold=3000,
+    isHeader=false, isCollapsed=false, isWatched=false, atWarWith=false, ...
+}
+```
+
+Standing is `reaction` (4 = Neutral, 5 = Friendly). Again a struct, so the plan's "standing is
+return 3" concern is moot — but so is any same-name alias.
+
+**The important result: `GetFactionDataByID` returns factions that are not in the visible list.**
+`GetNumFactions()` was 5, yet Argent Dawn (529), Cenarion Circle (609) and Thorium Brotherhood (59)
+all returned full data. This **validates Codex's recommendation** to key reputations off a static
+faction-ID map instead of walking the indexed UI list — no collapsed-header blind spots, and no
+English-name matching.
+
+`GetFactionDataByID(72)` (Stormwind) → `nil` on a Horde character, as expected.
+`GetFactionDataByID(270)` (Zandalar Tribe) → `nil` — that content may simply not be in yet. Re-check
+before building the faction map.
+
+---
+
+## Items
+
+```
+C_Item.GetItemInfo(6948) -> 18 returns, classic layout:
+  "Hearthstone", "[Hearthstone]", 1, 1, 0, "Miscellaneous", "Junk", 1,
+  "INVTYPE_NON_EQUIP_IGNORE", 134414, 0, 15, 0, 1, 0, nil, false, ""
+
+C_Item.GetItemInfoInstant(6948) -> 6948, "Miscellaneous", "Junk",
+                                   "INVTYPE_NON_EQUIP_IGNORE", 134414, 15, 0
+```
+
+Both keep the Classic return order, so these two **are** safe direct aliases.
+
+**Confirmed false friend:**
+```
+C_Item.GetItemIconByID(6948) ->  134414          OK
+C_Item.GetItemIcon(6948)     ->  ERROR: bad argument #1 (Usage: C_Item.GetItemIcon(itemLocation))
+```
+The plan's fix was right, and is now proven rather than inferred.
+
+**Cache miss returns NO values at all** — not `nil`:
+```
+C_Item.GetItemInfo(21877)  ->  (no returns)
+```
+The adapter must preserve that. `select(n, ...)` is safe; `{...}` yields an empty table.
+
+**The two runs proved this is per-client-cache, not per-item.** The identical call returned full
+data on one character and nothing on the other:
+
+| Call | Character A | Character B |
+|---|---|---|
+| `C_Item.GetItemInfo(19019)` | 18 returns | **(no returns)** |
+| `C_Item.GetItemQualityByID(19019)` | `5` | **`nil`** |
+| `C_Item.GetItemStats("item:19019")` | full table | **(no returns)** |
+
+One character's client happened to have Thunderfury cached; the other's did not. So **any item lookup can
+come back empty at any time**, and a gear scan that runs before the cache warms will silently
+record nothing. `Scanner.lua`'s existing `PendingGearSlots` retry driven by
+`GET_ITEM_INFO_RECEIVED` is therefore load-bearing, not belt-and-braces — keep it, and make sure
+the unguarded call sites (`Scanner.lua:655`, `Core.lua:1639`) go through it.
+
+### Item levels confirm the colour-gradient bug
+
+```
+Thunderfury (19019): quality=5 (epic), itemLevel=80, reqLevel=60
+```
+
+`RowRenderer.lua:517-522` breakpoints are `ILVL_POOR=60, ILVL_COMMON=80, ILVL_UNCOMMON=100,
+ILVL_RARE=115, ILVL_EPIC=125`. **A Vanilla legendary at ilvl 80 lands on the grey→white boundary.**
+Every Vanilla raid epic would render as junk. Codex flagged this from the code; the probe confirms
+the numbers. Colour by `quality`, not by item level.
+
+`IlvlCeiling()` (`RowRenderer.lua:515`) also reads from `AltTracker.GetBisTier()`, which does not
+exist once BiS is dropped — so this code path must be replaced, not just re-tuned.
+
+---
+
+## Containers — bag `-1` is the KEYRING, not the bank
+
+**This is a real bug the plan would have shipped.**
+
+```
+bag -1   slots=32   name="Keyring"
+bag  0   slots=20   name="Backpack"
+NUM_BAG_SLOTS = 4        NUM_BANKGENERIC_SLOTS = nil     NUM_BANKBAGSLOTS = nil
+```
+
+`AltTrackerWarband.lua:29-31` has:
+```lua
+local BAG_IDS   = { 0, 1, 2, 3, 4, -2 }        -- -2 assumed to be the keyring
+local BANK_IDS  = { -1, 5, 6, 7, 8, 9, 10, 11 } -- -1 assumed to be the main bank
+local MAIN_BANK = -1
+```
+On Forever, **-1 is the keyring**. Warband would scan the keyring as the main bank, and `-2`
+(its assumed keyring) does not report slots at all. Both constants are wrong.
+
+`GetContainerItemInfo` returns a **struct** — Warband's existing dual-shape `ReadSlot` at `:79`
+already handles this, which is why that plugin was the safe one to port first:
+```
+{ itemID=4604, itemName="Forest Mushroom Cap", hyperlink="[…]", stackCount=4,
+  quality=1, iconFileID=134534, isBound=false, isLocked=false, hasLoot=false, … }
+```
+
+### Bank — still unresolved
+
+Two runs, one explicitly with the bank open, both returned:
+```
+C_Bank.FetchViewableBankTypes()   ->  {}
+C_Bank.AreAnyBankTypesViewable()  ->  false
+C_Bank.CanViewBank(1)             ->  false
+```
+No bank bags appeared at any id from -5 to 20. Either the frame wasn't open when the sweep ran, or
+Forever uses the `C_Bank` type model rather than numbered bank bags.
+
+The probe now **auto-captures 0.25s after `BANKFRAME_OPENED`**, which removes the timing question,
+and reports `BankFrame:IsShown()` and the `Enum.BankType` table. Re-run by simply walking up to a
+banker and opening the bank — no command needed.
+
+---
+
+## Tooltips — the predicted load-blocker is real
+
+```
+GameTooltip:HookScript("OnTooltipSetItem", fn)
+   ->  ERROR: bad argument #2 (Usage: self:HookScript(scriptTypeName, script [, bindingType]))
+
+TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, fn)  ->  installed
+GameTooltip:SetHyperlink("item:6948")                                   ->  ok
+   fired:  OnTooltipSetItem = false        TooltipDataProcessor = true
+```
+
+The script type doesn't exist, so **`HookScript` itself throws** — it isn't merely a hook that never
+fires. `AltTrackerWarband.lua:434` calls exactly this inside `EnsureTooltipHook()`, reached during
+bootstrap, so it would **abort Warband's plugin registration**. Confirmed, as predicted.
+
+Fix: `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, …)`. `C_TooltipInfo` is
+also present and `C_TooltipInfo.GetHyperlink("item:6948")` returns structured tooltip data.
+
+---
+
+## Events — 2 of 23 rejected
+
+Rejected (throw on `RegisterEvent`):
+- `PLAYERBANKBAGSLOTS_CHANGED`
+- `TRADE_SKILL_UPDATE`
+
+Accepted, including all of Core.lua's: `PLAYER_LOGIN`, `CHAT_MSG_ADDON`,
+`PLAYER_EQUIPMENT_CHANGED`, `GET_ITEM_INFO_RECEIVED`, `PLAYER_MONEY`, `PLAYER_UPDATE_RESTING`,
+`PLAYER_XP_UPDATE`, `UPDATE_INSTANCE_INFO`, `MAIL_INBOX_UPDATE`, `CHAT_MSG_SYSTEM`, `BAG_UPDATE`,
+`BAG_UPDATE_DELAYED`, `BANKFRAME_OPENED`, `BANKFRAME_CLOSED`, `PLAYERBANKSLOTS_CHANGED`,
+`SKILL_LINES_CHANGED`, `UPDATE_FACTION`, `PLAYER_LEVEL_UP`, `TRADE_SKILL_SHOW`,
+`TRADE_SKILL_LIST_UPDATE`, `TRADE_SKILL_DATA_SOURCE_CHANGED`.
+
+---
+
+## Other stats
+
+```
+UnitDefenseSkill("player")  ->  1, 0           (base, modifier — same contract as UnitDefense)
+UnitStat("player", 1)       ->  24, 24, 0, 0
+UnitAttackPower("player")   ->  31, 0, 0
+GetXPExhaustion()           ->  nil            (not rested)
+UnitXPMax("player")         ->  400
+```
+
+---
+
+## Still to measure
+
+1. **`/asprobe whisper <Name>` with both accounts online** — the `CHAT_MSG_ADDON` sender string, and
+   whether a whisper target containing a space routes. Blocks the sync keying decision.
+2. **Bank** — walk to a banker and open it; the probe now captures automatically.
+3. **Saved instances** — `GetNumSavedInstances()` was 0. Needs a re-run while saved to a raid, to
+   confirm `GetSavedInstanceEncounterInfo` ordering is stable (the Instances boss mask depends on it).
+4. **Professions** — re-run on a character that has some. Both probed characters returned
+   `GetProfessions() -> nil x7`.
+5. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
