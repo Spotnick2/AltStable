@@ -430,6 +430,22 @@ eq("  and it is empty", (select(2, strsplit("|", "a||b"))), "")
 eq("a trailing delimiter keeps its empty field", splitCount("|", "a|"), 2)
 eq("a leading delimiter keeps its empty field", splitCount("|", "|a"), 2)
 
+-- The delimiter is a literal character set, not a pattern. Interpolating it
+-- raw builds "[^]" for a caret and throws "malformed pattern".
+for _, d in ipairs({ "^", "]", "%", "-", "." }) do
+    local okSplit, a2, b2 = pcall(strsplit, d, "a" .. d .. "b")
+    check("delimiter " .. string.format("%q", d) .. " does not throw", okSplit, tostring(a2))
+    if okSplit then
+        eq("  " .. string.format("%q", d) .. " [1]", a2, "a")
+        eq("  " .. string.format("%q", d) .. " [2]", b2, "b")
+    end
+end
+
+-- A metacharacter delimiter must not match anything else either: "." is a
+-- literal dot here, not "any character".
+eq("a literal dot splits only on dots", splitCount(".", "a.b"), 2)
+eq("  and leaves other characters alone", splitCount(".", "axb"), 1)
+
 ------------------------------------------------------------
 
 print(("test_compat: %d passed, %d failed"):format(passed, failed))

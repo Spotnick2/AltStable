@@ -275,10 +275,17 @@ function time() return 0 end
 --
 -- That would have quietly corrupted both the realm-stripping in PeerShort and
 -- every wire-format assertion in the eventual test_comm port.
+-- `sep` is a LITERAL set of characters, not a Lua pattern, so every
+-- non-alphanumeric is escaped before it goes into a character class.
+-- Interpolating it raw breaks on the class metacharacters: `sep = "^"` builds
+-- "[^]", which throws "malformed pattern (missing ']')" rather than splitting.
+-- `]`, `%` and `-` are the same hazard. Escaping keeps the search in C, which
+-- matters once test_comm starts splitting multi-KB serialized records.
 function strsplit(sep, str)
     str = tostring(str)
+    local escaped = tostring(sep):gsub("(%W)", "%%%1")
+    local pattern = "[" .. escaped .. "]"
     local out, start = {}, 1
-    local pattern = "[" .. sep .. "]"
     while true do
         local s, e = str:find(pattern, start)
         if not s then break end
