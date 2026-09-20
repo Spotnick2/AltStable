@@ -2,7 +2,8 @@
 -- AltStable/Theme.lua
 --
 -- ElvUI-inspired neutral dark palette and theming system.
--- Loaded first (via .toc) so all other UI files can use it.
+-- Loaded before every other UI file (via .toc; only Compat.lua precedes it)
+-- so they can all use it.
 --
 -- Dark theme: pure charcoal/black — NO blue or purple tints.
 --   ElvUI defaults: border=0,0,0 | bg=0.10,0.10,0.10

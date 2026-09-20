@@ -1697,12 +1697,14 @@ AltStable.plugins = AltStable.plugins or {}
 -- only persists (WoW can't unload an addon until the next /reload).
 ------------------------------------------------------------
 
-AltStable.LOD_PLUGINS = {
-    { key = "professions", addon = "AltStableProfessions", label = "Recipes" },
-    { key = "roster",      addon = "AltStableRoster",      label = "Roster"  },
-    { key = "instances",   addon = "AltStableInstances",   label = "Raids"   },
-    { key = "warband",     addon = "AltStableWarband",     label = "Warband" },
-}
+-- Empty until the plugins are ported. Each re-adds its own entry:
+--   Warband   -> #9  / #10
+--   Instances -> #11
+--   Recipes   -> #14 (deferred)
+--   Roster    -> #15 (deferred)
+-- Listing an addon that does not exist means a failed LoadAddOn at every
+-- login, which would bury the real errors this build exists to surface.
+AltStable.LOD_PLUGINS = {}
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
 -- back to the C_AddOns namespace if a future client drops them.
@@ -1714,7 +1716,16 @@ end
 local function LoadPluginAddon(addon)
     local loader = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
     if not loader then return false, "no loader" end
-    return loader(addon)
+    -- Skip an addon the client has never heard of, and pcall the rest. This
+    -- runs from the PLAYER_LOGIN handler, and on Retail LoadAddOn can raise
+    -- rather than return nil for an unknown name - which would abort login
+    -- before the scan and sync are ever scheduled.
+    if C_AddOns and C_AddOns.GetAddOnInfo and not C_AddOns.GetAddOnInfo(addon) then
+        return false, "not installed"
+    end
+    local ok, a, b = pcall(loader, addon)
+    if not ok then return false, tostring(a) end
+    return a, b
 end
 
 function AltStable.IsPluginEnabled(key)

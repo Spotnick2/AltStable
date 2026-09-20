@@ -243,7 +243,7 @@ ILVL_RARE=115, ILVL_EPIC=125`. **A Vanilla legendary at ilvl 80 lands on the gre
 Every Vanilla raid epic would render as junk. Codex flagged this from the code; the probe confirms
 the numbers. Colour by `quality`, not by item level.
 
-`IlvlCeiling()` (`RowRenderer.lua:515`) also reads from `AltTracker.GetBisTier()`, which does not
+`IlvlCeiling()` (`RowRenderer.lua:515`) also reads from `AltStable.GetBisTier()`, which does not
 exist once BiS is dropped — so this code path must be replaced, not just re-tuned.
 
 ---
@@ -258,7 +258,7 @@ bag  0   slots=20   name="Backpack"
 NUM_BAG_SLOTS = 4        NUM_BANKGENERIC_SLOTS = nil     NUM_BANKBAGSLOTS = nil
 ```
 
-`AltTrackerWarband.lua:29-31` has:
+`AltStableWarband.lua:29-31` has:
 ```lua
 local BAG_IDS   = { 0, 1, 2, 3, 4, -2 }        -- -2 assumed to be the keyring
 local BANK_IDS  = { -1, 5, 6, 7, 8, 9, 10, 11 } -- -1 assumed to be the main bank
@@ -343,7 +343,7 @@ BAG_IDS = { 0, 1, 2, 3, 4, 5 }          -- backpack, 4 bags, reagent bag (-1 key
 C_Bank.FetchPurchasedBankTabIDs(Enum.BankType.Character)   -- currently { 6 }
 ```
 `MAIN_BANK` as a concept goes away — there is no single main bank container, just tab 1.
-`AltTrackerWarband.lua:182`, which classifies bags 5–11 as bank bags, is wrong in both directions:
+`AltStableWarband.lua:182`, which classifies bags 5–11 as bank bags, is wrong in both directions:
 5 is a carried reagent bag, and the bank starts at 6.
 
 ---
@@ -360,7 +360,7 @@ GameTooltip:SetHyperlink("item:6948")                                   ->  ok
 ```
 
 The script type doesn't exist, so **`HookScript` itself throws** — it isn't merely a hook that never
-fires. `AltTrackerWarband.lua:434` calls exactly this inside `EnsureTooltipHook()`, reached during
+fires. `AltStableWarband.lua:434` calls exactly this inside `EnsureTooltipHook()`, reached during
 bootstrap, so it would **abort Warband's plugin registration**. Confirmed, as predicted.
 
 Fix: `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, …)`. `C_TooltipInfo` is
@@ -404,7 +404,7 @@ UnitXPMax("player")         ->  400
    Consequence is limited to one feature, not the whole plugin. `GetSavedInstanceInfo` returns
    `encounterProgress` and `numEncounters` directly, so the **lockout grid and "X/Y bosses" progress
    need no ordering assumption**. Only the *named* per-boss kill list does: `Core.lua:1063` encodes
-   kills as a positional bitmask by encounter index, and `AltTrackerInstances.lua:518` maps those
+   kills as a positional bitmask by encounter index, and `AltStableInstances.lua:518` maps those
    indices onto a static boss-name list. If Forever's ordering differs, that renders confidently
    wrong names.
 
