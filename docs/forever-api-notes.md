@@ -274,20 +274,77 @@ already handles this, which is why that plugin was the safe one to port first:
   quality=1, iconFileID=134534, isBound=false, isLocked=false, hasLoot=false, … }
 ```
 
-### Bank — still unresolved
+### Bank — RESOLVED, and the container IDs all moved
 
-Two runs, one explicitly with the bank open, both returned:
-```
-C_Bank.FetchViewableBankTypes()   ->  {}
-C_Bank.AreAnyBankTypesViewable()  ->  false
-C_Bank.CanViewBank(1)             ->  false
-```
-No bank bags appeared at any id from -5 to 20. Either the frame wasn't open when the sweep ran, or
-Forever uses the `C_Bank` type model rather than numbered bank bags.
+`Enum.BagIndex` is the authoritative map, and Forever uses the modern Retail bank-tab layout:
 
-The probe now **auto-captures 0.25s after `BANKFRAME_OPENED`**, which removes the timing question,
-and reports `BankFrame:IsShown()` and the `Enum.BankType` table. Re-run by simply walking up to a
-banker and opening the bank — no command needed.
+```
+Keyring          = -1        <- was -2 on Classic
+Characterbanktab = -2        <- bank-type pseudo-ids, not readable containers
+Accountbanktab   = -3
+Backpack         =  0
+Bag_1 .. Bag_4   =  1 .. 4
+ReagentBag       =  5
+CharacterBankTab_1 .. _9 =  6 .. 14
+AccountBankTab_1   .. _9 = 15 .. 23
+```
+
+**Every one of Classic's bank constants is wrong here.** `MAIN_BANK = -1` is the *keyring*, and
+`BANK_IDS = { -1, 5..11 }` mixes the keyring, the carried reagent bag, and six bank tabs.
+
+The good news: **bank tabs are ordinary containers.** No special API needed to read them —
+
+```
+bag 6   slots=48   name="Bank"
+C_Container.GetContainerNumSlots(6)      ->  48
+C_Container.GetContainerItemInfo(6, 1)   ->  { itemID=3282, itemName="Battle Chain Pants", ... }
+```
+
+Tabs are purchased individually, so the set is **dynamic** and must be queried, not hardcoded:
+
+```
+C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Character)  ->  1
+C_Bank.FetchPurchasedBankTabIDs(Enum.BankType.Character)   ->  { 6 }
+C_Bank.FetchMaxNumBankTabs(Enum.BankType.Character)        ->  9
+C_Bank.FetchPurchasedBankTabData(Enum.BankType.Character)
+   ->  { { ID=6, bankType=0, name="Tab 1", icon=134400, depositFlags=0 } }
+```
+
+(The 8 padlocked "Bag Slots" in the bank UI are the 8 *unpurchased* tabs — 9 max minus 1 owned.
+Next one costs 1000 copper.)
+
+### Account bank: exists in the API, not enabled — exclude it
+
+```
+Enum.BankType                                 ->  { Character=0, Guild=1, Account=2 }
+C_Bank.CanViewBank(Character=0)               ->  true
+C_Bank.CanViewBank(Guild=1)                   ->  false
+C_Bank.CanViewBank(Account=2)                 ->  false
+C_Bank.FetchViewableBankTypes()               ->  { 0 }          (Character only)
+C_Bank.FetchNumPurchasedBankTabs(Account=2)   ->  0
+C_Bank.FetchMaxNumBankTabs(Account=2)         ->  9              <- but the capacity is defined
+```
+
+So there is no account-wide bank *today*, but the client is plumbed for one (tab cost 100, with a
+purchase prompt reading "storage that is shared with all members in your Account").
+
+**This is the trap Codex flagged.** If account tabs (ids 15–23) are ever enabled and get folded
+into each character's bank map, the same shared items are counted once per alt and every cross-alt
+total inflates. Warband must filter by `bankType`, taking only `Enum.BankType.Character`, rather
+than sweeping a numeric range.
+
+### What Warband needs
+
+```lua
+-- carried
+BAG_IDS = { 0, 1, 2, 3, 4, 5 }          -- backpack, 4 bags, reagent bag (-1 keyring if wanted)
+
+-- bank: query, never hardcode
+C_Bank.FetchPurchasedBankTabIDs(Enum.BankType.Character)   -- currently { 6 }
+```
+`MAIN_BANK` as a concept goes away — there is no single main bank container, just tab 1.
+`AltTrackerWarband.lua:182`, which classifies bags 5–11 as bank bags, is wrong in both directions:
+5 is a carried reagent bag, and the bank starts at 6.
 
 ---
 
@@ -340,7 +397,7 @@ UnitXPMax("player")         ->  400
 
 ## Still to measure
 
-1. **Bank** — walk to a banker and open it; the probe now captures automatically.
+1. ~~Bank~~ — **answered**, see above.
 2. **Saved instances — DEFERRED TO POST-LAUNCH.** `GetNumSavedInstances()` was 0 and a raid lockout
    isn't obtainable on the beta, so `GetSavedInstanceEncounterInfo` ordering can't be confirmed.
 

@@ -253,8 +253,25 @@ function P.containers()
     Section("containers  (run '/asprobe bank' with the BANK WINDOW OPEN)")
     Has("C_Container", C_Container)
     if type(C_Container) ~= "table" then return end
-    Record("bag id -> slots / name  (keyring was -2 on Classic; reagent bag shifts bank ids)")
-    for bag = -5, 20 do
+    -- Enum.BagIndex is the authoritative container-id map. Forever remapped
+    -- these (bag -1 is the Keyring here, not the bank), so sweep what the enum
+    -- names plus a wide numeric net rather than trusting Classic's constants.
+    if Enum and Enum.BagIndex then
+        Record("Enum.BagIndex: " .. ValStr(Enum.BagIndex, 2))
+    else
+        Record("Enum.BagIndex ABSENT")
+    end
+    local ids, seen = {}, {}
+    if Enum and Enum.BagIndex then
+        for _, v in pairs(Enum.BagIndex) do
+            if type(v) == "number" and not seen[v] then seen[v] = true; ids[#ids + 1] = v end
+        end
+    end
+    for n = -10, 40 do if not seen[n] then seen[n] = true; ids[#ids + 1] = n end end
+    table.sort(ids)
+
+    Record("bag id -> slots / name")
+    for _, bag in ipairs(ids) do
         local slots
         if type(C_Container.GetContainerNumSlots) == "function" then
             local ok, v = pcall(C_Container.GetContainerNumSlots, bag)
@@ -297,6 +314,43 @@ function P.containers()
     Record(("%-46s %s"):format("NUM_BANKGENERIC_SLOTS", ValStr(NUM_BANKGENERIC_SLOTS, 1)))
     Record(("%-46s %s"):format("NUM_BAG_SLOTS", ValStr(NUM_BAG_SLOTS, 1)))
     Record(("%-46s %s"):format("NUM_BANKBAGSLOTS", ValStr(NUM_BANKBAGSLOTS, 1)))
+end
+
+-- Open question. With the bank demonstrably open (BankFrame:IsShown() == true)
+-- NO container id in -5..20 reported any slots, yet the bank shows 48 slots
+-- plus 8 purchasable bag slots. So Classic's BANK_IDS = { -1, 5..11 } is wrong
+-- here, and -1 is the Keyring. Either the ids moved, or the bank is reached
+-- through C_Bank rather than as plain containers. Enum.BagIndex settles it.
+function P.bank()
+    Section("bank  (open the bank first)")
+    Record(("%-46s %s"):format("BankFrame:IsShown()",
+        (BankFrame and BankFrame.IsShown) and tostring(BankFrame:IsShown()) or "no BankFrame"))
+    if not (Enum and Enum.BankType) then Record("Enum.BankType ABSENT"); return end
+    Record(("%-46s %s"):format("Enum.BankType", ValStr(Enum.BankType, 2)))
+    if type(C_Bank) ~= "table" then Record("C_Bank ABSENT"); return end
+
+    Call("C_Bank.FetchViewableBankTypes()", C_Bank.FetchViewableBankTypes)
+    for label, bt in pairs(Enum.BankType) do
+        if type(bt) == "number" then
+            local tag = ("%s=%d"):format(tostring(label), bt)
+            Call(("  CanViewBank(%s)"):format(tag), C_Bank.CanViewBank, bt)
+            Call(("  FetchNumPurchasedBankTabs(%s)"):format(tag), C_Bank.FetchNumPurchasedBankTabs, bt)
+            Call(("  FetchPurchasedBankTabIDs(%s)"):format(tag), C_Bank.FetchPurchasedBankTabIDs, bt)
+            Call(("  FetchPurchasedBankTabData(%s)"):format(tag), C_Bank.FetchPurchasedBankTabData, bt)
+            Call(("  FetchMaxNumBankTabs(%s)"):format(tag), C_Bank.FetchMaxNumBankTabs, bt)
+            Call(("  FetchNextPurchasableBankTabData(%s)"):format(tag), C_Bank.FetchNextPurchasableBankTabData, bt)
+            Call(("  DoesBankTypeSupportAutoDeposit(%s)"):format(tag), C_Bank.DoesBankTypeSupportAutoDeposit, bt)
+        end
+    end
+    -- If a tab id comes back above, read it as a container to confirm the
+    -- tab id IS the bag id that C_Container accepts.
+    local ok, tabs = pcall(C_Bank.FetchPurchasedBankTabIDs, Enum.BankType.Character)
+    if ok and type(tabs) == "table" then
+        for _, id in ipairs(tabs) do
+            Call(("  GetContainerNumSlots(tab %d)"):format(id), C_Container.GetContainerNumSlots, id)
+            Call(("  GetContainerItemInfo(tab %d, 1)"):format(id), C_Container.GetContainerItemInfo, id, 1)
+        end
+    end
 end
 
 -- The load-blocker. Warband hooks OnTooltipSetItem during bootstrap; on
@@ -408,7 +462,7 @@ end
 -- Defined further down (needs the frame helpers); forward-declared so Run can call it.
 local ShowCopy
 
-local ORDER = { "client", "identity", "skills", "prof", "rep", "items", "containers", "tooltip", "instances", "events" }
+local ORDER = { "client", "identity", "skills", "prof", "rep", "items", "containers", "bank", "tooltip", "instances", "events" }
 
 local function Run(which)
     lines = {}
@@ -639,8 +693,13 @@ wire:SetScript("OnEvent", function(_, event, prefix, text, channel, sender)
         -- back empty.
         if C_Timer and C_Timer.After then
             C_Timer.After(0.25, function()
-                Out("|cffffd100bank opened - auto-capturing containers|r")
-                Run("containers")
+                Out("|cffffd100bank opened - auto-capturing containers + bank tabs|r")
+                lines = {}
+                Record("AltStableProbe (bank auto-capture)  " .. date("%Y-%m-%d %H:%M:%S"))
+                P.containers()
+                P.bank()
+                AltStableProbeDB.lines = lines
+                ShowCopy(lines)
             end)
         end
         return

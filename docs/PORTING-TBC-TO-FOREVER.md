@@ -277,15 +277,43 @@ local cmd, target = args:match("^(%S+)%s+(.+)$")    -- rest of line, then trim
 Audit every place a character name arrives from user input, a saved config list, or a parsed system
 message.
 
-### Bag IDs moved
+### Bag IDs all moved — read `Enum.BagIndex`
 
-Measured on 1.60.1: **bag `-1` is the Keyring** (32 slots), and `0` is the Backpack.
-On Classic, `-1` was the main bank and `-2` was the keyring. Any addon carrying Classic's
-`BANK_IDS = { -1, 5..11 }` will scan the keyring as if it were the bank.
+Forever uses the modern Retail bank-tab container layout, so **every Classic bank constant is
+wrong**. Measured on 1.60.1:
 
-`NUM_BANKGENERIC_SLOTS` and `NUM_BANKBAGSLOTS` are both `nil`; `NUM_BAG_SLOTS` is `4`.
-`C_Bank` exists and is the Retail bank-type model — verify bank containers against it rather than
-assuming numbered bank bags.
+```
+Keyring          = -1        <- was -2 on Classic
+Characterbanktab = -2        <- bank-type pseudo-ids, not readable containers
+Accountbanktab   = -3
+Backpack         =  0
+Bag_1 .. Bag_4   =  1 .. 4
+ReagentBag       =  5
+CharacterBankTab_1 .. _9 =  6 .. 14
+AccountBankTab_1   .. _9 = 15 .. 23
+```
+
+Classic's `BANK_IDS = { -1, 5..11 }` therefore scans the **keyring**, the **carried reagent bag**,
+and only some bank tabs. `MAIN_BANK = -1` is the keyring.
+
+**Bank tabs are ordinary containers** — no special API to read them:
+```lua
+C_Container.GetContainerNumSlots(6)     --> 48      (name: "Bank")
+C_Container.GetContainerItemInfo(6, 1)  --> { itemID=..., stackCount=..., ... }
+```
+
+But tabs are **purchased individually**, so the set is dynamic. Query it:
+```lua
+C_Bank.FetchPurchasedBankTabIDs(Enum.BankType.Character)  --> { 6 }
+C_Bank.FetchMaxNumBankTabs(Enum.BankType.Character)       --> 9
+```
+`NUM_BANKGENERIC_SLOTS` and `NUM_BANKBAGSLOTS` are `nil`; `NUM_BAG_SLOTS` is `4`.
+
+**Account bank: plumbed but not enabled.** `Enum.BankType = { Character=0, Guild=1, Account=2 }`;
+only Character is viewable today, but `FetchMaxNumBankTabs(Account)` is already `9` with a purchase
+prompt describing storage "shared with all members in your Account". If you aggregate inventory
+across alts, filter by `bankType == Enum.BankType.Character` — otherwise, the day account tabs turn
+on, shared items get counted once per character and every total inflates.
 
 ### Tooltips: OnTooltipSetItem throws
 
