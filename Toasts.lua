@@ -83,11 +83,16 @@ end
 local function PruneShownSet()
     local set = GetShownSet()
     local cutoff = time() - NOTIFIED_TTL
+    local pruned = false
     for k, expiry in pairs(set) do
         if type(expiry) ~= "number" or expiry < cutoff then
             set[k] = nil
+            pruned = true
         end
     end
+    -- Written through a local alias, which the config-write lint cannot see,
+    -- so report it by hand.
+    if pruned then AltStable.OnConfigChanged("toastsShown") end
 end
 
 ------------------------------------------------------------
@@ -315,6 +320,7 @@ local function ScanCooldowns()
         end)
         AltStable.ShowAggregateToast(ready)
         for k, v in pairs(newlyNotified) do shown[k] = v end
+        AltStable.OnConfigChanged("toastsShown")
     end
 end
 

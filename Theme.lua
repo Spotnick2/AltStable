@@ -158,7 +158,7 @@ end
 function AltStable.SetScale(scale)
     scale = math.max(0.75, math.min(1.25, tonumber(scale) or 1.0))
     AltStableConfig      = AltStableConfig or {}
-    AltStableConfig.scale = scale
+    AltStable.SetConfigValue("scale", scale)
     local f = _G["AltStableSheet"]
     if f then f:SetScale(scale) end
 end

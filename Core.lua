@@ -353,9 +353,10 @@ local function AdvancePeerWatermark(name, ts)
     local short = PeerShort(name)
     if ts > (AltStableConfig.peerWatermarks[short] or 0) then
         AltStableConfig.peerWatermarks[short] = ts
+        AltStable.OnConfigChanged("peerWatermarks")
     end
 end
-AltStable.ResetPeerWatermarks = function() AltStableConfig.peerWatermarks = {} end
+AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
 
 -- Mark a character dirty so the next delta sync includes it. Plugins call this
 -- when their own per-character data changes (e.g. a recipe learned) so the
@@ -1766,6 +1767,7 @@ function AltStable.SetPluginEnabled(key, enabled)
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.plugins = AltStableConfig.plugins or {}
     AltStableConfig.plugins[key] = enabled and true or false
+    AltStable.OnConfigChanged("plugins")
     if enabled then
         for _, p in ipairs(AltStable.LOD_PLUGINS) do
             if p.key == key and not IsPluginLoaded(p.addon) then
@@ -1981,7 +1983,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
             return
         end
         AltStableConfig = AltStableConfig or {}
-        AltStableConfig.accountNumber = num
+        AltStable.SetConfigValue("accountNumber", num)
         Print("Account number set to " .. num .. ". It will be included on next scan/sync.")
         return
     end

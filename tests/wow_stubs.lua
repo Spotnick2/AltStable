@@ -306,6 +306,9 @@ function GetFramesRegisteredForEvent(event)
 end
 
 function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
+-- Four returns, in this order. Config.lua reads the build from the second.
+function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
+
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return 1 end
 function GetTime() return 0 end

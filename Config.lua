@@ -17,6 +17,42 @@ AltStableConfig = AltStableConfig or {}
 local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 
 ------------------------------------------------------------
+-- The single write path for AltStableConfig
+--
+-- AltStableConfig is a SavedVariable, so the client writes it at logout and
+-- there is normally nothing to save by hand. On 1.60.1.69913 it is written
+-- and never read back (#23) - and nothing else an addon can write survives a
+-- restart either: addon CVars and per-character SavedVariables were both
+-- measured dead across a real exit. Every earlier "it persists" result came
+-- from /reload, which keeps the process alive. The fix is Blizzard's.
+--
+-- Every mutation goes through here regardless, so that whatever the fix needs
+-- - a migration, a validation pass, a different store - lands in one place
+-- instead of in each checkbox handler. OnConfigChanged is empty on purpose.
+--
+-- The contract, enforced by a source scan in tests/test_scanner.lua:
+--
+--   * outside this file, assigning a value goes through SetConfigValue;
+--   * an in-place edit of a nested table (plugins[k], minimapButton.angle,
+--     toastProfessions[p]) is followed by OnConfigChanged(key);
+--   * the one exception is an idempotent initialiser, `X = X or {}`.
+--
+-- This file owns the table and writes its defaults directly. Writes through a
+-- local alias (Toasts' toastsShown set) are invisible to the scan and report
+-- by hand. OnConfigChanged fires during a minimap drag, once per frame - so
+-- whatever fills it later must be cheap, or debounce.
+------------------------------------------------------------
+
+function AltStable.OnConfigChanged(key)
+end
+
+function AltStable.SetConfigValue(key, value)
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig[key] = value
+    AltStable.OnConfigChanged(key)
+end
+
+------------------------------------------------------------
 -- Defaults
 ------------------------------------------------------------
 
@@ -189,9 +225,12 @@ local function IsWhitelisted(name)
     return false
 end
 
+-- The whitelist is mutated in place rather than assigned, so it cannot go
+-- through SetConfigValue - but it reports through the same hook.
 local function AddToWhitelist(name)
     if name == "" or IsWhitelisted(name) then return false end
     table.insert(AltStableConfig.whitelist, name)
+    AltStable.OnConfigChanged("whitelist")
     return true
 end
 
@@ -199,6 +238,7 @@ local function RemoveFromWhitelist(name)
     for i, n in ipairs(AltStableConfig.whitelist) do
         if n:lower() == name:lower() then
             table.remove(AltStableConfig.whitelist, i)
+            AltStable.OnConfigChanged("whitelist")
             return true
         end
     end
@@ -235,8 +275,104 @@ end
 -- Init on login
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Has Blizzard fixed it?
+--
+-- AltStableConfig.svLoadCheck is written every session and can only come back
+-- if the client actually read the SavedVariables file - so its presence at
+-- login is proof, on whichever build fixed it. Needs no working store,
+-- because it IS the test for one.
+--
+-- Lives here rather than in Tools/AltStableProbe: the probe answers when
+-- someone remembers to ask, and the point is to be told on the first login
+-- after the fix, without asking.
+------------------------------------------------------------
+
+local function CurrentBuild()
+    return (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or nil
+end
+
+-- `announce` is false on a /reload. A reload proves nothing - the client may
+-- hand back cached data without touching disk, which is exactly how
+-- per-character SavedVariables look persisted across /reload today while being
+-- lost at every real restart. This check exists to catch the fix; announcing
+-- it on a reload would be the same false positive it was written to avoid.
+-- The marker is still rewritten on every UI load, so a session that reloaded
+-- mid-way still leaves one behind for the next real login to find.
+local function CheckSavedVariablesLoad(announce)
+    local previous = AltStableConfig.svLoadCheck
+
+    if announce and type(previous) == "table" and previous.stamp and DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cff55ff55AltStable:|r SavedVariables loaded this session "
+            .. "(written " .. tostring(previous.stamp)
+            .. " on build " .. tostring(previous.build) .. "; now on "
+            .. tostring(CurrentBuild()) .. "). Issue #23 looks fixed - verify with a full exit, "
+            .. "not /reload, before relying on it.")
+    end
+
+    AltStableConfig.svLoadCheck = {
+        stamp = (type(date) == "function" and date("%Y-%m-%d %H:%M:%S")) or "?",
+        build = CurrentBuild(),
+    }
+end
+
+AltStable.CheckSavedVariablesLoad = CheckSavedVariablesLoad
+
+-- PLAYER_LOGIN fires on /reload too, so it cannot tell the two apart;
+-- PLAYER_ENTERING_WORLD can, and on 1.60.1.69913 carries
+-- (isInitialLogin, isReloadingUi) - checked against the API dump, not
+-- assumed. It also fires on every zone change with both false, which is
+-- ignored entirely.
+--
+-- Residual limit, stated rather than solved: logging out to character select
+-- and back in is an initial login inside the same process, and may also be
+-- served from cache. Hence the message asks for a full exit to confirm.
+function AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
+    if not (isInitialLogin or isReloadingUi) then return end
+    CheckSavedVariablesLoad(isInitialLogin and not isReloadingUi)
+end
+
+------------------------------------------------------------
+-- Which build were the findings measured on?
+--
+-- docs/forever-api-notes.md and References/forever-api-<build>.md were
+-- measured against one client build, and the beta updates without
+-- announcement. The build therefore lives in the SOURCE - the one thing that
+-- survives a restart on this client - and a mismatch at login says so.
+--
+-- Bump this after re-measuring on a new build. Until someone does, it says so
+-- on every login, which is the point: the reminder has to outlast the moment
+-- someone would have noticed.
+------------------------------------------------------------
+
+local MEASURED_ON_BUILD = "69913"
+AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
+
+local function CheckClientBuild()
+    local build = CurrentBuild()
+    -- An unreadable build is not evidence of a new one; stay quiet.
+    if not build or build == MEASURED_ON_BUILD then return end
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffffcc00AltStable:|r this client is build " .. tostring(build)
+            .. "; everything in the API notes was measured on " .. MEASURED_ON_BUILD
+            .. ". Treat it as unverified: re-run |cffffff00/apidump|r, re-check "
+            .. "SavedVariables (#23) and the camera CVars (#25), then bump "
+            .. "MEASURED_ON_BUILD in Config.lua.")
+    end
+end
+
+AltStable.CheckClientBuild = CheckClientBuild
+
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
-initFrame:SetScript("OnEvent", function()
-    EnsureDefaults()
+initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+initFrame:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
+    if event == "PLAYER_LOGIN" then
+        EnsureDefaults()
+        CheckClientBuild()
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
+    end
 end)

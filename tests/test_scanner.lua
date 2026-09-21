@@ -342,6 +342,198 @@ end
 check("the .toc scan reached the shipped files", scanned >= 8, tostring(scanned))
 
 ------------------------------------------------------------
+-- One write path for AltStableConfig
+--
+-- Nothing an addon writes survives a restart on this client (#23), so there
+-- is no store to test. What IS worth pinning is that every mutation converges
+-- on one seam, so the eventual fix lands in one place.
+------------------------------------------------------------
+
+local changed = {}
+local realOnChanged = AltStable.OnConfigChanged
+AltStable.OnConfigChanged = function(key) changed[#changed + 1] = key end
+
+AltStableConfig = { whitelist = {} }
+AltStable.SetConfigValue("toastsEnabled", false)
+eq("SetConfigValue assigns", AltStableConfig.toastsEnabled, false)
+eq("  and reports the key", changed[#changed], "toastsEnabled")
+
+changed = {}
+Slash("whitelist Hook Target")
+eq("adding a peer reports through the same hook", changed[#changed], "whitelist")
+changed = {}
+Slash("whitelist remove Hook Target")
+eq("  and so does removing one", changed[#changed], "whitelist")
+
+AltStable.OnConfigChanged = realOnChanged
+
+-- SheetUI.lua is not loadable under wow_stubs.lua, so no behavioural test can
+-- reach its handlers - reverting the checkbox to a bare assignment passes
+-- every test above. Scan the source for the wiring instead, the same way the
+-- adapted globals are scanned.
+local function SourceHas(path, needle)
+    local src = ReadFile(path)
+    if not src then return false end
+    for _, line in ipairs(CodeLines(src)) do
+        if line:find(needle, 1, true) then return true end
+    end
+    return false
+end
+
+check("the Options checkboxes write through SetConfigValue",
+      SourceHas("SheetUI.lua", "AltStable.SetConfigValue(savedKey"),
+      "MakeOptCheckRow must not assign AltStableConfig[savedKey] directly")
+check("the Options account box writes through SetConfigValue",
+      SourceHas("SheetUI.lua", 'SetConfigValue("accountNumber"'))
+check("/alts account writes through SetConfigValue",
+      SourceHas("Core.lua", 'SetConfigValue("accountNumber"'))
+
+-- The whole seam, not a sample. Every file that ships is scanned for writes to
+-- AltStableConfig; Config.lua is exempt because it owns the table. An
+-- assignment must go through SetConfigValue, an in-place edit of a nested
+-- table must be followed by OnConfigChanged within a few lines, and the only
+-- exception is an idempotent `X = X or {}` initialiser. The first version of
+-- this seam routed four writes and claimed to route all of them.
+local function ConfigWriteViolations(path)
+    local src = ReadFile(path)
+    if not src then return { path .. " unreadable" } end
+    local lines = CodeLines(src)
+    local bad = {}
+    -- Every assignment on the line, wherever it sits: the first version was
+    -- anchored at line start, so `if x then AltStableConfig.theme = "dark" end`
+    -- passed, and it skipped any line containing `==`, so
+    -- `AltStableConfig.foo = (a == b)` passed too. `=[^=]` after the target
+    -- rejects comparisons without discarding the rest of the line, and the
+    -- target cannot contain `~ < >`, so `~=` `<=` `>=` never match.
+    for i, code in ipairs(lines) do
+        for lhs in code:gmatch("(AltStableConfig[%.%[][%w_%.%[%]\"']*)%s*=[^=]") do
+            -- Initialisers are written `X = X or {}` throughout; anything else is
+            -- a real write.
+            if not code:find(lhs .. " = " .. lhs .. " or {}", 1, true) then
+                local nested = lhs:find("^AltStableConfig%.[%w_]+[%.%[]")
+                if nested then
+                    local reported = false
+                    for j = i, math.min(i + 3, #lines) do
+                        if lines[j]:find("OnConfigChanged(", 1, true) then reported = true; break end
+                    end
+                    if not reported then bad[#bad + 1] = path .. ":" .. i .. "  " .. code end
+                else
+                    bad[#bad + 1] = path .. ":" .. i .. "  " .. code
+                end
+            end
+        end
+    end
+    return bad
+end
+
+-- The lint must see writes it used to miss. Checked against synthetic lines
+-- rather than by mutating a shipped file.
+do
+    local realRead = ReadFile
+    local cases = {
+        { src = 'if x then AltStableConfig.theme = "dark" end', want = 1,
+          name = "an inline write mid-line" },
+        { src = 'AltStableConfig.flag = (a == b)', want = 1,
+          name = "a write whose value contains ==" },
+        { src = 'if AltStableConfig.theme == "dark" then end', want = 0,
+          name = "a comparison, which is not a write" },
+        { src = 'if AltStableConfig.scale ~= 1 then end', want = 0,
+          name = "a ~= comparison" },
+        { src = 'AltStableConfig.plugins = AltStableConfig.plugins or {}', want = 0,
+          name = "an idempotent initialiser" },
+    }
+    for _, c in ipairs(cases) do
+        ReadFile = function() return c.src end
+        local got = #ConfigWriteViolations("synthetic.lua")
+        eq("the config lint flags " .. c.name, got, c.want)
+    end
+    ReadFile = realRead
+end
+
+for _, path in ipairs({ "Core.lua", "SheetUI.lua", "Theme.lua", "Toasts.lua",
+                        "Scanner.lua", "Reputations.lua", "Columns.lua",
+                        "RowRenderer.lua", "Export.lua" }) do
+    local bad = ConfigWriteViolations(path)
+    check(path .. " writes AltStableConfig only through the seam", #bad == 0,
+          table.concat(bad, " | "))
+end
+
+------------------------------------------------------------
+-- Has Blizzard fixed it?
+--
+-- svLoadCheck can only come back if the client actually read the file.
+------------------------------------------------------------
+
+AltStableConfig = {}
+WoW.chatOut = {}
+AltStable.CheckSavedVariablesLoad()
+check("a first session says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  but leaves a marker for the next one",
+      type(AltStableConfig.svLoadCheck) == "table" and AltStableConfig.svLoadCheck.stamp ~= nil)
+
+-- A /reload with the marker still present must NOT announce: a reload can
+-- serve cached data, which is how per-character SavedVariables look
+-- persisted today while dying at every real restart.
+WoW.chatOut = {}
+AltStable.HandleEnteringWorld(false, true)
+check("a /reload never announces the fix, even with the marker present",
+      #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  but still leaves the marker for the next real login",
+      type(AltStableConfig.svLoadCheck) == "table")
+
+-- Zoning fires the same event with both flags false: ignore it entirely.
+local markerBefore = AltStableConfig.svLoadCheck
+WoW.chatOut = {}
+AltStable.HandleEnteringWorld(false, false)
+check("a zone change says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  and does not rewrite the marker", AltStableConfig.svLoadCheck == markerBefore)
+
+-- A real initial login with the marker present: the client loaded the file.
+WoW.chatOut = {}
+AltStable.HandleEnteringWorld(true, false)
+check("a marker that survived is announced",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("SavedVariables loaded", 1, true) ~= nil,
+      WoW.chatOut[1] or "(nothing printed)")
+check("  and says to confirm with a real exit, not /reload",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("full exit", 1, true) ~= nil,
+      WoW.chatOut[1] or "")
+
+------------------------------------------------------------
+-- Which build were the findings measured on?
+--
+-- A constant in the source, because the source is the only thing that
+-- survives a restart here.
+------------------------------------------------------------
+
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("the measured build stays quiet", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+
+local realBuildInfo = GetBuildInfo
+GetBuildInfo = function() return "1.60.2", "70001", "Oct 01 2026", 16001 end
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("a different build is announced",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("70001", 1, true) ~= nil
+      and WoW.chatOut[1]:find(AltStable.MEASURED_ON_BUILD, 1, true) ~= nil,
+      WoW.chatOut[1] or "(nothing printed)")
+check("  saying what to re-check and what to bump",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("/apidump", 1, true) ~= nil
+      and WoW.chatOut[1]:find("MEASURED_ON_BUILD", 1, true) ~= nil,
+      WoW.chatOut[1] or "")
+
+-- It keeps saying so until someone re-measures and bumps the constant.
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("  and keeps saying so on the next login", #WoW.chatOut > 0)
+
+GetBuildInfo = function() return nil end
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("an unreadable build is not treated as a new one", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+GetBuildInfo = realBuildInfo
+
+------------------------------------------------------------
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

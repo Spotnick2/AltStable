@@ -40,6 +40,14 @@ local ACCOUNT_NUMBER = ""
 
 ------------------------------------------------------------
 
+-- Whether the current whitelist is one this addon wrote. Seed() runs twice -
+-- at file load, and again at PLAYER_LOGIN because UnitName("player") is not
+-- reliable until then - so the second pass must rebuild the list it made
+-- itself (the first pass may have used a missing name for `me`, leaving the
+-- player whitelisted against themselves). Only a list that arrived from disk
+-- is someone else's to keep.
+local seededByUs = false
+
 local function Seed()
     AltStableConfig = AltStableConfig or {}
 
@@ -47,11 +55,24 @@ local function Seed()
     -- surname, and CHAT_MSG_ADDON reports the sender that way, so the
     -- whitelist has to match it exactly.
     local me = (UnitName and UnitName("player")) or ""
+
+    -- Stand aside once SavedVariables load again (#23). Nothing persists on
+    -- 1.60.1.69913, so today the whitelist is always empty here and this always
+    -- seeds. Once Blizzard fixes it the whitelist will arrive populated from
+    -- disk - and since this assigns rather than merges, seeding over it would
+    -- silently discard every peer the user added, at every login, and look
+    -- exactly like the fix not working.
+    if not seededByUs and type(AltStableConfig.whitelist) == "table"
+       and #AltStableConfig.whitelist > 0 then
+        return me, #AltStableConfig.whitelist, true
+    end
+
     local list = {}
     for _, name in ipairs(PEERS) do
         if name ~= me then list[#list + 1] = name end
     end
     AltStableConfig.whitelist = list
+    seededByUs = true
 
     if ACCOUNT_NUMBER ~= "" then
         AltStableConfig.accountNumber = ACCOUNT_NUMBER
@@ -69,9 +90,14 @@ Seed()
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
-    local me, n = Seed()
+    local me, n, stoodAside = Seed()
     if DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage(("|cffff9900[AltStable dev]|r seeded %d sync peer(s) for %s "
-            .. "- SavedVariables do not load on this client (#23)"):format(n, me))
+        if stoodAside then
+            DEFAULT_CHAT_FRAME:AddMessage(("|cff55ff55[AltStable dev]|r kept %d saved sync peer(s) for %s "
+                .. "- the whitelist loaded from disk, so #23 may be fixed"):format(n, me))
+        else
+            DEFAULT_CHAT_FRAME:AddMessage(("|cffff9900[AltStable dev]|r seeded %d sync peer(s) for %s "
+                .. "- SavedVariables do not load on this client (#23)"):format(n, me))
+        end
     end
 end)

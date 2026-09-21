@@ -947,6 +947,9 @@ local function CreateMinimapButton()
                 local angle = math.deg(math.atan2(py - my, px - mx))
                 AltStableConfig.minimapButton = AltStableConfig.minimapButton or {}
                 AltStableConfig.minimapButton.angle = angle
+                -- Fires every frame of a drag. OnConfigChanged is empty today;
+                -- whatever fills it later must be cheap or debounce.
+                AltStable.OnConfigChanged("minimapButton")
                 PositionMinimapButton()
             end
         end)
@@ -1002,6 +1005,7 @@ function AltStable.SetMinimapButtonShown(show)
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.minimapButton = AltStableConfig.minimapButton or {}
     AltStableConfig.minimapButton.hide = not show
+    AltStable.OnConfigChanged("minimapButton")
     if not minimapBtn then
         if show then CreateMinimapButton() end
         return
@@ -1587,12 +1591,12 @@ local function SaveWindowPosition()
         return
     end
     local point, _, relativePoint, xOfs, yOfs = frame:GetPoint(1)
-    AltStableConfig.windowPosition = {
+    AltStable.SetConfigValue("windowPosition", {
         point = point or "CENTER",
         relativePoint = relativePoint or point or "CENTER",
         x = xOfs or 0,
         y = yOfs or 0,
-    }
+    })
 end
 
 local function ApplyWindowPosition()
@@ -1608,7 +1612,7 @@ end
 
 local function ResetWindowPosition()
     AltStableConfig = AltStableConfig or {}
-    AltStableConfig.windowPosition = nil
+    AltStable.SetConfigValue("windowPosition", nil)
     if frame then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER")
@@ -2388,13 +2392,13 @@ local function CreateFrameIfNeeded()
 
     optDarkBtn:SetScript("OnClick", function()
         AltStableConfig = AltStableConfig or {}
-        AltStableConfig.theme = "dark"
+        AltStable.SetConfigValue("theme", "dark")
         RefreshThemeBtns()
         AltStable.ApplyTheme()
     end)
     optClassBtn:SetScript("OnClick", function()
         AltStableConfig = AltStableConfig or {}
-        AltStableConfig.theme = "class"
+        AltStable.SetConfigValue("theme", "class")
         RefreshThemeBtns()
         AltStable.ApplyTheme()
     end)
@@ -2526,7 +2530,7 @@ local function CreateFrameIfNeeded()
             if onClick then
                 onClick(checked)
             else
-                AltStableConfig[savedKey] = checked
+                AltStable.SetConfigValue(savedKey, checked)
             end
         end)
         local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -2591,7 +2595,7 @@ local function CreateFrameIfNeeded()
     for _, btn in ipairs(optBisBtns) do
         btn:SetScript("OnClick", function(self)
             AltStableConfig = AltStableConfig or {}
-            AltStableConfig.bisTier = self._key
+            AltStable.SetConfigValue("bisTier", self._key)
             RefreshBisBtns()
             -- Re-render so the BiS column, its ratio colour and the iLvl
             -- gradient all pick up the new phase immediately.
@@ -2697,11 +2701,11 @@ local function CreateFrameIfNeeded()
     local optRememberPositionCheck = MakeOptCheckRow("rememberWindowPosition",
         "Remember AltStable window position", Y,
         function(checked)
-            AltStableConfig.rememberWindowPosition = checked
+            AltStable.SetConfigValue("rememberWindowPosition", checked)
             if checked then
                 SaveWindowPosition()
             else
-                AltStableConfig.windowPosition = nil
+                AltStable.SetConfigValue("windowPosition", nil)
             end
         end)
 
@@ -2746,7 +2750,7 @@ local function CreateFrameIfNeeded()
     optAcctBox:SetScript("OnEnterPressed", function(self)
         local v = tonumber(self:GetText())
         AltStableConfig = AltStableConfig or {}
-        AltStableConfig.accountNumber = v or ""
+        AltStable.SetConfigValue("accountNumber", v or "")
         self:ClearFocus()
     end)
     optAcctBox:SetScript("OnEscapePressed", function(self)
@@ -2875,6 +2879,7 @@ local function CreateFrameIfNeeded()
             AltStableConfig = AltStableConfig or {}
             AltStableConfig.toastProfessions = AltStableConfig.toastProfessions or {}
             AltStableConfig.toastProfessions[profKey] = self:GetChecked() and true or false
+            AltStable.OnConfigChanged("toastProfessions")
         end)
         local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
