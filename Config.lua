@@ -46,10 +46,26 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 function AltStable.OnConfigChanged(key)
 end
 
+-- Settings that decide WHICH characters we send. Changing one makes characters
+-- newly eligible whose lastUpdate sits below every peer's watermark for us, so
+-- they would be filtered out of every delta the peers ask for. Core answers the
+-- next request from each peer in full (see OnSyncScopeChanged). Detected here
+-- because this is the one path every writer uses: the Options checkbox, the
+-- account box and /alts account.
+local SYNC_SCOPE_KEYS = { sendAllAccounts = true, accountNumber = true }
+
 function AltStable.SetConfigValue(key, value)
     AltStableConfig = AltStableConfig or {}
+    local previous = AltStableConfig[key]
     AltStableConfig[key] = value
     AltStable.OnConfigChanged(key)
+    -- tostring: accountNumber is a number from the Options box and /alts account
+    -- but a string from EnsureDefaults and DevConfig, so re-entering the same
+    -- "1" must not count as a change.
+    if SYNC_SCOPE_KEYS[key] and tostring(previous) ~= tostring(value)
+       and AltStable.OnSyncScopeChanged then
+        AltStable.OnSyncScopeChanged()
+    end
 end
 
 ------------------------------------------------------------
@@ -81,8 +97,15 @@ local function EnsureDefaults()
     if not AltStableConfig.plugins then
         AltStableConfig.plugins = { professions = true, roster = true, instances = true, warband = true }
     end
-    -- Delta-sync watermarks: newest lastUpdate value received from each peer,
-    -- so a sync request pulls only what changed since. Keyed by short name.
+    -- Delta-sync watermarks: per peer, the lastUpdate we ask it to send changes
+    -- since - the newest stamp received, capped a few minutes below the peer's
+    -- own clock (see WatermarkCeiling in Core.lua). Keyed by short name. A peer
+    -- that sends no clock has none, and gets full replies.
+    --
+    -- syncScopeGeneration / peerScopeGeneration: bumped when a setting widens
+    -- which characters we send; each peer's next request is answered in full
+    -- once per generation (see OnSyncScopeChanged in Core.lua).
+    AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
     if not AltStableConfig.peerWatermarks then
         AltStableConfig.peerWatermarks = {}
     end

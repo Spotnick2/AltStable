@@ -63,6 +63,10 @@ local function eq(a, b, msg)
         " (expected " .. tostring(b) .. ", got " .. tostring(a) .. ")")
 end
 
+-- Run timers until none remain: a reply schedules its chunk sends from inside
+-- a timer, so one flush is not enough.
+local function flushAll() for _ = 1, 10 do if #WoW.timers == 0 then break end WoW.flushTimers() end end
+
 -- Deliver a raw wire message to the receive handler as if from `sender`.
 local function receive(message, sender)
     -- Forever reports the sender as "First Surname" - a space, no realm
@@ -669,6 +673,78 @@ check(not delta:find("Player-DS-old", 1, true), "delta excludes a character not 
 check(delta:find("Player-DS-new", 1, true), "delta includes a character changed since the watermark")
 
 ------------------------------------------------------------
+-- #20 bug 2: a peer cannot overwrite a character this client scans
+--
+-- The first fix decided from the data (keep a link while the gearid matched).
+-- That still let a peer's slightly OLDER echo - inside the 60-second grace -
+-- roll our gear back, and let an old synced link survive on a remote record
+-- forever. Ownership decides now: our own characters accept only strictly
+-- newer records, on both merge paths.
+------------------------------------------------------------
+
+local function ownChar()
+    return {
+        guid = "Player-Own-1", name = "Mine", class = "PRIEST", level = 60, scannedHere = true,
+        gearid_chest = 888, gear_chest = 60, gearlink_chest = "|Hitem:888|h[New Robe]|h",
+        gearsubtype_chest = "Cloth", lastUpdate = 1030,
+    }
+end
+local olderEcho = { guid = "Player-Own-1", name = "Mine", class = "PRIEST", level = 60,
+                    gearid_chest = 777, gear_chest = 50, lastUpdate = 1000 }
+
+-- The reviewer's scenario: the alt swapped 777 -> 888 thirty seconds ago; a
+-- peer echoes back its copy from before the swap.
+WoW.reset()
+AltStableDB = { ["Player-Own-1"] = ownChar() }
+T.DeserializeFullDB(T.SerializeChar(olderEcho) .. "\n" .. T.CHAR_SEP, "Peer")
+local own = AltStableDB["Player-Own-1"]
+eq(own.gearid_chest, 888, "a slightly older echo cannot roll back our own gear")
+eq(own.gearlink_chest, "|Hitem:888|h[New Robe]|h", "  or take our local-only link with it")
+
+-- The same through the per-character path, which the first fix never reached.
+WoW.reset()
+AltStableDB = { ["Player-Own-1"] = ownChar() }
+T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(olderEcho)), "Peer")
+own = AltStableDB["Player-Own-1"]
+eq(own.gearid_chest, 888, "the CHAR merge path protects our own characters too")
+eq(own.gearlink_chest, "|Hitem:888|h[New Robe]|h", "  including their local-only link")
+
+-- An exact echo of our own record changes nothing either.
+WoW.reset()
+AltStableDB = { ["Player-Own-1"] = ownChar() }
+local sameEcho = ownChar(); sameEcho.scannedHere = nil; sameEcho.gearlink_chest = nil; sameEcho.gearsubtype_chest = nil
+T.DeserializeFullDB(T.SerializeChar(sameEcho) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Own-1"].gearsubtype_chest, "Cloth", "an exact echo leaves our local-only fields alone")
+
+-- Played on another machine since: strictly newer wins, and our local-only
+-- fields now describe a stale scan, so they go.
+WoW.reset()
+AltStableDB = { ["Player-Own-1"] = ownChar() }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Own-1", name = "Mine", class = "PRIEST", level = 60,
+      gearid_chest = 999, gear_chest = 70, lastUpdate = 2000 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+own = AltStableDB["Player-Own-1"]
+eq(own.gearid_chest, 999, "a strictly newer record for our character is accepted")
+eq(own.gearlink_chest, nil, "  and our stale local-only link is cleared")
+
+-- A REMOTE record never keeps a link, even for the same item - the invariant
+-- the data rule broke. RowRenderer's SetHyperlink branch must never see one.
+WoW.reset()
+AltStableDB = { ["Player-Remote-1"] = {
+    guid = "Player-Remote-1", name = "Theirs", class = "MAGE", level = 60,
+    gearid_head = 111, gearlink_head = "|Hitem:111:2673|h[Old]|h", lastUpdate = 1000 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Remote-1", name = "Theirs", class = "MAGE", level = 60,
+      gearid_head = 111, lastUpdate = 1000 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Remote-1"].gearlink_head, nil, "a remote record never keeps a link, even for the same item")
+
+-- The ownership marker must never ride the wire.
+check(not T.SerializeChar(ownChar()):find("scannedHere", 1, true),
+      "scannedHere is local-only and never serialized")
+
+------------------------------------------------------------
 -- 26. Delta sync: the watermark advances after a successful receive
 ------------------------------------------------------------
 
@@ -678,12 +754,170 @@ AltStableDB = {
     ["Player-WM-1"] = { guid = "Player-WM-1", name = "W1", class = "MAGE",  ilvl = 100, lastUpdate = 700 },
     ["Player-WM-2"] = { guid = "Player-WM-2", name = "W2", class = "ROGUE", ilvl = 110, lastUpdate = 1200 },
 }
-T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")
+T.SendFullDatabase("WHISPER", "x")      -- the real reply path, which carries our clock
 WoW.flushTimers()
 local wmWire = WoW.sentMessages()
 AltStableDB = {}
 for _, m in ipairs(wmWire) do receive(m, "Wmpeer-Realm") end
 eq(AltStableConfig.peerWatermarks["Wmpeer"], 1200, "watermark advances to the newest received lastUpdate")
+
+------------------------------------------------------------
+-- #20 bug 1: a fast third-party clock cannot drag the watermark forward
+--
+-- A peer relays records it received from others, stamped by THEIR clocks. One
+-- from a machine an hour fast used to push our watermark an hour past the
+-- peer's own clock, so the peer's own changes were silently filtered out.
+------------------------------------------------------------
+
+WoW.reset(); WoW.now = 100000
+AltStableConfig = { peerWatermarks = {} }
+AltStableDB = {
+    ["Player-Relay-1"] = { guid = "Player-Relay-1", name = "Relayed", class = "MAGE",
+                           ilvl = 1, lastUpdate = 100000 + 3600 },
+    ["Player-Peer-1"]  = { guid = "Player-Peer-1", name = "Theirs", class = "MAGE",
+                           ilvl = 1, lastUpdate = 99990 },
+}
+T.SendFullDatabase("WHISPER", "x")
+WoW.flushTimers()
+local fastWire = WoW.sentMessages()
+AltStableDB = {}
+for _, m in ipairs(fastWire) do receive(m, "Fastpeer-Realm") end
+local fwm = AltStableConfig.peerWatermarks["Fastpeer"]
+check(fwm and fwm <= 100000, "a future-dated relayed record cannot push the watermark past our clock (got " .. tostring(fwm) .. ")")
+check(fwm and fwm <= 99990, "  and it stays below the peer's own recent change, so that is re-requested")
+eq(T.WatermarkCeiling(100000), 99700, "the ceiling sits a few minutes below the given clock")
+
+-- The case the first fix missed: OUR clock ahead of the peer's. The peer
+-- relays one of our own characters, stamped by our fast clock. Capping at our
+-- clock put the watermark ~55 minutes past the peer's; the replier's own
+-- SEND_TIME caps it in the peer's frame.
+WoW.reset(); WoW.now = 100000          -- the peer sends at ITS time
+AltStableConfig = { peerWatermarks = {} }
+AltStableDB = { ["Player-Ours-1"] = { guid = "Player-Ours-1", name = "Ours", class = "MAGE",
+                                      ilvl = 1, lastUpdate = 103590 } }
+T.SendFullDatabase("WHISPER", "x")
+flushAll()
+local skewWire = WoW.sentMessages()
+WoW.now = 103600                       -- we receive, an hour ahead of the peer
+AltStableDB = {}
+for _, m in ipairs(skewWire) do receive(m, "Skew Surname") end
+local swm = AltStableConfig.peerWatermarks["Skew Surname"]
+check(swm and swm <= 100000 - 300, "our fast clock cannot drag the watermark past the peer's (got " .. tostring(swm) .. ")")
+
+-- Mixed versions: a v8 peer from before the trailer is still accepted, but
+-- sends no clock. Guessing it from ours rebuilt bug 1 - Codex's repro stored
+-- 103300. Such a peer gets no watermark at all, so it is asked for everything.
+WoW.reset(); WoW.now = 100000           -- the OLD peer sends, at its time
+AltStableConfig = { peerWatermarks = { ["Old Surname"] = 90000 } }
+AltStableDB = { ["Player-OldRelay-1"] = { guid = "Player-OldRelay-1", name = "Ours", class = "MAGE",
+                                          ilvl = 1, lastUpdate = 103590 } }
+T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")   -- no trailer: pre-fix sender
+flushAll()
+local oldWire = WoW.sentMessages()
+WoW.now = 103600                        -- we receive, an hour ahead
+AltStableDB = {}
+for _, m in ipairs(oldWire) do receive(m, "Old Surname") end
+eq(AltStableConfig.peerWatermarks["Old Surname"], nil,
+   "a peer that sends no clock gets no watermark, rather than one guessed from ours")
+eq(T.GetPeerWatermark("Old Surname"), 0, "  so its next REQ asks for everything")
+
+-- The replier's time rides after the last separator, where older parsers never look.
+WoW.reset(); WoW.now = 100000
+AltStableDB = { ["Player-Trail-1"] = { guid = "Player-Trail-1", name = "T", class = "MAGE", ilvl = 1, lastUpdate = 1 } }
+local _, trailerNow = T.DeserializeFullDB(T.SerializeFullDB(false) .. "\n==NOW==:100000", "Peer")
+eq(trailerNow, 100000, "the sender's clock is read from the payload's last line")
+
+-- A watermark already in the future is pulled back, not only ratcheted up.
+WoW.reset(); WoW.now = 100000
+AltStableConfig = { peerWatermarks = { ["Poison Surname"] = 103600 } }
+check(T.GetPeerWatermark("Poison Surname") <= 99700, "a future watermark is never sent in a REQ")
+AltStableDB = { ["Player-Pull-1"] = { guid = "Player-Pull-1", name = "P", class = "MAGE", ilvl = 1, lastUpdate = 99000 } }
+T.SendFullDatabase("WHISPER", "x"); flushAll()
+local pullWire = WoW.sentMessages()
+AltStableDB = {}
+for _, m in ipairs(pullWire) do receive(m, "Poison Surname") end
+check(AltStableConfig.peerWatermarks["Poison Surname"] <= 99700, "a completed stream pulls a future watermark back")
+
+------------------------------------------------------------
+-- #20 bug 3: every REQ goes through ChatThrottleLib at ALERT, never raw
+------------------------------------------------------------
+
+WoW.reset()
+T.RequestCharacters("WHISPER", "Alertpeer", true)
+local areq = WoW.sent[#WoW.sent]
+check(areq and isReq(areq.text), "a REQ was sent")
+eq(areq and areq.prio, "ALERT", "the REQ is paced by ChatThrottleLib at ALERT priority")
+
+WoW.reset()
+T.RequestResync("Retrypeer", "test.")
+WoW.flushTimers()
+local rreq
+for _, s in ipairs(WoW.sent) do if isReq(s.text) then rreq = s end end
+eq(rreq and rreq.prio, "ALERT", "a resync REQ is paced at ALERT too")
+
+-- ChatThrottleLib raises on an oversize message; QueueWire's fallback must
+-- still send it, raw, and the recorded priority must not leak onto it.
+WoW.reset()
+T.QueueWire(string.rep("x", 300), "WHISPER", "Big Surname")
+local big = WoW.sent[#WoW.sent]
+check(big and #big.text == 300, "a message ChatThrottleLib refuses still goes out, raw")
+eq(big and big.prio, nil, "  with no priority recorded, so it is distinguishable from a paced send")
+
+------------------------------------------------------------
+-- #20 bug 4: after a scope change, each peer's next REQ is answered in full
+--
+-- Watermarks belong to the requester. The first fix reset OUR watermarks, which
+-- did nothing for the peer still filtering out our newly eligible characters -
+-- and its test only checked that a table emptied, so it passed while the bug
+-- stayed open. This one decodes the actual reply.
+------------------------------------------------------------
+
+local function decodeReply(wire)
+    local saved = AltStableDB
+    AltStableDB = {}
+    for _, m in ipairs(wire) do receive(m, "Decoder Surname") end
+    local got = AltStableDB
+    AltStableDB = saved
+    return got
+end
+
+WoW.reset(); WoW.now = 100000
+AltStableConfig = { peerWatermarks = {}, sendAllAccounts = false, accountNumber = "1" }
+AltStableDB = {
+    ["Player-Late-1"] = { guid = "Player-Late-1", name = "Late", class = "MAGE", ilvl = 1,
+                          lastUpdate = 500, account = "2" },   -- another account, stamped long ago
+}
+local function askWithWatermark(wm)
+    WoW.sent = {}
+    receive(T.MSG_REQUEST_V .. "|" .. wm, "Asker Surname")
+    flushAll()
+    return decodeReply(WoW.sentMessages())
+end
+
+check(askWithWatermark(900)["Player-Late-1"] == nil, "before the change, the other account's character is not sent")
+AltStableConfig.peerWatermarks["Keeper Surname"] = 777
+AltStable.SetConfigValue("sendAllAccounts", true)
+check(askWithWatermark(900)["Player-Late-1"] ~= nil,
+      "after enabling send-all-accounts, the peer's next REQ is answered in full despite its watermark")
+check(askWithWatermark(900)["Player-Late-1"] == nil, "  and the one after that honours its watermark again")
+eq(AltStableConfig.peerWatermarks["Keeper Surname"], 777, "our own watermarks are not reset - they were never the problem")
+
+-- A relaunch must not forget it. Change scope, then simulate a new session:
+-- Core's module state is rebuilt, AltStableConfig survives (as it will once
+-- SavedVariables load). The peer that has not asked yet still gets a full reply.
+AltStableConfig.peerScopeGeneration = {}
+AltStableConfig.sendAllAccounts = false
+AltStable.SetConfigValue("sendAllAccounts", true)
+T.ResetSyncState()
+check(askWithWatermark(900)["Player-Late-1"] ~= nil,
+      "a scope change made before a relaunch is still honoured afterwards")
+
+local epoch = T.SyncScopeEpoch()
+AltStableConfig.accountNumber = "1"
+AltStable.SetConfigValue("accountNumber", 1)
+eq(T.SyncScopeEpoch(), epoch, "re-entering the same account number as a number is not a scope change")
+AltStable.SetConfigValue("theme", "dark")
+eq(T.SyncScopeEpoch(), epoch, "an unrelated setting is not a scope change")
 
 ------------------------------------------------------------
 -- 27. Delta sync: a REQ carries our watermark for that peer

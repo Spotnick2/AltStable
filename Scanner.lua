@@ -432,6 +432,10 @@ function AltStable.ScanCharacter()
     local char = AltStableDB[guid]
 
     char.guid = guid
+    -- This client scans this character, so its local record is the authority:
+    -- the merge will not let a peer's echo of it overwrite it unless strictly
+    -- newer. Local-only - never serialized.
+    char.scannedHere = true
     char.name = name
     char.realm = realm
 

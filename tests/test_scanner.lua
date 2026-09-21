@@ -534,6 +534,22 @@ check("an unreadable build is not treated as a new one", #WoW.chatOut == 0, WoW.
 GetBuildInfo = realBuildInfo
 
 ------------------------------------------------------------
+-- A scan marks the character as this client's own
+--
+-- scannedHere is what stops a peer's echo of our character from being merged
+-- over our own scan (#20). The merge tests seed it by hand, so without this a
+-- scanner that stopped setting it would leave ownership silently dead in game
+-- while every merge test still passed. Only the marker is under test: it is set
+-- as the scan starts, before the stat reads a later stub gap stops, so the
+-- partial scan still proves it - and moving it to the end would fail here.
+------------------------------------------------------------
+
+AltStableDB = AltStableDB or {}
+pcall(AltStable.ScanCharacter)
+local scanned = AltStableDB[UnitGUID("player")]
+check("scanning a character marks it as ours", scanned ~= nil and scanned.scannedHere == true)
+
+------------------------------------------------------------
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

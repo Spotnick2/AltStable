@@ -48,6 +48,7 @@ function WoW.reset()
     WoW.chatOut = {}
     WoW.eventFrames = {}
     WoW.now = 1700000000
+    WoW.pendingPrio = nil
 end
 
 ------------------------------------------------------------
@@ -251,7 +252,10 @@ C_AddOns = {
 C_ChatInfo = {
     RegisterAddonMessagePrefix = function() return true end,
     SendAddonMessage = function(prefix, text, channel, target)
-        table.insert(WoW.sent, { prefix = prefix, text = text, channel = channel, target = target })
+        -- prio is set only when the send came through ChatThrottleLib, so a
+        -- raw send is distinguishable from a paced one.
+        table.insert(WoW.sent, { prefix = prefix, text = text, channel = channel,
+                                 target = target, prio = WoW.pendingPrio })
         return true
     end,
 }
@@ -292,9 +296,26 @@ function IsInGuild() return false end
 SlashCmdList = {}
 UISpecialFrames = {}
 function ChatFrame_AddMessageEventFilter() end
+-- Like the bundled ChatThrottleLib v24 in the two ways that matter here: an
+-- unknown priority or an over-255-byte message RAISES, which is what
+-- QueueWire's raw fallback exists for - a stub that accepted anything left that
+-- fallback untested. The priority is recorded on the captured send, so a paced
+-- send is distinguishable from a raw one, and it is cleared even if the inner
+-- send fails so it can never leak onto the next raw send.
+local CTL_PRIORITIES = { BULK = true, NORMAL = true, ALERT = true }
 ChatThrottleLib = {
-    SendAddonMessage = function(_, _, prefix, text, channel, target)
-        return C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
+    SendAddonMessage = function(_, prio, prefix, text, channel, target)
+        if not CTL_PRIORITIES[prio] then
+            error("ChatThrottleLib:SendAddonMessage(): unknown priority " .. tostring(prio), 2)
+        end
+        if #tostring(text) > 255 then
+            error("ChatThrottleLib:SendAddonMessage(): message length cannot exceed 255 bytes", 2)
+        end
+        WoW.pendingPrio = prio
+        local ok, r = pcall(C_ChatInfo.SendAddonMessage, prefix, text, channel, target)
+        WoW.pendingPrio = nil
+        if not ok then error(r, 2) end
+        return r
     end,
 }
 function GetGuildInfo() return nil end
@@ -310,6 +331,9 @@ end
 function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 -- Four returns, in this order. Config.lua reads the build from the second.
 function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
+
+-- Measured: nil when the character is not rested (docs/forever-api-notes.md).
+function GetXPExhaustion() return nil end
 
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return 1 end
