@@ -26,6 +26,12 @@ local ADDON = ...
 
 AltStableProbeDB = AltStableProbeDB or {}
 AltStableProbeCharDB = AltStableProbeCharDB or {}
+-- Machine scope lands in the TOP-LEVEL WTF\SavedVariables\ folder, not under
+-- WTF\Account\<id>\. That folder demonstrably survives a full restart on
+-- 1.60.1.69913 - Blizzard_Console.lua carries history across launches - while
+-- everything under WTF\Account\ is wiped. The open question is whether a
+-- third-party addon is allowed to use this scope at all.
+AltStableProbeMachineDB = AltStableProbeMachineDB or {}
 
 local lines = {}
 
@@ -783,8 +789,9 @@ boot:SetScript("OnEvent", function()
     -- Account-wide and per-character are SEPARATE mechanisms; test them
     -- independently. If only one is broken that is a real workaround for any
     -- addon whose state does not need sharing across characters.
-    local prev     = AltStableProbeDB.loadCount
-    local prevChar = AltStableProbeCharDB.loadCount
+    local prev        = AltStableProbeDB.loadCount
+    local prevChar    = AltStableProbeCharDB.loadCount
+    local prevMachine = AltStableProbeMachineDB.loadCount
 
     if prev == nil then
         Out("|cffff5555SavedVariables (account)|r first ever run - not loaded")
@@ -800,13 +807,31 @@ boot:SetScript("OnEvent", function()
             :format(tostring(prevChar)))
     end
 
+    if prevMachine == nil then
+        Out("|cffff5555SavedVariablesMachine|r first ever run - not loaded")
+    else
+        Out(("|cff55ff55SavedVariablesMachine LOADED|r - previous loadCount=%s, last written on build %s")
+            :format(tostring(prevMachine), tostring(AltStableProbeMachineDB.lastBuild)))
+    end
+
     AltStableProbeDB.loadCount = (tonumber(prev) or 0) + 1
     AltStableProbeDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
     AltStableProbeCharDB.loadCount = (tonumber(prevChar) or 0) + 1
     AltStableProbeCharDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
+    AltStableProbeMachineDB.loadCount = (tonumber(prevMachine) or 0) + 1
+    AltStableProbeMachineDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
+    AltStableProbeMachineDB.lastBuild = select(2, GetBuildInfo())
 
-    Out(("account load #%d / per-character load #%d - reload and both must go up")
-        :format(AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount))
+    -- This line used to say "reload and both must go up". That instruction is
+    -- how three separate tests concluded a store persisted when it did not:
+    -- /reload keeps the client process alive, so a value survives in memory and
+    -- the counter climbs without anything touching the disk. Only a count that
+    -- climbs across a FULL EXIT proves persistence - and the file on disk is
+    -- the evidence, not this chat line.
+    Out(("account #%d / per-character #%d / machine #%d - only a FULL EXIT and relaunch "
+        .. "counts; /reload proves nothing"):format(
+        AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount,
+        AltStableProbeMachineDB.loadCount))
 
     -- Rule out a LATE load: if the client executes the SavedVariables file
     -- after PLAYER_LOGIN, the table would gain content some time later.
