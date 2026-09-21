@@ -13,8 +13,10 @@ docs/captures/
 *.zip
 settings.ini
 
-# Agent/editor local state
-.claude/
+# Agent/editor local state. Skills are shared project tooling and belong in the
+# repo (AltTracker tracks the same file); settings.local.json stays local.
+.claude/*
+!.claude/skills/
 .vscode/
 .idea/
 

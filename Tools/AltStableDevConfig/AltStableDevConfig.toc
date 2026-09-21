@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: AltStable Dev Config
+## Notes: Dev-only. Seeds AltStableConfig at load to work around the beta client never reading SavedVariables back (issue #23). Never packaged.
+## Author: Spotnick
+## Version: dev
+## Dependencies: AltStable
+
+DevConfig.lua

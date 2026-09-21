@@ -25,6 +25,7 @@
 local ADDON = ...
 
 AltStableProbeDB = AltStableProbeDB or {}
+AltStableProbeCharDB = AltStableProbeCharDB or {}
 
 local lines = {}
 
@@ -765,8 +766,67 @@ SlashCmdList["ASPROBE"] = function(msg)
     Run(msg ~= "" and msg or nil)
 end
 
+----------------------------------------------------------------------------
+-- SavedVariables persistence probe.
+--
+-- Decisive test for "the client writes SavedVariables but never reads them
+-- back". A counter that never rises above 1 means the load is not happening;
+-- a counter that climbs means it is.
+--
+-- Deliberately read at PLAYER_LOGIN rather than file scope: SavedVariables are
+-- not guaranteed to be populated while an addon's files are still executing.
+----------------------------------------------------------------------------
+
 local boot = CreateFrame("Frame")
 boot:RegisterEvent("PLAYER_LOGIN")
 boot:SetScript("OnEvent", function()
-    Out("loaded. run |cffffd100/asprobe|r for everything, or |cffffd100/asprobe bank|r with the bank open.")
+    -- Account-wide and per-character are SEPARATE mechanisms; test them
+    -- independently. If only one is broken that is a real workaround for any
+    -- addon whose state does not need sharing across characters.
+    local prev     = AltStableProbeDB.loadCount
+    local prevChar = AltStableProbeCharDB.loadCount
+
+    if prev == nil then
+        Out("|cffff5555SavedVariables (account)|r first ever run - not loaded")
+    else
+        Out(("|cff55ff55SavedVariables (account) LOADED|r - previous loadCount=%s")
+            :format(tostring(prev)))
+    end
+
+    if prevChar == nil then
+        Out("|cffff5555SavedVariablesPerCharacter|r first ever run - not loaded")
+    else
+        Out(("|cff55ff55SavedVariablesPerCharacter LOADED|r - previous loadCount=%s")
+            :format(tostring(prevChar)))
+    end
+
+    AltStableProbeDB.loadCount = (tonumber(prev) or 0) + 1
+    AltStableProbeDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
+    AltStableProbeCharDB.loadCount = (tonumber(prevChar) or 0) + 1
+    AltStableProbeCharDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
+
+    Out(("account load #%d / per-character load #%d - reload and both must go up")
+        :format(AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount))
+
+    -- Rule out a LATE load: if the client executes the SavedVariables file
+    -- after PLAYER_LOGIN, the table would gain content some time later.
+    -- Different bug, different workaround, so it is worth distinguishing.
+    if C_Timer and C_Timer.After then
+        for _, delay in ipairs({ 5, 15, 30 }) do
+            C_Timer.After(delay, function()
+                local now = AltStableProbeDB.loadCount
+                if prev == nil and now and now > 1 then
+                    Out(("|cff55ff55SV arrived LATE|r - loadCount became %s after %ds")
+                        :format(tostring(now), delay))
+                end
+            end)
+        end
+        C_Timer.After(31, function()
+            if prev == nil then
+                Out("|cffff5555SV never loaded|r - still nothing after 30s. The client writes the file but does not read it back.")
+            end
+        end)
+    end
+
+    Out("run |cffffd100/asprobe|r for everything, or |cffffd100/asprobe bank|r with the bank open.")
 end)
