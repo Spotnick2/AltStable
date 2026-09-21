@@ -831,6 +831,14 @@ local minimapBtn
 -- be an unverifiable number to tune against.
 local MINIMAP_BUTTON_CLEARANCE = 10
 
+-- Half the minimap's width, used only when the frame reports no size yet.
+-- Measured on this client (build 1.60.1.69913): Minimap is 198 x 198, so 99.
+-- The value this replaces was 70 - half of CLASSIC's 140px minimap - which
+-- plus the clearance above reconstructed exactly the 80 radius that put the
+-- button inside the ring. A fallback has to fail towards the client we are
+-- actually on.
+local MINIMAP_FALLBACK_RADIUS = 99
+
 local function PositionMinimapButton()
     if not minimapBtn or not Minimap then return end
     AltStableConfig.minimapButton = AltStableConfig.minimapButton or {}
@@ -856,8 +864,8 @@ local function PositionMinimapButton()
     -- diagonal clamp; if a square reskin ever matters here, that is the
     -- mechanism to copy rather than widening this.
     local w, h = Minimap:GetWidth() or 0, Minimap:GetHeight() or 0
-    local rx = (w > 0 and w / 2 or 70) + MINIMAP_BUTTON_CLEARANCE
-    local ry = (h > 0 and h / 2 or 70) + MINIMAP_BUTTON_CLEARANCE
+    local rx = (w > 0 and w / 2 or MINIMAP_FALLBACK_RADIUS) + MINIMAP_BUTTON_CLEARANCE
+    local ry = (h > 0 and h / 2 or MINIMAP_FALLBACK_RADIUS) + MINIMAP_BUTTON_CLEARANCE
 
     minimapBtn:ClearAllPoints()
     minimapBtn:SetPoint("CENTER", Minimap, "CENTER", rx * math.cos(rads), ry * math.sin(rads))
