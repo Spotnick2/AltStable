@@ -1239,7 +1239,8 @@ local function UpdateTotalsBar()
     end
     local avgIlvlStr = ""
     if ilvlCount > 0 then
-        avgIlvlStr = string.format("|cffaaaaaa%.1f|r avg iLvl", totalIlvl / ilvlCount)
+        -- Rounded, like the iLvl column (FormatItemLevel in RowRenderer.lua).
+        avgIlvlStr = string.format("|cffaaaaaa%d|r avg iLvl", math.floor(totalIlvl / ilvlCount + 0.5))
     end
 
     totalsBar.left:SetText(

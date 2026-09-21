@@ -210,6 +210,15 @@ if gear and avg and rested then
     WoW.reset()
 end
 
+-- The footer average matches the column: rounded, no decimal. SheetUI.lua
+-- doesn't load under the stubs, so this checks the source.
+do
+    local sheet = io.open("SheetUI.lua"):read("*a")
+    check("the footer average is rounded like the column",
+          sheet:find("math.floor(totalIlvl / ilvlCount + 0.5)", 1, true) ~= nil
+          and not sheet:find("%.1f|r avg iLvl", 1, true))
+end
+
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().
 for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua", "Config.lua" }) do
     local src = io.open(f):read("*a")
