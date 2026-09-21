@@ -1,4 +1,0 @@
-interface:
-  display_name: "WoW Addon Review"
-  short_description: "Review WoW addons across client flavors"
-  default_prompt: "Use $wow-addon-review to review this World of Warcraft addon pull request."
