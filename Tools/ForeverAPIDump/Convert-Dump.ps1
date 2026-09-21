@@ -5,8 +5,8 @@
     RE-RUN THIS WHENEVER THE CLIENT BUILD CHANGES. The artifact is a snapshot
     of one build; a stale one is worse than none, because it reads exactly as
     authoritatively as a current one. The filename carries the build for that
-    reason, and this script refuses to overwrite a different build's file
-    unless you pass -Force.
+    reason, so a new build writes a new file and leaves the old one in place -
+    the script says so when it notices, and deleting the stale one is yours.
 
     Note the staleness check cannot live in the addon: SavedVariables are never
     read back on this client (issue #23), so the addon cannot compare the
@@ -77,6 +77,7 @@ $sections = [ordered]@{
     "Widget methods"                           = Get-LuaArray "widgets"
     "Global functions"                         = Get-LuaArray "globals"
     "Namespace functions"                      = Get-LuaArray "namespaces"
+    "Namespace candidates (names only)"        = Get-LuaArray "namespaceCandidates"
 }
 
 foreach ($k in $sections.Keys) {
@@ -118,6 +119,7 @@ Add-Line "| Documented tables | $($sections['Documented tables (enums and struct
 Add-Line "| Global functions | $($sections['Global functions'].Count) | ``_G`` walk — the legacy surface the docs omit (``GetCVar``, ``CreateFrame``, …) |"
 Add-Line "| Namespace functions | $($sections['Namespace functions'].Count) | every ``C_*`` table's members |"
 Add-Line "| Widget methods | $($sections['Widget methods'].Count) | methods off each widget type's metatable — the surface no ``_G`` walk can see |"
+Add-Line "| Namespace candidates | $($sections['Namespace candidates (names only)'].Count) | other global tables with callable members — names only, since loaded addons live here too |"
 Add-Line ""
 Add-Line "**Presence is not a contract.** This says a name exists and what shape it declares. It does not"
 Add-Line "say the underlying system is wired up on a Vanilla-content client: ``test_cameraOverShoulder``"

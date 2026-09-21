@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Forever API Dump
-## Notes: Dumps this client's entire API surface to SavedVariables. Dev tool - never shipped, lives under Tools/ which .pkgmeta ignores.
+## Notes: Dumps this client's entire API surface to SavedVariables. Dev tool, not part of the addon - it lives under Tools/ and WoW only loads AddOns/<Name>/<Name>.toc. Excluding Tools/ from the released package needs the .pkgmeta that issue #12 adds.
 ## Author: Spotnick
 ## Version: dev
 ## SavedVariables: ForeverAPIDumpDB

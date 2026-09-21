@@ -180,8 +180,38 @@ end
 -- what a port needs to check.
 ------------------------------------------------------------
 
+-- Namespaces that carry no C_ prefix. The first version of this pass matched
+-- only ^C_, which meant the tool did not capture GameEvent - the very example
+-- its own header gives for "an internal event system", and the mechanism that
+-- actually suppresses the experimental-CVar popup. Grepping the artifact for
+-- UnregisterInternalEvent would have returned nothing and read as "gone".
+local EXTRA_NAMESPACES = {
+    "GameEvent", "EventRegistry", "Settings", "SettingsPanel", "Constants",
+    "Enum", "ScriptRegionUtil", "TableUtil", "StringUtil", "MathUtil",
+    "ChatFrameUtil", "SecureCmdList",
+}
+
 local function DumpRuntime(out)
     local nGlobal, nNs, nNsFunc = 0, 0, 0
+
+    local wanted = {}
+    for _, n in ipairs(EXTRA_NAMESPACES) do wanted[n] = true end
+
+    local function DumpTable(name, v)
+        nNs = nNs + 1
+        local found = 0
+        for _, k in ipairs(SortedKeys(v)) do
+            local ok, m = pcall(function() return v[k] end)
+            if ok and type(m) == "function" then
+                found = found + 1
+                out.namespaces[#out.namespaces + 1] = name .. "." .. k
+                nNsFunc = nNsFunc + 1
+            end
+        end
+        if found == 0 then
+            out.namespaces[#out.namespaces + 1] = name .. "  (no function members)"
+        end
+    end
 
     for _, name in ipairs(SortedKeys(_G)) do
         local ok, v = pcall(function() return _G[name] end)
@@ -189,19 +219,25 @@ local function DumpRuntime(out)
             if type(v) == "function" then
                 out.globals[#out.globals + 1] = name
                 nGlobal = nGlobal + 1
-            elseif type(v) == "table" and name:find("^C_") then
-                nNs = nNs + 1
-                local found = 0
-                for _, k in ipairs(SortedKeys(v)) do
-                    local ok2, m = pcall(function() return v[k] end)
-                    if ok2 and type(m) == "function" then
-                        found = found + 1
-                        out.namespaces[#out.namespaces + 1] = name .. "." .. k
-                        nNsFunc = nNsFunc + 1
+            elseif type(v) == "table" then
+                if name:find("^C_") or wanted[name] then
+                    DumpTable(name, v)
+                else
+                    -- Everything else with callable members gets its NAME
+                    -- recorded and nothing more. Loaded addons put their own
+                    -- tables in _G, and dumping those would pass addon code
+                    -- off as client API - but a Blizzard namespace this list
+                    -- has not learned about yet would hide here, so the names
+                    -- are worth keeping as a lead.
+                    local fns = 0
+                    for _, k in ipairs(SortedKeys(v)) do
+                        local ok2, m = pcall(function() return v[k] end)
+                        if ok2 and type(m) == "function" then fns = fns + 1 end
                     end
-                end
-                if found == 0 then
-                    out.namespaces[#out.namespaces + 1] = name .. "  (no function members)"
+                    if fns > 0 then
+                        out.namespaceCandidates[#out.namespaceCandidates + 1] =
+                            name .. "  (" .. fns .. " functions)"
+                    end
                 end
             end
         end
@@ -225,6 +261,13 @@ end
 --             player in an error window even though pcall catches the error.
 --             Its methods are readable off the existing Minimap object below
 --             instead, which costs nothing and breaks nothing.
+-- Every type below creates successfully on 1.60.1.69913. On a build where one
+-- does not, expect a player-facing warning as well as the "(CANNOT CREATE)"
+-- line: the warning is a property of CreateFrame refusing a type, not of the
+-- string "Minimap", and pcall catches the error without suppressing it. If a
+-- future build starts complaining about the Retail-era types here - Browser,
+-- OffScreenFrame, MovieFrame, UnitPositionFrame, ModelScene, CinematicModel -
+-- move the offender to WIDGET_SINGLETONS or drop it.
 local WIDGET_TYPES = {
     "Frame", "Button", "CheckButton", "EditBox", "Slider", "StatusBar",
     "ScrollFrame", "GameTooltip", "MessageFrame", "SimpleHTML", "ColorSelect",
@@ -233,32 +276,48 @@ local WIDGET_TYPES = {
     "ScrollingMessageFrame", "TabardModel", "UnitPositionFrame",
 }
 
--- Existing objects whose methods we read rather than create. Anything that is
--- a singleton, or that has side effects on creation, belongs here.
-local WIDGET_SINGLETONS = {
-    Minimap = Minimap,
-    UIParent = UIParent,
-}
+-- Existing objects whose methods we read rather than create: singletons, and
+-- anything with side effects on creation. Held as NAMES and resolved at dump
+-- time - a table literal would capture these at file load, and a global that
+-- is nil then simply would not become a key at all, so the "(not present)"
+-- marker below could never fire and a missing singleton would vanish silently.
+local WIDGET_SINGLETONS = { "Minimap", "UIParent", "WorldFrame" }
 
--- Widget methods hang off the metatable chain, not the object, so walk
--- __index until it runs out.
-local function MethodNames(widget)
-    local seen, names = {}, {}
-    local mt = getmetatable(widget)
-    local idx = mt and mt.__index
-    while type(idx) == "table" do
-        for _, k in ipairs(SortedKeys(idx)) do
+-- Widget methods hang off the metatable chain, so walk __index until it runs
+-- out - but scan the object's OWN keys first. Mixin() assigns functions
+-- directly onto the frame table rather than onto the shared metatable, so
+-- Minimap's and UIParent's mixin methods are invisible from the metatable
+-- alone. Reporting Minimap:SetZoomLevel as absent while it is callable is the
+-- same false negative that deferred the Roster port (#15).
+local function MethodNames(obj)
+    local seen, names, visited = {}, {}, {}
+
+    local function Collect(t)
+        for _, k in ipairs(SortedKeys(t)) do
             if not seen[k] then
-                local ok, m = pcall(function() return idx[k] end)
+                local ok, m = pcall(function() return t[k] end)
                 if ok and type(m) == "function" then
                     seen[k] = true
                     names[#names + 1] = k
                 end
             end
         end
+    end
+
+    Collect(obj)
+
+    -- `visited` is termination, not de-duplication: `mt.__index = mt` is a
+    -- common idiom, and a chain that loops back on itself would spin forever
+    -- with no error and no timeout - a frozen client, not a failed dump.
+    local mt = getmetatable(obj)
+    local idx = mt and mt.__index
+    while type(idx) == "table" and not visited[idx] do
+        visited[idx] = true
+        Collect(idx)
         local nextMt = getmetatable(idx)
         idx = nextMt and nextMt.__index
     end
+
     table.sort(names)
     return names
 end
@@ -295,12 +354,36 @@ local function DumpWidgets(out)
         end
     end
 
-    for _, label in ipairs(SortedKeys(WIDGET_SINGLETONS)) do
-        local obj = WIDGET_SINGLETONS[label]
+    for _, label in ipairs(WIDGET_SINGLETONS) do
+        local obj = _G[label]
         if type(obj) == "table" then
             Record(label, obj)
         else
             out.widgets[#out.widgets + 1] = label .. "  (not present)"
+        end
+    end
+
+    -- Textures, font strings, lines and animations are not CreateFrame-able,
+    -- so no pass above reaches them - yet SetAtlas, SetTexCoord, SetText and
+    -- the whole animation API are a large part of any UI port's surface.
+    local REGIONS = {
+        { "Texture",        function(h) return h:CreateTexture() end },
+        { "MaskTexture",    function(h) return h:CreateMaskTexture() end },
+        { "Line",           function(h) return h:CreateLine() end },
+        { "FontString",     function(h) return h:CreateFontString() end },
+        { "AnimationGroup", function(h) return h:CreateAnimationGroup() end },
+    }
+    for _, entry in ipairs(REGIONS) do
+        local label, make = entry[1], entry[2]
+        local ok, region = pcall(make, holder)
+        if ok and type(region) == "table" then
+            Record(label, region)
+            if label == "AnimationGroup" then
+                local ok2, anim = pcall(region.CreateAnimation, region, "Translation")
+                if ok2 and type(anim) == "table" then Record("Animation", anim) end
+            end
+        else
+            out.widgets[#out.widgets + 1] = label .. "  (CANNOT CREATE)"
         end
     end
 
@@ -314,7 +397,7 @@ end
 local function BuildDump()
     local out = {
         documented = {}, events = {}, tables = {},
-        globals = {}, namespaces = {}, widgets = {},
+        globals = {}, namespaces = {}, namespaceCandidates = {}, widgets = {},
     }
 
     local version, build, buildDate, tocVersion = GetBuildInfo()
@@ -338,6 +421,7 @@ local function BuildDump()
         globals             = nGlobal,
         namespaces          = nNs,
         namespaceFunctions  = nNsFunc,
+        namespaceCandidates = #out.namespaceCandidates,
         widgetTypes         = nWidgetTypes,
         widgetMethods       = nWidgetMethods,
     }
@@ -346,8 +430,8 @@ local function BuildDump()
 
     Out(("build %s.%s (toc %s)"):format(tostring(version), tostring(build), tostring(tocVersion)))
     Out(("documented: %d functions, %d events, %d tables"):format(nFunc, nEvent, nTable))
-    Out(("runtime:    %d globals, %d C_ namespaces, %d namespace functions")
-        :format(nGlobal, nNs, nNsFunc))
+    Out(("runtime:    %d globals, %d namespaces, %d namespace functions, %d candidates")
+        :format(nGlobal, nNs, nNsFunc, #out.namespaceCandidates))
     Out(("widgets:    %d types, %d methods"):format(nWidgetTypes, nWidgetMethods))
     Out("|cff55ff55Now /reload|r to flush it to SavedVariables.")
 end
