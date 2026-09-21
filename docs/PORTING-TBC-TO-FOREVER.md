@@ -61,17 +61,32 @@ Ship a plain `YourAddon.toc`. The base-name TOC is always read, so it cannot mis
 load fine. So "it loaded" does not prove your number is right — check the **out-of-date flag** in
 the AddOns list specifically.
 
-### SavedVariables work
+### SavedVariables are WRITTEN but never READ BACK
 
-There is a widely-circulated report that the Forever client writes SavedVariables on logout but
-never reads them back. **It does not reproduce on build 69913.** Verified by diffing a SavedVariables
-file against its `.bak` (the previous session's copy): 232 identical key/value pairs including five
-non-default user settings. The data round-trips.
+**Confirmed on build 69913.** The client saves your SavedVariables file correctly on logout and
+reload, and then never executes it on load. Every addon starts from defaults, every session.
 
-That report was filed against build **69893**. If you're on an older build, re-check before
-designing around it. To check yourself: find any configured addon's SV file in
-`WTF\Account\<id>\SavedVariables\`, compare it to the `.bak` beside it, and look for a setting you
-know you changed.
+Measure it yourself in two reloads rather than trusting either this file or a third-party report:
+
+```lua
+-- at PLAYER_LOGIN, not file scope
+local prev = MyAddonDB.loadCount            -- nil every session = not loading
+MyAddonDB.loadCount = (prev or 0) + 1
+```
+
+If `prev` is still nil on the second run while the file on disk clearly contains `loadCount = 1`,
+the load is not happening.
+
+**Do not verify this by diffing an SV file against its `.bak`.** An addon that writes its full
+default table every session produces two identical files whether or not the load happened — that
+comparison is what led to the opposite (wrong) conclusion here originally.
+
+Note the failure is easy to miss in exactly the addons that care most: anything that *rebuilds* its
+state on login, such as a scan of the current character, looks like it persists because it is
+rewritten each time. Only data that must accumulate across sessions exposes it.
+
+Presumed a beta bug rather than a design change, but plan for it: a cross-session datastore cannot
+be relied on for now.
 
 ---
 

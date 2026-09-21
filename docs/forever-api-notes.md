@@ -27,6 +27,45 @@ round; Classic's values were effectively integral.
 
 ---
 
+## SavedVariables are WRITTEN but never READ BACK
+
+**Blocking client bug, confirmed on build 69913.** This reverses what the porting guide originally
+claimed, and the earlier reasoning is worth recording because it was a plausible mistake.
+
+Measured with a load counter in `Tools/AltStableProbe`: read `AltStableProbeDB.loadCount` at
+`PLAYER_LOGIN`, report it, then increment.
+
+```
+session 1  ->  "first ever run (no loadCount in the table)"    ... writes loadCount = 1
+/reload
+session 2  ->  "first ever run (no loadCount in the table)"    <- read back as NIL
+```
+
+The file on disk at that moment:
+
+```lua
+AltStableProbeDB = {
+  ["lastLoadStamp"] = "2026-09-20 20:13:22",
+  ["loadCount"] = 1,
+}
+```
+
+The write side is perfect. The client never executes the SavedVariables file on load.
+
+**Why this was missed.** The original check diffed a third-party addon's SV file against its `.bak`
+and found 232 identical key/value pairs. That proves the addon is deterministic, not that the data
+round-tripped — an addon writing its full default table every session produces two identical files
+either way. The settings cited as "non-default" were never verified as such.
+
+**Why it stayed hidden in this addon specifically.** `AltStableDB` looks like it persists, because
+`ScanCharacter` rewrites the current character on every login. Only `AltStableConfig` exposed it —
+the whitelist and account number are set once and never regenerated, so they appeared to "vanish".
+Anything that rebuilds its state on login will mask this.
+
+Re-test on every build; the counter answers it in two reloads.
+
+---
+
 ## Identity — surnames are real, and they are space-separated
 
 ```
