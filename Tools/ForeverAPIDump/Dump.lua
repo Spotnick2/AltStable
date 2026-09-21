@@ -30,6 +30,13 @@
     Output is flat arrays of strings rather than nested tables: greppable from
     outside the game, and far smaller than the structured form.
 
+    RE-RUN IT WHENEVER THE CLIENT BUILD CHANGES. The artifact is a snapshot of
+    one build and a stale one reads exactly as authoritatively as a current
+    one, which is the whole danger. The addon cannot warn you about this
+    itself: SavedVariables are never read back on this client (#23), so it
+    cannot compare the build it is running on against the build it recorded
+    last time. Process discipline, not tooling.
+
     RUN IT, THEN /reload. Walking every global and creating two dozen widgets
     is a taint risk: the first run opened the character sheet by itself and
     left CTRL-A behaving like a movement binding, which is the usual shape of
