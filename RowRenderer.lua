@@ -1,5 +1,9 @@
 AltStable = AltStable or {}
 
+-- Retail-API adapter; see Compat.lua. Taken as a file-local so the call site
+-- below reads the same as it always did.
+local GetItemInfo = AltStable.API.GetItemInfo
+
 ------------------------------------------------------------
 -- Rested XP live extrapolation
 --

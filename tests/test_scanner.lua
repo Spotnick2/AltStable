@@ -206,6 +206,142 @@ eq("the old pattern returned an empty command (silent no-op)",
    (oldParse("sync Karuzo Elegia")), "")
 
 ------------------------------------------------------------
+-- /alts whitelist
+--
+-- "No whitelisted peers configured. Add some with /alts whitelist <name>."
+-- pointed at a branch that did not exist: the command fell through to the
+-- bare-/alts default and silently opened the sheet instead. These assert the
+-- branch exists and mutates the list GetSyncTargets actually whispers.
+------------------------------------------------------------
+
+dofile("Config.lua")
+
+AltStableConfig = { whitelist = {} }
+
+local function Slash(args)
+    SlashCmdList["ALTSTABLE"](args)
+    return WoW.chatOut[#WoW.chatOut] or ""
+end
+
+local msg = Slash("whitelist Karuzo Elegia")
+eq("whitelist add stores the two-word name", AltStableConfig.whitelist[1], "Karuzo Elegia")
+check("  and says so", msg:find("Added", 1, true) ~= nil, msg)
+
+msg = Slash("whitelist Karuzo Elegia")
+eq("a duplicate does not grow the list", #AltStableConfig.whitelist, 1)
+check("  and says it is already there", msg:find("already", 1, true) ~= nil, msg)
+
+Slash("whitelist Second Surname-RealmName")
+eq("a cross-realm peer keeps its realm suffix",
+   AltStableConfig.whitelist[2], "Second Surname-RealmName")
+
+msg = Slash("whitelist")
+check("bare whitelist lists every peer",
+      msg:find("Karuzo Elegia", 1, true) ~= nil
+      and msg:find("Second Surname-RealmName", 1, true) ~= nil, msg)
+
+msg = Slash("whitelist remove")
+eq("a nameless remove does not add \"remove\" as a peer", #AltStableConfig.whitelist, 2)
+check("  and prints usage", msg:find("Usage", 1, true) ~= nil, msg)
+
+msg = Slash("whitelist remove Karuzo Elegia")
+eq("remove drops the named entry", #AltStableConfig.whitelist, 1)
+eq("  and leaves the other one", AltStableConfig.whitelist[1], "Second Surname-RealmName")
+
+msg = Slash("whitelist remove Nobody Here")
+check("removing an absent peer says so",
+      msg:find("not on the whitelist", 1, true) ~= nil, msg)
+
+Slash("whitelist remove Second Surname-RealmName")
+msg = Slash("whitelist")
+check("an empty whitelist points at the add form",
+      msg:find("/alts whitelist <name>", 1, true) ~= nil, msg)
+
+------------------------------------------------------------
+-- Adapted APIs must be taken as file-locals
+--
+-- Compat.lua deliberately does not inject into _G, so a call site that kept
+-- the bare global name throws only when that exact path runs - RowRenderer's
+-- BiS comparison shipped that way and blew up on a tooltip hover, long after
+-- the two obvious crashes were fixed. Scan the shipped files instead of
+-- waiting for the hover.
+--
+-- Nil-guarded calls (`X and X(...)`) are exempt: they cannot throw, and the
+-- LOD-plugin wrappers in Core.lua use that form deliberately.
+------------------------------------------------------------
+
+local function ReadFile(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local s = f:read("*a")
+    f:close()
+    return s
+end
+
+-- Line comments go first, so prose naming an API cannot trip the scan.
+local function CodeLines(src)
+    local out = {}
+    for line in (src .. "\n"):gmatch("([^\n]*)\n") do
+        out[#out + 1] = line:match("^(.-)%-%-") or line
+    end
+    return out
+end
+
+local function BareCall(code, name)
+    local init = 1
+    while true do
+        local a, b = code:find(name .. "%s*%(", init)
+        if not a then return false end
+        local prev = (a > 1) and code:sub(a - 1, a - 1) or " "
+        if not prev:find("[%w_.:]") then return true end
+        init = b + 1
+    end
+end
+
+local compatSrc = ReadFile("Compat.lua")
+check("Compat.lua is readable from the test cwd", compatSrc ~= nil)
+
+local adapted = {}
+for name in (compatSrc or ""):gmatch("API%.([%w_]+)%s*=") do
+    if name ~= "missing" then adapted[#adapted + 1] = name end
+end
+check("the adapter exposes functions to scan for", #adapted > 5, tostring(#adapted))
+
+local scanned = 0
+for line in ((ReadFile("AltStable.toc") or "") .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
+    local fname = line:match("^%s*(%S+%.lua)%s*$")
+    if fname and not fname:find("Libs") and fname ~= "Compat.lua" then
+        local src = ReadFile(fname)
+        if not src then
+            check(fname .. " (listed in the .toc) is readable", false)
+        else
+            scanned = scanned + 1
+            local lines = CodeLines(src)
+            local whole = table.concat(lines, "\n")
+            for _, name in ipairs(adapted) do
+                local offender
+                for i, code in ipairs(lines) do
+                    if BareCall(code, name)
+                       and not code:find(name .. "%s+and%s+" .. name .. "%s*%(") then
+                        offender = i
+                        break
+                    end
+                end
+                if offender then
+                    local bound = whole:find("local%s+" .. name .. "%s*=")
+                        or whole:find("local%s+function%s+" .. name .. "%s*%(")
+                    check(fname .. " takes a file-local alias for " .. name,
+                          bound ~= nil,
+                          "line " .. offender .. " calls bare " .. name
+                          .. "() - Compat.lua does not inject globals")
+                end
+            end
+        end
+    end
+end
+check("the .toc scan reached the shipped files", scanned >= 8, tostring(scanned))
+
+------------------------------------------------------------
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

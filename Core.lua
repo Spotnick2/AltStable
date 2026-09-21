@@ -1913,6 +1913,50 @@ SlashCmdList["ALTSTABLE"] = function(args)
     end
 
     ----------------------------------------------------
+    -- /alts whitelist                 — list the configured peers
+    -- /alts whitelist <name>          — add one
+    -- /alts whitelist remove <name>   — drop one
+    --
+    -- The Options panel owns the same editor; this exists because the
+    -- "no whitelisted peers configured" message above tells people to
+    -- use it, and because typing a name is faster than opening the panel.
+    --
+    -- Names go in exactly as typed: a Forever character is two words
+    -- ("Karuzo Elegia") and a cross-realm peer keeps its "-Realm" suffix.
+    -- ParseSlashArgs preserves both, and GetSyncTargets whispers the entry
+    -- verbatim, so anything else would break routing.
+    ----------------------------------------------------
+
+    if cmd == "whitelist" then
+        AltStableConfig = AltStableConfig or {}
+        AltStableConfig.whitelist = AltStableConfig.whitelist or {}
+
+        local rest = target and target:match("^[Rr][Ee][Mm][Oo][Vv][Ee]%s+(.+)$")
+        if rest then
+            if AltStable.RemoveFromWhitelist and AltStable.RemoveFromWhitelist(rest) then
+                Print("Removed " .. rest .. " from the whitelist.")
+            else
+                Print(rest .. " is not on the whitelist.")
+            end
+        elseif target and target:lower() == "remove" then
+            Print("Usage: /alts whitelist remove <name>")
+        elseif target then
+            if AltStable.AddToWhitelist and AltStable.AddToWhitelist(target) then
+                Print("Added " .. target .. " to the whitelist.")
+            else
+                Print(target .. " is already on the whitelist.")
+            end
+        elseif #AltStableConfig.whitelist == 0 then
+            Print("Whitelist is empty. Add a peer with /alts whitelist <name>.")
+        else
+            Print("Whitelisted peers: " .. table.concat(AltStableConfig.whitelist, ", "))
+        end
+        -- The Options panel rebuilds its rows on show, so an open panel is
+        -- refreshed the next time it is opened; nothing to invalidate here.
+        return
+    end
+
+    ----------------------------------------------------
     -- /alts account N  — set this client's account number
     ----------------------------------------------------
 

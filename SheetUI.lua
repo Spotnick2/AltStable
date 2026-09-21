@@ -307,9 +307,10 @@ do
 
     -- Lateral character placement via test_cameraOverShoulder. This is
     -- the "experimental" CVar that triggers WoW's confirmation popup —
-    -- but we silence that popup before any of our SetCVar calls fire (see
-    -- the EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED unregister at the end of
-    -- this block). Narcissus uses the same approach.
+    -- but we silence that popup immediately before each of our SetCVar
+    -- calls fires (see SuppressExperimentalCVarPopup at the end of this
+    -- block; every test_* write in the addon goes through it). Narcissus
+    -- uses the same approach.
     --
     -- Per-race shoulder factor table copied from Narcissus Classic
     -- ZoomValuebyRaceID. Format: { factor1, factor2 } — used as
@@ -547,8 +548,9 @@ do
         -- Lateral character shift via test_cameraOverShoulder. This is
         -- exactly what Narcissus does — the only reason it's "experimental"
         -- in BCC is the popup gate, which we suppress by unregistering
-        -- EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED at file load (see bottom
-        -- of this `do` block). Capture before we touch it; restore on exit.
+        -- EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED right before the write (see
+        -- SuppressExperimentalCVarPopup at the bottom of this `do` block).
+        -- Capture before we touch it; restore on exit.
         if type(GetCVar) == "function" and type(SetCVar) == "function" then
             self.capture.shoulderOffset = tonumber(GetCVar("test_cameraOverShoulder")) or 0
             local desired = self:_ComputeShoulderOffset(self.enterToZoom)
@@ -776,15 +778,26 @@ do
     -- every window close and "Accept" never stuck - accepting does not stop
     -- the next write from asking again.
     --
-    -- So find the actual owner rather than assuming one. Re-run on each call
-    -- because the owning frame may not exist yet at file load.
+    -- So find the actual owner rather than assuming one, and call this
+    -- immediately before each of our own test_* writes rather than once at
+    -- file load. Two reasons: the owning frame may not exist yet at load, and
+    -- unregistering the event takes the confirmation gate away from Blizzard's
+    -- own handler for the rest of the session - so we only pay that cost for
+    -- users who actually touch a feature that writes one of these CVars.
     AltStable.SuppressExperimentalCVarPopup = function()
         local ev = "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED"
         local n = 0
         if type(GetFramesRegisteredForEvent) == "function" then
             local ok, frames = pcall(GetFramesRegisteredForEvent, ev)
             if ok and type(frames) == "table" then
-                for _, f in ipairs(frames) do
+                -- Snapshot first: the returned table may BE the live
+                -- registration list, and unregistering while iterating it
+                -- would compact the array under ipairs and skip every second
+                -- owner - leaving one registered while n > 0 suppresses the
+                -- UIParent fallback below.
+                local owners = {}
+                for i = 1, #frames do owners[i] = frames[i] end
+                for _, f in ipairs(owners) do
                     if f and type(f.UnregisterEvent) == "function" then
                         if pcall(f.UnregisterEvent, f, ev) then n = n + 1 end
                     end
@@ -797,8 +810,6 @@ do
         end
         return n
     end
-
-    AltStable.SuppressExperimentalCVarPopup()
 end
 
 ------------------------------------------------------------
@@ -1853,9 +1864,20 @@ local function CreateFrameIfNeeded()
         end
 
         local saved = {}
+        -- test_* CVars trip the experimental-CVar confirmation popup, so the
+        -- owner has to be unregistered immediately before each write - a
+        -- single call at load is not enough (see
+        -- SuppressExperimentalCVarPopup). Routing every write through setcv
+        -- means the restore path below gets the same treatment.
+        local function SilenceExperimental(k)
+            if k:find("^test_") and AltStable.SuppressExperimentalCVarPopup then
+                AltStable.SuppressExperimentalCVarPopup()
+            end
+        end
         local function setcv(k, v)
             if type(GetCVar) == "function" and type(SetCVar) == "function" then
                 saved[k] = GetCVar(k)
+                SilenceExperimental(k)
                 pcall(SetCVar, k, v)
             end
         end
@@ -1905,7 +1927,12 @@ local function CreateFrameIfNeeded()
                         AltStableCameraPresentation.capturing = false
                         frame:SetAlpha(1)
                         if type(SetCVar) == "function" then
-                            for k, v in pairs(saved) do if v then pcall(SetCVar, k, v) end end
+                            for k, v in pairs(saved) do
+                                if v then
+                                    SilenceExperimental(k)
+                                    pcall(SetCVar, k, v)
+                                end
+                            end
                         end
                         if savedZoom and type(GetCameraZoom) == "function" then
                             local cur = GetCameraZoom()
