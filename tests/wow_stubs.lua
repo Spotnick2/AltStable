@@ -35,7 +35,7 @@ local WoW = {
     maxLevel    = 60,
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
-    now         = nil,  -- pinned clock for time(); nil means real os.time()
+    now         = 1700000000,  -- the clock time() reads; tests pin their own values
     eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
 }
 
@@ -47,7 +47,7 @@ function WoW.reset()
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
-    WoW.now = nil
+    WoW.now = 1700000000
 end
 
 ------------------------------------------------------------
@@ -314,10 +314,14 @@ function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return 1 end
 function GetTime() return 0 end
--- Real os.time() by default; a test pins it with WoW.now = <epoch>. The sync
--- watermarks, the merge's 60-second window and the stall deadlines are all
--- time comparisons, so a clock stuck at 0 would make them untestable.
-function time() return WoW.now or os.time() end
+-- A fixed clock, never the wall clock. Sync watermarks, the merge's 60-second
+-- window and the stall deadlines are all time comparisons: a clock stuck at 0
+-- made them untestable, and the wall clock made the suite depend on the date it
+-- ran - sections on real time and sections pinned to 1000 stamped and read the
+-- same state with different clocks, and one assertion quietly stopped testing
+-- anything because every seeded expiry had become "the past". Tests pin their
+-- own WoW.now where a value matters.
+function time() return WoW.now end
 
 -- The payload of every captured SendAddonMessage, in send order.
 function WoW.sentMessages()
@@ -347,12 +351,21 @@ end
 -- matters once test_comm starts splitting multi-KB serialized records.
 -- `limit` caps the number of pieces, and the last one keeps the rest of the
 -- string untouched, delimiters included - the client's strsplit(delim, str,
--- pieces). This stub used to ignore it, which let a real dependency go
--- unmodelled: Core.lua reads every wire message as strsplit("|", message, 2),
--- and a sync chunk's body is raw compressed bytes that can contain "|". Without
--- the limit, every chunk parsed as malformed and the whole receive path was
--- untestable.
+-- pieces). This stub used to ignore it. Core.lua reads every wire message as
+-- strsplit("|", message, 2) and then parses the rest, and the rest has more "|"
+-- in its HEADER: "CHUNK5|<sid>|<seq>/<total>|<body>", "DONE8|<sid>|<checksum>".
+-- Without the limit the payload was only the next field, so every CHUNK and
+-- DONE failed to parse and the receive path was untestable. (A chunk body can
+-- contain "|" too, but that is not what broke: an all-printable body fails the
+-- same way - so a "|"-free body encoding would NOT make the limit unnecessary.)
+--
+-- A nil string is an error, as it is for the client's C string functions,
+-- rather than quietly becoming the text "nil" and letting a nil message fall
+-- through as an unknown command.
 function strsplit(sep, str, limit)
+    if str == nil then
+        error("bad argument #2 to 'strsplit' (string expected, got nil)", 2)
+    end
     str = tostring(str)
     local escaped = tostring(sep):gsub("(%W)", "%%%1")
     local pattern = "[" .. escaped .. "]"

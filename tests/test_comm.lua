@@ -35,6 +35,11 @@ assert(loadfile("Core.lua"))()
 dofile("Config.lua")
 
 local T       = AltStable._test
+
+-- WoW.reset() clears the stubs; Core's own module-level sync state needs its
+-- seam. Wrapped once here so every section's reset clears both.
+local stubReset = WoW.reset
+WoW.reset = function() stubReset(); T.ResetSyncState() end
 local PREFIX  = T.PREFIX
 local onEvent = T.frame:GetScript("OnEvent")
 
@@ -50,6 +55,9 @@ local function check(cond, msg)
         print("  FAIL: " .. (msg or "assertion failed"))
     end
 end
+-- NOTE the argument order: eq(got, want, msg) here, where test_compat and
+-- test_scanner use eq(name, got, want). Kept to avoid rewriting 140-odd ported
+-- assertions; mind it when moving between files.
 local function eq(a, b, msg)
     check(a == b, (msg or "values differ") ..
         " (expected " .. tostring(b) .. ", got " .. tostring(a) .. ")")
@@ -57,7 +65,10 @@ end
 
 -- Deliver a raw wire message to the receive handler as if from `sender`.
 local function receive(message, sender)
-    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", sender or "Peer-Realm")
+    -- Forever reports the sender as "First Surname" - a space, no realm
+    -- (docs/forever-api-notes.md). The TBC shape "Name-Realm" was the default
+    -- here, so nothing exercised the name this client actually delivers.
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", sender or "Peer Surname")
 end
 
 local function chatHas(substr)
@@ -133,6 +144,10 @@ end
 
 ------------------------------------------------------------
 -- 1. Base64 codec
+--
+-- LEGACY. No packet has used this codec since v7 moved the wire to LibDeflate;
+-- its only reference is the _test seam. Delete this section together with the
+-- codec, rather than let it keep counting towards wire coverage.
 ------------------------------------------------------------
 
 eq(T.Base64Encode("Man"), "TWFu", "base64 vector: Man")
@@ -366,11 +381,34 @@ check(cReq, "checksum mismatch now auto-requests a resync (H2 fix)")
 -- 11. Packets from ourselves are ignored
 ------------------------------------------------------------
 
+-- A real, appliable payload, sent under the player's own Forever-shaped name.
+-- The ported version sent a Base64 body with a zero checksum from a leftover
+-- AltTracker name: it could never apply by any route, so it passed with the
+-- self-check deleted. The control below proves the same wire DOES apply from
+-- anyone else, which is what makes the first assertion mean something.
 WoW.reset()
+seedDB("Player-Self-", 2)
+T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "x")
+WoW.flushTimers()
+local selfWire = WoW.sentMessages()
 AltStableDB = {}
-receive(T.MSG_CHUNK_V .. "|1|1/1|" .. T.Base64Encode("guid:Player-Self\nname:Me\n"), "Tester-Realm")
-receive(T.MSG_DONE_V .. "|1|00000000", "Tester-Realm")
-eq(dbCount(), 0, "our own packets (sender == player) are ignored")
+for _, m in ipairs(selfWire) do receive(m, UnitName("player")) end
+eq(dbCount(), 0, "our own packets (sender == player, Forever-shaped) are ignored")
+AltStableDB = {}
+for _, m in ipairs(selfWire) do receive(m, "Other Surname") end
+eq(dbCount(), 2, "  and the same wire from anyone else applies (control)")
+
+------------------------------------------------------------
+-- 11b. Peer keys keep the surname
+--
+-- PeerShort strips a "-Realm" suffix. On Forever two different characters can
+-- share a first name, so splitting on the space would merge "Bob Smith" and
+-- "Bob Jones" into one peer - one watermark, one retry budget, one stall watch.
+------------------------------------------------------------
+
+eq(T.PeerShort("Bob Smith"), "Bob Smith", "a Forever sender keeps its surname")
+check(T.PeerShort("Bob Smith") ~= T.PeerShort("Bob Jones"), "two peers sharing a first name stay distinct")
+eq(T.PeerShort("Bob Smith-Realm"), "Bob Smith", "a realm suffix is still stripped")
 
 ------------------------------------------------------------
 -- 12. Account-only serialization filter
@@ -719,6 +757,9 @@ check(not chatHas("No sync response"), "sync-watch: an unreachable/unknown peer 
 -- 31a2: an unanswered peer we CAN confirm online (in the guild roster, online) IS
 -- reported — worth flagging, since they should have replied.
 WoW.reset(); WoW.now = 1000
+-- Saved and restored, not nil'd afterwards: this stub file defines IsInGuild,
+-- and deleting it left later sections calling a nil global.
+local stubIsInGuild, stubNumGuild, stubRosterInfo = IsInGuild, GetNumGuildMembers, GetGuildRosterInfo
 IsInGuild          = function() return true end
 GetNumGuildMembers = function() return 1 end
 GetGuildRosterInfo = function(i) if i == 1 then return "Ghost-Realm", nil, nil, nil, nil, nil, nil, nil, true end end
@@ -726,15 +767,22 @@ T.WatchSyncPeer("Ghost-Realm")
 WoW.now = 1100
 WoW.flushTimers()
 check(chatHas("No sync response from Ghost-Realm"), "sync-watch: an online peer that doesn't reply IS reported")
-IsInGuild, GetNumGuildMembers, GetGuildRosterInfo = nil, nil, nil
+IsInGuild, GetNumGuildMembers, GetGuildRosterInfo = stubIsInGuild, stubNumGuild, stubRosterInfo
 
 -- 31b: a completed stream clears the watch, so no stall/no-response line fires.
+-- The peer is confirmed ONLINE, so the watch would report it if it were still
+-- armed (31a2 is the control). The ported version used a peer the watch ignores
+-- anyway, and passed with ClearSyncWatch turned into a no-op.
 WoW.reset(); WoW.now = 1000
+IsInGuild          = function() return true end
+GetNumGuildMembers = function() return 1 end
+GetGuildRosterInfo = function(i) if i == 1 then return "Done-Realm", nil, nil, nil, nil, nil, nil, nil, true end end
 T.WatchSyncPeer("Done-Realm")
 T.ClearSyncWatch("Done-Realm")  -- CompleteStream calls this on a finished stream
 WoW.now = 1100
 WoW.flushTimers()
 check(not chatHas("No sync response") and not chatHas("stalled"), "sync-watch: a completed sync fires no stall/no-response line")
+IsInGuild, GetNumGuildMembers, GetGuildRosterInfo = stubIsInGuild, stubNumGuild, stubRosterInfo
 
 -- 31c: partial data that never completes is reported as stalled (not "no response").
 WoW.reset(); WoW.now = 1000
@@ -748,11 +796,12 @@ check(chatHas("stalled"), "sync-watch: partial data with no completion is report
 -- 32. Saved raid lockouts: ScanSavedInstances writes syncable si_ fields
 ------------------------------------------------------------
 WoW.reset(); WoW.now = 100000
-local sguid = UnitGUID("player")   -- "Player-TEST-0001"
+local sguid = UnitGUID("player")   -- the stub player's GUID (WoW.player.guid)
 AltStableDB = { [sguid] = { guid = sguid, name = "Raider", lastUpdate = 0 } }
 AltStableConfig = { peerWatermarks = {} }
 
 local savedList = {}
+local stubNumSaved, stubSavedInfo = GetNumSavedInstances, GetSavedInstanceInfo
 _G.GetNumSavedInstances = function() return #savedList end
 _G.GetSavedInstanceInfo = function(i)
     local e = savedList[i]
@@ -782,16 +831,19 @@ savedList = { { name = "Karazhan", reset = 3600, prog = 8, total = 11, maxP = 10
 T.ScanSavedInstances()
 check(AltStableDB[sguid]["si_Gruul's Lair@1"] == nil, "a lockout no longer saved is cleared on re-scan")
 eq(AltStableDB[sguid]["si_Karazhan@1"], "103560|8|11|10|Normal", "boss-progress change is captured (7/11 -> 8/11)")
+-- Restored: left installed, these quietly re-enabled the lockout scan in every later section.
+GetNumSavedInstances, GetSavedInstanceInfo = stubNumSaved, stubSavedInfo
 
 ------------------------------------------------------------
 -- 33. Mail with expiry: ScanMail writes syncable mail_ fields
 ------------------------------------------------------------
 WoW.reset(); WoW.now = 100000
-local mguid = UnitGUID("player")   -- "Player-TEST-0001"
+local mguid = UnitGUID("player")   -- the stub player's GUID (WoW.player.guid)
 AltStableDB = { [mguid] = { guid = mguid, name = "Mailer", lastUpdate = 0 } }
 AltStableConfig = { peerWatermarks = {} }
 
 local inbox = {}
+local stubInboxNum, stubInboxHeader = GetInboxNumItems, GetInboxHeaderInfo
 _G.GetInboxNumItems = function() return #inbox end
 _G.GetInboxHeaderInfo = function(i)
     local e = inbox[i]
@@ -819,6 +871,7 @@ inbox = {}
 T.ScanMail()
 check(AltStableDB[mguid].mail_count == nil and AltStableDB[mguid].mail_expiry == nil,
       "mail: emptying the mailbox clears the mail_ summary")
+GetInboxNumItems, GetInboxHeaderInfo = stubInboxNum, stubInboxHeader
 
 ------------------------------------------------------------
 -- 34. Mail alerts: login warning respects window + toggle
@@ -837,7 +890,10 @@ check(chatHas("Expiro"), "mail alerts: an alt within the window is listed")
 check(not chatHas("Patient"), "mail alerts: an alt outside the window is not listed")
 check(not chatHas("Toolate"), "mail alerts: already-expired mail is not listed")
 
-WoW.reset()
+-- Same clock as above, so the only difference is the toggle. Without the pin,
+-- every seeded expiry fell outside the window and this passed with the toggle
+-- check deleted.
+WoW.reset(); WoW.now = 100000
 AltStableConfig = { mailAlertsEnabled = false }
 T.CheckMailAlerts()
 check(not chatHas("Mail expiring soon"), "mail alerts: disabling the toggle suppresses the warning")
@@ -880,8 +936,8 @@ AltStable.PendingAuditItems = nil
 ------------------------------------------------------------
 
 if failures == 0 then
-    print("comm tests passed: " .. testsRun)
+    print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else
-    print("comm tests FAILED: " .. failures .. " of " .. testsRun)
+    print(("test_comm: %d passed, %d failed"):format(testsRun - failures, failures))
     os.exit(1)
 end
