@@ -24,16 +24,17 @@ if (-not (Test-Path $AddOnsPath)) {
     exit 1
 }
 
-$dest = Join-Path $AddOnsPath "AltStableProbe"
-Write-Host "Deploying AltStableProbe ..." -ForegroundColor Cyan
-
-# /MIR: we own this folder wholesale, so stale files get purged.
+# /MIR: we own these folders wholesale, so stale files get purged.
 # SavedVariables live in WTF\, not here, so purging is safe.
 # robocopy exit codes 0-7 are success; 8+ is an error.
-robocopy $src $dest /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -ge 8) {
-    Write-Error "robocopy failed (code $LASTEXITCODE)"
-    exit 1
+foreach ($name in @("AltStableProbe", "AltStableDevConfig", "ForeverAPIDump")) {
+    $from = Join-Path $RepoRoot "Tools\$name"
+    if (-not (Test-Path $from)) { continue }
+    $to = Join-Path $AddOnsPath $name
+    Write-Host "Deploying $name ..." -ForegroundColor Cyan
+    robocopy $from $to /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
+    $dest = $to
 }
 
 Write-Host "Done -> $dest" -ForegroundColor Green

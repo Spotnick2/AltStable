@@ -4,5 +4,6 @@
 ## Author: Spotnick
 ## Version: dev
 ## SavedVariables: AltStableProbeDB
+## SavedVariablesPerCharacter: AltStableProbeCharDB
 
 Probe.lua
