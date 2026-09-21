@@ -526,7 +526,24 @@ non-secure, accepts a write, and reads the value straight back — and moves the
 at `2.043` or at `12`. The value also reverts to `0` on its own without the confirmation popup's
 "Disable" ever being clicked. Whatever the camera subsystem consults on this client, it is not this
 CVar. Same write-but-never-read shape as the SavedVariables blocker (#23), in a different store.
-See #25 before building anything on a `test_*` camera CVar.
+
+**It is the whole family, not one CVar.** `test_cameraDynamicPitch` set to `1` and confirmed
+changes nothing either - no tilt while moving, where a working one is unmistakable. So no
+`test_*` camera CVar is consulted by the camera on this client, and nothing built on `SetCVar` will
+ever reframe the view here. #25 is the casualty: lateral character placement moves to the window,
+not the camera.
+
+---
+
+## Frame geometry — the minimap is 198, not 140
+
+```
+Minimap:GetWidth(), Minimap:GetHeight()  ->  197.99984741211, 197.99998474121
+```
+
+Classic's minimap is 140 across, so addons that hardcode a radius of ~80 to sit "just outside the
+ring" land their buttons 29px INSIDE it here - the ring is at 109. Measure the frame; it is a child
+coordinate space, so no scale conversion is involved. Fixed for our own button in #26.
 
 ---
 
@@ -566,7 +583,6 @@ UnitXPMax("player")         ->  400
    unregister count came back `1` where a table read scored `0`, which can only happen if the
    first return value is a frame. A probe line would still be tidier than inference if one is
    ever added.
-6. **Does the camera subsystem read *any* `test_*` CVar on this client?** `test_cameraOverShoulder`
-   is written and ignored (#25). `test_cameraDynamicPitch` is the discriminator: if that is inert
-   too, the whole experimental-camera family is unread and no CVar-based framing will ever work
-   here.
+6. ~~**Does the camera subsystem read *any* `test_*` CVar on this client?**~~ — **answered**, and
+   the answer is no. Both `test_cameraOverShoulder` and `test_cameraDynamicPitch` are written,
+   read back, confirmed through the experimental-CVar dialog, and ignored. See above and #25.
