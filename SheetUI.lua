@@ -2517,38 +2517,45 @@ local function CreateFrameIfNeeded()
     Y = Y - 30
 
     -- ── Plugins section ────────────────────────────────────
-    -- Recipes and Roster are LoadOnDemand addons; toggling one loads it
-    -- immediately (enable) or persists the choice (disable, next /reload)
-    -- via AltStable.SetPluginEnabled.
-    local optPluginsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optPluginsHdr:SetPoint("TOPLEFT", P, Y)
-    optPluginsHdr:SetText("PLUGINS")
-    optPluginsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 20
-
+    -- Plugins are LoadOnDemand addons; toggling one loads it immediately
+    -- (enable) or persists the choice (disable, next /reload) via
+    -- AltStable.SetPluginEnabled.
+    --
+    -- The whole section is skipped when no plugins are registered, otherwise
+    -- the heading and hint render above empty space. LOD_PLUGINS is empty
+    -- until Warband (#9/#10) and Instances (#11) are ported.
     local optPluginChecks = {}
-    for _, p in ipairs(AltStable.LOD_PLUGINS or {}) do
-        local key = p.key
-        optPluginChecks[key] = MakeOptCheckRow(nil, p.label, Y,
-            function(checked)
-                if AltStable.SetPluginEnabled then
-                    AltStable.SetPluginEnabled(key, checked)
-                end
-            end,
-            function()
-                return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
-            end)
-        Y = Y - 22
-    end
+    if #(AltStable.LOD_PLUGINS or {}) > 0 then
+        local optPluginsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        optPluginsHdr:SetPoint("TOPLEFT", P, Y)
+        optPluginsHdr:SetText("PLUGINS")
+        optPluginsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        Y = Y - 20
 
-    local optPluginsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optPluginsHint:SetPoint("TOPLEFT", P, Y - 2)
-    optPluginsHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
-    optPluginsHint:SetJustifyH("LEFT")
-    optPluginsHint:SetWordWrap(true)
-    optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optPluginsHint:SetText("Enabling loads the tab immediately; disabling takes effect after /reload. (Both must also stay enabled in the game's AddOns list.)")
-    Y = Y - 34
+        for _, p in ipairs(AltStable.LOD_PLUGINS) do
+            local key = p.key
+            optPluginChecks[key] = MakeOptCheckRow(nil, p.label, Y,
+                function(checked)
+                    if AltStable.SetPluginEnabled then
+                        AltStable.SetPluginEnabled(key, checked)
+                    end
+                end,
+                function()
+                    return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
+                end)
+            Y = Y - 22
+        end
+
+        local optPluginsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        optPluginsHint:SetPoint("TOPLEFT", P, Y - 2)
+        optPluginsHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+        optPluginsHint:SetJustifyH("LEFT")
+        optPluginsHint:SetWordWrap(true)
+        optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        -- Not "Both": the count is whatever is registered.
+        optPluginsHint:SetText("Enabling loads the tab immediately; disabling takes effect after /reload. (They must also stay enabled in the game's AddOns list.)")
+        Y = Y - 34
+    end
 
     -- ── Presentation section ──────────────────────────────
     -- Camera presentation, frame shift, continuous orbit, open animation,
