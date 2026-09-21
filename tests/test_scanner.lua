@@ -356,7 +356,6 @@ AltStableConfig = { whitelist = {} }
 
 Slash("whitelist Karuzo Elegia")
 Slash("whitelist Second Surname-RealmName")
-AltStableConfig.accountNumber = "2"
 check("saving reports success", AltStable.SaveConfigToCVar() == true)
 check("  and something reached the cvar",
       type(WoW.cvars["altstable_config"]) == "string" and #WoW.cvars["altstable_config"] > 0,
@@ -368,7 +367,6 @@ AltStable.EnsureConfigDefaults()
 eq("the whitelist survives a session", #AltStableConfig.whitelist, 2)
 eq("  two-word name intact", AltStableConfig.whitelist[1], "Karuzo Elegia")
 eq("  realm suffix intact", AltStableConfig.whitelist[2], "Second Surname-RealmName")
-eq("  account number intact", AltStableConfig.accountNumber, "2")
 
 -- Delimiters in a value must not split it. Forever names are space-separated
 -- and cross-realm peers carry a suffix; neither is worth trusting to luck.
@@ -382,14 +380,33 @@ eq("an equals survives", AltStableConfig.whitelist[3], "Equals=Sign")
 eq("a percent survives", AltStableConfig.whitelist[4], "Per%cent")
 eq("  and the list is not split by them", #AltStableConfig.whitelist, 4)
 
--- Booleans round-trip as themselves, not as truthy strings.
-AltStableConfig = { whitelist = {}, sendAllAccounts = true, toastsEnabled = false }
-AltStable.SaveConfigToCVar()
+-- Booleans round-trip as themselves, not as truthy strings. Written through
+-- SetConfigValue, which is what the Options checkboxes call - they used to
+-- assign directly and never save, so a test that called SaveConfigToCVar by
+-- hand passed while the only UI that changes these settings did nothing.
+AltStableConfig = { whitelist = {} }
+AltStable.SetConfigValue("sendAllAccounts", true)
+AltStable.SetConfigValue("toastsEnabled", false)
 AltStableConfig = {}
 AltStable.EnsureConfigDefaults()
 eq("a true boolean survives", AltStableConfig.sendAllAccounts, true)
 eq("a false boolean survives, rather than reverting to its default",
    AltStableConfig.toastsEnabled, false)
+
+-- accountNumber distinguishes two WoW accounts sharing one client install, so
+-- it must not ride in a store whose scope is unmeasured. Pin that decision:
+-- if someone adds it to PERSISTED without measuring where the CVar lands,
+-- this fails.
+WoW.cvars = {}
+AltStableConfig = { whitelist = {} }
+AltStable.SetConfigValue("accountNumber", "7")
+check("the account number is NOT persisted",
+      (WoW.cvars["altstable_config"] or ""):find("accountNumber", 1, true) == nil,
+      WoW.cvars["altstable_config"] or "")
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+eq("  so it comes back empty rather than shared between accounts",
+   AltStableConfig.accountNumber, "")
 
 -- The dangerous failure: a write that is accepted but truncated. It reads back
 -- as success unless someone checks, and takes half a whitelist with it.
@@ -428,6 +445,31 @@ local okSave, saveErr = AltStable.SaveConfigToCVar()
 eq("  and saving reports failure instead of throwing", okSave, false)
 eq("  with a reason", saveErr, "no SetCVar")
 GetCVar, SetCVar, RegisterCVar = realGet, realSet, realRegister
+
+------------------------------------------------------------
+-- The Options UI must persist through SetConfigValue
+--
+-- SheetUI.lua is not loadable under wow_stubs.lua, so no behavioural test can
+-- reach the checkbox handler - which is exactly how three persisted settings
+-- came to be encoded into the store and never written by the only UI that
+-- changes them. Reverting that handler to a bare assignment passes every
+-- behavioural test in this file. So scan the source, the same way the adapted
+-- globals are scanned above.
+------------------------------------------------------------
+
+local sheetSrc = ReadFile("SheetUI.lua")
+check("SheetUI.lua is readable", sheetSrc ~= nil)
+
+if sheetSrc then
+    local code = table.concat(CodeLines(sheetSrc), "\n")
+    check("the Options checkboxes persist through SetConfigValue",
+          code:find("AltStable.SetConfigValue(savedKey", 1, true) ~= nil,
+          "MakeOptCheckRow must not assign AltStableConfig[savedKey] directly - "
+          .. "a setting in PERSISTED would then never be written by the UI")
+    check("the account box persists through SetConfigValue",
+          code:find('SetConfigValue("accountNumber"', 1, true) ~= nil,
+          "the Options account box must route through the persisting path")
+end
 
 ------------------------------------------------------------
 -- Did the client update?

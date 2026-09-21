@@ -46,8 +46,20 @@ local STORE_CVAR = "altstable_config"
 
 -- What persists, and how to read it back. Extend this list rather than the
 -- encoder; `kind` is all the encoder needs to know.
+-- NOT persisted here, deliberately:
+--
+--   accountNumber - it exists to tell two WoW accounts apart when both sync
+--     through one client installation, so it is only safe in a store that is
+--     per-WoW-account. Where a custom CVar actually lands is unmeasured:
+--     nothing has reached WTF/ yet, because this client writes its config on a
+--     clean exit and only /reload has been tested. If it lands in
+--     WTF/Account/<id>/config-cache.wtf it is per-account and safe; if it
+--     lands in WTF/Config.wtf it is installation-wide, both accounts would
+--     read the same number, and Scanner would tag their characters
+--     identically - which defeats the field entirely and makes
+--     SerializeFullDB(accountOnly) select the wrong characters. One full
+--     relaunch and a grep settles it. Until then it stays out.
 local PERSISTED = {
-    { key = "accountNumber",    kind = "string" },
     { key = "syncMode",         kind = "string" },
     { key = "whitelist",        kind = "list"   },
     { key = "sendAllAccounts",  kind = "bool"   },
@@ -150,6 +162,18 @@ local function StoreEnsureRegistered()
     local register = RegisterCVar or (C_CVar and C_CVar.RegisterCVar)
     if type(register) ~= "function" then return false end
     return (pcall(register, STORE_CVAR, ""))
+end
+
+-- The single mutation path for a persisted scalar. The reason this exists
+-- rather than each caller assigning and then remembering to save: the Options
+-- checkboxes did exactly that and forgot, so three settings encoded into the
+-- store were never written by the only UI that changes them. A test that calls
+-- SaveConfigToCVar by hand cannot catch that; a test that goes through here
+-- can.
+function AltStable.SetConfigValue(key, value)
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig[key] = value
+    return AltStable.SaveConfigToCVar()
 end
 
 function AltStable.LoadConfigFromCVar()

@@ -2525,6 +2525,8 @@ local function CreateFrameIfNeeded()
             local checked = self:GetChecked() and true or false
             if onClick then
                 onClick(checked)
+            elseif AltStable.SetConfigValue then
+                AltStable.SetConfigValue(savedKey, checked)
             else
                 AltStableConfig[savedKey] = checked
             end
@@ -2746,8 +2748,11 @@ local function CreateFrameIfNeeded()
     optAcctBox:SetScript("OnEnterPressed", function(self)
         local v = tonumber(self:GetText())
         AltStableConfig = AltStableConfig or {}
-        AltStableConfig.accountNumber = v or ""
-        if AltStable.SaveConfigToCVar then AltStable.SaveConfigToCVar() end
+        if AltStable.SetConfigValue then
+            AltStable.SetConfigValue("accountNumber", v or "")
+        else
+            AltStableConfig.accountNumber = v or ""
+        end
         self:ClearFocus()
     end)
     optAcctBox:SetScript("OnEscapePressed", function(self)
