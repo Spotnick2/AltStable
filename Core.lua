@@ -2115,6 +2115,20 @@ end
 -- functions/values. Not part of the public plugin API.
 ------------------------------------------------------------
 
+-- Test-only. Core keeps sync state at file scope - stream counter, reassembly
+-- buffers, retry budgets, throttle stamps, the stall watch - and none of it can
+-- be reached from outside, so test sections used to inherit each other's. A
+-- section that reused a sender found its retry budget already spent by an
+-- earlier one and failed far from the cause. Harmless in game: nothing calls it.
+local function ResetSyncState()
+    streamCounter   = 0
+    incomingBuffers = {}
+    outdatedSenders = {}
+    autoRetryCounts = {}
+    lastRequestedAt = {}
+    syncWatch       = {}
+end
+
 local _seam = {
     ComputeChecksum     = ComputeChecksum,
     Base64Encode        = Base64Encode,
@@ -2145,6 +2159,7 @@ local _seam = {
     MSG_DONE_V         = MSG_DONE_V,
     MSG_REQUEST_V      = MSG_REQUEST_V,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
+    ResetSyncState     = ResetSyncState,
 }
 
 AltStable._test = AltStable._test or {}
