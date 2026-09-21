@@ -493,7 +493,40 @@ way before a review caught it (#24). Use `AltStable.API.FramesRegisteredForEvent
 collects the varargs into a real list. `tests/wow_stubs.lua` models the vararg return, so a
 table-shaped stub cannot let this ship a third time.
 
+**Confirmed live 2026-09-20.** `AltStable.SuppressExperimentalCVarPopup()` returns the number of
+frames it successfully unregistered, and on this client it returns `1` where every table-shaped
+read returned `0`. That count only increments after `f:UnregisterEvent(ev)` succeeds, so a `1`
+means the first returned value was itself a frame — a *table of* frames has no `UnregisterEvent`
+and would have scored `0`. Varargs confirmed.
+
 ---
+
+---
+
+## CVars — the namespace moved halfway, and a writable CVar is not a read one
+
+Measured 2026-09-20 on 1.60.1.69913, chasing #25.
+
+```
+GetCVar("test_cameraOverShoulder")        ->  "0.000000"     -- global, still works
+SetCVar("test_cameraOverShoulder", 12)    ->  writes; GetCVar reads back 12
+GetCVarInfo("test_cameraOverShoulder")    ->  ERROR: attempt to call a nil value
+
+C_CVar.GetCVarInfo("test_cameraOverShoulder")
+    ->  "0.000000", "0.000000", false, false, false, false, false
+        value, default, storedServerAccount, storedServerCharacter,
+        lockedFromUser, secure, readonly
+```
+
+`GetCVar` and `SetCVar` survive as bare globals. `GetCVarInfo` does **not** — it lives in `C_CVar`.
+Assume nothing about the rest of the family; check each one before use.
+
+**Writable is not the same as read.** `test_cameraOverShoulder` reports unlocked, non-readonly and
+non-secure, accepts a write, and reads the value straight back — and moves the camera not at all,
+at `2.043` or at `12`. The value also reverts to `0` on its own without the confirmation popup's
+"Disable" ever being clicked. Whatever the camera subsystem consults on this client, it is not this
+CVar. Same write-but-never-read shape as the SavedVariables blocker (#23), in a different store.
+See #25 before building anything on a `test_*` camera CVar.
 
 ---
 
@@ -529,8 +562,11 @@ UnitXPMax("player")         ->  400
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
-5. **`GetFramesRegisteredForEvent`'s return shape** — documented above from the API reference
-   rather than measured here. One probe line settles it:
-   `select("#", GetFramesRegisteredForEvent("PLAYER_LOGIN"))` against
-   `type((GetFramesRegisteredForEvent("PLAYER_LOGIN")))`. A count above 1 with a non-table first
-   value confirms varargs.
+5. ~~**`GetFramesRegisteredForEvent`'s return shape**~~ — **answered live**, see above. The
+   unregister count came back `1` where a table read scored `0`, which can only happen if the
+   first return value is a frame. A probe line would still be tidier than inference if one is
+   ever added.
+6. **Does the camera subsystem read *any* `test_*` CVar on this client?** `test_cameraOverShoulder`
+   is written and ignored (#25). `test_cameraDynamicPitch` is the discriminator: if that is inert
+   too, the whole experimental-camera family is unread and no CVar-based framing will ever work
+   here.
