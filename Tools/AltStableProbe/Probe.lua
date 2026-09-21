@@ -29,8 +29,9 @@ AltStableProbeCharDB = AltStableProbeCharDB or {}
 -- Machine scope lands in the TOP-LEVEL WTF\SavedVariables\ folder, not under
 -- WTF\Account\<id>\. That folder demonstrably survives a full restart on
 -- 1.60.1.69913 - Blizzard_Console.lua carries history across launches - while
--- everything under WTF\Account\ is wiped. The open question is whether a
--- third-party addon is allowed to use this scope at all.
+-- everything under WTF\Account\ is wiped. On 1.60.1.69913 the answer is no:
+-- the client never writes a third-party machine-scope variable at all. Kept so
+-- each new build can be checked the same way.
 AltStableProbeMachineDB = AltStableProbeMachineDB or {}
 
 local lines = {}
@@ -833,22 +834,55 @@ boot:SetScript("OnEvent", function()
         AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount,
         AltStableProbeMachineDB.loadCount))
 
-    -- Rule out a LATE load: if the client executes the SavedVariables file
-    -- after PLAYER_LOGIN, the table would gain content some time later.
-    -- Different bug, different workaround, so it is worth distinguishing.
+    -- Rule out a LATE load: if the client executes a SavedVariables file after
+    -- PLAYER_LOGIN, it REPLACES the global table. Different bug, different
+    -- workaround, so it is worth distinguishing - for every store, not just the
+    -- account one.
+    --
+    -- Detected by identity, not by count. Every session starts at loadCount = 1
+    -- on this client, so a late load of the file just written reads back as 1 -
+    -- indistinguishable from the probe's own 1, and a `now > 1` check can never
+    -- fire. A per-session mark on each table can: a replaced table has lost it.
+    local mark = tostring(GetTime()) .. ":" .. tostring(math.random(1, 1000000000))
+    local STORES = {
+        { label = "account",       global = "AltStableProbeDB",        atLogin = prev },
+        { label = "per-character", global = "AltStableProbeCharDB",    atLogin = prevChar },
+        { label = "machine",       global = "AltStableProbeMachineDB", atLogin = prevMachine },
+    }
+    for _, store in ipairs(STORES) do
+        -- Resolve through _G each time: a late load swaps the global itself.
+        local t = _G[store.global]
+        if type(t) == "table" then t.sessionMark = mark end
+    end
+
+    local function Replaced(store)
+        local t = _G[store.global]
+        return type(t) == "table" and t.sessionMark ~= mark
+    end
+
     if C_Timer and C_Timer.After then
         for _, delay in ipairs({ 5, 15, 30 }) do
             C_Timer.After(delay, function()
-                local now = AltStableProbeDB.loadCount
-                if prev == nil and now and now > 1 then
-                    Out(("|cff55ff55SV arrived LATE|r - loadCount became %s after %ds")
-                        :format(tostring(now), delay))
+                for _, store in ipairs(STORES) do
+                    if store.atLogin == nil and not store.reportedLate and Replaced(store) then
+                        store.reportedLate = true
+                        Out(("|cff55ff55%s SV arrived LATE|r - replaced after %ds, loadCount=%s")
+                            :format(store.label, delay, tostring(_G[store.global].loadCount)))
+                    end
                 end
             end)
         end
         C_Timer.After(31, function()
-            if prev == nil then
-                Out("|cffff5555SV never loaded|r - still nothing after 30s. The client writes the file but does not read it back.")
+            local never = {}
+            for _, store in ipairs(STORES) do
+                if store.atLogin == nil and not Replaced(store) then
+                    never[#never + 1] = store.label
+                end
+            end
+            if #never > 0 then
+                Out(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
+                    .. "The client writes these files but does not read them back.")
+                    :format(table.concat(never, ", ")))
             end
         end)
     end
