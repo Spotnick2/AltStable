@@ -1,5 +1,9 @@
 AltStable = AltStable or {}
 
+-- Retail-API adapter; see Compat.lua. Taken as a file-local so the call site
+-- below reads the same as it always did.
+local GetItemInfo = AltStable.API.GetItemInfo
+
 ------------------------------------------------------------
 -- Rested XP live extrapolation
 --
@@ -100,26 +104,12 @@ end
 -- Race names in the file system are title-cased with specific spellings.
 ------------------------------------------------------------
 
-local RACE_FS = {
-    -- file system name (may differ from UnitRace internal name)
-    Human="Human", Dwarf="Dwarf", Gnome="Gnome",
-    NightElf="Nightelf", Draenei="Draenei",
-    Orc="Orc", Troll="Troll", Tauren="Tauren",
-    Scourge="Undead", BloodElf="Bloodelf", Goblin="Goblin",
-}
-
 local RACE_DISPLAY = {
     Human="Human", Dwarf="Dwarf", Gnome="Gnome", NightElf="Night Elf",
     Draenei="Draenei", Orc="Orc", Troll="Troll", Tauren="Tauren",
     Scourge="Undead", BloodElf="Blood Elf", Goblin="Goblin",
 }
 
-local function RaceIconText(race, gender)
-    local fs = race and RACE_FS[race]
-    if not fs then return "" end
-    local g = (gender == "Female") and "Female" or "Male"
-    return "|TInterface\\Icons\\Achievement_Character_"..fs.."_"..g..":18:18|t"
-end
 
 ------------------------------------------------------------
 -- Spec icon
@@ -136,15 +126,16 @@ end
 -- Atlas names from ChatLinkIcons addon reference
 ------------------------------------------------------------
 
-local RACE_ATLAS = {
-    Human="human", Dwarf="dwarf", Gnome="gnome", NightElf="nightelf",
-    Draenei="draenei", Orc="orc", Troll="troll", Tauren="tauren",
-    Scourge="undead", BloodElf="bloodelf", Goblin="goblin",
-}
+-- The atlas slug is the lowercased race key for every race measured so far,
+-- including Forever's Skyborne (raceicon-skyborne-female). Only Scourge breaks
+-- the pattern. Derived rather than looked up in an allowlist, so a race added
+-- by a future patch renders instead of silently disappearing - which is what
+-- an allowlist miss did, since it returned "".
+local RACE_ATLAS_OVERRIDE = { Scourge = "undead" }
 
 local function RaceIconText(race, gender)
-    local atlas = race and RACE_ATLAS[race]
-    if not atlas then return "" end
+    if not race or race == "" then return "" end
+    local atlas = RACE_ATLAS_OVERRIDE[race] or race:lower()
     local g = (gender == "Female") and "female" or "male"
     return "|A:raceicon-"..atlas.."-"..g..":18:18|a"
 end
@@ -400,6 +391,7 @@ end
 -- suite needs to exercise slot pairing directly.
 AltStable._test = AltStable._test or {}
 AltStable._test.CountBisItems  = CountBisItems
+AltStable._test.RaceIconText   = RaceIconText
 AltStable._test.IsItemBis      = IsItemBis
 AltStable._test.GetBisItemName = GetBisItemName
 
@@ -908,7 +900,12 @@ function AltStable.RenderRow(row, char, index, columns)
         elseif col.type=="raceIcon" then
             value = RaceIconText(char.race, char.gender)
             if tip then
-                tip.line1 = char.race and RACE_DISPLAY[char.race] or char.race
+                -- Stored localized name first: Skyborne renders as either
+                -- "High Order Skyborne" or "Windshaper Skyborne" depending on
+                -- faction, and both share the key "Skyborne".
+                tip.line1 = (char.raceName ~= "" and char.raceName)
+                    or (char.race and RACE_DISPLAY[char.race])
+                    or char.race
                 tip.line2 = char.gender
                 tip.line3 = nil
             end

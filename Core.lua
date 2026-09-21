@@ -1,4 +1,7 @@
 AltStable = AltStable or {}
+
+-- Retail-API adapter; see Compat.lua.
+local GetItemInfo = AltStable.API.GetItemInfo
 AltStableDB = AltStableDB or {}
 
 ------------------------------------------------------------
@@ -1403,6 +1406,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     if event == "PLAYER_LOGIN" then
 
+        -- Report any adapter contract this client does not satisfy. Compat.lua
+        -- collects them instead of throwing, so without this call a missing
+        -- API surfaces as "attempt to call a nil value" from inside the scan -
+        -- after the character is half-written, with nothing naming the
+        -- contract that went missing. Nobody was calling it but the tests.
+        if AltStable.API and AltStable.API.AssertCapabilities then
+            AltStable.API.AssertCapabilities()
+        end
+
         -- Re-register the prefix on login.  Calling it at file load
         -- time isn't always sufficient — same-machine dual-boxing has
         -- racy behaviour where the prefix isn't actually registered
@@ -1848,16 +1860,31 @@ local function CaptureReferenceScreenshot()
 end
 AltStable.CaptureReferenceScreenshot = CaptureReferenceScreenshot
 
+-- Split "<cmd> <target>" where the target may contain spaces.
+--
+-- Forever characters have a surname, so a name is two words: "Karuzo Elegia".
+-- The old pattern captured the target as a single %S+ token and was anchored
+-- at both ends, so a three-token line matched NEITHER that nor the one-token
+-- fallback - cmd came back empty and the command silently did nothing.
+function AltStable.ParseSlashArgs(args)
+    args = tostring(args or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local cmd, target = args:match("^(%S+)%s+(.+)$")
+    if not cmd then
+        cmd = args:match("^(%S+)$")
+    end
+    if target then
+        target = target:gsub("^%s+", ""):gsub("%s+$", "")
+        if target == "" then target = nil end
+    end
+    return (cmd and cmd:lower() or ""), target
+end
+
 SLASH_ALTSTABLE1 = "/alts"
 SLASH_ALTSTABLE2 = "/altstable"
 
 SlashCmdList["ALTSTABLE"] = function(args)
 
-    local cmd, target = args:match("^(%S+)%s+(%S+)$")
-    if not cmd then
-        cmd = args:match("^(%S+)$")
-    end
-    cmd = cmd and cmd:lower() or ""
+    local cmd, target = AltStable.ParseSlashArgs(args)
 
     ----------------------------------------------------
     -- /alts sync [PlayerName]
@@ -1891,6 +1918,55 @@ SlashCmdList["ALTSTABLE"] = function(args)
         C_Timer.After(3, function()
             RequestCharacters("WHISPER", target, true)
         end)
+        return
+    end
+
+    ----------------------------------------------------
+    -- /alts whitelist                 — list the configured peers
+    -- /alts whitelist <name>          — add one
+    -- /alts whitelist remove <name>   — drop one
+    --
+    -- The Options panel has an editor too, but it draws a fixed five rows
+    -- (OPT_WL_ROWS), so a sixth peer is only visible - and only removable -
+    -- from here. This also exists because the "no whitelisted peers
+    -- configured" message above tells people to use it.
+    --
+    -- "remove" is matched before the add branch, so a peer literally named
+    -- Remove has to be added from the Options panel. Documenting that costs
+    -- one line; a second keyword to disambiguate it would cost more.
+    --
+    -- Names go in exactly as typed: a Forever character is two words
+    -- ("Karuzo Elegia") and a cross-realm peer keeps its "-Realm" suffix.
+    -- ParseSlashArgs preserves both, and GetSyncTargets whispers the entry
+    -- verbatim, so anything else would break routing.
+    ----------------------------------------------------
+
+    if cmd == "whitelist" then
+        AltStableConfig = AltStableConfig or {}
+        AltStableConfig.whitelist = AltStableConfig.whitelist or {}
+
+        local rest = target and target:match("^[Rr][Ee][Mm][Oo][Vv][Ee]%s+(.+)$")
+        if rest then
+            if AltStable.RemoveFromWhitelist and AltStable.RemoveFromWhitelist(rest) then
+                Print("Removed " .. rest .. " from the whitelist.")
+            else
+                Print(rest .. " is not on the whitelist.")
+            end
+        elseif target and target:lower() == "remove" then
+            Print("Usage: /alts whitelist remove <name>")
+        elseif target then
+            if AltStable.AddToWhitelist and AltStable.AddToWhitelist(target) then
+                Print("Added " .. target .. " to the whitelist.")
+            else
+                Print(target .. " is already on the whitelist.")
+            end
+        elseif #AltStableConfig.whitelist == 0 then
+            Print("Whitelist is empty. Add a peer with /alts whitelist <name>.")
+        else
+            Print("Whitelisted peers: " .. table.concat(AltStableConfig.whitelist, ", "))
+        end
+        -- The Options panel rebuilds its rows on show, so an open panel is
+        -- refreshed the next time it is opened; nothing to invalidate here.
         return
     end
 
@@ -1990,7 +2066,7 @@ end
 -- functions/values. Not part of the public plugin API.
 ------------------------------------------------------------
 
-AltStable._test = {
+local _seam = {
     ComputeChecksum     = ComputeChecksum,
     Base64Encode        = Base64Encode,
     Base64Decode        = Base64Decode,
@@ -2019,3 +2095,6 @@ AltStable._test = {
     MSG_REQUEST_V      = MSG_REQUEST_V,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
 }
+
+AltStable._test = AltStable._test or {}
+for k, v in pairs(_seam) do AltStable._test[k] = v end

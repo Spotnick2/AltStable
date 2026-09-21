@@ -447,6 +447,52 @@ eq("a literal dot splits only on dots", splitCount(".", "a.b"), 2)
 eq("  and leaves other characters alone", splitCount(".", "axb"), 1)
 
 ------------------------------------------------------------
+-- Frames registered for an event: a vararg return, not a table
+--
+-- The experimental-CVar popup suppression in SheetUI unregisters the event
+-- from whichever frames own it, and read this API's return as a table. It is
+-- varargs, so the read bound the FIRST frame; a frame is a table, so the
+-- type() check passed, #frames was 0, nothing was unregistered, and the popup
+-- kept firing with no error to show for it.
+------------------------------------------------------------
+
+local framesAPI = dofile("Compat.lua")
+local EV = "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED"
+
+local f1 = { UnregisterEvent = function() end }
+local f2 = { UnregisterEvent = function() end }
+local f3 = { UnregisterEvent = function() end }
+WoW.eventFrames[EV] = { f1, f2, f3 }
+
+local owners = framesAPI.FramesRegisteredForEvent(EV)
+eq("every registered frame comes back", #owners, 3)
+eq("  in order [1]", owners[1], f1)
+eq("  in order [3]", owners[3], f3)
+
+-- The broken shape, kept as a live demonstration rather than a comment.
+local _, firstOnly = pcall(GetFramesRegisteredForEvent, EV)
+eq("one return value binds a frame, not a list", firstOnly, f1)
+check("  and a frame passes a type() check", type(firstOnly) == "table")
+eq("  while having no array part - hence the silent no-op", #firstOnly, 0)
+
+eq("an event nobody registered for yields an empty list",
+   #framesAPI.FramesRegisteredForEvent("NOBODY_LISTENS_TO_THIS"), 0)
+
+-- A client without the lookup, or one that throws, degrades to an empty list
+-- so the caller can fall back rather than error out.
+local realLookup = GetFramesRegisteredForEvent
+GetFramesRegisteredForEvent = nil
+eq("a client missing the lookup yields an empty list",
+   #framesAPI.FramesRegisteredForEvent(EV), 0)
+GetFramesRegisteredForEvent = function() error("boom") end
+eq("a lookup that throws yields an empty list",
+   #framesAPI.FramesRegisteredForEvent(EV), 0)
+GetFramesRegisteredForEvent = realLookup
+
+check("the lookup is optional, not a required capability",
+      framesAPI.AssertCapabilities() == true)
+
+------------------------------------------------------------
 
 print(("test_compat: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

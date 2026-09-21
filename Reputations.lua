@@ -1,3 +1,12 @@
+-- Retail-API adapters; see Compat.lua.
+local API = AltStable.API
+local GetNumFactions        = API.GetNumFactions
+local GetFactionDataByIndex = API.GetFactionDataByIndex
+
+-- Outland factions, carried over unchanged. They do not exist on a Vanilla
+-- client, so every lookup below simply misses and the columns read empty.
+-- Replacing this with the Vanilla set, keyed by faction ID, is #8 - this file
+-- only moves to the Retail API here.
 local TBC_REPUTATIONS = {
 
     -- Shattrath
@@ -43,12 +52,16 @@ function AltStable.ScanReputations(char)
 
     for i = 1, GetNumFactions() do
 
-        local name, _, standing = GetFactionInfo(i)
+        -- One struct, not the old tuple. Standing used to be the THIRD return
+        -- of GetFactionInfo; it is `reaction` here. Reading it positionally
+        -- would store nil for every faction with no error.
+        local data = GetFactionDataByIndex(i)
 
-        local key = TBC_REPUTATIONS[name]
-
-        if key then
-            char[key] = standing
+        if data then
+            local key = TBC_REPUTATIONS[data.name]
+            if key then
+                char[key] = data.reaction
+            end
         end
 
     end

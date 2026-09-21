@@ -161,10 +161,15 @@ local function GetPool(sectionId)
     return rowPools[sectionId]
 end
 
+-- Only created when devMode is on (see the ROSTER (DEV) block below), so every
+-- use must be nil-guarded. Declared here rather than in the block: it was a
+-- block-local while the options OnShow handler read it as a global, so with
+-- devMode off the panel threw on every open.
+local optModelDebugCheck
+
 local displayList = {}
 local sortColumn  = "level"
 local sortAsc     = false
-local hideLow     = true  -- runtime value; set from config in CreateFrameIfNeeded()
 local collapsed   = {}
 
 local totalChars = 0
@@ -302,9 +307,10 @@ do
 
     -- Lateral character placement via test_cameraOverShoulder. This is
     -- the "experimental" CVar that triggers WoW's confirmation popup —
-    -- but we silence that popup before any of our SetCVar calls fire (see
-    -- the EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED unregister at the end of
-    -- this block). Narcissus uses the same approach.
+    -- but we silence that popup immediately before each of our SetCVar
+    -- calls fires (see SuppressExperimentalCVarPopup at the end of this
+    -- block; every test_* write in the addon goes through it). Narcissus
+    -- uses the same approach.
     --
     -- Per-race shoulder factor table copied from Narcissus Classic
     -- ZoomValuebyRaceID. Format: { factor1, factor2 } — used as
@@ -542,11 +548,15 @@ do
         -- Lateral character shift via test_cameraOverShoulder. This is
         -- exactly what Narcissus does — the only reason it's "experimental"
         -- in BCC is the popup gate, which we suppress by unregistering
-        -- EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED at file load (see bottom
-        -- of this `do` block). Capture before we touch it; restore on exit.
+        -- EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED right before the write (see
+        -- SuppressExperimentalCVarPopup at the bottom of this `do` block).
+        -- Capture before we touch it; restore on exit.
         if type(GetCVar) == "function" and type(SetCVar) == "function" then
             self.capture.shoulderOffset = tonumber(GetCVar("test_cameraOverShoulder")) or 0
             local desired = self:_ComputeShoulderOffset(self.enterToZoom)
+            if AltStable.SuppressExperimentalCVarPopup then
+                AltStable.SuppressExperimentalCVarPopup()
+            end
             pcall(SetCVar, "test_cameraOverShoulder", desired)
             CameraDebug(string.format("shoulder: from=%.3f to=%.3f",
                 self.capture.shoulderOffset, desired))
@@ -622,6 +632,9 @@ do
                           self.capture.cameraDistanceMaxZoomFactor)
                 end
                 if self.capture.shoulderOffset then
+                    if AltStable.SuppressExperimentalCVarPopup then
+                        AltStable.SuppressExperimentalCVarPopup()
+                    end
                     pcall(SetCVar, "test_cameraOverShoulder",
                           self.capture.shoulderOffset)
                 end
@@ -756,16 +769,37 @@ do
     end
 
     -- Suppress the engine-level "Are you sure you want to enable this
-    -- experimental feature?" popup. Default Blizzard UI registers
-    -- EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED on UIParent, which fires
-    -- whenever a script writes to test_* CVars. Narcissus does the exact
-    -- same unregister to keep its own test_cameraOverShoulder /
-    -- test_cameraDynamicPitch writes silent. We do this once at file
-    -- load, the same way Narcissus does — there's no CVar-by-CVar opt-in
-    -- API; you either get the popup for all of them or none. We use
-    -- pcall in case some future client doesn't have this event.
-    if UIParent and type(UIParent.UnregisterEvent) == "function" then
-        pcall(UIParent.UnregisterEvent, UIParent, "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED")
+    -- experimental feature?" popup, which fires whenever a script writes a
+    -- test_* CVar. There is no per-CVar opt-in; you get the popup for all of
+    -- them or none. Narcissus takes the same approach.
+    --
+    -- On Classic the handler lived on UIParent, so unregistering there was
+    -- enough. On this client it does not, which is why the popup reappeared on
+    -- every window close and "Accept" never stuck - accepting does not stop
+    -- the next write from asking again.
+    --
+    -- So find the actual owner rather than assuming one, and call this
+    -- immediately before each of our own test_* writes rather than once at
+    -- file load. Two reasons: the owning frame may not exist yet at load, and
+    -- unregistering the event takes the confirmation gate away from Blizzard's
+    -- own handler for the rest of the session - so we only pay that cost for
+    -- users who actually touch a feature that writes one of these CVars.
+    AltStable.SuppressExperimentalCVarPopup = function()
+        local ev = "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED"
+        local n = 0
+        -- The adapter hands back a fresh list (the raw API returns varargs,
+        -- not a table - see Compat.lua), so there is nothing live to iterate
+        -- and unregistering as we go is safe.
+        for _, f in ipairs(AltStable.API.FramesRegisteredForEvent(ev)) do
+            if type(f) == "table" and type(f.UnregisterEvent) == "function" then
+                if pcall(f.UnregisterEvent, f, ev) then n = n + 1 end
+            end
+        end
+        -- Belt and braces for a client where the lookup is unavailable.
+        if n == 0 and UIParent and type(UIParent.UnregisterEvent) == "function" then
+            pcall(UIParent.UnregisterEvent, UIParent, ev)
+        end
+        return n
     end
 end
 
@@ -1004,9 +1038,7 @@ local function BuildDisplayList()
     local allChars = {}
     for _, char in next, store do
         if type(char)=="table" and char.name then
-            if not hideLow or (char.level or 0)>=58 then
-                table.insert(allChars, char)
-            end
+            table.insert(allChars, char)
         end
     end
     table.sort(allChars, function(a,b)
@@ -1143,7 +1175,7 @@ local function UpdateTotalsBar()
     local totalIlvl, ilvlCount = 0, 0
     local store = GetCharacterStore()
     for _, char in next, store do
-        if type(char)=="table" and char.name and (not hideLow or (char.level or 0)>=58) then
+        if type(char)=="table" and char.name then
             if char.ilvl and char.ilvl > 0 then
                 totalIlvl = totalIlvl + char.ilvl
                 ilvlCount  = ilvlCount  + 1
@@ -1587,14 +1619,16 @@ local function ComputeContentSize()
 
     -- Sidebar height floor.
     --
-    -- The sidebar holds N navigation buttons + a bottom block (Filter row,
-    -- Hide-below checkbox). Plugins can register more buttons at runtime,
-    -- so the required height is queried live, not hardcoded.
+    -- The sidebar holds N navigation buttons and nothing beneath them any
+    -- more - the Filter row and Hide-below checkbox are gone with the
+    -- always-on filter, and SIDEBAR_BOTTOM_FOOTER is 0. Plugins can register
+    -- more buttons at runtime, so the required height is queried live, not
+    -- hardcoded.
     --
     -- When the data grid is shorter than the sidebar — few alts on a
     -- single realm, realm collapsed, or any plugin section that returns
-    -- a small list — the frame must still be tall enough that the bottom
-    -- sidebar controls don't overlap the totals bar. Force the frame
+    -- a small list — the frame must still be tall enough that the last
+    -- sidebar button doesn't overlap the totals bar. Force the frame
     -- height up to the sidebar minimum here. The body grid below pads
     -- itself with empty filler rows in UpdateRows() so the table reads
     -- as continuing past the last data row.
@@ -1700,12 +1734,7 @@ end
 local function CreateFrameIfNeeded()
     if frame then return end
 
-    -- Restore persisted hideLow preference; default to true if never saved
     AltStableConfig = AltStableConfig or {}
-    if AltStableConfig.hideLow == nil then
-        AltStableConfig.hideLow = true
-    end
-    hideLow = AltStableConfig.hideLow
 
     ComputeFrozenWidth()
     BuildScrollableColsForSection(activeSection)
@@ -1828,9 +1857,20 @@ local function CreateFrameIfNeeded()
         end
 
         local saved = {}
+        -- test_* CVars trip the experimental-CVar confirmation popup, so the
+        -- owner has to be unregistered immediately before each write - a
+        -- single call at load is not enough (see
+        -- SuppressExperimentalCVarPopup). Routing every write through setcv
+        -- means the restore path below gets the same treatment.
+        local function SilenceExperimental(k)
+            if k:find("^test_") and AltStable.SuppressExperimentalCVarPopup then
+                AltStable.SuppressExperimentalCVarPopup()
+            end
+        end
         local function setcv(k, v)
             if type(GetCVar) == "function" and type(SetCVar) == "function" then
                 saved[k] = GetCVar(k)
+                SilenceExperimental(k)
                 pcall(SetCVar, k, v)
             end
         end
@@ -1880,7 +1920,12 @@ local function CreateFrameIfNeeded()
                         AltStableCameraPresentation.capturing = false
                         frame:SetAlpha(1)
                         if type(SetCVar) == "function" then
-                            for k, v in pairs(saved) do if v then pcall(SetCVar, k, v) end end
+                            for k, v in pairs(saved) do
+                                if v then
+                                    SilenceExperimental(k)
+                                    pcall(SetCVar, k, v)
+                                end
+                            end
                         end
                         if savedZoom and type(GetCameraZoom) == "function" then
                             local cur = GetCameraZoom()
@@ -2050,8 +2095,8 @@ local function CreateFrameIfNeeded()
     sidebar._pluginBtnY = btnY  -- tracked so late-registering plugins can append
 
     -- Returns the vertical space the sidebar needs to display all of its
-    -- buttons + the bottom controls (filter row + hideLow checkbox) without
-    -- the bottom items overlapping the topmost data rows or the totals bar.
+    -- buttons without the bottom items overlapping the topmost data rows or
+    -- the totals bar.
     --
     -- Used by ComputeContentSize so the frame is at least sidebar-tall when
     -- the data grid would otherwise be shorter (few characters, all on one
@@ -2060,11 +2105,11 @@ local function CreateFrameIfNeeded()
     -- minimum frame height grow automatically.
     --
     -- Math: btnY starts at -8 (top inset) and decrements by 27 per button.
-    -- _pluginBtnY is the next-empty-Y after all buttons. The bottom controls
-    -- (sbDiv2 at y=42 from BOTTOMLEFT, filter row, checkbox row) reserve
-    -- 64px below the last button. 8px breathing space at the very bottom.
+    -- _pluginBtnY is the next-empty-Y after all buttons. There are no bottom
+    -- controls any more, so nothing is reserved below the last button beyond
+    -- 8px of breathing space.
     local SIDEBAR_TOP_INSET     = 8
-    local SIDEBAR_BOTTOM_FOOTER = 64
+    local SIDEBAR_BOTTOM_FOOTER = 0
     local SIDEBAR_BOTTOM_BREATH = 8
     AltStable.GetSidebarRequiredHeight = function()
         if not sidebar or not sidebar._pluginBtnY then return 0 end
@@ -2386,7 +2431,7 @@ local function CreateFrameIfNeeded()
         optCharsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
         Y = Y - 20
 
-        local optModelDebugCheck = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
+        optModelDebugCheck = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
         optModelDebugCheck:SetSize(18, 18)
         optModelDebugCheck:SetPoint("TOPLEFT", P - 2, Y + 2)
         optModelDebugCheck:SetChecked(AltStableRosterDB and AltStableRosterDB._debugModelStatus and true or false)
@@ -2519,38 +2564,45 @@ local function CreateFrameIfNeeded()
     Y = Y - 30
 
     -- ── Plugins section ────────────────────────────────────
-    -- Recipes and Roster are LoadOnDemand addons; toggling one loads it
-    -- immediately (enable) or persists the choice (disable, next /reload)
-    -- via AltStable.SetPluginEnabled.
-    local optPluginsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optPluginsHdr:SetPoint("TOPLEFT", P, Y)
-    optPluginsHdr:SetText("PLUGINS")
-    optPluginsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 20
-
+    -- Plugins are LoadOnDemand addons; toggling one loads it immediately
+    -- (enable) or persists the choice (disable, next /reload) via
+    -- AltStable.SetPluginEnabled.
+    --
+    -- The whole section is skipped when no plugins are registered, otherwise
+    -- the heading and hint render above empty space. LOD_PLUGINS is empty
+    -- until Warband (#9/#10) and Instances (#11) are ported.
     local optPluginChecks = {}
-    for _, p in ipairs(AltStable.LOD_PLUGINS or {}) do
-        local key = p.key
-        optPluginChecks[key] = MakeOptCheckRow(nil, p.label, Y,
-            function(checked)
-                if AltStable.SetPluginEnabled then
-                    AltStable.SetPluginEnabled(key, checked)
-                end
-            end,
-            function()
-                return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
-            end)
-        Y = Y - 22
-    end
+    if #(AltStable.LOD_PLUGINS or {}) > 0 then
+        local optPluginsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        optPluginsHdr:SetPoint("TOPLEFT", P, Y)
+        optPluginsHdr:SetText("PLUGINS")
+        optPluginsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        Y = Y - 20
 
-    local optPluginsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optPluginsHint:SetPoint("TOPLEFT", P, Y - 2)
-    optPluginsHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
-    optPluginsHint:SetJustifyH("LEFT")
-    optPluginsHint:SetWordWrap(true)
-    optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optPluginsHint:SetText("Enabling loads the tab immediately; disabling takes effect after /reload. (Both must also stay enabled in the game's AddOns list.)")
-    Y = Y - 34
+        for _, p in ipairs(AltStable.LOD_PLUGINS) do
+            local key = p.key
+            optPluginChecks[key] = MakeOptCheckRow(nil, p.label, Y,
+                function(checked)
+                    if AltStable.SetPluginEnabled then
+                        AltStable.SetPluginEnabled(key, checked)
+                    end
+                end,
+                function()
+                    return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
+                end)
+            Y = Y - 22
+        end
+
+        local optPluginsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        optPluginsHint:SetPoint("TOPLEFT", P, Y - 2)
+        optPluginsHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+        optPluginsHint:SetJustifyH("LEFT")
+        optPluginsHint:SetWordWrap(true)
+        optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        -- Not "Both": the count is whatever is registered.
+        optPluginsHint:SetText("Enabling loads the tab immediately; disabling takes effect after /reload. (They must also stay enabled in the game's AddOns list.)")
+        Y = Y - 34
+    end
 
     -- ── Presentation section ──────────────────────────────
     -- Camera presentation, frame shift, continuous orbit, open animation,
@@ -2823,7 +2875,9 @@ local function CreateFrameIfNeeded()
         optSliderUpdating = false
         local rosterDebug = (AltStableRosterDB and AltStableRosterDB._debugModelStatus)
             or (AltStableAltsDB and AltStableAltsDB._debugModelStatus)
-        optModelDebugCheck:SetChecked(rosterDebug and true or false)
+        if optModelDebugCheck then
+            optModelDebugCheck:SetChecked(rosterDebug and true or false)
+        end
         for key, cb in pairs(optPluginChecks) do
             cb:SetChecked(cb._getter())
         end
@@ -2876,42 +2930,6 @@ local function CreateFrameIfNeeded()
     AltStable._SwitchToOptions = function()
         if optSect then SwitchSection(optSect) end
     end
-
-    local sbDiv2=sidebar:CreateTexture(nil,"ARTWORK")
-    sbDiv2:SetHeight(1)
-    sbDiv2:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,42)
-    sbDiv2:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,42)
-    sbDiv2:SetColorTexture(unpack(AltStable.C.SEP))
-
-    -- "Filter" label row (compact)
-    local filterRow=CreateFrame("Frame",nil,sidebar)
-    filterRow:SetHeight(20)
-    filterRow:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",0,22)
-    filterRow:SetPoint("BOTTOMRIGHT",sidebar,"BOTTOMRIGHT",0,22)
-    local filterIcon=filterRow:CreateTexture(nil,"OVERLAY")
-    filterIcon:SetSize(11,11); filterIcon:SetPoint("LEFT",8,0)
-    SetSidebarIconTexture(filterIcon, (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\filter.tga", true)
-    filterIcon:SetVertexColor(unpack(AltStable.C.TEXT_DIM))
-    local filterLbl=filterRow:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    filterLbl:SetPoint("LEFT",22,0); filterLbl:SetText("Filter")
-    filterLbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-
-    -- "Hide below 58" styled checkbox
-    local check=CreateFrame("CheckButton",nil,sidebar,"UICheckButtonTemplate")
-    check:SetSize(18,18)
-    check:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMLEFT",4,4)
-    check:SetChecked(hideLow)
-    check.text:SetText("Hide below 58")
-    check.text:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    check:SetScript("OnClick",function(self)
-        hideLow=self:GetChecked()
-        AltStableConfig.hideLow = hideLow
-        BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-        ResizeFrameToContent()
-        if AltStable.RefreshSheet then
-            AltStable.RefreshSheet()
-        end
-    end)
 
     --------------------------------------------------------
     -- Totals bar

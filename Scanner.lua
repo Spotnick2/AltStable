@@ -1,5 +1,14 @@
 AltStable = AltStable or {}
 
+-- Retail-API adapters. Taken as file-locals so call sites below read the same
+-- as they always did; see Compat.lua for why these are not globals.
+local API = AltStable.API
+local GetNumSkillLines = API.GetNumSkillLines
+local GetSkillLineInfo = API.GetSkillLineInfo
+local UnitDefenseSkill = API.UnitDefenseSkill
+local GetItemInfo      = API.GetItemInfo
+local GetItemStats     = API.GetItemStats
+
 local PRIMARY_PROFESSIONS = {
     ["Alchemy"] = true,
     ["Blacksmithing"] = true,
@@ -342,6 +351,67 @@ local function ResetCharacter(char)
 
 end
 
+-- Skill lines: secondary skills, riding, and the primary professions.
+--
+-- Split out of ScanCharacter so it can be driven directly in tests. All of
+-- ScanCharacter needs ~30 stubbed APIs; this needs two, and it is where the
+-- tuple-to-struct change actually bites.
+function AltStable.ScanSkills(char)
+    local primaryCount = 0
+
+    for i = 1, GetNumSkillLines() do
+
+        -- One struct, not the old 7-value tuple. Destructuring positionally
+        -- here would yield nil for every field and silently record no
+        -- professions at all, which is why this is read by name.
+        local info = GetSkillLineInfo(i)
+        local skillName = info and info.name
+        local rank      = info and info.rank
+        -- maxRank is dynamic for weapon and defense skills (5 x level), so it
+        -- is read per line rather than assumed to be a cap.
+        local maxRank   = info and info.maxRank
+
+        if info and not info.isHeader and skillName then
+
+            if skillName == "Fishing" then
+                char.fishing = rank or 0
+                char.fishingMax = maxRank or 0
+
+            elseif skillName == "Cooking" then
+                char.cooking = rank or 0
+                char.cookingMax = maxRank or 0
+
+            elseif skillName == "First Aid" then
+                char.firstAid = rank or 0
+                char.firstAidMax = maxRank or 0
+
+            elseif skillName == "Riding" then
+                char.riding = rank or 0
+                char.ridingMax = maxRank or 0
+
+            elseif PRIMARY_PROFESSIONS[skillName] then
+
+                primaryCount = primaryCount + 1
+
+                -- Flat field for new column layout
+                char["prof_"..skillName]    = rank or 0
+                char["profmax_"..skillName] = maxRank or 0
+
+                if primaryCount == 1 then
+                    char.prof1 = skillName
+                    char.prof1Skill = rank or 0
+                    char.prof1Max = maxRank or 0
+
+                elseif primaryCount == 2 then
+                    char.prof2 = skillName
+                    char.prof2Skill = rank or 0
+                    char.prof2Max = maxRank or 0
+                end
+            end
+        end
+    end
+end
+
 function AltStable.ScanCharacter()
 
     AltStableDB = AltStableDB or {}
@@ -377,8 +447,14 @@ function AltStable.ScanCharacter()
     local classLocalized, classFile = UnitClass("player")
     char.class = classFile
 
-    char.race = select(2, UnitRace("player"))
+    -- UnitRace returns (localizedName, fileName). Both are worth keeping:
+    -- Forever's Skyborne is ONE race key with two faction-dependent display
+    -- names - "High Order Skyborne" and "Windshaper Skyborne" both report
+    -- fileName "Skyborne" - so no key-to-name table can render it correctly.
+    local raceLocalized, raceFile = UnitRace("player")
+    char.race = raceFile
     char.raceKey = char.race or ""
+    char.raceName = raceLocalized or ""
 
     -- Gender: 2 = male, 3 = female
     local gender = UnitSex("player")
@@ -556,7 +632,7 @@ function AltStable.ScanCharacter()
         char.stat_haste = Round2(GetCombatRatingBonus(CR_HASTE_MELEE))
     end
 
-    local baseDef, modDef = UnitDefense("player")
+    local baseDef, modDef = UnitDefenseSkill("player")
     char.stat_defense = (baseDef or 0) + (modDef or 0)
 
     char.stat_resilience = 0
@@ -571,51 +647,7 @@ function AltStable.ScanCharacter()
     -- Scan professions
     --------------------------------------------------------
 
-    local primaryCount = 0
-
-    for i = 1, GetNumSkillLines() do
-
-        local skillName, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
-
-        if not isHeader and skillName then
-
-            if skillName == "Fishing" then
-                char.fishing = rank or 0
-                char.fishingMax = maxRank or 0
-
-            elseif skillName == "Cooking" then
-                char.cooking = rank or 0
-                char.cookingMax = maxRank or 0
-
-            elseif skillName == "First Aid" then
-                char.firstAid = rank or 0
-                char.firstAidMax = maxRank or 0
-
-            elseif skillName == "Riding" then
-                char.riding = rank or 0
-                char.ridingMax = maxRank or 0
-
-            elseif PRIMARY_PROFESSIONS[skillName] then
-
-                primaryCount = primaryCount + 1
-
-                -- Flat field for new column layout
-                char["prof_"..skillName]    = rank or 0
-                char["profmax_"..skillName] = maxRank or 0
-
-                if primaryCount == 1 then
-                    char.prof1 = skillName
-                    char.prof1Skill = rank or 0
-                    char.prof1Max = maxRank or 0
-
-                elseif primaryCount == 2 then
-                    char.prof2 = skillName
-                    char.prof2Skill = rank or 0
-                    char.prof2Max = maxRank or 0
-                end
-            end
-        end
-    end
+    AltStable.ScanSkills(char)
 
     --------------------------------------------------------
     -- Reputations
