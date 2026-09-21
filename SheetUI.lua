@@ -787,21 +787,12 @@ do
     AltStable.SuppressExperimentalCVarPopup = function()
         local ev = "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED"
         local n = 0
-        if type(GetFramesRegisteredForEvent) == "function" then
-            local ok, frames = pcall(GetFramesRegisteredForEvent, ev)
-            if ok and type(frames) == "table" then
-                -- Snapshot first: the returned table may BE the live
-                -- registration list, and unregistering while iterating it
-                -- would compact the array under ipairs and skip every second
-                -- owner - leaving one registered while n > 0 suppresses the
-                -- UIParent fallback below.
-                local owners = {}
-                for i = 1, #frames do owners[i] = frames[i] end
-                for _, f in ipairs(owners) do
-                    if f and type(f.UnregisterEvent) == "function" then
-                        if pcall(f.UnregisterEvent, f, ev) then n = n + 1 end
-                    end
-                end
+        -- The adapter hands back a fresh list (the raw API returns varargs,
+        -- not a table - see Compat.lua), so there is nothing live to iterate
+        -- and unregistering as we go is safe.
+        for _, f in ipairs(AltStable.API.FramesRegisteredForEvent(ev)) do
+            if type(f) == "table" and type(f.UnregisterEvent) == "function" then
+                if pcall(f.UnregisterEvent, f, ev) then n = n + 1 end
             end
         end
         -- Belt and braces for a client where the lookup is unavailable.
@@ -1628,14 +1619,16 @@ local function ComputeContentSize()
 
     -- Sidebar height floor.
     --
-    -- The sidebar holds N navigation buttons + a bottom block (Filter row,
-    -- Hide-below checkbox). Plugins can register more buttons at runtime,
-    -- so the required height is queried live, not hardcoded.
+    -- The sidebar holds N navigation buttons and nothing beneath them any
+    -- more - the Filter row and Hide-below checkbox are gone with the
+    -- always-on filter, and SIDEBAR_BOTTOM_FOOTER is 0. Plugins can register
+    -- more buttons at runtime, so the required height is queried live, not
+    -- hardcoded.
     --
     -- When the data grid is shorter than the sidebar — few alts on a
     -- single realm, realm collapsed, or any plugin section that returns
-    -- a small list — the frame must still be tall enough that the bottom
-    -- sidebar controls don't overlap the totals bar. Force the frame
+    -- a small list — the frame must still be tall enough that the last
+    -- sidebar button doesn't overlap the totals bar. Force the frame
     -- height up to the sidebar minimum here. The body grid below pads
     -- itself with empty filler rows in UpdateRows() so the table reads
     -- as continuing past the last data row.

@@ -244,6 +244,37 @@ function API.GetMaxPlayerLevel()
 end
 
 ----------------------------------------------------------------------------
+-- Frames registered for an event
+--
+-- GetFramesRegisteredForEvent returns VARARGS - frame1, frame2, ... - not a
+-- table. The tempting `local ok, frames = pcall(GetFramesRegisteredForEvent,
+-- ev)` binds `frames` to the FIRST frame; a frame is a Lua table, so a
+-- type() check passes, but it has no array part, so #frames is 0 and the
+-- caller reads "nobody is registered" and silently does nothing. That is a
+-- return-shape question, so it belongs here with the other ones - and with a
+-- test behind it.
+--
+-- Read out of _G at call time rather than captured at load: callers degrade
+-- when it is absent, so it is not a required contract and has no business in
+-- `missing`.
+----------------------------------------------------------------------------
+
+function API.FramesRegisteredForEvent(event)
+    local fn = _G and _G.GetFramesRegisteredForEvent
+    if type(fn) ~= "function" then return {} end
+    local function collect(ok, ...)
+        if not ok then return {} end
+        local frames = {}
+        for i = 1, select("#", ...) do
+            local f = select(i, ...)
+            if f ~= nil then frames[#frames + 1] = f end
+        end
+        return frames
+    end
+    return collect(pcall(fn, event))
+end
+
+----------------------------------------------------------------------------
 -- Capability report
 --
 -- Fail visibly during development rather than degrading into fabricated

@@ -1406,6 +1406,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     if event == "PLAYER_LOGIN" then
 
+        -- Report any adapter contract this client does not satisfy. Compat.lua
+        -- collects them instead of throwing, so without this call a missing
+        -- API surfaces as "attempt to call a nil value" from inside the scan -
+        -- after the character is half-written, with nothing naming the
+        -- contract that went missing. Nobody was calling it but the tests.
+        if AltStable.API and AltStable.API.AssertCapabilities then
+            AltStable.API.AssertCapabilities()
+        end
+
         -- Re-register the prefix on login.  Calling it at file load
         -- time isn't always sufficient — same-machine dual-boxing has
         -- racy behaviour where the prefix isn't actually registered
@@ -1917,9 +1926,14 @@ SlashCmdList["ALTSTABLE"] = function(args)
     -- /alts whitelist <name>          — add one
     -- /alts whitelist remove <name>   — drop one
     --
-    -- The Options panel owns the same editor; this exists because the
-    -- "no whitelisted peers configured" message above tells people to
-    -- use it, and because typing a name is faster than opening the panel.
+    -- The Options panel has an editor too, but it draws a fixed five rows
+    -- (OPT_WL_ROWS), so a sixth peer is only visible - and only removable -
+    -- from here. This also exists because the "no whitelisted peers
+    -- configured" message above tells people to use it.
+    --
+    -- "remove" is matched before the add branch, so a peer literally named
+    -- Remove has to be added from the Options panel. Documenting that costs
+    -- one line; a second keyword to disambiguate it would cost more.
     --
     -- Names go in exactly as typed: a Forever character is two words
     -- ("Karuzo Elegia") and a cross-realm peer keeps its "-Realm" suffix.

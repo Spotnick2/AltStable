@@ -35,6 +35,7 @@ local WoW = {
     maxLevel    = 60,
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
+    eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
 }
 
 function WoW.reset()
@@ -44,6 +45,7 @@ function WoW.reset()
     WoW.maxLevel = 60
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
+    WoW.eventFrames = {}
 end
 
 ------------------------------------------------------------
@@ -294,6 +296,14 @@ ChatThrottleLib = {
     end,
 }
 function GetGuildInfo() return nil end
+
+-- Frames registered for an event come back as VARARGS (frame1, frame2, ...),
+-- never as a table. A stub that returned a table would let the exact bug this
+-- models ship again: one return value binds the first FRAME, which is itself a
+-- table, so a type() check passes and the list reads as empty.
+function GetFramesRegisteredForEvent(event)
+    return unpack(WoW.eventFrames[event] or {})
+end
 
 function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 function GetMaxPlayerLevel() return WoW.maxLevel end
