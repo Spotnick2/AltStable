@@ -9,6 +9,54 @@ plan, that's called out.
 
 ---
 
+## How to check whether an API survived
+
+Read this before concluding that anything below is "gone". Three separate wrong conclusions in one
+evening came from probing the wrong surface, two of which shipped - one as code, one as a deferred
+issue.
+
+**A name can live in four different places.** `type(Name)` only ever asks about one of them:
+
+| where | example | probe |
+|---|---|---|
+| a global | `GetCVar` | `type(GetCVar)` |
+| a `C_*` namespace | `C_CVar.GetCVarInfo` | `type(C_CVar) == "table" and type(C_CVar.GetCVarInfo)` |
+| a widget method | `model:TryOn(...)` | create the widget, then `type(widget.TryOn)` |
+| an internal event system | `GameEvent.UnregisterInternalEvent` | `type(GameEvent)` and the member |
+
+A global check returning `nil` for a widget method reads exactly like a deleted API, on a client
+where the feature works perfectly.
+
+**And a present function can still be read wrongly.** Getting the name right is not the end of it:
+
+- **Return shape.** `GetFramesRegisteredForEvent` returns varargs. Bound as one value it yields the
+  first *frame*, which is a table, so a `type()` check passes while `#` is 0 - "nobody registered",
+  silently, forever. Collect with `{ ... }` and `select("#", ...)` when the shape is not certain.
+- **Struct vs tuple.** The skills and reputation ports (#4). A positionally-destructured struct
+  records nothing and raises no error.
+- **Written is not read.** `test_cameraOverShoulder` accepts a write, reads the value straight back
+  through both the global and `C_CVar`, reports unlocked and non-readonly - and the camera ignores
+  it entirely (#25). A round-trip through the store proves only that the store works.
+
+**The three that cost us:**
+
+| API | probed as | read as | actually |
+|---|---|---|---|
+| `GetFramesRegisteredForEvent` | one return value | empty list | varargs |
+| `GetCVarInfo` | global | deleted | moved to `C_CVar` |
+| `TryOn` | global | absent | a `DressUpModel` widget method |
+
+**A negative result deserves a second probe.** "It is missing" is a conclusion with consequences -
+a rewrite, a deferral, a feature dropped. Before accepting one, check the other surfaces, and
+check how a *working* client would answer the same probe. If the probe would print the same thing
+on a healthy client, it has told you nothing.
+
+Reference implementations settle it faster than reasoning does. Narcissus 1.8.6 (Retail, Interface
+120100) answered both the `TryOn` and the `CameraZoomIn(0)` questions in about a minute of grep,
+without being installed.
+
+---
+
 ## Client
 
 ```
@@ -560,6 +608,19 @@ every new build before designing around it (#25).
 The `GameEvent` finding stands on its own merit: it is the correct way to suppress that popup on a
 Mainline client, and it works here, where walking the frames registered for the event does not -
 even though the frame walk reports success.
+
+---
+
+## Model widgets — present, including TryOn
+
+```
+CreateFrame("DressUpModel", nil, UIParent)  ->  created; TryOn, SetUnit, Undress all functions
+CreateFrame("PlayerModel",  nil, UIParent)  ->  created; SetUnit, SetCamera present
+```
+
+`TryOn` is a widget method, never a global - `type(TryOn)` is `nil` here and on live Retail alike,
+which is how the Roster plugin (#15) came to be deferred on an API blocker that did not exist. The
+model panel is viable on this client; what remains in #15 is content, not API.
 
 ---
 
