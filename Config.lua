@@ -46,12 +46,12 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 function AltStable.OnConfigChanged(key)
 end
 
--- Settings that decide WHICH characters sync. Changing one makes characters
--- newly eligible whose lastUpdate sits below every peer's delta watermark, so
--- they would be filtered out of every delta and never sent - the user ticks
--- "send all accounts" and nothing arrives. Resetting the watermarks makes the
--- next exchange a full one. Handled here because this is the one path every
--- writer uses: the Options checkbox, the account box and /alts account.
+-- Settings that decide WHICH characters we send. Changing one makes characters
+-- newly eligible whose lastUpdate sits below every peer's watermark for us, so
+-- they would be filtered out of every delta the peers ask for. Core answers the
+-- next request from each peer in full (see OnSyncScopeChanged). Detected here
+-- because this is the one path every writer uses: the Options checkbox, the
+-- account box and /alts account.
 local SYNC_SCOPE_KEYS = { sendAllAccounts = true, accountNumber = true }
 
 function AltStable.SetConfigValue(key, value)
@@ -59,8 +59,12 @@ function AltStable.SetConfigValue(key, value)
     local previous = AltStableConfig[key]
     AltStableConfig[key] = value
     AltStable.OnConfigChanged(key)
-    if SYNC_SCOPE_KEYS[key] and previous ~= value and AltStable.ResetPeerWatermarks then
-        AltStable.ResetPeerWatermarks()
+    -- tostring: accountNumber is a number from the Options box and /alts account
+    -- but a string from EnsureDefaults and DevConfig, so re-entering the same
+    -- "1" must not count as a change.
+    if SYNC_SCOPE_KEYS[key] and tostring(previous) ~= tostring(value)
+       and AltStable.OnSyncScopeChanged then
+        AltStable.OnSyncScopeChanged()
     end
 end
 
@@ -93,8 +97,9 @@ local function EnsureDefaults()
     if not AltStableConfig.plugins then
         AltStableConfig.plugins = { professions = true, roster = true, instances = true, warband = true }
     end
-    -- Delta-sync watermarks: newest lastUpdate value received from each peer,
-    -- so a sync request pulls only what changed since. Keyed by short name.
+    -- Delta-sync watermarks: per peer, the lastUpdate we ask it to send changes
+    -- since - the newest stamp received, capped a few minutes below the peer's
+    -- own clock (see WatermarkCeiling in Core.lua). Keyed by short name.
     if not AltStableConfig.peerWatermarks then
         AltStableConfig.peerWatermarks = {}
     end

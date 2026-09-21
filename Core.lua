@@ -123,6 +123,23 @@ local autoRetryCounts = {}
 local lastRequestedAt = {}
 local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 
+-- Sync-scope epoch. Watermarks belong to the REQUESTER: a peer asks us for
+-- changes since its own watermark for us. So when a setting widens WHICH
+-- characters we send (sendAllAccounts, accountNumber), the newly eligible ones
+-- - stamped long before that watermark - would be filtered out of every delta
+-- the peer asks for. The fix has to be here, on the reply side: the first reply
+-- to each peer after a scope change ignores its watermark and sends everything.
+-- (Resetting our OWN watermarks, the first attempt, fixed nothing for anyone and
+-- forced a pointless full pull from every peer.)
+--
+-- Session-scoped. A scope change followed by a quit before a peer asks is
+-- covered by `/alts sync <name>`, which always sends in full.
+local scopeEpoch = 0
+local peerScopeEpoch = {}
+function AltStable.OnSyncScopeChanged()
+    scopeEpoch = scopeEpoch + 1
+end
+
 -- Stale-buffer cleanup.  If a sender's stream gets cut off mid-flight
 -- (DC, /reload on their end, sender ran out of credits to keep sending,
 -- etc.) we'd otherwise hold onto a partial buffer forever.  Every 60s
@@ -236,6 +253,8 @@ local function SerializeChar(c, sinceTS)
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
                                       -- synced alts fall back to keyword inference on gearname_
         and k ~= "specIcon"            -- numeric fileID, client-specific
+        and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
+                                      -- would tell every peer the character was ITS own
         -- NOTE: refshot_ts (reference-screenshot marker) IS synced on purpose. The render
         -- pipeline reads ONE aggregator account, so an alt's marker must ride sync to reach it.
         -- NOTE: hidehelm / hidecloak ride sync for the same reason — the pipeline has to know
@@ -334,6 +353,12 @@ end
 -- intact — never split across two packets.
 local CHAR_SEP = "==END=="
 
+-- The replier's time(), as the payload's last line. It sits AFTER the final
+-- CHAR_SEP, and every parser - including every older version's - only acts on
+-- a line when it hits CHAR_SEP, so an older client accumulates it and discards
+-- it with no effect. Additive, which is why there is no PROTOCOL_VERSION bump.
+local SEND_TIME = "==NOW=="
+
 -- Per-peer delta-sync watermark: the lastUpdate value we ask a peer to send
 -- changes since. Persisted in AltStableConfig.peerWatermarks, keyed by the
 -- realm-less short name so a REQ target and its reply sender map to one entry.
@@ -349,29 +374,42 @@ local CHAR_SEP = "==END=="
 local function PeerShort(name)
     return (name and name:match("^([^%-]+)")) or name
 end
+-- The delta filter runs on the PEER, comparing stamps against the peer's own
+-- clock - so the ceiling has to be the peer's clock, not ours. A reply now ends
+-- with the replier's time() (see SEND_TIME), and the watermark is capped a few
+-- minutes below it. Clamping against OUR clock, the first attempt, just swapped
+-- the roles: with our clock ahead of the peer's, our own characters relayed back
+-- still pushed the watermark past the peer's clock.
+--
+-- The slack is re-sent overlap - a few minutes of records on each delta, which
+-- the last-write-wins merge absorbs. From a peer too old to send its time, fall
+-- back to our own clock: wrong by the skew, but bounded by the slack.
+local WATERMARK_SLACK = 300
+local function WatermarkCeiling(peerNow)
+    return (tonumber(peerNow) or time()) - WATERMARK_SLACK
+end
+
 local function GetPeerWatermark(name)
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.peerWatermarks = AltStableConfig.peerWatermarks or {}
-    return AltStableConfig.peerWatermarks[PeerShort(name)] or 0
-end
--- A watermark may never sit in our own future, and keeps a few minutes of
--- overlap below "now". The clamp stops a fast third-party clock from dragging
--- it past the peer's; the slack absorbs moderate skew between our clock and the
--- peer's. The price is re-sending the last few minutes of records on each
--- delta, which the last-write-wins merge absorbs harmlessly. A watermark older
--- than the slack window is left exact.
-local WATERMARK_SLACK = 300
-local function ClampWatermark(maxTS)
-    return math.min(maxTS or 0, time() - WATERMARK_SLACK)
+    local wm = AltStableConfig.peerWatermarks[PeerShort(name)] or 0
+    -- Never ask from beyond our own clock, whatever is stored: covers a value
+    -- written before this rule existed - or persisted by an older build, once
+    -- SavedVariables load (#23).
+    return math.min(wm, time() - WATERMARK_SLACK)
 end
 
-local function AdvancePeerWatermark(name, ts)
-    if not ts or ts <= 0 then return end
+-- Raise to the newest stamp received, then cap at the ceiling - applied to the
+-- stored value too, so a watermark already in the future is pulled back rather
+-- than only ever ratcheting upward.
+local function AdvancePeerWatermark(name, ts, peerNow)
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.peerWatermarks = AltStableConfig.peerWatermarks or {}
     local short = PeerShort(name)
-    if ts > (AltStableConfig.peerWatermarks[short] or 0) then
-        AltStableConfig.peerWatermarks[short] = ts
+    local current = AltStableConfig.peerWatermarks[short] or 0
+    local new = math.min(math.max(current, tonumber(ts) or 0), WatermarkCeiling(peerNow))
+    if new > 0 and new ~= current then
+        AltStableConfig.peerWatermarks[short] = new
         AltStable.OnConfigChanged("peerWatermarks")
     end
 end
@@ -441,38 +479,17 @@ end
 -- unequipped or a profession it dropped would retain its stale field, because
 -- the merge only writes keys that ARE present in the new data.
 --
--- Local-only fields - gearlink_ and gearsubtype_ - never travel on the wire, so
--- the merge cannot restore them once cleared. This comment used to say the
--- merge only ever sees REMOTE characters, which made clearing them safe.
--- Nothing enforced it: with the default config a peer relays every record,
--- including our OWN characters, and an echoed one sailed through the 60-second
--- window and lost its links - taking the gem/enchant tooltip with it until that
--- character was logged into again.
---
--- The worry that motivated clearing them is still real - a link left over from
--- an old addon version that synced links, pointing at gear no longer worn. So
--- decide from the data instead of guessing ownership: a local-only field is
--- kept while the item it describes is still in the slot (the same gearid_ on
--- both sides) and cleared the moment the slot holds something else.
+-- gearlink_ and gearsubtype_ are cleared too: they are local-only, never on the
+-- wire, so on any record the merge touches they describe a scan that is no
+-- longer the newest - and a REMOTE record must never carry a link at all (one
+-- left by an old addon version that synced links would show gear no longer
+-- worn). Our OWN characters are protected before this runs, by ShouldMerge,
+-- which keeps a peer's echo from being merged over them in the first place.
 --
 -- Preserves metadata (account, guild, money, name, class, …): the incoming
 -- record overwrites those when present, and a peer that hasn't tagged a
 -- character shouldn't wipe our local account assignment.
-local function ClearSyncedStateFields(t, incoming)
-    local keepLocal = {}
-    for k in pairs(t) do
-        local slot = k:match("^gearlink_(.+)$") or k:match("^gearsubtype_(.+)$")
-        if slot then
-            local mine   = t["gearid_" .. slot]
-            local theirs = incoming and incoming["gearid_" .. slot]
-            -- tostring: a local scan stores a number, a deserialized record may
-            -- carry the same id as a string. 0 is an empty slot, never a match.
-            if mine and theirs and tostring(mine) ~= "0" and tostring(mine) == tostring(theirs) then
-                keepLocal[k] = true
-            end
-        end
-    end
-
+local function ClearSyncedStateFields(t)
     t.prof1 = nil; t.prof2 = nil
     t.prof1Skill = nil; t.prof2Skill = nil
     t.prof1Max   = nil; t.prof2Max   = nil
@@ -492,9 +509,31 @@ local function ClearSyncedStateFields(t, incoming)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_") then                 -- mail summary (mail_count / mail_expiry / mail_money)
-            if not keepLocal[k] then t[k] = nil end
+            t[k] = nil
         end
     end
+end
+
+-- Whether an incoming record may overwrite what we hold.
+--
+-- A character this client scans (scannedHere) is OURS, and our scan is the
+-- authority. With the default config a peer relays every record it holds,
+-- including ours, so most of what arrives for our own characters is our own
+-- record echoed back. It is accepted only if strictly newer - meaning the
+-- character was genuinely played somewhere else since.
+--
+-- Everything else keeps the old rule: the local copy wins only if it is more
+-- than 60 seconds newer, because a remote record sent with incomplete gear
+-- (GetItemInfo cache miss) is often corrected moments later with the same
+-- stamp. Applied to our own characters, that grace let a peer's slightly older
+-- copy roll back gear we had just scanned - and take its links with it.
+local function ShouldMerge(existing, incoming)
+    local existingTime = existing.lastUpdate or 0
+    local incomingTime = incoming.lastUpdate or 0
+    if existing.scannedHere then
+        return incomingTime > existingTime
+    end
+    return existingTime - incomingTime <= 60
 end
 
 local function DeserializeFullDB(payload, sender)
@@ -502,10 +541,14 @@ local function DeserializeFullDB(payload, sender)
     local current = {}
     local rejected = 0
     local maxTS = 0   -- newest lastUpdate seen; the caller advances the peer watermark to it
+    local peerNow     -- the sender's clock, when it sent one (SEND_TIME)
 
     for line in (payload .. "\n"):gmatch("([^\n]*)\n") do
 
-        if line == CHAR_SEP then
+        local stamped = line:match("^" .. SEND_TIME .. ":(%d+)$")
+        if stamped then
+            peerNow = tonumber(stamped)
+        elseif line == CHAR_SEP then
             -- End of a character block — deserialize what we have.
             local msg = table.concat(current, "\n")
             current = {}
@@ -525,16 +568,8 @@ local function DeserializeFullDB(payload, sender)
                 else
                     local existing = AltStableDB[c.guid] or {}
 
-                    local existingTime = existing.lastUpdate or 0
-                    local incomingTime = c.lastUpdate or 0
-
-                    -- Only keep local copy if it is meaningfully newer (>60s).
-                    -- Equal timestamps or small differences always accept the
-                    -- incoming data — this handles the case where a record was
-                    -- sent with incomplete gear (GetItemInfo cache miss) and a
-                    -- corrected version arrives shortly after with the same stamp.
-                    if existingTime - incomingTime <= 60 then
-                        ClearSyncedStateFields(existing, c)
+                    if ShouldMerge(existing, c) then
+                        ClearSyncedStateFields(existing)
                         for k,v in pairs(c) do
                             existing[k] = v
                         end
@@ -558,7 +593,7 @@ local function DeserializeFullDB(payload, sender)
         AltStable.RefreshSheet()
     end
 
-    return maxTS
+    return maxTS, peerNow
 
 end
 
@@ -741,6 +776,8 @@ local function SendFullDatabase(channel, target, sinceTS)
     local accountOnly = not AltStableConfig.sendAllAccounts
 
     local payload = SerializeFullDB(accountOnly, sinceTS)
+    -- Our clock, so the requester can keep its watermark in OUR frame.
+    payload = payload .. "\n" .. SEND_TIME .. ":" .. time()
     ChunkAndSendPayload(payload, channel, target)
 
 end
@@ -915,12 +952,9 @@ local function ReceiveCharacter(c, sender)
 
     local existing = AltStableDB[c.guid] or {}
 
-    -- Last-write-wins: keep the local copy only if it is meaningfully newer
-    -- (>60s), matching DeserializeFullDB's merge policy, so a stray older
-    -- single-character update can't clobber fresher data.
-    local existingTime = existing.lastUpdate or 0
-    local incomingTime = c.lastUpdate or 0
-    if existingTime - incomingTime > 60 then
+    -- The same merge rule as DeserializeFullDB, shared so the two paths cannot
+    -- drift - they had: this one never got the first ownership fix.
+    if not ShouldMerge(existing, c) then
         return
     end
 
@@ -1041,10 +1075,10 @@ local function CompleteStream(peer, bkey)
         Print("Receiving data from " .. peer .. "...")
         local before = 0
         for _ in pairs(AltStableDB) do before = before + 1 end
-        local maxTS = DeserializeFullDB(buffer, peer)
+        local maxTS, peerNow = DeserializeFullDB(buffer, peer)
         -- Advance our delta watermark for this peer so the next request only
         -- pulls what changes after this point.
-        AdvancePeerWatermark(peer, ClampWatermark(maxTS))
+        AdvancePeerWatermark(peer, maxTS, peerNow)
         local after = 0
         for _ in pairs(AltStableDB) do after = after + 1 end
         local newChars = after - before
@@ -1292,6 +1326,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if cmd == MSG_REQUEST_V then
             -- payload is the requester's delta watermark (0 / absent => full DB).
             local sinceTS = tonumber(payload) or 0
+            local owedShort = PeerShort(senderName)
+            if (peerScopeEpoch[owedShort] or 0) < scopeEpoch then
+                sinceTS = 0   -- our scope changed since this peer last heard from us
+                peerScopeEpoch[owedShort] = scopeEpoch
+            end
             local replyChannel = (channel == "WHISPER") and "WHISPER" or "GUILD"
             local replyTarget  = (channel == "WHISPER") and senderName or nil
             Print(senderName .. " requested sync — sending data.")
@@ -2127,6 +2166,8 @@ local function ResetSyncState()
     autoRetryCounts = {}
     lastRequestedAt = {}
     syncWatch       = {}
+    scopeEpoch      = 0
+    peerScopeEpoch  = {}
 end
 
 local _seam = {
@@ -2140,7 +2181,11 @@ local _seam = {
     ChunkAndSendPayload = ChunkAndSendPayload,
     RequestCharacters   = RequestCharacters,
     RequestResync       = RequestResync,
-    ClampWatermark      = ClampWatermark,
+    WatermarkCeiling    = WatermarkCeiling,
+    ReceiveCharacter    = ReceiveCharacter,
+    SendFullDatabase    = SendFullDatabase,
+    QueueWire           = QueueWire,
+    SyncScopeEpoch      = function() return scopeEpoch end,
     GetPeerWatermark    = GetPeerWatermark,
     ScanSavedInstances  = ScanSavedInstances,
     ScanMail            = ScanMail,
