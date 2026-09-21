@@ -1,7 +1,7 @@
 # CLAUDE.md — Claude-specific overlay
 
 `AGENTS.md` is the shared, cross-agent baseline (project layout, build/test/deploy, conventions,
-review preferences, and the **model tiers + cost discipline**). This file only adds the
+review policy, and the **model tiers + cost discipline**). This file only adds the
 Claude-specific bits that don't belong in the cross-agent baseline. When the two overlap,
 AGENTS.md is the source of truth.
 
@@ -13,9 +13,9 @@ main thread** — not just architecture calls. Subagents still default to the la
 tier table in `AGENTS.md`. Always use the newest version of each family; don't pin a version
 number here.
 
-**Code review is carved out of this.** The review preferences in `AGENTS.md` govern: GPT-5.6
-family minimum, model and effort recommended per review before starting, never switched
-silently. That rule beats the Opus default whenever the task is a review.
+**Code review is carved out of this.** The shared `$wow-addon-review` skill governs (see "Review
+policy" in `AGENTS.md`): model and effort routing, recommended per review before starting and
+never switched silently. That rule beats the Opus default whenever the task is a review.
 
 ## Adversarial review — prefer a *different* family
 
