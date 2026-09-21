@@ -342,210 +342,109 @@ end
 check("the .toc scan reached the shipped files", scanned >= 8, tostring(scanned))
 
 ------------------------------------------------------------
--- CVar-backed settings store
+-- One write path for AltStableConfig
 --
--- SavedVariables are written and never read back on this client (#23), so the
--- settings that cannot be regenerated live in a CVar instead. These assert the
--- round-trip, the delimiters, and the two traps that make a working store look
--- broken: registering before reading, and a write that silently truncates.
+-- Nothing an addon writes survives a restart on this client (#23), so there
+-- is no store to test. What IS worth pinning is that every mutation converges
+-- on one seam, so the eventual fix lands in one place.
 ------------------------------------------------------------
 
-WoW.cvars = {}
-WoW.cvarLimit = nil
+local changed = {}
+local realOnChanged = AltStable.OnConfigChanged
+AltStable.OnConfigChanged = function(key) changed[#changed + 1] = key end
+
 AltStableConfig = { whitelist = {} }
-
-Slash("whitelist Karuzo Elegia")
-Slash("whitelist Second Surname-RealmName")
-check("saving reports success", AltStable.SaveConfigToCVar() == true)
-check("  and something reached the cvar",
-      type(WoW.cvars["altstable_config"]) == "string" and #WoW.cvars["altstable_config"] > 0,
-      tostring(WoW.cvars["altstable_config"]))
-
--- A fresh session: the table is empty, exactly as #23 leaves it.
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-eq("the whitelist survives a session", #AltStableConfig.whitelist, 2)
-eq("  two-word name intact", AltStableConfig.whitelist[1], "Karuzo Elegia")
-eq("  realm suffix intact", AltStableConfig.whitelist[2], "Second Surname-RealmName")
-
--- Delimiters in a value must not split it. Forever names are space-separated
--- and cross-realm peers carry a suffix; neither is worth trusting to luck.
-AltStableConfig = { whitelist = { "Semi;Colon", "Com,ma", "Equals=Sign", "Per%cent" } }
-check("awkward names save", AltStable.SaveConfigToCVar() == true)
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-eq("a semicolon survives", AltStableConfig.whitelist[1], "Semi;Colon")
-eq("a comma survives", AltStableConfig.whitelist[2], "Com,ma")
-eq("an equals survives", AltStableConfig.whitelist[3], "Equals=Sign")
-eq("a percent survives", AltStableConfig.whitelist[4], "Per%cent")
-eq("  and the list is not split by them", #AltStableConfig.whitelist, 4)
-
--- Booleans round-trip as themselves, not as truthy strings. Written through
--- SetConfigValue, which is what the Options checkboxes call - they used to
--- assign directly and never save, so a test that called SaveConfigToCVar by
--- hand passed while the only UI that changes these settings did nothing.
-AltStableConfig = { whitelist = {} }
-AltStable.SetConfigValue("sendAllAccounts", true)
 AltStable.SetConfigValue("toastsEnabled", false)
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-eq("a true boolean survives", AltStableConfig.sendAllAccounts, true)
-eq("a false boolean survives, rather than reverting to its default",
-   AltStableConfig.toastsEnabled, false)
+eq("SetConfigValue assigns", AltStableConfig.toastsEnabled, false)
+eq("  and reports the key", changed[#changed], "toastsEnabled")
 
--- accountNumber distinguishes two WoW accounts sharing one client install, so
--- it must not ride in a store whose scope is unmeasured. Pin that decision:
--- if someone adds it to PERSISTED without measuring where the CVar lands,
--- this fails.
-WoW.cvars = {}
-AltStableConfig = { whitelist = {} }
-AltStable.SetConfigValue("accountNumber", "7")
-check("the account number is NOT persisted",
-      (WoW.cvars["altstable_config"] or ""):find("accountNumber", 1, true) == nil,
-      WoW.cvars["altstable_config"] or "")
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-eq("  so it comes back empty rather than shared between accounts",
-   AltStableConfig.accountNumber, "")
+changed = {}
+Slash("whitelist Hook Target")
+eq("adding a peer reports through the same hook", changed[#changed], "whitelist")
+changed = {}
+Slash("whitelist remove Hook Target")
+eq("  and so does removing one", changed[#changed], "whitelist")
 
--- The dangerous failure: a write that is accepted but truncated. It reads back
--- as success unless someone checks, and takes half a whitelist with it.
-WoW.cvars = {}
-AltStableConfig = { whitelist = { "Aaaaaaaa Aaaaaaaa", "Bbbbbbbb Bbbbbbbb", "Cccccccc Cccccccc" } }
-WoW.cvarLimit = 30
-WoW.chatOut = {}
-local saved, why = AltStable.SaveConfigToCVar()
-eq("a truncated write is reported as failure", saved, false)
-eq("  with a reason", why, "round-trip mismatch")
-check("  and says so in chat",
-      #WoW.chatOut > 0 and WoW.chatOut[#WoW.chatOut]:find("did not survive", 1, true) ~= nil,
-      WoW.chatOut[#WoW.chatOut] or "(nothing printed)")
-WoW.cvarLimit = nil
+AltStable.OnConfigChanged = realOnChanged
 
--- Registering an existing cvar overwrites it with the default, so a store that
--- registers before reading destroys the value it came for. The stub models
--- that, so this test fails loudly if the order is ever reversed.
-WoW.cvars = {}
-AltStableConfig = { whitelist = { "Karuzo Elegia" } }
-AltStable.SaveConfigToCVar()
-local stored = WoW.cvars["altstable_config"]
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-eq("loading does not register over the stored value", WoW.cvars["altstable_config"], stored)
-eq("  so the whitelist is still there", AltStableConfig.whitelist[1], "Karuzo Elegia")
-
--- A client with no CVar API at all degrades quietly rather than erroring.
-local realGet, realSet, realRegister = GetCVar, SetCVar, RegisterCVar
-GetCVar, SetCVar, RegisterCVar = nil, nil, nil
-AltStableConfig = {}
-local okNoCVar = pcall(AltStable.EnsureConfigDefaults)
-check("a client without CVars still loads defaults", okNoCVar)
-eq("  with an empty whitelist rather than an error", #AltStableConfig.whitelist, 0)
-local okSave, saveErr = AltStable.SaveConfigToCVar()
-eq("  and saving reports failure instead of throwing", okSave, false)
-eq("  with a reason", saveErr, "no SetCVar")
-GetCVar, SetCVar, RegisterCVar = realGet, realSet, realRegister
-
-------------------------------------------------------------
--- The Options UI must persist through SetConfigValue
---
 -- SheetUI.lua is not loadable under wow_stubs.lua, so no behavioural test can
--- reach the checkbox handler - which is exactly how three persisted settings
--- came to be encoded into the store and never written by the only UI that
--- changes them. Reverting that handler to a bare assignment passes every
--- behavioural test in this file. So scan the source, the same way the adapted
--- globals are scanned above.
-------------------------------------------------------------
-
-local sheetSrc = ReadFile("SheetUI.lua")
-check("SheetUI.lua is readable", sheetSrc ~= nil)
-
-if sheetSrc then
-    local code = table.concat(CodeLines(sheetSrc), "\n")
-    check("the Options checkboxes persist through SetConfigValue",
-          code:find("AltStable.SetConfigValue(savedKey", 1, true) ~= nil,
-          "MakeOptCheckRow must not assign AltStableConfig[savedKey] directly - "
-          .. "a setting in PERSISTED would then never be written by the UI")
-    check("the account box persists through SetConfigValue",
-          code:find('SetConfigValue("accountNumber"', 1, true) ~= nil,
-          "the Options account box must route through the persisting path")
+-- reach its handlers - reverting the checkbox to a bare assignment passes
+-- every test above. Scan the source for the wiring instead, the same way the
+-- adapted globals are scanned.
+local function SourceHas(path, needle)
+    local src = ReadFile(path)
+    if not src then return false end
+    for _, line in ipairs(CodeLines(src)) do
+        if line:find(needle, 1, true) then return true end
+    end
+    return false
 end
 
+check("the Options checkboxes write through SetConfigValue",
+      SourceHas("SheetUI.lua", "AltStable.SetConfigValue(savedKey"),
+      "MakeOptCheckRow must not assign AltStableConfig[savedKey] directly")
+check("the Options account box writes through SetConfigValue",
+      SourceHas("SheetUI.lua", 'SetConfigValue("accountNumber"'))
+check("/alts account writes through SetConfigValue",
+      SourceHas("Core.lua", 'SetConfigValue("accountNumber"'))
+
 ------------------------------------------------------------
--- Did the client update?
+-- Has Blizzard fixed it?
 --
--- Every measured finding belongs to one build, and nobody watches the
--- launcher. The build rides in the store - the only thing that persists on
--- this client - so a mismatch at login can say so.
-------------------------------------------------------------
-
-WoW.cvars = {}
-AltStableConfig = {}
-WoW.chatOut = {}
-AltStable.EnsureConfigDefaults()
-AltStable.CheckClientBuild()
-check("a first run says nothing about the build", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-eq("  but records the build it ran on", AltStableConfig.clientBuild, "69913")
-
--- Same build again: silence. This runs at every login, so a chatty version
--- would be worse than no check at all.
-WoW.chatOut = {}
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-AltStable.CheckClientBuild()
-eq("the stored build survives a session", AltStableConfig.clientBuild, "69913")
-check("  and an unchanged build stays quiet", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-
--- The client updates underneath us.
-local realBuildInfo = GetBuildInfo
-GetBuildInfo = function() return "1.60.2", "70001", "Oct 01 2026", 16001 end
-WoW.chatOut = {}
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-AltStable.CheckClientBuild()
-check("a changed build is announced",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("build changed", 1, true) ~= nil,
-      WoW.chatOut[1] or "(nothing printed)")
-check("  naming both builds",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("69913", 1, true) ~= nil
-      and WoW.chatOut[1]:find("70001", 1, true) ~= nil, WoW.chatOut[1] or "")
-check("  and what to re-check",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("/apidump", 1, true) ~= nil
-      and WoW.chatOut[1]:find("#23", 1, true) ~= nil, WoW.chatOut[1] or "")
-eq("  then records the new build", AltStableConfig.clientBuild, "70001")
-
--- And stops announcing it once recorded.
-WoW.chatOut = {}
-AltStableConfig = {}
-AltStable.EnsureConfigDefaults()
-AltStable.CheckClientBuild()
-check("the new build is then quiet too", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-GetBuildInfo = realBuildInfo
-
-------------------------------------------------------------
--- Has the client been fixed?
---
--- The store is a workaround, and workarounds outlive their cause silently.
 -- svLoadCheck can only come back if the client actually read the file.
 ------------------------------------------------------------
 
 AltStableConfig = {}
 WoW.chatOut = {}
 AltStable.CheckSavedVariablesLoad()
-check("a first run says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-check("  but leaves a marker for next time",
+check("a first session says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  but leaves a marker for the next one",
       type(AltStableConfig.svLoadCheck) == "table" and AltStableConfig.svLoadCheck.stamp ~= nil)
 
--- Simulate the client starting to load SavedVariables again: the marker is
--- present at login because the file came back.
+-- The client starts loading SavedVariables again: the marker is still there.
 WoW.chatOut = {}
 AltStable.CheckSavedVariablesLoad()
 check("a marker that survived is announced",
       #WoW.chatOut > 0 and WoW.chatOut[1]:find("SavedVariables loaded", 1, true) ~= nil,
       WoW.chatOut[1] or "(nothing printed)")
-check("  and names the issue to retire",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("#23", 1, true) ~= nil,
+check("  and says to confirm with a real exit, not /reload",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("full exit", 1, true) ~= nil,
       WoW.chatOut[1] or "")
+
+------------------------------------------------------------
+-- Which build were the findings measured on?
+--
+-- A constant in the source, because the source is the only thing that
+-- survives a restart here.
+------------------------------------------------------------
+
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("the measured build stays quiet", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+
+local realBuildInfo = GetBuildInfo
+GetBuildInfo = function() return "1.60.2", "70001", "Oct 01 2026", 16001 end
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("a different build is announced",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("70001", 1, true) ~= nil
+      and WoW.chatOut[1]:find(AltStable.MEASURED_ON_BUILD, 1, true) ~= nil,
+      WoW.chatOut[1] or "(nothing printed)")
+check("  saying what to re-check and what to bump",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("/apidump", 1, true) ~= nil
+      and WoW.chatOut[1]:find("MEASURED_ON_BUILD", 1, true) ~= nil,
+      WoW.chatOut[1] or "")
+
+-- It keeps saying so until someone re-measures and bumps the constant.
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("  and keeps saying so on the next login", #WoW.chatOut > 0)
+
+GetBuildInfo = function() return nil end
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("an unreadable build is not treated as a new one", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+GetBuildInfo = realBuildInfo
 
 ------------------------------------------------------------
 
