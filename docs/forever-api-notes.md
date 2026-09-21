@@ -533,10 +533,33 @@ never reads. They do not: `SetCVar(name, 12)` then reading both ways returns `12
 consistent everywhere. The camera simply does not consult it.
 
 **It is the whole family, not one CVar.** `test_cameraDynamicPitch` set to `1` and confirmed
-changes nothing either - no tilt while moving, where a working one is unmistakable. So no
-`test_*` camera CVar is consulted by the camera on this client, and nothing built on `SetCVar` will
-ever reframe the view here. #25 is the casualty: lateral character placement moves to the window,
-not the camera.
+changes nothing either - no tilt while moving, where a working one is unmistakable.
+
+**And it is inert even when driven exactly as Narcissus drives it.** Narcissus 1.8.6 (Retail,
+Interface 120100) still uses this CVar through the plain global `SetCVar`, with two steps we were
+missing:
+
+```lua
+-- Narcissus/API/Camera.lua:198 - the engine does not recompute the offset
+-- until the camera is nudged
+CameraZoomIn(0);            --Incur shoulder update
+
+-- Narcissus/API/Camera.lua:600 - the popup is an INTERNAL event in 12.1.0,
+-- not a frame-registered one
+GameEvent.UnregisterInternalEvent("EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED")
+```
+
+Both applied together, and the character still does not move. So this is not a matter of driving
+it wrong.
+
+**Treat it as a beta bug, not a permanent client limitation.** Forever is Mainline-derived and this
+is a working Mainline feature, so the likeliest explanation is that it is broken on this build
+rather than absent by design. Reported to Blizzard 2026-09-20 against 1.60.1.69913. Re-test on
+every new build before designing around it (#25).
+
+The `GameEvent` finding stands on its own merit: it is the correct way to suppress that popup on a
+Mainline client, and it works here, where walking the frames registered for the event does not -
+even though the frame walk reports success.
 
 ---
 
