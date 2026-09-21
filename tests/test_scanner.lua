@@ -342,6 +342,119 @@ end
 check("the .toc scan reached the shipped files", scanned >= 8, tostring(scanned))
 
 ------------------------------------------------------------
+-- CVar-backed settings store
+--
+-- SavedVariables are written and never read back on this client (#23), so the
+-- settings that cannot be regenerated live in a CVar instead. These assert the
+-- round-trip, the delimiters, and the two traps that make a working store look
+-- broken: registering before reading, and a write that silently truncates.
+------------------------------------------------------------
+
+WoW.cvars = {}
+WoW.cvarLimit = nil
+AltStableConfig = { whitelist = {} }
+
+Slash("whitelist Karuzo Elegia")
+Slash("whitelist Second Surname-RealmName")
+AltStableConfig.accountNumber = "2"
+check("saving reports success", AltStable.SaveConfigToCVar() == true)
+check("  and something reached the cvar",
+      type(WoW.cvars["altstable_config"]) == "string" and #WoW.cvars["altstable_config"] > 0,
+      tostring(WoW.cvars["altstable_config"]))
+
+-- A fresh session: the table is empty, exactly as #23 leaves it.
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+eq("the whitelist survives a session", #AltStableConfig.whitelist, 2)
+eq("  two-word name intact", AltStableConfig.whitelist[1], "Karuzo Elegia")
+eq("  realm suffix intact", AltStableConfig.whitelist[2], "Second Surname-RealmName")
+eq("  account number intact", AltStableConfig.accountNumber, "2")
+
+-- Delimiters in a value must not split it. Forever names are space-separated
+-- and cross-realm peers carry a suffix; neither is worth trusting to luck.
+AltStableConfig = { whitelist = { "Semi;Colon", "Com,ma", "Equals=Sign", "Per%cent" } }
+check("awkward names save", AltStable.SaveConfigToCVar() == true)
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+eq("a semicolon survives", AltStableConfig.whitelist[1], "Semi;Colon")
+eq("a comma survives", AltStableConfig.whitelist[2], "Com,ma")
+eq("an equals survives", AltStableConfig.whitelist[3], "Equals=Sign")
+eq("a percent survives", AltStableConfig.whitelist[4], "Per%cent")
+eq("  and the list is not split by them", #AltStableConfig.whitelist, 4)
+
+-- Booleans round-trip as themselves, not as truthy strings.
+AltStableConfig = { whitelist = {}, sendAllAccounts = true, toastsEnabled = false }
+AltStable.SaveConfigToCVar()
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+eq("a true boolean survives", AltStableConfig.sendAllAccounts, true)
+eq("a false boolean survives, rather than reverting to its default",
+   AltStableConfig.toastsEnabled, false)
+
+-- The dangerous failure: a write that is accepted but truncated. It reads back
+-- as success unless someone checks, and takes half a whitelist with it.
+WoW.cvars = {}
+AltStableConfig = { whitelist = { "Aaaaaaaa Aaaaaaaa", "Bbbbbbbb Bbbbbbbb", "Cccccccc Cccccccc" } }
+WoW.cvarLimit = 30
+WoW.chatOut = {}
+local saved, why = AltStable.SaveConfigToCVar()
+eq("a truncated write is reported as failure", saved, false)
+eq("  with a reason", why, "round-trip mismatch")
+check("  and says so in chat",
+      #WoW.chatOut > 0 and WoW.chatOut[#WoW.chatOut]:find("did not survive", 1, true) ~= nil,
+      WoW.chatOut[#WoW.chatOut] or "(nothing printed)")
+WoW.cvarLimit = nil
+
+-- Registering an existing cvar overwrites it with the default, so a store that
+-- registers before reading destroys the value it came for. The stub models
+-- that, so this test fails loudly if the order is ever reversed.
+WoW.cvars = {}
+AltStableConfig = { whitelist = { "Karuzo Elegia" } }
+AltStable.SaveConfigToCVar()
+local stored = WoW.cvars["altstable_config"]
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+eq("loading does not register over the stored value", WoW.cvars["altstable_config"], stored)
+eq("  so the whitelist is still there", AltStableConfig.whitelist[1], "Karuzo Elegia")
+
+-- A client with no CVar API at all degrades quietly rather than erroring.
+local realGet, realSet, realRegister = GetCVar, SetCVar, RegisterCVar
+GetCVar, SetCVar, RegisterCVar = nil, nil, nil
+AltStableConfig = {}
+local okNoCVar = pcall(AltStable.EnsureConfigDefaults)
+check("a client without CVars still loads defaults", okNoCVar)
+eq("  with an empty whitelist rather than an error", #AltStableConfig.whitelist, 0)
+local okSave, saveErr = AltStable.SaveConfigToCVar()
+eq("  and saving reports failure instead of throwing", okSave, false)
+eq("  with a reason", saveErr, "no SetCVar")
+GetCVar, SetCVar, RegisterCVar = realGet, realSet, realRegister
+
+------------------------------------------------------------
+-- Has the client been fixed?
+--
+-- The store is a workaround, and workarounds outlive their cause silently.
+-- svLoadCheck can only come back if the client actually read the file.
+------------------------------------------------------------
+
+AltStableConfig = {}
+WoW.chatOut = {}
+AltStable.CheckSavedVariablesLoad()
+check("a first run says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  but leaves a marker for next time",
+      type(AltStableConfig.svLoadCheck) == "table" and AltStableConfig.svLoadCheck.stamp ~= nil)
+
+-- Simulate the client starting to load SavedVariables again: the marker is
+-- present at login because the file came back.
+WoW.chatOut = {}
+AltStable.CheckSavedVariablesLoad()
+check("a marker that survived is announced",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("SavedVariables loaded", 1, true) ~= nil,
+      WoW.chatOut[1] or "(nothing printed)")
+check("  and names the issue to retire",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("#23", 1, true) ~= nil,
+      WoW.chatOut[1] or "")
+
+------------------------------------------------------------
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

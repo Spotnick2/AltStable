@@ -1982,6 +1982,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
         end
         AltStableConfig = AltStableConfig or {}
         AltStableConfig.accountNumber = num
+        if AltStable.SaveConfigToCVar then AltStable.SaveConfigToCVar() end
         Print("Account number set to " .. num .. ". It will be included on next scan/sync.")
         return
     end

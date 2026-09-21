@@ -2747,6 +2747,7 @@ local function CreateFrameIfNeeded()
         local v = tonumber(self:GetText())
         AltStableConfig = AltStableConfig or {}
         AltStableConfig.accountNumber = v or ""
+        if AltStable.SaveConfigToCVar then AltStable.SaveConfigToCVar() end
         self:ClearFocus()
     end)
     optAcctBox:SetScript("OnEscapePressed", function(self)

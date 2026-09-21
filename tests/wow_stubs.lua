@@ -36,6 +36,8 @@ local WoW = {
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
     eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
+    cvars       = {},   -- [name] = string, standing in for Config.wtf
+    cvarLimit   = nil,  -- set to model a client that truncates long values
 }
 
 function WoW.reset()
@@ -46,6 +48,8 @@ function WoW.reset()
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
+    WoW.cvars = {}
+    WoW.cvarLimit = nil
 end
 
 ------------------------------------------------------------
@@ -301,11 +305,44 @@ function GetGuildInfo() return nil end
 -- never as a table. A stub that returned a table would let the exact bug this
 -- models ship again: one return value binds the first FRAME, which is itself a
 -- table, so a type() check passes and the list reads as empty.
+-- CVars persist on this client where SavedVariables do not, so the settings
+-- store rides on them. Modelled with the two properties that matter: SetCVar
+-- reports success, and a value can come back SHORTER than it went in. A stub
+-- that always round-tripped perfectly would let a silent truncation ship.
+function GetCVar(name)
+    return WoW.cvars[name]
+end
+
+function SetCVar(name, value)
+    value = tostring(value or "")
+    if WoW.cvarLimit and #value > WoW.cvarLimit then
+        value = value:sub(1, WoW.cvarLimit)
+    end
+    WoW.cvars[name] = value
+    return true
+end
+
+-- Registering an EXISTING cvar overwrites it with the default - the trap that
+-- makes a working store look broken. Modelled faithfully so a test can catch
+-- a caller that registers before it reads.
+function RegisterCVar(name, default)
+    WoW.cvars[name] = tostring(default or "")
+end
+
+C_CVar = {
+    GetCVar      = function(name) return GetCVar(name) end,
+    SetCVar      = function(name, value) return SetCVar(name, value) end,
+    RegisterCVar = function(name, default) return RegisterCVar(name, default) end,
+}
+
 function GetFramesRegisteredForEvent(event)
     return unpack(WoW.eventFrames[event] or {})
 end
 
 function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
+-- Four returns, in this order. The port reads build from the second.
+function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
+
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return 1 end
 function GetTime() return 0 end

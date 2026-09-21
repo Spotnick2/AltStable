@@ -47,6 +47,15 @@ local function Seed()
     -- surname, and CHAT_MSG_ADDON reports the sender that way, so the
     -- whitelist has to match it exactly.
     local me = (UnitName and UnitName("player")) or ""
+
+    -- Stand aside once the real store works. AltStable now persists the
+    -- whitelist in a CVar, and this assigns rather than merges - so seeding
+    -- over a populated list would silently discard peers the user added, at
+    -- every login, and look exactly like "the store does not persist".
+    if type(AltStableConfig.whitelist) == "table" and #AltStableConfig.whitelist > 0 then
+        return me, #AltStableConfig.whitelist, true
+    end
+
     local list = {}
     for _, name in ipairs(PEERS) do
         if name ~= me then list[#list + 1] = name end

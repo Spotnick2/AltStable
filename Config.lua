@@ -17,10 +17,179 @@ AltStableConfig = AltStableConfig or {}
 local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 
 ------------------------------------------------------------
+-- CVar-backed settings store
+--
+-- This client writes SavedVariables and never reads them back (#23), so
+-- AltStableConfig is empty at every login: no whitelist, no account number,
+-- nothing. CVars DO persist - measured across three sessions on 1.60.1.69913,
+-- surviving /reload, loaded from Config.wtf before anything registers them.
+-- So the settings that cannot be regenerated live in a CVar until the client
+-- is fixed.
+--
+-- Deliberately small. Only values that are set once and never derived go in
+-- here: a roster entry rewrites itself on every scan, but a whitelist the user
+-- typed is gone forever. Keeping the payload short also keeps us clear of a
+-- value-length limit nobody has measured yet.
+--
+-- Two traps, both measured:
+--
+--   * READ BEFORE REGISTERING. RegisterCVar(name, default) takes a default, so
+--     registering first can overwrite the value you were about to read - and
+--     the whole store then looks like it never persisted.
+--   * Client-local. GetCVarInfo reports isStoredServerAccount and
+--     isStoredServerCharacter both false, so settings do not follow the player
+--     to another machine. Acceptable for a per-client whitelist; say so rather
+--     than let someone discover it.
+------------------------------------------------------------
+
+local STORE_CVAR = "altstable_config"
+
+-- What persists, and how to read it back. Extend this list rather than the
+-- encoder; `kind` is all the encoder needs to know.
+local PERSISTED = {
+    { key = "accountNumber",    kind = "string" },
+    { key = "syncMode",         kind = "string" },
+    { key = "whitelist",        kind = "list"   },
+    { key = "sendAllAccounts",  kind = "bool"   },
+    { key = "toastsEnabled",    kind = "bool"   },
+    { key = "mailAlertsEnabled",kind = "bool"   },
+}
+
+-- `;` separates pairs, `,` separates list items, `=` separates key from value.
+-- Those three and `%` itself are percent-encoded so a character name can
+-- contain anything: Forever surnames are space-separated and cross-realm peers
+-- carry a "-Realm" suffix, and neither is worth trusting to luck. Quotes and
+-- newlines are avoided entirely - Config.wtf stores values as SET name "value"
+-- and nobody has measured what it does with either.
+local function Escape(v)
+    return (tostring(v or "")
+        :gsub("%%", "%%25")
+        :gsub(";", "%%3B")
+        :gsub(",", "%%2C")
+        :gsub("=", "%%3D"))
+end
+
+local function Unescape(v)
+    return (tostring(v or "")
+        :gsub("%%3D", "=")
+        :gsub("%%2C", ",")
+        :gsub("%%3B", ";")
+        :gsub("%%25", "%%"))
+end
+
+local function EncodeConfig(cfg)
+    local parts = {}
+    for _, field in ipairs(PERSISTED) do
+        local v = cfg[field.key]
+        if field.kind == "list" then
+            if type(v) == "table" and #v > 0 then
+                local items = {}
+                for i, item in ipairs(v) do items[i] = Escape(item) end
+                parts[#parts + 1] = field.key .. "=" .. table.concat(items, ",")
+            end
+        elseif field.kind == "bool" then
+            if v ~= nil then
+                parts[#parts + 1] = field.key .. "=" .. (v and "1" or "0")
+            end
+        elseif v ~= nil and v ~= "" then
+            parts[#parts + 1] = field.key .. "=" .. Escape(v)
+        end
+    end
+    return table.concat(parts, ";")
+end
+
+local function DecodeConfig(raw, cfg)
+    if type(raw) ~= "string" or raw == "" then return 0 end
+
+    local kinds = {}
+    for _, field in ipairs(PERSISTED) do kinds[field.key] = field.kind end
+
+    local applied = 0
+    for pair in raw:gmatch("[^;]+") do
+        local key, value = pair:match("^([^=]+)=(.*)$")
+        local kind = key and kinds[key]
+        if kind == "list" then
+            local list = {}
+            for item in value:gmatch("[^,]+") do
+                list[#list + 1] = Unescape(item)
+            end
+            cfg[key] = list
+            applied = applied + 1
+        elseif kind == "bool" then
+            cfg[key] = (value == "1")
+            applied = applied + 1
+        elseif kind then
+            cfg[key] = Unescape(value)
+            applied = applied + 1
+        end
+        -- An unknown key is left alone rather than dropped: an older client
+        -- reading a newer store should ignore what it cannot use, not discard
+        -- it. Since we rewrite the whole value on save, that is a one-way
+        -- tolerance - noted rather than solved, because nothing writes two
+        -- versions of this store today.
+    end
+    return applied
+end
+
+local function StoreRead()
+    if type(GetCVar) ~= "function" then return nil end
+    local ok, raw = pcall(GetCVar, STORE_CVAR)
+    if ok then return raw end
+    return nil
+end
+
+local function StoreEnsureRegistered()
+    -- Only ever register when the CVar is genuinely absent. Registering an
+    -- existing one with a default is how you destroy the value you came for.
+    if StoreRead() ~= nil then return true end
+    local register = RegisterCVar or (C_CVar and C_CVar.RegisterCVar)
+    if type(register) ~= "function" then return false end
+    return (pcall(register, STORE_CVAR, ""))
+end
+
+function AltStable.LoadConfigFromCVar()
+    local raw = StoreRead()
+    if raw == nil then return 0 end
+    return DecodeConfig(raw, AltStableConfig)
+end
+
+function AltStable.SaveConfigToCVar()
+    if type(SetCVar) ~= "function" then return false, "no SetCVar" end
+    StoreEnsureRegistered()
+
+    local encoded = EncodeConfig(AltStableConfig)
+    local ok = pcall(SetCVar, STORE_CVAR, encoded)
+    if not ok then return false, "SetCVar threw" end
+
+    -- Verify rather than trust. A write that is REFUSED is easy to notice; a
+    -- write that silently truncates is the one that quietly loses half a
+    -- whitelist and reads back as success. Neither has been measured on this
+    -- client, so check the round-trip every time - it costs one string
+    -- comparison against a value we already have in hand.
+    local readBack = StoreRead()
+    if readBack ~= encoded then
+        if DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                "|cffff5555AltStable:|r settings did not survive the write ("
+                .. #encoded .. " chars sent, "
+                .. (readBack and #readBack or 0) .. " read back). "
+                .. "Your whitelist may not persist - please report this with your settings count.")
+        end
+        return false, "round-trip mismatch"
+    end
+    return true
+end
+
+
+------------------------------------------------------------
 -- Defaults
 ------------------------------------------------------------
 
 local function EnsureDefaults()
+    -- Before the defaults, not after: a default applied first would look like
+    -- a real setting and be written back over the stored one.
+    AltStable.LoadConfigFromCVar()
+
     AltStableConfig.syncMode      = AltStableConfig.syncMode      or "whisper"
     AltStableConfig.whitelist     = AltStableConfig.whitelist     or {}
     AltStableConfig.accountNumber = AltStableConfig.accountNumber or ""
@@ -192,6 +361,7 @@ end
 local function AddToWhitelist(name)
     if name == "" or IsWhitelisted(name) then return false end
     table.insert(AltStableConfig.whitelist, name)
+    AltStable.SaveConfigToCVar()
     return true
 end
 
@@ -199,6 +369,7 @@ local function RemoveFromWhitelist(name)
     for i, n in ipairs(AltStableConfig.whitelist) do
         if n:lower() == name:lower() then
             table.remove(AltStableConfig.whitelist, i)
+            AltStable.SaveConfigToCVar()
             return true
         end
     end
@@ -235,8 +406,44 @@ end
 -- Init on login
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Has the client been fixed?
+--
+-- The CVar store is a workaround for #23, and workarounds outlive their cause
+-- silently. AltStableConfig.svLoadCheck is written every session and can only
+-- come back if the client actually loaded the SavedVariables file - so its
+-- presence at login is proof the bug is gone, on whichever build fixed it.
+--
+-- This has to live in the addon rather than in Tools/AltStableProbe: the probe
+-- answers the question when someone remembers to ask, and the point is to be
+-- told without asking, on the first login after a client update.
+------------------------------------------------------------
+
+local function CheckSavedVariablesLoad()
+    local previous = AltStableConfig.svLoadCheck
+    local build = (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or "?"
+
+    if type(previous) == "table" and previous.stamp then
+        if DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                "|cff55ff55AltStable:|r account-wide SavedVariables loaded this session "
+                .. "(written " .. tostring(previous.stamp)
+                .. " on build " .. tostring(previous.build) .. "; now on " .. tostring(build) .. "). "
+                .. "Issue #23 looks fixed - the CVar-backed settings store can be retired.")
+        end
+    end
+
+    AltStableConfig.svLoadCheck = {
+        stamp = (type(date) == "function" and date("%Y-%m-%d %H:%M:%S")) or "?",
+        build = build,
+    }
+end
+
+AltStable.CheckSavedVariablesLoad = CheckSavedVariablesLoad
+
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:SetScript("OnEvent", function()
+    CheckSavedVariablesLoad()
     EnsureDefaults()
 end)
