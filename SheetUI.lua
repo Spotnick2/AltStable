@@ -824,9 +824,11 @@ AltStable._PlayOpenAnimation = PlayOpenAnimation
 
 local minimapBtn
 
--- How far outside the minimap edge the button centre sits. LibDBIcon uses ~5;
--- ours carries a 54px tracking border around a 31px button, so it needs a
--- little more clearance to clear the ring art.
+-- How far past the minimap edge the button centre sits, in minimap-frame
+-- units. Tuned by eye against a 31px button inside a 54px tracking border:
+-- lower it if the button floats, raise it if the ring art clips. No claim
+-- here about what any library uses - LibDBIcon is not vendored, so that would
+-- be an unverifiable number to tune against.
 local MINIMAP_BUTTON_CLEARANCE = 10
 
 local function PositionMinimapButton()
@@ -842,9 +844,17 @@ local function PositionMinimapButton()
     -- tracks whatever size the client (or the player's UI scale) gives us.
     --
     -- The button is a child of Minimap, so these are already in the same
-    -- coordinate space - no scale conversion needed. Width and height are
-    -- taken separately so a non-square minimap still gets its buttons on the
-    -- edge rather than on an inscribed circle.
+    -- coordinate space - no scale conversion needed. Width and height are read
+    -- separately so a minimap FRAME that is not square still tracks its own
+    -- edge on each axis.
+    --
+    -- This places on an ellipse, which is the right answer for the round
+    -- minimap this client ships and for any rectangular frame. It is NOT a
+    -- square-minimap solution: a reskin that makes the map square leaves a
+    -- button at 45 degrees short of the corner and therefore inside the map.
+    -- LibDBIcon handles that with GetMinimapShape() and a per-quadrant
+    -- diagonal clamp; if a square reskin ever matters here, that is the
+    -- mechanism to copy rather than widening this.
     local w, h = Minimap:GetWidth() or 0, Minimap:GetHeight() or 0
     local rx = (w > 0 and w / 2 or 70) + MINIMAP_BUTTON_CLEARANCE
     local ry = (h > 0 and h / 2 or 70) + MINIMAP_BUTTON_CLEARANCE
@@ -930,8 +940,15 @@ local function CreateMinimapButton()
     -- The minimap can be resized after we place the button (UI scale changes,
     -- another addon reskinning the cluster). Follow it rather than stranding
     -- the button at the old radius.
+    --
+    -- Recorded rather than silently swallowed: without the flag, a client
+    -- where this throws is indistinguishable from one that simply never
+    -- resized. `/dump AltStable._minimapButton._followsResize` answers it.
     if type(Minimap.HookScript) == "function" then
-        pcall(Minimap.HookScript, Minimap, "OnSizeChanged", PositionMinimapButton)
+        btn._followsResize =
+            pcall(Minimap.HookScript, Minimap, "OnSizeChanged", PositionMinimapButton)
+    else
+        btn._followsResize = false
     end
 
     if AltStableConfig.minimapButton.hide then
