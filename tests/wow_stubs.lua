@@ -251,7 +251,10 @@ C_AddOns = {
 C_ChatInfo = {
     RegisterAddonMessagePrefix = function() return true end,
     SendAddonMessage = function(prefix, text, channel, target)
-        table.insert(WoW.sent, { prefix = prefix, text = text, channel = channel, target = target })
+        -- prio is set only when the send came through ChatThrottleLib, so a
+        -- raw send is distinguishable from a paced one.
+        table.insert(WoW.sent, { prefix = prefix, text = text, channel = channel,
+                                 target = target, prio = WoW.pendingPrio })
         return true
     end,
 }
@@ -293,8 +296,11 @@ SlashCmdList = {}
 UISpecialFrames = {}
 function ChatFrame_AddMessageEventFilter() end
 ChatThrottleLib = {
-    SendAddonMessage = function(_, _, prefix, text, channel, target)
-        return C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
+    SendAddonMessage = function(_, prio, prefix, text, channel, target)
+        WoW.pendingPrio = prio
+        local r = C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
+        WoW.pendingPrio = nil
+        return r
     end,
 }
 function GetGuildInfo() return nil end

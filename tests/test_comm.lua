@@ -631,6 +631,32 @@ check(not delta:find("Player-DS-old", 1, true), "delta excludes a character not 
 check(delta:find("Player-DS-new", 1, true), "delta includes a character changed since the watermark")
 
 ------------------------------------------------------------
+-- #20 bug 2: an echoed OWN character keeps its local-only fields
+--
+-- gearlink_ and gearsubtype_ never travel on the wire, so the merge cannot
+-- restore them. They survive while the slot still holds the item they
+-- describe, and go the moment it holds something else.
+------------------------------------------------------------
+
+WoW.reset()
+AltStableDB = { ["Player-Own-1"] = {
+    guid = "Player-Own-1", name = "Mine", class = "PRIEST", level = 60,
+    gearid_head = 555, gearlink_head = "|Hitem:555|h[Helm]|h", gearsubtype_head = "Cloth",
+    gearid_chest = 777, gearlink_chest = "|Hitem:777|h[Robe]|h", gearsubtype_chest = "Cloth",
+    lastUpdate = 1000,
+} }
+-- A peer echoes our own record back: head unchanged, chest swapped for 888.
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Own-1", name = "Mine", class = "PRIEST", level = 60,
+      gearid_head = 555, gearid_chest = 888, lastUpdate = 1000 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+local own = AltStableDB["Player-Own-1"]
+eq(own.gearlink_head, "|Hitem:555|h[Helm]|h", "an echoed own character keeps the link for an unchanged slot")
+eq(own.gearsubtype_head, "Cloth", "  and the local-only subtype with it")
+eq(own.gearlink_chest, nil, "a slot now holding a different item loses its stale link")
+eq(own.gearsubtype_chest, nil, "  and its stale subtype")
+
+------------------------------------------------------------
 -- 26. Delta sync: the watermark advances after a successful receive
 ------------------------------------------------------------
 
@@ -646,6 +672,67 @@ local wmWire = WoW.sentMessages()
 AltStableDB = {}
 for _, m in ipairs(wmWire) do receive(m, "Wmpeer-Realm") end
 eq(AltStableConfig.peerWatermarks["Wmpeer"], 1200, "watermark advances to the newest received lastUpdate")
+
+------------------------------------------------------------
+-- #20 bug 1: a fast third-party clock cannot drag the watermark forward
+--
+-- A peer relays records it received from others, stamped by THEIR clocks. One
+-- from a machine an hour fast used to push our watermark an hour past the
+-- peer's own clock, so the peer's own changes were silently filtered out.
+------------------------------------------------------------
+
+WoW.reset(); WoW.now = 100000
+AltStableConfig = { peerWatermarks = {} }
+AltStableDB = {
+    ["Player-Relay-1"] = { guid = "Player-Relay-1", name = "Relayed", class = "MAGE",
+                           ilvl = 1, lastUpdate = 100000 + 3600 },
+    ["Player-Peer-1"]  = { guid = "Player-Peer-1", name = "Theirs", class = "MAGE",
+                           ilvl = 1, lastUpdate = 99990 },
+}
+T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")
+WoW.flushTimers()
+local fastWire = WoW.sentMessages()
+AltStableDB = {}
+for _, m in ipairs(fastWire) do receive(m, "Fastpeer-Realm") end
+local fwm = AltStableConfig.peerWatermarks["Fastpeer"]
+check(fwm and fwm <= 100000, "a future-dated relayed record cannot push the watermark past our clock (got " .. tostring(fwm) .. ")")
+check(fwm and fwm <= 99990, "  and it stays below the peer's own recent change, so that is re-requested")
+eq(T.ClampWatermark(1200), 1200, "an old watermark is left exact")
+
+------------------------------------------------------------
+-- #20 bug 3: every REQ goes through ChatThrottleLib at ALERT, never raw
+------------------------------------------------------------
+
+WoW.reset()
+T.RequestCharacters("WHISPER", "Alertpeer", true)
+local areq = WoW.sent[#WoW.sent]
+check(areq and isReq(areq.text), "a REQ was sent")
+eq(areq and areq.prio, "ALERT", "the REQ is paced by ChatThrottleLib at ALERT priority")
+
+WoW.reset()
+T.RequestResync("Retrypeer", "test.")
+WoW.flushTimers()
+local rreq
+for _, s in ipairs(WoW.sent) do if isReq(s.text) then rreq = s end end
+eq(rreq and rreq.prio, "ALERT", "a resync REQ is paced at ALERT too")
+
+------------------------------------------------------------
+-- #20 bug 4: changing sync scope resets the watermarks
+--
+-- Newly eligible characters carry lastUpdate values below every watermark, so
+-- without a reset they are never sent.
+------------------------------------------------------------
+
+AltStableConfig = { peerWatermarks = { A = 500, B = 900 }, sendAllAccounts = false }
+AltStable.SetConfigValue("theme", "dark")
+eq(AltStableConfig.peerWatermarks.A, 500, "an unrelated setting leaves the watermarks alone")
+AltStable.SetConfigValue("sendAllAccounts", false)
+eq(AltStableConfig.peerWatermarks.A, 500, "re-setting a scope setting to its current value leaves them alone")
+AltStable.SetConfigValue("sendAllAccounts", true)
+eq(next(AltStableConfig.peerWatermarks), nil, "turning on send-all-accounts resets every watermark")
+AltStableConfig.peerWatermarks = { A = 500 }
+AltStable.SetConfigValue("accountNumber", "2")
+eq(next(AltStableConfig.peerWatermarks), nil, "changing the account number resets them too")
 
 ------------------------------------------------------------
 -- 27. Delta sync: a REQ carries our watermark for that peer

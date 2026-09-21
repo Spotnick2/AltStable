@@ -46,10 +46,22 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 function AltStable.OnConfigChanged(key)
 end
 
+-- Settings that decide WHICH characters sync. Changing one makes characters
+-- newly eligible whose lastUpdate sits below every peer's delta watermark, so
+-- they would be filtered out of every delta and never sent - the user ticks
+-- "send all accounts" and nothing arrives. Resetting the watermarks makes the
+-- next exchange a full one. Handled here because this is the one path every
+-- writer uses: the Options checkbox, the account box and /alts account.
+local SYNC_SCOPE_KEYS = { sendAllAccounts = true, accountNumber = true }
+
 function AltStable.SetConfigValue(key, value)
     AltStableConfig = AltStableConfig or {}
+    local previous = AltStableConfig[key]
     AltStableConfig[key] = value
     AltStable.OnConfigChanged(key)
+    if SYNC_SCOPE_KEYS[key] and previous ~= value and AltStable.ResetPeerWatermarks then
+        AltStable.ResetPeerWatermarks()
+    end
 end
 
 ------------------------------------------------------------

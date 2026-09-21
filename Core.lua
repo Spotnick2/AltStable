@@ -334,10 +334,18 @@ end
 -- intact — never split across two packets.
 local CHAR_SEP = "==END=="
 
--- Per-peer delta-sync watermark: the newest lastUpdate VALUE we have received
--- from that peer. It is the peer's OWN timestamp, so we never compare across
--- machine clocks. Persisted in AltStableConfig.peerWatermarks, keyed by the
+-- Per-peer delta-sync watermark: the lastUpdate value we ask a peer to send
+-- changes since. Persisted in AltStableConfig.peerWatermarks, keyed by the
 -- realm-less short name so a REQ target and its reply sender map to one entry.
+--
+-- This comment used to claim the watermark is the peer's OWN timestamp, so no
+-- two machine clocks are ever compared. It never was: a peer relays every
+-- record it holds, including characters it received from third parties, whose
+-- lastUpdate came from THEIR clocks. One relayed record from a machine running
+-- an hour fast pushed the watermark an hour past the peer's own clock, and every
+-- change the peer then made to its own characters fell below the delta filter
+-- until real time caught up - silent, and self-healing, so it looked like flaky
+-- sync. See ClampWatermark.
 local function PeerShort(name)
     return (name and name:match("^([^%-]+)")) or name
 end
@@ -346,6 +354,17 @@ local function GetPeerWatermark(name)
     AltStableConfig.peerWatermarks = AltStableConfig.peerWatermarks or {}
     return AltStableConfig.peerWatermarks[PeerShort(name)] or 0
 end
+-- A watermark may never sit in our own future, and keeps a few minutes of
+-- overlap below "now". The clamp stops a fast third-party clock from dragging
+-- it past the peer's; the slack absorbs moderate skew between our clock and the
+-- peer's. The price is re-sending the last few minutes of records on each
+-- delta, which the last-write-wins merge absorbs harmlessly. A watermark older
+-- than the slack window is left exact.
+local WATERMARK_SLACK = 300
+local function ClampWatermark(maxTS)
+    return math.min(maxTS or 0, time() - WATERMARK_SLACK)
+end
+
 local function AdvancePeerWatermark(name, ts)
     if not ts or ts <= 0 then return end
     AltStableConfig = AltStableConfig or {}
@@ -422,17 +441,38 @@ end
 -- unequipped or a profession it dropped would retain its stale field, because
 -- the merge only writes keys that ARE present in the new data.
 --
--- This runs ONLY on the receive/merge path, i.e. for REMOTE characters synced
--- from another account. That's why gearlink_* is cleared too: a full item link
--- is only ever populated by a LOCAL scan (ScanCharacter writes those directly,
--- not through this merge), so on a synced record any gearlink_ is stale — it
--- lingers from older addon versions that used to sync links, and would make the
--- gear tooltip show ancient gear even though the synced ilvl/name/id are current.
+-- Local-only fields - gearlink_ and gearsubtype_ - never travel on the wire, so
+-- the merge cannot restore them once cleared. This comment used to say the
+-- merge only ever sees REMOTE characters, which made clearing them safe.
+-- Nothing enforced it: with the default config a peer relays every record,
+-- including our OWN characters, and an echoed one sailed through the 60-second
+-- window and lost its links - taking the gem/enchant tooltip with it until that
+-- character was logged into again.
+--
+-- The worry that motivated clearing them is still real - a link left over from
+-- an old addon version that synced links, pointing at gear no longer worn. So
+-- decide from the data instead of guessing ownership: a local-only field is
+-- kept while the item it describes is still in the slot (the same gearid_ on
+-- both sides) and cleared the moment the slot holds something else.
 --
 -- Preserves metadata (account, guild, money, name, class, …): the incoming
 -- record overwrites those when present, and a peer that hasn't tagged a
 -- character shouldn't wipe our local account assignment.
-local function ClearSyncedStateFields(t)
+local function ClearSyncedStateFields(t, incoming)
+    local keepLocal = {}
+    for k in pairs(t) do
+        local slot = k:match("^gearlink_(.+)$") or k:match("^gearsubtype_(.+)$")
+        if slot then
+            local mine   = t["gearid_" .. slot]
+            local theirs = incoming and incoming["gearid_" .. slot]
+            -- tostring: a local scan stores a number, a deserialized record may
+            -- carry the same id as a string. 0 is an empty slot, never a match.
+            if mine and theirs and tostring(mine) ~= "0" and tostring(mine) == tostring(theirs) then
+                keepLocal[k] = true
+            end
+        end
+    end
+
     t.prof1 = nil; t.prof2 = nil
     t.prof1Skill = nil; t.prof2Skill = nil
     t.prof1Max   = nil; t.prof2Max   = nil
@@ -452,7 +492,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_") then                 -- mail summary (mail_count / mail_expiry / mail_money)
-            t[k] = nil
+            if not keepLocal[k] then t[k] = nil end
         end
     end
 end
@@ -494,7 +534,7 @@ local function DeserializeFullDB(payload, sender)
                     -- sent with incomplete gear (GetItemInfo cache miss) and a
                     -- corrected version arrives shortly after with the same stamp.
                     if existingTime - incomingTime <= 60 then
-                        ClearSyncedStateFields(existing)
+                        ClearSyncedStateFields(existing, c)
                         for k,v in pairs(c) do
                             existing[k] = v
                         end
@@ -627,9 +667,12 @@ end
 -- a pathological over-budget packet degrades to a direct send (which merely
 -- returns false) instead of aborting the whole ChunkAndSendPayload loop. With
 -- MAX_CHUNK=220 this is belt-and-suspenders — it should never fire.
-local function QueueWire(msg, channel, target)
+-- `prio` defaults to BULK, which is right for chunks. A REQ goes at ALERT:
+-- it is one small message that must not queue behind - or be sent raw on top
+-- of - a large outgoing burst.
+local function QueueWire(msg, channel, target, prio)
     if ChatThrottleLib then
-        local ok = pcall(ChatThrottleLib.SendAddonMessage, ChatThrottleLib, "BULK", PREFIX, msg, channel, target)
+        local ok = pcall(ChatThrottleLib.SendAddonMessage, ChatThrottleLib, prio or "BULK", PREFIX, msg, channel, target)
         if not ok then
             C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
         end
@@ -817,7 +860,11 @@ local function RequestCharacters(channel, target, force)
     -- changed since we last heard from them. A peer on older code ignores the
     -- extra payload and replies with a full DB (correct, just unoptimized).
     local wm = target and GetPeerWatermark(target) or 0
-    C_ChatInfo.SendAddonMessage(PREFIX, MSG_REQUEST_V .. "|" .. wm, channel, target)
+    -- Through ChatThrottleLib, not raw. `/alts sync <target>` fires this three
+    -- seconds after starting a push, while CTL may still be draining BULK
+    -- chunks; a raw send then lands with the outbound budget already spent and
+    -- risks a silent server-side drop - the push arrives, the pull never does.
+    QueueWire(MSG_REQUEST_V .. "|" .. wm, channel, target, "ALERT")
     WatchSyncPeer(target)
     return true
 
@@ -906,7 +953,7 @@ local function RequestResync(peer, reason)
         Print("|cffff8800Sync incomplete|r from " .. peer .. " — " .. reason ..
               " Auto-requesting resync (attempt " .. autoRetryCounts[peer] .. "/2).")
         C_Timer.After(2, function()
-            C_ChatInfo.SendAddonMessage(PREFIX, MSG_REQUEST_V .. "|" .. GetPeerWatermark(peer), "WHISPER", peer)
+            QueueWire(MSG_REQUEST_V .. "|" .. GetPeerWatermark(peer), "WHISPER", peer, "ALERT")
         end)
         WatchSyncPeer(peer)   -- give the retry its own fresh stall window
     else
@@ -997,7 +1044,7 @@ local function CompleteStream(peer, bkey)
         local maxTS = DeserializeFullDB(buffer, peer)
         -- Advance our delta watermark for this peer so the next request only
         -- pulls what changes after this point.
-        AdvancePeerWatermark(peer, maxTS)
+        AdvancePeerWatermark(peer, ClampWatermark(maxTS))
         local after = 0
         for _ in pairs(AltStableDB) do after = after + 1 end
         local newChars = after - before
@@ -2078,6 +2125,8 @@ local _seam = {
     DeserializeFullDB   = DeserializeFullDB,
     ChunkAndSendPayload = ChunkAndSendPayload,
     RequestCharacters   = RequestCharacters,
+    RequestResync       = RequestResync,
+    ClampWatermark      = ClampWatermark,
     GetPeerWatermark    = GetPeerWatermark,
     ScanSavedInstances  = ScanSavedInstances,
     ScanMail            = ScanMail,
