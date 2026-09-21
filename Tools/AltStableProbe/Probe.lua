@@ -26,6 +26,13 @@ local ADDON = ...
 
 AltStableProbeDB = AltStableProbeDB or {}
 AltStableProbeCharDB = AltStableProbeCharDB or {}
+-- Machine scope lands in the TOP-LEVEL WTF\SavedVariables\ folder, not under
+-- WTF\Account\<id>\. That folder demonstrably survives a full restart on
+-- 1.60.1.69913 - Blizzard_Console.lua carries history across launches - while
+-- everything under WTF\Account\ is wiped. On 1.60.1.69913 the answer is no:
+-- the client never writes a third-party machine-scope variable at all. Kept so
+-- each new build can be checked the same way.
+AltStableProbeMachineDB = AltStableProbeMachineDB or {}
 
 local lines = {}
 
@@ -783,8 +790,9 @@ boot:SetScript("OnEvent", function()
     -- Account-wide and per-character are SEPARATE mechanisms; test them
     -- independently. If only one is broken that is a real workaround for any
     -- addon whose state does not need sharing across characters.
-    local prev     = AltStableProbeDB.loadCount
-    local prevChar = AltStableProbeCharDB.loadCount
+    local prev        = AltStableProbeDB.loadCount
+    local prevChar    = AltStableProbeCharDB.loadCount
+    local prevMachine = AltStableProbeMachineDB.loadCount
 
     if prev == nil then
         Out("|cffff5555SavedVariables (account)|r first ever run - not loaded")
@@ -800,30 +808,87 @@ boot:SetScript("OnEvent", function()
             :format(tostring(prevChar)))
     end
 
+    if prevMachine == nil then
+        Out("|cffff5555SavedVariablesMachine|r first ever run - not loaded")
+    else
+        Out(("|cff55ff55SavedVariablesMachine LOADED|r - previous loadCount=%s, last written on build %s")
+            :format(tostring(prevMachine), tostring(AltStableProbeMachineDB.lastBuild)))
+    end
+
     AltStableProbeDB.loadCount = (tonumber(prev) or 0) + 1
     AltStableProbeDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
     AltStableProbeCharDB.loadCount = (tonumber(prevChar) or 0) + 1
     AltStableProbeCharDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
+    AltStableProbeMachineDB.loadCount = (tonumber(prevMachine) or 0) + 1
+    AltStableProbeMachineDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
+    AltStableProbeMachineDB.lastBuild = select(2, GetBuildInfo())
 
-    Out(("account load #%d / per-character load #%d - reload and both must go up")
-        :format(AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount))
+    -- This line used to say "reload and both must go up". That instruction is
+    -- how three separate tests concluded a store persisted when it did not:
+    -- /reload keeps the client process alive, so a value survives in memory and
+    -- the counter climbs without anything touching the disk. Only a count that
+    -- climbs across a FULL EXIT proves persistence - and the file on disk is
+    -- the evidence, not this chat line.
+    Out(("account #%d / per-character #%d / machine #%d - only a FULL EXIT and relaunch "
+        .. "counts; /reload proves nothing"):format(
+        AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount,
+        AltStableProbeMachineDB.loadCount))
 
-    -- Rule out a LATE load: if the client executes the SavedVariables file
-    -- after PLAYER_LOGIN, the table would gain content some time later.
-    -- Different bug, different workaround, so it is worth distinguishing.
+    -- Rule out a LATE load: if the client executes a SavedVariables file after
+    -- PLAYER_LOGIN, it REPLACES the global table. Different bug, different
+    -- workaround, so it is worth distinguishing - for every store, not just the
+    -- account one.
+    --
+    -- Detected by identity, not by count. Every session starts at loadCount = 1
+    -- on this client, so a late load of the file just written reads back as 1 -
+    -- indistinguishable from the probe's own 1, and a `now > 1` check can never
+    -- fire. A per-session mark on each table can: a replaced table has lost it.
+    local mark = tostring(GetTime()) .. ":" .. tostring(math.random(1, 1000000000))
+    local STORES = {
+        { label = "account",       global = "AltStableProbeDB",        atLogin = prev },
+        { label = "per-character", global = "AltStableProbeCharDB",    atLogin = prevChar },
+        { label = "machine",       global = "AltStableProbeMachineDB", atLogin = prevMachine },
+    }
+    for _, store in ipairs(STORES) do
+        -- Resolve through _G each time: a late load swaps the global itself.
+        local t = _G[store.global]
+        if type(t) == "table" then t.sessionMark = mark end
+    end
+
+    local function Replaced(store)
+        local t = _G[store.global]
+        return type(t) == "table" and t.sessionMark ~= mark
+    end
+
     if C_Timer and C_Timer.After then
         for _, delay in ipairs({ 5, 15, 30 }) do
             C_Timer.After(delay, function()
-                local now = AltStableProbeDB.loadCount
-                if prev == nil and now and now > 1 then
-                    Out(("|cff55ff55SV arrived LATE|r - loadCount became %s after %ds")
-                        :format(tostring(now), delay))
+                for _, store in ipairs(STORES) do
+                    if store.atLogin == nil and not store.reportedLate and Replaced(store) then
+                        store.reportedLate = true
+                        Out(("|cff55ff55%s SV arrived LATE|r - replaced after %ds, loadCount=%s")
+                            :format(store.label, delay, tostring(_G[store.global].loadCount)))
+                    end
                 end
             end)
         end
         C_Timer.After(31, function()
-            if prev == nil then
-                Out("|cffff5555SV never loaded|r - still nothing after 30s. The client writes the file but does not read it back.")
+            local never = {}
+            for _, store in ipairs(STORES) do
+                if store.atLogin == nil and not Replaced(store) then
+                    never[#never + 1] = store.label
+                end
+            end
+            -- Say only what was observed. "Never loaded" covers two different
+            -- failures - a file written but not read (account, per-character on
+            -- 1.60.1.69913) and a file never written at all (machine scope, for
+            -- third-party addons) - and nothing in-game can tell them apart.
+            -- The disk can, so point there instead of guessing.
+            if #never > 0 then
+                Out(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
+                    .. "That only says they did not LOAD: check the files under WTF on disk "
+                    .. "to tell 'written but not read' from 'never written'.")
+                    :format(table.concat(never, ", ")))
             end
         end)
     end
