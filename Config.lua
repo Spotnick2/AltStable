@@ -99,7 +99,13 @@ local function EnsureDefaults()
     end
     -- Delta-sync watermarks: per peer, the lastUpdate we ask it to send changes
     -- since - the newest stamp received, capped a few minutes below the peer's
-    -- own clock (see WatermarkCeiling in Core.lua). Keyed by short name.
+    -- own clock (see WatermarkCeiling in Core.lua). Keyed by short name. A peer
+    -- that sends no clock has none, and gets full replies.
+    --
+    -- syncScopeGeneration / peerScopeGeneration: bumped when a setting widens
+    -- which characters we send; each peer's next request is answered in full
+    -- once per generation (see OnSyncScopeChanged in Core.lua).
+    AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
     if not AltStableConfig.peerWatermarks then
         AltStableConfig.peerWatermarks = {}
     end

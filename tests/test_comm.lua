@@ -63,6 +63,10 @@ local function eq(a, b, msg)
         " (expected " .. tostring(b) .. ", got " .. tostring(a) .. ")")
 end
 
+-- Run timers until none remain: a reply schedules its chunk sends from inside
+-- a timer, so one flush is not enough.
+local function flushAll() for _ = 1, 10 do if #WoW.timers == 0 then break end WoW.flushTimers() end end
+
 -- Deliver a raw wire message to the receive handler as if from `sender`.
 local function receive(message, sender)
     -- Forever reports the sender as "First Surname" - a space, no realm
@@ -750,7 +754,7 @@ AltStableDB = {
     ["Player-WM-1"] = { guid = "Player-WM-1", name = "W1", class = "MAGE",  ilvl = 100, lastUpdate = 700 },
     ["Player-WM-2"] = { guid = "Player-WM-2", name = "W2", class = "ROGUE", ilvl = 110, lastUpdate = 1200 },
 }
-T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")
+T.SendFullDatabase("WHISPER", "x")      -- the real reply path, which carries our clock
 WoW.flushTimers()
 local wmWire = WoW.sentMessages()
 AltStableDB = {}
@@ -773,7 +777,7 @@ AltStableDB = {
     ["Player-Peer-1"]  = { guid = "Player-Peer-1", name = "Theirs", class = "MAGE",
                            ilvl = 1, lastUpdate = 99990 },
 }
-T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")
+T.SendFullDatabase("WHISPER", "x")
 WoW.flushTimers()
 local fastWire = WoW.sentMessages()
 AltStableDB = {}
@@ -792,7 +796,6 @@ AltStableConfig = { peerWatermarks = {} }
 AltStableDB = { ["Player-Ours-1"] = { guid = "Player-Ours-1", name = "Ours", class = "MAGE",
                                       ilvl = 1, lastUpdate = 103590 } }
 T.SendFullDatabase("WHISPER", "x")
-local function flushAll() for _ = 1, 10 do if #WoW.timers == 0 then break end WoW.flushTimers() end end
 flushAll()
 local skewWire = WoW.sentMessages()
 WoW.now = 103600                       -- we receive, an hour ahead of the peer
@@ -800,6 +803,23 @@ AltStableDB = {}
 for _, m in ipairs(skewWire) do receive(m, "Skew Surname") end
 local swm = AltStableConfig.peerWatermarks["Skew Surname"]
 check(swm and swm <= 100000 - 300, "our fast clock cannot drag the watermark past the peer's (got " .. tostring(swm) .. ")")
+
+-- Mixed versions: a v8 peer from before the trailer is still accepted, but
+-- sends no clock. Guessing it from ours rebuilt bug 1 - Codex's repro stored
+-- 103300. Such a peer gets no watermark at all, so it is asked for everything.
+WoW.reset(); WoW.now = 100000           -- the OLD peer sends, at its time
+AltStableConfig = { peerWatermarks = { ["Old Surname"] = 90000 } }
+AltStableDB = { ["Player-OldRelay-1"] = { guid = "Player-OldRelay-1", name = "Ours", class = "MAGE",
+                                          ilvl = 1, lastUpdate = 103590 } }
+T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")   -- no trailer: pre-fix sender
+flushAll()
+local oldWire = WoW.sentMessages()
+WoW.now = 103600                        -- we receive, an hour ahead
+AltStableDB = {}
+for _, m in ipairs(oldWire) do receive(m, "Old Surname") end
+eq(AltStableConfig.peerWatermarks["Old Surname"], nil,
+   "a peer that sends no clock gets no watermark, rather than one guessed from ours")
+eq(T.GetPeerWatermark("Old Surname"), 0, "  so its next REQ asks for everything")
 
 -- The replier's time rides after the last separator, where older parsers never look.
 WoW.reset(); WoW.now = 100000
@@ -881,6 +901,16 @@ check(askWithWatermark(900)["Player-Late-1"] ~= nil,
       "after enabling send-all-accounts, the peer's next REQ is answered in full despite its watermark")
 check(askWithWatermark(900)["Player-Late-1"] == nil, "  and the one after that honours its watermark again")
 eq(AltStableConfig.peerWatermarks["Keeper Surname"], 777, "our own watermarks are not reset - they were never the problem")
+
+-- A relaunch must not forget it. Change scope, then simulate a new session:
+-- Core's module state is rebuilt, AltStableConfig survives (as it will once
+-- SavedVariables load). The peer that has not asked yet still gets a full reply.
+AltStableConfig.peerScopeGeneration = {}
+AltStableConfig.sendAllAccounts = false
+AltStable.SetConfigValue("sendAllAccounts", true)
+T.ResetSyncState()
+check(askWithWatermark(900)["Player-Late-1"] ~= nil,
+      "a scope change made before a relaunch is still honoured afterwards")
 
 local epoch = T.SyncScopeEpoch()
 AltStableConfig.accountNumber = "1"

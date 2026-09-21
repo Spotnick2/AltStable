@@ -132,12 +132,22 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- (Resetting our OWN watermarks, the first attempt, fixed nothing for anyone and
 -- forced a pointless full pull from every peer.)
 --
--- Session-scoped. A scope change followed by a quit before a peer asks is
--- covered by `/alts sync <name>`, which always sends in full.
-local scopeEpoch = 0
-local peerScopeEpoch = {}
+-- Persisted, not session state: a scope change made while a peer is offline,
+-- followed by a quit before that peer asks, must still be honoured next
+-- session - otherwise the newly eligible characters stay filtered indefinitely.
+-- So the generation and each peer's "answered in full at generation N" live in
+-- AltStableConfig. (Which on 1.60.1.69913 persists nothing (#23) - but the
+-- logic is correct, and becomes durable the moment SavedVariables load.)
+--
+-- Limit, stated rather than solved: a peer is marked served when its full reply
+-- is scheduled. If that stream is then lost, its next request gets a delta again;
+-- `/alts sync <name>` always sends in full and recovers it.
+local function ScopeGeneration()
+    AltStableConfig = AltStableConfig or {}
+    return tonumber(AltStableConfig.syncScopeGeneration) or 0
+end
 function AltStable.OnSyncScopeChanged()
-    scopeEpoch = scopeEpoch + 1
+    AltStable.SetConfigValue("syncScopeGeneration", ScopeGeneration() + 1)
 end
 
 -- Stale-buffer cleanup.  If a sender's stream gets cut off mid-flight
@@ -382,8 +392,15 @@ end
 -- still pushed the watermark past the peer's clock.
 --
 -- The slack is re-sent overlap - a few minutes of records on each delta, which
--- the last-write-wins merge absorbs. From a peer too old to send its time, fall
--- back to our own clock: wrong by the skew, but bounded by the slack.
+-- the last-write-wins merge absorbs.
+--
+-- A peer that sends no clock gets NO delta at all: its watermark is reset to 0,
+-- so we ask it for everything. That is the only safe reading, because the
+-- protocol version did not change for this - an older v8 peer is accepted, it
+-- just predates the trailer - and guessing its clock from ours is exactly bug 1
+-- again: with ours an hour ahead, one of our own characters relayed back pushed
+-- the watermark 55 minutes past the peer's. Full replies are how sync worked
+-- before deltas existed; slower, never wrong.
 local WATERMARK_SLACK = 300
 local function WatermarkCeiling(peerNow)
     return (tonumber(peerNow) or time()) - WATERMARK_SLACK
@@ -407,6 +424,14 @@ local function AdvancePeerWatermark(name, ts, peerNow)
     AltStableConfig.peerWatermarks = AltStableConfig.peerWatermarks or {}
     local short = PeerShort(name)
     local current = AltStableConfig.peerWatermarks[short] or 0
+    if not tonumber(peerNow) then
+        -- No clock from this peer: never delta against it (see above).
+        if current ~= 0 then
+            AltStableConfig.peerWatermarks[short] = nil
+            AltStable.OnConfigChanged("peerWatermarks")
+        end
+        return
+    end
     local new = math.min(math.max(current, tonumber(ts) or 0), WatermarkCeiling(peerNow))
     if new > 0 and new ~= current then
         AltStableConfig.peerWatermarks[short] = new
@@ -1327,9 +1352,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
             -- payload is the requester's delta watermark (0 / absent => full DB).
             local sinceTS = tonumber(payload) or 0
             local owedShort = PeerShort(senderName)
-            if (peerScopeEpoch[owedShort] or 0) < scopeEpoch then
+            local generation = ScopeGeneration()
+            AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
+            if (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation then
                 sinceTS = 0   -- our scope changed since this peer last heard from us
-                peerScopeEpoch[owedShort] = scopeEpoch
+                AltStableConfig.peerScopeGeneration[owedShort] = generation
+                AltStable.OnConfigChanged("peerScopeGeneration")
             end
             local replyChannel = (channel == "WHISPER") and "WHISPER" or "GUILD"
             local replyTarget  = (channel == "WHISPER") and senderName or nil
@@ -2166,8 +2194,6 @@ local function ResetSyncState()
     autoRetryCounts = {}
     lastRequestedAt = {}
     syncWatch       = {}
-    scopeEpoch      = 0
-    peerScopeEpoch  = {}
 end
 
 local _seam = {
@@ -2185,7 +2211,7 @@ local _seam = {
     ReceiveCharacter    = ReceiveCharacter,
     SendFullDatabase    = SendFullDatabase,
     QueueWire           = QueueWire,
-    SyncScopeEpoch      = function() return scopeEpoch end,
+    SyncScopeEpoch      = ScopeGeneration,
     GetPeerWatermark    = GetPeerWatermark,
     ScanSavedInstances  = ScanSavedInstances,
     ScanMail            = ScanMail,
