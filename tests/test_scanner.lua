@@ -220,21 +220,30 @@ do
 end
 
 -- #8: TBC leftovers removed. Source checks - SheetUI doesn't load under the
--- stubs, and these are absences.
+-- stubs, and these are absences. A missing file fails a check, not the run.
 do
-    local function src(f) return io.open(f):read("*a") end
+    local function src(f)
+        local h = io.open(f, "r")
+        if not h then check(f .. " is readable", false); return "" end
+        local s = h:read("*a"); h:close(); return s
+    end
     for _, f in ipairs({ "Scanner.lua", "Columns.lua", "SheetUI.lua", "Config.lua",
                          "Export.lua", "Toasts.lua", "RowRenderer.lua" }) do
-        check(f .. " has no Jewelcrafting", not src(f):find("Jewelcrafting", 1, true))
+        local s = src(f)
+        check(f .. " no longer uses Jewelcrafting",
+              not s:find('"Jewelcrafting"', 1, true) and not s:find("prof_Jewelcrafting", 1, true))
     end
+    local export = src("Export.lua")
+    check("Export keeps a blank column where Jewelcrafting was, so the sheet doesn't shift",
+          export:find('"Engineering",%s*"",') ~= nil)
     check("the scanner captures no combat ratings",
           not src("Scanner.lua"):find("CombatRating", 1, true))
+    check("the scanner no longer runs the dead talent-tab scan",
+          not src("Scanner.lua"):find("GetTalentTabInfo(", 1, true))
     check("no BiS column", not src("Columns.lua"):find("bisCount", 1, true)
                            and not src("SheetUI.lua"):find("bisCount", 1, true))
     check("no BiS matching left in the renderer", not src("RowRenderer.lua"):find("[Bb]is[TNC]"))
-    local sections = src("SheetUI.lua"):match("local SECTIONS = (.-\n})")
-    check("the Spec column is in no section (hidden for the beta)",
-          sections ~= nil and not sections:find('"spec"', 1, true))
+    check("no Spec column", not src("Columns.lua"):find("specIcon", 1, true))
 end
 
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().

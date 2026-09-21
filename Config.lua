@@ -91,6 +91,7 @@ local function EnsureDefaults()
             Alchemy       = true,
         }
     end
+    AltStableConfig.toastProfessions.Jewelcrafting = nil   -- not a Vanilla profession (#8)
     -- On-demand plugins (LoadOnDemand addons AltStable loads at login when
     -- enabled here). Default both on so existing users keep both tabs.
     if not AltStableConfig.plugins then

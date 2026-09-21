@@ -51,10 +51,6 @@ local GEAR_SLOTS = {
     { id=18, key="ranged"   },
 }
 
-local function Round2(value)
-    return math.floor((tonumber(value) or 0) * 100 + 0.5) / 100
-end
-
 local function ItemIDFromLink(link)
     if type(link) ~= "string" then return 0 end
     local id = link:match("item:(%d+)")
@@ -498,27 +494,9 @@ function AltStable.ScanCharacter()
     local guild = GetGuildInfo("player")
     char.guild = guild or ""
 
-    --------------------------------------------------------
-    -- Active spec (talent tree with most points)
-    --------------------------------------------------------
-
-    local maxPoints = 0
-    local specName  = ""
-    local specIcon  = ""
-    if GetNumTalentTabs then
-        for tab = 1, GetNumTalentTabs() do
-            -- TBC Classic returns: id, name, description, icon, pointsSpent, ...
-            local _, tabName, _, iconTexture, pointsSpent = GetTalentTabInfo(tab)
-            pointsSpent = tonumber(pointsSpent) or 0
-            if pointsSpent > maxPoints then
-                maxPoints  = pointsSpent
-                specName   = tabName or ""
-                specIcon   = iconTexture or ""
-            end
-        end
-    end
-    char.spec     = specName
-    char.specIcon = specIcon
+    -- No spec: GetNumTalentTabs / GetTalentTabInfo are gone on Forever, so the
+    -- old talent-tab scan wrote "" for every character. Which of
+    -- C_SpecializationInfo / C_ClassTalents returns Vanilla trees is unresolved.
 
     --------------------------------------------------------
     -- Item level

@@ -62,7 +62,6 @@ local SECTIONS = {
         id    = "summary",
         label = "Account Summary",
         icon  = IC("account-summary"),
-        -- Width = sidebar(190) + frozen(156) + scrollable cols(619) + scrollbar(20) = 985
         preferW = 985,
         preferH = 400,
         fields = {
@@ -75,8 +74,6 @@ local SECTIONS = {
         label = "Gear Progression",
         icon  = IC("gear-progression"),
         headerHeight = 32,
-        -- Width = sidebar(190) + frozen(156) + identity(380) + 17 slots×38(646) + scrollbar(20) = 1392
-        -- Capped at 1350 with h-scroll for the last slot or two
         preferW = 1350,
         preferH = 420,
         fields = {
@@ -92,7 +89,6 @@ local SECTIONS = {
         label = "Skills",
         icon  = IC("skills"),
         headerHeight = 32,
-        -- Width = sidebar(190) + frozen(156) + identity(119) + 14 profs×44(616) + scrollbar(20) = 1101
         preferW = 1111,
         preferH = 410,
         fields = {
@@ -1395,7 +1391,7 @@ end
 ------------------------------------------------------------
 
 local COL_TOOLTIPS = {
-    level="Level", ilvl="Item Level", 
+    level="Level", ilvl="Item Level",
     gear_head="Head", gear_neck="Neck", gear_shoulder="Shoulders",
     gear_back="Back", gear_chest="Chest", gear_wrist="Wrists",
     gear_hands="Hands", gear_waist="Waist", gear_legs="Legs",
@@ -1469,19 +1465,15 @@ local function BuildHeaders()
                 if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
                 GameTooltip:Hide()
             end)
-        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon or col.headerIcon then
+        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then
             -- slotSlug: faction-aware gear icon resolved at header-build time
             local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
-                or col.profIcon or col.slotIcon or col.repIcon or col.headerIcon
+                or col.profIcon or col.slotIcon or col.repIcon
             local sz=math.min(currentHeaderHeight-4,col.width-2)
             local tex=btn:CreateTexture(nil,"OVERLAY")
             tex:SetSize(sz,sz); tex:SetPoint("CENTER",btn,"CENTER",0,0); tex:SetTexture(iconPath)
-            -- For the built-in round WoW icons we auto-crop the pixel border
-            -- (0.08..0.92 tex coords). Custom art (headerIcon) ships already
-            -- trimmed and transparent, so we use the full texture untouched.
-            if not col.headerIcon then
-                tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            end
+            -- Crop the pixel border of the built-in round WoW icons.
+            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             btn.label=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); btn.label:SetText("")
             btn.iconTex=tex
             btn:SetScript("OnClick",function()
@@ -1506,9 +1498,9 @@ local function BuildHeaders()
                 tex:SetVertexColor(1,1,1)
                 GameTooltip:Hide()
             end)
-        elseif col.type=="classIcon" or col.type=="specIcon" or col.type=="raceIcon" then
+        elseif col.type=="classIcon" or col.type=="raceIcon" then
             -- Small centered header label for icon columns
-            local SHORT = {classIcon="C", specIcon="S", raceIcon="R"}
+            local SHORT = {classIcon="C", raceIcon="R"}
             local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
             lbl:SetAllPoints(); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("MIDDLE")
             lbl:SetText(SHORT[col.type] or "")

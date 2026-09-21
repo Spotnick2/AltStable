@@ -1,8 +1,5 @@
 AltStable = AltStable or {}
 
--- Retail-API adapter; see Compat.lua. Taken as a file-local so the call site
--- below reads the same as it always did.
-
 ------------------------------------------------------------
 -- Rested XP live extrapolation
 --
@@ -115,16 +112,6 @@ local RACE_DISPLAY = {
     Scourge="Undead", BloodElf="Blood Elf", Goblin="Goblin",
 }
 
-
-------------------------------------------------------------
--- Spec icon
-------------------------------------------------------------
-
-local function SpecIconText(specIcon)
-    if not specIcon or specIcon == "" or specIcon == 0 then return "" end
-    -- specIcon can be a numeric fileID or a path string — both work with |T
-    return "|T"..tostring(specIcon)..":18:18|t"
-end
 
 ------------------------------------------------------------
 -- Race display — atlas-based icons (raceicon-name-gender)
@@ -340,7 +327,7 @@ function AltStable.CreateRow(parent, height, columns)
     for i, col in ipairs(columns) do
         local cell
 
-        if col.type == "classIcon" or col.type == "raceIcon" or col.type == "specIcon" then
+        if col.type == "classIcon" or col.type == "raceIcon" then
             cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             cell:SetPoint("LEFT", x, 0)
             cell:SetWidth(col.width)
@@ -357,7 +344,7 @@ function AltStable.CreateRow(parent, height, columns)
         end
 
         -- General tooltip button for classIcon, raceIcon, level, restPercent, profSkill
-        if col.type=="classIcon" or col.type=="raceIcon" or col.type=="specIcon"
+        if col.type=="classIcon" or col.type=="raceIcon"
         or col.field=="level" or col.type=="restXP"
         or col.field=="restPercent" or col.type=="profSkill" then
             local tip = CreateFrame("Button", nil, row)
@@ -424,14 +411,19 @@ function AltStable.CreateRow(parent, height, columns)
                     GameTooltip:Show()
                 elseif tip.itemLink and tip.itemLink ~= "" then
                     -- Local full item link only (carries this client's
-                    -- gems/enchants). Remote/synced characters have no link and
-                    -- fall through to the text summary below.
+                    -- gems/enchants).
                     local itemID = tip.itemLink:match("item:(%d+)")
                     if itemID then
                         GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
                         GameTooltip:SetHyperlink("item:"..itemID)
                         GameTooltip:Show()
                     end
+                elseif tip.itemID and tip.itemID > 0 then
+                    -- Synced characters carry no link, only the item id: the
+                    -- base item's tooltip, without this character's enchants.
+                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                    GameTooltip:SetHyperlink("item:"..tip.itemID)
+                    GameTooltip:Show()
                 elseif tip.slotIlvl and tip.slotIlvl > 0 then
                     -- Fallback for items without a stored link
                     local qColor = QUALITY_COLORS[tip.slotQuality or 1] or "|cffffffff"
@@ -539,15 +531,6 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line3 = nil
             end
 
-        elseif col.type=="specIcon" then
-            value = SpecIconText(char.specIcon)
-            if tip then
-                local specName = char.spec
-                tip.line1 = (specName and specName ~= "") and specName or "Not scanned"
-                tip.line2 = nil
-                tip.line3 = nil
-            end
-
         elseif col.field=="level" then
             local cap = AltStable.API.LevelCap()
             value = FormatMax(char.level, cap)
@@ -578,6 +561,7 @@ function AltStable.RenderRow(row, char, index, columns)
                 row.gearTips[i].slotQuality       = q
                 row.gearTips[i].itemName          = itemName
                 row.gearTips[i].itemLink          = itemLink
+                row.gearTips[i].itemID            = tonumber(char["gearid_"..slotKey]) or 0
                 row.gearTips[i].slotID            = col.slotID
                 row.gearTips[i].isCurrentPlayer   = (char.guid == UnitGUID("player"))
             end

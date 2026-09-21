@@ -1170,29 +1170,56 @@ AltStable.PendingAuditItems = nil
 ------------------------------------------------------------
 
 ------------------------------------------------------------
--- Retired fields (#8): Jewelcrafting and combat ratings
+-- Retired fields (#8)
 ------------------------------------------------------------
 -- Nothing reads them any more. Stored records still hold them, so they must
 -- not be sent, must be dropped if an older peer sends them, and are purged
--- from the database at login.
+-- from the database at login. Every key in the real list is checked.
 WoW.reset()
-local retired = { guid = "Player-Ret-1", name = "Old", level = 20, lastUpdate = 1,
-                  prof_Jewelcrafting = 50, profmax_Jewelcrafting = 75,
-                  stat_crit = 1.5, stat_hitpct = 2, stat_haste = 0, stat_resilience = 0,
-                  prof_Tailoring = 80 }
-local wire = T.SerializeChar(retired)
-check(not wire:find("Jewelcrafting") and not wire:find("stat_crit") and not wire:find("stat_resilience"),
-      "retired fields are never sent")
-check(wire:find("prof_Tailoring:80", 1, true) ~= nil, "  and a live profession still is")
-local got = T.DeserializeChar("guid:Player-Ret-1\nprof_Jewelcrafting:50\nstat_haste:3\nlevel:20")
-eq(got and got.prof_Jewelcrafting, nil, "a retired field from an older peer is dropped")
-eq(got and got.stat_haste, nil, "  a rating too")
+local function oldRecord()
+    local r = { guid = "Player-Ret-1", name = "Old", level = 20, lastUpdate = 1,
+                prof_Tailoring = 80, stat_crit = 1.5, stat_hitpct = 2 }
+    for k in pairs(T.RETIRED_FIELDS) do r[k] = 7 end
+    return r
+end
+local retiredCount = 0
+for _ in pairs(T.RETIRED_FIELDS) do retiredCount = retiredCount + 1 end
+check(retiredCount >= 6, "the retired list is exposed and populated")
+
+local wire = T.SerializeChar(oldRecord())
+local wireLines = {}
+for line in (wire .. "\n"):gmatch("([^\n]*)\n") do wireLines[#wireLines + 1] = line end
+for k in pairs(T.RETIRED_FIELDS) do
+    local sent = false
+    for _, line in ipairs(wireLines) do
+        if line:sub(1, #k + 1) == k .. ":" then sent = true end
+    end
+    check(not sent, "retired field " .. k .. " is never sent")
+end
+check(wire:find("prof_Tailoring:80", 1, true) ~= nil, "  a live profession still is")
+check(wire:find("stat_crit:1.5", 1, true) ~= nil,
+      "  and stat_crit is not retired: Vanilla has crit chance, just no ratings")
+
+local incoming = { "guid:Player-Ret-1", "level:20" }
+for k in pairs(T.RETIRED_FIELDS) do incoming[#incoming + 1] = k .. ":7" end
+local got = T.DeserializeChar(table.concat(incoming, "\n"))
+for k in pairs(T.RETIRED_FIELDS) do
+    eq(got and got[k], nil, "retired field " .. k .. " from an older peer is dropped")
+end
 eq(got and got.level, 20, "  the rest of the record is kept")
-AltStableDB = { ["Player-Ret-1"] = retired }
-T.PurgeRetiredFields()
-eq(retired.prof_Jewelcrafting, nil, "the login purge removes a stored retired field")
-eq(retired.stat_resilience, nil, "  and a stored rating")
-eq(retired.prof_Tailoring, 80, "  and leaves the rest")
+
+-- The purge runs at PLAYER_LOGIN - through the real handler, not just the
+-- function. The rest of login needs more client than the stubs model, so it
+-- runs under pcall; the purge comes first and is what is checked.
+local stored = oldRecord()
+AltStableDB = { ["Player-Ret-1"] = stored }
+pcall(onEvent, T.frame, "PLAYER_LOGIN")
+for k in pairs(T.RETIRED_FIELDS) do
+    eq(stored[k], nil, "login purges stored " .. k)
+end
+eq(stored.prof_Tailoring, 80, "  and leaves the rest")
+eq(stored.stat_crit, 1.5, "  including stat_crit")
+WoW.reset()
 
 ------------------------------------------------------------
 -- Live rested-XP updates (#6)

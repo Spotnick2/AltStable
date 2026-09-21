@@ -259,9 +259,12 @@ end
 
 local RETIRED_FIELDS = {
     prof_Jewelcrafting = true, profmax_Jewelcrafting = true,   -- not a Vanilla profession
-    stat_crit = true, stat_hitpct = true, stat_haste = true,   -- combat ratings: none in Vanilla
-    stat_resilience = true,
+    stat_haste = true, stat_resilience = true,                 -- no Vanilla equivalent
+    spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }
+-- stat_crit / stat_hitpct are NOT retired: Vanilla has crit and hit chance
+-- (GetCritChance, GetHitModifier), just no ratings, and the Roster port (#11)
+-- will want these names. The scanner stops writing the rating-derived values.
 
 local function PurgeRetiredFields()
     for _, c in pairs(AltStableDB or {}) do
@@ -286,7 +289,6 @@ local function SerializeChar(c, sinceTS)
                                       -- gearid_* stays included (compact + sync-safe)
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
                                       -- synced alts fall back to keyword inference on gearname_
-        and k ~= "specIcon"            -- numeric fileID, client-specific
         and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
                                       -- would tell every peer the character was ITS own
         -- NOTE: refshot_ts (reference-screenshot marker) IS synced on purpose. The render
@@ -2240,6 +2242,7 @@ local _seam = {
     Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
     PurgeRetiredFields  = PurgeRetiredFields,
+    RETIRED_FIELDS      = RETIRED_FIELDS,
     DeserializeChar     = DeserializeChar,
     SerializeFullDB     = SerializeFullDB,
     DeserializeFullDB   = DeserializeFullDB,

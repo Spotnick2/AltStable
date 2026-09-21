@@ -33,7 +33,6 @@ AltStable.Columns = {
 
     -- Always-visible identity
     { label="Class", field="class", width=22, align="CENTER", type="classIcon", group="always" },
-    { label="Spec",  field="spec",  width=22, align="CENTER", type="specIcon",  group="always" },
     { label="Race",  field="race",  width=22, align="CENTER", type="raceIcon",  group="always" },
     { label="Lvl",   field="level", width=35, align="RIGHT",  type="number",    group="always" },
     { label="iLvl",  field="ilvl",  width=45, align="RIGHT",  type="number",    group="always" },
