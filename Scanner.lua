@@ -558,7 +558,10 @@ function AltStable.ScanCharacter()
     --------------------------------------------------------
 
     local rested = GetXPExhaustion() or 0
-    local nextXP = UnitXPMax("player") or 1
+    -- 0 is truthy in Lua, so `or 1` doesn't cover it; a zero here would divide
+    -- into inf/nan and sync out as garbage.
+    local nextXP = UnitXPMax("player") or 0
+    if nextXP <= 0 then nextXP = 1 end
 
     char.restXP = rested
     char.restPercent = math.floor((rested / nextXP) * 100)

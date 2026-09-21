@@ -167,6 +167,58 @@ else
 end
 
 ------------------------------------------------------------
+-- Vanilla display (#7, #6)
+--
+-- Gear cells take the item's own quality colour: the old ramp coloured by
+-- item level against TBC raid tiers, so every Vanilla epic rendered grey or
+-- white. The average is shown plain and rounded. The level cap comes from
+-- the client, not a TBC 70. restedArea arrives from sync as a STRING.
+------------------------------------------------------------
+
+local TT = AltStable._test
+local gear, avg, rested = TT.FormatGearIlvl, TT.FormatItemLevel, TT.ComputeLiveRestedPercent
+check("render helpers are exposed for testing", gear and avg and rested)
+if gear and avg and rested then
+    eq("a level-40 epic is purple, whatever its item level", gear(40, 4), "|cffa335ee40|r")
+    eq("an uncommon is green", gear(66, 2), "|cff1eff0066|r")
+    eq("a legendary stays orange", gear(80, 5), "|cffff800080|r")
+    eq("an unknown quality falls back to white", gear(50, 99), "|cffffffff50|r")
+    eq("an empty slot is a dim dash", gear(0, 4), "|cff444444--|r")
+    eq("the average is rounded and uncoloured", avg(57.6), "58")
+    eq("  and rounds down below the half", avg(57.4), "57")
+
+    WoW.reset()
+    local now = WoW.now
+    local function alt(level, area)
+        return { guid = "Player-Alt-1", level = level, restPercent = 0,
+                 restTimestamp = now - 8 * 3600, restedArea = area }
+    end
+    -- 8h: 5% in a rested area, 1.25% (rounds to 1) in the open world.
+    eq("a level-60 character is at the cap: no rested XP", (rested(alt(60, true))), 0)
+    WoW.maxLevel = 70
+    eq("  and the cap follows the client", (rested(alt(60, true))), 5)
+    WoW.maxLevel = 60
+    eq("rested area, as scanned (boolean)", (rested(alt(59, true))), 5)
+    eq("rested area, as synced (string)", (rested(alt(59, "true"))), 5)
+    eq("open world, as synced: the string \"false\" is not rested", (rested(alt(59, "false"))), 1)
+    eq("open world, as scanned", (rested(alt(59, false))), 1)
+
+    -- The current character reads the live API; UnitXPMax 0 must not divide.
+    WoW.xpMax, WoW.restXP = 0, 100
+    local live = rested({ guid = UnitGUID("player"), level = 59 })
+    check("a zero UnitXPMax gives a finite rested %", live == live and live ~= math.huge, tostring(live))
+    WoW.reset()
+end
+
+-- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().
+for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua" }) do
+    local src = io.open(f):read("*a")
+    check(f .. " has no hard-coded level cap",
+          not src:find("%f[%w_]lvl%s*[<>]=?%s*[1-9]") and not src:find("char%.level,%s*%d")
+          and not src:find("[cC]ap%s*=%s*%d"))
+end
+
+------------------------------------------------------------
 -- Slash arguments: names contain a space now
 ------------------------------------------------------------
 
@@ -545,9 +597,15 @@ GetBuildInfo = realBuildInfo
 ------------------------------------------------------------
 
 AltStableDB = AltStableDB or {}
+WoW.xpMax, WoW.restXP, WoW.xp = 0, 100, 50   -- UnitXPMax at the cap: 0 on Retail
 pcall(AltStable.ScanCharacter)
 local scanned = AltStableDB[UnitGUID("player")]
 check("scanning a character marks it as ours", scanned ~= nil and scanned.scannedHere == true)
+local function finite(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
+check("a zero UnitXPMax scans a finite rested %", scanned and finite(scanned.restPercent),
+      scanned and tostring(scanned.restPercent))
+check("  and a finite XP %", scanned and finite(scanned.xpPercent), scanned and tostring(scanned.xpPercent))
+WoW.reset()
 
 ------------------------------------------------------------
 

@@ -33,6 +33,7 @@ local WoW = {
     timers      = {},
     sent        = {},
     maxLevel    = 60,
+    level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
     now         = 1700000000,  -- the clock time() reads; tests pin their own values
@@ -44,6 +45,7 @@ function WoW.reset()
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.maxLevel = 60
+    WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
@@ -333,10 +335,15 @@ function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
 
 -- Measured: nil when the character is not rested (docs/forever-api-notes.md).
-function GetXPExhaustion() return nil end
+function GetXPExhaustion() return WoW.restXP end
+-- UnitXPMax at the level cap is unmeasured on Forever; Retail returns 0 there,
+-- which is why callers must not divide by it unguarded. Tests set WoW.xpMax = 0.
+function UnitXPMax() return WoW.xpMax end
+function UnitXP() return WoW.xp end
+function IsResting() return WoW.resting end
 
 function GetMaxPlayerLevel() return WoW.maxLevel end
-function UnitLevel() return 1 end
+function UnitLevel() return WoW.level end
 function GetTime() return 0 end
 -- A fixed clock, never the wall clock. Sync watermarks, the merge's 60-second
 -- window and the stall deadlines are all time comparisons: a clock stuck at 0

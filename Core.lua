@@ -1692,7 +1692,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local char = guid and AltStableDB[guid]
         if char then
             local liveRest = GetXPExhaustion() or 0
-            local liveMax  = UnitXPMax("player") or 1
+            local liveMax  = UnitXPMax("player") or 0
+            if liveMax <= 0 then liveMax = 1 end   -- 0 is truthy; don't divide by it
             local lvl      = UnitLevel("player") or 0
 
             -- Suspicious-zero guard.  Only accept a zero read if we have
@@ -1703,7 +1704,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local prevPct  = char.restPercent or 0
             local prevTime = char.restTimestamp or 0
             local elapsed  = time() - prevTime
-            local suspicious = (liveRest == 0) and (prevPct > 5) and (elapsed < 5) and (lvl < 70)
+            local suspicious = (liveRest == 0) and (prevPct > 5) and (elapsed < 5) and (lvl < AltStable.API.LevelCap())
 
             if not suspicious then
                 char.restXP        = liveRest
