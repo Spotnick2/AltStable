@@ -2008,7 +2008,7 @@ end
 -- functions/values. Not part of the public plugin API.
 ------------------------------------------------------------
 
-AltStable._test = {
+local _seam = {
     ComputeChecksum     = ComputeChecksum,
     Base64Encode        = Base64Encode,
     Base64Decode        = Base64Decode,
@@ -2037,3 +2037,6 @@ AltStable._test = {
     MSG_REQUEST_V      = MSG_REQUEST_V,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
 }
+
+AltStable._test = AltStable._test or {}
+for k, v in pairs(_seam) do AltStable._test[k] = v end
