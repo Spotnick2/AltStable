@@ -53,6 +53,11 @@ local PERSISTED = {
     { key = "sendAllAccounts",  kind = "bool"   },
     { key = "toastsEnabled",    kind = "bool"   },
     { key = "mailAlertsEnabled",kind = "bool"   },
+    -- Not a setting: the client build these settings were last written on.
+    -- It rides in the store because the store is the only thing on this
+    -- client that persists, and knowing when the client changed underneath
+    -- us is worth a dozen characters.
+    { key = "clientBuild",      kind = "string" },
 }
 
 -- `;` separates pairs, `,` separates list items, `=` separates key from value.
@@ -419,6 +424,43 @@ end
 -- told without asking, on the first login after a client update.
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Did the client update?
+--
+-- Every finding in docs/forever-api-notes.md, the API dump in
+-- References/forever-api-<build>.md, and the workarounds for #23 and #25 were
+-- measured against ONE build. A client update can fix or break any of them,
+-- and nobody watches the launcher closely enough to catch it.
+--
+-- So the build that the settings were last written on rides along in the
+-- store, and a mismatch at login says so. Not a warning about anything being
+-- broken - just "re-measure before trusting what you measured".
+------------------------------------------------------------
+
+local function CurrentBuild()
+    return (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or "?"
+end
+
+local function CheckClientBuild()
+    local previous = AltStableConfig.clientBuild
+    local build = CurrentBuild()
+
+    if previous and previous ~= "" and previous ~= build and DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffffcc00AltStable:|r client build changed " .. tostring(previous)
+            .. " -> " .. tostring(build) .. ". Everything measured on the old build is now "
+            .. "unverified: re-run |cffffff00/apidump|r for the API dump, and re-check "
+            .. "SavedVariables loading (#23) and the camera CVars (#25).")
+    end
+
+    if previous ~= build then
+        AltStableConfig.clientBuild = build
+        AltStable.SaveConfigToCVar()
+    end
+end
+
+AltStable.CheckClientBuild = CheckClientBuild
+
 local function CheckSavedVariablesLoad()
     local previous = AltStableConfig.svLoadCheck
     local build = (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or "?"
@@ -446,4 +488,7 @@ initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:SetScript("OnEvent", function()
     CheckSavedVariablesLoad()
     EnsureDefaults()
+    -- After the defaults, because it needs the stored build loaded to compare
+    -- against - and it writes, so it must not run before the store is read.
+    CheckClientBuild()
 end)

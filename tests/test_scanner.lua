@@ -430,6 +430,57 @@ eq("  with a reason", saveErr, "no SetCVar")
 GetCVar, SetCVar, RegisterCVar = realGet, realSet, realRegister
 
 ------------------------------------------------------------
+-- Did the client update?
+--
+-- Every measured finding belongs to one build, and nobody watches the
+-- launcher. The build rides in the store - the only thing that persists on
+-- this client - so a mismatch at login can say so.
+------------------------------------------------------------
+
+WoW.cvars = {}
+AltStableConfig = {}
+WoW.chatOut = {}
+AltStable.EnsureConfigDefaults()
+AltStable.CheckClientBuild()
+check("a first run says nothing about the build", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+eq("  but records the build it ran on", AltStableConfig.clientBuild, "69913")
+
+-- Same build again: silence. This runs at every login, so a chatty version
+-- would be worse than no check at all.
+WoW.chatOut = {}
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+AltStable.CheckClientBuild()
+eq("the stored build survives a session", AltStableConfig.clientBuild, "69913")
+check("  and an unchanged build stays quiet", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+
+-- The client updates underneath us.
+local realBuildInfo = GetBuildInfo
+GetBuildInfo = function() return "1.60.2", "70001", "Oct 01 2026", 16001 end
+WoW.chatOut = {}
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+AltStable.CheckClientBuild()
+check("a changed build is announced",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("build changed", 1, true) ~= nil,
+      WoW.chatOut[1] or "(nothing printed)")
+check("  naming both builds",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("69913", 1, true) ~= nil
+      and WoW.chatOut[1]:find("70001", 1, true) ~= nil, WoW.chatOut[1] or "")
+check("  and what to re-check",
+      #WoW.chatOut > 0 and WoW.chatOut[1]:find("/apidump", 1, true) ~= nil
+      and WoW.chatOut[1]:find("#23", 1, true) ~= nil, WoW.chatOut[1] or "")
+eq("  then records the new build", AltStableConfig.clientBuild, "70001")
+
+-- And stops announcing it once recorded.
+WoW.chatOut = {}
+AltStableConfig = {}
+AltStable.EnsureConfigDefaults()
+AltStable.CheckClientBuild()
+check("the new build is then quiet too", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+GetBuildInfo = realBuildInfo
+
+------------------------------------------------------------
 -- Has the client been fixed?
 --
 -- The store is a workaround, and workarounds outlive their cause silently.
