@@ -552,6 +552,9 @@ do
         if type(GetCVar) == "function" and type(SetCVar) == "function" then
             self.capture.shoulderOffset = tonumber(GetCVar("test_cameraOverShoulder")) or 0
             local desired = self:_ComputeShoulderOffset(self.enterToZoom)
+            if AltStable.SuppressExperimentalCVarPopup then
+                AltStable.SuppressExperimentalCVarPopup()
+            end
             pcall(SetCVar, "test_cameraOverShoulder", desired)
             CameraDebug(string.format("shoulder: from=%.3f to=%.3f",
                 self.capture.shoulderOffset, desired))
@@ -627,6 +630,9 @@ do
                           self.capture.cameraDistanceMaxZoomFactor)
                 end
                 if self.capture.shoulderOffset then
+                    if AltStable.SuppressExperimentalCVarPopup then
+                        AltStable.SuppressExperimentalCVarPopup()
+                    end
                     pcall(SetCVar, "test_cameraOverShoulder",
                           self.capture.shoulderOffset)
                 end
@@ -761,17 +767,38 @@ do
     end
 
     -- Suppress the engine-level "Are you sure you want to enable this
-    -- experimental feature?" popup. Default Blizzard UI registers
-    -- EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED on UIParent, which fires
-    -- whenever a script writes to test_* CVars. Narcissus does the exact
-    -- same unregister to keep its own test_cameraOverShoulder /
-    -- test_cameraDynamicPitch writes silent. We do this once at file
-    -- load, the same way Narcissus does — there's no CVar-by-CVar opt-in
-    -- API; you either get the popup for all of them or none. We use
-    -- pcall in case some future client doesn't have this event.
-    if UIParent and type(UIParent.UnregisterEvent) == "function" then
-        pcall(UIParent.UnregisterEvent, UIParent, "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED")
+    -- experimental feature?" popup, which fires whenever a script writes a
+    -- test_* CVar. There is no per-CVar opt-in; you get the popup for all of
+    -- them or none. Narcissus takes the same approach.
+    --
+    -- On Classic the handler lived on UIParent, so unregistering there was
+    -- enough. On this client it does not, which is why the popup reappeared on
+    -- every window close and "Accept" never stuck - accepting does not stop
+    -- the next write from asking again.
+    --
+    -- So find the actual owner rather than assuming one. Re-run on each call
+    -- because the owning frame may not exist yet at file load.
+    AltStable.SuppressExperimentalCVarPopup = function()
+        local ev = "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED"
+        local n = 0
+        if type(GetFramesRegisteredForEvent) == "function" then
+            local ok, frames = pcall(GetFramesRegisteredForEvent, ev)
+            if ok and type(frames) == "table" then
+                for _, f in ipairs(frames) do
+                    if f and type(f.UnregisterEvent) == "function" then
+                        if pcall(f.UnregisterEvent, f, ev) then n = n + 1 end
+                    end
+                end
+            end
+        end
+        -- Belt and braces for a client where the lookup is unavailable.
+        if n == 0 and UIParent and type(UIParent.UnregisterEvent) == "function" then
+            pcall(UIParent.UnregisterEvent, UIParent, ev)
+        end
+        return n
     end
+
+    AltStable.SuppressExperimentalCVarPopup()
 end
 
 ------------------------------------------------------------
