@@ -1169,6 +1169,37 @@ AltStable.PendingAuditItems = nil
 -- Summary
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Live rested-XP updates (#6)
+------------------------------------------------------------
+-- UnitXPMax can be 0 (Retail returns 0 at the cap); `or 1` never caught it.
+-- Below the cap that is a bad read: the last snapshot stands, rather than a
+-- 1-XP level making it 10000%.
+WoW.reset()
+local xpGuid = UnitGUID("player")
+AltStableDB = { [xpGuid] = { guid = xpGuid, restPercent = 40, xpMax = 400, restTimestamp = 0 } }
+WoW.level, WoW.xpMax, WoW.restXP = 59, 0, 100
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+eq(AltStableDB[xpGuid].restPercent, 40, "below the cap, a zero maximum keeps the last rested %")
+eq(AltStableDB[xpGuid].xpMax, 400, "  and the last maximum")
+eq(AltStableDB[xpGuid].restTimestamp, 0, "  and the snapshot time")
+WoW.level = 60
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+eq(AltStableDB[xpGuid].restPercent, 0, "at the cap, a zero maximum means no rested XP")
+
+-- The transient-zero guard applies below the cap only. At 60 - the cap here -
+-- a zero is real, not a loading-screen read, and must be stored.
+WoW.reset()
+AltStableDB = { [xpGuid] = { guid = xpGuid, restPercent = 40, restTimestamp = WoW.now } }
+WoW.level, WoW.xpMax, WoW.restXP = 60, 0, 0
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+eq(AltStableDB[xpGuid].restPercent, 0, "at the level cap a zero rested read is stored, not held back")
+WoW.level = 59
+AltStableDB = { [xpGuid] = { guid = xpGuid, restPercent = 40, restTimestamp = WoW.now } }
+WoW.xpMax = 400
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+eq(AltStableDB[xpGuid].restPercent, 40, "  below it, a sudden zero is still treated as transient")
+
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else

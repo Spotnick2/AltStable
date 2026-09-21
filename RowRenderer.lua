@@ -21,12 +21,19 @@ local GetItemInfo = AltStable.API.GetItemInfo
 -- without needing them to log in again.
 ------------------------------------------------------------
 
+-- restedArea is a boolean on the character that scanned it, but sync stringifies
+-- it and DeserializeChar only coerces numbers - so a synced alt carries the STRING
+-- "false", which is truthy. Compare explicitly; never test it for truthiness.
+local function InRestedArea(char)
+    return char.restedArea == true or char.restedArea == "true"
+end
+
 local function ComputeLiveRestedPercent(char)
     if not char then return 0, 0 end
 
-    -- Level 70s don't accrue rested XP (pre-expansion level cap)
+    -- Characters at the level cap don't accrue rested XP
     local lvl = char.level or 0
-    if lvl >= 70 then return 0, 0 end
+    if lvl >= AltStable.API.LevelCap() then return 0, 0 end
 
     -- For the currently-logged-in character, ALWAYS read the live API.
     -- Stored values are a per-snapshot approximation that only moves up
@@ -52,7 +59,7 @@ local function ComputeLiveRestedPercent(char)
     -- Accrual rate (% of a level per hour)
     --   rested area: 5% per 8h  = 0.625 %/h
     --   open world:  5% per 32h = 0.15625 %/h
-    local perHour = (char.restedArea and 0.625) or 0.15625
+    local perHour = InRestedArea(char) and 0.625 or 0.15625
     local addedPercent = (elapsed / 3600) * perHour
 
     local live = storedPercent + addedPercent
@@ -489,83 +496,18 @@ local function FormatProfession(name, skill, max)
 end
 
 ------------------------------------------------------------
--- iLvl gradient — smooth interpolation between WoW quality
--- colours, capping at Epic (purple).
+-- Item level display
 --
--- Below purple: grey → white → green → blue
--- Within purple: muted purple → rich purple, scaled to the
--- current raid tier ceiling so each phase's gear is visually
--- distinct.
---
--- The ceiling tracks the selected phase — the purple sub-gradient
--- rescales automatically.  Orange is reserved for legendary
--- item quality in gear slots only (see FormatGearIlvl).
+-- The average renders neutrally: there is no Vanilla item-level
+-- scale to colour it against (the old ramp was tuned to TBC raid
+-- tiers). GetAverageItemLevel is fractional, so it is rounded.
+-- Gear slots are coloured by the item's own quality instead
+-- (see FormatGearIlvl).
 ------------------------------------------------------------
-
--- The ceiling follows the phase selected in Options ▸ Best in Slot, so
--- the purple sub-gradient rescales automatically when the phase changes.
-local function IlvlCeiling()
-    local tier = AltStable.GetBisTier()
-    for _, t in ipairs(AltStable.BIS_TIERS) do
-        if t.key == tier then return t.ceiling end
-    end
-    return 154
-end
-
--- Fixed breakpoints for the quality colour ramp
-local ILVL_POOR     = 60   -- below: grey
-local ILVL_COMMON   = 80   -- grey → white ends here
-local ILVL_UNCOMMON = 100  -- white → green ends here
-local ILVL_RARE     = 115  -- green → blue ends here
-local ILVL_EPIC     = 125  -- blue → purple starts here (T4 entry)
-
-local function LerpColor(c1, c2, t)
-    t = math.max(0, math.min(1, t))
-    return {
-        r = c1.r + (c2.r - c1.r) * t,
-        g = c1.g + (c2.g - c1.g) * t,
-        b = c1.b + (c2.b - c1.b) * t,
-    }
-end
-
-local function IlvlToColor(ilvl)
-    -- Colour anchors
-    local GREY       = { r=0.62, g=0.62, b=0.62 }
-    local WHITE      = { r=1.00, g=1.00, b=1.00 }
-    local GREEN      = { r=0.12, g=1.00, b=0.00 }
-    local BLUE       = { r=0.00, g=0.44, b=0.87 }
-    -- Purple sub-gradient: muted at T4 entry, rich/vivid at ceiling (current tier max)
-    local PURPLE_LOW  = { r=0.47, g=0.20, b=0.73 }  -- #7833BA muted blue-purple
-    local PURPLE_HIGH = { r=0.78, g=0.30, b=1.00 }  -- #C74DFF vivid rich purple
-
-    -- The band thresholds above are absolute, but `ceiling` is now per-phase. A low
-    -- ceiling would otherwise collapse or invert the top bands: at T4 (125) the purple
-    -- ramp has zero width, and at Pre-Raid (115) the ceiling sits *below* ILVL_EPIC, so
-    -- every blue-tier item jumps straight to vivid purple. Pull each floor down only as
-    -- far as needed to keep the bands ordered and non-empty. Phases whose ceiling is
-    -- comfortably above ILVL_EPIC (T5 and up) are unaffected and keep today's colours.
-    local ceiling = IlvlCeiling()
-    local MIN_BAND = 8
-    local epic     = math.min(ILVL_EPIC,     ceiling  - MIN_BAND)
-    local rare     = math.min(ILVL_RARE,     epic     - MIN_BAND)
-    local uncommon = math.min(ILVL_UNCOMMON, rare     - MIN_BAND)
-    local common   = math.min(ILVL_COMMON,   uncommon - MIN_BAND)
-    local poor     = math.min(ILVL_POOR,     common   - MIN_BAND)
-
-    if     ilvl >= ceiling  then return PURPLE_HIGH
-    elseif ilvl >= epic     then return LerpColor(PURPLE_LOW, PURPLE_HIGH, (ilvl - epic)     / (ceiling  - epic))
-    elseif ilvl >= rare     then return LerpColor(BLUE,       PURPLE_LOW,  (ilvl - rare)     / (epic     - rare))
-    elseif ilvl >= uncommon then return LerpColor(GREEN,      BLUE,        (ilvl - uncommon) / (rare     - uncommon))
-    elseif ilvl >= common   then return LerpColor(WHITE,      GREEN,       (ilvl - common)   / (uncommon - common))
-    elseif ilvl >= poor     then return LerpColor(GREY,       WHITE,       (ilvl - poor)     / (common   - poor))
-    else                         return GREY
-    end
-end
 
 local function FormatItemLevel(ilvl)
     if not ilvl then return "" end
-    local c = IlvlToColor(ilvl)
-    return string.format("|cff%02x%02x%02x%.1f|r", c.r*255, c.g*255, c.b*255, ilvl)
+    return tostring(math.floor(ilvl + 0.5))
 end
 
 local function FormatSecondarySkill(value, max)
@@ -595,6 +537,8 @@ end
 --   3 Rare      : blue
 --   4 Epic      : purple
 --   5 Legendary : orange
+--   6 Artifact  : light gold  (the Retail enum carries these
+--   7 Heirloom  : light blue   two; unmeasured on Forever)
 ------------------------------------------------------------
 
 local QUALITY_COLORS = {
@@ -604,6 +548,8 @@ local QUALITY_COLORS = {
     [3] = "|cff0070dd",  -- blue   (Rare)
     [4] = "|cffa335ee",  -- purple (Epic)
     [5] = "|cffff8000",  -- orange (Legendary)
+    [6] = "|cffe6cc80",  -- gold   (Artifact)
+    [7] = "|cff00ccff",  -- cyan   (Heirloom)
 }
 
 local function FormatGearIlvl(slotIlvl, slotQuality)
@@ -611,13 +557,12 @@ local function FormatGearIlvl(slotIlvl, slotQuality)
         return "|cff444444--|r"
     end
     local v = math.floor(slotIlvl)
-    -- Legendary items keep their orange — everything else uses the ilvl gradient
-    if slotQuality == 5 then
-        return "|cffff8000"..v.."|r"
-    end
-    local c = IlvlToColor(slotIlvl)
-    return string.format("|cff%02x%02x%02x%d|r", c.r*255, c.g*255, c.b*255, v)
+    return (QUALITY_COLORS[slotQuality] or QUALITY_COLORS[1]) .. v .. "|r"
 end
+
+AltStable._test.FormatItemLevel          = FormatItemLevel
+AltStable._test.FormatGearIlvl           = FormatGearIlvl
+AltStable._test.ComputeLiveRestedPercent = ComputeLiveRestedPercent
 
 ------------------------------------------------------------
 -- Shared row background colours
@@ -920,16 +865,17 @@ function AltStable.RenderRow(row, char, index, columns)
             end
 
         elseif col.field=="level" then
-            value = FormatMax(char.level, 70)
+            local cap = AltStable.API.LevelCap()
+            value = FormatMax(char.level, cap)
             if tip then
                 local lvl = char.level or 0
-                if lvl < 70 then
+                if lvl < cap then
                     local xpPct = char.xpPercent or 0
                     tip.line1 = "Level " .. lvl
                     tip.line2 = xpPct .. "% through this level"
                     tip.line3 = nil
                 else
-                    tip.line1 = "Level 70 (max)"
+                    tip.line1 = "Level " .. lvl .. " (max)"
                     tip.line2 = nil; tip.line3 = nil
                 end
             end
@@ -979,8 +925,9 @@ function AltStable.RenderRow(row, char, index, columns)
 
         elseif col.field=="restPercent" or col.type=="restXP" then
             local lvl = char.level or 0
+            local atCap = lvl >= AltStable.API.LevelCap()
             local p   = ComputeLiveRestedPercent(char)  -- 0 at the level cap
-            if lvl >= 70 then
+            if atCap then
                 -- At the level cap rested XP doesn't apply. Show a dim
                 -- placeholder rather than a red 0%, which reads like an error.
                 value = "|cff888888—|r"
@@ -996,7 +943,7 @@ function AltStable.RenderRow(row, char, index, columns)
                 end
                 value = string.format("|cff%02x%02x00%d%%|r", math.floor(r*255), math.floor(g*255), p)
             end
-            if tip and lvl < 70 then
+            if tip and not atCap then
                 if p >= 150 then
                     tip.line1 = "Rested XP: " .. p .. "% (full)"
                     tip.line2 = nil; tip.line3 = nil
@@ -1004,13 +951,13 @@ function AltStable.RenderRow(row, char, index, columns)
                     local needed  = 150 - p
                     -- Time to full depends on whether the character
                     -- logged out in a rested zone.
-                    local perHour = (char.restedArea and 0.625) or 0.15625
+                    local perHour = InRestedArea(char) and 0.625 or 0.15625
                     local hours   = math.ceil(needed / perHour)
                     local days    = math.floor(hours / 24)
                     local remHour = hours % 24
                     local timeStr = days > 0 and (days.."d "..remHour.."h") or (hours.."h")
                     tip.line1 = "Rested XP: " .. p .. "%"
-                    if char.restedArea then
+                    if InRestedArea(char) then
                         tip.line2 = "~" .. timeStr .. " offline to reach 150% (in inn/city)"
                     else
                         tip.line2 = "~" .. timeStr .. " offline to reach 150% (open world)"

@@ -121,8 +121,11 @@ local function EnsureDefaults()
     if AltStableConfig.minGemQuality == nil then
         AltStableConfig.minGemQuality = 3
     end
-    if AltStableConfig.auditMinLevel == nil then
-        AltStableConfig.auditMinLevel = 70
+    -- The default is the client's level cap; a stored value above it (the old
+    -- TBC default of 70) could never be reached, so it is pulled down too.
+    local levelCap = AltStable.API.LevelCap()
+    if AltStableConfig.auditMinLevel == nil or AltStableConfig.auditMinLevel > levelCap then
+        AltStableConfig.auditMinLevel = levelCap
     end
 
     -- Appearance defaults
