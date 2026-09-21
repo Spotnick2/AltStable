@@ -824,14 +824,33 @@ AltStable._PlayOpenAnimation = PlayOpenAnimation
 
 local minimapBtn
 
+-- How far outside the minimap edge the button centre sits. LibDBIcon uses ~5;
+-- ours carries a 54px tracking border around a 31px button, so it needs a
+-- little more clearance to clear the ring art.
+local MINIMAP_BUTTON_CLEARANCE = 10
+
 local function PositionMinimapButton()
-    if not minimapBtn then return end
+    if not minimapBtn or not Minimap then return end
     AltStableConfig.minimapButton = AltStableConfig.minimapButton or {}
     local angle = tonumber(AltStableConfig.minimapButton.angle) or 200
     local rads = math.rad(angle)
-    local r = 80 -- distance from minimap center; sits just outside the ring
+
+    -- Measure the ring instead of assuming it. The old hardcoded 80 was a
+    -- Classic number: that minimap is 140px across, so 70 + clearance landed
+    -- the button just outside the edge. The Mainline minimap this client
+    -- ships is bigger, so 80 fell INSIDE the map. Reading the live frame
+    -- tracks whatever size the client (or the player's UI scale) gives us.
+    --
+    -- The button is a child of Minimap, so these are already in the same
+    -- coordinate space - no scale conversion needed. Width and height are
+    -- taken separately so a non-square minimap still gets its buttons on the
+    -- edge rather than on an inscribed circle.
+    local w, h = Minimap:GetWidth() or 0, Minimap:GetHeight() or 0
+    local rx = (w > 0 and w / 2 or 70) + MINIMAP_BUTTON_CLEARANCE
+    local ry = (h > 0 and h / 2 or 70) + MINIMAP_BUTTON_CLEARANCE
+
     minimapBtn:ClearAllPoints()
-    minimapBtn:SetPoint("CENTER", Minimap, "CENTER", r * math.cos(rads), r * math.sin(rads))
+    minimapBtn:SetPoint("CENTER", Minimap, "CENTER", rx * math.cos(rads), ry * math.sin(rads))
 end
 
 local function CreateMinimapButton()
@@ -907,6 +926,13 @@ local function CreateMinimapButton()
     minimapBtn = btn
     AltStable._minimapButton = btn
     PositionMinimapButton()
+
+    -- The minimap can be resized after we place the button (UI scale changes,
+    -- another addon reskinning the cluster). Follow it rather than stranding
+    -- the button at the old radius.
+    if type(Minimap.HookScript) == "function" then
+        pcall(Minimap.HookScript, Minimap, "OnSizeChanged", PositionMinimapButton)
+    end
 
     if AltStableConfig.minimapButton.hide then
         btn:Hide()
