@@ -466,6 +466,68 @@ Accepted, including all of Core.lua's: `PLAYER_LOGIN`, `CHAT_MSG_ADDON`,
 `SKILL_LINES_CHANGED`, `UPDATE_FACTION`, `PLAYER_LEVEL_UP`, `TRADE_SKILL_SHOW`,
 `TRADE_SKILL_LIST_UPDATE`, `TRADE_SKILL_DATA_SOURCE_CHANGED`.
 
+### `GetFramesRegisteredForEvent` returns VARARGS — read from the API reference, not probed
+
+The one entry on this page that is **not** a probe measurement. It is here because the wrong read
+is silent and it shipped twice; item 5 under "Still to measure" is the probe line that settles it.
+
+```
+GetFramesRegisteredForEvent(event)  ->  frame1, frame2, ...        (varargs)
+                                   NOT  { frame1, frame2, ... }    (a table)
+```
+
+Why the wrong read costs a whole feature rather than throwing:
+
+```lua
+local ok, frames = pcall(GetFramesRegisteredForEvent, ev)
+if ok and type(frames) == "table" then    -- passes: `frames` is the FIRST FRAME
+    for _, f in ipairs(frames) do         -- never runs: a frame has no array part
+```
+
+A frame **is** a Lua table, so `type()` says "table". It has no array part, so `#frames` is `0`,
+the loop body never executes, and the caller concludes that nobody is registered for the event.
+No error, no stack trace, and any "how many did I find?" counter reads back a confident zero.
+
+Two consecutive attempts at the experimental-CVar popup suppression in `SheetUI.lua` shipped that
+way before a review caught it (#24). Use `AltStable.API.FramesRegisteredForEvent(event)`, which
+collects the varargs into a real list. `tests/wow_stubs.lua` models the vararg return, so a
+table-shaped stub cannot let this ship a third time.
+
+**Confirmed live 2026-09-20.** `AltStable.SuppressExperimentalCVarPopup()` returns the number of
+frames it successfully unregistered, and on this client it returns `1` where every table-shaped
+read returned `0`. That count only increments after `f:UnregisterEvent(ev)` succeeds, so a `1`
+means the first returned value was itself a frame — a *table of* frames has no `UnregisterEvent`
+and would have scored `0`. Varargs confirmed.
+
+---
+
+---
+
+## CVars — the namespace moved halfway, and a writable CVar is not a read one
+
+Measured 2026-09-20 on 1.60.1.69913, chasing #25.
+
+```
+GetCVar("test_cameraOverShoulder")        ->  "0.000000"     -- global, still works
+SetCVar("test_cameraOverShoulder", 12)    ->  writes; GetCVar reads back 12
+GetCVarInfo("test_cameraOverShoulder")    ->  ERROR: attempt to call a nil value
+
+C_CVar.GetCVarInfo("test_cameraOverShoulder")
+    ->  "0.000000", "0.000000", false, false, false, false, false
+        value, default, storedServerAccount, storedServerCharacter,
+        lockedFromUser, secure, readonly
+```
+
+`GetCVar` and `SetCVar` survive as bare globals. `GetCVarInfo` does **not** — it lives in `C_CVar`.
+Assume nothing about the rest of the family; check each one before use.
+
+**Writable is not the same as read.** `test_cameraOverShoulder` reports unlocked, non-readonly and
+non-secure, accepts a write, and reads the value straight back — and moves the camera not at all,
+at `2.043` or at `12`. The value also reverts to `0` on its own without the confirmation popup's
+"Disable" ever being clicked. Whatever the camera subsystem consults on this client, it is not this
+CVar. Same write-but-never-read shape as the SavedVariables blocker (#23), in a different store.
+See #25 before building anything on a `test_*` camera CVar.
+
 ---
 
 ## Other stats
@@ -500,3 +562,11 @@ UnitXPMax("player")         ->  400
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
+5. ~~**`GetFramesRegisteredForEvent`'s return shape**~~ — **answered live**, see above. The
+   unregister count came back `1` where a table read scored `0`, which can only happen if the
+   first return value is a frame. A probe line would still be tidier than inference if one is
+   ever added.
+6. **Does the camera subsystem read *any* `test_*` CVar on this client?** `test_cameraOverShoulder`
+   is written and ignored (#25). `test_cameraDynamicPitch` is the discriminator: if that is inert
+   too, the whole experimental-camera family is unread and no CVar-based framing will ever work
+   here.
