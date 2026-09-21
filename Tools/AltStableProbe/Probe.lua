@@ -879,9 +879,15 @@ boot:SetScript("OnEvent", function()
                     never[#never + 1] = store.label
                 end
             end
+            -- Say only what was observed. "Never loaded" covers two different
+            -- failures - a file written but not read (account, per-character on
+            -- 1.60.1.69913) and a file never written at all (machine scope, for
+            -- third-party addons) - and nothing in-game can tell them apart.
+            -- The disk can, so point there instead of guessing.
             if #never > 0 then
                 Out(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
-                    .. "The client writes these files but does not read them back.")
+                    .. "That only says they did not LOAD: check the files under WTF on disk "
+                    .. "to tell 'written but not read' from 'never written'.")
                     :format(table.concat(never, ", ")))
             end
         end)
