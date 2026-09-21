@@ -126,6 +126,15 @@ local function DumpDocumented(out)
                 .. "(" .. FormatParams(fn.Arguments) .. ")"
             local rets = FormatParams(fn.Returns)
             if rets ~= "" then line = line .. " -> " .. rets end
+            -- Systems with no Namespace are the script-object ones, and their
+            -- "functions" are widget METHODS. Dropping the owner produced five
+            -- unqualified SetText signatures and two TryOn signatures in the
+            -- artifact, with no way to tell which belonged to what. The owner
+            -- goes in a trailing marker rather than a `Type:` prefix so the
+            -- line does not assert call syntax it has not verified.
+            if not ns and sys.Name then
+                line = line .. "  [" .. tostring(sys.Name) .. "]"
+            end
             out.documented[#out.documented + 1] = line
             nFunc = nFunc + 1
         end
