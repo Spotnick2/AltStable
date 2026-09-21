@@ -62,6 +62,52 @@ GetPlayerInfoByGUID(guid) ->  ..., [6]="Second", [7]="", ...
 Same realm ID (`1234`) for both characters, and the same split: full name with surname from
 `UnitName`, first name only from `GetPlayerInfoByGUID`.
 
+### UnitName on OTHER units splits the surname into the second return
+
+Measured from a party member:
+
+```
+UnitName("player")   ->  "Karuzo Elegia",  nil        full name, nothing in slot 2
+UnitName("party1")   ->  "Zoruka",         "Mortalis" first name, SURNAME in slot 2
+UnitFullName("party1") -> "Zoruka",        "Mortalis"
+```
+
+Slot 2 is classically the **realm**. Here it carries the surname — and the
+party member is on the same realm ("Classic Beta PvE"), so this is not a realm
+value at all. The idiom
+
+```lua
+local name, realm = UnitName(unit)
+if realm and realm ~= "" then name = name .. "-" .. realm end
+```
+
+therefore produces `"Zoruka-Mortalis"`, which reads as a realm-qualified name
+and will be mangled by anything that later strips a realm by splitting on `-`.
+
+Our code is unaffected — every `UnitName` call site is `"player"` — but any new
+code reading another unit's name must not assume slot 2 is a realm.
+
+### New race: Skyborne
+
+Forever adds a playable race the Classic clients do not have:
+
+```
+GetPlayerInfoByGUID(guid)            ->  ..., [3]="Windshaper Skyborne", [4]="Skyborne", ...
+C_PlayerInfo.GetPlayerCharacterData() ->  { fileName="Skyborne",
+                                            name="Windshaper Skyborne",
+                                            createScreenIconAtlas="raceicon-skyborne-female" }
+```
+
+**One race key, two faction-dependent display names.** "High Order Skyborne"
+and "Windshaper Skyborne" both report `fileName = "Skyborne"`, so no
+key-to-name table can render them correctly — the localized name has to be
+captured per character at scan time.
+
+The atlas slug is the lowercased key (`raceicon-skyborne-female`), which holds
+for every race measured. `Scourge -> undead` remains the only exception, so the
+icon is better derived than looked up: an allowlist returns `""` for anything
+it has not heard of, which is how a new race silently renders nothing.
+
 ### What this means for sync
 
 Better than feared. `PeerShort()` splits on `-` to strip the realm, and a Forever name contains a

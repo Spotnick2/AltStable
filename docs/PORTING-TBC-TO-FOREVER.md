@@ -261,6 +261,25 @@ CHAT_MSG_ADDON  ->  sender = "Example Surname"                (full name, space-
   not hyphenated — and replying to that string verbatim routes back.
 - So code that strips a realm by splitting on `-` still works, and the resulting key is unique.
 
+**`UnitName` on a unit other than the player puts the surname in slot 2**, where
+the realm used to be:
+
+```
+UnitName("player")  ->  "Karuzo Elegia", nil
+UnitName("party1")  ->  "Zoruka", "Mortalis"     <- surname, NOT a realm
+```
+
+So `local name, realm = UnitName(unit)` followed by `name.."-"..realm` builds
+`"Zoruka-Mortalis"`, which anything downstream will read as realm-qualified.
+
+**New playable race: Skyborne.** One race key with two faction-dependent
+display names — "High Order Skyborne" and "Windshaper Skyborne" both report
+`fileName = "Skyborne"`. Any addon with a hardcoded race table needs the key
+added, and any that maps key to display name cannot render both correctly;
+capture the localized name from `UnitRace` per character instead. The icon
+atlas is `raceicon-skyborne-<gender>`, i.e. the lowercased key, so deriving the
+slug beats an allowlist — a miss renders nothing at all.
+
 **The thing that actually breaks: slash-command argument parsing.** The near-universal idiom
 
 ```lua

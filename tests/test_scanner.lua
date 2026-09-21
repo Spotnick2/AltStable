@@ -137,6 +137,36 @@ C_Reputation.GetFactionDataByIndex = realFac
 dofile("Compat.lua"); dofile("Reputations.lua")
 
 ------------------------------------------------------------
+-- Race icons must not be an allowlist
+--
+-- Forever added Skyborne, and the old RACE_ATLAS table returned "" for any
+-- race it did not list - so a new race rendered no icon at all, silently.
+------------------------------------------------------------
+
+-- RowRenderer needs the palette from Theme.lua at load.
+dofile("Theme.lua")
+dofile("RowRenderer.lua")
+local iconOf = AltStable._test and AltStable._test.RaceIconText
+
+if iconOf then
+    check("a Classic race renders", iconOf("Human", "Male"):find("raceicon%-human%-male") ~= nil,
+          iconOf("Human", "Male"))
+    check("Scourge maps to the undead atlas", iconOf("Scourge", "Female"):find("raceicon%-undead%-female") ~= nil,
+          iconOf("Scourge", "Female"))
+    check("Skyborne renders without being in any table",
+          iconOf("Skyborne", "Female"):find("raceicon%-skyborne%-female") ~= nil,
+          iconOf("Skyborne", "Female"))
+    check("a race invented tomorrow still renders",
+          iconOf("Furbolg", "Male"):find("raceicon%-furbolg%-male") ~= nil,
+          iconOf("Furbolg", "Male"))
+    eq("an empty race renders nothing", iconOf("", "Male"), "")
+    eq("a nil race renders nothing", iconOf(nil, "Male"), "")
+else
+    check("RaceIconText is exposed for testing", false,
+          "add it to the AltStable._test seam")
+end
+
+------------------------------------------------------------
 -- Slash arguments: names contain a space now
 ------------------------------------------------------------
 

@@ -447,8 +447,14 @@ function AltStable.ScanCharacter()
     local classLocalized, classFile = UnitClass("player")
     char.class = classFile
 
-    char.race = select(2, UnitRace("player"))
+    -- UnitRace returns (localizedName, fileName). Both are worth keeping:
+    -- Forever's Skyborne is ONE race key with two faction-dependent display
+    -- names - "High Order Skyborne" and "Windshaper Skyborne" both report
+    -- fileName "Skyborne" - so no key-to-name table can render it correctly.
+    local raceLocalized, raceFile = UnitRace("player")
+    char.race = raceFile
     char.raceKey = char.race or ""
+    char.raceName = raceLocalized or ""
 
     -- Gender: 2 = male, 3 = female
     local gender = UnitSex("player")
