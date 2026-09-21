@@ -89,7 +89,6 @@ local function EnsureDefaults()
         AltStableConfig.toastProfessions = {
             Tailoring     = true,
             Alchemy       = true,
-            Jewelcrafting = true,
         }
     end
     -- On-demand plugins (LoadOnDemand addons AltStable loads at login when
@@ -109,10 +108,8 @@ local function EnsureDefaults()
     if not AltStableConfig.peerWatermarks then
         AltStableConfig.peerWatermarks = {}
     end
-    -- Best-in-Slot phase the BiS column and gear tooltips compare against.
-    -- Existing users get T6 (the current raid tier) rather than being
-    -- silently left on whatever the old hardcoded constant was.
-    AltStableConfig.bisTier = AltStableConfig.bisTier or "T6"
+    -- Retired with the BiS column (#8): nothing reads it any more.
+    AltStableConfig.bisTier = nil
 
     -- Roster gear audit. minGemQuality is the lowest gem quality considered
     -- acceptable (0 disables gem checks entirely, 3 = Rare, 4 = Epic), matching

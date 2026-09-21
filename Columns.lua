@@ -37,8 +37,6 @@ AltStable.Columns = {
     { label="Race",  field="race",  width=22, align="CENTER", type="raceIcon",  group="always" },
     { label="Lvl",   field="level", width=35, align="RIGHT",  type="number",    group="always" },
     { label="iLvl",  field="ilvl",  width=45, align="RIGHT",  type="number",    group="always" },
-    { label="BiS",   field="bisCount", width=38, align="RIGHT", type="bisCount", group="always",
-      headerIcon="Interface\\AddOns\\AltStable\\Media\\BisIcon.tga", headerNoBg=true },
 
     -- Gear slots — slotSlug drives icon resolution via AltStable.GetGearIconPath()
     -- at header-build time so Alliance/Horde icons update based on logged-in character.
@@ -72,7 +70,6 @@ AltStable.Columns = {
     prof("Blacksmithing", "prof_Blacksmithing",  "profmax_Blacksmithing",  "Interface\\Icons\\Trade_BlackSmithing"),
     prof("Enchanting",    "prof_Enchanting",     "profmax_Enchanting",     "Interface\\Icons\\Trade_Engraving"),
     prof("Engineering",   "prof_Engineering",    "profmax_Engineering",    "Interface\\Icons\\Trade_Engineering"),
-    prof("Jewelcrafting", "prof_Jewelcrafting",  "profmax_Jewelcrafting",  "Interface\\Icons\\INV_Misc_Gem_01"),
     prof("Leatherworking","prof_Leatherworking", "profmax_Leatherworking", "Interface\\Icons\\Trade_LeatherWorking"),
     prof("Tailoring",     "prof_Tailoring",      "profmax_Tailoring",      "Interface\\Icons\\Trade_Tailoring"),
     prof("Herbalism",     "prof_Herbalism",      "profmax_Herbalism",      "Interface\\Icons\\Trade_Herbalism"),

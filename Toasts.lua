@@ -64,7 +64,6 @@ local CLASS_COLORS = {
 local PROF_ICONS = {
     Tailoring     = "Interface/Icons/Trade_Tailoring",
     Alchemy       = "Interface/Icons/Trade_Alchemy",
-    Jewelcrafting = "Interface/Icons/INV_Misc_Gem_01",
 }
 
 ------------------------------------------------------------

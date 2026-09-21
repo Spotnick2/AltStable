@@ -249,6 +249,29 @@ local function GetSyncTargets()
 end
 
 ------------------------------------------------------------
+-- Retired fields
+--
+-- Character fields a previous build wrote that nothing reads any more. Removing
+-- the producer is not enough: stored records keep them, and sync would carry
+-- them between accounts indefinitely. So they are purged from the database at
+-- login, never sent, and dropped on receipt from a peer that still has them.
+------------------------------------------------------------
+
+local RETIRED_FIELDS = {
+    prof_Jewelcrafting = true, profmax_Jewelcrafting = true,   -- not a Vanilla profession
+    stat_crit = true, stat_hitpct = true, stat_haste = true,   -- combat ratings: none in Vanilla
+    stat_resilience = true,
+}
+
+local function PurgeRetiredFields()
+    for _, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" then
+            for k in pairs(RETIRED_FIELDS) do c[k] = nil end
+        end
+    end
+end
+
+------------------------------------------------------------
 -- Serialize character
 ------------------------------------------------------------
 
@@ -258,6 +281,7 @@ local function SerializeChar(c, sinceTS)
 
     for k,v in pairs(c) do
         if type(v) ~= "table"
+        and not RETIRED_FIELDS[k]
         and not k:find("^gearlink_")   -- item links are local-only (too large for sync)
                                       -- gearid_* stays included (compact + sync-safe)
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
@@ -327,8 +351,10 @@ local function DeserializeChar(msg)
                 -- none of them get mis-coerced. Don't "fix" this without a
                 -- per-field type marker — a blanket string keep would break
                 -- numeric sorting.
-                local num = tonumber(v)
-                c[k] = num or v
+                if not RETIRED_FIELDS[k] then
+                    local num = tonumber(v)
+                    c[k] = num or v
+                end
             end
         end
 
@@ -1530,6 +1556,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
             AltStable.API.AssertCapabilities()
         end
 
+        PurgeRetiredFields()
+
         -- Re-register the prefix on login.  Calling it at file load
         -- time isn't always sufficient — same-machine dual-boxing has
         -- racy behaviour where the prefix isn't actually registered
@@ -2211,6 +2239,7 @@ local _seam = {
     Base64Encode        = Base64Encode,
     Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
+    PurgeRetiredFields  = PurgeRetiredFields,
     DeserializeChar     = DeserializeChar,
     SerializeFullDB     = SerializeFullDB,
     DeserializeFullDB   = DeserializeFullDB,

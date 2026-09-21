@@ -219,6 +219,24 @@ do
           and not sheet:find("%.1f|r avg iLvl", 1, true))
 end
 
+-- #8: TBC leftovers removed. Source checks - SheetUI doesn't load under the
+-- stubs, and these are absences.
+do
+    local function src(f) return io.open(f):read("*a") end
+    for _, f in ipairs({ "Scanner.lua", "Columns.lua", "SheetUI.lua", "Config.lua",
+                         "Export.lua", "Toasts.lua", "RowRenderer.lua" }) do
+        check(f .. " has no Jewelcrafting", not src(f):find("Jewelcrafting", 1, true))
+    end
+    check("the scanner captures no combat ratings",
+          not src("Scanner.lua"):find("CombatRating", 1, true))
+    check("no BiS column", not src("Columns.lua"):find("bisCount", 1, true)
+                           and not src("SheetUI.lua"):find("bisCount", 1, true))
+    check("no BiS matching left in the renderer", not src("RowRenderer.lua"):find("[Bb]is[TNC]"))
+    local sections = src("SheetUI.lua"):match("local SECTIONS = (.-\n})")
+    check("the Spec column is in no section (hidden for the beta)",
+          sections ~= nil and not sections:find('"spec"', 1, true))
+end
+
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().
 for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua", "Config.lua" }) do
     local src = io.open(f):read("*a")

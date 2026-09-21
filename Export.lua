@@ -3,7 +3,7 @@ AltStable = AltStable or {}
 ------------------------------------------------------------
 -- Column order matches the Google Sheet exactly:
 -- Name | Realm | Class | Race | Faction | Level | iLvl | Account
--- Alchemy | Blacksmithing | Enchanting | Engineering | Jewelcrafting
+-- Alchemy | Blacksmithing | Enchanting | Engineering
 -- Leatherworking | Tailoring | Herbalism | Mining | Skinning
 -- Cooking | Fishing | First Aid | Riding
 -- (gap cols in sheet are just empty)
@@ -48,7 +48,7 @@ local GEAR_EXPORT_SLOTS = {
 
 local PROF_COLS = {
     "Alchemy","Blacksmithing","Enchanting","Engineering",
-    "Jewelcrafting","Leatherworking","Tailoring",
+    "Leatherworking","Tailoring",
     "Herbalism","Mining","Skinning",
     "Cooking","Fishing","First Aid","Riding",
 }

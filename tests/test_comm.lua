@@ -1170,6 +1170,31 @@ AltStable.PendingAuditItems = nil
 ------------------------------------------------------------
 
 ------------------------------------------------------------
+-- Retired fields (#8): Jewelcrafting and combat ratings
+------------------------------------------------------------
+-- Nothing reads them any more. Stored records still hold them, so they must
+-- not be sent, must be dropped if an older peer sends them, and are purged
+-- from the database at login.
+WoW.reset()
+local retired = { guid = "Player-Ret-1", name = "Old", level = 20, lastUpdate = 1,
+                  prof_Jewelcrafting = 50, profmax_Jewelcrafting = 75,
+                  stat_crit = 1.5, stat_hitpct = 2, stat_haste = 0, stat_resilience = 0,
+                  prof_Tailoring = 80 }
+local wire = T.SerializeChar(retired)
+check(not wire:find("Jewelcrafting") and not wire:find("stat_crit") and not wire:find("stat_resilience"),
+      "retired fields are never sent")
+check(wire:find("prof_Tailoring:80", 1, true) ~= nil, "  and a live profession still is")
+local got = T.DeserializeChar("guid:Player-Ret-1\nprof_Jewelcrafting:50\nstat_haste:3\nlevel:20")
+eq(got and got.prof_Jewelcrafting, nil, "a retired field from an older peer is dropped")
+eq(got and got.stat_haste, nil, "  a rating too")
+eq(got and got.level, 20, "  the rest of the record is kept")
+AltStableDB = { ["Player-Ret-1"] = retired }
+T.PurgeRetiredFields()
+eq(retired.prof_Jewelcrafting, nil, "the login purge removes a stored retired field")
+eq(retired.stat_resilience, nil, "  and a stored rating")
+eq(retired.prof_Tailoring, 80, "  and leaves the rest")
+
+------------------------------------------------------------
 -- Live rested-XP updates (#6)
 ------------------------------------------------------------
 -- UnitXPMax can be 0 (Retail returns 0 at the cap); `or 1` never caught it.

@@ -19,13 +19,12 @@ local PRIMARY_PROFESSIONS = {
     ["Mining"] = true,
     ["Skinning"] = true,
     ["Tailoring"] = true,
-    ["Jewelcrafting"] = true,
 }
 
 -- All trackable professions for flat field reset
 local ALL_PROFESSIONS = {
     "Alchemy","Blacksmithing","Enchanting","Engineering",
-    "Herbalism","Leatherworking","Mining","Skinning","Tailoring","Jewelcrafting",
+    "Herbalism","Leatherworking","Mining","Skinning","Tailoring",
 }
 
 ------------------------------------------------------------
@@ -334,7 +333,7 @@ local function ResetCharacter(char)
         char["gear_"..slot.key]     = 0
         char["gearq_"..slot.key]    = 0   -- item quality (5 = legendary)
         char["gearid_"..slot.key]   = 0   -- compact item id (safe to sync)
-        char["gearname_"..slot.key] = ""   -- item name (for BiS matching)
+        char["gearname_"..slot.key] = ""   -- item name (gear tooltips)
         char["gearsubtype_"..slot.key] = ""  -- item subtype ("Dagger", "Mail", ...) — authoritative gear type
         char["gearlink_"..slot.key] = ""   -- full item link (for tooltips)
         char["gearmod_"..slot.key]  = ""   -- packed "ench:sockets:g1:g2:g3" (synced)
@@ -629,31 +628,8 @@ function AltStable.ScanCharacter()
     end
     char.stat_sp = spellPower
 
-    char.stat_crit = 0
-    if GetCombatRatingBonus and CR_CRIT_MELEE then
-        char.stat_crit = Round2(GetCombatRatingBonus(CR_CRIT_MELEE))
-    end
-
-    char.stat_hitpct = 0
-    if GetCombatRatingBonus and CR_HIT_MELEE then
-        char.stat_hitpct = Round2(GetCombatRatingBonus(CR_HIT_MELEE))
-    end
-
-    char.stat_haste = 0
-    if GetCombatRatingBonus and CR_HASTE_MELEE then
-        char.stat_haste = Round2(GetCombatRatingBonus(CR_HASTE_MELEE))
-    end
-
     local baseDef, modDef = UnitDefenseSkill("player")
     char.stat_defense = (baseDef or 0) + (modDef or 0)
-
-    char.stat_resilience = 0
-    local resilIndex = CR_RESILIENCE_CRIT_TAKEN
-        or COMBAT_RATING_RESILIENCE_PLAYER_DAMAGE_TAKEN
-        or CR_RESILIENCE_PLAYER_DAMAGE_TAKEN
-    if GetCombatRating and resilIndex then
-        char.stat_resilience = GetCombatRating(resilIndex) or 0
-    end
 
     --------------------------------------------------------
     -- Scan professions
