@@ -526,7 +526,52 @@ non-secure, accepts a write, and reads the value straight back — and moves the
 at `2.043` or at `12`. The value also reverts to `0` on its own without the confirmation popup's
 "Disable" ever being clicked. Whatever the camera subsystem consults on this client, it is not this
 CVar. Same write-but-never-read shape as the SavedVariables blocker (#23), in a different store.
-See #25 before building anything on a `test_*` camera CVar.
+
+**The surviving globals are not shims.** Since `GetCVarInfo` moved to `C_CVar`, the obvious theory
+is that `GetCVar`/`SetCVar` survive as compatibility wrappers over a shadow store that the engine
+never reads. They do not: `SetCVar(name, 12)` then reading both ways returns `12, 12`. The value is
+consistent everywhere. The camera simply does not consult it.
+
+**It is the whole family, not one CVar.** `test_cameraDynamicPitch` set to `1` and confirmed
+changes nothing either - no tilt while moving, where a working one is unmistakable.
+
+**And it is inert even when driven exactly as Narcissus drives it.** Narcissus 1.8.6 (Retail,
+Interface 120100) still uses this CVar through the plain global `SetCVar`, with two steps we were
+missing:
+
+```lua
+-- Narcissus/API/Camera.lua:198 - the engine does not recompute the offset
+-- until the camera is nudged
+CameraZoomIn(0);            --Incur shoulder update
+
+-- Narcissus/API/Camera.lua:600 - the popup is an INTERNAL event in 12.1.0,
+-- not a frame-registered one
+GameEvent.UnregisterInternalEvent("EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED")
+```
+
+Both applied together, and the character still does not move. So this is not a matter of driving
+it wrong.
+
+**Treat it as a beta bug, not a permanent client limitation.** Forever is Mainline-derived and this
+is a working Mainline feature, so the likeliest explanation is that it is broken on this build
+rather than absent by design. Reported to Blizzard 2026-09-20 against 1.60.1.69913. Re-test on
+every new build before designing around it (#25).
+
+The `GameEvent` finding stands on its own merit: it is the correct way to suppress that popup on a
+Mainline client, and it works here, where walking the frames registered for the event does not -
+even though the frame walk reports success.
+
+---
+
+## Frame geometry — the minimap is 198, not 140
+
+```
+Minimap:GetWidth(), Minimap:GetHeight()  ->  197.99984741211, 197.99998474121
+```
+
+Classic's minimap is 140 across, so addons that hardcode a radius of ~80 to sit "just outside the
+ring" land their buttons 29px INSIDE it here - the ring is at 109. Measure the frame; it is a child
+coordinate space, so no scale conversion is involved. Fixed for our own button in #26.
 
 ---
 
@@ -566,7 +611,6 @@ UnitXPMax("player")         ->  400
    unregister count came back `1` where a table read scored `0`, which can only happen if the
    first return value is a frame. A probe line would still be tidier than inference if one is
    ever added.
-6. **Does the camera subsystem read *any* `test_*` CVar on this client?** `test_cameraOverShoulder`
-   is written and ignored (#25). `test_cameraDynamicPitch` is the discriminator: if that is inert
-   too, the whole experimental-camera family is unread and no CVar-based framing will ever work
-   here.
+6. ~~**Does the camera subsystem read *any* `test_*` CVar on this client?**~~ — **answered**, and
+   the answer is no. Both `test_cameraOverShoulder` and `test_cameraDynamicPitch` are written,
+   read back, confirmed through the experimental-CVar dialog, and ignored. See above and #25.
