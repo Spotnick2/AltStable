@@ -527,6 +527,11 @@ at `2.043` or at `12`. The value also reverts to `0` on its own without the conf
 "Disable" ever being clicked. Whatever the camera subsystem consults on this client, it is not this
 CVar. Same write-but-never-read shape as the SavedVariables blocker (#23), in a different store.
 
+**The surviving globals are not shims.** Since `GetCVarInfo` moved to `C_CVar`, the obvious theory
+is that `GetCVar`/`SetCVar` survive as compatibility wrappers over a shadow store that the engine
+never reads. They do not: `SetCVar(name, 12)` then reading both ways returns `12, 12`. The value is
+consistent everywhere. The camera simply does not consult it.
+
 **It is the whole family, not one CVar.** `test_cameraDynamicPitch` set to `1` and confirmed
 changes nothing either - no tilt while moving, where a working one is unmistakable. So no
 `test_*` camera CVar is consulted by the camera on this client, and nothing built on `SetCVar` will
