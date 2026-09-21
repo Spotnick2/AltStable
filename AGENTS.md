@@ -170,6 +170,11 @@ low-stakes, no build.
   optional arguments and event payloads for the exact build - authoritative, and better than any
   website. (The verb is `search`; `name` and `func` are read as system names.) The Battle.net
   developer portal is REST Game Data APIs, not the Lua API, and is no use here.
+- **The API dump is build-stamped — regenerate it when the client bumps.**
+  `C:\Projects\Referencesorever-api-<build>.md` is a snapshot of one build, and a stale one reads
+  exactly as authoritatively as a current one. When `GetBuildInfo()` changes: deploy, `/apidump`,
+  `/reload`, then `Tools/ForeverAPIDump/Convert-Dump.ps1`. The addon cannot detect staleness itself,
+  because SavedVariables are never read back here (#23).
 - **A name can be a global, a `C_*` member, a widget method or an internal event system**, and
   `type(Name)` only asks about the first. Three APIs were declared missing on that mistake before
   it was spotted - see "How to check whether an API survived" in `docs/forever-api-notes.md`. If a
