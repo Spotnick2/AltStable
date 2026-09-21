@@ -466,6 +466,35 @@ Accepted, including all of Core.lua's: `PLAYER_LOGIN`, `CHAT_MSG_ADDON`,
 `SKILL_LINES_CHANGED`, `UPDATE_FACTION`, `PLAYER_LEVEL_UP`, `TRADE_SKILL_SHOW`,
 `TRADE_SKILL_LIST_UPDATE`, `TRADE_SKILL_DATA_SOURCE_CHANGED`.
 
+### `GetFramesRegisteredForEvent` returns VARARGS — read from the API reference, not probed
+
+The one entry on this page that is **not** a probe measurement. It is here because the wrong read
+is silent and it shipped twice; item 5 under "Still to measure" is the probe line that settles it.
+
+```
+GetFramesRegisteredForEvent(event)  ->  frame1, frame2, ...        (varargs)
+                                   NOT  { frame1, frame2, ... }    (a table)
+```
+
+Why the wrong read costs a whole feature rather than throwing:
+
+```lua
+local ok, frames = pcall(GetFramesRegisteredForEvent, ev)
+if ok and type(frames) == "table" then    -- passes: `frames` is the FIRST FRAME
+    for _, f in ipairs(frames) do         -- never runs: a frame has no array part
+```
+
+A frame **is** a Lua table, so `type()` says "table". It has no array part, so `#frames` is `0`,
+the loop body never executes, and the caller concludes that nobody is registered for the event.
+No error, no stack trace, and any "how many did I find?" counter reads back a confident zero.
+
+Two consecutive attempts at the experimental-CVar popup suppression in `SheetUI.lua` shipped that
+way before a review caught it (#24). Use `AltStable.API.FramesRegisteredForEvent(event)`, which
+collects the varargs into a real list. `tests/wow_stubs.lua` models the vararg return, so a
+table-shaped stub cannot let this ship a third time.
+
+---
+
 ---
 
 ## Other stats
@@ -500,3 +529,8 @@ UnitXPMax("player")         ->  400
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
+5. **`GetFramesRegisteredForEvent`'s return shape** — documented above from the API reference
+   rather than measured here. One probe line settles it:
+   `select("#", GetFramesRegisteredForEvent("PLAYER_LOGIN"))` against
+   `type((GetFramesRegisteredForEvent("PLAYER_LOGIN")))`. A count above 1 with a non-table first
+   value confirms varargs.
