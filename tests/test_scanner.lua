@@ -211,11 +211,11 @@ if gear and avg and rested then
 end
 
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().
-for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua" }) do
+for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua", "Config.lua" }) do
     local src = io.open(f):read("*a")
     check(f .. " has no hard-coded level cap",
           not src:find("%f[%w_]lvl%s*[<>]=?%s*[1-9]") and not src:find("char%.level,%s*%d")
-          and not src:find("[cC]ap%s*=%s*%d"))
+          and not src:find("[cC]ap%s*=%s*%d") and not src:find("Level%s*=%s*[1-9]%d"))
 end
 
 ------------------------------------------------------------
@@ -597,15 +597,47 @@ GetBuildInfo = realBuildInfo
 ------------------------------------------------------------
 
 AltStableDB = AltStableDB or {}
-WoW.xpMax, WoW.restXP, WoW.xp = 0, 100, 50   -- UnitXPMax at the cap: 0 on Retail
 pcall(AltStable.ScanCharacter)
 local scanned = AltStableDB[UnitGUID("player")]
 check("scanning a character marks it as ours", scanned ~= nil and scanned.scannedHere == true)
-local function finite(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
-check("a zero UnitXPMax scans a finite rested %", scanned and finite(scanned.restPercent),
-      scanned and tostring(scanned.restPercent))
-check("  and a finite XP %", scanned and finite(scanned.xpPercent), scanned and tostring(scanned.xpPercent))
+
+-- UnitXPMax 0 (Retail's value at the cap; unmeasured on Forever). At the cap the
+-- zero is real; below it the read is bad, and must not become a 1-XP level
+-- (10000% rested) that displays, sorts and syncs.
+local function scanXP(level, xpMax, prior)
+    WoW.reset()
+    WoW.level, WoW.xpMax, WoW.restXP, WoW.xp = level, xpMax, 100, 50
+    AltStableDB = { [UnitGUID("player")] = prior }
+    pcall(AltStable.ScanCharacter)
+    return AltStableDB[UnitGUID("player")]
+end
+local c = scanXP(60, 0, nil)
+eq("at the cap, a zero maximum scans as no rested XP", c and c.restPercent, 0)
+eq("  and no XP progress", c and c.xpPercent, 0)
+c = scanXP(59, 0, { guid = UnitGUID("player"), restPercent = 40, xpPercent = 25, xpMax = 400, restTimestamp = 123 })
+eq("below the cap, a zero maximum keeps the last rested %", c and c.restPercent, 40)
+eq("  and XP %", c and c.xpPercent, 25)
+eq("  and the snapshot time it extrapolates from", c and c.restTimestamp, 123)
+c = scanXP(59, 400, nil)
+eq("a real maximum still scans: 100 of 400 rested", c and c.restPercent, 25)
+eq("  and 50 of 400 through the level", c and c.xpPercent, 12)
 WoW.reset()
+
+-- auditMinLevel defaulted to TBC's 70: unreachable here. It follows the cap,
+-- and a stored value above the cap is pulled down.
+if AltStable.EnsureConfigDefaults then
+    AltStableConfig = {}
+    AltStable.EnsureConfigDefaults()
+    eq("auditMinLevel defaults to the client cap", AltStableConfig.auditMinLevel, 60)
+    AltStableConfig = { auditMinLevel = 70 }
+    AltStable.EnsureConfigDefaults()
+    eq("  a stored 70 comes down to it", AltStableConfig.auditMinLevel, 60)
+    AltStableConfig = { auditMinLevel = 20 }
+    AltStable.EnsureConfigDefaults()
+    eq("  a lower choice is kept", AltStableConfig.auditMinLevel, 20)
+else
+    check("EnsureConfigDefaults is exposed", false)
+end
 
 ------------------------------------------------------------
 

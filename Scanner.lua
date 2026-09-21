@@ -557,21 +557,26 @@ function AltStable.ScanCharacter()
     --                  offline extrapolation math.
     --------------------------------------------------------
 
+    -- A maximum of 0 can't be divided by (and 0 is truthy, so `or 1` never
+    -- caught it). At the cap it is real: there is no next level, so the
+    -- snapshot is zero. Below the cap it is a bad read, and the last good
+    -- snapshot is kept rather than replaced with a percentage of nothing.
     local rested = GetXPExhaustion() or 0
-    -- 0 is truthy in Lua, so `or 1` doesn't cover it; a zero here would divide
-    -- into inf/nan and sync out as garbage.
     local nextXP = UnitXPMax("player") or 0
-    if nextXP <= 0 then nextXP = 1 end
-
-    char.restXP = rested
-    char.restPercent = math.floor((rested / nextXP) * 100)
-    char.xpMax = nextXP
-    char.restedArea = IsResting and IsResting() or false
-    char.restTimestamp = time()
-
-    -- XP progress toward next level (0-100%), only meaningful below cap
     local currentXP = UnitXP("player") or 0
-    char.xpPercent = math.floor((currentXP / nextXP) * 100)
+
+    if nextXP > 0 then
+        char.restXP = rested
+        char.restPercent = math.floor((rested / nextXP) * 100)
+        char.xpMax = nextXP
+        char.xpPercent = math.floor((currentXP / nextXP) * 100)
+        char.restedArea = IsResting and IsResting() or false
+        char.restTimestamp = time()
+    elseif (UnitLevel("player") or 0) >= AltStable.API.LevelCap() then
+        char.restXP, char.restPercent, char.xpMax, char.xpPercent = 0, 0, 0, 0
+        char.restedArea = IsResting and IsResting() or false
+        char.restTimestamp = time()
+    end
 
     --------------------------------------------------------
     -- Reset profession data

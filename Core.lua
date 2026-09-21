@@ -1693,8 +1693,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if char then
             local liveRest = GetXPExhaustion() or 0
             local liveMax  = UnitXPMax("player") or 0
-            if liveMax <= 0 then liveMax = 1 end   -- 0 is truthy; don't divide by it
             local lvl      = UnitLevel("player") or 0
+            local atCap    = lvl >= AltStable.API.LevelCap()
 
             -- Suspicious-zero guard.  Only accept a zero read if we have
             -- a prior non-zero snapshot that is very recent; a fresh zero
@@ -1704,9 +1704,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local prevPct  = char.restPercent or 0
             local prevTime = char.restTimestamp or 0
             local elapsed  = time() - prevTime
-            local suspicious = (liveRest == 0) and (prevPct > 5) and (elapsed < 5) and (lvl < AltStable.API.LevelCap())
+            local suspicious = (liveRest == 0) and (prevPct > 5) and (elapsed < 5) and not atCap
 
-            if not suspicious then
+            -- A zero maximum (0 is truthy, so `or 1` never caught it): at the cap
+            -- there is no next level and the snapshot is zero; below it the read
+            -- is bad and the last good snapshot stands. Same rule as the scan.
+            if liveMax <= 0 then
+                if atCap then
+                    char.restXP, char.xpMax, char.restPercent = 0, 0, 0
+                    char.restedArea    = IsResting and IsResting() or false
+                    char.restTimestamp = time()
+                end
+            elseif not suspicious then
                 char.restXP        = liveRest
                 char.xpMax         = liveMax
                 char.restPercent   = math.floor((liveRest / liveMax) * 100)
