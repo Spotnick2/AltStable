@@ -388,6 +388,45 @@ check("the Options account box writes through SetConfigValue",
 check("/alts account writes through SetConfigValue",
       SourceHas("Core.lua", 'SetConfigValue("accountNumber"'))
 
+-- The whole seam, not a sample. Every file that ships is scanned for writes to
+-- AltStableConfig; Config.lua is exempt because it owns the table. An
+-- assignment must go through SetConfigValue, an in-place edit of a nested
+-- table must be followed by OnConfigChanged within a few lines, and the only
+-- exception is an idempotent `X = X or {}` initialiser. The first version of
+-- this seam routed four writes and claimed to route all of them.
+local function ConfigWriteViolations(path)
+    local src = ReadFile(path)
+    if not src then return { path .. " unreadable" } end
+    local lines = CodeLines(src)
+    local bad = {}
+    for i, code in ipairs(lines) do
+        local lhs, rhs = code:match("^%s*(AltStableConfig[%.%[][^=]-)%s*=%s*([^=].-)%s*$")
+        if lhs and not code:find("==", 1, true) then
+            if rhs ~= lhs .. " or {}" then
+                local nested = lhs:find("^AltStableConfig%.[%w_]+[%.%[]")
+                if nested then
+                    local reported = false
+                    for j = i, math.min(i + 3, #lines) do
+                        if lines[j]:find("OnConfigChanged(", 1, true) then reported = true; break end
+                    end
+                    if not reported then bad[#bad + 1] = path .. ":" .. i .. "  " .. code end
+                else
+                    bad[#bad + 1] = path .. ":" .. i .. "  " .. code
+                end
+            end
+        end
+    end
+    return bad
+end
+
+for _, path in ipairs({ "Core.lua", "SheetUI.lua", "Theme.lua", "Toasts.lua",
+                        "Scanner.lua", "Reputations.lua", "Columns.lua",
+                        "RowRenderer.lua", "Export.lua" }) do
+    local bad = ConfigWriteViolations(path)
+    check(path .. " writes AltStableConfig only through the seam", #bad == 0,
+          table.concat(bad, " | "))
+end
+
 ------------------------------------------------------------
 -- Has Blizzard fixed it?
 --

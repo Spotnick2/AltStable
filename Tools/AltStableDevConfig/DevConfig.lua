@@ -48,10 +48,12 @@ local function Seed()
     -- whitelist has to match it exactly.
     local me = (UnitName and UnitName("player")) or ""
 
-    -- Stand aside once the real store works. AltStable now persists the
-    -- whitelist in a CVar, and this assigns rather than merges - so seeding
-    -- over a populated list would silently discard peers the user added, at
-    -- every login, and look exactly like "the store does not persist".
+    -- Stand aside once SavedVariables load again (#23). Nothing persists on
+    -- 1.60.1.69913, so today the whitelist is always empty here and this always
+    -- seeds. Once Blizzard fixes it the whitelist will arrive populated from
+    -- disk - and since this assigns rather than merges, seeding over it would
+    -- silently discard every peer the user added, at every login, and look
+    -- exactly like the fix not working.
     if type(AltStableConfig.whitelist) == "table" and #AltStableConfig.whitelist > 0 then
         return me, #AltStableConfig.whitelist, true
     end

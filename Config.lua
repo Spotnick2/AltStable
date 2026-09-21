@@ -29,6 +29,18 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 -- Every mutation goes through here regardless, so that whatever the fix needs
 -- - a migration, a validation pass, a different store - lands in one place
 -- instead of in each checkbox handler. OnConfigChanged is empty on purpose.
+--
+-- The contract, enforced by a source scan in tests/test_scanner.lua:
+--
+--   * outside this file, assigning a value goes through SetConfigValue;
+--   * an in-place edit of a nested table (plugins[k], minimapButton.angle,
+--     toastProfessions[p]) is followed by OnConfigChanged(key);
+--   * the one exception is an idempotent initialiser, `X = X or {}`.
+--
+-- This file owns the table and writes its defaults directly. Writes through a
+-- local alias (Toasts' toastsShown set) are invisible to the scan and report
+-- by hand. OnConfigChanged fires during a minimap drag, once per frame - so
+-- whatever fills it later must be cheap, or debounce.
 ------------------------------------------------------------
 
 function AltStable.OnConfigChanged(key)
