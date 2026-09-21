@@ -292,10 +292,17 @@ local function CurrentBuild()
     return (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or nil
 end
 
-local function CheckSavedVariablesLoad()
+-- `announce` is false on a /reload. A reload proves nothing - the client may
+-- hand back cached data without touching disk, which is exactly how
+-- per-character SavedVariables look persisted across /reload today while being
+-- lost at every real restart. This check exists to catch the fix; announcing
+-- it on a reload would be the same false positive it was written to avoid.
+-- The marker is still rewritten on every UI load, so a session that reloaded
+-- mid-way still leaves one behind for the next real login to find.
+local function CheckSavedVariablesLoad(announce)
     local previous = AltStableConfig.svLoadCheck
 
-    if type(previous) == "table" and previous.stamp and DEFAULT_CHAT_FRAME then
+    if announce and type(previous) == "table" and previous.stamp and DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage(
             "|cff55ff55AltStable:|r SavedVariables loaded this session "
             .. "(written " .. tostring(previous.stamp)
@@ -311,6 +318,20 @@ local function CheckSavedVariablesLoad()
 end
 
 AltStable.CheckSavedVariablesLoad = CheckSavedVariablesLoad
+
+-- PLAYER_LOGIN fires on /reload too, so it cannot tell the two apart;
+-- PLAYER_ENTERING_WORLD can, and on 1.60.1.69913 carries
+-- (isInitialLogin, isReloadingUi) - checked against the API dump, not
+-- assumed. It also fires on every zone change with both false, which is
+-- ignored entirely.
+--
+-- Residual limit, stated rather than solved: logging out to character select
+-- and back in is an initial login inside the same process, and may also be
+-- served from cache. Hence the message asks for a full exit to confirm.
+function AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
+    if not (isInitialLogin or isReloadingUi) then return end
+    CheckSavedVariablesLoad(isInitialLogin and not isReloadingUi)
+end
 
 ------------------------------------------------------------
 -- Which build were the findings measured on?
@@ -346,8 +367,12 @@ AltStable.CheckClientBuild = CheckClientBuild
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
-initFrame:SetScript("OnEvent", function()
-    CheckSavedVariablesLoad()
-    EnsureDefaults()
-    CheckClientBuild()
+initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+initFrame:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
+    if event == "PLAYER_LOGIN" then
+        EnsureDefaults()
+        CheckClientBuild()
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
+    end
 end)

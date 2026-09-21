@@ -399,10 +399,17 @@ local function ConfigWriteViolations(path)
     if not src then return { path .. " unreadable" } end
     local lines = CodeLines(src)
     local bad = {}
+    -- Every assignment on the line, wherever it sits: the first version was
+    -- anchored at line start, so `if x then AltStableConfig.theme = "dark" end`
+    -- passed, and it skipped any line containing `==`, so
+    -- `AltStableConfig.foo = (a == b)` passed too. `=[^=]` after the target
+    -- rejects comparisons without discarding the rest of the line, and the
+    -- target cannot contain `~ < >`, so `~=` `<=` `>=` never match.
     for i, code in ipairs(lines) do
-        local lhs, rhs = code:match("^%s*(AltStableConfig[%.%[][^=]-)%s*=%s*([^=].-)%s*$")
-        if lhs and not code:find("==", 1, true) then
-            if rhs ~= lhs .. " or {}" then
+        for lhs in code:gmatch("(AltStableConfig[%.%[][%w_%.%[%]\"']*)%s*=[^=]") do
+            -- Initialisers are written `X = X or {}` throughout; anything else is
+            -- a real write.
+            if not code:find(lhs .. " = " .. lhs .. " or {}", 1, true) then
                 local nested = lhs:find("^AltStableConfig%.[%w_]+[%.%[]")
                 if nested then
                     local reported = false
@@ -417,6 +424,30 @@ local function ConfigWriteViolations(path)
         end
     end
     return bad
+end
+
+-- The lint must see writes it used to miss. Checked against synthetic lines
+-- rather than by mutating a shipped file.
+do
+    local realRead = ReadFile
+    local cases = {
+        { src = 'if x then AltStableConfig.theme = "dark" end', want = 1,
+          name = "an inline write mid-line" },
+        { src = 'AltStableConfig.flag = (a == b)', want = 1,
+          name = "a write whose value contains ==" },
+        { src = 'if AltStableConfig.theme == "dark" then end', want = 0,
+          name = "a comparison, which is not a write" },
+        { src = 'if AltStableConfig.scale ~= 1 then end', want = 0,
+          name = "a ~= comparison" },
+        { src = 'AltStableConfig.plugins = AltStableConfig.plugins or {}', want = 0,
+          name = "an idempotent initialiser" },
+    }
+    for _, c in ipairs(cases) do
+        ReadFile = function() return c.src end
+        local got = #ConfigWriteViolations("synthetic.lua")
+        eq("the config lint flags " .. c.name, got, c.want)
+    end
+    ReadFile = realRead
 end
 
 for _, path in ipairs({ "Core.lua", "SheetUI.lua", "Theme.lua", "Toasts.lua",
@@ -440,9 +471,26 @@ check("a first session says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 check("  but leaves a marker for the next one",
       type(AltStableConfig.svLoadCheck) == "table" and AltStableConfig.svLoadCheck.stamp ~= nil)
 
--- The client starts loading SavedVariables again: the marker is still there.
+-- A /reload with the marker still present must NOT announce: a reload can
+-- serve cached data, which is how per-character SavedVariables look
+-- persisted today while dying at every real restart.
 WoW.chatOut = {}
-AltStable.CheckSavedVariablesLoad()
+AltStable.HandleEnteringWorld(false, true)
+check("a /reload never announces the fix, even with the marker present",
+      #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  but still leaves the marker for the next real login",
+      type(AltStableConfig.svLoadCheck) == "table")
+
+-- Zoning fires the same event with both flags false: ignore it entirely.
+local markerBefore = AltStableConfig.svLoadCheck
+WoW.chatOut = {}
+AltStable.HandleEnteringWorld(false, false)
+check("a zone change says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  and does not rewrite the marker", AltStableConfig.svLoadCheck == markerBefore)
+
+-- A real initial login with the marker present: the client loaded the file.
+WoW.chatOut = {}
+AltStable.HandleEnteringWorld(true, false)
 check("a marker that survived is announced",
       #WoW.chatOut > 0 and WoW.chatOut[1]:find("SavedVariables loaded", 1, true) ~= nil,
       WoW.chatOut[1] or "(nothing printed)")
