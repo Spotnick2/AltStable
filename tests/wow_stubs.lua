@@ -35,6 +35,7 @@ local WoW = {
     maxLevel    = 60,
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
+    now         = nil,  -- pinned clock for time(); nil means real os.time()
     eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
 }
 
@@ -46,6 +47,7 @@ function WoW.reset()
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
+    WoW.now = nil
 end
 
 ------------------------------------------------------------
@@ -312,7 +314,17 @@ function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return 1 end
 function GetTime() return 0 end
-function time() return 0 end
+-- Real os.time() by default; a test pins it with WoW.now = <epoch>. The sync
+-- watermarks, the merge's 60-second window and the stall deadlines are all
+-- time comparisons, so a clock stuck at 0 would make them untestable.
+function time() return WoW.now or os.time() end
+
+-- The payload of every captured SendAddonMessage, in send order.
+function WoW.sentMessages()
+    local msgs = {}
+    for _, m in ipairs(WoW.sent) do msgs[#msgs + 1] = m.text end
+    return msgs
+end
 
 -- WoW's strsplit takes a SET of delimiter characters and returns the fields
 -- between them, preserving genuinely empty fields (adjacent or trailing
@@ -333,12 +345,20 @@ function time() return 0 end
 -- "[^]", which throws "malformed pattern (missing ']')" rather than splitting.
 -- `]`, `%` and `-` are the same hazard. Escaping keeps the search in C, which
 -- matters once test_comm starts splitting multi-KB serialized records.
-function strsplit(sep, str)
+-- `limit` caps the number of pieces, and the last one keeps the rest of the
+-- string untouched, delimiters included - the client's strsplit(delim, str,
+-- pieces). This stub used to ignore it, which let a real dependency go
+-- unmodelled: Core.lua reads every wire message as strsplit("|", message, 2),
+-- and a sync chunk's body is raw compressed bytes that can contain "|". Without
+-- the limit, every chunk parsed as malformed and the whole receive path was
+-- untestable.
+function strsplit(sep, str, limit)
     str = tostring(str)
     local escaped = tostring(sep):gsub("(%W)", "%%%1")
     local pattern = "[" .. escaped .. "]"
     local out, start = {}, 1
     while true do
+        if limit and #out == limit - 1 then break end
         local s, e = str:find(pattern, start)
         if not s then break end
         out[#out + 1] = str:sub(start, s - 1)

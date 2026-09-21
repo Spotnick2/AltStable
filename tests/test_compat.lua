@@ -441,6 +441,16 @@ for _, d in ipairs({ "^", "]", "%", "-", "." }) do
     end
 end
 
+-- The piece limit keeps the remainder whole. Core.lua reads every wire message
+-- as strsplit("|", message, 2) and a chunk body can contain "|"; the stub used
+-- to ignore the limit, so every chunk parsed as malformed under test.
+local head, rest = strsplit("|", "CHUNK5|1|1/1|body|with|pipes", 2)
+eq("a piece limit splits only once", head, "CHUNK5")
+eq("  and keeps the remainder whole, delimiters included", rest, "1|1/1|body|with|pipes")
+eq("a limit returns no more pieces than asked", select("#", strsplit("|", "a|b|c", 2)), 2)
+eq("a limit of 1 returns the whole string", (strsplit("|", "a|b", 1)), "a|b")
+eq("no limit still splits everywhere", select("#", strsplit("|", "a|b|c")), 3)
+
 -- A metacharacter delimiter must not match anything else either: "." is a
 -- literal dot here, not "any character".
 eq("a literal dot splits only on dots", splitCount(".", "a.b"), 2)
