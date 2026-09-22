@@ -2525,8 +2525,8 @@ local function CreateFrameIfNeeded()
     -- AltStable.SetPluginEnabled.
     --
     -- The whole section is skipped when no plugins are registered, otherwise
-    -- the heading and hint render above empty space. LOD_PLUGINS is empty
-    -- until Warband (#9/#10) and Instances (#11) are ported.
+    -- the heading and hint render above empty space. LOD_PLUGINS holds Warband;
+    -- Instances (#11) is still to come.
     local optPluginChecks = {}
     if #(AltStable.LOD_PLUGINS or {}) > 0 then
         local optPluginsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

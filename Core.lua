@@ -28,6 +28,13 @@ local function CleanupDB()
         AltStable.ScanCharacter()
     end
 
+    -- Plugins keep their own per-character stores keyed by the same guids, and
+    -- their own stale-reject guards would refuse the re-pull below, so they get
+    -- cleared with us.
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.OnCleanup then pcall(plugin.OnCleanup, guid) end
+    end
+
     -- We just wiped the DB, so forget every peer's delta watermark — the next
     -- request must pull a FULL database again, not just deltas.
     if AltStable.ResetPeerWatermarks then AltStable.ResetPeerWatermarks() end
@@ -283,6 +290,20 @@ local function PurgeRetiredFields()
     end
 end
 
+-- Hand each plugin its own blob for an ACCEPTED character, then drop the
+-- carrier field so it never reaches the database or the wire.
+local function DispatchPluginPayloads(c)
+    local payloads = c and c._pluginPayloads
+    c._pluginPayloads = nil
+    if not payloads or not AltStable.plugins then return end
+    for _, plugin in ipairs(AltStable.plugins) do
+        local blob = payloads[plugin.id]
+        if blob and plugin.OnDeserialize then
+            pcall(plugin.OnDeserialize, c.guid, blob)
+        end
+    end
+end
+
 ------------------------------------------------------------
 -- Serialize character
 ------------------------------------------------------------
@@ -375,16 +396,13 @@ local function DeserializeChar(msg)
         return
     end
 
-    -- Dispatch any plugin payloads to their owners.  Done AFTER c.guid
-    -- is confirmed so plugins can trust the character exists.
-    if pluginPayloads and AltStable.plugins then
-        for _, plugin in ipairs(AltStable.plugins) do
-            local blob = pluginPayloads[plugin.id]
-            if blob and plugin.OnDeserialize then
-                pcall(plugin.OnDeserialize, c.guid, blob)
-            end
-        end
-    end
+    -- Plugin payloads ride along on the record and are dispatched by the
+    -- caller, once the record has passed ValidateIncoming and ShouldMerge.
+    -- Dispatching here applied a peer's inventory for a character whose own
+    -- record was then REJECTED - a conflicting name, or an older record losing
+    -- to ours - so the sheet showed one character and the plugin another's
+    -- items. The field is local-only; DispatchPluginPayloads strips it.
+    c._pluginPayloads = pluginPayloads
 
     return c
 
@@ -632,6 +650,7 @@ local function DeserializeFullDB(payload, sender)
                     local existing = AltStableDB[c.guid] or {}
 
                     if ShouldMerge(existing, c) then
+                        DispatchPluginPayloads(c)
                         ClearSyncedStateFields(existing)
                         for k,v in pairs(c) do
                             existing[k] = v
@@ -1021,6 +1040,7 @@ local function ReceiveCharacter(c, sender)
         return
     end
 
+    DispatchPluginPayloads(c)
     ClearSyncedStateFields(existing)
     for k,v in pairs(c) do
         existing[k] = v
@@ -1874,14 +1894,15 @@ AltStable.plugins = AltStable.plugins or {}
 -- only persists (WoW can't unload an addon until the next /reload).
 ------------------------------------------------------------
 
--- Empty until the plugins are ported. Each re-adds its own entry:
---   Warband   -> #9  / #10
+-- Each ported plugin adds its entry. Still to come:
 --   Instances -> #11
 --   Recipes   -> #14 (deferred)
 --   Roster    -> #15 (deferred)
 -- Listing an addon that does not exist means a failed LoadAddOn at every
 -- login, which would bury the real errors this build exists to surface.
-AltStable.LOD_PLUGINS = {}
+AltStable.LOD_PLUGINS = {
+    { key = "warband", addon = "AltStableWarband", label = "Warband" },
+}
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
 -- back to the C_AddOns namespace if a future client drops them.
@@ -2251,6 +2272,8 @@ local _seam = {
     Base64Encode        = Base64Encode,
     Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
+    CleanupDB           = CleanupDB,
+    DispatchPluginPayloads = DispatchPluginPayloads,
     PurgeRetiredFields  = PurgeRetiredFields,
     RETIRED_FIELDS      = RETIRED_FIELDS,
     DeserializeChar     = DeserializeChar,

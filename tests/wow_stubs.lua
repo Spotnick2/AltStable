@@ -28,6 +28,7 @@ local WoW = {
     containers  = {},   -- [bagID] = { name=, size=, [slot] = itemStruct }
     bankTabs    = {},   -- purchased CHARACTER bank tab ids
     accountTabs = {},   -- purchased ACCOUNT bank tab ids (should never be scanned)
+    tooltipPostCalls = {},  -- [Enum.TooltipDataType.X] = { fn, ... }
     loaded      = {},
     loadCalls   = {},
     timers      = {},
@@ -43,6 +44,7 @@ local WoW = {
 function WoW.reset()
     WoW.items, WoW.skillLines, WoW.factions, WoW.factionByID = {}, {}, {}, {}
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
+    WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
@@ -250,6 +252,16 @@ C_Container = {
 ------------------------------------------------------------
 -- C_Bank
 ------------------------------------------------------------
+
+-- TooltipDataProcessor: the Retail replacement for the OnTooltipSetItem script
+-- hook, which THROWS on this client (see HookScript above). Registered
+-- post-calls land in WoW.tooltipPostCalls[dataType] so a test can fire one.
+TooltipDataProcessor = {
+    AddTooltipPostCall = function(dataType, fn)
+        WoW.tooltipPostCalls[dataType] = WoW.tooltipPostCalls[dataType] or {}
+        table.insert(WoW.tooltipPostCalls[dataType], fn)
+    end,
+}
 
 C_Bank = {
     FetchPurchasedBankTabIDs = function(bankType)

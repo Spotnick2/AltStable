@@ -424,7 +424,8 @@ do
 end
 
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().
-for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua", "Config.lua" }) do
+for _, f in ipairs({ "RowRenderer.lua", "Core.lua", "Scanner.lua", "Config.lua",
+                     "Plugins/Warband/AltStableWarband.lua" }) do
     local src = io.open(f):read("*a")
     check(f .. " has no hard-coded level cap",
           not src:find("%f[%w_]lvl%s*[<>]=?%s*[1-9]") and not src:find("char%.level,%s*%d")
@@ -717,7 +718,8 @@ end
 
 for _, path in ipairs({ "Core.lua", "SheetUI.lua", "Theme.lua", "Toasts.lua",
                         "Scanner.lua", "Reputations.lua", "Columns.lua",
-                        "RowRenderer.lua", "Export.lua" }) do
+                        "RowRenderer.lua", "Export.lua",
+                        "Plugins/Warband/AltStableWarband.lua" }) do
     local bad = ConfigWriteViolations(path)
     check(path .. " writes AltStableConfig only through the seam", #bad == 0,
           table.concat(bad, " | "))
