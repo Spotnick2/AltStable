@@ -249,6 +249,34 @@ local function GetSyncTargets()
 end
 
 ------------------------------------------------------------
+-- Retired fields
+--
+-- Character fields a previous build wrote that nothing reads any more. Removing
+-- the producer is not enough: stored records keep them, and sync would carry
+-- them between accounts indefinitely. So they are purged from the database at
+-- login, never sent, and dropped on receipt from a peer that still has them.
+------------------------------------------------------------
+
+local RETIRED_FIELDS = {
+    prof_Jewelcrafting = true, profmax_Jewelcrafting = true,   -- not a Vanilla profession
+    stat_haste = true, stat_resilience = true,                 -- no Vanilla equivalent
+    -- Rating-derived, so always 0 here. Vanilla does have crit and hit chance
+    -- (GetCritChance, GetHitModifier): when the Roster port (#11) adds a
+    -- build-verified producer, take these two off the list. Until then a stored
+    -- 0 would sit beside characters that have no value at all.
+    stat_crit = true, stat_hitpct = true,
+    spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
+}
+
+local function PurgeRetiredFields()
+    for _, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" then
+            for k in pairs(RETIRED_FIELDS) do c[k] = nil end
+        end
+    end
+end
+
+------------------------------------------------------------
 -- Serialize character
 ------------------------------------------------------------
 
@@ -258,11 +286,11 @@ local function SerializeChar(c, sinceTS)
 
     for k,v in pairs(c) do
         if type(v) ~= "table"
+        and not RETIRED_FIELDS[k]
         and not k:find("^gearlink_")   -- item links are local-only (too large for sync)
                                       -- gearid_* stays included (compact + sync-safe)
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
                                       -- synced alts fall back to keyword inference on gearname_
-        and k ~= "specIcon"            -- numeric fileID, client-specific
         and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
                                       -- would tell every peer the character was ITS own
         -- NOTE: refshot_ts (reference-screenshot marker) IS synced on purpose. The render
@@ -327,8 +355,10 @@ local function DeserializeChar(msg)
                 -- none of them get mis-coerced. Don't "fix" this without a
                 -- per-field type marker — a blanket string keep would break
                 -- numeric sorting.
-                local num = tonumber(v)
-                c[k] = num or v
+                if not RETIRED_FIELDS[k] then
+                    local num = tonumber(v)
+                    c[k] = num or v
+                end
             end
         end
 
@@ -1530,6 +1560,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
             AltStable.API.AssertCapabilities()
         end
 
+        PurgeRetiredFields()
+
         -- Re-register the prefix on login.  Calling it at file load
         -- time isn't always sufficient — same-machine dual-boxing has
         -- racy behaviour where the prefix isn't actually registered
@@ -2211,6 +2243,8 @@ local _seam = {
     Base64Encode        = Base64Encode,
     Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
+    PurgeRetiredFields  = PurgeRetiredFields,
+    RETIRED_FIELDS      = RETIRED_FIELDS,
     DeserializeChar     = DeserializeChar,
     SerializeFullDB     = SerializeFullDB,
     DeserializeFullDB   = DeserializeFullDB,

@@ -62,11 +62,10 @@ local SECTIONS = {
         id    = "summary",
         label = "Account Summary",
         icon  = IC("account-summary"),
-        -- Width = sidebar(190) + frozen(156) + scrollable cols(619) + scrollbar(20) = 985
         preferW = 985,
         preferH = 400,
         fields = {
-            "class","spec","race","level","ilvl",
+            "class","race","level","ilvl",
             "guild","restPercent","money","lastUpdate",
         },
     },
@@ -75,12 +74,10 @@ local SECTIONS = {
         label = "Gear Progression",
         icon  = IC("gear-progression"),
         headerHeight = 32,
-        -- Width = sidebar(190) + frozen(156) + identity(380) + 17 slots×38(646) + scrollbar(20) = 1392
-        -- Capped at 1350 with h-scroll for the last slot or two
         preferW = 1350,
         preferH = 420,
         fields = {
-            "class","spec","race","level","ilvl","bisCount",
+            "class","race","level","ilvl",
             "gear_head","gear_neck","gear_shoulder","gear_back","gear_chest",
             "gear_wrist","gear_hands","gear_waist","gear_legs","gear_feet",
             "gear_ring1","gear_ring2","gear_trinket1","gear_trinket2",
@@ -92,13 +89,12 @@ local SECTIONS = {
         label = "Skills",
         icon  = IC("skills"),
         headerHeight = 32,
-        -- Width = sidebar(190) + frozen(156) + identity(119) + 14 profs×44(616) + scrollbar(20) = 1101
         preferW = 1111,
         preferH = 410,
         fields = {
-            "class","spec","race","level",
+            "class","race","level",
             "prof_Alchemy","prof_Blacksmithing","prof_Enchanting","prof_Engineering",
-            "prof_Jewelcrafting","prof_Leatherworking","prof_Tailoring",
+            "prof_Leatherworking","prof_Tailoring",
             "prof_Herbalism","prof_Mining","prof_Skinning",
             "cooking","fishing","firstAid","riding",
         },
@@ -112,7 +108,7 @@ local SECTIONS = {
         preferW = 999,
         preferH = 410,
         fields = {
-            "class","spec","race","level",
+            "class","race","level",
             "aldor","scryer","shatar","lowercity",
             "cenarion","consortium","keepers","violeteye","sporeggar",
             "honorhold","thrallmar","kurenai","maghar",
@@ -1395,7 +1391,7 @@ end
 ------------------------------------------------------------
 
 local COL_TOOLTIPS = {
-    level="Level", ilvl="Item Level", bisCount="Best-in-Slot items equipped",
+    level="Level", ilvl="Item Level",
     gear_head="Head", gear_neck="Neck", gear_shoulder="Shoulders",
     gear_back="Back", gear_chest="Chest", gear_wrist="Wrists",
     gear_hands="Hands", gear_waist="Waist", gear_legs="Legs",
@@ -1469,19 +1465,15 @@ local function BuildHeaders()
                 if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
                 GameTooltip:Hide()
             end)
-        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon or col.headerIcon then
+        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then
             -- slotSlug: faction-aware gear icon resolved at header-build time
             local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
-                or col.profIcon or col.slotIcon or col.repIcon or col.headerIcon
+                or col.profIcon or col.slotIcon or col.repIcon
             local sz=math.min(currentHeaderHeight-4,col.width-2)
             local tex=btn:CreateTexture(nil,"OVERLAY")
             tex:SetSize(sz,sz); tex:SetPoint("CENTER",btn,"CENTER",0,0); tex:SetTexture(iconPath)
-            -- For the built-in round WoW icons we auto-crop the pixel border
-            -- (0.08..0.92 tex coords). Custom art (headerIcon) ships already
-            -- trimmed and transparent, so we use the full texture untouched.
-            if not col.headerIcon then
-                tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            end
+            -- Crop the pixel border of the built-in round WoW icons.
+            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             btn.label=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); btn.label:SetText("")
             btn.iconTex=tex
             btn:SetScript("OnClick",function()
@@ -1495,13 +1487,7 @@ local function BuildHeaders()
                 GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
                 local tipText = COL_TOOLTIPS[col.field] or col.label
                 GameTooltip:AddLine(tipText,1,1,1)
-                if col.field=="bisCount" then
-                    -- Legend: the % column and the per-slot green checkmark
-                    -- are otherwise unexplained on-screen (issue #2).
-                    local check = "|TInterface\\RAIDFRAME\\ReadyCheck-Ready:12:12:0:0:64:64:4:60:4:60|t"
-                    GameTooltip:AddLine("|cffaaaaaaPercent of gear slots holding a best-in-slot item.|r",1,1,1,true)
-                    GameTooltip:AddLine(check.." |cffaaaaaamarks a BiS item in each gear-slot column.|r",1,1,1,true)
-                elseif col.type=="rep" or col.type=="repCombined" then
+                if col.type=="rep" or col.type=="repCombined" then
                     -- Standing key lives here so the footer keeps normal
                     -- char/level/gold totals like every other tab (issue #8).
                     AddRepStandingLegend(GameTooltip)
@@ -1512,9 +1498,9 @@ local function BuildHeaders()
                 tex:SetVertexColor(1,1,1)
                 GameTooltip:Hide()
             end)
-        elseif col.type=="classIcon" or col.type=="specIcon" or col.type=="raceIcon" then
+        elseif col.type=="classIcon" or col.type=="raceIcon" then
             -- Small centered header label for icon columns
-            local SHORT = {classIcon="C", specIcon="S", raceIcon="R"}
+            local SHORT = {classIcon="C", raceIcon="R"}
             local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
             lbl:SetAllPoints(); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("MIDDLE")
             lbl:SetText(SHORT[col.type] or "")
@@ -2541,84 +2527,6 @@ local function CreateFrameIfNeeded()
         return cb
     end
 
-    -- ── Best in Slot section ───────────────────────────────
-    -- Picks which raid phase the BiS column and the gear-slot tooltips
-    -- compare against. Rendered as a segmented row rather than a dropdown
-    -- so every phase is visible at a glance and selecting one is a single
-    -- click, matching the Theme row's idiom above.
-    local optBisHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optBisHdr:SetPoint("TOPLEFT", P, Y)
-    optBisHdr:SetText("BEST IN SLOT")
-    optBisHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 20
-
-    local optBisLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optBisLabel:SetPoint("TOPLEFT", P, Y)
-    optBisLabel:SetText("Phase")
-    optBisLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
-
-    local optBisBtns = {}
-    local BIS_BTN_W, BIS_BTN_H = 54, 22
-    local prevBisBtn
-    for _, tier in ipairs(AltStable.BIS_TIERS or {}) do
-        local btn = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
-        btn:SetSize(BIS_BTN_W, BIS_BTN_H)
-        if prevBisBtn then
-            btn:SetPoint("LEFT", prevBisBtn, "RIGHT", 6, 0)
-        else
-            btn:SetPoint("TOPLEFT", P + 60, Y + 1)
-        end
-        AltStable.ApplyBackdrop(btn, 0.12, 0.12, 0.12, 1)
-        local lbl = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        lbl:SetAllPoints(); lbl:SetJustifyH("CENTER"); lbl:SetText(tier.label)
-        btn._key, btn._lbl = tier.key, lbl
-        optBisBtns[#optBisBtns + 1] = btn
-        prevBisBtn = btn
-    end
-
-    local function RefreshBisBtns()
-        local cur = AltStable.GetBisTier and AltStable.GetBisTier() or "T6"
-        local ar, ag, ab = AltStable.GetAccentRGB()
-        for _, btn in ipairs(optBisBtns) do
-            if btn._key == cur then
-                btn:SetBackdropColor(
-                    AltStable.C.BG_BTN_ACTIVE[1], AltStable.C.BG_BTN_ACTIVE[2],
-                    AltStable.C.BG_BTN_ACTIVE[3], AltStable.C.BG_BTN_ACTIVE[4])
-                btn:SetBackdropBorderColor(ar, ag, ab, 1)
-                btn._lbl:SetTextColor(ar, ag, ab)
-            else
-                btn:SetBackdropColor(0.12, 0.12, 0.12, 1)
-                btn:SetBackdropBorderColor(0, 0, 0, 1)
-                btn._lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
-            end
-        end
-    end
-    for _, btn in ipairs(optBisBtns) do
-        btn:SetScript("OnClick", function(self)
-            AltStableConfig = AltStableConfig or {}
-            AltStable.SetConfigValue("bisTier", self._key)
-            RefreshBisBtns()
-            -- Re-render so the BiS column, its ratio colour and the iLvl
-            -- gradient all pick up the new phase immediately.
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
-        end)
-    end
-    RefreshBisBtns()
-    AltStable.RegisterThemeCallback(function()
-        if optionsPanel:IsShown() then RefreshBisBtns() end
-    end)
-
-    Y = Y - 26
-
-    local optBisHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optBisHint:SetPoint("TOPLEFT", P, Y)
-    optBisHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
-    optBisHint:SetJustifyH("LEFT"); optBisHint:SetWordWrap(true)
-    optBisHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optBisHint:SetText("Which raid phase the BiS column and gear tooltips compare against. Also rescales the item-level colour gradient.")
-
-    Y = Y - 30
-
     -- ── Plugins section ────────────────────────────────────
     -- Plugins are LoadOnDemand addons; toggling one loads it immediately
     -- (enable) or persists the choice (disable, next /reload) via
@@ -2870,7 +2778,7 @@ local function CreateFrameIfNeeded()
         "Show profession toasts", Y)
     Y = Y - 22
 
-    local PROFESSION_KEYS = { "Tailoring", "Alchemy", "Jewelcrafting" }
+    local PROFESSION_KEYS = { "Tailoring", "Alchemy" }
     local optProfChecks = {}
     for _, profKey in ipairs(PROFESSION_KEYS) do
         local cb = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")

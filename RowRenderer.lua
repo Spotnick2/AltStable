@@ -1,9 +1,5 @@
 AltStable = AltStable or {}
 
--- Retail-API adapter; see Compat.lua. Taken as a file-local so the call site
--- below reads the same as it always did.
-local GetItemInfo = AltStable.API.GetItemInfo
-
 ------------------------------------------------------------
 -- Rested XP live extrapolation
 --
@@ -85,7 +81,6 @@ local PROF_ICONS = {
     Mining         = "|TInterface\\Icons\\Trade_Mining:14:14:0:0|t",
     Skinning       = "|TInterface\\Icons\\INV_Misc_Pelt_Wolf_01:14:14:0:0|t",
     Tailoring      = "|TInterface\\Icons\\Trade_Tailoring:14:14:0:0|t",
-    Jewelcrafting  = "|TInterface\\Icons\\INV_Misc_Gem_01:14:14:0:0|t",
 }
 
 ------------------------------------------------------------
@@ -119,16 +114,6 @@ local RACE_DISPLAY = {
 
 
 ------------------------------------------------------------
--- Spec icon
-------------------------------------------------------------
-
-local function SpecIconText(specIcon)
-    if not specIcon or specIcon == "" or specIcon == 0 then return "" end
-    -- specIcon can be a numeric fileID or a path string — both work with |T
-    return "|T"..tostring(specIcon)..":18:18|t"
-end
-
-------------------------------------------------------------
 -- Race display — atlas-based icons (raceicon-name-gender)
 -- Atlas names from ChatLinkIcons addon reference
 ------------------------------------------------------------
@@ -147,285 +132,9 @@ local function RaceIconText(race, gender)
     return "|A:raceicon-"..atlas.."-"..g..":18:18|a"
 end
 
-------------------------------------------------------------
--- BiS lookup
--- Returns the active tier name if the item is BiS for it, else nil.
--- Only the selected phase's BiS list counts: other tiers' gear is not
--- marked, and the BiS column ratio reflects that phase's progress.
---
--- The phase is chosen by the user in Options ▸ Best in Slot and stored
--- in AltStableConfig.bisTier; AltStable.BIS_TIERS is the ordered list
--- the options UI renders. Defaults to T6.
-------------------------------------------------------------
-
-AltStable.BIS_TIERS = {
-    { key = "PreRaid", label = "Pre-Raid", ceiling = 115 },
-    { key = "T4",      label = "T4",       ceiling = 125 },
-    { key = "T5",      label = "T5",       ceiling = 141 },
-    { key = "T6",      label = "T6",       ceiling = 154 },
-    { key = "ZA",      label = "ZA",       ceiling = 154 },
-    { key = "Sunwell", label = "SWP",      ceiling = 164 },
-}
-AltStable.BIS_TIER_DEFAULT = "T6"
-
--- Resolve the configured tier, falling back to the default if the saved
--- value is missing or names a tier this build no longer ships.
-function AltStable.GetBisTier()
-    local want = AltStableConfig and AltStableConfig.bisTier
-    for _, t in ipairs(AltStable.BIS_TIERS) do
-        if t.key == want then return t.key end
-    end
-    return AltStable.BIS_TIER_DEFAULT
-end
-
-local function CurrentTier()
-    return AltStable.GetBisTier()
-end
-
--- Display name for a tier key ("PreRaid" -> "Pre-Raid", "Sunwell" -> "SWP").
-function AltStable.GetBisTierLabel(key)
-    for _, t in ipairs(AltStable.BIS_TIERS) do
-        if t.key == key then return t.label end
-    end
-    return key
-end
-
--- WoW's paired slots are interchangeable: the game does not care whether a ring
--- sits in ring1 or ring2, nor which trinket is in which socket. Matching strictly
--- against the physical slot means a player wearing exactly the right pair, but in
--- the opposite order, loses credit for BOTH slots and sees wrong replacement
--- tooltips. Look each paired slot up against the union of the pair.
-local SLOT_PARTNER = {
-    ring1    = "ring2",   ring2    = "ring1",
-    trinket1 = "trinket2", trinket2 = "trinket1",
-}
-
--- Acceptable BiS names for one slot, always as a list (the data allows either a
--- bare string or a table).
-local function BisNamesForSlot(tierData, slotKey)
-    local items = tierData and tierData[slotKey]
-    if type(items) == "string" then return { items } end
-    if type(items) == "table"  then return items end
-    return nil
-end
-
-local function BisTierData(class, spec)
-    local bisData = AltStable.BisData
-    if not bisData then return nil end
-    local classData = bisData[class]
-    if not classData then return nil end
-    local specData = classData[spec]
-    if not specData then return nil end
-    return specData[CurrentTier()]
-end
-
-local function IsItemBis(class, spec, slotKey, itemName)
-    if not itemName or itemName == "" then return nil end
-    if not class or not spec then return nil end
-
-    local tierData = BisTierData(class, spec)
-    if not tierData then return nil end
-
-    local tier = CurrentTier()
-    for _, key in ipairs({ slotKey, SLOT_PARTNER[slotKey] }) do
-        local names = key and BisNamesForSlot(tierData, key)
-        if names then
-            for _, bisName in ipairs(names) do
-                if bisName == itemName then return tier end
-            end
-        end
-    end
-    return nil
-end
-
--- Returns the primary BiS item name for a slot (the first entry when a table
--- of alternatives is listed), used to render the side-by-side comparison
--- tooltip in the Gear Progression grid.
--- Replacement suggested in a gear tooltip for a slot the character has not filled
--- with a BiS item.
---
--- For the interchangeable pairs this must consider what is worn in the PARTNER
--- slot. Scoring already treats ring1/ring2 as one set, so recommending the entry
--- nominally assigned to this physical socket can suggest an item the character is
--- already wearing in the other one — and equipping it would not raise the score,
--- because CountBisForPair consumes each entry only once. Recommend an entry that
--- is still missing instead.
-local function GetBisItemName(class, spec, slotKey, char)
-    if not class or not spec or not slotKey then return nil end
-    local tierData = BisTierData(class, spec)
-    if not tierData then return nil end
-
-    local partner = SLOT_PARTNER[slotKey]
-    if not partner or not char then
-        local items = BisNamesForSlot(tierData, slotKey)
-        return items and items[1] or nil
-    end
-
-    -- Combined ordered pool: this slot's own entries first so the ordinary case keeps
-    -- its usual answer, then the partner's.
-    local pool = {}
-    for _, key in ipairs({ slotKey, partner }) do
-        local names = BisNamesForSlot(tierData, key)
-        if names then
-            for _, name in ipairs(names) do pool[#pool + 1] = name end
-        end
-    end
-
-    -- Consume exactly ONE copy of whatever is worn in the partner slot, mirroring
-    -- CountBisForPair. Several shipped lists intentionally name the same non-unique
-    -- item for both slots (Ring of Ancient Knowledge fills both ring slots for a
-    -- number of specs), and there a SECOND copy is genuinely the right advice -
-    -- dropping every match would recommend nothing while scoring still awards the
-    -- point for equipping one.
-    -- Both sockets are consumed, one occurrence each. The partner is the case that
-    -- matters in practice; this slot's own item is consumed too so the function is
-    -- correct standalone rather than relying on the caller only asking about slots
-    -- that already failed the BiS check.
-    local function ConsumeOne(worn)
-        if not worn or worn == "" then return end
-        for i, name in ipairs(pool) do
-            if name == worn then
-                table.remove(pool, i)
-                return
-            end
-        end
-    end
-
-    ConsumeOne(char["gearname_"..partner])
-    ConsumeOne(char["gearname_"..slotKey])
-
-    return pool[1]
-end
-
-------------------------------------------------------------
--- BiS count for a character
--- Returns: displayCount, colorRatio (0-1)
--- 2H weapons count as 2 slots for the color ratio
--- (since they occupy mainhand+offhand) but 1 for display.
--- For Feral Combat druids, both Cat and Bear lists are checked;
--- the one that yields the higher ratio is used so that a bear-geared
--- character is not penalised against the Cat BiS list (and vice versa).
-------------------------------------------------------------
-
-local ALL_GEAR_KEYS = {
-    "head","neck","shoulder","back","chest","wrist","hands",
-    "waist","legs","feet","ring1","ring2","trinket1","trinket2",
-    "mainhand","offhand","ranged",
-}
-local MAX_GEAR_SLOTS = #ALL_GEAR_KEYS  -- 17
-
--- Credit for one interchangeable slot pair. The two equipped items are matched
--- against the pair's combined BiS entries as SETS, consuming each entry at most
--- once. Counting the two slots independently through IsItemBis would award 2/2 to
--- a player wearing two copies of the same non-unique BiS ring.
-local function CountBisForPair(tierData, char, slotA, slotB)
-    if not tierData then return 0 end
-
-    local pool = {}
-    for _, key in ipairs({ slotA, slotB }) do
-        local names = BisNamesForSlot(tierData, key)
-        if names then
-            for _, n in ipairs(names) do pool[#pool + 1] = n end
-        end
-    end
-
-    local credited = 0
-    for _, key in ipairs({ slotA, slotB }) do
-        local worn = char["gearname_"..key] or ""
-        if worn ~= "" then
-            for i, n in ipairs(pool) do
-                if n == worn then
-                    table.remove(pool, i)
-                    credited = credited + 1
-                    break
-                end
-            end
-        end
-    end
-    return credited
-end
-
--- Slots handled by CountBisForPair rather than one at a time.
-local PAIRED_SLOTS = { ring1=true, ring2=true, trinket1=true, trinket2=true }
-
--- Internal helper: count BiS items for an explicit spec override
-local function CountBisForSpec(char, specOverride)
-    local count = 0
-    for _, slotKey in ipairs(ALL_GEAR_KEYS) do
-        if not PAIRED_SLOTS[slotKey] then
-            local itemName = char["gearname_"..slotKey] or ""
-            if IsItemBis(char.class, specOverride, slotKey, itemName) then
-                count = count + 1
-            end
-        end
-    end
-
-    local tierData = BisTierData(char.class, specOverride)
-    count = count + CountBisForPair(tierData, char, "ring1", "ring2")
-    count = count + CountBisForPair(tierData, char, "trinket1", "trinket2")
-    -- 2H bonus
-    local colorCount = count
-    local ohIlvl = char.gear_offhand or 0
-    local mhName = char.gearname_mainhand or ""
-    if ohIlvl == 0 and IsItemBis(char.class, specOverride, "mainhand", mhName) then
-        colorCount = colorCount + 1
-    end
-    local ratio = colorCount / MAX_GEAR_SLOTS
-    return count, math.min(ratio, 1.0)
-end
-
-local function CountBisItems(char)
-    if not char or not char.class or not char.spec then return 0, 0 end
-
-    -- Feral Combat: score against both Cat and Bear lists, keep the better result
-    if char.spec == "Feral Combat" then
-        local catCount, catRatio   = CountBisForSpec(char, "Feral Combat")
-        local bearCount, bearRatio = CountBisForSpec(char, "Feral Combat (Bear)")
-        if bearRatio > catRatio then
-            return bearCount, bearRatio
-        end
-        return catCount, catRatio
-    end
-
-    -- All other specs: the same scoring, just against the character's own spec.
-    -- This used to be a second, near-identical copy of CountBisForSpec's body,
-    -- which meant fixes to the scoring only reached the Feral Combat branch.
-    return CountBisForSpec(char, char.spec)
-end
-
--- Test seam (matches the AltStable._test convention in Core.lua): the scoring
--- functions stay local so the row renderer remains a closed unit, but the BiS
--- suite needs to exercise slot pairing directly.
+-- Test seam (matches the AltStable._test convention in Core.lua).
 AltStable._test = AltStable._test or {}
-AltStable._test.CountBisItems  = CountBisItems
-AltStable._test.RaceIconText   = RaceIconText
-AltStable._test.IsItemBis      = IsItemBis
-AltStable._test.GetBisItemName = GetBisItemName
-
-------------------------------------------------------------
--- BiS count gradient: grey (0) → white → green → orange
-------------------------------------------------------------
-
-local function BisCountColor(ratio)
-    local function lerp(c1, c2, t)
-        t = math.max(0, math.min(1, t))
-        return {
-            r = c1.r + (c2.r - c1.r) * t,
-            g = c1.g + (c2.g - c1.g) * t,
-            b = c1.b + (c2.b - c1.b) * t,
-        }
-    end
-    local GREY   = { r=0.50, g=0.50, b=0.50 }
-    local WHITE  = { r=1.00, g=1.00, b=1.00 }
-    local GREEN  = { r=0.12, g=1.00, b=0.00 }
-    local ORANGE = { r=1.00, g=0.50, b=0.00 }
-
-    if     ratio >= 0.85 then return lerp(GREEN,  ORANGE, (ratio - 0.85) / 0.15)
-    elseif ratio >= 0.50 then return lerp(WHITE,  GREEN,  (ratio - 0.50) / 0.35)
-    elseif ratio >= 0.15 then return lerp(GREY,   WHITE,  (ratio - 0.15) / 0.35)
-    else                      return GREY
-    end
-end
+AltStable._test.RaceIconText = RaceIconText
 
 ------------------------------------------------------------
 -- Reputation
@@ -618,7 +327,7 @@ function AltStable.CreateRow(parent, height, columns)
     for i, col in ipairs(columns) do
         local cell
 
-        if col.type == "classIcon" or col.type == "raceIcon" or col.type == "specIcon" then
+        if col.type == "classIcon" or col.type == "raceIcon" then
             cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             cell:SetPoint("LEFT", x, 0)
             cell:SetWidth(col.width)
@@ -635,10 +344,9 @@ function AltStable.CreateRow(parent, height, columns)
         end
 
         -- General tooltip button for classIcon, raceIcon, level, restPercent, profSkill
-        if col.type=="classIcon" or col.type=="raceIcon" or col.type=="specIcon"
+        if col.type=="classIcon" or col.type=="raceIcon"
         or col.field=="level" or col.type=="restXP"
-        or col.field=="restPercent" or col.type=="profSkill"
-        or col.type=="bisCount" then
+        or col.field=="restPercent" or col.type=="profSkill" then
             local tip = CreateFrame("Button", nil, row)
             tip:SetPoint("LEFT", x, 0)
             tip:SetSize(col.width, height)
@@ -700,27 +408,22 @@ function AltStable.CreateRow(parent, height, columns)
                     -- SetInventoryItem shows enchants, gems, and socket bonuses correctly.
                     GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
                     GameTooltip:SetInventoryItem("player", tip.slotID)
-                    if tip.bisTier then
-                        GameTooltip:AddLine(" ")
-                        GameTooltip:AddLine("|TInterface\\RAIDFRAME\\ReadyCheck-Ready:0:0:0:0:64:64:4:60:4:60|t|cff00ff00 BiS: "..AltStable.GetBisTierLabel(tip.bisTier).."|r", 0, 1, 0)
-                    end
                     GameTooltip:Show()
                 elseif tip.itemLink and tip.itemLink ~= "" then
                     -- Local full item link only (carries this client's
-                    -- gems/enchants). Remote/synced characters have no link and
-                    -- fall through to the text summary below — showing a plain
-                    -- SetHyperlink for them triggers WoW's item-comparison
-                    -- tooltip, which collides with the BiS side-by-side tooltip.
+                    -- gems/enchants).
                     local itemID = tip.itemLink:match("item:(%d+)")
                     if itemID then
                         GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
                         GameTooltip:SetHyperlink("item:"..itemID)
-                        if tip.bisTier then
-                            GameTooltip:AddLine(" ")
-                            GameTooltip:AddLine("|TInterface\\RAIDFRAME\\ReadyCheck-Ready:0:0:0:0:64:64:4:60:4:60|t|cff00ff00 BiS: "..AltStable.GetBisTierLabel(tip.bisTier).."|r", 0, 1, 0)
-                        end
                         GameTooltip:Show()
                     end
+                elseif tip.itemID and tip.itemID > 0 then
+                    -- Synced characters carry no link, only the item id: the
+                    -- base item's tooltip, without this character's enchants.
+                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                    GameTooltip:SetHyperlink("item:"..tip.itemID)
+                    GameTooltip:Show()
                 elseif tip.slotIlvl and tip.slotIlvl > 0 then
                     -- Fallback for items without a stored link
                     local qColor = QUALITY_COLORS[tip.slotQuality or 1] or "|cffffffff"
@@ -730,39 +433,12 @@ function AltStable.CreateRow(parent, height, columns)
                         GameTooltip:AddLine(qColor..tip.itemName.."|r", 1,1,1)
                     end
                     GameTooltip:AddLine(col.label.." — ilvl "..tip.slotIlvl, 0.8,0.8,0.8)
-                    if tip.bisTier then
-                        GameTooltip:AddLine(" ")
-                        GameTooltip:AddLine("|TInterface\\RAIDFRAME\\ReadyCheck-Ready:0:0:0:0:64:64:4:60:4:60|t|cff00ff00 BiS: "..AltStable.GetBisTierLabel(tip.bisTier).."|r", 0, 1, 0)
-                    end
                     GameTooltip:Show()
-                end
-
-                -- Side-by-side BiS comparison: if the equipped item is not BiS
-                -- for the current tier, show the BiS item's tooltip next to the
-                -- equipped one. GetItemInfo only returns a link if the client
-                -- has already cached the item — uncached items fall back to a
-                -- plain name line on GameTooltip.
-                if tip.bisName and (not tip.bisTier) and GameTooltip:IsShown() then
-                    local _, bisLink = GetItemInfo(tip.bisName)
-                    if bisLink then
-                        local st = ShoppingTooltip1
-                        st:SetOwner(GameTooltip, "ANCHOR_NONE")
-                        st:ClearAllPoints()
-                        st:SetPoint("TOPLEFT", GameTooltip, "TOPRIGHT", 2, 0)
-                        st:SetHyperlink(bisLink)
-                        st:Show()
-                    else
-                        GameTooltip:AddLine(" ")
-                        GameTooltip:AddLine("|cffaaaaaaBiS: |r|cffffffff"..tip.bisName.."|r", 1, 1, 1)
-                        GameTooltip:AddLine("|cff666666(hover the item in-game to cache its tooltip)|r", 0.5, 0.5, 0.5)
-                        GameTooltip:Show()
-                    end
                 end
             end)
             tip:SetScript("OnLeave", function()
                 hoverBg:Hide()
                 GameTooltip:Hide()
-                if ShoppingTooltip1 then ShoppingTooltip1:Hide() end
             end)
             row.gearTips[i] = tip
         end
@@ -855,15 +531,6 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line3 = nil
             end
 
-        elseif col.type=="specIcon" then
-            value = SpecIconText(char.specIcon)
-            if tip then
-                local specName = char.spec
-                tip.line1 = (specName and specName ~= "") and specName or "Not scanned"
-                tip.line2 = nil
-                tip.line3 = nil
-            end
-
         elseif col.field=="level" then
             local cap = AltStable.API.LevelCap()
             value = FormatMax(char.level, cap)
@@ -882,21 +549,6 @@ function AltStable.RenderRow(row, char, index, columns)
 
         elseif col.field=="ilvl" then value = FormatItemLevel(char.ilvl)
 
-        elseif col.type=="bisCount" then
-            local count, ratio = CountBisItems(char)
-            if count > 0 then
-                local pct = math.floor(ratio * 100)
-                local c = BisCountColor(ratio)
-                value = string.format("|cff%02x%02x%02x%d%%|r", c.r*255, c.g*255, c.b*255, pct)
-            else
-                value = "|cff555555-|r"
-            end
-            if tip then
-                tip.line1 = count .. " / " .. MAX_GEAR_SLOTS .. " BiS items equipped"
-                tip.line2 = char.spec and ("Spec: " .. char.spec) or nil
-                tip.line3 = nil
-            end
-
         elseif col.type=="gearSlot" then
             local slotKey = col.field:sub(6)  -- e.g. "head", "neck", etc.
             local v = char[col.field]
@@ -904,25 +556,15 @@ function AltStable.RenderRow(row, char, index, columns)
             local itemName = char["gearname_"..slotKey] or ""
             local itemLink = char["gearlink_"..slotKey] or ""
             value = FormatGearIlvl(v, q)
-
-            -- BiS check
-            local bisTier = IsItemBis(char.class, char.spec, slotKey, itemName)
-            local bisName = bisTier and nil or GetBisItemName(char.class, char.spec, slotKey, char)
             if row.gearTips[i] then
                 row.gearTips[i].slotIlvl         = v
                 row.gearTips[i].slotQuality       = q
                 row.gearTips[i].itemName          = itemName
                 row.gearTips[i].itemLink          = itemLink
-                row.gearTips[i].bisTier           = bisTier
-                row.gearTips[i].bisName           = bisName
+                row.gearTips[i].itemID            = tonumber(char["gearid_"..slotKey]) or 0
                 row.gearTips[i].slotID            = col.slotID
                 row.gearTips[i].isCurrentPlayer   = (char.guid == UnitGUID("player"))
             end
-            -- Prepend a green checkmark for BiS items
-            if bisTier then
-                value = "|TInterface\\RAIDFRAME\\ReadyCheck-Ready:0:0:0:0:64:64:4:60:4:60|t"..value
-            end
-
         elseif col.field=="restPercent" or col.type=="restXP" then
             local lvl = char.level or 0
             local atCap = lvl >= AltStable.API.LevelCap()
@@ -993,20 +635,14 @@ function AltStable.RenderRow(row, char, index, columns)
                 else
                     color = "|cff808080"  -- grey
                 end
-                -- Racial cap marker: 375 in a 385-cap profession
-                if max > 375 and skill >= 375 and skill < max then
-                    value = color..skill.."*|r"
-                else
-                    value = color..skill.."|r"
-                end
+                value = color..skill.."|r"
             else
                 value = tostring(skill)
             end
             if tip then
                 tip.line1 = col.label
                 tip.line2 = max and ("Max: "..max) or nil
-                tip.line3 = (max and max > 375 and skill and skill >= 375 and skill < max)
-                    and "* Racial bonus cap — functionally maxed" or nil
+                tip.line3 = nil
                 -- Append any craft cooldowns for this profession. Cooldowns are
                 -- captured generically by the Professions plugin as dynamic
                 -- cd_<prof>@<label> fields on the record, so we match this
