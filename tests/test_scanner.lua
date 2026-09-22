@@ -116,6 +116,32 @@ do
           and seen[2826] and seen[2827] and seen[2586] and seen[2587])
 end
 
+-- Header icons: a faction's tabard icon is used only when the texture exists on
+-- this client; otherwise the stacked text label stays.
+do
+    local byID = {}
+    for _, r in ipairs(AltStable.REPUTATIONS) do byID[r.id] = r end
+    eq("Earthen Ring has its tabard icon", byID[2787].icon, "inv_misc_tabard_earthenring")
+    eq("a battleground faction has none (its tabard icon is the generic one)", byID[730].icon, nil)
+
+    local dir = "Interface" .. string.char(92) .. "Icons" .. string.char(92)
+    WoW.textures = { [dir .. "inv_misc_tabard_earthenring"] = true }
+    dofile("Columns.lua")
+    local colByField = {}
+    for _, c in ipairs(AltStable.Columns) do colByField[c.field] = c end
+    eq("an icon that exists is drawn", colByField.rep_2787.repIcon, dir .. "inv_misc_tabard_earthenring")
+    eq("an icon the client lacks falls back to the text label", colByField.rep_72.repIcon, nil)
+    eq("  which keeps its short label", colByField.rep_72.verticalLabel, "Stormw")
+    eq("a faction with no icon keeps the text label", colByField.rep_730.repIcon, nil)
+
+    WoW.textures = nil   -- every path resolves
+    dofile("Columns.lua")
+    colByField = {}
+    for _, c in ipairs(AltStable.Columns) do colByField[c.field] = c end
+    eq("with the texture present, Stormwind gets its tabard", colByField.rep_72.repIcon,
+       dir .. "inv_misc_tournaments_tabard_human")
+end
+
 -- Measured on Kaleid (Horde, level 14): a "Horde" header that is a faction in
 -- its own right, an "Other" grouping header with factionID 0, and two Forever
 -- factions under it.

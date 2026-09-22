@@ -365,6 +365,13 @@ function UnitXPMax() return WoW.xpMax end
 function UnitXP() return WoW.xp end
 function IsResting() return WoW.resting end
 
+-- nil for a path the client doesn't have. WoW.textures: set of known paths;
+-- nil (the default) means every path resolves.
+function GetFileIDFromPath(path)
+    if WoW.textures == nil then return 1 end
+    return WoW.textures[path] and 1 or nil
+end
+
 function GetMaxPlayerLevel() return WoW.maxLevel end
 function UnitLevel() return WoW.level end
 function GetTime() return 0 end

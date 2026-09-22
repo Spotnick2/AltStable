@@ -1,9 +1,19 @@
 AltStable = AltStable or {}
 
--- Reputation column: a stacked text header (see BuildHeaders in SheetUI.lua).
+-- Reputation column: the faction's icon when it has one that exists on this
+-- client, else a stacked text header (see BuildHeaders in SheetUI.lua).
+local ICON_DIR = "Interface\\Icons\\"
 local function rep(r)
+    local icon
+    if r.icon then
+        local path = ICON_DIR .. r.icon
+        -- Unknown (no GetFileIDFromPath) trusts the name; a confirmed miss
+        -- keeps the text label rather than drawing a green box.
+        if AltStable.API.TextureExists(path) ~= false then icon = path end
+    end
     return { label=r.label, field=AltStable.RepField(r.id), width=22, align="RIGHT",
-             type="rep", vertical=true, verticalLabel=r.short, group="rep" }
+             type="rep", vertical=true, verticalLabel=r.short, group="rep",
+             repIcon=icon }
 end
 
 -- Profession skill column

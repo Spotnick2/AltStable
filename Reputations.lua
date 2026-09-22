@@ -17,19 +17,33 @@ local GetFactionDataByIndex = API.GetFactionDataByIndex
 -- Azeroth Commerce Authority.
 --
 -- `short` is the stacked header label; keep it to about six characters.
+-- `icon` (optional) is a Blizzard icon texture name, usually the faction's
+-- tabard, drawn in the header instead of the label. It is used only when the
+-- texture resolves on this client (see Columns.lua), so a wrong or missing name
+-- falls back to the text label. Where every tabard shares the generic guild
+-- tabard icon (the battleground factions, Argent Dawn, Kirin Tor) there is none:
+-- it would not tell the columns apart.
 ------------------------------------------------------------
 
 AltStable.REPUTATIONS = {
     -- Capitals (and Forever's Skyborne, one faction per side)
-    { id = 72,   label = "Stormwind",            short = "Stormw" },
-    { id = 47,   label = "Ironforge",            short = "Ironfg" },
-    { id = 69,   label = "Darnassus",            short = "Darnas" },
-    { id = 54,   label = "Gnomeregan Exiles",    short = "Gnome"  },
+    { id = 72,   label = "Stormwind",            short = "Stormw",
+      icon = "inv_misc_tournaments_tabard_human" },
+    { id = 47,   label = "Ironforge",            short = "Ironfg",
+      icon = "inv_misc_tournaments_tabard_dwarf" },
+    { id = 69,   label = "Darnassus",            short = "Darnas",
+      icon = "inv_misc_tournaments_tabard_nightelf" },
+    { id = 54,   label = "Gnomeregan Exiles",    short = "Gnome",
+      icon = "inv_misc_tournaments_tabard_gnome" },
     { id = 2779, label = "High Order",           short = "HiOrdr" },
-    { id = 76,   label = "Orgrimmar",            short = "Orgrim" },
-    { id = 81,   label = "Thunder Bluff",        short = "ThBluf" },
-    { id = 68,   label = "Undercity",            short = "UndCty" },
-    { id = 530,  label = "Darkspear Trolls",     short = "Dkspr"  },
+    { id = 76,   label = "Orgrimmar",            short = "Orgrim",
+      icon = "inv_misc_tournaments_tabard_orc" },
+    { id = 81,   label = "Thunder Bluff",        short = "ThBluf",
+      icon = "inv_misc_tournaments_tabard_tauren" },
+    { id = 68,   label = "Undercity",            short = "UndCty",
+      icon = "inv_misc_tournaments_tabard_scourge" },
+    { id = 530,  label = "Darkspear Trolls",     short = "Dkspr",
+      icon = "inv_misc_tournaments_tabard_troll" },
     { id = 2778, label = "Windshapers",          short = "Windsh" },
 
     -- Azeroth
@@ -59,22 +73,28 @@ AltStable.REPUTATIONS = {
     { id = 889,  label = "Warsong Outriders",    short = "Warsng" },
     { id = 509,  label = "League of Arathor",    short = "LgArth" },
     { id = 510,  label = "The Defilers",         short = "Defilr" },
-    { id = 2799, label = "Theramore Expeditionary Force", short = "Thrmor" },
-    { id = 2798, label = "Darkspear Raiders",    short = "DkRaid" },
+    { id = 2799, label = "Theramore Expeditionary Force", short = "Thrmor",
+      icon = "inv_tabard_theramorec60" },
+    { id = 2798, label = "Darkspear Raiders",    short = "DkRaid",
+      icon = "inv_tabard_darkspearc60" },
 
     -- Forever
     { id = 2719, label = "Cenarion Scouts",      short = "CenSct" },
     { id = 2740, label = "Kirin Tor",            short = "KirTor" },
     { id = 2747, label = "Barkskin Burrow",      short = "Barksk" },
     { id = 2758, label = "Nightclaw Druids",     short = "Nghtcl" },
-    { id = 2765, label = "Guardians of Hyjal",   short = "GdHyjl" },
+    { id = 2765, label = "Guardians of Hyjal",   short = "GdHyjl",
+      icon = "inv_tabard_raidhyjalc60_b_01_green" },
     { id = 2782, label = "Bolder'ok Clan",       short = "Bldrok" },
-    { id = 2787, label = "Earthen Ring",         short = "ErthRg" },
+    { id = 2787, label = "Earthen Ring",         short = "ErthRg",
+      icon = "inv_misc_tabard_earthenring" },
     { id = 2819, label = "The Watchers",         short = "Watchr" },
     { id = 2826, label = "Brotherhood of the Horse", short = "BroHrs" },
     { id = 2827, label = "Powderfuse",           short = "Pwdrfs" },
-    { id = 2586, label = "Azeroth Commerce Authority", short = "AzCmAu" },
-    { id = 2587, label = "Durotar Supply and Logistics", short = "DuSupL" },
+    { id = 2586, label = "Azeroth Commerce Authority", short = "AzCmAu",
+      icon = "inv_tabard_merchantalliancec60" },
+    { id = 2587, label = "Durotar Supply and Logistics", short = "DuSupL",
+      icon = "inv_tabard_merchanthordec60" },
 }
 
 function AltStable.RepField(id)

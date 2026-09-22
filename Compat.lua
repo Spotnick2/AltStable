@@ -111,6 +111,16 @@ API.GetSkillLineInfo = need(C_SkillInfo, "C_SkillInfo", "GetSkillLineInfo")
 API.GetNumFactions         = need(C_Reputation, "C_Reputation", "GetNumFactions")
 API.GetFactionDataByIndex  = need(C_Reputation, "C_Reputation", "GetFactionDataByIndex")
 API.GetFactionDataByID     = need(C_Reputation, "C_Reputation", "GetFactionDataByID")
+-- Whether a texture file exists on this client. GetFileIDFromPath returns nil
+-- for a path that doesn't resolve. nil (unknown) if the function is missing or
+-- errors, so callers can decide how to fail.
+function API.TextureExists(path)
+    if type(GetFileIDFromPath) ~= "function" then return nil end
+    local ok, id = pcall(GetFileIDFromPath, path)
+    if not ok then return nil end
+    return id ~= nil and id ~= 0
+end
+
 -- The scan expands collapsed headers to see every faction, then restores them.
 API.ExpandAllFactionHeaders = need(C_Reputation, "C_Reputation", "ExpandAllFactionHeaders")
 API.CollapseFactionHeader   = need(C_Reputation, "C_Reputation", "CollapseFactionHeader")
