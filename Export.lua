@@ -7,8 +7,8 @@ AltStable = AltStable or {}
 -- Leatherworking | Tailoring | Herbalism | Mining | Skinning
 -- Cooking | Fishing | First Aid | Riding
 -- (gap cols in sheet are just empty)
--- Aldor/Scryers | Thrallmar | Cenarion Exp | Lower City | Consortium
--- Sha'tar | Keepers of Time | Sporeggar | Mag'har
+-- then one column per faction in AltStable.REPUTATIONS (all of them, in order,
+-- so the layout doesn't depend on which factions anyone has met)
 ------------------------------------------------------------
 
 local HORDE_RACES = {
@@ -61,17 +61,13 @@ local PROF_FIELD = {
     ["Riding"]    = "riding",
 }
 
-local REP_COLS = {
-    { label="Aldor/Scryers",   fieldA="aldor",      fieldB="scryer"   },
-    { label="Thrallmar",       fieldA="thrallmar"                      },
-    { label="Cenarion Exp.",   fieldA="cenarion"                       },
-    { label="Lower City",      fieldA="lowercity"                      },
-    { label="Consortium",      fieldA="consortium"                     },
-    { label="Sha'tar",         fieldA="shatar"                         },
-    { label="Keepers of Time", fieldA="keepers"                        },
-    { label="Sporeggar",       fieldA="sporeggar"                      },
-    { label="Mag'har",         fieldA="maghar"                         },
-}
+local function RepCols()
+    local out = {}
+    for _, r in ipairs(AltStable.REPUTATIONS or {}) do
+        out[#out + 1] = { label = r.label, field = AltStable.RepField(r.id) }
+    end
+    return out
+end
 
 ------------------------------------------------------------
 -- Build TSV row for one character
@@ -123,18 +119,8 @@ local function CharToTSV(char)
     end
 
     -- Reputation columns
-    for _, repCol in ipairs(REP_COLS) do
-        local val
-        if repCol.fieldB then
-            -- Aldor/Scryers: show whichever standing the char has (they're mutually exclusive)
-            local a = char[repCol.fieldA]
-            local b = char[repCol.fieldB]
-            if a and a > 0 then val = a
-            elseif b and b > 0 then val = b
-            end
-        else
-            val = char[repCol.fieldA]
-        end
+    for _, repCol in ipairs(RepCols()) do
+        local val = char[repCol.field]
         table.insert(row, val and REP_LETTER2[val] or "")
     end
 
@@ -155,7 +141,7 @@ local function BuildHeader()
     for _, p in ipairs(PROF_COLS) do
         table.insert(cols, p)
     end
-    for _, r in ipairs(REP_COLS) do
+    for _, r in ipairs(RepCols()) do
         table.insert(cols, r.label)
     end
     return table.concat(cols, "\t")
@@ -166,6 +152,11 @@ end
 ------------------------------------------------------------
 
 local exportFrame
+
+-- Test seam (the AltStable._test convention): the row and header builders.
+AltStable._test = AltStable._test or {}
+AltStable._test.ExportRow    = CharToTSV
+AltStable._test.ExportHeader = BuildHeader
 
 local function CreateExportFrame()
     if exportFrame then return end

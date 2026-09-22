@@ -111,6 +111,9 @@ API.GetSkillLineInfo = need(C_SkillInfo, "C_SkillInfo", "GetSkillLineInfo")
 API.GetNumFactions         = need(C_Reputation, "C_Reputation", "GetNumFactions")
 API.GetFactionDataByIndex  = need(C_Reputation, "C_Reputation", "GetFactionDataByIndex")
 API.GetFactionDataByID     = need(C_Reputation, "C_Reputation", "GetFactionDataByID")
+-- The scan expands collapsed headers to see every faction, then restores them.
+API.ExpandAllFactionHeaders = need(C_Reputation, "C_Reputation", "ExpandAllFactionHeaders")
+API.CollapseFactionHeader   = need(C_Reputation, "C_Reputation", "CollapseFactionHeader")
 
 ----------------------------------------------------------------------------
 -- Containers  (STRUCT)

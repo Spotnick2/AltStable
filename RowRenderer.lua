@@ -301,6 +301,29 @@ local function GetGroupBG() return unpack(AltStable.C.BG_GROUP) end
 
 local DIVIDER_COLOR = AltStable.C.GRIDLINE
 
+-- Row pools, one per sheet section. A row is built with one cell and tooltip
+-- frame per column, so it can't be reused across a change of columns - and the
+-- Reputations section's columns follow the data. A pool remembers the columns
+-- its rows were built for; when they change, the old rows are hidden and
+-- dropped (frames can't be destroyed; this only happens when a character meets
+-- a new faction) and the caller builds fresh ones. Frozen (Name) rows don't
+-- depend on the columns and are kept.
+function AltStable.RowPoolFor(pools, sectionId, columns)
+    local fields = {}
+    for i, col in ipairs(columns) do fields[i] = col.field end
+    local signature = table.concat(fields, ",")
+    local pool = pools[sectionId]
+    if not pool then
+        pool = { rows = {}, frozenRows = {}, signature = signature }
+        pools[sectionId] = pool
+    elseif pool.signature ~= signature then
+        for _, row in ipairs(pool.rows) do row:Hide() end
+        pool.rows = {}
+        pool.signature = signature
+    end
+    return pool
+end
+
 function AltStable.CreateRow(parent, height, columns)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(height)
@@ -369,7 +392,7 @@ function AltStable.CreateRow(parent, height, columns)
         end
 
         -- Invisible hover button for rep cells
-        if col.type == "rep" or col.type == "repCombined" then
+        if col.type == "rep" then
             local tip = CreateFrame("Button", nil, row)
             tip:SetPoint("LEFT", x, 0)
             tip:SetSize(col.width, height)
@@ -377,7 +400,7 @@ function AltStable.CreateRow(parent, height, columns)
                 if tip.standing then
                     GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
                     GameTooltip:ClearLines()
-                    local factionName = tip.activeFactionName or tip.factionLabel or ""
+                    local factionName = tip.factionLabel or ""
                     GameTooltip:AddLine(factionName, 1, 1, 1)
                     GameTooltip:AddLine(tip.standing, 0.8, 0.8, 0.8)
                     GameTooltip:Show()
@@ -693,24 +716,6 @@ function AltStable.RenderRow(row, char, index, columns)
             value = FormatReputation(standing)
             if row.repTips[i] then
                 row.repTips[i].standing = standing and REP_TEXT[standing] or nil
-            end
-        elseif col.type=="repCombined"  then
-            local v1 = char[col.field]  or 0
-            local v2 = char[col.field2] or 0
-            local active, activeName
-            if v1 >= 3 then
-                active, activeName = v1, col.label:match("^([^/]+)")
-            elseif v2 >= 3 then
-                active, activeName = v2, col.label:match("/(.+)$")
-            else
-                active = math.max(v1, v2)
-                activeName = col.label
-            end
-            activeName = activeName and activeName:match("^%s*(.-)%s*$") or col.label
-            value = (active > 0) and FormatReputation(active) or ""
-            if row.repTips[i] then
-                row.repTips[i].standing          = active > 0 and REP_TEXT[active] or nil
-                row.repTips[i].activeFactionName = activeName
             end
         else
             value = tostring(char[col.field] or "")

@@ -267,6 +267,13 @@ local RETIRED_FIELDS = {
     stat_crit = true, stat_hitpct = true,
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }
+-- The TBC reputation slugs. Standings are rep_<factionID> now (Reputations.lua).
+for _, slug in ipairs({ "aldor", "scryer", "shatar", "lowercity", "cenarion", "consortium",
+                        "keepers", "sporeggar", "honorhold", "thrallmar", "kurenai", "maghar",
+                        "ogrila", "skyguard", "netherwing", "ashtongue", "scaleofsands",
+                        "shatteredsun", "violeteye" }) do
+    RETIRED_FIELDS[slug] = true
+end
 
 local function PurgeRetiredFields()
     for _, c in pairs(AltStableDB or {}) do
@@ -563,7 +570,8 @@ local function ClearSyncedStateFields(t)
         or k:find("^gearlink_") or k:find("^gearsubtype_")  -- both local-only (see note above)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
-        or k:find("^mail_") then                 -- mail summary (mail_count / mail_expiry / mail_money)
+        or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
+        or k:find("^rep_") then                  -- reputations: a standing dropped at the source goes here too
             t[k] = nil
         end
     end
