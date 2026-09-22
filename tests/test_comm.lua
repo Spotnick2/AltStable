@@ -462,6 +462,17 @@ T.DeserializeFullDB(T.SerializeChar(
 eq(AltStableDB["Player-Prof-1"].prof_Mining, nil, "stale prof_ field cleared on merge")
 eq(AltStableDB["Player-Prof-1"].prof1, nil, "stale prof1 cleared on merge")
 
+-- Reputations (#8): a standing dropped at the source must not linger here.
+-- The incoming record carries the standings it still has; any other rep_
+-- field on the stored copy goes.
+AltStableDB = { ["Player-Rep-1"] = { guid = "Player-Rep-1", name = "Rep", class = "MAGE", level = 20,
+                                      rep_76 = 4, rep_2758 = 5, lastUpdate = 1000 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Rep-1", name = "Rep", class = "MAGE", level = 20, rep_76 = 6, lastUpdate = 1000 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Rep-1"].rep_2758, nil, "a standing the peer no longer has is cleared on merge")
+eq(AltStableDB["Player-Rep-1"].rep_76, 6, "  and a standing it sent is updated")
+
 ------------------------------------------------------------
 -- 15. Plugin per-character payload round-trips through serialization
 ------------------------------------------------------------
@@ -1189,6 +1200,10 @@ check(retiredCount >= 8, "the retired list is exposed and populated")
 for _, k in ipairs({ "stat_crit", "stat_hitpct", "stat_haste", "stat_resilience",
                      "prof_Jewelcrafting", "profmax_Jewelcrafting", "spec", "specIcon" }) do
     check(T.RETIRED_FIELDS[k], k .. " is retired")
+end
+-- The TBC reputation slugs (#8): standings are rep_<factionID> now.
+for _, k in ipairs({ "aldor", "scryer", "thrallmar", "honorhold", "violeteye", "shatteredsun" }) do
+    check(T.RETIRED_FIELDS[k], "TBC reputation field " .. k .. " is retired")
 end
 
 local wire = T.SerializeChar(oldRecord())

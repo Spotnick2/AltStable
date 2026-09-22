@@ -96,33 +96,92 @@ C_SkillInfo.GetSkillLineInfo = realGet
 dofile("Compat.lua"); dofile("Scanner.lua")
 
 ------------------------------------------------------------
--- Reputation: `reaction` is the standing, and stale values are cleared
+-- Reputations (#8): keyed by faction ID, "met" = in the character's list
 ------------------------------------------------------------
 
-WoW.factions = {
-    { name = "Horde",       factionID = 67,  reaction = 5, currentStanding = 3500, isHeader = true },
-    { name = "The Aldor",   factionID = 932, reaction = 6, currentStanding = 4000, isHeader = false },
-    { name = "Lower City",  factionID = 1011, reaction = 4, currentStanding = 200, isHeader = false },
-    { name = "Unlisted Co", factionID = 999, reaction = 7, currentStanding = 900, isHeader = false },
-}
+-- The table: IDs unique, labels short enough to stack in a 64px header.
+do
+    local seen, dup, long = {}, nil, nil
+    for _, r in ipairs(AltStable.REPUTATIONS or {}) do
+        if seen[r.id] then dup = r.id end
+        seen[r.id] = true
+        if #r.short > 6 then long = r.label end
+    end
+    check("the reputation table is populated", #(AltStable.REPUTATIONS or {}) >= 40)
+    check("faction IDs are unique", dup == nil, tostring(dup))
+    check("every header label fits six characters", long == nil, tostring(long))
+    check("all 16 Forever factions are tracked",
+          seen[2719] and seen[2740] and seen[2747] and seen[2758] and seen[2765] and seen[2778]
+          and seen[2779] and seen[2782] and seen[2787] and seen[2798] and seen[2799] and seen[2819]
+          and seen[2826] and seen[2827] and seen[2586] and seen[2587])
+end
 
+-- Measured on Kaleid (Horde, level 14): a "Horde" header that is a faction in
+-- its own right, an "Other" grouping header with factionID 0, and two Forever
+-- factions under it.
+local function kaleidList()
+    return {
+        { name = "Horde", factionID = 67, reaction = 5, isHeader = true, isHeaderWithRep = true },
+        { name = "Darkspear Trolls", factionID = 530, reaction = 4, isHeader = false },
+        { name = "Orgrimmar", factionID = 76, reaction = 4, isHeader = false },
+        { name = "Thunder Bluff", factionID = 81, reaction = 5, isHeader = false },
+        { name = "Other", factionID = 0, reaction = 2, isHeader = true },
+        { name = "Nightclaw Druids", factionID = 2758, reaction = 5, isHeader = false },
+        { name = "Windshapers", factionID = 2778, reaction = 5, isHeader = false },
+        { name = "Unlisted Co", factionID = 999, reaction = 7, isHeader = false },
+    }
+end
+
+WoW.reset()
+WoW.factions = kaleidList()
+-- GetFactionDataByID answers for factions never met, at a starting standing.
+WoW.factionByID = { [2740] = { name = "Kirin Tor", factionID = 2740, reaction = 1 } }
 local rep = {}
 AltStable.ScanReputations(rep)
+eq("a met faction records its reaction", rep.rep_76, 4)
+eq("a Forever faction under a grouping header", rep.rep_2758, 5)
+eq("an untracked faction is ignored", rep.rep_999, nil)
+eq("a header that is not a faction records nothing", rep.rep_0, nil)
+eq("a faction known only by ID (never met) is not recorded", rep.rep_2740, nil)
 
--- Standing is `reaction` (4 = Neutral, 5 = Friendly, 6 = Honored, 7 = Revered).
-eq("a tracked faction records its reaction", rep.aldor, 6)
-eq("a second tracked faction", rep.lowercity, 4)
-eq("an untracked faction is ignored", rep.unlisted, nil)
+-- A collapsed header hides its factions from the list; the scan must still
+-- see them, and leave the header collapsed as the player had it.
+WoW.factions = kaleidList()
+WoW.factions[5].isCollapsed = true
+rep = {}
+AltStable.ScanReputations(rep)
+eq("a faction under a collapsed header is still recorded", rep.rep_2778, 5)
+check("the collapsed header is collapsed again afterwards", WoW.factions[5].isCollapsed == true)
+check("  and an expanded one stays expanded", not WoW.factions[1].isCollapsed)
 
--- Stale values must be cleared, or a standing the character can no longer see
--- persists from an earlier scan or a sync.
-rep.aldor = 8
+-- A standing that disappears from the list is cleared, but an empty list (not
+-- loaded yet) must not wipe everything.
+rep = { rep_76 = 4, rep_530 = 8 }
+WoW.factions = { kaleidList()[1], kaleidList()[3] }
+AltStable.ScanReputations(rep)
+eq("a faction no longer listed is cleared", rep.rep_530, nil)
+eq("  one still listed is kept", rep.rep_76, 4)
 WoW.factions = {}
 AltStable.ScanReputations(rep)
-eq("a faction that disappeared is cleared", rep.aldor, nil)
+eq("an empty list leaves the stored standings alone", rep.rep_76, 4)
 
--- Same regression check: the old positional read took standing from return 3.
-WoW.factions = { { name = "The Aldor", factionID = 932, reaction = 6, isHeader = false } }
+-- A faction can also be a header with a standing of its own (the Retail list
+-- nests some that way); that row is the faction, not a grouping.
+WoW.factions = { { name = "Argent Dawn", factionID = 529, reaction = 6, isHeader = true,
+                   isHeaderWithRep = true },
+                 { name = "Group", factionID = 0, isHeader = true } }
+rep = {}
+AltStable.ScanReputations(rep)
+eq("a tracked faction listed as a header-with-rep is recorded", rep.rep_529, 6)
+
+-- Old TBC slug fields are not written any more.
+WoW.factions = kaleidList()
+rep = {}
+AltStable.ScanReputations(rep)
+check("no TBC slug fields are written", rep.aldor == nil and rep.thrallmar == nil)
+
+-- A tuple-shaped API (the old GetFactionInfo) records no standing.
+WoW.factions = { { name = "Orgrimmar", factionID = 76, reaction = 4, isHeader = false } }
 local rep2 = {}
 local realFac = C_Reputation.GetFactionDataByIndex
 C_Reputation.GetFactionDataByIndex = function(i)
@@ -132,9 +191,21 @@ C_Reputation.GetFactionDataByIndex = function(i)
 end
 dofile("Compat.lua"); dofile("Reputations.lua")
 AltStable.ScanReputations(rep2)
-eq("a tuple-shaped API records no standing", rep2.aldor, nil)
+eq("a tuple-shaped API records no standing", rep2.rep_76, nil)
 C_Reputation.GetFactionDataByIndex = realFac
 dofile("Compat.lua"); dofile("Reputations.lua")
+
+-- The sheet shows only factions some character has met, in table order.
+local inUse = AltStable.RepFieldsInUse({
+    a = { rep_2758 = 5, rep_76 = 4 },
+    b = { rep_72 = 5, name = "x" },
+    c = "not a record",
+})
+eq("factions in use: count", #inUse, 3)
+eq("  in table order (Stormwind first)", inUse[1], "rep_72")
+eq("  then Orgrimmar", inUse[2], "rep_76")
+eq("  then the Forever faction", inUse[3], "rep_2758")
+WoW.reset()
 
 ------------------------------------------------------------
 -- Race icons must not be an allowlist
@@ -244,6 +315,30 @@ do
                            and not src("SheetUI.lua"):find("bisCount", 1, true))
     check("no BiS matching left in the renderer", not src("RowRenderer.lua"):find("[Bb]is[TNC]"))
     check("no Spec column", not src("Columns.lua"):find("specIcon", 1, true))
+end
+
+-- Export: one column per tracked faction, all of them, in table order - the
+-- layout can't depend on which factions anyone has met.
+dofile("Export.lua")
+do
+    local header, row = AltStable._test.ExportHeader, AltStable._test.ExportRow
+    local function cols(line)
+        local out = {}
+        for c in (line .. "\t"):gmatch("([^\t]*)\t") do out[#out + 1] = c end
+        return out
+    end
+    local h = cols(header())
+    local nReps = #AltStable.REPUTATIONS
+    eq("the last export column is the last tracked faction", h[#h], AltStable.REPUTATIONS[nReps].label)
+    local orgCol
+    for i, c in ipairs(h) do if c == "Orgrimmar" then orgCol = i end end
+    check("Orgrimmar has an export column", orgCol ~= nil)
+    local r = cols(row({ name = "Kaleid", realm = "Elegia", class = "MAGE", level = 14,
+                         rep_76 = 4, rep_2778 = 5 }))
+    eq("a row has a cell for every header column", #r, #h)
+    eq("  and the standing lands in its faction's column", orgCol and r[orgCol], "N")
+    check("no TBC reputation columns remain",
+          not header():find("Aldor", 1, true) and not header():find("Thrallmar", 1, true))
 end
 
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().

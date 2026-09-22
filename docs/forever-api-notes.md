@@ -322,6 +322,37 @@ English-name matching.
 `GetFactionDataByID(270)` (Zandalar Tribe) → `nil` — that content may simply not be in yet. Re-check
 before building the faction map.
 
+**ByID does not mean "met" (1.60.1.69913, both sides).** A fresh level-1 Alliance character's list
+held only the Alliance header (469, `isHeader`, reaction 5) and the four capitals, yet ByID returned
+every Forever faction on its side at a starting standing — Kirin Tor and Darkspear Raiders read 1
+(Hated), Barkskin Burrow 2. Showing ByID results would fill the sheet with red cells for factions
+nobody has seen. AltStable counts a faction as met only when it appears in the (fully expanded) list.
+
+Kaleid (Horde, level 14): Horde header (67, reaction 5), Darkspear Trolls, Orgrimmar, Thunder Bluff,
+Undercity, then an **`Other` header with `factionID` 0** holding Nightclaw Druids (2758) and
+Windshapers (2778). `0` is truthy in Lua — test IDs with `> 0`.
+
+Forever-only faction IDs, confirmed by name on this build:
+
+| ID | Faction | Side (nil from the other) |
+|---:|---|---|
+| 2719 | Cenarion Scouts | both |
+| 2740 | Kirin Tor | both |
+| 2747 | Barkskin Burrow | both |
+| 2758 | Nightclaw Druids | both |
+| 2765 | Guardians of Hyjal | both |
+| 2778 | Windshapers | Horde |
+| 2779 | High Order | Alliance |
+| 2782 | Bolder'ok Clan | Horde |
+| 2787 | Earthen Ring | Horde |
+| 2798 | Darkspear Raiders | both (Hated for Alliance) |
+| 2799 | Theramore Expeditionary Force | both (Hated for Horde) |
+| 2819 | The Watchers | both |
+| 2826 | Brotherhood of the Horse | Alliance |
+| 2827 | Powderfuse | both |
+| 2586 | Azeroth Commerce Authority | Alliance |
+| 2587 | Durotar Supply and Logistics | Horde |
+
 ---
 
 ## Items

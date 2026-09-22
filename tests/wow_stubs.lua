@@ -194,9 +194,28 @@ C_SkillInfo = {
 -- C_Reputation  (STRUCT)
 ------------------------------------------------------------
 
+-- WoW.factions is the full list in order. As on the client, a collapsed
+-- header hides the rows under it (up to the next header) from the indexed
+-- calls; Expand/Collapse change what those calls see. One level of nesting.
+local function VisibleFactions()
+    local out, hiding = {}, false
+    for _, f in ipairs(WoW.factions) do
+        if f.isHeader then out[#out + 1] = f; hiding = f.isCollapsed
+        elseif not hiding then out[#out + 1] = f end
+    end
+    return out
+end
+
 C_Reputation = {
-    GetNumFactions        = function() return #WoW.factions end,
-    GetFactionDataByIndex = function(i) return WoW.factions[i] end,
+    GetNumFactions        = function() return #VisibleFactions() end,
+    GetFactionDataByIndex = function(i) return VisibleFactions()[i] end,
+    ExpandAllFactionHeaders = function()
+        for _, f in ipairs(WoW.factions) do if f.isHeader then f.isCollapsed = false end end
+    end,
+    CollapseFactionHeader = function(i)
+        local f = VisibleFactions()[i]
+        if f and f.isHeader then f.isCollapsed = true end
+    end,
     -- Deliberately backed by a SEPARATE table: the live client returns
     -- factions that are not in the indexed list, which is the whole reason we
     -- key reputations off ids instead of walking the UI list.

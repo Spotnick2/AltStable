@@ -103,17 +103,13 @@ local SECTIONS = {
         id    = "rep",
         label = "Reputations",
         icon  = IC("reputations"),
-        headerHeight = 32,
-        -- Width = sidebar(190) + frozen(156) + identity(119) + 18 rep×28(504) + scrollbar(20) = 989
+        headerHeight = 64,   -- stacked six-letter labels
         preferW = 999,
         preferH = 410,
-        fields = {
-            "class","race","level",
-            "aldor","scryer","shatar","lowercity",
-            "cenarion","consortium","keepers","violeteye","sporeggar",
-            "honorhold","thrallmar","kurenai","maghar",
-            "ogrila","skyguard","netherwing","ashtongue","scaleofsands","shatteredsun",
-        },
+        -- Faction columns are added per build: only those some character has
+        -- met (AltStable.RepFieldsInUse), in the order of AltStable.REPUTATIONS.
+        fields = { "class","race","level" },
+        repFields = true,
     },
 }
 
@@ -1050,17 +1046,14 @@ end
 local function BuildScrollableColsForSection(section)
     wipe(scrollableCols)
     local lookup = BuildFieldLookup()
-    for _, field in ipairs(section.fields) do
-        -- aldor/scryer is a special combined column
-        if field == "aldor" then
-            -- find the repCombined column
-            for _, col in ipairs(AltStable.Columns) do
-                if col.type == "repCombined" and col.field == "aldor" then
-                    scrollableCols[#scrollableCols+1] = col
-                    break
-                end
-            end
-        elseif lookup[field] then
+    local fields = section.fields
+    if section.repFields then
+        fields = {}
+        for _, f in ipairs(section.fields) do fields[#fields+1] = f end
+        for _, f in ipairs(AltStable.RepFieldsInUse(GetCharacterStore())) do fields[#fields+1] = f end
+    end
+    for _, field in ipairs(fields) do
+        if lookup[field] then
             scrollableCols[#scrollableCols+1] = lookup[field]
         end
     end
@@ -1441,7 +1434,7 @@ local function BuildHeaders()
         local btn=CreateFrame("Button",nil,headerContent)
         btn:SetPoint("LEFT",x,0); btn:SetSize(col.width,currentHeaderHeight); btn.field=col.field
 
-        if col.vertical and not col.repIcon then
+        if col.vertical then
             local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
             lbl:SetPoint("TOP",btn,"TOP",0,-2); lbl:SetPoint("BOTTOM",btn,"BOTTOM",0,2)
             lbl:SetWidth(col.width); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("TOP")
@@ -1458,17 +1451,20 @@ local function BuildHeaders()
                 lbl:SetTextColor(ar,ag,ab)
                 GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
                 GameTooltip:AddLine(col.label,1,1,1)
-                if col.type=="repCombined" then GameTooltip:AddLine("|cffaaaaaa(shows whichever is active)|r",1,1,1) end
-                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7); GameTooltip:Show()
+                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7)
+                -- The standing key lives in the faction headers, so the footer
+                -- keeps the normal char/level/gold totals like every other tab.
+                if col.type=="rep" then AddRepStandingLegend(GameTooltip) end
+                GameTooltip:Show()
             end)
             btn:SetScript("OnLeave",function()
                 if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
                 GameTooltip:Hide()
             end)
-        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then
+        elseif col.slotSlug or col.profIcon or col.slotIcon then
             -- slotSlug: faction-aware gear icon resolved at header-build time
             local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
-                or col.profIcon or col.slotIcon or col.repIcon
+                or col.profIcon or col.slotIcon
             local sz=math.min(currentHeaderHeight-4,col.width-2)
             local tex=btn:CreateTexture(nil,"OVERLAY")
             tex:SetSize(sz,sz); tex:SetPoint("CENTER",btn,"CENTER",0,0); tex:SetTexture(iconPath)
@@ -1487,11 +1483,6 @@ local function BuildHeaders()
                 GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
                 local tipText = COL_TOOLTIPS[col.field] or col.label
                 GameTooltip:AddLine(tipText,1,1,1)
-                if col.type=="rep" or col.type=="repCombined" then
-                    -- Standing key lives here so the footer keeps normal
-                    -- char/level/gold totals like every other tab (issue #8).
-                    AddRepStandingLegend(GameTooltip)
-                end
                 GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7); GameTooltip:Show()
             end)
             btn:SetScript("OnLeave",function()

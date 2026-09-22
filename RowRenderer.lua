@@ -369,7 +369,7 @@ function AltStable.CreateRow(parent, height, columns)
         end
 
         -- Invisible hover button for rep cells
-        if col.type == "rep" or col.type == "repCombined" then
+        if col.type == "rep" then
             local tip = CreateFrame("Button", nil, row)
             tip:SetPoint("LEFT", x, 0)
             tip:SetSize(col.width, height)
@@ -377,7 +377,7 @@ function AltStable.CreateRow(parent, height, columns)
                 if tip.standing then
                     GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
                     GameTooltip:ClearLines()
-                    local factionName = tip.activeFactionName or tip.factionLabel or ""
+                    local factionName = tip.factionLabel or ""
                     GameTooltip:AddLine(factionName, 1, 1, 1)
                     GameTooltip:AddLine(tip.standing, 0.8, 0.8, 0.8)
                     GameTooltip:Show()
@@ -693,24 +693,6 @@ function AltStable.RenderRow(row, char, index, columns)
             value = FormatReputation(standing)
             if row.repTips[i] then
                 row.repTips[i].standing = standing and REP_TEXT[standing] or nil
-            end
-        elseif col.type=="repCombined"  then
-            local v1 = char[col.field]  or 0
-            local v2 = char[col.field2] or 0
-            local active, activeName
-            if v1 >= 3 then
-                active, activeName = v1, col.label:match("^([^/]+)")
-            elseif v2 >= 3 then
-                active, activeName = v2, col.label:match("/(.+)$")
-            else
-                active = math.max(v1, v2)
-                activeName = col.label
-            end
-            activeName = activeName and activeName:match("^%s*(.-)%s*$") or col.label
-            value = (active > 0) and FormatReputation(active) or ""
-            if row.repTips[i] then
-                row.repTips[i].standing          = active > 0 and REP_TEXT[active] or nil
-                row.repTips[i].activeFactionName = activeName
             end
         else
             value = tostring(char[col.field] or "")

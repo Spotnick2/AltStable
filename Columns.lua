@@ -1,24 +1,9 @@
 AltStable = AltStable or {}
 
-------------------------------------------------------------
--- Custom TBC faction icons
--- Loaded from Media/Icons/Reputations/ as 64x64 TGA files
--- matching the field/slug name of each faction.
-------------------------------------------------------------
-
-local RICON_PATH = "Interface\\AddOns\\AltStable\\Media\\Icons\\Reputations\\"
-local function RI(slug) return RICON_PATH .. slug .. ".tga" end
-
-local function rep(label, field, vertLabel, icon)
-    return { label=label, field=field, width=22, align="RIGHT",
-             type="rep", vertical=true, verticalLabel=vertLabel, group="rep",
-             repIcon=icon }
-end
-
-local function repCombo(label, field1, field2, vertLabel, icon)
-    return { label=label, field=field1, field2=field2, width=22, align="RIGHT",
-             type="repCombined", vertical=true, verticalLabel=vertLabel, group="rep",
-             repIcon=icon }
+-- Reputation column: a stacked text header (see BuildHeaders in SheetUI.lua).
+local function rep(r)
+    return { label=r.label, field=AltStable.RepField(r.id), width=22, align="RIGHT",
+             type="rep", vertical=true, verticalLabel=r.short, group="rep" }
 end
 
 -- Profession skill column
@@ -79,26 +64,12 @@ AltStable.Columns = {
     prof("First Aid",     "firstAid",            "firstAidMax",            "Interface\\Icons\\Spell_Holy_SealOfSacrifice"),
     prof("Riding",        "riding",              "ridingMax",              "Interface\\Icons\\Ability_Mount_RidingHorse"),
 
-    -- Reputations (with faction icons for headers)
-    repCombo("Aldor / Scryers", "aldor", "scryer", "Al/Scr", RI("aldor")),
-    rep("The Sha'tar",           "shatar",       "Sha'tr", RI("shatar")),
-    rep("Lower City",            "lowercity",    "LowCit", RI("lowercity")),
-    rep("Cenarion Expedition",   "cenarion",     "CenExp", RI("cenarion")),
-    rep("The Consortium",        "consortium",   "Consrt", RI("consortium")),
-    rep("Keepers of Time",       "keepers",      "KoT",    RI("keepers")),
-    rep("The Violet Eye",        "violeteye",    "VioEye", RI("violeteye")),
-    rep("Sporeggar",             "sporeggar",    "Spore",  RI("sporeggar")),
-    rep("Honor Hold",            "honorhold",    "HonHld", RI("honorhold")),
-    rep("Thrallmar",             "thrallmar",    "Thrall", RI("thrallmar")),
-    rep("Kurenai",               "kurenai",      "Kurnai", RI("kurenai")),
-    rep("The Mag'har",           "maghar",       "Mag'hr", RI("maghar")),
-    rep("Ogri'la",               "ogrila",       "Ogri'l", RI("ogrila")),
-    rep("Sha'tari Skyguard",     "skyguard",     "Skygrd", RI("skyguard")),
-    rep("Netherwing",            "netherwing",   "Netwng", RI("netherwing")),
-    rep("Ashtongue Deathsworn",  "ashtongue",    "Ashtnge",RI("ashtongue")),
-    rep("The Scale of the Sands","scaleofsands", "ScalSd", RI("scaleofsands")),
-    rep("Shattered Sun",         "shatteredsun", "ShatSun",RI("shatteredsun")),
+    -- Reputations: appended below from AltStable.REPUTATIONS
 }
+
+for _, r in ipairs(AltStable.REPUTATIONS) do
+    AltStable.Columns[#AltStable.Columns + 1] = rep(r)
+end
 
 function AltStable.GetTotalColumnWidth()
     local total = 20
