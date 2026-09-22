@@ -1874,14 +1874,15 @@ AltStable.plugins = AltStable.plugins or {}
 -- only persists (WoW can't unload an addon until the next /reload).
 ------------------------------------------------------------
 
--- Empty until the plugins are ported. Each re-adds its own entry:
---   Warband   -> #9  / #10
+-- Each ported plugin adds its entry. Still to come:
 --   Instances -> #11
 --   Recipes   -> #14 (deferred)
 --   Roster    -> #15 (deferred)
 -- Listing an addon that does not exist means a failed LoadAddOn at every
 -- login, which would bury the real errors this build exists to surface.
-AltStable.LOD_PLUGINS = {}
+AltStable.LOD_PLUGINS = {
+    { key = "warband", addon = "AltStableWarband", label = "Warband" },
+}
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
 -- back to the C_AddOns namespace if a future client drops them.

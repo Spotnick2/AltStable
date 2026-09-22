@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: AltStable Warband
+## Notes: Consolidated cross-alt bag + bank inventory for AltStable
+## Author: Spotnick
+## Version: dev
+## Dependencies: AltStable
+## LoadOnDemand: 1
+## SavedVariables: AltStableWarbandDB
+
+AltStableWarband.lua

@@ -5,9 +5,9 @@
         pwsh Tools/deploy.ps1
         pwsh Tools/deploy.ps1 -AddOnsPath "D:\Games\WoW\_classic_beta_\Interface\AddOns"
 
-    Plugins fan out into sibling top-level folders (WoW only discovers addons
-    as top-level folders under Interface\AddOns) once they are ported — see
-    issues #9 and #11. For now this deploys the core addon only.
+    Plugins fan out into sibling top-level folders: WoW only discovers addons
+    as top-level folders under Interface\AddOns, so Plugins\Warband deploys to
+    AddOns\AltStableWarband rather than inside AltStable.
 #>
 
 param(
@@ -40,7 +40,9 @@ $excludeDirs = @(
     (Join-Path $RepoRoot ".vscode"),
     (Join-Path $RepoRoot ".idea"),
     (Join-Path $RepoRoot "dist"),
-    (Join-Path $RepoRoot "__pycache__")
+    (Join-Path $RepoRoot "__pycache__"),
+    # Plugins are separate addons; they are deployed below, not nested here.
+    (Join-Path $RepoRoot "Plugins")
 )
 # *.png is source art only - WoW loads TGA/BLP, never PNG.
 $excludeFiles = @("*.log", "*.zip", "*.md", "*.png", ".gitignore")
@@ -66,6 +68,24 @@ if (Test-Path $deployedToc) {
     (Get-Content $deployedToc -Raw).Replace('@project-version@', $label) |
         Set-Content $deployedToc -NoNewline
     Write-Host "  version -> $label (deployed copy only)" -ForegroundColor DarkGray
+}
+
+# Plugins: each folder under Plugins\ becomes its own top-level addon folder,
+# named after the .toc inside it (WoW requires folder name == toc name).
+$pluginRoot = Join-Path $RepoRoot "Plugins"
+if (Test-Path $pluginRoot) {
+    foreach ($dir in Get-ChildItem $pluginRoot -Directory) {
+        $toc = Get-ChildItem $dir.FullName -Filter *.toc | Select-Object -First 1
+        if (-not $toc) {
+            Write-Host "  skipping $($dir.Name): no .toc" -ForegroundColor DarkYellow
+            continue
+        }
+        $name = [IO.Path]::GetFileNameWithoutExtension($toc.Name)
+        $pluginDest = Join-Path $AddOnsPath $name
+        robocopy $dir.FullName $pluginDest "/E" "/NFL" "/NDL" "/NJH" "/NJS" "/NP" "/XF" "*.md" | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
+        Write-Host "  plugin -> $name" -ForegroundColor DarkGray
+    }
 }
 
 Write-Host "Done -> $dest" -ForegroundColor Green
