@@ -1,9 +1,19 @@
 AltStable = AltStable or {}
 
--- Reputation column: a stacked text header (see BuildHeaders in SheetUI.lua).
+-- Reputation column: the faction's icon when it has one that exists on this
+-- client, else a stacked text header (see BuildHeaders in SheetUI.lua).
+local ICON_DIR = "Interface\\Icons\\"
 local function rep(r)
+    local icon
+    if r.icon then
+        local path = ICON_DIR .. r.icon
+        -- Unknown (no GetFileIDFromPath) trusts the name; a confirmed miss
+        -- keeps the text label rather than drawing a green box.
+        if AltStable.API.TextureExists(path) ~= false then icon = path end
+    end
     return { label=r.label, field=AltStable.RepField(r.id), width=22, align="RIGHT",
-             type="rep", vertical=true, verticalLabel=r.short, group="rep" }
+             type="rep", vertical=true, verticalLabel=r.short, group="rep",
+             repIcon=icon }
 end
 
 -- Profession skill column
@@ -69,6 +79,15 @@ AltStable.Columns = {
 
 for _, r in ipairs(AltStable.REPUTATIONS) do
     AltStable.Columns[#AltStable.Columns + 1] = rep(r)
+end
+
+-- Header height for a set of columns: stacked text labels need 64px, icons fit
+-- the usual 32. Only as tall as the columns actually shown need.
+function AltStable.HeaderHeightFor(columns, default)
+    for _, col in ipairs(columns) do
+        if col.vertical and not col.repIcon then return 64 end
+    end
+    return default or 32
 end
 
 function AltStable.GetTotalColumnWidth()

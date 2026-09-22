@@ -103,7 +103,7 @@ local SECTIONS = {
         id    = "rep",
         label = "Reputations",
         icon  = IC("reputations"),
-        headerHeight = 64,   -- stacked six-letter labels
+        headerHeight = 32,   -- 64 while a stacked-text label is shown (HeaderHeightFor)
         preferW = 999,
         preferH = 410,
         -- Faction columns are added per build: only those some character has
@@ -1429,7 +1429,7 @@ local function BuildHeaders()
         local btn=CreateFrame("Button",nil,headerContent)
         btn:SetPoint("LEFT",x,0); btn:SetSize(col.width,currentHeaderHeight); btn.field=col.field
 
-        if col.vertical then
+        if col.vertical and not col.repIcon then
             local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
             lbl:SetPoint("TOP",btn,"TOP",0,-2); lbl:SetPoint("BOTTOM",btn,"BOTTOM",0,2)
             lbl:SetWidth(col.width); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("TOP")
@@ -1456,10 +1456,10 @@ local function BuildHeaders()
                 if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
                 GameTooltip:Hide()
             end)
-        elseif col.slotSlug or col.profIcon or col.slotIcon then
+        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then
             -- slotSlug: faction-aware gear icon resolved at header-build time
             local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
-                or col.profIcon or col.slotIcon
+                or col.profIcon or col.slotIcon or col.repIcon
             local sz=math.min(currentHeaderHeight-4,col.width-2)
             local tex=btn:CreateTexture(nil,"OVERLAY")
             tex:SetSize(sz,sz); tex:SetPoint("CENTER",btn,"CENTER",0,0); tex:SetTexture(iconPath)
@@ -1478,10 +1478,15 @@ local function BuildHeaders()
                 GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
                 local tipText = COL_TOOLTIPS[col.field] or col.label
                 GameTooltip:AddLine(tipText,1,1,1)
-                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7); GameTooltip:Show()
+                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7)
+                if col.type=="rep" then AddRepStandingLegend(GameTooltip) end
+                GameTooltip:Show()
             end)
             btn:SetScript("OnLeave",function()
-                tex:SetVertexColor(1,1,1)
+                -- Keep the accent tint on the column the rows are sorted by: an
+                -- icon header has no arrow and no label, so the tint is the only
+                -- sign of it (same rule as the text headers below).
+                if sortColumn~=col.field then tex:SetVertexColor(1,1,1) end
                 GameTooltip:Hide()
             end)
         elseif col.type=="classIcon" or col.type=="raceIcon" then
@@ -1741,6 +1746,7 @@ local function SwitchSection(section)
     end
 
     BuildScrollableColsForSection(section)
+    AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, section.headerHeight or HEADER_HEIGHT))
     BuildHeaders()
     UpdateScroll()
     local needed=CountVisibleRows()
@@ -3108,7 +3114,10 @@ local function RebuildDataDrivenColumns()
     if not (activeSection and activeSection.repFields) then return end
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
-    if ColumnSignature() ~= before then BuildHeaders() end
+    if ColumnSignature() ~= before then
+        AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, activeSection.headerHeight or HEADER_HEIGHT))
+        BuildHeaders()
+    end
 end
 
 local function Refresh()
