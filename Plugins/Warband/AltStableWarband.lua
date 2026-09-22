@@ -603,6 +603,19 @@ local function CellOnLeave()
     GameTooltip:Hide()
 end
 
+-- Shown only when there is something to scroll to, and kept in step with the
+-- wheel. _syncing stops the value we set here from re-entering Layout.
+function AT_WB.UpdateScrollBar(maxStart, start)
+    local scrollBar = AT_WB.scrollBar
+    if not scrollBar then return end
+    if (maxStart or 0) <= 0 then scrollBar:Hide(); return end
+    scrollBar._syncing = true
+    scrollBar:SetMinMaxValues(0, maxStart)
+    scrollBar:SetValue(start or 0)
+    scrollBar._syncing = false
+    scrollBar:Show()
+end
+
 local function hideFrom(pool, from)
     for k = from, #pool do if pool[k] then pool[k]:Hide() end end
 end
@@ -612,6 +625,19 @@ end
 -- is virtual: we lay out only the visible window of rows and shift it on the
 -- mouse wheel.
 local ROW_TOP = TITLE_H + 32   -- first row Y (below the title + tooltip-toggle strip)
+
+-- How much of the grid fits, and where the window starts. Whole rows only:
+-- cells are laid out on a fixed stride, so a partial row at the bottom would be
+-- a clipped row rather than a scrolled one. Returns visible rows, the highest
+-- first-row index, and the requested start clamped into range.
+local function ScrollBounds(rowCount, panelHeight, requested)
+    local ph = (panelHeight and panelHeight >= 50) and panelHeight or 400
+    local visible = math.max(1, math.floor((ph - ROW_TOP - PAD) / STRIDE))
+    local maxStart = math.max(0, (rowCount or 0) - visible)
+    local start = math.max(0, math.min(requested or 0, maxStart))
+    return visible, maxStart, start
+end
+AT_WB.ScrollBounds = ScrollBounds
 
 local function getHeader(i)
     local fs = AT_WB.headers[i]
@@ -712,12 +738,9 @@ function AT_WB.Layout()
         return
     end
 
-    local ph = panel:GetHeight()
-    if not ph or ph < 50 then ph = 400 end
-    local visible = math.max(1, math.floor((ph - ROW_TOP - PAD) / STRIDE))
-    local maxStart = math.max(0, #rows - visible)
-    local start = math.max(0, math.min(AT_WB.scrollRow or 0, maxStart))
+    local visible, maxStart, start = ScrollBounds(#rows, panel:GetHeight(), AT_WB.scrollRow)
     AT_WB.scrollRow = start
+    AT_WB.UpdateScrollBar(maxStart, start)
 
     local ci, hi = 0, 0
     for slot = 0, visible - 1 do
@@ -839,6 +862,33 @@ local function BuildPanel(mainFrame)
         AT_WB.scrollRow = math.max(0, (AT_WB.scrollRow or 0) - delta * 2)
         AT_WB.Layout()
     end)
+
+    -- Scrollbar. The wheel already scrolls, but nothing showed there was more
+    -- below - and a grid whose last group is off-screen just looks short. Built
+    -- from a bare Slider rather than a scroll-frame template: the cells are
+    -- direct children of the panel (a ScrollFrame swallowed their hover), and
+    -- template names differ across builds.
+    local scrollBar = CreateFrame("Slider", nil, panel)
+    AT_WB.scrollBar = scrollBar
+    scrollBar:SetWidth(10)
+    scrollBar:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -4, -ROW_TOP)
+    scrollBar:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -4, PAD)
+    scrollBar:SetOrientation("VERTICAL")
+    scrollBar:SetValueStep(1)
+    scrollBar:SetObeyStepOnDrag(true)
+    local track = scrollBar:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints()
+    track:SetColorTexture(1, 1, 1, 0.05)
+    local thumb = scrollBar:CreateTexture(nil, "OVERLAY")
+    thumb:SetColorTexture(1, 1, 1, 0.28)
+    thumb:SetSize(10, 32)
+    scrollBar:SetThumbTexture(thumb)
+    scrollBar:SetScript("OnValueChanged", function(self, value)
+        if self._syncing then return end
+        AT_WB.scrollRow = math.floor((value or 0) + 0.5)
+        AT_WB.Layout()
+    end)
+    scrollBar:Hide()
 
     emptyFS = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     emptyFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(TITLE_H + 34))
