@@ -290,6 +290,20 @@ local function PurgeRetiredFields()
     end
 end
 
+-- Hand each plugin its own blob for an ACCEPTED character, then drop the
+-- carrier field so it never reaches the database or the wire.
+local function DispatchPluginPayloads(c)
+    local payloads = c and c._pluginPayloads
+    c._pluginPayloads = nil
+    if not payloads or not AltStable.plugins then return end
+    for _, plugin in ipairs(AltStable.plugins) do
+        local blob = payloads[plugin.id]
+        if blob and plugin.OnDeserialize then
+            pcall(plugin.OnDeserialize, c.guid, blob)
+        end
+    end
+end
+
 ------------------------------------------------------------
 -- Serialize character
 ------------------------------------------------------------
@@ -382,16 +396,13 @@ local function DeserializeChar(msg)
         return
     end
 
-    -- Dispatch any plugin payloads to their owners.  Done AFTER c.guid
-    -- is confirmed so plugins can trust the character exists.
-    if pluginPayloads and AltStable.plugins then
-        for _, plugin in ipairs(AltStable.plugins) do
-            local blob = pluginPayloads[plugin.id]
-            if blob and plugin.OnDeserialize then
-                pcall(plugin.OnDeserialize, c.guid, blob)
-            end
-        end
-    end
+    -- Plugin payloads ride along on the record and are dispatched by the
+    -- caller, once the record has passed ValidateIncoming and ShouldMerge.
+    -- Dispatching here applied a peer's inventory for a character whose own
+    -- record was then REJECTED - a conflicting name, or an older record losing
+    -- to ours - so the sheet showed one character and the plugin another's
+    -- items. The field is local-only; DispatchPluginPayloads strips it.
+    c._pluginPayloads = pluginPayloads
 
     return c
 
@@ -639,6 +650,7 @@ local function DeserializeFullDB(payload, sender)
                     local existing = AltStableDB[c.guid] or {}
 
                     if ShouldMerge(existing, c) then
+                        DispatchPluginPayloads(c)
                         ClearSyncedStateFields(existing)
                         for k,v in pairs(c) do
                             existing[k] = v
@@ -1028,6 +1040,7 @@ local function ReceiveCharacter(c, sender)
         return
     end
 
+    DispatchPluginPayloads(c)
     ClearSyncedStateFields(existing)
     for k,v in pairs(c) do
         existing[k] = v
@@ -2260,6 +2273,7 @@ local _seam = {
     Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
     CleanupDB           = CleanupDB,
+    DispatchPluginPayloads = DispatchPluginPayloads,
     PurgeRetiredFields  = PurgeRetiredFields,
     RETIRED_FIELDS      = RETIRED_FIELDS,
     DeserializeChar     = DeserializeChar,

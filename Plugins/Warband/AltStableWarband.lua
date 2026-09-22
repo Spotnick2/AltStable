@@ -252,6 +252,17 @@ local function OnBankOpened()
     ScheduleBank()      -- ...plus a follow-up in case slot counts aren't ready yet
 end
 
+-- A tab bought without closing the bank: its BAG_UPDATE would be classified as
+-- a carried bag (the cached list predates it) and ScanBank would keep reading
+-- the old tabs. BANK_TABS_CHANGED carries the bank type, so only ours counts.
+local function OnBankTabsChanged(bankType)
+    if Enum and Enum.BankType and bankType ~= nil and bankType ~= Enum.BankType.Character then
+        return
+    end
+    InvalidateTabCache()
+    if isBankOpen then ScanBank(); ScheduleBank() end
+end
+
 local function OnBankClosed()
     isBankOpen = false
     InvalidateTabCache()
@@ -309,11 +320,14 @@ local function DeserializePlayer(guid, blob)
 
     local incomingStamp = tonumber(rest:match("s=(%d+)"))
     if not incomingStamp then return end
-    -- Stale-reject: never let an older (or duplicate) relayed record roll back
-    -- fresher local inventory. Covers the "Core applies plugin blobs before it
-    -- validates/accepts the character record" ordering gap for our threat model.
+    -- Stale-reject: never let an older relayed record roll back fresher local
+    -- inventory. Equality is NOT stale, though: stamps come from time(), so two
+    -- item moves in the same second produce different maps under one stamp, and
+    -- the core deliberately re-sends records at the watermark. So a same-stamp
+    -- blob is applied when its contents actually differ (idempotent when they
+    -- don't), and only an older one is refused.
     local existing = AltStableWarbandDB[guid]
-    if existing and (existing.stamp or 0) >= incomingStamp then return end
+    if existing and (existing.stamp or 0) > incomingStamp then return end
 
     -- The fields must be PRESENT, not merely parseable: ParseMap(nil) is an
     -- empty map, so a truncated blob would silently blank the peer's inventory.
@@ -891,9 +905,15 @@ local function BootstrapPlugin()
             CarriedBagIDs = CarriedBagIDs, BankTabIDs = BankTabIDs, IsBankContainer = IsBankContainer,
             CleanupWarbandDB = CleanupWarbandDB, PruneOrphans = PruneOrphans,
             InvalidateTabCache = InvalidateTabCache, BootstrapPlugin = BootstrapPlugin,
+            OnBankTabsChanged = OnBankTabsChanged,
             ScanContainerSet = ScanContainerSet, EnsureTooltipHook = EnsureTooltipHook,
         },
     })
+
+    -- Orphans first: inventory for a guid no character record mentions is
+    -- invisible in the UI, so counting it as "we hold data" could skip the
+    -- baseline pull below and leave the real inventory unfetched.
+    PruneOrphans()
 
     -- Full-baseline pull when we hold no inventory at all: the peer watermark
     -- may already be ahead of data we never received, which a delta pull would
@@ -914,7 +934,6 @@ local function BootstrapPlugin()
         if not hasData then AltStable.ResetPeerWatermarks() end
     end
 
-    PruneOrphans()
     C_Timer.After(3, ScanBags)   -- prime our own bags after the login event storm
 end
 
@@ -924,6 +943,7 @@ frame:RegisterEvent("BAG_UPDATE")
 frame:RegisterEvent("BANKFRAME_OPENED")
 frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+frame:RegisterEvent("BANK_TABS_CHANGED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
@@ -936,6 +956,8 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         OnBankClosed()
     elseif event == "PLAYERBANKSLOTS_CHANGED" then
         if isBankOpen then ScheduleBank() end
+    elseif event == "BANK_TABS_CHANGED" then
+        OnBankTabsChanged(arg1)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         local id, success = arg1, arg2
         if id and success and requestedIDs[id] then

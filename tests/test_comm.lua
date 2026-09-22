@@ -486,8 +486,52 @@ AltStable.plugins = {
 }
 local ps = T.SerializeChar({ guid = "Player-Plug-1", name = "Plug", class = "MAGE", level = 70, lastUpdate = 1 })
 check(ps:find("plugin_demo:blob-for:Player-Plug-1", 1, true), "plugin data serialized as plugin_<id>:<blob>")
-T.DeserializeChar(ps)
-eq(delivered["Player-Plug-1"], "blob-for:Player-Plug-1", "plugin OnDeserialize receives its blob for the char")
+-- Dispatched by the ACCEPT path, not by DeserializeChar: a blob must not be
+-- applied for a character whose own record is then rejected.
+AltStableDB = {}
+T.DeserializeFullDB(ps .. "\n" .. T.CHAR_SEP, "Peer")
+eq(delivered["Player-Plug-1"], "blob-for:Player-Plug-1", "plugin OnDeserialize receives its blob for an accepted char")
+
+local parsed = T.DeserializeChar(ps)
+eq(parsed._pluginPayloads and parsed._pluginPayloads.demo, "blob-for:Player-Plug-1",
+   "  the blob rides on the parsed record until then")
+check(not T.SerializeChar(parsed):find("_pluginPayloads", 1, true),
+      "  and the carrier field never goes back on the wire")
+
+-- A record rejected by validation (an existing guid under a different name)
+-- must not have its inventory applied: the sheet would show one character and
+-- the plugin another's items.
+delivered = {}
+AltStableDB = { ["Player-Plug-1"] = { guid = "Player-Plug-1", name = "Plug", class = "MAGE",
+                                      level = 70, lastUpdate = 5 } }
+local impostor = T.SerializeChar({ guid = "Player-Plug-1", name = "Impostor", class = "MAGE",
+                                   level = 70, lastUpdate = 9 })
+T.DeserializeFullDB(impostor .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Plug-1"].name, "Plug", "a conflicting-name record is rejected")
+eq(delivered["Player-Plug-1"], nil, "  and its plugin blob is not applied")
+
+-- Same for a record the merge rule declines (well older than what we hold -
+-- the rule allows a small window, so this is a minute-plus behind).
+delivered = {}
+AltStableDB["Player-Plug-1"].lastUpdate = 5000
+local older = T.SerializeChar({ guid = "Player-Plug-1", name = "Plug", class = "MAGE",
+                                level = 70, lastUpdate = 1 })
+T.DeserializeFullDB(older .. "\n" .. T.CHAR_SEP, "Peer")
+eq(delivered["Player-Plug-1"], nil, "a record that loses the merge does not apply its blob either")
+
+-- The single-character path (MSG_CHAR) has the same rule; the two receive
+-- paths have drifted apart before.
+delivered = {}
+AltStableDB = {}
+T.ReceiveCharacter(T.DeserializeChar(ps), "Peer")
+eq(delivered["Player-Plug-1"], "blob-for:Player-Plug-1", "the single-character path dispatches on accept")
+
+delivered = {}
+AltStableDB = { ["Player-Plug-1"] = { guid = "Player-Plug-1", name = "Plug", class = "MAGE",
+                                      level = 70, lastUpdate = 5000 } }
+T.ReceiveCharacter(T.DeserializeChar(impostor), "Peer")
+eq(AltStableDB["Player-Plug-1"].name, "Plug", "  a conflicting name is still rejected there")
+eq(delivered["Player-Plug-1"], nil, "  and no blob is applied")
 AltStable.plugins = {}   -- reset so it doesn't affect other cases
 
 ------------------------------------------------------------

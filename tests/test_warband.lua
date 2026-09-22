@@ -141,6 +141,28 @@ WoW.bankTabs = { 6 }
 WoW.containers[7] = nil
 T.OnBankClosed(); T.OnBankOpened()
 
+-- A tab bought WITHOUT closing the bank: BANK_TABS_CHANGED is the only signal,
+-- since the new tab's BAG_UPDATE looks like a carried bag against the old list.
+WoW.bankTabs = { 6 }
+T.OnBankClosed(); T.OnBankOpened()
+WoW.bankTabs = { 6, 7 }
+WoW.containers[7] = { size = 1, slot(4306, 4) }
+T.OnBagUpdate(7)
+WoW.flushTimers()
+eq("a tab bought mid-session is invisible until the client says so",
+   AltStableWarbandDB[GUID].bank[4306], nil)
+T.OnBankTabsChanged(Enum.BankType.Character)
+eq("BANK_TABS_CHANGED picks the new tab up while the bank is open",
+   AltStableWarbandDB[GUID].bank[4306], 4)
+
+-- The account bank's own event is not ours.
+WoW.bankTabs = { 6 }
+WoW.containers[7] = nil
+T.OnBankTabsChanged(Enum.BankType.Account)
+eq("an account-bank tab change is ignored", AltStableWarbandDB[GUID].bank[4306], 4)
+T.OnBankTabsChanged(Enum.BankType.Character)
+eq("  a character one is not", AltStableWarbandDB[GUID].bank[4306], nil)
+
 -- Enumeration failure is not an empty bank.
 AltStableWarbandDB[GUID].bank = { [2318] = 13 }
 local realFetch = C_Bank.FetchPurchasedBankTabIDs
@@ -242,6 +264,18 @@ eq("  a newer one is applied", AltStableWarbandDB["Player-Peer-1"].bags[2318], 9
 T.DeserializePlayer("Player-Peer-2", "v1|s=999|kt=0|b=2318,notanumber|k=")
 eq("a malformed blob is ignored", AltStableWarbandDB["Player-Peer-2"], nil)
 
+-- Stamps come from time(), one-second resolution: two moves in one second give
+-- different maps under the SAME stamp, and the core re-sends records at the
+-- watermark. A same-stamp blob whose contents differ has to be applied.
+AltStableWarbandDB["Player-Same-1"] = { bags = { [2318] = 1 }, bank = {}, stamp = 100 }
+T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,2|k=")
+eq("a same-second blob with different contents is applied",
+   AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
+T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,2|k=")
+eq("  re-sending the same one changes nothing", AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
+T.DeserializePlayer("Player-Same-1", "v1|s=99|kt=99|b=2318,777|k=")
+eq("  and an older one is still refused", AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
+
 -- A blob missing a section is malformed, not "this character has nothing":
 -- ParseMap(nil) is an empty map, so this would silently blank the inventory.
 AltStableWarbandDB["Player-Peer-3"] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, stamp = 100 }
@@ -298,6 +332,16 @@ eq("  and login prunes a record no character record mentions",
 AltStableWarbandDB = {}
 T.BootstrapPlugin()
 eq("holding none, it does force one", resets, 1)
+
+-- Orphans don't count as "we hold inventory": they are pruned at login, so
+-- counting them first would skip the baseline pull and leave the real
+-- inventory unfetched behind watermarks that are already ahead.
+resets = 0
+AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid" } }
+AltStableWarbandDB = { ["Player-Ghost-2"] = { bags = { [2318] = 3 }, stamp = 100 } }
+T.BootstrapPlugin()
+eq("inventory for a character nobody has does not count as data", resets, 1)
+eq("  and it is pruned", AltStableWarbandDB["Player-Ghost-2"], nil)
 AltStable.ResetPeerWatermarks = realReset
 
 ------------------------------------------------------------
