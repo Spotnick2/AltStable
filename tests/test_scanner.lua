@@ -317,8 +317,42 @@ do
     check("no Spec column", not src("Columns.lua"):find("specIcon", 1, true))
 end
 
+-- A row is built with one cell per column. The Reputations columns follow the
+-- data, so when a faction is met the pool must hand out rows built for the new
+-- columns: rendering an old row against them indexes a cell that doesn't exist.
+do
+    local colsA = { { label = "Orgrimmar", field = "rep_76", type = "rep", width = 22 },
+                    { label = "Thunder Bluff", field = "rep_81", type = "rep", width = 22 } }
+    local colsB = { colsA[1], colsA[2],
+                    { label = "Timbermaw Hold", field = "rep_576", type = "rep", width = 22 } }
+    local char = { guid = "Player-Rows-1", name = "Kaleid", rep_76 = 4, rep_81 = 5, rep_576 = 3 }
+    local pools = {}
+
+    local pool = AltStable.RowPoolFor(pools, "rep", colsA)
+    local oldRow = AltStable.CreateRow(nil, 20, colsA)
+    pool.rows[1] = oldRow
+    check("a row renders against the columns it was built for",
+          pcall(AltStable.RenderRow, oldRow, char, 1, colsA))
+    check("  (the hazard: an old row rendered against more columns errors)",
+          not pcall(AltStable.RenderRow, oldRow, char, 1, colsB))
+
+    local hidden = false
+    oldRow.Hide = function() hidden = true end
+    eq("the same columns keep the pool's rows", #AltStable.RowPoolFor(pools, "rep", colsA).rows, 1)
+    pool = AltStable.RowPoolFor(pools, "rep", colsB)
+    eq("new columns: the pool drops the rows built for the old ones", #pool.rows, 0)
+    check("  and hides them", hidden)
+    local newRow = AltStable.CreateRow(nil, 20, colsB)
+    pool.rows[1] = newRow
+    local ok, err = pcall(AltStable.RenderRow, newRow, char, 1, colsB)
+    check("  a fresh row renders the new faction", ok, tostring(err))
+    check("another section's pool is untouched",
+          AltStable.RowPoolFor(pools, "gear", colsA) ~= pool)
+end
+
 -- SheetUI doesn't load under the stubs: check that a data refresh rebuilds the
--- Reputations columns, so a faction met or synced while the tab is open shows.
+-- Reputations columns, so a faction met or synced while the tab is open shows,
+-- and that rows come from the column-aware pool.
 do
     local h = io.open("SheetUI.lua", "r")
     local sheet = h and h:read("*a") or ""
@@ -326,6 +360,8 @@ do
     local refreshBody = sheet:match("local function Refresh%(%)(.-)\nend")
     check("a sheet refresh rebuilds the data-driven Reputations columns",
           refreshBody ~= nil and refreshBody:find("RebuildDataDrivenColumns()", 1, true) ~= nil)
+    check("the sheet takes its rows from the column-aware pool",
+          sheet:find("AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)", 1, true) ~= nil)
 end
 
 -- Export: one column per tracked faction, all of them, in table order - the

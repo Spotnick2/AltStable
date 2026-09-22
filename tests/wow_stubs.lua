@@ -92,7 +92,11 @@ local function makeFrame()
     end
     f.CreateTexture    = function() return makeFrame() end
     f.CreateFontString = function() return makeFrame() end
-    setmetatable(f, { __index = function() return chain end })
+    -- Any unknown METHOD chains (widget methods are all capitalised). A plain
+    -- field reads nil, as on a real frame - `row.dividers or {}` must see nil.
+    setmetatable(f, { __index = function(_, k)
+        if type(k) == "string" and k:find("^%u") then return chain end
+    end })
     return f
 end
 WoW.makeFrame = makeFrame

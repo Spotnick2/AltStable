@@ -144,14 +144,9 @@ local hScrollBar
 local totalsBar
 local rows = {}
 
--- Row pools keyed by section id so we reuse without SetParent(nil)
-local rowPools         = {}   -- rowPools[sectionId] = { rows={}, frozenRows={} }
-local function GetPool(sectionId)
-    if not rowPools[sectionId] then
-        rowPools[sectionId] = { rows={}, frozenRows={} }
-    end
-    return rowPools[sectionId]
-end
+-- Row pools keyed by section id so we reuse without SetParent(nil). A pool is
+-- rebuilt when its section's columns change (AltStable.RowPoolFor).
+local rowPools         = {}   -- rowPools[sectionId] = { rows={}, frozenRows={}, signature }
 
 -- Only created when devMode is on (see the ROSTER (DEV) block below), so every
 -- use must be nil-guarded. Declared here rather than in the block: it was a
@@ -1135,7 +1130,7 @@ local function CountVisibleRows()
 end
 
 local function EnsureRows(needed)
-    local pool = GetPool(activeSection.id)
+    local pool = AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)
     -- Scrollable rows
     if #pool.rows < needed then
         for i=#pool.rows+1, needed do

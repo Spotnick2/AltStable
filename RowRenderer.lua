@@ -301,6 +301,29 @@ local function GetGroupBG() return unpack(AltStable.C.BG_GROUP) end
 
 local DIVIDER_COLOR = AltStable.C.GRIDLINE
 
+-- Row pools, one per sheet section. A row is built with one cell and tooltip
+-- frame per column, so it can't be reused across a change of columns - and the
+-- Reputations section's columns follow the data. A pool remembers the columns
+-- its rows were built for; when they change, the old rows are hidden and
+-- dropped (frames can't be destroyed; this only happens when a character meets
+-- a new faction) and the caller builds fresh ones. Frozen (Name) rows don't
+-- depend on the columns and are kept.
+function AltStable.RowPoolFor(pools, sectionId, columns)
+    local fields = {}
+    for i, col in ipairs(columns) do fields[i] = col.field end
+    local signature = table.concat(fields, ",")
+    local pool = pools[sectionId]
+    if not pool then
+        pool = { rows = {}, frozenRows = {}, signature = signature }
+        pools[sectionId] = pool
+    elseif pool.signature ~= signature then
+        for _, row in ipairs(pool.rows) do row:Hide() end
+        pool.rows = {}
+        pool.signature = signature
+    end
+    return pool
+end
+
 function AltStable.CreateRow(parent, height, columns)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(height)
