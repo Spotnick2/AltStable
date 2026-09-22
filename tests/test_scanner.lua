@@ -393,6 +393,8 @@ do
     local refreshBody = sheet:match("local function Refresh%(%)(.-)\nend")
     check("a sheet refresh rebuilds the data-driven Reputations columns",
           refreshBody ~= nil and refreshBody:find("RebuildDataDrivenColumns()", 1, true) ~= nil)
+    check("an icon header keeps the sort tint when the cursor leaves",
+          sheet:find("if sortColumn~=col.field then tex:SetVertexColor(1,1,1) end", 1, true) ~= nil)
     check("the sheet takes its rows from the column-aware pool",
           sheet:find("AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)", 1, true) ~= nil)
 end

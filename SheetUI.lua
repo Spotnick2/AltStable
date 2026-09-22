@@ -1483,7 +1483,10 @@ local function BuildHeaders()
                 GameTooltip:Show()
             end)
             btn:SetScript("OnLeave",function()
-                tex:SetVertexColor(1,1,1)
+                -- Keep the accent tint on the column the rows are sorted by: an
+                -- icon header has no arrow and no label, so the tint is the only
+                -- sign of it (same rule as the text headers below).
+                if sortColumn~=col.field then tex:SetVertexColor(1,1,1) end
                 GameTooltip:Hide()
             end)
         elseif col.type=="classIcon" or col.type=="raceIcon" then
