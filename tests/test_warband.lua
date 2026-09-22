@@ -271,10 +271,22 @@ AltStableWarbandDB["Player-Same-1"] = { bags = { [2318] = 1 }, bank = {}, stamp 
 T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,2|k=")
 eq("a same-second blob with different contents is applied",
    AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
+-- An unchanged record costs no redraw: a full response re-sends every
+-- character, and each redraw rebuilds the whole grid.
+local wb = plugin._wb
+local redraws = 0
+local realRefresh, realActive = wb.Refresh, wb.isActive
+wb.Refresh, wb.isActive = function() redraws = redraws + 1 end, true
 T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,2|k=")
 eq("  re-sending the same one changes nothing", AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
+eq("  and does not redraw the grid", redraws, 0)
+T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,3|k=")
+eq("  a changed one does", redraws, 1)
+T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=101|b=2318,3|k=")
+eq("  as does a bank stamp moving on its own", redraws, 2)
+wb.Refresh, wb.isActive = realRefresh, realActive
 T.DeserializePlayer("Player-Same-1", "v1|s=99|kt=99|b=2318,777|k=")
-eq("  and an older one is still refused", AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
+eq("  and an older one is still refused", AltStableWarbandDB["Player-Same-1"].bags[2318], 3)
 
 -- A blob missing a section is malformed, not "this character has nothing":
 -- ParseMap(nil) is an empty map, so this would silently blank the inventory.

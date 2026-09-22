@@ -337,6 +337,17 @@ local function DeserializePlayer(guid, blob)
     if not bags or not bank then return end   -- malformed: keep existing good data
 
     local bankStamp = tonumber(rest:match("kt=(%d+)")) or incomingStamp
+
+    -- Nothing new: a full response re-sends every character, and the sheet is
+    -- redrawn per character while the panel is open - each redraw rebuilds the
+    -- whole aggregate, its buckets and its rows. Compare what we would store,
+    -- not just the stamp, so an unchanged record costs nothing.
+    if existing and (existing.stamp or 0) == incomingStamp
+       and (existing.bankStamp or 0) == bankStamp
+       and mapsEqual(existing.bags, bags) and mapsEqual(existing.bank, bank) then
+        return
+    end
+
     local db = GetDB(guid)
     db.bags = bags
     db.bank = bank
