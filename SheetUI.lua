@@ -3099,7 +3099,25 @@ end
 -- Public API
 ------------------------------------------------------------
 
+-- The Reputations tab's columns follow the data - the factions some character
+-- has met - so a faction met, or synced in, while the tab is open needs them
+-- rebuilt here, not only on a tab switch. Headers are rebuilt only when the
+-- set actually changed.
+local function ColumnSignature()
+    local fields = {}
+    for i, col in ipairs(scrollableCols) do fields[i] = col.field end
+    return table.concat(fields, ",")
+end
+
+local function RebuildDataDrivenColumns()
+    if not (activeSection and activeSection.repFields) then return end
+    local before = ColumnSignature()
+    BuildScrollableColsForSection(activeSection)
+    if ColumnSignature() ~= before then BuildHeaders() end
+end
+
 local function Refresh()
+    RebuildDataDrivenColumns()
     BuildDisplayList()
     local needed=CountVisibleRows()
     EnsureRows(needed)

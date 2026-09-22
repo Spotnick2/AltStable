@@ -317,6 +317,17 @@ do
     check("no Spec column", not src("Columns.lua"):find("specIcon", 1, true))
 end
 
+-- SheetUI doesn't load under the stubs: check that a data refresh rebuilds the
+-- Reputations columns, so a faction met or synced while the tab is open shows.
+do
+    local h = io.open("SheetUI.lua", "r")
+    local sheet = h and h:read("*a") or ""
+    if h then h:close() end
+    local refreshBody = sheet:match("local function Refresh%(%)(.-)\nend")
+    check("a sheet refresh rebuilds the data-driven Reputations columns",
+          refreshBody ~= nil and refreshBody:find("RebuildDataDrivenColumns()", 1, true) ~= nil)
+end
+
 -- Export: one column per tracked faction, all of them, in table order - the
 -- layout can't depend on which factions anyone has met.
 dofile("Export.lua")
