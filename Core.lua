@@ -260,11 +260,13 @@ end
 local RETIRED_FIELDS = {
     prof_Jewelcrafting = true, profmax_Jewelcrafting = true,   -- not a Vanilla profession
     stat_haste = true, stat_resilience = true,                 -- no Vanilla equivalent
+    -- Rating-derived, so always 0 here. Vanilla does have crit and hit chance
+    -- (GetCritChance, GetHitModifier): when the Roster port (#11) adds a
+    -- build-verified producer, take these two off the list. Until then a stored
+    -- 0 would sit beside characters that have no value at all.
+    stat_crit = true, stat_hitpct = true,
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }
--- stat_crit / stat_hitpct are NOT retired: Vanilla has crit and hit chance
--- (GetCritChance, GetHitModifier), just no ratings, and the Roster port (#11)
--- will want these names. The scanner stops writing the rating-derived values.
 
 local function PurgeRetiredFields()
     for _, c in pairs(AltStableDB or {}) do

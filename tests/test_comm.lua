@@ -1177,14 +1177,19 @@ AltStable.PendingAuditItems = nil
 -- from the database at login. Every key in the real list is checked.
 WoW.reset()
 local function oldRecord()
+    -- A pre-upgrade record: what the old scanner wrote, rating-derived stats included.
     local r = { guid = "Player-Ret-1", name = "Old", level = 20, lastUpdate = 1,
-                prof_Tailoring = 80, stat_crit = 1.5, stat_hitpct = 2 }
+                prof_Tailoring = 80, stat_str = 40 }
     for k in pairs(T.RETIRED_FIELDS) do r[k] = 7 end
     return r
 end
 local retiredCount = 0
 for _ in pairs(T.RETIRED_FIELDS) do retiredCount = retiredCount + 1 end
-check(retiredCount >= 6, "the retired list is exposed and populated")
+check(retiredCount >= 8, "the retired list is exposed and populated")
+for _, k in ipairs({ "stat_crit", "stat_hitpct", "stat_haste", "stat_resilience",
+                     "prof_Jewelcrafting", "profmax_Jewelcrafting", "spec", "specIcon" }) do
+    check(T.RETIRED_FIELDS[k], k .. " is retired")
+end
 
 local wire = T.SerializeChar(oldRecord())
 local wireLines = {}
@@ -1197,8 +1202,7 @@ for k in pairs(T.RETIRED_FIELDS) do
     check(not sent, "retired field " .. k .. " is never sent")
 end
 check(wire:find("prof_Tailoring:80", 1, true) ~= nil, "  a live profession still is")
-check(wire:find("stat_crit:1.5", 1, true) ~= nil,
-      "  and stat_crit is not retired: Vanilla has crit chance, just no ratings")
+check(wire:find("stat_str:40", 1, true) ~= nil, "  and a live stat still is")
 
 local incoming = { "guid:Player-Ret-1", "level:20" }
 for k in pairs(T.RETIRED_FIELDS) do incoming[#incoming + 1] = k .. ":7" end
@@ -1218,7 +1222,7 @@ for k in pairs(T.RETIRED_FIELDS) do
     eq(stored[k], nil, "login purges stored " .. k)
 end
 eq(stored.prof_Tailoring, 80, "  and leaves the rest")
-eq(stored.stat_crit, 1.5, "  including stat_crit")
+eq(stored.stat_str, 40, "  including the live stats")
 WoW.reset()
 
 ------------------------------------------------------------
