@@ -93,7 +93,7 @@ check("a bag scan stores a map for this character", db ~= nil and db.bags ~= nil
 eq("stacks of one item across bags are summed", db.bags[2318], 8)
 eq("the reagent bag is carried, not bank", db.bags[2589], 10)
 eq("the keyring is included", db.bags[5140], 1)
-eq("a bank tab's contents are not in the bags map", db.bags[2318] ~= 13, true)
+eq("a bank tab's contents are not in the bags map", db.bags[2318], 8)   -- 21 if it leaked
 eq("the bank map is untouched by a bag scan", db.bank, nil)
 
 ------------------------------------------------------------
@@ -119,11 +119,27 @@ T.ScanBank()
 eq("a tab whose slots are not ready yet leaves the snapshot alone",
    AltStableWarbandDB[GUID].bank[2318], 13)
 
--- A character who owns no tabs legitimately has an empty bank.
+-- A character who owns no tabs legitimately has an empty bank. The purchased
+-- set is cached between bank sessions (BAG_UPDATE asks about it constantly), so
+-- a change to it is picked up when the bank opens.
 WoW.containers[6] = { size = 1, slot(2318, 13) }
 WoW.bankTabs = {}
 T.ScanBank()
+eq("the cached tab list survives a change made with the bank open",
+   AltStableWarbandDB[GUID].bank[2318], 13)
+T.OnBankClosed(); T.OnBankOpened()
+T.ScanBank()
 eq("owning no tabs records an empty bank", next(AltStableWarbandDB[GUID].bank), nil)
+
+-- A tab bought mid-session shows up when the bank is next opened.
+WoW.bankTabs = { 6, 7 }
+WoW.containers[7] = { size = 1, slot(4306, 4) }
+T.OnBankClosed(); T.OnBankOpened()
+eq("a newly bought tab is read on the next bank session",
+   AltStableWarbandDB[GUID].bank[4306], 4)
+WoW.bankTabs = { 6 }
+WoW.containers[7] = nil
+T.OnBankClosed(); T.OnBankOpened()
 
 -- Enumeration failure is not an empty bank.
 AltStableWarbandDB[GUID].bank = { [2318] = 13 }
@@ -213,12 +229,127 @@ local got = AltStableWarbandDB["Player-Peer-1"]
 eq("a peer's bags arrive", got and got.bags[2318], 8)
 eq("  and their bank", got and got.bank[2318], 13)
 
-local stale = blob:gsub("|s=%d+", "|s=1")
-T.DeserializePlayer("Player-Peer-1", stale)
-eq("an older relayed blob does not roll back fresher data", AltStableWarbandDB["Player-Peer-1"].bags[2318], 8)
+-- Stale reject: an OLDER blob carrying DIFFERENT data must not be applied.
+AltStableWarbandDB["Player-Peer-1"].stamp = 500
+local older = "v1|s=400|kt=400|b=2318,999|k=2318,999"
+T.DeserializePlayer("Player-Peer-1", older)
+eq("an older relayed blob does not roll back fresher data",
+   AltStableWarbandDB["Player-Peer-1"].bags[2318], 8)
+local newer = "v1|s=600|kt=600|b=2318,999|k=2318,13"
+T.DeserializePlayer("Player-Peer-1", newer)
+eq("  a newer one is applied", AltStableWarbandDB["Player-Peer-1"].bags[2318], 999)
 
 T.DeserializePlayer("Player-Peer-2", "v1|s=999|kt=0|b=2318,notanumber|k=")
 eq("a malformed blob is ignored", AltStableWarbandDB["Player-Peer-2"], nil)
+
+-- A blob missing a section is malformed, not "this character has nothing":
+-- ParseMap(nil) is an empty map, so this would silently blank the inventory.
+AltStableWarbandDB["Player-Peer-3"] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, stamp = 100 }
+T.DeserializePlayer("Player-Peer-3", "v1|s=200")
+eq("a blob with no bags field leaves the stored bags alone",
+   AltStableWarbandDB["Player-Peer-3"].bags[2318], 8)
+T.DeserializePlayer("Player-Peer-3", "v1|s=200|b=2318,1")
+eq("  and one with no bank field leaves the bank alone",
+   AltStableWarbandDB["Player-Peer-3"].bank[2318], 13)
+
+------------------------------------------------------------
+-- Cleanup and orphans
+------------------------------------------------------------
+
+-- The core's cleanup wipes its own DB and re-pulls in full. Our stale-reject
+-- guard would refuse that re-pull, so our records have to go with it.
+AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid", class = "MAGE", lastUpdate = 1 } }
+AltStableWarbandDB = {
+    [GUID] = { bags = { [2318] = 8 }, stamp = 100 },
+    ["Player-Other-1"] = { bags = { [2318] = 5 }, stamp = 100 },
+}
+AltStable._test.CleanupDB()
+eq("the core's cleanup clears other characters' inventory too",
+   AltStableWarbandDB["Player-Other-1"], nil)
+check("  and keeps this character's", AltStableWarbandDB[GUID] ~= nil)
+
+-- A guid no character record mentions any more is invisible in the UI but
+-- would sit in SavedVariables forever.
+AltStableWarbandDB["Player-Gone-1"] = { bags = { [2318] = 5 }, stamp = 100 }
+T.PruneOrphans()
+eq("an orphaned record is pruned", AltStableWarbandDB["Player-Gone-1"], nil)
+check("  while a known character stays", AltStableWarbandDB[GUID] ~= nil)
+
+------------------------------------------------------------
+-- The login pull
+------------------------------------------------------------
+
+-- The core loads enabled plugins from its own PLAYER_LOGIN handler, so
+-- IsLoggedIn() is already true when we load: forcing a baseline on that signal
+-- reset every peer watermark at every login, turning each session into a full
+-- database pull.
+local resets = 0
+local realReset = AltStable.ResetPeerWatermarks
+AltStable.ResetPeerWatermarks = function() resets = resets + 1 end
+
+AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid" } }
+AltStableWarbandDB = { [GUID] = { bags = { [2318] = 8 }, stamp = 100 },
+                       ["Player-Ghost-1"] = { bags = { [2318] = 3 }, stamp = 100 } }
+T.BootstrapPlugin()
+eq("holding inventory, a login does not force a full re-pull", resets, 0)
+eq("  and login prunes a record no character record mentions",
+   AltStableWarbandDB["Player-Ghost-1"], nil)
+
+AltStableWarbandDB = {}
+T.BootstrapPlugin()
+eq("holding none, it does force one", resets, 1)
+AltStable.ResetPeerWatermarks = realReset
+
+------------------------------------------------------------
+-- A bank reopened inside the debounce window
+------------------------------------------------------------
+
+WoW.reset()
+WoW.bankTabs = { 6 }
+WoW.containers = { [6] = { size = 1, slot(2318, 13) } }
+AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid" } }
+AltStableWarbandDB = {}
+T.OnBankOpened()          -- schedules a follow-up scan
+AltStableWarbandDB[GUID].bank = nil
+T.OnBankClosed()          -- ...closed and reopened before it fires
+T.OnBankOpened()
+AltStableWarbandDB[GUID].bank = nil
+WoW.flushTimers()
+eq("a bank reopened inside the debounce window still gets its scan",
+   AltStableWarbandDB[GUID].bank and AltStableWarbandDB[GUID].bank[2318], 13)
+
+-- ...while a scan whose session ended is still dropped.
+AltStableWarbandDB[GUID].bank = nil
+T.OnBagUpdate(6)
+T.OnBankClosed()
+WoW.flushTimers()
+eq("a scan whose bank session ended is dropped", AltStableWarbandDB[GUID].bank, nil)
+
+------------------------------------------------------------
+-- Tooltips: the hovered cell's breakdown belongs to that item
+------------------------------------------------------------
+
+AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid", class = "MAGE" } }
+AltStableWarbandDB = { [GUID] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, bankStamp = WoW.now } }
+AltStable.SetConfigValue("warbandItemTooltips", false)
+local hoverLines = {}
+local htt = WoW.makeFrame()
+htt.AddLine = function(_, text) hoverLines[#hoverLines + 1] = tostring(text) end
+htt.AddDoubleLine = function(_, l, r) hoverLines[#hoverLines + 1] = tostring(l) .. "|" .. tostring(r) end
+
+local AT_WB = plugin._wb
+if AT_WB then
+    AT_WB.hoverEntry = { id = 2318, total = 21, holders = { { name = "Kaleid", bags = 8, bank = 13 } } }
+    for _, fn in ipairs(ttCalls) do fn(htt, { id = 2318 }) end
+    check("the hovered cell's own tooltip gets its breakdown", #hoverLines > 0)
+
+    hoverLines = {}
+    for _, fn in ipairs(ttCalls) do fn(htt, { id = 9999 }) end
+    eq("a comparison tooltip for a different item gets nothing", #hoverLines, 0)
+    AT_WB.hoverEntry = nil
+else
+    check("the panel state is exposed for testing", false)
+end
 
 print(("test_warband: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -28,6 +28,13 @@ local function CleanupDB()
         AltStable.ScanCharacter()
     end
 
+    -- Plugins keep their own per-character stores keyed by the same guids, and
+    -- their own stale-reject guards would refuse the re-pull below, so they get
+    -- cleared with us.
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.OnCleanup then pcall(plugin.OnCleanup, guid) end
+    end
+
     -- We just wiped the DB, so forget every peer's delta watermark — the next
     -- request must pull a FULL database again, not just deltas.
     if AltStable.ResetPeerWatermarks then AltStable.ResetPeerWatermarks() end
@@ -2252,6 +2259,7 @@ local _seam = {
     Base64Encode        = Base64Encode,
     Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
+    CleanupDB           = CleanupDB,
     PurgeRetiredFields  = PurgeRetiredFields,
     RETIRED_FIELDS      = RETIRED_FIELDS,
     DeserializeChar     = DeserializeChar,

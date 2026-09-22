@@ -82,7 +82,9 @@ if (Test-Path $pluginRoot) {
         }
         $name = [IO.Path]::GetFileNameWithoutExtension($toc.Name)
         $pluginDest = Join-Path $AddOnsPath $name
-        robocopy $dir.FullName $pluginDest "/E" "/NFL" "/NDL" "/NJH" "/NJS" "/NP" "/XF" "*.md" | Out-Null
+        $pluginArgs = @($dir.FullName, $pluginDest, "/E", "/NFL", "/NDL", "/NJH",
+                        "/NJS", "/NP", "/XF") + $excludeFiles
+        robocopy @pluginArgs | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
         Write-Host "  plugin -> $name" -ForegroundColor DarkGray
     }

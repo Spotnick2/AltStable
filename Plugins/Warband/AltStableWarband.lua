@@ -57,8 +57,18 @@ end
 
 -- nil (not {}) when the bank tabs can't be enumerated, so a failed read aborts
 -- the scan instead of recording an empty bank over a good snapshot.
+--
+-- Cached: BAG_UPDATE fires several times a second while questing and each one
+-- asks whether the bag is a bank tab. The set only changes when a tab is
+-- bought, which happens at the bank - so every bank session re-reads it.
+local tabCache
 local function BankTabIDs()
-    return AltStable.API.GetCharacterBankTabIDs()
+    if tabCache == nil then tabCache = AltStable.API.GetCharacterBankTabIDs() or false end
+    return tabCache or nil
+end
+
+local function InvalidateTabCache()
+    tabCache = nil
 end
 
 local function IsBankContainer(bag)
@@ -206,16 +216,18 @@ local function ScheduleBags()
     C_Timer.After(1, function() bagsPending = false; ScanBags() end)
 end
 
--- Capture the bank generation at schedule time; if the bank closed (or
--- closed-then-reopened) before this fires, the generation no longer matches
--- and we drop the stale scan instead of committing it over a good snapshot.
+-- Debounced, and tied to the CURRENT bank session: a scan is dropped when the
+-- bank closed before it fired, but a close-then-reopen inside the window must
+-- not lose the new session's scan. So a pending timer is re-pointed at the
+-- newest generation rather than the request being dropped.
+local pendingBankGen
 local function ScheduleBank()
+    pendingBankGen = bankGen
     if bankPending then return end
     bankPending = true
-    local gen = bankGen
     C_Timer.After(1, function()
         bankPending = false
-        if gen == bankGen and isBankOpen then ScanBank() end
+        if pendingBankGen == bankGen and isBankOpen then ScanBank() end
     end)
 end
 
@@ -234,6 +246,7 @@ end
 
 local function OnBankOpened()
     isBankOpen = true
+    InvalidateTabCache()   -- a tab may have been bought since the last session
     bankGen = bankGen + 1
     ScanBank()          -- immediate...
     ScheduleBank()      -- ...plus a follow-up in case slot counts aren't ready yet
@@ -241,6 +254,7 @@ end
 
 local function OnBankClosed()
     isBankOpen = false
+    InvalidateTabCache()
     bankGen = bankGen + 1   -- invalidate any in-flight scheduled scan
 end
 
@@ -301,8 +315,11 @@ local function DeserializePlayer(guid, blob)
     local existing = AltStableWarbandDB[guid]
     if existing and (existing.stamp or 0) >= incomingStamp then return end
 
-    local bags = ParseMap(rest:match("b=([^|]*)"))
-    local bank = ParseMap(rest:match("k=([^|]*)"))
+    -- The fields must be PRESENT, not merely parseable: ParseMap(nil) is an
+    -- empty map, so a truncated blob would silently blank the peer's inventory.
+    local bagsStr, bankStr = rest:match("b=([^|]*)"), rest:match("k=([^|]*)")
+    if not bagsStr or not bankStr then return end
+    local bags, bank = ParseMap(bagsStr), ParseMap(bankStr)
     if not bags or not bank then return end   -- malformed: keep existing good data
 
     local bankStamp = tonumber(rest:match("kt=(%d+)")) or incomingStamp
@@ -319,6 +336,25 @@ end
 -- Read model for the grid: merge every character's bags+bank by itemID.
 --   agg[itemID] = { total, holders = { {name,class,realm,bags,bank,bankStamp} } }
 ------------------------------------------------------------
+
+-- The core's /alts cleanup wipes AltStableDB down to this character and resets
+-- the peer watermarks so everything is re-pulled in full. Our records are keyed
+-- by the same guids, and the stale-reject guard below would refuse the re-pull
+-- (the peers' stamps have not moved), so they have to go at the same time.
+-- Orphans are dropped too: a guid no peer still has is invisible in the UI but
+-- would sit in SavedVariables forever.
+local function CleanupWarbandDB(keepGuid)
+    for guid in pairs(AltStableWarbandDB) do
+        if guid ~= keepGuid then AltStableWarbandDB[guid] = nil end
+    end
+end
+
+local function PruneOrphans()
+    for guid in pairs(AltStableWarbandDB) do
+        local c = AltStableDB and AltStableDB[guid]
+        if type(c) ~= "table" or not c.name then AltStableWarbandDB[guid] = nil end
+    end
+end
 
 local function gather()
     AltStableDB = AltStableDB or {}
@@ -362,8 +398,6 @@ local PAD       = 12
 local TITLE_H   = 26
 local ICON      = 32
 local STRIDE    = 42     -- icon + gutter
-local HDR_H     = 22
-local GROUP_GAP = 10
 
 -- Item classID -> section label, in display order. Unknown classes fall into "Other".
 local CLASS_LABEL = {
@@ -481,6 +515,8 @@ end
 -- type no longer exists and the call THROWS, which used to abort this plugin's
 -- registration entirely (#10). TooltipDataProcessor is the replacement, and the
 -- item id arrives in the data payload rather than through tt:GetItem().
+-- AT_WB._ttHooked: true once installed, nil when this client has no
+-- TooltipDataProcessor (CellOnEnter appends the breakdown itself then).
 local function EnsureTooltipHook()
     if AT_WB._ttHooked then return end
     if not (TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall
@@ -489,16 +525,21 @@ local function EnsureTooltipHook()
     end
     AT_WB._ttHooked = true
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data)
-        local e = AT_WB.hoverEntry
-        if e then AppendBreakdown(tt, e.total, e.holders); return end
-        -- Global enrichment is opt-in (default off) so it doesn't double up with
-        -- another inventory addon's counts. Enable it in the Warband tab.
-        if not (AltStableConfig and AltStableConfig.warbandItemTooltips) then return end
         local id = data and data.id
         if not id and tt.GetItem then
             local _, link = tt:GetItem()
             id = link and tonumber(link:match("item:(%d+)"))
         end
+        -- Our own panel cell, and only for the item it holds: comparison
+        -- tooltips (Shift, or alwaysCompareItems) render the EQUIPPED items
+        -- through this same post-call, and would otherwise be labelled with the
+        -- hovered item's holders - bypassing the opt-in below as well.
+        local e = AT_WB.hoverEntry
+        if e and id == e.id then AppendBreakdown(tt, e.total, e.holders); return end
+        if e then return end
+        -- Global enrichment is opt-in (default off) so it doesn't double up with
+        -- another inventory addon's counts. Enable it in the Warband tab.
+        if not (AltStableConfig and AltStableConfig.warbandItemTooltips) then return end
         if id then
             local total, holders = CountItem(id)
             if total > 0 then AppendBreakdown(tt, total, holders) end
@@ -514,6 +555,12 @@ local function CellOnEnter(self)
     -- SetHyperlink drives the item tooltip; OnTooltipSetItem then appends the
     -- breakdown. Guard it so a finicky bare-item string never aborts the hover.
     local ok = pcall(function() GameTooltip:SetHyperlink("item:" .. e.id) end)
+    if ok and AT_WB._ttHooked == nil then
+        -- No TooltipDataProcessor on this client, so nothing appends for us:
+        -- add the breakdown here, where the grid's whole point lives.
+        AppendBreakdown(GameTooltip, e.total, e.holders)
+        return
+    end
     if not ok or GameTooltip:NumLines() == 0 then
         -- Fallback: no item tooltip available (uncached, no data yet) — show a
         -- quality-coloured name header and the breakdown directly.
@@ -818,7 +865,7 @@ end
 -- Bootstrap + events
 ------------------------------------------------------------
 
-local function BootstrapPlugin(isOnDemand)
+local function BootstrapPlugin()
     if not AltStable or not AltStable.RegisterPlugin then
         Print("AltStable not found — make sure it is installed and enabled.")
         return
@@ -834,19 +881,29 @@ local function BootstrapPlugin(isOnDemand)
         OnDeactivate  = function(mf) AT_WB.Deactivate(mf) end,
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
+        OnCleanup     = function(keepGuid) CleanupWarbandDB(keepGuid) end,
+        _wb           = AT_WB,
         _test = {
             SerializePlayer = SerializePlayer, DeserializePlayer = DeserializePlayer,
             gather = gather, ScanBags = ScanBags, ScanBank = ScanBank, CountItem = CountItem,
             EncodeMap = EncodeMap, ParseMap = ParseMap, mapsEqual = mapsEqual,
             OnBagUpdate = OnBagUpdate, OnBankOpened = OnBankOpened, OnBankClosed = OnBankClosed,
             CarriedBagIDs = CarriedBagIDs, BankTabIDs = BankTabIDs, IsBankContainer = IsBankContainer,
+            CleanupWarbandDB = CleanupWarbandDB, PruneOrphans = PruneOrphans,
+            InvalidateTabCache = InvalidateTabCache, BootstrapPlugin = BootstrapPlugin,
             ScanContainerSet = ScanContainerSet, EnsureTooltipHook = EnsureTooltipHook,
         },
     })
 
-    -- Full-baseline pull when we hold no inventory yet (fresh install / wiped DB)
-    -- or when re-enabled mid-session — the peer watermark may already be ahead
-    -- of missing data, which a delta pull would never backfill.
+    -- Full-baseline pull when we hold no inventory at all: the peer watermark
+    -- may already be ahead of data we never received, which a delta pull would
+    -- never backfill.
+    --
+    -- NOT on "loaded on demand": the core loads enabled plugins from its own
+    -- PLAYER_LOGIN handler, so IsLoggedIn() is already true and EVERY login
+    -- took that branch. That reset every peer watermark about a second before
+    -- the login sync, turning every session into a full-database pull (minutes
+    -- on a large database). Holding data is the only signal that matters.
     if AltStable.ResetPeerWatermarks then
         local hasData = false
         for _, cdb in pairs(AltStableWarbandDB) do
@@ -854,9 +911,10 @@ local function BootstrapPlugin(isOnDemand)
                 hasData = true; break
             end
         end
-        if isOnDemand or not hasData then AltStable.ResetPeerWatermarks() end
+        if not hasData then AltStable.ResetPeerWatermarks() end
     end
 
+    PruneOrphans()
     C_Timer.After(3, ScanBags)   -- prime our own bags after the login event storm
 end
 
@@ -869,7 +927,7 @@ frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
-        C_Timer.After(1, function() BootstrapPlugin(false) end)
+        C_Timer.After(1, BootstrapPlugin)
     elseif event == "BAG_UPDATE" then
         OnBagUpdate(arg1)
     elseif event == "BANKFRAME_OPENED" then
@@ -893,8 +951,8 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     end
 end)
 
--- Loaded on demand after login: PLAYER_LOGIN already fired, so bootstrap now
--- (and treat it as an on-demand enable so we force a baseline).
+-- Loaded on demand after login (the usual path: the core loads enabled plugins
+-- from its PLAYER_LOGIN handler), so PLAYER_LOGIN will not fire for us again.
 if IsLoggedIn() then
-    C_Timer.After(1, function() BootstrapPlugin(true) end)
+    C_Timer.After(1, BootstrapPlugin)
 end
