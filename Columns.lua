@@ -81,6 +81,15 @@ for _, r in ipairs(AltStable.REPUTATIONS) do
     AltStable.Columns[#AltStable.Columns + 1] = rep(r)
 end
 
+-- Header height for a set of columns: stacked text labels need 64px, icons fit
+-- the usual 32. Only as tall as the columns actually shown need.
+function AltStable.HeaderHeightFor(columns, default)
+    for _, col in ipairs(columns) do
+        if col.vertical and not col.repIcon then return 64 end
+    end
+    return default or 32
+end
+
 function AltStable.GetTotalColumnWidth()
     local total = 20
     for _, col in ipairs(AltStable.Columns) do

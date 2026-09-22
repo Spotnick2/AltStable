@@ -134,6 +134,13 @@ do
     eq("  which keeps its short label", colByField.rep_72.verticalLabel, "Stormw")
     eq("a faction with no icon keeps the text label", colByField.rep_730.repIcon, nil)
 
+    eq("a text-label faction needs the tall header",
+       AltStable.HeaderHeightFor({ colByField.rep_72, colByField.rep_2787 }, 32), 64)
+    eq("all icons fit the normal header",
+       AltStable.HeaderHeightFor({ colByField.rep_2787 }, 32), 32)
+    eq("non-rep columns use the section's own height",
+       AltStable.HeaderHeightFor({ { field = "level" } }, 28), 28)
+
     WoW.textures = nil   -- every path resolves
     dofile("Columns.lua")
     colByField = {}

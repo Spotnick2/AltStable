@@ -103,7 +103,7 @@ local SECTIONS = {
         id    = "rep",
         label = "Reputations",
         icon  = IC("reputations"),
-        headerHeight = 64,   -- stacked six-letter labels
+        headerHeight = 32,   -- 64 while a stacked-text label is shown (HeaderHeightFor)
         preferW = 999,
         preferH = 410,
         -- Faction columns are added per build: only those some character has
@@ -1743,6 +1743,7 @@ local function SwitchSection(section)
     end
 
     BuildScrollableColsForSection(section)
+    AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, section.headerHeight or HEADER_HEIGHT))
     BuildHeaders()
     UpdateScroll()
     local needed=CountVisibleRows()
@@ -3110,7 +3111,10 @@ local function RebuildDataDrivenColumns()
     if not (activeSection and activeSection.repFields) then return end
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
-    if ColumnSignature() ~= before then BuildHeaders() end
+    if ColumnSignature() ~= before then
+        AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, activeSection.headerHeight or HEADER_HEIGHT))
+        BuildHeaders()
+    end
 end
 
 local function Refresh()
