@@ -448,6 +448,12 @@ do
     local layout = sheet:match("function AT_WB.Layout%(%)(.-)\nend")
     check("the layout drives the scrollbar",
           layout ~= nil and layout:find("UpdateScrollBar", 1, true) ~= nil)
+    -- An empty grid has nothing to scroll, and both empty paths return early.
+    check("the layout hides the bar when there are no rows",
+          layout ~= nil and layout:find("UpdateScrollBar(0, 0)", 1, true) ~= nil)
+    local refresh = sheet:match("function AT_WB.Refresh%(%)(.-)\nend")
+    check("a refresh with no inventory hides it too",
+          refresh ~= nil and refresh:find("UpdateScrollBar(0, 0)", 1, true) ~= nil)
 end
 
 print(("test_warband: %d passed, %d failed"):format(passed, failed))

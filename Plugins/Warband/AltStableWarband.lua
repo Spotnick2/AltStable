@@ -735,6 +735,7 @@ function AT_WB.Layout()
     if #rows == 0 then
         hideFrom(AT_WB.cells, 1)
         hideFrom(AT_WB.headers, 1)
+        AT_WB.UpdateScrollBar(0, 0)   -- nothing to scroll: no bar
         return
     end
 
@@ -786,6 +787,7 @@ function AT_WB.Refresh()
         AT_WB._rows = {}
         hideFrom(AT_WB.cells, 1)
         hideFrom(AT_WB.headers, 1)
+        AT_WB.UpdateScrollBar(0, 0)   -- nothing left to scroll
         emptyFS:Show()
         return
     end
@@ -863,11 +865,24 @@ local function BuildPanel(mainFrame)
         AT_WB.Layout()
     end)
 
+    emptyFS = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    emptyFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(TITLE_H + 34))
+    emptyFS:SetText("No inventory captured yet. Log in on your alts (and open a bank) to populate this.")
+    emptyFS:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    emptyFS:Hide()
+
     -- Scrollbar. The wheel already scrolls, but nothing showed there was more
     -- below - and a grid whose last group is off-screen just looks short. Built
     -- from a bare Slider rather than a scroll-frame template: the cells are
     -- direct children of the panel (a ScrollFrame swallowed their hover), and
     -- template names differ across builds.
+    --
+    -- Built LAST in this function: BuildPanel early-returns once `panel` is
+    -- assigned, so a widget call that failed here would leave the panel
+    -- half-built for the session - emptyFS nil, and the next data-less Refresh
+    -- throwing on it. The bar is the expendable part, so it goes at the end.
+    -- SetObeyStepOnDrag is measured on this build (Slider:SetObeyStepOnDrag in
+    -- forever-api-1.60.1.69913.md); SheetUI omits it because TBC 2.5.x lacked it.
     local scrollBar = CreateFrame("Slider", nil, panel)
     AT_WB.scrollBar = scrollBar
     scrollBar:SetWidth(10)
@@ -889,12 +904,6 @@ local function BuildPanel(mainFrame)
         AT_WB.Layout()
     end)
     scrollBar:Hide()
-
-    emptyFS = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    emptyFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(TITLE_H + 34))
-    emptyFS:SetText("No inventory captured yet. Log in on your alts (and open a bank) to populate this.")
-    emptyFS:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    emptyFS:Hide()
 end
 
 local function HookRefresh()
