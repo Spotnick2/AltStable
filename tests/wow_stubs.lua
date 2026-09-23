@@ -367,7 +367,7 @@ end
 
 function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 -- Four returns, in this order. Config.lua reads the build from the second.
-function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
+function GetBuildInfo() return "1.60.1", "69977", "Sep 22 2026", 16001 end
 
 -- Measured: nil when the character is not rested (docs/forever-api-notes.md).
 function GetXPExhaustion() return WoW.restXP end

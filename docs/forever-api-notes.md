@@ -298,6 +298,31 @@ before the Professions plugin is designed — deferred anyway.
 
 ---
 
+## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 unchanged
+
+The client bumped from 69913 (built Sep 17) to 69977 (built Sep 22). The dump was regenerated
+(`forever-api-1.60.1.69977.md`) and compared section by section against 69913:
+
+**No change to the documented API.** Documented functions, documented events, enums and
+structures, widget methods and namespace functions are byte-identical sets. The only differences
+in the artifact are other addons' globals picked up by the `_G` walk (whatever was loaded when the
+dump ran), which is why those two sections are not comparable between runs.
+
+Re-measured in game on 69977, all unchanged:
+
+```
+GetMaxPlayerLevel()            -> 60
+UnitXPMax("player")            -> 14400      (positive below the cap)
+GetXPExhaustion()              -> 2020       (a number while rested; nil when not)
+Enum.BagIndex.Keyring          -> -1
+C_Reputation.GetNumFactions()  -> 9
+type(TooltipDataProcessor)     -> "table"
+```
+
+**SavedVariables still do not load (#23).** The probe on a fresh launch: account-wide table
+arrived NO, per-character NO, launches recorded before this one 0 — after previous sessions had
+written the file. So the blocker survives this build; nothing an addon writes is read back.
+
 ## Reputation — also a struct, and ByID reaches beyond the visible list
 
 ```
