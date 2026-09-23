@@ -1,79 +1,57 @@
-# Raid row-band art (`Media/Raids/`)
+# Raid thumbnails
 
-Dim landmark artwork drawn behind each row of the **Raids** plugin
-(`Plugins/Instances/AltTrackerInstances.lua`). One TGA per raid, cover-cropped to
-a wide, short band with the raid name overlaid on the left.
+One landmark image per raid, shown in the name cell of each row in the Raids tab
+(`Plugins/Instances/AltStableInstances.lua`).
 
-## Source
+## What ships here
 
-These are **derived from existing masters**, not generated per-addon:
+Seven files, one per Vanilla raid. The name is `scene-raid-<art>.tga`, where
+`<art>` is the `art` field of the matching entry in that file's `RAIDS` table:
 
-    C:\Projects\WowClassicRaids\assets\raid-image-masters\<slug>-master.png
+| art | Raid |
+|---|---|
+| `mc` | Molten Core |
+| `ony` | Onyxia's Lair |
+| `bwl` | Blackwing Lair |
+| `zg` | Zul'Gurub |
+| `aq20` | Ruins of Ahn'Qiraj |
+| `aq40` | Temple of Ahn'Qiraj |
+| `naxx` | Naxxramas |
 
-The masters are ~2172×724 (≈3:1) `srgb` PNGs. Do not edit them in place — always
-re-derive the TGA from the master.
+The nine Outland raids the TBC version carried are gone: Forever is Vanilla
+content, so those rows no longer exist (#11).
 
-## Format (same hard rules as `Media/Scene/`)
+## The format the plugin expects
 
-- **TGA, 32-bit RGBA** (`TrueColorMatte`), **uncompressed**, **power-of-two 1024×512**.
-  24-bit or non-POT textures render **black** in WoW.
-- The aspect-preserved image sits in the **top 341 rows**; the bottom is
-  **black-padded** to 512. The plugin samples only the top `341/512` of the
-  texture (`BAND_VSCALE`) and cover-crops the content into the row band, so the
-  pad never shows and the landmark isn't distorted.
-- **Fresh filename whenever pixels change** — WoW caches textures by path; a
-  `/reload` won't re-read an overwritten file (bump the name or restart the client).
+The shipped files are **512×256, 32-bit uncompressed TGA**, with the image in the
+**top two thirds** (roughly 170 rows) and black padding below.
 
-## Convert (ImageMagick 7)
+That shape is not arbitrary. WoW textures must have power-of-two dimensions, but
+the artwork is a ~3:1 landscape strip, so it sits in the top of a 2:1 texture and
+the rest is padding the plugin never samples. `BAND_IMG_W` / `BAND_IMG_H` /
+`BAND_TEX_H` in the plugin describe exactly that, and only their **ratios**
+matter — art at 1024×512 with content in the top 341 rows crops identically.
 
-    magick <slug>-master.png \
-      -resize 1024x -background black -gravity north -extent 1024x512 \
-      -alpha set -type TrueColorMatte -compress none \
-      scene-raid-<id>.tga
+Checks, before committing a replacement:
 
-Sanity-check → must print `1024x512 srgba 4.0`:
+```bash
+# dimensions must be powers of two, and the ratio must match the constants
+python -c "d=open('scene-raid-mc.tga','rb').read(18); print(d[12]|d[13]<<8, 'x', d[14]|d[15]<<8)"
+# -> 512 x 256
+```
 
-    magick identify -format "%wx%h %[channels]\n" scene-raid-<id>.tga
+A file that fails to load renders nothing at all: `LoadTexture` in the plugin
+checks `GetTexture()` after setting it and clears the texture on failure, so a
+bad path or an unsupported format leaves a plain band rather than a green box.
 
-## id ↔ master map (the 16 raids the plugin ships)
+## Making one
 
-| id (`RAIDS[].art`) | master slug            | raid                     |
-|--------------------|------------------------|--------------------------|
-| kara               | karazhan               | Karazhan                 |
-| gruul              | gruuls-lair            | Gruul's Lair             |
-| mag                | magtheridons-lair      | Magtheridon's Lair       |
-| ssc                | serpentshrine-cavern   | Serpentshrine Cavern     |
-| tk                 | tempest-keep           | Tempest Keep             |
-| hyjal              | mount-hyjal            | Battle for Mount Hyjal   |
-| bt                 | black-temple           | Black Temple             |
-| za                 | zul-aman               | Zul'Aman                 |
-| sunwell            | sunwell-plateau        | Sunwell Plateau          |
-| mc                 | molten-core            | Molten Core              |
-| ony                | onyxias-lair           | Onyxia's Lair            |
-| bwl                | blackwing-lair         | Blackwing Lair           |
-| zg                 | zul-gurub              | Zul'Gurub                |
-| aq20               | ruins-of-ahn-qiraj     | Ruins of Ahn'Qiraj       |
-| aq40               | temple-of-ahn-qiraj    | Temple of Ahn'Qiraj      |
-| naxx               | naxxramas-classic      | Naxxramas                |
+Any 3:1 landscape capture works. Scale it to 512 wide, then pad the bottom to
+256 with black:
 
-Batch-convert all 16 from a Bash shell (Git Bash):
+```bash
+magick input.png -resize 512x -background black -gravity north -extent 512x256 \
+       -type TrueColorAlpha -compress none scene-raid-<art>.tga
+```
 
-    M="C:\Projects\WowClassicRaids\assets\raid-image-masters"
-    declare -A MAP=( [kara]=karazhan [gruul]=gruuls-lair [mag]=magtheridons-lair \
-      [ssc]=serpentshrine-cavern [tk]=tempest-keep [hyjal]=mount-hyjal [bt]=black-temple \
-      [za]=zul-aman [sunwell]=sunwell-plateau [mc]=molten-core [ony]=onyxias-lair \
-      [bwl]=blackwing-lair [zg]=zul-gurub [aq20]=ruins-of-ahn-qiraj \
-      [aq40]=temple-of-ahn-qiraj [naxx]=naxxramas-classic )
-    for id in "${!MAP[@]}"; do
-      magick "$M/${MAP[$id]}-master.png" -resize 1024x -background black -gravity north \
-        -extent 1024x512 -alpha set -type TrueColorMatte -compress none "scene-raid-$id.tga"
-    done
-
-## Registration & deploy
-
-- Each raid's `art` id is set in the `RAIDS` table in
-  `Plugins/Instances/AltTrackerInstances.lua`. A raid with no matching TGA (or an
-  "Other" row) falls back to a plain dark band automatically.
-- `Tools/deploy.ps1` ships `*.tga` and excludes `*.png`/`*.md` — run
-  `pwsh Tools/deploy.ps1`, then `/reload`. If a replaced-in-place band still shows
-  black, restart the client to flush the texture cache.
+Uncompressed matters: WoW does not read RLE-compressed TGA reliably.

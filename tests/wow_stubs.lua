@@ -396,6 +396,11 @@ function GetTime() return 0 end
 -- own WoW.now where a value matters.
 function time() return WoW.now end
 
+-- WoW exposes `date` as a global (Lua 5.1 only has os.date), and anything
+-- formatting a reset time calls it. Pinned to UTC so a test asserting a weekday
+-- does not depend on the machine's timezone.
+function date(fmt, t) return os.date("!" .. (fmt or "%c"), t or WoW.now) end
+
 -- The payload of every captured SendAddonMessage, in send order.
 function WoW.sentMessages()
     local msgs = {}

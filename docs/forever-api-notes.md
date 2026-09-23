@@ -712,15 +712,15 @@ UnitXPMax("player")         ->  400
 
    Consequence is limited to one feature, not the whole plugin. `GetSavedInstanceInfo` returns
    `encounterProgress` and `numEncounters` directly, so the **lockout grid and "X/Y bosses" progress
-   need no ordering assumption**. Only the *named* per-boss kill list does: `Core.lua:1063` encodes
-   kills as a positional bitmask by encounter index, and `AltStableInstances.lua:518` maps those
-   indices onto a static boss-name list. If Forever's ordering differs, that renders confidently
-   wrong names.
+   need no ordering assumption**. Only a *named* per-boss kill list would: `ScanSavedInstances` in
+   `Core.lua` encodes kills as a positional bitmask by encounter index, and reading it back as names
+   means mapping those indices onto a static boss list. If Forever's ordering differs, that renders
+   confidently wrong names.
 
-   **First beta therefore ships aggregate progress only.** The named-boss mask is written but not
-   displayed until a real lockout confirms ordering. The logic stays covered offline by
-   `tests/test_instances.lua` with stubbed returns; it's the live data assumption that's unverified,
-   not the code.
+   **The Raids plugin therefore ships aggregate progress only** (#11): it does not read the mask at
+   all, and carries no boss-name lists - `tests/test_instances.lua` asserts both, so re-adding one
+   without verifying the order fails the suite. The mask is still captured and synced, so the data
+   is there the day a real lockout can confirm the ordering (#17).
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.

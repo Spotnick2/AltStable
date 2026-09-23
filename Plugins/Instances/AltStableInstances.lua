@@ -47,6 +47,7 @@ local TITLE_H     = 22
 local STATS_H     = 30
 local HBAR_H      = 14     -- horizontal scrollbar strip
 local MAX_COLS    = 40
+local MAX_OTHER_ROWS = 10  -- unrecognised lockouts shown; the panel has no v-scroll
 local MAX_VIEW_COLS = 12   -- character columns visible at once before scrolling
 local COL_LEVEL_MIN = 60   -- a character is a "filler" column at this level+
 local MAX_FRAME_H = 880    -- don't grow the window past this; collapse to manage
@@ -57,17 +58,15 @@ local MAX_FRAME_H = 880    -- don't grow the window past this; collapse to manag
 local panel, colScroll, colChild, hbar
 local titleFS, emptyFS, raidHdr, resetHdr, headerBG, headerSep, statsBar, statsFS
 
--- Thumbnail cover-crop. The TGA is 1024x512 with the (aspect-preserved) image in
--- the top 341 rows and black padding below (see Media/Raids/README.md).
-local BAND_IMG_W  = 1024
-local BAND_IMG_H  = 341
-local BAND_TEX_H  = 512
+-- Thumbnail cover-crop. The shipped art is 512x256 with the (aspect-preserved)
+-- image in the top two thirds and black padding below (see Media/Raids/README.md).
+-- Only the RATIOS below matter, so art at another power-of-two size with the same
+-- 3:1 content in the top two thirds crops identically.
+local BAND_IMG_W  = 512
+local BAND_IMG_H  = 170
+local BAND_TEX_H  = 256
 local BAND_CASP   = BAND_IMG_W / BAND_IMG_H      -- content aspect (~3:1)
 local BAND_VSCALE = BAND_IMG_H / BAND_TEX_H
-
-local function Print(msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable Raids]|r " .. msg)
-end
 
 ------------------------------------------------------------
 -- Canonical raid catalogue
@@ -78,14 +77,14 @@ end
 -- Serpentshrine Cavern"). No boss names here: see the note at the top (#17).
 ------------------------------------------------------------
 local RAIDS = {
-    { apiName = "Molten Core",         display = "Molten Core",         art = "mc",   reset = "Weekly" },
-    { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony",  reset = "5-day"  },
-    { apiName = "Blackwing Lair",      display = "Blackwing Lair",      art = "bwl",  reset = "Weekly" },
-    { apiName = "Zul'Gurub",           display = "Zul'Gurub",           art = "zg",   reset = "3-day"  },
-    { apiName = "Ruins of Ahn'Qiraj",  display = "Ruins of Ahn'Qiraj",  art = "aq20", reset = "3-day"  },
+    { apiName = "Molten Core",         display = "Molten Core",         art = "mc" },
+    { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony"  },
+    { apiName = "Blackwing Lair",      display = "Blackwing Lair",      art = "bwl" },
+    { apiName = "Zul'Gurub",           display = "Zul'Gurub",           art = "zg"  },
+    { apiName = "Ruins of Ahn'Qiraj",  display = "Ruins of Ahn'Qiraj",  art = "aq20"  },
     { apiName = "Temple of Ahn'Qiraj", aliases = { "Ahn'Qiraj Temple" },
-      display = "Temple of Ahn'Qiraj", art = "aq40", reset = "Weekly" },
-    { apiName = "Naxxramas",           display = "Naxxramas",           art = "naxx", reset = "Weekly" },
+      display = "Temple of Ahn'Qiraj", art = "aq40" },
+    { apiName = "Naxxramas",           display = "Naxxramas",           art = "naxx" },
 }
 
 -- One group on Forever. A group header still renders (the "Other" group below
@@ -143,6 +142,23 @@ end
 -- Formatting helpers
 ------------------------------------------------------------
 
+-- Column headers are 58px. Names here are "First Surname" (Forever gives every
+-- character a surname), so show the first name - cutting at a byte count would
+-- both hide the part that distinguishes two alts and, on an accented name, slice
+-- a UTF-8 character in half. Truncation, when still needed, stops on a character
+-- boundary: a continuation byte is 10xxxxxx (0x80..0xBF).
+local function shortName(name, maxBytes)
+    local first = (name or "?"):match("^(%S+)") or "?"
+    if #first <= maxBytes then return first end
+    local cut = maxBytes
+    while cut > 1 do
+        local b = first:byte(cut + 1)
+        if not b or b < 0x80 or b > 0xBF then break end
+        cut = cut - 1
+    end
+    return first:sub(1, cut)
+end
+
 -- "in 2d 4h" style, from a seconds-remaining value.
 local function fmtDur(sec)
     sec = tonumber(sec) or 0
@@ -176,7 +192,6 @@ local function parseLockout(key, val)
     local e, p, t, size, dname = val:match("^(%d+)|(%d*)|(%d*)|(%d*)|(.*)$")
     if not e then return nil end
     return {
-        raidKey  = key,
         name     = name,
         diff     = tonumber(diff) or 0,
         expires  = tonumber(e) or 0,
@@ -191,9 +206,24 @@ end
 -- Read model
 ------------------------------------------------------------
 
+-- Which of two lockouts for the same raid row to show (see gather).
+local function PreferLockout(a, b)
+    if not a then return b end
+    if not b then return a end
+    if a.expires ~= b.expires then return (a.expires > b.expires) and a or b end
+    if a.prog ~= b.prog then return (a.prog > b.prog) and a or b end
+    return (a.diff <= b.diff) and a or b
+end
+
 -- All tracked characters (with level/ilvl for ranking) + per-char lockouts keyed
 -- by canonical raid apiName (lower) when recognised, else raw name; `lk.canon`
--- points at the canonical raid (nil = unknown -> Other). Killmask attached as .mask.
+-- points at the canonical raid (nil = unknown -> Other).
+--
+-- The core keys lockouts by name@difficulty and never merges them, but the grid
+-- has ONE row per raid - so a character saved to the same raid at two
+-- difficulties needs a rule, or `pairs` order decides which one renders and the
+-- answer changes between refreshes. Rule: the one that expires latest, then the
+-- one with more progress, then the lower difficulty id.
 local function gather()
     local allChars, lookup = {}, {}
     AltStableDB = AltStableDB or {}
@@ -211,7 +241,7 @@ local function gather()
                             mine = mine or {}
                             lk.canon = matchRaid(lk.name:lower())
                             local key = lk.canon and lk.canon.apiName:lower() or lk.name:lower()
-                            mine[key] = lk
+                            mine[key] = PreferLockout(mine[key], lk)
                         end
                     end
                 end
@@ -232,18 +262,35 @@ end
 
 -- Columns: every character level 60+ (filler), plus anyone holding any lockout so
 -- a real save is never hidden. Ranked by level, then item level, then name.
+--
+-- MAX_COLS is applied HERE, not at layout time, and saved characters survive it:
+-- the ranking puts a level-30 bank alt last, so a plain truncation would drop
+-- exactly the characters the filter exists to include - leaving a raid row of
+-- dashes and no column that explains it.
 local function columnsForView(allChars, lookup)
-    local cols = {}
+    local saved, fillers = {}, {}
     for _, ch in ipairs(allChars) do
-        if (ch.level or 0) >= COL_LEVEL_MIN or lookup[ch.guid] then
-            cols[#cols + 1] = ch
-        end
+        if lookup[ch.guid] then saved[#saved + 1] = ch
+        elseif (ch.level or 0) >= COL_LEVEL_MIN then fillers[#fillers + 1] = ch end
     end
-    table.sort(cols, function(a, b)
+    local function rank(a, b)
         if (a.level or 0) ~= (b.level or 0) then return (a.level or 0) > (b.level or 0) end
         if (a.ilvl or 0)  ~= (b.ilvl or 0)  then return (a.ilvl or 0)  > (b.ilvl or 0)  end
         return (a.name or "") < (b.name or "")
-    end)
+    end
+    table.sort(saved, rank)
+    table.sort(fillers, rank)
+
+    local cols = {}
+    for _, ch in ipairs(saved) do
+        if #cols >= MAX_COLS then break end
+        cols[#cols + 1] = ch
+    end
+    for _, ch in ipairs(fillers) do
+        if #cols >= MAX_COLS then break end
+        cols[#cols + 1] = ch
+    end
+    table.sort(cols, rank)
     return cols
 end
 
@@ -257,6 +304,9 @@ local function buildDisplayRows(lookup)
             for _, r in ipairs(RAIDS) do out[#out + 1] = { raid = r } end
         end
     end
+    -- Bounded and sorted: rows sit at absolute offsets with no vertical scroller,
+    -- so an unbounded list would run under the stats bar with no way to reach it,
+    -- and pairs() over guid-keyed tables would reshuffle them between refreshes.
     local otherRows, seen = {}, {}
     for _, mine in pairs(lookup) do
         for key, lk in pairs(mine) do
@@ -267,10 +317,14 @@ local function buildDisplayRows(lookup)
             end
         end
     end
+    table.sort(otherRows, function(a, b) return a.display < b.display end)
     if #otherRows > 0 then
-        out[#out + 1] = { isGroup = true, key = "other", label = "Other" }
+        local shown = math.min(#otherRows, MAX_OTHER_ROWS)
+        local label = (shown < #otherRows)
+            and ("Other (" .. shown .. " of " .. #otherRows .. ")") or "Other"
+        out[#out + 1] = { isGroup = true, key = "other", label = label }
         if not isCollapsed("other") then
-            for _, r in ipairs(otherRows) do out[#out + 1] = { raid = r } end
+            for i = 1, shown do out[#out + 1] = { raid = otherRows[i] } end
         end
     end
     return out
@@ -442,8 +496,7 @@ local function getCell(j, i)
             if not d then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine(d.raidName, 0.6, 0.8, 1)
-            local cc = d.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[d.class]
-            GameTooltip:AddLine(d.charName, cc and cc.r or 0.9, cc and cc.g or 0.9, cc and cc.b or 0.9)
+            GameTooltip:AddLine(d.charName, AltStable.GetClassRGB(d.class))
             if d.total > 0 then
                 GameTooltip:AddLine("Progress: " .. d.prog .. "/" .. d.total, 0.85, 0.85, 0.85)
             end
@@ -544,11 +597,8 @@ function AT_SI.Refresh()
         local fs = getHeader(i)
         fs:ClearAllPoints()
         fs:SetPoint("TOPLEFT", colChild, "TOPLEFT", (i - 1) * COL_W, -5)
-        local nm = ch.name or "?"
-        if #nm > 9 then nm = nm:sub(1, 9) end
-        fs:SetText(nm)
-        local cc = ch.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[ch.class]
-        if cc then fs:SetTextColor(cc.r, cc.g, cc.b) else fs:SetTextColor(0.9, 0.9, 0.9) end
+        fs:SetText(shortName(ch.name, 9))
+        fs:SetTextColor(AltStable.GetClassRGB(ch.class))
         fs:Show()
     end
     hideFrom(AT_SI.headers, nCols + 1)
@@ -724,8 +774,10 @@ function AT_SI.Refresh()
     -- Stats bar.
     local pct = (sumTotal > 0) and (" (" .. math.floor(100 * sumProg / sumTotal + 0.5) .. "%)") or ""
     local defeated = (sumTotal > 0) and (sumProg .. "/" .. sumTotal .. pct) or "—"
-    statsFS:SetText(("|cffffd100Active saves:|r %d       |cffffd100Bosses defeated:|r %s       |cffffd100Characters tracked:|r %d")
-        :format(activeSaves, defeated, nCols))
+    -- #allChars is what "tracked" means; nCols is how many of them fit as columns.
+    local shownNote = (nCols < #allChars) and (" (" .. nCols .. " shown)") or ""
+    statsFS:SetText(("|cffffd100Active saves:|r %d       |cffffd100Bosses defeated:|r %s       |cffffd100Characters tracked:|r %d%s")
+        :format(activeSaves, defeated, #allChars, shownNote))
     statsBar:Show()
 
     -- Size the shared window to our content (plugins own their sizing). Width fits
@@ -750,6 +802,28 @@ end
 -- Panel + activation
 ------------------------------------------------------------
 
+-- Every colour this panel bakes in at build time, in one place - and registered
+-- with the theme so a Dark/Class switch repaints it. Without that the panel keeps
+-- the old palette until /reload while the per-refresh colours (group backgrounds,
+-- row labels) update around it: a half-themed window.
+function AT_SI.ApplyTheme()
+    if not panel then return end
+    local C = AltStable.C
+    AltStable.ApplyBGOnly(panel, C.BG_MAIN[1], C.BG_MAIN[2], C.BG_MAIN[3], C.BG_MAIN[4])
+    if statsBar then
+        AltStable.ApplyBGOnly(statsBar, C.BG_FOOTER[1], C.BG_FOOTER[2], C.BG_FOOTER[3], C.BG_FOOTER[4])
+    end
+    if AT_SI._hbarThumb then
+        AT_SI._hbarThumb:SetColorTexture(C.ACCENT[1], C.ACCENT[2], C.ACCENT[3], 0.85)
+    end
+    if AT_SI._headerSep then AT_SI._headerSep:SetColorTexture(unpack(C.ACCENT)) end
+    if AT_SI._footSep   then AT_SI._footSep:SetColorTexture(unpack(C.ACCENT))   end
+    for _, fs in ipairs({ titleFS, raidHdr, resetHdr, statsFS }) do
+        if fs then fs:SetTextColor(unpack(C.TEXT_BRIGHT)) end
+    end
+    if emptyFS then emptyFS:SetTextColor(unpack(C.TEXT_DIM)) end
+end
+
 local function BuildPanel(mainFrame)
     if panel then return end
     local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
@@ -760,7 +834,7 @@ local function BuildPanel(mainFrame)
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
     panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
-    AltStable.ApplyBGOnly(panel, AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2], AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    AT_SI._headerSep = headerSep
     panel:Hide()
 
     -- Horizontally-scrolling viewport for the character columns (Raid + Reset stay
@@ -783,7 +857,7 @@ local function BuildPanel(mainFrame)
     hbarTrack:SetAllPoints(hbar)
     hbarTrack:SetColorTexture(0, 0, 0, 0.40)
     local hbarThumb = hbar:CreateTexture(nil, "OVERLAY")
-    hbarThumb:SetColorTexture(AltStable.C.ACCENT[1], AltStable.C.ACCENT[2], AltStable.C.ACCENT[3], 0.85)
+    AT_SI._hbarThumb = hbarThumb
     hbarThumb:SetSize(48, HBAR_H)
     hbar:SetThumbTexture(hbarThumb)
     hbar:SetScript("OnValueChanged", function(_, val)
@@ -794,47 +868,53 @@ local function BuildPanel(mainFrame)
     titleFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, -PAD_Y + 2)
     titleFS:SetText("Raid Lockouts")
-    titleFS:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
+
 
     headerBG = panel:CreateTexture(nil, "BACKGROUND", nil, 2)
     headerBG:Hide()
     headerSep = panel:CreateTexture(nil, "ARTWORK")
     headerSep:SetHeight(1)
-    headerSep:SetColorTexture(unpack(AltStable.C.ACCENT))
+
     headerSep:Hide()
 
     raidHdr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     raidHdr:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X + 8, -(PAD_Y + TITLE_H + 5))
     raidHdr:SetText("Raid")
-    raidHdr:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
+
     raidHdr:Hide()
 
     resetHdr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     resetHdr:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X + NAME_COL_W + 6, -(PAD_Y + TITLE_H + 5))
     resetHdr:SetText("Reset")
-    resetHdr:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
+
     resetHdr:Hide()
 
     statsBar = CreateFrame("Frame", nil, panel)
     statsBar:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
     statsBar:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
     statsBar:SetHeight(STATS_H)
-    AltStable.ApplyBGOnly(statsBar, AltStable.C.BG_FOOTER[1], AltStable.C.BG_FOOTER[2], AltStable.C.BG_FOOTER[3], AltStable.C.BG_FOOTER[4])
+
     local footSep = statsBar:CreateTexture(nil, "ARTWORK")
     footSep:SetHeight(1)
     footSep:SetPoint("TOPLEFT", statsBar, "TOPLEFT", 0, 0)
     footSep:SetPoint("TOPRIGHT", statsBar, "TOPRIGHT", 0, 0)
-    footSep:SetColorTexture(unpack(AltStable.C.ACCENT))
+    AT_SI._footSep = footSep
     statsFS = statsBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     statsFS:SetPoint("LEFT", statsBar, "LEFT", PAD_X, 0)
-    statsFS:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
+
     statsBar:Hide()
 
     emptyFS = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     emptyFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, -(PAD_Y + TITLE_H + 6))
     emptyFS:SetText("No raid lockouts on any tracked character.")
-    emptyFS:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+
     emptyFS:Hide()
+
+    AT_SI.ApplyTheme()
+    if not AT_SI._themeHooked and AltStable.RegisterThemeCallback then
+        AltStable.RegisterThemeCallback(function() AT_SI.ApplyTheme() end)
+        AT_SI._themeHooked = true
+    end
 end
 
 local function HookRefresh()
@@ -889,7 +969,9 @@ function AT_SI._Bootstrap()
         OnActivate   = function(mainFrame) AT_SI.Activate(mainFrame) end,
         OnDeactivate = function(mainFrame) AT_SI.Deactivate(mainFrame) end,
         _test        = {
-            parseLockout = parseLockout, gather = gather,
+            parseLockout = parseLockout, gather = gather, shortName = shortName,
+            fmtDur = fmtDur, resetLabel = resetLabel, resetColor = resetColor,
+            findLockout = findLockout, PreferLockout = PreferLockout,
             matchRaid = matchRaid, columnsForView = columnsForView,
             buildDisplayRows = buildDisplayRows, toggleCollapse = toggleCollapse,
             isCollapsed = isCollapsed, RAIDS = RAIDS,

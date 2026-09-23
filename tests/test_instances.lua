@@ -88,6 +88,37 @@ eq("a killmask value is not a lockout", T.parseLockout("si_boss_Molten Core@1", 
 eq("a non-si_ field is not a lockout", T.parseLockout("prof_Mining", "300|1|2|3|x"), nil)
 
 ------------------------------------------------------------
+-- Formatting the reset column
+------------------------------------------------------------
+
+eq("a lockout already past reads now", T.fmtDur(-5), "now")
+eq("minutes", T.fmtDur(90 * 60), "1h 30m")
+eq("hours and minutes", T.fmtDur(3600 + 120), "1h 2m")
+eq("days and hours", T.fmtDur(2 * 86400 + 4 * 3600), "2d 4h")
+eq("a reset moment reads as a weekday and time", T.resetLabel(1700000000), "Tue 22:13")
+
+local function firstOf(...) return (select(1, ...)) end
+check("a lockout resetting within 12h is red", firstOf(T.resetColor(3600)) == 1.00)
+check("  within two days, amber", select(2, T.resetColor(30 * 3600)) == 0.82)
+check("  further out, green", firstOf(T.resetColor(5 * 86400)) == 0.52)
+
+------------------------------------------------------------
+-- Names in the column headers
+------------------------------------------------------------
+
+-- Forever gives every character a surname, and first names are not unique, so
+-- the header shows the first name rather than a byte-truncated full name.
+eq("the first name is what fits a 58px column", T.shortName("Kaleid Sumner", 9), "Kaleid")
+eq("a long first name is cut", T.shortName("Bartholomew Smith", 9), "Bartholom")
+eq("a short one is left alone", T.shortName("Ash Grey", 9), "Ash")
+eq("a missing name is not an error", T.shortName(nil, 9), "?")
+-- "Ceridwen" with an accented e (2 bytes): cutting at 9 bytes would split it.
+local accented = "Cerid" .. string.char(0xC3, 0xA9) .. "wen"
+local cut = T.shortName(accented, 6)
+check("a multibyte character is never cut in half", cut == "Cerid" or cut == "Cerid" .. string.char(0xC3, 0xA9),
+      cut)
+
+------------------------------------------------------------
 -- The read model
 ------------------------------------------------------------
 
@@ -110,6 +141,42 @@ eq("  a second lockout too", lookup["Player-A-1"]["onyxia's lair"].total, 1)
 check("an unsaved character has none", lookup["Player-B-1"] == nil)
 eq("the killmask is not read into the model (#17)", lookup["Player-A-1"]["molten core"].mask, nil)
 
+-- Two lockouts for the same raid at different difficulties: one row, one rule.
+-- Without it, pairs() order decides, and it can change between refreshes.
+do
+    local a = { expires = 100, prog = 3, diff = 1 }
+    local b = { expires = 200, prog = 1, diff = 2 }
+    eq("the later reset wins", T.PreferLockout(a, b), b)
+    eq("  whichever order they arrive in", T.PreferLockout(b, a), b)
+    local c = { expires = 100, prog = 5, diff = 2 }
+    eq("same reset: more progress wins", T.PreferLockout(a, c), c)
+    local d = { expires = 100, prog = 3, diff = 3 }
+    eq("same reset and progress: the lower difficulty", T.PreferLockout(a, d), a)
+    eq("nothing to compare against", T.PreferLockout(nil, a), a)
+end
+
+-- ...and gather applies it: the core stores one field per difficulty, the grid
+-- has one row per raid.
+do
+    AltStableDB["Player-Two-1"] = { guid = "Player-Two-1", name = "Twice", class = "MAGE", level = 60,
+                                    ["si_Naxxramas@1"] = "1700000000|3|15|40|Normal",
+                                    ["si_Naxxramas@2"] = "1700009999|1|15|40|Heroic" }
+    local _, lk2 = T.gather()
+    local kept = lk2["Player-Two-1"]["naxxramas"]
+    eq("two difficulties collapse to the later reset", kept.expires, 1700009999)
+    eq("  deterministically, not whichever pairs() saw last", kept.prog, 1)
+    AltStableDB["Player-Two-1"] = nil
+end
+
+-- The footer counts tracked characters, not visible columns (UI code, so this
+-- reads the source).
+do
+    local src = io.open("Plugins/Instances/AltStableInstances.lua"):read("*a")
+    local stats = src:match("statsFS:SetText%((.-)%)%s*" .. "statsBar:Show")
+    check("the footer reports #allChars as tracked",
+          stats ~= nil and stats:find("#allChars", 1, true) ~= nil, tostring(stats))
+end
+
 local cols = T.columnsForView(allChars, lookup)
 local names = {}
 for _, c in ipairs(cols) do names[#names + 1] = c.name end
@@ -125,6 +192,21 @@ end
 eq("one group header", groups, 1)
 eq("  with every raid under it", raidRows, 7)
 
+-- The column cap must not drop a saved character: they sort last (low level),
+-- so a plain truncation would cut exactly the ones the filter exists to keep.
+do
+    local many, look = {}, { ["Player-Saved-1"] = { ["zul'gurub"] = { prog = 1 } } }
+    many[1] = { guid = "Player-Saved-1", name = "Bank Alt", level = 30, ilvl = 20 }
+    for i = 1, 60 do
+        many[#many + 1] = { guid = "Player-F-" .. i, name = "Filler" .. i, level = 60, ilvl = 100 }
+    end
+    local capped = T.columnsForView(many, look)
+    eq("columns are capped", #capped, 40)
+    local kept = false
+    for _, c in ipairs(capped) do if c.guid == "Player-Saved-1" then kept = true end end
+    check("the saved low-level character survives the cap", kept)
+end
+
 -- A lockout the catalogue doesn't know still shows, under "Other".
 AltStableDB["Player-E-1"] = { guid = "Player-E-1", name = "Explorer", class = "DRUID", level = 60,
                               ["si_Some New Raid@1"] = "1700000000|1|5|20|Normal" }
@@ -137,6 +219,27 @@ for _, r in ipairs(rows2) do
 end
 check("an unknown lockout gets an Other group", other)
 eq("  and its own row", otherRow, "Some New Raid")
+
+-- Those rows are sorted and bounded: the panel has no vertical scroller, so an
+-- unbounded list would run under the stats bar with no way to reach it.
+do
+    AltStableDB = { ["Player-F-1"] = { guid = "Player-F-1", name = "Finder", class = "MAGE", level = 60 } }
+    for i = 1, 14 do
+        AltStableDB["Player-F-1"]["si_Zone " .. string.char(90 - i) .. "@1"] = "1700000000|1|5|20|Normal"
+    end
+    local _, lk3 = T.gather()
+    local rows3 = T.buildDisplayRows(lk3)
+    local others, label = {}, nil
+    for _, r in ipairs(rows3) do
+        if r.isGroup and r.key == "other" then label = r.label end
+        if r.raid and r.raid.isOther then others[#others + 1] = r.raid.display end
+    end
+    eq("the Other rows are bounded", #others, 10)
+    check("  the header says how many there are", label and label:find("10 of 14", 1, true) ~= nil, label)
+    local sorted = true
+    for i = 2, #others do if others[i - 1] > others[i] then sorted = false end end
+    check("  and they are in a stable, sorted order", sorted, table.concat(others, ","))
+end
 
 -- Collapsing hides a group's rows, and the state is remembered.
 T.toggleCollapse("vanilla")
