@@ -162,22 +162,53 @@ local function shortName(name, maxBytes)
     return truncate((name or "?"):match("^(%S+)") or "?", maxBytes)
 end
 
--- First names are NOT unique on Forever, so a column of "Kaleid" over another
--- "Kaleid" is useless. Where the shown names would collide, add the surname's
--- first character: "Kaleid S" / "Kaleid T". Names with no surname, or colliding
--- surname initials too, fall back to the first name - two characters called
--- exactly the same thing are indistinguishable by any label this narrow.
-local function headerNames(chars, maxBytes)
-    local counts, out = {}, {}
-    for i, ch in ipairs(chars) do
-        out[i] = shortName(ch.name, maxBytes)
-        counts[out[i]] = (counts[out[i]] or 0) + 1
+-- The first `n` CHARACTERS of a string, not bytes: an initial taken with
+-- `:sub(1, 1)` cuts an accented surname ("Elodie" with an acute) in half and
+-- renders invalid UTF-8.
+local function firstChars(s, n)
+    local i, taken = 1, 0
+    while i <= #s and taken < n do
+        local b = s:byte(i)
+        local len = (b < 0x80 and 1) or (b < 0xE0 and 2) or (b < 0xF0 and 3) or 4
+        i = i + len
+        taken = taken + 1
     end
+    return s:sub(1, i - 1)
+end
+
+-- First names are NOT unique on Forever, so a column of "Kaleid" over another
+-- "Kaleid" is useless. Where the shown names would collide, as much of the
+-- surname as fits is appended - one character first ("Kaleid S"), more when
+-- that still collides ("Kaleid St" / "Kaleid Su"). Two characters whose names
+-- are identical stay identical; nothing this narrow could separate them, which
+-- is what the full-name tooltip on each header is for.
+local function headerNames(chars, maxBytes)
+    local out, first, surname = {}, {}, {}
     for i, ch in ipairs(chars) do
-        if counts[out[i]] > 1 then
-            local surname = (ch.name or ""):match("^%S+%s+(%S)")
-            if surname then out[i] = truncate(out[i], maxBytes - 2) .. " " .. surname end
+        first[i] = shortName(ch.name, maxBytes)
+        surname[i] = (ch.name or ""):match("^%S+%s+(%S+)") or ""
+        out[i] = first[i]
+    end
+
+    local function collisions()
+        local counts = {}
+        for _, label in ipairs(out) do counts[label] = (counts[label] or 0) + 1 end
+        return counts
+    end
+
+    for extra = 1, 4 do
+        local counts, done = collisions(), true
+        for i = 1, #out do
+            if counts[out[i]] > 1 and surname[i] ~= "" then
+                local room = maxBytes - 1 - #first[i]
+                local abbrev = firstChars(surname[i], extra)
+                if #abbrev <= room then
+                    out[i] = first[i] .. " " .. abbrev
+                    done = false
+                end
+            end
         end
+        if done then break end
     end
     return out
 end
@@ -363,15 +394,30 @@ end
 ------------------------------------------------------------
 
 -- Character-column widgets live on colChild (they scroll horizontally).
+-- A button, not a bare font string: the label is abbreviated to fit 58px, so the
+-- full name has to be reachable. Hovering a column header shows it.
 local function getHeader(i)
-    local fs = AT_SI.headers[i]
-    if not fs then
-        fs = colChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        fs:SetJustifyH("CENTER")
-        fs:SetWidth(COL_W)
-        AT_SI.headers[i] = fs
+    local btn = AT_SI.headers[i]
+    if not btn then
+        btn = CreateFrame("Button", nil, colChild)
+        btn:SetSize(COL_W, HEADER_H)
+        btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        btn.text:SetAllPoints()
+        btn.text:SetJustifyH("CENTER")
+        btn:SetScript("OnEnter", function(self)
+            if not self.fullName then return end
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(self.fullName, AltStable.GetClassRGB(self.class))
+            if self.level then
+                GameTooltip:AddLine("Level " .. self.level, 0.7, 0.7, 0.7)
+            end
+            GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        AT_SI.headers[i] = btn
     end
-    return fs
+    return btn
 end
 
 local function getCVLine(i)
@@ -643,12 +689,13 @@ function AT_SI.Refresh()
     local headerText = headerNames(chars, 9)
     for i = 1, nCols do
         local ch = chars[i]
-        local fs = getHeader(i)
-        fs:ClearAllPoints()
-        fs:SetPoint("TOPLEFT", colChild, "TOPLEFT", (i - 1) * COL_W, -5)
-        fs:SetText(headerText[i] or shortName(ch.name, 9))
-        fs:SetTextColor(AltStable.GetClassRGB(ch.class))
-        fs:Show()
+        local hdr = getHeader(i)
+        hdr:ClearAllPoints()
+        hdr:SetPoint("TOPLEFT", colChild, "TOPLEFT", (i - 1) * COL_W, -5)
+        hdr.text:SetText(headerText[i] or shortName(ch.name, 9))
+        hdr.text:SetTextColor(AltStable.GetClassRGB(ch.class))
+        hdr.fullName, hdr.class, hdr.level = ch.name, ch.class, ch.level
+        hdr:Show()
     end
     hideFrom(AT_SI.headers, nCols + 1)
 
@@ -1024,6 +1071,7 @@ function AT_SI._Bootstrap()
             fmtDur = fmtDur, resetLabel = resetLabel, resetColor = resetColor,
             findLockout = findLockout, PreferLockout = PreferLockout,
             headerNames = headerNames, ScheduleExpiryRefresh = ScheduleExpiryRefresh,
+            firstChars = firstChars, getHeader = getHeader,
             matchRaid = matchRaid, columnsForView = columnsForView,
             buildDisplayRows = buildDisplayRows, toggleCollapse = toggleCollapse,
             isCollapsed = isCollapsed, RAIDS = RAIDS,

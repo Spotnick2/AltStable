@@ -39,6 +39,8 @@ local WoW = {
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
     now         = 1700000000,  -- the clock time() reads; tests pin their own values
     eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
+    tooltipLines = {},  -- lines the last GameTooltip render added
+    tooltipShown = false,
 }
 
 function WoW.reset()
@@ -51,6 +53,7 @@ function WoW.reset()
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
+    WoW.tooltipLines, WoW.tooltipShown = {}, false
     WoW.now = 1700000000
     WoW.pendingPrio = nil
 end
@@ -134,6 +137,21 @@ function WoW.flushTimers()
 end
 
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut, m) end }
+
+-- GameTooltip, recording what an OnEnter would draw: WoW.tooltipLines. Without
+-- it every hover path in the addon is unreachable from a test - the code calls
+-- a global that simply is not there, so a tooltip that shows the wrong thing
+-- (or nothing) can only be caught in game.
+GameTooltip = makeFrame()
+GameTooltip.ClearLines = function() WoW.tooltipLines = {} end
+GameTooltip.AddLine = function(_, text) table.insert(WoW.tooltipLines, tostring(text)) end
+GameTooltip.AddDoubleLine = function(_, l, r)
+    table.insert(WoW.tooltipLines, tostring(l) .. "|" .. tostring(r))
+end
+GameTooltip.NumLines = function() return #WoW.tooltipLines end
+GameTooltip.Hide = function() WoW.tooltipShown = false end
+GameTooltip.Show = function() WoW.tooltipShown = true end
+GameTooltip.IsShown = function() return WoW.tooltipShown == true end
 
 ------------------------------------------------------------
 -- Enums, measured from the live client

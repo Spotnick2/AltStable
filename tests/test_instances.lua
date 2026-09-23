@@ -26,6 +26,7 @@ AltStable = {}
 AltStableDB = {}
 AltStableConfig = {}
 dofile("Compat.lua")
+dofile("Theme.lua")   -- the plugin colours headers with AltStable.GetClassRGB
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
 dofile("Plugins/Instances/AltStableInstances.lua")
@@ -125,6 +126,44 @@ do
     eq("one character needs no initial", solo[1], "Kaleid")
     local nosur = T.headerNames({ { name = "Kaleid" }, { name = "Kaleid" } }, 9)
     eq("two identical names stay identical - nothing distinguishes them", nosur[1], "Kaleid")
+
+    -- One initial is not always enough: two surnames starting with the same
+    -- letter would both read "Kaleid S".
+    local same = T.headerNames({ { name = "Kaleid Sumner" }, { name = "Kaleid Stone" } }, 9)
+    check("colliding initials extend until the labels differ", same[1] ~= same[2],
+          tostring(same[1]) .. " / " .. tostring(same[2]))
+    eq("  taking more of the surname", same[1], "Kaleid Su")
+
+    -- An accented surname: taking the first BYTE renders invalid UTF-8.
+    local acute = string.char(0xC3, 0x89)   -- E with an acute accent, 2 bytes
+    local accentedPair = T.headerNames({ { name = "Kaleid " .. acute .. "toile" },
+                                         { name = "Kaleid Thorne" } }, 9)
+    check("an accented initial is a whole character", accentedPair[1]:find(acute, 1, true) ~= nil,
+          accentedPair[1])
+    check("  and never a lone lead byte",
+          accentedPair[1]:byte(#accentedPair[1]) ~= 0xC3, accentedPair[1])
+end
+
+-- Whole characters, not bytes.
+eq("one character of an ASCII name", T.firstChars("Sumner", 1), "S")
+eq("two characters", T.firstChars("Sumner", 2), "Su")
+eq("a two-byte character counts as one", T.firstChars(string.char(0xC3, 0x89) .. "toile", 1),
+   string.char(0xC3, 0x89))
+eq("asking for more than there is returns it all", T.firstChars("Su", 5), "Su")
+
+-- The label is abbreviated to fit 58px, so hovering a header has to give the
+-- full name - that is what settles identity when two labels still look alike.
+do
+    WoW.tooltipLines = {}
+    local hdr = T.getHeader(1)
+    hdr.fullName, hdr.class, hdr.level = "Kaleid Sumner", "MAGE", 60
+    local onEnter = hdr:GetScript("OnEnter")
+    check("the header has a hover handler", type(onEnter) == "function")
+    if type(onEnter) == "function" then
+        onEnter(hdr)
+        eq("hovering shows the full name", WoW.tooltipLines[1], "Kaleid Sumner")
+        check("  and the level", WoW.tooltipLines[2] == "Level 60", tostring(WoW.tooltipLines[2]))
+    end
 end
 -- "Ceridwen" with an accented e (2 bytes): cutting at 9 bytes would split it.
 local accented = "Cerid" .. string.char(0xC3, 0xA9) .. "wen"
