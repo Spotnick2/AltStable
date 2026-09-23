@@ -407,5 +407,54 @@ else
     check("the panel state is exposed for testing", false)
 end
 
+------------------------------------------------------------
+-- Scrolling the grid
+------------------------------------------------------------
+
+-- Whole rows only, clamped, and the bar only appears when there is something
+-- below the fold. STRIDE is 42 and the first row sits at ROW_TOP.
+do
+    local bounds = plugin._wb.ScrollBounds
+    local visible, maxStart, start = bounds(3, 400, 0)
+    check("a short grid fits", maxStart == 0 and start == 0, tostring(maxStart))
+    local v2, max2 = bounds(40, 400, 0)
+    check("a long one does not", max2 > 0 and v2 == visible, tostring(max2))
+    local _, _, clampedHigh = bounds(40, 400, 999)
+    eq("scrolling past the end stops at the last window", clampedHigh, max2)
+    local _, _, clampedLow = bounds(40, 400, -5)
+    eq("  and cannot go above the first row", clampedLow, 0)
+    local _, _, kept = bounds(40, 400, 3)
+    eq("  a request in range is kept", kept, 3)
+    local vSmall = bounds(40, 0, 0)
+    check("an unmeasured panel still lays out rows", vSmall >= 1)
+
+    -- The bar follows the window, and only exists when something is off-screen.
+    local shown, value, range = nil, nil, nil
+    plugin._wb.scrollBar = {
+        Hide = function() shown = false end,
+        Show = function() shown = true end,
+        SetMinMaxValues = function(_, lo, hi) range = hi end,
+        SetValue = function(_, v) value = v end,
+    }
+    plugin._wb.UpdateScrollBar(0, 0)
+    eq("a grid that fits has no scrollbar", shown, false)
+    plugin._wb.UpdateScrollBar(6, 2)
+    eq("one that does not, does", shown, true)
+    eq("  its range is the last window", range, 6)
+    eq("  and it sits where the grid does", value, 2)
+    plugin._wb.scrollBar = nil
+
+    local sheet = io.open("Plugins/Warband/AltStableWarband.lua"):read("*a")
+    local layout = sheet:match("function AT_WB.Layout%(%)(.-)\nend")
+    check("the layout drives the scrollbar",
+          layout ~= nil and layout:find("UpdateScrollBar", 1, true) ~= nil)
+    -- An empty grid has nothing to scroll, and both empty paths return early.
+    check("the layout hides the bar when there are no rows",
+          layout ~= nil and layout:find("UpdateScrollBar(0, 0)", 1, true) ~= nil)
+    local refresh = sheet:match("function AT_WB.Refresh%(%)(.-)\nend")
+    check("a refresh with no inventory hides it too",
+          refresh ~= nil and refresh:find("UpdateScrollBar(0, 0)", 1, true) ~= nil)
+end
+
 print(("test_warband: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
