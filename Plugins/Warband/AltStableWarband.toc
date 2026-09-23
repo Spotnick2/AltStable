@@ -2,7 +2,7 @@
 ## Title: AltStable Warband
 ## Notes: Consolidated cross-alt bag + bank inventory for AltStable
 ## Author: Spotnick
-## Version: dev
+## Version: @project-version@
 ## Dependencies: AltStable
 ## LoadOnDemand: 1
 ## SavedVariables: AltStableWarbandDB

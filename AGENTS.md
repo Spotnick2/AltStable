@@ -111,8 +111,36 @@ pwsh Tools/deploy.ps1 -AddOnsPath "D:\...\Interface\AddOns"
 ```
 
 Copies the addon to `Interface\AddOns\AltStable` additively (`robocopy /E`), excluding `Tools/`,
-`tests/`, `docs/`, `.git`, `.claude`, `.vscode`. Then `/reload` in-game. Deploy is a file copy —
-low-stakes, no build.
+`tests/`, `docs/`, `.git`, `.claude`, `.vscode`, and `Plugins/`. Each folder under `Plugins/` is
+deployed as its own top-level addon folder named after its `.toc` (`AltStableWarband`,
+`AltStableInstances`) — WoW only discovers addons as top-level folders. Then `/reload` in-game.
+Deploy is a file copy — low-stakes, no build.
+
+`@project-version@` is substituted in every deployed `.toc`, in the **deployed copy only**. Never
+commit a literal version over that keyword: the packager needs it, and it has been overwritten by
+hand twice on sibling projects.
+
+## Releasing
+
+One CurseForge project publishes all three folders. CurseForge's own packager builds the release
+from the tag webhook, reading `.pkgmeta`; nothing here uploads, and no API key lives in this repo.
+
+```
+git tag v0.1.0-beta && git push origin v0.1.0-beta
+```
+
+The tag name sets the release type, so `-beta` publishes as a beta. `CHANGELOG.md` is the release
+notes (`manual-changelog`), and is itself ignored so it does not ship inside the addon.
+
+`.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on pull requests and on
+pushes to `main` — a push to a feature branch with no PR open runs nothing — and then asserts the
+built zip's shape: the three folders present, `Tools/`, `tests/` and
+`docs/` absent, and every `.toc` version substituted. `-d` is the real no-upload switch — merely
+omitting the API key still cuts a GitHub release. `tests/test_packaging.lua` checks the inputs that
+feed it (the TOCs, `.pkgmeta`, the deploy script) and runs in the normal suite.
+
+After a release, check the published files on CurseForge by hand: CI runs the BigWigs packager, and
+CurseForge runs its own, so the zip players get is not the zip CI inspected.
 
 ## Key architectural patterns
 

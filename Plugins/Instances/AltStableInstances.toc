@@ -2,7 +2,7 @@
 ## Title: AltStable Raids
 ## Notes: Cross-alt raid-lockout matrix for AltStable. Which characters are saved to which raids, and when each resets.
 ## Author: Spotnick
-## Version: dev
+## Version: @project-version@
 ## Dependencies: AltStable
 ## LoadOnDemand: 1
 
