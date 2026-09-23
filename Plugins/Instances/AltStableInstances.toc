@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: AltStable Raids
+## Notes: Cross-alt raid-lockout matrix for AltStable. Which characters are saved to which raids, and when each resets.
+## Author: Spotnick
+## Version: dev
+## Dependencies: AltStable
+## LoadOnDemand: 1
+
+AltStableInstances.lua
