@@ -39,6 +39,8 @@ local WoW = {
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
     now         = 1700000000,  -- the clock time() reads; tests pin their own values
     eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
+    tooltipLines = {},  -- lines the last GameTooltip render added
+    tooltipShown = false,
 }
 
 function WoW.reset()
@@ -51,6 +53,7 @@ function WoW.reset()
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
+    WoW.tooltipLines, WoW.tooltipShown = {}, false
     WoW.now = 1700000000
     WoW.pendingPrio = nil
 end
@@ -105,19 +108,50 @@ WoW.makeFrame = makeFrame
 
 function CreateFrame() return makeFrame() end
 
+-- Pending timers land in WoW.timers as { delay = <seconds>, fn = <callback> }, so
+-- a test can assert WHEN something was scheduled, not just that it ran. A
+-- NewTimer handle that is cancelled drops out of the queue, the way the client
+-- stops it firing - the old stub returned an inert handle and recorded nothing,
+-- so a scheduled-for-later callback was invisible to every test.
 C_Timer = {
-    After     = function(_, fn) table.insert(WoW.timers, fn) end,
-    NewTimer  = function(_, fn) return { Cancel = function() end } end,
+    After = function(delay, fn)
+        table.insert(WoW.timers, { delay = delay, fn = fn })
+    end,
+    NewTimer = function(delay, fn)
+        local entry = { delay = delay, fn = fn }
+        table.insert(WoW.timers, entry)
+        entry.Cancel = function()
+            for i, e in ipairs(WoW.timers) do
+                if e == entry then table.remove(WoW.timers, i); return end
+            end
+        end
+        return entry
+    end,
     NewTicker = function(_, fn) return { Cancel = function() end } end,
 }
 
 function WoW.flushTimers()
     local t = WoW.timers
     WoW.timers = {}
-    for _, fn in ipairs(t) do fn() end
+    for _, e in ipairs(t) do e.fn() end
 end
 
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut, m) end }
+
+-- GameTooltip, recording what an OnEnter would draw: WoW.tooltipLines. Without
+-- it every hover path in the addon is unreachable from a test - the code calls
+-- a global that simply is not there, so a tooltip that shows the wrong thing
+-- (or nothing) can only be caught in game.
+GameTooltip = makeFrame()
+GameTooltip.ClearLines = function() WoW.tooltipLines = {} end
+GameTooltip.AddLine = function(_, text) table.insert(WoW.tooltipLines, tostring(text)) end
+GameTooltip.AddDoubleLine = function(_, l, r)
+    table.insert(WoW.tooltipLines, tostring(l) .. "|" .. tostring(r))
+end
+GameTooltip.NumLines = function() return #WoW.tooltipLines end
+GameTooltip.Hide = function() WoW.tooltipShown = false end
+GameTooltip.Show = function() WoW.tooltipShown = true end
+GameTooltip.IsShown = function() return WoW.tooltipShown == true end
 
 ------------------------------------------------------------
 -- Enums, measured from the live client
@@ -395,6 +429,11 @@ function GetTime() return 0 end
 -- anything because every seeded expiry had become "the past". Tests pin their
 -- own WoW.now where a value matters.
 function time() return WoW.now end
+
+-- WoW exposes `date` as a global (Lua 5.1 only has os.date), and anything
+-- formatting a reset time calls it. Pinned to UTC so a test asserting a weekday
+-- does not depend on the machine's timezone.
+function date(fmt, t) return os.date("!" .. (fmt or "%c"), t or WoW.now) end
 
 -- The payload of every captured SendAddonMessage, in send order.
 function WoW.sentMessages()

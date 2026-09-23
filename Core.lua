@@ -1215,16 +1215,19 @@ local function ScanSavedInstances()
                        .. (numEncounters or 0) .. "|" .. (maxPlayers or 0) .. "|" .. (difficultyName or "")
 
             -- Per-boss kill state as a positional bitmask (bit e-1 set = encounter e
-            -- dead), so the Raids plugin can show a named Killed / Not-killed list.
+            -- dead). NOTHING READS IT YET: a named Killed / Not-killed list needs the
+            -- encounter ORDER to match a static boss list, and no raid lockout is
+            -- obtainable on the beta to check that (#17), so the Raids plugin shows
+            -- aggregate progress only. Captured now so the data exists the day it can
+            -- be verified.
             -- Stored as a SEPARATE si_boss_<name>@<diff> field, NOT appended to the
             -- si_ value: the "si_boss_" prefix still matches the existing "^si_"
             -- serialize / clear / orphan-drop rules, so it syncs, gets cleaned up on
             -- expiry, and old clients can't resurrect a stale mask — while
             -- parseLockout rejects it (the value has no pipes), so no protocol bump is
-            -- needed. Boss NAMES aren't synced; the plugin maps bit positions to a
-            -- static boss list, so the encounter ORDER must stay stable (verified in
-            -- game). Routed through newSet like every other field so the diff below
-            -- flags `changed` and the delta sync picks it up.
+            -- needed. Boss NAMES are not synced either way. Routed through newSet like
+            -- every other field so the diff below flags `changed` and the delta sync
+            -- picks it up.
             if type(GetSavedInstanceEncounterInfo) == "function"
                and numEncounters and numEncounters > 0 then
                 local mask = 0
@@ -1895,13 +1898,13 @@ AltStable.plugins = AltStable.plugins or {}
 ------------------------------------------------------------
 
 -- Each ported plugin adds its entry. Still to come:
---   Instances -> #11
 --   Recipes   -> #14 (deferred)
 --   Roster    -> #15 (deferred)
 -- Listing an addon that does not exist means a failed LoadAddOn at every
 -- login, which would bury the real errors this build exists to surface.
 AltStable.LOD_PLUGINS = {
     { key = "warband", addon = "AltStableWarband", label = "Warband" },
+    { key = "instances", addon = "AltStableInstances", label = "Raids" },
 }
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
