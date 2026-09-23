@@ -882,7 +882,7 @@ local function BuildPanel(mainFrame)
     -- half-built for the session - emptyFS nil, and the next data-less Refresh
     -- throwing on it. The bar is the expendable part, so it goes at the end.
     -- SetObeyStepOnDrag is measured on this build (Slider:SetObeyStepOnDrag in
-    -- forever-api-1.60.1.69913.md); SheetUI omits it because TBC 2.5.x lacked it.
+    -- the build-matched API dump); SheetUI omits it because TBC 2.5.x lacked it.
     local scrollBar = CreateFrame("Slider", nil, panel)
     AT_WB.scrollBar = scrollBar
     scrollBar:SetWidth(10)

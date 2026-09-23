@@ -143,7 +143,7 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- followed by a quit before that peer asks, must still be honoured next
 -- session - otherwise the newly eligible characters stay filtered indefinitely.
 -- So the generation and each peer's "answered in full at generation N" live in
--- AltStableConfig. (Which on 1.60.1.69913 persists nothing (#23) - but the
+-- AltStableConfig. (Which through 1.60.1.69977 persists nothing (#23) - but the
 -- logic is correct, and becomes durable the moment SavedVariables load.)
 --
 -- Limit, stated rather than solved: a peer is marked served when its full reply

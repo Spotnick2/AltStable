@@ -20,7 +20,7 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 -- The single write path for AltStableConfig
 --
 -- AltStableConfig is a SavedVariable, so the client writes it at logout and
--- there is normally nothing to save by hand. On 1.60.1.69913 it is written
+-- there is normally nothing to save by hand. On 1.60.1.69913 and .69977 it is written
 -- and never read back (#23) - and nothing else an addon can write survives a
 -- restart either: addon CVars and per-character SavedVariables were both
 -- measured dead across a real exit. Every earlier "it persists" result came
@@ -344,7 +344,7 @@ end
 AltStable.CheckSavedVariablesLoad = CheckSavedVariablesLoad
 
 -- PLAYER_LOGIN fires on /reload too, so it cannot tell the two apart;
--- PLAYER_ENTERING_WORLD can, and on 1.60.1.69913 carries
+-- PLAYER_ENTERING_WORLD can, and on 1.60.1.69913/.69977 carries
 -- (isInitialLogin, isReloadingUi) - checked against the API dump, not
 -- assumed. It also fires on every zone change with both false, which is
 -- ignored entirely.
@@ -370,7 +370,7 @@ end
 -- someone would have noticed.
 ------------------------------------------------------------
 
-local MEASURED_ON_BUILD = "69913"
+local MEASURED_ON_BUILD = "69977"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
 local function CheckClientBuild()
