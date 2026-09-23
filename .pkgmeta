@@ -1,0 +1,45 @@
+package-as: AltStable
+
+# No nolib zip: nothing here is an external, so a "no libraries" build would be
+# the same files minus Libs/ and could only confuse.
+enable-nolib-creation: no
+
+# The libraries are vendored in Libs/ rather than pulled as externals, so there
+# is no `externals:` block. Vendoring is deliberate: this is a Vanilla-content
+# client on the Retail codebase, and a library tag that moved under a release
+# would be one more variable in a port whose whole problem is "which build is
+# this true for".
+
+# One CurseForge project, three addon folders. WoW only discovers addons as
+# top-level folders under Interface/AddOns, so the plugins cannot ship nested
+# inside AltStable/ - the packager moves them out.
+#
+# Paths are relative to the packaged root, which is the `package-as` folder;
+# each destination becomes its own sibling folder in the zip. The now-empty
+# AltStable/Plugins directory is left behind and is harmless.
+move-folders:
+  AltStable/Plugins/Warband: AltStableWarband
+  AltStable/Plugins/Instances: AltStableInstances
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+# YAML list, not markdown bullets: a `*` here silently ignores nothing, which is
+# how development files end up in a published zip.
+#
+# CHANGELOG.md appears here AND in manual-changelog on purpose: the packager
+# reads it for the changelog, and this keeps the file itself out of the addon.
+# LICENSE deliberately stays in the package - MIT requires the notice to travel
+# with the distribution.
+ignore:
+  - .github
+  - .claude
+  - docs
+  - tests
+  - Tools
+  - AGENTS.md
+  - CLAUDE.md
+  - README.md
+  - CHANGELOG.md
+  - Media/Raids/README.md

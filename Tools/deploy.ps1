@@ -50,24 +50,9 @@ $excludeFiles = @("*.log", "*.zip", "*.md", "*.png", ".gitignore")
 $roboArgs = @($RepoRoot, $dest, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
               "/XD") + $excludeDirs + @("/XF") + $excludeFiles
 robocopy @roboArgs | Out-Null
+$deployedTocs = @((Join-Path $dest "AltStable.toc"))
 if ($LASTEXITCODE -ge 8) {
     throw "robocopy failed (code $LASTEXITCODE)"
-}
-
-# The packager substitutes @project-version@ at release time. Left as-is, the
-# raw token shows in the in-game AddOns list — and worse, editing the repo copy
-# to avoid that is how a literal version gets committed over the token, which
-# happened twice in Priestly and Apotheca. Substitute in the DEPLOYED copy only.
-$deployedToc = Join-Path $dest "AltStable.toc"
-if (Test-Path $deployedToc) {
-    $rev = $null
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        try { $rev = (git -C $RepoRoot rev-parse --short HEAD 2>$null) } catch { $rev = $null }
-    }
-    $label = if ($rev) { "dev-$rev" } else { "dev" }
-    (Get-Content $deployedToc -Raw).Replace('@project-version@', $label) |
-        Set-Content $deployedToc -NoNewline
-    Write-Host "  version -> $label (deployed copy only)" -ForegroundColor DarkGray
 }
 
 # Plugins: each folder under Plugins\ becomes its own top-level addon folder,
@@ -86,9 +71,29 @@ if (Test-Path $pluginRoot) {
                         "/NJS", "/NP", "/XF") + $excludeFiles
         robocopy @pluginArgs | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
+        $deployedTocs += (Join-Path $pluginDest $toc.Name)
         Write-Host "  plugin -> $name" -ForegroundColor DarkGray
     }
 }
+
+# The packager substitutes @project-version@ at release time. Left as-is, the
+# raw token shows in the in-game AddOns list — and worse, editing the repo copy
+# to avoid that is how a literal version gets committed over the token, which
+# happened twice in Priestly and Apotheca. Substitute in the DEPLOYED copies
+# only, and in EVERY deployed .toc: the plugins carry the keyword too, so
+# patching just the main one leaves them showing the raw token.
+$rev = $null
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    try { $rev = (git -C $RepoRoot rev-parse --short HEAD 2>$null) } catch { $rev = $null }
+}
+$label = if ($rev) { "dev-$rev" } else { "dev" }
+foreach ($toc in $deployedTocs) {
+    if (Test-Path $toc) {
+        (Get-Content $toc -Raw).Replace('@project-version@', $label) |
+            Set-Content $toc -NoNewline
+    }
+}
+Write-Host "  version -> $label (deployed copies only)" -ForegroundColor DarkGray
 
 Write-Host "Done -> $dest" -ForegroundColor Green
 Write-Host ""
