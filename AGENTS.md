@@ -132,8 +132,9 @@ git tag v0.1.0-beta && git push origin v0.1.0-beta
 The tag name sets the release type, so `-beta` publishes as a beta. `CHANGELOG.md` is the release
 notes (`manual-changelog`), and is itself ignored so it does not ship inside the addon.
 
-`.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on every push and pull
-request and then asserts the built zip's shape: the three folders present, `Tools/`, `tests/` and
+`.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on pull requests and on
+pushes to `main` — a push to a feature branch with no PR open runs nothing — and then asserts the
+built zip's shape: the three folders present, `Tools/`, `tests/` and
 `docs/` absent, and every `.toc` version substituted. `-d` is the real no-upload switch — merely
 omitting the API key still cuts a GitHub release. `tests/test_packaging.lua` checks the inputs that
 feed it (the TOCs, `.pkgmeta`, the deploy script) and runs in the normal suite.

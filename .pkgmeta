@@ -15,8 +15,9 @@ enable-nolib-creation: no
 # inside AltStable/ - the packager moves them out.
 #
 # Paths are relative to the packaged root, which is the `package-as` folder;
-# each destination becomes its own sibling folder in the zip. The now-empty
-# AltStable/Plugins directory is left behind and is harmless.
+# each destination becomes its own sibling folder in the zip. The packager
+# removes the emptied AltStable/Plugins directory afterwards, so nothing is left
+# behind - the CI package check asserts that.
 move-folders:
   AltStable/Plugins/Warband: AltStableWarband
   AltStable/Plugins/Instances: AltStableInstances

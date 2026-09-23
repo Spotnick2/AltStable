@@ -29,9 +29,17 @@ jobs:
 
       # WoW runs Lua 5.1, so the tests do too - not whatever newer Lua is first
       # on PATH. tests/run.ps1 is the Windows entry point for the same files.
+      #
+      # find, not globs: a glob only reaches one nesting level, so a library at
+      # Libs/Foo/Bar/Baz.lua would ship unchecked - and with nullglob off, a
+      # pattern matching nothing is passed through literally and fails the job
+      # for the wrong reason.
       - name: Syntax-check every shipped Lua file
         run: |
-          luac5.1 -p *.lua Plugins/*/*.lua Libs/*/*.lua tests/*.lua
+          count=$(find . -name '*.lua' -not -path './.git/*' | wc -l)
+          test "$count" -gt 0 || { echo "no Lua files found - the check would prove nothing"; exit 1; }
+          echo "checking $count files"
+          find . -name '*.lua' -not -path './.git/*' -print0 | xargs -0 luac5.1 -p
 
       - name: Unit tests
         run: |
@@ -83,10 +91,17 @@ jobs:
 
           # @project-version@ must have been substituted in every TOC, and no
           # literal version may have been committed over the keyword.
+          #
+          # The count is asserted first: a zero-iteration loop is not an error
+          # under `bash -e`, so a package whose TOC layout changed would sail
+          # through this having proved nothing.
+          tocs=$(grep -cE '\.toc$' files.txt || true)
+          test "$tocs" -eq 3 || { echo "expected 3 TOCs in the package, found $tocs"; fail=1; }
           for toc in $(grep -E '\.toc$' files.txt); do
             v=$(grep -i '^## Version:' "unpacked/$toc" | head -1)
             echo "$toc  ->  $v"
             case "$v" in
+              "")                    echo "  no Version line at all"; fail=1 ;;
               *"@project-version@"*) echo "  keyword not substituted"; fail=1 ;;
               *dev*)                 echo "  a dev version was committed over the keyword"; fail=1 ;;
             esac

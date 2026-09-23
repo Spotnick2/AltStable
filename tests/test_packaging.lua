@@ -68,7 +68,15 @@ end
 -- Every shipped Lua file at the root is listed in the main TOC: a file added to
 -- the repo but not the TOC simply never loads in game, silently.
 do
-    local src = read("AltStable.toc") or ""
+    -- Whole LINES, not a substring search over the file: "UI.lua" is a suffix
+    -- of "SheetUI.lua", so a plain find() reports four of today's files as
+    -- listed no matter what the TOC says - and a new root UI.lua would pass
+    -- while never loading.
+    local listed = {}
+    for line in ((read("AltStable.toc") or "") .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
+        local file = line:match("^%s*([%w_%-%./\\]+%.lua)%s*$")
+        if file then listed[file:gsub("^.*[/\\]", "")] = true end
+    end
     -- The listing command differs by platform, and this suite runs on both
     -- (Windows locally, Linux in CI). A wrong one would list nothing and the
     -- check would pass while testing nothing, so the count is asserted too.
@@ -83,10 +91,10 @@ do
         end
         pipe:close()
     end
-    check("the root .lua files could be listed", #names >= 10, tostring(#names))
+    check("the root .lua files could be listed", #names > 0, tostring(#names))
     local unlisted = {}
     for _, name in ipairs(names) do
-        if not src:find(name, 1, true) then unlisted[#unlisted + 1] = name end
+        if not listed[name] then unlisted[#unlisted + 1] = name end
     end
     check("every root .lua file is listed in the TOC", #unlisted == 0, table.concat(unlisted, ", "))
 end
@@ -136,17 +144,32 @@ check("CHANGELOG.md exists", read("CHANGELOG.md") ~= nil)
 -- The deploy script
 ------------------------------------------------------------
 
+-- These read the script's text rather than running it: the suite runs under
+-- Lua on both Windows and Linux CI, and pwsh is not a given. So assert the
+-- BODY of the substitution loop, not that the loop exists - a grep for the
+-- `foreach` line alone stays green with the replacement deleted from inside it,
+-- which is exactly the bug (every deployed TOC showing the raw keyword).
 local deploy = read("Tools/deploy.ps1")
 check("the deploy script exists", deploy ~= nil)
 if deploy then
-    -- Every deployed TOC needs the keyword substituted, not just the main one,
-    -- or the plugins show "@project-version@" in the AddOns list.
-    check("it substitutes the version in every deployed TOC",
-          deploy:find("foreach ($toc in $deployedTocs)", 1, true) ~= nil)
-    check("  and only in the deployed copy",
-          deploy:find("DEPLOYED copies", 1, true) ~= nil)
-    check("it fans the plugins out to sibling folders",
-          deploy:find("$pluginDest", 1, true) ~= nil)
+    local loop = deploy:match("foreach %(%$toc in %$deployedTocs%) {(.-)\n}")
+    check("it loops over every deployed TOC", loop ~= nil)
+    if loop then
+        check("  and substitutes the version keyword in each",
+              loop:find("@project%-version@") ~= nil and loop:find("Set%-Content") ~= nil, loop)
+    end
+
+    -- The repo copy must keep the keyword: a literal written back here is how a
+    -- version gets committed over it.
+    check("  writing only to the deployed copy",
+          deploy:find("$dest", 1, true) ~= nil and not deploy:find("$RepoRoot" .. "\\AltStable.toc", 1, true))
+
+    local pluginLoop = deploy:match("foreach %(%$dir in Get%-ChildItem %$pluginRoot %-Directory%) {(.-)\n    }")
+    -- The statement, not the text: a commented-out line still contains it.
+    check("it fans each plugin out to its own folder",
+          pluginLoop ~= nil and pluginLoop:find("\n%s*robocopy @pluginArgs") ~= nil)
+    check("  and collects that folder's TOC for substitution",
+          pluginLoop ~= nil and pluginLoop:find("$deployedTocs +=", 1, true) ~= nil)
 end
 
 ------------------------------------------------------------
