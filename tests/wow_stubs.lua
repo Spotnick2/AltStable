@@ -105,16 +105,32 @@ WoW.makeFrame = makeFrame
 
 function CreateFrame() return makeFrame() end
 
+-- Pending timers land in WoW.timers as { delay = <seconds>, fn = <callback> }, so
+-- a test can assert WHEN something was scheduled, not just that it ran. A
+-- NewTimer handle that is cancelled drops out of the queue, the way the client
+-- stops it firing - the old stub returned an inert handle and recorded nothing,
+-- so a scheduled-for-later callback was invisible to every test.
 C_Timer = {
-    After     = function(_, fn) table.insert(WoW.timers, fn) end,
-    NewTimer  = function(_, fn) return { Cancel = function() end } end,
+    After = function(delay, fn)
+        table.insert(WoW.timers, { delay = delay, fn = fn })
+    end,
+    NewTimer = function(delay, fn)
+        local entry = { delay = delay, fn = fn }
+        table.insert(WoW.timers, entry)
+        entry.Cancel = function()
+            for i, e in ipairs(WoW.timers) do
+                if e == entry then table.remove(WoW.timers, i); return end
+            end
+        end
+        return entry
+    end,
     NewTicker = function(_, fn) return { Cancel = function() end } end,
 }
 
 function WoW.flushTimers()
     local t = WoW.timers
     WoW.timers = {}
-    for _, fn in ipairs(t) do fn() end
+    for _, e in ipairs(t) do e.fn() end
 end
 
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut, m) end }

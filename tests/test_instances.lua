@@ -77,7 +77,7 @@ eq("an unknown raid matches nothing", T.matchRaid("karazhan"), nil)
 -- Parsing what the core stored
 ------------------------------------------------------------
 
-local lk = T.parseLockout("si_Molten Core@1", "1700000000|7|10|40|Normal")
+local lk = T.parseLockout("si_Molten Core@1", "1700086400|7|10|40|Normal")
 check("a lockout parses", lk ~= nil)
 eq("  name", lk and lk.name, "Molten Core")
 eq("  progress", lk and lk.prog, 7)
@@ -112,6 +112,20 @@ eq("the first name is what fits a 58px column", T.shortName("Kaleid Sumner", 9),
 eq("a long first name is cut", T.shortName("Bartholomew Smith", 9), "Bartholom")
 eq("a short one is left alone", T.shortName("Ash Grey", 9), "Ash")
 eq("a missing name is not an error", T.shortName(nil, 9), "?")
+
+-- First names are not unique here, so two "Kaleid" columns would be useless:
+-- the surname initial is added only where the shown names would collide.
+do
+    local names = T.headerNames({ { name = "Kaleid Sumner" }, { name = "Kaleid Thorne" },
+                                  { name = "Ash Grey" } }, 9)
+    eq("a collision gets the surname initial", names[1], "Kaleid S")
+    eq("  for both of them", names[2], "Kaleid T")
+    eq("a name that does not collide is left alone", names[3], "Ash")
+    local solo = T.headerNames({ { name = "Kaleid Sumner" } }, 9)
+    eq("one character needs no initial", solo[1], "Kaleid")
+    local nosur = T.headerNames({ { name = "Kaleid" }, { name = "Kaleid" } }, 9)
+    eq("two identical names stay identical - nothing distinguishes them", nosur[1], "Kaleid")
+end
 -- "Ceridwen" with an accented e (2 bytes): cutting at 9 bytes would split it.
 local accented = "Cerid" .. string.char(0xC3, 0xA9) .. "wen"
 local cut = T.shortName(accented, 6)
@@ -125,13 +139,13 @@ check("a multibyte character is never cut in half", cut == "Cerid" or cut == "Ce
 WoW.reset()
 AltStableDB = {
     ["Player-A-1"] = { guid = "Player-A-1", name = "Raider", class = "WARRIOR", level = 60, ilvl = 66,
-                       ["si_Molten Core@1"] = "1700000000|7|10|40|Normal",
+                       ["si_Molten Core@1"] = "1700086400|7|10|40|Normal",
                        ["si_boss_Molten Core@1"] = "127",
-                       ["si_Onyxia's Lair@1"] = "1700000000|1|1|40|Normal" },
+                       ["si_Onyxia's Lair@1"] = "1700086400|1|1|40|Normal" },
     ["Player-B-1"] = { guid = "Player-B-1", name = "Alt", class = "MAGE", level = 60, ilvl = 60 },
     ["Player-C-1"] = { guid = "Player-C-1", name = "Leveller", class = "ROGUE", level = 22, ilvl = 20 },
     ["Player-D-1"] = { guid = "Player-D-1", name = "Saved Low", class = "PRIEST", level = 30, ilvl = 25,
-                       ["si_Zul'Gurub@1"] = "1700000000|2|8|20|Normal" },
+                       ["si_Zul'Gurub@1"] = "1700086400|2|8|20|Normal" },
 }
 local allChars, lookup = T.gather()
 eq("every character is a candidate column", #allChars, 4)
@@ -159,13 +173,41 @@ end
 -- has one row per raid.
 do
     AltStableDB["Player-Two-1"] = { guid = "Player-Two-1", name = "Twice", class = "MAGE", level = 60,
-                                    ["si_Naxxramas@1"] = "1700000000|3|15|40|Normal",
-                                    ["si_Naxxramas@2"] = "1700009999|1|15|40|Heroic" }
+                                    ["si_Naxxramas@1"] = "1700086400|3|15|40|Normal",
+                                    ["si_Naxxramas@2"] = "1700172800|1|15|40|Heroic" }
     local _, lk2 = T.gather()
     local kept = lk2["Player-Two-1"]["naxxramas"]
-    eq("two difficulties collapse to the later reset", kept.expires, 1700009999)
+    eq("two difficulties collapse to the later reset", kept.expires, 1700172800)
     eq("  deterministically, not whichever pairs() saw last", kept.prog, 1)
     AltStableDB["Player-Two-1"] = nil
+end
+
+-- An expired lockout is not a lockout: left in the model it would keep a
+-- low-level character in the columns, and an unknown raid in the Other rows,
+-- showing nothing but dashes.
+do
+    AltStableDB["Player-Old-1"] = { guid = "Player-Old-1", name = "Lapsed", class = "MAGE", level = 30,
+                                    ["si_Molten Core@1"] = (WoW.now - 60) .. "|7|10|40|Normal" }
+    local chars3, lk4 = T.gather()
+    eq("an expired lockout is dropped", lk4["Player-Old-1"], nil)
+    local cols3 = T.columnsForView(chars3, lk4)
+    local kept3 = false
+    for _, c in ipairs(cols3) do if c.guid == "Player-Old-1" then kept3 = true end end
+    check("  and stops holding a column open", not kept3)
+    AltStableDB["Player-Old-1"] = nil
+end
+
+-- An open tab drops a save when it expires, without waiting for a scan.
+do
+    WoW.timers = {}
+    T.ScheduleExpiryRefresh({ a = { mc = { expires = WoW.now + 600 } },
+                              b = { zg = { expires = WoW.now + 120 } } })
+    eq("a refresh is scheduled", #WoW.timers, 1)
+    check("  at the soonest expiry", WoW.timers[1].delay >= 120 and WoW.timers[1].delay <= 122,
+          tostring(WoW.timers[1].delay))
+    WoW.timers = {}
+    T.ScheduleExpiryRefresh({})
+    eq("nothing to expire, nothing scheduled", #WoW.timers, 0)
 end
 
 -- The footer counts tracked characters, not visible columns (UI code, so this
@@ -173,6 +215,13 @@ end
 do
     local src = io.open("Plugins/Instances/AltStableInstances.lua"):read("*a")
     local stats = src:match("statsFS:SetText%((.-)%)%s*" .. "statsBar:Show")
+    -- The call site, not the definition: "ScheduleExpiryRefresh(lookup)" also
+    -- matches "local function ScheduleExpiryRefresh(lookup)".
+    local refreshBody = src:match("function AT_SI.Refresh%(%)(.-)\nend")
+    check("a refresh schedules the next expiry",
+          refreshBody ~= nil and refreshBody:find("ScheduleExpiryRefresh(lookup)", 1, true) ~= nil)
+    check("the footer frame gets the backdrop template its theming needs",
+          src:find('statsBar = CreateFrame("Frame", nil, panel, "BackdropTemplate")', 1, true) ~= nil)
     check("the footer reports #allChars as tracked",
           stats ~= nil and stats:find("#allChars", 1, true) ~= nil, tostring(stats))
 end
@@ -209,7 +258,7 @@ end
 
 -- A lockout the catalogue doesn't know still shows, under "Other".
 AltStableDB["Player-E-1"] = { guid = "Player-E-1", name = "Explorer", class = "DRUID", level = 60,
-                              ["si_Some New Raid@1"] = "1700000000|1|5|20|Normal" }
+                              ["si_Some New Raid@1"] = "1700086400|1|5|20|Normal" }
 local _, lookup2 = T.gather()
 local rows2 = T.buildDisplayRows(lookup2)
 local other, otherRow = false, nil
@@ -225,7 +274,7 @@ eq("  and its own row", otherRow, "Some New Raid")
 do
     AltStableDB = { ["Player-F-1"] = { guid = "Player-F-1", name = "Finder", class = "MAGE", level = 60 } }
     for i = 1, 14 do
-        AltStableDB["Player-F-1"]["si_Zone " .. string.char(90 - i) .. "@1"] = "1700000000|1|5|20|Normal"
+        AltStableDB["Player-F-1"]["si_Zone " .. string.char(90 - i) .. "@1"] = "1700086400|1|5|20|Normal"
     end
     local _, lk3 = T.gather()
     local rows3 = T.buildDisplayRows(lk3)

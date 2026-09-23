@@ -143,20 +143,43 @@ end
 ------------------------------------------------------------
 
 -- Column headers are 58px. Names here are "First Surname" (Forever gives every
--- character a surname), so show the first name - cutting at a byte count would
--- both hide the part that distinguishes two alts and, on an accented name, slice
--- a UTF-8 character in half. Truncation, when still needed, stops on a character
--- boundary: a continuation byte is 10xxxxxx (0x80..0xBF).
-local function shortName(name, maxBytes)
-    local first = (name or "?"):match("^(%S+)") or "?"
-    if #first <= maxBytes then return first end
+-- character one), so the header shows the first name - cutting the full name at
+-- a byte count would hide the part that distinguishes two alts, and on an
+-- accented name could slice a UTF-8 character in half. Truncation, when still
+-- needed, stops on a character boundary: a continuation byte is 10xxxxxx.
+local function truncate(s, maxBytes)
+    if #s <= maxBytes then return s end
     local cut = maxBytes
     while cut > 1 do
-        local b = first:byte(cut + 1)
+        local b = s:byte(cut + 1)
         if not b or b < 0x80 or b > 0xBF then break end
         cut = cut - 1
     end
-    return first:sub(1, cut)
+    return s:sub(1, cut)
+end
+
+local function shortName(name, maxBytes)
+    return truncate((name or "?"):match("^(%S+)") or "?", maxBytes)
+end
+
+-- First names are NOT unique on Forever, so a column of "Kaleid" over another
+-- "Kaleid" is useless. Where the shown names would collide, add the surname's
+-- first character: "Kaleid S" / "Kaleid T". Names with no surname, or colliding
+-- surname initials too, fall back to the first name - two characters called
+-- exactly the same thing are indistinguishable by any label this narrow.
+local function headerNames(chars, maxBytes)
+    local counts, out = {}, {}
+    for i, ch in ipairs(chars) do
+        out[i] = shortName(ch.name, maxBytes)
+        counts[out[i]] = (counts[out[i]] or 0) + 1
+    end
+    for i, ch in ipairs(chars) do
+        if counts[out[i]] > 1 then
+            local surname = (ch.name or ""):match("^%S+%s+(%S)")
+            if surname then out[i] = truncate(out[i], maxBytes - 2) .. " " .. surname end
+        end
+    end
+    return out
 end
 
 -- "in 2d 4h" style, from a seconds-remaining value.
@@ -224,7 +247,12 @@ end
 -- difficulties needs a rule, or `pairs` order decides which one renders and the
 -- answer changes between refreshes. Rule: the one that expires latest, then the
 -- one with more progress, then the lower difficulty id.
+-- Expired lockouts are dropped here rather than at render time: they would
+-- otherwise keep a low-level character in the columns and an unrecognised raid
+-- in the Other rows, both showing nothing but dashes. Refresh schedules itself
+-- for the next expiry so an open tab lets them go without needing a scan.
 local function gather()
+    local now = time()
     local allChars, lookup = {}, {}
     AltStableDB = AltStableDB or {}
     for guid, c in pairs(AltStableDB) do
@@ -237,7 +265,7 @@ local function gather()
                     if k:find("^si_boss_") then   -- skip
                     elseif type(v) == "string" and k:find("^si_") then
                         local lk = parseLockout(k, v)
-                        if lk then
+                        if lk and lk.expires > now then
                             mine = mine or {}
                             lk.canon = matchRaid(lk.name:lower())
                             local key = lk.canon and lk.canon.apiName:lower() or lk.name:lower()
@@ -529,10 +557,30 @@ local function hideBand(b)
     if b then b.row:Hide(); b.art:Hide(); b.shade:Hide() end
 end
 
+-- Wake up when the soonest displayed lockout expires, so a tab left open drops
+-- it instead of showing a stale save until the next scan or sync.
+local function ScheduleExpiryRefresh(lookup)
+    if AT_SI._expiryTimer then AT_SI._expiryTimer:Cancel(); AT_SI._expiryTimer = nil end
+    local soonest
+    for _, mine in pairs(lookup or {}) do
+        for _, lk in pairs(mine) do
+            if not soonest or lk.expires < soonest then soonest = lk.expires end
+        end
+    end
+    if not soonest or not C_Timer or not C_Timer.NewTimer then return end
+    local delay = soonest - time() + 1
+    if delay < 1 then delay = 1 end
+    AT_SI._expiryTimer = C_Timer.NewTimer(delay, function()
+        AT_SI._expiryTimer = nil
+        if AT_SI.isActive then AT_SI.Refresh() end
+    end)
+end
+
 function AT_SI.Refresh()
     if not panel or not panel:IsShown() then return end
 
     local allChars, lookup = gather()
+    ScheduleExpiryRefresh(lookup)
     local now = time()
     local chars = columnsForView(allChars, lookup)
 
@@ -592,12 +640,13 @@ function AT_SI.Refresh()
     headerSep:Show()
 
     -- Character headers (class-coloured) — on colChild, so they scroll.
+    local headerText = headerNames(chars, 9)
     for i = 1, nCols do
         local ch = chars[i]
         local fs = getHeader(i)
         fs:ClearAllPoints()
         fs:SetPoint("TOPLEFT", colChild, "TOPLEFT", (i - 1) * COL_W, -5)
-        fs:SetText(shortName(ch.name, 9))
+        fs:SetText(headerText[i] or shortName(ch.name, 9))
         fs:SetTextColor(AltStable.GetClassRGB(ch.class))
         fs:Show()
     end
@@ -889,7 +938,9 @@ local function BuildPanel(mainFrame)
 
     resetHdr:Hide()
 
-    statsBar = CreateFrame("Frame", nil, panel)
+    -- BackdropTemplate: ApplyBGOnly colours this through SetBackdrop, which a
+    -- plain Frame does not have - the background would silently never appear.
+    statsBar = CreateFrame("Frame", nil, panel, "BackdropTemplate")
     statsBar:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
     statsBar:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
     statsBar:SetHeight(STATS_H)
@@ -972,6 +1023,7 @@ function AT_SI._Bootstrap()
             parseLockout = parseLockout, gather = gather, shortName = shortName,
             fmtDur = fmtDur, resetLabel = resetLabel, resetColor = resetColor,
             findLockout = findLockout, PreferLockout = PreferLockout,
+            headerNames = headerNames, ScheduleExpiryRefresh = ScheduleExpiryRefresh,
             matchRaid = matchRaid, columnsForView = columnsForView,
             buildDisplayRows = buildDisplayRows, toggleCollapse = toggleCollapse,
             isCollapsed = isCollapsed, RAIDS = RAIDS,
