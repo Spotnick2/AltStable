@@ -162,6 +162,10 @@ local collapsed   = {}
 local totalChars = 0
 local totalLevel = 0
 local totalGold  = 0
+-- Characters whose money is UNREADABLE (secret, see Compat.lua). File scope,
+-- like the totals above: BuildDisplayList counts them and UpdateTotalsBar reads
+-- the count, and a local in the first would read as a nil global in the second.
+local goldUnknown = 0
 
 local FROZEN_WIDTH
 local NAME_COL_WIDTH
@@ -1060,16 +1064,21 @@ end
 
 local function BuildDisplayList()
     wipe(displayList)
-    totalChars=0; totalLevel=0; totalGold=0
+    totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0
     local store = GetCharacterStore()
 
     -- Totals reflect EVERY character in the DB, not just the filtered view.
     -- Bank alts below 58 still hold gold, and users expect the total gold
     -- number to match other addons (ElvUI, etc.) that account for them.
+    -- A character whose money is UNREADABLE (secret, see Compat.lua) has no
+    -- money field at all. Counting it as zero would present the sum as the
+    -- whole account's gold while silently leaving one character out, so the
+    -- footer says how many are missing instead.
     for _, char in next, store do
         if type(char)=="table" and char.name then
             totalLevel = totalLevel + (char.level or 0)
-            totalGold  = totalGold  + (char.money or 0)
+            if char.money == nil then goldUnknown = goldUnknown + 1
+            else totalGold = totalGold + char.money end
             totalChars = totalChars + 1
         end
     end
@@ -1109,7 +1118,7 @@ local function BuildDisplayList()
     for _, realm in ipairs(realmOrder) do
         local chars=realmChars[realm]; local sumLvl=0; local sumGold=0
         for _, c in ipairs(chars) do
-            sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)
+            sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)   -- nil = unreadable; the footer counts those
         end
         table.insert(displayList,{kind="group",realm=realm,count=#chars,
             sumLevel=sumLvl,sumGold=sumGold,collapsed=collapsed[realm]})
@@ -1231,8 +1240,10 @@ local function UpdateTotalsBar()
         accentHex .. totalChars .. "|r |cffaaaaaa chars  " ..
         accentHex .. totalLevel .. "|r |cffaaaaaa total levels|r")
     if totalsBar.mid then totalsBar.mid:SetText(avgIlvlStr) end
+    local goldNote = (goldUnknown > 0)
+        and ("  |cffff8800(" .. goldUnknown .. " unknown)|r") or ""
     totalsBar.right:SetText(
-        "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r")
+        "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r" .. goldNote)
 end
 
 ------------------------------------------------------------
@@ -3145,6 +3156,18 @@ end
 
 function AltStable.RefreshSheet()
     if frame and frame:IsShown() then Refresh() end
+end
+
+-- Test seam (the AltStable._test convention). The sheet loads and builds under
+-- tests/wow_stubs.lua, so the footer can be ASSERTED rather than grepped: a
+-- count declared in one function and read in another compiled as a nil global
+-- and errored on every build, and a source-text check could not see it.
+AltStable._test = AltStable._test or {}
+AltStable._test.FooterText = function()
+    if not totalsBar then return nil end
+    return (totalsBar.left and totalsBar.left:GetText() or "")
+        .. " || " .. (totalsBar.mid and totalsBar.mid:GetText() or "")
+        .. " || " .. (totalsBar.right and totalsBar.right:GetText() or "")
 end
 
 function AltStable.EnsureSheetVisible()

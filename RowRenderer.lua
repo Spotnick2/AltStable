@@ -37,12 +37,15 @@ local function ComputeLiveRestedPercent(char)
     -- the character burns it at 2x XP.  The live API is the source of
     -- truth for the player character.
     if UnitGUID("player") == char.guid then
-        local liveRest = GetXPExhaustion() or 0
-        local liveMax  = UnitXPMax("player") or 1
-        if liveMax > 0 then
+        -- Through the adapter: a secret here would throw on the divide and take
+        -- out the row being drawn, not just one number.
+        local liveRest = AltStable.API.PlainNumber(GetXPExhaustion())
+        local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player"))
+        if liveRest and liveMax and liveMax > 0 then
             return math.floor((liveRest / liveMax) * 100 + 0.5), 0
         end
-        return 0, 0
+        -- Unreadable live values: fall through to the stored snapshot rather
+        -- than reporting 0% rested, which reads as fact.
     end
 
     -- Offline / other-character path: extrapolate from last snapshot.

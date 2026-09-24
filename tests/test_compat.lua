@@ -251,6 +251,66 @@ end
 check("MAX_PLAYER_LEVEL is nil; GetMaxPlayerLevel() is the source", _G.MAX_PLAYER_LEVEL == nil)
 
 ------------------------------------------------------------
+-- Secret values
+--
+-- Measured in game: on a PvP realm UnitStat, UnitArmor and UnitAttackPower all
+-- returned secret numbers, and the arithmetic on them aborted the character
+-- scan mid-way. A secret is storable but not inspectable.
+------------------------------------------------------------
+
+local secret = WoW.secret(42)
+check("a plain number is not secret", API.IsSecretValue(7) == false)
+check("nil is not secret", API.IsSecretValue(nil) == false)
+check("a secret number is", API.IsSecretValue(secret) == true)
+
+eq("a plain number passes through", API.PlainNumber(7), 7)
+eq("a numeric string is converted", API.PlainNumber("7"), 7)
+eq("nil stays nil", API.PlainNumber(nil), nil)
+eq("a secret becomes nil, not 0 - unknown is not zero", API.PlainNumber(secret), nil)
+
+eq("a sum of plain numbers", API.PlainSum(1, 2, 3), 6)
+-- Nothing to add is unknown, not zero: some APIs here return NO values on a
+-- miss, and a confident 0 for that is the lie this whole adapter avoids.
+eq("  nothing to add is unknown, not zero", API.PlainSum(), nil)
+eq("one secret component makes the whole sum unknown", API.PlainSum(1, secret, 3), nil)
+eq("  in any position", API.PlainSum(secret), nil)
+
+-- The fallback matters: not every build need have the predicate, and the real
+-- question is "can I do arithmetic on this".
+do
+    local realPredicate = issecretvalue
+    issecretvalue = nil
+    dofile("Compat.lua")
+    local API2 = AltStable.API
+    -- NOT covered, and it cannot be from here: the fallback probes numbers
+    -- with arithmetic rather than trusting type(), because what type() reports
+    -- for a real secret number is unmeasured. The stub's secret is a coroutine
+    -- (Lua 5.1 cannot make userdata), so a mutation that trusts type() passes
+    -- this suite either way. Measure it in game:
+    --   /run local _, s = UnitStat("player", 1) print(type(s), issecretvalue(s))
+    check("without the predicate, a secret is still caught", API2.IsSecretValue(secret) == true)
+    eq("  and still becomes nil", API2.PlainNumber(secret), nil)
+    eq("  while plain numbers are unaffected", API2.PlainNumber(5), 5)
+
+    -- The probe is arithmetic, and "Thrall" + 0 throws. A fallback that called
+    -- that secret dropped every name, class and realm from the sync - guid
+    -- included, so the record arrived unparseable and sync became a silent
+    -- no-op. Strings and booleans are never secret.
+    check("a plain string is not secret", API2.IsSecretValue("Thrall") == false)
+    check("  nor an empty one", API2.IsSecretValue("") == false)
+    check("  nor a boolean", API2.IsSecretValue(false) == false)
+    check("  nor a numeric string", API2.IsSecretValue("42") == false)
+
+    issecretvalue = realPredicate
+    dofile("Compat.lua")
+end
+
+-- With the predicate present, the same must hold: SerializeChar asks about
+-- every field, not just the numeric ones.
+check("a string is not secret with the predicate either", API.IsSecretValue("Thrall") == false)
+check("  and neither is a table", API.IsSecretValue({}) == false)
+
+------------------------------------------------------------
 -- Full tuple shape, not just the early positions
 --
 -- A wrapper that truncates trailing returns passes an early-positions-only

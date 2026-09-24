@@ -323,6 +323,94 @@ type(TooltipDataProcessor)     -> "table"
 arrived NO, per-character NO, launches recorded before this one 0 — after previous sessions had
 written the file. So the blocker survives this build; nothing an addon writes is read back.
 
+## Secret values — some unit numbers cannot be read, only passed along
+
+Hit live on 1.60.1.69977, on a **PvP realm**, mid-scan:
+
+```
+AltStable/Scanner.lua:596: attempt to perform arithmetic on a secret number value
+                           (execution tainted by 'AltStable')
+```
+
+This client carries Retail's **secret values**. A secret is a value an addon may receive, hold and
+hand back to the client, but must not inspect: arithmetic, comparison, `tostring` and concatenation
+all throw. The error is not a nil-check failure and no `or 0` guard helps — the value is there, it
+just cannot be touched.
+
+Measured: `UnitStat`, `UnitArmor`, `UnitAttackPower`, `UnitHealthMax` and `GetMoney` all returned
+secrets for the **player's own character** on that realm, while `UnitXPMax`, `UnitXP`,
+`GetXPExhaustion`, `UnitLevel` and `UnitDefenseSkill` returned plain numbers in the same scan. So it
+is per-API (and evidently per-realm-type), not a blanket switch: assume any unit number can be
+secret and check the ones you do maths on.
+
+The client's own predicate:
+
+```lua
+issecretvalue(v)        -- true for a secret value          [FrameScript]
+issecrettable(t)        -- true if a table holds any
+hasanysecretvalues(...)
+scrubsecretvalues(...)  -- strips them out of a value list
+canaccesssecrets()
+```
+`C_Secrets.*` holds the policy queries (`ShouldAurasBeSecret`, `ShouldUnitHealthMaxBeSecret`, …) —
+useful for asking *whether* a category is secret, but `issecretvalue` is the value test.
+
+What this costs an addon that stores and syncs numbers:
+
+- **Arithmetic aborts the whole function.** The scan above died half-way, leaving the character
+  record without professions, reputations or lockouts. One unguarded sum takes everything after it.
+- **A stored secret is worse than a missing one.** It survives in the table (the error log shows
+  `stat_str=<secret number>`), and then every later reader — a sort, a total, a `tostring` on the
+  sync wire — throws in turn, far from the cause.
+- **`nil`, not `0`.** A secret stat is *unknown*. Writing 0 renders as a real zero and, in AltStable,
+  syncs that lie to every other account.
+
+The shape that works: one adapter, and every unit read goes through it.
+
+```lua
+function API.IsSecretValue(v)
+    if type(issecretvalue) == "function" then
+        local ok, secret = pcall(issecretvalue, v)
+        if ok then return secret and true or false end
+    end
+    -- Fallback for a build without the predicate. Strings and booleans FIRST:
+    -- "Thrall" + 0 throws, and calling that secret drops every name and id from
+    -- anything that filters on it. Numbers are probed rather than trusted,
+    -- because what type() reports for a secret number is unmeasured.
+    local t = type(v)
+    if t == "string" or t == "boolean" then return false end
+    local ok = pcall(function() return v + 0 end)
+    return not ok
+end
+
+function API.PlainNumber(v)   -- a number you can store, compare and serialize, or nil
+    if v == nil or API.IsSecretValue(v) then return nil end
+    local ok, n = pcall(tonumber, v)
+    return ok and n or nil
+end
+```
+
+The two mistakes in that fallback are both ones this project actually made. The
+string case dropped `guid`, `name` and `class` from every synced record on a
+build without the predicate, which turned sync into a silent no-op; and trusting
+`type(v) == "number"` would report the one case the fallback exists for as safe.
+
+A third, further out: **a value that becomes unreadable has to propagate.** A
+field stored as nil is simply absent from the wire, so a peer merging "only the
+keys present" keeps the last number it saw and goes on displaying it as current.
+Clear the fields an accepted snapshot owns before applying it.
+
+Two details that are easy to miss:
+
+- **Comparisons throw too.** A "largest of" loop (`if sp > best`) is as fatal as a sum, and it hides
+  behind a short-circuit on the first iteration.
+- **A sum of parts is all-or-nothing.** `UnitAttackPower` returns base, positive and negative; if one
+  is secret, the total is unknown, not smaller.
+
+And for tests: a stub secret must NOT be a table, or any `type(v) == "table"` filter skips it and the
+guard that matters never runs. Lua 5.1 cannot create userdata from script; a coroutine is a workable
+stand-in, since arithmetic and comparison on one throw by themselves.
+
 ## Reputation — also a struct, and ByID reaches beyond the visible list
 
 ```

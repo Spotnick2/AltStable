@@ -1225,6 +1225,99 @@ AltStable.PendingAuditItems = nil
 ------------------------------------------------------------
 
 ------------------------------------------------------------
+-- A secret value never reaches the wire
+------------------------------------------------------------
+-- tostring on one throws, so a single secret field would take the whole sync
+-- with it. The scanner keeps them out of the database; this is the boundary
+-- refusing one that arrived some other way.
+WoW.reset()
+local secretRec = { guid = "Player-Secret-1", name = "Secretive", class = "WARLOCK",
+                    level = 7, lastUpdate = 1, stat_str = WoW.secret(10), stat_hp = 163 }
+local okSer, secretWire = pcall(T.SerializeChar, secretRec)
+check(okSer, "serializing a record holding a secret does not throw: " .. tostring(secretWire))
+if okSer then
+    check(not secretWire:find("stat_str"), "  the secret field is left out")
+    check(secretWire:find("stat_hp:163", 1, true) ~= nil, "  and the plain fields still go")
+end
+
+-- On a build with no issecretvalue, the fallback is arithmetic - and "Thrall"
+-- + 0 throws. Calling that secret dropped every name, class and realm from the
+-- wire, guid included, so the record arrived unparseable: sync as a silent
+-- no-op. The identity fields must survive the fallback.
+do
+    local realPredicate = issecretvalue
+    issecretvalue = nil
+    dofile("Compat.lua")
+    local rec = { guid = "Player-Str-1", name = "Thrall", class = "SHAMAN",
+                  realm = "Classic Beta PvP", level = 7, money = 1234, lastUpdate = 1 }
+    local wire = T.SerializeChar(rec)
+    for _, field in ipairs({ "guid:Player-Str-1", "name:Thrall", "class:SHAMAN",
+                             "realm:Classic Beta PvP", "level:7", "money:1234" }) do
+        check(wire:find(field, 1, true) ~= nil, "without the predicate, " .. field .. " still syncs")
+    end
+    local back = T.DeserializeChar(wire)
+    check(back ~= nil and back.guid == "Player-Str-1", "  and the record parses at the other end")
+    issecretvalue = realPredicate
+    dofile("Compat.lua")
+end
+
+-- A value that became UNREADABLE has to propagate. It is stored as nil and
+-- omitted from the wire, so a merge that applies "only the keys present" keeps
+-- the last number it saw and goes on summing it as current.
+WoW.reset()
+AltStableDB = { ["Player-Was-1"] = { guid = "Player-Was-1", name = "Rich", class = "ROGUE",
+                                      level = 60, money = 12345, stat_str = 50,
+                                      stat_hp = 3000, lastUpdate = 100 } }
+T.DeserializeFullDB(T.SerializeChar(
+    -- The same character, rescanned where money and the stats are unreadable:
+    -- the fields are simply absent.
+    { guid = "Player-Was-1", name = "Rich", class = "ROGUE", level = 60, lastUpdate = 200 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+local was = AltStableDB["Player-Was-1"]
+eq(was.lastUpdate, 200, "the newer record is accepted")
+eq(was.money, nil, "  money that went unreadable is cleared, not left showing as current")
+eq(was.stat_str, nil, "  and so is a stat")
+eq(was.stat_hp, nil, "  every stat, not just the one")
+eq(was.name, "Rich", "  while identity is untouched")
+
+-- ...and a record that still HAS the values restores them.
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Was-1", name = "Rich", class = "ROGUE", level = 60,
+      money = 999, stat_str = 51, lastUpdate = 300 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Was-1"].money, 999, "a readable amount arrives normally")
+eq(AltStableDB["Player-Was-1"].stat_str, 51, "  and so do the stats")
+
+------------------------------------------------------------
+-- Secret values in the live event handlers
+------------------------------------------------------------
+-- PLAYER_MONEY and the XP events fire constantly during play, so a secret read
+-- there errors on every loot and every XP tick - and PLAYER_MONEY refreshes the
+-- sheet, which sums money across characters.
+WoW.reset()
+local liveGuid = UnitGUID("player")
+AltStableDB = { [liveGuid] = { guid = liveGuid, name = "Live", class = "MAGE", money = 500,
+                               restPercent = 40, restTimestamp = WoW.now, lastUpdate = 1 } }
+local realMoney = GetMoney
+GetMoney = function() return WoW.secret(99) end
+local okMoney = pcall(onEvent, T.frame, "PLAYER_MONEY")
+check(okMoney, "a secret from GetMoney does not throw on PLAYER_MONEY")
+eq(AltStableDB[liveGuid].money, 500, "  and the known amount is kept, not replaced by a secret")
+GetMoney = function() return 750 end
+onEvent(T.frame, "PLAYER_MONEY")
+eq(AltStableDB[liveGuid].money, 750, "  a readable amount still updates")
+GetMoney = realMoney
+
+local realExh = GetXPExhaustion
+GetXPExhaustion = function() return WoW.secret(120) end
+WoW.xpMax, WoW.level = 400, 20
+local okXP = pcall(onEvent, T.frame, "PLAYER_XP_UPDATE")
+check(okXP, "a secret from GetXPExhaustion does not throw on an XP tick")
+eq(AltStableDB[liveGuid].restPercent, 40, "  and the stored rested % is kept")
+GetXPExhaustion = realExh
+WoW.reset()
+
+------------------------------------------------------------
 -- Retired fields (#8)
 ------------------------------------------------------------
 -- Nothing reads them any more. Stored records still hold them, so they must

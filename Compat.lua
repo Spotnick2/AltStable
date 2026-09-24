@@ -111,6 +111,72 @@ API.GetSkillLineInfo = need(C_SkillInfo, "C_SkillInfo", "GetSkillLineInfo")
 API.GetNumFactions         = need(C_Reputation, "C_Reputation", "GetNumFactions")
 API.GetFactionDataByIndex  = need(C_Reputation, "C_Reputation", "GetFactionDataByIndex")
 API.GetFactionDataByID     = need(C_Reputation, "C_Reputation", "GetFactionDataByID")
+----------------------------------------------------------------------------
+-- Secret values
+--
+-- This client carries Retail's "secret values": some APIs hand back a value an
+-- addon may pass along but must not inspect. Arithmetic on one THROWS -
+-- "attempt to perform arithmetic on a secret number value (execution tainted
+-- by 'AltStable')" - which aborted a whole character scan mid-way on a PvP
+-- realm, where UnitStat, UnitArmor and UnitAttackPower all returned secrets.
+--
+-- issecretvalue is the client's own predicate (C_Secrets holds the policy
+-- queries; this is the value test). It is present on 1.60.1.69977 and is
+-- authoritative when present; the arithmetic probe below is only the fallback
+-- for a build without it.
+local issecretvalue = _G.issecretvalue
+
+function API.IsSecretValue(v)
+    if type(issecretvalue) == "function" then
+        local ok, secret = pcall(issecretvalue, v)
+        if ok then return secret and true or false end
+    end
+    -- No predicate: ask the arithmetic that would otherwise throw at the call
+    -- site. Strings and booleans are excluded FIRST and never called secret:
+    -- "Thrall" + 0 throws, and a fallback that called that secret dropped every
+    -- name, class and realm from the sync - guid included, which made the whole
+    -- record unparseable at the other end. A silent total no-op.
+    --
+    -- Numbers are probed rather than trusted, because what type() reports for a
+    -- secret number is not measured (the name appears only in the error text).
+    -- If it says "number", trusting type() would report the one case this
+    -- fallback exists for as safe.
+    local t = type(v)
+    if t == "string" or t == "boolean" then return false end
+    local ok = pcall(function() return v + 0 end)
+    return not ok
+end
+
+-- A number safe to store, compare and serialize, or nil. nil rather than 0: a
+-- secret stat is UNKNOWN, and writing 0 would render as a real "0 Strength" and
+-- sync that lie to every other account.
+function API.PlainNumber(v)
+    if v == nil then return nil end
+    if API.IsSecretValue(v) then return nil end
+    local ok, n = pcall(tonumber, v)
+    if not ok then return nil end
+    return n
+end
+
+-- Sum of values that may be secret: nil if any part is, since a partial sum is
+-- not a smaller number, it is a wrong one. No values at all is also nil, not 0:
+-- some APIs here return NOTHING on a miss (see the cache-miss note above), and
+-- "the client told us nothing" is as unknown as "we may not look".
+function API.PlainSum(...)
+    if select("#", ...) == 0 then return nil end
+    local total = 0
+    for i = 1, select("#", ...) do
+        local n = API.PlainNumber((select(i, ...)))
+        if n == nil then return nil end
+        total = total + n
+    end
+    return total
+end
+
+----------------------------------------------------------------------------
+-- Textures
+----------------------------------------------------------------------------
+
 -- Whether a texture file exists on this client. GetFileIDFromPath returns nil
 -- for a path that doesn't resolve. nil (unknown) if the function is missing or
 -- errors, so callers can decide how to fail.

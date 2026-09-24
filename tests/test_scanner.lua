@@ -271,6 +271,80 @@ else
 end
 
 ------------------------------------------------------------
+-- A secret rested value must not be stored as zero
+------------------------------------------------------------
+-- The scan has no suspicious-zero guard (the live event path does), so a 0
+-- written here overwrites a good snapshot and syncs that zero to the peer.
+do
+    WoW.reset()
+    local realExh = GetXPExhaustion
+    GetXPExhaustion = function() return WoW.secret(120) end
+    WoW.xpMax = 400
+    AltStableDB = { [UnitGUID("player")] = { guid = UnitGUID("player"), restPercent = 40,
+                                             restXP = 160, restTimestamp = 111 } }
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("an unreadable rested value leaves the stored %", c.restPercent, 40)
+    eq("  and the stored amount", c.restXP, 160)
+    eq("  and the snapshot time it extrapolates from", c.restTimestamp, 111)
+    GetXPExhaustion = realExh
+    WoW.reset()
+end
+
+------------------------------------------------------------
+-- Secret unit stats must not abort the scan
+--
+-- Live error: "Scanner.lua:596: attempt to perform arithmetic on a secret
+-- number value (execution tainted by 'AltStable')" - UnitAttackPower returned
+-- secrets on a PvP realm, the sum threw, and ScanCharacter died half-way
+-- through, leaving the character record incomplete.
+------------------------------------------------------------
+
+do
+    WoW.reset()
+    local realStat, realArmor, realAP = UnitStat, UnitArmor, UnitAttackPower
+    local realHealth, realMoney = UnitHealthMax, GetMoney
+    UnitStat = function() return WoW.secret(10), WoW.secret(10) end
+    UnitArmor = function() return WoW.secret(1), WoW.secret(29) end
+    UnitAttackPower = function() return WoW.secret(9), WoW.secret(0), WoW.secret(0) end
+    UnitHealthMax = function() return WoW.secret(163) end
+    GetMoney = function() return WoW.secret(67) end
+    -- Spell power COMPARES the values, which throws on a secret just as the sum did.
+    local realBonus = GetSpellBonusDamage
+    GetSpellBonusDamage = function() return WoW.secret(12) end
+
+    -- The scan runs until a stub gap stops it, as elsewhere in this file; what
+    -- matters is that a SECRET value is no longer what stops it. The stub models
+    -- secrets as coroutines (see wow_stubs.lua), so its errors say "thread"
+    -- where the client says "secret number" - both count as this failure.
+    AltStableDB = {}
+    local ok, err = pcall(AltStable.ScanCharacter)
+    local msg = tostring(err)
+    check("no secret value aborts the scan",
+          ok or not (msg:find("secret", 1, true) or msg:find("thread", 1, true)), msg)
+    local c = AltStableDB[UnitGUID("player")]
+    check("  and still writes the character", c ~= nil)
+    if c then
+        -- Every sanitized field, not a sample: a raw store doesn't throw, it
+        -- just puts a value in the database that can never be read back.
+        for _, field in ipairs({ "stat_str", "stat_agi", "stat_sta", "stat_int", "stat_spi",
+                                 "stat_hp", "stat_armor", "stat_ap", "stat_sp", "money" }) do
+            eq("  " .. field .. " is stored as nil, not a value nothing can read", c[field], nil)
+        end
+        -- The point of not aborting: the fields written AFTER the stats are
+        -- reached. Defense comes after the attack-power sum that threw in game.
+        check("  the scan reaches the fields that follow the stats",
+              c.stat_defense ~= nil or c.prof1 ~= nil, tostring(c.stat_defense))
+        check("  including the reputations, near the end of the scan",
+              c.rep_76 ~= nil or c.rep_72 ~= nil or next(WoW.factions or {}) == nil)
+    end
+
+    UnitStat, UnitArmor, UnitAttackPower = realStat, realArmor, realAP
+    UnitHealthMax, GetMoney, GetSpellBonusDamage = realHealth, realMoney, realBonus
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Vanilla display (#7, #6)
 --
 -- Gear cells take the item's own quality colour: the old ramp coloured by
@@ -314,14 +388,11 @@ if gear and avg and rested then
     WoW.reset()
 end
 
--- The footer average matches the column: rounded, no decimal. SheetUI.lua
--- doesn't load under the stubs, so this checks the source.
-do
-    local sheet = io.open("SheetUI.lua"):read("*a")
-    check("the footer average is rounded like the column",
-          sheet:find("math.floor(totalIlvl / ilvlCount + 0.5)", 1, true) ~= nil
-          and not sheet:find("%.1f|r avg iLvl", 1, true))
-end
+
+-- The footer's totals (gold, the unknown-money marker, the rounded average) are
+-- covered by tests/test_sheetui.lua, which BUILDS the sheet and reads the text
+-- it sets. Source greps for those were deleted: one of them could not see a
+-- variable scoped to the wrong function, which errored on every sheet build.
 
 -- #8: TBC leftovers removed. Source checks - SheetUI doesn't load under the
 -- stubs, and these are absences. A missing file fails a check, not the run.
@@ -421,6 +492,20 @@ do
     eq("  and the standing lands in its faction's column", orgCol and r[orgCol], "N")
     check("no TBC reputation columns remain",
           not header():find("Aldor", 1, true) and not header():find("Thrallmar", 1, true))
+end
+
+-- The renderer reads the live rested values for the player's own row and
+-- DIVIDES them: a secret there would throw while drawing, taking out the row.
+do
+    local realExh, realMax = GetXPExhaustion, UnitXPMax
+    GetXPExhaustion = function() return WoW.secret(120) end
+    UnitXPMax = function() return 400 end
+    local me = { guid = UnitGUID("player"), level = 20, restPercent = 40,
+                 restTimestamp = WoW.now, restedArea = false }
+    local ok, pct = pcall(rested, me)
+    check("a secret rested value does not throw while rendering", ok, tostring(pct))
+    eq("  and the row falls back to the stored snapshot", ok and pct, 40)
+    GetXPExhaustion, UnitXPMax = realExh, realMax
 end
 
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().

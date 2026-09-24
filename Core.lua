@@ -313,7 +313,12 @@ local function SerializeChar(c, sinceTS)
     local parts = {}
 
     for k,v in pairs(c) do
+        -- A secret value (see Compat.lua) would throw on the tostring below and
+        -- take the whole sync with it. The scanner already keeps them out of the
+        -- database; this is the wire boundary refusing to carry one that got in
+        -- some other way - a record from an older build, or a plugin's field.
         if type(v) ~= "table"
+        and not AltStable.API.IsSecretValue(v)
         and not RETIRED_FIELDS[k]
         and not k:find("^gearlink_")   -- item links are local-only (too large for sync)
                                       -- gearid_* stays included (compact + sync-safe)
@@ -571,6 +576,12 @@ end
 -- character shouldn't wipe our local account assignment.
 local function ClearSyncedStateFields(t)
     t.prof1 = nil; t.prof2 = nil
+    -- Money and the stat snapshot: a value that became UNREADABLE (secret, see
+    -- Compat.lua) is written as nil locally and simply omitted from the wire -
+    -- so without clearing first, the receiving account keeps showing and
+    -- summing the last number it saw, as though it were current. Same rule as
+    -- the prefixes below: an accepted record is the whole truth about these.
+    t.money = nil
     t.prof1Skill = nil; t.prof2Skill = nil
     t.prof1Max   = nil; t.prof2Max   = nil
     -- Helm/cloak display toggles. A current peer always sends both (the scanner writes 1 or 0
@@ -589,6 +600,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
+        or k:find("^stat_")                      -- the stat snapshot: a stat that went unreadable must not linger
         or k:find("^rep_") then                  -- reputations: a standing dropped at the source goes here too
             t[k] = nil
         end
@@ -1727,8 +1739,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_MONEY" then
         local guid = UnitGUID("player")
         if guid and AltStableDB[guid] then
-            AltStableDB[guid].money = GetMoney()
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            -- Through the adapter: GetMoney is one of the APIs measured
+            -- returning a secret value, and the refresh below adds money up
+            -- across characters - arithmetic that would throw and take the
+            -- whole sheet build with it (see "Secret values" in Compat.lua).
+            local money = AltStable.API.PlainNumber(GetMoney())
+            if money ~= nil then
+                AltStableDB[guid].money = money
+                if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            end
         end
         return
     end
@@ -1754,9 +1773,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local guid = UnitGUID("player")
         local char = guid and AltStableDB[guid]
         if char then
-            local liveRest = GetXPExhaustion() or 0
-            local liveMax  = UnitXPMax("player") or 0
-            local lvl      = UnitLevel("player") or 0
+            -- Same adapter as the scan: these fire on every XP tick, so a
+            -- secret here would error constantly rather than once.
+            local liveRest = AltStable.API.PlainNumber(GetXPExhaustion())
+            local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player")) or 0
+            local lvl      = AltStable.API.PlainNumber(UnitLevel("player")) or 0
+            if liveRest == nil then return end   -- unreadable: keep the snapshot
             local atCap    = lvl >= AltStable.API.LevelCap()
 
             -- Suspicious-zero guard.  Only accept a zero read if we have
