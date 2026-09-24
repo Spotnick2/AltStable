@@ -97,16 +97,66 @@ local function makeFrame()
     end
     f.CreateTexture    = function() return makeFrame() end
     f.CreateFontString = function() return makeFrame() end
+    -- Text is REMEMBERED, not swallowed: a footer or a label is a real
+    -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
+    -- display bug invisible to the suite.
+    f.SetText = function(self, text) self._text = text; return self end
+    f.GetText = function(self) return self._text end
+    -- Geometry getters return NUMBERS. The chaining default would hand back the
+    -- frame itself, and layout code does arithmetic on these - so a stub that
+    -- chains them turns every layout pass into "arithmetic on a table value".
+    local NUMERIC = {
+        GetWidth = 100, GetHeight = 20, GetStringWidth = 40, GetStringHeight = 10,
+        GetNumLines = 0, GetValue = 0, GetVerticalScroll = 0, GetHorizontalScroll = 0,
+        GetVerticalScrollRange = 0, GetHorizontalScrollRange = 0,
+        GetLeft = 0, GetRight = 100, GetTop = 100, GetBottom = 0,
+        GetScale = 1, GetEffectiveScale = 1, GetNumPoints = 0, GetAlpha = 1,
+        GetFrameLevel = 1, GetID = 0,
+    }
+    for name, value in pairs(NUMERIC) do
+        f[name] = function(self) return self["_" .. name] or value end
+    end
+    f.SetWidth  = function(self, w) self._GetWidth = w; return self end
+    f.SetHeight = function(self, h) self._GetHeight = h; return self end
+    f.SetSize   = function(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
+
+    -- Regions a TEMPLATE would have created (OptionsSliderTemplate gives a
+    -- slider .Low/.High/.Text, a scroll frame gets .ScrollBar, and so on). The
+    -- chaining default would hand back a function, and `slider.Low:SetText(...)`
+    -- then fails on a function value - so these come back as frames.
+    local TEMPLATE_CHILDREN = {
+        Low = true, High = true, Text = true, ScrollBar = true, ScrollFrame = true,
+        EditBox = true, Icon = true, Border = true, Left = true, Middle = true,
+        Right = true, Center = true, Background = true, Label = true, Thumb = true,
+    }
+
     -- Any unknown METHOD chains (widget methods are all capitalised). A plain
     -- field reads nil, as on a real frame - `row.dividers or {}` must see nil.
-    setmetatable(f, { __index = function(_, k)
-        if type(k) == "string" and k:find("^%u") then return chain end
+    setmetatable(f, { __index = function(self, k)
+        if type(k) ~= "string" then return nil end
+        if TEMPLATE_CHILDREN[k] then
+            local child = makeFrame()
+            self[k] = child        -- cached, so identity is stable across reads
+            return child
+        end
+        if k:find("^%u") then return chain end
     end })
     return f
 end
 WoW.makeFrame = makeFrame
 
 function CreateFrame() return makeFrame() end
+
+-- WoW's table helpers, which are globals there and absent in plain Lua 5.1.
+function wipe(t) for k in pairs(t) do t[k] = nil end return t end
+-- WoW hoists a few math/string functions to globals; code written against the
+-- client uses them bare.
+floor, ceil, abs, min, max = math.floor, math.ceil, math.abs, math.min, math.max
+format, strsub, strlower, strupper = string.format, string.sub, string.lower, string.upper
+function tinsert(...) return table.insert(...) end
+function tremove(...) return table.remove(...) end
+function tContains(t, v) for _, x in ipairs(t) do if x == v then return true end end return false end
+UISpecialFrames = UISpecialFrames or {}
 
 ------------------------------------------------------------
 -- Secret values
