@@ -4,8 +4,14 @@ Operational notes for working on AltStable against a live WoW: Forever client. T
 design decisions lives in `AGENTS.md` and `docs/forever-api-notes.md`; this is the *how*.
 
 Paths below assume the default install:
-`C:\Program Files (x86)\World of Warcraft\_classic_beta_`. Every script takes an
-`-AddOnsPath` override.
+`C:\Program Files (x86)\World of Warcraft\_classic_beta_`. Each script takes its own override,
+and they are not the same flag:
+
+| Script | Override |
+|---|---|
+| `Tools/deploy.ps1`, `Tools/deploy-probe.ps1` | `-AddOnsPath "<...>\Interface\AddOns"` |
+| `Tools/ForeverAPIDump/Convert-Dump.ps1` | `-WtfAccountPath "<...>\WTF\Account"`, and `-OutDir` for where the artifact lands |
+| `tests/run.ps1` | `-Lua "<path to lua5.1.exe>"` (no client involved) |
 
 ---
 
@@ -84,14 +90,31 @@ To check the state of the bug after a client update:
 ```
 pwsh Tools/deploy-probe.ps1     # deploys AltStableProbe, AltStableDevConfig, ForeverAPIDump
 ```
-Log in, and the probe reports on its own:
+
+The probe keeps a counter in each store and reports at `PLAYER_LOGIN` what it found there:
+
 ```
-[Probe] == SavedVariables persistence ==
-[Probe]   account-wide table arrived at load: NO
-[Probe]   launches recorded before this one: account=0 character=0
+SavedVariables (account) first ever run - not loaded
+SavedVariablesPerCharacter first ever run - not loaded
+account #1 / per-character #1 / machine #1 - only a FULL EXIT and relaunch counts; /reload proves nothing
 ```
-`launches recorded before this one: 0` after earlier sessions have written the file is the failure.
-Non-zero means Blizzard fixed it — at which point most of the deferred work unblocks.
+
+That is the broken state: every launch is "first ever run", and every counter sits at 1.
+
+Fixed looks like `SavedVariables (account) LOADED - previous loadCount=3`, with the counters
+climbing launch over launch.
+
+**The procedure is the point, not the line.** A counter that rises after a `/reload` proves
+nothing — the process stayed alive, so the in-memory table was never re-read. It has to be:
+
+1. log in (this writes the file on logout),
+2. **exit the client completely**,
+3. relaunch and log in again,
+4. read the line: `LOADED - previous loadCount=` is a real fix; `first ever run` is the bug
+   intact.
+
+The probe prints that caveat itself, on the counter line, because three separate tests on this
+project concluded a store persisted when it had not.
 
 ---
 
