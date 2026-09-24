@@ -1066,10 +1066,16 @@ local function BuildDisplayList()
     -- Totals reflect EVERY character in the DB, not just the filtered view.
     -- Bank alts below 58 still hold gold, and users expect the total gold
     -- number to match other addons (ElvUI, etc.) that account for them.
+    -- A character whose money is UNREADABLE (secret, see Compat.lua) has no
+    -- money field at all. Counting it as zero would present the sum as the
+    -- whole account's gold while silently leaving one character out, so the
+    -- footer says how many are missing instead.
+    local goldUnknown = 0
     for _, char in next, store do
         if type(char)=="table" and char.name then
             totalLevel = totalLevel + (char.level or 0)
-            totalGold  = totalGold  + (char.money or 0)
+            if char.money == nil then goldUnknown = goldUnknown + 1
+            else totalGold = totalGold + char.money end
             totalChars = totalChars + 1
         end
     end
@@ -1109,7 +1115,7 @@ local function BuildDisplayList()
     for _, realm in ipairs(realmOrder) do
         local chars=realmChars[realm]; local sumLvl=0; local sumGold=0
         for _, c in ipairs(chars) do
-            sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)
+            sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)   -- nil = unreadable; the footer counts those
         end
         table.insert(displayList,{kind="group",realm=realm,count=#chars,
             sumLevel=sumLvl,sumGold=sumGold,collapsed=collapsed[realm]})
@@ -1231,8 +1237,10 @@ local function UpdateTotalsBar()
         accentHex .. totalChars .. "|r |cffaaaaaa chars  " ..
         accentHex .. totalLevel .. "|r |cffaaaaaa total levels|r")
     if totalsBar.mid then totalsBar.mid:SetText(avgIlvlStr) end
+    local goldNote = (goldUnknown > 0)
+        and ("  |cffff8800(" .. goldUnknown .. " unknown)|r") or ""
     totalsBar.right:SetText(
-        "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r")
+        "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r" .. goldNote)
 end
 
 ------------------------------------------------------------

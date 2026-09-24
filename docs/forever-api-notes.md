@@ -373,8 +373,13 @@ function API.IsSecretValue(v)
         local ok, secret = pcall(issecretvalue, v)
         if ok then return secret and true or false end
     end
-    if type(v) == "number" then return false end
-    local ok = pcall(function() return v + 0 end)   -- the arithmetic that would throw anyway
+    -- Fallback for a build without the predicate. Strings and booleans FIRST:
+    -- "Thrall" + 0 throws, and calling that secret drops every name and id from
+    -- anything that filters on it. Numbers are probed rather than trusted,
+    -- because what type() reports for a secret number is unmeasured.
+    local t = type(v)
+    if t == "string" or t == "boolean" then return false end
+    local ok = pcall(function() return v + 0 end)
     return not ok
 end
 
@@ -384,6 +389,16 @@ function API.PlainNumber(v)   -- a number you can store, compare and serialize, 
     return ok and n or nil
 end
 ```
+
+The two mistakes in that fallback are both ones this project actually made. The
+string case dropped `guid`, `name` and `class` from every synced record on a
+build without the predicate, which turned sync into a silent no-op; and trusting
+`type(v) == "number"` would report the one case the fallback exists for as safe.
+
+A third, further out: **a value that becomes unreadable has to propagate.** A
+field stored as nil is simply absent from the wire, so a peer merging "only the
+keys present" keeps the last number it saw and goes on displaying it as current.
+Clear the fields an accepted snapshot owns before applying it.
 
 Two details that are easy to miss:
 

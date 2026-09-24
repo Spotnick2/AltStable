@@ -1261,6 +1261,33 @@ do
     dofile("Compat.lua")
 end
 
+-- A value that became UNREADABLE has to propagate. It is stored as nil and
+-- omitted from the wire, so a merge that applies "only the keys present" keeps
+-- the last number it saw and goes on summing it as current.
+WoW.reset()
+AltStableDB = { ["Player-Was-1"] = { guid = "Player-Was-1", name = "Rich", class = "ROGUE",
+                                      level = 60, money = 12345, stat_str = 50,
+                                      stat_hp = 3000, lastUpdate = 100 } }
+T.DeserializeFullDB(T.SerializeChar(
+    -- The same character, rescanned where money and the stats are unreadable:
+    -- the fields are simply absent.
+    { guid = "Player-Was-1", name = "Rich", class = "ROGUE", level = 60, lastUpdate = 200 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+local was = AltStableDB["Player-Was-1"]
+eq(was.lastUpdate, 200, "the newer record is accepted")
+eq(was.money, nil, "  money that went unreadable is cleared, not left showing as current")
+eq(was.stat_str, nil, "  and so is a stat")
+eq(was.stat_hp, nil, "  every stat, not just the one")
+eq(was.name, "Rich", "  while identity is untouched")
+
+-- ...and a record that still HAS the values restores them.
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Was-1", name = "Rich", class = "ROGUE", level = 60,
+      money = 999, stat_str = 51, lastUpdate = 300 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Was-1"].money, 999, "a readable amount arrives normally")
+eq(AltStableDB["Player-Was-1"].stat_str, 51, "  and so do the stats")
+
 ------------------------------------------------------------
 -- Secret values in the live event handlers
 ------------------------------------------------------------

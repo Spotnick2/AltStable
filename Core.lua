@@ -576,6 +576,12 @@ end
 -- character shouldn't wipe our local account assignment.
 local function ClearSyncedStateFields(t)
     t.prof1 = nil; t.prof2 = nil
+    -- Money and the stat snapshot: a value that became UNREADABLE (secret, see
+    -- Compat.lua) is written as nil locally and simply omitted from the wire -
+    -- so without clearing first, the receiving account keeps showing and
+    -- summing the last number it saw, as though it were current. Same rule as
+    -- the prefixes below: an accepted record is the whole truth about these.
+    t.money = nil
     t.prof1Skill = nil; t.prof2Skill = nil
     t.prof1Max   = nil; t.prof2Max   = nil
     -- Helm/cloak display toggles. A current peer always sends both (the scanner writes 1 or 0
@@ -594,6 +600,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
+        or k:find("^stat_")                      -- the stat snapshot: a stat that went unreadable must not linger
         or k:find("^rep_") then                  -- reputations: a standing dropped at the source goes here too
             t[k] = nil
         end

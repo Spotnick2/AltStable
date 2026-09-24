@@ -388,6 +388,20 @@ if gear and avg and rested then
     WoW.reset()
 end
 
+-- A character whose money is unreadable has no money field, and counting that
+-- as zero would present an incomplete sum as the account's total gold. SheetUI
+-- doesn't load under the stubs, so these read the source.
+do
+    local sheet = io.open("SheetUI.lua"):read("*a")
+    local totals = sheet:match("local goldUnknown = 0(.-)\nend") or ""
+    check("unreadable money is counted, not summed as zero",
+          totals:find("char.money == nil", 1, true) ~= nil
+          and totals:find("goldUnknown = goldUnknown + 1", 1, true) ~= nil, totals)
+    check("  and the footer says how many are unknown",
+          sheet:find("goldUnknown > 0", 1, true) ~= nil
+          and sheet:find("unknown)", 1, true) ~= nil)
+end
+
 -- The footer average matches the column: rounded, no decimal. SheetUI.lua
 -- doesn't load under the stubs, so this checks the source.
 do
