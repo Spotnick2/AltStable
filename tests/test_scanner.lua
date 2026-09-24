@@ -271,6 +271,59 @@ else
 end
 
 ------------------------------------------------------------
+-- Secret unit stats must not abort the scan
+--
+-- Live error: "Scanner.lua:596: attempt to perform arithmetic on a secret
+-- number value (execution tainted by 'AltStable')" - UnitAttackPower returned
+-- secrets on a PvP realm, the sum threw, and ScanCharacter died half-way
+-- through, leaving the character record incomplete.
+------------------------------------------------------------
+
+do
+    WoW.reset()
+    local realStat, realArmor, realAP = UnitStat, UnitArmor, UnitAttackPower
+    local realHealth, realMoney = UnitHealthMax, GetMoney
+    UnitStat = function() return WoW.secret(10), WoW.secret(10) end
+    UnitArmor = function() return WoW.secret(1), WoW.secret(29) end
+    UnitAttackPower = function() return WoW.secret(9), WoW.secret(0), WoW.secret(0) end
+    UnitHealthMax = function() return WoW.secret(163) end
+    GetMoney = function() return WoW.secret(67) end
+    -- Spell power COMPARES the values, which throws on a secret just as the sum did.
+    local realBonus = GetSpellBonusDamage
+    GetSpellBonusDamage = function() return WoW.secret(12) end
+
+    -- The scan runs until a stub gap stops it, as elsewhere in this file; what
+    -- matters is that a SECRET value is no longer what stops it. The stub models
+    -- secrets as coroutines (see wow_stubs.lua), so its errors say "thread"
+    -- where the client says "secret number" - both count as this failure.
+    AltStableDB = {}
+    local ok, err = pcall(AltStable.ScanCharacter)
+    local msg = tostring(err)
+    check("no secret value aborts the scan",
+          ok or not (msg:find("secret", 1, true) or msg:find("thread", 1, true)), msg)
+    local c = AltStableDB[UnitGUID("player")]
+    check("  and still writes the character", c ~= nil)
+    if c then
+        -- Every sanitized field, not a sample: a raw store doesn't throw, it
+        -- just puts a value in the database that can never be read back.
+        for _, field in ipairs({ "stat_str", "stat_agi", "stat_sta", "stat_int", "stat_spi",
+                                 "stat_hp", "stat_armor", "stat_ap", "stat_sp", "money" }) do
+            eq("  " .. field .. " is stored as nil, not a value nothing can read", c[field], nil)
+        end
+        -- The point of not aborting: the fields written AFTER the stats are
+        -- reached. Defense comes after the attack-power sum that threw in game.
+        check("  the scan reaches the fields that follow the stats",
+              c.stat_defense ~= nil or c.prof1 ~= nil, tostring(c.stat_defense))
+        check("  including the reputations, near the end of the scan",
+              c.rep_76 ~= nil or c.rep_72 ~= nil or next(WoW.factions or {}) == nil)
+    end
+
+    UnitStat, UnitArmor, UnitAttackPower = realStat, realArmor, realAP
+    UnitHealthMax, GetMoney, GetSpellBonusDamage = realHealth, realMoney, realBonus
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Vanilla display (#7, #6)
 --
 -- Gear cells take the item's own quality colour: the old ramp coloured by

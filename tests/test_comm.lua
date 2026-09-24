@@ -1225,6 +1225,22 @@ AltStable.PendingAuditItems = nil
 ------------------------------------------------------------
 
 ------------------------------------------------------------
+-- A secret value never reaches the wire
+------------------------------------------------------------
+-- tostring on one throws, so a single secret field would take the whole sync
+-- with it. The scanner keeps them out of the database; this is the boundary
+-- refusing one that arrived some other way.
+WoW.reset()
+local secretRec = { guid = "Player-Secret-1", name = "Secretive", class = "WARLOCK",
+                    level = 7, lastUpdate = 1, stat_str = WoW.secret(10), stat_hp = 163 }
+local okSer, secretWire = pcall(T.SerializeChar, secretRec)
+check(okSer, "serializing a record holding a secret does not throw: " .. tostring(secretWire))
+if okSer then
+    check(not secretWire:find("stat_str"), "  the secret field is left out")
+    check(secretWire:find("stat_hp:163", 1, true) ~= nil, "  and the plain fields still go")
+end
+
+------------------------------------------------------------
 -- Retired fields (#8)
 ------------------------------------------------------------
 -- Nothing reads them any more. Stored records still hold them, so they must

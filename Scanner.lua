@@ -6,6 +6,12 @@ local API = AltStable.API
 local GetNumSkillLines = API.GetNumSkillLines
 local GetSkillLineInfo = API.GetSkillLineInfo
 local UnitDefenseSkill = API.UnitDefenseSkill
+-- Unit stats can come back "secret" on this client: storable, but arithmetic or
+-- tostring on one throws (see Compat.lua). Every unit number below is read
+-- through these, so a secret becomes nil - unknown - instead of aborting the
+-- scan or being stored as a value that cannot be summed, compared or synced.
+local plain = API.PlainNumber
+local plainSum = API.PlainSum
 local GetItemInfo      = API.GetItemInfo
 local GetItemStats     = API.GetItemStats
 
@@ -511,7 +517,7 @@ function AltStable.ScanCharacter()
     -- Money
     --------------------------------------------------------
 
-    char.money = GetMoney()
+    char.money = plain(GetMoney())
 
     --------------------------------------------------------
     -- Rested XP
@@ -538,9 +544,9 @@ function AltStable.ScanCharacter()
     -- caught it). At the cap it is real: there is no next level, so the
     -- snapshot is zero. Below the cap it is a bad read, and the last good
     -- snapshot is kept rather than replaced with a percentage of nothing.
-    local rested = GetXPExhaustion() or 0
-    local nextXP = UnitXPMax("player") or 0
-    local currentXP = UnitXP("player") or 0
+    local rested = plain(GetXPExhaustion()) or 0
+    local nextXP = plain(UnitXPMax("player")) or 0
+    local currentXP = plain(UnitXP("player")) or 0
 
     if nextXP > 0 then
         char.restXP = rested
@@ -565,49 +571,41 @@ function AltStable.ScanCharacter()
     -- Core stat snapshot (for offline detail view)
     --------------------------------------------------------
 
-    local _, statStr = UnitStat("player", 1)
-    local _, statAgi = UnitStat("player", 2)
-    local _, statSta = UnitStat("player", 3)
-    local _, statInt = UnitStat("player", 4)
-    local _, statSpi = UnitStat("player", 5)
+    char.stat_str = plain((select(2, UnitStat("player", 1))))
+    char.stat_agi = plain((select(2, UnitStat("player", 2))))
+    char.stat_sta = plain((select(2, UnitStat("player", 3))))
+    char.stat_int = plain((select(2, UnitStat("player", 4))))
+    char.stat_spi = plain((select(2, UnitStat("player", 5))))
 
-    char.stat_str = statStr or 0
-    char.stat_agi = statAgi or 0
-    char.stat_sta = statSta or 0
-    char.stat_int = statInt or 0
-    char.stat_spi = statSpi or 0
+    char.stat_hp = plain(UnitHealthMax("player"))
 
-    char.stat_hp = UnitHealthMax("player") or 0
-
-    local manaMax = 0
+    local manaMax
     if UnitPowerMax then
-        manaMax = UnitPowerMax("player", 0) or 0
+        manaMax = plain(UnitPowerMax("player", 0))
     elseif UnitManaMax then
-        manaMax = UnitManaMax("player") or 0
+        manaMax = plain(UnitManaMax("player"))
     elseif UnitMana then
-        manaMax = UnitMana("player") or 0
+        manaMax = plain(UnitMana("player"))
     end
     char.stat_mana = manaMax
 
-    local _, effectiveArmor = UnitArmor("player")
-    char.stat_armor = effectiveArmor or 0
+    char.stat_armor = plain((select(2, UnitArmor("player"))))
 
-    local baseAP, posAP, negAP = UnitAttackPower("player")
-    char.stat_ap = (baseAP or 0) + (posAP or 0) + (negAP or 0)
+    -- A sum, so one secret component makes the whole thing unknown.
+    char.stat_ap = plainSum(UnitAttackPower("player"))
 
-    local spellPower = 0
+    local spellPower
     if GetSpellBonusDamage then
         for school = 2, 7 do
-            local sp = GetSpellBonusDamage(school) or 0
-            if sp > spellPower then
-                spellPower = sp
-            end
+            local sp = plain(GetSpellBonusDamage(school))
+            -- The comparison is the danger here: `sp > spellPower` on a secret
+            -- throws exactly like the arithmetic did.
+            if sp and (not spellPower or sp > spellPower) then spellPower = sp end
         end
     end
     char.stat_sp = spellPower
 
-    local baseDef, modDef = UnitDefenseSkill("player")
-    char.stat_defense = (baseDef or 0) + (modDef or 0)
+    char.stat_defense = plainSum(UnitDefenseSkill("player"))
 
     --------------------------------------------------------
     -- Scan professions

@@ -251,6 +251,43 @@ end
 check("MAX_PLAYER_LEVEL is nil; GetMaxPlayerLevel() is the source", _G.MAX_PLAYER_LEVEL == nil)
 
 ------------------------------------------------------------
+-- Secret values
+--
+-- Measured in game: on a PvP realm UnitStat, UnitArmor and UnitAttackPower all
+-- returned secret numbers, and the arithmetic on them aborted the character
+-- scan mid-way. A secret is storable but not inspectable.
+------------------------------------------------------------
+
+local secret = WoW.secret(42)
+check("a plain number is not secret", API.IsSecretValue(7) == false)
+check("nil is not secret", API.IsSecretValue(nil) == false)
+check("a secret number is", API.IsSecretValue(secret) == true)
+
+eq("a plain number passes through", API.PlainNumber(7), 7)
+eq("a numeric string is converted", API.PlainNumber("7"), 7)
+eq("nil stays nil", API.PlainNumber(nil), nil)
+eq("a secret becomes nil, not 0 - unknown is not zero", API.PlainNumber(secret), nil)
+
+eq("a sum of plain numbers", API.PlainSum(1, 2, 3), 6)
+eq("  with nothing to add", API.PlainSum(), 0)
+eq("one secret component makes the whole sum unknown", API.PlainSum(1, secret, 3), nil)
+eq("  in any position", API.PlainSum(secret), nil)
+
+-- The fallback matters: not every build need have the predicate, and the real
+-- question is "can I do arithmetic on this".
+do
+    local realPredicate = issecretvalue
+    issecretvalue = nil
+    dofile("Compat.lua")
+    local API2 = AltStable.API
+    check("without the predicate, a secret is still caught", API2.IsSecretValue(secret) == true)
+    eq("  and still becomes nil", API2.PlainNumber(secret), nil)
+    eq("  while plain numbers are unaffected", API2.PlainNumber(5), 5)
+    issecretvalue = realPredicate
+    dofile("Compat.lua")
+end
+
+------------------------------------------------------------
 -- Full tuple shape, not just the early positions
 --
 -- A wrapper that truncates trailing returns passes an early-positions-only

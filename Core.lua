@@ -313,7 +313,12 @@ local function SerializeChar(c, sinceTS)
     local parts = {}
 
     for k,v in pairs(c) do
+        -- A secret value (see Compat.lua) would throw on the tostring below and
+        -- take the whole sync with it. The scanner already keeps them out of the
+        -- database; this is the wire boundary refusing to carry one that got in
+        -- some other way - a record from an older build, or a plugin's field.
         if type(v) ~= "table"
+        and not AltStable.API.IsSecretValue(v)
         and not RETIRED_FIELDS[k]
         and not k:find("^gearlink_")   -- item links are local-only (too large for sync)
                                       -- gearid_* stays included (compact + sync-safe)

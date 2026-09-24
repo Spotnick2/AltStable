@@ -108,6 +108,37 @@ WoW.makeFrame = makeFrame
 
 function CreateFrame() return makeFrame() end
 
+------------------------------------------------------------
+-- Secret values
+--
+-- Retail's "secret values", present on this client: a value an addon may hold
+-- and pass along but must not inspect. Arithmetic, comparison, tostring and
+-- concatenation all throw - which is what aborted a live character scan. The
+-- stub models the THROWING, not just the flag, so code that reaches for the
+-- number fails here the way it fails in game.
+------------------------------------------------------------
+
+-- A secret is NOT a table: code that filters on type(v) == "table" (the
+-- serializer does, for nested data) would skip it and the guard that matters
+-- would never run. Lua 5.1 cannot make userdata from script, so a coroutine
+-- stands in: a distinct type whose arithmetic and comparisons throw by
+-- themselves, exactly like the client's secret numbers.
+--
+-- Difference from the client, stated rather than papered over: tostring() on a
+-- coroutine returns "thread: 0x..." instead of throwing. So a test can only
+-- show that a secret is kept OFF the wire, not that carrying one would error.
+local secrets = setmetatable({}, { __mode = "k" })
+
+function WoW.secret(n)
+    local v = coroutine.create(function() return n end)
+    secrets[v] = n
+    return v
+end
+
+function issecretvalue(v)
+    return secrets[v] ~= nil
+end
+
 -- Pending timers land in WoW.timers as { delay = <seconds>, fn = <callback> }, so
 -- a test can assert WHEN something was scheduled, not just that it ran. A
 -- NewTimer handle that is cancelled drops out of the queue, the way the client
