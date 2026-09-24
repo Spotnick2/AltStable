@@ -811,6 +811,7 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
             local copper = c.money % 100
             GameTooltip:AddLine(string.format("Gold: %d%s %ds %dc", gold,GOLD_ICON,silver,copper), 0.9,0.85,0.1)
         end
+        GameTooltip:AddLine("Right-click to hide this character", 0.5,0.5,0.5)
         if c.lastUpdate then
             local diff = time()-c.lastUpdate
             local isMe = c.guid == UnitGUID("player")
@@ -824,6 +825,18 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         GameTooltip:Show()
     end)
     tipBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- Right-click hides the character (#21). The row only reports the click:
+    -- the confirmation and the config write live in SheetUI, which owns the
+    -- view. charData is nil on group, filler and recycled rows, so those
+    -- right-clicks do nothing.
+    tipBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    tipBtn:SetScript("OnClick", function(_, button)
+        if button ~= "RightButton" then return end
+        local c = tipBtn.charData
+        if c and AltStable.RequestHideCharacter then
+            AltStable.RequestHideCharacter(c)
+        end
+    end)
     row.nameTipBtn = tipBtn
 
     return row

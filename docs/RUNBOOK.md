@@ -82,8 +82,9 @@ Consequences for testing, in order of how often they bite:
    correctly; the broken half is the read.
 2. Cross-session features (an alt's data surviving a restart) cannot be verified at all yet.
    Cross-*account* sync works within a session, because it goes over the addon channel.
-3. Config changes do not survive either, including `AltStableConfig.accountNumber` and the
-   whitelist — set them again after each launch when testing sync.
+3. Config changes do not survive either, including `AltStableConfig.accountNumber`, the
+   whitelist and the hidden-character list — set them again after each launch when testing
+   sync, and expect a hidden character to be back on the sheet after a restart.
 
 To check the state of the bug after a client update:
 

@@ -112,6 +112,16 @@ local function EnsureDefaults()
     -- Retired with the BiS column (#8): nothing reads it any more.
     AltStableConfig.bisTier = nil
 
+    -- Characters hidden from the sheet, keyed by GUID: names are not unique on
+    -- Forever (every character has a surname, and two can share a first name).
+    --
+    -- Per ACCOUNT, deliberately. This lives in AltStableConfig, which is not
+    -- synced, so hiding an alt here leaves it visible on the other account. It
+    -- is a display preference, not character data - and the record keeps
+    -- syncing either way, so unhiding shows current data rather than starting a
+    -- re-sync (which would also disturb the delta watermarks).
+    AltStableConfig.hiddenCharacters = AltStableConfig.hiddenCharacters or {}
+
     -- Roster gear audit. minGemQuality is the lowest gem quality considered
     -- acceptable (0 disables gem checks entirely, 3 = Rare, 4 = Epic), matching
     -- CLA's "minimum required gem quality" selector. auditMinLevel keeps the
@@ -283,6 +293,49 @@ AltStable.EnsureConfigDefaults = EnsureDefaults
 -- AltStable.OpenConfig() now opens the AltStable sheet on the Options
 -- section directly, instead of building its own popup.
 ------------------------------------------------------------
+
+------------------------------------------------------------
+-- Hidden characters
+--
+-- Through the config seam like every other setting write, so one place still
+-- owns persistence and the change notification.
+------------------------------------------------------------
+
+function AltStable.IsCharacterHidden(guid)
+    if not guid then return false end
+    local hidden = AltStableConfig and AltStableConfig.hiddenCharacters
+    return (hidden and hidden[guid]) and true or false
+end
+
+function AltStable.SetCharacterHidden(guid, hidden)
+    if not guid then return end
+    AltStableConfig = AltStableConfig or {}
+    local current = AltStableConfig.hiddenCharacters or {}
+    local copy = {}
+    for k, v in pairs(current) do copy[k] = v end
+    copy[guid] = hidden and true or nil     -- nil, not false: absent means shown
+    AltStable.SetConfigValue("hiddenCharacters", copy)
+end
+
+-- The hidden characters that still have a record, sorted by name.
+--
+-- A guid with no record (deleted character, /alts cleanup, a peer not synced
+-- yet) is skipped rather than shown as a bare guid, but the entry is KEPT: the
+-- record usually comes back on the next sync, and it should come back hidden
+-- rather than silently reappearing in the grid.
+function AltStable.HiddenCharacterList()
+    local out = {}
+    local hidden = AltStableConfig and AltStableConfig.hiddenCharacters or {}
+    for guid in pairs(hidden) do
+        local c = AltStableDB and AltStableDB[guid]
+        if type(c) == "table" and c.name then
+            out[#out + 1] = { guid = guid, name = c.name, realm = c.realm, class = c.class,
+                              level = c.level }
+        end
+    end
+    table.sort(out, function(a, b) return (a.name or "") < (b.name or "") end)
+    return out
+end
 
 function AltStable.OpenConfig()
     if AltStable.EnsureSheetVisible then

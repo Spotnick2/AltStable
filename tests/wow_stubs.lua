@@ -42,6 +42,7 @@ local WoW = {
     eventFrames = {},   -- [event] = { frame, ... } for GetFramesRegisteredForEvent
     tooltipLines = {},  -- lines the last GameTooltip render added
     tooltipShown = false,
+    popups      = {},   -- StaticPopup_Show calls, newest last
 }
 
 function WoW.reset()
@@ -56,6 +57,7 @@ function WoW.reset()
     WoW.chatOut = {}
     WoW.eventFrames = {}
     WoW.tooltipLines, WoW.tooltipShown = {}, false
+    WoW.popups = {}
     WoW.now = 1700000000
     WoW.pendingPrio = nil
 end
@@ -235,6 +237,19 @@ GameTooltip.NumLines = function() return #WoW.tooltipLines end
 GameTooltip.Hide = function() WoW.tooltipShown = false end
 GameTooltip.Show = function() WoW.tooltipShown = true end
 GameTooltip.IsShown = function() return WoW.tooltipShown == true end
+
+-- StaticPopup, recording rather than drawing: WoW.popups. The confirmation
+-- before a destructive-looking action is part of the behaviour (#21), so a test
+-- has to be able to see that the popup was RAISED and that accepting it is what
+-- performs the action - not the click itself.
+StaticPopupDialogs = {}
+function StaticPopup_Show(which, arg1, arg2, data)
+    table.insert(WoW.popups, { which = which, arg1 = arg1, arg2 = arg2, data = data })
+    return StaticPopupDialogs[which]
+end
+-- The client's localized button captions. Defined because the dialog table
+-- reads them at file scope.
+YES, NO = "Yes", "No"
 
 ------------------------------------------------------------
 -- Enums, measured from the live client

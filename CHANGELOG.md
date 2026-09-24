@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Hide a character from the sheet.** Right-click its name and confirm; it
+  disappears from the grid and from the footer totals, which then say how many
+  were left out. The record keeps syncing and updating - nothing is deleted.
+  Restore it under Options, "Hidden characters". The list is per account and is
+  keyed by GUID, so two characters sharing a first name are not confused
+  ([#21](https://github.com/Spotnick2/AltStable/issues/21)).
+
 ## v0.1.0-beta
 
 First packaged build for World of Warcraft: Forever (measured on client
