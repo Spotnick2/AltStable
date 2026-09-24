@@ -120,6 +120,10 @@ Deploy is a file copy — low-stakes, no build.
 commit a literal version over that keyword: the packager needs it, and it has been overwritten by
 hand twice on sibling projects.
 
+See `docs/RUNBOOK.md` for the operational side: the in-game loop, where the client keeps
+SavedVariables, what #23 costs you when testing, the client-update procedure, two-account sync
+testing, and the errors you will actually see.
+
 ## Releasing
 
 One CurseForge project publishes all three folders. CurseForge's own packager builds the release
@@ -169,6 +173,18 @@ client ignores it.
   field means touching three places: the reset in `Scanner.lua`, the denylist in
   `SerializeChar`, and the wipe list in `ClearSyncedStateFields` (note `^gear_` does **not**
   match `gearmod_`).
+- **`hidehelm` / `hidecloak` are NUMBERS, 1 or 0 — never booleans.** Everything on a character
+  record rides the wire as `tostring(v)`, and `DeserializeChar` coerces with `tonumber`, so a
+  boolean arrives at the peer as the STRING `"false"` — which is truthy in Lua, making a shown
+  cloak read as hidden. `1`/`0` round-trip as numbers. They are named for the HIDDEN state so an
+  absent field (an older record) reads as `0` = shown, which is the safe direction to fail.
+  `restedArea` is the one boolean that predates this rule, and readers compare it explicitly
+  (`== true or == "true"`) for exactly that reason.
+- **Unit numbers can be unreadable.** Some APIs return Retail "secret values": storable, but
+  arithmetic, comparison or `tostring` on one throws and aborts the whole function. Read every
+  unit number through `AltStable.API.PlainNumber` / `PlainSum`, store `nil` rather than `0` for
+  one (unknown is not zero, and a 0 syncs as fact), and clear the field on the peer when it goes
+  unknown. See "Secret values" in `docs/forever-api-notes.md`.
 - **Sync protocol** uses prefix `"ALTSTABLE"`, `"CMD|payload"` messages; records serialize as
   `key:value` lines separated by `==END==`. Read `Core.lua` before touching it, and keep the
   corresponding tests green. A format change means a `PROTOCOL_VERSION` bump — old clients must
