@@ -470,9 +470,43 @@ do
           sheet:find("AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)", 1, true) ~= nil)
 end
 
+-- Faction comes from the client, not from the race (#22). Forever's Skyborne is
+-- ONE race key on both sides, so a race-to-faction table gets one of them wrong
+-- - silently, in a file the user pastes into a spreadsheet.
+do
+    WoW.reset()
+    WoW.faction = "Alliance"
+    AltStableDB = {}
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("the scan records the faction the client reports", c and c.faction, "Alliance")
+    WoW.faction = "Horde"
+    pcall(AltStable.ScanCharacter)
+    eq("  and follows it on the other side", AltStableDB[UnitGUID("player")].faction, "Horde")
+    WoW.reset()
+end
+
 -- Export: one column per tracked faction, all of them, in table order - the
 -- layout can't depend on which factions anyone has met.
 dofile("Export.lua")
+
+do
+    local row = AltStable._test.ExportRow
+    local function firstCols(line)
+        local out = {}
+        for field in (line .. "	"):gmatch("([^	]*)	") do out[#out + 1] = field end
+        return out
+    end
+    -- Column 5 is Faction (Name, Realm, Class, Race, Faction, ...).
+    local horde = firstCols(row({ name = "A", realm = "R", class = "MAGE", race = "Skyborne",
+                                  faction = "Horde", level = 60 }))
+    local ally  = firstCols(row({ name = "B", realm = "R", class = "MAGE", race = "Skyborne",
+                                  faction = "Alliance", level = 60 }))
+    eq("a Horde Skyborne exports as H", horde[5], "H")
+    eq("  and an Alliance one as A - the same race key", ally[5], "A")
+    local old = firstCols(row({ name = "C", realm = "R", class = "WARRIOR", race = "Orc", level = 60 }))
+    eq("a record with no faction falls back to the race guess", old[5], "H")
+end
 do
     local header, row = AltStable._test.ExportHeader, AltStable._test.ExportRow
     local function cols(line)
