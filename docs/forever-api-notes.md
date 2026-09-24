@@ -400,6 +400,18 @@ field stored as nil is simply absent from the wire, so a peer merging "only the
 keys present" keeps the last number it saw and goes on displaying it as current.
 Clear the fields an accepted snapshot owns before applying it.
 
+**Still unmeasured: what `type()` reports for a secret.** A run on the character that produced the
+error returned `number false` for
+`local _, s = UnitStat("player", 1) print(type(s), issecretvalue(s))` - so `issecretvalue` is
+callable and answers, but that read was NOT secret at the time, and the question stands. Until a
+secret is caught in the act, the adapter probes numbers with arithmetic instead of trusting
+`type()`: if a secret number reports as `"number"`, trusting the type would wave through the one
+case the check exists for.
+
+That run also shows the flag is not sticky - the same API on the same character returned a plain
+number later. Whatever turns it on (realm type, group state, something else) can turn it off, so
+"it worked when I tested" proves nothing here.
+
 Two details that are easy to miss:
 
 - **Comparisons throw too.** A "largest of" loop (`if sp > best`) is as fatal as a sum, and it hides

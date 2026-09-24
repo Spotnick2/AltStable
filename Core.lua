@@ -79,7 +79,11 @@ local MSG_DONE = "DONE"
 local PROTOCOL_VERSION = "8"
 local MSG_REQUEST_V = MSG_REQUEST .. PROTOCOL_VERSION   -- "REQ7"
 local MSG_DONE_V    = MSG_DONE    .. PROTOCOL_VERSION   -- "DONE7"
-local MSG_CHUNK_V   = MSG_CHUNK   .. "5"                -- "CHUNK5"
+-- The chunk format's own version, which moves independently of
+-- PROTOCOL_VERSION: v7 and v8 both use CHUNK5, because the payload changed
+-- while the framing did not.
+local CHUNK_VERSION = "5"
+local MSG_CHUNK_V   = MSG_CHUNK   .. CHUNK_VERSION     -- "CHUNK5"
 
 -- Compression codec (loaded before Core.lua in the .toc).
 local LibDeflate = LibStub and LibStub:GetLibrary("LibDeflate", true)
@@ -111,6 +115,24 @@ local CHUNK_DONE_GRACE      = 2     -- seconds
 -- buffer because chunks can arrive out of order on the addon channel
 -- and silent reordering was producing checksum mismatches.
 local incomingBuffers = {}
+
+-- Which protocol a command string belongs to, and whether we can speak it.
+--
+-- The version rides in the command's numeric suffix (REQ8, DONE8, CHUNK5), and
+-- an unversioned command is v1 - the first release. Parsing it beats listing
+-- every old string: the lists stopped at REQ6 and DONE6, so a v7 peer's DONE
+-- matched nothing and was dropped in SILENCE. Its chunks had already been
+-- buffered (CHUNK5 is shared by v7 and v8), so the user saw a stalled sync or
+-- nothing at all, never "outdated addon version" - and v8 would have needed the
+-- same fix again when v9 ships.
+--
+-- Returns the version, or nil when the command is not one of ours.
+local function CommandVersion(cmd, base)
+    if type(cmd) ~= "string" then return nil end
+    local suffix = cmd:match("^" .. base .. "(%d*)$")
+    if not suffix then return nil end
+    return tonumber(suffix) or 1
+end
 
 -- Set of senders we've already nagged about being on an outdated
 -- protocol version, to avoid spamming the chat frame on every chunk.
@@ -695,99 +717,6 @@ end
 -- Send character  (line-aligned chunks — single messages cap at 255 bytes)
 ------------------------------------------------------------
 
-------------------------------------------------------------
--- Base64 codec
---
--- Chunks transmitted over WoW's addon channel are now base64-
--- encoded.  Reasoning: even though SendAddonMessage's docs
--- claim it transmits all bytes 1-255 verbatim, the user has
--- been seeing deterministic checksum mismatches with the
--- exact same hashes both sides every time, even when all
--- chunks arrived.  The likeliest culprit is some kind of
--- whitespace / control-character normalization happening
--- somewhere in the channel — leading/trailing whitespace
--- stripping is a common pattern in chat-server pipelines.
---
--- Encoding the chunk body as base64 sidesteps this entire
--- class of issues at the cost of a 33% size overhead.  Each
--- chunk's bytes after the header are now pure printable
--- ASCII from the base64 alphabet — A-Z, a-z, 0-9, +, /, =
--- — none of which any sane chat pipeline touches.
---
--- The encoding is plain RFC 4648 with `=` padding.
-------------------------------------------------------------
-
-local B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-local B64_DECODE = {}
-for i = 1, #B64_ALPHABET do
-    B64_DECODE[B64_ALPHABET:sub(i,i)] = i - 1
-end
-
-local function Base64Encode(s)
-    if not s or s == "" then return "" end
-    local out = {}
-    local n = #s
-    for i = 1, n, 3 do
-        local b1 = string.byte(s, i)
-        local b2 = string.byte(s, i+1) or 0
-        local b3 = string.byte(s, i+2) or 0
-        local n1 = math.floor(b1 / 4)
-        local n2 = (b1 % 4) * 16 + math.floor(b2 / 16)
-        local n3 = (b2 % 16) * 4 + math.floor(b3 / 64)
-        local n4 = b3 % 64
-        out[#out+1] = B64_ALPHABET:sub(n1+1, n1+1)
-        out[#out+1] = B64_ALPHABET:sub(n2+1, n2+1)
-        if i+1 <= n then
-            out[#out+1] = B64_ALPHABET:sub(n3+1, n3+1)
-        else
-            out[#out+1] = "="
-        end
-        if i+2 <= n then
-            out[#out+1] = B64_ALPHABET:sub(n4+1, n4+1)
-        else
-            out[#out+1] = "="
-        end
-    end
-    return table.concat(out)
-end
-
-local function Base64Decode(s)
-    if not s or s == "" then return "" end
-    -- Strip any whitespace that might have crept in (defensive)
-    s = s:gsub("%s", "")
-    local out = {}
-    local n = #s
-    for i = 1, n, 4 do
-        local c1 = s:sub(i,   i)
-        local c2 = s:sub(i+1, i+1)
-        local c3 = s:sub(i+2, i+2)
-        local c4 = s:sub(i+3, i+3)
-        local n1 = B64_DECODE[c1]
-        local n2 = B64_DECODE[c2]
-        local n3 = B64_DECODE[c3] or 0
-        local n4 = B64_DECODE[c4] or 0
-        if not n1 or not n2 then return nil end  -- malformed
-        local b1 = n1 * 4 + math.floor(n2 / 16)
-        local b2 = (n2 % 16) * 16 + math.floor(n3 / 4)
-        local b3 = (n3 % 4) * 64 + n4
-        out[#out+1] = string.char(b1)
-        if c3 ~= "=" and c3 ~= "" then out[#out+1] = string.char(b2) end
-        if c4 ~= "=" and c4 ~= "" then out[#out+1] = string.char(b3) end
-    end
-    return table.concat(out)
-end
-
-
---
--- Called by SendFullDatabase. Splits the payload into chunks no larger
--- than MAX_CHUNK, computes one checksum over the reassembled stream, and
--- sends each chunk as
---   "CHUNK2|<seq>/<total>|<chunkBody>"
--- followed by "DONE4|<checksum>".
---
--- Both sides must agree on the byte sequence in order — the sequence
--- numbers let the receiver reassemble even if packets arrive out of
--- order, and detect drops (a missing seq gets reported on DONE).
 ------------------------------------------------------------
 
 -- Send one wire message, paced by ChatThrottleLib when present (it queues +
@@ -1451,9 +1380,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
-        -- Older request from a previous protocol version — ignore
-        if cmd == MSG_REQUEST or cmd == "REQ2" or cmd == "REQ3" or cmd == "REQ4" or cmd == "REQ5" or cmd == "REQ6" then
-            Print("|cffff8800[AltStable]|r Ignoring sync request from "..senderName.." (outdated addon version).")
+        -- A request we cannot serve: any version but ours. Older and newer are
+        -- reported differently, because only one of them is the user's to fix
+        -- on the other machine.
+        local reqVersion = CommandVersion(cmd, MSG_REQUEST)
+        if reqVersion then
+            if reqVersion < tonumber(PROTOCOL_VERSION) then
+                Print("|cffff8800[AltStable]|r Ignoring sync request from "..senderName..
+                      " (outdated addon version — update AltStable there).")
+            else
+                Print("|cffff8800[AltStable]|r Ignoring sync request from "..senderName..
+                      " (newer addon version — update AltStable here).")
+            end
             return
         end
 
@@ -1477,13 +1415,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- chunk under the v5 codec, so we tell the user to update both
         -- ends and move on.  Logged once per sender per session to
         -- avoid spamming the chat frame on multi-chunk streams.
-        if cmd == MSG_CHUNK or cmd == "CHUNK2" or cmd == "CHUNK3" or cmd == "CHUNK4" then
+        local chunkVersion = CommandVersion(cmd, MSG_CHUNK)
+        if chunkVersion and cmd ~= MSG_CHUNK_V then
             local key = sender and sender:match("^([^%-]+)") or sender
             outdatedSenders = outdatedSenders or {}
             if not outdatedSenders[key] then
                 outdatedSenders[key] = true
+                local which = (chunkVersion < tonumber(CHUNK_VERSION))
+                    and "outdated addon version" or "newer addon version"
                 Print("|cffff8800[AltStable]|r Ignoring chunked sync from " .. key ..
-                      " (outdated addon version — please update AltStable on both ends).")
+                      " (" .. which .. " — please update AltStable on both ends).")
             end
             return
         end
@@ -1576,12 +1517,36 @@ frame:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
-        -- Old unversioned DONE from a previous addon version — discard buffer silently
-        if cmd == MSG_DONE or cmd == "DONE2" or cmd == "DONE3" or cmd == "DONE4" or cmd == "DONE5" or cmd == "DONE6" then
+        -- A DONE from any other version: drop whatever it was assembling and
+        -- SAY so. Buffers are keyed "<peer>#<sid>", so the old code's
+        -- incomingBuffers[shortName] never matched anything - the buffer was
+        -- left to the 120-second sweep and the user got a "stalled" line, or
+        -- silence, instead of a reason.
+        local doneVersion = CommandVersion(cmd, MSG_DONE)
+        if doneVersion then
+            -- Buffers are keyed by the FULL sender ("Name-Realm#sid"), while the
+            -- chat line names the character. Scanning by the short name alone
+            -- matched nothing, which is how the old code silently left the data
+            -- to the 120-second sweep.
             local key = sender and sender:match("^([^%-]+)") or sender
-            if incomingBuffers[key] then
-                incomingBuffers[key] = nil
-                Print("|cffff8800Warning:|r Discarded data from "..key.." (outdated addon version — please update AltStable).")
+            local dropped = false
+            local function ownedBy(bkey, who)
+                if not who then return false end
+                return bkey == who or bkey:find("^" .. who:gsub("(%W)", "%%%1") .. "#") ~= nil
+            end
+            for bkey in pairs(incomingBuffers) do
+                if ownedBy(bkey, sender) or ownedBy(bkey, key) then
+                    incomingBuffers[bkey] = nil
+                    dropped = true
+                end
+            end
+            local which = (doneVersion < tonumber(PROTOCOL_VERSION))
+                and "outdated addon version" or "newer addon version"
+            if dropped then
+                Print("|cffff8800Warning:|r Discarded data from "..key.." ("..which..
+                      " — please update AltStable).")
+            else
+                Print("|cffff8800[AltStable]|r Ignoring sync from "..key.." ("..which..").")
             end
             return
         end
@@ -2294,8 +2259,6 @@ end
 
 local _seam = {
     ComputeChecksum     = ComputeChecksum,
-    Base64Encode        = Base64Encode,
-    Base64Decode        = Base64Decode,
     SerializeChar       = SerializeChar,
     CleanupDB           = CleanupDB,
     DispatchPluginPayloads = DispatchPluginPayloads,
@@ -2329,6 +2292,8 @@ local _seam = {
     MSG_CHUNK_V        = MSG_CHUNK_V,
     MSG_DONE_V         = MSG_DONE_V,
     MSG_REQUEST_V      = MSG_REQUEST_V,
+    CommandVersion     = CommandVersion,
+    CHUNK_VERSION      = CHUNK_VERSION,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
     ResetSyncState     = ResetSyncState,
 }
