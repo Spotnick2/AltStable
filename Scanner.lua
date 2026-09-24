@@ -461,6 +461,16 @@ function AltStable.ScanCharacter()
     char.raceKey = char.race or ""
     char.raceName = raceLocalized or ""
 
+    -- Faction from the CLIENT, not inferred from the race. Forever's Skyborne is
+    -- one race key on both sides ("High Order Skyborne" / "Windshaper
+    -- Skyborne"), so any race-to-faction table gets one of them wrong - and gets
+    -- it wrong silently, in an export the user pastes into a spreadsheet.
+    -- The tag is the English "Horde"/"Alliance"; the second return is localized
+    -- and deliberately not stored.
+    if UnitFactionGroup then
+        char.faction = UnitFactionGroup("player") or char.faction
+    end
+
     -- Gender: 2 = male, 3 = female
     local gender = UnitSex("player")
     char.gender = (gender == 3) and "Female" or "Male"

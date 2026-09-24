@@ -35,6 +35,7 @@ local WoW = {
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
+    faction = "Horde",  -- UnitFactionGroup's tag
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
     now         = 1700000000,  -- the clock time() reads; tests pin their own values
@@ -50,6 +51,7 @@ function WoW.reset()
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
+    WoW.faction = "Horde"
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
     WoW.eventFrames = {}
@@ -440,7 +442,9 @@ function GetNormalizedRealmName() return WoW.player.normalizedRealm end
 function UnitClass(unit) if unit == "player" then return WoW.player.classLocalized, WoW.player.class end end
 function UnitRace(unit) if unit == "player" then return "Undead", WoW.player.race end end
 function UnitSex() return 3 end
-function UnitFactionGroup() return "Horde", "Horde" end
+-- Tag first, localized name second. Driven by WoW.faction so a test can put a
+-- Skyborne on either side - the case a race-to-faction table gets wrong.
+function UnitFactionGroup() return WoW.faction or "Horde", WoW.faction or "Horde" end
 function IsLoggedIn() return WoW.loggedIn ~= false end
 function GetMoney() return 0 end
 function IsInGuild() return false end
