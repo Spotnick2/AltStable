@@ -77,8 +77,8 @@ local MSG_DONE = "DONE"
 --          checksum is computed over the encoded stream. Huge size win on the
 --          repetitive recipe payload.
 local PROTOCOL_VERSION = "8"
-local MSG_REQUEST_V = MSG_REQUEST .. PROTOCOL_VERSION   -- "REQ7"
-local MSG_DONE_V    = MSG_DONE    .. PROTOCOL_VERSION   -- "DONE7"
+local MSG_REQUEST_V = MSG_REQUEST .. PROTOCOL_VERSION   -- "REQ8"
+local MSG_DONE_V    = MSG_DONE    .. PROTOCOL_VERSION   -- "DONE8"
 -- The chunk format's own version, which moves independently of
 -- PROTOCOL_VERSION: v7 and v8 both use CHUNK5, because the payload changed
 -- while the framing did not.
@@ -715,8 +715,6 @@ end
 
 ------------------------------------------------------------
 -- Send character  (line-aligned chunks — single messages cap at 255 bytes)
-------------------------------------------------------------
-
 ------------------------------------------------------------
 
 -- Send one wire message, paced by ChatThrottleLib when present (it queues +
@@ -1524,29 +1522,45 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- silence, instead of a reason.
         local doneVersion = CommandVersion(cmd, MSG_DONE)
         if doneVersion then
-            -- Buffers are keyed by the FULL sender ("Name-Realm#sid"), while the
-            -- chat line names the character. Scanning by the short name alone
-            -- matched nothing, which is how the old code silently left the data
-            -- to the 120-second sweep.
+            -- Buffers are keyed by the FULL sender plus the stream id
+            -- ("Name-Realm#sid"); the chat line names the character. The old
+            -- code looked up incomingBuffers[shortName], which never matched -
+            -- so the data was left to the 120-second sweep in silence.
             local key = sender and sender:match("^([^%-]+)") or sender
             local dropped = false
-            local function ownedBy(bkey, who)
-                if not who then return false end
-                return bkey == who or bkey:find("^" .. who:gsub("(%W)", "%%%1") .. "#") ~= nil
-            end
+            local prefix = sender and ("^" .. sender:gsub("(%W)", "%%%1") .. "#")
             for bkey in pairs(incomingBuffers) do
-                if ownedBy(bkey, sender) or ownedBy(bkey, key) then
+                if bkey == sender or (prefix and bkey:find(prefix)) then
                     incomingBuffers[bkey] = nil
                     dropped = true
                 end
             end
+
+            -- This stream is over, so end the watch on it. Without this the
+            -- user got the right reason now and, 45 seconds later, "sync
+            -- stalled - try /alts sync <name>" for something that cannot
+            -- succeed: the contradictory advice this whole change exists to
+            -- remove, one function call away from the fix.
+            if sender then
+                ClearSyncWatch(sender)
+                autoRetryCounts = autoRetryCounts or {}
+                autoRetryCounts[sender] = nil
+            end
+
             local which = (doneVersion < tonumber(PROTOCOL_VERSION))
                 and "outdated addon version" or "newer addon version"
             if dropped then
                 Print("|cffff8800Warning:|r Discarded data from "..key.." ("..which..
                       " — please update AltStable).")
             else
-                Print("|cffff8800[AltStable]|r Ignoring sync from "..key.." ("..which..").")
+                -- Nothing buffered: this peer's chunks were refused too, so it
+                -- broadcasts one of these per update. Say it once per session,
+                -- like the chunk path - the old code was silent here.
+                outdatedSenders = outdatedSenders or {}
+                if not outdatedSenders[key] then
+                    outdatedSenders[key] = true
+                    Print("|cffff8800[AltStable]|r Ignoring sync from "..key.." ("..which..").")
+                end
             end
             return
         end

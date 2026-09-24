@@ -6,7 +6,7 @@
 -- data reaches the sheet while SavedVariables do not load (#23), and
 -- this is the harness issue #20 asks for before its fixes.
 --
--- Exercises the wire format in Core.lua (base64 codec, checksum,
+-- Exercises the wire format in Core.lua (protocol versions, checksum,
 -- character + full-DB serialization, and the chunk -> reassemble
 -- receive path) with no game client, via the tests/wow_stubs.lua mock
 -- and the AltStable._test seam.
@@ -192,6 +192,34 @@ WoW.chatOut = {}
 receive("DONE7|1|abc", "Old-Realm")
 check(chatHas("Ignoring sync") and not chatHas("Discarded"),
       "  with nothing buffered, it is reported without claiming a discard")
+
+-- Discarding the data ends the watch on that stream. Without this the user got
+-- the right reason now and, 45 seconds later, "stalled - try /alts sync <name>"
+-- for something that cannot succeed: the contradictory advice this change
+-- exists to remove, one function call away from the fix.
+WoW.reset(); WoW.now = 1000
+AltStableDB = {}
+T.WatchSyncPeer("Old-Realm")
+receive(T.MSG_CHUNK_V .. "|1|1/2|body", "Old-Realm")   -- NoteSyncActivity: sawData
+receive("DONE7|1|abc", "Old-Realm")
+WoW.chatOut = {}
+WoW.now = 1100
+WoW.flushTimers()
+check(not chatHas("stalled") and not chatHas("No sync response"),
+      "discarding another version's stream also ends the watch on it")
+
+-- The line is said once per session, not once per broadcast: a peer whose chunk
+-- framing also differs buffers nothing, so every stream it sends lands here.
+WoW.reset()
+receive("DONE7|1|abc", "Chatty-Realm")
+local firstCount = 0
+for _, m in ipairs(WoW.chatOut) do if m:find("Ignoring sync", 1, true) then firstCount = firstCount + 1 end end
+receive("DONE7|1|abc", "Chatty-Realm")
+receive("DONE7|1|abc", "Chatty-Realm")
+local total = 0
+for _, m in ipairs(WoW.chatOut) do if m:find("Ignoring sync", 1, true) then total = total + 1 end end
+eq(firstCount, 1, "the first mismatched DONE with nothing buffered is reported")
+eq(total, 1, "  and repeats are not")
 
 -- A chunk in another FRAMING version cannot be reassembled at all.
 WoW.reset()
