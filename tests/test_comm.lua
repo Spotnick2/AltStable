@@ -6,7 +6,7 @@
 -- data reaches the sheet while SavedVariables do not load (#23), and
 -- this is the harness issue #20 asks for before its fixes.
 --
--- Exercises the wire format in Core.lua (base64 codec, checksum,
+-- Exercises the wire format in Core.lua (protocol versions, checksum,
 -- character + full-DB serialization, and the chunk -> reassemble
 -- receive path) with no game client, via the tests/wow_stubs.lua mock
 -- and the AltStable._test seam.
@@ -147,25 +147,104 @@ local function seedBig(prefix, n)
 end
 
 ------------------------------------------------------------
--- 1. Base64 codec
---
--- LEGACY. No packet has used this codec since v7 moved the wire to LibDeflate;
--- its only reference is the _test seam. Delete this section together with the
--- codec, rather than let it keep counting towards wire coverage.
+-- 1. Recognising another protocol version (#37)
 ------------------------------------------------------------
+-- The version rides in the command's numeric suffix. The old code LISTED the
+-- versions it knew - and stopped at 6, so a v7 peer's DONE7 matched nothing and
+-- was dropped in silence while its chunks sat in a buffer (CHUNK5 is shared by
+-- v7 and v8). The user saw a stall, never "outdated addon version".
 
-eq(T.Base64Encode("Man"), "TWFu", "base64 vector: Man")
-eq(T.Base64Encode("Ma"),  "TWE=", "base64 vector: Ma")
-eq(T.Base64Encode("M"),   "TQ==", "base64 vector: M")
-eq(T.Base64Encode(""),    "",     "base64 of empty string")
+eq(T.CommandVersion("REQ8", "REQ"), 8, "the suffix is the version")
+eq(T.CommandVersion("REQ", "REQ"), 1, "no suffix is v1, the first release")
+eq(T.CommandVersion("DONE12", "DONE"), 12, "two digits")
+eq(T.CommandVersion("REQUEST", "REQ"), nil, "a longer word is not a versioned command")
+eq(T.CommandVersion("CHUNK5X", "CHUNK"), nil, "trailing junk is not a version")
+eq(T.CommandVersion(nil, "REQ"), nil, "nothing is not a version")
+eq(T.CommandVersion("DONE8", "REQ"), nil, "a different command is not ours")
 
-for _, s in ipairs({
-    "", "a", "ab", "abc", "abcd",
-    "guid:Player-1\nname:Bob\nlevel:70",
-    string.char(0, 1, 2, 127, 200, 254, 255),
-}) do
-    eq(T.Base64Decode(T.Base64Encode(s)), s, "base64 round-trip (len " .. #s .. ")")
-end
+-- A request from any version but ours is refused, and the message says which
+-- side has to update.
+local current = tonumber(T.PROTOCOL_VERSION)
+WoW.reset()
+receive("REQ" .. (current - 1) .. "|0", "Old-Realm")
+check(chatHas("outdated addon version"), "the previous version's request is reported as outdated")
+WoW.chatOut = {}
+receive("REQ7|0", "Old-Realm")
+check(chatHas("outdated"), "  v7 too, which the old list never reached")
+WoW.chatOut = {}
+receive("REQ" .. (current + 1) .. "|0", "New-Realm")
+check(chatHas("newer addon version"), "a newer version's request says to update HERE")
+WoW.chatOut = {}
+receive("REQ|0", "Ancient-Realm")
+check(chatHas("outdated"), "the unversioned first release is outdated")
+
+-- A DONE from another version drops what it was assembling AND says so. The
+-- old code looked up incomingBuffers[shortName], but buffers are keyed
+-- "<peer>#<sid>", so it never matched: the data sat until the 120s sweep.
+WoW.reset()
+AltStableDB = {}
+receive(T.MSG_CHUNK_V .. "|1|1/2|body", "Old-Realm")
+WoW.chatOut = {}
+receive("DONE7|1|abc", "Old-Realm")
+check(chatHas("Discarded data"), "a DONE from another version discards the buffered chunks")
+check(chatHas("outdated"), "  and names the reason")
+WoW.chatOut = {}
+receive("DONE7|1|abc", "Old-Realm")
+check(chatHas("Ignoring sync") and not chatHas("Discarded"),
+      "  with nothing buffered, it is reported without claiming a discard")
+
+-- Discarding the data ends the watch on that stream. Without this the user got
+-- the right reason now and, 45 seconds later, "stalled - try /alts sync <name>"
+-- for something that cannot succeed: the contradictory advice this change
+-- exists to remove, one function call away from the fix.
+WoW.reset(); WoW.now = 1000
+AltStableDB = {}
+T.WatchSyncPeer("Old-Realm")
+receive(T.MSG_CHUNK_V .. "|1|1/2|body", "Old-Realm")   -- NoteSyncActivity: sawData
+receive("DONE7|1|abc", "Old-Realm")
+WoW.chatOut = {}
+WoW.now = 1100
+WoW.flushTimers()
+check(not chatHas("stalled") and not chatHas("No sync response"),
+      "discarding another version's stream also ends the watch on it")
+
+-- The line is said once per session, not once per broadcast: a peer whose chunk
+-- framing also differs buffers nothing, so every stream it sends lands here.
+WoW.reset()
+receive("DONE7|1|abc", "Chatty-Realm")
+local firstCount = 0
+for _, m in ipairs(WoW.chatOut) do if m:find("Ignoring sync", 1, true) then firstCount = firstCount + 1 end end
+receive("DONE7|1|abc", "Chatty-Realm")
+receive("DONE7|1|abc", "Chatty-Realm")
+local total = 0
+for _, m in ipairs(WoW.chatOut) do if m:find("Ignoring sync", 1, true) then total = total + 1 end end
+eq(firstCount, 1, "the first mismatched DONE with nothing buffered is reported")
+eq(total, 1, "  and repeats are not")
+
+-- A chunk in another FRAMING version cannot be reassembled at all.
+WoW.reset()
+WoW.chatOut = {}
+receive("CHUNK4|1|1/1|body", "Old-Realm")
+check(chatHas("outdated addon version"), "an older chunk format is reported as outdated")
+WoW.chatOut = {}
+receive("CHUNK9|1|1/1|body", "New-Realm")
+check(chatHas("newer addon version"), "a newer one says to update here")
+
+-- ...and the current one still works, which is what keeps the above honest.
+WoW.reset()
+AltStableDB = {}
+local liveRec = { guid = "Player-Live-1", name = "Live", class = "MAGE", level = 60, lastUpdate = 1000 }
+AltStableDB = { ["Player-Live-1"] = liveRec }
+T.ChunkAndSendPayload(T.SerializeFullDB(false, 0), "WHISPER", "x")
+WoW.flushTimers()
+local wire = WoW.sentMessages()
+AltStableDB = {}
+WoW.chatOut = {}
+for _, m in ipairs(wire) do receive(m, "Live-Realm") end
+eq(AltStableDB["Player-Live-1"] and AltStableDB["Player-Live-1"].name, "Live",
+   "the current version's stream still reassembles")
+check(not chatHas("outdated") and not chatHas("newer"),
+      "  and is not mistaken for another version")
 
 ------------------------------------------------------------
 -- 2. Checksum
@@ -555,9 +634,8 @@ AltStableDB = {}
 receive(T.MSG_CHUNK_V .. "|1|not-a-valid-header", "Junk-Realm")
 check(chatHas("Malformed"), "malformed chunk header is reported")
 WoW.chatOut = {}
-receive(T.MSG_CHUNK_V .. "|1|9/3|" .. T.Base64Encode("x"), "Junk-Realm")
+receive(T.MSG_CHUNK_V .. "|1|9/3|body", "Junk-Realm")
 check(chatHas("Out-of-range"), "out-of-range seq (seq > total) is reported")
-eq(T.Base64Decode("@@@@"), nil, "malformed base64 body decodes to nil")
 
 ------------------------------------------------------------
 -- 18. DONE with no received chunks is a safe no-op
