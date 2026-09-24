@@ -166,6 +166,9 @@ local totalGold  = 0
 -- like the totals above: BuildDisplayList counts them and UpdateTotalsBar reads
 -- the count, and a local in the first would read as a nil global in the second.
 local goldUnknown = 0
+-- Characters the user has hidden (#21). Same file scope, same reason: counted
+-- in BuildDisplayList, reported by UpdateTotalsBar.
+local hiddenCount = 0
 
 local FROZEN_WIDTH
 local NAME_COL_WIDTH
@@ -1026,9 +1029,14 @@ local function StackChars(text)
     return table.concat(t, "\n")
 end
 
+-- AltStableDB is flat, keyed by guid: that is what Scanner, Core and Config all
+-- write and read. The AltTracker-era "db.characters" sub-table this used to fall
+-- back to is written by nothing here, and the branch made the sheet read the
+-- store differently from every other file - which would have shown hidden
+-- characters filtered out of the grid while the restore list in Options found
+-- no records at all.
 local function GetCharacterStore()
     if type(AltStableDB)~="table" then return {} end
-    if type(AltStableDB.characters)=="table" then return AltStableDB.characters end
     return AltStableDB
 end
 
@@ -1062,30 +1070,47 @@ end
 -- Display list
 ------------------------------------------------------------
 
+-- #21. Hiding is filtered HERE, at render time, and nowhere else: the record
+-- still syncs, still updates, and still goes out to peers. Config.lua owns the
+-- state (per account, keyed by guid).
+local function IsHidden(char)
+    if not AltStable.IsCharacterHidden then return false end
+    return AltStable.IsCharacterHidden(char.guid)
+end
+
 local function BuildDisplayList()
     wipe(displayList)
-    totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0
+    totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0; hiddenCount=0
     local store = GetCharacterStore()
 
-    -- Totals reflect EVERY character in the DB, not just the filtered view.
-    -- Bank alts below 58 still hold gold, and users expect the total gold
-    -- number to match other addons (ElvUI, etc.) that account for them.
+    -- Totals reflect every character in the DB EXCEPT the hidden ones. A
+    -- hidden character is meant to be gone from the sheet, and a total that
+    -- still counted it would be the one place it kept showing up - so the
+    -- footer reports how many were left out instead.
+    --
+    -- Everything else counts, including low-level bank alts: they hold gold,
+    -- and the total is expected to match other addons (ElvUI, etc.) that count
+    -- them.
     -- A character whose money is UNREADABLE (secret, see Compat.lua) has no
     -- money field at all. Counting it as zero would present the sum as the
     -- whole account's gold while silently leaving one character out, so the
     -- footer says how many are missing instead.
     for _, char in next, store do
         if type(char)=="table" and char.name then
-            totalLevel = totalLevel + (char.level or 0)
-            if char.money == nil then goldUnknown = goldUnknown + 1
-            else totalGold = totalGold + char.money end
-            totalChars = totalChars + 1
+            if IsHidden(char) then
+                hiddenCount = hiddenCount + 1
+            else
+                totalLevel = totalLevel + (char.level or 0)
+                if char.money == nil then goldUnknown = goldUnknown + 1
+                else totalGold = totalGold + char.money end
+                totalChars = totalChars + 1
+            end
         end
     end
 
     local allChars = {}
     for _, char in next, store do
-        if type(char)=="table" and char.name then
+        if type(char)=="table" and char.name and not IsHidden(char) then
             table.insert(allChars, char)
         end
     end
@@ -1223,7 +1248,7 @@ local function UpdateTotalsBar()
     local totalIlvl, ilvlCount = 0, 0
     local store = GetCharacterStore()
     for _, char in next, store do
-        if type(char)=="table" and char.name then
+        if type(char)=="table" and char.name and not IsHidden(char) then
             if char.ilvl and char.ilvl > 0 then
                 totalIlvl = totalIlvl + char.ilvl
                 ilvlCount  = ilvlCount  + 1
@@ -1242,8 +1267,13 @@ local function UpdateTotalsBar()
     if totalsBar.mid then totalsBar.mid:SetText(avgIlvlStr) end
     local goldNote = (goldUnknown > 0)
         and ("  |cffff8800(" .. goldUnknown .. " unknown)|r") or ""
+    -- Dim, and after the gold: it is not a warning, it is a reminder that the
+    -- numbers to its left describe fewer characters than the database holds.
+    local hiddenNote = (hiddenCount > 0)
+        and ("  |cff808080(" .. hiddenCount .. " hidden)|r") or ""
     totalsBar.right:SetText(
-        "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r" .. goldNote)
+        "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r"
+        .. goldNote .. hiddenNote)
 end
 
 ------------------------------------------------------------
@@ -2816,6 +2846,115 @@ local function CreateFrameIfNeeded()
 
     Y = Y - 12
 
+    -- ── Hidden characters (#21) ───────────────────────────
+    local optHideHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optHideHdr:SetPoint("TOPLEFT", P, Y)
+    optHideHdr:SetText("HIDDEN CHARACTERS")
+    optHideHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    Y = Y - 18
+
+    local optHideHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optHideHint:SetPoint("TOPLEFT", P, Y)
+    optHideHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optHideHint:SetJustifyH("LEFT"); optHideHint:SetWordWrap(true)
+    optHideHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optHideHint:SetText("Right-click a name on the sheet to hide it. Hidden characters keep "
+        .. "syncing; they are only left out of the grid and the totals.")
+    Y = Y - 32
+
+    -- Same compact row list as the sync peers above. This one is per account
+    -- and not synced, so it stays short in practice.
+    local OPT_HIDDEN_ROWS = 6
+    local optHiddenRows = {}
+    local optHiddenListY = Y
+    for i = 1, OPT_HIDDEN_ROWS do
+        local row = CreateFrame("Frame", nil, optionsFrame)
+        row:SetSize(360, 18)
+        row:SetPoint("TOPLEFT", P + 4, Y - (i - 1) * 18)
+
+        local lbl = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", 0, 0); lbl:SetJustifyH("LEFT")
+        lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        row.label = lbl
+
+        local show = CreateFrame("Button", nil, row, "BackdropTemplate")
+        show:SetSize(48, 16)
+        show:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+        AltStable.ApplyBackdrop(show, 0.12, 0.12, 0.12, 1)
+        local showLbl = show:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        showLbl:SetAllPoints(); showLbl:SetJustifyH("CENTER"); showLbl:SetText("|cffddddddShow|r")
+        row.showBtn = show
+        row:Hide()
+        optHiddenRows[i] = row
+    end
+
+    local optHiddenNote = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY)
+    optHiddenNote:SetJustifyH("LEFT")
+    optHiddenNote:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+
+    Y = Y - (OPT_HIDDEN_ROWS * 18) - 6
+
+    local function OptRefreshHidden()
+        local list = AltStable.HiddenCharacterList and AltStable.HiddenCharacterList() or {}
+        for i, row in ipairs(optHiddenRows) do
+            local entry = list[i]
+            if entry then
+                local label = AltStable.ClassColor(entry.class) .. entry.name .. "|r"
+                if entry.realm and entry.realm ~= "" then
+                    label = label .. "  |cff808080" .. entry.realm .. "|r"
+                end
+                row.label:SetText(label)
+                row.showBtn:SetScript("OnClick", function()
+                    AltStable.ShowCharacter(entry.guid)
+                end)
+                row:Show()
+            else
+                row.label:SetText("")
+                row:Hide()
+            end
+        end
+        -- ClearAllPoints first: SetPoint ADDS an anchor, so re-anchoring a
+        -- frame that already has one leaves it pinned to both.
+        optHiddenNote:ClearAllPoints()
+        -- Overflow rather than a scroll frame: six rows cover every case seen,
+        -- and the note says plainly what is not on screen instead of pretending
+        -- the list is complete.
+        if #list == 0 then
+            optHiddenNote:SetText("Nothing is hidden.")
+            optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY)
+            optHiddenNote:Show()
+        elseif #list > OPT_HIDDEN_ROWS then
+            optHiddenNote:SetText(("... and %d more (unhide one to see the next)")
+                :format(#list - OPT_HIDDEN_ROWS))
+            optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY - (OPT_HIDDEN_ROWS * 18))
+            optHiddenNote:Show()
+        else
+            -- Cleared, not just hidden: the same stale-text trap as the row
+            -- labels above, and the note is read back in tests.
+            optHiddenNote:SetText("")
+            optHiddenNote:Hide()
+        end
+    end
+    -- So HideCharacter/ShowCharacter can repaint this list without the sheet
+    -- knowing how it is built.
+    AltStable.RefreshOptionsHiddenList = OptRefreshHidden
+
+    -- Test seam: the row labels that carry text, and the note under them. A
+    -- stubbed frame answers IsShown() truthily whatever it was told, so the
+    -- emptied label is what "this row is not in use" looks like from a test.
+    AltStable._test = AltStable._test or {}
+    AltStable._test.OptionsHiddenList = function()
+        local names = {}
+        for _, row in ipairs(optHiddenRows) do
+            local t = row.label:GetText()
+            if t and t ~= "" then names[#names + 1] = t end
+        end
+        return names, optHiddenNote:GetText()
+    end
+
+    Y = Y - 12
+
     -- ── Helper text ───────────────────────────────────────
     local optHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optHint:SetPoint("TOPLEFT", P, Y)
@@ -2864,6 +3003,7 @@ local function CreateFrameIfNeeded()
             cb:SetChecked(AltStableConfig.toastProfessions[profKey] ~= false)
         end
         OptRefreshWhitelist()
+        OptRefreshHidden()
         RefreshThemeBtns()
     end)
 
@@ -3156,6 +3296,64 @@ end
 
 function AltStable.RefreshSheet()
     if frame and frame:IsShown() then Refresh() end
+    -- The restore list too, and unconditionally. A record can ARRIVE for a
+    -- hidden character while Options is open - a peer syncing an alt, or the
+    -- re-pull after /alts cleanup - and the list only shows guids that have a
+    -- record. Its OnShow does not fire again while the panel stays open, so
+    -- that character would be unrestorable until the user left Options and came
+    -- back. Six rows; not worth a visibility check that could itself be wrong.
+    if AltStable.RefreshOptionsHiddenList then AltStable.RefreshOptionsHiddenList() end
+end
+
+------------------------------------------------------------
+-- Hiding a character (#21)
+--
+-- Confirmed, because the row vanishes from the grid on a single right-click
+-- and the only way back is a list in Options - which the user has no reason to
+-- know about at the moment they misclick. The popup says where it went.
+------------------------------------------------------------
+
+local HIDE_POPUP = "ALTSTABLE_CONFIRM_HIDE_CHARACTER"
+
+if type(StaticPopupDialogs) == "table" then
+    StaticPopupDialogs[HIDE_POPUP] = {
+        text = "Hide |cffffffff%s|r from the sheet?\n\nIt keeps syncing and updating - it is "
+            .. "only left out of the grid and the totals. Restore it under "
+            .. "Options, \"Hidden characters\".",
+        button1 = YES or "Yes",
+        button2 = NO or "No",
+        OnAccept = function(_, data)
+            AltStable.HideCharacter(type(data) == "table" and data.guid or data)
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+    }
+end
+
+function AltStable.HideCharacter(guid)
+    if not guid or not AltStable.SetCharacterHidden then return end
+    AltStable.SetCharacterHidden(guid, true)
+    AltStable.RefreshSheet()   -- repaints the grid, the totals and the restore list
+end
+
+function AltStable.ShowCharacter(guid)
+    if not guid or not AltStable.SetCharacterHidden then return end
+    AltStable.SetCharacterHidden(guid, false)
+    AltStable.RefreshSheet()
+end
+
+-- Called by the row on a right-click. Asks first.
+function AltStable.RequestHideCharacter(char)
+    if type(char) ~= "table" or not char.guid then return end
+    if type(StaticPopup_Show) == "function" and StaticPopupDialogs
+        and StaticPopupDialogs[HIDE_POPUP] then
+        StaticPopup_Show(HIDE_POPUP, char.name or "?", nil, { guid = char.guid })
+        return
+    end
+    -- No popup API (never seen on this client, but the click should still do
+    -- what it says rather than nothing at all - Options can undo it).
+    AltStable.HideCharacter(char.guid)
 end
 
 -- Test seam (the AltStable._test convention). The sheet loads and builds under
@@ -3163,6 +3361,16 @@ end
 -- count declared in one function and read in another compiled as a nil global
 -- and errored on every build, and a source-text check could not see it.
 AltStable._test = AltStable._test or {}
+-- The character rows the grid would draw, in order. The footer counts are a
+-- different code path from the list, and #21 has to be right in both.
+AltStable._test.DisplayNames = function()
+    local names = {}
+    for _, item in ipairs(displayList) do
+        if item.kind == "char" then names[#names + 1] = item.data.name end
+    end
+    return names
+end
+
 AltStable._test.FooterText = function()
     if not totalsBar then return nil end
     return (totalsBar.left and totalsBar.left:GetText() or "")

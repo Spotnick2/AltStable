@@ -117,5 +117,222 @@ if footer then
     check("  not one decimal place", footer:find("4.5 avg", 1, true) == nil, footer)
 end
 
+------------------------------------------------------------
+-- Hidden characters (#21)
+--
+-- Hiding is a VIEW filter: the record stays in the database, keeps syncing and
+-- keeps updating. So these checks watch the grid, the totals and the restore
+-- list, and never the store.
+------------------------------------------------------------
+
+-- Refresh without re-running ShowSheet (which toggles).
+local function refresh()
+    local ok, err = pcall(AltStable.RefreshSheet)
+    check("the sheet refreshes", ok, tostring(err))
+    return plain(AltStable._test.FooterText())
+end
+
+local function joined(list) return table.concat(list, ",") end
+
+AltStableConfig.hiddenCharacters = {}
+footer = build({
+    keep = { guid = "keep", name = "Keeper", class = "MAGE", realm = "R", level = 60,
+             ilvl = 60, money = 100 * GOLD, lastUpdate = 1 },
+    gone = { guid = "gone", name = "Goner", class = "ROGUE", realm = "R", level = 40,
+             ilvl = 20, money = 50 * GOLD, lastUpdate = 1 },
+})
+eq("both characters start visible", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
+
+-- A right-click ASKS. It must not hide anything by itself: the row disappears
+-- on one click and the way back is a list in Options the user has no reason to
+-- have seen yet.
+WoW.popups = {}
+AltStable.RequestHideCharacter(AltStableDB.gone)
+eq("a right-click raises one confirmation", #WoW.popups, 1)
+local popup = WoW.popups[1]
+if popup then
+    check("  naming the character", popup.arg1 == "Goner", tostring(popup.arg1))
+    check("  and carrying its guid, not its name",
+          type(popup.data) == "table" and popup.data.guid == "gone", tostring(popup.data))
+end
+eq("nothing is hidden until it is accepted", AltStable.IsCharacterHidden("gone"), false)
+eq("  and the row is still drawn", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
+
+-- Accepting it is what hides.
+local dialog = StaticPopupDialogs[popup and popup.which]
+check("the dialog is registered", dialog ~= nil)
+if dialog then
+    dialog.OnAccept(nil, popup.data)
+end
+eq("accepting hides the character", AltStable.IsCharacterHidden("gone"), true)
+eq("  the grid drops the row", joined(AltStable._test.DisplayNames()), "Keeper")
+
+footer = refresh()
+if footer then
+    check("the footer counts only the visible characters",
+          footer:find("1%s+chars") ~= nil, footer)
+    check("  levels exclude the hidden one", footer:find("60%s+total levels") ~= nil, footer)
+    check("  gold excludes the hidden one", footer:find("100", 1, true) ~= nil, footer)
+    check("  and does not total all of it", footer:find("150", 1, true) == nil, footer)
+    check("  the average iLvl excludes it too", footer:find("60 avg iLvl", 1, true) ~= nil, footer)
+    check("  with a marker saying how many were left out",
+          footer:find("(1 hidden)", 1, true) ~= nil, footer)
+end
+
+-- The record itself is untouched: hiding is not deleting.
+check("the character is still in the database",
+      type(AltStableDB.gone) == "table" and AltStableDB.gone.name == "Goner")
+
+------------------------------------------------------------
+-- The restore list in Options
+------------------------------------------------------------
+
+check("Options exposes a hidden list", type(AltStable._test.OptionsHiddenList) == "function")
+if AltStable._test.OptionsHiddenList then
+    AltStable.RefreshOptionsHiddenList()
+    local rows, note = AltStable._test.OptionsHiddenList()
+    eq("the hidden character is listed once", #rows, 1)
+    check("  by name", (rows[1] or ""):find("Goner", 1, true) ~= nil, tostring(rows[1]))
+    eq("  and no empty-list note is left behind", note, "")
+
+    AltStable.ShowCharacter("gone")
+    eq("restoring it unhides the character", AltStable.IsCharacterHidden("gone"), false)
+    rows, note = AltStable._test.OptionsHiddenList()
+    eq("  the list empties", #rows, 0)
+    eq("  and says so", note, "Nothing is hidden.")
+    footer = refresh()
+    if footer then
+        check("  the footer marker goes away", footer:find("hidden", 1, true) == nil, footer)
+        check("  and the row is back", joined(AltStable._test.DisplayNames()) == "Keeper,Goner",
+              joined(AltStable._test.DisplayNames()))
+    end
+end
+
+-- More hidden characters than rows: say so rather than pretend the list is
+-- complete.
+local many = {}
+for i = 1, 8 do
+    many["g" .. i] = { guid = "g" .. i, name = "Alt" .. i, class = "MAGE", realm = "R",
+                       level = 10, money = 0, lastUpdate = 1 }
+end
+build(many)
+for i = 1, 8 do AltStable.SetCharacterHidden("g" .. i, true) end
+AltStable.RefreshOptionsHiddenList()
+local rows, note = AltStable._test.OptionsHiddenList()
+eq("the list shows a full page", #rows, 6)
+check("  and counts the rest", (note or ""):find("2 more", 1, true) ~= nil, tostring(note))
+footer = refresh()
+if footer then
+    check("every character can be hidden", footer:find("(8 hidden)", 1, true) ~= nil, footer)
+    check("  leaving an empty grid, not an error", #AltStable._test.DisplayNames() == 0)
+end
+
+------------------------------------------------------------
+-- Keyed by guid, because names are not unique
+------------------------------------------------------------
+-- Every Forever character has a surname, and two characters can share a first
+-- name across realms or accounts. Hiding one must not hide the other.
+
+AltStableConfig.hiddenCharacters = {}
+build({
+    t1 = { guid = "t1", name = "Twin", class = "MAGE", realm = "R", level = 20,
+           money = 0, lastUpdate = 1 },
+    t2 = { guid = "t2", name = "Twin", class = "ROGUE", realm = "R", level = 20,
+           money = 0, lastUpdate = 1 },
+})
+AltStable.SetCharacterHidden("t1", true)
+refresh()
+eq("hiding one namesake leaves the other", joined(AltStable._test.DisplayNames()), "Twin")
+eq("  by guid", AltStable.IsCharacterHidden("t2"), false)
+
+------------------------------------------------------------
+-- A hidden character with no record yet
+------------------------------------------------------------
+-- /alts cleanup wipes the store and re-pulls it. The entry is kept so the
+-- character comes back hidden, but it is not listed as a row it cannot fill.
+
+AltStableConfig.hiddenCharacters = {}
+build({
+    here = { guid = "here", name = "Here", class = "MAGE", realm = "R", level = 20,
+             money = 0, lastUpdate = 1 },
+})
+AltStable.SetCharacterHidden("vanished", true)
+local list = AltStable.HiddenCharacterList()
+eq("a hidden guid with no record is not listed", #list, 0)
+eq("  but stays hidden for when it syncs back", AltStable.IsCharacterHidden("vanished"), true)
+
+-- ...and when it does syncs back with Options already open, the restore list
+-- has to notice. Its OnShow does not fire again while the panel stays open, so
+-- without this the character is unrestorable until the user leaves Options and
+-- comes back.
+AltStable.RefreshOptionsHiddenList()
+eq("the restore list starts empty", #(select(1, AltStable._test.OptionsHiddenList())), 0)
+AltStableDB.vanished = { guid = "vanished", name = "Returned", class = "WARRIOR",
+                         realm = "R", level = 30, money = 0, lastUpdate = 1 }
+AltStable.RefreshSheet()
+local backRows = AltStable._test.OptionsHiddenList()
+eq("a record arriving for a hidden character reaches the restore list", #backRows, 1)
+check("  by name", (backRows[1] or ""):find("Returned", 1, true) ~= nil, tostring(backRows[1]))
+eq("  and it is still hidden from the grid", joined(AltStable._test.DisplayNames()), "Here")
+
+------------------------------------------------------------
+-- The row wiring
+------------------------------------------------------------
+
+WoW.popups = {}
+local row = AltStable.CreateFrozenRow(WoW.makeFrame(), 18, 100)
+AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
+local onClick = row.nameTipBtn:GetScript("OnClick")
+check("the name row handles clicks", type(onClick) == "function")
+if onClick then
+    onClick(row.nameTipBtn, "LeftButton")
+    eq("a left-click does nothing", #WoW.popups, 0)
+    onClick(row.nameTipBtn, "RightButton")
+    eq("a right-click asks", #WoW.popups, 1)
+    check("  about the character under the cursor",
+          WoW.popups[1] and WoW.popups[1].arg1 == "Here", tostring(WoW.popups[1] and WoW.popups[1].arg1))
+
+    -- A recycled row carries no character. Group rows and fillers go through
+    -- the same pool, and a right-click there must not hide whatever was drawn
+    -- in that row last.
+    AltStable.HideFrozenRow(row)
+    onClick(row.nameTipBtn, "RightButton")
+    eq("a right-click on an empty row does nothing", #WoW.popups, 1)
+
+    -- The realm header is the one that actually happens: collapse a realm and
+    -- the row that drew a character now draws its header, at the same index.
+    AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
+    AltStable.RenderFrozenGroupRow(row, { kind = "group", realm = "R", count = 1 })
+    onClick(row.nameTipBtn, "RightButton")
+    eq("a right-click on a realm header hides nothing", #WoW.popups, 1)
+
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("  and it shows no leftover tooltip", #WoW.tooltipLines, 0)
+
+    -- Same for a filler row.
+    AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
+    AltStable.RenderFrozenFillerRow(row, 1)
+    onClick(row.nameTipBtn, "RightButton")
+    eq("a right-click on a filler row hides nothing", #WoW.popups, 1)
+end
+
+-- The same guard, asked directly: the row is not the only caller (a plugin or
+-- a slash command could route here), so the entry point has to hold it too.
+local okNil = pcall(AltStable.RequestHideCharacter, nil)
+check("asking to hide nothing is not an error", okNil)
+AltStable.RequestHideCharacter({ name = "No guid" })
+eq("  and raises no confirmation", #WoW.popups, 1)
+
+AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
+local onEnter = row.nameTipBtn:GetScript("OnEnter")
+if onEnter then
+    WoW.tooltipLines = {}
+    onEnter()
+    check("the tooltip says how to hide it",
+          joined(WoW.tooltipLines):find("Right%-click to hide") ~= nil,
+          joined(WoW.tooltipLines))
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
