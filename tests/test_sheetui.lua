@@ -284,6 +284,23 @@ if onClick then
     AltStable.HideFrozenRow(row)
     onClick(row.nameTipBtn, "RightButton")
     eq("a right-click on an empty row does nothing", #WoW.popups, 1)
+
+    -- The realm header is the one that actually happens: collapse a realm and
+    -- the row that drew a character now draws its header, at the same index.
+    AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
+    AltStable.RenderFrozenGroupRow(row, { kind = "group", realm = "R", count = 1 })
+    onClick(row.nameTipBtn, "RightButton")
+    eq("a right-click on a realm header hides nothing", #WoW.popups, 1)
+
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("  and it shows no leftover tooltip", #WoW.tooltipLines, 0)
+
+    -- Same for a filler row.
+    AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
+    AltStable.RenderFrozenFillerRow(row, 1)
+    onClick(row.nameTipBtn, "RightButton")
+    eq("a right-click on a filler row hides nothing", #WoW.popups, 1)
 end
 
 -- The same guard, asked directly: the row is not the only caller (a plugin or

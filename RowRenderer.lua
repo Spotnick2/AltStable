@@ -846,6 +846,11 @@ function AltStable.RenderFrozenGroupRow(row, item)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Show()
+    -- Frozen rows come from a shared pool and are re-rendered by index, so this
+    -- row drew a CHARACTER a frame ago - collapsing a realm is enough. Leaving
+    -- charData behind gave the realm header that character's tooltip, and since
+    -- #21 a right-click on the header would have offered to hide it.
+    if row.nameTipBtn then row.nameTipBtn.charData = nil end
 
     -- Apply the bordered-box backdrop the first time we render this button.
     -- Doing it here (not in CreateFrozenRow) keeps creation lean and lets

@@ -1029,9 +1029,14 @@ local function StackChars(text)
     return table.concat(t, "\n")
 end
 
+-- AltStableDB is flat, keyed by guid: that is what Scanner, Core and Config all
+-- write and read. The AltTracker-era "db.characters" sub-table this used to fall
+-- back to is written by nothing here, and the branch made the sheet read the
+-- store differently from every other file - which would have shown hidden
+-- characters filtered out of the grid while the restore list in Options found
+-- no records at all.
 local function GetCharacterStore()
     if type(AltStableDB)~="table" then return {} end
-    if type(AltStableDB.characters)=="table" then return AltStableDB.characters end
     return AltStableDB
 end
 
