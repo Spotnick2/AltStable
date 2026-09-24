@@ -15,9 +15,14 @@ enable-nolib-creation: no
 # inside AltStable/ - the packager moves them out.
 #
 # Paths are relative to the packaged root, which is the `package-as` folder;
-# each destination becomes its own sibling folder in the zip. The packager
-# removes the emptied AltStable/Plugins directory afterwards, so nothing is left
-# behind - the CI package check asserts that.
+# each destination becomes its own sibling folder in the zip.
+#
+# The two packagers differ on the leftover: the BigWigs one (what CI dry-runs)
+# deletes the emptied AltStable/Plugins directory, while CurseForge's - which
+# builds the actual releases - leaves an empty `AltStable/Plugins/` entry in the
+# zip. Measured on the published v0.1.0-beta. Harmless (the client ignores an
+# empty directory), but it means CI cannot see it: the check asserts the BigWigs
+# shape, not the shipped one.
 move-folders:
   AltStable/Plugins/Warband: AltStableWarband
   AltStable/Plugins/Instances: AltStableInstances

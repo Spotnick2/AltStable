@@ -140,7 +140,11 @@ omitting the API key still cuts a GitHub release. `tests/test_packaging.lua` che
 feed it (the TOCs, `.pkgmeta`, the deploy script) and runs in the normal suite.
 
 After a release, check the published files on CurseForge by hand: CI runs the BigWigs packager, and
-CurseForge runs its own, so the zip players get is not the zip CI inspected.
+CurseForge runs its own, so the zip players get is not the zip CI inspected. Checked on
+v0.1.0-beta: three folders, the version substituted in all three `.toc` files, no `Tools`/`tests`/
+`docs`, and every library, icon and raid image present. One known difference between the two
+packagers — CurseForge leaves an empty `AltStable/Plugins/` entry where BigWigs removes it. The
+client ignores it.
 
 ## Key architectural patterns
 
