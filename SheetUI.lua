@@ -2930,6 +2930,9 @@ local function CreateFrameIfNeeded()
             optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY - (OPT_HIDDEN_ROWS * 18))
             optHiddenNote:Show()
         else
+            -- Cleared, not just hidden: the same stale-text trap as the row
+            -- labels above, and the note is read back in tests.
+            optHiddenNote:SetText("")
             optHiddenNote:Hide()
         end
     end
@@ -3293,6 +3296,13 @@ end
 
 function AltStable.RefreshSheet()
     if frame and frame:IsShown() then Refresh() end
+    -- The restore list too, and unconditionally. A record can ARRIVE for a
+    -- hidden character while Options is open - a peer syncing an alt, or the
+    -- re-pull after /alts cleanup - and the list only shows guids that have a
+    -- record. Its OnShow does not fire again while the panel stays open, so
+    -- that character would be unrestorable until the user left Options and came
+    -- back. Six rows; not worth a visibility check that could itself be wrong.
+    if AltStable.RefreshOptionsHiddenList then AltStable.RefreshOptionsHiddenList() end
 end
 
 ------------------------------------------------------------
@@ -3324,15 +3334,13 @@ end
 function AltStable.HideCharacter(guid)
     if not guid or not AltStable.SetCharacterHidden then return end
     AltStable.SetCharacterHidden(guid, true)
-    AltStable.RefreshSheet()
-    if AltStable.RefreshOptionsHiddenList then AltStable.RefreshOptionsHiddenList() end
+    AltStable.RefreshSheet()   -- repaints the grid, the totals and the restore list
 end
 
 function AltStable.ShowCharacter(guid)
     if not guid or not AltStable.SetCharacterHidden then return end
     AltStable.SetCharacterHidden(guid, false)
     AltStable.RefreshSheet()
-    if AltStable.RefreshOptionsHiddenList then AltStable.RefreshOptionsHiddenList() end
 end
 
 -- Called by the row on a right-click. Asks first.

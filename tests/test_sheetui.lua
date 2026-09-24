@@ -193,7 +193,7 @@ if AltStable._test.OptionsHiddenList then
     local rows, note = AltStable._test.OptionsHiddenList()
     eq("the hidden character is listed once", #rows, 1)
     check("  by name", (rows[1] or ""):find("Goner", 1, true) ~= nil, tostring(rows[1]))
-    check("  and no empty-list note is shown", note ~= "Nothing is hidden.", tostring(note))
+    eq("  and no empty-list note is left behind", note, "")
 
     AltStable.ShowCharacter("gone")
     eq("restoring it unhides the character", AltStable.IsCharacterHidden("gone"), false)
@@ -260,6 +260,20 @@ AltStable.SetCharacterHidden("vanished", true)
 local list = AltStable.HiddenCharacterList()
 eq("a hidden guid with no record is not listed", #list, 0)
 eq("  but stays hidden for when it syncs back", AltStable.IsCharacterHidden("vanished"), true)
+
+-- ...and when it does syncs back with Options already open, the restore list
+-- has to notice. Its OnShow does not fire again while the panel stays open, so
+-- without this the character is unrestorable until the user leaves Options and
+-- comes back.
+AltStable.RefreshOptionsHiddenList()
+eq("the restore list starts empty", #(select(1, AltStable._test.OptionsHiddenList())), 0)
+AltStableDB.vanished = { guid = "vanished", name = "Returned", class = "WARRIOR",
+                         realm = "R", level = 30, money = 0, lastUpdate = 1 }
+AltStable.RefreshSheet()
+local backRows = AltStable._test.OptionsHiddenList()
+eq("a record arriving for a hidden character reaches the restore list", #backRows, 1)
+check("  by name", (backRows[1] or ""):find("Returned", 1, true) ~= nil, tostring(backRows[1]))
+eq("  and it is still hidden from the grid", joined(AltStable._test.DisplayNames()), "Here")
 
 ------------------------------------------------------------
 -- The row wiring
