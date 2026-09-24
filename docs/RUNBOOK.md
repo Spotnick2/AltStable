@@ -70,8 +70,10 @@ Consequences for testing, in order of how often they bite:
 
 1. **`/reload` proves nothing about persistence.** The process stays alive, so values survive in
    memory and look persisted. Every false "it persists" result on this project came from a
-   `/reload`. A persistence claim needs a **full client exit**, a relaunch, and the value found
-   **on disk**.
+   `/reload`. A persistence claim needs a **full client exit**, a relaunch, and the value
+   **observed inside the relaunched client** — printed by the addon, or reported by the probe.
+   Finding it in the file on disk proves only that the client *wrote* it, which it has always done
+   correctly; the broken half is the read.
 2. Cross-session features (an alt's data surviving a restart) cannot be verified at all yet.
    Cross-*account* sync works within a session, because it goes over the addon channel.
 3. Config changes do not survive either, including `AltStableConfig.accountNumber` and the
@@ -122,15 +124,22 @@ authoritatively as a current one.
 Both accounts run on this machine, from the same AddOns folder, so both always have the same
 version.
 
-1. Log in account 1, `/alts account 1`, `/alts whitelist add <the other character>`.
+1. Log in account 1, `/alts account 1`, `/alts whitelist <the other character>`.
 2. Log in account 2 (a second client), `/alts account 2`, whitelist account 1's character.
 3. `/alts sync <name>` from either side, or just `/alts`, which pings whitelisted peers.
 
+There is **no `add` keyword**: `/alts whitelist <name>` adds, and anything typed after
+`whitelist` becomes the name verbatim — `/alts whitelist add Karuzo` whitelists a peer called
+"add Karuzo". Bare `/alts whitelist` lists, `remove <name>` drops. Names go in as typed: a Forever
+character is two words ("Karuzo Elegia"), and a cross-realm peer keeps its `-Realm` suffix.
+
 Set the account number and whitelist on **each** launch until #23 is fixed.
 
-Useful detail: a request always sends in full; ordinary syncs send deltas against a per-peer
-watermark. `/alts sync <name>` is therefore the way to force a complete transfer when a delta has
-gone wrong.
+What `/alts sync <name>` actually does, in both directions: it sends **our** database to that peer
+in full, then three seconds later asks for theirs **from our watermark for them** — a delta, not a
+full pull. So it is the way to force a complete *outbound* transfer. To force a full *inbound* one,
+the watermark has to go: `/alts cleanup` resets every peer watermark (it wipes the local database,
+so the next reply has to be complete), and a peer that sends no clock is reset to 0 automatically.
 
 ---
 
@@ -139,8 +148,11 @@ gone wrong.
 | Command | What it does |
 |---|---|
 | `/alts` | Open the sheet and ping whitelisted peers (throttled) |
-| `/alts sync <name>` | Request a full sync from one peer |
-| `/alts whitelist [add\|remove] <name>` | Who may sync with this account |
+| `/alts sync` | Ping every whitelisted peer, ignoring the throttle |
+| `/alts sync <name>` | Send our database to that peer in full, then request a delta back |
+| `/alts whitelist` | List the whitelisted peers |
+| `/alts whitelist <name>` | Add one — no `add` keyword; the rest of the line is the name |
+| `/alts whitelist remove <name>` | Drop one |
 | `/alts account <n>` | This account's number, shown in the sheet |
 | `/alts export` | TSV of every character, for the spreadsheet |
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |
@@ -156,12 +168,13 @@ gone wrong.
 CurseForge builds releases from the tag webhook, reading `.pkgmeta`. Nothing here uploads.
 
 1. Update `CHANGELOG.md` — it is the release notes.
-2. `git tag -a v0.1.0-beta -m "..."` and `git push origin v0.1.0-beta`.
+2. `git tag -a vX.Y.Z-beta -m "..."` and `git push origin vX.Y.Z-beta`, with a version that has
+   not been used before (`v0.1.0-beta` is taken; `git tag -l` lists them).
 3. The tag name sets the release type: `-beta` publishes as a beta, a bare `v0.1.0` as a release.
 4. **Check the published zip by hand.** CI dry-runs the BigWigs packager; CurseForge runs its own,
    so the file players download is not the file CI inspected.
 
-What to look for in the zip (verified on `v0.1.0-beta`):
+What to look for in the zip (verified on `v0.1.0-beta`, the first release):
 
 - three sibling folders: `AltStable`, `AltStableWarband`, `AltStableInstances`;
 - `## Version: v0.1.0-beta` in all three `.toc` files, not the raw keyword;
@@ -171,8 +184,8 @@ What to look for in the zip (verified on `v0.1.0-beta`):
 Known difference between the packagers: CurseForge leaves an empty `AltStable/Plugins/` entry where
 BigWigs deletes it. The client ignores it.
 
-If the webhook does not fire, the project's GitHub link was not saved. Re-link and push a new tag
-(`v0.1.0-beta2`); tags are cheap.
+If the webhook does not fire, the project's GitHub link was not saved. Re-link and push a **new**
+tag rather than reusing the failed one — CurseForge builds per tag, and tags are cheap.
 
 ---
 
