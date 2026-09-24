@@ -271,6 +271,27 @@ else
 end
 
 ------------------------------------------------------------
+-- A secret rested value must not be stored as zero
+------------------------------------------------------------
+-- The scan has no suspicious-zero guard (the live event path does), so a 0
+-- written here overwrites a good snapshot and syncs that zero to the peer.
+do
+    WoW.reset()
+    local realExh = GetXPExhaustion
+    GetXPExhaustion = function() return WoW.secret(120) end
+    WoW.xpMax = 400
+    AltStableDB = { [UnitGUID("player")] = { guid = UnitGUID("player"), restPercent = 40,
+                                             restXP = 160, restTimestamp = 111 } }
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("an unreadable rested value leaves the stored %", c.restPercent, 40)
+    eq("  and the stored amount", c.restXP, 160)
+    eq("  and the snapshot time it extrapolates from", c.restTimestamp, 111)
+    GetXPExhaustion = realExh
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Secret unit stats must not abort the scan
 --
 -- Live error: "Scanner.lua:596: attempt to perform arithmetic on a secret
@@ -474,6 +495,20 @@ do
     eq("  and the standing lands in its faction's column", orgCol and r[orgCol], "N")
     check("no TBC reputation columns remain",
           not header():find("Aldor", 1, true) and not header():find("Thrallmar", 1, true))
+end
+
+-- The renderer reads the live rested values for the player's own row and
+-- DIVIDES them: a secret there would throw while drawing, taking out the row.
+do
+    local realExh, realMax = GetXPExhaustion, UnitXPMax
+    GetXPExhaustion = function() return WoW.secret(120) end
+    UnitXPMax = function() return 400 end
+    local me = { guid = UnitGUID("player"), level = 20, restPercent = 40,
+                 restTimestamp = WoW.now, restedArea = false }
+    local ok, pct = pcall(rested, me)
+    check("a secret rested value does not throw while rendering", ok, tostring(pct))
+    eq("  and the row falls back to the stored snapshot", ok and pct, 40)
+    GetXPExhaustion, UnitXPMax = realExh, realMax
 end
 
 -- No TBC level cap left in the code: the cap is AltStable.API.LevelCap().

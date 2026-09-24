@@ -544,11 +544,14 @@ function AltStable.ScanCharacter()
     -- caught it). At the cap it is real: there is no next level, so the
     -- snapshot is zero. Below the cap it is a bad read, and the last good
     -- snapshot is kept rather than replaced with a percentage of nothing.
-    local rested = plain(GetXPExhaustion()) or 0
+    -- `rested` unreadable is NOT zero: writing 0 here would overwrite a good
+    -- snapshot and sync that zero to the other account. Unlike the live event
+    -- path there is no suspicious-zero guard to catch it afterwards.
+    local rested = plain(GetXPExhaustion())
     local nextXP = plain(UnitXPMax("player")) or 0
     local currentXP = plain(UnitXP("player")) or 0
 
-    if nextXP > 0 then
+    if rested ~= nil and nextXP > 0 then
         char.restXP = rested
         char.restPercent = math.floor((rested / nextXP) * 100)
         char.xpMax = nextXP

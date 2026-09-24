@@ -1240,6 +1240,56 @@ if okSer then
     check(secretWire:find("stat_hp:163", 1, true) ~= nil, "  and the plain fields still go")
 end
 
+-- On a build with no issecretvalue, the fallback is arithmetic - and "Thrall"
+-- + 0 throws. Calling that secret dropped every name, class and realm from the
+-- wire, guid included, so the record arrived unparseable: sync as a silent
+-- no-op. The identity fields must survive the fallback.
+do
+    local realPredicate = issecretvalue
+    issecretvalue = nil
+    dofile("Compat.lua")
+    local rec = { guid = "Player-Str-1", name = "Thrall", class = "SHAMAN",
+                  realm = "Classic Beta PvP", level = 7, money = 1234, lastUpdate = 1 }
+    local wire = T.SerializeChar(rec)
+    for _, field in ipairs({ "guid:Player-Str-1", "name:Thrall", "class:SHAMAN",
+                             "realm:Classic Beta PvP", "level:7", "money:1234" }) do
+        check(wire:find(field, 1, true) ~= nil, "without the predicate, " .. field .. " still syncs")
+    end
+    local back = T.DeserializeChar(wire)
+    check(back ~= nil and back.guid == "Player-Str-1", "  and the record parses at the other end")
+    issecretvalue = realPredicate
+    dofile("Compat.lua")
+end
+
+------------------------------------------------------------
+-- Secret values in the live event handlers
+------------------------------------------------------------
+-- PLAYER_MONEY and the XP events fire constantly during play, so a secret read
+-- there errors on every loot and every XP tick - and PLAYER_MONEY refreshes the
+-- sheet, which sums money across characters.
+WoW.reset()
+local liveGuid = UnitGUID("player")
+AltStableDB = { [liveGuid] = { guid = liveGuid, name = "Live", class = "MAGE", money = 500,
+                               restPercent = 40, restTimestamp = WoW.now, lastUpdate = 1 } }
+local realMoney = GetMoney
+GetMoney = function() return WoW.secret(99) end
+local okMoney = pcall(onEvent, T.frame, "PLAYER_MONEY")
+check(okMoney, "a secret from GetMoney does not throw on PLAYER_MONEY")
+eq(AltStableDB[liveGuid].money, 500, "  and the known amount is kept, not replaced by a secret")
+GetMoney = function() return 750 end
+onEvent(T.frame, "PLAYER_MONEY")
+eq(AltStableDB[liveGuid].money, 750, "  a readable amount still updates")
+GetMoney = realMoney
+
+local realExh = GetXPExhaustion
+GetXPExhaustion = function() return WoW.secret(120) end
+WoW.xpMax, WoW.level = 400, 20
+local okXP = pcall(onEvent, T.frame, "PLAYER_XP_UPDATE")
+check(okXP, "a secret from GetXPExhaustion does not throw on an XP tick")
+eq(AltStableDB[liveGuid].restPercent, 40, "  and the stored rested % is kept")
+GetXPExhaustion = realExh
+WoW.reset()
+
 ------------------------------------------------------------
 -- Retired fields (#8)
 ------------------------------------------------------------

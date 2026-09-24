@@ -121,9 +121,9 @@ API.GetFactionDataByID     = need(C_Reputation, "C_Reputation", "GetFactionDataB
 -- realm, where UnitStat, UnitArmor and UnitAttackPower all returned secrets.
 --
 -- issecretvalue is the client's own predicate (C_Secrets holds the policy
--- queries; this is the value test). Not every build has it, so a pcall on
--- arithmetic is the fallback - and the pcall is worth keeping regardless,
--- because "can I do maths on this" is the actual question.
+-- queries; this is the value test). It is present on 1.60.1.69977 and is
+-- authoritative when present; the arithmetic probe below is only the fallback
+-- for a build without it.
 local issecretvalue = _G.issecretvalue
 
 function API.IsSecretValue(v)
@@ -131,9 +131,18 @@ function API.IsSecretValue(v)
         local ok, secret = pcall(issecretvalue, v)
         if ok then return secret and true or false end
     end
-    -- No predicate: try the arithmetic that would otherwise throw at the call
-    -- site, and treat a failure as secret.
-    if type(v) == "number" then return false end
+    -- No predicate: ask the arithmetic that would otherwise throw at the call
+    -- site. Strings and booleans are excluded FIRST and never called secret:
+    -- "Thrall" + 0 throws, and a fallback that called that secret dropped every
+    -- name, class and realm from the sync - guid included, which made the whole
+    -- record unparseable at the other end. A silent total no-op.
+    --
+    -- Numbers are probed rather than trusted, because what type() reports for a
+    -- secret number is not measured (the name appears only in the error text).
+    -- If it says "number", trusting type() would report the one case this
+    -- fallback exists for as safe.
+    local t = type(v)
+    if t == "string" or t == "boolean" then return false end
     local ok = pcall(function() return v + 0 end)
     return not ok
 end
@@ -150,8 +159,11 @@ function API.PlainNumber(v)
 end
 
 -- Sum of values that may be secret: nil if any part is, since a partial sum is
--- not a smaller number, it is a wrong one.
+-- not a smaller number, it is a wrong one. No values at all is also nil, not 0:
+-- some APIs here return NOTHING on a miss (see the cache-miss note above), and
+-- "the client told us nothing" is as unknown as "we may not look".
 function API.PlainSum(...)
+    if select("#", ...) == 0 then return nil end
     local total = 0
     for i = 1, select("#", ...) do
         local n = API.PlainNumber((select(i, ...)))

@@ -1732,8 +1732,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_MONEY" then
         local guid = UnitGUID("player")
         if guid and AltStableDB[guid] then
-            AltStableDB[guid].money = GetMoney()
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            -- Through the adapter: GetMoney is one of the APIs measured
+            -- returning a secret value, and the refresh below adds money up
+            -- across characters - arithmetic that would throw and take the
+            -- whole sheet build with it (see "Secret values" in Compat.lua).
+            local money = AltStable.API.PlainNumber(GetMoney())
+            if money ~= nil then
+                AltStableDB[guid].money = money
+                if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            end
         end
         return
     end
@@ -1759,9 +1766,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local guid = UnitGUID("player")
         local char = guid and AltStableDB[guid]
         if char then
-            local liveRest = GetXPExhaustion() or 0
-            local liveMax  = UnitXPMax("player") or 0
-            local lvl      = UnitLevel("player") or 0
+            -- Same adapter as the scan: these fire on every XP tick, so a
+            -- secret here would error constantly rather than once.
+            local liveRest = AltStable.API.PlainNumber(GetXPExhaustion())
+            local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player")) or 0
+            local lvl      = AltStable.API.PlainNumber(UnitLevel("player")) or 0
+            if liveRest == nil then return end   -- unreadable: keep the snapshot
             local atCap    = lvl >= AltStable.API.LevelCap()
 
             -- Suspicious-zero guard.  Only accept a zero read if we have
