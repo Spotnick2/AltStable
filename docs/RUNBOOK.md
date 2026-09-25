@@ -218,6 +218,78 @@ tag rather than reusing the failed one — CurseForge builds per tag, and tags a
 
 ---
 
+## Character portraits (the Roster lineup)
+
+An offline character cannot be textured on this client — only geometry and
+weapons come back (see `docs/forever-api-notes.md`). So the lineup is drawn from
+pictures taken earlier, of the **live** character, by this machine. No armory is
+involved and none is needed.
+
+```
+in game:   /asrender                  (or let it happen at login when gear changed)
+outside:   pwsh Tools/RenderCutout/Update-Cutouts.ps1
+           pwsh Tools/RenderCutout/Update-Cutouts.ps1 -Watch     # and forget about it
+```
+
+**How it works.** The addon poses the live character on a flat stage and takes
+**two** screenshots of the identical frozen pose, one on black and one on white.
+From that pair the converter recovers exact alpha — `α = 1 − (white − black)` —
+which a chroma key cannot do: hair and blended edges come out right with no
+colour fringing. It then trims to content, supersamples down (the client emits
+**no partial alpha**, so edges are aliased until they are resampled), pads to a
+power of two, and writes the manifest.
+
+**Where things end up.**
+
+```
+Screenshots\WoWScrnShot_*.tga                       staged pairs, deleted once converted
+Tools\RenderCutout\out\<character>.tga              the build output (gitignored)
+Interface\AddOns\AltStableCutouts\Cutouts\*.tga     what the game loads
+Interface\AddOns\AltStableCutouts\CutoutManifest.lua
+```
+
+`AltStableCutouts` is a **generated addon folder**, not part of the repo. It has
+to be separate: a Lua file dropped into `AltStable/` is never loaded unless the
+`.toc` lists it — and a generated file cannot be listed — and `deploy.ps1` would
+overwrite it on the next deploy anyway. Delete the whole folder to start over.
+
+### Things that will catch you
+
+- **A new portrait shows "0 of N" after `/reload`.** The client only discovers a
+  new ADDON FOLDER at startup. The first time `AltStableCutouts` is created you
+  need a full exit and relaunch; after that `/reload` is enough, because only the
+  files inside it change.
+- **A cutout comes out nearly square.** Something other than the character was on
+  screen and got matted in — a tooltip draws above the stage. The converter says
+  so; re-capture that one. The stage hides `UIParent` now, so this should be
+  historical.
+- **Screenshots must be TGA.** The addon switches the CVar for the capture and
+  restores it. JPEG makes the matte read compression noise as coverage.
+- **Nothing is deleted that was not matched** to a capture the addon recorded, so
+  screenshots taken by hand are never touched. The flip side: an unpaired shot
+  lingers, and has to go by hand.
+- **A spoiled capture still counts as done.** The addon records that a LOOK was
+  photographed; only the converter can see whether the picture was any good. Use
+  `/asrender forget` to put that character back in the automatic queue.
+
+### The commands
+
+| Command | What it does |
+|---|---|
+| `/asrender` | Capture now |
+| `/asrender preview` | Show the stage without shooting, to judge the framing |
+| `/asrender facing <deg>` | Turn the character; 0 faces you straight on |
+| `/asrender cancel` | Stop a capture that is counting down |
+| `/asrender auto` | Turn automatic capture off or back on |
+| `/asrender status` | What it thinks your look is, and whether auto is on |
+| `/asrender forget` | Re-capture this character at the next login (`forget all` for everyone) |
+
+Automatic capture fires at login when the equipped-item fingerprint changed, never
+in combat, and announces itself the first time. An independent watchdog restores
+the interface after 12 seconds whatever happens, because the capture hides it.
+
+---
+
 ## Errors you will actually see
 
 **`attempt to perform arithmetic on a secret number value`** — a unit API returned a value this
