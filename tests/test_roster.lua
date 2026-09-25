@@ -29,16 +29,26 @@ dofile("Compat.lua")
 dofile("Theme.lua")
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
-dofile("Plugins/Roster/AltStableRoster.lua")
+------------------------------------------------------------
+-- It has to register when loaded ON DEMAND
+------------------------------------------------------------
+-- The core loads enabled plugins from its own PLAYER_LOGIN handler, so by the
+-- time a plugin file runs, PLAYER_LOGIN has already fired and never fires for
+-- it again. A plugin that only waits for the event loads cleanly, reports no
+-- error, and silently never appears in the nav. That is precisely what this one
+-- did, so the load path is asserted rather than assumed.
 
--- The plugin registers on a timer after PLAYER_LOGIN; drive it directly.
-AltStable.RosterPlugin._Bootstrap()
+WoW.timers = {}
+dofile("Plugins/Roster/AltStableRoster.lua")
+check("loading after login schedules its own bootstrap", #WoW.timers > 0,
+      "no timer scheduled - the plugin is waiting for a PLAYER_LOGIN that already fired")
+WoW.flushTimers()
 
 local registered
 for _, p in ipairs(AltStable.plugins or {}) do
     if p.id == "roster" then registered = p end
 end
-check("the plugin registers itself", registered ~= nil)
+check("  and that bootstrap registers the tab", registered ~= nil)
 if not registered then
     print(("test_roster: %d passed, %d failed"):format(passed, failed + 1))
     os.exit(1)

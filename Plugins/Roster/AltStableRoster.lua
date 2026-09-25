@@ -292,3 +292,12 @@ eventFrame:SetScript("OnEvent", function(_, event)
     if event ~= "PLAYER_LOGIN" then return end
     C_Timer.After(1, Roster._Bootstrap)
 end)
+
+-- THE USUAL PATH, and the one that matters: the core loads enabled plugins from
+-- its OWN PLAYER_LOGIN handler, so by the time this file runs that event has
+-- already fired and will not fire for us again. Without this the addon loads,
+-- reports no error, and simply never appears in the nav - which is exactly what
+-- it did. Warband and Raids both carry the same line.
+if IsLoggedIn() then
+    C_Timer.After(1, Roster._Bootstrap)
+end
