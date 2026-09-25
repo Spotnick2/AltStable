@@ -167,14 +167,24 @@ def shot_times(folder):
     return found
 
 
-def match(stamp, times, tolerance=4):
-    """The screenshot taken at that second, allowing for a little drift."""
+def match(stamp, times, tolerance=4, exclude=()):
+    """The screenshot taken at that second, allowing for a little drift.
+
+    `exclude` is what makes this safe: the two shots of a pair are about a
+    second apart and the tolerance is wider than that, so without it BOTH
+    stamps can resolve to the same file when one shot is missing. The matte
+    then compares an image with itself, finds no difference anywhere, and
+    concludes the whole screen is opaque - producing a "cutout" that is the
+    entire screenshot. That is not a hypothetical; it shipped two of them.
+    """
     try:
         want = datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
     except ValueError:
         return None
     best, best_gap = None, None
     for path, when in times.items():
+        if path in exclude:
+            continue
         gap = abs((when - want).total_seconds())
         if gap <= tolerance and (best_gap is None or gap < best_gap):
             best, best_gap = path, gap
@@ -222,15 +232,30 @@ def matte_numpy(b, w):
     out[..., 3] = (alpha * 255 + 0.5).astype(np.uint8)
     out[~keep] = 0
 
+    # If the two shots were identical, every pixel reads as fully covered. A
+    # real capture is a figure on an empty stage, so near-total coverage means
+    # the pair was wrong, not that the character filled the screen.
+    covered = float((alpha > 0.5).sum()) / alpha.size
+    if covered > 0.9:
+        raise NotAPair("the two shots look identical (%.0f%% of the frame reads as opaque)"
+                       % (covered * 100))
+
     img = Image.fromarray(out, "RGBA")
     box = img.getbbox()
     if not box:
-        sys.exit("nothing but backdrop in those two shots - was the stage showing?")
+        raise NotAPair("nothing but backdrop in those two shots - was the stage showing?")
     return img.crop(box)
+
+
+class NotAPair(Exception):
+    """The two shots are not a black/white pair of the same pose."""
 
 
 def matte(black_path, white_path):
     """Recover colour+alpha from the same pose shot on two backdrops."""
+    if os.path.abspath(black_path) == os.path.abspath(white_path):
+        raise NotAPair("both shots resolved to the same file")
+
     b = Image.open(black_path).convert("RGB")
     w = Image.open(white_path).convert("RGB")
     if b.size != w.size:
@@ -245,6 +270,7 @@ def matte(black_path, white_path):
     op = out.load()
 
     minx, miny, maxx, maxy = width, height, -1, -1
+    kept = 0
 
     for y in range(height):
         for x in range(width):
@@ -261,6 +287,7 @@ def matte(black_path, white_path):
             g = min(255, int(bg / a + 0.5))
             bl = min(255, int(bb / a + 0.5))
             op[x, y] = (r, g, bl, int(a * 255 + 0.5))
+            kept += 1
 
             if x < minx: minx = x
             if y < miny: miny = y
@@ -268,7 +295,11 @@ def matte(black_path, white_path):
             if y > maxy: maxy = y
 
     if maxx < 0:
-        sys.exit("nothing but backdrop in those two shots - was the stage showing?")
+        raise NotAPair("nothing but backdrop in those two shots - was the stage showing?")
+    covered = float(kept) / float(width * height)
+    if covered > 0.9:
+        raise NotAPair("the two shots look identical (%.0f%% of the frame reads as opaque)"
+                       % (covered * 100))
     return out.crop((minx, miny, maxx + 1, maxy + 1))
 
 
@@ -418,11 +449,19 @@ def run_all(args):
 
     done, missing, freed = 0, [], 0
     for name, first, second in caps:
-        black, white = match(first, times), match(second, times)
+        black = match(first, times)
+        white = match(second, times, exclude=(black,) if black else ())
         if not (black and white):
             missing.append((name, first))
             continue
-        convert(black, white, slug(name), args.target_height, args.keep_png)
+        try:
+            convert(black, white, slug(name), args.target_height, args.keep_png)
+        except NotAPair as err:
+            # Leave the screenshots alone: the capture can be salvaged, and a
+            # bad cutout filed under a character's name is worse than none.
+            print("  %-22s SKIPPED - %s" % (slug(name), err))
+            missing.append((name, first))
+            continue
         done += 1
 
         if not args.keep_shots:
