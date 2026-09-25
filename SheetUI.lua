@@ -505,19 +505,22 @@ do
 
     function AltStableCameraPresentation:Enter()
         if self.active then
-            -- Unless we are on the way OUT. Exit() leaves active set and only
-            -- clears it when the animation completes, so reopening the sheet
-            -- inside that window used to no-op here - and then the pending
-            -- ForceRestore fired with the sheet open, putting
+            -- Unless we are on the way OUT. Exit() leaves active set and clears
+            -- it only when the animation completes, so reopening the sheet
+            -- inside that window used to no-op here - and the pending
+            -- ForceRestore then fired with the sheet OPEN, putting
             -- CameraKeepCharacterCentered back to 1 and re-centring the
-            -- character. The bug this whole feature exists to avoid, arriving
-            -- half a second late.
-            if self.mode == "exit" then
-                self.mode = "enter"
-                self.elapsed = 0
-                CameraDebug("re-entered during exit; restore cancelled")
-            end
-            return
+            -- character. The bug this feature exists to prevent, half a second
+            -- late.
+            --
+            -- Finish the exit properly and enter afresh, rather than flipping
+            -- the mode back. Exit() has ALREADY restored the game UI, stopped
+            -- the yaw and put the saved view back, so simply resuming leaves a
+            -- presentation that is missing everything Exit undid - a reopened
+            -- sheet with no showcase at all, which is its own bug.
+            if self.mode ~= "exit" then return end
+            self:ForceRestore("re-enter during exit")
+            CameraDebug("re-entered during exit; restarting the presentation")
         end
         if InCombatLockdown and InCombatLockdown() then
             return

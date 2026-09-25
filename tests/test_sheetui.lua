@@ -486,8 +486,15 @@ if Cam then
     eq("centring is off while shown", WoW.cvars["CameraKeepCharacterCentered"], "0")
     pcall(Cam.Exit, Cam, "test")
     pcall(Cam.Enter, Cam)                       -- reopened mid-exit
-    eq("re-entering during the exit animation cancels the restore", Cam.mode, "enter")
+    eq("re-entering during the exit animation restarts the presentation",
+       Cam.mode, "enter")
     eq("  and leaves centring off", WoW.cvars["CameraKeepCharacterCentered"], "0")
+    -- Exit() had already put the saved view back and stopped the yaw, so merely
+    -- flipping the mode would leave a sheet open with no showcase at all. The
+    -- entry must be a REAL one: SetView(2) is the first thing Enter does.
+    eq("  and really re-enters, rather than resuming a half-undone one",
+       WoW.camera.view, 2)
+    check("  with a fresh capture to restore from", Cam.capture ~= nil)
     pcall(Cam.ForceRestore, Cam, "test")
 
     AltStableConfig.enableWorldCameraPresentation = nil
