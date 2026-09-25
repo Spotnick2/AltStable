@@ -125,6 +125,10 @@ See `docs/RUNBOOK.md` for the operational side: the in-game loop, where the clie
 SavedVariables, how to verify persistence on a new build, the client-update procedure, two-account sync
 testing, and the errors you will actually see.
 
+See `docs/SYNC-DISCOVERY.md` before touching how peers find each other (#58): which transports this
+client offers, which routes are already closed and why, how Altoholic solves the same problem, and
+the measurements that decide the design. Parked until the port is done.
+
 ## Releasing
 
 One CurseForge project publishes all three folders. CurseForge's own packager builds the release
