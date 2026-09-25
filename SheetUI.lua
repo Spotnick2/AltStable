@@ -682,6 +682,20 @@ do
         end
     end
 
+    -- Anything that must stay visible while the showcase has the game UI hidden
+    -- has to be lifted out from under UIParent - no strata makes a child of a
+    -- hidden parent draw. The sheet and GameTooltip are lifted below; this is
+    -- the same door for everything else, so the next thing that needs it does
+    -- not rediscover the problem.
+    function AltStable.IsGameUIHidden()
+        return AltStableCameraPresentation.uiHidden == true
+    end
+
+    function AltStable.LiftAboveHiddenUI(frame, state)
+        if not frame then return end
+        AltStableCameraPresentation:_TakeOut(frame, state and "FULLSCREEN_DIALOG" or nil, state)
+    end
+
     function AltStableCameraPresentation:HideGameUI()
         if self.uiHidden then return end
         if not (self.config and self.config.hideGameUI) then return end
@@ -3372,18 +3386,32 @@ if type(StaticPopupDialogs) == "table" then
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
-        -- The sheet is DIALOG strata and SetToplevel(true), and a StaticPopup is
-        -- DIALOG too - so this confirmation opened BEHIND the window and only
-        -- became visible once the sheet was closed. A question nobody can see
-        -- is worse than no question: the click appears to do nothing.
+        -- This confirmation was invisible until the sheet was closed, so the
+        -- right-click read as doing nothing.
         --
-        -- The popup frame is shared with every other addon, so the strata is
-        -- put back when it closes rather than left raised.
+        -- TWO things hide it, and strata only answers one. The sheet is DIALOG
+        -- and SetToplevel(true), and a StaticPopup is DIALOG too, so the sheet
+        -- covers it. But the camera showcase - on by default whenever the sheet
+        -- is open - also hides UIParent outright, and a StaticPopup is a CHILD
+        -- of UIParent. No strata makes the child of a hidden parent draw.
+        --
+        -- So the popup is lifted out from under UIParent exactly as the sheet
+        -- and GameTooltip are, and put back on close: the frame is shared with
+        -- every other addon, and leaving it reparented or raised would quietly
+        -- change where everyone else's confirmations appear.
         OnShow = function(self)
             self._altstablePrevStrata = self:GetFrameStrata()
             self:SetFrameStrata("FULLSCREEN_DIALOG")
+            if AltStable.IsGameUIHidden and AltStable.IsGameUIHidden() then
+                self._altstableLifted = true
+                AltStable.LiftAboveHiddenUI(self, true)
+            end
         end,
         OnHide = function(self)
+            if self._altstableLifted then
+                AltStable.LiftAboveHiddenUI(self, false)
+                self._altstableLifted = nil
+            end
             if self._altstablePrevStrata then
                 self:SetFrameStrata(self._altstablePrevStrata)
                 self._altstablePrevStrata = nil

@@ -158,6 +158,14 @@ WoW.makeFrame = makeFrame
 
 function CreateFrame() return makeFrame() end
 
+-- The roots of the client's frame hierarchy. Absent until now, so every
+-- CreateFrame(..., UIParent) passed nil and any code that lifts a frame OUT
+-- from under UIParent - to survive the showcase hiding it - had nothing to be
+-- compared against: "not parented to UIParent" was trivially true because
+-- UIParent was nil.
+UIParent = makeFrame()
+WorldFrame = makeFrame()
+
 -- WoW's table helpers, which are globals there and absent in plain Lua 5.1.
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 -- WoW hoists a few math/string functions to globals; code written against the

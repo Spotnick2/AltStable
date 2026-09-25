@@ -157,19 +157,54 @@ if popup then
     -- so this confirmation opened BEHIND the window and appeared only once the
     -- sheet was closed. A question nobody can see reads as a click that did
     -- nothing.
+    -- The confirmation was invisible until the sheet closed, so the right-click
+    -- read as doing nothing. TWO things hid it and strata answers only one: the
+    -- sheet is DIALOG and toplevel, AND the camera showcase hides UIParent
+    -- outright - a StaticPopup is a child of UIParent, and no strata makes the
+    -- child of a hidden parent draw.
     local dlg = StaticPopupDialogs[popup.which]
-    check("  the dialog raises itself", type(dlg.OnShow) == "function")
-    if type(dlg.OnShow) == "function" then
-        local fake = WoW.makeFrame()
-        fake._GetFrameStrata = "DIALOG"
-        fake.GetFrameStrata = function(self) return self._GetFrameStrata end
-        fake.SetFrameStrata = function(self, v) self._GetFrameStrata = v end
+    check("the dialog has show/hide handlers",
+          dlg ~= nil and type(dlg.OnShow) == "function" and type(dlg.OnHide) == "function")
 
+    if dlg and type(dlg.OnShow) == "function" and type(dlg.OnHide) == "function" then
+        -- A frame with real strata and parent state; the stub's default chains
+        -- unknown methods back to itself, which would store the frame as its own
+        -- "saved strata" and make every restore a silent no-op.
+        local function FakeDialog()
+            local f = WoW.makeFrame()
+            f._strata, f._parent, f._scale = "DIALOG", UIParent, 1
+            f.GetFrameStrata = function(self) return self._strata end
+            f.SetFrameStrata = function(self, v) self._strata = v end
+            f.GetParent = function(self) return self._parent end
+            f.SetParent = function(self, p) self._parent = p end
+            f.GetScale = function(self) return self._scale end
+            f.SetScale = function(self, v) self._scale = v end
+            f.GetEffectiveScale = function(self) return self._scale end
+            return f
+        end
+
+        -- Sheet open, game UI visible: strata is enough.
+        local fake = FakeDialog()
         dlg.OnShow(fake)
-        eq("  above the sheet while shown", fake:GetFrameStrata(), "FULLSCREEN_DIALOG")
+        eq("it is raised above the sheet", fake:GetFrameStrata(), "FULLSCREEN_DIALOG")
+        eq("  and stays under UIParent while the UI is up", fake:GetParent(), UIParent)
         dlg.OnHide(fake)
-        eq("  and put back on close, since the frame is shared",
+        eq("  strata is put back, since the frame is shared with every addon",
            fake:GetFrameStrata(), "DIALOG")
+
+        -- Showcase running, so UIParent is hidden: strata cannot help.
+        local realHidden = AltStable.IsGameUIHidden
+        AltStable.IsGameUIHidden = function() return true end
+
+        fake = FakeDialog()
+        dlg.OnShow(fake)
+        check("with the game UI hidden it is lifted OUT from under UIParent",
+              fake:GetParent() ~= UIParent, tostring(fake:GetParent()))
+        dlg.OnHide(fake)
+        eq("  and parented back on close", fake:GetParent(), UIParent)
+        eq("  with its strata restored too", fake:GetFrameStrata(), "DIALOG")
+
+        AltStable.IsGameUIHidden = realHidden
     end
     check("  and carrying its guid, not its name",
           type(popup.data) == "table" and popup.data.guid == "gone", tostring(popup.data))
