@@ -505,6 +505,18 @@ do
 
     function AltStableCameraPresentation:Enter()
         if self.active then
+            -- Unless we are on the way OUT. Exit() leaves active set and only
+            -- clears it when the animation completes, so reopening the sheet
+            -- inside that window used to no-op here - and then the pending
+            -- ForceRestore fired with the sheet open, putting
+            -- CameraKeepCharacterCentered back to 1 and re-centring the
+            -- character. The bug this whole feature exists to avoid, arriving
+            -- half a second late.
+            if self.mode == "exit" then
+                self.mode = "enter"
+                self.elapsed = 0
+                CameraDebug("re-entered during exit; restore cancelled")
+            end
             return
         end
         if InCombatLockdown and InCombatLockdown() then
@@ -590,9 +602,19 @@ do
                 AltStable.SuppressExperimentalCVarPopup()
             end
             pcall(SetCVar, "test_cameraOverShoulder", desired)
-            CameraDebug(string.format("shoulder: from=%.3f to=%.3f  centred=%s",
-                self.capture.shoulderOffset, desired,
-                tostring(self.capture.CameraKeepCharacterCentered)))
+            -- Report what each CVar is NOW, not what it was. The first version
+            -- printed the captured value under a label that reads as current
+            -- state, so on a client where centring had been on it logged
+            -- "centred=1" immediately after setting it to 0 - which anyone
+            -- debugging a recurrence would read as "the fix did not run".
+            local after = {}
+            for _, cvar in ipairs(CENTRING_CVARS) do
+                after[#after + 1] = cvar:gsub("^Camera", "") .. "="
+                    .. tostring(GetCVar(cvar)) .. " (was "
+                    .. tostring(self.capture[cvar]) .. ")"
+            end
+            CameraDebug(string.format("shoulder: from=%.3f to=%.3f  %s",
+                self.capture.shoulderOffset, desired, table.concat(after, " ")))
         end
 
         do

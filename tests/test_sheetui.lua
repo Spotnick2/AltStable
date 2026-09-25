@@ -427,8 +427,12 @@ if Cam then
     local CENTRING = AltStable._test.CENTRING_CVARS
     check("the centring CVars are named", type(CENTRING) == "table" and #CENTRING >= 1)
 
+    -- The key _GetConfig actually reads. An earlier version set
+    -- `worldCameraPresentation`, which nothing reads at all: the block passed
+    -- only because the feature defaults to on, and would have failed with a
+    -- confusing "Enter() did not activate" the moment that default changed.
     AltStableConfig = AltStableConfig or {}
-    AltStableConfig.worldCameraPresentation = { enabled = true }
+    AltStableConfig.enableWorldCameraPresentation = true
 
     -- The player's own settings, as they were before we touched anything.
     WoW.cvars["CameraKeepCharacterCentered"] = "1"
@@ -456,16 +460,37 @@ if Cam then
         check("the presentation entered", false, "Enter() did not activate")
     end
 
-    -- A CVar this client does not have must not be INVENTED on the way out.
+    -- A CVar this client does not have must not be INVENTED - on the way in or
+    -- the way out. Asserting Cam.active matters: without it an Enter() that
+    -- threw or bailed early would leave the CVar absent and this would pass for
+    -- the wrong reason, proving nothing about the guard.
     WoW.cvars["CameraKeepCharacterCentered"] = nil
     WoW.cvars["CameraReduceUnexpectedMovement"] = nil
     Cam.active = false
-    pcall(Cam.Enter, Cam)
+    local ok2 = pcall(Cam.Enter, Cam)
+    check("it still enters on a client without those CVars", ok2 and Cam.active == true)
+    eq("  and does not create the one it lacks",
+       WoW.cvars["CameraKeepCharacterCentered"], nil)
+    eq("  nor the other", WoW.cvars["CameraReduceUnexpectedMovement"], nil)
     pcall(Cam.ForceRestore, Cam, "test")
-    eq("a CVar the client lacks is not created on restore",
+    eq("  nor invent one on the way out",
        WoW.cvars["CameraKeepCharacterCentered"], nil)
 
-    AltStableConfig.worldCameraPresentation = nil
+    -- Reopening the sheet DURING the exit animation must cancel the pending
+    -- restore. Otherwise it fires with the sheet open and re-centres the
+    -- character - the very bug this feature exists to prevent, arriving half a
+    -- second late.
+    WoW.cvars["CameraKeepCharacterCentered"] = "1"
+    Cam.active = false
+    pcall(Cam.Enter, Cam)
+    eq("centring is off while shown", WoW.cvars["CameraKeepCharacterCentered"], "0")
+    pcall(Cam.Exit, Cam, "test")
+    pcall(Cam.Enter, Cam)                       -- reopened mid-exit
+    eq("re-entering during the exit animation cancels the restore", Cam.mode, "enter")
+    eq("  and leaves centring off", WoW.cvars["CameraKeepCharacterCentered"], "0")
+    pcall(Cam.ForceRestore, Cam, "test")
+
+    AltStableConfig.enableWorldCameraPresentation = nil
     WoW.reset()
 end
 
