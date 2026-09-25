@@ -25,7 +25,7 @@
 local ADDON_ID = "roster"
 
 local CARD_GAP      = 10
-local NAME_H        = 16
+local NAME_H        = 28      -- two lines: name, then level
 local PAD_X, PAD_Y  = 16, 14
 local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
 
@@ -157,10 +157,18 @@ local function BuildCard(parent, index)
     card.icon:SetSize(48, 48)
     card.icon:SetPoint("CENTER", card.plate, "CENTER", 0, 0)
 
+    -- Name and level on SEPARATE lines. Sharing one line truncates a Forever
+    -- name to "Morphisto Ruskador ..." at any sensible card width, and the
+    -- surname is the half that distinguishes two characters called Karuzo.
     card.label = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    card.label:SetPoint("BOTTOM", 0, 2)
+    card.label:SetPoint("BOTTOM", 0, 14)
     card.label:SetJustifyH("CENTER")
     card.label:SetWordWrap(false)
+
+    card.sub = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    card.sub:SetPoint("BOTTOM", 0, 2)
+    card.sub:SetJustifyH("CENTER")
+    card.sub:SetTextColor(0.6, 0.6, 0.6)
 
     card:SetScript("OnEnter", function(self) self.highlight:Show() end)
     card:SetScript("OnLeave", function(self)
@@ -174,15 +182,18 @@ end
 local function RenderCard(card, char, cardW, cardH)
     card.charGuid = char.guid
     card:SetSize(cardW, cardH)
-    card.label:SetWidth(cardW)
+    -- The gap is fair game for text: a name that reaches a little into it reads
+    -- better than one cut off mid-surname.
+    card.label:SetWidth(cardW + CARD_GAP)
+    card.sub:SetWidth(cardW + CARD_GAP)
 
     local figureH = math.max(40, cardH * FIGURE_RATIO)
     card.plate:SetSize(math.max(24, cardW - 30), figureH * 0.82)
     card.icon:SetSize(math.min(48, cardW * 0.32), math.min(48, cardW * 0.32))
-    card.label:SetText(("%s|cff808080  %d|r"):format(
-        AltStable.ClassColor and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
-            or (char.name or "?"),
-        char.level or 0))
+    card.label:SetText(AltStable.ClassColor
+        and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
+        or (char.name or "?"))
+    card.sub:SetText(("level %d"):format(char.level or 0))
 
     local entry = CutoutFor(char)
     if entry and entry.file then
