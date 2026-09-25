@@ -60,6 +60,13 @@ function WoW.reset()
     WoW.popups = {}
     WoW.now = 1700000000
     WoW.pendingPrio = nil
+    -- The player too. A test that renames the character to exercise a login
+    -- path would otherwise leave that name in place for every test after it,
+    -- and the addon's own captured copy would agree with it - so the mistake
+    -- hides itself.
+    WoW.player.name = "Example Surname"
+    WoW.player.realm, WoW.player.normalizedRealm = "Classic Beta PvE", "ClassicBetaPvE"
+    WoW.player.class, WoW.player.classLocalized, WoW.player.race = "PRIEST", "Priest", "Scourge"
 end
 
 ------------------------------------------------------------

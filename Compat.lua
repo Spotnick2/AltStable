@@ -322,9 +322,6 @@ function API.GetMaxPlayerLevel()
     return nil, "GetMaxPlayerLevel returned " .. tostring(v)
 end
 
--- The level cap every display and rested-XP rule compares against. 60 is the
--- value measured on 1.60.1.69913, used only when the client can't be read -
--- the capability check reports that case separately.
 -- Forever surnames, and where the client keeps them.
 --
 -- Through 1.60.1.69977 UnitName("player") returned "First Surname" as ONE
@@ -350,6 +347,9 @@ function API.PlayerFullName()
     return name
 end
 
+-- The level cap every display and rested-XP rule compares against. 60 is the
+-- value measured on 1.60.1.69913, used only when the client can't be read -
+-- the capability check reports that case separately.
 function API.LevelCap()
     return API.GetMaxPlayerLevel() or 60
 end

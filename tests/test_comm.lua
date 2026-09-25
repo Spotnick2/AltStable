@@ -506,6 +506,53 @@ local renamedWire = WoW.sentMessages()
 AltStableDB = {}
 for _, m in ipairs(renamedWire) do receive(m, "Renamed Person") end
 eq(dbCount(), 0, "the name re-read at login carries the surname too")
+-- WoW.reset() puts the stub's character back, but nothing outside Core can
+-- reach the PLAYER_NAME it captured at login - so fire the login again. Skip
+-- it and every later self-echo assertion is judged against "Renamed Person";
+-- prove the restore here, once, rather than trusting it.
+WoW.reset()
+onEvent(T.frame, "PLAYER_LOGIN")
+WoW.sent = {}
+seedDB("Player-Self3-", 2)
+T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "x")
+flushAll()
+local restoredWire = WoW.sentMessages()
+AltStableDB = {}
+for _, m in ipairs(restoredWire) do receive(m, WoW.player.name) end
+eq(dbCount(), 0, "PLAYER_NAME is back to this character after the rename test")
+WoW.reset()
+WoW.sent = {}
+
+------------------------------------------------------------
+-- The reply stagger uses the WHOLE name
+------------------------------------------------------------
+-- Two clients answering one broadcast must not pick the same moment. Forever
+-- surnames make "two characters, one first name" ordinary, so a seed built
+-- from the first name alone reintroduces exactly the collision this avoids.
+
+eq(T.ReplyDelay("Kaleid Sumner", 0) == T.ReplyDelay("Kaleid Fox", 0), false,
+   "two characters sharing a first name get different delays")
+check(T.ReplyDelay("Kaleid Sumner", 0) >= 1 and T.ReplyDelay("Kaleid Sumner", 0) <= 4,
+      "the delay stays within 1-4 seconds")
+check(T.ReplyDelay(nil, 0) >= 1, "an unreadable name still yields a usable delay")
+
+-- The stub's own promise, since the block above leans on it: a renamed
+-- character does not leak into the next test.
+WoW.player.name = "Temporary Person"
+WoW.reset()
+eq(WoW.player.name, "Example Surname", "WoW.reset() puts the character back")
+
+-- ...and the request handler actually uses it, with the full name.
+WoW.reset()
+AltStableDB = {}
+WoW.timers = {}
+receive(T.MSG_REQUEST_V .. "|0", "Asker Person")
+local scheduled = WoW.timers[1]
+check(scheduled ~= nil, "a request schedules a staggered reply")
+if scheduled then
+    eq(scheduled.delay, T.ReplyDelay(WoW.player.name, WoW.now),
+       "the reply delay is seeded from our whole name")
+end
 WoW.reset()
 AltStableDB = {}
 for _, m in ipairs(selfWire) do receive(m, "Other Surname") end
@@ -684,6 +731,16 @@ T.DeserializeFullDB(T.SerializeChar(
 ) .. "\n" .. T.CHAR_SEP, "Kaleid Sumner")
 eq(AltStableDB["Player-Sur-2"].name, "Kaleid Sumner", "a record missing its surname gains one")
 eq(AltStableDB["Player-Sur-2"].level, 17, "  and updates")
+
+-- A REAL rename is not reverted. Keeping "the longer name" would pin this
+-- record to the stale surname forever, and we would re-broadcast it.
+WoW.reset()
+AltStableDB = { ["Player-Sur-4"] = { guid = "Player-Sur-4", name = "Kaleid Sumner",
+                                     class = "MAGE", level = 16, lastUpdate = 500 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Sur-4", name = "Kaleid Fox", class = "MAGE", level = 17, lastUpdate = 600 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Sur-4"].name, "Kaleid Fox", "a shorter NEW surname replaces the old one")
 
 -- A DIFFERENT character is still refused: the first name is what cannot change.
 WoW.reset()

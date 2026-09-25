@@ -6,7 +6,8 @@
   `UnitName`'s second return, so every character scanned on it was stored as just its first
   name — and a persisted record then rejected its own updates over sync ("name changed: Kaleid
   Sumner -> Kaleid"). Names are read whole again, and a record missing its surname gains one
-  back on the next sync instead of being refused
+  back on the next sync instead of being refused. Both sides need this build: a peer still on the
+  previous one applies the old strict rule and will reject the repaired name
   ([#56](https://github.com/Spotnick2/AltStable/issues/56)).
 
 - **Data survives a restart.** The beta client used to write SavedVariables and never read them
