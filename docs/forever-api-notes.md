@@ -123,6 +123,48 @@ being "checked" more than once. 70009 was measured the right way.
 
 ---
 
+## Rendering a character who is not logged in — measured, 1.60.1.70009
+
+The short version: **you can render an offline character's body, and you cannot texture it.**
+Every path that produces a textured character needs a live unit token.
+
+Measured with `Tools/AltStableProbe` (`/asmodel`, `/asscene`) on 70009, rendering saved data from
+one character while logged in as another — a test that only became possible once #23 was fixed.
+
+| What | Result |
+|---|---|
+| `DressUpModel:SetUnit("player")` | **Fully textured**, and with `SetAutoDress(true)` wearing the character's own gear. The live character is perfect. |
+| `DressUpModel:SetDisplayInfo(savedDisplayID)` | Correct **geometry** — right race, right gender, distinct per character (different `GetModelFileID`) — and **no texture at all**: a white body. |
+| `DressUpModel:TryOn(link)` on that model | Every call succeeds (11/11), and **weapons render in full colour**. Armour appears as untextured geometry. |
+| `ModelSceneActor:SetPlayerModelFromGlues(1..4)` | **`false`** for every index. The character-select cache is not reachable in-game. |
+| `ModelSceneActor:SetModelByCreatureDisplayID(id, useActivePlayerCustomizations=true)` | `true` — but the flag composites the **active player**, so it can only ever be you. |
+| `SetUseTransmogSkin(true)` / `SetUseTransmogChoices(true)` | Blackens the face. Not the missing ingredient; their own bug. |
+
+### Why
+
+Skin, face, hair and armour are baked into **one composite texture** built from a character's
+customization choices. A display ID does not carry those choices, so the client builds the mesh
+and has nothing to paint it with. Weapons are separate models carrying their own textures, which
+is why they come out perfect on an otherwise white body — that contrast is what localises the
+failure, and it is worth reproducing before concluding anything about "models not working".
+
+`GetDisplayInfo()` returns **0** after `SetUnit`, confirming the unit path does not go through a
+display ID at all.
+
+### What this means for an alt-tracker UI
+
+- The **currently played** character can be rendered live and looks perfect.
+- Any **other** character can be rendered as an untextured figure, optionally holding its real
+  weapons, or not at all.
+- An exact offline likeness needs pre-rendered images. On TBC that came from scraping the
+  Battle.net armory; Forever has no armory, so the only source is an in-game screenshot converted
+  to TGA by hand and shipped with the addon.
+
+This is the same wall the TBC-era port hit. The difference is that it is now measured rather than
+assumed, and the boundary is precise: geometry yes, weapons yes, composite no.
+
+---
+
 ## Identity — surnames are real, and WHERE they live changed in 70009
 
 > **This section was measured on 69913/69977 and the shapes below changed in 1.60.1.70009.**
