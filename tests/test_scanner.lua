@@ -684,6 +684,13 @@ check("  and it says how many", acct:find("re-tagged", 1, true) ~= nil, acct)
 acct = Slash("account clear")
 eq("clearing empties it", AltStableConfig.accountNumber, "")
 check("  and says so", acct:find("cleared", 1, true) ~= nil, acct)
+-- Clearing must untag our own records too, or this client presents MIXED
+-- identities: alts scanned earlier still claim account 3 and are still sent to
+-- peers under it, while the next one scanned carries none.
+eq("  and untags our characters", AltStableDB.mine.account, "")
+eq("  all of them", AltStableDB.also.account, "")
+eq("  but still never a peer's", AltStableDB.peers.account, 7)
+check("  and says how many", acct:find("untagged", 1, true) ~= nil, acct)
 acct = Slash("account clear")
 check("clearing twice is not an error", acct:find("was set", 1, true) ~= nil, acct)
 

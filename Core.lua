@@ -233,6 +233,24 @@ AltStable.Print = Print
 -- them mean anything to a peer.
 ------------------------------------------------------------
 
+-- Re-tag the characters THIS client scanned. char.account is written at scan
+-- time, so a change that did not do this would leave every alt on the old value
+-- until it was next played: filtered out of account-scoped syncs, while the
+-- setting claims to have changed. Peers' records are never touched - they carry
+-- their owner's account, not ours.
+local function RetagScannedHere(value)
+    if type(AltStableDB) ~= "table" then return 0 end
+    local n = 0
+    for _, c in pairs(AltStableDB) do
+        if type(c) == "table" and c.scannedHere
+            and tostring(c.account or "") ~= tostring(value) then
+            c.account = value
+            n = n + 1
+        end
+    end
+    return n
+end
+
 -- nil when unset, so callers do not have to know whether "unset" is nil or "".
 function AltStable.GetAccountNumber()
     local v = AltStableConfig and AltStableConfig.accountNumber
@@ -249,9 +267,19 @@ function AltStable.SetAccountNumber(text)
     if type(text) == "string" and text:lower():match("^%s*clear%s*$") then
         if before == nil then return false, "No account number was set." end
         AltStable.SetConfigValue("accountNumber", "")
+        -- Untag our own records too. Setting a number re-tags them, so clearing
+        -- without doing the same leaves this client presenting MIXED
+        -- identities: the alts scanned earlier still claim the old account and
+        -- are still sent to peers under it, while the next one scanned carries
+        -- no account at all - all while the setting reports itself as cleared.
+        local cleared = RetagScannedHere("")
         if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         if AltStable.RefreshAccountBox then AltStable.RefreshAccountBox() end
-        return true, "Account number cleared."
+        local msg = "Account number cleared."
+        if cleared > 0 then
+            msg = msg .. " (" .. cleared .. " character(s) on this client untagged.)"
+        end
+        return true, msg
     end
 
     -- Validated by SHAPE, not by value: tonumber("0x10") is 16, a perfectly
@@ -269,19 +297,7 @@ function AltStable.SetAccountNumber(text)
 
     AltStable.SetConfigValue("accountNumber", num)
 
-    -- Re-tag the characters THIS client scanned. char.account is written at
-    -- scan time, so without this every alt keeps the old number and is filtered
-    -- out of account-scoped syncs until each one is played again - the setting
-    -- would appear to do nothing, which is the complaint that started this.
-    local retagged = 0
-    if type(AltStableDB) == "table" then
-        for _, c in pairs(AltStableDB) do
-            if type(c) == "table" and c.scannedHere and tostring(c.account or "") ~= tostring(num) then
-                c.account = num
-                retagged = retagged + 1
-            end
-        end
-    end
+    local retagged = RetagScannedHere(num)
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     -- The Options box only reads the stored value when the panel is SHOWN, so a
     -- change made from chat while it is already open leaves a stale number in
