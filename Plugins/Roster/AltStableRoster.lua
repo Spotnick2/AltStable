@@ -24,12 +24,17 @@
 
 local ADDON_ID = "roster"
 
-local CARD_W        = 150     -- one column of the lineup
 local CARD_GAP      = 10
-local FIGURE_H      = 260     -- the height every cutout is scaled to
 local NAME_H        = 16
 local PAD_X, PAD_Y  = 16, 14
-local MAX_CARDS     = 12      -- one row; a second row is for the scene work
+local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
+
+-- The card grid is measured from the panel at refresh time rather than fixed:
+-- the sheet is resizable and the number of characters is whatever the player
+-- has, so a hardcoded row of twelve either overflows the panel or wastes it.
+local MIN_CARD_W    = 110
+local MAX_CARD_W    = 170
+local FIGURE_RATIO  = 0.78    -- of the card's height, leaving room for the name
 
 local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
@@ -78,6 +83,25 @@ local function FigureSize(entry, targetH)
     return targetH * (w / h), targetH
 end
 
+-- How many columns fit, how big each card is, and how many rows that needs.
+-- Pure arithmetic, so it is testable without a frame: the layout bug that put
+-- cards over the sidebar was invisible to every assertion until this existed.
+local function GridFor(panelW, panelH, count)
+    if count <= 0 then return 0, 0, 0, 0 end
+    panelW = math.max(panelW or 0, MIN_CARD_W + PAD_X * 2)
+    panelH = math.max(panelH or 0, 120)
+
+    local usableW = panelW - PAD_X * 2
+    local cols = math.max(1, math.floor((usableW + CARD_GAP) / (MIN_CARD_W + CARD_GAP)))
+    cols = math.min(cols, count)
+    local rows = math.ceil(count / cols)
+
+    local cardW = math.min(MAX_CARD_W, (usableW - CARD_GAP * (cols - 1)) / cols)
+    local usableH = panelH - PAD_Y * 2 - 18          -- 18: the hint line
+    local cardH = (usableH - CARD_GAP * (rows - 1)) / rows
+    return cols, rows, cardW, math.max(60, cardH)
+end
+
 ------------------------------------------------------------
 -- Who to show
 ------------------------------------------------------------
@@ -113,8 +137,6 @@ end
 
 local function BuildCard(parent, index)
     local card = CreateFrame("Button", nil, parent)
-    card:SetSize(CARD_W, FIGURE_H + NAME_H + 8)
-    card:SetPoint("BOTTOMLEFT", PAD_X + (index - 1) * (CARD_W + CARD_GAP), PAD_Y + 24)
 
     card.highlight = card:CreateTexture(nil, "BACKGROUND")
     card.highlight:SetAllPoints()
@@ -130,7 +152,6 @@ local function BuildCard(parent, index)
     -- characters.
     card.plate = card:CreateTexture(nil, "ARTWORK")
     card.plate:SetPoint("BOTTOM", 0, NAME_H + 4)
-    card.plate:SetSize(CARD_W - 24, FIGURE_H * 0.62)
 
     card.icon = card:CreateTexture(nil, "OVERLAY")
     card.icon:SetSize(48, 48)
@@ -138,8 +159,8 @@ local function BuildCard(parent, index)
 
     card.label = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     card.label:SetPoint("BOTTOM", 0, 2)
-    card.label:SetWidth(CARD_W)
     card.label:SetJustifyH("CENTER")
+    card.label:SetWordWrap(false)
 
     card:SetScript("OnEnter", function(self) self.highlight:Show() end)
     card:SetScript("OnLeave", function(self)
@@ -150,8 +171,14 @@ local function BuildCard(parent, index)
     return card
 end
 
-local function RenderCard(card, char)
+local function RenderCard(card, char, cardW, cardH)
     card.charGuid = char.guid
+    card:SetSize(cardW, cardH)
+    card.label:SetWidth(cardW)
+
+    local figureH = math.max(40, cardH * FIGURE_RATIO)
+    card.plate:SetSize(math.max(24, cardW - 30), figureH * 0.82)
+    card.icon:SetSize(math.min(48, cardW * 0.32), math.min(48, cardW * 0.32))
     card.label:SetText(("%s|cff808080  %d|r"):format(
         AltStable.ClassColor and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
             or (char.name or "?"),
@@ -159,7 +186,10 @@ local function RenderCard(card, char)
 
     local entry = CutoutFor(char)
     if entry and entry.file then
-        local w, h = FigureSize(entry, FIGURE_H)
+        local w, h = FigureSize(entry, figureH)
+        -- A wide capture (a gnome, or a drawn bow) must not spill into its
+        -- neighbours, so the height gives way rather than the column.
+        if w > cardW then h = h * (cardW / w); w = cardW end
         card.figure:SetTexture(entry.file)
         card.figure:SetTexCoord(TexCoordsFor(entry))
         card.figure:SetSize(w, h)
@@ -172,8 +202,12 @@ local function RenderCard(card, char)
         if AltStable.GetClassRGB then r, g, b = AltStable.GetClassRGB(char.class) end
         card.plate:SetColorTexture(r * 0.35, g * 0.35, b * 0.35, 0.85)
         card.plate:Show()
-        if AltStable.ClassIcon then
-            card.icon:SetTexture(AltStable.ClassIcon(char.class))
+        -- The same icons the name column uses (RowRenderer's ClassIconText),
+        -- by path rather than through a helper that does not exist.
+        local cls = type(char.class) == "string" and char.class or ""
+        cls = cls:sub(1, 1):upper() .. cls:sub(2):lower()
+        if cls ~= "" then
+            card.icon:SetTexture("Interface\\Icons\\ClassIcon_" .. cls)
             card.icon:Show()
         else
             card.icon:Hide()
@@ -187,9 +221,15 @@ end
 local function BuildPanel(mainFrame)
     if panel then return panel end
 
+    -- Anchored past the SIDEBAR, like every other plugin panel. Anchored to the
+    -- frame's own left edge instead, the cards are drawn over the navigation -
+    -- which is exactly what the first build did.
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+
     panel = CreateFrame("Frame", nil, mainFrame)
-    panel:SetPoint("TOPLEFT", 8, -52)
-    panel:SetPoint("BOTTOMRIGHT", -8, 8)
+    panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     panel:Hide()
 
     backdropTex = panel:CreateTexture(nil, "BACKGROUND")
@@ -217,11 +257,19 @@ function Roster.Refresh()
     if not panel then return end
     local chars = PickCharacters(MAX_CARDS)
 
+    local cols, _, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
+
     local withArt = 0
     for i, card in ipairs(Roster.cards) do
         local char = chars[i]
-        if char then
-            RenderCard(card, char)
+        if char and cols > 0 then
+            local col = (i - 1) % cols
+            local row = math.floor((i - 1) / cols)
+            card:ClearAllPoints()
+            card:SetPoint("TOPLEFT", panel, "TOPLEFT",
+                PAD_X + col * (cardW + CARD_GAP),
+                -(PAD_Y + 18 + row * (cardH + CARD_GAP)))
+            RenderCard(card, char, cardW, cardH)
             if CutoutFor(char) then withArt = withArt + 1 end
         else
             card:Hide()
@@ -266,6 +314,22 @@ end
 -- Registration
 ------------------------------------------------------------
 
+-- Media\Icons\roster.tga does not exist yet - the other tabs' icons are made
+-- by hand. Until one is dropped in, fall back rather than leave a blank square
+-- in the navigation; the custom file takes over automatically the moment it
+-- appears. API.TextureExists returns nil when the client cannot tell, and nil
+-- means "assume it is there" - guessing absent would hide real art.
+local function TabIcon()
+    local media = AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\"
+    local custom = media .. "Icons\\roster.tga"
+    local exists = AltStable.API and AltStable.API.TextureExists
+    if not exists or exists(custom) ~= false then return custom end
+
+    local stock = "Interface\\Icons\\INV_Misc_GroupNeedMore"
+    if exists(stock) ~= false then return stock end
+    return media .. "Icons\\account-summary.tga"
+end
+
 function Roster._Bootstrap()
     if not AltStable or not AltStable.RegisterPlugin then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable Roster]|r AltStable not found.")
@@ -274,14 +338,15 @@ function Roster._Bootstrap()
     AltStable.RegisterPlugin({
         id           = ADDON_ID,
         label        = "Roster",
-        icon         = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\roster.tga",
+        icon         = TabIcon(),
         _isPlugin    = true,
         OnActivate   = function(mainFrame) Roster.Activate(mainFrame) end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = {
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
-            MAX_CARDS = MAX_CARDS, FIGURE_H = FIGURE_H,
+            GridFor = GridFor, MAX_CARDS = MAX_CARDS, TabIcon = TabIcon,
+            MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         },
     })
 end

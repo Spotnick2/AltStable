@@ -31,6 +31,12 @@ local SHOT_DELAY  = 0.65   -- let the client finish writing a file
 local LOGIN_SETTLE = 8
 local WARN_SECONDS = 5
 
+-- Declared up here because Capture() hides the notice before it hides the UI,
+-- and Capture is defined long before the popup is. A constant referenced above
+-- its own declaration is simply nil - the call still runs, does nothing, and
+-- looks right.
+local CONSENT_POPUP = "ALTSTABLE_RENDER_CONSENT"
+
 -- Which way the character is turned, in degrees. 0 is dead-on; a slight turn
 -- reads better in a lineup than a passport photo, and the same value is used
 -- for every capture so a row of alts is consistent. Tunable because the right
@@ -51,6 +57,8 @@ local frame, model, backdrop, hint
 local savedFormat
 local uiWasShown
 local previewing
+local capturing          -- one at a time, always
+local captureStartedAt
 
 local function Build()
     if frame then return end
@@ -163,7 +171,10 @@ local function RecordMetadata(shotIndex)
 end
 
 local function Finish()
+    capturing = false
     frame:Hide()
+    -- ALWAYS give the interface back. Everything else here is a nicety; a
+    -- player left staring at an empty screen is not.
     if uiWasShown then UIParent:Show(); uiWasShown = nil end
     -- Only now, once both shots are on disk: a fingerprint stored after a
     -- capture that failed half-way would suppress the retry.
@@ -180,11 +191,29 @@ local function Finish()
 end
 
 local function Capture()
+    -- ONE AT A TIME. Overlapping captures fought over the UI-restore flag and
+    -- left the interface hidden - the player had to alt-z to get it back. The
+    -- age check is the get-out: if a capture somehow never finished, a later
+    -- one is allowed through rather than the feature seizing up forever.
+    if capturing and captureStartedAt and (GetTime() - captureStartedAt) < 15 then
+        return
+    end
+    capturing = true
+    captureStartedAt = GetTime()
+
     Build()
 
     if type(Screenshot) ~= "function" then
+        capturing = false
         Out("|cffff5555Screenshot() is unavailable on this client.|r")
         return
+    end
+
+    -- The stage hides UIParent, which hides any StaticPopup, which fires its
+    -- OnCancel - so take the notice down ourselves first, deliberately, rather
+    -- than letting the client dismiss it as a side effect.
+    if type(StaticPopup_Hide) == "function" then
+        pcall(StaticPopup_Hide, CONSENT_POPUP)
     end
     -- JPEG would make the matte read compression noise instead of coverage.
     if type(GetCVar) == "function" and type(SetCVar) == "function" then
@@ -206,6 +235,17 @@ local function Capture()
     uiWasShown = UIParent:IsShown()
     if uiWasShown then UIParent:Hide() end
     frame:Show()
+
+    -- The whole sequence is a chain of timers. If any link fails, nothing
+    -- restores the interface - so an independent timer does it regardless.
+    C_Timer.After(12, function()
+        if uiWasShown then
+            UIParent:Show(); uiWasShown = nil
+            frame:Hide()
+            Out("|cffff8800capture did not finish - your interface is back|r")
+        end
+        capturing = false
+    end)
 
     C_Timer.After(KEY_DELAY, function()
         Screenshot()
@@ -264,8 +304,6 @@ end
 -- enough, because by then it is a known behaviour.
 ------------------------------------------------------------
 
-local CONSENT_POPUP = "ALTSTABLE_RENDER_CONSENT"
-
 -- Set to "yes" once the player has seen the notice, by either button. Escape
 -- closes it without answering, which leaves this nil so the notice returns next
 -- login rather than capturing unannounced.
@@ -283,17 +321,22 @@ if type(StaticPopupDialogs) == "table" then
         text = "AltStable will take a portrait of this character for the Roster lineup.\n\n"
             .. "Your interface will be hidden for about 3 seconds while it takes two "
             .. "screenshots. They are deleted once the portrait is made.\n\n"
+            .. "Later takes it next time your gear changes. "
             .. "Type |cffffff00/asrender auto|r if you would rather it never did this.",
         button1 = "Capture Now",
-        button2 = "Okay",
+        button2 = "Later",
         OnAccept = function()                 -- Capture Now: skip the wait
             AltStableProbeDB.autoConsent = "yes"
             CancelPending()
             Capture()
         end,
-        OnCancel = function()                 -- Okay: let the countdown run
+        -- "Okay", but ALSO every programmatic dismissal: hiding UIParent hides
+        -- the popup and the client calls this. So it records the answer and
+        -- nothing more - starting a capture from here is what looped, because
+        -- the capture hides the UI, which dismisses the popup, which lands
+        -- straight back in this function.
+        OnCancel = function()
             AltStableProbeDB.autoConsent = "yes"
-            StartCountdown("taking your first portrait")
         end,
         timeout = 0,
         whileDead = true,
@@ -311,6 +354,9 @@ function CancelPending(reason)
 end
 
 function StartCountdown(why)
+    -- Idempotent. Five of these queued at once is what turned one dismissed
+    -- popup into a capture loop.
+    if pending or capturing then return end
     Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender cancel|r to skip.")
         :format(why, WARN_SECONDS))
     pending = C_Timer.NewTimer(WARN_SECONDS, function()
@@ -321,6 +367,7 @@ end
 
 local function ConsiderCapture(why)
     if not AutoEnabled() then return end
+    if pending or capturing then return end
     local guid = UnitGUID("player")
     if not guid then return end
 
@@ -339,6 +386,12 @@ local function ConsiderCapture(why)
         if Consent() == "never" then return end
         if type(StaticPopup_Show) == "function" and StaticPopupDialogs
             and StaticPopupDialogs[CONSENT_POPUP] then
+            -- Once. Asking again while the notice is already up queues a second
+            -- copy, and each copy answers itself when the stage hides the UI.
+            if type(StaticPopup_Visible) == "function"
+                and StaticPopup_Visible(CONSENT_POPUP) then
+                return
+            end
             StaticPopup_Show(CONSENT_POPUP)
         else
             -- No popup API: say it in chat rather than doing it unannounced.
