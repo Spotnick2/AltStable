@@ -31,13 +31,26 @@ local SHOT_DELAY  = 0.65   -- let the client finish writing a file
 local LOGIN_SETTLE = 8
 local WARN_SECONDS = 5
 
+-- Which way the character is turned, in degrees. 0 is dead-on; a slight turn
+-- reads better in a lineup than a passport photo, and the same value is used
+-- for every capture so a row of alts is consistent. Tunable because the right
+-- angle is a matter of taste and can only be judged on screen.
+local DEFAULT_FACING = 20
+
+local function Facing()
+    local deg = tonumber(AltStableProbeDB and AltStableProbeDB.facing)
+    if not deg then deg = DEFAULT_FACING end
+    return math.rad(deg), deg
+end
+
 local function Out(s)
     DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[render]|r " .. tostring(s))
 end
 
-local frame, model, backdrop
+local frame, model, backdrop, hint
 local savedFormat
 local uiWasShown
+local previewing
 
 local function Build()
     if frame then return end
@@ -58,6 +71,13 @@ local function Build()
     backdrop:SetAllPoints()
     backdrop:SetColorTexture(0, 0, 0, 1)
 
+    -- Preview-only caption. It must be HIDDEN for a capture: anything drawn on
+    -- the stage is matted straight into the cutout, which is how a tooltip once
+    -- ended up beside a gnome.
+    hint = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    hint:SetPoint("TOP", 0, -80)
+    hint:Hide()
+
     model = CreateFrame("DressUpModel", nil, frame)
     -- A tall, narrow stage centred on screen: the converter trims to content,
     -- so the only thing that matters is that the figure fits with margin.
@@ -75,7 +95,7 @@ local function PoseLiveCharacter()
     pcall(model.SetUnit, model, "player")
     pcall(model.SetPortraitZoom, model, 0)
     pcall(model.SetPosition, model, 0, 0, 0)
-    pcall(model.SetFacing, model, 0.35)
+    pcall(model.SetFacing, model, (Facing()))
     -- Identical pose in both shots or the matte is nonsense.
     if model.SetAnimation then pcall(model.SetAnimation, model, 0) end
     if model.FreezeAnimation then pcall(model.FreezeAnimation, model, 0, 0, 0) end
@@ -175,6 +195,8 @@ local function Capture()
         end
     end
 
+    previewing = false
+    hint:Hide()
     PoseLiveCharacter()
     backdrop:SetColorTexture(0, 0, 0, 1)
     Out("staging... hold still, two screenshots are coming")
@@ -197,6 +219,25 @@ local function Capture()
             end)
         end)
     end)
+end
+
+-- Show the stage WITHOUT shooting, so the framing and the angle can be judged
+-- before two screenshots are spent on them. The UI stays up (this is not a
+-- capture) and a click dismisses it.
+local function Preview()
+    Build()
+    local _, deg = Facing()
+    PoseLiveCharacter()
+    backdrop:SetColorTexture(0.06, 0.06, 0.07, 1)
+    hint:SetText(("facing %d\194\176  -  |cffffff00/asrender facing <deg>|r to turn, " ..
+                  "|cffffff00/asrender|r to capture  (click to close)"):format(deg))
+    hint:Show()
+    previewing = true
+    frame:EnableMouse(true)
+    frame:SetScript("OnMouseDown", function()
+        frame:Hide(); frame:EnableMouse(false); hint:Hide(); previewing = false
+    end)
+    frame:Show()
 end
 
 ------------------------------------------------------------
@@ -248,6 +289,23 @@ SlashCmdList["ASRENDER"] = function(msg)
         if not CancelPending() then Out("nothing pending") end
         return
     end
+    local deg = msg:match("^facing%s+(%-?%d+%.?%d*)$")
+    if deg then
+        AltStableProbeDB = AltStableProbeDB or {}
+        AltStableProbeDB.facing = tonumber(deg)
+        Out(("facing set to %s\194\176 - every capture from now on uses it"):format(deg))
+        if previewing then Preview() else Out("  |cffffff00/asrender preview|r to see it") end
+        return
+    end
+    if msg == "facing" then
+        local _, d = Facing()
+        Out(("facing is %d\194\176 (0 faces you straight on). usage: /asrender facing <deg>"):format(d))
+        return
+    end
+    if msg == "preview" then
+        Preview()
+        return
+    end
     if msg == "forget" or msg == "forget all" then
         AltStableProbeDB = AltStableProbeDB or {}
         if msg == "forget all" then
@@ -274,7 +332,7 @@ SlashCmdList["ASRENDER"] = function(msg)
         return
     end
     if msg ~= "" then
-        Out("usage: /asrender [cancel|auto|status|forget|forget all]")
+        Out("usage: /asrender [preview|facing <deg>|cancel|auto|status|forget|forget all]")
         return
     end
 
