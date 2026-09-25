@@ -50,10 +50,20 @@ SendFullDatabase(...)    <-  every character record: names, realms, guilds, leve
 ```
 
 `Core.lua:1362-1377` goes straight from "the protocol version matches" to scheduling
-`SendFullDatabase`. There is no check that the requester is anyone we know. `sendAllAccounts`
-narrows it to the current account by default — that is a scope limit, not an authorization check.
-The prefix is public (the addon ships on CurseForge), so this needs no discovery on the attacker's
-part.
+`SendFullDatabase`. There is no check that the requester is anyone we know. The prefix is public
+(the addon ships on CurseForge), so this needs no discovery on the asker's part.
+
+**On a default install the reply is not even limited to this account.** Two conditions have to
+line up for the narrowing to happen, and out of the box the second one does not:
+
+- `accountOnly = not AltStableConfig.sendAllAccounts` (`Core.lua:797`), so leaving
+  `sendAllAccounts` false — the default — *asks* for account-only.
+- but the filter only runs `if accountOnly and myAccount and myAccount ~= ""`
+  (`Core.lua:556`), and `accountNumber` defaults to `""` (`Config.lua:81`).
+
+So until someone runs `/alts account <n>`, every record in the database is serialized into the
+reply, including characters synced in from the *other* account. And either way it is a scope
+limit, never an authorization check.
 
 **So authorizing requests is a prerequisite of #58, not a nice-to-have alongside it.** A channel
 password protects a channel; it does nothing for the whisper request handler that already exists.
@@ -153,11 +163,20 @@ needs a name). After that seed:
    `lastUpdate` per character; the one played most recently is the likeliest to be logged in. One
    burst per login, never per sync tick.
 
-**Our own code blocks this today**, whatever the client sends: `Core.lua:1343` strips any realm
-suffix off the sender, and `Core.lua:1363` uses that stripped name as the whisper reply target. So
-a cross-realm request is answered to a bare name on *our* realm — the wrong player, or nobody. The
-stripped form is right for the self-echo comparison and wrong as a routing target; those two uses
-need to stop sharing one variable before any cross-realm flow can work.
+**Our own code blocks this today**, whatever the client sends. `Core.lua:1343` strips any realm
+suffix off the sender into `senderName`, and that one value is then used for two different jobs,
+both of which it gets wrong cross-realm:
+
+- **As a routing target** (`Core.lua:1363`): a cross-realm request is answered to a bare name on
+  *our* realm — the wrong player, or nobody.
+- **As an identity check** (`Core.lua:1344`, `senderName == PLAYER_NAME`): a character on another
+  realm with the same full name as ours has its legitimate traffic discarded as our own echo,
+  before a reply is even considered. Names are unique per realm, not globally, so this is a real
+  collision rather than a theoretical one.
+
+So the identity comparison has to become realm-aware too, and the **raw** sender has to be
+preserved for routing. Three needs, one variable: that split comes before any cross-realm flow can
+work.
 
 Automatic after the first seed, and self-correcting when you switch characters.
 
