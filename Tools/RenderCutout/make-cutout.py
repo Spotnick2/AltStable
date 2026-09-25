@@ -62,26 +62,25 @@ def latest_capture(wtf=WTF):
     the store has not been written yet - the client only flushes it on logout
     or /reload, so a fresh capture may not be on disk at all.
     """
-    text = read_store(wtf)
-    if not text:
-        return None
-
-    shots = _entries(text)
-    for e in reversed(shots):
-        if e.get("name"):
-            return e["name"]
-    return None
+    caps = captures(wtf)
+    return caps[-1][0] if caps else None
 
 
-def read_store(wtf=WTF):
-    """The ACCOUNT-wide AltStableProbe.lua, as text.
+def read_stores(wtf=WTF):
+    """EVERY account-wide AltStableProbe.lua, as text.
 
-    Per-character SavedVariables have the SAME FILENAME, one per character, and
-    are often newer than the account file - so picking by timestamp alone reads
-    a file that has no captures in it and reports "nothing recorded". Filter on
-    content: only the account store contains the renders array.
+    All of them, not the newest: a player with two accounts captures from both,
+    and every client writes screenshots into the SAME folder. Read one store and
+    the other account's captures have no metadata to match against, so its
+    screenshots look like orphans and its characters silently never get a
+    portrait. That is exactly how it presented - the two that failed were both
+    from account 2.
+
+    Per-character SavedVariables share the filename AltStableProbe.lua and are
+    often newer than the account file, so the filter is on CONTENT: only the
+    account store holds the renders array.
     """
-    best, best_time = None, -1
+    out = []
     for root, _dirs, files in os.walk(wtf):
         for f in files:
             if f != "AltStableProbe.lua":
@@ -91,12 +90,9 @@ def read_store(wtf=WTF):
                 text = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
-            if '["renders"]' not in text:
-                continue
-            t = os.path.getmtime(full)
-            if t > best_time:
-                best, best_time = text, t
-    return best
+            if '["renders"]' in text:
+                out.append(text)
+    return out
 
 
 def slug(name):
@@ -135,21 +131,25 @@ def captures(wtf=WTF):
     key that matches them to files on disk - far more reliable than assuming
     the folder is in the order we left it.
     """
-    text = read_store(wtf)
-    if not text:
-        return []
+    out = []
+    for text in read_stores(wtf):
+        # Pairing is per store: shot 1 and shot 2 of one capture are always
+        # recorded by the same client, and two accounts shooting at the same
+        # moment must not have their halves paired with each other.
+        pending = {}
+        for e in _entries(text):
+            guid, shot, stamp = e.get("guid"), e.get("shot"), e.get("stamp")
+            if not (guid and stamp):
+                continue
+            if shot == "1":
+                pending[guid] = (e.get("name") or guid, stamp)
+            elif shot == "2" and guid in pending:
+                name, first = pending.pop(guid)
+                out.append((name, first, stamp))
 
-    shots = _entries(text)
-    out, pending = [], {}
-    for e in shots:
-        guid, shot, stamp = e.get("guid"), e.get("shot"), e.get("stamp")
-        if not (guid and stamp):
-            continue
-        if shot == "1":
-            pending[guid] = (e.get("name") or guid, stamp)
-        elif shot == "2" and guid in pending:
-            name, first = pending.pop(guid)
-            out.append((name, first, stamp))
+    # Oldest first, so "the newest capture of each character" still means that
+    # once both accounts are in one list.
+    out.sort(key=lambda c: c[1])
     return out
 
 
