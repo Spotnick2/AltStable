@@ -28,6 +28,20 @@
 
 local SLOTS = 19           -- Vanilla equipped slots, 1..19
 
+-- Render knobs, flipped in the viewer. The pale untextured body the first run
+-- produced is what Blizzard's TRANSMOG SKIN looks like - the featureless
+-- mannequin the dressing room poses - and the frame reported a 19-slot
+-- transmog list the instant SetDisplayInfo landed, which is the dressing-room
+-- state. So these get tried in combination rather than guessed at.
+local knobs = {
+    { key = "skin",    method = "SetUseTransmogSkin",    value = false,
+      label = "TransmogSkin", hint = "OFF should give the character's own skin instead of the mannequin" },
+    { key = "choices", method = "SetUseTransmogChoices", value = true,
+      label = "TransmogChoices", hint = "customization choices: hair, face, skin colour" },
+    { key = "auto",    method = "SetAutoDress",          value = true,
+      label = "AutoDress", hint = "let the model dress itself from the display" },
+}
+
 AltStableProbeDB = AltStableProbeDB or {}
 
 local function Out(s)
@@ -173,6 +187,19 @@ local function Apply(pane, mode)
     local notes = {}
     Try(m, "ClearModel")
 
+    -- Read the defaults once, then push our values. Order matters: these have
+    -- to be set BEFORE the display is applied, or the model is already built.
+    if not pane.reportedDefaults then
+        pane.reportedDefaults = true
+        local d1 = Get(m, "GetUseTransmogSkin")
+        local d2 = Get(m, "GetAutoDress")
+        Out("defaults: GetUseTransmogSkin=" .. tostring(d1) .. " GetAutoDress=" .. tostring(d2))
+    end
+    for _, knob in ipairs(knobs) do
+        local ok, err = Try(m, knob.method, knob.value)
+        if not ok then notes[#notes + 1] = knob.method .. "=" .. err end
+    end
+
     if mode == "unit" then
         local ok, err = Try(m, "SetUnit", "player")
         notes[#notes + 1] = "SetUnit(player)=" .. (ok and "ok" or err)
@@ -183,6 +210,11 @@ local function Apply(pane, mode)
             local ok, err = Try(m, "SetDisplayInfo", rec.displayID)
             notes[#notes + 1] = "SetDisplayInfo(" .. rec.displayID .. ")=" .. (ok and "ok" or err)
         end
+    end
+
+    if mode == "dress" then
+        local ok, err = Try(m, "Dress")
+        notes[#notes + 1] = "Dress()=" .. (ok and "ok" or err)
     end
 
     if mode == "gear" then
@@ -211,20 +243,28 @@ local function Apply(pane, mode)
     notes[#notes + 1] = "-> GetDisplayInfo=" .. tostring(shown)
         .. " GetModelFileID=" .. tostring(fileID)
         .. " transmogList=" .. tostring(tmogN)
+    local state = {}
+    for _, knob in ipairs(knobs) do
+        state[#state + 1] = knob.label .. "=" .. tostring(knob.value)
+    end
+    notes[#notes + 1] = "   " .. table.concat(state, " ")
 
     pane.status:SetText(table.concat(notes, "\n"))
     for _, n in ipairs(notes) do Out(rec.name .. ": " .. n) end
 end
 
+local lastMode = "display"
+
 local function ApplyBoth(mode)
-    for _, pane in ipairs(panes) do Apply(pane, mode) end
+    lastMode = mode or lastMode
+    for _, pane in ipairs(panes) do Apply(pane, lastMode) end
 end
 
 local function BuildViewer()
     if viewer then return viewer end
 
     viewer = CreateFrame("Frame", "AltStableModelProbe", UIParent, "BasicFrameTemplateWithInset")
-    viewer:SetSize(510, 470)
+    viewer:SetSize(510, 500)
     viewer:SetPoint("CENTER")
     viewer:SetMovable(true); viewer:EnableMouse(true)
     viewer:RegisterForDrag("LeftButton")
@@ -251,11 +291,12 @@ local function BuildViewer()
         { "Display", "display", "render both from their SAVED display id" },
         { "+ Gear",  "gear",    "then Undress and TryOn every saved item" },
         { "Unit",    "unit",    "baseline: the live character, ignoring saves" },
+        { "Dress",   "dress",   "ask the model to dress itself, no saved links" },
     }
     for i, spec in ipairs(buttons) do
         local b = CreateFrame("Button", nil, viewer, "UIPanelButtonTemplate")
-        b:SetSize(110, 22)
-        b:SetPoint("BOTTOMLEFT", 14 + (i - 1) * 118, 14)
+        b:SetSize(84, 22)
+        b:SetPoint("BOTTOMLEFT", 14 + (i - 1) * 88, 14)
         b:SetText(spec[1])
         b:SetScript("OnClick", function() ApplyBoth(spec[2]) end)
         b:SetScript("OnEnter", function(self)
@@ -264,6 +305,28 @@ local function BuildViewer()
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
+    -- Toggle row: flip a knob and both panes re-render, so a combination can
+    -- be found by eye in seconds instead of by rebuild-and-relog.
+    for i, knob in ipairs(knobs) do
+        local cb = CreateFrame("CheckButton", nil, viewer, "UICheckButtonTemplate")
+        cb:SetSize(20, 20)
+        cb:SetPoint("BOTTOMLEFT", 14 + (i - 1) * 150, 40)
+        cb:SetChecked(knob.value)
+        local lbl = viewer:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+        lbl:SetText(knob.label)
+        cb:SetScript("OnClick", function(self)
+            knob.value = self:GetChecked() and true or false
+            ApplyBoth(lastMode or "display")
+        end)
+        cb:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(knob.hint, 1, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
 
     local cap = CreateFrame("Button", nil, viewer, "UIPanelButtonTemplate")
