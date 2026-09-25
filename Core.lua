@@ -222,6 +222,23 @@ end
 -- Returns true if the record is safe to accept.
 ------------------------------------------------------------
 
+-- The part of a name no client version disagrees about.
+local function FirstName(n)
+    return (type(n) == "string" and n:match("^(%S+)")) or n
+end
+AltStable._FirstName = FirstName
+
+-- Keep the fuller name when merging. A peer still reading only UnitName's
+-- first return sends the short form; the surname is not a change they made, it
+-- is the half their client dropped, and our record should not lose it.
+local function KeepFullerName(existing, priorName)
+    if not priorName or not existing.name then return end
+    if FirstName(priorName) ~= FirstName(existing.name) then return end
+    if #tostring(priorName) > #tostring(existing.name) then
+        existing.name = priorName
+    end
+end
+
 local function ValidateIncoming(c, sender)
     if not c or not c.guid then return false end
 
@@ -237,8 +254,13 @@ local function ValidateIncoming(c, sender)
         return false
     end
 
-    -- Name should never change for a given GUID
-    if existing.name and c.name and existing.name ~= c.name then
+    -- The FIRST name should never change for a given GUID. Not the whole
+    -- string: 1.60.1.70009 moved the surname into UnitName's second return, so
+    -- a client reading only the first sends "Kaleid" for the character this
+    -- one has on disk as "Kaleid Sumner" - and rejecting that means a
+    -- character stops updating until every client has the same addon build.
+    -- A genuine mismatch (Kaleid -> Zoruka) still fails.
+    if existing.name and c.name and FirstName(existing.name) ~= FirstName(c.name) then
         Print("|cffff0000Rejected|r data for GUID " .. c.guid ..
               " from " .. (sender or "unknown") ..
               ": name changed (" .. tostring(existing.name) ..
@@ -252,7 +274,9 @@ end
 -- Our own character name, used to suppress our own broadcast echoes. May be
 -- nil this early (file load runs before PLAYER_LOGIN); refreshed in the login
 -- handler below so self-suppression is reliable for the session.
-local PLAYER_NAME = UnitName("player")
+-- The full name, surname included: the sender on an addon message carries it,
+-- so a half name here stops us recognising our own packets (see below).
+local PLAYER_NAME = AltStable.API.PlayerFullName()
 
 ------------------------------------------------------------
 -- Sync routing — whisper-only to whitelisted characters
@@ -684,11 +708,13 @@ local function DeserializeFullDB(payload, sender)
                     local existing = AltStableDB[c.guid] or {}
 
                     if ShouldMerge(existing, c) then
+                        local priorName = existing.name
                         DispatchPluginPayloads(c)
                         ClearSyncedStateFields(existing)
                         for k,v in pairs(c) do
                             existing[k] = v
                         end
+                        KeepFullerName(existing, priorName)
                         AltStableDB[c.guid] = existing
                     end
                 end
@@ -979,11 +1005,13 @@ local function ReceiveCharacter(c, sender)
         return
     end
 
+    local priorName = existing.name
     DispatchPluginPayloads(c)
     ClearSyncedStateFields(existing)
     for k,v in pairs(c) do
         existing[k] = v
     end
+    KeepFullerName(existing, priorName)
 
     AltStableDB[c.guid] = existing
 
@@ -1339,7 +1367,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Ignore our own packets
         ----------------------------------------------------
 
-        -- In TBC, sender arrives as "Name-Realm". Strip the realm suffix before comparing.
+        -- The sender arrives as "First Surname", and cross-realm as
+        -- "First Surname-Realm"; strip the realm suffix before comparing.
+        -- PLAYER_NAME has to carry the surname for this to match - while it
+        -- did not, we accepted and processed our own broadcasts.
         local senderName = sender and sender:match("^([^%-]+)") or ""
         if senderName == PLAYER_NAME then
             return
@@ -1595,7 +1626,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Refresh our own name now that we're in-world; UnitName("player") can
         -- return nil at file-load, and a nil PLAYER_NAME would silently defeat
         -- the self-echo suppression check for the whole session.
-        PLAYER_NAME = UnitName("player") or PLAYER_NAME
+        PLAYER_NAME = AltStable.API.PlayerFullName() or PLAYER_NAME
 
         -- Load the on-demand plugins the user has enabled. Done early (not
         -- inside the 2s sync timer) so the Recipes/Roster tabs appear as

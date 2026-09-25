@@ -476,8 +476,37 @@ T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "x")
 WoW.flushTimers()
 local selfWire = WoW.sentMessages()
 AltStableDB = {}
-for _, m in ipairs(selfWire) do receive(m, UnitName("player")) end
+-- WoW.player.name, not UnitName("player"): since 1.60.1.70009 that call
+-- returns TWO values, so as the last argument it expanded to (first, surname)
+-- and handed receive() half a name. The wire carries the whole thing - the
+-- live client logs "Receiving data from Kaleid Sumner", and peer IS sender.
+for _, m in ipairs(selfWire) do receive(m, WoW.player.name) end
 eq(dbCount(), 0, "our own packets (sender == player, Forever-shaped) are ignored")
+
+-- The half name is what a client reading only UnitName's first return would
+-- put in PLAYER_NAME. It must NOT be treated as us: the sender on the wire has
+-- the surname, so a short PLAYER_NAME stops matching and we process our own
+-- broadcast back into the database.
+AltStableDB = {}
+for _, m in ipairs(selfWire) do receive(m, WoW.player.name:match("^(%S+)")) end
+check(dbCount() > 0, "a HALF name is a different sender, not us")
+
+-- The login refresh. UnitName("player") can return nil at file load, so Core
+-- re-reads our own name at PLAYER_LOGIN; if that path drops the surname, the
+-- self-echo check is defeated for the whole session and nothing above notices,
+-- because those assertions use the name captured at load.
+WoW.reset()
+WoW.player.name = "Renamed Person"
+onEvent(T.frame, "PLAYER_LOGIN")
+WoW.sent = {}
+seedDB("Player-Self2-", 2)
+T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "x")
+flushAll()
+local renamedWire = WoW.sentMessages()
+AltStableDB = {}
+for _, m in ipairs(renamedWire) do receive(m, "Renamed Person") end
+eq(dbCount(), 0, "the name re-read at login carries the surname too")
+WoW.reset()
 AltStableDB = {}
 for _, m in ipairs(selfWire) do receive(m, "Other Surname") end
 eq(dbCount(), 2, "  and the same wire from anyone else applies (control)")
@@ -625,6 +654,47 @@ T.DeserializeFullDB(T.SerializeChar(
 ) .. "\n" .. T.CHAR_SEP, "Peer")
 eq(AltStableDB["Player-Name-1"].name, "Alice", "name change rejected — original retained")
 check(chatHas("name changed") or chatHas("Rejected"), "name-change rejection reported")
+
+------------------------------------------------------------
+-- ...but a SURNAME is not a name change (#56)
+------------------------------------------------------------
+-- Live rejection on 1.60.1.70009: "Rejected data for GUID Player-4618-006B8614
+-- from Kaleid Sumner: name changed (Kaleid Sumner -> Kaleid)". The peer had
+-- read only UnitName's first return, so it sent the half name for a character
+-- this client had on disk, from the previous build, in full. Same GUID, same
+-- character - and rejecting it means that character silently stops updating.
+
+WoW.reset()
+AltStableDB = { ["Player-Sur-1"] = { guid = "Player-Sur-1", name = "Kaleid Sumner",
+                                     class = "MAGE", level = 16, lastUpdate = 500 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Sur-1", name = "Kaleid", class = "MAGE", level = 17, lastUpdate = 600 }
+) .. "\n" .. T.CHAR_SEP, "Kaleid Sumner")
+eq(AltStableDB["Player-Sur-1"].level, 17, "a half name from an older client still updates")
+eq(AltStableDB["Player-Sur-1"].name, "Kaleid Sumner",
+   "  and the surname we already had is kept, not dropped")
+check(not chatHas("name changed"), "  with nothing rejected")
+
+-- The other direction: we hold the half name, the peer sends it whole.
+WoW.reset()
+AltStableDB = { ["Player-Sur-2"] = { guid = "Player-Sur-2", name = "Kaleid",
+                                     class = "MAGE", level = 16, lastUpdate = 500 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Sur-2", name = "Kaleid Sumner", class = "MAGE", level = 17, lastUpdate = 600 }
+) .. "\n" .. T.CHAR_SEP, "Kaleid Sumner")
+eq(AltStableDB["Player-Sur-2"].name, "Kaleid Sumner", "a record missing its surname gains one")
+eq(AltStableDB["Player-Sur-2"].level, 17, "  and updates")
+
+-- A DIFFERENT character is still refused: the first name is what cannot change.
+WoW.reset()
+AltStableDB = { ["Player-Sur-3"] = { guid = "Player-Sur-3", name = "Kaleid Sumner",
+                                     class = "MAGE", level = 16, lastUpdate = 500 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Sur-3", name = "Zoruka Sumner", class = "MAGE", level = 17, lastUpdate = 600 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Sur-3"].name, "Kaleid Sumner", "a different first name is still rejected")
+eq(AltStableDB["Player-Sur-3"].level, 16, "  and nothing it carried was merged")
+check(chatHas("name changed") or chatHas("Rejected"), "  and it is reported")
 
 ------------------------------------------------------------
 -- 17. Malformed / out-of-range chunks are discarded and reported
