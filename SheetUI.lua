@@ -2689,14 +2689,58 @@ local function CreateFrameIfNeeded()
     optAcctBox:SetAutoFocus(false)
     optAcctBox:SetNumeric(true)
     optAcctBox:SetMaxLetters(3)
+    -- Enter commits. Losing focus ALSO commits, because Enter-only is how a
+    -- typed value gets silently discarded by clicking somewhere else - which
+    -- looks exactly like the setting failing to persist, and this one was
+    -- already suspected of that.
+    --
+    -- But blurring an EMPTY or unparseable box reverts rather than clears. The
+    -- box selects all of its text when focused, so backspace-then-click-away is
+    -- an ordinary thing to do, and it must not wipe a configured account
+    -- number - the more so because accountNumber is a sync-scope key, so
+    -- clearing it forces a full re-send to every peer. Clearing is explicit:
+    -- /alts account clear.
+    local function ShowStoredAccount()
+        optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
+    end
+
+    local function CommitAccountNumber(text, fromEnter)
+        local typed = tostring(text or ""):match("^%s*(.-)%s*$")
+        if typed == "" then
+            if fromEnter then
+                local _, msg = AltStable.SetAccountNumber("clear")
+                AltStable.Print(msg)
+            end
+            ShowStoredAccount()
+            return false
+        end
+
+        local ok, msg = AltStable.SetAccountNumber(typed)
+        if ok or fromEnter then AltStable.Print(msg) end
+        ShowStoredAccount()
+        return ok
+    end
+
+    AltStable._test = AltStable._test or {}
+    AltStable._test.CommitAccountNumber = CommitAccountNumber
+    AltStable._test.AccountBox = optAcctBox
+    -- So a change made anywhere else (the slash command) does not leave a stale
+    -- number in the box, which blurring would then commit back over it.
+    AltStable._test.ShowStoredAccount = ShowStoredAccount
+    AltStable.RefreshAccountBox = ShowStoredAccount
+
     optAcctBox:SetScript("OnEnterPressed", function(self)
-        local v = tonumber(self:GetText())
-        AltStableConfig = AltStableConfig or {}
-        AltStable.SetConfigValue("accountNumber", v or "")
+        CommitAccountNumber(self:GetText(), true)
         self:ClearFocus()
     end)
+    optAcctBox:SetScript("OnEditFocusLost", function(self)
+        CommitAccountNumber(self:GetText(), false)
+        -- InputBoxTemplate's own OnEditFocusLost clears the selection made when
+        -- the box was focused; overriding it means doing that here.
+        self:HighlightText(0, 0)
+    end)
     optAcctBox:SetScript("OnEscapePressed", function(self)
-        self:SetText(tostring(AltStableConfig.accountNumber or ""))
+        ShowStoredAccount()
         self:ClearFocus()
     end)
 
@@ -2994,7 +3038,7 @@ local function CreateFrameIfNeeded()
         optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
         optMinimapCheck:SetChecked(optMinimapCheck._getter())
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
-        optAcctBox:SetText(tostring(AltStableConfig.accountNumber or ""))
+        optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
         optToastsCheck:SetChecked(AltStableConfig.toastsEnabled ~= false)
         optMailAlertsCheck:SetChecked(AltStableConfig.mailAlertsEnabled ~= false)
