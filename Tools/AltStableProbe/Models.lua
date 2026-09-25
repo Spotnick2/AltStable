@@ -42,6 +42,21 @@ local knobs = {
       label = "AutoDress", hint = "let the model dress itself from the display" },
 }
 
+-- NPC display ids, as a fallback experiment. An NPC model carries its own
+-- BAKED texture instead of a composite built from customization choices - so
+-- if a creature renders textured where a player display renders white, that
+-- localises the failure precisely, and hands us a usable fallback: a
+-- race-appropriate stand-in wearing the character's real gear.
+--
+-- These are guesses to be confirmed in game, which is why the viewer also
+-- takes a typed id.
+local CREATURE_TRIES = {
+    { id = 49,    label = "49 (human male, classic)" },
+    { id = 57,    label = "57 (human female, classic)" },
+    { id = 6,     label = "6 (undead?)" },
+    { id = 1793,  label = "1793" },
+}
+
 AltStableProbeDB = AltStableProbeDB or {}
 
 local function Out(s)
@@ -187,6 +202,24 @@ local function Apply(pane, mode)
     local notes = {}
     Try(m, "ClearModel")
 
+    -- A model frame with hostile fog or no light renders as a white or black
+    -- silhouette whatever textures it has, so neutralise both before judging
+    -- anything. Cheap, and it removes a whole class of false conclusion.
+    if AltStableProbeDB.resetLight ~= false then
+        Try(m, "ClearFog")
+        Try(m, "SetFogNear", 0)
+        Try(m, "SetFogFar", 10000)
+        -- ModelLight is an undocumented C struct here, so do not build one
+        -- blind: read what the frame already has and say so. A disabled or
+        -- blown-out light renders a white silhouette whatever the textures are,
+        -- and that would be visible in this report.
+        if not pane.reportedLight then
+            pane.reportedLight = true
+            local enabled, light = Get(m, "GetLight")
+            Out("light: enabled=" .. tostring(enabled) .. " light=" .. type(light))
+        end
+    end
+
     -- Read the defaults once, then push our values. Order matters: these have
     -- to be set BEFORE the display is applied, or the model is already built.
     if not pane.reportedDefaults then
@@ -203,12 +236,30 @@ local function Apply(pane, mode)
     if mode == "unit" then
         local ok, err = Try(m, "SetUnit", "player")
         notes[#notes + 1] = "SetUnit(player)=" .. (ok and "ok" or err)
+    elseif mode == "creature" or mode == "manual" then
+        -- handled below; no player display involved
     else
         if not rec.displayID then
             notes[#notes + 1] = "no display id captured"
         else
             local ok, err = Try(m, "SetDisplayInfo", rec.displayID)
             notes[#notes + 1] = "SetDisplayInfo(" .. rec.displayID .. ")=" .. (ok and "ok" or err)
+        end
+    end
+
+    if mode == "creature" then
+        local id = AltStableProbeDB.creatureID or CREATURE_TRIES[1].id
+        local ok, err = Try(m, "SetCreature", id)
+        notes[#notes + 1] = "SetCreature(" .. id .. ")=" .. (ok and "ok" or err)
+    end
+
+    if mode == "manual" then
+        local id = AltStableProbeDB.manualID
+        if id then
+            local ok, err = Try(m, "SetDisplayInfo", id)
+            notes[#notes + 1] = "SetDisplayInfo(" .. id .. ") [typed] =" .. (ok and "ok" or err)
+        else
+            notes[#notes + 1] = "no id typed"
         end
     end
 
@@ -264,7 +315,7 @@ local function BuildViewer()
     if viewer then return viewer end
 
     viewer = CreateFrame("Frame", "AltStableModelProbe", UIParent, "BasicFrameTemplateWithInset")
-    viewer:SetSize(510, 500)
+    viewer:SetSize(560, 510)
     viewer:SetPoint("CENTER")
     viewer:SetMovable(true); viewer:EnableMouse(true)
     viewer:RegisterForDrag("LeftButton")
@@ -292,11 +343,12 @@ local function BuildViewer()
         { "+ Gear",  "gear",    "then Undress and TryOn every saved item" },
         { "Unit",    "unit",    "baseline: the live character, ignoring saves" },
         { "Dress",   "dress",   "ask the model to dress itself, no saved links" },
+        { "Creature","creature","an NPC display: baked texture, no composite" },
     }
     for i, spec in ipairs(buttons) do
         local b = CreateFrame("Button", nil, viewer, "UIPanelButtonTemplate")
-        b:SetSize(84, 22)
-        b:SetPoint("BOTTOMLEFT", 14 + (i - 1) * 88, 14)
+        b:SetSize(78, 22)
+        b:SetPoint("BOTTOMLEFT", 12 + (i - 1) * 82, 14)
         b:SetText(spec[1])
         b:SetScript("OnClick", function() ApplyBoth(spec[2]) end)
         b:SetScript("OnEnter", function(self)
@@ -328,6 +380,21 @@ local function BuildViewer()
         end)
         cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
+
+    -- Type any display id and render it, so a guess can be checked without a
+    -- rebuild. Enter applies it to both panes.
+    local box = CreateFrame("EditBox", nil, viewer, "InputBoxTemplate")
+    box:SetSize(70, 20); box:SetAutoFocus(false); box:SetNumeric(true)
+    box:SetPoint("BOTTOMRIGHT", -130, 42)
+    local boxLbl = viewer:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    boxLbl:SetPoint("RIGHT", box, "LEFT", -4, 0)
+    boxLbl:SetText("display id")
+    box:SetScript("OnEnterPressed", function(self)
+        AltStableProbeDB.manualID = tonumber(self:GetText())
+        AltStableProbeDB.creatureID = AltStableProbeDB.manualID
+        self:ClearFocus()
+        ApplyBoth("manual")
+    end)
 
     local cap = CreateFrame("Button", nil, viewer, "UIPanelButtonTemplate")
     cap:SetSize(110, 22)
