@@ -26,6 +26,7 @@ enable-nolib-creation: no
 move-folders:
   AltStable/Plugins/Warband: AltStableWarband
   AltStable/Plugins/Instances: AltStableInstances
+  AltStable/Plugins/Roster: AltStableRoster
 
 manual-changelog:
   filename: CHANGELOG.md

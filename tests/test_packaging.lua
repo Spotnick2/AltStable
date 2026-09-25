@@ -38,6 +38,7 @@ local TOCS = {
     { toc = "AltStable.toc",                              dir = "" },
     { toc = "Plugins/Warband/AltStableWarband.toc",       dir = "Plugins/Warband/" },
     { toc = "Plugins/Instances/AltStableInstances.toc",   dir = "Plugins/Instances/" },
+    { toc = "Plugins/Roster/AltStableRoster.toc",         dir = "Plugins/Roster/" },
 }
 
 for _, t in ipairs(TOCS) do
@@ -114,6 +115,8 @@ if pkg then
           pkg:find("AltStable/Plugins/Warband: AltStableWarband", 1, true) ~= nil)
     check("Raids moves to its own folder",
           pkg:find("AltStable/Plugins/Instances: AltStableInstances", 1, true) ~= nil)
+check("Roster moves to its own folder",
+      pkg:find("AltStable/Plugins/Roster: AltStableRoster", 1, true) ~= nil)
 
     -- The ignore list must be a YAML list. Markdown bullets parse as nothing,
     -- and the result is a published zip carrying the probe and the tests.
