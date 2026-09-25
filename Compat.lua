@@ -322,6 +322,31 @@ function API.GetMaxPlayerLevel()
     return nil, "GetMaxPlayerLevel returned " .. tostring(v)
 end
 
+-- Forever surnames, and where the client keeps them.
+--
+-- Through 1.60.1.69977 UnitName("player") returned "First Surname" as ONE
+-- string. On 1.60.1.70009 the surname moved into the SECOND return - the slot
+-- documented as unitServer - so code reading only the first return silently
+-- started storing half the name. Measured in game on both builds; 70009 also
+-- added C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator, which is the same
+-- change seen from the client's side.
+--
+-- "player" only, deliberately. For any other unit that second return really can
+-- be a realm, and gluing a realm on with a space would invent a name.
+function API.PlayerFullName()
+    local name, second = UnitName("player")
+    if type(name) ~= "string" or name == "" then return nil end
+    -- A first return that already contains a space is a WHOLE name (the 69977
+    -- shape), so whatever is in the second slot is not the missing half of it -
+    -- on any other unit that slot is a realm, and gluing a realm on with a
+    -- space would invent a character who does not exist.
+    if name:find(" ") then return name end
+    if type(second) == "string" and second ~= "" then
+        return name .. " " .. second
+    end
+    return name
+end
+
 -- The level cap every display and rested-XP rule compares against. 60 is the
 -- value measured on 1.60.1.69913, used only when the client can't be read -
 -- the capability check reports that case separately.

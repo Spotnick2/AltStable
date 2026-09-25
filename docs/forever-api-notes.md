@@ -123,7 +123,39 @@ being "checked" more than once. 70009 was measured the right way.
 
 ---
 
-## Identity — surnames are real, and they are space-separated
+## Identity — surnames are real, and WHERE they live changed in 70009
+
+> **This section was measured on 69913/69977 and the shapes below changed in 1.60.1.70009.**
+> `AGENTS.md` names this file as the arbiter when a stub shape is in question, so read the 70009
+> block first — `tests/wow_stubs.lua` models the new shapes, and they contradict the old ones.
+
+### On 1.60.1.70009 (measured in game, `/run` on Kaleid Sumner)
+
+```
+UnitName("player")          ->  "Kaleid", "Sumner"     -- TWO returns now
+UnitNameUnmodified("player")->  "Kaleid", "Sumner"
+UnitFullName("player")      ->  "Kaleid", "Sumner"     -- second return is the SURNAME, not the realm
+GetUnitName("player", true) ->  "Kaleid Sumner"        -- joined, one string
+UnitPVPName("player")       ->  "Kaleid Sumner"        -- joined, one string
+```
+
+The surname moved out of the first return and into the second — the slot documented as
+`unitServer`. Code that read only the first return silently began storing half a name: see #56,
+where the scan stored `"Kaleid Sumner"` on 69977 and `"Kaleid"` on 70009 from the same line. This
+is also what the build's new `C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator` is about.
+
+Consequences worth carrying into any addon:
+
+- **Read names through one adapter.** Ours is `AltStable.API.PlayerFullName()` (`Compat.lua`),
+  which joins both shapes so a record written on either build reads the same. It is **player-only
+  on purpose**: for any other unit that second return really is a realm, and gluing a realm on
+  with a space invents a character.
+- **`UnitFullName` no longer yields the realm.** Use `GetRealmName()` / `GetNormalizedRealmName()`.
+- **A name comparison is now a version check in disguise.** Anything asserting a stored name still
+  equals a freshly read one will fire across the 69977/70009 boundary — for us it was the sync
+  rule that refuses a record whose name changed, which rejected each character's own updates.
+
+### On 1.60.1.69913 and .69977 (history)
 
 ```
 UnitName("player")          ->  "Example Surname",  nil
@@ -136,7 +168,7 @@ GetNormalizedRealmName()    ->  "ClassicBetaPvE"
 C_PlayerInfo.ShouldDisplaySurname()  ->  true
 ```
 
-Findings that matter:
+Findings that matter (all still true on 70009 — only where the surname *lives* changed):
 
 1. **The surname is part of the name string, separated by a SPACE** — `"Example Surname"`, not
    `Example-Surname`. The hyphenated form only appears in WTF folder names on disk.
@@ -209,6 +241,16 @@ it has not heard of, which is how a new race silently renders nothing.
 Better than feared. `PeerShort()` splits on `-` to strip the realm, and a Forever name contains a
 space rather than a hyphen — so `"Example Surname"` passes through intact and `"Example Surname-Realm"`
 still splits correctly. **The existing realm-stripping logic is not broken by surnames.**
+
+**But 70009 broke the other side of that comparison.** The sender on `CHAT_MSG_ADDON` is still the
+whole joined name (`Receiving data from Kaleid Sumner`, live) — while `UnitName("player")` read
+naively is now only the first half, so the self-echo check stopped matching and a client processed
+its own broadcasts. Our own name has to come from the adapter, not from `UnitName` directly.
+
+Still **unverified**: what `sender` contains for a *cross-realm* whisper. And note that
+`Core.lua:1343` strips any realm suffix and `Core.lua:1363` then uses that stripped value as the
+reply target — correct for the self-echo comparison, wrong as a routing address. See
+`docs/SYNC-DISCOVERY.md`.
 
 The residual risk is narrower than the plan assumed: two characters can share a *first* name, but
 the full name including surname still looks unique. Names are keys only for peer watermarks and

@@ -60,6 +60,13 @@ function WoW.reset()
     WoW.popups = {}
     WoW.now = 1700000000
     WoW.pendingPrio = nil
+    -- The player too. A test that renames the character to exercise a login
+    -- path would otherwise leave that name in place for every test after it,
+    -- and the addon's own captured copy would agree with it - so the mistake
+    -- hides itself.
+    WoW.player.name = "Example Surname"
+    WoW.player.realm, WoW.player.normalizedRealm = "Classic Beta PvE", "ClassicBetaPvE"
+    WoW.player.class, WoW.player.classLocalized, WoW.player.race = "PRIEST", "Priest", "Scourge"
 end
 
 ------------------------------------------------------------
@@ -442,10 +449,23 @@ WoW.player = { name = "Example Surname", realm = "Classic Beta PvE",
                normalizedRealm = "ClassicBetaPvE", guid = "Player-1234-0000AAAA",
                class = "PRIEST", classLocalized = "Priest", race = "Scourge" }
 
-function UnitName(unit) if unit == "player" then return WoW.player.name, nil end end
-function UnitFullName(unit) if unit == "player" then return WoW.player.name, WoW.player.normalizedRealm end end
+-- SURNAMES ARE SPLIT ACROSS TWO RETURNS on 1.60.1.70009: "Example Surname"
+-- arrives as ("Example", "Surname"), where through 69977 it was one string.
+-- WoW.player.name stays the whole name - that is what a test means by "the
+-- character's name" - and the split happens here, so code that reads only the
+-- first return loses the surname in tests exactly as it does in game.
+-- Measured: UnitName, UnitNameUnmodified and UnitFullName all behave this way,
+-- while GetUnitName and UnitPVPName return the joined string.
+local function SplitPlayerName()
+    local first, surname = WoW.player.name:match("^(%S+)%s+(.+)$")
+    if not first then return WoW.player.name end
+    return first, surname
+end
+function UnitName(unit) if unit == "player" then return SplitPlayerName() end end
+function UnitFullName(unit) if unit == "player" then return SplitPlayerName() end end
 function UnitNameUnmodified(unit) return UnitName(unit) end
-function GetUnitName(unit) return (UnitName(unit)) end
+function GetUnitName(unit) if unit == "player" then return WoW.player.name end end
+function UnitPVPName(unit) if unit == "player" then return WoW.player.name end end
 function UnitGUID(unit) if unit == "player" then return WoW.player.guid end end
 function UnitNameFromGUID() return WoW.player.name end
 function GetPlayerInfoByGUID()

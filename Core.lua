@@ -222,6 +222,28 @@ end
 -- Returns true if the record is safe to accept.
 ------------------------------------------------------------
 
+-- The part of a name no client version disagrees about.
+local function FirstName(n)
+    return (type(n) == "string" and n:match("^(%S+)")) or n
+end
+-- Keep our surname when the incoming name is BARE - a peer still reading only
+-- UnitName's first return sends "Kaleid" for a character we hold as "Kaleid
+-- Sumner". That is the half their client dropped, not a change they made.
+--
+-- Deliberately not "keep the longer one": a genuine rename to a shorter
+-- surname ("Kaleid Sumner" -> "Kaleid Fox") would then be reverted forever,
+-- and we would re-broadcast the stale name. Only the exactly-bare case is
+-- treated as a client artefact; every other difference is the peer's to tell
+-- us about.
+local function KeepFullerName(existing, priorName)
+    if not priorName or not existing.name then return end
+    local first = FirstName(existing.name)
+    if FirstName(priorName) ~= first then return end
+    if existing.name ~= first then return end      -- incoming carries a surname: theirs wins
+    if priorName == first then return end          -- we had no surname either
+    existing.name = priorName
+end
+
 local function ValidateIncoming(c, sender)
     if not c or not c.guid then return false end
 
@@ -237,8 +259,13 @@ local function ValidateIncoming(c, sender)
         return false
     end
 
-    -- Name should never change for a given GUID
-    if existing.name and c.name and existing.name ~= c.name then
+    -- The FIRST name should never change for a given GUID. Not the whole
+    -- string: 1.60.1.70009 moved the surname into UnitName's second return, so
+    -- a client reading only the first sends "Kaleid" for the character this
+    -- one has on disk as "Kaleid Sumner" - and rejecting that means a
+    -- character stops updating until every client has the same addon build.
+    -- A genuine mismatch (Kaleid -> Zoruka) still fails.
+    if existing.name and c.name and FirstName(existing.name) ~= FirstName(c.name) then
         Print("|cffff0000Rejected|r data for GUID " .. c.guid ..
               " from " .. (sender or "unknown") ..
               ": name changed (" .. tostring(existing.name) ..
@@ -252,7 +279,9 @@ end
 -- Our own character name, used to suppress our own broadcast echoes. May be
 -- nil this early (file load runs before PLAYER_LOGIN); refreshed in the login
 -- handler below so self-suppression is reliable for the session.
-local PLAYER_NAME = UnitName("player")
+-- The full name, surname included: the sender on an addon message carries it,
+-- so a half name here stops us recognising our own packets (see below).
+local PLAYER_NAME = AltStable.API.PlayerFullName()
 
 ------------------------------------------------------------
 -- Sync routing — whisper-only to whitelisted characters
@@ -684,11 +713,13 @@ local function DeserializeFullDB(payload, sender)
                     local existing = AltStableDB[c.guid] or {}
 
                     if ShouldMerge(existing, c) then
+                        local priorName = existing.name
                         DispatchPluginPayloads(c)
                         ClearSyncedStateFields(existing)
                         for k,v in pairs(c) do
                             existing[k] = v
                         end
+                        KeepFullerName(existing, priorName)
                         AltStableDB[c.guid] = existing
                     end
                 end
@@ -787,6 +818,21 @@ end
 -- sinceTS: when replying to a delta REQ, only the characters changed since the
 -- requester's watermark are sent. Omitted (nil) => full DB (a manual push, where
 -- we don't know what the target already has).
+-- Stagger replies with entropy from OUR OWN name plus the clock, so two
+-- clients answering the same broadcast do not pick the same moment
+-- (math.random alone is seeded identically right after launch). Deterministic,
+-- and distinct per character: between 1.0 and 4.0 seconds.
+--
+-- The whole name, surname included. Two characters sharing a first name is
+-- exactly what Forever surnames produce, so seeding from "Kaleid" alone hands
+-- both clients the same delay - the collision this exists to prevent.
+local function ReplyDelay(name, now)
+    local seed = 0
+    name = tostring(name or "")
+    for i = 1, #name do seed = seed + string.byte(name, i) end
+    return 1 + ((seed + ((now or 0) % 1000)) % 30) / 10
+end
+
 local function SendFullDatabase(channel, target, sinceTS)
 
     channel = channel or "GUILD"
@@ -979,11 +1025,13 @@ local function ReceiveCharacter(c, sender)
         return
     end
 
+    local priorName = existing.name
     DispatchPluginPayloads(c)
     ClearSyncedStateFields(existing)
     for k,v in pairs(c) do
         existing[k] = v
     end
+    KeepFullerName(existing, priorName)
 
     AltStableDB[c.guid] = existing
 
@@ -1339,7 +1387,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Ignore our own packets
         ----------------------------------------------------
 
-        -- In TBC, sender arrives as "Name-Realm". Strip the realm suffix before comparing.
+        -- The sender arrives as "First Surname", and cross-realm as
+        -- "First Surname-Realm"; strip the realm suffix before comparing.
+        -- PLAYER_NAME has to carry the surname for this to match - while it
+        -- did not, we accepted and processed our own broadcasts.
         local senderName = sender and sender:match("^([^%-]+)") or ""
         if senderName == PLAYER_NAME then
             return
@@ -1362,16 +1413,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local replyChannel = (channel == "WHISPER") and "WHISPER" or "GUILD"
             local replyTarget  = (channel == "WHISPER") and senderName or nil
             Print(senderName .. " requested sync — sending data.")
-            -- Stagger replies with entropy from the receiver's name +
-            -- current time, so that two clients on the same machine
-            -- replying to a broadcast don't pick the same delay (math.random
-            -- on its own would be seeded identically right after launch).
-            -- Result: each peer gets a deterministic-but-distinct delay
-            -- between 1.0 and 4.0 seconds.
-            local seed = 0
-            local me = UnitName("player") or ""
-            for i = 1, #me do seed = seed + string.byte(me, i) end
-            local delay = 1 + ((seed + (time() % 1000)) % 30) / 10
+            local delay = ReplyDelay(AltStable.API.PlayerFullName(), time())
             C_Timer.After(delay, function()
                 SendFullDatabase(replyChannel, replyTarget, sinceTS)
             end)
@@ -1595,7 +1637,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Refresh our own name now that we're in-world; UnitName("player") can
         -- return nil at file-load, and a nil PLAYER_NAME would silently defeat
         -- the self-echo suppression check for the whole session.
-        PLAYER_NAME = UnitName("player") or PLAYER_NAME
+        PLAYER_NAME = AltStable.API.PlayerFullName() or PLAYER_NAME
 
         -- Load the on-demand plugins the user has enabled. Done early (not
         -- inside the 2s sync timer) so the Recipes/Roster tabs appear as
@@ -2272,6 +2314,7 @@ local function ResetSyncState()
 end
 
 local _seam = {
+    ReplyDelay          = ReplyDelay,
     ComputeChecksum     = ComputeChecksum,
     SerializeChar       = SerializeChar,
     CleanupDB           = CleanupDB,

@@ -418,7 +418,10 @@ function AltStable.ScanCharacter()
     AltStableDB = AltStableDB or {}
 
     local guid = UnitGUID("player")
-    local name = UnitName("player")
+    -- Both halves of the name: on 1.60.1.70009 the surname is UnitName's
+    -- second return, and taking only the first stored "Kaleid" for a character
+    -- every other client (and the whitelist) calls "Kaleid Sumner".
+    local name = API.PlayerFullName()
     local realm = GetRealmName()
 
     if not guid then

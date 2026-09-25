@@ -565,6 +565,59 @@ check("the lookup is optional, not a required capability",
       framesAPI.AssertCapabilities() == true)
 
 ------------------------------------------------------------
+-- Surnames: PlayerFullName (#56)
+--
+-- 1.60.1.70009 moved the surname out of UnitName's first return and into the
+-- second. The adapter has to read BOTH client shapes, because a record written
+-- by either build has to come out the same string - the whitelist, the sync
+-- sender and the sheet all use the joined form.
+------------------------------------------------------------
+
+do
+    local nameAPI = AltStable.API
+    local realUnitName = UnitName
+
+    -- 70009: two returns.
+    UnitName = function(u) if u == "player" then return "Kaleid", "Sumner" end end
+    eq("the surname is joined back on", nameAPI.PlayerFullName(), "Kaleid Sumner")
+
+    -- 69977 and earlier: one string, already whole.
+    UnitName = function(u) if u == "player" then return "Kaleid Sumner" end end
+    eq("an older client's whole name is left alone", nameAPI.PlayerFullName(), "Kaleid Sumner")
+
+    -- A character with no surname is not given an empty one.
+    UnitName = function(u) if u == "player" then return "Kaleid", "" end end
+    eq("no surname means no trailing space", nameAPI.PlayerFullName(), "Kaleid")
+    UnitName = function(u) if u == "player" then return "Kaleid" end end
+    eq("  nor does a missing second return", nameAPI.PlayerFullName(), "Kaleid")
+
+    -- A whole name in the first return with something in the second: the
+    -- second is NOT the missing half, and appending it would invent a name.
+    UnitName = function(u) if u == "player" then return "Kaleid Sumner", "Mortalis" end end
+    eq("a whole name is never extended by the second return",
+       nameAPI.PlayerFullName(), "Kaleid Sumner")
+
+    -- Nothing to read: nil, not the string "nil" and not an error.
+    UnitName = function() return nil end
+    eq("an unreadable name is nil", nameAPI.PlayerFullName(), nil)
+    UnitName = function() return "" end
+    eq("  and so is an empty one", nameAPI.PlayerFullName(), nil)
+
+    UnitName = realUnitName
+
+    -- And the stub itself. Everything above also passes against the 69977
+    -- shape, so without this nothing holds tests/wow_stubs.lua to the client
+    -- we actually ship against - which is how a broken port passes a green
+    -- suite (see the rules at the top of wow_stubs.lua).
+    local first, surname = UnitName("player")
+    check("the stub models 70009: UnitName returns the surname separately",
+          type(first) == "string" and type(surname) == "string" and surname ~= "",
+          tostring(first) .. " / " .. tostring(surname))
+    eq("  and the two halves rejoin to the whole name",
+       tostring(first) .. " " .. tostring(surname), WoW.player.name)
+end
+
+------------------------------------------------------------
 
 print(("test_compat: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
