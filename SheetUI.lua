@@ -3372,6 +3372,23 @@ if type(StaticPopupDialogs) == "table" then
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
+        -- The sheet is DIALOG strata and SetToplevel(true), and a StaticPopup is
+        -- DIALOG too - so this confirmation opened BEHIND the window and only
+        -- became visible once the sheet was closed. A question nobody can see
+        -- is worse than no question: the click appears to do nothing.
+        --
+        -- The popup frame is shared with every other addon, so the strata is
+        -- put back when it closes rather than left raised.
+        OnShow = function(self)
+            self._altstablePrevStrata = self:GetFrameStrata()
+            self:SetFrameStrata("FULLSCREEN_DIALOG")
+        end,
+        OnHide = function(self)
+            if self._altstablePrevStrata then
+                self:SetFrameStrata(self._altstablePrevStrata)
+                self._altstablePrevStrata = nil
+            end
+        end,
     }
 end
 

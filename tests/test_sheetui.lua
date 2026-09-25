@@ -152,6 +152,25 @@ eq("a right-click raises one confirmation", #WoW.popups, 1)
 local popup = WoW.popups[1]
 if popup then
     check("  naming the character", popup.arg1 == "Goner", tostring(popup.arg1))
+
+    -- The sheet is DIALOG strata and toplevel, and a StaticPopup is DIALOG too,
+    -- so this confirmation opened BEHIND the window and appeared only once the
+    -- sheet was closed. A question nobody can see reads as a click that did
+    -- nothing.
+    local dlg = StaticPopupDialogs[popup.which]
+    check("  the dialog raises itself", type(dlg.OnShow) == "function")
+    if type(dlg.OnShow) == "function" then
+        local fake = WoW.makeFrame()
+        fake._GetFrameStrata = "DIALOG"
+        fake.GetFrameStrata = function(self) return self._GetFrameStrata end
+        fake.SetFrameStrata = function(self, v) self._GetFrameStrata = v end
+
+        dlg.OnShow(fake)
+        eq("  above the sheet while shown", fake:GetFrameStrata(), "FULLSCREEN_DIALOG")
+        dlg.OnHide(fake)
+        eq("  and put back on close, since the frame is shared",
+           fake:GetFrameStrata(), "DIALOG")
+    end
     check("  and carrying its guid, not its name",
           type(popup.data) == "table" and popup.data.guid == "gone", tostring(popup.data))
 end
