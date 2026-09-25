@@ -148,19 +148,41 @@ if (-not $Watch) {
 }
 
 Write-Host "Watching $Shots - capture with /asrender in game. Ctrl-C to stop." -ForegroundColor Cyan
-$seen = @{}
-Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue | ForEach-Object { $seen[$_.Name] = $true }
+Write-Host "A new pair converts once the game writes its record (on /reload or logout)." -ForegroundColor DarkGray
 
+# Deliberately NOT a "seen" list.
+#
+# A screenshot pair appears the moment it is taken, but the addon's record of
+# WHICH CHARACTER it shows is only written when the client flushes
+# SavedVariables - on /reload or logout. Marking files as seen on sight meant a
+# fresh pair was converted once, skipped for want of metadata, and never
+# retried: the later flush creates no new screenshot, so nothing woke the
+# watcher again. The promised capture-to-portrait path quietly did not happen.
+#
+# So the trigger is "anything changed", and the converter is left to decide what
+# it can do. It deletes what it converts, so an unconvertible pair simply stays
+# on disk and is retried the next time something moves - which the flush itself
+# now counts as.
+function Get-State {
+    $shots = @(Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue |
+               ForEach-Object { "$($_.Name):$($_.Length)" })
+    $stores = @(Get-ChildItem (Split-Path $Shots -Parent) -Recurse -Filter AltStableProbe.lua -ErrorAction SilentlyContinue |
+                ForEach-Object { "$($_.FullName):$($_.LastWriteTimeUtc.Ticks)" })
+    return (($shots + $stores) -join "|")
+}
+
+$last = Get-State
 while ($true) {
     Start-Sleep -Seconds 2
-    $fresh = @(Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue |
-               Where-Object { -not $seen.ContainsKey($_.Name) } |
-               Sort-Object LastWriteTime)
-    if ($fresh.Count -ge 2) {
-        # A capture is a PAIR. Wait for both before converting, or the matte
-        # reads one shot against an older, unrelated one.
-        $fresh | ForEach-Object { $seen[$_.Name] = $true }
-        Write-Host ("pair: {0}, {1}" -f $fresh[-2].Name, $fresh[-1].Name)
-        Convert-Newest
-    }
+    $now = Get-State
+    if ($now -eq $last) { continue }
+    $last = $now
+
+    # A capture is a PAIR, and both halves must have landed.
+    $pending = @(Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue)
+    if ($pending.Count -lt 2) { continue }
+
+    Write-Host ("{0} staged screenshot(s) - converting what has a record" -f $pending.Count)
+    Convert-Newest
+    $last = Get-State        # the converter deletes what it used
 }

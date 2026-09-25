@@ -263,5 +263,41 @@ check("  and a card can be selected", ok, tostring(err))
 ok, err = pcall(registered.OnDeactivate, main)
 check("  and deactivates", ok, tostring(err))
 
+------------------------------------------------------------
+-- It repaints while it is open
+------------------------------------------------------------
+-- Built once on activation and then left alone, the lineup goes stale: an alt
+-- arriving by sync, a gear change, or hiding someone shows nothing until the
+-- user leaves the tab and comes back.
+
+do
+    -- SheetUI is not loaded here, so stand in for the function the hook wraps.
+    -- What is under test is the WRAPPING: that activating installs it, that it
+    -- calls through, and that it repaints only while the tab is open.
+    local base = 0
+    AltStable.RefreshSheet = function() base = base + 1 end
+
+    local painted = 0
+    local realRefresh = AltStable.RosterPlugin.Refresh
+    AltStable.RosterPlugin.Refresh = function() painted = painted + 1 end
+
+    pcall(registered.OnActivate, main)      -- installs the hook
+    check("the hook is installed once", AltStable.RosterPlugin._refreshHooked == true)
+    painted = 0
+    base = 0
+    AltStable.RefreshSheet()
+    WoW.flushTimers()
+    check("a sheet refresh repaints an open Roster", painted > 0, tostring(painted))
+    eq("  and still refreshes the sheet itself", base, 1)
+
+    pcall(registered.OnDeactivate, main)
+    painted = 0
+    AltStable.RefreshSheet()
+    WoW.flushTimers()
+    eq("  and does not touch a closed one", painted, 0)
+
+    AltStable.RosterPlugin.Refresh = realRefresh
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

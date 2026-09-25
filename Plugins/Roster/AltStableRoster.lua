@@ -328,8 +328,28 @@ function Roster.Refresh()
     end
 end
 
+-- Repaint while the tab is OPEN. Without this the lineup is built once on
+-- activation and then goes stale: an alt arriving by sync, a gear change, or
+-- hiding someone (#21) shows nothing until the user leaves the tab and comes
+-- back. Wrapping RefreshSheet is how the sibling plugins do it - one refresh
+-- path, so nothing has to remember to call two.
+local function HookRefresh()
+    if Roster._refreshHooked or type(AltStable.RefreshSheet) ~= "function" then return end
+    local prev = AltStable.RefreshSheet
+    AltStable.RefreshSheet = function(...)
+        prev(...)
+        if Roster.isActive then
+            C_Timer.After(0, function()
+                if Roster.isActive then Roster.Refresh() end
+            end)
+        end
+    end
+    Roster._refreshHooked = true
+end
+
 function Roster.Activate(mainFrame)
     BuildPanel(mainFrame)
+    HookRefresh()
     Roster.isActive = true
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Hide()   end
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Hide() end
@@ -381,6 +401,7 @@ function Roster._Bootstrap()
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
+            HookRefresh = HookRefresh,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         },
     })
