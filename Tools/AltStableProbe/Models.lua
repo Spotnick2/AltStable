@@ -33,13 +33,19 @@ local SLOTS = 19           -- Vanilla equipped slots, 1..19
 -- mannequin the dressing room poses - and the frame reported a 19-slot
 -- transmog list the instant SetDisplayInfo landed, which is the dressing-room
 -- state. So these get tried in combination rather than guessed at.
+-- MEASURED on 1.60.1.70009, with SetUnit("player"):
+--   TransmogSkin=false, TransmogChoices=false, AutoDress=true
+-- renders the live character correctly, textured and wearing her own gear.
+-- Turning EITHER transmog knob on blackens the face - so they are not the
+-- missing ingredient for the untextured offline models, they are their own
+-- bug. The defaults below are that known-good combination.
 local knobs = {
     { key = "skin",    method = "SetUseTransmogSkin",    value = false,
-      label = "TransmogSkin", hint = "OFF should give the character's own skin instead of the mannequin" },
-    { key = "choices", method = "SetUseTransmogChoices", value = true,
-      label = "TransmogChoices", hint = "customization choices: hair, face, skin colour" },
+      label = "TransmogSkin", hint = "ON blackens the face (measured) - the dressing-room mannequin skin" },
+    { key = "choices", method = "SetUseTransmogChoices", value = false,
+      label = "TransmogChoices", hint = "ON blackens the face too (measured)" },
     { key = "auto",    method = "SetAutoDress",          value = true,
-      label = "AutoDress", hint = "let the model dress itself from the display" },
+      label = "AutoDress", hint = "ON: the model wears the character's own gear. Keep this on." },
 }
 
 -- NPC display ids, as a fallback experiment. An NPC model carries its own
