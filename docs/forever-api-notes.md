@@ -298,7 +298,7 @@ before the Professions plugin is designed — deferred anyway.
 
 ---
 
-## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 unchanged
+## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 still broken (fixed two builds later, in 70009)
 
 The client bumped from 69913 (built Sep 17) to 69977 (built Sep 22). The dump was regenerated
 (`forever-api-1.60.1.69977.md`) and compared section by section against 69913:
@@ -322,6 +322,69 @@ type(TooltipDataProcessor)     -> "table"
 **SavedVariables still do not load (#23).** The probe on a fresh launch: account-wide table
 arrived NO, per-character NO, launches recorded before this one 0 — after previous sessions had
 written the file. So the blocker survives this build; nothing an addon writes is read back.
+
+---
+
+## Build 1.60.1.70009 (2026-09-24) — **SavedVariables load. #23 is fixed.**
+
+The blocker that shaped every testing assumption in this repo is gone. First login on the new
+build, with the previous session's files untouched on disk:
+
+```
+[probe] SavedVariables (account) LOADED - previous loadCount=1
+[probe] SavedVariablesPerCharacter LOADED - previous loadCount=1
+[probe] SavedVariablesMachine first ever run - not loaded
+[probe] account #2 / per-character #2 / machine #1
+[AltStable dev] kept 2 saved sync peer(s) for Morphisto - the whitelist loaded from disk
+```
+
+A real test, not a `/reload`: the client was **shut down for the patch** and relaunched, and the
+files on disk were written at 10:56 that morning by build 69977. Both scopes an addon actually
+uses — `SavedVariables` and `SavedVariablesPerCharacter` — came back, and the whitelist inside
+`AltStableConfig` was live in the session.
+
+`SavedVariablesMachine` still reports "first ever run". It is Blizzard-only scope and AltStable
+does not use it; the probe watches it for completeness. Not worth chasing.
+
+What this unblocks: cross-session data (the whole point of the addon), `accountNumber` and the
+whitelist staying set, delta sync against a watermark that survives, and every deferred item that
+was waiting on "we cannot verify this until data persists".
+
+### API diff, 69977 → 70009
+
+Nothing AltStable uses changed. Documented events +3
+(`ALERT_AGE_VERIFICATION_RESTRICTED`, `GLOBAL_REGION_MOUSE_DOWN`, `GLOBAL_REGION_MOUSE_UP`), enums
+and structures identical, widget methods identical. Namespace functions +18 / −2:
+
+- **new:** `C_Flyout.*` (6), `C_SocialRestrictions.*` (3), `C_Trainer.GetCategorizeTrainerUI` /
+  `SetCategorizeTrainerUI`, `C_UnitAuras.GetRefreshCarryOverDuration`, `C_BattleNet.SetBlocked`,
+  `C_FriendList.GetWhoRaceFilters`, `C_AdventureMap` count getters,
+  `C_PvP.GetArenaOpponentSpec`, `C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator`.
+- **gone:** `C_GameRules.SelectClassicExperiencePreset` / `SelectModernExperiencePreset`, replaced
+  by `C_GameRules.GetForeverExperiencePreset` / `SetForeverExperiencePreset`.
+- The 24 `C_LocaleContext.*` entries now document as bare globals (`CompareStrings`, `FormatDate`,
+  `ToLower`, …). A documentation reshuffle, not a removal — nothing here calls them.
+
+`C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator` is the one to remember: Forever surnames are
+this project's recurring edge (whitelist entries are two words, `strsplit` on names, peer keys), so
+there is now a client function for the separator instead of guessing at it.
+
+Re-measured in game on 70009, all unchanged:
+
+```
+GetMaxPlayerLevel()            -> 60
+UnitXPMax("player")            -> 5400       (positive below the cap)
+GetXPExhaustion()              -> 764        (a number while rested; nil when not)
+Enum.BagIndex.Keyring          -> -1
+C_Reputation.GetNumFactions()  -> 5
+type(TooltipDataProcessor)     -> "table"
+```
+
+**Still unverified on this build:** whether CVars persist (they did not through 69977 — see the
+camera CVars, #25) and whether secret values behave the same on a PvP realm. Neither was
+re-measured here.
+
+---
 
 ## Secret values — some unit numbers cannot be read, only passed along
 

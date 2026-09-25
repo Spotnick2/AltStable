@@ -21,7 +21,7 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 --
 -- AltStableConfig is a SavedVariable, so the client writes it at logout and
 -- there is normally nothing to save by hand. On 1.60.1.69913 and .69977 it is written
--- and never read back (#23) - and nothing else an addon can write survives a
+-- and never read back (fixed in 1.60.1.70009) - and nothing else an addon can write survives a
 -- restart either: addon CVars and per-character SavedVariables were both
 -- measured dead across a real exit. Every earlier "it persists" result came
 -- from /reload, which keeps the process alive. The fix is Blizzard's.
@@ -353,41 +353,28 @@ end
 ------------------------------------------------------------
 
 ------------------------------------------------------------
--- Has Blizzard fixed it?
+-- When was this file last written, and by which build?
 --
--- AltStableConfig.svLoadCheck is written every session and can only come back
--- if the client actually read the SavedVariables file - so its presence at
--- login is proof, on whichever build fixed it. Needs no working store,
--- because it IS the test for one.
+-- This started as the detector for #23: a marker that could only come back if
+-- the client had read the SavedVariables file, announced at login on whichever
+-- build fixed it. Build 1.60.1.70009 fixed it, so the announcement is gone -
+-- it would now be a green line at every single login, saying what the sheet
+-- being full of alts already says.
 --
--- Lives here rather than in Tools/AltStableProbe: the probe answers when
--- someone remembers to ask, and the point is to be told on the first login
--- after the fix, without asking.
+-- The marker itself stays, and only now means anything, because it survives:
+-- a stamp and a build number on the last session that wrote this file. That is
+-- the first thing worth knowing when a store looks stale or a future build
+-- regresses. Measuring persistence per build is still the probe's job
+-- (Tools/AltStableProbe, and docs/RUNBOOK.md).
 ------------------------------------------------------------
 
 local function CurrentBuild()
     return (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or nil
 end
 
--- `announce` is false on a /reload. A reload proves nothing - the client may
--- hand back cached data without touching disk, which is exactly how
--- per-character SavedVariables look persisted across /reload today while being
--- lost at every real restart. This check exists to catch the fix; announcing
--- it on a reload would be the same false positive it was written to avoid.
--- The marker is still rewritten on every UI load, so a session that reloaded
--- mid-way still leaves one behind for the next real login to find.
-local function CheckSavedVariablesLoad(announce)
-    local previous = AltStableConfig.svLoadCheck
-
-    if announce and type(previous) == "table" and previous.stamp and DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage(
-            "|cff55ff55AltStable:|r SavedVariables loaded this session "
-            .. "(written " .. tostring(previous.stamp)
-            .. " on build " .. tostring(previous.build) .. "; now on "
-            .. tostring(CurrentBuild()) .. "). Issue #23 looks fixed - verify with a full exit, "
-            .. "not /reload, before relying on it.")
-    end
-
+-- Rewritten on every UI load, including a /reload, so the stamp describes the
+-- last time this client wrote the file rather than the last cold login.
+local function CheckSavedVariablesLoad()
     AltStableConfig.svLoadCheck = {
         stamp = (type(date) == "function" and date("%Y-%m-%d %H:%M:%S")) or "?",
         build = CurrentBuild(),
@@ -396,18 +383,13 @@ end
 
 AltStable.CheckSavedVariablesLoad = CheckSavedVariablesLoad
 
--- PLAYER_LOGIN fires on /reload too, so it cannot tell the two apart;
--- PLAYER_ENTERING_WORLD can, and on 1.60.1.69913/.69977 carries
--- (isInitialLogin, isReloadingUi) - checked against the API dump, not
--- assumed. It also fires on every zone change with both false, which is
--- ignored entirely.
---
--- Residual limit, stated rather than solved: logging out to character select
--- and back in is an initial login inside the same process, and may also be
--- served from cache. Hence the message asks for a full exit to confirm.
+-- PLAYER_ENTERING_WORLD carries (isInitialLogin, isReloadingUi) on
+-- 1.60.1.69913 through .70009 - checked against the API dump, not assumed. It
+-- also fires on every zone change with both false, and a zone change is not a
+-- write worth stamping, so those are ignored entirely.
 function AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
     if not (isInitialLogin or isReloadingUi) then return end
-    CheckSavedVariablesLoad(isInitialLogin and not isReloadingUi)
+    CheckSavedVariablesLoad()
 end
 
 ------------------------------------------------------------
@@ -423,7 +405,7 @@ end
 -- someone would have noticed.
 ------------------------------------------------------------
 
-local MEASURED_ON_BUILD = "69977"
+local MEASURED_ON_BUILD = "70009"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
 local function CheckClientBuild()
@@ -435,8 +417,8 @@ local function CheckClientBuild()
             "|cffffcc00AltStable:|r this client is build " .. tostring(build)
             .. "; everything in the API notes was measured on " .. MEASURED_ON_BUILD
             .. ". Treat it as unverified: re-run |cffffff00/apidump|r, re-check "
-            .. "SavedVariables (#23) and the camera CVars (#25), then bump "
-            .. "MEASURED_ON_BUILD in Config.lua.")
+            .. "SavedVariables persistence with the probe and the camera CVars (#25), "
+            .. "then bump MEASURED_ON_BUILD in Config.lua.")
     end
 end
 

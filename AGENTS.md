@@ -40,9 +40,10 @@ AltStable-specific.
   codebase**, so bare Classic globals are mostly gone — use the adapter, not TBC-era APIs.
 - **Namespace:** one global table `AltStable`; every file starts `AltStable = AltStable or {}`.
 - **SavedVariables:** `AltStableDB` (character records keyed by GUID) and `AltStableConfig`
-  (user settings). Declared in `AltStable.toc`. **Known blocker: the client writes them and
-  never reads them back** (issue #23) — a failed load is invisible in `AltStableDB` because
-  `ScanCharacter` rewrites it every login.
+  (user settings). Declared in `AltStable.toc`. They persist again as of client 1.60.1.70009
+  (#23 is fixed), so the shape on disk now holds real data across sessions — and a load failure
+  would still be invisible in `AltStableDB`, because `ScanCharacter` rewrites the current
+  character every login. Verify persistence with a full client exit, never a `/reload`.
 
 ## Layout
 
@@ -121,7 +122,7 @@ commit a literal version over that keyword: the packager needs it, and it has be
 hand twice on sibling projects.
 
 See `docs/RUNBOOK.md` for the operational side: the in-game loop, where the client keeps
-SavedVariables, what #23 costs you when testing, the client-update procedure, two-account sync
+SavedVariables, how to verify persistence on a new build, the client-update procedure, two-account sync
 testing, and the errors you will actually see.
 
 ## Releasing
@@ -225,8 +226,8 @@ client ignores it.
   `/api <system> list`; the Battle.net developer portal documents REST APIs, not the Lua API.
 - **The API dump is build-stamped — regenerate it when the client bumps.**
   When `GetBuildInfo()` changes: deploy, `/apidump`, `/reload`, then
-  `Tools/ForeverAPIDump/Convert-Dump.ps1`. The addon cannot detect staleness itself because
-  SavedVariables are never read back here (#23).
+  `Tools/ForeverAPIDump/Convert-Dump.ps1`. `MEASURED_ON_BUILD` in `Config.lua` is the record of
+  which build the notes describe, and the addon says so at login when the two differ.
 
 ## Cost control & model usage
 

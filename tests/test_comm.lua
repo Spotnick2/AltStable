@@ -2,9 +2,10 @@
 -- test_comm.lua — AltStable sync/communication protocol tests.
 --
 -- Ported from AltTracker, whose Core.lua this repo imported verbatim
--- (#19). The sync engine is the only path by which other characters'
--- data reaches the sheet while SavedVariables do not load (#23), and
--- this is the harness issue #20 asks for before its fixes.
+-- (#19). The sync engine is how another ACCOUNT's characters reach the
+-- sheet - it was the only path at all while SavedVariables did not load
+-- (#23, fixed in 1.60.1.70009) - and this is the harness issue #20 asks
+-- for before its fixes.
 --
 -- Exercises the wire format in Core.lua (protocol versions, checksum,
 -- character + full-DB serialization, and the chunk -> reassemble
