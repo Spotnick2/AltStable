@@ -25,6 +25,12 @@
 local KEY_DELAY   = 1.25   -- let the model stream in before the first shot
 local SHOT_DELAY  = 0.65   -- let the client finish writing a file
 
+-- Auto-capture timings. The login one is long because inventory is not
+-- reliably readable the instant the world loads, and a fingerprint taken from
+-- half-loaded gear would trigger a pointless capture every single login.
+local LOGIN_SETTLE = 8
+local WARN_SECONDS = 5
+
 local function Out(s)
     DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[render]|r " .. tostring(s))
 end
@@ -68,6 +74,45 @@ local function PoseLiveCharacter()
     if model.SetPaused then pcall(model.SetPaused, model, true) end
 end
 
+------------------------------------------------------------
+-- "Has the character's look changed since the last portrait?"
+--
+-- The whole point of auto-capture: a portrait should refresh when the
+-- character actually looks different, and never otherwise. Item IDs are the
+-- right granularity - they decide the model - so enchants, gems and stat
+-- rerolls do not trigger a pointless re-shoot, and neither does levelling.
+------------------------------------------------------------
+
+local function LookFingerprint()
+    local parts = {}
+    for slot = 1, 19 do
+        local link = GetInventoryItemLink("player", slot)
+        local id = link and link:match("item:(%d+)")
+        parts[#parts + 1] = id or "-"
+    end
+    -- The display id changes with a barber-shop visit or a race change, which
+    -- is exactly the kind of "looks different" this is for.
+    local displayID
+    if C_PlayerInfo and type(C_PlayerInfo.GetDisplayID) == "function" then
+        local ok, id = pcall(C_PlayerInfo.GetDisplayID)
+        if ok then displayID = id end
+    end
+    parts[#parts + 1] = tostring(displayID or "?")
+    return table.concat(parts, ":")
+end
+
+local function StoredFingerprint(guid)
+    local looks = AltStableProbeDB and AltStableProbeDB.looks
+    local rec = looks and looks[guid]
+    return rec and rec.fp
+end
+
+local function RememberFingerprint(guid, fp)
+    AltStableProbeDB = AltStableProbeDB or {}
+    AltStableProbeDB.looks = AltStableProbeDB.looks or {}
+    AltStableProbeDB.looks[guid] = { fp = fp, stamp = date("%Y-%m-%d %H:%M:%S") }
+end
+
 local function RecordMetadata(shotIndex)
     AltStableProbeDB = AltStableProbeDB or {}
     AltStableProbeDB.renders = AltStableProbeDB.renders or {}
@@ -91,6 +136,10 @@ end
 
 local function Finish()
     frame:Hide()
+    -- Only now, once both shots are on disk: a fingerprint stored after a
+    -- capture that failed half-way would suppress the retry.
+    local guid = UnitGUID("player")
+    if guid then RememberFingerprint(guid, LookFingerprint()) end
     if savedFormat and type(SetCVar) == "function" then
         pcall(SetCVar, "screenshotFormat", savedFormat)
     end
@@ -133,7 +182,91 @@ local function Capture()
     end)
 end
 
+------------------------------------------------------------
+-- Auto-capture: keep portraits current without anyone typing anything
+------------------------------------------------------------
+
+local pending   -- the countdown timer, so it can be cancelled
+
+local function AutoEnabled()
+    return not (AltStableProbeDB and AltStableProbeDB.autoCaptureOff)
+end
+
+local function CancelPending(reason)
+    if not pending then return false end
+    pending:Cancel()
+    pending = nil
+    Out("auto-capture cancelled" .. (reason and (" - " .. reason) or ""))
+    return true
+end
+
+local function ConsiderCapture(why)
+    if not AutoEnabled() then return end
+    local guid = UnitGUID("player")
+    if not guid then return end
+
+    local fp = LookFingerprint()
+    if fp == StoredFingerprint(guid) then return end          -- looks the same
+
+    -- Never interrupt a fight to take a photograph. PLAYER_REGEN_ENABLED
+    -- brings us back.
+    if InCombatLockdown and InCombatLockdown() then
+        Out("gear changed - portrait will refresh after combat")
+        return
+    end
+
+    Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender cancel|r to skip.")
+        :format(why, WARN_SECONDS))
+    pending = C_Timer.NewTimer(WARN_SECONDS, function()
+        pending = nil
+        Capture()
+    end)
+end
+
 SLASH_ASRENDER1 = "/asrender"
-SlashCmdList["ASRENDER"] = function()
+SlashCmdList["ASRENDER"] = function(msg)
+    msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+
+    if msg == "cancel" then
+        if not CancelPending() then Out("nothing pending") end
+        return
+    end
+    if msg == "auto" then
+        AltStableProbeDB = AltStableProbeDB or {}
+        AltStableProbeDB.autoCaptureOff = AutoEnabled() and true or nil
+        Out("auto-capture " .. (AutoEnabled() and "|cff55ff55on|r" or "|cffff5555off|r"))
+        return
+    end
+    if msg == "status" then
+        local guid = UnitGUID("player")
+        Out("auto-capture " .. (AutoEnabled() and "on" or "off"))
+        Out("look now    : " .. LookFingerprint())
+        Out("last shot   : " .. tostring(guid and StoredFingerprint(guid) or "never"))
+        return
+    end
+    if msg ~= "" then
+        Out("usage: /asrender [cancel|auto|status]")
+        return
+    end
+
+    CancelPending()
     Capture()
 end
+
+local auto = CreateFrame("Frame")
+auto:RegisterEvent("PLAYER_LOGIN")
+auto:RegisterEvent("PLAYER_REGEN_ENABLED")
+auto:RegisterEvent("PLAYER_REGEN_DISABLED")
+auto:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        -- A fight started inside the countdown: hiding the UI for three
+        -- seconds mid-pull is the one thing this must never do.
+        CancelPending("combat started")
+    elseif event == "PLAYER_LOGIN" then
+        -- Inventory is not reliably readable the instant the world loads, and
+        -- a fingerprint built from half-loaded gear would re-shoot every login.
+        C_Timer.After(LOGIN_SETTLE, function() ConsiderCapture("gear changed since your last portrait") end)
+    else
+        ConsiderCapture("out of combat - gear changed since your last portrait")
+    end
+end)
