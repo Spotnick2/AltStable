@@ -729,9 +729,9 @@ check("the .toc scan reached the shipped files", scanned >= 8, tostring(scanned)
 ------------------------------------------------------------
 -- One write path for AltStableConfig
 --
--- Nothing an addon writes survives a restart on this client (#23), so there
--- is no store to test. What IS worth pinning is that every mutation converges
--- on one seam, so the eventual fix lands in one place.
+-- What is worth pinning is that every mutation converges on one seam. That
+-- mattered doubly while nothing survived a restart (#23); now that it does,
+-- the seam is what makes a write reach disk at all.
 ------------------------------------------------------------
 
 local changed = {}
@@ -845,27 +845,31 @@ for _, path in ipairs({ "Core.lua", "SheetUI.lua", "Theme.lua", "Toasts.lua",
 end
 
 ------------------------------------------------------------
--- Has Blizzard fixed it?
+-- The write stamp
 --
--- svLoadCheck can only come back if the client actually read the file.
+-- Since 1.60.1.70009 this file comes back, so the marker records when it was
+-- last written and by which build - the first thing worth knowing when a store
+-- looks stale. It never announces anything: the sheet being full of alts is
+-- the user-visible proof that the load worked.
 ------------------------------------------------------------
 
 AltStableConfig = {}
 WoW.chatOut = {}
 AltStable.CheckSavedVariablesLoad()
-check("a first session says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-check("  but leaves a marker for the next one",
-      type(AltStableConfig.svLoadCheck) == "table" and AltStableConfig.svLoadCheck.stamp ~= nil)
+check("stamping says nothing in chat", #WoW.chatOut == 0, WoW.chatOut[1] or "")
+check("  and leaves a stamp", type(AltStableConfig.svLoadCheck) == "table"
+      and AltStableConfig.svLoadCheck.stamp ~= nil)
+check("  naming the build that wrote it", AltStableConfig.svLoadCheck.build == "70009",
+      tostring(AltStableConfig.svLoadCheck.build))
 
--- A /reload with the marker still present must NOT announce: a reload can
--- serve cached data, which is how per-character SavedVariables look
--- persisted today while dying at every real restart.
+-- Identity, not type: svLoadCheck is already a table from the call above, so
+-- "it is a table" passes whether or not the reload branch ran at all.
+local beforeReload = AltStableConfig.svLoadCheck
 WoW.chatOut = {}
 AltStable.HandleEnteringWorld(false, true)
-check("a /reload never announces the fix, even with the marker present",
-      #WoW.chatOut == 0, WoW.chatOut[1] or "")
-check("  but still leaves the marker for the next real login",
-      type(AltStableConfig.svLoadCheck) == "table")
+check("a /reload is a write, so it re-stamps",
+      AltStableConfig.svLoadCheck ~= beforeReload)
+check("  still silently", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 
 -- Zoning fires the same event with both flags false: ignore it entirely.
 local markerBefore = AltStableConfig.svLoadCheck
@@ -874,21 +878,19 @@ AltStable.HandleEnteringWorld(false, false)
 check("a zone change says nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 check("  and does not rewrite the marker", AltStableConfig.svLoadCheck == markerBefore)
 
--- A real initial login with the marker present: the client loaded the file.
+-- A real login re-stamps, and still says nothing. The #23 announcement lived
+-- here until 1.60.1.70009 fixed the client; a green line at every login saying
+-- the file loaded would now be noise beside a sheet full of alts.
 WoW.chatOut = {}
 AltStable.HandleEnteringWorld(true, false)
-check("a marker that survived is announced",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("SavedVariables loaded", 1, true) ~= nil,
-      WoW.chatOut[1] or "(nothing printed)")
-check("  and says to confirm with a real exit, not /reload",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("full exit", 1, true) ~= nil,
-      WoW.chatOut[1] or "")
+check("a real login re-stamps", AltStableConfig.svLoadCheck ~= markerBefore)
+check("  and announces nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 
 ------------------------------------------------------------
 -- Which build were the findings measured on?
 --
--- A constant in the source, because the source is the only thing that
--- survives a restart here.
+-- A constant in the source: a human bumps it after re-measuring, which is the
+-- point - a value the addon could compute would just agree with itself.
 ------------------------------------------------------------
 
 WoW.chatOut = {}

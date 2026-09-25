@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Data survives a restart.** The beta client used to write SavedVariables and never read them
+  back; build 1.60.1.70009 fixed that, so characters, settings, the sync whitelist and the
+  hidden-character list are all still there on the next launch. Nothing in the addon changed for
+  this — it has been writing them correctly all along
+  ([#23](https://github.com/Spotnick2/AltStable/issues/23)).
+- Measured against client build 1.60.1.70009.
+
 - **Hide a character from the sheet.** Right-click its name and confirm; it
   disappears from the grid and from the footer totals, which then say how many
   were left out. The record keeps syncing and updating - nothing is deleted.
@@ -14,12 +21,11 @@
 First packaged build for World of Warcraft: Forever (measured on client
 1.60.1.69977, interface 16001). Ported from AltTracker (TBC Classic 2.5.5).
 
-**Known limitation:** this client does not read SavedVariables back after a
-restart ([#23](https://github.com/Spotnick2/AltStable/issues/23)). Everything
-the addon writes is written correctly and is lost on the next launch, so nothing
-persists between sessions yet. The addon is usable within a session, and syncing
-between two accounts works. When Blizzard fixes the client, persistence starts
-working with no change here.
+**Known limitation at the time of this release:** the client did not read
+SavedVariables back after a restart
+([#23](https://github.com/Spotnick2/AltStable/issues/23)), so nothing persisted
+between sessions. Fixed by Blizzard in client build 1.60.1.70009, with no change
+needed here.
 
 ### The sheet
 

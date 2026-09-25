@@ -75,7 +75,13 @@ round; Classic's values were effectively integral.
 
 ---
 
-## SavedVariables are WRITTEN but never READ BACK
+## SavedVariables are WRITTEN but never READ BACK — *history, builds 69913 and 69977*
+
+> **Fixed in 1.60.1.70009.** Both stores load again; see the 70009 section below for the
+> measurement. Everything under this heading describes the two builds before it and is kept
+> because the reasoning — and the way it was originally got wrong — is the useful part. Do not
+> plan around it, and do not follow its re-test instruction: a `/reload` cannot answer this
+> question. The procedure is a full client exit, in `docs/RUNBOOK.md`.
 
 **Blocking client bug, confirmed on build 69913.** This reverses what the porting guide originally
 claimed, and the earlier reasoning is worth recording because it was a plausible mistake.
@@ -110,7 +116,10 @@ either way. The settings cited as "non-default" were never verified as such.
 the whitelist and account number are set once and never regenerated, so they appeared to "vanish".
 Anything that rebuilds its state on login will mask this.
 
-Re-test on every build; the counter answers it in two reloads.
+Re-test on every build — but with a **full client exit and relaunch**, never the two reloads
+this section originally prescribed. A reload keeps the process alive, so the in-memory table is
+handed back untouched and a broken client reads as a working one; that is how the bug survived
+being "checked" more than once. 70009 was measured the right way.
 
 ---
 
@@ -298,7 +307,7 @@ before the Professions plugin is designed — deferred anyway.
 
 ---
 
-## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 unchanged
+## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 still broken (fixed two builds later, in 70009)
 
 The client bumped from 69913 (built Sep 17) to 69977 (built Sep 22). The dump was regenerated
 (`forever-api-1.60.1.69977.md`) and compared section by section against 69913:
@@ -322,6 +331,91 @@ type(TooltipDataProcessor)     -> "table"
 **SavedVariables still do not load (#23).** The probe on a fresh launch: account-wide table
 arrived NO, per-character NO, launches recorded before this one 0 — after previous sessions had
 written the file. So the blocker survives this build; nothing an addon writes is read back.
+
+---
+
+## Build 1.60.1.70009 (2026-09-24) — **SavedVariables load. #23 is fixed.**
+
+The blocker that shaped every testing assumption in this repo is gone. First login on the new
+build, with the previous session's files untouched on disk:
+
+```
+[probe] SavedVariables (account) LOADED - previous loadCount=1
+[probe] SavedVariablesPerCharacter LOADED - previous loadCount=1
+[probe] SavedVariablesMachine first ever run - not loaded
+[probe] account #2 / per-character #2 / machine #1
+[AltStable dev] kept 2 saved sync peer(s) for Morphisto - the whitelist loaded from disk
+```
+
+A real test, not a `/reload`: the client was **shut down for the patch** and relaunched, and the
+files on disk were written at 10:56 that morning by build 69977. Both scopes an addon actually
+uses — `SavedVariables` and `SavedVariablesPerCharacter` — came back, and the whitelist inside
+`AltStableConfig` was live in the session.
+
+`SavedVariablesMachine` still reports "first ever run". It is Blizzard-only scope and AltStable
+does not use it; the probe watches it for completeness. Not worth chasing.
+
+What this unblocks: cross-session data (the whole point of the addon), `accountNumber` and the
+whitelist staying set, delta sync against a watermark that survives, and every deferred item that
+was waiting on "we cannot verify this until data persists".
+
+### API diff, 69977 → 70009
+
+Nothing AltStable uses changed. Widget methods are identical (7530). The rest:
+
+**Namespace functions 5401 → 5417 (+18 / −2)** — the artifact's own counts. Three of those lines
+are `Constants`, `Enum` and `MathUtil` placeholders ("no function members"), present in both
+builds, so a script that counts only `Namespace.Member` lines sees 5398 → 5414 and the same delta.
+All eighteen, since a partial list is how a "nothing to see here" becomes wrong later:
+
+- `C_Flyout.FlyoutHasSpell` / `GetFlyoutID` / `GetFlyoutInfo` / `GetFlyoutSlotInfo` /
+  `GetFlyoutTexture` / `GetNumFlyouts`
+- `C_SocialRestrictions.AcknowledgeAgeVerificationRestriction` / `IsAgeVerificationRestricted` /
+  `IsAgeVerificationRestrictedMinor`
+- `C_GameRules.GetForeverExperiencePreset` / `SetForeverExperiencePreset` — these **replace**
+  `SelectClassicExperiencePreset` / `SelectModernExperiencePreset`, the only two removals
+- `C_Trainer.GetCategorizeTrainerUI` / `SetCategorizeTrainerUI`,
+  `C_UnitAuras.GetRefreshCarryOverDuration`, `C_BattleNet.SetBlocked`,
+  `C_FriendList.GetWhoRaceFilters`, `C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator`,
+  `GameEvent.HandleAlertAgeVerificationRestricted`
+
+**Enums and structures 792 → 797.** Five new: `Enumeration ForeverExperiencePreset`,
+`Structure FlyoutInfo`, `Structure FlyoutSlotInfo`, `Structure SendWhoFilters`,
+`Structure WhoFilter`. Three gained a field in place, which a name-only diff misses entirely:
+`FrameTutorialAccount` (+`Reserved1`), `VoiceChatStatusCode`
+(+`PlayerVoiceChatAgeVerificationRestricted`), `EditModeLayoutInfo`
+(+`optional interfaceStyle:InputDeviceInterfaceType`).
+
+**Events 1802 → 1805**: `ALERT_AGE_VERIFICATION_RESTRICTED`, `GLOBAL_REGION_MOUSE_DOWN`,
+`GLOBAL_REGION_MOUSE_UP`. `LFG_LIST_SHOW_SEARCH` also gained a `showAllLevelRanges:bool` payload
+field — same trap as the structures, so diff the section BODIES, not just the names.
+
+The 22 `C_LocaleContext.*` entries now document as bare globals (`CompareStrings`, `FormatDate`,
+`ToLower`, …). A documentation reshuffle, not a removal — nothing here calls them. Two other
+apparent newcomers are the same effect: `C_AdventureMap`'s member set is byte-identical between
+the builds, and `C_PvP.GetArenaOpponentSpec` existed on 69977 as a global. Both merely entered the
+*documented* section.
+
+`C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator` is the one to remember: Forever surnames are
+this project's recurring edge (whitelist entries are two words, `strsplit` on names, peer keys), so
+there is now a client function for the separator instead of guessing at it.
+
+Re-measured in game on 70009, all unchanged:
+
+```
+GetMaxPlayerLevel()            -> 60
+UnitXPMax("player")            -> 5400       (positive below the cap)
+GetXPExhaustion()              -> 764        (a number while rested; nil when not)
+Enum.BagIndex.Keyring          -> -1
+C_Reputation.GetNumFactions()  -> 5
+type(TooltipDataProcessor)     -> "table"
+```
+
+**Still unverified on this build:** whether CVars persist (they did not through 69977 — see the
+camera CVars, #25) and whether secret values behave the same on a PvP realm. Neither was
+re-measured here.
+
+---
 
 ## Secret values — some unit numbers cannot be read, only passed along
 

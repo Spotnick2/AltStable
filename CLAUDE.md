@@ -54,9 +54,10 @@ Feed these into any external review, and don't let a blind reviewer override the
   strings, chunking under the 255-byte cap, base64 + checksum, and **cross-version
   compatibility** (old clients must cleanly ignore, not misparse). A format change means a
   version bump.
-- **SavedVariables shape** — `AltStableDB` / `AltStableConfig` are persisted; don't break the
-  shape on disk. Note the standing blocker (#23): this client writes them and never reads them
-  back, so "it persisted" is never a safe inference from the file alone.
+- **SavedVariables shape** — `AltStableDB` / `AltStableConfig` are persisted and, since client
+  1.60.1.70009, are read back again (#23 is fixed); don't break the shape on disk, because now
+  there is real data out there in it. "It persisted" still needs a **full client exit**, not a
+  `/reload`, and the file on disk only proves the write half.
 - **Forever, not TBC.** Vanilla content on the Mainline codebase. Suggestions citing TBC/WotLK
   Classic API behaviour are usually stale; Lua 5.1 semantics still apply.
 - **Test stubs model Forever.** `tests/wow_stubs.lua` returning a Classic-shaped tuple would make

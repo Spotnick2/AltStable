@@ -29,8 +29,10 @@ then in game:
 ```
 
 `scriptErrors 1` matters more here than on retail: without it a Lua error is silent, the scan
-stops half-way, and the symptom you see is missing data rather than a stack trace. It is a CVar,
-and CVars are memory-only on this build (see **#23**), so it has to be set again after a restart.
+stops half-way, and the symptom you see is missing data rather than a stack trace. Through 69977
+CVars were memory-only and it had to be set again after every restart; whether 70009 fixed CVars
+along with SavedVariables has **not** been measured, so assume it did not until someone checks
+(the camera CVars in #25 are the same question).
 
 Better still, install **BugGrabber + BugSack**: they catch the error with its locals, which is how
 the secret-value bug was diagnosed (the character record in the log showed `stat_str=<secret
@@ -66,53 +68,53 @@ makes local two-account sync testing possible.
 
 ---
 
-## #23: nothing persists, and what that costs you
+## Persistence (#23, fixed in 1.60.1.70009)
 
-This client **writes** SavedVariables correctly and **never reads them back**. Account-wide and
-per-character both. So on every launch the addon starts empty, rescans the current character, and
-forgets everything else.
+SavedVariables load. Both scopes an addon uses — account-wide and per-character — came back on the
+first launch of 70009, reading files written by 69977. `AltStableConfig` (account number,
+whitelist, hidden characters) and `AltStableDB` (every alt) now survive a restart, which is the
+addon's whole point.
 
-Consequences for testing, in order of how often they bite:
+Through 69977 they did not: the client wrote them correctly and never read them back. That shaped
+a lot of this repo's history, and two habits from it are worth keeping:
 
-1. **`/reload` proves nothing about persistence.** The process stays alive, so values survive in
-   memory and look persisted. Every false "it persists" result on this project came from a
-   `/reload`. A persistence claim needs a **full client exit**, a relaunch, and the value
-   **observed inside the relaunched client** — printed by the addon, or reported by the probe.
-   Finding it in the file on disk proves only that the client *wrote* it, which it has always done
-   correctly; the broken half is the read.
-2. Cross-session features (an alt's data surviving a restart) cannot be verified at all yet.
-   Cross-*account* sync works within a session, because it goes over the addon channel.
-3. Config changes do not survive either, including `AltStableConfig.accountNumber`, the
-   whitelist and the hidden-character list — set them again after each launch when testing
-   sync, and expect a hidden character to be back on the sheet after a restart.
+1. **`/reload` still proves nothing about persistence.** The process stays alive, so values
+   survive in memory whether or not the disk was touched. Every false "it persists" result on this
+   project came from a reload. A persistence claim needs a **full client exit**, a relaunch, and
+   the value **observed inside the relaunched client**. Finding it in the file on disk only proves
+   the client wrote it — which it always did.
+2. **Re-check it after every client update**, with the probe, the same way. It is one launch, and
+   a regression here would be invisible in the code.
 
-To check the state of the bug after a client update:
+`SavedVariablesMachine` still does not load. It is Blizzard-only scope, AltStable does not use it,
+and the probe reports it only for completeness.
+
+To check persistence on a new build:
 
 ```
 pwsh Tools/deploy-probe.ps1     # deploys AltStableProbe, AltStableDevConfig, ForeverAPIDump
 ```
 
-The probe keeps a counter in each store and reports at `PLAYER_LOGIN` what it found there:
+The probe keeps a counter in each store and reports at `PLAYER_LOGIN` what it found there.
+Healthy, as of 70009:
 
 ```
-SavedVariables (account) first ever run - not loaded
-SavedVariablesPerCharacter first ever run - not loaded
-account #1 / per-character #1 / machine #1 - only a FULL EXIT and relaunch counts; /reload proves nothing
+[probe] SavedVariables (account) LOADED - previous loadCount=1
+[probe] SavedVariablesPerCharacter LOADED - previous loadCount=1
+[probe] SavedVariablesMachine first ever run - not loaded
+[probe] account #2 / per-character #2 / machine #1 - only a FULL EXIT and relaunch counts; /reload proves nothing
 ```
 
-That is the broken state: every launch is "first ever run", and every counter sits at 1.
+Broken looks like `first ever run - not loaded`, with every counter stuck at 1 launch after
+launch.
 
-Fixed looks like `SavedVariables (account) LOADED - previous loadCount=3`, with the counters
-climbing launch over launch.
-
-**The procedure is the point, not the line.** A counter that rises after a `/reload` proves
-nothing — the process stayed alive, so the in-memory table was never re-read. It has to be:
+**The procedure is the point, not the line:**
 
 1. log in (this writes the file on logout),
 2. **exit the client completely**,
 3. relaunch and log in again,
-4. read the line: `LOADED - previous loadCount=` is a real fix; `first ever run` is the bug
-   intact.
+4. read the line. A counter that rises after a `/reload` proves nothing — the process stayed
+   alive, so the in-memory table was never re-read.
 
 The probe prints that caveat itself, on the counter line, because three separate tests on this
 project concluded a store persisted when it had not.
@@ -135,9 +137,11 @@ authoritatively as a current one.
    ```
    /run print(GetMaxPlayerLevel(), UnitXPMax("player"), GetXPExhaustion(), Enum.BagIndex.Keyring, C_Reputation.GetNumFactions(), type(TooltipDataProcessor))
    ```
-   Expected on 69977: `60`, a positive number, `nil` unless rested, `-1`, your faction count,
-   `table`.
-4. **Check #23** with the probe, above.
+   Expected on 70009: `60`, a positive number, a number while rested (`nil` when not), `-1`,
+   your faction count, `table`. Update this line with the build when you bump
+   `MEASURED_ON_BUILD` below — an expectation pinned to an older build is the staleness this
+   checklist exists to prevent.
+4. **Check persistence** with the probe, above — it is fixed, and a regression would be silent.
 5. **Bump `MEASURED_ON_BUILD`** and the test stub's `GetBuildInfo`, and record what was compared in
    `docs/forever-api-notes.md`. Old dump files are kept, not deleted — deleting is a human call.
 
@@ -152,12 +156,13 @@ version.
 2. Log in account 2 (a second client), `/alts account 2`, whitelist account 1's character.
 3. `/alts sync <name>` from either side, or just `/alts`, which pings whitelisted peers.
 
+Since 70009 steps 1 and 2 are a one-off: the account number and the whitelist come back on their
+own.
+
 There is **no `add` keyword**: `/alts whitelist <name>` adds, and anything typed after
 `whitelist` becomes the name verbatim — `/alts whitelist add Karuzo` whitelists a peer called
 "add Karuzo". Bare `/alts whitelist` lists, `remove <name>` drops. Names go in as typed: a Forever
 character is two words ("Karuzo Elegia"), and a cross-realm peer keeps its `-Realm` suffix.
-
-Set the account number and whitelist on **each** launch until #23 is fixed.
 
 What `/alts sync <name>` actually does, in both directions: it sends **our** database to that peer
 in full, then three seconds later asks for theirs **from our watermark for them** — a delta, not a
