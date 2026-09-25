@@ -59,6 +59,7 @@ local uiWasShown
 local previewing
 local capturing          -- one at a time, always
 local captureStartedAt
+local watchdog           -- cancelled by Finish, or it fires into the NEXT capture
 local toldConverter      -- the "run the converter" hint: once a session
 
 local function Build()
@@ -158,7 +159,16 @@ local function RecordMetadata(shotIndex)
     local name = (surname and surname ~= "") and (first .. " " .. surname) or first
     local raceLoc, raceToken = UnitRace("player")
     local _, classToken = UnitClass("player")
-    local w, h = GetPhysicalScreenSize and GetPhysicalScreenSize() or GetScreenWidth(), GetScreenHeight()
+    -- Both from the SAME source. Written as one and/or expression the call is
+    -- truncated to a single value, so the width came from GetPhysicalScreenSize
+    -- and the height from GetScreenHeight - physical pixels paired with a
+    -- UI-scaled number, which is nobody's screen.
+    local w, h
+    if type(GetPhysicalScreenSize) == "function" then
+        w, h = GetPhysicalScreenSize()
+    else
+        w, h = GetScreenWidth(), GetScreenHeight()
+    end
 
     table.insert(AltStableProbeDB.renders, {
         name = name, guid = UnitGUID("player"),
@@ -173,6 +183,7 @@ end
 
 local function Finish()
     capturing = false
+    if watchdog then watchdog:Cancel(); watchdog = nil end
     frame:Hide()
     -- ALWAYS give the interface back. Everything else here is a nicety; a
     -- player left staring at an empty screen is not.
@@ -232,8 +243,14 @@ local function Capture()
         end
     end
 
+    -- Take the preview's click handler off the stage. Left attached, a click
+    -- during the three seconds hides the stage while UIParent is still hidden -
+    -- the shots then photograph the bare world and the player sees nothing at
+    -- all until the watchdog.
     previewing = false
     hint:Hide()
+    frame:EnableMouse(false)
+    frame:SetScript("OnMouseDown", nil)
     PoseLiveCharacter()
     backdrop:SetColorTexture(0, 0, 0, 1)
     Out("staging... hold still, two screenshots are coming")
@@ -246,11 +263,24 @@ local function Capture()
 
     -- The whole sequence is a chain of timers. If any link fails, nothing
     -- restores the interface - so an independent timer does it regardless.
-    C_Timer.After(12, function()
+    --
+    -- CANCELLED on success. Left running, the one armed by an earlier capture
+    -- fires in the middle of a later one: it restores the interface and hides
+    -- the stage while the second shot is still pending, so that shot
+    -- photographs the restored UI and the matte reads the whole frame as
+    -- opaque. NewTimer rather than After, precisely so it can be cancelled.
+    if watchdog then watchdog:Cancel() end
+    watchdog = C_Timer.NewTimer(12, function()
+        watchdog = nil
         if uiWasShown then
             UIParent:Show(); uiWasShown = nil
             frame:Hide()
             Out("|cffff8800capture did not finish - your interface is back|r")
+        end
+        -- Everything Finish would have restored, because it never ran.
+        if savedFormat and type(SetCVar) == "function" then
+            pcall(SetCVar, "screenshotFormat", savedFormat)
+            savedFormat = nil
         end
         capturing = false
     end)
@@ -349,6 +379,12 @@ if type(StaticPopupDialogs) == "table" then
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
+        -- Escape closes the notice WITHOUT running OnCancel. Without this the
+        -- client routes Escape through OnCancel, which records consent - so
+        -- waving the dialog away would quietly agree to it, and the next gear
+        -- change would hide the interface for three seconds unannounced. That
+        -- is the exact outcome the notice exists to prevent.
+        noCancelOnEscape = true,
         showAlert = false,
     }
 end
@@ -406,7 +442,11 @@ local function ConsiderCapture(why)
             Out("AltStable can take a portrait of this character: it hides the UI for ~3s "
                 .. "and takes two screenshots. |cffffff00/asrender|r to do it, "
                 .. "|cffffff00/asrender auto|r to stop being asked.")
-            AltStableProbeDB.autoConsent = "asked"
+            -- "yes", not "asked": every reader compares against "yes" or
+            -- "never", so a third value means this branch is re-entered on
+            -- every trigger forever - the same notice after every fight, and a
+            -- portrait never taken, because nothing ever records a fingerprint.
+            AltStableProbeDB.autoConsent = "yes"
         end
         return
     end

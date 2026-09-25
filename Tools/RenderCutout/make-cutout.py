@@ -528,9 +528,10 @@ def main():
     cw, ch, tw, th = convert(black, white, base, args.target_height, args.keep_png)
     canvas = type("c", (), {"size": (tw, th)})
     print()
-    print("manifest entry:")
-    print('  { file = "Interface\\\\AddOns\\\\AltStable\\\\Media\\\\Cutouts\\\\%s.tga",' % base)
-    print("    w = %d, h = %d, texw = %d, texh = %d }," % (cw, ch, canvas.size[0], canvas.size[1]))
+    print("Update-Cutouts.ps1 files these and writes the manifest; this single-pair")
+    print("mode is for eyeballing one capture. It deliberately prints no manifest")
+    print("entry: the path it used to suggest (AltStable\\Media\\Cutouts) is not where",)
+    print("the pipeline puts cutouts, and pasting it produces a texture that never loads.")
 
 
 if __name__ == "__main__":
