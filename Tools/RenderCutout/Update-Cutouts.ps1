@@ -51,23 +51,26 @@ function Test-Prereqs {
     if (-not (Test-Path $converter)) { throw "converter not found at $converter" }
 }
 
-# One pair -> one TGA, filed where the addon can load it.
+# Convert everything outstanding and file each cutout where the addon can load
+# it. Deliberately not "the newest one": a watcher can miss a pair while it was
+# not running, and a character whose portrait never appears is a worse failure
+# than a few seconds of extra work.
 function Convert-Newest {
     $before = @(Get-ChildItem $outDir -Filter *.tga -ErrorAction SilentlyContinue |
                 Select-Object -ExpandProperty Name)
 
-    & python $converter --shots $Shots
+    & python $converter --shots $Shots --all
     if ($LASTEXITCODE -ne 0) { Write-Warning "converter failed"; return }
 
     New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
-    $made = Get-ChildItem $outDir -Filter *.tga | Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
+    $made = @(Get-ChildItem $outDir -Filter *.tga -ErrorAction SilentlyContinue)
     if (-not $made) { Write-Warning "no TGA produced"; return }
 
-    Copy-Item $made.FullName (Join-Path $mediaDir $made.Name) -Force
-    Write-Host ("  filed -> {0}" -f (Join-Path $mediaDir $made.Name)) -ForegroundColor Green
-
-    if ($before -notcontains $made.Name) { Write-Host "  (new character)" -ForegroundColor DarkGray }
+    foreach ($tga in $made) {
+        Copy-Item $tga.FullName (Join-Path $mediaDir $tga.Name) -Force
+        $tag = if ($before -notcontains $tga.Name) { "  (new)" } else { "" }
+        Write-Host ("  filed -> {0}{1}" -f $tga.Name, $tag) -ForegroundColor Green
+    }
     Write-Manifest
 }
 

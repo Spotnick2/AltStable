@@ -25,6 +25,11 @@ leaves a dark halo.
 
 Writes a 32-bit uncompressed TGA, padded to a power of two (WoW reloads those
 reliably), plus the content dimensions the UI needs to crop it back.
+
+Staged screenshots are DELETED once their cutout is written - two per capture
+at 1-2 MB each adds up fast. Only files that matched a capture the addon
+recorded are ever removed, so a screenshot taken by hand is never touched.
+Pass --keep-shots to leave them.
 """
 
 import argparse
@@ -357,6 +362,33 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
     return cw, ch, canvas.size[0], canvas.size[1]
 
 
+def human(nbytes):
+    mb = nbytes / (1024.0 * 1024.0)
+    return "%.1f MB" % mb if mb >= 1 else "%.0f KB" % (nbytes / 1024.0)
+
+
+def discard(paths, why):
+    """Delete staged screenshots we are finished with.
+
+    Only ever files that MATCHED a capture the addon recorded: those are shots
+    this pipeline staged and nobody else wants. A screenshot the player took
+    themselves never matches a stamp, so it is never touched - which is the
+    whole reason deletion keys off the addon's record rather than a filename
+    pattern or a date.
+    """
+    freed, gone = 0, 0
+    for path in paths:
+        try:
+            freed += os.path.getsize(path)
+            os.remove(path)
+            gone += 1
+        except OSError as err:
+            print("     could not delete %s (%s)" % (os.path.basename(path), err))
+    if gone:
+        print("  cleaned up %d screenshot(s), %s freed  [%s]" % (gone, human(freed), why))
+    return freed
+
+
 def run_all(args):
     """Every capture the addon recorded, matched to its screenshots by time."""
     caps = captures()
@@ -364,9 +396,27 @@ def run_all(args):
         sys.exit("no captures recorded - /reload in game so the addon writes its store")
 
     times = shot_times(args.shots)
-    print("%d capture(s) recorded, %d screenshots on disk\n" % (len(caps), len(times)))
 
-    done, missing = 0, []
+    # One portrait per character: a re-shoot supersedes the one before it, and
+    # converting the whole history would re-report every old mistake and write
+    # each character's file several times over, newest not necessarily last.
+    superseded = {}
+    if not args.history:
+        latest = {}
+        for cap in caps:
+            prev = latest.get(cap[0])
+            if prev:
+                superseded.setdefault(cap[0], []).append(prev)
+            latest[cap[0]] = cap          # recorded oldest first, so this keeps the newest
+        chosen = [latest[k] for k in sorted(latest)]
+        if len(chosen) != len(caps):
+            print("%d capture(s) of %d character(s) - taking the newest of each"
+                  % (len(caps), len(chosen)))
+        caps = chosen
+
+    print("%d capture(s) to convert, %d screenshots on disk\n" % (len(caps), len(times)))
+
+    done, missing, freed = 0, [], 0
     for name, first, second in caps:
         black, white = match(first, times), match(second, times)
         if not (black and white):
@@ -375,10 +425,26 @@ def run_all(args):
         convert(black, white, slug(name), args.target_height, args.keep_png)
         done += 1
 
+        if not args.keep_shots:
+            # Only after the cutout is written: a failed convert must leave its
+            # source alone so it can be retried.
+            spent = [black, white]
+            # Older shots of the SAME character are superseded by the cutout we
+            # just made, so they go with it.
+            for old_cap in superseded.get(name, []):
+                for stamp in (old_cap[1], old_cap[2]):
+                    hit = match(stamp, times)
+                    if hit:
+                        spent.append(hit)
+            freed += discard(spent, "converted " + slug(name))
+
     print()
     print("converted %d of %d" % (done, len(caps)))
+    if freed:
+        print("reclaimed %s of staged screenshots" % human(freed))
     for name, stamp in missing:
-        print("  no screenshots for %s (%s) - deleted, or taken on another machine" % (name, stamp))
+        print("  no screenshots for %s (%s) - already cleaned up, deleted, or taken "
+              "on another machine" % (name, stamp))
 
 
 def main():
@@ -391,8 +457,14 @@ def main():
                     help="supersample down to this content height for antialiased edges "
                          "(0 keeps the capture at native size)")
     ap.add_argument("--all", action="store_true",
-                    help="convert every capture the addon recorded, matching each to its "
-                         "screenshots by timestamp, and name each after its character")
+                    help="convert the newest capture of every character the addon recorded, "
+                         "matching each to its screenshots by timestamp")
+    ap.add_argument("--keep-shots", action="store_true",
+                    help="do not delete the staged screenshots after converting them "
+                         "(they are 1-2 MB each and there are two per capture)")
+    ap.add_argument("--history", action="store_true",
+                    help="with --all: convert every capture ever recorded, not just the "
+                         "newest of each character")
     args = ap.parse_args()
 
     if args.all:

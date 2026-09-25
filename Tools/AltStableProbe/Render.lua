@@ -153,7 +153,10 @@ local function Finish()
         pcall(SetCVar, "screenshotFormat", savedFormat)
     end
     Out("done - two shots in Screenshots\\, newest first (black, then white).")
-    Out("now run:  python Tools/RenderCutout/make-cutout.py")
+    Out("now run:  python Tools/RenderCutout/make-cutout.py --all")
+    -- The addon records that this LOOK was photographed; whether the picture
+    -- came out is something only the converter can see. So if one is spoiled,
+    -- /asrender forget puts this character back in the automatic queue.
 end
 
 local function Capture()
@@ -245,6 +248,18 @@ SlashCmdList["ASRENDER"] = function(msg)
         if not CancelPending() then Out("nothing pending") end
         return
     end
+    if msg == "forget" or msg == "forget all" then
+        AltStableProbeDB = AltStableProbeDB or {}
+        if msg == "forget all" then
+            AltStableProbeDB.looks = {}
+            Out("forgot every stored look - each character re-captures at next login")
+        else
+            local guid = UnitGUID("player")
+            if guid and AltStableProbeDB.looks then AltStableProbeDB.looks[guid] = nil end
+            Out("forgot this character's look - it re-captures at next login")
+        end
+        return
+    end
     if msg == "auto" then
         AltStableProbeDB = AltStableProbeDB or {}
         AltStableProbeDB.autoCaptureOff = AutoEnabled() and true or nil
@@ -259,7 +274,7 @@ SlashCmdList["ASRENDER"] = function(msg)
         return
     end
     if msg ~= "" then
-        Out("usage: /asrender [cancel|auto|status]")
+        Out("usage: /asrender [cancel|auto|status|forget|forget all]")
         return
     end
 
