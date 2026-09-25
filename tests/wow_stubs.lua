@@ -43,6 +43,11 @@ local WoW = {
     tooltipLines = {},  -- lines the last GameTooltip render added
     tooltipShown = false,
     popups      = {},   -- StaticPopup_Show calls, newest last
+    -- CVars, as a plain store. Code that changes one and RESTORES it is exactly
+    -- what needs testing: a missed restore leaves the player's own settings
+    -- altered after the addon closes, and nothing in game says so.
+    cvars       = {},
+    camera      = { zoom = 4, view = 1, savedViews = {} },
 }
 
 function WoW.reset()
@@ -58,6 +63,8 @@ function WoW.reset()
     WoW.eventFrames = {}
     WoW.tooltipLines, WoW.tooltipShown = {}, false
     WoW.popups = {}
+    WoW.cvars = {}
+    WoW.camera = { zoom = 4, view = 1, savedViews = {} }
     WoW.now = 1700000000
     WoW.pendingPrio = nil
     -- The player too. A test that renames the character to exercise a login
@@ -244,6 +251,27 @@ GameTooltip.NumLines = function() return #WoW.tooltipLines end
 GameTooltip.Hide = function() WoW.tooltipShown = false end
 GameTooltip.Show = function() WoW.tooltipShown = true end
 GameTooltip.IsShown = function() return WoW.tooltipShown == true end
+
+------------------------------------------------------------
+-- CVars and the camera
+--
+-- A CVar that does not exist reads as nil, exactly as on the client - which is
+-- the case that matters for restore code: writing a default over a setting the
+-- player never had is not a restore, it is an invention.
+------------------------------------------------------------
+
+function GetCVar(name) return WoW.cvars[name] end
+function SetCVar(name, value)
+    WoW.cvars[name] = tostring(value)
+    return true
+end
+function GetCVarBool(name) return WoW.cvars[name] == "1" end
+
+function GetCameraZoom() return WoW.camera.zoom end
+function CameraZoomIn(d) WoW.camera.zoom = math.max(0, WoW.camera.zoom - (d or 1)) end
+function CameraZoomOut(d) WoW.camera.zoom = WoW.camera.zoom + (d or 1) end
+function SaveView(slot) WoW.camera.savedViews[slot or 1] = WoW.camera.zoom end
+function SetView(slot) WoW.camera.view = slot end
 
 -- StaticPopup, recording rather than drawing: WoW.popups. The confirmation
 -- before a destructive-looking action is part of the behaviour (#21), so a test

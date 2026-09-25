@@ -407,5 +407,67 @@ if commit then
     eq("a change elsewhere refreshes the box", box:GetText(), "6")
 end
 
+------------------------------------------------------------
+-- The camera presentation must beat CameraKeepCharacterCentered (#25)
+------------------------------------------------------------
+-- The offset was written and then quietly cancelled: an 11.0.x client - which
+-- this codebase is - added CameraKeepCharacterCentered, which re-centres the
+-- character regardless. So the source looked right and the screen did not.
+-- DialogueUI, which works on Forever, sets the same pair and comments them
+-- "11.0.2 Fix".
+--
+-- The other half is putting them back. A presentation that leaves a player's
+-- camera CVars changed after the window closes is worse than one that never
+-- moved the camera.
+
+local Cam = AltStable._test.CameraPresentation
+check("the presentation is reachable", Cam ~= nil)
+
+if Cam then
+    local CENTRING = AltStable._test.CENTRING_CVARS
+    check("the centring CVars are named", type(CENTRING) == "table" and #CENTRING >= 1)
+
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig.worldCameraPresentation = { enabled = true }
+
+    -- The player's own settings, as they were before we touched anything.
+    WoW.cvars["CameraKeepCharacterCentered"] = "1"
+    WoW.cvars["CameraReduceUnexpectedMovement"] = "1"
+    WoW.cvars["test_cameraOverShoulder"] = "0"
+    WoW.cvars["cameraDistanceMaxZoomFactor"] = "1.0"
+
+    Cam.active = false
+    local entered = pcall(Cam.Enter, Cam)
+    check("entering does not error", entered)
+
+    if entered and Cam.active then
+        eq("the character stops being centred", WoW.cvars["CameraKeepCharacterCentered"], "0")
+        eq("  and the movement damping is off", WoW.cvars["CameraReduceUnexpectedMovement"], "0")
+        check("  while the shoulder offset is still written",
+              tonumber(WoW.cvars["test_cameraOverShoulder"]) ~= 0,
+              tostring(WoW.cvars["test_cameraOverShoulder"]))
+
+        pcall(Cam.ForceRestore, Cam, "test")
+        eq("leaving puts centring back exactly as found",
+           WoW.cvars["CameraKeepCharacterCentered"], "1")
+        eq("  and the damping", WoW.cvars["CameraReduceUnexpectedMovement"], "1")
+        eq("  and the shoulder offset", tonumber(WoW.cvars["test_cameraOverShoulder"]), 0)
+    else
+        check("the presentation entered", false, "Enter() did not activate")
+    end
+
+    -- A CVar this client does not have must not be INVENTED on the way out.
+    WoW.cvars["CameraKeepCharacterCentered"] = nil
+    WoW.cvars["CameraReduceUnexpectedMovement"] = nil
+    Cam.active = false
+    pcall(Cam.Enter, Cam)
+    pcall(Cam.ForceRestore, Cam, "test")
+    eq("a CVar the client lacks is not created on restore",
+       WoW.cvars["CameraKeepCharacterCentered"], nil)
+
+    AltStableConfig.worldCameraPresentation = nil
+    WoW.reset()
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
