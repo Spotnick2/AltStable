@@ -334,5 +334,33 @@ if onEnter then
           joined(WoW.tooltipLines))
 end
 
+------------------------------------------------------------
+-- The account number commits without pressing Enter
+------------------------------------------------------------
+-- Reported as "the account number doesn't persist". It did persist - it was
+-- never saved: the box only committed on Enter, so typing a number and
+-- clicking away discarded it silently. Indistinguishable from a broken
+-- setting, and especially so on a client that genuinely lost everything until
+-- 1.60.1.70009 (#23).
+
+AltStableConfig = {}
+local commit = AltStable._test.CommitAccountNumber
+check("the commit seam exists", type(commit) == "function")
+if commit then
+    WoW.chatOut = {}
+    eq("typing a number stores it", commit("2") and AltStableConfig.accountNumber, 2)
+    check("  and says so", #WoW.chatOut > 0, "nothing printed")
+
+    eq("committing the same value again changes nothing", commit("2"), false)
+    eq("clearing it stores empty", commit("") and AltStableConfig.accountNumber, "")
+    eq("  as does nonsense", commit("abc"), false)
+
+    local box = AltStable._test.AccountBox
+    check("the box commits on Enter", type(box:GetScript("OnEnterPressed")) == "function")
+    check("  and on losing focus, which is how a typed value used to vanish",
+          type(box:GetScript("OnEditFocusLost")) == "function")
+    check("  while Escape still reverts", type(box:GetScript("OnEscapePressed")) == "function")
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

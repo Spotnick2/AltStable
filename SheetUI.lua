@@ -2689,11 +2689,35 @@ local function CreateFrameIfNeeded()
     optAcctBox:SetAutoFocus(false)
     optAcctBox:SetNumeric(true)
     optAcctBox:SetMaxLetters(3)
-    optAcctBox:SetScript("OnEnterPressed", function(self)
-        local v = tonumber(self:GetText())
+    -- Committed on Enter AND on losing focus. Enter-only is how a typed value
+    -- gets silently discarded by clicking somewhere else, which looks exactly
+    -- like the setting failing to persist - and this one was already suspected
+    -- of that, because through 1.60.1.69977 nothing persisted at all (#23).
+    -- Escape still reverts, so there is a way to back out.
+    local function CommitAccountNumber(text)
         AltStableConfig = AltStableConfig or {}
-        AltStable.SetConfigValue("accountNumber", v or "")
+        local before = AltStableConfig.accountNumber
+        local v = tonumber(text)
+        local value = v or ""
+        if tostring(before or "") == tostring(value) then return false end
+        AltStable.SetConfigValue("accountNumber", value)
+        if AltStable.Print then
+            AltStable.Print(v and ("Account number set to " .. v ..
+                    ". It will be included on next scan/sync.")
+                or "Account number cleared.")
+        end
+        return true
+    end
+    AltStable._test = AltStable._test or {}
+    AltStable._test.CommitAccountNumber = CommitAccountNumber
+    AltStable._test.AccountBox = optAcctBox
+
+    optAcctBox:SetScript("OnEnterPressed", function(self)
+        CommitAccountNumber(self:GetText())
         self:ClearFocus()
+    end)
+    optAcctBox:SetScript("OnEditFocusLost", function(self)
+        CommitAccountNumber(self:GetText())
     end)
     optAcctBox:SetScript("OnEscapePressed", function(self)
         self:SetText(tostring(AltStableConfig.accountNumber or ""))

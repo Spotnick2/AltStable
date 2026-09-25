@@ -212,9 +212,13 @@ end
 -- Chat output  (declared before ValidateIncoming, which calls it)
 ------------------------------------------------------------
 
+-- Exposed as AltStable.Print below: the UI and the plugins need the same
+-- prefix, and a guarded "if AltStable.Print then" that is never true prints
+-- nothing while looking like it works.
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r " .. msg)
 end
+AltStable.Print = Print
 
 ------------------------------------------------------------
 -- Validation — reject incoming records whose immutable
@@ -2210,7 +2214,16 @@ SlashCmdList["ALTSTABLE"] = function(args)
     if cmd == "account" then
         local num = tonumber(target)
         if not num then
-            Print("Usage: /alts account 1   (or 2, 3, ...)")
+            -- Bare "/alts account" answers the question people actually have,
+            -- which is what it is set to now - not how to type it.
+            local current = AltStableConfig and AltStableConfig.accountNumber
+            if current == nil or current == "" then
+                Print("No account number set (this client's characters show as |cffaaaaaaDefault|r). "
+                      .. "Set one with |cffffff00/alts account 1|r.")
+            else
+                Print("Account number is " .. tostring(current)
+                      .. ". Change it with |cffffff00/alts account <n>|r.")
+            end
             return
         end
         AltStableConfig = AltStableConfig or {}
