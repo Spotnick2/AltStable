@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: AltStable Roster
+## Notes: The alts standing together - a character-select style lineup, drawn from locally captured portraits with a class card for anyone who has none.
+## Author: Spotnick
+## Version: @project-version@
+## Dependencies: AltStable
+## LoadOnDemand: 1
+
+AltStableRoster.lua

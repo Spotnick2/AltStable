@@ -250,12 +250,73 @@ local function AutoEnabled()
     return not (AltStableProbeDB and AltStableProbeDB.autoCaptureOff)
 end
 
-local function CancelPending(reason)
+------------------------------------------------------------
+-- Say what is about to happen, the first time
+--
+-- The capture hides the ENTIRE UI for about three seconds and takes two
+-- screenshots. Unannounced, that reads as something going badly wrong with the
+-- game rather than a feature working.
+--
+-- Shaped after the client's own layer-swap notice: state plainly what will
+-- happen, offer to do it immediately, otherwise let it proceed. Two buttons, no
+-- interrogation - the alarming part is an interface that vanishes without
+-- warning, not the capture. After the first one the five-second chat warning is
+-- enough, because by then it is a known behaviour.
+------------------------------------------------------------
+
+local CONSENT_POPUP = "ALTSTABLE_RENDER_CONSENT"
+
+-- Set to "yes" once the player has seen the notice, by either button. Escape
+-- closes it without answering, which leaves this nil so the notice returns next
+-- login rather than capturing unannounced.
+local function Consent()
+    return AltStableProbeDB and AltStableProbeDB.autoConsent
+end
+
+-- Both are defined below and both are called from the popup's buttons. Without
+-- the forward declaration those closures resolve a nil GLOBAL at click time -
+-- which is invisible until someone presses the button.
+local StartCountdown, CancelPending
+
+if type(StaticPopupDialogs) == "table" then
+    StaticPopupDialogs[CONSENT_POPUP] = {
+        text = "AltStable will take a portrait of this character for the Roster lineup.\n\n"
+            .. "Your interface will be hidden for about 3 seconds while it takes two "
+            .. "screenshots. They are deleted once the portrait is made.\n\n"
+            .. "Type |cffffff00/asrender auto|r if you would rather it never did this.",
+        button1 = "Capture Now",
+        button2 = "Okay",
+        OnAccept = function()                 -- Capture Now: skip the wait
+            AltStableProbeDB.autoConsent = "yes"
+            CancelPending()
+            Capture()
+        end,
+        OnCancel = function()                 -- Okay: let the countdown run
+            AltStableProbeDB.autoConsent = "yes"
+            StartCountdown("taking your first portrait")
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        showAlert = false,
+    }
+end
+
+function CancelPending(reason)
     if not pending then return false end
     pending:Cancel()
     pending = nil
     Out("auto-capture cancelled" .. (reason and (" - " .. reason) or ""))
     return true
+end
+
+function StartCountdown(why)
+    Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender cancel|r to skip.")
+        :format(why, WARN_SECONDS))
+    pending = C_Timer.NewTimer(WARN_SECONDS, function()
+        pending = nil
+        Capture()
+    end)
 end
 
 local function ConsiderCapture(why)
@@ -266,19 +327,30 @@ local function ConsiderCapture(why)
     local fp = LookFingerprint()
     if fp == StoredFingerprint(guid) then return end          -- looks the same
 
-    -- Never interrupt a fight to take a photograph. PLAYER_REGEN_ENABLED
-    -- brings us back.
+    -- Never interrupt a fight to take a photograph, and never put a popup on
+    -- screen during one either. PLAYER_REGEN_ENABLED brings us back.
     if InCombatLockdown and InCombatLockdown() then
         Out("gear changed - portrait will refresh after combat")
         return
     end
 
-    Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender cancel|r to skip.")
-        :format(why, WARN_SECONDS))
-    pending = C_Timer.NewTimer(WARN_SECONDS, function()
-        pending = nil
-        Capture()
-    end)
+    if Consent() ~= "yes" then
+        AltStableProbeDB = AltStableProbeDB or {}
+        if Consent() == "never" then return end
+        if type(StaticPopup_Show) == "function" and StaticPopupDialogs
+            and StaticPopupDialogs[CONSENT_POPUP] then
+            StaticPopup_Show(CONSENT_POPUP)
+        else
+            -- No popup API: say it in chat rather than doing it unannounced.
+            Out("AltStable can take a portrait of this character: it hides the UI for ~3s "
+                .. "and takes two screenshots. |cffffff00/asrender|r to do it, "
+                .. "|cffffff00/asrender auto|r to stop being asked.")
+            AltStableProbeDB.autoConsent = "asked"
+        end
+        return
+    end
+
+    StartCountdown(why)
 end
 
 SLASH_ASRENDER1 = "/asrender"
@@ -326,7 +398,8 @@ SlashCmdList["ASRENDER"] = function(msg)
     end
     if msg == "status" then
         local guid = UnitGUID("player")
-        Out("auto-capture " .. (AutoEnabled() and "on" or "off"))
+        Out("auto-capture " .. (AutoEnabled() and "on" or "off")
+            .. " (consent: " .. tostring(Consent() or "not asked yet") .. ")")
         Out("look now    : " .. LookFingerprint())
         Out("last shot   : " .. tostring(guid and StoredFingerprint(guid) or "never"))
         return
@@ -337,6 +410,9 @@ SlashCmdList["ASRENDER"] = function(msg)
     end
 
     CancelPending()
+    -- Doing it by hand answers the question the popup would ask.
+    AltStableProbeDB = AltStableProbeDB or {}
+    if Consent() ~= "never" then AltStableProbeDB.autoConsent = "yes" end
     Capture()
 end
 

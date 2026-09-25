@@ -1942,12 +1942,12 @@ AltStable.plugins = AltStable.plugins or {}
 
 -- Each ported plugin adds its entry. Still to come:
 --   Recipes   -> #14 (deferred)
---   Roster    -> #15 (deferred)
 -- Listing an addon that does not exist means a failed LoadAddOn at every
 -- login, which would bury the real errors this build exists to surface.
 AltStable.LOD_PLUGINS = {
     { key = "warband", addon = "AltStableWarband", label = "Warband" },
     { key = "instances", addon = "AltStableInstances", label = "Raids" },
+    { key = "roster", addon = "AltStableRoster", label = "Roster" },
 }
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
