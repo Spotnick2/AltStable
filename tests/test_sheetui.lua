@@ -335,31 +335,76 @@ if onEnter then
 end
 
 ------------------------------------------------------------
--- The account number commits without pressing Enter
+-- The account number box
 ------------------------------------------------------------
--- Reported as "the account number doesn't persist". It did persist - it was
--- never saved: the box only committed on Enter, so typing a number and
--- clicking away discarded it silently. Indistinguishable from a broken
--- setting, and especially so on a client that genuinely lost everything until
--- 1.60.1.70009 (#23).
+-- Reported as "it doesn't persist". It had never been SAVED: the box committed
+-- only on Enter, so typing a number and clicking away discarded it silently.
+--
+-- The first fix over-corrected and introduced a worse bug: committing an EMPTY
+-- box on blur wiped a configured number. The box selects all of its text when
+-- focused, so backspace-then-click-elsewhere is ordinary - and accountNumber is
+-- a sync-scope key, so clearing it forces a full re-send to every peer.
 
 AltStableConfig = {}
+AltStableDB = {}
 local commit = AltStable._test.CommitAccountNumber
+local box = AltStable._test.AccountBox
 check("the commit seam exists", type(commit) == "function")
+
 if commit then
     WoW.chatOut = {}
-    eq("typing a number stores it", commit("2") and AltStableConfig.accountNumber, 2)
+    check("typing a number and clicking away stores it", commit("2", false))
+    eq("  really stores it", AltStableConfig.accountNumber, 2)
     check("  and says so", #WoW.chatOut > 0, "nothing printed")
 
-    eq("committing the same value again changes nothing", commit("2"), false)
-    eq("clearing it stores empty", commit("") and AltStableConfig.accountNumber, "")
-    eq("  as does nonsense", commit("abc"), false)
+    -- The regression, pinned.
+    WoW.chatOut = {}
+    eq("blurring an EMPTY box does not clear the setting", commit("", false), false)
+    eq("  the value survives", AltStableConfig.accountNumber, 2)
+    eq("  and the box is put back", box:GetText(), "2")
 
-    local box = AltStable._test.AccountBox
+    eq("blurring an unparseable box does not clear it either", commit("abc", false), false)
+    eq("  the value still survives", AltStableConfig.accountNumber, 2)
+
+    -- Clearing is explicit.
+    WoW.chatOut = {}
+    commit("", true)
+    eq("pressing Enter on an empty box clears it", AltStableConfig.accountNumber, "")
+    check("  and says so", #WoW.chatOut > 0)
+
+    -- Validation lives in the shared seam, so the box inherits it.
+    commit("2", true)
+    eq("a whole number is accepted", AltStableConfig.accountNumber, 2)
+    eq("a fraction is refused", commit("2.5", true), false)
+    eq("  leaving the value", AltStableConfig.accountNumber, 2)
+    eq("a negative is refused", commit("-3", true), false)
+    eq("hex is refused", commit("0x10", true), false)
+    eq("  still leaving the value", AltStableConfig.accountNumber, 2)
+
     check("the box commits on Enter", type(box:GetScript("OnEnterPressed")) == "function")
     check("  and on losing focus, which is how a typed value used to vanish",
           type(box:GetScript("OnEditFocusLost")) == "function")
-    check("  while Escape still reverts", type(box:GetScript("OnEscapePressed")) == "function")
+    check("  while Escape reverts", type(box:GetScript("OnEscapePressed")) == "function")
+
+    -- Invoke the handlers themselves: type-checking them let a gutted body pass.
+    AltStable.SetAccountNumber("clear")
+    box:SetText("4")
+    box:GetScript("OnEnterPressed")(box)
+    eq("the Enter handler actually commits", AltStableConfig.accountNumber, 4)
+
+    box:SetText("5")
+    box:GetScript("OnEditFocusLost")(box)
+    eq("the focus-lost handler actually commits", AltStableConfig.accountNumber, 5)
+
+    box:SetText("9")
+    box:GetScript("OnEscapePressed")(box)
+    eq("the Escape handler reverts instead", AltStableConfig.accountNumber, 5)
+    eq("  and puts the stored value back in the box", box:GetText(), "5")
+
+    -- A change from chat must not leave a stale number in an open box, or
+    -- blurring it commits the old value straight back over the new one.
+    AltStable.SetAccountNumber("6")
+    eq("a change elsewhere refreshes the box", box:GetText(), "6")
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))

@@ -635,6 +635,61 @@ local function Slash(args)
     return WoW.chatOut[#WoW.chatOut] or ""
 end
 
+------------------------------------------------------------
+-- /alts account
+------------------------------------------------------------
+
+AltStableConfig = { whitelist = {} }
+AltStableDB = {}
+
+local acct = Slash("account")
+check("bare /alts account reports that none is set",
+      acct:find("No account number set", 1, true) ~= nil, acct)
+
+acct = Slash("account 2")
+eq("setting one stores it", AltStableConfig.accountNumber, 2)
+check("  and confirms", acct:find("set to 2", 1, true) ~= nil, acct)
+
+acct = Slash("account")
+check("bare /alts account now reports the value",
+      acct:find("is 2", 1, true) ~= nil, acct)
+
+-- A typo must not read as success. This printed a cheerful status line once.
+acct = Slash("account one")
+eq("a non-number leaves the value alone", AltStableConfig.accountNumber, 2)
+check("  and says what it wants", acct:find("whole number", 1, true) ~= nil, acct)
+
+for _, bad in ipairs({ "2.5", "-3", "0" }) do
+    acct = Slash("account " .. bad)
+    eq("'" .. bad .. "' is refused", AltStableConfig.accountNumber, 2)
+end
+-- Compared as a STRING on the wire, so hex would be stored as 16 and mean
+-- nothing to a peer that wrote "0x10".
+acct = Slash("account 0x10")
+eq("hex is refused too", AltStableConfig.accountNumber, 2)
+
+-- Characters scanned on THIS client carry the number; without re-tagging they
+-- keep the old one and drop out of account-scoped syncs until each is played.
+AltStableDB = {
+    mine  = { guid = "mine",  name = "Mine",  scannedHere = true,  account = 2 },
+    also  = { guid = "also",  name = "Also",  scannedHere = true,  account = 2 },
+    peers = { guid = "peers", name = "Peer",  account = 7 },
+}
+acct = Slash("account 3")
+eq("our own characters are re-tagged", AltStableDB.mine.account, 3)
+eq("  all of them", AltStableDB.also.account, 3)
+eq("  but never a peer's", AltStableDB.peers.account, 7)
+check("  and it says how many", acct:find("re-tagged", 1, true) ~= nil, acct)
+
+acct = Slash("account clear")
+eq("clearing empties it", AltStableConfig.accountNumber, "")
+check("  and says so", acct:find("cleared", 1, true) ~= nil, acct)
+acct = Slash("account clear")
+check("clearing twice is not an error", acct:find("was set", 1, true) ~= nil, acct)
+
+AltStableConfig = { whitelist = {} }
+AltStableDB = {}
+
 local msg = Slash("whitelist Karuzo Elegia")
 eq("whitelist add stores the two-word name", AltStableConfig.whitelist[1], "Karuzo Elegia")
 check("  and says so", msg:find("Added", 1, true) ~= nil, msg)
@@ -795,8 +850,11 @@ end
 check("the Options checkboxes write through SetConfigValue",
       SourceHas("SheetUI.lua", "AltStable.SetConfigValue(savedKey"),
       "MakeOptCheckRow must not assign AltStableConfig[savedKey] directly")
-check("the Options account box writes through SetConfigValue",
-      SourceHas("SheetUI.lua", 'SetConfigValue("accountNumber"'))
+-- The box no longer writes the config itself: both it and /alts account go
+-- through AltStable.SetAccountNumber, which is the one place that writes. A
+-- grep for the old call site would now fail while the behaviour is correct,
+-- which is the trouble with grepping for implementations.
+check("one seam owns the account number", type(AltStable.SetAccountNumber) == "function")
 check("/alts account writes through SetConfigValue",
       SourceHas("Core.lua", 'SetConfigValue("accountNumber"'))
 

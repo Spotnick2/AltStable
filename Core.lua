@@ -221,6 +221,81 @@ end
 AltStable.Print = Print
 
 ------------------------------------------------------------
+-- The account number
+--
+-- ONE place that coerces, validates, stores and reports. The Options box and
+-- /alts account both go through it: two implementations of one setting drift,
+-- and only one of them ever has a test.
+--
+-- Validated as a positive whole number because the value is compared as a
+-- STRING on the wire (SerializeFullDB filters on tostring(charAcct) ~=
+-- tostring(myAccount)), so "2.5", "0x10" and "-3" are all storable and none of
+-- them mean anything to a peer.
+------------------------------------------------------------
+
+-- nil when unset, so callers do not have to know whether "unset" is nil or "".
+function AltStable.GetAccountNumber()
+    local v = AltStableConfig and AltStableConfig.accountNumber
+    if v == nil or v == "" then return nil end
+    return v
+end
+
+-- Returns ok, message. `text` may be a number, a numeric string, or the word
+-- "clear" - clearing is EXPLICIT, never a side effect of an empty box.
+function AltStable.SetAccountNumber(text)
+    AltStableConfig = AltStableConfig or {}
+    local before = AltStable.GetAccountNumber()
+
+    if type(text) == "string" and text:lower():match("^%s*clear%s*$") then
+        if before == nil then return false, "No account number was set." end
+        AltStable.SetConfigValue("accountNumber", "")
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        if AltStable.RefreshAccountBox then AltStable.RefreshAccountBox() end
+        return true, "Account number cleared."
+    end
+
+    -- Validated by SHAPE, not by value: tonumber("0x10") is 16, a perfectly
+    -- good positive whole number that nobody typed. Digits only.
+    local digits = tostring(text or ""):match("^%s*(%d+)%s*$")
+    local num = digits and tonumber(digits)
+    if not num or num < 1 then
+        return false, "Account number must be a whole number, 1 or more. "
+            .. "Usage: |cffffff00/alts account 1|r (or |cffffff00clear|r)."
+    end
+
+    if before ~= nil and tostring(before) == tostring(num) then
+        return false, "Account number is already " .. num .. "."
+    end
+
+    AltStable.SetConfigValue("accountNumber", num)
+
+    -- Re-tag the characters THIS client scanned. char.account is written at
+    -- scan time, so without this every alt keeps the old number and is filtered
+    -- out of account-scoped syncs until each one is played again - the setting
+    -- would appear to do nothing, which is the complaint that started this.
+    local retagged = 0
+    if type(AltStableDB) == "table" then
+        for _, c in pairs(AltStableDB) do
+            if type(c) == "table" and c.scannedHere and tostring(c.account or "") ~= tostring(num) then
+                c.account = num
+                retagged = retagged + 1
+            end
+        end
+    end
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    -- The Options box only reads the stored value when the panel is SHOWN, so a
+    -- change made from chat while it is already open leaves a stale number in
+    -- it - which blurring the box would then commit straight back over this.
+    if AltStable.RefreshAccountBox then AltStable.RefreshAccountBox() end
+
+    local msg = "Account number set to " .. num .. ". It will be included on next scan/sync."
+    if retagged > 0 then
+        msg = msg .. " (" .. retagged .. " character(s) on this client re-tagged.)"
+    end
+    return true, msg
+end
+
+------------------------------------------------------------
 -- Validation — reject incoming records whose immutable
 -- fields (class, name) have changed for an existing GUID.
 -- Returns true if the record is safe to accept.
@@ -2212,23 +2287,22 @@ SlashCmdList["ALTSTABLE"] = function(args)
     ----------------------------------------------------
 
     if cmd == "account" then
-        local num = tonumber(target)
-        if not num then
+        if target == nil or target == "" then
             -- Bare "/alts account" answers the question people actually have,
             -- which is what it is set to now - not how to type it.
-            local current = AltStableConfig and AltStableConfig.accountNumber
-            if current == nil or current == "" then
-                Print("No account number set (this client's characters show as |cffaaaaaaDefault|r). "
-                      .. "Set one with |cffffff00/alts account 1|r.")
+            local current = AltStable.GetAccountNumber()
+            if current == nil then
+                Print("No account number set. Set one with |cffffff00/alts account 1|r.")
             else
                 Print("Account number is " .. tostring(current)
-                      .. ". Change it with |cffffff00/alts account <n>|r.")
+                      .. ". Change it with |cffffff00/alts account <n>|r, "
+                      .. "or |cffffff00/alts account clear|r.")
             end
             return
         end
-        AltStableConfig = AltStableConfig or {}
-        AltStable.SetConfigValue("accountNumber", num)
-        Print("Account number set to " .. num .. ". It will be included on next scan/sync.")
+
+        local ok, msg = AltStable.SetAccountNumber(target)
+        Print(msg)
         return
     end
 
