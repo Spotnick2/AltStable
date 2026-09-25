@@ -59,6 +59,7 @@ local uiWasShown
 local previewing
 local capturing          -- one at a time, always
 local captureStartedAt
+local toldConverter      -- the "run the converter" hint: once a session
 
 local function Build()
     if frame then return end
@@ -183,8 +184,15 @@ local function Finish()
     if savedFormat and type(SetCVar) == "function" then
         pcall(SetCVar, "screenshotFormat", savedFormat)
     end
-    Out("done - two shots in Screenshots\\, newest first (black, then white).")
-    Out("now run:  python Tools/RenderCutout/make-cutout.py --all")
+    -- One line per capture. The converter hint is worth saying once a session
+    -- and no more: repeated identical chat is indistinguishable from something
+    -- being stuck, which is exactly how the capture loop was first noticed.
+    Out("portrait captured.")
+    if not toldConverter then
+        toldConverter = true
+        Out("turn it into a cutout with:  |cffffff00pwsh Tools/RenderCutout/Update-Cutouts.ps1|r"
+            .. "  (or -Watch once, and forget about it)")
+    end
     -- The addon records that this LOOK was photographed; whether the picture
     -- came out is something only the converter can see. So if one is spoiled,
     -- /asrender forget puts this character back in the automatic queue.
