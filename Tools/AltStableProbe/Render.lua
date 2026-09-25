@@ -31,6 +31,13 @@ local SHOT_DELAY  = 0.65   -- let the client finish writing a file
 local LOGIN_SETTLE = 8
 local WARN_SECONDS = 5
 
+-- How long the player has to be OUT of combat before a capture is considered.
+-- Leaving combat is not the same as being done fighting: between pulls there is
+-- a gap of a few seconds, and hiding the interface in one of those is worse
+-- than not taking the picture at all. Login is the intended moment; this is the
+-- fallback for a gear change mid-session, and it is deliberately patient.
+local COMBAT_SETTLE = 30
+
 -- Declared up here because Capture() hides the notice before it hides the UI,
 -- and Capture is defined long before the popup is. A constant referenced above
 -- its own declaration is simply nil - the call still runs, does nothing, and
@@ -53,9 +60,49 @@ local function Out(s)
     DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[render]|r " .. tostring(s))
 end
 
+-- UIParent:Hide()/Show() are PROTECTED. Called once combat has started the
+-- client blocks them, and the block lands on the way BACK - so the interface
+-- stays hidden for the whole fight and the addon takes the blame in an error
+-- report. Seen live:
+--
+--   AddOn 'AltStableProbe' tried to call the protected function 'UIParent:Show()'
+--
+-- SetUIVisibility is the engine's own call - the one Alt+Z makes - and is not
+-- protected. AltStable's camera showcase already uses it for exactly this
+-- reason; the stage should never have hidden the UI a different way.
+--
+-- The stage survives it by being parented to WorldFrame rather than UIParent,
+-- so the engine's hide does not take it with the rest of the interface.
+local uiHidden
+
+local function HideUI()
+    if uiHidden then return end
+    if type(SetUIVisibility) == "function" then
+        pcall(SetUIVisibility, false)
+        uiHidden = "engine"
+        return
+    end
+    -- No engine support: fall back, but never in combat, where the call is
+    -- blocked and would strand the player.
+    if InCombatLockdown and InCombatLockdown() then return end
+    if UIParent and UIParent:IsShown() then
+        pcall(UIParent.Hide, UIParent)
+        uiHidden = "uiparent"
+    end
+end
+
+local function ShowUI()
+    if not uiHidden then return end
+    if uiHidden == "engine" then
+        if type(SetUIVisibility) == "function" then pcall(SetUIVisibility, true) end
+    else
+        pcall(UIParent.Show, UIParent)
+    end
+    uiHidden = nil
+end
+
 local frame, model, backdrop, hint
 local savedFormat
-local uiWasShown
 local previewing
 local capturing          -- one at a time, always
 local captureStartedAt
@@ -187,7 +234,7 @@ local function Finish()
     frame:Hide()
     -- ALWAYS give the interface back. Everything else here is a nicety; a
     -- player left staring at an empty screen is not.
-    if uiWasShown then UIParent:Show(); uiWasShown = nil end
+    ShowUI()
     -- Only now, once both shots are on disk: a fingerprint stored after a
     -- capture that failed half-way would suppress the retry.
     local guid = UnitGUID("player")
@@ -257,8 +304,7 @@ local function Capture()
 
     -- Say it BEFORE the UI goes, or the message lands in a hidden chat frame.
     if GameTooltip and GameTooltip.Hide then pcall(GameTooltip.Hide, GameTooltip) end
-    uiWasShown = UIParent:IsShown()
-    if uiWasShown then UIParent:Hide() end
+    HideUI()
     frame:Show()
 
     -- The whole sequence is a chain of timers. If any link fails, nothing
@@ -272,8 +318,8 @@ local function Capture()
     if watchdog then watchdog:Cancel() end
     watchdog = C_Timer.NewTimer(12, function()
         watchdog = nil
-        if uiWasShown then
-            UIParent:Show(); uiWasShown = nil
+        if uiHidden then
+            ShowUI()
             frame:Hide()
             Out("|cffff8800capture did not finish - your interface is back|r")
         end
@@ -322,7 +368,8 @@ end
 -- Auto-capture: keep portraits current without anyone typing anything
 ------------------------------------------------------------
 
-local pending   -- the countdown timer, so it can be cancelled
+local pending        -- the countdown timer, so it can be cancelled
+local combatSettle  -- the quiet-after-combat wait
 
 local function AutoEnabled()
     return not (AltStableProbeDB and AltStableProbeDB.autoCaptureOff)
@@ -526,11 +573,18 @@ auto:SetScript("OnEvent", function(_, event)
         -- A fight started inside the countdown: hiding the UI for three
         -- seconds mid-pull is the one thing this must never do.
         CancelPending("combat started")
+        if combatSettle then combatSettle:Cancel(); combatSettle = nil end
     elseif event == "PLAYER_LOGIN" then
         -- Inventory is not reliably readable the instant the world loads, and
         -- a fingerprint built from half-loaded gear would re-shoot every login.
         C_Timer.After(LOGIN_SETTLE, function() ConsiderCapture("gear changed since your last portrait") end)
     else
-        ConsiderCapture("out of combat - gear changed since your last portrait")
+        -- Wait out the gap between pulls rather than capturing in it. Any new
+        -- fight cancels this, so a long chain of pulls simply never reaches it.
+        if combatSettle then combatSettle:Cancel() end
+        combatSettle = C_Timer.NewTimer(COMBAT_SETTLE, function()
+            combatSettle = nil
+            ConsiderCapture("quiet since combat - gear changed since your last portrait")
+        end)
     end
 end)
