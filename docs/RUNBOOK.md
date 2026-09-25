@@ -101,7 +101,8 @@ Healthy, as of 70009:
 ```
 [probe] SavedVariables (account) LOADED - previous loadCount=1
 [probe] SavedVariablesPerCharacter LOADED - previous loadCount=1
-[probe] account #2 / per-character #2 / machine #1
+[probe] SavedVariablesMachine first ever run - not loaded
+[probe] account #2 / per-character #2 / machine #1 - only a FULL EXIT and relaunch counts; /reload proves nothing
 ```
 
 Broken looks like `first ever run - not loaded`, with every counter stuck at 1 launch after
@@ -136,8 +137,10 @@ authoritatively as a current one.
    ```
    /run print(GetMaxPlayerLevel(), UnitXPMax("player"), GetXPExhaustion(), Enum.BagIndex.Keyring, C_Reputation.GetNumFactions(), type(TooltipDataProcessor))
    ```
-   Expected on 69977: `60`, a positive number, `nil` unless rested, `-1`, your faction count,
-   `table`.
+   Expected on 70009: `60`, a positive number, a number while rested (`nil` when not), `-1`,
+   your faction count, `table`. Update this line with the build when you bump
+   `MEASURED_ON_BUILD` below — an expectation pinned to an older build is the staleness this
+   checklist exists to prevent.
 4. **Check persistence** with the probe, above — it is fixed, and a regression would be silent.
 5. **Bump `MEASURED_ON_BUILD`** and the test stub's `GetBuildInfo`, and record what was compared in
    `docs/forever-api-notes.md`. Old dump files are kept, not deleted — deleting is a human call.

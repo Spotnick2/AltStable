@@ -1,13 +1,16 @@
 --[[
     AltStableDevConfig — dev-only settings seeding.
 
-    The beta client writes SavedVariables and never reads them back (issue #23),
-    so AltStableConfig is empty at every login: no whitelist, no account number,
-    no toggles. That makes anything configuration-driven untestable, sync most
-    of all, because GetSyncTargets() returns nothing when the whitelist is empty.
+    Through client 1.60.1.69977 the beta wrote SavedVariables and never read
+    them back (issue #23), so AltStableConfig was empty at every login: no
+    whitelist, no account number, no toggles. That made anything
+    configuration-driven untestable, sync most of all, because GetSyncTargets()
+    returns nothing when the whitelist is empty. This seeds the config in Lua,
+    because addon FILES always loaded even when the saved table did not.
 
-    The workaround is simply that addon FILES do load. So this seeds the config
-    in Lua instead of relying on the saved table.
+    1.60.1.70009 fixed the client, so on a normal machine this now stands aside
+    every login. It earns its keep for a fresh WTF, a second test account, or a
+    wiped config - and as the canary if persistence ever regresses.
 
     It is a separate addon on purpose:
       * it never ships - it lives under Tools/, which .pkgmeta ignores
@@ -56,12 +59,11 @@ local function Seed()
     -- whitelist has to match it exactly.
     local me = (UnitName and UnitName("player")) or ""
 
-    -- Stand aside once SavedVariables load again (#23). Nothing persists on
-    -- 1.60.1.69913, so today the whitelist is always empty here and this always
-    -- seeds. Once Blizzard fixes it the whitelist will arrive populated from
-    -- disk - and since this assigns rather than merges, seeding over it would
-    -- silently discard every peer the user added, at every login, and look
-    -- exactly like the fix not working.
+    -- Stand aside when a whitelist arrived from disk. Since 1.60.1.70009 that
+    -- is the normal case; before it, never. This ASSIGNS rather than merges, so
+    -- seeding over a loaded whitelist would silently discard every peer the
+    -- user added, at every login, and look exactly like persistence being
+    -- broken.
     if not seededByUs and type(AltStableConfig.whitelist) == "table"
        and #AltStableConfig.whitelist > 0 then
         return me, #AltStableConfig.whitelist, true
@@ -94,10 +96,12 @@ f:SetScript("OnEvent", function()
     if DEFAULT_CHAT_FRAME then
         if stoodAside then
             DEFAULT_CHAT_FRAME:AddMessage(("|cff55ff55[AltStable dev]|r kept %d saved sync peer(s) for %s "
-                .. "- the whitelist loaded from disk, so #23 may be fixed"):format(n, me))
+                .. "- the whitelist loaded from disk"):format(n, me))
         else
+            -- Not evidence of anything on its own: an empty whitelist is also
+            -- what a fresh WTF, a new account or a wiped config looks like.
             DEFAULT_CHAT_FRAME:AddMessage(("|cffff9900[AltStable dev]|r seeded %d sync peer(s) for %s "
-                .. "- SavedVariables do not load on this client (#23)"):format(n, me))
+                .. "- nothing was on disk to keep"):format(n, me))
         end
     end
 end)

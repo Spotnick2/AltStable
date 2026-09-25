@@ -352,18 +352,38 @@ was waiting on "we cannot verify this until data persists".
 
 ### API diff, 69977 → 70009
 
-Nothing AltStable uses changed. Documented events +3
-(`ALERT_AGE_VERIFICATION_RESTRICTED`, `GLOBAL_REGION_MOUSE_DOWN`, `GLOBAL_REGION_MOUSE_UP`), enums
-and structures identical, widget methods identical. Namespace functions +18 / −2:
+Nothing AltStable uses changed. Widget methods are identical (7530). The rest:
 
-- **new:** `C_Flyout.*` (6), `C_SocialRestrictions.*` (3), `C_Trainer.GetCategorizeTrainerUI` /
-  `SetCategorizeTrainerUI`, `C_UnitAuras.GetRefreshCarryOverDuration`, `C_BattleNet.SetBlocked`,
-  `C_FriendList.GetWhoRaceFilters`, `C_AdventureMap` count getters,
-  `C_PvP.GetArenaOpponentSpec`, `C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator`.
-- **gone:** `C_GameRules.SelectClassicExperiencePreset` / `SelectModernExperiencePreset`, replaced
-  by `C_GameRules.GetForeverExperiencePreset` / `SetForeverExperiencePreset`.
-- The 24 `C_LocaleContext.*` entries now document as bare globals (`CompareStrings`, `FormatDate`,
-  `ToLower`, …). A documentation reshuffle, not a removal — nothing here calls them.
+**Namespace functions 5398 → 5414 (+18 / −2).** All eighteen, since a partial list is how a
+"nothing to see here" becomes wrong later:
+
+- `C_Flyout.FlyoutHasSpell` / `GetFlyoutID` / `GetFlyoutInfo` / `GetFlyoutSlotInfo` /
+  `GetFlyoutTexture` / `GetNumFlyouts`
+- `C_SocialRestrictions.AcknowledgeAgeVerificationRestriction` / `IsAgeVerificationRestricted` /
+  `IsAgeVerificationRestrictedMinor`
+- `C_GameRules.GetForeverExperiencePreset` / `SetForeverExperiencePreset` — these **replace**
+  `SelectClassicExperiencePreset` / `SelectModernExperiencePreset`, the only two removals
+- `C_Trainer.GetCategorizeTrainerUI` / `SetCategorizeTrainerUI`,
+  `C_UnitAuras.GetRefreshCarryOverDuration`, `C_BattleNet.SetBlocked`,
+  `C_FriendList.GetWhoRaceFilters`, `C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator`,
+  `GameEvent.HandleAlertAgeVerificationRestricted`
+
+**Enums and structures 792 → 797.** Five new: `Enumeration ForeverExperiencePreset`,
+`Structure FlyoutInfo`, `Structure FlyoutSlotInfo`, `Structure SendWhoFilters`,
+`Structure WhoFilter`. Three gained a field in place, which a name-only diff misses entirely:
+`FrameTutorialAccount` (+`Reserved1`), `VoiceChatStatusCode`
+(+`PlayerVoiceChatAgeVerificationRestricted`), `EditModeLayoutInfo`
+(+`optional interfaceStyle:InputDeviceInterfaceType`).
+
+**Events 1802 → 1805**: `ALERT_AGE_VERIFICATION_RESTRICTED`, `GLOBAL_REGION_MOUSE_DOWN`,
+`GLOBAL_REGION_MOUSE_UP`. `LFG_LIST_SHOW_SEARCH` also gained a `showAllLevelRanges:bool` payload
+field — same trap as the structures, so diff the section BODIES, not just the names.
+
+The 22 `C_LocaleContext.*` entries now document as bare globals (`CompareStrings`, `FormatDate`,
+`ToLower`, …). A documentation reshuffle, not a removal — nothing here calls them. Two other
+apparent newcomers are the same effect: `C_AdventureMap`'s member set is byte-identical between
+the builds, and `C_PvP.GetArenaOpponentSpec` existed on 69977 as a global. Both merely entered the
+*documented* section.
 
 `C_NameUtil.ReplaceSurnameSeparatorWithLinkSeparator` is the one to remember: Forever surnames are
 this project's recurring edge (whitelist entries are two words, `strsplit` on names, peer keys), so

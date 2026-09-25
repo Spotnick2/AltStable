@@ -862,10 +862,13 @@ check("  and leaves a stamp", type(AltStableConfig.svLoadCheck) == "table"
 check("  naming the build that wrote it", AltStableConfig.svLoadCheck.build == "70009",
       tostring(AltStableConfig.svLoadCheck.build))
 
+-- Identity, not type: svLoadCheck is already a table from the call above, so
+-- "it is a table" passes whether or not the reload branch ran at all.
+local beforeReload = AltStableConfig.svLoadCheck
 WoW.chatOut = {}
 AltStable.HandleEnteringWorld(false, true)
 check("a /reload is a write, so it re-stamps",
-      type(AltStableConfig.svLoadCheck) == "table")
+      AltStableConfig.svLoadCheck ~= beforeReload)
 check("  still silently", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 
 -- Zoning fires the same event with both flags false: ignore it entirely.
@@ -886,8 +889,8 @@ check("  and announces nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 ------------------------------------------------------------
 -- Which build were the findings measured on?
 --
--- A constant in the source, because the source is the only thing that
--- survives a restart here.
+-- A constant in the source: a human bumps it after re-measuring, which is the
+-- point - a value the addon could compute would just agree with itself.
 ------------------------------------------------------------
 
 WoW.chatOut = {}

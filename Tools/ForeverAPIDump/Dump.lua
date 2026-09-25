@@ -22,7 +22,8 @@
                     global check says nil on a client where it works fine.
 
     SavedVariables are WRITTEN correctly on this client even though they are
-    never read back (#23), so this path is unaffected by that bug. The file
+    never read back through 69977 (#23), and writing always worked, so this
+    path was unaffected by that bug even then. The file
     lands on /reload or logout:
 
         WTF\Account\<id>\SavedVariables\ForeverAPIDump.lua
@@ -32,10 +33,11 @@
 
     RE-RUN IT WHENEVER THE CLIENT BUILD CHANGES. The artifact is a snapshot of
     one build and a stale one reads exactly as authoritatively as a current
-    one, which is the whole danger. The addon cannot warn you about this
-    itself: SavedVariables are never read back on this client (#23), so it
-    cannot compare the build it is running on against the build it recorded
-    last time. Process discipline, not tooling.
+    one, which is the whole danger. Nothing here warns you: the dump addon
+    keeps no state between runs, and AltStable's own MEASURED_ON_BUILD (which
+    does warn, at login) is a constant in the source that a human bumps. Since
+    1.60.1.70009 reads SavedVariables back, a self-checking dump is now
+    possible - it just has not been written. Process discipline until then.
 
     RUN IT, THEN /reload. Walking every global and creating two dozen widgets
     is a taint risk: the first run opened the character sheet by itself and

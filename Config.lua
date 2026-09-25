@@ -20,11 +20,14 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 -- The single write path for AltStableConfig
 --
 -- AltStableConfig is a SavedVariable, so the client writes it at logout and
--- there is normally nothing to save by hand. On 1.60.1.69913 and .69977 it is written
--- and never read back (fixed in 1.60.1.70009) - and nothing else an addon can write survives a
--- restart either: addon CVars and per-character SavedVariables were both
--- measured dead across a real exit. Every earlier "it persists" result came
--- from /reload, which keeps the process alive. The fix is Blizzard's.
+-- there is normally nothing to save by hand. Through 1.60.1.69977 it was
+-- written and never read back (#23); 1.60.1.70009 fixed that, for this store
+-- and for per-character SavedVariables both - measured across a real exit, not
+-- a /reload.
+--
+-- Addon CVars are a separate question and were NOT re-measured on 70009: they
+-- were dead across a real exit through 69977, and the SavedVariables fix does
+-- not imply anything about them (see #25, the camera CVars).
 --
 -- Every mutation goes through here regardless, so that whatever the fix needs
 -- - a migration, a validation pass, a different store - lands in one place
@@ -372,8 +375,11 @@ local function CurrentBuild()
     return (type(GetBuildInfo) == "function" and select(2, GetBuildInfo())) or nil
 end
 
--- Rewritten on every UI load, including a /reload, so the stamp describes the
--- last time this client wrote the file rather than the last cold login.
+-- Written at PLAYER_ENTERING_WORLD, so the stamp is when the session STARTED,
+-- not when the file was flushed - the client writes at logout, a play session
+-- later. Close enough to answer "which session, on which build, last wrote
+-- this store", which is what it is for; wrong if read as a write time.
+-- Re-stamped on a /reload too, since that session goes on to write the file.
 local function CheckSavedVariablesLoad()
     AltStableConfig.svLoadCheck = {
         stamp = (type(date) == "function" and date("%Y-%m-%d %H:%M:%S")) or "?",

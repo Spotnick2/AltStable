@@ -8,10 +8,10 @@
     reason, so a new build writes a new file and leaves the old one in place -
     the script says so when it notices, and deleting the stale one is yours.
 
-    Note the staleness check cannot live in the addon: SavedVariables are never
-    read back on this client (issue #23), so the addon cannot compare the
-    build it ran on against the build it recorded last time. That makes this a
-    process discipline rather than something the tool can enforce.
+    The staleness check lives here rather than in the addon because the dump
+    addon keeps no state between runs - not, any longer, because the client
+    cannot read SavedVariables back (#23 was fixed in 1.60.1.70009). Process
+    discipline for now; a self-checking dump is possible if it earns its keep.
 
     Usage:
         pwsh Tools/ForeverAPIDump/Convert-Dump.ps1
