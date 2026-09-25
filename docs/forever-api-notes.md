@@ -75,7 +75,13 @@ round; Classic's values were effectively integral.
 
 ---
 
-## SavedVariables are WRITTEN but never READ BACK
+## SavedVariables are WRITTEN but never READ BACK — *history, builds 69913 and 69977*
+
+> **Fixed in 1.60.1.70009.** Both stores load again; see the 70009 section below for the
+> measurement. Everything under this heading describes the two builds before it and is kept
+> because the reasoning — and the way it was originally got wrong — is the useful part. Do not
+> plan around it, and do not follow its re-test instruction: a `/reload` cannot answer this
+> question. The procedure is a full client exit, in `docs/RUNBOOK.md`.
 
 **Blocking client bug, confirmed on build 69913.** This reverses what the porting guide originally
 claimed, and the earlier reasoning is worth recording because it was a plausible mistake.
@@ -110,7 +116,10 @@ either way. The settings cited as "non-default" were never verified as such.
 the whitelist and account number are set once and never regenerated, so they appeared to "vanish".
 Anything that rebuilds its state on login will mask this.
 
-Re-test on every build; the counter answers it in two reloads.
+Re-test on every build — but with a **full client exit and relaunch**, never the two reloads
+this section originally prescribed. A reload keeps the process alive, so the in-memory table is
+handed back untouched and a broken client reads as a working one; that is how the bug survived
+being "checked" more than once. 70009 was measured the right way.
 
 ---
 
@@ -354,8 +363,10 @@ was waiting on "we cannot verify this until data persists".
 
 Nothing AltStable uses changed. Widget methods are identical (7530). The rest:
 
-**Namespace functions 5398 → 5414 (+18 / −2).** All eighteen, since a partial list is how a
-"nothing to see here" becomes wrong later:
+**Namespace functions 5401 → 5417 (+18 / −2)** — the artifact's own counts. Three of those lines
+are `Constants`, `Enum` and `MathUtil` placeholders ("no function members"), present in both
+builds, so a script that counts only `Namespace.Member` lines sees 5398 → 5414 and the same delta.
+All eighteen, since a partial list is how a "nothing to see here" becomes wrong later:
 
 - `C_Flyout.FlyoutHasSpell` / `GetFlyoutID` / `GetFlyoutInfo` / `GetFlyoutSlotInfo` /
   `GetFlyoutTexture` / `GetNumFlyouts`
