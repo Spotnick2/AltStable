@@ -37,13 +37,21 @@ end
 
 local frame, model, backdrop
 local savedFormat
+local uiWasShown
 
 local function Build()
     if frame then return end
 
-    frame = CreateFrame("Frame", "AltStableRenderStage", UIParent)
+    -- Parented to WorldFrame, NOT UIParent, so hiding UIParent during the shots
+    -- takes every other frame away and leaves the stage standing. A fullscreen
+    -- frame is not enough on its own: a tooltip draws at TOOLTIP strata, above
+    -- FULLSCREEN_DIALOG, and gets matted straight into the cutout - measured,
+    -- after AltStable's own minimap tooltip turned a 250x885 character into a
+    -- 1790x1350 image with a tooltip floating beside her.
+    frame = CreateFrame("Frame", "AltStableRenderStage", WorldFrame)
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
-    frame:SetAllPoints(UIParent)
+    frame:SetFrameLevel(10000)
+    frame:SetAllPoints(WorldFrame)
     frame:Hide()
 
     backdrop = frame:CreateTexture(nil, "BACKGROUND")
@@ -136,6 +144,7 @@ end
 
 local function Finish()
     frame:Hide()
+    if uiWasShown then UIParent:Show(); uiWasShown = nil end
     -- Only now, once both shots are on disk: a fingerprint stored after a
     -- capture that failed half-way would suppress the retry.
     local guid = UnitGUID("player")
@@ -165,8 +174,13 @@ local function Capture()
 
     PoseLiveCharacter()
     backdrop:SetColorTexture(0, 0, 0, 1)
-    frame:Show()
     Out("staging... hold still, two screenshots are coming")
+
+    -- Say it BEFORE the UI goes, or the message lands in a hidden chat frame.
+    if GameTooltip and GameTooltip.Hide then pcall(GameTooltip.Hide, GameTooltip) end
+    uiWasShown = UIParent:IsShown()
+    if uiWasShown then UIParent:Hide() end
+    frame:Show()
 
     C_Timer.After(KEY_DELAY, function()
         Screenshot()
