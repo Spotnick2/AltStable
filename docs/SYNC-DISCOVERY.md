@@ -31,14 +31,43 @@ Two framings that sound right and are not:
 
 | Fact | Where |
 |---|---|
-| A request is answered **to whoever asked** — the replying side needs no whitelist entry, no config, nothing | `Core.lua:1390`, `replyTarget = senderName` |
-| The whitelist gates **outbound only**: whom we whisper | `Core.lua:289`, `GetSyncTargets` |
-| **Inbound is ungated.** Data from an unknown sender is processed, subject only to payload validation | the `CHAT_MSG_ADDON` branch, `Core.lua:1358` onward |
+| A request is answered **to whoever asked**, with no authorization check of any kind | `Core.lua:1362-1377` |
+| The whitelist gates **outbound initiation only**: whom *we* choose to whisper first | `Core.lua:289`, `GetSyncTargets` |
+| Inbound data is likewise ungated — a payload from an unknown sender is merged, subject only to field validation | the `CHAT_MSG_ADDON` branch, `Core.lua:1358` onward |
+| The reply target is the sender with **any realm suffix stripped** | `Core.lua:1343` feeding `Core.lua:1363` |
 | Guild broadcast exists in the routing but is switched off deliberately — *"alt tracker, not guild tracker"* | `Core.lua:287` |
 | We already react to "X has come online" and fire a request at whitelisted peers | `Core.lua:1719` |
 
-So exactly one thing is missing, and it is not a longer list of names: **the asking side needs a
-name that is online.**
+### This is a data-disclosure path, today
+
+Say it plainly, because "inbound is ungated" undersells it. Any player who whispers our addon
+prefix with a valid same-version request gets **the whole character database sent back**:
+
+```
+                         ->  REQ8|0        (from anyone, no whitelist entry needed)
+SendFullDatabase(...)    <-  every character record: names, realms, guilds, levels,
+                             item levels, gold, mail, lockouts, reputations
+```
+
+`Core.lua:1362-1377` goes straight from "the protocol version matches" to scheduling
+`SendFullDatabase`. There is no check that the requester is anyone we know. `sendAllAccounts`
+narrows it to the current account by default — that is a scope limit, not an authorization check.
+The prefix is public (the addon ships on CurseForge), so this needs no discovery on the attacker's
+part.
+
+**So authorizing requests is a prerequisite of #58, not a nice-to-have alongside it.** A channel
+password protects a channel; it does nothing for the whisper request handler that already exists.
+Whatever transport wins, the rule has to be: *do not send records to a requester we have not
+authorized.*
+
+The reason it is ungated is not an oversight to patch blindly — it is what makes a **one-sided**
+whitelist work. A whitelists B, A asks, B answers without ever having heard of A. Gate that on the
+whitelist as it stands and sync stops working for the very setup it was built for. The fix is
+Altoholic's three modes (auto / ask / never) with *ask* as the default, so the first request from
+an unknown peer becomes a prompt instead of a silent transfer. Tracked in #61.
+
+So the thing missing for *discovery* is still a name that is online — but it is not the only
+prerequisite.
 
 ---
 
@@ -116,11 +145,19 @@ unavoidable (two accounts cannot discover each other: SavedVariables are per acc
 needs a name). After that seed:
 
 1. **Remember who answered.** Any reply names that account's current character in the sender
-   field, with the realm attached when cross-realm. Store it as "account N was last seen as X".
+   field — *assuming* the realm is attached when cross-realm, which is *unverified on this client*
+   (`docs/forever-api-notes.md` records the cross-realm `CHAT_MSG_ADDON` sender format as
+   untested). Store it as "account N was last seen as X".
 2. **Try that one first** next session.
 3. **When it fails, probe the adopted names in most-recently-played order.** We already store
    `lastUpdate` per character; the one played most recently is the likeliest to be logged in. One
    burst per login, never per sync tick.
+
+**Our own code blocks this today**, whatever the client sends: `Core.lua:1343` strips any realm
+suffix off the sender, and `Core.lua:1363` uses that stripped name as the whisper reply target. So
+a cross-realm request is answered to a bare name on *our* realm — the wrong player, or nobody. The
+stripped form is right for the self-echo comparison and wrong as a routing target; those two uses
+need to stop sharing one variable before any cross-realm flow can work.
 
 Automatic after the first seed, and self-correcting when you switch characters.
 
@@ -142,6 +179,10 @@ session, with two clients running:
    routes every non-whisper reply to `GUILD`, so a channel branch is needed before anything works.
 6. Does whispering an offline character produce a visible error line? That decides how aggressive
    the probing in step 3 above can be.
+7. **A cross-realm request/reply round trip, end to end.** What exactly does `CHAT_MSG_ADDON`
+   put in `sender` for a cross-realm whisper — and does a reply addressed to that value arrive?
+   Everything in the cross-realm half rests on this, and both the client format and our own
+   realm-stripping are unverified.
 
 A probe for 1–5 belongs in `Tools/AltStableProbe`, not in the addon.
 
@@ -171,6 +212,7 @@ the model.
 
 - **#56** — whisper targets need the full name including the surname. Adoption also removes the
   main source of whitelist typos, since names arrive over the wire rather than from the keyboard.
+- **#61** — authorizing requests before sending records. A prerequisite, not a parallel task.
 - **#20** — the inherited sync-engine bugs. More peers means more concurrent streams, and a channel
   broadcast reaches every keyholder at once, which the per-peer watermarks and the `"<peer>#<sid>"`
   chunk buffers have never had to handle.
