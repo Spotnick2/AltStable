@@ -27,3 +27,6 @@ __pycache__/
 # .NET build output, if any tooling lands here later
 [Bb]in/
 [Oo]bj/
+
+# Generated cutouts - regenerate from screenshots, never commit
+Tools/RenderCutout/out/

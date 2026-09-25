@@ -22,6 +22,7 @@ reliably), plus the content dimensions the UI needs to crop it back.
 
 import argparse
 import os
+import re
 import sys
 
 try:
@@ -31,6 +32,42 @@ except ImportError:
 
 SHOTS = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\Screenshots"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
+WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF\Account"
+
+
+def latest_capture(wtf=WTF):
+    """Who the addon photographed last, from AltStableProbe's SavedVariables.
+
+    Beats a hand-typed name: the file is named after the character it actually
+    shows, so a capture cannot be filed under the wrong alt. Returns None when
+    the store has not been written yet - the client only flushes it on logout
+    or /reload, so a fresh capture may not be on disk at all.
+    """
+    newest, newest_time = None, -1
+    for root, _dirs, files in os.walk(wtf):
+        for f in files:
+            if f == "AltStableProbe.lua":
+                full = os.path.join(root, f)
+                t = os.path.getmtime(full)
+                if t > newest_time:
+                    newest, newest_time = full, t
+    if not newest:
+        return None
+    try:
+        text = open(newest, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return None
+
+    block = re.search(r'\["renders"\]\s*=\s*\{(.+)', text, re.S)
+    if not block:
+        return None
+    # Every entry carries a name; the last one is the most recent capture.
+    names = re.findall(r'\["name"\]\s*=\s*"([^"]+)"', block.group(1))
+    return names[-1] if names else None
+
+
+def slug(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 # Below this coverage a pixel is background, not a faint edge. Screenshots are
 # lossless TGA, so this only has to reject sensor-free noise, not compression.
@@ -103,7 +140,8 @@ def pot(n):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=SHOTS, help="the client's Screenshots folder")
-    ap.add_argument("--name", default=None, help="base name for the output")
+    ap.add_argument("--name", default=None,
+                    help="base name for the output (default: the character the addon last photographed)")
     ap.add_argument("--keep-png", action="store_true", help="also write a PNG to eyeball")
     args = ap.parse_args()
 
@@ -116,7 +154,16 @@ def main():
     print("content        : %dx%d" % (cw, ch))
 
     os.makedirs(OUT, exist_ok=True)
-    base = args.name or "cutout"
+    base = args.name
+    if not base:
+        who = latest_capture()
+        if who:
+            base = slug(who)
+            print("character      :", who)
+        else:
+            base = "cutout"
+            print("character      : unknown (SavedVariables not written yet - "
+                  "/reload in game, or pass --name)")
 
     if args.keep_png:
         png = os.path.join(OUT, base + ".png")
