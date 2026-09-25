@@ -33,8 +33,9 @@ local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
 -- the sheet is resizable and the number of characters is whatever the player
 -- has, so a hardcoded row of twelve either overflows the panel or wastes it.
 local MIN_CARD_W    = 110
+local MIN_CARD_H    = 96      -- below this a portrait is not worth drawing
 local MAX_CARD_W    = 170
-local FIGURE_RATIO  = 0.78    -- of the card's height, leaving room for the name
+local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
 
 local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
@@ -56,11 +57,18 @@ local function Slug(name)
     return (s ~= "") and s or nil
 end
 
+-- An entry only counts when it can actually be DRAWN. The renderer requires
+-- entry.file, so a counter asking a weaker question would hide the "capture one
+-- with /asrender" hint at exactly the moment every card is a fallback.
 local function CutoutFor(char)
     local manifest = AltStableCutoutManifest
     if type(manifest) ~= "table" or type(char) ~= "table" then return nil end
     local slug = Slug(char.name)
-    return slug and manifest[slug] or nil
+    local entry = slug and manifest[slug] or nil
+    if type(entry) ~= "table" or type(entry.file) ~= "string" or entry.file == "" then
+        return nil
+    end
+    return entry
 end
 
 -- The image sits in the TOP-LEFT of a power-of-two canvas, so the rest of the
@@ -83,6 +91,18 @@ local function FigureSize(entry, targetH)
     return targetH * (w / h), targetH
 end
 
+-- The figure is anchored ABOVE the name block, so the space available to it is
+-- the card MINUS that block - not a fraction of the whole card. Taking a
+-- fraction of the whole made the figure taller than its own card at any height
+-- below ~146px, and the overflow ran up into the row above.
+--
+-- A named function rather than a line inside the renderer, so a test can assert
+-- the real arithmetic instead of restating it: a test that recomputes the
+-- formula agrees with itself no matter what the source does.
+local function FigureHeightFor(cardH)
+    return math.max(24, ((cardH or 0) - NAME_H - 8) * FIGURE_RATIO)
+end
+
 -- How many columns fit, how big each card is, and how many rows that needs.
 -- Pure arithmetic, so it is testable without a frame: the layout bug that put
 -- cards over the sidebar was invisible to every assertion until this existed.
@@ -98,8 +118,17 @@ local function GridFor(panelW, panelH, count)
 
     local cardW = math.min(MAX_CARD_W, (usableW - CARD_GAP * (cols - 1)) / cols)
     local usableH = panelH - PAD_Y * 2 - 18          -- 18: the hint line
+
+    -- Drop rows rather than squash cards. Clamping the height up to a minimum
+    -- breaks the very division that made the rows fit, and the surplus draws
+    -- OUTSIDE the panel: WoW frames do not clip their children, so the last row
+    -- lands on whatever is below it.
     local cardH = (usableH - CARD_GAP * (rows - 1)) / rows
-    return cols, rows, cardW, math.max(60, cardH)
+    while rows > 1 and cardH < MIN_CARD_H do
+        rows = rows - 1
+        cardH = (usableH - CARD_GAP * (rows - 1)) / rows
+    end
+    return cols, rows, cardW, math.max(MIN_CARD_H, cardH)
 end
 
 ------------------------------------------------------------
@@ -187,7 +216,7 @@ local function RenderCard(card, char, cardW, cardH)
     card.label:SetWidth(cardW + CARD_GAP)
     card.sub:SetWidth(cardW + CARD_GAP)
 
-    local figureH = math.max(40, cardH * FIGURE_RATIO)
+    local figureH = FigureHeightFor(cardH)
     card.plate:SetSize(math.max(24, cardW - 30), figureH * 0.82)
     card.icon:SetSize(math.min(48, cardW * 0.32), math.min(48, cardW * 0.32))
     card.label:SetText(AltStable.ClassColor
@@ -196,7 +225,7 @@ local function RenderCard(card, char, cardW, cardH)
     card.sub:SetText(("level %d"):format(char.level or 0))
 
     local entry = CutoutFor(char)
-    if entry and entry.file then
+    if entry then
         local w, h = FigureSize(entry, figureH)
         -- A wide capture (a gnome, or a drawn bow) must not spill into its
         -- neighbours, so the height gives way rather than the column.
@@ -268,12 +297,13 @@ function Roster.Refresh()
     if not panel then return end
     local chars = PickCharacters(MAX_CARDS)
 
-    local cols, _, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
+    local cols, rows, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
+    local fits = cols * rows
 
     local withArt = 0
     for i, card in ipairs(Roster.cards) do
         local char = chars[i]
-        if char and cols > 0 then
+        if char and cols > 0 and i <= fits then
             local col = (i - 1) % cols
             local row = math.floor((i - 1) / cols)
             card:ClearAllPoints()
@@ -318,6 +348,7 @@ function Roster.Deactivate(mainFrame)
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Show() end
     if mainFrame.headerScroll then mainFrame.headerScroll:Show() end
     if mainFrame.frozenHeader then mainFrame.frozenHeader:Show() end
+    if mainFrame.hScrollBar   then mainFrame.hScrollBar:Show()   end
     if mainFrame.totalsBar    then mainFrame.totalsBar:Show()    end
 end
 
@@ -325,21 +356,13 @@ end
 -- Registration
 ------------------------------------------------------------
 
--- Media\Icons\roster.tga does not exist yet - the other tabs' icons are made
--- by hand. Until one is dropped in, fall back rather than leave a blank square
--- in the navigation; the custom file takes over automatically the moment it
--- appears. API.TextureExists returns nil when the client cannot tell, and nil
--- means "assume it is there" - guessing absent would hide real art.
-local function TabIcon()
-    local media = AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\"
-    local custom = media .. "Icons\\roster.tga"
-    local exists = AltStable.API and AltStable.API.TextureExists
-    if not exists or exists(custom) ~= false then return custom end
-
-    local stock = "Interface\\Icons\\INV_Misc_GroupNeedMore"
-    if exists(stock) ~= false then return stock end
-    return media .. "Icons\\account-summary.tga"
-end
+-- The icon is passed by PATH, exactly as every other tab does it (the sheet's
+-- own sidebar, Warband, Raids). An earlier version guarded it with
+-- API.TextureExists, which was wrong twice over: GetFileIDFromPath resolves
+-- the CLIENT's file table, so an addon's own TGA on disk has no FileDataID and
+-- reads as ABSENT - the guard rejected the real icon and showed a stock
+-- placeholder in its place. A texture that genuinely is missing draws as
+-- nothing, which is what the fallback amounted to anyway.
 
 function Roster._Bootstrap()
     if not AltStable or not AltStable.RegisterPlugin then
@@ -349,14 +372,15 @@ function Roster._Bootstrap()
     AltStable.RegisterPlugin({
         id           = ADDON_ID,
         label        = "Roster",
-        icon         = TabIcon(),
+        icon         = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\")
+                       .. "Icons\\roster.tga",
         _isPlugin    = true,
         OnActivate   = function(mainFrame) Roster.Activate(mainFrame) end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = {
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
-            GridFor = GridFor, MAX_CARDS = MAX_CARDS, TabIcon = TabIcon,
+            GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         },
     })

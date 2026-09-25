@@ -88,6 +88,14 @@ check("a captured character finds its portrait", T.CutoutFor(withArt) ~= nil)
 eq("  an uncaptured one does not", T.CutoutFor(without), nil)
 eq("  and neither does a nameless record", T.CutoutFor({ guid = "c" }), nil)
 
+-- An entry the renderer could not draw must not count as a portrait either, or
+-- the "capture one with /asrender" hint disappears exactly when every card is a
+-- fallback.
+AltStableCutoutManifest = { ["kaleid-sumner"] = { w = 144, h = 512, texw = 256, texh = 512 } }
+eq("an entry with no file is not a portrait", T.CutoutFor(withArt), nil)
+AltStableCutoutManifest = { ["kaleid-sumner"] = { file = "", w = 1, h = 1, texw = 1, texh = 1 } }
+eq("  nor is an empty file path", T.CutoutFor(withArt), nil)
+
 AltStableCutoutManifest = nil
 eq("no manifest at all is not an error", T.CutoutFor(withArt), nil)
 AltStableCutoutManifest = {
@@ -162,6 +170,78 @@ AltStable.SetCharacterHidden("a", false)
 
 picked = T.PickCharacters(2)
 eq("the lineup is capped", #picked, 2)
+
+------------------------------------------------------------
+-- The grid has to FIT
+------------------------------------------------------------
+-- GridFor exists to be testable without a frame, and then nothing tested it,
+-- which is how two layout bugs shipped: figures taller than their own card, and
+-- a height floor that broke the division that made the rows fit. WoW frames do
+-- not clip their children, so "does not fit" means "drawn over the thing below".
+
+local function fits(panelW, panelH, count)
+    local cols, rows, cardW, cardH = T.GridFor(panelW, panelH, count)
+    local usedW = PADX2 + cols * cardW + (cols - 1) * GAP
+    local usedH = PADY2 + HINT + rows * cardH + (rows - 1) * GAP
+    return cols, rows, cardW, cardH, usedW, usedH
+end
+
+PADX2, PADY2, GAP, HINT = 32, 28, 10, 18   -- PAD_X*2, PAD_Y*2, CARD_GAP, hint line
+
+do
+    local cols, rows, cardW, cardH, usedW, usedH = fits(1200, 600, 12)
+    check("a wide panel lays out in columns", cols > 1, tostring(cols))
+    check("  every card fits across", usedW <= 1200 + 1, ("%.1f > 1200"):format(usedW))
+    check("  and down", usedH <= 600 + 1, ("%.1f > 600"):format(usedH))
+    check("  enough cells for everyone", cols * rows >= 12, ("%dx%d"):format(cols, rows))
+end
+
+do
+    -- The case that broke: a short panel with enough characters to want more
+    -- rows than there is height for.
+    local cols, rows, cardW, cardH, _, usedH = fits(400, 300, 8)
+    check("a short panel drops rows instead of squashing cards",
+          usedH <= 300 + 1, ("%.1f > 300 (rows=%d cardH=%.1f)"):format(usedH, rows, cardH))
+    check("  and keeps cards big enough to show a portrait", cardH >= 96, tostring(cardH))
+end
+
+do
+    local cols, rows = T.GridFor(1200, 600, 0)
+    check("no characters means no grid", cols == 0 and rows == 0)
+end
+
+do
+    -- A panel measured before layout reports zero; it must not divide by it.
+    local ok = pcall(T.GridFor, 0, 0, 5)
+    check("an unmeasured panel does not error", ok)
+end
+
+do
+    local _, _, cardW = fits(4000, 600, 2)
+    check("cards stop growing past a sane width", cardW <= T.MAX_CARD_W + 0.5, tostring(cardW))
+end
+
+------------------------------------------------------------
+-- The figure fits inside its own card
+------------------------------------------------------------
+-- It is anchored above the name block, so the space it may use is the card
+-- minus that block. Taking a fraction of the WHOLE card overflowed upward into
+-- the row above at every card height below ~146px.
+
+do
+    -- Asking the PLUGIN, not restating its formula: a test that recomputes the
+    -- arithmetic passes whatever the source does, which is how the overflow
+    -- survived a green suite once already.
+    local NAME_BLOCK = 28 + 8            -- NAME_H plus the gap under the figure
+    for _, cardH in ipairs({ 96, 120, 150, 200, 320 }) do
+        local figureH = T.FigureHeightFor(cardH)
+        check(("a figure fits in a %dpx card"):format(cardH),
+              figureH + NAME_BLOCK <= cardH + 0.5,
+              ("figure %.1f + name %d > card %d"):format(figureH, NAME_BLOCK, cardH))
+    end
+    check("a figure is never negative on an absurd card", T.FigureHeightFor(0) > 0)
+    check("  nor on a nil one", T.FigureHeightFor(nil) > 0)
+end
 
 ------------------------------------------------------------
 -- It builds
