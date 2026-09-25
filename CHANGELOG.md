@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Surnames are back on the sheet.** Client 1.60.1.70009 moved the surname into
+  `UnitName`'s second return, so every character scanned on it was stored as just its first
+  name — and a persisted record then rejected its own updates over sync ("name changed: Kaleid
+  Sumner -> Kaleid"). Names are read whole again, and a record missing its surname gains one
+  back on the next sync instead of being refused
+  ([#56](https://github.com/Spotnick2/AltStable/issues/56)).
+
 - **Data survives a restart.** The beta client used to write SavedVariables and never read them
   back; build 1.60.1.70009 fixed that, so characters, settings, the sync whitelist and the
   hidden-character list are all still there on the next launch. Nothing in the addon changed for

@@ -292,6 +292,33 @@ do
 end
 
 ------------------------------------------------------------
+-- The scan stores the WHOLE name, surname included (#56)
+--
+-- Live symptom on 1.60.1.70009: the sheet listed "Kaleid" where every other
+-- client, the whitelist and the sync sender all say "Kaleid Sumner", because
+-- the surname arrives in UnitName's second return now and the scan read only
+-- the first. The stub models the split, so this fails without the fix.
+------------------------------------------------------------
+
+do
+    WoW.reset()
+    AltStableDB = {}
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("the scan keeps the surname", c and c.name, WoW.player.name)
+    check("  which is more than the first name",
+          c and c.name and c.name:find(" ") ~= nil, tostring(c and c.name))
+
+    -- A character with no surname stores exactly its name.
+    WoW.player.name = "Solo"
+    AltStableDB = {}
+    pcall(AltStable.ScanCharacter)
+    c = AltStableDB[UnitGUID("player")]
+    eq("a character without a surname is stored as-is", c and c.name, "Solo")
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Secret unit stats must not abort the scan
 --
 -- Live error: "Scanner.lua:596: attempt to perform arithmetic on a secret
