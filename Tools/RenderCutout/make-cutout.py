@@ -16,6 +16,12 @@ Usage
     python Tools/RenderCutout/make-cutout.py --name Kaleid   # name the output
     python Tools/RenderCutout/make-cutout.py --keep-png      # also leave a PNG
 
+The client gives back no partial alpha at all, so the raw cutout has hard,
+aliased edges. The capture is far larger than any scene draws it, so it is
+resampled down here to manufacture the coverage the client refused to produce -
+premultiplied first, or every edge pixel averages with transparent black and
+leaves a dark halo.
+
 Writes a 32-bit uncompressed TGA, padded to a power of two (WoW reloads those
 reliably), plus the content dimensions the UI needs to crop it back.
 """
@@ -26,7 +32,7 @@ import re
 import sys
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageChops
 except ImportError:
     sys.exit("Pillow is required:  python -m pip install pillow")
 
@@ -130,6 +136,58 @@ def matte(black_path, white_path):
     return out.crop((minx, miny, maxx + 1, maxy + 1))
 
 
+# The client renders with NO partial alpha - every pixel comes back fully
+# opaque or fully clear (measured on 1.60.1.70009). So the cutout has hard,
+# aliased edges, and scaling it in the UI makes them crawl.
+#
+# The fix is supersampling: the capture is already much larger than the size a
+# scene draws it at, so resampling it down HERE manufactures the intermediate
+# coverage the client refused to give us. Done properly it is exact, offline,
+# free, and needs no model.
+#
+# Premultiplying first is what makes it correct. Resampling straight alpha
+# averages each edge pixel with the transparent black around it and leaves a
+# dark halo - the classic mistake. Multiply colour by coverage, resample, then
+# divide it back out.
+TARGET_HEIGHT = 512
+
+
+def supersample(img, target_h):
+    w, h = img.size
+    if target_h <= 0 or h <= target_h:
+        return img, False
+
+    nw = max(1, int(round(w * target_h / float(h))))
+    nh = target_h
+
+    r, g, b, a = img.split()
+    premul = Image.merge("RGBA", (
+        ImageChops.multiply(r, a),
+        ImageChops.multiply(g, a),
+        ImageChops.multiply(b, a),
+        a,
+    ))
+    premul = premul.resize((nw, nh), Image.LANCZOS)
+
+    out = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+    src, dst = premul.load(), out.load()
+    for y in range(nh):
+        for x in range(nw):
+            pr, pg, pb, pa = src[x, y]
+            if pa == 0:
+                continue
+            # Undo the premultiply. Values can round a shade over 255 on a
+            # bright edge; clamp rather than wrap.
+            f = 255.0 / pa
+            dst[x, y] = (
+                min(255, int(pr * f + 0.5)),
+                min(255, int(pg * f + 0.5)),
+                min(255, int(pb * f + 0.5)),
+                pa,
+            )
+    return out, True
+
+
 def pot(n):
     p = 1
     while p < n:
@@ -143,6 +201,9 @@ def main():
     ap.add_argument("--name", default=None,
                     help="base name for the output (default: the character the addon last photographed)")
     ap.add_argument("--keep-png", action="store_true", help="also write a PNG to eyeball")
+    ap.add_argument("--target-height", type=int, default=TARGET_HEIGHT,
+                    help="supersample down to this content height for antialiased edges "
+                         "(0 keeps the capture at native size)")
     args = ap.parse_args()
 
     black, white = newest_pair(args.shots)
@@ -150,8 +211,12 @@ def main():
     print("white backdrop :", os.path.basename(white))
 
     cut = matte(black, white)
+    print("content        : %dx%d" % cut.size)
+
+    cut, resampled = supersample(cut, args.target_height)
+    if resampled:
+        print("supersampled   : %dx%d  (edges antialiased)" % cut.size)
     cw, ch = cut.size
-    print("content        : %dx%d" % (cw, ch))
 
     os.makedirs(OUT, exist_ok=True)
     base = args.name
