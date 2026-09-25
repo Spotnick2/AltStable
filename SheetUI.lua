@@ -3373,6 +3373,53 @@ end
 
 local HIDE_POPUP = "ALTSTABLE_CONFIRM_HIDE_CHARACTER"
 
+-- Make a StaticPopup visible over our own window, and put the shared frame back
+-- afterwards.
+--
+-- Done from the CALLER, on the frame StaticPopup_Show hands back, rather than
+-- from the dialog's OnShow. A frame whose parent is hidden may never receive a
+-- visibility event at all, so a fix that lives in OnShow is a fix that never
+-- runs - which is the failure being fixed, wearing the fix's own clothes.
+--
+-- Two separate problems, and strata only answers one:
+--   * the sheet is DIALOG and SetToplevel(true), and a StaticPopup is DIALOG,
+--     so the sheet covers it;
+--   * the camera showcase hides UIParent outright, and a StaticPopup is a CHILD
+--     of UIParent - no strata makes the child of a hidden parent draw.
+local function LiftPopup(dialog)
+    if type(dialog) ~= "table" then return dialog end
+    if dialog._altstablePrevStrata == nil and dialog.GetFrameStrata then
+        dialog._altstablePrevStrata = dialog:GetFrameStrata()
+        pcall(dialog.SetFrameStrata, dialog, "FULLSCREEN_DIALOG")
+    end
+    if not dialog._altstableLifted
+        and AltStable.IsGameUIHidden and AltStable.IsGameUIHidden() then
+        dialog._altstableLifted = true
+        AltStable.LiftAboveHiddenUI(dialog, true)
+    end
+    return dialog
+end
+
+-- Idempotent, because it is called from every route out of the dialog: the two
+-- buttons and the hide event. Whichever runs first wins and the rest no-op -
+-- the frame is shared with every other addon, so leaving it moved or raised
+-- would quietly change where their confirmations appear.
+local function DropPopup(dialog)
+    if type(dialog) ~= "table" then return end
+    if dialog._altstableLifted then
+        AltStable.LiftAboveHiddenUI(dialog, false)
+        dialog._altstableLifted = nil
+    end
+    if dialog._altstablePrevStrata then
+        pcall(dialog.SetFrameStrata, dialog, dialog._altstablePrevStrata)
+        dialog._altstablePrevStrata = nil
+    end
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.LiftPopup = LiftPopup
+AltStable._test.DropPopup = DropPopup
+
 if type(StaticPopupDialogs) == "table" then
     StaticPopupDialogs[HIDE_POPUP] = {
         text = "Hide |cffffffff%s|r from the sheet?\n\nIt keeps syncing and updating - it is "
@@ -3380,9 +3427,11 @@ if type(StaticPopupDialogs) == "table" then
             .. "Options, \"Hidden characters\".",
         button1 = YES or "Yes",
         button2 = NO or "No",
-        OnAccept = function(_, data)
+        OnAccept = function(self, data)
+            DropPopup(self)
             AltStable.HideCharacter(type(data) == "table" and data.guid or data)
         end,
+        OnCancel = function(self) DropPopup(self) end,
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
@@ -3399,24 +3448,10 @@ if type(StaticPopupDialogs) == "table" then
         -- and GameTooltip are, and put back on close: the frame is shared with
         -- every other addon, and leaving it reparented or raised would quietly
         -- change where everyone else's confirmations appear.
-        OnShow = function(self)
-            self._altstablePrevStrata = self:GetFrameStrata()
-            self:SetFrameStrata("FULLSCREEN_DIALOG")
-            if AltStable.IsGameUIHidden and AltStable.IsGameUIHidden() then
-                self._altstableLifted = true
-                AltStable.LiftAboveHiddenUI(self, true)
-            end
-        end,
-        OnHide = function(self)
-            if self._altstableLifted then
-                AltStable.LiftAboveHiddenUI(self, false)
-                self._altstableLifted = nil
-            end
-            if self._altstablePrevStrata then
-                self:SetFrameStrata(self._altstablePrevStrata)
-                self._altstablePrevStrata = nil
-            end
-        end,
+        -- Belt and braces. The caller lifts; these put it back by whichever
+        -- route the dialog closes, and DropPopup is idempotent so they cannot
+        -- fight each other.
+        OnHide = function(self) DropPopup(self) end,
     }
 end
 
@@ -3437,7 +3472,7 @@ function AltStable.RequestHideCharacter(char)
     if type(char) ~= "table" or not char.guid then return end
     if type(StaticPopup_Show) == "function" and StaticPopupDialogs
         and StaticPopupDialogs[HIDE_POPUP] then
-        StaticPopup_Show(HIDE_POPUP, char.name or "?", nil, { guid = char.guid })
+        LiftPopup(StaticPopup_Show(HIDE_POPUP, char.name or "?", nil, { guid = char.guid }))
         return
     end
     -- No popup API (never seen on this client, but the click should still do
