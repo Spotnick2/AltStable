@@ -265,10 +265,13 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts forget <name>` | Remove a character that no longer exists, for good |
 | `/alts unforget <name>` | Undo that — it returns on the next sync |
 | `/alts forgotten` | What has been forgotten on this account |
-
 | `/alts favourite <name>` | Pin to the top of the Roster, and into the scene |
 | `/alts unfavourite <name>` | Unpin |
 | `/alts favourite` | List them |
+| `/alts auth` | Who may ask us for the database, and who is waiting |
+| `/alts allow <name>` | Share with them from now on, and answer their pending request |
+| `/alts deny <name>` | Refuse for good, both directions — they are never told |
+| `/alts forget-peer <name>` | Drop the stored answer (a whitelisted peer falls back to the whitelist) |
 | `/alts account <n>` | This account's number, shown in the sheet |
 | `/alts export` | TSV of every character, for the spreadsheet |
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |

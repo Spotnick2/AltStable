@@ -87,7 +87,10 @@ local function receive(message, sender)
     local who = sender or "Peer Surname"
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.syncAuth = AltStableConfig.syncAuth or {}
-    AltStableConfig.syncAuth[who:match("^([^%-]+)") or who] = "auto"
+    -- Lower-cased, like Core keys it. WoW whisper targets are case-insensitive
+    -- and the rest of the addon folds case everywhere; the first version of the
+    -- gate did not, which made /alts deny silently no-op on a capitalisation.
+    AltStableConfig.syncAuth[(who:match("^([^%-]+)") or who):lower()] = "auto"
     onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", who)
 end
 
@@ -1973,6 +1976,105 @@ do
     eq(AltStable.ResolveCharacter("Only Surname"), "solo-1",
        "a name held once still resolves without ceremony")
     eq(AltStable.ResolveCharacter("Only"), "solo-1", "  and so does its first name")
+end
+-- Authorization, case-folded and mutual
+------------------------------------------------------------
+-- WoW whisper targets are case-insensitive and the rest of the addon knows it:
+-- IsWhitelisted, RemoveFromWhitelist and IsPeerOnline all compare with
+-- :lower(). The gate did not. That broke it in both directions - a whitelist
+-- entry typed in another case stopped being served, and /alts deny stored an
+-- answer under a key the handler never read, so it printed "refusing" and went
+-- on serving them. A control that no-ops on a capitalisation while reporting
+-- success is worse than no control.
+
+do
+    WoW.reset()
+    AltStableConfig = { whitelist = { "karuzo" }, peerWatermarks = {} }
+    eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_AUTO,
+       "a whitelist entry matches the character whatever the case")
+    eq(AltStable.SyncAuthFor("KARUZO-Realm"), AltStable.AUTH_AUTO,
+       "  realm suffix and shouting included")
+
+    AltStable.DenySyncPeer("karuzo")
+    eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_NEVER,
+       "denying in one case denies in every case")
+
+    AltStable.AllowSyncPeer("KARUZO")
+    eq(AltStable.SyncAuthFor("karuzo"), AltStable.AUTH_AUTO,
+       "  and so does allowing")
+
+    -- One entry, not three.
+    local list = AltStable.SyncAuthList()
+    eq(#list, 1, "the same peer in three cases is one stored answer")
+end
+
+do
+    -- "Refuse them for good" has to mean both directions. Gating only the
+    -- inbound request left a denied peer on the whitelist, so every login still
+    -- whispered them a REQ and /alts cleanup still pushed them the database.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Friend", "Nuisance" }, peerWatermarks = {} }
+    local function targetNames()
+        local names = {}
+        for _, t in ipairs(T.GetSyncTargets()) do names[#names + 1] = t.target end
+        table.sort(names)
+        return table.concat(names, ",")
+    end
+    eq(targetNames(), "Friend,Nuisance", "both whitelisted peers are sync targets")
+
+    AltStable.DenySyncPeer("nuisance")
+    eq(targetNames(), "Friend", "a denied peer is no longer pushed to either")
+end
+
+do
+    -- Forgetting an answer for a WHITELISTED peer falls back to the whitelist,
+    -- which is auto - so saying "they will be asked about again" would tell the
+    -- player the opposite of the truth. The player most likely to type this is
+    -- one who denied someone they had whitelisted.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Bob" }, peerWatermarks = {} }
+    AltStable.DenySyncPeer("Bob")
+    WoW.chatOut = {}
+    AltStable.ForgetSyncPeer("Bob")
+    local said = table.concat(WoW.chatOut or {}, " ")
+    eq(AltStable.SyncAuthFor("Bob"), AltStable.AUTH_AUTO,
+       "forgetting falls back to the whitelist")
+    check(said:find("whitelist", 1, true) ~= nil,
+          "  and the message says so rather than promising a prompt: " .. said)
+    check(said:lower():find("asked about again", 1, true) == nil,
+          "  it does not claim they will be asked about again")
+
+    -- With no whitelist entry, the plain wording is correct.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    AltStable.DenySyncPeer("Carol")
+    WoW.chatOut = {}
+    AltStable.ForgetSyncPeer("Carol")
+    eq(AltStable.SyncAuthFor("Carol"), AltStable.AUTH_ASK,
+       "without a whitelist entry, forgetting really does mean ask")
+    check(table.concat(WoW.chatOut or {}, " "):find("asked about again", 1, true) ~= nil,
+          "  and it says so")
+end
+
+do
+    -- Module state has to be reset between sections like every other piece of
+    -- sync state, or a leftover pending request decides a later assertion.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER", "Ghost Surname")
+    check(#AltStable.PendingSyncRequests() > 0, "a stranger's request is pending")
+    WoW.reset()
+    eq(#AltStable.PendingSyncRequests(), 0, "  and a reset clears it, like the rest of the sync state")
+end
+
+do
+    -- An unanswered request expires rather than accumulating for the session.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER", "Fleeting Surname")
+    eq(#AltStable.PendingSyncRequests(), 1, "the request is remembered")
+    WoW.now = (WoW.now or 0) + 3600
+    eq(#AltStable.PendingSyncRequests(), 0, "  and an hour later it is gone, not merely hidden")
 end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
