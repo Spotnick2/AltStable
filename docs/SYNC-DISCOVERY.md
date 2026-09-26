@@ -10,6 +10,83 @@ first.
 
 ---
 
+
+## #44, measured: the bank half is 52 bytes of 1.6 KB
+
+Measured 2026-09-26 with `Tools/Sync/measure-blob.py`, which reads the
+SavedVariables directly. Re-run it rather than trusting these numbers.
+
+```
+account 50284074#12
+  characters with inventory : 20
+  bag / bank entries        : 100 / 7
+  blob payload, raw         : 1592 bytes
+  ... deflated ALONE        :  403 bytes
+  bank bytes, whole account :   52
+
+account 50284074#1
+  characters with inventory : 15
+  bag / bank entries        :  80 / 0
+  blob payload, raw         : 1188 bytes
+  ... deflated ALONE        :  317 bytes
+```
+
+**What the compressed figures are and are not.** The warband fragments are
+compressed here *on their own*, which is neither the size of a message nor a
+bound on what they add to one. The real payload interleaves them with the core
+character records in a single DEFLATE stream, and interleaving changes match
+distances and available history: a fixture that compresses to 71 bytes alone can
+add **103** when separated by other text. So these are standalone fragment sizes
+— useful for comparing one roster against another, useless for "what does the
+bank cost the wire". Answering *that* means measuring complete payloads with and
+without the bank, which needs the core serializer and so a client.
+
+**The decision does not rest on them anyway.** #44's concern is that a bag
+change re-sends the bank too. Stated correctly: a bag change bumps **one**
+character's stamp, and `SerializeFullDB` filters on `lastUpdate`, so the delta
+carries that character alone. The bank re-sent with it is that one character's
+bank — the worst on this machine is **7 entries, 52 raw bytes**.
+
+Even the worst case the issue imagines is small in raw terms: a full 120-item
+bank, with distinct ids so it does not compress unrealistically, is 905 raw
+bytes. What that costs *compressed, in context* is exactly the thing this script
+cannot tell you — but 905 bytes against a 1.6 KB blob, on the one character that
+changed, is not a format change.
+
+**So the split is not justified**, and it is not free: a `BLOB_VERSION` bump
+with cross-version compatibility to get right. Re-measure if characters start
+hoarding.
+
+### Five ways the first attempt got this wrong
+
+Recorded because each is an easy mistake to repeat, and the first version of
+this section stated all of them as fact.
+
+1. **Summing the account stores.** Each account is a separate client sending its
+   own blob; summing them measures a message nobody sends and double-counts the
+   13 characters both accounts know. Reported 35 characters for something that
+   is really 20.
+2. **Counting chunks on raw bytes.** `ChunkAndSendPayload` DEFLATEs and escapes
+   before slicing, so raw size says nothing about chunk count. The correction
+   was itself half wrong: compressing the fragments alone and calling it an
+   upper bound on their contribution. It is not a bound in either direction —
+   see the counterexample above.
+3. **Treating a delta as the whole roster.** The waste is per character, because
+   only the changed character rides the delta. This made the recorded threshold
+   about twenty times too high.
+4. **"Framing is half the blob."** True uncompressed, false on the wire:
+   near-identical repeated headers are what DEFLATE erases. The claim that
+   trimming framing was "the cheaper fix" is withdrawn.
+5. **Inventing the values being measured.** The script substituted one constant
+   stamp for every character and kept SavedVariables order instead of the
+   numeric order `EncodeMap` emits. Both flatter the compressor: with the real
+   stamps the same data deflates to **403 bytes rather than 343**, 17% worse.
+   Measuring a fixture is not measuring the thing.
+
+Note also that `EncodeForWoWAddonChannel` is **not** base64: it is
+`CreateCodec("\000", "\001", "")`, which escapes two byte values and costs
+~0.6% rather than a third. See #20 item 5, which is about that choice.
+
 ## The problem, stated precisely
 
 Sync is whisper-only to a hand-typed whitelist. A whisper needs a character name, and the name that
