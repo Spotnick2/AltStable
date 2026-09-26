@@ -35,10 +35,28 @@ local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
 local MIN_CARD_W    = 110
 local MIN_CARD_H    = 96      -- below this a portrait is not worth drawing
 
--- Scene view. The ground line sits where the art puts the campfire's base, so
--- the figures stand in the camp rather than floating above or sinking into it.
-local SCENE_GROUND   = 0.13   -- of panel height, from the bottom
+-- Scene view.
+--
+-- The fire's position is not guessed. Media/Scene/README.md commissions every
+-- backdrop with the campfire at horizontal centre 50% and its base at about 84%
+-- of the image height, and those two numbers are what let the figures stand on
+-- the ground the art drew and stand AROUND the fire rather than in it. The
+-- first version used a ground line picked by eye and spaced everyone evenly
+-- across the panel, which put somebody in the flames and hid the one element
+-- that makes the picture a campsite.
+local FIRE_X         = 0.50   -- of the content width
+local FIRE_BASE_Y    = 0.84   -- of the content height, from the TOP
 local SCENE_FIGURE_H = 0.62   -- of panel height, for the TALLEST character
+
+-- The gap kept clear around the fire, as a fraction of panel width.
+local FIRE_CLEARANCE = 0.22
+
+-- The camp is a RING seen from the front, not a line. Someone standing near the
+-- fire's screen x is at the back of that ring: further away, so higher up the
+-- picture and smaller. Someone out at the edge is at the ring's side, nearest
+-- the camera. An ellipse gives both from one number.
+local SCENE_ARC      = 0.08   -- how far back the ring reaches, of panel height
+local SCENE_DEPTH    = 0.14   -- how much smaller the far side of it is
 
 -- How many stand around the fire. Retail's warband campsite shows four or five
 -- and it reads as a scene; thirteen in a row reads as a police line-up, which
@@ -188,8 +206,9 @@ local function TallestNative(chars, cutoutFor)
     return tallest
 end
 
--- Cover-crop a backdrop to the panel: fill it completely, keep the aspect, crop
--- the overflow evenly, and never show the padding.
+-- Cover-crop a backdrop to the panel: fill it completely, keep the aspect, drop
+-- the overflow, and never show the padding. The sides go evenly; the vertical
+-- overflow comes off the TOP only, for the reason given below.
 --
 -- Pure arithmetic and returned rather than applied, so the thing most likely to
 -- be subtly wrong - the v remap by h/texh - is testable without a frame. Get it
@@ -216,20 +235,115 @@ local function BackdropTexCoords(panelW, panelH, entry)
         uFrac = panelAspect / imageAspect      -- panel is taller: crop the sides
     end
 
+    -- Horizontally, crop evenly: the fire is dead centre, so an even crop keeps
+    -- it and a biased one would slide it off the side of a narrow panel.
     local uPad = (1 - uFrac) / 2
-    local vPad = (1 - vFrac) / 2
-    return uPad, 1 - uPad, vMax * vPad, vMax * (1 - vPad)
+
+    -- VERTICALLY, crop the sky. These backdrops are bottom-weighted by design -
+    -- the floor the cast stands on and the fire they stand around are both in
+    -- the bottom sixth - and an even crop takes half of that away. On a wide
+    -- panel it takes ALL of it: the fire ends up outside the visible texture
+    -- entirely, which is the "you don't see the fire" half of the report. Sky
+    -- is the part nobody misses.
+    return uPad, 1 - uPad, vMax * (1 - vFrac), vMax
 end
 
--- Where the figures stand and how wide a slot each gets. They share one ground
--- line and one height, which is the whole point of a lineup: a gnome beside a
--- tauren, both standing on the same floor.
-local function SceneLayout(panelW, panelH, count)
-    if count <= 0 then return 0, 0, 0 end
-    local groundY = panelH * SCENE_GROUND        -- from the panel's BOTTOM
-    local figureH = panelH * SCENE_FIGURE_H
-    local slot = panelW / count
-    return groundY, figureH, slot
+-- Where the fire ended up on screen once the backdrop was cover-cropped.
+--
+-- Returns its centre x and the y of its BASE, both in panel pixels measured the
+-- way the cards are anchored: x from the left, y from the bottom. The crop
+-- moves the fire - a tall panel cuts the sides, a wide one cuts sky off the top
+-- and so raises everything left - which is why this reads the same texture
+-- coordinates the backdrop is drawn with rather than the art spec directly.
+local function FireAnchor(panelW, panelH, entry)
+    local l, r, t, b = BackdropTexCoords(panelW, panelH, entry)
+    local vMax = (tonumber(entry and entry.h) or 0) / (tonumber(entry and entry.texh) or 0)
+    if not (vMax > 0) then vMax = 1 end
+
+    -- Where the fire sits inside the VISIBLE part of the texture, 0..1.
+    local u = (r > l) and ((FIRE_X - l) / (r - l)) or 0.5
+    local v = (b > t) and ((FIRE_BASE_Y * vMax - t) / (b - t)) or FIRE_BASE_Y
+
+    -- Cropped out of frame. Fall back to the middle of the floor rather than
+    -- sending the whole cast off-screen after a fire nobody can see.
+    if u < 0 or u > 1 then u = 0.5 end
+    if v < 0 or v > 1 then v = FIRE_BASE_Y end
+
+    return panelW * u, panelH * (1 - v)
+end
+
+-- Where each figure stands. Returns one spot per character - x, the ground y it
+-- stands on, and the scale it is drawn at - plus the height of the tallest
+-- figure and the width one figure may occupy.
+--
+-- Two things the even-spacing version got wrong. It divided the panel into
+-- equal slots, and the middle slot is where the fire is; and it put everyone on
+-- one flat line, which reads as a police line-up rather than a camp. Here the
+-- cast is split either side of the fire, and each figure is placed on an
+-- ellipse around it: screen offset d from the fire gives depth sqrt(1 - d^2),
+-- which lifts and shrinks whoever is standing at the back of the ring.
+local function SceneLayout(panelW, panelH, count, entry)
+    local spots = {}
+    if count <= 0 or (panelW or 0) <= 0 or (panelH or 0) <= 0 then return spots, 0, 0 end
+
+    local fireX, groundY = FireAnchor(panelW, panelH, entry)
+
+    -- Tall enough to read, never taller than the room above the ground line. A
+    -- flat fraction of the panel overflows the top on any panel whose crop
+    -- pushes the fire high, and a figure running off the top of the scene looks
+    -- worse than a slightly short one.
+    local figureH = math.min(panelH * SCENE_FIGURE_H,
+                             (panelH - groundY) * 0.92)
+    local clear = panelW * FIRE_CLEARANCE
+
+    local leftEdge  = math.max(0, math.min(panelW, fireX - clear / 2))
+    local rightEdge = math.max(leftEdge, math.min(panelW, fireX + clear / 2))
+    local leftRoom, rightRoom = leftEdge, panelW - rightEdge
+
+    -- Share them out by how much room each side has, so an off-centre crop does
+    -- not crowd one half while the other stands empty.
+    local total = leftRoom + rightRoom
+    local nLeft = (total > 0) and math.floor(count * (leftRoom / total) + 0.5)
+                              or math.floor(count / 2)
+    nLeft = math.max(0, math.min(count, nLeft))
+    if leftRoom <= 0 then nLeft = 0 end
+    if rightRoom <= 0 then nLeft = count end
+    local nRight = count - nLeft
+
+    local xs = {}
+    for i = 1, nLeft do
+        xs[#xs + 1] = leftRoom * ((i - 0.5) / nLeft)
+    end
+    for i = 1, nRight do
+        xs[#xs + 1] = rightEdge + rightRoom * ((i - 0.5) / nRight)
+    end
+    table.sort(xs)
+
+    local half = panelW / 2
+    for i = 1, #xs do
+        local d = math.min(1, math.abs(xs[i] - fireX) / half)
+        local depth = math.sqrt(math.max(0, 1 - d * d))
+        spots[i] = {
+            x     = xs[i],
+            y     = groundY + panelH * SCENE_ARC * depth,
+            scale = 1 - SCENE_DEPTH * depth,
+            -- Who overlaps whom. Nearest the camera wins, which is the one
+            -- standing furthest from the fire's screen x. Left to roster order
+            -- the ring overlaps arbitrarily, and a figure at the back of the
+            -- camp is drawn over the top of one at the front.
+            level = math.floor((1 - depth) * 10 + 0.5),
+        }
+    end
+
+    -- The tighter of the two sides, so nobody overlaps their neighbour.
+    local slot
+    if nLeft > 0 then slot = leftRoom / nLeft end
+    if nRight > 0 then
+        local rs = rightRoom / nRight
+        slot = (slot and math.min(slot, rs)) or rs
+    end
+
+    return spots, figureH, slot or (panelW / count)
 end
 
 -- The figure is anchored ABOVE the name block, so the space available to it is
@@ -495,16 +609,18 @@ local function RenderScene(chars)
     if sceneLabel then sceneLabel:SetText(entry.label) end
 
     local cast = SceneCast(chars, CutoutFor, SCENE_CAST)
-    local groundY, figureH, slot = SceneLayout(pw, ph, #cast)
+    local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestNative(cast, CutoutFor)
     local withArt = 0
 
     for i, card in ipairs(Roster.cards) do
         local char = cast[i]
         local cut = char and CutoutFor(char)
-        if char and cut then
+        local spot = spots[i]
+        if char and cut and spot then
             withArt = withArt + 1
             local w, h = RelativeFigureSize(cut, tallest, figureH)
+            w, h = w * spot.scale, h * spot.scale
             -- Narrow the slot, not the figure: shrinking a wide capture to fit
             -- made it SHORTER than its neighbours, which is the height
             -- discrepancy the first version showed - a scaling artefact
@@ -514,9 +630,10 @@ local function RenderScene(chars)
                 w, h = w / overflow, h / overflow
             end
 
+            card:SetFrameLevel(panel:GetFrameLevel() + 1 + spot.level)
+
             card:ClearAllPoints()
-            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
-                          slot * (i - 0.5), groundY - NAME_H - 4)
+            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", spot.x, spot.y - NAME_H - 4)
             card:SetSize(math.max(slot, w), h + NAME_H + 4)
 
             card.plate:Hide()
@@ -684,6 +801,8 @@ function Roster._Bootstrap()
             HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
             SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,
+            FireAnchor = FireAnchor, FIRE_CLEARANCE = FIRE_CLEARANCE,
+            FIRE_X = FIRE_X, FIRE_BASE_Y = FIRE_BASE_Y,
             TallestNative = TallestNative, SCENE_CAST = SCENE_CAST,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,

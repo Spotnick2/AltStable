@@ -264,14 +264,24 @@ do
     check("  and stopping at the content, not the canvas",
           math.abs(b - V_MAX) < 0.0001, tostring(b))
 
-    -- Wider than the art: crop top and bottom, never past the content.
+    -- Wider than the art: crop vertically - and crop the SKY. The floor and the
+    -- fire live in the bottom sixth of every backdrop, so an even crop halves
+    -- the camp and a wide enough panel removes the fire altogether.
     l, r, t, b = T.BackdropTexCoords(2000, 400, entry)
     eq("a wide panel keeps the full width", l, 0)
     eq("  still to the far edge", r, 1)
     check("  and crops vertically", t > 0, tostring(t))
-    check("  without ever reaching the padding", b <= V_MAX + 0.0001,
-          ("%.4f > %.4f"):format(b, V_MAX))
-    check("  symmetrically", math.abs((V_MAX - b) - t) < 0.0001)
+    check("  from the top, keeping the floor", math.abs(b - V_MAX) < 0.0001,
+          ("%.4f vs %.4f"):format(b, V_MAX))
+    check("  by exactly the overflow", math.abs(t - V_MAX * (1 - (400 / 2000) / (682 / 1024))) < 0.0001,
+          tostring(t))
+
+    -- Wide enough to crop past the fire's own ground line under an even crop.
+    -- This is the case that produced "most of the time you don't see the fire".
+    l, r, t, b = T.BackdropTexCoords(1800, 500, entry)
+    check("even a very wide panel keeps the fire's base in frame",
+          0.84 * V_MAX > t and 0.84 * V_MAX < b,
+          ("fire %.4f outside %.4f..%.4f"):format(0.84 * V_MAX, t, b))
 
     -- Taller than the art: crop the sides instead.
     l, r, t, b = T.BackdropTexCoords(400, 800, entry)
@@ -288,22 +298,143 @@ do
 end
 
 ------------------------------------------------------------
--- Everyone stands on the same line
+-- Nobody stands in the fire
 ------------------------------------------------------------
+-- The backdrops are commissioned with the fire at horizontal centre and its
+-- base at 84% of the image height (Media/Scene/README.md). The first version
+-- guessed a ground line and spread the cast evenly across the panel, which put
+-- the middle character in the flames and hid the fire behind the rest.
+
+-- A backdrop shaped exactly like the real ones: 1024x682 of art in the top of a
+-- 1024x1024 texture.
+local BACKDROP = { w = 1024, h = 682, texw = 1024, texh = 1024 }
 
 do
-    local groundY, figureH, slot = T.SceneLayout(1400, 700, 7)
-    check("the ground line is above the panel floor", groundY > 0 and groundY < 700)
-    check("the figures fit above it", figureH > 0 and figureH < 700)
-    check("  with room for the ground line itself", groundY + figureH <= 700)
-    eq("the slots divide the width", slot, 1400 / 7)
+    -- 1400x700 is very close to the art's own 1024x682, so the crop is mild and
+    -- the fire should land near where the art put it.
+    local fireX, fireY = T.FireAnchor(1400, 700, BACKDROP)
+    check("the fire is horizontally centred", math.abs(fireX - 700) < 1,
+          tostring(fireX))
+    check("its base is low in the frame, where the art drew it",
+          fireY > 0 and fireY < 700 * 0.25, tostring(fireY))
 
-    local _, figureH2, slot2 = T.SceneLayout(1400, 700, 14)
-    eq("twice as many characters get half the width each", slot2, slot / 2)
-    eq("  but the same height, so they share a scale", figureH2, figureH)
+    -- A TALL panel crops the sides. The fire is dead centre horizontally, so it
+    -- survives that crop - and being centred is the point of the check: a naive
+    -- (0.5 * panelW) would also pass here, so the wide case below is what
+    -- actually proves the crop is being read.
+    local tallX = T.FireAnchor(400, 900, BACKDROP)
+    check("a tall panel keeps the fire centred", math.abs(tallX - 200) < 1,
+          tostring(tallX))
 
-    local g, f, sl = T.SceneLayout(1400, 700, 0)
-    check("an empty roster lays out nothing", g == 0 and f == 0 and sl == 0)
+    -- A WIDE panel crops sky off the top, so what is left is proportionally
+    -- more floor and the fire sits HIGHER up the visible frame. Read the crop
+    -- and the ground line follows it; ignore it and the cast stands in the
+    -- bottom sixth of a panel whose bottom sixth is no longer the floor.
+    local _, wideY = T.FireAnchor(1800, 500, BACKDROP)
+    local _, squareY = T.FireAnchor(700, 500, BACKDROP)
+    check("cropping the sky raises the fire up the frame",
+          wideY > squareY + 1, ("wide %.1f vs square %.1f"):format(wideY, squareY))
+    check("  and it stays on the panel", wideY > 0 and wideY < 500,
+          tostring(wideY))
+
+    -- The v remap by h/texh again: forget it and the anchor is computed against
+    -- the black padding as though it were art, putting the ground line a third
+    -- of the way up the panel.
+    local flat = { w = 1024, h = 682, texw = 1024, texh = 682 }
+    local _, flatY = T.FireAnchor(1400, 700, flat)
+    check("the padding above the art is not mistaken for art",
+          math.abs(flatY - fireY) < 1,
+          ("%.1f vs %.1f"):format(flatY, fireY))
+
+    local x, y = T.FireAnchor(1400, 700, nil)
+    check("a missing backdrop still gives a usable anchor",
+          x > 0 and x < 1400 and y > 0 and y < 700)
+end
+
+do
+    local spots, figureH, slot = T.SceneLayout(1400, 700, 5, BACKDROP)
+    local fireX = T.FireAnchor(1400, 700, BACKDROP)
+    local clear = 1400 * T.FIRE_CLEARANCE
+
+    eq("everyone in the cast gets a spot", #spots, 5)
+    check("the figures fit on the panel", figureH > 0 and figureH < 700)
+
+    -- The reported bug, as an assertion.
+    for i, sp in ipairs(spots) do
+        check(("character %d is clear of the fire"):format(i),
+              math.abs(sp.x - fireX) >= clear / 2,
+              ("x %.1f vs fire %.1f, clearance %.1f"):format(sp.x, fireX, clear))
+        check(("  and on the panel"):format(i), sp.x > 0 and sp.x < 1400)
+    end
+
+    -- An odd cast with the fire dead centre cannot split evenly, but it must
+    -- still split: 3 and 2, never 2 and a passenger in the flames.
+    local left = 0
+    for _, sp in ipairs(spots) do if sp.x < fireX then left = left + 1 end end
+    check("the cast is split either side of the fire", left >= 2 and left <= 3,
+          tostring(left))
+
+    -- The ring, not the line-up.
+    table.sort(spots, function(a, b) return a.x < b.x end)
+    local inner, outer = spots[3], spots[1]
+    check("whoever stands nearest the fire is further back",
+          inner.y > outer.y, ("%.1f vs %.1f"):format(inner.y, outer.y))
+    check("  and therefore drawn smaller",
+          inner.scale < outer.scale,
+          ("%.3f vs %.3f"):format(inner.scale, outer.scale))
+    check("  but nobody is shrunk out of sight", inner.scale > 0.7,
+          tostring(inner.scale))
+    -- The ring rises from the ground line; nobody sinks below it, and nobody is
+    -- lifted so far they are standing on air.
+    local _, ground = T.FireAnchor(1400, 700, BACKDROP)
+    for i, sp in ipairs(spots) do
+        check(("character %d stands on or behind the ground line"):format(i),
+              sp.y >= ground - 0.001 and sp.y <= ground + 700 * 0.09,
+              ("%.1f vs ground %.1f"):format(sp.y, ground))
+        check(("  and fits above it"):format(i), sp.y + figureH * sp.scale <= 700,
+              ("%.1f"):format(sp.y + figureH * sp.scale))
+    end
+
+    -- Overlap order. The one nearest the camera is drawn last, over the top of
+    -- whoever is standing behind them.
+    check("the figure at the front is drawn over the one at the back",
+          outer.level > inner.level,
+          ("front %d vs back %d"):format(outer.level, inner.level))
+    check("  and the ring's own back is the bottom of the stack",
+          inner.level >= 0, tostring(inner.level))
+
+    check("the slots leave room between neighbours", slot > 0 and slot < 1400)
+    local _, _, slot8 = T.SceneLayout(1400, 700, 8, BACKDROP)
+    check("a bigger cast gets narrower slots", slot8 < slot,
+          ("%.1f vs %.1f"):format(slot8, slot))
+
+    local one = T.SceneLayout(1400, 700, 1, BACKDROP)
+    eq("a single character still gets a spot", #one, 1)
+    check("  and still stands clear of the fire",
+          math.abs(one[1].x - fireX) >= clear / 2)
+
+    -- A wide panel is where the ground line climbs: cropping sky leaves more
+    -- floor, so the fire - and the cast on it - sit higher up. A figure height
+    -- taken as a flat fraction of the panel then runs off the top.
+    do
+        local wide, wideH = T.SceneLayout(1800, 500, 5, BACKDROP)
+        local _, wideGround = T.FireAnchor(1800, 500, BACKDROP)
+        check("a wide panel puts the ground line well up the frame",
+              wideGround > 500 * 0.25, tostring(wideGround))
+        check("  and the figures still fit above it",
+              wideGround + wideH <= 500, ("%.1f + %.1f"):format(wideGround, wideH))
+        check("  without shrinking to nothing", wideH > 500 * 0.4, tostring(wideH))
+        for i, sp in ipairs(wide) do
+            check(("  character %d stays on the panel"):format(i),
+                  sp.y + wideH * sp.scale <= 500,
+                  ("%.1f"):format(sp.y + wideH * sp.scale))
+        end
+    end
+
+    local none, f, sl = T.SceneLayout(1400, 700, 0, BACKDROP)
+    check("an empty roster lays out nothing", #none == 0 and f == 0 and sl == 0)
+    local unmeasured = T.SceneLayout(0, 0, 5, BACKDROP)
+    eq("an unmeasured panel lays out nothing", #unmeasured, 0)
 end
 
 ------------------------------------------------------------
