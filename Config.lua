@@ -483,6 +483,57 @@ end
 
 AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 
+-- Favourite characters (#66)
+--
+-- Deliberately the same shape as hidden below, down to the copy-on-write and
+-- the "absent means no" rule: they are the same kind of thing - a per-account
+-- view preference keyed by GUID, never synced - and a second, subtly different
+-- mechanism for the same job is how the two end up disagreeing.
+--
+-- Three per-character states now, and they have to stay distinct or none of
+-- them means anything:
+--
+--   favourite   show me first          (here)
+--   hidden      do not show me at all  (#21)
+--   forgotten   this does not exist    (#65 - removes the record entirely)
+------------------------------------------------------------
+
+function AltStable.IsCharacterFavourite(guid)
+    if not guid then return false end
+    local fav = AltStableConfig and AltStableConfig.favouriteCharacters
+    return (fav and fav[guid]) and true or false
+end
+
+function AltStable.SetCharacterFavourite(guid, favourite)
+    if not guid then return end
+    AltStableConfig = AltStableConfig or {}
+    local current = AltStableConfig.favouriteCharacters or {}
+    local copy = {}
+    for k, v in pairs(current) do copy[k] = v end
+    copy[guid] = favourite and true or nil    -- nil, not false: absent means no
+    AltStable.SetConfigValue("favouriteCharacters", copy)
+end
+
+function AltStable.ToggleCharacterFavourite(guid)
+    if not guid then return false end
+    local now = not AltStable.IsCharacterFavourite(guid)
+    AltStable.SetCharacterFavourite(guid, now)
+    return now
+end
+
+-- Favourites first, then whatever order the caller already wanted.
+--
+-- Returned as a comparator rather than applied, so every view sorts the same
+-- way and a test can assert the ORDER rather than a rendered list. `within` is
+-- the existing rule - level desc then name, in both views today.
+function AltStable.FavouriteFirst(within)
+    return function(a, b)
+        local fa = AltStable.IsCharacterFavourite(a and a.guid)
+        local fb = AltStable.IsCharacterFavourite(b and b.guid)
+        if fa ~= fb then return fa end
+        return within(a, b)
+    end
+end
 function AltStable.IsCharacterHidden(guid)
     if not guid then return false end
     local hidden = AltStableConfig and AltStableConfig.hiddenCharacters

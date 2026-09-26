@@ -954,6 +954,88 @@ do
 end
 
 ------------------------------------------------------------
+-- Favourites (#66)
+------------------------------------------------------------
+-- Three per-character states now, and they have to stay distinct or none of
+-- them means anything: favourite is "show me first", hidden is "do not show me
+-- at all", forgotten removes the record. Favourite and hidden are the same kind
+-- of thing, so this reuses hidden's storage shape rather than inventing a
+-- second one that can disagree with it.
+
+do
+    local saved = AltStableDB
+    AltStableDB = {}
+    for i = 1, 6 do
+        local guid = ("fav-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Alt %d"):format(i),
+                              level = i * 10, ilvl = i, class = "MAGE" }
+    end
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.hiddenCharacters = nil
+
+    -- Plain order: level descending.
+    local plain = T.AllCharacters()
+    eq("without favourites, the highest level leads", plain[1].name, "Alt 6")
+
+    -- Pin the weakest character and it goes to the front.
+    AltStable.SetCharacterFavourite("fav-1", true)
+    local pinned = T.AllCharacters()
+    eq("a favourite sorts first whatever its level", pinned[1].name, "Alt 1")
+    eq("  and the rest keep their order behind it", pinned[2].name, "Alt 6")
+    eq("  all the way down", pinned[#pinned].name, "Alt 2")
+
+    -- Two favourites keep level order between themselves.
+    AltStable.SetCharacterFavourite("fav-3", true)
+    local two = T.AllCharacters()
+    eq("favourites are ordered among themselves by level", two[1].name, "Alt 3")
+    eq("  then the other favourite", two[2].name, "Alt 1")
+    eq("  then everyone else", two[3].name, "Alt 6")
+
+    -- It is a toggle, and absent means no.
+    check(AltStable.IsCharacterFavourite("fav-1"), "a pinned character reads as favourite")
+    eq("toggling reports the new state", AltStable.ToggleCharacterFavourite("fav-1"), false)
+    check(not AltStable.IsCharacterFavourite("fav-1"), "  and unpins it")
+    eq("  storing nil rather than false, like hidden does",
+       AltStableConfig.favouriteCharacters["fav-1"], nil)
+    check(not AltStable.IsCharacterFavourite("never-seen"), "an unknown guid is not a favourite")
+    check(not AltStable.IsCharacterFavourite(nil), "and neither is nothing")
+
+    -- Favourite and hidden stay different things.
+    AltStable.SetCharacterFavourite("fav-2", true)
+    AltStable.SetCharacterHidden("fav-2", true)
+    for _, c in ipairs(T.AllCharacters()) do
+        check(c.guid ~= "fav-2", "a hidden character stays hidden even when favourited")
+    end
+    AltStable.SetCharacterHidden("fav-2", false)
+
+    ------------------------------------------------------------
+    -- The scene casts from them
+    ------------------------------------------------------------
+    local art = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    local function cut() return art end
+
+    AltStableConfig.favouriteCharacters = nil
+    local byLevel = T.SceneCast(T.AllCharacters(), cut, 2)
+    eq("with no favourites the scene still fills itself by level", byLevel[1].name, "Alt 6")
+
+    AltStable.SetCharacterFavourite("fav-1", true)
+    local cast = T.SceneCast(T.AllCharacters(), cut, 2)
+    eq("a favourite takes a seat at the fire", cast[1].name, "Alt 1")
+    eq("  and the rest of the seats go by level", cast[2].name, "Alt 6")
+
+    -- Fewer favourites than seats must not empty the camp.
+    eq("the cast is still full", #cast, 2)
+
+    eq("the hint knows how many were chosen rather than guessed",
+       T.FavouritesAmong(T.AllCharacters()), 1)
+    AltStableConfig.favouriteCharacters = nil
+    eq("  and that none were, when none were", T.FavouritesAmong(T.AllCharacters()), 0)
+
+    AltStableDB = saved
+    AltStableConfig.favouriteCharacters = nil
+end
+
+------------------------------------------------------------
 -- It builds
 ------------------------------------------------------------
 -- Frames are stubs, so this asserts that the panel can be constructed and

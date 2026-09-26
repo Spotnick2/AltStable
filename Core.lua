@@ -2516,6 +2516,46 @@ SlashCmdList["ALTSTABLE"] = function(args)
         return
     end
 
+    -- Pin a character to the top of the Roster, and into the scene (#66).
+    if cmd == "favourite" or cmd == "favorite" or cmd == "unfavourite" or cmd == "unfavorite" then
+        local on = (cmd == "favourite" or cmd == "favorite")
+        if target == nil or target == "" then
+            local named = {}
+            for guid, c in pairs(AltStableDB or {}) do
+                if type(c) == "table" and c.name and AltStable.IsCharacterFavourite(guid) then
+                    named[#named + 1] = c.name
+                end
+            end
+            table.sort(named)
+            if #named == 0 then
+                Print("No favourites. |cffffff00/alts favourite <character>|r pins one to the "
+                    .. "top of the Roster and puts it in the scene.")
+            else
+                Print("Favourites: |cff88ff88" .. table.concat(named, "|r, |cff88ff88") .. "|r")
+            end
+            return
+        end
+
+        local want, match = target:lower(), nil
+        for guid, c in pairs(AltStableDB or {}) do
+            if type(c) == "table" and c.name then
+                local n = c.name:lower()
+                if n == want then match = guid; break end
+                if n:match("^(%S+)") == want and not match then match = guid end
+            end
+        end
+        if not match then
+            Print("|cffff8800No character called|r " .. target)
+            return
+        end
+
+        AltStable.SetCharacterFavourite(match, on)
+        Print((on and "|cff88ff88Pinned|r " or "Unpinned ") .. (AltStableDB[match].name or target)
+            .. (on and " to the top of the Roster." or "."))
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        return
+    end
+
     if cmd == "account" then
         if target == nil or target == "" then
             -- Bare "/alts account" answers the question people actually have,
