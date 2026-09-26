@@ -681,7 +681,6 @@ function AltStable.ForgetCharacter(guid)
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true, name
 end
-
 -- A character by name, for the slash commands. Returns the GUID, or nil and a
 -- message to print.
 --
@@ -2513,6 +2512,62 @@ SlashCmdList["ALTSTABLE"] = function(args)
         for _, e in ipairs(list) do
             Print(("  %s  |cff888888(%s)|r"):format(e.name or "?", e.guid))
         end
+        return
+    end
+
+    -- Pin a character to the top of the Roster, and into the scene (#66).
+    if cmd == "favourite" or cmd == "favorite" or cmd == "unfavourite" or cmd == "unfavorite" then
+        local on = (cmd == "favourite" or cmd == "favorite")
+
+        if target == nil or target == "" then
+            if not on then
+                -- The verb that was typed, not the other one. The shared branch
+                -- used to answer "unfavourite" with the help for adding.
+                Print("usage: |cffffff00/alts " .. cmd .. " <character>|r")
+                return
+            end
+            -- Listed from the CONFIG, not the database. A favourite whose
+            -- record is gone - after /alts cleanup, or a peer not yet synced -
+            -- is still pinned and comes back pinned, so reporting "no
+            -- favourites" would hide the one entry the player cannot otherwise
+            -- reach.
+            local named = {}
+            for guid in pairs((AltStableConfig or {}).favouriteCharacters or {}) do
+                local c = (AltStableDB or {})[guid]
+                named[#named + 1] = (type(c) == "table" and c.name)
+                    or (guid .. " |cff888888(no record here)|r")
+            end
+            table.sort(named)
+            if #named == 0 then
+                Print("No favourites. |cffffff00/alts favourite <character>|r pins one to the "
+                    .. "top of the Roster and puts it in the scene.")
+            else
+                Print("Favourites: |cff88ff88" .. table.concat(named, "|r, |cff88ff88") .. "|r")
+            end
+            return
+        end
+
+        local match, why = AltStable.ResolveCharacter(target)
+        if not match then
+            Print(why)
+            return
+        end
+
+        AltStable.SetCharacterFavourite(match, on)
+        local name = (AltStableDB[match] or {}).name or target
+        if on then
+            -- Hidden beats favourite, so saying "pinned to the top" of a list
+            -- it does not appear in would be plainly untrue.
+            if AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(match) then
+                Print("|cff88ff88Pinned|r " .. name .. ", but it is hidden, so it still shows "
+                    .. "nowhere. Unhide it in Options to see it.")
+            else
+                Print("|cff88ff88Pinned|r " .. name .. " to the top of the Roster.")
+            end
+        else
+            Print("Unpinned " .. name .. ".")
+        end
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         return
     end
 

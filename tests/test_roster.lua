@@ -954,6 +954,163 @@ do
 end
 
 ------------------------------------------------------------
+-- Favourites (#66)
+------------------------------------------------------------
+-- Three per-character states now, and they have to stay distinct or none of
+-- them means anything: favourite is "show me first", hidden is "do not show me
+-- at all", forgotten removes the record. Favourite and hidden are the same kind
+-- of thing, so this reuses hidden's storage shape rather than inventing a
+-- second one that can disagree with it.
+
+do
+    local saved = AltStableDB
+    AltStableDB = {}
+    for i = 1, 6 do
+        local guid = ("fav-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Alt %d"):format(i),
+                              level = i * 10, ilvl = i, class = "MAGE" }
+    end
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.hiddenCharacters = nil
+
+    -- Plain order: level descending.
+    local plain = T.AllCharacters()
+    eq("without favourites, the highest level leads", plain[1].name, "Alt 6")
+
+    -- Pin the weakest character and it goes to the front.
+    AltStable.SetCharacterFavourite("fav-1", true)
+    local pinned = T.AllCharacters()
+    eq("a favourite sorts first whatever its level", pinned[1].name, "Alt 1")
+    eq("  and the rest keep their order behind it", pinned[2].name, "Alt 6")
+    eq("  all the way down", pinned[#pinned].name, "Alt 2")
+
+    -- Two favourites keep level order between themselves.
+    AltStable.SetCharacterFavourite("fav-3", true)
+    local two = T.AllCharacters()
+    eq("favourites are ordered among themselves by level", two[1].name, "Alt 3")
+    eq("  then the other favourite", two[2].name, "Alt 1")
+    eq("  then everyone else", two[3].name, "Alt 6")
+
+    -- It is a toggle, and absent means no.
+    check(AltStable.IsCharacterFavourite("fav-1"), "a pinned character reads as favourite")
+    eq("toggling reports the new state", AltStable.ToggleCharacterFavourite("fav-1"), false)
+    check(not AltStable.IsCharacterFavourite("fav-1"), "  and unpins it")
+    eq("  storing nil rather than false, like hidden does",
+       AltStableConfig.favouriteCharacters["fav-1"], nil)
+    check(not AltStable.IsCharacterFavourite("never-seen"), "an unknown guid is not a favourite")
+    check(not AltStable.IsCharacterFavourite(nil), "and neither is nothing")
+
+    -- Favourite and hidden stay different things.
+    AltStable.SetCharacterFavourite("fav-2", true)
+    AltStable.SetCharacterHidden("fav-2", true)
+    for _, c in ipairs(T.AllCharacters()) do
+        check(c.guid ~= "fav-2", "a hidden character stays hidden even when favourited")
+    end
+    AltStable.SetCharacterHidden("fav-2", false)
+
+    ------------------------------------------------------------
+    -- The scene casts from them
+    ------------------------------------------------------------
+    local art = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    local function cut() return art end
+
+    AltStableConfig.favouriteCharacters = nil
+    local byLevel = T.SceneCast(T.AllCharacters(), cut, 2)
+    eq("with no favourites the scene still fills itself by level", byLevel[1].name, "Alt 6")
+
+    AltStable.SetCharacterFavourite("fav-1", true)
+    local cast = T.SceneCast(T.AllCharacters(), cut, 2)
+    eq("a favourite takes a seat at the fire", cast[1].name, "Alt 1")
+    eq("  and the rest of the seats go by level", cast[2].name, "Alt 6")
+
+    -- Fewer favourites than seats must not empty the camp.
+    eq("the cast is still full", #cast, 2)
+
+    -- The hint counts who is SEATED, not who is pinned. Only characters with a
+    -- portrait can be seated, so favouriting a portrait-less alt used to make
+    -- the hint claim "your favourites first" over a scene of pure level picks.
+    -- The first version of this test asserted the roster count and blessed it.
+    eq("the hint counts favourites actually seated", T.FavouritesAmong(cast), 1)
+
+    local function noArtForAlt1(c) return c.name ~= "Alt 1" and art or nil end
+    local castNoArt = T.SceneCast(T.AllCharacters(), noArtForAlt1, 2)
+    eq("a favourite with no portrait cannot be seated",
+       T.FavouritesAmong(castNoArt), 0)
+    check("  so the scene fills from level instead", castNoArt[1].name == "Alt 6")
+    check("  while the roster still counts it as pinned",
+          T.FavouritesAmong(T.AllCharacters()) == 1,
+          "the roster and the cast are different questions")
+
+    AltStableConfig.favouriteCharacters = nil
+    eq("  and none are seated when none are pinned",
+       T.FavouritesAmong(T.SceneCast(T.AllCharacters(), cut, 2)), 0)
+
+    AltStableDB = saved
+    AltStableConfig.favouriteCharacters = nil
+end
+
+------------------------------------------------------------
+-- What the scene actually tells the player
+------------------------------------------------------------
+-- The hint claims either "your favourites first" or "highest level first", and
+-- which one is true depends on who got SEATED - not on who is pinned. Only
+-- characters with a portrait can be seated, so favouriting a portrait-less alt
+-- used to produce a scene of pure level picks under a hint claiming otherwise.
+--
+-- This drives the real panel, because the bug was the renderer handing the
+-- count the wrong list. Every test that checks FavouritesAmong directly passes
+-- whichever list it is given.
+
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = {}
+    for i = 1, 6 do
+        local guid = ("wire-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Wire %d"):format(i),
+                              level = i * 10, ilvl = i, class = "MAGE" }
+    end
+
+    -- Portraits for everyone EXCEPT Wire 1, who is the one we pin.
+    AltStableCutoutManifest = {}
+    for i = 2, 6 do
+        AltStableCutoutManifest[("wire-%d"):format(i)] =
+            { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    local guessed = T.HintText() or ""
+    check("with nobody pinned the hint says it is guessing",
+          guessed:find("highest level first", 1, true) ~= nil, guessed)
+
+    -- Pin the one character that CANNOT be seated.
+    AltStable.SetCharacterFavourite("wire-1", true)
+    T.Refresh()
+    local stillGuessing = T.HintText() or ""
+    check("pinning a character with no portrait does not make it a choice",
+          stillGuessing:find("highest level first", 1, true) ~= nil, stillGuessing)
+    check("  and the hint does not claim otherwise",
+          stillGuessing:find("favourites first", 1, true) == nil, stillGuessing)
+
+    -- Pin one that can.
+    AltStable.SetCharacterFavourite("wire-2", true)
+    T.Refresh()
+    local chosen = T.HintText() or ""
+    check("pinning a character that can be seated does",
+          chosen:find("favourites first", 1, true) ~= nil, chosen)
+
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterView = nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
+------------------------------------------------------------
 -- It builds
 ------------------------------------------------------------
 -- Frames are stubs, so this asserts that the panel can be constructed and

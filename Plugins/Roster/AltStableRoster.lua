@@ -499,7 +499,8 @@ local function CharacterStore()
     return AltStableDB
 end
 
--- Everyone the addon knows about and is willing to show, highest level first.
+-- Everyone the addon knows about and is willing to show: favourites first
+-- (#66), then highest level.
 --
 -- Deliberately UNCAPPED. MAX_CARDS is a grid concern - it is how many cards the
 -- grid has to draw with - and applying it here made it a selection rule for the
@@ -519,11 +520,14 @@ local function AllCharacters()
             end
         end
     end
-    table.sort(out, function(a, b)
+    -- Favourites first (#66), then level, then name. The grid and the scene
+    -- share this one list, so pinning a character moves it in both.
+    local byLevel = function(a, b)
         local la, lb = a.level or 0, b.level or 0
         if la ~= lb then return la > lb end
         return (a.name or "") < (b.name or "")
-    end)
+    end
+    table.sort(out, AltStable.FavouriteFirst and AltStable.FavouriteFirst(byLevel) or byLevel)
     return out
 end
 
@@ -755,7 +759,8 @@ local function FitScale(sizes, slot)
     return 1 / worst
 end
 
--- Who stands around the fire: the highest level first, then item level, capped.
+-- Who stands around the fire: favourites first (#66), then level, then item
+-- level, capped.
 -- Only characters with a portrait, because a class card pasted into a campsite
 -- looks like a mistake rather than a placeholder.
 local function SceneCast(chars, cutoutFor, limit)
@@ -763,15 +768,41 @@ local function SceneCast(chars, cutoutFor, limit)
     for _, c in ipairs(chars) do
         if cutoutFor(c) then out[#out + 1] = c end
     end
-    table.sort(out, function(a, b)
+
+    -- Favourites are the cast (#66). The five you want around the fire are the
+    -- five you play, which is what a favourite already means - so this needs no
+    -- second flag, and the hint stops apologising for guessing.
+    --
+    -- Top-by-level stays as the default, for a roster with no favourites yet,
+    -- and as the filler when there are fewer favourites than seats. Nobody
+    -- should have to mark five characters before the scene works at all.
+    local byRank = function(a, b)
         local la, lb = a.level or 0, b.level or 0
         if la ~= lb then return la > lb end
         local ia, ib = a.ilvl or 0, b.ilvl or 0
         if ia ~= ib then return ia > ib end
         return (a.name or "") < (b.name or "")
-    end)
+    end
+    table.sort(out, AltStable.FavouriteFirst and AltStable.FavouriteFirst(byRank) or byRank)
+
     while #out > (limit or SCENE_CAST) do table.remove(out) end
     return out
+end
+
+-- How many favourites are in a list.
+--
+-- Called on the CAST, never on the roster. Only characters with a portrait can
+-- be seated, so a favourite without one is pinned and absent - and counting the
+-- roster made the hint claim "your favourites first" while the scene was in
+-- fact five pure level picks.
+local function FavouritesAmong(chars)
+    local n = 0
+    for _, c in ipairs(chars) do
+        if AltStable.IsCharacterFavourite and AltStable.IsCharacterFavourite(c.guid) then
+            n = n + 1
+        end
+    end
+    return n
 end
 
 -- One backdrop, everyone standing on it.
@@ -837,7 +868,9 @@ local function RenderScene(chars)
         end
     end
 
-    return withArt, #chars
+    -- The third value is how many of the SEATED characters were chosen rather
+    -- than guessed, which is the only honest basis for the hint below.
+    return withArt, #chars, FavouritesAmong(cast)
 end
 
 -- Where the hint goes, and how wide it may be.
@@ -882,10 +915,13 @@ function Roster.Refresh()
 
     if View() == "scene" then
         ApplyHintLayout(panel:GetWidth(), true)
-        local shown, total = RenderScene(CharactersFor("scene"))
+        local shown, total, chosen = RenderScene(CharactersFor("scene"))
         if shown < total then
-            hintText:SetText(("showing %d of %d - highest level first; the grid shows them all")
-                :format(shown, total))
+            hintText:SetText(chosen > 0
+                and ("showing %d of %d - your favourites first; the grid shows them all")
+                    :format(shown, total)
+                or ("showing %d of %d - highest level first; favourite the ones you want here")
+                    :format(shown, total))
             hintText:Show()
         else
             hintText:Hide()
@@ -1009,6 +1045,13 @@ function Roster._Bootstrap()
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             AllCharacters = AllCharacters, CharactersFor = CharactersFor,
+            FavouritesAmong = FavouritesAmong,
+            -- What the player is actually told. Asserting the hint STRING is
+            -- the only way to catch the renderer handing the count the wrong
+            -- list: the composition is right either way.
+            HintText = function() return hintText and hintText:GetText() end,
+            Refresh = function() return Roster.Refresh() end,
+            Activate = function(main) return Roster.Activate(main) end,
             HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
             SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,
