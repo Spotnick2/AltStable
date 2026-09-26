@@ -466,5 +466,99 @@ if commit then
     eq("a change elsewhere refreshes the box", box:GetText(), "6")
 end
 
+------------------------------------------------------------
+-- The camera presentation must beat CameraKeepCharacterCentered (#25)
+------------------------------------------------------------
+-- The offset was written and then quietly cancelled: an 11.0.x client - which
+-- this codebase is - added CameraKeepCharacterCentered, which re-centres the
+-- character regardless. So the source looked right and the screen did not.
+-- DialogueUI, which works on Forever, sets the same pair and comments them
+-- "11.0.2 Fix".
+--
+-- The other half is putting them back. A presentation that leaves a player's
+-- camera CVars changed after the window closes is worse than one that never
+-- moved the camera.
+
+local Cam = AltStable._test.CameraPresentation
+check("the presentation is reachable", Cam ~= nil)
+
+if Cam then
+    local CENTRING = AltStable._test.CENTRING_CVARS
+    check("the centring CVars are named", type(CENTRING) == "table" and #CENTRING >= 1)
+
+    -- The key _GetConfig actually reads. An earlier version set
+    -- `worldCameraPresentation`, which nothing reads at all: the block passed
+    -- only because the feature defaults to on, and would have failed with a
+    -- confusing "Enter() did not activate" the moment that default changed.
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig.enableWorldCameraPresentation = true
+
+    -- The player's own settings, as they were before we touched anything.
+    WoW.cvars["CameraKeepCharacterCentered"] = "1"
+    WoW.cvars["CameraReduceUnexpectedMovement"] = "1"
+    WoW.cvars["test_cameraOverShoulder"] = "0"
+    WoW.cvars["cameraDistanceMaxZoomFactor"] = "1.0"
+
+    Cam.active = false
+    local entered = pcall(Cam.Enter, Cam)
+    check("entering does not error", entered)
+
+    if entered and Cam.active then
+        eq("the character stops being centred", WoW.cvars["CameraKeepCharacterCentered"], "0")
+        eq("  and the movement damping is off", WoW.cvars["CameraReduceUnexpectedMovement"], "0")
+        check("  while the shoulder offset is still written",
+              tonumber(WoW.cvars["test_cameraOverShoulder"]) ~= 0,
+              tostring(WoW.cvars["test_cameraOverShoulder"]))
+
+        pcall(Cam.ForceRestore, Cam, "test")
+        eq("leaving puts centring back exactly as found",
+           WoW.cvars["CameraKeepCharacterCentered"], "1")
+        eq("  and the damping", WoW.cvars["CameraReduceUnexpectedMovement"], "1")
+        eq("  and the shoulder offset", tonumber(WoW.cvars["test_cameraOverShoulder"]), 0)
+    else
+        check("the presentation entered", false, "Enter() did not activate")
+    end
+
+    -- A CVar this client does not have must not be INVENTED - on the way in or
+    -- the way out. Asserting Cam.active matters: without it an Enter() that
+    -- threw or bailed early would leave the CVar absent and this would pass for
+    -- the wrong reason, proving nothing about the guard.
+    WoW.cvars["CameraKeepCharacterCentered"] = nil
+    WoW.cvars["CameraReduceUnexpectedMovement"] = nil
+    Cam.active = false
+    local ok2 = pcall(Cam.Enter, Cam)
+    check("it still enters on a client without those CVars", ok2 and Cam.active == true)
+    eq("  and does not create the one it lacks",
+       WoW.cvars["CameraKeepCharacterCentered"], nil)
+    eq("  nor the other", WoW.cvars["CameraReduceUnexpectedMovement"], nil)
+    pcall(Cam.ForceRestore, Cam, "test")
+    eq("  nor invent one on the way out",
+       WoW.cvars["CameraKeepCharacterCentered"], nil)
+
+    -- Reopening the sheet DURING the exit animation must cancel the pending
+    -- restore. Otherwise it fires with the sheet open and re-centres the
+    -- character - the very bug this feature exists to prevent, arriving half a
+    -- second late.
+    WoW.cvars["CameraKeepCharacterCentered"] = "1"
+    Cam.active = false
+    pcall(Cam.Enter, Cam)
+    eq("centring is off while shown", WoW.cvars["CameraKeepCharacterCentered"], "0")
+    pcall(Cam.Exit, Cam, "test")
+    pcall(Cam.Enter, Cam)                       -- reopened mid-exit
+    eq("re-entering during the exit animation restarts the presentation",
+       Cam.mode, "enter")
+    eq("  and leaves centring off", WoW.cvars["CameraKeepCharacterCentered"], "0")
+    -- Exit() had already put the saved view back and stopped the yaw, so merely
+    -- flipping the mode would leave a sheet open with no showcase at all. The
+    -- entry must be a REAL one: SetView(2) is the first thing Enter does.
+    eq("  and really re-enters, rather than resuming a half-undone one",
+       WoW.camera.view, 2)
+    check("  with a fresh capture to restore from", Cam.capture ~= nil)
+    pcall(Cam.ForceRestore, Cam, "test")
+
+    AltStableConfig.enableWorldCameraPresentation = nil
+    WoW.reset()
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -491,9 +491,36 @@ do
     -- character laterally on screen (Narcissus-style), which leaves the
     -- addon sitting where the user placed it.
 
+    -- Camera CVars that CANCEL a shoulder offset, added in the 11.0.x client
+    -- this codebase comes from. Captured on entry, restored on exit, and set to
+    -- "0" in between. Named here so the restore loop cannot drift from the
+    -- write loop.
+    local CENTRING_CVARS = {
+        "CameraKeepCharacterCentered",
+        "CameraReduceUnexpectedMovement",
+    }
+    AltStable._test = AltStable._test or {}
+    AltStable._test.CENTRING_CVARS = CENTRING_CVARS
+    AltStable._test.CameraPresentation = AltStableCameraPresentation
+
     function AltStableCameraPresentation:Enter()
         if self.active then
-            return
+            -- Unless we are on the way OUT. Exit() leaves active set and clears
+            -- it only when the animation completes, so reopening the sheet
+            -- inside that window used to no-op here - and the pending
+            -- ForceRestore then fired with the sheet OPEN, putting
+            -- CameraKeepCharacterCentered back to 1 and re-centring the
+            -- character. The bug this feature exists to prevent, half a second
+            -- late.
+            --
+            -- Finish the exit properly and enter afresh, rather than flipping
+            -- the mode back. Exit() has ALREADY restored the game UI, stopped
+            -- the yaw and put the saved view back, so simply resuming leaves a
+            -- presentation that is missing everything Exit undid - a reopened
+            -- sheet with no showcase at all, which is its own bug.
+            if self.mode ~= "exit" then return end
+            self:ForceRestore("re-enter during exit")
+            CameraDebug("re-entered during exit; restarting the presentation")
         end
         if InCombatLockdown and InCombatLockdown() then
             return
@@ -546,14 +573,51 @@ do
         -- SuppressExperimentalCVarPopup at the bottom of this `do` block).
         -- Capture before we touch it; restore on exit.
         if type(GetCVar) == "function" and type(SetCVar) == "function" then
+            -- The offset alone is not enough on this codebase. An 11.0.x client
+            -- added CameraKeepCharacterCentered, which does exactly what it
+            -- says: it re-centres the character and cancels the shoulder offset
+            -- we just wrote. So the offset was applied and then quietly undone,
+            -- which is why this looked correct in the source and wrong on
+            -- screen (#25). CameraReduceUnexpectedMovement is the same vintage
+            -- and smooths our move away.
+            --
+            -- Evidence: DialogueUI 1.0.5-f works on Forever and sets both,
+            -- commented "11.0.2 Fix", alongside the same
+            -- test_cameraOverShoulder we use.
+            --
+            -- Neither is a test_ CVar, so neither needs the experimental-popup
+            -- suppression that the offset write goes through.
+            for _, cvar in ipairs(CENTRING_CVARS) do
+                -- Only touch what the client actually has. Writing to a CVar
+                -- that does not exist CREATES it, so an older build would come
+                -- out of this with a setting it never had and no way back -
+                -- the restore cannot undo what it never captured.
+                local prev = GetCVar(cvar)
+                if prev ~= nil then
+                    self.capture[cvar] = prev
+                    pcall(SetCVar, cvar, "0")
+                end
+            end
+
             self.capture.shoulderOffset = tonumber(GetCVar("test_cameraOverShoulder")) or 0
             local desired = self:_ComputeShoulderOffset(self.enterToZoom)
             if AltStable.SuppressExperimentalCVarPopup then
                 AltStable.SuppressExperimentalCVarPopup()
             end
             pcall(SetCVar, "test_cameraOverShoulder", desired)
-            CameraDebug(string.format("shoulder: from=%.3f to=%.3f",
-                self.capture.shoulderOffset, desired))
+            -- Report what each CVar is NOW, not what it was. The first version
+            -- printed the captured value under a label that reads as current
+            -- state, so on a client where centring had been on it logged
+            -- "centred=1" immediately after setting it to 0 - which anyone
+            -- debugging a recurrence would read as "the fix did not run".
+            local after = {}
+            for _, cvar in ipairs(CENTRING_CVARS) do
+                after[#after + 1] = cvar:gsub("^Camera", "") .. "="
+                    .. tostring(GetCVar(cvar)) .. " (was "
+                    .. tostring(self.capture[cvar]) .. ")"
+            end
+            CameraDebug(string.format("shoulder: from=%.3f to=%.3f  %s",
+                self.capture.shoulderOffset, desired, table.concat(after, " ")))
         end
 
         do
@@ -631,6 +695,15 @@ do
                     end
                     pcall(SetCVar, "test_cameraOverShoulder",
                           self.capture.shoulderOffset)
+                end
+                -- Put the centring CVars back exactly as found. A nil capture
+                -- means the CVar did not exist on this client, and writing a
+                -- default over it would be inventing a setting the player never
+                -- had.
+                for _, cvar in ipairs(CENTRING_CVARS) do
+                    if self.capture[cvar] ~= nil then
+                        pcall(SetCVar, cvar, self.capture[cvar])
+                    end
                 end
             end
         end
