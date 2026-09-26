@@ -2234,6 +2234,105 @@ do
     flushAll()
     check(#WoW.sentMessages() > 0, "  while an answer left alone is still honoured")
 end
+
+
+------------------------------------------------------------
+-- The prompt's own instruction has to work
+------------------------------------------------------------
+-- The notice named the requester with the realm stripped and told the player to
+-- type "/alts allow Faraway Name" - which authorizes the LOCAL character of
+-- that name while the one who actually asked stays pending. A prompt whose
+-- instruction grants the wrong person is worse than no prompt.
+--
+-- So this runs the command the prompt PRINTS, rather than calling the helper
+-- with the identity I already know is right. Testing the corrected call was how
+-- the bug survived the first round.
+
+do
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Prompt-1"] = { guid = "Player-Prompt-1", name = "Secret", class = "MAGE",
+                                level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    WoW.chatOut = {}
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Faraway Name-OtherRealm")
+
+    local notice = table.concat(WoW.chatOut or {}, " ")
+    check(notice:find("Faraway Name-OtherRealm", 1, true) ~= nil,
+          "the prompt names the requester in full: " .. notice)
+
+    -- Pull the command straight out of the message and run exactly that.
+    local suggested = notice:match("/alts allow ([^|]+)")
+    check(suggested ~= nil, "the prompt suggests an allow command")
+    suggested = suggested and suggested:gsub("%s+$", "")
+    eq(suggested, "Faraway Name-OtherRealm",
+       "and it names the character that actually asked")
+
+    AltStable.AllowSyncPeer(suggested)
+    eq(AltStable.SyncAuthFor("Faraway Name-OtherRealm"), AltStable.AUTH_AUTO,
+       "following the prompt authorizes the requester")
+    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_ASK,
+       "  and not the local namesake")
+end
+
+------------------------------------------------------------
+-- Consent has to be current when the reply goes out
+------------------------------------------------------------
+
+do
+    -- forget-peer drops the answer back to "ask". Testing only for NEVER let
+    -- that through: the stored decision said ask and the database went anyway.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Withdraw-1"] = { guid = "Player-Withdraw-1", name = "Secret", class = "MAGE",
+                                  level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Waverer Surname")
+    AltStable.AllowSyncPeer("Waverer Surname")     -- schedules the reply
+    WoW.sent = {}
+    AltStable.ForgetSyncPeer("Waverer Surname")    -- back to ask, before it fires
+    flushAll()
+    eq(#WoW.sentMessages(), 0,
+       "withdrawing consent to 'ask' stops the reply, not just denying")
+end
+
+do
+    -- A cancelled reply must not spend the scope change. Marking the peer
+    -- "answered in full at generation N" before knowing whether the answer goes
+    -- out meant re-approving them afterwards got a delta - and the newly
+    -- eligible records, stamped below every watermark, were never sent at all.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, peerScopeGeneration = {}, syncAuth = {},
+                        accountNumber = "1" }
+    AltStableDB = {
+        ["Player-Other-1"] = { guid = "Player-Other-1", name = "Otherling", class = "MAGE",
+                               level = 60, lastUpdate = 1000, account = "2" },
+    }
+    AltStable.SetConfigValue("sendAllAccounts", true)   -- the other account is now eligible
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|2000", "WHISPER",
+            "Fickle Surname")
+    AltStable.AllowSyncPeer("Fickle Surname")
+    AltStable.DenySyncPeer("Fickle Surname")           -- cancel it
+    flushAll()
+    eq(AltStableConfig.peerScopeGeneration["Fickle Surname"], nil,
+       "a cancelled reply does not consume the scope change")
+
+    -- Re-approve and ask again: the record stamped below the watermark must
+    -- still arrive, which only happens if the generation was never spent.
+    AltStable.AllowSyncPeer("Fickle Surname")
+    WoW.sent = {}
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|2000", "WHISPER",
+            "Fickle Surname")
+    flushAll()
+    local reply = decodeReply(WoW.sentMessages())
+    check(reply["Player-Other-1"] ~= nil,
+          "so re-approving still recovers the newly eligible record")
+end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else

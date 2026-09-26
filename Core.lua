@@ -1231,13 +1231,6 @@ local function DefineSyncServing()
         -- Scope and watermark keys stay as PeerShort, matching what is already
         -- persisted under them; only the authorization side is case-folded.
         local owedShort = PeerShort(peer)
-        local generation = ScopeGeneration()
-        AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
-        if (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation then
-            sinceTS = 0   -- our scope changed since this peer last heard from us
-            AltStableConfig.peerScopeGeneration[owedShort] = generation
-            AltStable.OnConfigChanged("peerScopeGeneration")
-        end
 
         pendingAuth[AuthKey(peer) or owedShort] = nil
 
@@ -1254,16 +1247,32 @@ local function DefineSyncServing()
         Print(peer .. " requested sync — sending data.")
         local delay = ReplyDelay(AltStable.API.PlayerFullName(), time())
         C_Timer.After(delay, function()
-            -- Check again. The reply is staggered by a few seconds, and in that
-            -- window the player can read the name, decide against it and type
-            -- /alts deny - which said "refusing" while the database went out
-            -- anyway. An answer given before the envelope is sealed has to
-            -- count.
-            if SyncAuthFor(peer) == AUTH_NEVER then
-                Print("|cffff8800" .. (PeerShort(peer) or peer)
-                    .. " was denied before the reply went out - nothing was sent.|r")
+            -- Consent has to be CURRENT, not merely not-revoked. The reply is
+            -- staggered by a few seconds, and in that window the player can
+            -- read the name and change their mind - by denying, or by typing
+            -- /alts forget-peer, which drops the answer back to "ask". Testing
+            -- only for NEVER let the second one through: the stored decision
+            -- said ask and the database went out anyway.
+            if SyncAuthFor(peer) ~= AUTH_AUTO then
+                Print("|cffff8800" .. peer
+                    .. " is no longer approved - nothing was sent.|r")
                 return
             end
+
+            -- The scope generation is spent HERE, not when the reply was
+            -- scheduled. Marking a peer "answered in full at generation N"
+            -- before knowing whether the answer goes out meant a cancelled
+            -- reply consumed the scope change: re-approving them afterwards
+            -- got a delta again, and the newly eligible records - stamped
+            -- below every watermark - were never sent at all.
+            local generation = ScopeGeneration()
+            AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
+            if (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation then
+                sinceTS = 0   -- our scope changed since this peer last heard from us
+                AltStableConfig.peerScopeGeneration[owedShort] = generation
+                AltStable.OnConfigChanged("peerScopeGeneration")
+            end
+
             SendFullDatabase(replyChannel, replyTarget, sinceTS)
         end)
     end
@@ -1282,7 +1291,14 @@ local function DefineSyncServing()
         if prev and prev.told and (now - prev.told) < NOTICE_EVERY then return end
         pendingAuth[key].told = now
 
-        local shown = PeerShort(peer) or key
+        -- The FULL identity, realm and all, in the text and in both commands.
+        --
+        -- Showing PeerShort meant the prompt said "Faraway Name is asking" and
+        -- told the player to type /alts allow Faraway Name - which grants the
+        -- LOCAL character of that name while the cross-realm requester stays
+        -- pending. A prompt whose own instruction authorizes the wrong person
+        -- is worse than no prompt.
+        local shown = peer
         Print("|cffff8800" .. shown .. " is asking for your character database.|r "
             .. "Nothing has been sent. "
             .. "|cffffff00/alts allow " .. shown .. "|r to share with them from now on, "
