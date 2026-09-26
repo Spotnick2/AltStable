@@ -632,6 +632,19 @@ function ShowCopy(src)
     copyFrame:Show()
 end
 
+-- Shared with the other probe files. WoW chat is not selectable, so any command
+-- whose answer is a path the player has to retype needs this, not just this one.
+AltStableProbe = AltStableProbe or {}
+AltStableProbe.ShowCopy = ShowCopy
+
+-- The copy window is a big mouse-enabled frame in the middle of the screen, so
+-- anything that reads the cursor has to be able to move it out of the way
+-- first - otherwise the second reading is of this.
+function AltStableProbe.HideCopy()
+    if copyFrame and copyFrame:IsShown() then copyFrame:Hide(); return true end
+    return false
+end
+
 ----------------------------------------------------------------------------
 -- Cross-account whisper test (run with both WOW1 and WOW12 logged in).
 --

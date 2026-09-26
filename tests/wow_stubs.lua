@@ -32,6 +32,7 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
+    tickers     = {},
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
@@ -55,6 +56,10 @@ function WoW.reset()
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
+    -- Tickers are NOT cleared: they are registered once at load, like the
+    -- client's, and a reset is a new test section rather than a new session.
+    -- Clearing them here is what left Core's stale-buffer sweep unreachable
+    -- after the first WoW.reset().
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.equipped = {}
     if UIParent then UIParent:Show() end
@@ -263,13 +268,45 @@ C_Timer = {
         end
         return entry
     end,
-    NewTicker = function(_, fn) return { Cancel = function() end } end,
+    -- A REAL ticker: it queues like the others, fires on each flush, and stays
+    -- queued until cancelled. The inert version returned a handle that never
+    -- fired and a Cancel that did nothing, which made every countdown built on
+    -- NewTicker untestable - the callback simply never ran, so a test could
+    -- only assert that something had been scheduled.
+    -- Tickers live in their own list, NOT in WoW.timers.
+    --
+    -- Core registers a 60-second sweep at load, so a repeating entry in
+    -- WoW.timers would mean the count never reaches zero - and test_comm's
+    -- flushAll short-circuits on exactly that, while test_instances asserts
+    -- `#WoW.timers == 0`. A real ticker should not quietly change what a
+    -- one-shot timer count means.
+    NewTicker = function(delay, fn)
+        local entry = { delay = delay, ticker = true }
+        entry.Cancel = function()
+            entry.cancelled = true
+            for i, e in ipairs(WoW.tickers) do
+                if e == entry then table.remove(WoW.tickers, i); return end
+            end
+        end
+        entry.fn = function() fn(entry) end
+        table.insert(WoW.tickers, entry)
+        return entry
+    end,
 }
 
+-- One flush is one tick: every pending one-shot fires and is gone, and every
+-- live ticker fires once and stays. A test advances N ticks by flushing N times.
 function WoW.flushTimers()
     local t = WoW.timers
     WoW.timers = {}
     for _, e in ipairs(t) do e.fn() end
+
+    -- Snapshot first: a ticker's callback may cancel itself or add another.
+    local ticking = {}
+    for _, e in ipairs(WoW.tickers) do ticking[#ticking + 1] = e end
+    for _, e in ipairs(ticking) do
+        if not e.cancelled then e.fn() end
+    end
 end
 
 -- Combat, the interface toggle, and screenshots.
