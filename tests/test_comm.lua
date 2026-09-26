@@ -1173,6 +1173,42 @@ T.ResetSyncState()
 check(askWithWatermark(900)["Player-Late-1"] ~= nil,
       "a scope change made before a relaunch is still honoured afterwards")
 
+-- ResetPeerWatermarks: it must CLEAR, and it must survive a config that has
+-- not loaded yet.
+--
+-- The clearing half is the one that matters and the one nothing asserted. It
+-- exists for /alts cleanup, which wipes the database down to the current
+-- character and then resets watermarks precisely so the follow-up
+-- BroadcastRequest pulls a FULL database back. A reset that quietly kept the
+-- old stamps leaves every peer answering with a delta above them, and the
+-- wiped characters never return - the exact regression the function prevents.
+-- A no-op version passed the whole suite.
+do
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig.peerWatermarks = { ["Someone Surname"] = 4242 }
+    AltStable.ResetPeerWatermarks()
+    eq(next(AltStableConfig.peerWatermarks or {}), nil,
+       "resetting watermarks actually empties them")
+end
+
+-- And the nil-config half. Plugin bootstrap reaches it: Core.lua is listed
+-- before Config.lua in the TOC, so Core's PLAYER_LOGIN handler loads the
+-- plugins before Config's EnsureDefaults runs, and the Warband plugin calls
+-- this from its bootstrap. Its two siblings, GetPeerWatermark and
+-- AdvancePeerWatermark, both open with `AltStableConfig = AltStableConfig or
+-- {}`; this one goes through SetConfigValue, which guards the same way.
+do
+    local saved = AltStableConfig
+    AltStableConfig = nil
+    local ok, err = pcall(AltStable.ResetPeerWatermarks)
+    check(ok, "resetting watermarks before the config loads does not error: " .. tostring(err))
+    check(type(AltStableConfig) == "table",
+          "  and it leaves a config behind rather than nothing")
+    check(type(AltStableConfig and AltStableConfig.peerWatermarks) == "table",
+          "  with a watermark table for the next writer to use")
+    AltStableConfig = saved
+end
+
 local epoch = T.SyncScopeEpoch()
 AltStableConfig.accountNumber = "1"
 AltStable.SetConfigValue("accountNumber", 1)
