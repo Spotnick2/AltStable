@@ -32,6 +32,9 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
+    -- File ids this pretend client has. Empty by default: a test that relies on
+    -- one says so, which is the point.
+    knownFileIDs = {},
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
@@ -56,6 +59,7 @@ function WoW.reset()
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
+    WoW.knownFileIDs = {}
     WoW.equipped = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
@@ -143,6 +147,33 @@ local function makeFrame()
     -- is exactly what needs testing, and with the chaining default every such
     -- save/restore stored the FRAME ITSELF as "the saved strata" and restored
     -- nothing - a silent no-op that reads as correct.
+    -- Textures: what was set, and whether the client knew it.
+    --
+    -- SetTexture takes a path OR a file id, and an id the client does not have
+    -- leaves the texture EMPTY rather than erroring - so "did that id resolve"
+    -- can only be answered by asking the texture afterwards. Modelled here
+    -- because code that checks before falling back is code worth testing, and
+    -- the chaining default made both branches look identical.
+    --
+    -- WoW.knownFileIDs decides which ids exist; anything not in it comes back
+    -- empty, the way an id from a previous build would.
+    f.SetTexture = function(self, v)
+        if type(v) == "number" then
+            self._fileID = WoW.knownFileIDs[v] and v or nil
+            self._texture = self._fileID and v or nil
+        else
+            self._texture = v
+            self._fileID = v and 1 or nil     -- a path always resolves here
+        end
+        return self
+    end
+    f.GetTexture         = function(self) return self._texture end
+    f.GetTextureFileID   = function(self) return self._fileID end
+    f.GetTextureFilePath = function(self)
+        return type(self._texture) == "string" and self._texture or nil
+    end
+    f.SetTexCoord = function(self, ...) self._texCoord = { ... }; return self end
+
     f.SetFrameStrata = function(self, v) self._strata = v; return self end
     f.GetFrameStrata = function(self) return self._strata or "MEDIUM" end
     f.SetParent      = function(self, p) self._parent = p; return self end
