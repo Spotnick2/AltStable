@@ -30,3 +30,12 @@ __pycache__/
 
 # Generated cutouts - regenerate from screenshots, never commit
 Tools/RenderCutout/out/
+
+# Scene SOURCE artwork: the PNG masters the TGAs were exported from, and the
+# owner's reference screenshots. 110 MB that the addon never loads and that git
+# would carry forever - binary files do not shrink out of history later.
+# PROMPTS.md records how every scene was generated, and README.md the exact
+# ImageMagick line that turns a master into a texture, so this is reproducible
+# rather than lost. The committed .tga files are what the client reads.
+Media/Scene/*.png
+Media/Scene/References/

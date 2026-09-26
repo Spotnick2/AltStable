@@ -244,6 +244,503 @@ do
 end
 
 ------------------------------------------------------------
+-- Scene mode: the backdrop must never show its padding
+------------------------------------------------------------
+-- Media/Scene/README.md specifies a 1024x1024 texture whose real image is the
+-- top 1024x682 and whose remaining 342 rows are opaque black. Forget the v
+-- remap and a black band appears along the bottom, which reads as broken art
+-- rather than wrong texture coordinates.
+
+local V_MAX = 682 / 1024
+
+do
+    local entry = { w = 1024, h = 682, texh = 1024 }
+
+    -- A panel with the same aspect as the content: no crop, full content.
+    local l, r, t, b = T.BackdropTexCoords(1024, 682, entry)
+    eq("an exactly-matching panel shows the whole width", l, 0)
+    eq("  to the far edge", r, 1)
+    eq("  starting at the top", t, 0)
+    check("  and stopping at the content, not the canvas",
+          math.abs(b - V_MAX) < 0.0001, tostring(b))
+
+    -- Wider than the art: crop vertically - and crop the SKY. The floor and the
+    -- fire live in the bottom sixth of every backdrop, so an even crop halves
+    -- the camp and a wide enough panel removes the fire altogether.
+    l, r, t, b = T.BackdropTexCoords(2000, 400, entry)
+    eq("a wide panel keeps the full width", l, 0)
+    eq("  still to the far edge", r, 1)
+    check("  and crops vertically", t > 0, tostring(t))
+    check("  from the top, keeping the floor", math.abs(b - V_MAX) < 0.0001,
+          ("%.4f vs %.4f"):format(b, V_MAX))
+    check("  by exactly the overflow", math.abs(t - V_MAX * (1 - (400 / 2000) / (682 / 1024))) < 0.0001,
+          tostring(t))
+
+    -- Wide enough to crop past the fire's own ground line under an even crop.
+    -- This is the case that produced "most of the time you don't see the fire".
+    l, r, t, b = T.BackdropTexCoords(1800, 500, entry)
+    check("even a very wide panel keeps the fire's base in frame",
+          0.84 * V_MAX > t and 0.84 * V_MAX < b,
+          ("fire %.4f outside %.4f..%.4f"):format(0.84 * V_MAX, t, b))
+
+    -- Taller than the art: crop the sides instead.
+    l, r, t, b = T.BackdropTexCoords(400, 800, entry)
+    check("a tall panel crops the sides", l > 0 and r < 1, ("%.3f..%.3f"):format(l, r))
+    eq("  and keeps the full content height", t, 0)
+    check("  up to the content edge", math.abs(b - V_MAX) < 0.0001)
+    check("  symmetrically", math.abs(l - (1 - r)) < 0.0001)
+
+    -- Nonsense in, whole texture out, rather than a divide by zero.
+    l, r, t, b = T.BackdropTexCoords(0, 0, entry)
+    check("an unmeasured panel is safe", l == 0 and r == 1 and t == 0 and b == 1)
+    l, r, t, b = T.BackdropTexCoords(800, 600, nil)
+    check("a missing entry is safe", l == 0 and r == 1 and t == 0 and b == 1)
+end
+
+------------------------------------------------------------
+-- Nobody stands in the fire
+------------------------------------------------------------
+-- The backdrops are commissioned with the fire at horizontal centre and its
+-- base at 84% of the image height (Media/Scene/README.md). The first version
+-- guessed a ground line and spread the cast evenly across the panel, which put
+-- the middle character in the flames and hid the fire behind the rest.
+
+-- A backdrop shaped exactly like the real ones: 1024x682 of art in the top of a
+-- 1024x1024 texture.
+local BACKDROP = { w = 1024, h = 682, texw = 1024, texh = 1024 }
+
+do
+    -- 1400x700 is very close to the art's own 1024x682, so the crop is mild and
+    -- the fire should land near where the art put it.
+    local fireX, fireY = T.FireAnchor(1400, 700, BACKDROP)
+    check("the fire is horizontally centred", math.abs(fireX - 700) < 1,
+          tostring(fireX))
+    check("its base is low in the frame, where the art drew it",
+          fireY > 0 and fireY < 700 * 0.25, tostring(fireY))
+
+    -- A TALL panel crops the sides. The fire is dead centre horizontally, so it
+    -- survives that crop - and being centred is the point of the check: a naive
+    -- (0.5 * panelW) would also pass here, so the wide case below is what
+    -- actually proves the crop is being read.
+    local tallX = T.FireAnchor(400, 900, BACKDROP)
+    check("a tall panel keeps the fire centred", math.abs(tallX - 200) < 1,
+          tostring(tallX))
+
+    -- A WIDE panel crops sky off the top, so what is left is proportionally
+    -- more floor and the fire sits HIGHER up the visible frame. Read the crop
+    -- and the ground line follows it; ignore it and the cast stands in the
+    -- bottom sixth of a panel whose bottom sixth is no longer the floor.
+    local _, wideY = T.FireAnchor(1800, 500, BACKDROP)
+    local _, squareY = T.FireAnchor(700, 500, BACKDROP)
+    check("cropping the sky raises the fire up the frame",
+          wideY > squareY + 1, ("wide %.1f vs square %.1f"):format(wideY, squareY))
+    check("  and it stays on the panel", wideY > 0 and wideY < 500,
+          tostring(wideY))
+
+    -- The v remap by h/texh again: forget it and the anchor is computed against
+    -- the black padding as though it were art, putting the ground line a third
+    -- of the way up the panel.
+    local flat = { w = 1024, h = 682, texw = 1024, texh = 682 }
+    local _, flatY = T.FireAnchor(1400, 700, flat)
+    check("the padding above the art is not mistaken for art",
+          math.abs(flatY - fireY) < 1,
+          ("%.1f vs %.1f"):format(flatY, fireY))
+
+    local x, y = T.FireAnchor(1400, 700, nil)
+    check("a missing backdrop still gives a usable anchor",
+          x > 0 and x < 1400 and y > 0 and y < 700)
+end
+
+do
+    local spots, figureH, slot = T.SceneLayout(1400, 700, 5, BACKDROP)
+    local fireX = T.FireAnchor(1400, 700, BACKDROP)
+    local clear = 1400 * T.FIRE_CLEARANCE
+
+    eq("everyone in the cast gets a spot", #spots, 5)
+    check("the figures fit on the panel", figureH > 0 and figureH < 700)
+
+    -- The reported bug, as an assertion.
+    for i, sp in ipairs(spots) do
+        check(("character %d is clear of the fire"):format(i),
+              math.abs(sp.x - fireX) >= clear / 2,
+              ("x %.1f vs fire %.1f, clearance %.1f"):format(sp.x, fireX, clear))
+        check(("  and on the panel"):format(i), sp.x > 0 and sp.x < 1400)
+    end
+
+    -- An odd cast with the fire dead centre cannot split evenly, but it must
+    -- still split: 3 and 2, never 2 and a passenger in the flames.
+    local left = 0
+    for _, sp in ipairs(spots) do if sp.x < fireX then left = left + 1 end end
+    check("the cast is split either side of the fire", left >= 2 and left <= 3,
+          tostring(left))
+
+    -- The ring, not the line-up.
+    table.sort(spots, function(a, b) return a.x < b.x end)
+    local inner, outer = spots[3], spots[1]
+    check("whoever stands nearest the fire is further back",
+          inner.y > outer.y, ("%.1f vs %.1f"):format(inner.y, outer.y))
+    check("  and therefore drawn smaller",
+          inner.scale < outer.scale,
+          ("%.3f vs %.3f"):format(inner.scale, outer.scale))
+    check("  but nobody is shrunk out of sight", inner.scale > 0.7,
+          tostring(inner.scale))
+    -- The ring rises from the ground line; nobody sinks below it, and nobody is
+    -- lifted so far they are standing on air.
+    local _, ground = T.FireAnchor(1400, 700, BACKDROP)
+    for i, sp in ipairs(spots) do
+        check(("character %d stands on or behind the ground line"):format(i),
+              sp.y >= ground - 0.001 and sp.y <= ground + 700 * 0.09,
+              ("%.1f vs ground %.1f"):format(sp.y, ground))
+        check(("  and fits above it"):format(i), sp.y + figureH * sp.scale <= 700,
+              ("%.1f"):format(sp.y + figureH * sp.scale))
+    end
+
+    -- Overlap order. The one nearest the camera is drawn last, over the top of
+    -- whoever is standing behind them.
+    check("the figure at the front is drawn over the one at the back",
+          outer.level > inner.level,
+          ("front %d vs back %d"):format(outer.level, inner.level))
+    check("  and the ring's own back is the bottom of the stack",
+          inner.level >= 0, tostring(inner.level))
+
+    check("the slots leave room between neighbours", slot > 0 and slot < 1400)
+    local _, _, slot8 = T.SceneLayout(1400, 700, 8, BACKDROP)
+    check("a bigger cast gets narrower slots", slot8 < slot,
+          ("%.1f vs %.1f"):format(slot8, slot))
+
+    local one = T.SceneLayout(1400, 700, 1, BACKDROP)
+    eq("a single character still gets a spot", #one, 1)
+    check("  and still stands clear of the fire",
+          math.abs(one[1].x - fireX) >= clear / 2)
+
+    -- A wide panel is where the ground line climbs: cropping sky leaves more
+    -- floor, so the fire - and the cast on it - sit higher up. A figure height
+    -- taken as a flat fraction of the panel then runs off the top.
+    do
+        local wide, wideH = T.SceneLayout(1800, 500, 5, BACKDROP)
+        local _, wideGround = T.FireAnchor(1800, 500, BACKDROP)
+        check("a wide panel puts the ground line well up the frame",
+              wideGround > 500 * 0.25, tostring(wideGround))
+        check("  and the figures still fit above it",
+              wideGround + wideH <= 500, ("%.1f + %.1f"):format(wideGround, wideH))
+        check("  without shrinking to nothing", wideH > 500 * 0.4, tostring(wideH))
+        for i, sp in ipairs(wide) do
+            check(("  character %d stays on the panel"):format(i),
+                  sp.y + wideH * sp.scale <= 500,
+                  ("%.1f"):format(sp.y + wideH * sp.scale))
+        end
+    end
+
+    local none, f, sl = T.SceneLayout(1400, 700, 0, BACKDROP)
+    check("an empty roster lays out nothing", #none == 0 and f == 0 and sl == 0)
+    local unmeasured = T.SceneLayout(0, 0, 5, BACKDROP)
+    eq("an unmeasured panel lays out nothing", #unmeasured, 0)
+end
+
+------------------------------------------------------------
+-- The backdrops themselves
+------------------------------------------------------------
+
+do
+    local scenes = T.SCENE_BACKDROPS
+    check("there are backdrops to choose from", #scenes >= 2, tostring(#scenes))
+
+    local seen = {}
+    for _, b in ipairs(scenes) do
+        check("every backdrop has an id, a label and a file",
+              type(b.id) == "string" and type(b.label) == "string"
+              and type(b.file) == "string" and b.file ~= "")
+        check("  ids are unique (" .. tostring(b.id) .. ")", not seen[b.id])
+        seen[b.id] = true
+        -- The whole point of the padding contract: h must be SMALLER than texh,
+        -- or the entry is claiming the black rows are part of the picture.
+        check("  " .. b.id .. " declares content shorter than its canvas",
+              b.h < b.texh, ("h=%s texh=%s"):format(tostring(b.h), tostring(b.texh)))
+        check("  " .. b.id .. " points at a scene texture",
+              b.file:find("Scene", 1, true) ~= nil, b.file)
+    end
+end
+
+------------------------------------------------------------
+-- The view is remembered, and the grid is the default
+------------------------------------------------------------
+
+do
+    AltStableConfig.rosterView = nil
+    eq("the grid is the default view", T.View(), "grid")
+    AltStableConfig.rosterView = "scene"
+    eq("  and the scene is remembered when chosen", T.View(), "scene")
+    AltStableConfig.rosterView = "nonsense"
+    eq("  anything else falls back to the grid", T.View(), "grid")
+
+    AltStableConfig.rosterScene = nil
+    check("an unset backdrop picks the first", T.CurrentScene() == T.SCENE_BACKDROPS[1])
+    AltStableConfig.rosterScene = T.SCENE_BACKDROPS[3].id
+    check("  a chosen one is remembered", T.CurrentScene() == T.SCENE_BACKDROPS[3])
+    AltStableConfig.rosterScene = "a-scene-that-was-deleted"
+    check("  and one that no longer exists falls back rather than erroring",
+          T.CurrentScene() == T.SCENE_BACKDROPS[1])
+    AltStableConfig.rosterScene = nil
+    AltStableConfig.rosterView = nil
+end
+
+------------------------------------------------------------
+-- A gnome is shorter than a night elf
+------------------------------------------------------------
+-- Every cutout is supersampled to the SAME pixel height, so w/h carries no
+-- information about how tall the character is. nativeH, recorded before that
+-- step, is the only surviving record - and without it the scene drew a gnome
+-- exactly as tall as an elf, which is what made the first version look wrong.
+
+do
+    local elf   = { w = 144, h = 512, texw = 256, texh = 512, nativeH = 1382 }
+    local gnome = { w = 334, h = 512, texw = 512, texh = 512, nativeH = 874 }
+
+    local _, elfH = T.RelativeFigureSize(elf, 1382, 400)
+    local _, gnomeH = T.RelativeFigureSize(gnome, 1382, 400)
+    eq("the tallest character fills the target height", elfH, 400)
+    check("  and the gnome is visibly shorter", gnomeH < elfH * 0.75,
+          ("gnome %.1f vs elf %.1f"):format(gnomeH, elfH))
+    check("  in proportion to its real height",
+          math.abs(gnomeH - 400 * (874 / 1382)) < 0.01, tostring(gnomeH))
+
+    local w, h = T.RelativeFigureSize(elf, 1382, 400)
+    check("aspect ratio is preserved", math.abs(w / h - 144 / 512) < 0.0001)
+
+    -- A cutout captured before sidecars existed has no native height. It must
+    -- fall back to the common height it always had, not vanish or tower.
+    local legacy = { w = 200, h = 512, texw = 256, texh = 512 }
+    local _, legacyH = T.RelativeFigureSize(legacy, 1382, 400)
+    eq("a cutout with no native height falls back to the common one", legacyH, 400)
+
+    local _, noRefH = T.RelativeFigureSize(elf, nil, 400)
+    eq("  as does everyone when nothing has one", noRefH, 400)
+end
+
+do
+    local function cut(c) return c.entry end
+    local chars = {
+        { name = "Tall",  entry = { nativeH = 1382 } },
+        { name = "Short", entry = { nativeH = 874 } },
+        { name = "None",  entry = {} },
+    }
+    eq("the tallest native height wins", T.TallestNative(chars, cut), 1382)
+    eq("nobody with a height means nobody to measure against",
+       T.TallestNative({ { name = "None", entry = {} } }, cut), nil)
+end
+
+------------------------------------------------------------
+-- Who stands around the fire
+------------------------------------------------------------
+-- Thirteen in a row reads as a police line-up. Retail's warband campsite shows
+-- four or five, which is the look this is copying.
+
+do
+    local withArt = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    local function cut(c) return c.hasArt and withArt or nil end
+
+    local many = {}
+    for i = 1, 13 do
+        many[i] = { name = "Alt" .. i, level = i, ilvl = i, hasArt = true }
+    end
+
+    local cast = T.SceneCast(many, cut, T.SCENE_CAST)
+    eq("the cast is capped", #cast, T.SCENE_CAST)
+    eq("  highest level first", cast[1].name, "Alt13")
+    eq("  then the next", cast[2].name, "Alt12")
+
+    -- Item level breaks a tie, since a levelled roster is mostly one level.
+    local tied = {
+        { name = "Geared", level = 60, ilvl = 70, hasArt = true },
+        { name = "Naked",  level = 60, ilvl = 10, hasArt = true },
+    }
+    eq("item level breaks a level tie", T.SceneCast(tied, cut, 2)[1].name, "Geared")
+
+    -- Without a portrait there is nothing to draw.
+    local mixed = {
+        { name = "Pictured", level = 5, hasArt = true },
+        { name = "Bare",     level = 60 },
+    }
+    local only = T.SceneCast(mixed, cut, 5)
+    eq("only characters with a portrait appear", #only, 1)
+    eq("  even when a bare one outranks them", only[1].name, "Pictured")
+
+    eq("an empty roster casts nobody", #T.SceneCast({}, cut, 5), 0)
+end
+
+------------------------------------------------------------
+-- Every backdrop knows where its own fire is
+------------------------------------------------------------
+-- The art spec is 50%/84%, but the README says in the same breath that those
+-- are "approximate art targets, not measured anchors", and that Karazhan - an
+-- AltTracker original that predates the spec - keeps its own smaller fire,
+-- right of centre. One hardcoded pair for all fourteen puts the keep-out gap on
+-- empty ground there.
+
+do
+    local missing, karazhan = {}, nil
+    for _, e in ipairs(T.SCENE_BACKDROPS) do
+        if type(e.fireX) ~= "number" or type(e.fireBaseY) ~= "number" then
+            missing[#missing + 1] = e.id
+        end
+        if e.id == "karazhan" then karazhan = e end
+    end
+    eq("every backdrop carries a measured fire anchor", #missing, 0)
+
+    check("Karazhan's fire is right of centre, as the README says",
+          karazhan and karazhan.fireX > 0.53,
+          karazhan and tostring(karazhan.fireX) or "no karazhan entry")
+    check("  and lower than the generated scenes",
+          karazhan and karazhan.fireBaseY > 0.87, tostring(karazhan.fireBaseY))
+
+    -- The anchor has to REACH the layout, not just sit in the table.
+    local spec  = { w = 1024, h = 682, texw = 1024, texh = 1024 }
+    local kara  = { w = 1024, h = 682, texw = 1024, texh = 1024,
+                    fireX = karazhan.fireX, fireBaseY = karazhan.fireBaseY }
+    local specX, specY = T.FireAnchor(1400, 700, spec)
+    local karaX, karaY = T.FireAnchor(1400, 700, kara)
+    check("a backdrop's own anchor moves the fire", karaX > specX + 40,
+          ("%.1f vs %.1f"):format(karaX, specX))
+    check("  and its ground line with it", karaY < specY - 10,
+          ("%.1f vs %.1f"):format(karaY, specY))
+
+    -- And the cast follows it, rather than clearing the middle of the panel.
+    local spots = T.SceneLayout(1400, 700, 5, kara)
+    for i, sp in ipairs(spots) do
+        check(("character %d clears Karazhan's own fire"):format(i),
+              math.abs(sp.x - karaX) >= 1400 * T.FIRE_CLEARANCE / 2,
+              ("x %.1f vs fire %.1f"):format(sp.x, karaX))
+    end
+end
+
+------------------------------------------------------------
+-- One scale for the whole cast
+------------------------------------------------------------
+-- The clamp this replaced shrank each too-wide figure on its own, which is a
+-- uniform downscale of that one character - exactly the "scaling artefact
+-- masquerading as a short character" its own comment claimed to have fixed.
+-- Wide captures are the short, stocky races, so it hit precisely the ones
+-- RelativeFigureSize had just measured.
+
+do
+    eq("nothing overflowing means nothing scaled",
+       T.FitScale({ { 50, 200 }, { 60, 210 } }, 100), 1)
+
+    -- One figure over the slot pulls EVERYONE down by the same factor.
+    local fit = T.FitScale({ { 200, 300 }, { 50, 400 } }, 100)
+    eq("the worst overflow sets the scale", fit, 0.5)
+
+    local wideH  = 300 * fit
+    local narrowH = 400 * fit
+    check("the tall narrow figure is still the taller one", narrowH > wideH)
+    check("  and the ratio between them is untouched",
+          math.abs((narrowH / wideH) - (400 / 300)) < 1e-9,
+          ("%.6f"):format(narrowH / wideH))
+
+    -- The old per-figure clamp, for contrast: it would have left the wide one
+    -- at 300 * (100/200) = 150 and the narrow one at 400, a ratio of 2.67.
+    check("  which the per-figure clamp did not preserve",
+          math.abs((400 / 150) - (400 / 300)) > 1,
+          "the fixture must actually distinguish the two")
+
+    eq("the worst of several overflows wins",
+       T.FitScale({ { 400, 100 }, { 200, 100 } }, 100), 0.25)
+    eq("an unmeasured slot scales nothing", T.FitScale({ { 400, 100 } }, 0), 1)
+    eq("an empty cast scales nothing", T.FitScale({}, 100), 1)
+end
+
+------------------------------------------------------------
+-- The hint does not sit on top of the backdrop picker
+------------------------------------------------------------
+-- Scene mode puts a 240px picker at the left of the top strip and the view
+-- toggle at the right. The grid has neither, which is why the hint could be
+-- centred there and nobody noticed.
+
+do
+    local gridY, gridW = T.HintLayout(700, false)
+    local sceneY, sceneW = T.HintLayout(700, true)
+
+    eq("the grid hint sits in the top strip", gridY, -8)
+    check("the scene hint drops below the picker row",
+          sceneY <= -(T.BAR_TOP + T.BAR_H),
+          ("%d vs bar bottom %d"):format(sceneY, -(T.BAR_TOP + T.BAR_H)))
+
+    eq("both get the panel's usable width", gridW, 700 - 2 * T.PAD_X)
+    eq("  including the scene", sceneW, gridW)
+
+    -- A centred string of this width WOULD have overlapped the furniture, which
+    -- is why it moved rather than narrowed: check the geometry that forced it.
+    local halfFree = (700 - T.SCENE_BAR_W - T.VIEW_BTN_W) / 2
+    check("there is not room to centre a hint between the two",
+          sceneW / 2 > halfFree,
+          ("half-hint %.1f vs free %.1f"):format(sceneW / 2, halfFree))
+
+    local _, narrow = T.HintLayout(40, true)
+    check("an absurdly narrow panel still gives a non-negative width",
+          narrow >= 0, tostring(narrow))
+end
+
+------------------------------------------------------------
+-- The scene ranks the whole roster, not the grid's first page
+------------------------------------------------------------
+-- MAX_CARDS is how many cards the GRID has. Applying it before the scene chose
+-- its cast turned it into a selection rule: AllCharacters sorts by level then
+-- NAME, SceneCast ranks by level then ITEM level, so on a roster of level-60
+-- alts the best-geared one could be dropped for sorting late alphabetically -
+-- and a roster whose portraits all sat past the cap produced an empty camp.
+
+do
+    local saved = AltStableDB
+    AltStableDB = {}
+    for i = 1, 25 do
+        local guid = ("alt-%02d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Alt %02d"):format(i),
+                              level = 60, ilvl = i, class = "WARRIOR" }
+    end
+
+    local all = T.AllCharacters()
+    eq("every character is offered to the scene", #all, 25)
+    check("  which is more than the grid draws", #all > T.MAX_CARDS,
+          ("%d vs %d"):format(#all, T.MAX_CARDS))
+    eq("the grid still takes only its page", #T.PickCharacters(T.MAX_CARDS), T.MAX_CARDS)
+
+    local art = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    local cast = T.SceneCast(all, function() return art end, T.SCENE_CAST)
+    eq("the cast is still capped", #cast, T.SCENE_CAST)
+    eq("the best-geared character is cast", cast[1].name, "Alt 25")
+    eq("  then the next", cast[2].name, "Alt 24")
+
+    -- The worse failure: nobody past the cap has a portrait, so the camp empties.
+    local onlyLate = function(c)
+        return tonumber((c.name or ""):match("(%d+)")) > T.MAX_CARDS and art or nil
+    end
+    local lateCast = T.SceneCast(all, onlyLate, T.SCENE_CAST)
+    check("a roster whose only portraits sort last still fills the camp",
+          #lateCast > 0, "the scene came back empty")
+    eq("  with the character that has one", lateCast[1] and lateCast[1].name, "Alt 25")
+
+    -- Feeding the scene the grid's page is the bug, stated as an assertion.
+    local paged = T.SceneCast(T.PickCharacters(T.MAX_CARDS), onlyLate, T.SCENE_CAST)
+    eq("  which the grid's page could not", #paged, 0)
+
+    -- And the WIRING, not just the composition. Asserting that the right two
+    -- functions compose correctly says nothing about which one the view calls,
+    -- which is precisely where this went wrong.
+    eq("the scene view is handed everyone", #T.CharactersFor("scene"), 25)
+    eq("the grid view is handed its page", #T.CharactersFor("grid"), T.MAX_CARDS)
+    check("  so the two views are not handed the same list",
+          #T.CharactersFor("scene") ~= #T.CharactersFor("grid"))
+
+    local cast2 = T.SceneCast(T.CharactersFor("scene"), onlyLate, T.SCENE_CAST)
+    -- Nil-safe on purpose: when this regresses the cast comes back EMPTY, and a
+    -- bare cast2[1].name aborts the whole file, hiding every test below it.
+    eq("what the scene view actually gets still fills the camp",
+       cast2[1] and cast2[1].name, "Alt 25")
+
+    AltStableDB = saved
+end
+
+------------------------------------------------------------
 -- It builds
 ------------------------------------------------------------
 -- Frames are stubs, so this asserts that the panel can be constructed and

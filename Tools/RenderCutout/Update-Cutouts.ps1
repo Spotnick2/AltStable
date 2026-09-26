@@ -82,6 +82,12 @@ function Convert-Newest {
 
     foreach ($tga in $made) {
         Copy-Item $tga.FullName (Join-Path $mediaDir $tga.Name) -Force
+        # The sidecar travels with its texture: it carries the native size, which
+        # is the only record of how tall this character really is.
+        $side = [IO.Path]::ChangeExtension($tga.FullName, ".json")
+        if (Test-Path $side) {
+            Copy-Item $side (Join-Path $mediaDir (Split-Path $side -Leaf)) -Force
+        }
         $tag = if ($before -notcontains $tga.Name) { "  (new)" } else { "" }
         Write-Host ("  filed -> {0}{1}" -f $tga.Name, $tag) -ForegroundColor Green
     }
@@ -108,17 +114,61 @@ CutoutManifest.lua
 # The manifest is regenerated wholesale from what is on disk, so deleting a TGA
 # is all it takes to retire a character - no second place to edit.
 function Write-Manifest {
+    # Sidecars written before nativeUnit existed hold raw screenshot pixels,
+    # and are recoverable from the probe store's screenH without re-capturing.
+    # Recover in the STAGING folder as well: those files are copied over the
+    # media folder on every run, so recovering only the copies means redoing it
+    # every time and re-printing the same warnings for ever.
+    & python $converter --renormalise $outDir
+    & python $converter --renormalise $mediaDir
+
     $entries = foreach ($tga in (Get-ChildItem $mediaDir -Filter *.tga -ErrorAction SilentlyContinue | Sort-Object Name)) {
         $slug = [IO.Path]::GetFileNameWithoutExtension($tga.Name)
-        $dims = & python -c @"
+        $side = [IO.Path]::ChangeExtension($tga.FullName, ".json")
+
+        # Read the numbers the converter already worked out. The old path
+        # launched a Python interpreter per texture to recompute them from the
+        # image - slow, and a SECOND definition of "content size" that could
+        # disagree with the converter's own crop.
+        if (Test-Path $side) {
+            $m = Get-Content $side -Raw | ConvertFrom-Json
+            $w, $h, $tw, $th = $m.w, $m.h, $m.texw, $m.texh
+            # Only a sidecar that DECLARES its unit contributes a native size.
+            # The first version of this recorded raw screenshot pixels, which
+            # are not comparable between captures taken at different
+            # resolutions or UI scales. Mixing the two scales in one manifest
+            # is worse than having neither: it invents race differences.
+            if ($m.nativeUnit -eq 'screen' -and $m.nativeH -lt 0.95) {
+                $nw, $nh = $m.nativeW, $m.nativeH
+            } elseif ($m.nativeUnit -eq 'screen') {
+                # As tall as the screen: the matte caught the whole window, not
+                # the character. The converter refuses these now, but two were
+                # filed before that check existed - and because the height is
+                # RELATIVE, one bad entry halves every other character.
+                $nw, $nh = $null, $null
+                Write-Host ("  {0}: cutout is full-screen height - re-capture, it is not a figure" -f $slug) -ForegroundColor Red
+            } else {
+                $nw, $nh = $null, $null
+                Write-Host ("  {0}: sidecar predates unit normalisation - re-capture for true height" -f $slug) -ForegroundColor DarkYellow
+            }
+        } else {
+            # A cutout made before sidecars existed. Fall back to the image, and
+            # leave the native size absent rather than inventing one - the scene
+            # treats "unknown" as "draw at the common height", which is exactly
+            # what these used to get.
+            $dims = & python -c @"
 import sys
 from PIL import Image
 im = Image.open(r'$($tga.FullName)')
 bbox = im.convert('RGBA').getbbox()
 print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
 "@
-        $w, $h, $tw, $th = $dims -split '\s+'
-        "    ['$slug'] = { file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th },"
+            $w, $h, $tw, $th = $dims -split '\s+'
+            $nw, $nh = $null, $null
+        }
+
+        $native = if ($nh) { ", nativeW = $nw, nativeH = $nh" } else { "" }
+        "    ['$slug'] = { file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
     }
 
     $lua = @"
@@ -127,7 +177,10 @@ print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
 --
 -- One entry per character cutout on disk. w/h are the CONTENT size; texw/texh
 -- are the power-of-two canvas the image sits in the top-left of, so the UI can
--- crop back to the figure. Regenerated wholesale: delete a TGA to retire a
+-- crop back to the figure. nativeW/nativeH are the size BEFORE supersampling -
+-- the only surviving record of how tall the character actually is, since every
+-- cutout is normalised to the same height. The scene uses it to keep a gnome
+-- shorter than a night elf. Regenerated wholesale: delete a TGA to retire a
 -- character, do not hand-edit this file.
 --
 -- Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')

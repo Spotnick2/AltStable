@@ -38,6 +38,16 @@ $excludeDirs = @(
     # misleading to diagnose what the client actually loaded.
     (Join-Path $RepoRoot ".claude"),
     (Join-Path $RepoRoot ".vscode"),
+    # Scene REFERENCE screenshots: ~79 MB of source material the client never
+    # reads. Excluded like dist/ and for the same reason - a deployed tree that
+    # carries the sources makes it harder to see what the game actually loaded.
+    # (The PNG masters beside them are already covered by the *.png file rule.)
+    # Backslashes, matching every other entry. A review flagged the forward-
+    # slash form as silently matching nothing; that did NOT reproduce here -
+    # robocopy excluded the directory either way, splatted exactly as below.
+    # Kept in the native separator regardless: this is the only multi-segment
+    # entry in the list, so it is the only one where the question can arise.
+    (Join-Path $RepoRoot "Media\Scene\References"),
     (Join-Path $RepoRoot ".idea"),
     (Join-Path $RepoRoot "dist"),
     (Join-Path $RepoRoot "__pycache__"),
