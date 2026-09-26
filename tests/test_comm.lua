@@ -1173,6 +1173,26 @@ T.ResetSyncState()
 check(askWithWatermark(900)["Player-Late-1"] ~= nil,
       "a scope change made before a relaunch is still honoured afterwards")
 
+-- ResetPeerWatermarks must survive a config that has not loaded yet.
+--
+-- CleanupDB and plugin bootstrap both call it, and either can run before
+-- Config.lua's EnsureDefaults if the SavedVariable did not load - which was
+-- routine before #23 and is still what happens on a first ever launch. Its two
+-- siblings, GetPeerWatermark and AdvancePeerWatermark, both open with
+-- `AltStableConfig = AltStableConfig or {}`; this one went through
+-- SetConfigValue, which guards the same way. Nothing tested that it does.
+do
+    local saved = AltStableConfig
+    AltStableConfig = nil
+    local ok, err = pcall(AltStable.ResetPeerWatermarks)
+    check(ok, "resetting watermarks before the config loads does not error: " .. tostring(err))
+    check(type(AltStableConfig) == "table",
+          "  and it leaves a config behind rather than nothing")
+    check(type(AltStableConfig and AltStableConfig.peerWatermarks) == "table",
+          "  with an empty watermark table, which is what it was asked for")
+    AltStableConfig = saved
+end
+
 local epoch = T.SyncScopeEpoch()
 AltStableConfig.accountNumber = "1"
 AltStable.SetConfigValue("accountNumber", 1)
