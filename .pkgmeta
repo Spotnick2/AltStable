@@ -10,7 +10,7 @@ enable-nolib-creation: no
 # would be one more variable in a port whose whole problem is "which build is
 # this true for".
 
-# One CurseForge project, three addon folders. WoW only discovers addons as
+# One CurseForge project, four addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
 # inside AltStable/ - the packager moves them out.
 #
