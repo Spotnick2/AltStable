@@ -931,57 +931,38 @@ AltStable._PlayOpenAnimation = PlayOpenAnimation
 ------------------------------------------------------------
 -- The addon's icon: the group of figures from the client's Who tab.
 --
--- A FILE ID, not a path, because the client gave us no path for it. Found with
--- the probe's /asicon on the LFG frame's side tabs: the tab itself is the
--- `common-sidetab` atlas and the art inside it is this, set by id with no
--- atlas and no filename of its own. There is nothing to write instead.
+-- A FILE ID, because the client gave no path for it. Found with the probe's
+-- /asicon on the LFG frame's side tabs: the tab is the `common-sidetab` atlas
+-- and the art inside it is this, set by id with no atlas and no filename.
 --
--- File ids are stable within a build and not guaranteed across them, so the
--- result is checked rather than trusted: set it, ask the texture whether
--- anything is there, and put the old icon back if not.
+-- IT CANNOT BE VALIDATED, and the first version of this pretended otherwise.
+-- Measured on 1.60.1.70009:
 --
--- HOW MUCH THAT CHECK IS WORTH IS UNMEASURED. A path has to be resolved by the
--- client and can fail to be - that is why LoadTexture in the Instances plugin
--- can rely on `not tex:GetTexture()`. A file id may need no resolution at all:
--- if the widget simply stores the number and hands it back, the check can never
--- fail and the fallback below is decorative. Settle it on the client with
+--     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+--          print(t:GetTexture(), t:GetTextureFileID())
+--     999999999   999999999
 --
---   /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
---        print(t:GetTexture(), t:GetTextureFileID())
+-- A file id is stored, not resolved: a nonsense one is echoed straight back. So
+-- "set it and check whether it took" is a check that can never fail, and the
+-- fallback behind it was decorative - green tests, and a blank minimap button
+-- the day the id changes. A path would be resolvable (that is why LoadTexture
+-- in the Instances plugin can use `not tex:GetTexture()`), but there is no path
+-- to use.
 --
--- and if that prints the bogus id, this mechanism needs rebuilding on something
--- that can actually fail. Recorded here rather than assumed, because the stub
--- that tests it was written to the same assumption.
---
--- If a build ever breaks the icon, the probe's /asicon on the Who tab gives the
--- new id. (That command is added by #82 and is not on main yet.)
+-- So: no fallback, because a fake one is worse than none - it says the case is
+-- handled. If the icon ever goes blank after a build, /asicon on the Who tab
+-- gives the new id. (That command arrives with #82 and is not on main yet.)
 local ROSTER_ICON_FILE_ID = 8197123
-local ROSTER_ICON_FALLBACK = "Interface\\Icons\\INV_Misc_GroupNeedMore"
 
--- Returns the icon it settled on, so a test can tell which branch ran.
+-- Deliberately not cropped. The icon this replaces was Interface\Icons\ art,
+-- 64x64 with a border baked in, which is why it was trimmed by 8%. This is UI
+-- art from inside a sidetab and has no such margin, so the same trim would
+-- shave the outer figures off the group.
 local function ApplyRosterIcon(tex)
     if not tex or not tex.SetTexture then return nil end
-
     tex:SetTexture(ROSTER_ICON_FILE_ID)
-
-    -- "Is anything there", not "is it the number I asked for". Equality would
-    -- also reject a texture that loaded perfectly well under a canonicalised
-    -- id - an alias or redirect resolving to a different, valid FileDataID -
-    -- and silently revert to the old icon for ever. Two ways to fail where the
-    -- question only has one.
-    local got = tex.GetTextureFileID and tex:GetTextureFileID() or nil
-    if got then
-        -- NO CROP. The old icon was Interface\Icons\ art, 64x64 with a border
-        -- baked in, which is why it was trimmed by 8%. This is UI art from
-        -- inside a sidetab and has no such margin, so the same trim would shave
-        -- the outer figures off the group.
-        if tex.SetTexCoord then tex:SetTexCoord(0, 1, 0, 1) end
-        return ROSTER_ICON_FILE_ID
-    end
-
-    tex:SetTexture(ROSTER_ICON_FALLBACK)
-    if tex.SetTexCoord then tex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
-    return ROSTER_ICON_FALLBACK
+    if tex.SetTexCoord then tex:SetTexCoord(0, 1, 0, 1) end
+    return ROSTER_ICON_FILE_ID
 end
 
 -- Not on the public namespace: one caller in this file, plus tests. The
@@ -990,7 +971,6 @@ end
 AltStable._test = AltStable._test or {}
 AltStable._test.ApplyRosterIcon = ApplyRosterIcon
 AltStable._test.ROSTER_ICON_FILE_ID = ROSTER_ICON_FILE_ID
-AltStable._test.ROSTER_ICON_FALLBACK = ROSTER_ICON_FALLBACK
 
 ------------------------------------------------------------
 -- Minimap button

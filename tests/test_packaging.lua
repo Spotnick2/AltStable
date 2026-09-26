@@ -186,5 +186,23 @@ for _, t in ipairs(TOCS) do
           not version:find("%d+%.%d+") and not version:find("dev"), version)
 end
 
+------------------------------------------------------------
+-- Every addon has an icon
+------------------------------------------------------------
+-- Without ## IconTexture the AddOns list draws a red question mark, and with
+-- six folders in this family that is six of them in a row. Pinned per TOC
+-- rather than as one check, so adding a plugin without an icon fails on the
+-- plugin rather than on a count nobody reads.
+
+for _, t in ipairs(TOCS) do
+    local src = read(t.toc)
+    local icon = src:match("##%s*IconTexture:%s*(%S+)")
+    check(t.toc .. " declares an icon", icon ~= nil,
+          "the AddOns list shows a red question mark without one")
+    if icon then
+        eq("  and they all use the same one", icon, "8197123")
+    end
+end
+
 print(("test_packaging: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

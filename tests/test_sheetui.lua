@@ -568,47 +568,48 @@ end
 -- atlas and the art inside is set by FILE ID with no atlas and no filename - so
 -- an id is the only thing there is to write.
 --
--- File ids are stable within a build and not across them. An id the client does
--- not have leaves the texture EMPTY rather than erroring, so a wrong one is a
--- blank minimap button and no complaint: the fallback is the point, not a
--- nicety.
+-- There is no fallback, and that is deliberate. Measured on 1.60.1.70009:
+--
+--     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+--          print(t:GetTexture(), t:GetTextureFileID())
+--     999999999   999999999
+--
+-- A file id is stored, not resolved. A nonsense one is echoed straight back, so
+-- no check on the texture can tell you the art is missing. An earlier version
+-- of this had a fallback behind exactly such a check: it could never fire, and
+-- it said the case was handled when it was not.
 
 do
     local T = AltStable._test
 
-    -- The client has it: use it.
-    WoW.missingFileIDs = {}
     local tex = CreateFrame("Frame"):CreateTexture()
-    eq("the Who tab's icon is used when the client has it",
-       T.ApplyRosterIcon(tex), T.ROSTER_ICON_FILE_ID)
+    eq("the Who tab's icon is used", T.ApplyRosterIcon(tex), T.ROSTER_ICON_FILE_ID)
     eq("  and actually set", tex:GetTextureFileID(), T.ROSTER_ICON_FILE_ID)
 
-    -- NOT cropped. The old icon was Interface\Icons\ art with a border baked
-    -- in; this is UI art from inside a sidetab, and the same 8% trim would
-    -- shave the outer figures off the group.
-    check("  and drawn whole, not trimmed like an Icons\ file",
+    -- Not cropped. The icon this replaces was Interface\Icons\ art, 64x64 with
+    -- a border baked in, which is why it was trimmed by 8%. This is UI art from
+    -- inside a sidetab and has no margin, so the same trim would shave the
+    -- outer figures off the group.
+    check("  and drawn whole, not trimmed like an Icons file",
           tex._texCoord and tex._texCoord[1] == 0 and tex._texCoord[2] == 1,
           tostring(tex._texCoord and tex._texCoord[1]))
 
-    -- A canonicalised id - an alias resolving to a different but perfectly
-    -- valid FileDataID - must not be thrown away. The question is "did anything
-    -- load", not "is it the number I asked for".
-    local aliased = CreateFrame("Frame"):CreateTexture()
-    aliased.GetTextureFileID = function() return 9999999 end
-    eq("an id the client redirected elsewhere is still accepted",
-       T.ApplyRosterIcon(aliased), T.ROSTER_ICON_FILE_ID)
+    -- The measurement itself, pinned: if a future client ever DOES reject a bad
+    -- id, this fails and the fallback becomes worth writing.
+    local bogus = CreateFrame("Frame"):CreateTexture()
+    bogus:SetTexture(999999999)
+    eq("a file id the client does not have is echoed back, not rejected",
+       bogus:GetTextureFileID(), 999999999)
+    check("  which is why there is nothing to check and no fallback",
+          bogus:GetTexture() ~= nil)
 
-    -- The client does not have it - a later build, say. The button must not go
-    -- blank and say nothing.
-    WoW.missingFileIDs = { [T.ROSTER_ICON_FILE_ID] = true }
-    local missing = CreateFrame("Frame"):CreateTexture()
-    eq("an id this client does not have falls back rather than drawing nothing",
-       T.ApplyRosterIcon(missing), T.ROSTER_ICON_FALLBACK)
-    eq("  to the old icon, by path", missing:GetTextureFilePath(), T.ROSTER_ICON_FALLBACK)
-    check("  cropped, because THAT one is an Icons\ file with a border",
-          missing._texCoord and missing._texCoord[1] > 0,
-          tostring(missing._texCoord and missing._texCoord[1]))
-    WoW.missingFileIDs = {}
+    -- A PATH is different: the client resolves it and can fail to, which is
+    -- what the Instances plugin's missing-texture fallback relies on.
+    local badPath = CreateFrame("Frame"):CreateTexture()
+    WoW.missingTexturePaths = { ["Interface\Nope"] = true }
+    badPath:SetTexture("Interface\Nope")
+    eq("a path the client cannot resolve comes back empty", badPath:GetTexture(), nil)
+    WoW.missingTexturePaths = {}
 
     check("nothing to draw on is not a crash", T.ApplyRosterIcon(nil) == nil)
 end

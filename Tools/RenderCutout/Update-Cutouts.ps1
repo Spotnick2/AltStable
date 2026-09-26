@@ -101,6 +101,7 @@ function Write-Toc {
 ## Interface: 16001
 ## Title: AltStable Cutouts
 ## Notes: Character portraits captured locally by AltStable. GENERATED - regenerate with Tools/RenderCutout/Update-Cutouts.ps1, or delete this folder to start over.
+## IconTexture: 8197123
 ## Author: generated
 ## Version: 1
 
