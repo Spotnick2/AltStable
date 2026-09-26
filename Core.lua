@@ -179,6 +179,14 @@ function AltStable.OnSyncScopeChanged()
     AltStable.SetConfigValue("syncScopeGeneration", ScopeGeneration() + 1)
 end
 
+-- Answer a request. Everything that MUTATES on behalf of a peer lives here
+-- rather than in the handler, because the handler now has paths that do not
+-- serve: marking a peer "answered in full at generation N" for a request we
+-- then refused would consume the scope change and silently drop the newly
+-- eligible characters from every later delta.
+local ServeSyncRequest       -- forward: defined once SendFullDatabase exists
+local RememberPendingRequest
+
 -- Stale-buffer cleanup.  If a sender's stream gets cut off mid-flight
 -- (DC, /reload on their end, sender ran out of credits to keep sending,
 -- etc.) we'd otherwise hold onto a partial buffer forever.  Every 60s
@@ -380,6 +388,153 @@ local PLAYER_NAME = AltStable.API.PlayerFullName()
 
 ------------------------------------------------------------
 -- Sync routing — whisper-only to whitelisted characters
+-- A peer's name without its realm suffix. Keyed on throughout - watermarks,
+-- authorization, buffers - so it sits above all of them rather than beside
+-- whichever one happened to need it first.
+local function PeerShort(name)
+    return (name and name:match("^([^%-]+)")) or name
+end
+
+------------------------------------------------------------
+-- Sync authorization (#61)
+--
+-- The request handler used to answer ANY player who sent a REQ. The prefix is
+-- public - the addon ships on CurseForge - so it took no discovery: whisper
+-- "REQ8|0" and receive every character record we hold. Names, realms, guilds,
+-- levels, item levels, gold, mail, lockouts, reputations.
+--
+-- The whitelist is not a defence and never was. It gates GetSyncTargets, which
+-- is whom WE choose to whisper first, and nothing on the request path.
+--
+-- Nor is the account filter: `accountOnly` only bites when accountNumber is
+-- set, and it defaults to "". Until someone runs /alts account <n>, a default
+-- install answers a stranger with everything it holds, including characters
+-- synced in from the other account. A scope limit, never an authorization.
+--
+-- So: three answers per peer, following Altoholic's model.
+--
+--   auto   serve them, no questions
+--   never  ignore them
+--   ask    the default for someone we have never heard of - tell the player
+--          who is asking and serve nobody until they say so
+--
+-- "ask" is what keeps the ONE-SIDED setup working. Today A whitelists B, A
+-- asks, and B answers without ever having heard of A; requiring B to whitelist
+-- A first would mean nothing syncs until both sides are configured, which is
+-- the friction #58 exists to remove. Asking once preserves the flow and closes
+-- the hole.
+------------------------------------------------------------
+
+local AUTH_AUTO, AUTH_ASK, AUTH_NEVER = "auto", "ask", "never"
+AltStable.AUTH_AUTO, AltStable.AUTH_ASK, AltStable.AUTH_NEVER = AUTH_AUTO, AUTH_ASK, AUTH_NEVER
+
+-- What we will do for this peer, without doing it.
+--
+-- An explicit answer always wins, including over the whitelist: saying "never"
+-- to someone you also whitelisted has to mean never.
+--
+-- Otherwise our own whitelist counts as consent. Those are the peers the player
+-- named as their own, and prompting for characters you configured yourself
+-- would be a prompt with one sensible answer. It also means an existing install
+-- sees no new prompts for the peers it already syncs with.
+-- One key for a peer, case-folded.
+--
+-- WoW whisper targets are case-insensitive and the rest of the addon knows it:
+-- IsWhitelisted, RemoveFromWhitelist and IsPeerOnline all compare with :lower().
+-- This did not, which broke it in both directions. A whitelist entry typed
+-- "karuzo" stopped matching the character Karuzo, so an upgrade would start
+-- prompting for peers already configured - the one thing the whitelist-as-
+-- consent rule exists to avoid. Worse, `/alts deny karuzo` stored an answer
+-- under a key the handler never looked up: it printed "refusing karuzo" and
+-- went on serving them. A security control that silently no-ops on a
+-- capitalisation is worse than none, because it reports success.
+-- REALM INCLUDED. "Trusted-OtherRealm" and "Trusted" are two people.
+--
+-- Stripping the realm meant a whitelist entry for a character on another realm
+-- silently authorized the local character of the same name, who could then
+-- whisper a request and be served without ever being asked about. Folding case
+-- is right - WoW whisper targets are case-insensitive - but folding away the
+-- realm is not; it is the only thing distinguishing two players who chose the
+-- same name.
+--
+-- A sender with no realm suffix IS the local realm, and a whitelist entry with
+-- no suffix means the same, so those two match each other and neither matches a
+-- qualified name.
+local function AuthKey(peer)
+    if type(peer) ~= "string" or peer == "" then return nil end
+    local trimmed = peer:match("^%s*(.-)%s*$")
+    if trimmed == "" then return nil end
+    return trimmed:lower()
+end
+
+local function SyncAuthFor(peer)
+    AltStableConfig = AltStableConfig or {}
+    local key = AuthKey(peer)
+    if not key then return AUTH_NEVER end
+
+    local stored = (AltStableConfig.syncAuth or {})[key]
+    if stored == AUTH_AUTO or stored == AUTH_NEVER then return stored end
+
+    for _, name in ipairs(AltStableConfig.whitelist or {}) do
+        if AuthKey(name) == key then return AUTH_AUTO end
+    end
+    return AUTH_ASK
+end
+
+local function SetSyncAuth(peer, mode)
+    local key = AuthKey(peer)
+    if not key then return false end
+    if mode ~= AUTH_AUTO and mode ~= AUTH_NEVER and mode ~= nil then return false end
+
+    AltStableConfig = AltStableConfig or {}
+    local current = AltStableConfig.syncAuth or {}
+    local copy = {}
+    for k, v in pairs(current) do copy[k] = v end
+    copy[key] = mode          -- nil clears it, back to whitelist-or-ask
+    AltStable.SetConfigValue("syncAuth", copy)
+    return true
+end
+
+-- Requests we have not answered yet, keyed by peer: what they asked for, and
+-- when. Session state on purpose - an approval given tomorrow should serve
+-- tomorrow's request, not replay one from before a relaunch.
+local pendingAuth = {}
+local PENDING_TTL = 300     -- after this, approving just waits for their next REQ
+local NOTICE_EVERY = 60     -- do not narrate every retry of the same request
+
+AltStable.SyncAuthFor = SyncAuthFor
+
+-- Every peer we hold an explicit answer for, sorted, for Options and /alts auth.
+function AltStable.SyncAuthList()
+    AltStableConfig = AltStableConfig or {}
+    local out = {}
+    for name, mode in pairs(AltStableConfig.syncAuth or {}) do
+        out[#out + 1] = { name = name, mode = mode }
+    end
+    table.sort(out, function(a, b) return a.name < b.name end)
+    return out
+end
+
+-- Peers who have asked and are still waiting on an answer.
+--
+-- Expired entries are DROPPED here rather than merely skipped: nothing else
+-- removes one that is never allowed or denied, so every stranger who ever asks
+-- would otherwise leave a permanent entry behind for the session. Same reason
+-- the stale-buffer sweeper exists.
+function AltStable.PendingSyncRequests()
+    local out = {}
+    local now = time()
+    for key, req in pairs(pendingAuth) do
+        if now - (req.at or 0) > PENDING_TTL then
+            pendingAuth[key] = nil
+        else
+            out[#out + 1] = { name = req.name or key, at = req.at }
+        end
+    end
+    table.sort(out, function(a, b) return a.name < b.name end)
+    return out
+end
+
 ------------------------------------------------------------
 
 -- Returns a list of {channel, target} pairs to send to.
@@ -395,7 +550,13 @@ local function GetSyncTargets()
 
     local targets = {}
     for _, name in ipairs(whitelist) do
-        table.insert(targets, { channel = "WHISPER", target = name })
+        -- "Refuse them for good" has to mean both directions. Gating only the
+        -- inbound request left a denied peer on the whitelist, so every login
+        -- still whispered them a REQ and /alts cleanup still pushed them the
+        -- whole database - which is the thing the player just refused.
+        if SyncAuthFor(name) ~= AUTH_NEVER then
+            table.insert(targets, { channel = "WHISPER", target = name })
+        end
     end
 
     return targets
@@ -587,9 +748,6 @@ local SEND_TIME = "==NOW=="
 -- change the peer then made to its own characters fell below the delta filter
 -- until real time caught up - silent, and self-healing, so it looked like flaky
 -- sync. See ClampWatermark.
-local function PeerShort(name)
-    return (name and name:match("^([^%-]+)")) or name
-end
 -- The delta filter runs on the PEER, comparing stamps against the peer's own
 -- clock - so the ceiling has to be the peer's clock, not ours. A reply now ends
 -- with the replier's time() (see SEND_TIME), and the watermark is capped a few
@@ -1063,6 +1221,141 @@ local function SendFullDatabase(channel, target, sinceTS)
 
 end
 
+
+-- Defined here because it needs SendFullDatabase, and declared far above
+-- because the message handler needs it. See the note by the forward
+-- declaration for why the scope bookkeeping lives in here.
+local function DefineSyncServing()
+    function ServeSyncRequest(peer, sinceTS, channel)
+        AltStableConfig = AltStableConfig or {}
+        -- Scope and watermark keys stay as PeerShort, matching what is already
+        -- persisted under them; only the authorization side is case-folded.
+        local owedShort = PeerShort(peer)
+
+        pendingAuth[AuthKey(peer) or owedShort] = nil
+
+        -- ALWAYS a whisper, to the character that asked.
+        --
+        -- A request arriving on GUILD used to be answered on GUILD, so every
+        -- guild member received the database - including the ones who had not
+        -- been authorized and the ones explicitly denied. Authorizing one peer
+        -- must not authorize a broadcast, and there is no reason for an answer
+        -- to a question to reach anyone but the asker. BroadcastDB is a
+        -- separate, deliberate act.
+        local replyChannel, replyTarget = "WHISPER", peer
+        if not peer or peer == "" then return end
+        Print(peer .. " requested sync — sending data.")
+        local delay = ReplyDelay(AltStable.API.PlayerFullName(), time())
+        C_Timer.After(delay, function()
+            -- Consent has to be CURRENT, not merely not-revoked. The reply is
+            -- staggered by a few seconds, and in that window the player can
+            -- read the name and change their mind - by denying, or by typing
+            -- /alts forget-peer, which drops the answer back to "ask". Testing
+            -- only for NEVER let the second one through: the stored decision
+            -- said ask and the database went out anyway.
+            if SyncAuthFor(peer) ~= AUTH_AUTO then
+                Print("|cffff8800" .. peer
+                    .. " is no longer approved - nothing was sent.|r")
+                return
+            end
+
+            -- The scope generation is spent HERE, not when the reply was
+            -- scheduled. Marking a peer "answered in full at generation N"
+            -- before knowing whether the answer goes out meant a cancelled
+            -- reply consumed the scope change: re-approving them afterwards
+            -- got a delta again, and the newly eligible records - stamped
+            -- below every watermark - were never sent at all.
+            local generation = ScopeGeneration()
+            AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
+            if (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation then
+                sinceTS = 0   -- our scope changed since this peer last heard from us
+                AltStableConfig.peerScopeGeneration[owedShort] = generation
+                AltStable.OnConfigChanged("peerScopeGeneration")
+            end
+
+            SendFullDatabase(replyChannel, replyTarget, sinceTS)
+        end)
+    end
+
+    function RememberPendingRequest(peer, sinceTS, channel)
+        local key = AuthKey(peer)
+        if not key then return end
+        local now = time()
+        local prev = pendingAuth[key]
+        pendingAuth[key] = { name = peer, since = sinceTS, channel = channel, at = now,
+                             told = prev and prev.told or nil }
+
+        -- Say it once per minute per peer. A client that retries - and ours
+        -- does, on every login and every resync - must not turn a single
+        -- unanswered question into a wall of chat.
+        if prev and prev.told and (now - prev.told) < NOTICE_EVERY then return end
+        pendingAuth[key].told = now
+
+        -- The FULL identity, realm and all, in the text and in both commands.
+        --
+        -- Showing PeerShort meant the prompt said "Faraway Name is asking" and
+        -- told the player to type /alts allow Faraway Name - which grants the
+        -- LOCAL character of that name while the cross-realm requester stays
+        -- pending. A prompt whose own instruction authorizes the wrong person
+        -- is worse than no prompt.
+        local shown = peer
+        Print("|cffff8800" .. shown .. " is asking for your character database.|r "
+            .. "Nothing has been sent. "
+            .. "|cffffff00/alts allow " .. shown .. "|r to share with them from now on, "
+            .. "|cffffff00/alts deny " .. shown .. "|r to refuse them for good.")
+    end
+end
+
+-- Answer on the player's behalf, and remember the answer. Returns whether the
+-- name was usable, so the slash command can tell the difference between "done"
+-- and "I do not know what you mean".
+function AltStable.AllowSyncPeer(peer)
+    if not SetSyncAuth(peer, AUTH_AUTO) then return false end
+    local key = AuthKey(peer)
+    local req = pendingAuth[key]
+    Print("Sharing with |cff88ff88" .. key .. "|r from now on.")
+    -- Serve what they already asked for, if it is still their question. Beyond
+    -- the TTL, wait for them to ask again rather than replying to something
+    -- from another session.
+    if req and (time() - (req.at or 0)) <= PENDING_TTL then
+        ServeSyncRequest(req.name or key, req.since or 0, req.channel)
+    else
+        pendingAuth[key] = nil
+    end
+    return true
+end
+
+function AltStable.DenySyncPeer(peer)
+    if not SetSyncAuth(peer, AUTH_NEVER) then return false end
+    local key = AuthKey(peer)
+    pendingAuth[key] = nil
+    Print("Refusing |cffff8888" .. (PeerShort(peer) or key)
+        .. "|r. They will not be told, will not be asked about again, "
+        .. "and we will not push to them either.")
+    return true
+end
+
+-- Drop the stored answer. Says what will ACTUALLY happen next rather than
+-- assuming: clearing an answer for a whitelisted peer falls back to the
+-- whitelist, which means auto, not ask. Printing "they will be asked about
+-- again" there would tell the player the opposite of the truth - and the
+-- player most likely to type this is one who denied someone they had
+-- whitelisted and now wants to reconsider.
+function AltStable.ForgetSyncPeer(peer)
+    if not SetSyncAuth(peer, nil) then return false end
+    local shown = PeerShort(peer) or AuthKey(peer)
+    if SyncAuthFor(peer) == AUTH_AUTO then
+        Print("Forgotten |cffffff00" .. shown .. "|r - but they are on your whitelist, "
+            .. "so they are served again. |cffffff00/alts whitelist remove " .. shown
+            .. "|r to stop that too.")
+    else
+        Print("Forgotten |cffffff00" .. shown .. "|r - they will be asked about again.")
+    end
+    return true
+end
+
+DefineSyncServing()
+
 ------------------------------------------------------------
 -- Request sync
 --
@@ -1128,7 +1421,7 @@ local function CheckSyncWatch(short)
             -- (CHAT_MSG_SYSTEM peer-online handler), so a timeout for an unreachable
             -- peer is just noise.
             if IsPeerOnline(w.name) == true then
-                Print("|cff888888No sync response from " .. w.name .. "|r — they're online but didn't reply (still loading addons, or on an older AltStable).")
+                Print("|cff888888No sync response from " .. w.name .. "|r — they're online but didn't reply (they may not have allowed you yet, or are still loading addons, or are on an older AltStable).")
             end
         end
         syncWatch[short] = nil
@@ -1611,6 +1904,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if senderName == PLAYER_NAME then
             return
         end
+        -- The name as it arrived, realm and all. senderName is the realm-less
+        -- form the routing and buffer keys have always used; authorization
+        -- needs the full identity, because two realms can hold the same name
+        -- and only one of them may have been approved (#61).
+        local senderFull = sender or senderName
 
         local cmd, payload = strsplit("|", message, 2)
 
@@ -1618,21 +1916,19 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if cmd == MSG_REQUEST_V then
             -- payload is the requester's delta watermark (0 / absent => full DB).
             local sinceTS = tonumber(payload) or 0
-            local owedShort = PeerShort(senderName)
-            local generation = ScopeGeneration()
-            AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
-            if (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation then
-                sinceTS = 0   -- our scope changed since this peer last heard from us
-                AltStableConfig.peerScopeGeneration[owedShort] = generation
-                AltStable.OnConfigChanged("peerScopeGeneration")
+            local mode = SyncAuthFor(senderFull)
+
+            if mode == AUTH_NEVER then
+                -- Silently. They were told once, when the answer was given.
+                return
             end
-            local replyChannel = (channel == "WHISPER") and "WHISPER" or "GUILD"
-            local replyTarget  = (channel == "WHISPER") and senderName or nil
-            Print(senderName .. " requested sync — sending data.")
-            local delay = ReplyDelay(AltStable.API.PlayerFullName(), time())
-            C_Timer.After(delay, function()
-                SendFullDatabase(replyChannel, replyTarget, sinceTS)
-            end)
+
+            if mode == AUTH_ASK then
+                RememberPendingRequest(senderFull, sinceTS, channel)
+                return
+            end
+
+            ServeSyncRequest(senderFull, sinceTS, channel)
             return
         end
 
@@ -2467,6 +2763,40 @@ SlashCmdList["ALTSTABLE"] = function(args)
     -- /alts account N  — set this client's account number
     ----------------------------------------------------
 
+    -- Who may ask us for the database (#61).
+    if cmd == "allow" or cmd == "deny" or cmd == "forget-peer" then
+        if target == nil or target == "" then
+            Print("usage: |cffffff00/alts " .. cmd .. " <character>|r")
+            return
+        end
+        local fn = (cmd == "allow" and AltStable.AllowSyncPeer)
+                or (cmd == "deny" and AltStable.DenySyncPeer)
+                or AltStable.ForgetSyncPeer
+        if not fn(target) then
+            Print("|cffff8800Not a name I can use:|r " .. tostring(target))
+        end
+        return
+    end
+
+    if cmd == "auth" then
+        local list = AltStable.SyncAuthList()
+        local waiting = AltStable.PendingSyncRequests()
+        if #list == 0 and #waiting == 0 then
+            Print("Nobody has asked yet, and no answers are stored. "
+                .. "An unknown character asking for your database will be refused until you "
+                .. "|cffffff00/alts allow|r them.")
+            return
+        end
+        for _, e in ipairs(list) do
+            Print(("  %s  |cff%s%s|r"):format(e.name,
+                  e.mode == AltStable.AUTH_AUTO and "88ff88" or "ff8888", e.mode))
+        end
+        for _, e in ipairs(waiting) do
+            Print(("  %s  |cffffff00waiting on you|r - /alts allow %s"):format(e.name, e.name))
+        end
+        return
+    end
+
     -- Forget a character that no longer exists (#65).
     if cmd == "forget" or cmd == "unforget" then
         if target == nil or target == "" then
@@ -2570,7 +2900,6 @@ SlashCmdList["ALTSTABLE"] = function(args)
         if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         return
     end
-
     if cmd == "account" then
         if target == nil or target == "" then
             -- Bare "/alts account" answers the question people actually have,
@@ -2677,6 +3006,7 @@ end
 -- section that reused a sender found its retry budget already spent by an
 -- earlier one and failed far from the cause. Harmless in game: nothing calls it.
 local function ResetSyncState()
+    pendingAuth = {}
     streamCounter   = 0
     incomingBuffers = {}
     outdatedSenders = {}

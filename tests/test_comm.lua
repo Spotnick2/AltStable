@@ -44,6 +44,7 @@ WoW.reset = function() stubReset(); T.ResetSyncState() end
 local PREFIX  = T.PREFIX
 local onEvent = T.frame:GetScript("OnEvent")
 
+
 ------------------------------------------------------------
 -- Tiny assert harness (ParseBuddy style)
 ------------------------------------------------------------
@@ -73,7 +74,24 @@ local function receive(message, sender)
     -- Forever reports the sender as "First Surname" - a space, no realm
     -- (docs/forever-api-notes.md). The TBC shape "Name-Realm" was the default
     -- here, so nothing exercised the name this client actually delivers.
-    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", sender or "Peer Surname")
+    -- Approve the sender first.
+    --
+    -- Since #61 an unknown character asking for the database is refused and
+    -- nothing is sent, which is the point of the feature - so every test in
+    -- this file that is about sync MECHANICS would otherwise be testing the
+    -- refusal instead. Done here rather than once at the top because several
+    -- sections reassign AltStableConfig wholesale and would wipe it.
+    --
+    -- The gate itself is exercised in its own section, through
+    -- receiveUnapproved, which deliberately skips this.
+    local who = sender or "Peer Surname"
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig.syncAuth = AltStableConfig.syncAuth or {}
+    -- Lower-cased, like Core keys it. WoW whisper targets are case-insensitive
+    -- and the rest of the addon folds case everywhere; the first version of the
+    -- gate did not, which made /alts deny silently no-op on a capitalisation.
+    AltStableConfig.syncAuth[(who:match("^([^%-]+)") or who):lower()] = "auto"
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", who)
 end
 
 local function chatHas(substr)
@@ -1748,7 +1766,6 @@ do
         eq(AltStable.ForgottenGuidFor("Twin Surname"), nil, "  every time, not by luck")
     end
     eq(AltStable.ForgottenGuidFor("Twin"), nil, "the shared first name is ambiguous too")
-
     -- The GUID is the way out.
     eq(AltStable.ForgottenGuidFor("Player-Dup-A"), "Player-Dup-A",
        "a GUID resolves to itself, which is the selector the message offers")
@@ -1761,6 +1778,32 @@ do
     check(not AltStable.IsCharacterForgotten("Player-Gone-2"), "  and drops the tombstone")
     eq(AltStable.UnforgetCharacter("Player-Gone-2"), false,
        "  doing it twice is not success the second time")
+end
+
+do
+    -- An explicit answer beats the whitelist, in both directions.
+    --
+    -- Its own block: it resets AltStableConfig wholesale, and sitting inside
+    -- the tombstone block above it wiped forgottenCharacters half way through
+    -- and took three assertions with it.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Mine-Realm" }, peerWatermarks = {} }
+    eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_AUTO,
+       "a peer we whitelisted is one we already chose to sync with")
+
+    -- THE REALM IS PART OF WHO THEY ARE. Stripping it meant a whitelist entry
+    -- for a character on another realm silently authorized the LOCAL character
+    -- of the same name, who could then ask and be served without a prompt.
+    eq(AltStable.SyncAuthFor("Mine"), AltStable.AUTH_ASK,
+       "  and the local character of the same name is somebody else")
+
+    AltStable.DenySyncPeer("Mine-Realm")
+    eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_NEVER,
+       "  but saying never to someone you whitelisted means never")
+
+    AltStable.ForgetSyncPeer("Mine-Realm")
+    eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_AUTO,
+       "  and forgetting the answer falls back to the whitelist, not to ask")
 end
 
 do
@@ -1960,6 +2003,465 @@ do
     eq(AltStable.ResolveCharacter("Only"), "solo-1", "  and so does its first name")
 end
 
+------------------------------------------------------------
+-- Who may ask us for the database (#61)
+------------------------------------------------------------
+-- The handler used to answer anyone. The prefix ships on CurseForge, so
+-- whispering "REQ8|0" returned every character record held: names, realms,
+-- guilds, levels, item levels, gold, mail, lockouts, reputations. On a default
+-- install it was not even limited to one account, because the account filter
+-- only bites once accountNumber is set and it defaults to "".
+--
+-- receiveUnapproved is the same path as receive with the approval step left
+-- out, which is what an actual stranger looks like.
+
+local function receiveUnapproved(message, sender)
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", sender)
+end
+
+local function askAs(sender)
+    WoW.sent = {}
+    WoW.chatOut = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", sender)
+    flushAll()
+    return WoW.sentMessages()
+end
+
+do
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    AltStableDB = {
+        ["Player-Secret-1"] = { guid = "Player-Secret-1", name = "Hidden", class = "MAGE",
+                                level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+
+    -- A stranger gets nothing.
+    local sent = askAs("Stranger Surname")
+    eq(#sent, 0, "a character we have never heard of is sent nothing at all")
+    eq(AltStable.SyncAuthFor("Stranger Surname"), AltStable.AUTH_ASK,
+       "  and is filed as someone to ask about")
+
+    -- The player is told, by name, that someone asked.
+    local told = table.concat(WoW.chatOut or {}, "\n")
+    check(told:find("Stranger Surname", 1, true) ~= nil,
+          "  the player is told who asked: " .. told)
+    check(told:find("/alts allow", 1, true) ~= nil, "  and how to answer")
+    -- The promise, not the wording: the player has to know their data stayed
+    -- put. Without this the notice could say someone asked and leave them
+    -- guessing whether it went out.
+    check(told:lower():find("nothing has been sent", 1, true) ~= nil,
+          "  and that nothing was sent: " .. told)
+
+    -- Retries must not become a wall of chat.
+    WoW.chatOut = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Stranger Surname")
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Stranger Surname")
+    eq(#(WoW.chatOut or {}), 0, "  and repeating the question does not repeat the notice")
+
+    -- It is remembered as waiting, so the player can find it later.
+    local waiting = AltStable.PendingSyncRequests()
+    eq(#waiting, 1, "the unanswered request is remembered")
+    -- Nil-safe: when this regresses the list is EMPTY, and indexing it aborts
+    -- the file and hides every test below.
+    eq(waiting[1] and waiting[1].name, "Stranger Surname", "  under the name that asked")
+end
+
+do
+    -- Allowing serves the question they already asked, rather than making them
+    -- ask again.
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Stranger Surname")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "allowing them answers the request they already sent")
+    eq(AltStable.SyncAuthFor("Stranger Surname"), AltStable.AUTH_AUTO,
+       "  and the answer is remembered")
+    eq(#AltStable.PendingSyncRequests(), 0, "  and they are no longer waiting")
+
+    check(#askAs("Stranger Surname") > 0, "from then on they are served without asking again")
+end
+
+do
+    -- Denying is silent to them and permanent to us.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Nuisance Surname")
+    AltStable.DenySyncPeer("Nuisance Surname")
+    eq(AltStable.SyncAuthFor("Nuisance Surname"), AltStable.AUTH_NEVER, "denying is remembered")
+    eq(#AltStable.PendingSyncRequests(), 0, "  and drops their pending request")
+
+    WoW.chatOut = {}
+    eq(#askAs("Nuisance Surname"), 0, "a denied character is sent nothing")
+    eq(#(WoW.chatOut or {}), 0, "  and is not announced again - the answer was already given")
+end
+
+
+do
+    -- A refused request must not consume the scope change. The handler used to
+    -- do its "answered in full at generation N" bookkeeping before deciding
+    -- whether to answer, which would mark a peer served by refusing it - and
+    -- the newly eligible characters would then be filtered out of every later
+    -- delta, permanently.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, peerScopeGeneration = {} }
+    AltStableDB = {
+        ["Player-Scope-1"] = { guid = "Player-Scope-1", name = "Scoped", class = "MAGE",
+                               level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    AltStable.SetConfigValue("sendAllAccounts", true)   -- bump the generation
+
+    receiveUnapproved(T.MSG_REQUEST_V .. "|900", "Refused Surname")
+    eq(AltStableConfig.peerScopeGeneration["Refused Surname"], nil,
+       "refusing a request does not mark that peer as answered in full")
+
+    AltStable.AllowSyncPeer("Refused Surname")
+    flushAll()
+    check((AltStableConfig.peerScopeGeneration["Refused Surname"] or 0) > 0,
+          "  and approving it does")
+end
+
+------------------------------------------------------------
+-- Authorization, case-folded and mutual
+------------------------------------------------------------
+-- WoW whisper targets are case-insensitive and the rest of the addon knows it:
+-- IsWhitelisted, RemoveFromWhitelist and IsPeerOnline all compare with
+-- :lower(). The gate did not. That broke it in both directions - a whitelist
+-- entry typed in another case stopped being served, and /alts deny stored an
+-- answer under a key the handler never read, so it printed "refusing" and went
+-- on serving them. A control that no-ops on a capitalisation while reporting
+-- success is worse than no control.
+
+do
+    WoW.reset()
+    AltStableConfig = { whitelist = { "karuzo" }, peerWatermarks = {} }
+    eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_AUTO,
+       "a whitelist entry matches the character whatever the case")
+    eq(AltStable.SyncAuthFor("KARUZO"), AltStable.AUTH_AUTO, "  including shouting")
+    -- An unqualified entry means the local character, so a qualified name is a
+    -- different person - not the same one written out more fully.
+    eq(AltStable.SyncAuthFor("Karuzo-OtherRealm"), AltStable.AUTH_ASK,
+       "  but somebody on another realm is not that character")
+
+    eq(AltStable.SyncAuthFor(""), AltStable.AUTH_NEVER, "a nameless sender is refused outright")
+    eq(AltStable.SyncAuthFor(nil), AltStable.AUTH_NEVER, "so is no sender at all")
+
+    AltStable.DenySyncPeer("karuzo")
+    eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_NEVER,
+       "denying in one case denies in every case")
+
+    AltStable.AllowSyncPeer("KARUZO")
+    eq(AltStable.SyncAuthFor("karuzo"), AltStable.AUTH_AUTO,
+       "  and so does allowing")
+
+    -- One entry, not three.
+    local list = AltStable.SyncAuthList()
+    eq(#list, 1, "the same peer in three cases is one stored answer")
+end
+
+do
+    -- "Refuse them for good" has to mean both directions. Gating only the
+    -- inbound request left a denied peer on the whitelist, so every login still
+    -- whispered them a REQ and /alts cleanup still pushed them the database.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Friend", "Nuisance" }, peerWatermarks = {} }
+    local function targetNames()
+        local names = {}
+        for _, t in ipairs(T.GetSyncTargets()) do names[#names + 1] = t.target end
+        table.sort(names)
+        return table.concat(names, ",")
+    end
+    eq(targetNames(), "Friend,Nuisance", "both whitelisted peers are sync targets")
+
+    AltStable.DenySyncPeer("nuisance")
+    eq(targetNames(), "Friend", "a denied peer is no longer pushed to either")
+end
+
+do
+    -- Forgetting an answer for a WHITELISTED peer falls back to the whitelist,
+    -- which is auto - so saying "they will be asked about again" would tell the
+    -- player the opposite of the truth. The player most likely to type this is
+    -- one who denied someone they had whitelisted.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Bob" }, peerWatermarks = {} }
+    AltStable.DenySyncPeer("Bob")
+    WoW.chatOut = {}
+    AltStable.ForgetSyncPeer("Bob")
+    local said = table.concat(WoW.chatOut or {}, " ")
+    eq(AltStable.SyncAuthFor("Bob"), AltStable.AUTH_AUTO,
+       "forgetting falls back to the whitelist")
+    check(said:find("whitelist", 1, true) ~= nil,
+          "  and the message says so rather than promising a prompt: " .. said)
+    check(said:lower():find("asked about again", 1, true) == nil,
+          "  it does not claim they will be asked about again")
+
+    -- With no whitelist entry, the plain wording is correct.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    AltStable.DenySyncPeer("Carol")
+    WoW.chatOut = {}
+    AltStable.ForgetSyncPeer("Carol")
+    eq(AltStable.SyncAuthFor("Carol"), AltStable.AUTH_ASK,
+       "without a whitelist entry, forgetting really does mean ask")
+    check(table.concat(WoW.chatOut or {}, " "):find("asked about again", 1, true) ~= nil,
+          "  and it says so")
+end
+
+do
+    -- Module state has to be reset between sections like every other piece of
+    -- sync state, or a leftover pending request decides a later assertion.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER", "Ghost Surname")
+    check(#AltStable.PendingSyncRequests() > 0, "a stranger's request is pending")
+    WoW.reset()
+    eq(#AltStable.PendingSyncRequests(), 0, "  and a reset clears it, like the rest of the sync state")
+end
+
+do
+    -- An unanswered request expires rather than accumulating for the session.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER", "Fleeting Surname")
+    eq(#AltStable.PendingSyncRequests(), 1, "the request is remembered")
+    WoW.now = (WoW.now or 0) + 3600
+    eq(#AltStable.PendingSyncRequests(), 0, "  and an hour later it is gone, not merely hidden")
+end
+
+
+------------------------------------------------------------
+-- An answer goes to the asker, and only while they are still allowed
+------------------------------------------------------------
+
+do
+    -- THROUGH THE HANDLER, with a realm in play. Whitelisting a character on
+    -- another realm used to authorize the LOCAL character of the same name,
+    -- who could then whisper a request and be served without a prompt. The
+    -- handler strips the realm for routing and buffer keys; the consent
+    -- decision has to see the full identity.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Trusted Name-OtherRealm" }, peerWatermarks = {},
+                        syncAuth = {} }
+    AltStableDB = {
+        ["Player-Secret-9"] = { guid = "Player-Secret-9", name = "Secret", class = "MAGE",
+                                level = 60, money = 999999, lastUpdate = 1000,
+                                scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Trusted Name")
+    flushAll()
+    eq(#WoW.sentMessages(), 0,
+       "the local character sharing a whitelisted name is not served")
+
+    WoW.sent = {}
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Trusted Name-OtherRealm")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "  while the one actually whitelisted is")
+    for _, m in ipairs(WoW.sent) do
+        eq(m.target, "Trusted Name-OtherRealm",
+           "  and the reply is addressed across the realm, not to the local namesake")
+    end
+end
+
+do
+    -- An unknown CROSS-REALM requester. Everything the player then does has to
+    -- be about that person, not about whoever shares their name locally - so
+    -- the pending entry keeps the realm, approving by the realm-qualified name
+    -- works, and the reply is addressed back across the realm rather than
+    -- whispered to a local stranger.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Secret-8"] = { guid = "Player-Secret-8", name = "Secret", class = "MAGE",
+                                level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Faraway Name-OtherRealm")
+    local waiting = AltStable.PendingSyncRequests()
+    eq(#waiting, 1, "the cross-realm request is pending")
+    eq(waiting[1] and waiting[1].name, "Faraway Name-OtherRealm",
+       "  recorded with the realm, because that is who asked")
+
+    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_ASK,
+       "approving the local name would be approving somebody else")
+
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Faraway Name-OtherRealm")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "approving the one who asked answers them")
+    for _, m in ipairs(WoW.sent) do
+        eq(m.target, "Faraway Name-OtherRealm",
+           "  and the reply goes back across the realm, not to a local stranger")
+    end
+end
+
+
+do
+    -- A REQUEST ON GUILD USED TO BE ANSWERED ON GUILD. Approving one peer then
+    -- broadcast the database to the entire guild - every member, including the
+    -- ones never authorized and the ones explicitly denied. Authorizing one
+    -- person must not authorize a broadcast.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Priv-1"] = { guid = "Player-Priv-1", name = "Private", class = "MAGE",
+                              level = 60, money = 123456, lastUpdate = 1000,
+                              scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "GUILD",
+            "Guildie Surname")
+    eq(#WoW.sentMessages(), 0, "a guild request from a stranger is not answered")
+
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Guildie Surname")
+    flushAll()
+    local sent = WoW.sent
+    check(#sent > 0, "approving them does answer")
+    local broadcast = 0
+    for _, m in ipairs(sent) do
+        if m.channel ~= "WHISPER" then broadcast = broadcast + 1 end
+    end
+    eq(broadcast, 0, "  but privately - nothing goes to the guild")
+    for _, m in ipairs(sent) do
+        eq(m.target, "Guildie Surname", "  addressed to the character that asked")
+    end
+end
+
+do
+    -- DENYING DURING THE STAGGER. The reply is delayed a few seconds so peers
+    -- do not answer in unison; in that window the player can read the name,
+    -- think better of it and type /alts deny - which said "refusing" while the
+    -- database went out anyway.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Priv-2"] = { guid = "Player-Priv-2", name = "Private", class = "MAGE",
+                              level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Regret Surname")
+    AltStable.AllowSyncPeer("Regret Surname")      -- schedules the reply
+    WoW.sent = {}
+    AltStable.DenySyncPeer("Regret Surname")       -- before it fires
+    flushAll()
+    eq(#WoW.sentMessages(), 0,
+       "an answer withdrawn before the reply goes out means nothing is sent")
+
+    -- And the ordinary case still works.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Priv-3"] = { guid = "Player-Priv-3", name = "Private", class = "MAGE",
+                              level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Patient Surname")
+    AltStable.AllowSyncPeer("Patient Surname")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "  while an answer left alone is still honoured")
+end
+
+
+------------------------------------------------------------
+-- The prompt's own instruction has to work
+------------------------------------------------------------
+-- The notice named the requester with the realm stripped and told the player to
+-- type "/alts allow Faraway Name" - which authorizes the LOCAL character of
+-- that name while the one who actually asked stays pending. A prompt whose
+-- instruction grants the wrong person is worse than no prompt.
+--
+-- So this runs the command the prompt PRINTS, rather than calling the helper
+-- with the identity I already know is right. Testing the corrected call was how
+-- the bug survived the first round.
+
+do
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Prompt-1"] = { guid = "Player-Prompt-1", name = "Secret", class = "MAGE",
+                                level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    WoW.chatOut = {}
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Faraway Name-OtherRealm")
+
+    local notice = table.concat(WoW.chatOut or {}, " ")
+    check(notice:find("Faraway Name-OtherRealm", 1, true) ~= nil,
+          "the prompt names the requester in full: " .. notice)
+
+    -- Pull the command straight out of the message and run exactly that.
+    local suggested = notice:match("/alts allow ([^|]+)")
+    check(suggested ~= nil, "the prompt suggests an allow command")
+    suggested = suggested and suggested:gsub("%s+$", "")
+    eq(suggested, "Faraway Name-OtherRealm",
+       "and it names the character that actually asked")
+
+    AltStable.AllowSyncPeer(suggested)
+    eq(AltStable.SyncAuthFor("Faraway Name-OtherRealm"), AltStable.AUTH_AUTO,
+       "following the prompt authorizes the requester")
+    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_ASK,
+       "  and not the local namesake")
+end
+
+------------------------------------------------------------
+-- Consent has to be current when the reply goes out
+------------------------------------------------------------
+
+do
+    -- forget-peer drops the answer back to "ask". Testing only for NEVER let
+    -- that through: the stored decision said ask and the database went anyway.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Withdraw-1"] = { guid = "Player-Withdraw-1", name = "Secret", class = "MAGE",
+                                  level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Waverer Surname")
+    AltStable.AllowSyncPeer("Waverer Surname")     -- schedules the reply
+    WoW.sent = {}
+    AltStable.ForgetSyncPeer("Waverer Surname")    -- back to ask, before it fires
+    flushAll()
+    eq(#WoW.sentMessages(), 0,
+       "withdrawing consent to 'ask' stops the reply, not just denying")
+end
+
+do
+    -- A cancelled reply must not spend the scope change. Marking the peer
+    -- "answered in full at generation N" before knowing whether the answer goes
+    -- out meant re-approving them afterwards got a delta - and the newly
+    -- eligible records, stamped below every watermark, were never sent at all.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, peerScopeGeneration = {}, syncAuth = {},
+                        accountNumber = "1" }
+    AltStableDB = {
+        ["Player-Other-1"] = { guid = "Player-Other-1", name = "Otherling", class = "MAGE",
+                               level = 60, lastUpdate = 1000, account = "2" },
+    }
+    AltStable.SetConfigValue("sendAllAccounts", true)   -- the other account is now eligible
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|2000", "WHISPER",
+            "Fickle Surname")
+    AltStable.AllowSyncPeer("Fickle Surname")
+    AltStable.DenySyncPeer("Fickle Surname")           -- cancel it
+    flushAll()
+    eq(AltStableConfig.peerScopeGeneration["Fickle Surname"], nil,
+       "a cancelled reply does not consume the scope change")
+
+    -- Re-approve and ask again: the record stamped below the watermark must
+    -- still arrive, which only happens if the generation was never spent.
+    AltStable.AllowSyncPeer("Fickle Surname")
+    WoW.sent = {}
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|2000", "WHISPER",
+            "Fickle Surname")
+    flushAll()
+    local reply = decodeReply(WoW.sentMessages())
+    check(reply["Player-Other-1"] ~= nil,
+          "so re-approving still recovers the newly eligible record")
+end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else

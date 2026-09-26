@@ -93,6 +93,40 @@ a peer offers it back.
 Hiding (#21) is a different thing and still the right one for "I do not want to
 look at my bank alt": the record stays and keeps syncing.
 
+### Someone asked for your database
+
+Since #61 the sync request handler does not answer strangers. An unknown
+character whispering a request gets **nothing**, and you get a line naming them:
+
+```
+Stranger is asking for your character database. Nothing has been sent.
+/alts allow Stranger to share with them from now on,
+/alts deny Stranger to refuse them for good.
+```
+
+- `/alts allow <name>` — share from now on, and answer the request they just
+  sent if it is still fresh (5 minutes).
+- `/alts deny <name>` — refuse for good. They are never told; you are never
+  asked again.
+- `/alts auth` — what is stored, and who is waiting on you.
+- `/alts forget-peer <name>` — drop the stored answer and be asked again.
+
+**An answer is always a whisper to the character that asked.** A request
+arriving on the guild channel used to be answered on the guild channel, so
+approving one peer broadcast the database to every member. Nothing is sent to a
+room. (`BroadcastDB` is a separate, deliberate act.)
+
+**The realm is part of who they are.** `Trusted-OtherRealm` and `Trusted` are
+two different people, and approving one does not approve the other. Case is
+folded, because WoW whisper targets are case-insensitive; the realm is not.
+
+**Your whitelist counts as consent.** Peers you listed there are served without
+a prompt, because you already named them as your own — so an existing setup sees
+no new prompts. An explicit `deny` still beats the whitelist.
+
+The notice repeats at most once a minute per peer, because a client that retries
+on every login must not turn one unanswered question into a wall of chat.
+
 ### What deploy does
 
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,
@@ -240,10 +274,13 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts forget <name>` | Remove a character that no longer exists, for good |
 | `/alts unforget <name>` | Undo that — it returns on the next sync |
 | `/alts forgotten` | What has been forgotten on this account |
-
 | `/alts favourite <name>` | Pin to the top of the Roster, and into the scene |
 | `/alts unfavourite <name>` | Unpin |
 | `/alts favourite` | List them |
+| `/alts auth` | Who may ask us for the database, and who is waiting |
+| `/alts allow <name>` | Share with them from now on, and answer their pending request |
+| `/alts deny <name>` | Refuse for good, both directions — they are never told |
+| `/alts forget-peer <name>` | Drop the stored answer (a whitelisted peer falls back to the whitelist) |
 | `/alts account <n>` | This account's number, shown in the sheet |
 | `/alts export` | TSV of every character, for the spreadsheet |
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |
