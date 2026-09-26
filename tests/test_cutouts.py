@@ -18,6 +18,8 @@ covered here is the arithmetic and the refusals - the parts that decide whether
 a number is trustworthy, which is where the bugs have actually been.
 """
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -210,6 +212,91 @@ with tempfile.TemporaryDirectory() as tmp:
     # it is what run_all branches on before trying to match files.
     check("identical stamps are detectable without touching the disk",
           collided[1] == collided[2] and clean[1] != clean[2])
+
+
+# ------------------------------------------------------------------
+# The client has not written its records yet
+# ------------------------------------------------------------------
+# AltStableProbeDB is saved on /reload or logout, but a screenshot hits the disk
+# the instant it is taken. So the normal state right after a capture is both
+# images present and nothing describing them - and the converter, working from
+# the PREVIOUS records, reports something true but misleading: "no screenshots
+# for X", or a complaint about a capture the player has already redone. The real
+# answer is "/reload", and it should say so.
+
+import datetime as _dt
+
+def _t(s):
+    return _dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+
+FRESH = [("Alt", "2026-09-26 02:30:04", "2026-09-26 02:30:05", "2160")]
+OLD = [("Alt", "2026-09-26 02:14:43", "2026-09-26 02:14:44", "2160")]
+
+shots_new = {"a.tga": _t("2026-09-26 02:30:04"), "b.tga": _t("2026-09-26 02:30:05")}
+
+check("records that match the screenshots are not called stale",
+      mc.store_is_stale(FRESH, shots_new) is None)
+
+stale = mc.store_is_stale(OLD, shots_new)
+check("screenshots newer than every record are", stale is not None)
+if stale:
+    eq("  and it reports the newest screenshot", stale[0], _t("2026-09-26 02:30:05"))
+    eq("  and the newest record it does have", stale[1], _t("2026-09-26 02:14:44"))
+
+# A record written a moment after the shutter is the normal case, not staleness.
+justafter = [("Alt", "2026-09-26 02:30:04", "2026-09-26 02:30:05", "2160")]
+shots_slack = {"a.tga": _t("2026-09-26 02:30:35")}
+check("a shot a few seconds ahead of its record is within slack",
+      mc.store_is_stale(justafter, shots_slack) is None)
+
+check("an empty store with screenshots present is stale",
+      mc.store_is_stale([], shots_new) is not None)
+local_empty = mc.store_is_stale([], shots_new)
+eq("  and says there is no record at all", local_empty and local_empty[1], None)
+check("no screenshots at all is not staleness", mc.store_is_stale(OLD, {}) is None)
+
+
+# ------------------------------------------------------------------
+# Being told to delete the same file twice
+# ------------------------------------------------------------------
+# A superseded capture's stamp can resolve through match() onto a path already
+# staged for deletion - its tolerance is wider than the gap between two shots.
+# The second delete then failed and printed a WinError in the middle of a
+# successful conversion, which reads like something went wrong.
+
+with tempfile.TemporaryDirectory() as tmp:
+    victim = os.path.join(tmp, "shot.tga")
+    with open(victim, "wb") as fh:
+        fh.write(b"x" * 1024)
+    other = os.path.join(tmp, "other.tga")
+    with open(other, "wb") as fh:
+        fh.write(b"y" * 512)
+
+    # The byte count alone cannot see this: without the dedupe the second
+    # delete fails, is caught, and the totals come out identical. The only
+    # difference is a WinError printed mid-conversion, so that is what to
+    # assert.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        freed = mc.discard([victim, victim, other], "test")
+    said = buf.getvalue()
+
+    eq("both files are counted once each", freed, 1536)
+    check("  and both are gone",
+          not os.path.exists(victim) and not os.path.exists(other))
+    check("  with no failure reported for the repeat",
+          "could not delete" not in said, said.strip())
+    check("  and the tally counts two files, not three",
+          "2 screenshot(s)" in said, said.strip())
+
+    # A file that genuinely is not there still reports, because that IS worth
+    # knowing - it was only the duplicate that was noise.
+    missing = os.path.join(tmp, "never-existed.tga")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        eq("a truly missing file frees nothing", mc.discard([missing], "test"), 0)
+    check("  and is still reported", "could not delete" in buf.getvalue(),
+          buf.getvalue().strip())
 
 
 print("test_cutouts: %d passed, %d failed" % (passed, failed))
