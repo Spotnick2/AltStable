@@ -34,9 +34,16 @@ where the feature works perfectly.
   silently, forever. Collect with `{ ... }` and `select("#", ...)` when the shape is not certain.
 - **Struct vs tuple.** The skills and reputation ports (#4). A positionally-destructured struct
   records nothing and raises no error.
-- **Written is not read.** `test_cameraOverShoulder` accepts a write, reads the value straight back
-  through both the global and `C_CVar`, reports unlocked and non-readonly - and the camera ignores
-  it entirely (#25). A round-trip through the store proves only that the store works.
+- **Written is not read.** A round-trip through the store proves only that the store works.
+  `SavedVariablesMachine` is the clean example: it accepts everything written to it and reports
+  "first ever run" on every load, even on 70009 where the other two scopes were fixed.
+
+  > **CORRECTED, 2026-09-25.** This bullet used to cite `test_cameraOverShoulder` as a CVar the
+  > camera "ignores entirely", and that was its only example. It does not ignore it. The write
+  > lands and the camera honours it - and then `CameraKeepCharacterCentered` re-centres the
+  > character and undoes it. Applied-then-cancelled, not ignored (#25, and the camera section
+  > below, which carries the same banner). The observable was identical, which is exactly why the
+  > conclusion deserved a second probe rather than trust.
 
 **The three that cost us:**
 
@@ -885,7 +892,16 @@ and would have scored `0`. Varargs confirmed.
 
 ---
 
-## CVars — the namespace moved halfway, and a writable CVar is not a read one
+## CVars — the namespace moved halfway, and one conclusion here was wrong
+
+> **CORRECTED, 2026-09-25 (build 1.60.1.70009).** Everything below about `GetCVarInfo` moving to
+> `C_CVar` stands. The conclusion that the camera **ignores** `test_cameraOverShoulder` does not:
+> the camera honours it, and `CameraKeepCharacterCentered` then re-centres the character and
+> cancels the effect. Clear that CVar (and `CameraReduceUnexpectedMovement`) and the offset works -
+> that is what #25 ships. Read the "writable is not read", "not shims" and "Narcissus" paragraphs
+> below as a record of how a *cancelled* effect looked identical to an ignored one, not as current
+> guidance. The one claim below that is **not** retracted is the `test_cameraDynamicPitch`
+> measurement: nothing has re-tested it (see the note on it).
 
 Measured 2026-09-20 on 1.60.1.69913, chasing #25.
 
@@ -903,19 +919,31 @@ C_CVar.GetCVarInfo("test_cameraOverShoulder")
 `GetCVar` and `SetCVar` survive as bare globals. `GetCVarInfo` does **not** — it lives in `C_CVar`.
 Assume nothing about the rest of the family; check each one before use.
 
-**Writable is not the same as read.** `test_cameraOverShoulder` reports unlocked, non-readonly and
-non-secure, accepts a write, and reads the value straight back — and moves the camera not at all,
-at `2.043` or at `12`. The value also reverts to `0` on its own without the confirmation popup's
-"Disable" ever being clicked. Whatever the camera subsystem consults on this client, it is not this
-CVar. Same write-but-never-read shape as the SavedVariables blocker (#23), in a different store.
+**Writable is not the same as read — *retracted*.** `test_cameraOverShoulder` reports unlocked,
+non-readonly and non-secure, accepts a write, and reads the value straight back — and appeared to
+move the camera not at all, at `2.043` or at `12`. That appearance was `CameraKeepCharacterCentered`
+cancelling it, not the camera declining to read it; the "same write-but-never-read shape as #23"
+analogy drawn here was wrong in kind, not just in degree.
+
+One observation from this paragraph is **unresolved**: the value also reverted to `0` on its own,
+on 69913, without the confirmation popup's "Disable" ever being clicked. That has not been
+re-measured on 70009, and the #25 fix would hide it if it still happens — `SheetUI` re-writes the
+CVar on every Enter, so a revert between presentations is invisible. If the offset ever stops
+working mid-session, look here first.
 
 **The surviving globals are not shims.** Since `GetCVarInfo` moved to `C_CVar`, the obvious theory
 is that `GetCVar`/`SetCVar` survive as compatibility wrappers over a shadow store that the engine
 never reads. They do not: `SetCVar(name, 12)` then reading both ways returns `12, 12`. The value is
-consistent everywhere. The camera simply does not consult it.
+consistent everywhere. *(This paragraph's conclusion stands — the store is real and shared. Its
+closing line, "the camera simply does not consult it", is the retracted claim: it does.)*
 
-**It is the whole family, not one CVar.** `test_cameraDynamicPitch` set to `1` and confirmed
-changes nothing either - no tilt while moving, where a working one is unmistakable.
+**`test_cameraDynamicPitch` — measured inert, and *not* re-tested.** Set to `1` and confirmed, it
+changed nothing on 69913: no tilt while moving, where a working one is unmistakable. The heading
+here used to read "it is the whole family, not one CVar", and that generalisation is withdrawn -
+the shoulder offset turned out to work. But the reverse generalisation is not established either.
+Nothing in #25 touches pitch: `CENTRING_CVARS` in `SheetUI.lua` lists only the two centring CVars,
+no test exercises pitch, and nobody has re-run this on 70009. Treat it as an open measurement.
+`CameraKeepCharacterCentered` is the obvious first thing to clear before concluding anything.
 
 **And it is inert even when driven exactly as Narcissus drives it.** Narcissus 1.8.6 (Retail,
 Interface 120100) still uses this CVar through the plain global `SetCVar`, with two steps we were
@@ -931,13 +959,15 @@ CameraZoomIn(0);            --Incur shoulder update
 GameEvent.UnregisterInternalEvent("EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED")
 ```
 
-Both applied together, and the character still does not move. So this is not a matter of driving
-it wrong.
+Both applied together, and the character still did not move — because `CameraKeepCharacterCentered`
+was still set. Narcissus was being copied faithfully and the missing step was not in Narcissus at
+all. Both of its steps are still required and both are in the shipped fix; they were simply not
+sufficient on their own.
 
-**Treat it as a beta bug, not a permanent client limitation.** Forever is Mainline-derived and this
-is a working Mainline feature, so the likeliest explanation is that it is broken on this build
-rather than absent by design. Reported to Blizzard 2026-09-20 against 1.60.1.69913. Re-test on
-every new build before designing around it (#25).
+**~~Treat it as a beta bug~~ — withdrawn.** This was read as a client bug and reported to Blizzard
+on 2026-09-20 against 1.60.1.69913. It is not a client bug: the CVar works, and a second setting
+was undoing it. Nothing needs re-testing on each build, and nothing needs waiting for. See #25 for
+the fix.
 
 The `GameEvent` finding stands on its own merit: it is the correct way to suppress that popup on a
 Mainline client, and it works here, where walking the frames registered for the event does not -
@@ -1006,6 +1036,30 @@ UnitXPMax("player")         ->  400
    unregister count came back `1` where a table read scored `0`, which can only happen if the
    first return value is a frame. A probe line would still be tidier than inference if one is
    ever added.
-6. ~~**Does the camera subsystem read *any* `test_*` CVar on this client?**~~ — **answered**, and
-   the answer is no. Both `test_cameraOverShoulder` and `test_cameraDynamicPitch` are written,
-   read back, confirmed through the experimental-CVar dialog, and ignored. See above and #25.
+6. **Does the camera subsystem read *any* `test_*` CVar on this client?** — **partly answered.**
+   `test_cameraOverShoulder`: **yes**, it is read and honoured (below). `test_cameraDynamicPitch`:
+   **unknown** — measured inert on 69913, never re-measured, and the thing that explained the
+   shoulder offset was never ruled out for pitch. This item stays open until someone clears
+   `CameraKeepCharacterCentered` and tries pitch again.
+
+   > **CORRECTED, 2026-09-25 (build 1.60.1.70009).** This item used to read "answered, and the
+   > answer is no", struck through as closed. It was neither. `CameraKeepCharacterCentered`
+   > re-centres the character regardless of the shoulder offset, so the offset was being applied
+   > and then immediately cancelled. Set that CVar to 0, as DialogueUI 1.0.5-f does (it comments
+   > the line "11.0.2 Fix"), and the offset visibly shifts the character. Confirmed in game on
+   > 70009.
+   >
+   > Set `CameraKeepCharacterCentered` and `CameraReduceUnexpectedMovement` to 0 alongside
+   > `test_cameraOverShoulder`, and restore all three afterwards. Neither of those two is a `test_`
+   > CVar, so neither needs the experimental-confirmation suppression the offset write requires.
+   >
+   > *Provenance, inferred not measured:* DialogueUI's "11.0.2 Fix" comment is the only evidence
+   > for when `CameraKeepCharacterCentered` arrived upstream. Nothing here pins this client's
+   > Mainline base to a particular release — the `.toc` says `Interface: 16001` and the nearest
+   > comparison in this file is against a 12.1.0 addon. What is *measured* is that the CVar exists
+   > on 70009, reads non-nil, and does what the fix depends on; the version story is a guess and
+   > the fix does not rest on it.
+   >
+   > The lesson is not about CVars. "The client ignores this" and "the client obeys this and a
+   > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
+   > A working addon doing the same thing was the cheapest way to tell them apart.
