@@ -632,6 +632,11 @@ function ShowCopy(src)
     copyFrame:Show()
 end
 
+-- Shared with the other probe files. WoW chat is not selectable, so any command
+-- whose answer is a path the player has to retype needs this, not just this one.
+AltStableProbe = AltStableProbe or {}
+AltStableProbe.ShowCopy = ShowCopy
+
 ----------------------------------------------------------------------------
 -- Cross-account whisper test (run with both WOW1 and WOW12 logged in).
 --
