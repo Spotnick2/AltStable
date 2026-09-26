@@ -44,6 +44,7 @@ WoW.reset = function() stubReset(); T.ResetSyncState() end
 local PREFIX  = T.PREFIX
 local onEvent = T.frame:GetScript("OnEvent")
 
+
 ------------------------------------------------------------
 -- Tiny assert harness (ParseBuddy style)
 ------------------------------------------------------------
@@ -73,7 +74,21 @@ local function receive(message, sender)
     -- Forever reports the sender as "First Surname" - a space, no realm
     -- (docs/forever-api-notes.md). The TBC shape "Name-Realm" was the default
     -- here, so nothing exercised the name this client actually delivers.
-    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", sender or "Peer Surname")
+    -- Approve the sender first.
+    --
+    -- Since #61 an unknown character asking for the database is refused and
+    -- nothing is sent, which is the point of the feature - so every test in
+    -- this file that is about sync MECHANICS would otherwise be testing the
+    -- refusal instead. Done here rather than once at the top because several
+    -- sections reassign AltStableConfig wholesale and would wipe it.
+    --
+    -- The gate itself is exercised in its own section, through
+    -- receiveUnapproved, which deliberately skips this.
+    local who = sender or "Peer Surname"
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig.syncAuth = AltStableConfig.syncAuth or {}
+    AltStableConfig.syncAuth[who:match("^([^%-]+)") or who] = "auto"
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", who)
 end
 
 local function chatHas(substr)
@@ -1959,7 +1974,6 @@ do
        "a name held once still resolves without ceremony")
     eq(AltStable.ResolveCharacter("Only"), "solo-1", "  and so does its first name")
 end
-
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else

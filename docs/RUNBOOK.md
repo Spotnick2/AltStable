@@ -93,6 +93,31 @@ a peer offers it back.
 Hiding (#21) is a different thing and still the right one for "I do not want to
 look at my bank alt": the record stays and keeps syncing.
 
+### Someone asked for your database
+
+Since #61 the sync request handler does not answer strangers. An unknown
+character whispering a request gets **nothing**, and you get a line naming them:
+
+```
+Stranger is asking for your character database. Nothing has been sent.
+/alts allow Stranger to share with them from now on,
+/alts deny Stranger to refuse them for good.
+```
+
+- `/alts allow <name>` — share from now on, and answer the request they just
+  sent if it is still fresh (5 minutes).
+- `/alts deny <name>` — refuse for good. They are never told; you are never
+  asked again.
+- `/alts auth` — what is stored, and who is waiting on you.
+- `/alts forget-peer <name>` — drop the stored answer and be asked again.
+
+**Your whitelist counts as consent.** Peers you listed there are served without
+a prompt, because you already named them as your own — so an existing setup sees
+no new prompts. An explicit `deny` still beats the whitelist.
+
+The notice repeats at most once a minute per peer, because a client that retries
+on every login must not turn one unanswered question into a wall of chat.
+
 ### What deploy does
 
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,
