@@ -3,8 +3,14 @@
 
 Plain stdlib, no framework, same shape as the Lua suites: check/eq helpers and a
 count at the end. run.ps1 used to say "Lua only" because AltTracker's Python
-tests pulled in deferred tooling - this file pulls in nothing, and there is now
+tests pulled in deferred tooling - this file adds no tooling, and there is now
 Python logic whose failure mode is silently wrong artwork rather than an error.
+
+It does need Pillow, because the converter it loads does. Pillow is the
+converter's dependency and not the addon's, so this file SKIPS rather than fails
+when it is absent - and it checks for it before loading the converter, because
+the converter answers a missing Pillow with sys.exit(), which is a SystemExit no
+ImportError handler will catch.
 
 The heavy image work (matte, supersample) still has no test: it needs real
 screenshot pairs, which are 2 MB each and are deleted after conversion. What is
@@ -36,16 +42,31 @@ def eq(label, got, want):
     check(label, got == want, "got %r, want %r" % (got, want))
 
 
-try:
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "make_cutout", os.path.join(HERE, "..", "Tools", "RenderCutout", "make-cutout.py"))
-    mc = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mc)
-except ImportError as err:
-    # numpy/Pillow are the converter's own dependencies, not the addon's.
-    print("test_cutouts: SKIPPED - %s" % err)
+import importlib.util
+
+# Check the converter's dependency BEFORE loading it, and do not wrap the load
+# in a handler.
+#
+# make-cutout.py catches its own missing Pillow and calls sys.exit("Pillow is
+# required: ..."), which raises SystemExit - not ImportError. An `except
+# ImportError` around the load therefore does not catch it, and since run.ps1
+# runs this file unconditionally, a Python without Pillow failed the whole addon
+# suite instead of skipping the optional converter checks. find_spec answers the
+# question without importing anything, so there is no exit to catch.
+#
+# numpy is genuinely optional - the converter falls back to a pure-Python matte -
+# so it is not checked here.
+if importlib.util.find_spec("PIL") is None:
+    print("test_cutouts: SKIPPED - Pillow is not installed "
+          "(it is the converter's dependency, not the addon's)")
     sys.exit(0)
+
+# Loaded bare on purpose: past this point any failure is a real one and should
+# show as an error, not be mistaken for an absent dependency.
+spec = importlib.util.spec_from_file_location(
+    "make_cutout", os.path.join(HERE, "..", "Tools", "RenderCutout", "make-cutout.py"))
+mc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mc)
 
 
 # ------------------------------------------------------------------

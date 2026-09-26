@@ -38,11 +38,21 @@ try {
         if ($LASTEXITCODE -ne 0) { $failed++ }
         Write-Host ""
     }
-    Get-ChildItem (Join-Path $PSScriptRoot "test_*.py") | Sort-Object Name | ForEach-Object {
-        Write-Host "── $($_.Name) ──────────────────────────────" -ForegroundColor Cyan
-        & python $_.FullName
-        if ($LASTEXITCODE -ne 0) { $failed++ }
+    # Same reasoning as the tests' own Pillow check: the Python suites cover an
+    # optional local tool, so a machine without Python should skip them, not
+    # fail the addon's tests. This runner was Lua-only until now and nobody
+    # needed Python to run it.
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $py) {
+        Write-Host "── test_*.py ── SKIPPED: python is not on PATH" -ForegroundColor DarkYellow
         Write-Host ""
+    } else {
+        Get-ChildItem (Join-Path $PSScriptRoot "test_*.py") | Sort-Object Name | ForEach-Object {
+            Write-Host "── $($_.Name) ──────────────────────────────" -ForegroundColor Cyan
+            & $py.Source $_.FullName
+            if ($LASTEXITCODE -ne 0) { $failed++ }
+            Write-Host ""
+        }
     }
 
     if ($failed -gt 0) {
