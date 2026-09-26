@@ -55,6 +55,8 @@ function WoW.reset()
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
+    WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
+    if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
     WoW.faction = "Horde"
@@ -267,6 +269,52 @@ function WoW.flushTimers()
     local t = WoW.timers
     WoW.timers = {}
     for _, e in ipairs(t) do e.fn() end
+end
+
+-- Combat, the interface toggle, and screenshots.
+--
+-- All three are real client calls the render probe makes, and none of them was
+-- modelled - which is why that file went through three review rounds with no
+-- test able to load it at all. Combat lockdown and Alt+Z are exactly the states
+-- its bugs lived in.
+WoW.inCombat = false
+function InCombatLockdown() return WoW.inCombat and true or false end
+
+-- SetUIVisibility is what Alt+Z and Escape call. It is NOT protected, which is
+-- the whole reason the probe uses it instead of UIParent:Hide().
+WoW.uiVisible = true
+function SetUIVisibility(visible)
+    WoW.uiVisible = visible and true or false
+    -- It really does hide UIParent - callers check IsShown() to find out
+    -- whether the call took, and a stub that only flipped a flag of its own
+    -- made every one of them conclude it had failed.
+    if UIParent then
+        if WoW.uiVisible then UIParent:Show() else UIParent:Hide() end
+    end
+end
+
+WoW.screenshots = 0
+function Screenshot() WoW.screenshots = WoW.screenshots + 1 end
+
+-- Physical pixels, which is what a screenshot is measured in. GetScreenWidth /
+-- GetScreenHeight are UI units and are a different number; the probe records
+-- both from ONE source for that reason, so the stub keeps them distinct.
+WoW.screenW, WoW.screenH = 3840, 2160
+function GetPhysicalScreenSize() return WoW.screenW, WoW.screenH end
+function GetScreenWidth() return WoW.screenW / 2 end
+function GetScreenHeight() return WoW.screenH / 2 end
+
+-- A REAL post-hook: it wraps the global so the hook actually runs afterwards.
+-- An inert stub would have made the Alt+Z-during-capture path untestable, which
+-- is the path that had the bug.
+function hooksecurefunc(name, fn)
+    local prev = _G[name]
+    if type(prev) ~= "function" then return end
+    _G[name] = function(...)
+        local r = { prev(...) }
+        fn(...)
+        return unpack(r)
+    end
 end
 
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut, m) end }

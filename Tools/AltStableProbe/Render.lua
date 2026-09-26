@@ -143,12 +143,14 @@ local frame, model, backdrop, hint
 local savedFormat
 local previewing
 local capturing          -- one at a time, always
-local spoiled            -- the interface reappeared before both shots landed
+-- How many render records existed before the current capture began. Abandoning
+-- truncates back to it, so a half-written pair cannot be picked up later.
 -- Bumped by every capture and by every abort. Each timer in the chain holds the
 -- value it was scheduled under and does nothing if it no longer matches, so an
 -- abandoned capture cannot take a shot, record a fingerprint, or restore an
 -- interface that a later capture is legitimately hiding.
 local captureToken = 0
+local renderMark = 0
 local combatSettle       -- the quiet-after-combat wait, cancellable like the rest
 local captureStartedAt
 local watchdog           -- cancelled by Finish, or it fires into the NEXT capture
@@ -273,26 +275,57 @@ local function RecordMetadata(shotIndex)
     })
 end
 
+-- Give up on the capture in flight, completely.
+--
+-- Three callers give up for different reasons - combat, the player taking their
+-- interface back, and the watchdog - and they were not doing the same thing.
+-- The user-restoration path in particular only set a flag: the timer chain ran
+-- on, both screenshots were taken WITH the interface in them, and both records
+-- were appended. Finish() then skipped the look fingerprint and said the
+-- portrait was discarded, but the converter pairs from the RENDER records, not
+-- the fingerprint - so the ruined pair was still eligible and would overwrite a
+-- good portrait with one full of action bars.
+--
+-- restoreUI is false when the player has already put the interface back
+-- themselves; there is nothing to give them and nothing we still own.
+local function AbandonCapture(message, restoreUI)
+    -- The stage goes first and unconditionally. It is a fullscreen frame on
+    -- WorldFrame with no mouse, so if a broken chain ever leaves it up, neither
+    -- Escape nor Alt+Z dismisses it and the player needs /reload.
+    frame:Hide()
+    if not capturing then return end
+
+    captureToken = captureToken + 1     -- every pending callback is now void
+    capturing = false
+    if watchdog then watchdog:Cancel(); watchdog = nil end
+
+    if savedFormat and type(SetCVar) == "function" then
+        pcall(SetCVar, "screenshotFormat", savedFormat)
+        savedFormat = nil
+    end
+
+    -- Drop whatever this capture already wrote. A lone shot-1 record is
+    -- harmless (the converter only pairs a 1 with a 2), but a complete pair
+    -- taken through a restored interface is not, and the watchdog can fire
+    -- after both are on disk.
+    local renders = AltStableProbeDB and AltStableProbeDB.renders
+    if renders then
+        for i = #renders, renderMark + 1, -1 do table.remove(renders, i) end
+    end
+
+    local back = true
+    if restoreUI then back = ShowUI() end
+    if message then
+        Out(message .. ((back or not restoreUI) and ""
+            or " (interface returns when the fight ends)"))
+    end
+end
+
 local function Finish()
     capturing = false
     if watchdog then watchdog:Cancel(); watchdog = nil end
     frame:Hide()
 
-    -- Escape and Alt+Z both call SetUIVisibility(true), so the player can undo
-    -- our hide mid-capture - the engine hide is reversible in a way
-    -- UIParent:Hide() was not. If that happened, the shots caught the interface
-    -- and the portrait is ruined, so the look is deliberately NOT recorded and
-    -- the next trigger tries again.
-    if spoiled then
-        spoiled = nil
-        ShowUI()
-        if savedFormat and type(SetCVar) == "function" then
-            pcall(SetCVar, "screenshotFormat", savedFormat)
-            savedFormat = nil
-        end
-        Out("|cffff8800interface came back mid-capture - portrait discarded, will retry|r")
-        return
-    end
     -- ALWAYS give the interface back. Everything else here is a nicety; a
     -- player left staring at an empty screen is not.
     ShowUI()
@@ -338,6 +371,9 @@ local function Capture()
     captureStartedAt = GetTime()
     captureToken = captureToken + 1
     local token = captureToken
+    AltStableProbeDB = AltStableProbeDB or {}
+    AltStableProbeDB.renders = AltStableProbeDB.renders or {}
+    renderMark = #AltStableProbeDB.renders
 
     Build()
 
@@ -401,19 +437,11 @@ local function Capture()
     watchdog = C_Timer.NewTimer(12, function()
         watchdog = nil
         if token ~= captureToken then return end
-        -- Unconditional. The stage is a fullscreen frame on WorldFrame with no
-        -- mouse: if a broken chain leaves it up, neither Escape nor Alt+Z
-        -- dismisses it and the player needs /reload. ShowUI self-guards, so
-        -- putting the frame behind that flag bought nothing and cost this.
-        frame:Hide()
-        ShowUI()
-        Out("|cffff8800capture did not finish - your interface is back|r")
-        -- Everything Finish would have restored, because it never ran.
-        if savedFormat and type(SetCVar) == "function" then
-            pcall(SetCVar, "screenshotFormat", savedFormat)
-            savedFormat = nil
-        end
-        capturing = false
+        -- The same giving-up as combat and Alt+Z, for the same reasons. This
+        -- used to restore the interface and the screenshot format by hand and
+        -- stop there, which left the records of a chain that hung AFTER both
+        -- shots were taken - a complete pair from a capture nobody trusts.
+        AbandonCapture("|cffff8800capture did not finish - your interface is back|r", true)
     end)
 
     C_Timer.After(KEY_DELAY, function()
@@ -601,8 +629,15 @@ end
 if type(hooksecurefunc) == "function" and type(SetUIVisibility) == "function" then
     hooksecurefunc("SetUIVisibility", function(visible)
         if visible and capturing and uiHidden then
-            spoiled = true
             uiHidden = nil          -- they restored it; we no longer own it
+            -- Abandon, do not merely mark. Flagging it left the chain running:
+            -- the shots were taken through the restored interface and their
+            -- records were still written, and the converter reads those records
+            -- rather than the fingerprint Finish() withholds. Alt+Z and Escape
+            -- now dismiss the stage immediately, which is what pressing them
+            -- means.
+            AbandonCapture("|cffff8800interface came back mid-capture - "
+                .. "portrait discarded, will retry|r", false)
         end
     end)
 end
@@ -685,20 +720,7 @@ auto:SetScript("OnEvent", function(_, event)
         -- means the player fights the pull with no action bars until the chain
         -- finishes - which is the same harm as the protected-call bug, just
         -- without an error report to show for it.
-        if capturing then
-            captureToken = captureToken + 1     -- every pending timer is now void
-            capturing = false
-            spoiled = nil
-            if watchdog then watchdog:Cancel(); watchdog = nil end
-            frame:Hide()
-            if savedFormat and type(SetCVar) == "function" then
-                pcall(SetCVar, "screenshotFormat", savedFormat)
-                savedFormat = nil
-            end
-            local back = ShowUI()
-            Out("|cffff8800combat started - portrait abandoned|r"
-                .. (back and "" or " (interface returns when the fight ends)"))
-        end
+        AbandonCapture("|cffff8800combat started - portrait abandoned|r", true)
     elseif event == "PLAYER_LOGIN" then
         -- Inventory is not reliably readable the instant the world loads, and
         -- a fingerprint built from half-loaded gear would re-shoot every login.
@@ -718,3 +740,18 @@ auto:SetScript("OnEvent", function(_, event)
         end)
     end
 end)
+
+-- Test seam (the AltStable._test convention). Everything above is local, so
+-- without this the file can be loaded but not driven, and the combat and Alt+Z
+-- paths - the two that have produced real bugs - are unreachable from a test.
+AltStableProbe = AltStableProbe or {}
+AltStableProbe._test = {
+    Capture        = function() return Capture() end,
+    AbandonCapture = function(m, r) return AbandonCapture(m, r) end,
+    Build          = function() return Build() end,
+    events         = auto,
+    stage          = function() return frame end,
+    capturing      = function() return capturing and true or false end,
+    token          = function() return captureToken end,
+    renderMark     = function() return renderMark end,
+}
