@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: AltStable Raids
 ## Notes: Cross-alt raid-lockout matrix for AltStable. Which characters are saved to which raids, and when each resets.
+## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: @project-version@
 ## Dependencies: AltStable

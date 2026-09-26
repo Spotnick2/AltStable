@@ -32,13 +32,9 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
-    -- Art this pretend client does NOT have. Opt-out, not opt-in: real item
-    -- icons ARE file ids on this client (docs/forever-api-notes.md records
-    -- iconFileID=134534 from the item struct, and the Warband plugin feeds
-    -- exactly that into SetTexture), so a client that owns no files is the
-    -- wrong default and would fail unrelated tests the moment a fixture used a
-    -- numeric icon.
-    missingFileIDs = {},
+    -- Texture PATHS this pretend client does not have. There is deliberately no
+    -- equivalent for file ids: the client cannot tell you a file id is bad
+    -- (measured - see SetTexture below), so neither can this.
     missingTexturePaths = {},
     sent        = {},
     maxLevel    = 60,
@@ -64,7 +60,7 @@ function WoW.reset()
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
-    WoW.missingFileIDs, WoW.missingTexturePaths = {}, {}
+    WoW.missingTexturePaths = {}
     WoW.equipped = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
@@ -154,33 +150,31 @@ local function makeFrame()
     -- nothing - a silent no-op that reads as correct.
     -- Textures: what was set, and whether the client knew it.
     --
-    -- SetTexture takes a path OR a file id, and art the client does not have
-    -- leaves the texture EMPTY rather than erroring - so "did that resolve" can
-    -- only be answered by asking the texture afterwards. Modelled here because
-    -- code that checks before falling back is code worth testing, and the
-    -- chaining default made both branches look identical.
+    -- SetTexture takes a path OR a file id, and the two behave DIFFERENTLY.
     --
-    -- WoW.missingFileIDs and WoW.missingTexturePaths name what is ABSENT.
-    -- Everything else resolves, because on a real client almost everything
-    -- does - and the Instances plugin's `not tex:GetTexture()` fallback needs a
-    -- missing PATH to be expressible, which an id-only allowlist could not do.
+    -- MEASURED on 1.60.1.70009:
+    --     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+    --          print(t:GetTexture(), t:GetTextureFileID())
+    --     999999999   999999999
     --
-    -- CAVEAT, unverified on the live client: whether SetTexture(<bad id>)
-    -- really leaves GetTextureFileID empty, rather than echoing the number
-    -- back, has not been measured. See the note on ApplyRosterIcon in
-    -- SheetUI.lua - if the client echoes, this stub is optimistic and the
-    -- fallback it lets us test is decorative.
+    -- A file id is stored, not resolved. A nonsense one is echoed straight
+    -- back, so NOTHING a texture can be asked will tell you whether the art
+    -- exists - the only symptom is that it draws nothing. An earlier version of
+    -- this stub returned nil for an unknown id, which made a validity check
+    -- look testable when on the client it could never fire.
+    --
+    -- A PATH is different: the client resolves it to a file id and can fail to,
+    -- which is why the Instances plugin's `not tex:GetTexture()` fallback
+    -- works. WoW.missingTexturePaths expresses that.
     f.SetTexture = function(self, v)
         if type(v) == "number" then
-            local missing = WoW.missingFileIDs[v]
-            self._fileID  = (not missing) and v or nil
-            self._texture = self._fileID
+            self._texture, self._fileID = v, v     -- echoed, whatever it is
         elseif type(v) == "string" then
             local missing = WoW.missingTexturePaths[v]
             self._texture = (not missing) and v or nil
             -- A path the client HAS resolves to some id. The number is not
-            -- knowable here, so it is deliberately not the path's own identity
-            -- and no test should assert its value - only that there is one.
+            -- knowable here, so no test should assert its value - only that
+            -- there is one.
             self._fileID  = self._texture and 100000 or nil
         else
             self._texture, self._fileID = nil, nil

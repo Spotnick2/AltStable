@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: AltStable Dev Config
 ## Notes: Dev-only. Seeds AltStableConfig at load when nothing came back from disk - the workaround for #23 before 1.60.1.70009 fixed it, still useful for a fresh WTF or a second test account. Never packaged.
+## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: dev
 ## Dependencies: AltStable
