@@ -6,8 +6,21 @@
 -- guessing at Interface\Icons\ names from a picture is how you end up shipping
 -- the green question mark.
 --
--- /asicon  — hover something, run it, and it prints every texture and atlas in
--- the frame under the cursor, deepest first, with the file id beside each.
+-- /asicon        — counts down, then reads whatever the cursor is over
+-- /asicon now    — reads immediately (for a keybind or a macro)
+-- /asicon cancel — call off a pending read
+--
+-- THE COUNTDOWN IS THE POINT. The first version read the cursor the instant the
+-- command ran, which sounds right and is useless: typing "/asicon" means being
+-- at the chat box, so by the time it executes the pointer has left whatever you
+-- wanted to identify. The first real use of it came back
+-- "UI-HUD-ExperienceBar-Fill-Prediction" - the status bar behind the chat
+-- frame, correctly identified and entirely beside the point.
+--
+-- So it waits, and you move the pointer onto the thing while it does. Same
+-- reason the capture in Render.lua counts down before hiding the interface.
+-- `now` is there for a keybind, which is the precise version of this: press it
+-- while already hovering and there is nothing to wait for.
 --
 -- GetMouseFoci, plural: GetMouseFocus was removed in 11.0 and this client is
 -- Mainline-derived, so the old single-return call is simply absent (see
@@ -168,14 +181,66 @@ local function WhatIsUnderTheCursor(sink)
     return lines
 end
 
+local READ_DELAY = 5
+local pendingRead
+
+local function CancelRead()
+    if not pendingRead then return false end
+    pendingRead:Cancel()
+    pendingRead = nil
+    return true
+end
+
+local function ReadAfterDelay()
+    -- Idempotent, like the capture countdown: five of these queued at once is
+    -- how a countdown turns into a burst.
+    if pendingRead then
+        Out("already counting down - |cffffff00/asicon cancel|r to stop it")
+        return
+    end
+
+    Out(("hover the thing now - reading in %ds. "):format(READ_DELAY)
+        .. "|cffffff00/asicon cancel|r to stop, |cffffff00/asicon now|r to skip the wait.")
+
+    local remaining = READ_DELAY
+    pendingRead = C_Timer.NewTicker(1, function(ticker)
+        remaining = remaining - 1
+        if remaining > 0 then
+            if remaining <= 3 then Out(tostring(remaining) .. "...") end
+            return
+        end
+        ticker:Cancel()
+        pendingRead = nil
+        WhatIsUnderTheCursor()
+    end)
+end
+
 SLASH_ASICON1 = "/asicon"
-SlashCmdList["ASICON"] = function()
-    WhatIsUnderTheCursor()
+SlashCmdList["ASICON"] = function(msg)
+    msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+
+    if msg == "cancel" then
+        if not CancelRead() then Out("nothing counting down") end
+        return
+    end
+    if msg == "now" then
+        WhatIsUnderTheCursor()
+        return
+    end
+    if msg ~= "" then
+        Out("usage: |cffffff00/asicon|r, |cffffff00/asicon now|r, |cffffff00/asicon cancel|r")
+        return
+    end
+    ReadAfterDelay()
 end
 
 AltStableProbe = AltStableProbe or {}
 AltStableProbe.WhatIcon = WhatIsUnderTheCursor
 AltStableProbe._testIcon = {
+    READ_DELAY = READ_DELAY,
+    CancelRead = function() return CancelRead() end,
+    ReadAfterDelay = function() return ReadAfterDelay() end,
+    reading = function() return pendingRead ~= nil end,
     Describe = Describe,
     DescribeRegions = DescribeRegions,
     FociList = function(...) return FociList(...) end,

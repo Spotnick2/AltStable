@@ -178,5 +178,102 @@ do
           table.concat(said, " "))
 end
 
+------------------------------------------------------------
+-- It waits for you to point at the thing
+------------------------------------------------------------
+-- The first version read the cursor the instant the command ran, which sounds
+-- right and is useless: typing "/asicon" means being at the chat box, so the
+-- pointer has already left whatever you wanted named. The first real use came
+-- back "UI-HUD-ExperienceBar-Fill-Prediction" - the status bar behind the chat
+-- frame, correctly identified and entirely beside the point.
+
+do
+    WoW.timers = {}
+    local said = {}
+    local answered = false
+    _G.GetMouseFoci = function()
+        answered = true
+        return { { GetObjectType = function() return "Frame" end,
+                   GetName = function() return "TheThing" end,
+                   GetRegions = function()
+                       local t = { GetObjectType = function() return "Texture" end,
+                                   GetAtlas = function() return "the-atlas" end,
+                                   GetTextureFilePath = function() return nil end,
+                                   GetTextureFileID = function() return 0 end,
+                                   IsShown = function() return true end }
+                       return t
+                   end } }
+    end
+
+    T.ReadAfterDelay()
+    check("the read is pending", T.reading())
+    check("  and nothing was read yet", not answered,
+          "it read the cursor while the player was still at the chat box")
+
+    -- Tick down. It must not fire early.
+    for i = 1, T.READ_DELAY - 1 do
+        WoW.flushTimers()
+        check(("  still waiting after %d tick(s)"):format(i), not answered)
+    end
+
+    WoW.flushTimers()
+    check("it reads once the countdown ends", answered)
+    check("  and stops being pending", not T.reading())
+
+    -- The ticker must not keep firing afterwards.
+    answered = false
+    WoW.flushTimers()
+    check("  and does not read again", not answered,
+          "the ticker was left running")
+end
+
+do
+    -- THROUGH THE REAL COMMAND, because which of the two it calls is the whole
+    -- fix. Calling ReadAfterDelay directly proves the countdown works and says
+    -- nothing about whether /asicon uses it - and "it reads immediately" is
+    -- exactly the bug being fixed.
+    WoW.timers = {}
+    local reads = 0
+    _G.GetMouseFoci = function() reads = reads + 1; return {} end
+
+    SlashCmdList["ASICON"]("")
+    eq("bare /asicon does not read straight away", reads, 0)
+    check("  it counts down instead", T.reading())
+    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    eq("  and reads when the countdown ends", reads, 1)
+
+    SlashCmdList["ASICON"]("now")
+    eq("/asicon now reads immediately", reads, 2)
+    check("  without queueing anything", not T.reading())
+
+    SlashCmdList["ASICON"]("")
+    check("a countdown is running", T.reading())
+    SlashCmdList["ASICON"]("cancel")
+    check("/asicon cancel stops it", not T.reading())
+    for _ = 1, T.READ_DELAY + 1 do WoW.flushTimers() end
+    eq("  and it never reads", reads, 2)
+
+    SlashCmdList["ASICON"]("nonsense")
+    eq("an unknown argument reads nothing", reads, 2)
+    check("  and starts nothing", not T.reading())
+end
+
+do
+    -- Cancelling, and not stacking.
+    WoW.timers = {}
+    local answered = false
+    _G.GetMouseFoci = function() answered = true; return {} end
+
+    T.ReadAfterDelay()
+    T.ReadAfterDelay()          -- a second one must not queue a second read
+    check("asking twice does not start two countdowns", T.reading())
+    check("cancelling reports it cancelled something", T.CancelRead())
+    check("  and there is nothing pending", not T.reading())
+    eq("  cancelling nothing says so", T.CancelRead(), false)
+
+    for _ = 1, T.READ_DELAY + 2 do WoW.flushTimers() end
+    check("a cancelled countdown never reads", not answered)
+end
+
 print(("test_whaticon: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)

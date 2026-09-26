@@ -263,13 +263,34 @@ C_Timer = {
         end
         return entry
     end,
-    NewTicker = function(_, fn) return { Cancel = function() end } end,
+    -- A REAL ticker: it queues like the others, fires on each flush, and stays
+    -- queued until cancelled. The inert version returned a handle that never
+    -- fired and a Cancel that did nothing, which made every countdown built on
+    -- NewTicker untestable - the callback simply never ran, so a test could
+    -- only assert that something had been scheduled.
+    NewTicker = function(delay, fn)
+        local entry = { delay = delay, ticker = true }
+        entry.Cancel = function()
+            entry.cancelled = true
+            for i, e in ipairs(WoW.timers) do
+                if e == entry then table.remove(WoW.timers, i); return end
+            end
+        end
+        entry.fn = function() fn(entry) end
+        table.insert(WoW.timers, entry)
+        return entry
+    end,
 }
 
 function WoW.flushTimers()
     local t = WoW.timers
     WoW.timers = {}
-    for _, e in ipairs(t) do e.fn() end
+    for _, e in ipairs(t) do
+        e.fn()
+        -- A ticker repeats. Re-queue it unless its callback cancelled it, so a
+        -- test can flush N times to advance N ticks.
+        if e.ticker and not e.cancelled then table.insert(WoW.timers, e) end
+    end
 end
 
 -- Combat, the interface toggle, and screenshots.
