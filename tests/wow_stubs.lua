@@ -32,6 +32,7 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
+    tickers     = {},
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
