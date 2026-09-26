@@ -75,6 +75,7 @@ end
 -- so the engine's hide does not take it with the rest of the interface.
 local uiHidden        -- "engine" | "uiparent" | nil
 local uiWasShown      -- was the interface up before we touched it?
+local owedRestore     -- a protected restore we could not make during combat
 
 -- Returns true only if the interface is ACTUALLY gone. The caller aborts
 -- otherwise: two screenshots of a character behind a full interface are not a
@@ -105,20 +106,37 @@ local function HideUI()
     return false
 end
 
+-- Returns true when the interface is back, false when we still owe it.
+--
+-- The flag is cleared ONLY on success. UIParent:Show() is protected, so on the
+-- fallback path during combat the call is blocked - and clearing the flag first
+-- would lose the fact that we still owe a restore, leaving the player without
+-- an interface and nothing tracking that. That is the reported bug with an
+-- extra step.
 local function ShowUI()
-    if not uiHidden then return end
-    local how = uiHidden
-    uiHidden = nil
+    if not uiHidden then return true end
+
     -- Leave it off if that is how we found it. The quiet-after-combat trigger
     -- fires in exactly the idle moments where someone has deliberately hidden
-    -- their interface, and forcing it back on would be the addon overruling
+    -- their own interface, and forcing it back would be the addon overruling
     -- them.
-    if uiWasShown == false then return end
-    if how == "engine" then
+    if uiWasShown == false then uiHidden = nil; return true end
+
+    if uiHidden == "engine" then
+        -- The engine call is safe in combat; it is what Alt+Z does.
         if type(SetUIVisibility) == "function" then pcall(SetUIVisibility, true) end
-    else
-        pcall(UIParent.Show, UIParent)
+        uiHidden = nil
+        return true
     end
+
+    if InCombatLockdown and InCombatLockdown() then
+        owedRestore = true          -- paid at PLAYER_REGEN_ENABLED
+        return false
+    end
+    pcall(UIParent.Show, UIParent)
+    uiHidden = nil
+    owedRestore = nil
+    return true
 end
 
 local frame, model, backdrop, hint
@@ -126,6 +144,11 @@ local savedFormat
 local previewing
 local capturing          -- one at a time, always
 local spoiled            -- the interface reappeared before both shots landed
+-- Bumped by every capture and by every abort. Each timer in the chain holds the
+-- value it was scheduled under and does nothing if it no longer matches, so an
+-- abandoned capture cannot take a shot, record a fingerprint, or restore an
+-- interface that a later capture is legitimately hiding.
+local captureToken = 0
 local combatSettle       -- the quiet-after-combat wait, cancellable like the rest
 local captureStartedAt
 local watchdog           -- cancelled by Finish, or it fires into the NEXT capture
@@ -302,8 +325,19 @@ local function Capture()
     if capturing and captureStartedAt and (GetTime() - captureStartedAt) < 15 then
         return
     end
+    -- No captures in combat, from ANY entry point. ConsiderCapture checks this
+    -- for the automatic path, but /asrender and the notice's own button both
+    -- reach here directly - and hiding the interface for three seconds during a
+    -- pull is the single worst thing this feature can do.
+    if InCombatLockdown and InCombatLockdown() then
+        Out("|cffff8800not while you are in combat|r - try again once the fight is over")
+        return
+    end
+
     capturing = true
     captureStartedAt = GetTime()
+    captureToken = captureToken + 1
+    local token = captureToken
 
     Build()
 
@@ -366,6 +400,7 @@ local function Capture()
     if watchdog then watchdog:Cancel() end
     watchdog = C_Timer.NewTimer(12, function()
         watchdog = nil
+        if token ~= captureToken then return end
         -- Unconditional. The stage is a fullscreen frame on WorldFrame with no
         -- mouse: if a broken chain leaves it up, neither Escape nor Alt+Z
         -- dismisses it and the player needs /reload. ShowUI self-guards, so
@@ -382,14 +417,20 @@ local function Capture()
     end)
 
     C_Timer.After(KEY_DELAY, function()
+        if token ~= captureToken then return end
         Screenshot()
         RecordMetadata(1)
         C_Timer.After(SHOT_DELAY, function()
+            if token ~= captureToken then return end
             backdrop:SetColorTexture(1, 1, 1, 1)     -- same pose, other backdrop
             C_Timer.After(0.25, function()
+                if token ~= captureToken then return end
                 Screenshot()
                 RecordMetadata(2)
-                C_Timer.After(SHOT_DELAY, Finish)
+                C_Timer.After(SHOT_DELAY, function()
+                    if token ~= captureToken then return end
+                    Finish()
+                end)
             end)
         end)
     end)
@@ -639,23 +680,37 @@ auto:SetScript("OnEvent", function(_, event)
         -- seconds mid-pull is the one thing this must never do.
         CancelPending("combat started")
         if combatSettle then combatSettle:Cancel(); combatSettle = nil end
-        -- An in-flight capture on the FALLBACK path is the original bug: the
-        -- restore is UIParent:Show(), which is protected and blocked once the
-        -- fight starts, and pcall suppresses neither the block nor the error
-        -- report. Give the interface back now, while it is still allowed.
-        if capturing and uiHidden == "uiparent" then
-            spoiled = true
+        -- Abandon an in-flight capture on EVERY path, not just the fallback.
+        -- The engine hide is combat-safe to REVERSE, but leaving it in place
+        -- means the player fights the pull with no action bars until the chain
+        -- finishes - which is the same harm as the protected-call bug, just
+        -- without an error report to show for it.
+        if capturing then
+            captureToken = captureToken + 1     -- every pending timer is now void
+            capturing = false
+            spoiled = nil
+            if watchdog then watchdog:Cancel(); watchdog = nil end
             frame:Hide()
-            ShowUI()
-            Out("|cffff8800combat started - portrait abandoned|r")
+            if savedFormat and type(SetCVar) == "function" then
+                pcall(SetCVar, "screenshotFormat", savedFormat)
+                savedFormat = nil
+            end
+            local back = ShowUI()
+            Out("|cffff8800combat started - portrait abandoned|r"
+                .. (back and "" or " (interface returns when the fight ends)"))
         end
     elseif event == "PLAYER_LOGIN" then
         -- Inventory is not reliably readable the instant the world loads, and
         -- a fingerprint built from half-loaded gear would re-shoot every login.
         C_Timer.After(LOGIN_SETTLE, function() ConsiderCapture("gear changed since your last portrait") end)
     else
-        -- Wait out the gap between pulls rather than capturing in it. Any new
-        -- fight cancels this, so a long chain of pulls simply never reaches it.
+        -- First, anything we could not give back during the fight.
+        if owedRestore then
+            owedRestore = nil
+            if ShowUI() then Out("interface restored") end
+        end
+        -- Then wait out the gap between pulls rather than capturing in it. Any
+        -- new fight cancels this, so a long chain of pulls never reaches it.
         if combatSettle then combatSettle:Cancel() end
         combatSettle = C_Timer.NewTimer(COMBAT_SETTLE, function()
             combatSettle = nil
