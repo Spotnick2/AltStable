@@ -315,8 +315,14 @@ do
     WoW.chatOut = {}
     T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
     eq("  and combat cancels it", T.pendingKind(), nil)
+    local said = table.concat(WoW.chatOut or {}, " ")
     check("  but says so, because it had announced itself",
           #(WoW.chatOut or {}) > 0, "the player was left waiting in silence")
+    -- The REASON is the payload. A player told "refreshing your portrait in 5s"
+    -- and then handed a bare "auto-capture cancelled" has no idea combat did
+    -- it, which is the confusion the countdown message exists to prevent.
+    check("  and says what cancelled it", said:find("combat started", 1, true) ~= nil,
+          said)
 end
 
 do
@@ -333,8 +339,12 @@ do
 end
 
 do
-    -- /asrender cancel is the player asking, so silence would read as a command
-    -- that did nothing.
+    -- The same promise one level down, at the function rather than the command.
+    --
+    -- NOT a duplicate of the block above, which drives SlashCmdList and so
+    -- pins the ARGUMENT the command passes. This one pins what CancelPending
+    -- does when given it - the two failures are different, and testing only
+    -- this one is exactly how the missing `announce` survived the first pass.
     resetCapture()
     local events = T.events:GetScript("OnEvent")
     events(T.events, "PLAYER_REGEN_ENABLED")
