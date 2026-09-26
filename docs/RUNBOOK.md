@@ -73,13 +73,22 @@ a peer offers it back.
 - **Per account, and not on the wire.** Each account forgets independently.
   Account A deciding a character is gone is not evidence for account B, which
   may still be playing it — and it needs no protocol change.
-- **Tombstones expire after a month with nobody offering the record.** The
-  stamp tracks *when a peer last offered it*, not when you forgot it, so the
-  tombstone cannot age out while anyone is still sending the character.
+- **Tombstones do not expire by age.** They were going to, and that was wrong:
+  a dead character's `lastUpdate` is frozen, so it never passes a delta's filter
+  and rides only *full* replies. In the ordinary login-delta steady state the
+  stamp never moves, the tombstone would drop on day 31, and the next full sync
+  — a `/alts cleanup`, a scope change, or the Warband plugin resetting
+  watermarks at login — would bring the character straight back. The list is
+  bounded by **count** instead (200, oldest evicted), which is what "do not grow
+  without bound" actually needed.
 - **Not the character you are playing.** The next scan would rewrite the record
   seconds later.
-- `/alts unforget <name>` undoes it; the character returns on the next sync,
-  not immediately. `/alts forgotten` lists them.
+- `/alts unforget <name>` undoes it. Dropping the tombstone is not enough on
+  its own — every peer's watermark is already past the dead record, so it would
+  never be offered again — so unforgetting also **resets the watermarks**, and
+  the next reply from each peer is a full one.
+- `/alts forgotten` lists them. Forgetting also drops the character's hidden and
+  favourite entries, since the record will not be coming back to need them.
 
 Hiding (#21) is a different thing and still the right one for "I do not want to
 look at my bank alt": the record stays and keeps syncing.

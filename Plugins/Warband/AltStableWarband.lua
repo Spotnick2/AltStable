@@ -966,6 +966,12 @@ local function BootstrapPlugin()
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
         OnCleanup     = function(keepGuid) CleanupWarbandDB(keepGuid) end,
+        -- #65: a forgotten character's bags and bank go with its record, or
+        -- they sit in SavedVariables until PruneOrphans happens to run at the
+        -- next login - for a character nothing shows.
+        OnForget      = function(guid)
+            if guid and AltStableWarbandDB then AltStableWarbandDB[guid] = nil end
+        end,
         _wb           = AT_WB,
         _test = {
             SerializePlayer = SerializePlayer, DeserializePlayer = DeserializePlayer,

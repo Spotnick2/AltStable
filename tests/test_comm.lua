@@ -1704,20 +1704,159 @@ do
 end
 
 do
-    -- The list expires, or it grows forever on an account that reorganises alts.
-    -- It must NOT expire while a peer is still offering the record, which is
-    -- why the stamp tracks "last offered" rather than "when forgotten".
+    -- The list is bounded by COUNT, not by age.
+    --
+    -- Age was the first design and it was wrong: a dead character's lastUpdate
+    -- is frozen, so it never passes a delta's filter and rides only full
+    -- replies. In the ordinary login-delta steady state the "last offered"
+    -- stamp never moves, the tombstone drops on day 31, and the next full sync
+    -- brings the character back. A count cap bounds the list without a clock
+    -- that can resurrect somebody.
     WoW.reset()
     AltStableConfig = { forgottenCharacters = {} }
-    local ttl = AltStable._TOMBSTONE_TTL
-    AltStable.MarkCharacterForgotten("Player-Old-1", 1000, "Ancient")
-    AltStable.MarkCharacterForgotten("Player-New-1", 1000 + ttl, "Recent")
+    local cap = AltStable._TOMBSTONE_CAP
+    check(type(cap) == "number" and cap > 0, "there is a cap")
 
-    eq(AltStable.PruneForgotten(1000 + ttl + 1), 1, "one tombstone ages out")
-    check(not AltStable.IsCharacterForgotten("Player-Old-1"), "  the old one")
-    check(AltStable.IsCharacterForgotten("Player-New-1"), "  and the fresh one stays")
+    for i = 1, cap + 5 do
+        AltStable.MarkCharacterForgotten(("Player-Bulk-%d"):format(i), 1000 + i,
+                                         ("Bulk %d"):format(i))
+    end
+    eq(AltStable.PruneForgotten(), 5, "the overflow is evicted")
+    eq(#AltStable.ForgottenList(), cap, "  leaving exactly the cap")
+    check(not AltStable.IsCharacterForgotten("Player-Bulk-1"), "  the oldest went")
+    check(AltStable.IsCharacterForgotten(("Player-Bulk-%d"):format(cap + 5)),
+          "  and the newest stayed")
 
-    eq(AltStable.PruneForgotten(1000 + ttl + 1), 0, "a second sweep finds nothing to do")
+    eq(AltStable.PruneForgotten(), 0, "a second sweep finds nothing to do")
+
+    -- Age alone must never drop one, however long ago it was forgotten.
+    WoW.reset()
+    AltStableConfig = { forgottenCharacters = {} }
+    AltStable.MarkCharacterForgotten("Player-Ancient-1", 1, "Ancient")
+    WoW.now = (WoW.now or 0) + 60 * 60 * 24 * 365
+    eq(AltStable.PruneForgotten(), 0, "a year-old tombstone is not swept")
+    check(AltStable.IsCharacterForgotten("Player-Ancient-1"),
+          "  because expiring it would let the next full sync undo the forget")
+end
+
+
+------------------------------------------------------------
+-- Forgetting: the paths the first version missed
+------------------------------------------------------------
+
+do
+    -- BOTH receive paths. ReceiveCharacter is the single-character path, still
+    -- used by the chunked stream and by older peers, and its own header warns
+    -- that the two "cannot drift - they had". Checking the tombstone in only
+    -- the bulk path drifted them again, and this one put the character back.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    AltStableDB = {}
+    AltStable.MarkCharacterForgotten("Player-Gone-3", 1000, "Ghost")
+
+    T.ReceiveCharacter({ guid = "Player-Gone-3", name = "Ghost", class = "PRIEST",
+                         level = 12, lastUpdate = 2000 }, "Peer Surname")
+    eq(AltStableDB["Player-Gone-3"], nil,
+       "the single-character path refuses a forgotten character too")
+
+    T.ReceiveCharacter({ guid = "Player-Fine-3", name = "Fine", class = "MAGE",
+                         level = 60, lastUpdate = 2000 }, "Peer Surname")
+    check(AltStableDB["Player-Fine-3"] ~= nil, "  and still takes everyone else")
+end
+
+do
+    -- Unforgetting has to make the record REACHABLE again, not merely allowed.
+    -- Its lastUpdate is frozen at whenever it was last played and every peer's
+    -- watermark has long passed it, so without resetting them the character is
+    -- never offered and the message promising its return is a lie.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = { ["Peer Surname"] = 99999 },
+                        forgottenCharacters = {} }
+    AltStable.MarkCharacterForgotten("Player-Back-1", 1000, "Returning")
+
+    AltStable.UnforgetCharacter("Player-Back-1")
+    check(not AltStable.IsCharacterForgotten("Player-Back-1"), "the tombstone is dropped")
+    eq(next(AltStableConfig.peerWatermarks or {}), nil,
+       "  and every watermark is reset, so the next reply is a full one")
+end
+
+do
+    -- Forgetting takes the display preferences with it. The hidden list keeps
+    -- orphans on purpose - "the record usually comes back on the next sync" -
+    -- but here it never will, so the entry would sit in SavedVariables for good
+    -- and an unforget would bring the character back invisible.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {},
+                        hiddenCharacters = {}, favouriteCharacters = {} }
+    AltStableDB = {
+        ["Player-Hid-1"] = { guid = "Player-Hid-1", name = "Hidden One", class = "MAGE",
+                             level = 40, lastUpdate = 1000 },
+    }
+    AltStable.SetCharacterHidden("Player-Hid-1", true)
+    check(AltStable.IsCharacterHidden("Player-Hid-1"), "the character starts hidden")
+
+    AltStable.ForgetCharacter("Player-Hid-1")
+    check(not AltStable.IsCharacterHidden("Player-Hid-1"),
+          "forgetting drops the hidden entry with the record")
+end
+
+do
+    -- Plugins are actually told, and the bundled one actually listens.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    AltStableDB = {
+        ["Player-Plug-1"] = { guid = "Player-Plug-1", name = "Plugged", class = "MAGE",
+                              level = 40, lastUpdate = 1000 },
+    }
+    local told
+    AltStable.plugins = { { id = "spy", OnForget = function(g) told = g end } }
+    AltStable.ForgetCharacter("Player-Plug-1")
+    eq(told, "Player-Plug-1", "plugins are told which character was forgotten")
+    AltStable.plugins = {}
+end
+
+
+------------------------------------------------------------
+-- Resolving a character by name, for the slash commands
+------------------------------------------------------------
+-- The fallback match is on the first name, and this client has four pairs of
+-- alts sharing one. Iterating with pairs() picked a different character run to
+-- run - silently, for commands that change what the player sees and what gets
+-- deleted. Ambiguity is refused rather than guessed.
+
+do
+    WoW.reset()
+    AltStableDB = {
+        ["g-1"] = { guid = "g-1", name = "Karuzo Elegia", class = "MAGE", level = 60 },
+        ["g-2"] = { guid = "g-2", name = "Karuzo Maxima", class = "PRIEST", level = 40 },
+        ["g-3"] = { guid = "g-3", name = "Solo Surname", class = "ROGUE", level = 20 },
+    }
+
+    eq(AltStable.ResolveCharacter("Karuzo Elegia"), "g-1", "a full name resolves exactly")
+    eq(AltStable.ResolveCharacter("karuzo elegia"), "g-1", "  whatever the case")
+    eq(AltStable.ResolveCharacter("Solo"), "g-3", "an unambiguous first name resolves")
+    eq(AltStable.ResolveCharacter("solo surname"), "g-3", "  as does its full name")
+
+    local guid, why = AltStable.ResolveCharacter("Karuzo")
+    eq(guid, nil, "an ambiguous first name resolves to nobody")
+    check(why and why:find("Karuzo Elegia", 1, true) and why:find("Karuzo Maxima", 1, true),
+          "  and names both candidates: " .. tostring(why))
+
+    -- Stable across runs, which is the whole point - pairs() was not.
+    for _ = 1, 20 do
+        eq(AltStable.ResolveCharacter("Karuzo"), nil, "  every time, not by luck")
+    end
+
+    local none, missing = AltStable.ResolveCharacter("Nobody")
+    eq(none, nil, "an unknown name resolves to nobody")
+    check(missing and missing:find("Nobody", 1, true), "  and says so")
+    eq(AltStable.ResolveCharacter(""), nil, "an empty name resolves to nobody")
+    eq(AltStable.ResolveCharacter(nil), nil, "and so does no name")
+
+    -- An exact full-name match wins even when it is also somebody's first name.
+    AltStableDB["g-4"] = { guid = "g-4", name = "Karuzo", class = "WARRIOR", level = 10 }
+    eq(AltStable.ResolveCharacter("Karuzo"), "g-4",
+       "a character actually called Karuzo beats the ambiguity")
 end
 
 

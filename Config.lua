@@ -332,7 +332,25 @@ AltStable.EnsureConfigDefaults = EnsureDefaults
 -- copying a GUID out of a chat line.
 ------------------------------------------------------------
 
-local TOMBSTONE_TTL = 60 * 60 * 24 * 30   -- a month with nobody offering it
+-- Bounded by COUNT, not by age.
+--
+-- The first version expired a tombstone after a month with nobody offering the
+-- record, on the theory that the stamp would keep moving while any peer still
+-- held the character. It does not: a dead character's lastUpdate is frozen, so
+-- it never passes a delta's filter and rides only FULL replies. In the normal
+-- login-delta steady state the stamp never moves at all, the tombstone drops on
+-- day 31, and the next full sync - a /alts cleanup, a scope change, or the
+-- Warband plugin resetting watermarks at login when it has no inventory -
+-- brings the character straight back.
+--
+-- A count cap gets what the issue actually asked for ("so the list does not
+-- grow without bound on an account that reorganises alts often") without a
+-- clock that can resurrect a character. An entry is a guid, a name and a
+-- number; two hundred of them is nothing, and nobody deletes two hundred
+-- characters. When the cap is passed the OLDEST go, which is why the stamp is
+-- still refreshed when a peer offers the record: a tombstone anyone is still
+-- arguing about should be the last to be evicted.
+local TOMBSTONE_CAP = 200
 
 function AltStable.IsCharacterForgotten(guid)
     if not guid then return false end
@@ -378,27 +396,38 @@ function AltStable.UnforgetCharacter(guid)
     for k, v in pairs(AltStableConfig.forgottenCharacters or {}) do copy[k] = v end
     copy[guid] = nil
     AltStable.SetConfigValue("forgottenCharacters", copy)
+
+    -- Dropping the tombstone is not enough to bring the character back, and
+    -- saying it was would be a lie. The record's lastUpdate is frozen at
+    -- whenever it was last played, and every peer's watermark for us has long
+    -- since passed it - so it fails the delta filter and is never offered
+    -- again. Only a full reply carries it, which means asking for one.
+    if AltStable.ResetPeerWatermarks then AltStable.ResetPeerWatermarks() end
     return true
 end
 
--- Drop tombstones nobody has offered in a month. Returns how many went.
-function AltStable.PruneForgotten(now)
+-- Keep the list under the cap, oldest out first. Returns how many went.
+function AltStable.PruneForgotten()
     AltStableConfig = AltStableConfig or {}
     local gone = AltStableConfig.forgottenCharacters
     if not gone then return 0 end
-    now = tonumber(now) or time()
 
-    local copy, dropped = {}, 0
+    local all = {}
     for guid, e in pairs(gone) do
-        local at = (type(e) == "table" and tonumber(e.at)) or 0
-        if (now - at) > TOMBSTONE_TTL then
-            dropped = dropped + 1
-        else
-            copy[guid] = e
-        end
+        all[#all + 1] = { guid = guid, at = (type(e) == "table" and tonumber(e.at)) or 0 }
     end
-    if dropped > 0 then AltStable.SetConfigValue("forgottenCharacters", copy) end
-    return dropped
+    if #all <= TOMBSTONE_CAP then return 0 end
+
+    -- Newest first, then keep the first TOMBSTONE_CAP of them.
+    table.sort(all, function(a, b)
+        if a.at ~= b.at then return a.at > b.at end
+        return a.guid < b.guid     -- deterministic when stamps tie
+    end)
+
+    local copy = {}
+    for i = 1, TOMBSTONE_CAP do copy[all[i].guid] = gone[all[i].guid] end
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+    return #all - TOMBSTONE_CAP
 end
 
 function AltStable.ForgottenList()
@@ -414,7 +443,7 @@ function AltStable.ForgottenList()
     return out
 end
 
-AltStable._TOMBSTONE_TTL = TOMBSTONE_TTL
+AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 
 function AltStable.IsCharacterHidden(guid)
     if not guid then return false end

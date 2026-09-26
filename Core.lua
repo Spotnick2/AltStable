@@ -665,6 +665,13 @@ function AltStable.ForgetCharacter(guid)
     AltStableDB[guid] = nil
     AltStable.MarkCharacterForgotten(guid, time(), name)
 
+    -- Drop the display preferences with the record. The hidden list keeps
+    -- orphans on purpose, because "the record usually comes back on the next
+    -- sync" - here it never will, so the entry would sit in SavedVariables for
+    -- good, and an unforget would silently bring the character back invisible.
+    if AltStable.SetCharacterHidden then AltStable.SetCharacterHidden(guid, false) end
+    if AltStable.SetCharacterFavourite then AltStable.SetCharacterFavourite(guid, false) end
+
     -- The plugins hold their own per-character tables and would otherwise keep
     -- the inventory, recipes and lockouts of a character nothing shows.
     for _, plugin in ipairs(AltStable.plugins or {}) do
@@ -673,6 +680,43 @@ function AltStable.ForgetCharacter(guid)
 
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true, name
+end
+
+-- A character by name, for the slash commands. Returns the GUID, or nil and a
+-- message to print.
+--
+-- Ambiguity is refused rather than guessed. The fallback match is on the first
+-- name, and this client has four pairs of alts sharing one - so iterating with
+-- pairs() deleted a different character run to run, silently, on a command
+-- whose whole job is to delete something. Naming the candidates costs one line
+-- and is the only answer that is not a coin toss.
+function AltStable.ResolveCharacter(name)
+    if not name or name == "" then return nil, "usage: a character name" end
+    local want = name:lower()
+
+    local exact, partial = nil, {}
+    for guid, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and c.name then
+            local n = c.name:lower()
+            if n == want then
+                exact = guid
+            elseif n:match("^(%S+)") == want then
+                partial[#partial + 1] = { guid = guid, name = c.name }
+            end
+        end
+    end
+    if exact then return exact end
+
+    if #partial == 1 then return partial[1].guid end
+    if #partial == 0 then
+        return nil, "|cffff8800No character called|r " .. name
+    end
+
+    table.sort(partial, function(a, b) return a.name < b.name end)
+    local names = {}
+    for _, e in ipairs(partial) do names[#names + 1] = e.name end
+    return nil, "|cffff8800" .. name .. " is ambiguous|r - did you mean "
+        .. table.concat(names, ", ") .. "? Use the full name."
 end
 
 -- Mark a character dirty so the next delta sync includes it. Plugins call this
@@ -804,6 +848,26 @@ local function ShouldMerge(existing, incoming)
     return existingTime - incomingTime <= 60
 end
 
+-- Forgotten here (#65): the peer still holds this character and always will
+-- until they forget it too, so dropping it once locally is not enough - it
+-- arrives again every sync.
+--
+-- Shared, and called from BOTH receive paths. ReceiveCharacter's own header
+-- warns that the two "cannot drift - they had", and putting this check in only
+-- the bulk path drifted them again: the single-character path, still used by
+-- the chunked stream and by older peers, put the character straight back.
+--
+-- Refreshing the stamp keeps a contested tombstone at the front of the eviction
+-- queue.
+local function RefuseIfForgotten(c)
+    if not c or not c.guid then return false end
+    if not (AltStable.IsCharacterForgotten and AltStable.IsCharacterForgotten(c.guid)) then
+        return false
+    end
+    AltStable.MarkCharacterForgotten(c.guid, time())
+    return true
+end
+
 local function DeserializeFullDB(payload, sender)
 
     local current = {}
@@ -830,18 +894,7 @@ local function DeserializeFullDB(payload, sender)
                 -- them and they aren't re-requested next delta.
                 if (c.lastUpdate or 0) > maxTS then maxTS = c.lastUpdate end
 
-                -- Forgotten here (#65): the peer still holds this character and
-                -- always will until they forget it too, so dropping it once
-                -- locally is not enough - it arrives again every sync.
-                --
-                -- Refresh the tombstone while we are here. Its stamp is "when a
-                -- peer last offered this", which is what lets the list expire
-                -- without the record sneaking back: it cannot age out while
-                -- anyone is still sending it.
-                if AltStable.IsCharacterForgotten and AltStable.IsCharacterForgotten(c.guid) then
-                    AltStable.MarkCharacterForgotten(c.guid, time())
-                    c = nil
-                end
+                if RefuseIfForgotten(c) then c = nil end
             end
 
             if c and c.guid then
@@ -1151,6 +1204,8 @@ local function ReceiveCharacter(c, sender)
     if not c or not c.guid then
         return
     end
+
+    if RefuseIfForgotten(c) then return end
 
     -- Validate immutable fields before merging
     if not ValidateIncoming(c, sender) then
@@ -2405,23 +2460,15 @@ SlashCmdList["ALTSTABLE"] = function(args)
                 return
             end
             AltStable.UnforgetCharacter(guid)
-            Print("|cff88ff88" .. (held or target) .. "|r will be accepted from peers again. "
-                .. "It comes back on the next sync, not immediately.")
+            Print("|cff88ff88" .. (held or target) .. "|r will be accepted from peers again, "
+                .. "and every peer will be asked in full so it can actually come back. "
+                .. "That takes one sync, not immediately.")
             return
         end
 
-        -- Match on the full name first, then the first name, so surnames are
-        -- optional the way they are everywhere else.
-        local want, match = target:lower(), nil
-        for guid, c in pairs(AltStableDB or {}) do
-            if type(c) == "table" and c.name then
-                local n = c.name:lower()
-                if n == want then match = guid; break end
-                if n:match("^(%S+)") == want and not match then match = guid end
-            end
-        end
+        local match, why = AltStable.ResolveCharacter(target)
         if not match then
-            Print("|cffff8800No character called|r " .. target)
+            Print(why)
             return
         end
 
