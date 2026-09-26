@@ -32,11 +32,14 @@ account 50284074#1
 ```
 
 **What the compressed figures are and are not.** The warband fragments are
-compressed here *on their own*. The real message interleaves them with the core
-character records in one DEFLATE stream, so these bound the fragments'
-contribution — they are not the size of a message anyone sends, and the chunk
-counts derived from them are not transport chunk counts. Enough to answer "is
-this worth a format change"; not a figure to quote as the size of a sync.
+compressed here *on their own*, which is neither the size of a message nor a
+bound on what they add to one. The real payload interleaves them with the core
+character records in a single DEFLATE stream, and interleaving changes match
+distances and available history: a fixture that compresses to 71 bytes alone can
+add **103** when separated by other text. So these are standalone fragment sizes
+— useful for comparing one roster against another, useless for "what does the
+bank cost the wire". Answering *that* means measuring complete payloads with and
+without the bank, which needs the core serializer and so a client.
 
 **The decision does not rest on them anyway.** #44's concern is that a bag
 change re-sends the bank too. Stated correctly: a bag change bumps **one**
@@ -44,8 +47,11 @@ character's stamp, and `SerializeFullDB` filters on `lastUpdate`, so the delta
 carries that character alone. The bank re-sent with it is that one character's
 bank — the worst on this machine is **7 entries, 52 raw bytes**.
 
-Even the worst case the issue imagines is small: a full 120-item bank, with
-distinct ids so it does not compress unrealistically, is 905 raw bytes.
+Even the worst case the issue imagines is small in raw terms: a full 120-item
+bank, with distinct ids so it does not compress unrealistically, is 905 raw
+bytes. What that costs *compressed, in context* is exactly the thing this script
+cannot tell you — but 905 bytes against a 1.6 KB blob, on the one character that
+changed, is not a format change.
 
 **So the split is not justified**, and it is not free: a `BLOB_VERSION` bump
 with cross-version compatibility to get right. Re-measure if characters start
@@ -61,7 +67,10 @@ this section stated all of them as fact.
    13 characters both accounts know. Reported 35 characters for something that
    is really 20.
 2. **Counting chunks on raw bytes.** `ChunkAndSendPayload` DEFLATEs and escapes
-   before slicing, so raw size says nothing about chunk count.
+   before slicing, so raw size says nothing about chunk count. The correction
+   was itself half wrong: compressing the fragments alone and calling it an
+   upper bound on their contribution. It is not a bound in either direction —
+   see the counterexample above.
 3. **Treating a delta as the whole roster.** The waste is per character, because
    only the changed character rides the delta. This made the recorded threshold
    about twenty times too high.

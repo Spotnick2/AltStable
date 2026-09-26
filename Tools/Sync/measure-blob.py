@@ -20,10 +20,11 @@ FOUR THINGS THIS HAS TO GET RIGHT, each of which the first version got wrong:
 2. ON THE WIRE. Core DEFLATEs the whole payload and escapes it before slicing
    at MAX_CHUNK (Core.lua, ChunkAndSendPayload), so chunk counts taken from raw
    bytes are meaningless - and repetitive per-character framing, which looks
-   enormous uncompressed, is exactly what DEFLATE erases. Note the limit of
-   even this: the warband fragments are compressed here on their own, while the
-   real stream also carries the core character records, so the figures bound
-   their contribution rather than measuring a message.
+   enormous uncompressed, is exactly what DEFLATE erases. And the limit of even
+   that: these fragments are compressed on their own, which is neither the size
+   of a message nor a bound on what they add to one. Interleaving changes match
+   distances; a fixture that compresses to 71 bytes alone can add 103 when
+   separated by other text.
 
 3. PER DELTA. A bag change touches ONE character's stamp, and SerializeFullDB
    filters on lastUpdate, so the delta carries that character - not the roster.
@@ -100,11 +101,14 @@ def on_wire(payload):
     rather than base64's third. zlib stands in for LibDeflate's DEFLATE; the
     sizes are close, not identical.
 
-    This compresses the warband fragments ALONE. The real payload interleaves
-    them with the core character records in a single DEFLATE stream, so a
-    fragment's compressed size is an upper bound on what it contributes - never
-    the size of a message anyone sends. Good enough for "is this worth a format
-    change", not for quoting as the size of a sync.
+    This compresses the warband fragments ALONE, which is NOT a bound of any
+    kind on what they contribute to the real message. The real payload
+    interleaves them with the core character records in one DEFLATE stream, and
+    interleaving changes match distances and the available history - a fixture
+    that compresses to 71 bytes on its own can add 103 when separated by other
+    text. So these are standalone fragment sizes and nothing more: useful for
+    comparing one roster against another, useless as the size of a sync or as
+    the cost of adding or removing a section.
     """
     raw = payload.encode("utf-8", "replace")
     co = zlib.compressobj(8, zlib.DEFLATED, -15)
@@ -169,10 +173,9 @@ def main():
         print("  ... deflated ALONE        : %d bytes" % deflated)
         print("  ... escaped               : %d bytes  (~%d chunk(s) of %d)"
               % (escaped, chunks, MAX_CHUNK))
-        print("     ^ these fragments compressed BY THEMSELVES. The real message")
-        print("       interleaves them with the core character records in one")
-        print("       DEFLATE stream, so this bounds their share - it is not the")
-        print("       size of anything actually sent.")
+        print("     ^ these fragments compressed BY THEMSELVES - not a bound on")
+        print("       what they add to the real message, which interleaves them")
+        print("       with the core character records in one DEFLATE stream.")
         print("  bank bytes, whole account : %d" % bank_bytes)
         print()
 
@@ -187,12 +190,12 @@ def main():
         print("  No character here has a bank at all.")
     # Distinct ids, because repeating one 120 times compresses far better than
     # a real bank does and would flatter the answer.
+    #
+    # RAW bytes only. What a section costs the real stream cannot be had by
+    # compressing it on its own - that has to be measured as complete payloads
+    # with and without it, which needs the core serializer and so a client.
     synthetic = ";".join("%d,%d" % (4000 + i * 37, 1 + (i % 20)) for i in range(120))
-    lone, lone_esc, lone_chunks = on_wire(PLUGIN_PREFIX + "v1|s=1|kt=1|b=|k=" + synthetic)
-    print("  A FULL bank (120 distinct items) is %d raw, %d deflated, %d chunk(s)."
-          % (len(synthetic), lone, lone_chunks))
-    print("  So even the worst case #44 imagines costs about one extra chunk,")
-    print("  on the one character that changed.")
+    print("  A FULL bank (120 distinct items) is %d raw bytes." % len(synthetic))
     return 0
 
 
