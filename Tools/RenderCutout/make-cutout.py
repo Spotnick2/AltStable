@@ -371,19 +371,28 @@ def renormalise(folder, wtf=WTF):
 
     Recovery matters because the screenshots are deleted after conversion, so
     the alternative is re-capturing every character in game.
+
+    ONLY when the answer is unambiguous. A legacy sidecar records no capture
+    identity - just a pixel height - so there is nothing tying it to one record
+    rather than another. If a character has been captured at more than one
+    screen height, "their" height is a guess, and a guess written here is worse
+    than no measurement: it is stamped nativeUnit and never revisited. This
+    roster has two such characters already (Karuzo Sumner and Morphisto
+    Ruskador, captured at both 1200 and 2160), so it is not a hypothetical.
     """
-    # Newest capture per character wins, matching run_all's own rule.
+    # Every DISTINCT screen height per character. One means recovery is certain;
+    # more than one means it cannot be.
     heights = {}
     for text in read_stores(wtf):
         for e in _entries(text):
             name, sh = e.get("name"), e.get("screenH")
             if name and sh:
                 try:
-                    heights[slug(name)] = float(sh)
+                    heights.setdefault(slug(name), set()).add(float(sh))
                 except ValueError:
                     pass
 
-    done, stuck = 0, []
+    done, stuck, ambiguous = 0, [], []
     for path in sorted(glob.glob(os.path.join(folder, "*.json"))):
         base = os.path.splitext(os.path.basename(path))[0]
         try:
@@ -394,7 +403,11 @@ def renormalise(folder, wtf=WTF):
         if meta.get("nativeUnit"):
             continue
         px = meta.get("nativePx") or [meta.get("nativeW"), meta.get("nativeH")]
-        shot_h = heights.get(base)
+        seen = heights.get(base) or set()
+        if len(seen) > 1:
+            ambiguous.append((base, sorted(seen)))
+            continue
+        shot_h = next(iter(seen), None)
         if not shot_h or not px or not px[1]:
             stuck.append(base)
             continue
@@ -412,6 +425,9 @@ def renormalise(folder, wtf=WTF):
         print("  recovered %d sidecar(s) without re-capturing" % done)
     for base in stuck:
         print("  %-22s no capture record - re-capture for a true height" % base)
+    for base, seen in ambiguous:
+        print("  %-22s captured at %s - cannot tell which made this cutout; "
+              "re-capture" % (base, " and ".join("%d" % h for h in seen)))
     return done
 
 

@@ -430,7 +430,16 @@ local function CharacterStore()
     return AltStableDB
 end
 
-local function PickCharacters(limit)
+-- Everyone the addon knows about and is willing to show, highest level first.
+--
+-- Deliberately UNCAPPED. MAX_CARDS is a grid concern - it is how many cards the
+-- grid has to draw with - and applying it here made it a selection rule for the
+-- scene too: SceneCast ranks by item level, but only among whatever survived a
+-- cap sorted by level then NAME. With 25 level-60 alts the best-geared one
+-- could be cut before the scene ever saw it, purely for sorting late
+-- alphabetically, and a roster whose portraits all sat past the cap produced an
+-- empty camp.
+local function AllCharacters()
     local out = {}
     for _, c in next, CharacterStore() do
         if type(c) == "table" and c.name then
@@ -446,8 +455,24 @@ local function PickCharacters(limit)
         if la ~= lb then return la > lb end
         return (a.name or "") < (b.name or "")
     end)
+    return out
+end
+
+-- The grid's page: as many as it has cards for.
+local function PickCharacters(limit)
+    local out = AllCharacters()
     while #out > (limit or MAX_CARDS) do table.remove(out) end
     return out
+end
+
+-- Which characters a view is given. Named, and chosen here rather than inline
+-- in Refresh, because this IS the bug that was found: the scene was handed the
+-- grid's page, so a cap meant for "how many cards exist" quietly became a rule
+-- about who is eligible for the camp. Inline, the wiring was untestable - the
+-- composition could be asserted while the call site kept doing the wrong thing.
+local function CharactersFor(view)
+    if view == "scene" then return AllCharacters() end
+    return PickCharacters(MAX_CARDS)
 end
 
 ------------------------------------------------------------
@@ -762,14 +787,13 @@ end
 
 function Roster.Refresh()
     if not panel then return end
-    local chars = PickCharacters(MAX_CARDS)
 
     if sceneBar then sceneBar:SetShown(View() == "scene") end
     if viewBtn then viewBtn:SetText(View() == "scene" and "Grid" or "Scene") end
 
     if View() == "scene" then
         ApplyHintLayout(panel:GetWidth(), true)
-        local shown, total = RenderScene(chars)
+        local shown, total = RenderScene(CharactersFor("scene"))
         if shown < total then
             hintText:SetText(("showing %d of %d - highest level first; the grid shows them all")
                 :format(shown, total))
@@ -780,6 +804,7 @@ function Roster.Refresh()
         return
     end
 
+    local chars = CharactersFor("grid")
     ApplyHintLayout(panel:GetWidth(), false)
     backdropTex:SetTexture(nil)
     backdropTex:SetColorTexture(0.05, 0.05, 0.06, 1)
@@ -894,6 +919,7 @@ function Roster._Bootstrap()
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
+            AllCharacters = AllCharacters, CharactersFor = CharactersFor,
             HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
             SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,

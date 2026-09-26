@@ -114,9 +114,12 @@ CutoutManifest.lua
 # The manifest is regenerated wholesale from what is on disk, so deleting a TGA
 # is all it takes to retire a character - no second place to edit.
 function Write-Manifest {
-    # Sidecars written before nativeUnit existed hold raw screenshot pixels.
-    # They are recoverable from the probe store's screenH without re-capturing,
-    # so try that before the manifest decides they are unusable.
+    # Sidecars written before nativeUnit existed hold raw screenshot pixels,
+    # and are recoverable from the probe store's screenH without re-capturing.
+    # Recover in the STAGING folder as well: those files are copied over the
+    # media folder on every run, so recovering only the copies means redoing it
+    # every time and re-printing the same warnings for ever.
+    & python $converter --renormalise $outDir
     & python $converter --renormalise $mediaDir
 
     $entries = foreach ($tga in (Get-ChildItem $mediaDir -Filter *.tga -ErrorAction SilentlyContinue | Sort-Object Name)) {

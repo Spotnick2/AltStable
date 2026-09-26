@@ -681,6 +681,66 @@ do
 end
 
 ------------------------------------------------------------
+-- The scene ranks the whole roster, not the grid's first page
+------------------------------------------------------------
+-- MAX_CARDS is how many cards the GRID has. Applying it before the scene chose
+-- its cast turned it into a selection rule: AllCharacters sorts by level then
+-- NAME, SceneCast ranks by level then ITEM level, so on a roster of level-60
+-- alts the best-geared one could be dropped for sorting late alphabetically -
+-- and a roster whose portraits all sat past the cap produced an empty camp.
+
+do
+    local saved = AltStableDB
+    AltStableDB = {}
+    for i = 1, 25 do
+        local guid = ("alt-%02d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Alt %02d"):format(i),
+                              level = 60, ilvl = i, class = "WARRIOR" }
+    end
+
+    local all = T.AllCharacters()
+    eq("every character is offered to the scene", #all, 25)
+    check("  which is more than the grid draws", #all > T.MAX_CARDS,
+          ("%d vs %d"):format(#all, T.MAX_CARDS))
+    eq("the grid still takes only its page", #T.PickCharacters(T.MAX_CARDS), T.MAX_CARDS)
+
+    local art = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    local cast = T.SceneCast(all, function() return art end, T.SCENE_CAST)
+    eq("the cast is still capped", #cast, T.SCENE_CAST)
+    eq("the best-geared character is cast", cast[1].name, "Alt 25")
+    eq("  then the next", cast[2].name, "Alt 24")
+
+    -- The worse failure: nobody past the cap has a portrait, so the camp empties.
+    local onlyLate = function(c)
+        return tonumber((c.name or ""):match("(%d+)")) > T.MAX_CARDS and art or nil
+    end
+    local lateCast = T.SceneCast(all, onlyLate, T.SCENE_CAST)
+    check("a roster whose only portraits sort last still fills the camp",
+          #lateCast > 0, "the scene came back empty")
+    eq("  with the character that has one", lateCast[1] and lateCast[1].name, "Alt 25")
+
+    -- Feeding the scene the grid's page is the bug, stated as an assertion.
+    local paged = T.SceneCast(T.PickCharacters(T.MAX_CARDS), onlyLate, T.SCENE_CAST)
+    eq("  which the grid's page could not", #paged, 0)
+
+    -- And the WIRING, not just the composition. Asserting that the right two
+    -- functions compose correctly says nothing about which one the view calls,
+    -- which is precisely where this went wrong.
+    eq("the scene view is handed everyone", #T.CharactersFor("scene"), 25)
+    eq("the grid view is handed its page", #T.CharactersFor("grid"), T.MAX_CARDS)
+    check("  so the two views are not handed the same list",
+          #T.CharactersFor("scene") ~= #T.CharactersFor("grid"))
+
+    local cast2 = T.SceneCast(T.CharactersFor("scene"), onlyLate, T.SCENE_CAST)
+    -- Nil-safe on purpose: when this regresses the cast comes back EMPTY, and a
+    -- bare cast2[1].name aborts the whole file, hiding every test below it.
+    eq("what the scene view actually gets still fills the camp",
+       cast2[1] and cast2[1].name, "Alt 25")
+
+    AltStableDB = saved
+end
+
+------------------------------------------------------------
 -- It builds
 ------------------------------------------------------------
 -- Frames are stubs, so this asserts that the panel can be constructed and
