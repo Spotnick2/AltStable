@@ -50,3 +50,9 @@ ignore:
   - README.md
   - CHANGELOG.md
   - Media/Raids/README.md
+  # Scene documentation. The .tga files beside these DO ship - they are what the
+  # client loads - but how the art was made is repository business, not a
+  # download. The PNG masters and the reference screenshots are gitignored
+  # entirely and never reach the packager at all.
+  - Media/Scene/README.md
+  - Media/Scene/PROMPTS.md
