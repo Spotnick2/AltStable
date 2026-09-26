@@ -124,6 +124,41 @@ def _entries(text):
     return out
 
 
+def store_is_stale(caps, times, slack=60):
+    """Is the client sitting on capture records it has not written out yet?
+
+    Returns (newest screenshot, newest record) when the screenshots on disk run
+    ahead of the store, otherwise None.
+
+    AltStableProbeDB is only written on logout or /reload, but the client writes
+    a screenshot the instant it is taken. So the normal state right after a
+    capture is: both images on disk, no record of them anywhere. The converter
+    then works from the PREVIOUS records and reports something true but
+    misleading - "no screenshots for X", or a complaint about a capture the
+    player has already redone - and the real answer is simply "/reload".
+
+    `slack` covers the ordinary gap between the shutter and the record being
+    flushed a moment later; this is only worth saying when the gap is real.
+    """
+    if not times:
+        return None
+    newest_shot = max(times.values())
+    newest_rec = None
+    for cap in caps:
+        for stamp in (cap[1], cap[2]):
+            try:
+                when = datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                continue
+            if newest_rec is None or when > newest_rec:
+                newest_rec = when
+    if newest_rec is None:
+        return (newest_shot, None)
+    if (newest_shot - newest_rec).total_seconds() > slack:
+        return (newest_shot, newest_rec)
+    return None
+
+
 def captures(wtf=WTF):
     """Every capture the addon recorded, newest last.
 
@@ -540,6 +575,19 @@ def discard(paths, why):
     whole reason deletion keys off the addon's record rather than a filename
     pattern or a date.
     """
+    # The same file can reach here twice: a superseded capture's stamp resolves
+    # through match(), whose tolerance is wider than the gap between two shots,
+    # so it can land on a path already in the list. Deleting it twice printed a
+    # WinError in the middle of a successful conversion, which reads like a
+    # failure. Deduplicated here rather than at the call site, because this is
+    # the function that deletes and it should tolerate being told twice.
+    seen, unique = set(), []
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    paths = unique
+
     freed, gone = 0, 0
     for path in paths:
         try:
@@ -580,8 +628,26 @@ def run_all(args):
 
     print("%d capture(s) to convert, %d screenshots on disk\n" % (len(caps), len(times)))
 
-    done, missing, freed = 0, [], 0
+    stale = store_is_stale(caps, times)
+    if stale:
+        shot, rec = stale
+        print("  |  Your client has not written its capture records yet.")
+        print("  |  Newest screenshot: %s" % shot.strftime("%Y-%m-%d %H:%M:%S"))
+        print("  |  Newest record:     %s" % (rec.strftime("%Y-%m-%d %H:%M:%S") if rec else "none at all"))
+        print("  |  AltStableProbeDB is only saved on /reload or logout, so a capture")
+        print("  |  taken just now is two images with nothing describing them.")
+        print("  |  Run /reload in game, then run this again.")
+        print("")
+
+    done, missing, collided, freed = 0, [], [], 0
     for name, first, second, screen_h in caps:
+        # Both shots recorded at the same second means one filename, and the
+        # client overwrote the first with the second. There is no pair to find
+        # and "no screenshots for X" is a misleading way to say so - the file is
+        # right there, it is just one file where two are needed.
+        if first == second:
+            collided.append((name, first))
+            continue
         black = match(first, times)
         white = match(second, times, exclude=(black,) if black else ())
         if not (black and white):
@@ -614,6 +680,9 @@ def run_all(args):
     print("converted %d of %d" % (done, len(caps)))
     if freed:
         print("reclaimed %s of staged screenshots" % human(freed))
+    for name, stamp in collided:
+        print("  %-22s both shots landed in the same second (%s), so the client "
+              "wrote one file - re-capture" % (slug(name), stamp))
     for name, stamp in missing:
         print("  no screenshots for %s (%s) - already cleaned up, deleted, or taken "
               "on another machine" % (name, stamp))
