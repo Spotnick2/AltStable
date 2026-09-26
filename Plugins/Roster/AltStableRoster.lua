@@ -69,6 +69,10 @@ local SCENE_FIGURE_H = 0.62   -- of panel height, for the TALLEST character
 -- The gap kept clear around the fire, as a fraction of panel width.
 local FIRE_CLEARANCE = 0.22
 
+-- And the gap kept clear of the panel's own edges, so the outermost figure is
+-- not pressed against the frame.
+local SCENE_EDGE = 0.02
+
 -- The camp is a RING seen from the front, not a line. Someone standing near the
 -- fire's screen x is at the back of that ring: further away, so higher up the
 -- picture and smaller. Someone out at the edge is at the ring's side, nearest
@@ -385,12 +389,39 @@ local function SceneLayout(panelW, panelH, count, entry)
     if rightRoom <= 0 then nLeft = count end
     local nRight = count - nLeft
 
+    -- ONE spacing for everybody, measured outward from the fire.
+    --
+    -- Each side used to divide its own half independently, which looks even
+    -- only when the counts match. With five around a centred fire it is two and
+    -- three, so the pair spread out across their half while the trio crowded
+    -- into theirs - visibly lopsided even though the arithmetic on each side
+    -- was right. A common step makes the gaps equal everywhere and keeps the
+    -- two innermost symmetric about the flames.
+    --
+    -- The step is whatever the tighter side can afford: the side with more
+    -- figures runs out of room first, and matching it is what keeps the
+    -- outermost inside the frame.
+    -- Dividing by the COUNT, not count - 0.5, is what keeps the outermost
+    -- figure on the panel. Every figure is scaled to fit within one step (see
+    -- FitScale), so the outermost reaches half a step past its own centre;
+    -- leaving room only up to that centre clips it against the frame.
+    local edge = panelW * SCENE_EDGE
+    local step
+    if nLeft > 0 then
+        step = math.max(0, (leftEdge - edge) / nLeft)
+    end
+    if nRight > 0 then
+        local rs = math.max(0, (panelW - edge - rightEdge) / nRight)
+        step = (step and math.min(step, rs)) or rs
+    end
+    step = step or 0
+
     local xs = {}
     for i = 1, nLeft do
-        xs[#xs + 1] = leftRoom * ((i - 0.5) / nLeft)
+        xs[#xs + 1] = leftEdge - (i - 0.5) * step
     end
     for i = 1, nRight do
-        xs[#xs + 1] = rightEdge + rightRoom * ((i - 0.5) / nRight)
+        xs[#xs + 1] = rightEdge + (i - 0.5) * step
     end
     table.sort(xs)
 
@@ -410,15 +441,8 @@ local function SceneLayout(panelW, panelH, count, entry)
         }
     end
 
-    -- The tighter of the two sides, so nobody overlaps their neighbour.
-    local slot
-    if nLeft > 0 then slot = leftRoom / nLeft end
-    if nRight > 0 then
-        local rs = rightRoom / nRight
-        slot = (slot and math.min(slot, rs)) or rs
-    end
-
-    return spots, figureH, slot or (panelW / count)
+    -- The width one figure may occupy is now simply the spacing between them.
+    return spots, figureH, (step > 0) and step or (panelW / count)
 end
 
 -- The figure is anchored ABOVE the name block, so the space available to it is
@@ -978,7 +1002,7 @@ function Roster._Bootstrap()
             MeasureCast = MeasureCast,
             RACE_HEIGHT = RACE_HEIGHT, DEFAULT_HEIGHT = DEFAULT_HEIGHT,
             FireAnchor = FireAnchor, FIRE_CLEARANCE = FIRE_CLEARANCE,
-            FIRE_X = FIRE_X, FIRE_BASE_Y = FIRE_BASE_Y,
+            FIRE_X = FIRE_X, FIRE_BASE_Y = FIRE_BASE_Y, SCENE_EDGE = SCENE_EDGE,
             FitScale = FitScale, HintLayout = HintLayout,
             SCENE_BAR_W = SCENE_BAR_W, VIEW_BTN_W = VIEW_BTN_W,
             BAR_TOP = BAR_TOP, BAR_H = BAR_H, PAD_X = PAD_X,

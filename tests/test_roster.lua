@@ -403,6 +403,79 @@ do
     check("  and the ring's own back is the bottom of the stack",
           inner.level >= 0, tostring(inner.level))
 
+    -- ONE spacing for everybody. Each side used to divide its own half, which
+    -- is even only when the counts match: with five around a centred fire it is
+    -- two and three, so the pair spread out while the trio crowded together.
+    do
+        table.sort(spots, function(a, b) return a.x < b.x end)
+        local gaps = {}
+        for i = 2, #spots do
+            -- Skip the one that straddles the fire; that gap is the keep-out.
+            if not (spots[i - 1].x < fireX and spots[i].x > fireX) then
+                gaps[#gaps + 1] = spots[i].x - spots[i - 1].x
+            end
+        end
+        check("there are gaps on both sides to compare", #gaps >= 3, tostring(#gaps))
+        local first = gaps[1] or 0
+        local even = true
+        for _, g in ipairs(gaps) do
+            if math.abs(g - first) > 0.001 then even = false end
+        end
+        check("  and every one of them is the same", even,
+              table.concat(gaps, ", "))
+        check("  which is the slot the figures are fitted to",
+              math.abs(first - slot) < 0.001,
+              ("%.2f vs %.2f"):format(first, slot))
+
+        -- The two nearest the fire sit the same distance from it, so the
+        -- keep-out reads as a gap rather than an accident.
+        local innerL, innerR
+        for _, sp in ipairs(spots) do
+            if sp.x < fireX then innerL = sp.x else innerR = innerR or sp.x end
+        end
+        check("  and the innermost pair are symmetric about the flames",
+              math.abs((fireX - innerL) - (innerR - fireX)) < 0.001,
+              ("%.1f vs %.1f"):format(fireX - innerL, innerR - fireX))
+    end
+
+    -- Nobody is clipped by the frame. Every figure is fitted to one slot, so it
+    -- reaches half a slot past its own centre - leaving room only up to the
+    -- centre puts the outermost through the edge, which is what it did.
+    do
+        table.sort(spots, function(a, b) return a.x < b.x end)
+        check("the leftmost figure is inside the panel",
+              spots[1].x - slot / 2 >= 0, ("%.1f"):format(spots[1].x - slot / 2))
+        check("  and so is the rightmost",
+              spots[#spots].x + slot / 2 <= 1400,
+              ("%.1f"):format(spots[#spots].x + slot / 2))
+    end
+
+    -- A fire well off to one side, so the RIGHT is the side that runs out of
+    -- room. On a centred fire the left binds first and a mistake in the right
+    -- side's arithmetic changes nothing, which is exactly how two of them
+    -- survived a mutation run.
+    do
+        local offset = { w = 1024, h = 682, texw = 1024, texh = 1024,
+                         fireX = 0.75, fireBaseY = 0.84 }
+        local off, _, offSlot = T.SceneLayout(1400, 700, 5, offset)
+        local offFire = T.FireAnchor(1400, 700, offset)
+        check("the fire really is off to the right", offFire > 1400 * 0.7,
+              ("%.0f"):format(offFire))
+
+        table.sort(off, function(a, b) return a.x < b.x end)
+        local margin = 1400 * T.SCENE_EDGE
+        check("the outermost figure keeps clear of the right frame",
+              off[#off].x + offSlot / 2 <= 1400 - margin * 0.99,
+              ("%.1f vs %.1f"):format(off[#off].x + offSlot / 2, 1400 - margin))
+        check("  and of the left",
+              off[1].x - offSlot / 2 >= margin * 0.99,
+              ("%.1f vs %.1f"):format(off[1].x - offSlot / 2, margin))
+        for i, sp in ipairs(off) do
+            check(("  character %d still clears the fire"):format(i),
+                  math.abs(sp.x - offFire) >= 1400 * T.FIRE_CLEARANCE / 2)
+        end
+    end
+
     check("the slots leave room between neighbours", slot > 0 and slot < 1400)
     local _, _, slot8 = T.SceneLayout(1400, 700, 8, BACKDROP)
     check("a bigger cast gets narrower slots", slot8 < slot,
