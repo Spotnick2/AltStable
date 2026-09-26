@@ -506,10 +506,19 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
 
     # The NATIVE size, beside the texture.
     #
-    # Supersampling normalises every cutout to the same height, which throws
-    # away the one thing a lineup needs: a gnome IS shorter than a night elf,
-    # and the capture knew it before this step. Without recording it here the
-    # scene can only draw everyone the same height, which is what it did.
+    # NOT a race height, and it cannot be made into one. This was recorded to
+    # let the scene draw a gnome shorter than a night elf, on the theory that
+    # supersampling had flattened a difference the capture knew about. It had
+    # not: the render stage uses DressUpModel:SetUnit(), which FRAMES the model
+    # to fill the frame, so every race is drawn at the same size before a
+    # screenshot exists. Across nine captured characters these values spanned
+    # 0.609 to 0.649 - 6.6% - for races that differ by roughly 40%.
+    #
+    # The scene takes heights from char.race now. This stays because it is a
+    # true measurement of how much of the screen the cutout occupies, it costs
+    # nothing, and it is the evidence for the paragraph above - but nothing
+    # reads it, and nothing should read it as a height until the stage renders
+    # at a fixed camera scale instead of auto-framing.
     #
     # But raw screenshot pixels are NOT comparable between captures, and this
     # roster already proves it: the probe store here holds captures at screenH

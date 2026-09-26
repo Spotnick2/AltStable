@@ -487,46 +487,145 @@ end
 ------------------------------------------------------------
 -- A gnome is shorter than a night elf
 ------------------------------------------------------------
--- Every cutout is supersampled to the SAME pixel height, so w/h carries no
--- information about how tall the character is. nativeH, recorded before that
--- step, is the only surviving record - and without it the scene drew a gnome
--- exactly as tall as an elf, which is what made the first version look wrong.
+-- The height comes from the RACE, not from the picture. The render stage frames
+-- the model to fill the frame, so every race is drawn the same size before a
+-- screenshot exists: across nine real captures the recorded pixel heights
+-- spanned 0.609 to 0.649 - 6.6% - for races that differ by about 40%. Measuring
+-- the image could never have worked, which is why an earlier version of this
+-- file measured it and a gnome still stood shoulder to shoulder with elves.
 
 do
-    local elf   = { w = 144, h = 512, texw = 256, texh = 512, nativeH = 1382 }
-    local gnome = { w = 334, h = 512, texw = 512, texh = 512, nativeH = 874 }
+    local gnomeM = { race = "Gnome",    gender = "Male" }
+    local elfF   = { race = "NightElf", gender = "Female" }
+    local taurenM = { race = "Tauren",  gender = "Male" }
 
-    local _, elfH = T.RelativeFigureSize(elf, 1382, 400)
-    local _, gnomeH = T.RelativeFigureSize(gnome, 1382, 400)
-    eq("the tallest character fills the target height", elfH, 400)
+    check("a gnome is much shorter than a night elf",
+          T.RaceHeight(gnomeM) < T.RaceHeight(elfF) * 0.6,
+          ("%.2f vs %.2f"):format(T.RaceHeight(gnomeM), T.RaceHeight(elfF)))
+    check("  and a tauren is taller than both",
+          T.RaceHeight(taurenM) > T.RaceHeight(elfF))
+
+    -- Sex matters, and both spellings of it: the scanner writes gender as a
+    -- word and sexID as a number, and a sync from an older client may carry
+    -- only one of them.
+    check("women are shorter than men of the same race",
+          T.RaceHeight({ race = "Human", gender = "Female" })
+              < T.RaceHeight({ race = "Human", gender = "Male" }))
+    eq("  sexID says the same thing as gender",
+       T.RaceHeight({ race = "Human", sexID = 1 }),
+       T.RaceHeight({ race = "Human", gender = "Female" }))
+    eq("  and absent both, male is the default",
+       T.RaceHeight({ race = "Human" }),
+       T.RaceHeight({ race = "Human", gender = "Male" }))
+
+    -- Forever adds races, and a client newer than this table must not make
+    -- somebody vanish or tower.
+    eq("an unknown race stands human-sized",
+       T.RaceHeight({ race = "SomeFutureRace" }), T.DEFAULT_HEIGHT)
+    eq("  as does a record with no race at all", T.RaceHeight({}), T.DEFAULT_HEIGHT)
+    eq("  and no record at all", T.RaceHeight(nil), T.DEFAULT_HEIGHT)
+
+    check("Forever's own race is in the table",
+          T.RACE_HEIGHT.Skyborne ~= nil,
+          "Skyborne is 11 of the characters on this account")
+end
+
+------------------------------------------------------------
+-- Drawing at those heights
+------------------------------------------------------------
+
+do
+    -- Two cutouts of the SAME pixel size, which is what the stage really
+    -- produces. If the drawn heights came from the image these would be equal.
+    local cut = { w = 300, h = 512, texw = 512, texh = 512 }
+    local gnome = T.RaceHeight({ race = "Gnome", gender = "Male" })
+    local elf   = T.RaceHeight({ race = "NightElf", gender = "Female" })
+
+    local _, elfH = T.RelativeFigureSize(cut, elf, elf, 400)
+    local _, gnomeH = T.RelativeFigureSize(cut, gnome, elf, 400)
+
+    eq("the tallest race fills the target height", elfH, 400)
     check("  and the gnome is visibly shorter", gnomeH < elfH * 0.75,
           ("gnome %.1f vs elf %.1f"):format(gnomeH, elfH))
-    check("  in proportion to its real height",
-          math.abs(gnomeH - 400 * (874 / 1382)) < 0.01, tostring(gnomeH))
+    check("  in proportion to their real heights",
+          math.abs(gnomeH - 400 * (gnome / elf)) < 0.01, tostring(gnomeH))
 
-    local w, h = T.RelativeFigureSize(elf, 1382, 400)
-    check("aspect ratio is preserved", math.abs(w / h - 144 / 512) < 0.0001)
+    -- Identical images, different heights: the picture is not the source.
+    check("two identical cutouts still differ in height", gnomeH ~= elfH)
 
-    -- A cutout captured before sidecars existed has no native height. It must
-    -- fall back to the common height it always had, not vanish or tower.
-    local legacy = { w = 200, h = 512, texw = 256, texh = 512 }
-    local _, legacyH = T.RelativeFigureSize(legacy, 1382, 400)
-    eq("a cutout with no native height falls back to the common one", legacyH, 400)
+    local w, h = T.RelativeFigureSize(cut, elf, elf, 400)
+    check("the cutout still supplies the aspect",
+          math.abs(w / h - 300 / 512) < 0.0001,
+          "a tauren is broad as well as tall, and that the image does know")
 
-    local _, noRefH = T.RelativeFigureSize(elf, nil, 400)
-    eq("  as does everyone when nothing has one", noRefH, 400)
+    local _, noRefH = T.RelativeFigureSize(cut, gnome, 0, 400)
+    eq("nobody to measure against means the common height", noRefH, 400)
+    local bad = { w = 0, h = 0 }
+    local bw, bh = T.RelativeFigureSize(bad, gnome, elf, 400)
+    check("an unmeasured cutout is square rather than a divide by zero",
+          bw == 400 and bh == 400)
 end
 
 do
-    local function cut(c) return c.entry end
     local chars = {
-        { name = "Tall",  entry = { nativeH = 1382 } },
-        { name = "Short", entry = { nativeH = 874 } },
-        { name = "None",  entry = {} },
+        { name = "Stubby", race = "Gnome", gender = "Male" },
+        { name = "Lofty",  race = "NightElf", gender = "Male" },
+        { name = "Plain",  race = "Human", gender = "Male" },
     }
-    eq("the tallest native height wins", T.TallestNative(chars, cut), 1382)
-    eq("nobody with a height means nobody to measure against",
-       T.TallestNative({ { name = "None", entry = {} } }, cut), nil)
+    eq("the tallest race in the cast sets the scale",
+       T.TallestRace(chars), T.RaceHeight({ race = "NightElf", gender = "Male" }))
+
+    -- A cast of gnomes should FILL the frame, not huddle at ankle height under
+    -- an absent tauren.
+    local gnomes = {
+        { name = "A", race = "Gnome", gender = "Male" },
+        { name = "B", race = "Gnome", gender = "Female" },
+    }
+    local tallestGnome = T.TallestRace(gnomes)
+    local _, h = T.RelativeFigureSize({ w = 300, h = 512 },
+                                      T.RaceHeight(gnomes[1]), tallestGnome, 400)
+    eq("an all-gnome cast still fills the frame", h, 400)
+
+    eq("an empty cast has a usable scale", T.TallestRace({}), T.DEFAULT_HEIGHT)
+end
+
+------------------------------------------------------------
+-- And the renderer really measures them that way
+------------------------------------------------------------
+-- Checking that RaceHeight and RelativeFigureSize agree with each other proves
+-- nothing about what the renderer hands them. Handing every figure the same
+-- height levels the races out again while both functions stay correct.
+
+do
+    local cut = { w = 300, h = 512, texw = 512, texh = 512 }
+    local cast = {
+        { name = "Stubby", race = "Gnome",    gender = "Male" },
+        { name = "Lofty",  race = "NightElf", gender = "Male" },
+        { name = "Bare",   race = "Tauren",   gender = "Male" },   -- no portrait
+    }
+    local function cutoutFor(c) return c.name ~= "Bare" and cut or nil end
+    local spots = { { scale = 1 }, { scale = 1 }, { scale = 1 } }
+
+    local tallest = T.TallestRace(cast)
+    local sizes = T.MeasureCast(cast, cutoutFor, spots, tallest, 400)
+
+    eq("every slot is measured", #sizes, 3)
+    check("the gnome is drawn shorter than the elf",
+          sizes[1][2] < sizes[2][2] * 0.75,
+          ("%.1f vs %.1f"):format(sizes[1][2], sizes[2][2]))
+    check("  from identical cutouts", true)
+    check("a character with no portrait measures zero",
+          sizes[3][1] == 0 and sizes[3][2] == 0)
+
+    -- The depth scale from the ring still multiplies through.
+    local deep = { { scale = 0.5 }, { scale = 1 }, { scale = 1 } }
+    local scaled = T.MeasureCast(cast, cutoutFor, deep, tallest, 400)
+    check("standing further back makes a figure smaller still",
+          math.abs(scaled[1][2] - sizes[1][2] * 0.5) < 0.001,
+          ("%.2f vs %.2f"):format(scaled[1][2], sizes[1][2] * 0.5))
+
+    local none = T.MeasureCast({}, cutoutFor, {}, tallest, 400)
+    eq("an empty cast measures nothing", #none, 0)
 end
 
 ------------------------------------------------------------
