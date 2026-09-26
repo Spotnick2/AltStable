@@ -1614,6 +1614,113 @@ WoW.xpMax = 400
 onEvent(T.frame, "PLAYER_XP_UPDATE")
 eq(AltStableDB[xpGuid].restPercent, 40, "  below it, a sudden zero is still treated as transient")
 
+------------------------------------------------------------
+-- Forgetting a character that no longer exists (#65)
+------------------------------------------------------------
+-- Deleting the record is the easy half and not the useful one: a peer still
+-- holds it and re-sends it on the next sync, so without a tombstone the
+-- character is back within seconds. Through 1.60.1.69977 this never came up
+-- because nothing survived a restart (#23); now records persist and only
+-- accumulate.
+
+do
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {} }
+    AltStableDB = {
+        ["Player-Gone-1"] = { guid = "Player-Gone-1", name = "Ghost", class = "PRIEST",
+                              level = 12, lastUpdate = 1000 },
+        ["Player-Here-1"] = { guid = "Player-Here-1", name = "Present", class = "MAGE",
+                              level = 60, lastUpdate = 1000 },
+    }
+
+    local ok, name = AltStable.ForgetCharacter("Player-Gone-1")
+    check(ok, "forgetting a character reports success")
+    eq(name, "Ghost", "  and gives back the name, for the message")
+    eq(AltStableDB["Player-Gone-1"], nil, "  the record is gone")
+    check(AltStableDB["Player-Here-1"] ~= nil, "  and nobody else is touched")
+    check(AltStable.IsCharacterForgotten("Player-Gone-1"), "  a tombstone is left")
+
+    local missing, why = AltStable.ForgetCharacter("Player-Nope-9")
+    eq(missing, false, "forgetting a character we do not have fails")
+    check(type(why) == "string" and why ~= "", "  with something to print")
+
+    -- Not the one you are standing on. The next scan rewrites the record
+    -- seconds later, so it would look broken rather than destructive - and the
+    -- tombstone would then be fighting our own scanner.
+    local me = WoW.player.guid
+    AltStableDB[me] = { guid = me, name = "Myself", class = "DRUID", level = 20,
+                        lastUpdate = 1000, scannedHere = true }
+    local refused, reason = AltStable.ForgetCharacter(me)
+    eq(refused, false, "the character you are playing cannot be forgotten")
+    check(type(reason) == "string" and reason:find("playing", 1, true) ~= nil,
+          "  and the reason says why: " .. tostring(reason))
+    check(AltStableDB[me] ~= nil, "  the record is still there")
+    check(not AltStable.IsCharacterForgotten(me), "  and no tombstone was left for it")
+end
+
+do
+    -- The half that matters: the peer sends it back and we do not take it.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    AltStableDB = {}
+    AltStable.MarkCharacterForgotten("Player-Gone-1", 1000, "Ghost")
+
+    local blob = T.SerializeChar({ guid = "Player-Gone-1", name = "Ghost", class = "PRIEST",
+                                   level = 12, lastUpdate = 2000 })
+    T.DeserializeFullDB(blob .. "\n" .. T.CHAR_SEP, "Peer Surname")
+    eq(AltStableDB["Player-Gone-1"], nil,
+       "a forgotten character offered back by a peer is not taken")
+
+    -- And the tombstone's clock moves, because a peer is still offering it.
+    local after = AltStable.ForgottenList()[1]
+    check(after and (after.lastOffered or 0) > 1000,
+          "  and the tombstone is refreshed, so it cannot expire while they still send it")
+    eq(after and after.name, "Ghost", "  keeping the name we knew it by")
+
+    -- An unrelated character still arrives.
+    local other = T.SerializeChar({ guid = "Player-Fine-1", name = "Fine", class = "MAGE",
+                                    level = 60, lastUpdate = 2000 })
+    T.DeserializeFullDB(other .. "\n" .. T.CHAR_SEP, "Peer Surname")
+    check(AltStableDB["Player-Fine-1"] ~= nil, "anyone else still syncs normally")
+end
+
+do
+    -- Undo, by name, because the record is gone and the player has only a name.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    AltStable.MarkCharacterForgotten("Player-Gone-2", 1000, "Ghost Surname")
+
+    local guid, held = AltStable.ForgottenGuidFor("ghost surname")
+    eq(guid, "Player-Gone-2", "a forgotten character is findable by name")
+    eq(held, "Ghost Surname", "  with the name as it was")
+    eq(AltStable.ForgottenGuidFor("Ghost"), "Player-Gone-2",
+       "  and by first name alone, like everywhere else")
+    eq(AltStable.ForgottenGuidFor("Nobody"), nil, "  and not by a name we never had")
+
+    check(AltStable.UnforgetCharacter("Player-Gone-2"), "unforgetting reports success")
+    check(not AltStable.IsCharacterForgotten("Player-Gone-2"), "  and drops the tombstone")
+    eq(AltStable.UnforgetCharacter("Player-Gone-2"), false,
+       "  doing it twice is not success the second time")
+end
+
+do
+    -- The list expires, or it grows forever on an account that reorganises alts.
+    -- It must NOT expire while a peer is still offering the record, which is
+    -- why the stamp tracks "last offered" rather than "when forgotten".
+    WoW.reset()
+    AltStableConfig = { forgottenCharacters = {} }
+    local ttl = AltStable._TOMBSTONE_TTL
+    AltStable.MarkCharacterForgotten("Player-Old-1", 1000, "Ancient")
+    AltStable.MarkCharacterForgotten("Player-New-1", 1000 + ttl, "Recent")
+
+    eq(AltStable.PruneForgotten(1000 + ttl + 1), 1, "one tombstone ages out")
+    check(not AltStable.IsCharacterForgotten("Player-Old-1"), "  the old one")
+    check(AltStable.IsCharacterForgotten("Player-New-1"), "  and the fresh one stays")
+
+    eq(AltStable.PruneForgotten(1000 + ttl + 1), 0, "a second sweep finds nothing to do")
+end
+
+
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else

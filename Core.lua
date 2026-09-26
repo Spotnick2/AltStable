@@ -646,6 +646,35 @@ local function AdvancePeerWatermark(name, ts, peerNow)
 end
 AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
 
+-- Forget a character: the record goes, and a tombstone stops peers putting it
+-- back. Returns false with a reason the caller can print.
+--
+-- Not the character being played. Its record would be rewritten by the next
+-- scan seconds later, so "forgetting" it would look broken rather than
+-- destructive - and the honest answer is that you cannot forget somebody you
+-- are standing on.
+function AltStable.ForgetCharacter(guid)
+    if not guid or not AltStableDB or not AltStableDB[guid] then
+        return false, "no such character"
+    end
+    if guid == (UnitGUID and UnitGUID("player")) then
+        return false, "that is the character you are playing - log in as someone else first"
+    end
+
+    local name = AltStableDB[guid].name or guid
+    AltStableDB[guid] = nil
+    AltStable.MarkCharacterForgotten(guid, time(), name)
+
+    -- The plugins hold their own per-character tables and would otherwise keep
+    -- the inventory, recipes and lockouts of a character nothing shows.
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.OnForget then pcall(plugin.OnForget, guid) end
+    end
+
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    return true, name
+end
+
 -- Mark a character dirty so the next delta sync includes it. Plugins call this
 -- when their own per-character data changes (e.g. a recipe learned) so the
 -- change actually rides a delta — otherwise the character would be filtered out
@@ -800,6 +829,22 @@ local function DeserializeFullDB(payload, sender)
                 -- (even rejected/skipped records) so the watermark advances past
                 -- them and they aren't re-requested next delta.
                 if (c.lastUpdate or 0) > maxTS then maxTS = c.lastUpdate end
+
+                -- Forgotten here (#65): the peer still holds this character and
+                -- always will until they forget it too, so dropping it once
+                -- locally is not enough - it arrives again every sync.
+                --
+                -- Refresh the tombstone while we are here. Its stamp is "when a
+                -- peer last offered this", which is what lets the list expire
+                -- without the record sneaking back: it cannot age out while
+                -- anyone is still sending it.
+                if AltStable.IsCharacterForgotten and AltStable.IsCharacterForgotten(c.guid) then
+                    AltStable.MarkCharacterForgotten(c.guid, time())
+                    c = nil
+                end
+            end
+
+            if c and c.guid then
 
                 -- Validate immutable fields before merging
                 if not ValidateIncoming(c, sender) then
@@ -2345,6 +2390,62 @@ SlashCmdList["ALTSTABLE"] = function(args)
     ----------------------------------------------------
     -- /alts account N  — set this client's account number
     ----------------------------------------------------
+
+    -- Forget a character that no longer exists (#65).
+    if cmd == "forget" or cmd == "unforget" then
+        if target == nil or target == "" then
+            Print("usage: |cffffff00/alts " .. cmd .. " <character>|r")
+            return
+        end
+
+        if cmd == "unforget" then
+            local guid, held = AltStable.ForgottenGuidFor(target)
+            if not guid then
+                Print("|cffff8800Not on the forgotten list:|r " .. target)
+                return
+            end
+            AltStable.UnforgetCharacter(guid)
+            Print("|cff88ff88" .. (held or target) .. "|r will be accepted from peers again. "
+                .. "It comes back on the next sync, not immediately.")
+            return
+        end
+
+        -- Match on the full name first, then the first name, so surnames are
+        -- optional the way they are everywhere else.
+        local want, match = target:lower(), nil
+        for guid, c in pairs(AltStableDB or {}) do
+            if type(c) == "table" and c.name then
+                local n = c.name:lower()
+                if n == want then match = guid; break end
+                if n:match("^(%S+)") == want and not match then match = guid end
+            end
+        end
+        if not match then
+            Print("|cffff8800No character called|r " .. target)
+            return
+        end
+
+        local ok, info = AltStable.ForgetCharacter(match)
+        if ok then
+            Print("Forgotten |cffff8888" .. info .. "|r. The record is gone and peers offering "
+                .. "it back will be ignored. |cffffff00/alts unforget " .. info .. "|r to undo.")
+        else
+            Print("|cffff8800Cannot forget that:|r " .. tostring(info))
+        end
+        return
+    end
+
+    if cmd == "forgotten" then
+        local list = AltStable.ForgottenList()
+        if #list == 0 then
+            Print("Nothing forgotten. |cffffff00/alts forget <character>|r removes one for good.")
+            return
+        end
+        for _, e in ipairs(list) do
+            Print(("  %s  |cff888888(%s)|r"):format(e.name or "?", e.guid))
+        end
+        return
+    end
 
     if cmd == "account" then
         if target == nil or target == "" then

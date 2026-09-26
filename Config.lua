@@ -306,6 +306,116 @@ AltStable.EnsureConfigDefaults = EnsureDefaults
 -- owns persistence and the change notification.
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Forgotten characters (#65)
+--
+-- A record deleted locally comes straight back: a peer still holds it and
+-- re-sends it on the next sync. So forgetting has to be remembered.
+--
+-- PER ACCOUNT, and deliberately not on the wire. Each account forgets
+-- independently, which needs no protocol change and is the honest model given
+-- the config is per account anyway - account A deciding that a character is
+-- gone is not evidence for account B, which may still be playing it.
+--
+-- Each entry is { at = <when a peer last offered it>, name = <what it was
+-- called> }.
+--
+-- `at` is deliberately not "when it was forgotten". That is what lets the list
+-- expire safely: a tombstone has to outlive every peer that still remembers the
+-- character, and nothing else knows how long that is. While anyone keeps
+-- offering it the stamp keeps moving and the tombstone stays; once they have
+-- all forgotten too, it ages out and the list stops growing on an account that
+-- reorganises alts often.
+--
+-- `name` is kept only so the player can read the list and undo by name. The
+-- record itself is gone, so without it a mistake could only be undone by
+-- copying a GUID out of a chat line.
+------------------------------------------------------------
+
+local TOMBSTONE_TTL = 60 * 60 * 24 * 30   -- a month with nobody offering it
+
+function AltStable.IsCharacterForgotten(guid)
+    if not guid then return false end
+    local gone = AltStableConfig and AltStableConfig.forgottenCharacters
+    return (gone and gone[guid]) and true or false
+end
+
+-- Records the tombstone, or refreshes how recently a peer offered the record.
+-- An existing name is never overwritten with nothing: the refresh path runs
+-- when a peer offers the record back, and the peer's copy is not the authority
+-- on what the player called it when they forgot it.
+function AltStable.MarkCharacterForgotten(guid, when, name)
+    if not guid then return false end
+    AltStableConfig = AltStableConfig or {}
+    local current = AltStableConfig.forgottenCharacters or {}
+    local copy = {}
+    for k, v in pairs(current) do copy[k] = v end
+    local prev = current[guid]
+    copy[guid] = {
+        at   = tonumber(when) or time(),
+        name = name or (type(prev) == "table" and prev.name) or nil,
+    }
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+    return true
+end
+
+-- The GUID we hold for a forgotten character of this name, if any.
+function AltStable.ForgottenGuidFor(name)
+    if not name or name == "" then return nil end
+    local want = name:lower()
+    for guid, e in pairs((AltStableConfig or {}).forgottenCharacters or {}) do
+        local held = type(e) == "table" and e.name
+        if held and (held:lower() == want or held:lower():match("^(%S+)") == want) then
+            return guid, held
+        end
+    end
+    return nil
+end
+
+function AltStable.UnforgetCharacter(guid)
+    if not guid or not AltStable.IsCharacterForgotten(guid) then return false end
+    local copy = {}
+    for k, v in pairs(AltStableConfig.forgottenCharacters or {}) do copy[k] = v end
+    copy[guid] = nil
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+    return true
+end
+
+-- Drop tombstones nobody has offered in a month. Returns how many went.
+function AltStable.PruneForgotten(now)
+    AltStableConfig = AltStableConfig or {}
+    local gone = AltStableConfig.forgottenCharacters
+    if not gone then return 0 end
+    now = tonumber(now) or time()
+
+    local copy, dropped = {}, 0
+    for guid, e in pairs(gone) do
+        local at = (type(e) == "table" and tonumber(e.at)) or 0
+        if (now - at) > TOMBSTONE_TTL then
+            dropped = dropped + 1
+        else
+            copy[guid] = e
+        end
+    end
+    if dropped > 0 then AltStable.SetConfigValue("forgottenCharacters", copy) end
+    return dropped
+end
+
+function AltStable.ForgottenList()
+    local out = {}
+    for guid, e in pairs((AltStableConfig or {}).forgottenCharacters or {}) do
+        out[#out + 1] = {
+            guid = guid,
+            name = (type(e) == "table" and e.name) or nil,
+            lastOffered = (type(e) == "table" and e.at) or nil,
+        }
+    end
+    table.sort(out, function(a, b) return (a.name or a.guid) < (b.name or b.guid) end)
+    return out
+end
+
+AltStable._TOMBSTONE_TTL = TOMBSTONE_TTL
+
 function AltStable.IsCharacterHidden(guid)
     if not guid then return false end
     local hidden = AltStableConfig and AltStableConfig.hiddenCharacters
@@ -439,6 +549,10 @@ initFrame:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
     if event == "PLAYER_LOGIN" then
         EnsureDefaults()
         CheckClientBuild()
+        -- Drop tombstones nobody has offered in a month (#65). Once here,
+        -- because it only changes on the scale of months and a sweep on every
+        -- sync would rewrite the config for nothing.
+        AltStable.PruneForgotten()
     elseif event == "PLAYER_ENTERING_WORLD" then
         AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
     end
