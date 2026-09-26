@@ -929,6 +929,70 @@ end
 AltStable._PlayOpenAnimation = PlayOpenAnimation
 
 ------------------------------------------------------------
+-- The addon's icon: the group of figures from the client's Who tab.
+--
+-- A FILE ID, because the client gave no path for it. Found with the probe's
+-- /asicon on the LFG frame's side tabs: the tab is the `common-sidetab` atlas
+-- and the art inside it is this, set by id with no atlas and no filename.
+--
+-- IT CANNOT BE VALIDATED. Measured on 1.60.1.70009:
+--
+--     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+--          print(t:GetTexture(), t:GetTextureFileID())
+--     999999999   999999999
+--
+-- A file id is stored, not resolved: a nonsense one is echoed straight back. So
+-- "set it and check whether it took" is a check that can never fire, and an
+-- earlier version of this had a fallback behind exactly such a check - green
+-- tests, and a blank minimap button the day the id changes.
+--
+-- SO THE FALLBACK IS DRAWN, NOT DECIDED. The old icon sits on a lower layer and
+-- the file id is drawn over it. The same measurement says an id the client does
+-- not have draws NOTHING, which is precisely what makes this work: if 8197123
+-- ever stops resolving, the layer beneath shows through and the button is the
+-- old icon rather than empty. No check, no branch, nothing to be wrong about.
+--
+-- This only holds while the Who-tab art is OPAQUE - transparent pixels in it
+-- would show the old icon through at all times, which is a present defect
+-- traded for a hypothetical one. Checked on the minimap button, 2026-09-26: the
+-- art covers the underlay completely, no bleed-through. Worth re-checking if
+-- the id is ever changed for a different texture.
+--
+-- If the icon ever does revert, /asicon on the Who tab gives the new id. (That
+-- command arrives with #82 and is not on main yet.)
+local ROSTER_ICON_FILE_ID = 8197123
+local ROSTER_ICON_UNDERLAY = "Interface\\Icons\\INV_Misc_GroupNeedMore"
+
+-- Draws both layers onto a button. Returns the two textures, so a test can see
+-- that the underlay is really there and really underneath.
+local function ApplyRosterIcon(btn)
+    if not btn or not btn.CreateTexture then return nil end
+
+    -- The underlay is Interface\Icons\ art: 64x64 with a border baked in,
+    -- which is why it is trimmed by 8%.
+    local under = btn:CreateTexture(nil, "BACKGROUND")
+    under:SetTexture(ROSTER_ICON_UNDERLAY)
+    if under.SetTexCoord then under:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+
+    -- The Who tab art is NOT trimmed. It is UI art from inside a sidetab and
+    -- has no border margin, so the same 8% would shave the outer figures off
+    -- the group.
+    local over = btn:CreateTexture(nil, "ARTWORK")
+    over:SetTexture(ROSTER_ICON_FILE_ID)
+    if over.SetTexCoord then over:SetTexCoord(0, 1, 0, 1) end
+
+    return over, under
+end
+
+-- Not on the public namespace: one caller in this file, plus tests. The
+-- convention here is _PlayOpenAnimation and the _test seam, not AltStable.Foo
+-- for an internal.
+AltStable._test = AltStable._test or {}
+AltStable._test.ApplyRosterIcon = ApplyRosterIcon
+AltStable._test.ROSTER_ICON_FILE_ID = ROSTER_ICON_FILE_ID
+AltStable._test.ROSTER_ICON_UNDERLAY = ROSTER_ICON_UNDERLAY
+
+------------------------------------------------------------
 -- Minimap button
 --
 -- Minimal LibDBIcon-style button. No external lib dependency to keep the
@@ -999,11 +1063,13 @@ local function CreateMinimapButton()
     btn:RegisterForDrag("LeftButton")
     btn:SetMovable(true)
 
-    local icon = btn:CreateTexture(nil, "BACKGROUND")
-    icon:SetSize(20, 20)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_GroupNeedMore")
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    icon:SetPoint("CENTER", btn, "CENTER", 0, 1)
+    -- Two layers: see ApplyRosterIcon. The lower one is the old icon, showing
+    -- through only if the file id above it ever stops resolving.
+    local icon, underIcon = ApplyRosterIcon(btn)
+    for _, t in ipairs({ icon, underIcon }) do
+        t:SetSize(20, 20)
+        t:SetPoint("CENTER", btn, "CENTER", 0, 1)
+    end
 
     local border = btn:CreateTexture(nil, "OVERLAY")
     border:SetSize(54, 54)

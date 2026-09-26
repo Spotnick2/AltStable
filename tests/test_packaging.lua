@@ -186,5 +186,56 @@ for _, t in ipairs(TOCS) do
           not version:find("%d+%.%d+") and not version:find("dev"), version)
 end
 
+------------------------------------------------------------
+-- Every addon has an icon, and they all have the SAME one
+------------------------------------------------------------
+-- Without ## IconTexture the AddOns list draws a red question mark, and with
+-- this many folders that is a column of them.
+--
+-- The expected id is read out of SheetUI rather than written here. The comment
+-- beside it tells a future maintainer to re-derive the id with /asicon and
+-- update it there - and doing exactly that used to leave six TOCs and the
+-- Cutouts generator on the stale one, with a green suite and a minimap button
+-- that disagreed with the AddOns list.
+--
+-- The list is its own, not the TOCS above: that one holds the four PACKAGED
+-- addons, while the icon matters for the dev tools and the generated Cutouts
+-- template too. Dropping the line from the PS1 template regenerates every
+-- user's Cutouts folder with a question mark and nothing else would notice.
+
+local WANTED_ICON = read("SheetUI.lua"):match("ROSTER_ICON_FILE_ID%s*=%s*(%d+)")
+check("SheetUI names the icon this checks against", WANTED_ICON ~= nil)
+
+local ICON_FILES = {
+    "AltStable.toc",
+    "Plugins/Warband/AltStableWarband.toc",
+    "Plugins/Instances/AltStableInstances.toc",
+    "Plugins/Roster/AltStableRoster.toc",
+    "Tools/AltStableProbe/AltStableProbe.toc",
+    "Tools/AltStableDevConfig/AltStableDevConfig.toc",
+    -- Not a TOC: the generator that WRITES one.
+    "Tools/RenderCutout/Update-Cutouts.ps1",
+}
+
+for _, file in ipairs(ICON_FILES) do
+    local src = read(file)
+    local icon = src:match("##%s*IconTexture:%s*(%S+)")
+    check(file .. " declares an icon", icon ~= nil,
+          "the AddOns list shows a red question mark without one")
+    if icon and WANTED_ICON then
+        eq("  and it is the one SheetUI uses", icon, WANTED_ICON)
+    end
+
+    -- ## Dependencies: AltStable is what nests a folder UNDER the main addon in
+    -- the AddOns list. Without it a member of this family sits at the top level
+    -- among unrelated addons, which is how Cutouts and the Probe looked until
+    -- someone noticed. The main addon is the parent and depends on nobody.
+    if file ~= "AltStable.toc" then
+        check("  and hangs off the main addon in the list",
+              src:match("##%s*Dependencies:[^\n]*AltStable") ~= nil,
+              "it would sit at the top level on its own")
+    end
+end
+
 print(("test_packaging: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

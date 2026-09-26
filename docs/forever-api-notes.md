@@ -1087,6 +1087,69 @@ reports "nothing under the cursor" while the thing is plainly hovered, which
 sends you looking in the wrong place entirely.
 
 `Tools/AltStableProbe/WhatIcon.lua` (`/asicon`) is the working example.
+## A file id cannot be validated; a path can
+
+Measured 2026-09-26 on 1.60.1.70009:
+
+```
+/run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+     print(t:GetTexture(), t:GetTextureFileID())
+999999999   999999999
+```
+
+A **file id is stored, not resolved**. A nonsense one is echoed straight back by
+both `GetTexture` and `GetTextureFileID`, so nothing you can ask a texture will
+tell you the art is missing — the only symptom is that it draws nothing.
+
+**A path is believed to be different — NOT MEASURED.** The plausible story is
+that the client resolves a path to a file id and can fail to, making
+`not tex:GetTexture()` after `SetTexture(path)` a real check. Nothing here has
+tested it. To settle it:
+
+```
+/run local t=UIParent:CreateTexture() t:SetTexture("Interface\Nope\Nope")
+     print(t:GetTexture(), t:GetTextureFileID())
+```
+
+Two reasons to doubt it rather than assume:
+
+- `Plugins/Instances/AltStableInstances.lua`'s `LoadTexture` is cited as proof
+  that paths are checkable, but it is only ever called on **addon** TGAs — and
+  this repo already recorded, at `Plugins/Roster/AltStableRoster.lua`, that the
+  client has **no FileDataID for an addon's own files**. So the one exemplar may
+  be vacuous for the only paths it is used on. Delete a
+  `Media\Raids\scene-raid-*.tga` and see whether `LoadTexture` still returns
+  true.
+- `GetFileIDFromPath` is a different function with a different caller
+  (`API.TextureExists` in `Compat.lua`), and it has that same addon-file caveat:
+  it returns nil for art the addon ships, so guarding on it **rejects real
+  textures**. Roster removed exactly such a guard for that reason. Do not reach
+  for it on the strength of this note.
+
+**The trap, which is the measured part.** "Set it and check whether it took"
+reads as prudent and, for a file id, can never fire. A fallback behind that
+check is worse than none, because it claims the case is handled: a build that
+renames the id gives a blank frame, no error, and a green suite saying
+otherwise.
+
+**What to do instead when there is no path.** Draw the fallback rather than
+deciding it: put the known-good art on a lower layer and the file id over it.
+An id that does not resolve draws nothing, so the layer beneath shows through —
+no check, no branch, nothing to be wrong about. `SheetUI.lua`'s
+`ApplyRosterIcon` is the worked example.
+
+**With one condition: the top texture has to be opaque.** The measurement above
+says a *missing* id draws nothing; it says nothing about how much of the frame a
+*valid* one covers. Transparent pixels in the upper art reveal the backup at all
+times, which trades a hypothetical future defect for a visible present one — so
+look at it before shipping the pair. Checked for the Who-tab icon on 2026-09-26:
+opaque, no bleed-through.
+
+Finding the file-id half took a reviewer to doubt the check and one line in game
+to settle it. The stub had been written to the same assumption as the code, so
+the suite agreed with the mistake — and then the first correction asserted the
+PATH half just as confidently, with no measurement behind it either. Hence the
+caveat above rather than a second confident claim.
 
 ## A model frame auto-frames, so a render tells you nothing about size
 

@@ -560,5 +560,54 @@ if Cam then
     WoW.reset()
 end
 
+------------------------------------------------------------
+-- The addon's icon
+------------------------------------------------------------
+-- The group-of-figures art from the client's Who tab, found with the probe's
+-- /asicon. The client gave no path for it - the tab is the `common-sidetab`
+-- atlas and the art inside is set by FILE ID with no atlas and no filename - so
+-- an id is the only thing there is to write.
+--
+-- Measured on 1.60.1.70009 (see docs/forever-api-notes.md): SetTexture with a
+-- nonsense file id echoes it straight back from both getters. A file id is
+-- stored, not resolved, so no check on the texture can tell you the art is
+-- missing. An earlier version had a fallback behind exactly such a check: it
+-- could never fire, and it claimed the case was handled.
+--
+-- The fallback is DRAWN instead. The old icon sits on a lower layer with the
+-- file id over it, so if the id ever stops resolving - which the same
+-- measurement says draws nothing - the layer beneath shows through.
+
+do
+    local T = AltStable._test
+    local btn = CreateFrame("Frame")
+    local over, under = T.ApplyRosterIcon(btn)
+
+    eq("the Who tab's icon is drawn", over:GetTextureFileID(), T.ROSTER_ICON_FILE_ID)
+    eq("  and the old icon underneath it", under:GetTexture(), T.ROSTER_ICON_UNDERLAY)
+
+    -- Order matters: BACKGROUND is beneath ARTWORK. The wrong way round and the
+    -- old icon covers the new one on every client that HAS the file.
+    eq("the old icon is on the lower layer", under:GetDrawLayer(), "BACKGROUND")
+    eq("  and the new one above it", over:GetDrawLayer(), "ARTWORK")
+
+    -- The Who tab art is not trimmed; the icon beneath it is.
+    check("the Who tab art is drawn whole",
+          over._texCoord and over._texCoord[1] == 0 and over._texCoord[2] == 1,
+          tostring(over._texCoord and over._texCoord[1]))
+    check("  while the Icons file under it is trimmed, as such art needs",
+          under._texCoord and under._texCoord[1] > 0,
+          tostring(under._texCoord and under._texCoord[1]))
+
+    -- The measurement itself, pinned: if a future client ever DOES reject a bad
+    -- id, this fails and a check becomes worth writing again.
+    local bogus = CreateFrame("Frame"):CreateTexture()
+    bogus:SetTexture(999999999)
+    eq("a file id the client does not have is echoed back, not rejected",
+       bogus:GetTextureFileID(), 999999999)
+
+    check("nothing to draw on is not a crash", T.ApplyRosterIcon(nil) == nil)
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

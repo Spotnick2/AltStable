@@ -94,21 +94,37 @@ function Convert-Newest {
     Write-Manifest
 }
 
-# The .toc that makes the folder an addon. Written once and left alone.
+# The .toc that makes the folder an addon.
+#
+# Rewritten when it differs, not written once and left alone. "Once" meant a
+# change here could never reach anyone who already had the folder: adding
+# ## IconTexture left every existing install with a red question mark in the
+# AddOns list and no way to fix it short of deleting the folder. The file is
+# generated and says so, so there is nothing of the user's in it to preserve.
 function Write-Toc {
-    if (Test-Path $cutoutToc) { return }
     $toc = @"
 ## Interface: 16001
 ## Title: AltStable Cutouts
 ## Notes: Character portraits captured locally by AltStable. GENERATED - regenerate with Tools/RenderCutout/Update-Cutouts.ps1, or delete this folder to start over.
+## IconTexture: 8197123
+## Dependencies: AltStable
 ## Author: generated
 ## Version: 1
 
 CutoutManifest.lua
 "@
+    $existed = Test-Path $cutoutToc
+    if ($existed -and ((Get-Content $cutoutToc -Raw) -replace "`r`n", "`n").Trim() -eq ($toc -replace "`r`n", "`n").Trim()) {
+        return
+    }
+
     Set-Content -Path $cutoutToc -Value $toc -Encoding UTF8
-    Write-Host ("  created addon -> {0}" -f $cutoutAddon) -ForegroundColor Cyan
-    Write-Host "  (new addon folder: /reload will not pick it up, restart the client once)" -ForegroundColor DarkGray
+    if ($existed) {
+        Write-Host ("  refreshed addon header -> {0}" -f $cutoutToc) -ForegroundColor Cyan
+    } else {
+        Write-Host ("  created addon -> {0}" -f $cutoutAddon) -ForegroundColor Cyan
+        Write-Host "  (new addon folder: /reload will not pick it up, restart the client once)" -ForegroundColor DarkGray
+    }
 }
 
 # The manifest is regenerated wholesale from what is on disk, so deleting a TGA

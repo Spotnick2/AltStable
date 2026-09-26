@@ -121,7 +121,16 @@ local function makeFrame()
         self["_hook_" .. tostring(ev)] = fn
         return self
     end
-    f.CreateTexture    = function() return makeFrame() end
+    -- The draw layer is REAL state. Which of two textures is on top is a
+    -- correctness question - an underlay drawn above its overlay hides the
+    -- thing it is backing up - and the chaining default swallowed it.
+    f.CreateTexture    = function(_, _, layer)
+        local t = makeFrame()
+        t._layer = layer
+        t.SetDrawLayer = function(self, v) self._layer = v; return self end
+        t.GetDrawLayer = function(self) return self._layer end
+        return t
+    end
     f.CreateFontString = function() return makeFrame() end
     -- Text is REMEMBERED, not swallowed: a footer or a label is a real
     -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
@@ -148,6 +157,49 @@ local function makeFrame()
     -- is exactly what needs testing, and with the chaining default every such
     -- save/restore stored the FRAME ITSELF as "the saved strata" and restored
     -- nothing - a silent no-op that reads as correct.
+    -- Textures: what was set, and whether the client knew it.
+    --
+    -- SetTexture takes a path OR a file id, and the two behave DIFFERENTLY.
+    --
+    -- MEASURED on 1.60.1.70009:
+    --     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+    --          print(t:GetTexture(), t:GetTextureFileID())
+    --     999999999   999999999
+    --
+    -- A file id is stored, not resolved. A nonsense one is echoed straight
+    -- back, so NOTHING a texture can be asked will tell you whether the art
+    -- exists - the only symptom is that it draws nothing. An earlier version of
+    -- this stub returned nil for an unknown id, which made a validity check
+    -- look testable when on the client it could never fire.
+    --
+    -- A PATH is believed to be different - the client resolving it to a file id
+    -- and being able to fail - but that half is NOT MEASURED. See the caveat in
+    -- docs/forever-api-notes.md. Modelled the optimistic way so the behaviour
+    -- is expressible, and driven by WoW.textures, which is the one table that
+    -- already decides whether a path exists (GetFileIDFromPath reads it too).
+    f.SetTexture = function(self, v)
+        if type(v) == "number" then
+            self._texture, self._fileID = v, v     -- echoed, whatever it is
+        elseif type(v) == "string" then
+            -- The SAME table GetFileIDFromPath consults. Two notions of "a path
+            -- this client has" disagree the moment a test configures one of
+            -- them: with WoW.textures set, a missing path reported absent to
+            -- GetFileIDFromPath and present to SetTexture, at once.
+            local id = GetFileIDFromPath(v)
+            self._texture = id and v or nil
+            self._fileID  = id
+        else
+            self._texture, self._fileID = nil, nil
+        end
+        return self
+    end
+    f.GetTexture         = function(self) return self._texture end
+    f.GetTextureFileID   = function(self) return self._fileID end
+    f.GetTextureFilePath = function(self)
+        return type(self._texture) == "string" and self._texture or nil
+    end
+    f.SetTexCoord = function(self, ...) self._texCoord = { ... }; return self end
+
     f.SetFrameStrata = function(self, v) self._strata = v; return self end
     f.GetFrameStrata = function(self) return self._strata or "MEDIUM" end
     f.SetParent      = function(self, p) self._parent = p; return self end
