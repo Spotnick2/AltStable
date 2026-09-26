@@ -694,29 +694,51 @@ function AltStable.ResolveCharacter(name)
     if not name or name == "" then return nil, "usage: a character name" end
     local want = name:lower()
 
-    local exact, partial = nil, {}
+    -- Three ways to name someone, narrowing as they go: "Name-Realm" is
+    -- unambiguous, a full name usually is, a first name often is not.
+    local exact, full, partial = {}, {}, {}
     for guid, c in pairs(AltStableDB or {}) do
         if type(c) == "table" and c.name then
             local n = c.name:lower()
-            if n == want then
-                exact = guid
+            local qualified = c.realm and (n .. "-" .. tostring(c.realm):lower()) or nil
+            if qualified == want then
+                exact[#exact + 1] = { guid = guid, name = c.name, realm = c.realm }
+            elseif n == want then
+                full[#full + 1] = { guid = guid, name = c.name, realm = c.realm }
             elseif n:match("^(%S+)") == want then
-                partial[#partial + 1] = { guid = guid, name = c.name }
+                partial[#partial + 1] = { guid = guid, name = c.name, realm = c.realm }
             end
         end
     end
-    if exact then return exact end
 
-    if #partial == 1 then return partial[1].guid end
-    if #partial == 0 then
-        return nil, "|cffff8800No character called|r " .. name
+    -- A realm-qualified name is the selector, so it wins outright.
+    if #exact == 1 then return exact[1].guid end
+
+    local function ambiguous(list)
+        table.sort(list, function(a, b)
+            if a.name ~= b.name then return a.name < b.name end
+            return tostring(a.realm) < tostring(b.realm)
+        end)
+        local shown = {}
+        for _, e in ipairs(list) do
+            shown[#shown + 1] = e.realm and (e.name .. "-" .. e.realm) or e.name
+        end
+        return nil, "|cffff8800" .. name .. " is ambiguous|r - did you mean "
+            .. table.concat(shown, ", ") .. "? Name the realm too."
     end
 
-    table.sort(partial, function(a, b) return a.name < b.name end)
-    local names = {}
-    for _, e in ipairs(partial) do names[#names + 1] = e.name end
-    return nil, "|cffff8800" .. name .. " is ambiguous|r - did you mean "
-        .. table.concat(names, ", ") .. "? Use the full name."
+    if #exact > 1 then return ambiguous(exact) end
+
+    -- A full name matching more than once is the case that was missed: the same
+    -- character name exists on a PvE and a PvP realm, and `exact = guid` in a
+    -- pairs() loop simply kept the last one seen.
+    if #full == 1 then return full[1].guid end
+    if #full > 1 then return ambiguous(full) end
+
+    if #partial == 1 then return partial[1].guid end
+    if #partial > 1 then return ambiguous(partial) end
+
+    return nil, "|cffff8800No character called|r " .. name
 end
 
 -- Mark a character dirty so the next delta sync includes it. Plugins call this
@@ -2456,7 +2478,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
         if cmd == "unforget" then
             local guid, held = AltStable.ForgottenGuidFor(target)
             if not guid then
-                Print("|cffff8800Not on the forgotten list:|r " .. target)
+                Print(held or ("|cffff8800Not on the forgotten list:|r " .. target))
                 return
             end
             AltStable.UnforgetCharacter(guid)

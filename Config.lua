@@ -377,17 +377,55 @@ function AltStable.MarkCharacterForgotten(guid, when, name)
     return true
 end
 
--- The GUID we hold for a forgotten character of this name, if any.
+-- The GUID we hold for a forgotten character of this name.
+--
+-- Same rule as ResolveCharacter, and for the same reason: returning the first
+-- match let /alts unforget Karuzo lift an arbitrary one of two tombstones,
+-- letting that character back on the next sync while the one the player meant
+-- stayed suppressed. Undo has to be as precise as the thing it undoes.
+--
+-- Returns guid, name - or nil, message when it cannot tell which.
 function AltStable.ForgottenGuidFor(name)
-    if not name or name == "" then return nil end
+    if not name or name == "" then return nil, "usage: a character name" end
     local want = name:lower()
+
+    local full, partial = {}, {}
     for guid, e in pairs((AltStableConfig or {}).forgottenCharacters or {}) do
         local held = type(e) == "table" and e.name
-        if held and (held:lower() == want or held:lower():match("^(%S+)") == want) then
-            return guid, held
+        if held then
+            local n = held:lower()
+            if n == want then
+                full[#full + 1] = { guid = guid, name = held }
+            elseif n:match("^(%S+)") == want then
+                partial[#partial + 1] = { guid = guid, name = held }
+            end
         end
     end
-    return nil
+
+    local function ambiguous(list)
+        table.sort(list, function(a, b)
+            if a.name ~= b.name then return a.name < b.name end
+            return a.guid < b.guid
+        end)
+        local shown = {}
+        for _, e in ipairs(list) do
+            -- The GUID, because two tombstones can hold the same name and the
+            -- records they came from are gone - there is no realm left to show.
+            shown[#shown + 1] = e.name .. " (" .. e.guid .. ")"
+        end
+        return nil, "|cffff8800" .. name .. " is ambiguous|r - " .. table.concat(shown, ", ")
+            .. ". Use the GUID."
+    end
+
+    -- A GUID is always an unambiguous answer, so accept one directly.
+    local byGuid = ((AltStableConfig or {}).forgottenCharacters or {})[name]
+    if type(byGuid) == "table" then return name, byGuid.name end
+
+    if #full == 1 then return full[1].guid, full[1].name end
+    if #full > 1 then return ambiguous(full) end
+    if #partial == 1 then return partial[1].guid, partial[1].name end
+    if #partial > 1 then return ambiguous(partial) end
+    return nil, "|cffff8800Not on the forgotten list:|r " .. name
 end
 
 function AltStable.UnforgetCharacter(guid)

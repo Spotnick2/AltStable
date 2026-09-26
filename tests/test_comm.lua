@@ -1697,6 +1697,30 @@ do
        "  and by first name alone, like everywhere else")
     eq(AltStable.ForgottenGuidFor("Nobody"), nil, "  and not by a name we never had")
 
+    -- Two tombstones can hold the same name, and the records they came from are
+    -- gone - so there is no realm left to tell them apart. Returning the first
+    -- match let /alts unforget lift an arbitrary one, letting that character
+    -- back while the one the player meant stayed suppressed.
+    AltStable.MarkCharacterForgotten("Player-Dup-A", 1000, "Twin Surname")
+    AltStable.MarkCharacterForgotten("Player-Dup-B", 1000, "Twin Surname")
+    local dup, why = AltStable.ForgottenGuidFor("Twin Surname")
+    eq(dup, nil, "two tombstones with one name resolve to nobody")
+    check(why and why:find("Player-Dup-A", 1, true) and why:find("Player-Dup-B", 1, true),
+          "  and the message offers the GUIDs, since nothing else distinguishes them: "
+          .. tostring(why))
+    for _ = 1, 20 do
+        eq(AltStable.ForgottenGuidFor("Twin Surname"), nil, "  every time, not by luck")
+    end
+    eq(AltStable.ForgottenGuidFor("Twin"), nil, "the shared first name is ambiguous too")
+
+    -- The GUID is the way out.
+    eq(AltStable.ForgottenGuidFor("Player-Dup-A"), "Player-Dup-A",
+       "a GUID resolves to itself, which is the selector the message offers")
+    AltStable.UnforgetCharacter("Player-Dup-A")
+    eq(AltStable.ForgottenGuidFor("Twin Surname"), "Player-Dup-B",
+       "  and with one lifted the other is unambiguous again")
+    AltStable.UnforgetCharacter("Player-Dup-B")
+
     check(AltStable.UnforgetCharacter("Player-Gone-2"), "unforgetting reports success")
     check(not AltStable.IsCharacterForgotten("Player-Gone-2"), "  and drops the tombstone")
     eq(AltStable.UnforgetCharacter("Player-Gone-2"), false,
@@ -1857,6 +1881,47 @@ do
     AltStableDB["g-4"] = { guid = "g-4", name = "Karuzo", class = "WARRIOR", level = 10 }
     eq(AltStable.ResolveCharacter("Karuzo"), "g-4",
        "a character actually called Karuzo beats the ambiguity")
+end
+
+do
+    -- THE SAME FULL NAME ON TWO REALMS. This is the case the first fix missed:
+    -- `exact = guid` inside a pairs() loop kept whichever was visited last, so a
+    -- destructive command picked one at random and the name-only interface gave
+    -- no way to ask for the other.
+    WoW.reset()
+    AltStableDB = {
+        ["pve-1"] = { guid = "pve-1", name = "Same Surname", realm = "Pyrewood",
+                      class = "MAGE", level = 60 },
+        ["pvp-1"] = { guid = "pvp-1", name = "Same Surname", realm = "Nightslayer",
+                      class = "ROGUE", level = 60 },
+        ["solo-1"] = { guid = "solo-1", name = "Only Surname", realm = "Pyrewood",
+                       class = "PRIEST", level = 30 },
+    }
+
+    local guid, why = AltStable.ResolveCharacter("Same Surname")
+    eq(guid, nil, "a full name held on two realms resolves to nobody")
+    check(why and why:find("Pyrewood", 1, true) and why:find("Nightslayer", 1, true),
+          "  and names both realms, which is the only way to tell them apart: "
+          .. tostring(why))
+
+    -- Stable, because pairs() order was not.
+    for _ = 1, 20 do
+        eq(AltStable.ResolveCharacter("Same Surname"), nil, "  every time")
+    end
+
+    -- The realm is the selector.
+    eq(AltStable.ResolveCharacter("Same Surname-Pyrewood"), "pve-1",
+       "naming the realm picks one")
+    eq(AltStable.ResolveCharacter("same surname-nightslayer"), "pvp-1",
+       "  the other, and case does not matter")
+
+    -- A first name shared across realms is ambiguous for the same reason.
+    local firstGuid = AltStable.ResolveCharacter("Same")
+    eq(firstGuid, nil, "so is the first name they share")
+
+    eq(AltStable.ResolveCharacter("Only Surname"), "solo-1",
+       "a name held once still resolves without ceremony")
+    eq(AltStable.ResolveCharacter("Only"), "solo-1", "  and so does its first name")
 end
 
 
