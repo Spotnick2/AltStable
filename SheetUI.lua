@@ -929,6 +929,48 @@ end
 AltStable._PlayOpenAnimation = PlayOpenAnimation
 
 ------------------------------------------------------------
+-- The addon's icon: the group of figures from the client's Who tab.
+--
+-- A FILE ID, not a path, because the client gave us no path for it. Found with
+-- the probe's /asicon on the LFG frame's side tabs: the tab itself is the
+-- `common-sidetab` atlas and the art inside it is this, set by id with no
+-- atlas and no filename of its own. There is nothing to write instead.
+--
+-- File ids are stable within a build and not guaranteed across them, so this is
+-- checked rather than trusted: SetTexture is told the id, and if the texture
+-- comes back empty the old icon goes in instead. A missing icon on a minimap
+-- button is a green question mark, and the fallback costs two lines.
+--
+-- If a build ever breaks it, /asicon on the Who tab gives the new id.
+local ROSTER_ICON_FILE_ID = 8197123
+local ROSTER_ICON_FALLBACK = "Interface\\Icons\\INV_Misc_GroupNeedMore"
+
+-- Returns the icon it settled on, so a test can tell which branch ran.
+function AltStable.ApplyRosterIcon(tex)
+    if not tex or not tex.SetTexture then return nil end
+
+    tex:SetTexture(ROSTER_ICON_FILE_ID)
+    -- The id resolved if the texture now reports one. A file id the client does
+    -- not know leaves the texture empty rather than erroring, so this is the
+    -- only way to find out.
+    local got = tex.GetTextureFileID and tex:GetTextureFileID() or nil
+    if got == ROSTER_ICON_FILE_ID then
+        -- Crop the border, as the old icon did: these are drawn with a margin
+        -- and the minimap button is small enough that it matters.
+        if tex.SetTexCoord then tex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+        return ROSTER_ICON_FILE_ID
+    end
+
+    tex:SetTexture(ROSTER_ICON_FALLBACK)
+    if tex.SetTexCoord then tex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+    return ROSTER_ICON_FALLBACK
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.ROSTER_ICON_FILE_ID = ROSTER_ICON_FILE_ID
+AltStable._test.ROSTER_ICON_FALLBACK = ROSTER_ICON_FALLBACK
+
+------------------------------------------------------------
 -- Minimap button
 --
 -- Minimal LibDBIcon-style button. No external lib dependency to keep the
@@ -1001,8 +1043,7 @@ local function CreateMinimapButton()
 
     local icon = btn:CreateTexture(nil, "BACKGROUND")
     icon:SetSize(20, 20)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_GroupNeedMore")
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    AltStable.ApplyRosterIcon(icon)
     icon:SetPoint("CENTER", btn, "CENTER", 0, 1)
 
     local border = btn:CreateTexture(nil, "OVERLAY")

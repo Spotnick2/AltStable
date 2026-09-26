@@ -560,5 +560,40 @@ if Cam then
     WoW.reset()
 end
 
+------------------------------------------------------------
+-- The addon's icon
+------------------------------------------------------------
+-- The group-of-figures art from the client's Who tab, found with the probe's
+-- /asicon. The client gave no path for it - the tab is the `common-sidetab`
+-- atlas and the art inside is set by FILE ID with no atlas and no filename - so
+-- an id is the only thing there is to write.
+--
+-- File ids are stable within a build and not across them. An id the client does
+-- not have leaves the texture EMPTY rather than erroring, so a wrong one is a
+-- blank minimap button and no complaint: the fallback is the point, not a
+-- nicety.
+
+do
+    local T = AltStable._test
+
+    -- The id resolves: use it.
+    WoW.knownFileIDs = { [T.ROSTER_ICON_FILE_ID] = true }
+    local tex = CreateFrame("Frame"):CreateTexture()
+    eq("the Who tab's icon is used when the client has it",
+       AltStable.ApplyRosterIcon(tex), T.ROSTER_ICON_FILE_ID)
+    eq("  and actually set", tex:GetTextureFileID(), T.ROSTER_ICON_FILE_ID)
+    check("  cropped, like the icon it replaces", tex._texCoord ~= nil)
+
+    -- The id does not resolve - a later build, say. The button must not go blank.
+    WoW.knownFileIDs = {}
+    local missing = CreateFrame("Frame"):CreateTexture()
+    eq("an id this client does not have falls back rather than drawing nothing",
+       AltStable.ApplyRosterIcon(missing), T.ROSTER_ICON_FALLBACK)
+    eq("  to the old icon", missing:GetTexture(), T.ROSTER_ICON_FALLBACK)
+    check("  which does resolve", missing:GetTextureFileID() ~= nil)
+
+    check("nothing to draw on is not a crash", AltStable.ApplyRosterIcon(nil) == nil)
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
