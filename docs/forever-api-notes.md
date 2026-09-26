@@ -1064,6 +1064,30 @@ UnitXPMax("player")         ->  400
    > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
    > A working addon doing the same thing was the cheapest way to tell them apart.
 
+## What is under the cursor: GetMouseFoci, and it is a list
+
+`GetMouseFocus` is **gone**. It was removed in 11.0 and this client is
+Mainline-derived, so the call every older addon uses is simply absent — one more
+false friend, and a silent one, because `GetMouseFocus()` on a nil global is a
+"attempt to call a nil value" at the moment a player hovers something rather
+than at load.
+
+```
+GetMouseFoci() -> region:table      [Input]      -- 1.60.1.70009 dump, line 5029
+```
+
+Plural, and it returns a **list**: more than one frame can be under the pointer,
+and the one you want is often not the first. Read it as a list.
+
+**Telling a list from a tuple needs care.** A widget IS a table with no array
+part, so `type(foci) ~= "table"` cannot distinguish "a list of frames" from "one
+frame, returned as the first of several values". Ask the first value whether it
+answers `GetObjectType` — a frame does, a list does not. Guessing wrong here
+reports "nothing under the cursor" while the thing is plainly hovered, which
+sends you looking in the wrong place entirely.
+
+`Tools/AltStableProbe/WhatIcon.lua` (`/asicon`) is the working example.
+
 ## A model frame auto-frames, so a render tells you nothing about size
 
 Measured 2026-09-26 on 1.60.1.70009, building the Roster's scene view (#15).

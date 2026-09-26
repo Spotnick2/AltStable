@@ -21,7 +21,16 @@ local function eq(name, got, want)
 end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
+-- A stand-in for what Probe.lua provides. The hand-off is the PR's only change
+-- to that file and nothing exercised it, so breaking it left the suite green.
 AltStableProbe = {}
+local copyShown, copyLines = false, nil
+AltStableProbe.ShowCopy = function(lines) copyShown, copyLines = true, lines end
+AltStableProbe.HideCopy = function()
+    local was = copyShown
+    copyShown = false
+    return was
+end
 dofile("Compat.lua")
 dofile("Tools/AltStableProbe/WhatIcon.lua")
 
@@ -144,6 +153,10 @@ do
     -- The returned lines are what the copy window shows, so they must be free
     -- of colour codes - a path with |cffffff00 glued to it is not a path.
     local joined = table.concat(lines, "\n")
+    check("the answer is handed to the copy window", copyShown,
+          "chat is not selectable, so a path has to be retypeable from somewhere")
+    check("  with the same lines", copyLines ~= nil and #copyLines > 0)
+
     check("the copyable lines carry no colour codes",
           joined:find("|c", 1, true) == nil and joined:find("|r", 1, true) == nil,
           joined)
@@ -205,7 +218,12 @@ do
                    end } }
     end
 
+    -- Starting a read dismisses the last answer, or the big mouse-enabled copy
+    -- window sits under the cursor and the next reading is of the probe.
+    copyShown = true
     T.ReadAfterDelay()
+    check("starting a read puts the copy window away", not copyShown,
+          "it would be the thing under the cursor")
     check("the read is pending", T.reading())
     check("  and nothing was read yet", not answered,
           "it read the cursor while the player was still at the chat box")
@@ -246,15 +264,27 @@ do
     eq("/asicon now reads immediately", reads, 2)
     check("  without queueing anything", not T.reading())
 
+    -- `now` while a countdown is ALREADY running. Without cancelling it, the
+    -- pending one fires five seconds later and overwrites the answer just
+    -- given with whatever the cursor has wandered onto - two readings from one
+    -- ask, and the wrong one last.
+    SlashCmdList["ASICON"]("")
+    check("a countdown is running", T.reading())
+    SlashCmdList["ASICON"]("now")
+    eq("  /asicon now answers straight away", reads, 3)
+    check("  and cancels the countdown rather than leaving it armed", not T.reading())
+    for _ = 1, T.READ_DELAY + 1 do WoW.flushTimers() end
+    eq("  so it does not read again behind your back", reads, 3)
+
     SlashCmdList["ASICON"]("")
     check("a countdown is running", T.reading())
     SlashCmdList["ASICON"]("cancel")
     check("/asicon cancel stops it", not T.reading())
     for _ = 1, T.READ_DELAY + 1 do WoW.flushTimers() end
-    eq("  and it never reads", reads, 2)
+    eq("  and it never reads", reads, 3)
 
     SlashCmdList["ASICON"]("nonsense")
-    eq("an unknown argument reads nothing", reads, 2)
+    eq("an unknown argument reads nothing", reads, 3)
     check("  and starts nothing", not T.reading())
 end
 

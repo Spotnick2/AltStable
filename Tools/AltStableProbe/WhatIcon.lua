@@ -23,9 +23,9 @@
 -- while already hovering and there is nothing to wait for.
 --
 -- GetMouseFoci, plural: GetMouseFocus was removed in 11.0 and this client is
--- Mainline-derived, so the old single-return call is simply absent (see
--- docs/forever-api-notes.md on false friends). It returns a LIST, because more
--- than one frame can be under the pointer.
+-- Mainline-derived, so the old single-return call is simply absent. It returns
+-- a LIST, because more than one frame can be under the pointer. Recorded in
+-- docs/forever-api-notes.md under the cursor-focus note.
 --
 -- Textures name themselves three ways and a frame may use any of them:
 --   GetAtlas()           a named slice of a sheet, e.g. "worldquest-icon"
@@ -132,7 +132,7 @@ local function WhatIsUnderTheCursor(sink)
         -- Worth saying out loud rather than quietly coping: the notes record
         -- this call as returning a list, and if it does not, they are wrong.
         sink("|cffff8800GetMouseFoci returned a tuple, not a list|r - "
-            .. "docs/forever-api-notes.md says otherwise. Reading it as one anyway.")
+            .. "the notes say otherwise. Reading it as one anyway.")
     end
     if #foci == 0 then
         sink("nothing under the cursor. Hover the thing first, then run this - "
@@ -199,6 +199,11 @@ local function ReadAfterDelay()
         return
     end
 
+    -- Get the last answer off the screen first. The copy window is a big
+    -- mouse-enabled frame in the middle of the screen, so leaving it up means
+    -- the next reading is of the probe's own backdrop.
+    if AltStableProbe and AltStableProbe.HideCopy then AltStableProbe.HideCopy() end
+
     Out(("hover the thing now - reading in %ds. "):format(READ_DELAY)
         .. "|cffffff00/asicon cancel|r to stop, |cffffff00/asicon now|r to skip the wait.")
 
@@ -224,6 +229,12 @@ SlashCmdList["ASICON"] = function(msg)
         return
     end
     if msg == "now" then
+        -- Cancel any countdown first. Without this the pending one still fires
+        -- five seconds later and overwrites the answer just given with
+        -- whatever the cursor has wandered onto - two readings from one ask,
+        -- and the wrong one last.
+        CancelRead()
+        if AltStableProbe and AltStableProbe.HideCopy then AltStableProbe.HideCopy() end
         WhatIsUnderTheCursor()
         return
     end
