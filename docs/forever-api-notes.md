@@ -1064,6 +1064,37 @@ UnitXPMax("player")         ->  400
    > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
    > A working addon doing the same thing was the cheapest way to tell them apart.
 
+## A file id cannot be validated; a path can
+
+Measured 2026-09-26 on 1.60.1.70009:
+
+```
+/run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+     print(t:GetTexture(), t:GetTextureFileID())
+999999999   999999999
+```
+
+A **file id is stored, not resolved**. A nonsense one is echoed straight back by
+both `GetTexture` and `GetTextureFileID`, so nothing you can ask a texture will
+tell you the art is missing — the only symptom is that it draws nothing.
+
+A **path is different**: the client resolves it to a file id and can fail to, so
+`not tex:GetTexture()` after `SetTexture(path)` is a real check. That is what
+`GetFileIDFromPath` is for, and what the Instances plugin's missing-texture
+fallback relies on.
+
+**The trap.** "Set it and check whether it took" reads as prudent and, for an
+id, can never fire. A fallback behind that check is worse than none, because it
+claims the case is handled: a build that renames the id gives a blank frame, no
+error, and a green test suite saying otherwise. Prefer a path when there is one;
+when there is not — art set by id with no atlas and no filename, which is common
+for Blizzard's own UI — write the id, say plainly that it is unvalidated, and
+record how to re-derive it.
+
+Finding both halves of this took a reviewer to doubt the check and one line in
+game to settle it. The stub had been written to the same assumption as the code,
+so the suite agreed with the mistake.
+
 ## A model frame auto-frames, so a render tells you nothing about size
 
 Measured 2026-09-26 on 1.60.1.70009, building the Roster's scene view (#15).

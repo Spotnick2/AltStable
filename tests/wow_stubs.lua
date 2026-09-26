@@ -32,6 +32,10 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
+    -- Texture PATHS this pretend client does not have. There is deliberately no
+    -- equivalent for file ids: the client cannot tell you a file id is bad
+    -- (measured - see SetTexture below), so neither can this.
+    missingTexturePaths = {},
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
@@ -56,6 +60,7 @@ function WoW.reset()
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
+    WoW.missingTexturePaths = {}
     WoW.equipped = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
@@ -143,6 +148,46 @@ local function makeFrame()
     -- is exactly what needs testing, and with the chaining default every such
     -- save/restore stored the FRAME ITSELF as "the saved strata" and restored
     -- nothing - a silent no-op that reads as correct.
+    -- Textures: what was set, and whether the client knew it.
+    --
+    -- SetTexture takes a path OR a file id, and the two behave DIFFERENTLY.
+    --
+    -- MEASURED on 1.60.1.70009:
+    --     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+    --          print(t:GetTexture(), t:GetTextureFileID())
+    --     999999999   999999999
+    --
+    -- A file id is stored, not resolved. A nonsense one is echoed straight
+    -- back, so NOTHING a texture can be asked will tell you whether the art
+    -- exists - the only symptom is that it draws nothing. An earlier version of
+    -- this stub returned nil for an unknown id, which made a validity check
+    -- look testable when on the client it could never fire.
+    --
+    -- A PATH is different: the client resolves it to a file id and can fail to,
+    -- which is why the Instances plugin's `not tex:GetTexture()` fallback
+    -- works. WoW.missingTexturePaths expresses that.
+    f.SetTexture = function(self, v)
+        if type(v) == "number" then
+            self._texture, self._fileID = v, v     -- echoed, whatever it is
+        elseif type(v) == "string" then
+            local missing = WoW.missingTexturePaths[v]
+            self._texture = (not missing) and v or nil
+            -- A path the client HAS resolves to some id. The number is not
+            -- knowable here, so no test should assert its value - only that
+            -- there is one.
+            self._fileID  = self._texture and 100000 or nil
+        else
+            self._texture, self._fileID = nil, nil
+        end
+        return self
+    end
+    f.GetTexture         = function(self) return self._texture end
+    f.GetTextureFileID   = function(self) return self._fileID end
+    f.GetTextureFilePath = function(self)
+        return type(self._texture) == "string" and self._texture or nil
+    end
+    f.SetTexCoord = function(self, ...) self._texCoord = { ... }; return self end
+
     f.SetFrameStrata = function(self, v) self._strata = v; return self end
     f.GetFrameStrata = function(self) return self._strata or "MEDIUM" end
     f.SetParent      = function(self, p) self._parent = p; return self end

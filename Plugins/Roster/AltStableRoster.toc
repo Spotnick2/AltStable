@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: AltStable Roster
 ## Notes: The alts standing together - a character-select style lineup, drawn from locally captured portraits with a class card for anyone who has none.
+## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: @project-version@
 ## Dependencies: AltStable

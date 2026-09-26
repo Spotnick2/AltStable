@@ -929,6 +929,50 @@ end
 AltStable._PlayOpenAnimation = PlayOpenAnimation
 
 ------------------------------------------------------------
+-- The addon's icon: the group of figures from the client's Who tab.
+--
+-- A FILE ID, because the client gave no path for it. Found with the probe's
+-- /asicon on the LFG frame's side tabs: the tab is the `common-sidetab` atlas
+-- and the art inside it is this, set by id with no atlas and no filename.
+--
+-- IT CANNOT BE VALIDATED, and the first version of this pretended otherwise.
+-- Measured on 1.60.1.70009:
+--
+--     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
+--          print(t:GetTexture(), t:GetTextureFileID())
+--     999999999   999999999
+--
+-- A file id is stored, not resolved: a nonsense one is echoed straight back. So
+-- "set it and check whether it took" is a check that can never fail, and the
+-- fallback behind it was decorative - green tests, and a blank minimap button
+-- the day the id changes. A path would be resolvable (that is why LoadTexture
+-- in the Instances plugin can use `not tex:GetTexture()`), but there is no path
+-- to use.
+--
+-- So: no fallback, because a fake one is worse than none - it says the case is
+-- handled. If the icon ever goes blank after a build, /asicon on the Who tab
+-- gives the new id. (That command arrives with #82 and is not on main yet.)
+local ROSTER_ICON_FILE_ID = 8197123
+
+-- Deliberately not cropped. The icon this replaces was Interface\Icons\ art,
+-- 64x64 with a border baked in, which is why it was trimmed by 8%. This is UI
+-- art from inside a sidetab and has no such margin, so the same trim would
+-- shave the outer figures off the group.
+local function ApplyRosterIcon(tex)
+    if not tex or not tex.SetTexture then return nil end
+    tex:SetTexture(ROSTER_ICON_FILE_ID)
+    if tex.SetTexCoord then tex:SetTexCoord(0, 1, 0, 1) end
+    return ROSTER_ICON_FILE_ID
+end
+
+-- Not on the public namespace: one caller in this file, plus tests. The
+-- convention here is _PlayOpenAnimation and the _test seam, not AltStable.Foo
+-- for an internal.
+AltStable._test = AltStable._test or {}
+AltStable._test.ApplyRosterIcon = ApplyRosterIcon
+AltStable._test.ROSTER_ICON_FILE_ID = ROSTER_ICON_FILE_ID
+
+------------------------------------------------------------
 -- Minimap button
 --
 -- Minimal LibDBIcon-style button. No external lib dependency to keep the
@@ -1001,8 +1045,7 @@ local function CreateMinimapButton()
 
     local icon = btn:CreateTexture(nil, "BACKGROUND")
     icon:SetSize(20, 20)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_GroupNeedMore")
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    ApplyRosterIcon(icon)
     icon:SetPoint("CENTER", btn, "CENTER", 0, 1)
 
     local border = btn:CreateTexture(nil, "OVERLAY")

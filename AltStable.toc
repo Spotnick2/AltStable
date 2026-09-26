@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: AltStable Forever edition
 ## Notes: Cross-alt tracker for World of Warcraft: Forever.
+## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: @project-version@
 ## SavedVariables: AltStableDB AltStableConfig
