@@ -2143,7 +2143,40 @@ end
 -- orbit to face the character) first. A portrait-UI button that auto-frames via
 -- the world-camera presentation is the intended follow-up.
 ------------------------------------------------------------
+-- The portrait capture, wherever it is asked for.
+--
+-- Returns true when it has taken responsibility for the capture, so callers can
+-- stop. Two things it settles that both old paths got wrong:
+--
+-- COMBAT. Both of them hid the interface with UIParent:Hide(), which is
+-- protected: in combat the call is blocked, the player is left staring at
+-- nothing, and an ADDON_ACTION_BLOCKED report names this addon. That is #70,
+-- and these were the last two sites.
+--
+-- WHICH CAPTURE. The single reference shot fed the old .NET armory pipeline,
+-- which no longer exists - the portraits now come from the probe's two-shot
+-- matte, and nothing reads a lone screenshot or the refshot_ts marker beside
+-- it. So when the probe is loaded, hand the job to it; that is what the button
+-- was always meant to do.
+function AltStable.CapturePortrait(announce)
+    if InCombatLockdown and InCombatLockdown() then
+        Print("|cffff8800Not while you are in combat|r - try again once the fight is over.")
+        return true
+    end
+    local probe = _G.AltStableProbe
+    if probe and type(probe.CapturePortrait) == "function" then
+        probe.CapturePortrait()
+        return true
+    end
+    if announce then
+        Print("|cffff8800Portrait capture needs the AltStableProbe addon|r - it is the "
+            .. "tool that takes the two shots the cutout is matted from.")
+    end
+    return false
+end
+
 local function CaptureReferenceScreenshot()
+    if AltStable.CapturePortrait(true) then return end
     if type(Screenshot) ~= "function" then
         Print("|cffff8800Screenshot() is unavailable on this client.|r")
         return
@@ -2171,12 +2204,23 @@ local function CaptureReferenceScreenshot()
     Print("Capturing reference screenshot — drawing weapons, hiding UI...")
     -- Let the draw-weapon animation settle before hiding the UI and capturing.
     C_Timer.After(0.6, function()
-        UIParent:Hide()
+        -- SetUIVisibility, not UIParent:Hide(): the engine call is what Alt+Z
+        -- makes and is NOT protected, so it cannot be blocked and cannot strand
+        -- the player without an interface (#70).
+        if type(SetUIVisibility) == "function" then
+            pcall(SetUIVisibility, false)
+        else
+            pcall(UIParent.Hide, UIParent)
+        end
         C_Timer.After(0.2, function()
             char.refshot_ts = time()   -- marker the render pipeline matches against
             Screenshot()
             C_Timer.After(0.7, function()
-                UIParent:Show()
+                if type(SetUIVisibility) == "function" then
+                    pcall(SetUIVisibility, true)
+                else
+                    pcall(UIParent.Show, UIParent)
+                end
                 if restoreSheath and type(ToggleSheath) == "function" then
                     pcall(ToggleSheath)   -- restore the stowed state
                 end

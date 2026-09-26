@@ -41,6 +41,22 @@ if not T then
     os.exit(1)
 end
 
+------------------------------------------------------------
+-- Combat on a fresh login, before anything has been built
+------------------------------------------------------------
+-- FIRST, deliberately: the stage is built lazily by the first capture or
+-- preview, so this is the only point in the file where it genuinely does not
+-- exist yet. Every check below constructs it, which is exactly how a crash here
+-- stayed invisible - combat entry called frame:Hide() on a nil.
+
+WoW.inCombat = true
+local okFresh, freshErr = pcall(function()
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
+end)
+check("combat before the stage exists does not error", okFresh, tostring(freshErr))
+check("  and nothing was capturing to abandon", not T.capturing())
+WoW.inCombat = false
+
 local function renders() return (AltStableProbeDB.renders or {}) end
 local function resetCapture()
     AltStableProbeDB = { renders = {}, looks = {} }
@@ -177,6 +193,82 @@ T.stage():Show()
 check("the stage can be up with no capture running", not T.capturing())
 T.AbandonCapture(nil, false)
 eq("  and abandoning still takes it down", T.stage():IsShown(), false)
+
+------------------------------------------------------------
+-- The two shots must not share a filename
+------------------------------------------------------------
+-- The client names screenshots to the second - WoWScrnShot_MMDDYY_HHMMSS.tga -
+-- so two shots inside one second are ONE filename and the second overwrites the
+-- first. What survives is a single file the converter cannot pair, and both
+-- records claim the same stamp. At the original 0.9s gap that happened whenever
+-- the clock ticked unkindly: Morphisto Ruskador recorded both shots at 02:14:44
+-- and left one file behind.
+
+local shutterGap = T.SHOT_DELAY + T.SWAP_DELAY
+check("the gap between shutters exceeds one second", shutterGap > 1.0,
+      ("%.2fs - two shots can share a filename"):format(shutterGap))
+check("  and is not so long the pose can drift", shutterGap < 2.5,
+      ("%.2fs"):format(shutterGap))
+
+-- Strictly greater than one second is what guarantees a different second, at
+-- ANY point in the clock's cycle. Worst case is a shot taken a hair before a
+-- tick; it still has to land past the next one.
+local worst = 0.999 + shutterGap
+check("  so the second shot always lands in a later second",
+      math.floor(worst) > math.floor(0.999),
+      ("%.3f"):format(worst))
+
+------------------------------------------------------------
+-- The chain really is spaced that way
+------------------------------------------------------------
+-- The constants agreeing with each other proves nothing if the code schedules
+-- something else, which is the mistake the roster review caught: asserting a
+-- composition while the call site did its own thing.
+
+-- Walk the timer chain on a virtual clock and record WHEN each shutter fires.
+-- The chain is linear - one pending callback at a time, plus the watchdog,
+-- which is far longer than any link and is skipped here.
+local function shutterTimes()
+    local clock, shots = 0, {}
+    for _ = 1, 20 do
+        local nextTimer
+        for _, t in ipairs(WoW.timers) do
+            if t.delay < 5 then nextTimer = t; break end   -- not the watchdog
+        end
+        if not nextTimer then break end
+        for i, t in ipairs(WoW.timers) do
+            if t == nextTimer then table.remove(WoW.timers, i); break end
+        end
+        clock = clock + nextTimer.delay
+        local before = WoW.screenshots
+        nextTimer.fn()
+        if WoW.screenshots > before then shots[#shots + 1] = clock end
+    end
+    return shots
+end
+
+resetCapture()
+T.Capture()
+local watchdogDelay = 0
+for _, t in ipairs(WoW.timers) do
+    if t.delay > watchdogDelay then watchdogDelay = t.delay end
+end
+local shots = shutterTimes()
+
+eq("a capture takes exactly two shots", #shots, 2)
+check("the first waits for the model to stream in",
+      shots[1] and shots[1] >= T.KEY_DELAY - 0.001, tostring(shots[1]))
+-- The one the constants alone could not catch: the chain may not schedule its
+-- own number. Hardcoding the old 0.25 here leaves SWAP_DELAY looking correct
+-- while the shots collide exactly as before.
+check("the SCHEDULED gap between shutters exceeds one second",
+      shots[2] and shots[1] and (shots[2] - shots[1]) > 1.0,
+      shots[2] and ("%.2fs as scheduled"):format(shots[2] - shots[1]) or "no second shot")
+check("  and matches the constants it is built from",
+      shots[2] and math.abs((shots[2] - shots[1]) - shutterGap) < 0.001,
+      shots[2] and ("%.3f vs %.3f"):format(shots[2] - shots[1], shutterGap) or "-")
+check("the watchdog outlasts the whole sequence",
+      watchdogDelay > (shots[2] or 0), ("%.1f vs %.2f"):format(watchdogDelay, shots[2] or 0))
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)

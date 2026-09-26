@@ -56,6 +56,7 @@ function WoW.reset()
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
+    WoW.equipped = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
@@ -295,6 +296,13 @@ end
 
 WoW.screenshots = 0
 function Screenshot() WoW.screenshots = WoW.screenshots + 1 end
+
+-- What the player is wearing, by slot. The probe fingerprints this to decide
+-- whether a portrait is stale, so a capture that runs to completion reaches it.
+WoW.equipped = {}
+function GetInventoryItemLink(unit, slot)
+    return WoW.equipped[slot]
+end
 
 -- Physical pixels, which is what a screenshot is measured in. GetScreenWidth /
 -- GetScreenHeight are UI units and are a different number; the probe records

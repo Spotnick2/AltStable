@@ -1996,6 +1996,12 @@ local function CreateFrameIfNeeded()
     -- presentation down), draw weapons, Screenshot(), then restore. Stamps
     -- refshot_ts on the player's record for the pipeline to match.
     local function CaptureReferenceFromSheet()
+        -- The two-shot capture when it is available, which is what produces a
+        -- portrait anything actually reads. This button used to take a single
+        -- plain screenshot for the retired .NET armory pipeline - the picture
+        -- went to the Screenshots folder and nothing ever collected it, which
+        -- is exactly what it looked like from the outside.
+        if AltStable.CapturePortrait and AltStable.CapturePortrait(true) then return end
         if type(Screenshot) ~= "function" then return end
         local guid = UnitGUID("player")
         local char = guid and AltStableDB and AltStableDB[guid]
@@ -2073,12 +2079,28 @@ local function CreateFrameIfNeeded()
                 -- re-running Enter when we bring UIParent back.
                 AltStableCameraPresentation.capturing = true
                 local ownBlackout = not AltStableCameraPresentation.uiHidden
-                if ownBlackout and UIParent and UIParent.Hide then UIParent:Hide() end
+                -- SetUIVisibility over UIParent:Hide(): the engine call is the
+                -- one Alt+Z makes and is not protected (#70). The fallback is
+                -- kept for a client without it, but it is the protected one and
+                -- is why this path could strand a player's interface.
+                if ownBlackout then
+                    if type(SetUIVisibility) == "function" then
+                        pcall(SetUIVisibility, false)
+                    elseif UIParent and UIParent.Hide then
+                        UIParent:Hide()
+                    end
+                end
                 C_Timer.After(0.1, function()
                     char.refshot_ts = time()
                     Screenshot()
                     C_Timer.After(0.5, function()
-                        if ownBlackout and UIParent and UIParent.Show then UIParent:Show() end
+                        if ownBlackout then
+                            if type(SetUIVisibility) == "function" then
+                                pcall(SetUIVisibility, true)
+                            elseif UIParent and UIParent.Show then
+                                UIParent:Show()
+                            end
+                        end
                         AltStableCameraPresentation.capturing = false
                         frame:SetAlpha(1)
                         if type(SetCVar) == "function" then

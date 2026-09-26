@@ -61,6 +61,17 @@ if importlib.util.find_spec("PIL") is None:
           "(it is the converter's dependency, not the addon's)")
     sys.exit(0)
 
+# No .pyc for the converter.
+#
+# Python decides a cached bytecode file is still valid from the source's mtime
+# and SIZE. An edit that changes neither - and a same-length identifier swap
+# changes neither - leaves the cache looking current, so the test runs the OLD
+# code while reporting on the new file. That happened here: a mutation check
+# swapped `first` for `stamp`, both five letters, and the suite went on passing
+# against bytecode from the mutated run long after the source was restored.
+sys.dont_write_bytecode = True
+importlib.invalidate_caches()
+
 # Loaded bare on purpose: past this point any failure is a real one and should
 # show as an error, not be mistaken for an absent dependency.
 spec = importlib.util.spec_from_file_location(
@@ -154,6 +165,51 @@ with tempfile.TemporaryDirectory() as tmp:
     # Idempotent: a second pass has nothing left to do and changes nothing.
     eq("a second pass recovers nothing", mc.renormalise(cuts, wtf=root), 0)
     eq("  and leaves the recovered value alone", read(cuts, "solo-alt")["nativeH"], 0.5)
+
+
+# ------------------------------------------------------------------
+# Two shots recorded at the same second
+# ------------------------------------------------------------------
+# The client names screenshots to the second, so a pair taken inside one second
+# is one filename and the second overwrites the first. The pair is unrecoverable
+# and the converter must say WHY - "no screenshots for X" points at the wrong
+# thing when the file is sitting right there, just one file where two are needed.
+
+STORE_COLLIDED = '''
+AltStableProbeDB = {
+    ["renders"] = {
+        { ["name"] = "Split Second", ["guid"] = "g9", ["shot"] = 1,
+          ["stamp"] = "2026-09-26 02:14:44", ["screenH"] = 2160 },
+        { ["name"] = "Split Second", ["guid"] = "g9", ["shot"] = 2,
+          ["stamp"] = "2026-09-26 02:14:44", ["screenH"] = 2160 },
+        { ["name"] = "Clean Pair", ["guid"] = "g8", ["shot"] = 1,
+          ["stamp"] = "2026-09-26 02:13:56", ["screenH"] = 2160 },
+        { ["name"] = "Clean Pair", ["guid"] = "g8", ["shot"] = 2,
+          ["stamp"] = "2026-09-26 02:13:57", ["screenH"] = 2160 },
+    },
+}
+'''
+
+with tempfile.TemporaryDirectory() as tmp:
+    wtf = os.path.join(tmp, "WTF", "Account", "1#1", "SavedVariables")
+    os.makedirs(wtf)
+    with open(os.path.join(wtf, "AltStableProbe.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_COLLIDED)
+
+    caps = {c[0]: c for c in mc.captures(wtf=os.path.join(tmp, "WTF"))}
+    eq("both captures are recorded as pairs", len(caps), 2)
+
+    collided = caps["Split Second"]
+    eq("  and the collided one has identical stamps", collided[1], collided[2])
+
+    clean = caps["Clean Pair"]
+    check("  while a good pair does not", clean[1] != clean[2],
+          "%r == %r" % (clean[1], clean[2]))
+
+    # This equality is the whole detection rule, so pin the comparison itself:
+    # it is what run_all branches on before trying to match files.
+    check("identical stamps are detectable without touching the disk",
+          collided[1] == collided[2] and clean[1] != clean[2])
 
 
 print("test_cutouts: %d passed, %d failed" % (passed, failed))

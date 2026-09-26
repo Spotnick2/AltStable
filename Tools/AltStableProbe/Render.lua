@@ -25,6 +25,21 @@
 local KEY_DELAY   = 1.25   -- let the model stream in before the first shot
 local SHOT_DELAY  = 0.65   -- let the client finish writing a file
 
+-- The pause between the backdrop swap and the SECOND shot.
+--
+-- SHOT_DELAY + this is the gap between the two Screenshot() calls, and it must
+-- come to MORE THAN ONE SECOND. The client names screenshots to the second -
+-- WoWScrnShot_MMDDYY_HHMMSS.tga - so two shots inside one second are one
+-- filename, and the second overwrites the first. What survives is a single
+-- file the converter cannot pair, and both records claim the same stamp.
+--
+-- It was 0.25, for a gap of 0.9s, so roughly one capture in ten quietly lost
+-- its pair depending on where the clock happened to tick. Caught on a live
+-- roster: Morphisto Ruskador recorded both shots at 02:14:44 and left one file.
+--
+-- Any gap strictly greater than 1.0s guarantees two different seconds.
+local SWAP_DELAY  = 0.45   -- 0.65 + 0.45 = 1.10s between shutter and shutter
+
 -- Auto-capture timings. The login one is long because inventory is not
 -- reliably readable the instant the world loads, and a fingerprint taken from
 -- half-loaded gear would trigger a pointless capture every single login.
@@ -289,10 +304,11 @@ end
 -- restoreUI is false when the player has already put the interface back
 -- themselves; there is nothing to give them and nothing we still own.
 local function AbandonCapture(message, restoreUI)
-    -- The stage goes first and unconditionally. It is a fullscreen frame on
-    -- WorldFrame with no mouse, so if a broken chain ever leaves it up, neither
-    -- Escape nor Alt+Z dismisses it and the player needs /reload.
-    frame:Hide()
+    -- The stage goes first and unconditionally - but only if it EXISTS. It is
+    -- built lazily by the first capture or preview, so combat entry on a fresh
+    -- login, or after declining the notice, reaches this with frame still nil.
+    -- Unconditional was right; unguarded was not.
+    if frame then frame:Hide() end
     if not capturing then return end
 
     captureToken = captureToken + 1     -- every pending callback is now void
@@ -451,7 +467,7 @@ local function Capture()
         C_Timer.After(SHOT_DELAY, function()
             if token ~= captureToken then return end
             backdrop:SetColorTexture(1, 1, 1, 1)     -- same pose, other backdrop
-            C_Timer.After(0.25, function()
+            C_Timer.After(SWAP_DELAY, function()
                 if token ~= captureToken then return end
                 Screenshot()
                 RecordMetadata(2)
@@ -745,6 +761,14 @@ end)
 -- without this the file can be loaded but not driven, and the combat and Alt+Z
 -- paths - the two that have produced real bugs - are unreachable from a test.
 AltStableProbe = AltStableProbe or {}
+
+-- The two-shot capture, for anything outside this file that wants a portrait.
+-- The sheet's button used to take a single plain screenshot of its own, which
+-- produced a picture no part of the pipeline reads.
+function AltStableProbe.CapturePortrait()
+    Capture()
+end
+
 AltStableProbe._test = {
     Capture        = function() return Capture() end,
     AbandonCapture = function(m, r) return AbandonCapture(m, r) end,
@@ -754,4 +778,7 @@ AltStableProbe._test = {
     capturing      = function() return capturing and true or false end,
     token          = function() return captureToken end,
     renderMark     = function() return renderMark end,
+    KEY_DELAY      = KEY_DELAY,
+    SHOT_DELAY     = SHOT_DELAY,
+    SWAP_DELAY     = SWAP_DELAY,
 }

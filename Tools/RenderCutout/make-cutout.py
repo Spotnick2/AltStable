@@ -580,8 +580,15 @@ def run_all(args):
 
     print("%d capture(s) to convert, %d screenshots on disk\n" % (len(caps), len(times)))
 
-    done, missing, freed = 0, [], 0
+    done, missing, collided, freed = 0, [], [], 0
     for name, first, second, screen_h in caps:
+        # Both shots recorded at the same second means one filename, and the
+        # client overwrote the first with the second. There is no pair to find
+        # and "no screenshots for X" is a misleading way to say so - the file is
+        # right there, it is just one file where two are needed.
+        if first == second:
+            collided.append((name, first))
+            continue
         black = match(first, times)
         white = match(second, times, exclude=(black,) if black else ())
         if not (black and white):
@@ -614,6 +621,9 @@ def run_all(args):
     print("converted %d of %d" % (done, len(caps)))
     if freed:
         print("reclaimed %s of staged screenshots" % human(freed))
+    for name, stamp in collided:
+        print("  %-22s both shots landed in the same second (%s), so the client "
+              "wrote one file - re-capture" % (slug(name), stamp))
     for name, stamp in missing:
         print("  no screenshots for %s (%s) - already cleaned up, deleted, or taken "
               "on another machine" % (name, stamp))
