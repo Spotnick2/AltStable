@@ -177,11 +177,11 @@ print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
 --
 -- One entry per character cutout on disk. w/h are the CONTENT size; texw/texh
 -- are the power-of-two canvas the image sits in the top-left of, so the UI can
--- crop back to the figure. nativeW/nativeH are the size BEFORE supersampling -
--- the only surviving record of how tall the character actually is, since every
--- cutout is normalised to the same height. The scene uses it to keep a gnome
--- shorter than a night elf. Regenerated wholesale: delete a TGA to retire a
--- character, do not hand-edit this file.
+-- crop back to the figure. nativeW/nativeH are how much of the SCREEN the
+-- capture filled - not a race height, and not usable as one: the render stage
+-- frames the model to fill the frame, so every race comes out the same size.
+-- The scene takes heights from the character's race instead. Regenerated
+-- wholesale: delete a TGA to retire a character, do not hand-edit this file.
 --
 -- Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 

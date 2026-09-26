@@ -1063,3 +1063,41 @@ UnitXPMax("player")         ->  400
    > The lesson is not about CVars. "The client ignores this" and "the client obeys this and a
    > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
    > A working addon doing the same thing was the cheapest way to tell them apart.
+
+## A model frame auto-frames, so a render tells you nothing about size
+
+Measured 2026-09-26 on 1.60.1.70009, building the Roster's scene view (#15).
+
+`DressUpModel:SetUnit("player")` fits the model to the frame. That is the useful
+behaviour almost everywhere and the wrong one here: it means the rendered image
+is the same size for every race, so a screenshot of the stage carries **no
+information about how tall the character is**.
+
+Nine characters captured on one stage, as a fraction of screen height:
+
+```
+karuzo-morphisto   0.609      karuzo-komakino    0.641
+morphisto-ruskador 0.614      karuzo-kashmere    0.643
+karuzo-donstab     0.635      karuzo-macphisto   0.649
+karuzo-spotnick    0.635      karuzo-sumner      0.649
+karuzo-memphisto   0.640
+```
+
+A 6.6% spread, across a set including a gnome and several elves - races that
+differ by roughly 40%. The 0.609 is the gnome; it is not meaningfully shorter
+than anyone else.
+
+**The trap is that a plausible wrong explanation fits.** The cutout pipeline
+supersamples every image to a common height, so "the resampling flattened it"
+looks like the answer, and recovering the pre-resample size looks like the fix.
+It is not, and it does not: the flattening happened in the model frame, before
+the screenshot. Two rounds of work went into recovering a number that was never
+there.
+
+**What to use instead.** `UnitRace()`'s fileName and `UnitSex()` are recorded per
+character already, and a race-to-height table is exact, needs no capture, and
+cannot drift with resolution or UI scale. To measure it from a render instead,
+the stage has to stop auto-framing - a fixed camera distance and position via
+`SetCamDistanceScale` / `SetPosition`, identical for every capture - and every
+existing cutout has to be retaken against it.
+

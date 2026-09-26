@@ -403,6 +403,79 @@ do
     check("  and the ring's own back is the bottom of the stack",
           inner.level >= 0, tostring(inner.level))
 
+    -- ONE spacing for everybody. Each side used to divide its own half, which
+    -- is even only when the counts match: with five around a centred fire it is
+    -- two and three, so the pair spread out while the trio crowded together.
+    do
+        table.sort(spots, function(a, b) return a.x < b.x end)
+        local gaps = {}
+        for i = 2, #spots do
+            -- Skip the one that straddles the fire; that gap is the keep-out.
+            if not (spots[i - 1].x < fireX and spots[i].x > fireX) then
+                gaps[#gaps + 1] = spots[i].x - spots[i - 1].x
+            end
+        end
+        check("there are gaps on both sides to compare", #gaps >= 3, tostring(#gaps))
+        local first = gaps[1] or 0
+        local even = true
+        for _, g in ipairs(gaps) do
+            if math.abs(g - first) > 0.001 then even = false end
+        end
+        check("  and every one of them is the same", even,
+              table.concat(gaps, ", "))
+        check("  which is the slot the figures are fitted to",
+              math.abs(first - slot) < 0.001,
+              ("%.2f vs %.2f"):format(first, slot))
+
+        -- The two nearest the fire sit the same distance from it, so the
+        -- keep-out reads as a gap rather than an accident.
+        local innerL, innerR
+        for _, sp in ipairs(spots) do
+            if sp.x < fireX then innerL = sp.x else innerR = innerR or sp.x end
+        end
+        check("  and the innermost pair are symmetric about the flames",
+              math.abs((fireX - innerL) - (innerR - fireX)) < 0.001,
+              ("%.1f vs %.1f"):format(fireX - innerL, innerR - fireX))
+    end
+
+    -- Nobody is clipped by the frame. Every figure is fitted to one slot, so it
+    -- reaches half a slot past its own centre - leaving room only up to the
+    -- centre puts the outermost through the edge, which is what it did.
+    do
+        table.sort(spots, function(a, b) return a.x < b.x end)
+        check("the leftmost figure is inside the panel",
+              spots[1].x - slot / 2 >= 0, ("%.1f"):format(spots[1].x - slot / 2))
+        check("  and so is the rightmost",
+              spots[#spots].x + slot / 2 <= 1400,
+              ("%.1f"):format(spots[#spots].x + slot / 2))
+    end
+
+    -- A fire well off to one side, so the RIGHT is the side that runs out of
+    -- room. On a centred fire the left binds first and a mistake in the right
+    -- side's arithmetic changes nothing, which is exactly how two of them
+    -- survived a mutation run.
+    do
+        local offset = { w = 1024, h = 682, texw = 1024, texh = 1024,
+                         fireX = 0.75, fireBaseY = 0.84 }
+        local off, _, offSlot = T.SceneLayout(1400, 700, 5, offset)
+        local offFire = T.FireAnchor(1400, 700, offset)
+        check("the fire really is off to the right", offFire > 1400 * 0.7,
+              ("%.0f"):format(offFire))
+
+        table.sort(off, function(a, b) return a.x < b.x end)
+        local margin = 1400 * T.SCENE_EDGE
+        check("the outermost figure keeps clear of the right frame",
+              off[#off].x + offSlot / 2 <= 1400 - margin * 0.99,
+              ("%.1f vs %.1f"):format(off[#off].x + offSlot / 2, 1400 - margin))
+        check("  and of the left",
+              off[1].x - offSlot / 2 >= margin * 0.99,
+              ("%.1f vs %.1f"):format(off[1].x - offSlot / 2, margin))
+        for i, sp in ipairs(off) do
+            check(("  character %d still clears the fire"):format(i),
+                  math.abs(sp.x - offFire) >= 1400 * T.FIRE_CLEARANCE / 2)
+        end
+    end
+
     check("the slots leave room between neighbours", slot > 0 and slot < 1400)
     local _, _, slot8 = T.SceneLayout(1400, 700, 8, BACKDROP)
     check("a bigger cast gets narrower slots", slot8 < slot,
@@ -487,46 +560,186 @@ end
 ------------------------------------------------------------
 -- A gnome is shorter than a night elf
 ------------------------------------------------------------
--- Every cutout is supersampled to the SAME pixel height, so w/h carries no
--- information about how tall the character is. nativeH, recorded before that
--- step, is the only surviving record - and without it the scene drew a gnome
--- exactly as tall as an elf, which is what made the first version look wrong.
+-- The height comes from the RACE, not from the picture. The render stage frames
+-- the model to fill the frame, so every race is drawn the same size before a
+-- screenshot exists: across nine real captures the recorded pixel heights
+-- spanned 0.609 to 0.649 - 6.6% - for races that differ by about 40%. Measuring
+-- the image could never have worked, which is why an earlier version of this
+-- file measured it and a gnome still stood shoulder to shoulder with elves.
 
 do
-    local elf   = { w = 144, h = 512, texw = 256, texh = 512, nativeH = 1382 }
-    local gnome = { w = 334, h = 512, texw = 512, texh = 512, nativeH = 874 }
+    local gnomeM = { race = "Gnome",    gender = "Male" }
+    local elfF   = { race = "NightElf", gender = "Female" }
+    local taurenM = { race = "Tauren",  gender = "Male" }
 
-    local _, elfH = T.RelativeFigureSize(elf, 1382, 400)
-    local _, gnomeH = T.RelativeFigureSize(gnome, 1382, 400)
-    eq("the tallest character fills the target height", elfH, 400)
+    check("a gnome is much shorter than a night elf",
+          T.RaceHeight(gnomeM) < T.RaceHeight(elfF) * 0.6,
+          ("%.2f vs %.2f"):format(T.RaceHeight(gnomeM), T.RaceHeight(elfF)))
+    check("  and a tauren is taller than both",
+          T.RaceHeight(taurenM) > T.RaceHeight(elfF))
+
+    -- Sex matters, and both spellings of it: the scanner writes gender as a
+    -- word and sexID as a number, and a sync from an older client may carry
+    -- only one of them.
+    check("women are shorter than men of the same race",
+          T.RaceHeight({ race = "Human", gender = "Female" })
+              < T.RaceHeight({ race = "Human", gender = "Male" }))
+    eq("  sexID says the same thing as gender",
+       T.RaceHeight({ race = "Human", sexID = 1 }),
+       T.RaceHeight({ race = "Human", gender = "Female" }))
+    eq("  and absent both, male is the default",
+       T.RaceHeight({ race = "Human" }),
+       T.RaceHeight({ race = "Human", gender = "Male" }))
+
+    -- Forever adds races, and a client newer than this table must not make
+    -- somebody vanish or tower.
+    --
+    -- Pinned to a REAL race, not to DEFAULT_HEIGHT. Comparing the constant with
+    -- itself passes whatever it is set to: at 0 an unknown race is drawn at
+    -- zero height - invisible, the exact thing the code comment claims to
+    -- prevent - and at 5.0 it becomes the tallest in the cast and shrinks
+    -- everyone real to a fifth. Both passed every check here.
+    eq("an unknown race stands human-sized",
+       T.RaceHeight({ race = "SomeFutureRace" }), T.RACE_HEIGHT.Human.male)
+    eq("  as does a record with no race at all",
+       T.RaceHeight({}), T.RACE_HEIGHT.Human.male)
+    eq("  and no record at all", T.RaceHeight(nil), T.RACE_HEIGHT.Human.male)
+    check("  which is between the shortest race and the tallest",
+          T.DEFAULT_HEIGHT > T.RACE_HEIGHT.Gnome.male
+              and T.DEFAULT_HEIGHT < T.RACE_HEIGHT.Tauren.male,
+          tostring(T.DEFAULT_HEIGHT))
+
+    check("Forever's own race is in the table",
+          T.RACE_HEIGHT.Skyborne ~= nil,
+          "Skyborne is 11 of the characters on this account")
+end
+
+------------------------------------------------------------
+-- Drawing at those heights
+------------------------------------------------------------
+
+do
+    -- Two cutouts of the SAME pixel size, which is what the stage really
+    -- produces. If the drawn heights came from the image these would be equal.
+    local cut = { w = 300, h = 512, texw = 512, texh = 512 }
+    local gnome = T.RaceHeight({ race = "Gnome", gender = "Male" })
+    local elf   = T.RaceHeight({ race = "NightElf", gender = "Female" })
+
+    local _, elfH = T.RelativeFigureSize(cut, elf, elf, 400)
+    local _, gnomeH = T.RelativeFigureSize(cut, gnome, elf, 400)
+
+    eq("the tallest race fills the target height", elfH, 400)
     check("  and the gnome is visibly shorter", gnomeH < elfH * 0.75,
           ("gnome %.1f vs elf %.1f"):format(gnomeH, elfH))
-    check("  in proportion to its real height",
-          math.abs(gnomeH - 400 * (874 / 1382)) < 0.01, tostring(gnomeH))
+    check("  in proportion to their real heights",
+          math.abs(gnomeH - 400 * (gnome / elf)) < 0.01, tostring(gnomeH))
 
-    local w, h = T.RelativeFigureSize(elf, 1382, 400)
-    check("aspect ratio is preserved", math.abs(w / h - 144 / 512) < 0.0001)
+    -- Identical images, different heights: the picture is not the source.
+    check("two identical cutouts still differ in height", gnomeH ~= elfH)
 
-    -- A cutout captured before sidecars existed has no native height. It must
-    -- fall back to the common height it always had, not vanish or tower.
-    local legacy = { w = 200, h = 512, texw = 256, texh = 512 }
-    local _, legacyH = T.RelativeFigureSize(legacy, 1382, 400)
-    eq("a cutout with no native height falls back to the common one", legacyH, 400)
+    local w, h = T.RelativeFigureSize(cut, elf, elf, 400)
+    check("the cutout still supplies the aspect",
+          math.abs(w / h - 300 / 512) < 0.0001,
+          "a tauren is broad as well as tall, and that the image does know")
 
-    local _, noRefH = T.RelativeFigureSize(elf, nil, 400)
-    eq("  as does everyone when nothing has one", noRefH, 400)
+    local _, noRefH = T.RelativeFigureSize(cut, gnome, 0, 400)
+    eq("nobody to measure against means the common height", noRefH, 400)
+    -- An unmeasured cutout has no aspect, so it is drawn square - but at the
+    -- height its RACE says. Returning the full target height here let one bad
+    -- sidecar stand a gnome at the tallest race's height, which is this whole
+    -- fix undone for that figure. The old test asserted 400x400 and blessed it.
+    local bad = { w = 0, h = 0 }
+    local bw, bh = T.RelativeFigureSize(bad, gnome, elf, 400)
+    eq("an unmeasured cutout is square rather than a divide by zero", bw, bh)
+    check("  and still stands at its own race's height",
+          math.abs(bh - 400 * (gnome / elf)) < 0.001,
+          ("%.1f, want %.1f"):format(bh, 400 * (gnome / elf)))
+    check("  which is shorter than the tallest", bh < 400)
 end
 
 do
-    local function cut(c) return c.entry end
     local chars = {
-        { name = "Tall",  entry = { nativeH = 1382 } },
-        { name = "Short", entry = { nativeH = 874 } },
-        { name = "None",  entry = {} },
+        { name = "Stubby", race = "Gnome", gender = "Male" },
+        { name = "Lofty",  race = "NightElf", gender = "Male" },
+        { name = "Plain",  race = "Human", gender = "Male" },
     }
-    eq("the tallest native height wins", T.TallestNative(chars, cut), 1382)
-    eq("nobody with a height means nobody to measure against",
-       T.TallestNative({ { name = "None", entry = {} } }, cut), nil)
+    eq("the tallest race in the cast sets the scale",
+       T.TallestRace(chars), T.RaceHeight({ race = "NightElf", gender = "Male" }))
+
+    -- A cast of gnomes should FILL the frame, not huddle at ankle height under
+    -- an absent tauren.
+    local gnomes = {
+        { name = "A", race = "Gnome", gender = "Male" },
+        { name = "B", race = "Gnome", gender = "Female" },
+    }
+    local tallestGnome = T.TallestRace(gnomes)
+    local _, h = T.RelativeFigureSize({ w = 300, h = 512 },
+                                      T.RaceHeight(gnomes[1]), tallestGnome, 400)
+    eq("an all-gnome cast still fills the frame", h, 400)
+
+    eq("an empty cast has a usable scale", T.TallestRace({}), T.DEFAULT_HEIGHT)
+end
+
+------------------------------------------------------------
+-- And the renderer really measures them that way
+------------------------------------------------------------
+-- Checking that RaceHeight and RelativeFigureSize agree with each other proves
+-- nothing about what the renderer hands them. Handing every figure the same
+-- height levels the races out again while both functions stay correct.
+
+do
+    local cut = { w = 300, h = 512, texw = 512, texh = 512 }
+    local cast = {
+        { name = "Stubby", race = "Gnome",    gender = "Male" },
+        { name = "Lofty",  race = "NightElf", gender = "Male" },
+        { name = "Bare",   race = "Tauren",   gender = "Male" },   -- no portrait
+    }
+    local function cutoutFor(c) return c.name ~= "Bare" and cut or nil end
+    local spots = { { scale = 1 }, { scale = 1 }, { scale = 1 } }
+
+    local tallest = T.TallestRace(cast)
+    local sizes = T.MeasureCast(cast, cutoutFor, spots, tallest, 400)
+
+    eq("every slot is measured", #sizes, 3)
+    check("the gnome is drawn shorter than the elf",
+          sizes[1][2] < sizes[2][2] * 0.75,
+          ("%.1f vs %.1f"):format(sizes[1][2], sizes[2][2]))
+    -- The point of the check above is that the two came from the SAME image, so
+    -- say so with an assertion rather than a comment. `check(..., true)` was
+    -- here and could not fail.
+    eq("  from cutouts of identical width", cutoutFor(cast[1]).w, cutoutFor(cast[2]).w)
+    eq("  and identical height", cutoutFor(cast[1]).h, cutoutFor(cast[2]).h)
+    check("a character with no portrait measures zero",
+          sizes[3][1] == 0 and sizes[3][2] == 0)
+
+    -- The depth scale from the ring multiplies through, and each figure gets
+    -- ITS OWN. Varying only the first spot and reading only the first result
+    -- cannot tell spots[i] from spots[1] - and spots[1] gives every figure the
+    -- front-of-ring scale, which flattens the perspective completely. That
+    -- mutation survived, on the very function this PR added to pin the wiring.
+    local deep = { { scale = 1 }, { scale = 0.5 }, { scale = 1 } }
+    local scaled = T.MeasureCast(cast, cutoutFor, deep, tallest, 400)
+    check("the figure standing further back is smaller",
+          math.abs(scaled[2][2] - sizes[2][2] * 0.5) < 0.001,
+          ("%.2f vs %.2f"):format(scaled[2][2], sizes[2][2] * 0.5))
+    check("  and the one at the front is untouched",
+          math.abs(scaled[1][2] - sizes[1][2]) < 0.001,
+          ("%.2f vs %.2f"):format(scaled[1][2], sizes[1][2]))
+
+    -- Every index, in one pass: a distinct scale each, so nothing can quietly
+    -- read the wrong spot.
+    local each = T.MeasureCast(cast, cutoutFor,
+                               { { scale = 0.25 }, { scale = 0.5 }, { scale = 1 } },
+                               tallest, 400)
+    for i = 1, 2 do
+        local want = sizes[i][2] * (i == 1 and 0.25 or 0.5)
+        check(("figure %d is scaled by its own spot"):format(i),
+              math.abs(each[i][2] - want) < 0.001,
+              ("%.2f vs %.2f"):format(each[i][2], want))
+    end
+
+    local none = T.MeasureCast({}, cutoutFor, {}, tallest, 400)
+    eq("an empty cast measures nothing", #none, 0)
 end
 
 ------------------------------------------------------------

@@ -69,6 +69,10 @@ local SCENE_FIGURE_H = 0.62   -- of panel height, for the TALLEST character
 -- The gap kept clear around the fire, as a fraction of panel width.
 local FIRE_CLEARANCE = 0.22
 
+-- And the gap kept clear of the panel's own edges, so the outermost figure is
+-- not pressed against the frame.
+local SCENE_EDGE = 0.02
+
 -- The camp is a RING seen from the front, not a line. Someone standing near the
 -- fire's screen x is at the back of that ring: further away, so higher up the
 -- picture and smaller. Someone out at the edge is at the ring's side, nearest
@@ -206,36 +210,81 @@ local function FigureSize(entry, targetH)
     return targetH * (w / h), targetH
 end
 
--- Scaled to a common SCALE, which is what a scene needs: everyone standing on
--- one floor at their real relative heights, so a gnome is visibly a gnome.
+-- How tall each race is, relative to a human male.
 --
--- Every cutout is supersampled to the same pixel height, so w/h says nothing
--- about how tall the character is - nativeH, recorded before that step, is the
--- only surviving record. A cutout made before sidecars existed has none, and
--- falls back to the common height it always had rather than guessing.
-local function RelativeFigureSize(entry, tallestNative, maxH)
+-- NOT measured from the cutouts, and this is the thing that took two attempts
+-- to understand. The render stage uses DressUpModel:SetUnit(), which FRAMES the
+-- model to fill the frame - so a gnome and a night elf are both drawn at the
+-- same size before any screenshot exists. Across nine captured characters the
+-- recorded pixel heights spanned 0.609 to 0.649, a 6.6% spread, for races that
+-- genuinely differ by about 40%. The earlier nativeH work assumed supersampling
+-- had destroyed the difference and recovered the pre-supersample size; the
+-- difference was never in the image to begin with.
+--
+-- The addon already knows the race and gender of every character it has
+-- scanned, so use that. It is exact for anyone in the roster, needs no capture,
+-- and cannot drift with resolution or UI scale.
+--
+-- Values are approximations of the in-game model heights, good enough that a
+-- gnome reads as a gnome beside a tauren. Keys are the fileName from UnitRace
+-- (Scanner writes it to char.race), which is what makes Skyborne one key.
+local RACE_HEIGHT = {
+    Gnome     = { male = 0.60, female = 0.58 },
+    Dwarf     = { male = 0.72, female = 0.69 },
+    Scourge   = { male = 0.96, female = 0.90 },   -- Undead
+    Human     = { male = 1.00, female = 0.94 },
+    Orc       = { male = 1.06, female = 0.97 },
+    Troll     = { male = 1.17, female = 1.06 },
+    NightElf  = { male = 1.18, female = 1.10 },
+    Tauren    = { male = 1.35, female = 1.24 },
+    -- Forever's own race, and the only entry here that is a guess: it reads as
+    -- elven in game, so it is sat beside the night elves until someone measures
+    -- it properly. Being slightly wrong for one race is a different order of
+    -- problem from every race being identical.
+    Skyborne  = { male = 1.15, female = 1.08 },
+}
+local DEFAULT_HEIGHT = 1.00   -- an unknown race stands human-sized, not invisible
+
+local function RaceHeight(char)
+    local entry = RACE_HEIGHT[char and char.race or ""]
+    if not entry then return DEFAULT_HEIGHT end
+    local female = (char.gender == "Female") or (char.sexID == 1)
+    return female and entry.female or entry.male
+end
+
+-- Scaled to a common SCALE, which is what a scene needs: everyone standing on
+-- one floor at their real relative heights.
+--
+-- The cutout still supplies the ASPECT - a tauren is broad as well as tall, and
+-- that much the image does know - but the height comes from the race.
+local function RelativeFigureSize(entry, height, tallest, maxH)
+    height = tonumber(height) or DEFAULT_HEIGHT
+    tallest = tonumber(tallest) or 0
+
+    -- The height first, and unconditionally. A cutout with no usable content
+    -- box used to return maxH here and skip the race entirely, so one bad
+    -- sidecar stood a gnome at the tallest race's height - this fix, undone for
+    -- that one figure.
+    local drawnH = (tallest > 0) and (maxH * (height / tallest)) or maxH
+
     local w = tonumber(entry and entry.w) or 0
     local h = tonumber(entry and entry.h) or 0
-    if w <= 0 or h <= 0 then return maxH, maxH end
-
-    local native = tonumber(entry and entry.nativeH)
-    if not native or not tallestNative or tallestNative <= 0 then
-        return maxH * (w / h), maxH
+    if w <= 0 or h <= 0 then
+        return drawnH, drawnH    -- no aspect to keep, so square
     end
-    local drawnH = maxH * (native / tallestNative)
     return drawnH * (w / h), drawnH
 end
 
--- The tallest character present, in native pixels, so everyone can be measured
--- against it. Absent sidecars simply do not vote.
-local function TallestNative(chars, cutoutFor)
-    local tallest
+-- The tallest race in the cast, so everyone is measured against someone who is
+-- actually present: five gnomes should fill the frame, not huddle at ankle
+-- height under an absent tauren.
+local function TallestRace(chars)
+    local tallest = 0
     for _, c in ipairs(chars) do
-        local e = cutoutFor(c)
-        local n = e and tonumber(e.nativeH)
-        if n and (not tallest or n > tallest) then tallest = n end
+        local hgt = RaceHeight(c)
+        if hgt > tallest then tallest = hgt end
     end
-    return tallest
+    return tallest > 0 and tallest or DEFAULT_HEIGHT
 end
 
 -- Cover-crop a backdrop to the panel: fill it completely, keep the aspect, drop
@@ -345,12 +394,39 @@ local function SceneLayout(panelW, panelH, count, entry)
     if rightRoom <= 0 then nLeft = count end
     local nRight = count - nLeft
 
+    -- ONE spacing for everybody, measured outward from the fire.
+    --
+    -- Each side used to divide its own half independently, which looks even
+    -- only when the counts match. With five around a centred fire it is two and
+    -- three, so the pair spread out across their half while the trio crowded
+    -- into theirs - visibly lopsided even though the arithmetic on each side
+    -- was right. A common step makes the gaps equal everywhere and keeps the
+    -- two innermost symmetric about the flames.
+    --
+    -- The step is whatever the tighter side can afford: the side with more
+    -- figures runs out of room first, and matching it is what keeps the
+    -- outermost inside the frame.
+    -- Dividing by the COUNT, not count - 0.5, is what keeps the outermost
+    -- figure on the panel. Every figure is scaled to fit within one step (see
+    -- FitScale), so the outermost reaches half a step past its own centre;
+    -- leaving room only up to that centre clips it against the frame.
+    local edge = panelW * SCENE_EDGE
+    local step
+    if nLeft > 0 then
+        step = math.max(0, (leftEdge - edge) / nLeft)
+    end
+    if nRight > 0 then
+        local rs = math.max(0, (panelW - edge - rightEdge) / nRight)
+        step = (step and math.min(step, rs)) or rs
+    end
+    step = step or 0
+
     local xs = {}
     for i = 1, nLeft do
-        xs[#xs + 1] = leftRoom * ((i - 0.5) / nLeft)
+        xs[#xs + 1] = leftEdge - (i - 0.5) * step
     end
     for i = 1, nRight do
-        xs[#xs + 1] = rightEdge + rightRoom * ((i - 0.5) / nRight)
+        xs[#xs + 1] = rightEdge + (i - 0.5) * step
     end
     table.sort(xs)
 
@@ -370,15 +446,8 @@ local function SceneLayout(panelW, panelH, count, entry)
         }
     end
 
-    -- The tighter of the two sides, so nobody overlaps their neighbour.
-    local slot
-    if nLeft > 0 then slot = leftRoom / nLeft end
-    if nRight > 0 then
-        local rs = rightRoom / nRight
-        slot = (slot and math.min(slot, rs)) or rs
-    end
-
-    return spots, figureH, slot or (panelW / count)
+    -- The width one figure may occupy is now simply the spacing between them.
+    return spots, figureH, (step > 0) and step or (panelW / count)
 end
 
 -- The figure is anchored ABOVE the name block, so the space available to it is
@@ -639,6 +708,28 @@ local function BuildPanel(mainFrame)
     return panel
 end
 
+-- Every figure's drawn size, before the cast-wide fit below.
+--
+-- A named function rather than a loop inside the renderer, because the thing
+-- that goes wrong here is WHICH height each character is given - pass the same
+-- one to everybody and the races silently level out again, which is the bug
+-- this replaced. Inline, a test could check RelativeFigureSize and RaceHeight
+-- agree with each other while the renderer quietly used neither.
+local function MeasureCast(cast, cutoutFor, spots, tallest, figureH)
+    local sizes = {}
+    for i, char in ipairs(cast) do
+        local cut = cutoutFor(char)
+        local spot = spots[i]
+        if cut and spot then
+            local w, h = RelativeFigureSize(cut, RaceHeight(char), tallest, figureH)
+            sizes[i] = { w * spot.scale, h * spot.scale }
+        else
+            sizes[i] = { 0, 0 }
+        end
+    end
+    return sizes
+end
+
 -- One scale factor for the WHOLE cast, so nobody overflows their slot.
 --
 -- The per-figure clamp this replaces did precisely what its own comment said it
@@ -696,20 +787,9 @@ local function RenderScene(chars)
 
     local cast = SceneCast(chars, CutoutFor, SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
-    local tallest = TallestNative(cast, CutoutFor)
+    local tallest = TallestRace(cast)
 
-    -- Measure everyone first, then pick ONE scale that fits the widest of them.
-    local sizes = {}
-    for i, char in ipairs(cast) do
-        local cut = CutoutFor(char)
-        local spot = spots[i]
-        if cut and spot then
-            local w, h = RelativeFigureSize(cut, tallest, figureH)
-            sizes[i] = { w * spot.scale, h * spot.scale }
-        else
-            sizes[i] = { 0, 0 }
-        end
-    end
+    local sizes = MeasureCast(cast, CutoutFor, spots, tallest, figureH)
     local fit = FitScale(sizes, slot)
     local withArt = 0
 
@@ -734,11 +814,20 @@ local function RenderScene(chars)
             card.figure:SetSize(w, h)
             card.figure:Show()
 
-            card.label:SetWidth(math.max(slot, w))
+            -- The name sizes to ITSELF, not to the slot.
+            --
+            -- Constraining it to the slot and disabling word wrap means the
+            -- client truncates: tightening the spacing turned "Morphisto
+            -- Ruskador" into "Morphisto Ruska...". A name is the one thing on
+            -- this card that has to be readable, and Forever's surnames make
+            -- them long. Width 0 lets the string be as wide as its text, so it
+            -- may reach a little over a neighbour's empty floor - which costs
+            -- nothing, because the figures are what occupy the slots.
+            card.label:SetWidth(0)
             card.label:SetText(AltStable.ClassColor
                 and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
                 or (char.name or "?"))
-            card.sub:SetWidth(math.max(slot, w))
+            card.sub:SetWidth(0)
             card.sub:SetText(("level %d"):format(char.level or 0))
             card.highlight:SetShown(Roster.selected == char.guid)
             card.charGuid = char.guid
@@ -923,12 +1012,15 @@ function Roster._Bootstrap()
             HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
             SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,
+            RaceHeight = RaceHeight, TallestRace = TallestRace,
+            MeasureCast = MeasureCast,
+            RACE_HEIGHT = RACE_HEIGHT, DEFAULT_HEIGHT = DEFAULT_HEIGHT,
             FireAnchor = FireAnchor, FIRE_CLEARANCE = FIRE_CLEARANCE,
-            FIRE_X = FIRE_X, FIRE_BASE_Y = FIRE_BASE_Y,
+            FIRE_X = FIRE_X, FIRE_BASE_Y = FIRE_BASE_Y, SCENE_EDGE = SCENE_EDGE,
             FitScale = FitScale, HintLayout = HintLayout,
             SCENE_BAR_W = SCENE_BAR_W, VIEW_BTN_W = VIEW_BTN_W,
             BAR_TOP = BAR_TOP, BAR_H = BAR_H, PAD_X = PAD_X,
-            TallestNative = TallestNative, SCENE_CAST = SCENE_CAST,
+            SCENE_CAST = SCENE_CAST,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         },
