@@ -59,6 +59,14 @@ WoW.inCombat = false
 
 local function renders() return (AltStableProbeDB.renders or {}) end
 local function resetCapture()
+    -- Module state too, not just the stubs. pending / combatSettle / capturing
+    -- are locals in Render.lua, and StartCountdown is idempotent - so a stale
+    -- `pending` leaking in from an earlier block makes the next
+    -- StartCountdown a silent no-op while pendingKind() still answers
+    -- "countdown", and the block passes against a timer it never created.
+    if AltStableProbe and AltStableProbe._test and AltStableProbe._test.CancelPending then
+        AltStableProbe._test.CancelPending()
+    end
     AltStableProbeDB = { renders = {}, looks = {} }
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.timers = {}
@@ -269,6 +277,141 @@ check("  and matches the constants it is built from",
       shots[2] and ("%.3f vs %.3f"):format(shots[2] - shots[1], shutterGap) or "-")
 check("the watchdog outlasts the whole sequence",
       watchdogDelay > (shots[2] or 0), ("%.1f vs %.2f"):format(watchdogDelay, shots[2] or 0))
+
+------------------------------------------------------------
+-- The quiet-after-combat wait cancels quietly
+------------------------------------------------------------
+-- Reported from a live session: "[render] auto-capture cancelled - combat
+-- started" on EVERY pull. The wait is armed when combat ends and cancelled the
+-- moment the next fight begins, so while questing that is a line of chat per
+-- mob - announcing the end of something whose beginning was never announced.
+--
+-- The countdown is the opposite case. It says "refreshing your portrait in 5s"
+-- when it starts, so cancelling it silently would leave the player waiting for
+-- a picture that is not coming.
+
+do
+    resetCapture()
+    local events = T.events:GetScript("OnEvent")
+
+    -- Leaving combat arms the silent wait.
+    events(T.events, "PLAYER_REGEN_ENABLED")
+    eq("leaving combat arms the quiet wait", T.pendingKind(), "settle")
+
+    -- Entering it again cancels the wait, and says nothing.
+    WoW.chatOut = {}
+    events(T.events, "PLAYER_REGEN_DISABLED")
+    eq("  and the next pull cancels it", T.pendingKind(), nil)
+    eq("  without a word, because nothing announced it", #(WoW.chatOut or {}), 0)
+
+    -- Ten pulls, still nothing.
+    WoW.chatOut = {}
+    for _ = 1, 10 do
+        events(T.events, "PLAYER_REGEN_ENABLED")
+        events(T.events, "PLAYER_REGEN_DISABLED")
+    end
+    eq("  ten pulls in a row produce ten lines of nothing", #(WoW.chatOut or {}), 0)
+end
+
+do
+    -- The countdown is the opposite case and must still speak. It announced
+    -- itself when it started, so cancelling it in silence leaves the player
+    -- waiting for a picture that is not coming.
+    resetCapture()
+    T.StartCountdown("gear changed")
+    eq("a countdown is pending", T.pendingKind(), "countdown")
+    WoW.chatOut = {}
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
+    eq("  and combat cancels it", T.pendingKind(), nil)
+    local said = table.concat(WoW.chatOut or {}, " ")
+    check("  but says so, because it had announced itself",
+          #(WoW.chatOut or {}) > 0, "the player was left waiting in silence")
+    -- The REASON is the payload. A player told "refreshing your portrait in 5s"
+    -- and then handed a bare "auto-capture cancelled" has no idea combat did
+    -- it, which is the confusion the countdown message exists to prevent.
+    check("  and says what cancelled it", said:find("combat started", 1, true) ~= nil,
+          said)
+end
+
+do
+    -- /asrender cancel is the player asking, so silence would read as a command
+    -- that did nothing. Driven through the real command, because the argument
+    -- it passes is the whole point.
+    resetCapture()
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_ENABLED")
+    WoW.chatOut = {}
+    SlashCmdList["ASRENDER"]("cancel")
+    -- On the CONTENT, not the line count. "nothing pending" is also one line,
+    -- so a CancelPending that cancelled the timer and reported false would
+    -- satisfy a count - and reporting false while cancelling is exactly the
+    -- regression this function's own comment records as having shipped once.
+    local answer = table.concat(WoW.chatOut or {}, " ")
+    check("/asrender cancel confirms it cancelled the quiet wait",
+          answer:find("cancelled", 1, true) ~= nil, answer)
+    check("  and does not claim nothing was pending",
+          answer:find("nothing pending", 1, true) == nil, answer)
+    eq("  and there is nothing left pending", T.pendingKind(), nil)
+end
+
+do
+    -- The same promise one level down, at the function rather than the command.
+    --
+    -- NOT a duplicate of the block above, which drives SlashCmdList and so
+    -- pins the ARGUMENT the command passes. This one pins what CancelPending
+    -- does when given it - the two failures are different, and testing only
+    -- this one is exactly how the missing `announce` survived the first pass.
+    resetCapture()
+    local events = T.events:GetScript("OnEvent")
+    events(T.events, "PLAYER_REGEN_ENABLED")
+    WoW.chatOut = {}
+    check("cancelling the quiet wait by hand is confirmed",
+          T.CancelPending(nil, true) == true)
+    check("  out loud", #(WoW.chatOut or {}) > 0,
+          "the player asked and got no answer")
+
+    WoW.chatOut = {}
+    eq("cancelling nothing reports nothing was pending", T.CancelPending(nil, true), false)
+end
+
+------------------------------------------------------------
+-- Turning auto-capture off stops what is already coming
+------------------------------------------------------------
+-- The countdown announces itself five seconds ahead. Type /asrender auto inside
+-- that window and you are told auto-capture is off - and then, three seconds
+-- later, the interface vanishes for a capture anyway.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoCaptureOff = nil
+    T.StartCountdown("gear changed")
+    eq("a countdown is pending", T.pendingKind(), "countdown")
+
+    WoW.chatOut = {}
+    SlashCmdList["ASRENDER"]("auto")
+    eq("  turning auto off cancels it", T.pendingKind(), nil)
+    local said = table.concat(WoW.chatOut or {}, " ")
+    check("  and says so, rather than going quiet",
+          said:find("cancelled", 1, true) ~= nil, said)
+
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("  so no picture is taken", WoW.screenshots, 0)
+    AltStableProbeDB.autoCaptureOff = nil
+end
+
+do
+    -- And the countdown asks again when it fires, for every other way the
+    -- answer could have changed in those five seconds.
+    resetCapture()
+    AltStableProbeDB.autoCaptureOff = nil
+    T.StartCountdown("gear changed")
+    AltStableProbeDB.autoCaptureOff = true    -- changed behind the command's back
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("a countdown that fires with auto off takes no picture", WoW.screenshots, 0)
+    check("  and is not left capturing", not T.capturing())
+    AltStableProbeDB.autoCaptureOff = nil
+end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)
