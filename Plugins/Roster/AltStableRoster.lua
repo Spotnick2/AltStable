@@ -258,15 +258,20 @@ end
 -- The cutout still supplies the ASPECT - a tauren is broad as well as tall, and
 -- that much the image does know - but the height comes from the race.
 local function RelativeFigureSize(entry, height, tallest, maxH)
-    local w = tonumber(entry and entry.w) or 0
-    local h = tonumber(entry and entry.h) or 0
-    if w <= 0 or h <= 0 then return maxH, maxH end
-
     height = tonumber(height) or DEFAULT_HEIGHT
     tallest = tonumber(tallest) or 0
-    if tallest <= 0 then return maxH * (w / h), maxH end
 
-    local drawnH = maxH * (height / tallest)
+    -- The height first, and unconditionally. A cutout with no usable content
+    -- box used to return maxH here and skip the race entirely, so one bad
+    -- sidecar stood a gnome at the tallest race's height - this fix, undone for
+    -- that one figure.
+    local drawnH = (tallest > 0) and (maxH * (height / tallest)) or maxH
+
+    local w = tonumber(entry and entry.w) or 0
+    local h = tonumber(entry and entry.h) or 0
+    if w <= 0 or h <= 0 then
+        return drawnH, drawnH    -- no aspect to keep, so square
+    end
     return drawnH * (w / h), drawnH
 end
 

@@ -593,10 +593,21 @@ do
 
     -- Forever adds races, and a client newer than this table must not make
     -- somebody vanish or tower.
+    --
+    -- Pinned to a REAL race, not to DEFAULT_HEIGHT. Comparing the constant with
+    -- itself passes whatever it is set to: at 0 an unknown race is drawn at
+    -- zero height - invisible, the exact thing the code comment claims to
+    -- prevent - and at 5.0 it becomes the tallest in the cast and shrinks
+    -- everyone real to a fifth. Both passed every check here.
     eq("an unknown race stands human-sized",
-       T.RaceHeight({ race = "SomeFutureRace" }), T.DEFAULT_HEIGHT)
-    eq("  as does a record with no race at all", T.RaceHeight({}), T.DEFAULT_HEIGHT)
-    eq("  and no record at all", T.RaceHeight(nil), T.DEFAULT_HEIGHT)
+       T.RaceHeight({ race = "SomeFutureRace" }), T.RACE_HEIGHT.Human.male)
+    eq("  as does a record with no race at all",
+       T.RaceHeight({}), T.RACE_HEIGHT.Human.male)
+    eq("  and no record at all", T.RaceHeight(nil), T.RACE_HEIGHT.Human.male)
+    check("  which is between the shortest race and the tallest",
+          T.DEFAULT_HEIGHT > T.RACE_HEIGHT.Gnome.male
+              and T.DEFAULT_HEIGHT < T.RACE_HEIGHT.Tauren.male,
+          tostring(T.DEFAULT_HEIGHT))
 
     check("Forever's own race is in the table",
           T.RACE_HEIGHT.Skyborne ~= nil,
@@ -633,10 +644,17 @@ do
 
     local _, noRefH = T.RelativeFigureSize(cut, gnome, 0, 400)
     eq("nobody to measure against means the common height", noRefH, 400)
+    -- An unmeasured cutout has no aspect, so it is drawn square - but at the
+    -- height its RACE says. Returning the full target height here let one bad
+    -- sidecar stand a gnome at the tallest race's height, which is this whole
+    -- fix undone for that figure. The old test asserted 400x400 and blessed it.
     local bad = { w = 0, h = 0 }
     local bw, bh = T.RelativeFigureSize(bad, gnome, elf, 400)
-    check("an unmeasured cutout is square rather than a divide by zero",
-          bw == 400 and bh == 400)
+    eq("an unmeasured cutout is square rather than a divide by zero", bw, bh)
+    check("  and still stands at its own race's height",
+          math.abs(bh - 400 * (gnome / elf)) < 0.001,
+          ("%.1f, want %.1f"):format(bh, 400 * (gnome / elf)))
+    check("  which is shorter than the tallest", bh < 400)
 end
 
 do
@@ -686,16 +704,39 @@ do
     check("the gnome is drawn shorter than the elf",
           sizes[1][2] < sizes[2][2] * 0.75,
           ("%.1f vs %.1f"):format(sizes[1][2], sizes[2][2]))
-    check("  from identical cutouts", true)
+    -- The point of the check above is that the two came from the SAME image, so
+    -- say so with an assertion rather than a comment. `check(..., true)` was
+    -- here and could not fail.
+    eq("  from cutouts of identical width", cutoutFor(cast[1]).w, cutoutFor(cast[2]).w)
+    eq("  and identical height", cutoutFor(cast[1]).h, cutoutFor(cast[2]).h)
     check("a character with no portrait measures zero",
           sizes[3][1] == 0 and sizes[3][2] == 0)
 
-    -- The depth scale from the ring still multiplies through.
-    local deep = { { scale = 0.5 }, { scale = 1 }, { scale = 1 } }
+    -- The depth scale from the ring multiplies through, and each figure gets
+    -- ITS OWN. Varying only the first spot and reading only the first result
+    -- cannot tell spots[i] from spots[1] - and spots[1] gives every figure the
+    -- front-of-ring scale, which flattens the perspective completely. That
+    -- mutation survived, on the very function this PR added to pin the wiring.
+    local deep = { { scale = 1 }, { scale = 0.5 }, { scale = 1 } }
     local scaled = T.MeasureCast(cast, cutoutFor, deep, tallest, 400)
-    check("standing further back makes a figure smaller still",
-          math.abs(scaled[1][2] - sizes[1][2] * 0.5) < 0.001,
-          ("%.2f vs %.2f"):format(scaled[1][2], sizes[1][2] * 0.5))
+    check("the figure standing further back is smaller",
+          math.abs(scaled[2][2] - sizes[2][2] * 0.5) < 0.001,
+          ("%.2f vs %.2f"):format(scaled[2][2], sizes[2][2] * 0.5))
+    check("  and the one at the front is untouched",
+          math.abs(scaled[1][2] - sizes[1][2]) < 0.001,
+          ("%.2f vs %.2f"):format(scaled[1][2], sizes[1][2]))
+
+    -- Every index, in one pass: a distinct scale each, so nothing can quietly
+    -- read the wrong spot.
+    local each = T.MeasureCast(cast, cutoutFor,
+                               { { scale = 0.25 }, { scale = 0.5 }, { scale = 1 } },
+                               tallest, 400)
+    for i = 1, 2 do
+        local want = sizes[i][2] * (i == 1 and 0.25 or 0.5)
+        check(("figure %d is scaled by its own spot"):format(i),
+              math.abs(each[i][2] - want) < 0.001,
+              ("%.2f vs %.2f"):format(each[i][2], want))
+    end
 
     local none = T.MeasureCast({}, cutoutFor, {}, tallest, 400)
     eq("an empty cast measures nothing", #none, 0)
