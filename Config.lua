@@ -27,7 +27,9 @@ local CAMERA_PRESENTATION_DEFAULTS_VERSION = 10
 --
 -- Addon CVars are a separate question and were NOT re-measured on 70009: they
 -- were dead across a real exit through 69977, and the SavedVariables fix does
--- not imply anything about them (see #25, the camera CVars).
+-- not imply anything about them. (#25 used to be cited here as a second case of
+-- a CVar write going nowhere. It is not one - the camera did read the value,
+-- and another setting undid it - so this rests on the 69977 measurement alone.)
 --
 -- Every mutation goes through here regardless, so that whatever the fix needs
 -- - a migration, a validation pass, a different store - lands in one place

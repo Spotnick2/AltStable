@@ -30,9 +30,11 @@ then in game:
 
 `scriptErrors 1` matters more here than on retail: without it a Lua error is silent, the scan
 stops half-way, and the symptom you see is missing data rather than a stack trace. Through 69977
-CVars were memory-only and it had to be set again after every restart; whether 70009 fixed CVars
-along with SavedVariables has **not** been measured, so assume it did not until someone checks
-(the camera CVars in #25 are the same question).
+CVars were memory-only and it had to be set again after every restart; whether 70009 fixed CVar
+**persistence** along with SavedVariables has **not** been measured, so assume it did not until
+someone checks. (#25 is a different question and no longer supports this one: the camera CVars
+turned out to be read correctly within a session - see the correction in
+`docs/forever-api-notes.md`. Nothing there says anything about surviving a restart.)
 
 Better still, install **BugGrabber + BugSack**: they catch the error with its locals, which is how
 the secret-value bug was diagnosed (the character record in the log showed `stat_str=<secret
