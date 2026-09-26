@@ -18,5 +18,6 @@ Config.lua
 Toasts.lua
 Columns.lua
 RowRenderer.lua
+CharacterMenu.lua
 SheetUI.lua
 Export.lua

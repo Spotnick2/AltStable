@@ -29,6 +29,8 @@ dofile("Compat.lua")
 dofile("Theme.lua")
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
+-- The card's right-click raises the shared character menu (#69).
+dofile("CharacterMenu.lua")
 ------------------------------------------------------------
 -- It has to register when loaded ON DEMAND
 ------------------------------------------------------------
@@ -1164,6 +1166,102 @@ do
     eq("  and does not touch a closed one", painted, 0)
 
     AltStable.RosterPlugin.Refresh = realRefresh
+end
+
+------------------------------------------------------------
+-- The card's right-click, and hidden characters (#69)
+------------------------------------------------------------
+
+do
+    AltStableDB = {
+        shown  = { guid = "shown",  name = "Shown One",  class = "MAGE",  realm = "R",
+                   level = 60, race = "Human" },
+        tucked = { guid = "tucked", name = "Tucked Away", class = "ROGUE", realm = "R",
+                   level = 59, race = "Human" },
+    }
+    AltStableConfig.hiddenCharacters = {}
+    AltStableConfig.favouriteCharacters = {}
+    AltStable.SetCharacterHidden("tucked", true)
+    AltStable.SetShowingHidden(false)
+
+    local function names(list)
+        local out = {}
+        for _, c in ipairs(list) do out[#out + 1] = c.name end
+        table.sort(out)
+        return table.concat(out, ",")
+    end
+
+    eq("a hidden character is out of the card grid",
+       names(T.CharactersFor("grid")), "Shown One")
+    eq("  and out of the scene", names(T.CharactersFor("scene")), "Shown One")
+
+    AltStable.SetShowingHidden(true)
+    eq("with the toggle on, the grid lists it",
+       names(T.CharactersFor("grid")), "Shown One,Tucked Away")
+
+    -- The line that separates a management view from a showcase. The camp is a
+    -- diorama; a dimmed figure standing in it says nothing to anybody, and
+    -- there is no card there to right-click.
+    eq("  but the scene still never shows one",
+       names(T.CharactersFor("scene")), "Shown One")
+
+    AltStable.SetShowingHidden(false)
+    eq("switching it back off empties the grid of it again",
+       names(T.CharactersFor("grid")), "Shown One")
+end
+
+do
+    local card = T.BuildCard(WoW.makeFrame(), 1)
+
+    -- The registration, not just the handler.
+    --
+    -- A Button fires OnClick for the LEFT button only until RegisterForClicks
+    -- says otherwise. Every check below calls the handler directly with
+    -- "RightButton", which the client would never do on an unregistered
+    -- button - so without this the section passes against a card whose menu
+    -- cannot be opened in game. The card had exactly that shape before #69:
+    -- SetScript("OnClick") and no registration at all.
+    check("the card listens for right-clicks",
+          card:HandlesClick("RightButton"),
+          table.concat(card:RegisteredClicks(), ","))
+    check("  and still for left-clicks, which select",
+          card:HandlesClick("LeftButton"),
+          table.concat(card:RegisteredClicks(), ","))
+
+    T.RenderCard(card, AltStableDB.shown, 100, 140)
+    local onClick = card:GetScript("OnClick")
+    check("the card handles clicks", type(onClick) == "function")
+
+    if onClick then
+        AltStable.CloseCharacterMenu()
+        onClick(card, "RightButton")
+        check("a right-click on a card opens the same menu the row does",
+              AltStable._test.MenuIsShown())
+        check("  about the character on that card",
+              table.concat(AltStable._test.MenuLabels(), "|"):find("Shown One", 1, true) ~= nil,
+              table.concat(AltStable._test.MenuLabels(), "|"))
+        AltStable.CloseCharacterMenu()
+
+        -- Cards are POOLED and re-rendered. A card still carrying the previous
+        -- character would open a menu about somebody who is no longer on it.
+        T.RenderCard(card, AltStableDB.tucked, 100, 140)
+        onClick(card, "RightButton")
+        check("a re-rendered card opens the menu for its NEW character",
+              table.concat(AltStable._test.MenuLabels(), "|"):find("Tucked Away", 1, true) ~= nil,
+              table.concat(AltStable._test.MenuLabels(), "|"))
+        AltStable.CloseCharacterMenu()
+
+        onClick(card, "LeftButton")
+        check("a left-click still selects instead of opening a menu",
+              AltStable._test.MenuIsShown() == false)
+    end
+
+    -- Dimmed exactly as a hidden row is, and set BOTH ways: the card showed
+    -- somebody else a frame ago.
+    T.RenderCard(card, AltStableDB.tucked, 100, 140)
+    eq("a hidden character's card is dimmed", card:GetAlpha(), T.HIDDEN_CARD_ALPHA)
+    T.RenderCard(card, AltStableDB.shown, 100, 140)
+    eq("  and the next card drawn in it is not", card:GetAlpha(), 1)
 end
 
 print(("test_roster: %d passed, %d failed"):format(passed, failed))

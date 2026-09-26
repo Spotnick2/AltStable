@@ -1188,3 +1188,52 @@ the stage has to stop auto-framing - a fixed camera distance and position via
 `SetCamDistanceScale` / `SetPosition`, identical for every capture - and every
 existing cutout has to be retaken against it.
 
+
+---
+
+## A menu of our own, and why MenuUtil went unused — UNMEASURED
+
+`MenuUtil` is present on this client (32 functions), and it is the modern Retail
+route. `AltStable`'s character menu (`CharacterMenu.lua`, #69) does not use it.
+
+**What is actually known:** that the table exists and how many functions it has.
+Nothing here has called `MenuUtil.CreateContextMenu` on this client. The decision
+is a judgement, not a measurement, and it should be read as one. To settle the
+first half of it:
+
+```
+/run MenuUtil.CreateContextMenu(UIParent, function(_, root) root:CreateButton("hi") end)
+```
+
+**The judgement.** Two of the reasons are about this client and one is about this
+addon:
+
+- *Present is not behaves.* That has been wrong repeatedly on this port, and a
+  menu is not something Lua can interrogate the way it can a return value — you
+  find out by looking at the screen.
+- *The showcase problem is not hypothetical.* While the sheet is open the addon
+  hides the game UI with `SetUIVisibility(false)`, and **no strata makes the
+  child of a hidden parent draw**. The cure is to reparent out from under
+  `UIParent` (`AltStable.LiftAboveHiddenUI`), which needs a handle to the frame.
+  A menu built by somebody else does not reliably hand one over. This already bit
+  the hide confirmation once, where a `StaticPopup` is likewise a child of
+  `UIParent`.
+- *The addon has its own dark theme*, so a Blizzard-styled menu over it is the
+  inconsistent choice rather than the consistent one.
+
+**What hand-rolling costs**, listed because it is the honest price and because
+each item is a real bug somebody will otherwise rediscover:
+
+| Concern | What goes wrong | What was done |
+|---|---|---|
+| Dismissal | nothing closes the menu, or the catcher eats the menu's own clicks | full-screen catcher as a **sibling below** the panel under one root; the panel takes the mouse itself so its padding does not fall through |
+| Escape | `UISpecialFrames` closes the **sheet** instead — the sheet is registered too and comes first, and only one frame closes per Escape | the menu handles `OnKeyDown` itself and propagates every other key, or it is a menu you cannot walk away from |
+| Cursor | `GetCursorPosition()` is in **physical pixels**, an anchor offset is in the frame's own units | divide by `GetEffectiveScale()`, then clamp to the screen |
+| Lifetime | the menu outlives the window that raised it | the sheet's `OnHide` closes it — otherwise a full-screen click-catcher stays over the game, eating every click |
+| Ordering | the action runs while the menu is still up, and the catcher swallows the first click at the confirmation it just raised | close first, then dispatch |
+
+**Reparenting is idempotent now.** `_TakeOut` in `SheetUI.lua` previously saved
+the frame's strata and scale on every lift, so lifting twice saved the *lifted*
+values and the restore afterwards left the frame permanently at
+`FULLSCREEN_DIALOG`. The two callers that existed each guarded at their own end,
+which put the trap one careless caller away. The flag lives on the frame now.

@@ -34,6 +34,7 @@ dofile("Config.lua")
 dofile("Toasts.lua")
 dofile("Columns.lua")
 dofile("RowRenderer.lua")
+dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
 
 local GOLD = 10000   -- copper per gold
@@ -147,84 +148,44 @@ footer = build({
 })
 eq("both characters start visible", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
 
--- A right-click ASKS. It must not hide anything by itself: the row disappears
--- on one click and the way back is a list in Options the user has no reason to
--- have seen yet.
+-- A right-click opens the MENU (#69). It used to raise "hide this character?"
+-- directly, which spent the only right-click there is on one of the four things
+-- that want it.
 WoW.popups = {}
-AltStable.RequestHideCharacter(AltStableDB.gone)
-eq("a right-click raises one confirmation", #WoW.popups, 1)
-local popup = WoW.popups[1]
-if popup then
-    check("  naming the character", popup.arg1 == "Goner", tostring(popup.arg1))
+AltStable.ShowCharacterMenu(AltStableDB.gone)
+check("a right-click opens the menu", AltStable._test.MenuIsShown())
+eq("  and asks nothing yet", #WoW.popups, 0)
 
-    -- The sheet is DIALOG strata and toplevel, and a StaticPopup is DIALOG too,
-    -- so this confirmation opened BEHIND the window and appeared only once the
-    -- sheet was closed. A question nobody can see reads as a click that did
-    -- nothing.
-    -- The confirmation was invisible until the sheet was closed, so the
-    -- right-click read as doing nothing. TWO things hid it:
-    --   * the sheet is DIALOG strata and SetToplevel(true), and a StaticPopup is
-    --     DIALOG too, so the sheet covers it;
-    --   * the camera showcase - on by default whenever the sheet is open -
-    --     hides UIParent outright, and a StaticPopup is a CHILD of UIParent. No
-    --     strata makes the child of a hidden parent draw.
-    --
-    -- Driven through the REAL path, because the first fix put the lift in the
-    -- dialog's OnShow: a frame that cannot become visible may never receive a
-    -- visibility event, so that fix would not have run. The stub therefore only
-    -- calls OnShow when the dialog can actually be seen.
-    local dialog = popup.dialog
-    check("the popup hands back a frame", dialog ~= nil)
-
-    if dialog then
-        eq("it is raised above the sheet", dialog:GetFrameStrata(), "FULLSCREEN_DIALOG")
-        check("  and is actually visible", dialog:IsVisible() == true)
-        StaticPopup_Hide(popup.which)
-        eq("  strata is put back, since the frame is shared with every addon",
-           dialog:GetFrameStrata(), "DIALOG")
-    end
-
-    -- Now the case that was broken: the showcase has hidden the whole UI.
-    local realHidden = AltStable.IsGameUIHidden
-    AltStable.IsGameUIHidden = function() return true end
-    UIParent:Hide()
-
-    WoW.popups = {}
-    AltStable.RequestHideCharacter(AltStableDB.gone)
-    local hiddenUIPopup = WoW.popups[#WoW.popups]
-    check("a confirmation is still raised with the UI hidden", hiddenUIPopup ~= nil)
-
-    if hiddenUIPopup and hiddenUIPopup.dialog then
-        local d = hiddenUIPopup.dialog
-        check("  it is lifted OUT from under the hidden UIParent",
-              d:GetParent() ~= UIParent, tostring(d:GetParent()))
-        check("  so the player can actually see the question", d:IsVisible() == true)
-
-        StaticPopup_Hide(hiddenUIPopup.which)
-        eq("  and is parented back on close", d:GetParent(), UIParent)
-        eq("  with its strata restored", d:GetFrameStrata(), "DIALOG")
-    end
-
-    UIParent:Show()
-    AltStable.IsGameUIHidden = realHidden
-
-    -- Back to the first dialog for the acceptance checks below.
-    WoW.popups = {}
-    AltStable.RequestHideCharacter(AltStableDB.gone)
-    popup = WoW.popups[1]
+do
+    local labels = table.concat(AltStable._test.MenuLabels(), "|")
+    check("  the menu is titled with the character", labels:find("Goner", 1, true) ~= nil, labels)
+    check("  and offers to hide it", labels:find("Hide", 1, true) ~= nil, labels)
 end
 
-eq("nothing is hidden until it is accepted", AltStable.IsCharacterHidden("gone"), false)
-eq("  and the row is still drawn", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
-
--- Accepting it is what hides.
-local dialog = StaticPopupDialogs[popup and popup.which]
-check("the dialog is registered", dialog ~= nil)
-if dialog then
-    dialog.OnAccept(nil, popup.data)
-end
-eq("accepting hides the character", AltStable.IsCharacterHidden("gone"), true)
+-- Hiding is immediate and unconfirmed now. The confirmation existed because
+-- the way back was a list in Options the user had no reason to have seen; the
+-- footer toggle below is that way back, and it is on screen.
+AltStable._test.MenuClick("hide")
+eq("choosing Hide asks nothing", #WoW.popups, 0)
+eq("  and hides the character there and then", AltStable.IsCharacterHidden("gone"), true)
 eq("  the grid drops the row", joined(AltStable._test.DisplayNames()), "Keeper")
+check("  and the menu closes behind it", AltStable._test.MenuIsShown() == false)
+
+-- Reversed from the menu, which is the point of dropping the confirmation.
+AltStable.ShowCharacterMenu(AltStableDB.gone)
+do
+    local labels = table.concat(AltStable._test.MenuLabels(), "|")
+    check("a hidden character is offered Unhide, not Hide",
+          labels:find("Unhide", 1, true) ~= nil, labels)
+end
+AltStable._test.MenuClick("unhide")
+eq("  which puts it back", AltStable.IsCharacterHidden("gone"), false)
+eq("  and the row returns", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
+
+-- Back to hidden for the footer checks below.
+AltStable.ShowCharacterMenu(AltStableDB.gone)
+AltStable._test.MenuClick("hide")
+eq("hidden again for the totals checks", AltStable.IsCharacterHidden("gone"), true)
 
 footer = refresh()
 if footer then
@@ -234,13 +195,260 @@ if footer then
     check("  gold excludes the hidden one", footer:find("100", 1, true) ~= nil, footer)
     check("  and does not total all of it", footer:find("150", 1, true) == nil, footer)
     check("  the average iLvl excludes it too", footer:find("60 avg iLvl", 1, true) ~= nil, footer)
-    check("  with a marker saying how many were left out",
-          footer:find("(1 hidden)", 1, true) ~= nil, footer)
 end
+
+-- The marker moved OUT of the gold string into its own button, so that a click
+-- on it can toggle the view without a click on the gold total doing the same.
+-- Asserted on the button, not on the footer text, or the move would look like
+-- the marker disappearing.
+check("the gold string no longer carries the hidden marker",
+      (footer or ""):find("hidden", 1, true) == nil, footer)
+eq("a marker says how many were left out", AltStable._test.HiddenToggleText(),
+   "|cff808080(1 hidden)|r")
 
 -- The record itself is untouched: hiding is not deleting.
 check("the character is still in the database",
       type(AltStableDB.gone) == "table" and AltStableDB.gone.name == "Goner")
+
+------------------------------------------------------------
+-- The menu does not outlive the window that raised it (#69)
+------------------------------------------------------------
+
+do
+    AltStableDB.keep = AltStableDB.keep
+        or { guid = "keep", name = "Keeper", class = "MAGE", realm = "R", level = 60,
+             ilvl = 60, money = 100 * GOLD, lastUpdate = 1 }
+    AltStable.EnsureSheetVisible()
+    AltStable.ShowCharacterMenu(AltStableDB.keep)
+    check("a menu is open over the sheet", AltStable._test.MenuIsShown())
+
+    -- Not a stray widget. The menu is FULLSCREEN_DIALOG with a full-screen
+    -- click-catcher under it, so one that outlives the sheet is an invisible
+    -- sheet of glass over the whole game that eats every click.
+    -- Through the real gesture: ShowSheet toggles, and the stub fires OnHide
+    -- the way the client does. Calling CloseCharacterMenu directly would
+    -- assert the function exists, not that anything calls it.
+    AltStable.ShowSheet()
+    check("  the sheet did close", AltStableSheet:IsShown() == false)
+    check("closing the sheet takes the menu with it",
+          AltStable._test.MenuIsShown() == false,
+          "a full-screen click-catcher would be left over the game")
+    check("  and the catcher is not left parented outside UIParent",
+          AltStable._test.MenuRoot():GetParent() == UIParent)
+end
+
+------------------------------------------------------------
+-- "Show hidden" (#69)
+--
+-- The toggle changes WHAT THE GRID LISTS and nothing else. The totals and the
+-- "(N hidden)" count deliberately still leave hidden characters out, on or off,
+-- so switching a view can never change the account's reported gold.
+------------------------------------------------------------
+
+do
+    AltStableConfig.hiddenCharacters = {}
+    AltStable.SetShowingHidden(false)
+    footer = build({
+        keep = { guid = "keep", name = "Keeper", class = "MAGE", realm = "R", level = 60,
+                 ilvl = 60, money = 100 * GOLD, lastUpdate = 1 },
+        gone = { guid = "gone", name = "Goner", class = "ROGUE", realm = "R", level = 40,
+                 ilvl = 20, money = 50 * GOLD, lastUpdate = 1 },
+    })
+
+    eq("nothing is hidden, so there is no toggle to press",
+       AltStable._test.HiddenToggleText(), nil)
+
+    AltStable.HideCharacter("gone")
+    footer = refresh()
+    eq("hiding one puts the toggle on the footer",
+       AltStable._test.HiddenToggleText(), "|cff808080(1 hidden)|r")
+    eq("  and the grid leaves it out", joined(AltStable._test.DisplayNames()), "Keeper")
+
+    -- The totals BEFORE, so the comparison below is against a measured value
+    -- rather than a guess at what they should be.
+    local totalsWhileOff = footer
+
+    check("pressing it works", AltStable._test.ClickHiddenToggle())
+    eq("  the preference is set", AltStable.IsShowingHidden(), true)
+    footer = refresh()
+    eq("  and the grid lists the hidden character again",
+       joined(AltStable._test.DisplayNames()), "Keeper,Goner")
+
+    -- The half that could quietly lie.
+    eq("the totals do NOT change when hidden rows are listed", footer, totalsWhileOff)
+    check("  so the gold total still excludes it",
+          footer:find("100", 1, true) ~= nil and footer:find("150", 1, true) == nil, footer)
+    check("  and the iLvl average too", footer:find("60 avg iLvl", 1, true) ~= nil, footer)
+    check("  the label says as much, since the rows are visible",
+          (AltStable._test.HiddenToggleText() or ""):find("not counted", 1, true) ~= nil,
+          tostring(AltStable._test.HiddenToggleText()))
+
+    -- The row is listed, but marked. Otherwise it is indistinguishable from a
+    -- character that was never hidden, and unhiding becomes guesswork.
+    do
+        local row = AltStable.CreateFrozenRow(WoW.makeFrame(), 18, 100)
+        AltStable.RenderFrozenCharRow(row, AltStableDB.gone, 1)
+        eq("a hidden row is dimmed", row:GetAlpha(), AltStable._test.HIDDEN_ROW_ALPHA)
+
+        -- Rows come from a POOL. The one that drew the dimmed character draws a
+        -- normal one next, and a one-way "dim it if hidden" leaves a perfectly
+        -- visible character greyed out for no reason the user can see.
+        AltStable.RenderFrozenCharRow(row, AltStableDB.keep, 2)
+        eq("  and the next character in that pooled row is not",
+           row:GetAlpha(), 1)
+
+        AltStable.RenderFrozenCharRow(row, AltStableDB.gone, 1)
+        AltStable.RenderFrozenGroupRow(row, { kind = "group", realm = "R", count = 1 })
+        eq("  nor is a realm header drawn in it", row:GetAlpha(), 1)
+        AltStable.RenderFrozenCharRow(row, AltStableDB.gone, 1)
+        AltStable.RenderFrozenFillerRow(row, 1)
+        eq("  nor a filler", row:GetAlpha(), 1)
+
+        -- The scrollable half of the same row, which is a SECOND renderer.
+        -- Dimming only the name column would leave a half-faded row.
+        local cols = { { key = "level", label = "Level", width = 60 } }
+        local wide = AltStable.CreateRow(WoW.makeFrame(), 18, cols)
+        AltStable.RenderRow(wide, AltStableDB.gone, 1, cols)
+        eq("the scrollable half of a hidden row is dimmed too",
+           wide:GetAlpha(), AltStable._test.HIDDEN_ROW_ALPHA)
+        AltStable.RenderRow(wide, AltStableDB.keep, 2, cols)
+        eq("  and undimmed for the next one", wide:GetAlpha(), 1)
+        AltStable.RenderRow(wide, AltStableDB.gone, 1, cols)
+        AltStable.RenderFillerRow(wide, 1)
+        eq("  and for a filler", wide:GetAlpha(), 1)
+        AltStable.RenderRow(wide, AltStableDB.gone, 1, cols)
+        AltStable.RenderGroupRow(wide, { kind = "group", realm = "R", count = 1 })
+        eq("  and for a group row", wide:GetAlpha(), 1)
+    end
+
+    -- Unhide the last hidden character WHILE listing them. The button must not
+    -- vanish with the preference still set, or the next character hidden stays
+    -- on screen with no control in sight to explain why.
+    AltStable.ShowCharacter("gone")
+    footer = refresh()
+    eq("nothing is hidden any more", AltStable.IsCharacterHidden("gone"), false)
+    check("the toggle stays while it is switched on",
+          AltStable._test.HiddenToggleText() ~= nil,
+          "with none hidden and the toggle on, there would be no way to turn it off")
+    check("  reading zero", (AltStable._test.HiddenToggleText() or ""):find("(0 hidden", 1, true) ~= nil,
+          tostring(AltStable._test.HiddenToggleText()))
+
+    check("pressing it again turns it off", AltStable._test.ClickHiddenToggle())
+    eq("  the preference clears", AltStable.IsShowingHidden(), false)
+    footer = refresh()
+    eq("  and now it goes away", AltStable._test.HiddenToggleText(), nil)
+end
+
+------------------------------------------------------------
+-- Forgetting a character, confirmed (#65 via the #69 menu)
+--
+-- The confirmation that used to guard HIDING now guards forgetting, and it
+-- inherits the whole problem that made it worth testing: a StaticPopup raised
+-- while the sheet is open is invisible, so the click reads as doing nothing.
+-- These checks are on the forget path because that is where the popup went -
+-- dropping them with the hide confirmation would have retired the coverage
+-- along with the feature, and the bug is still live.
+------------------------------------------------------------
+
+do
+    AltStableConfig.hiddenCharacters = {}
+    build({
+        keep = { guid = "keep", name = "Keeper", class = "MAGE", realm = "R", level = 60,
+                 ilvl = 60, money = 100 * GOLD, lastUpdate = 1 },
+        gone = { guid = "gone", name = "Goner", class = "ROGUE", realm = "R", level = 40,
+                 ilvl = 20, money = 50 * GOLD, lastUpdate = 1 },
+    })
+
+    WoW.popups = {}
+    AltStable.ShowCharacterMenu(AltStableDB.gone)
+    AltStable._test.MenuClick("forget")
+    eq("choosing Forget raises one confirmation", #WoW.popups, 1)
+    check("  and closes the menu first, so it cannot swallow the dialog's click",
+          AltStable._test.MenuIsShown() == false)
+
+    local popup = WoW.popups[1]
+    if popup then
+        check("  naming the character", popup.arg1 == "Goner", tostring(popup.arg1))
+
+        -- The sheet is DIALOG strata and toplevel, and a StaticPopup is DIALOG
+        -- too, so this confirmation opened BEHIND the window.
+        local dialog = popup.dialog
+        check("the popup hands back a frame", dialog ~= nil)
+        if dialog then
+            eq("it is raised above the sheet", dialog:GetFrameStrata(), "FULLSCREEN_DIALOG")
+            check("  and is actually visible", dialog:IsVisible() == true)
+            StaticPopup_Hide(popup.which)
+            eq("  strata is put back, since the frame is shared with every addon",
+               dialog:GetFrameStrata(), "DIALOG")
+        end
+
+        -- The case that was broken: the showcase has hidden the whole UI, and a
+        -- StaticPopup is a CHILD of UIParent. No strata makes the child of a
+        -- hidden parent draw.
+        local realHidden = AltStable.IsGameUIHidden
+        AltStable.IsGameUIHidden = function() return true end
+        UIParent:Hide()
+
+        WoW.popups = {}
+        AltStable.ShowCharacterMenu(AltStableDB.gone)
+        AltStable._test.MenuClick("forget")
+        local hiddenUIPopup = WoW.popups[#WoW.popups]
+        check("a confirmation is still raised with the UI hidden", hiddenUIPopup ~= nil)
+        if hiddenUIPopup and hiddenUIPopup.dialog then
+            local d = hiddenUIPopup.dialog
+            check("  it is lifted OUT from under the hidden UIParent",
+                  d:GetParent() ~= UIParent, tostring(d:GetParent()))
+            check("  so the player can actually see the question", d:IsVisible() == true)
+            StaticPopup_Hide(hiddenUIPopup.which)
+            eq("  and is parented back on close", d:GetParent(), UIParent)
+            eq("  with its strata restored", d:GetFrameStrata(), "DIALOG")
+        end
+
+        -- The menu itself has to survive the same thing: it is a frame of ours,
+        -- raised while UIParent is hidden.
+        AltStable.ShowCharacterMenu(AltStableDB.gone)
+        local menuRoot = AltStable._test.MenuRoot()
+        check("the menu is lifted out from under the hidden UIParent too",
+              menuRoot and menuRoot:GetParent() ~= UIParent, tostring(menuRoot))
+        check("  so it can be seen at all", menuRoot and menuRoot:IsVisible() == true)
+        AltStable.CloseCharacterMenu()
+        eq("  and is parented back when it closes", menuRoot:GetParent(), UIParent)
+
+        UIParent:Show()
+        AltStable.IsGameUIHidden = realHidden
+    end
+
+    -- Nothing happens until it is accepted.
+    WoW.popups = {}
+    AltStable.ShowCharacterMenu(AltStableDB.gone)
+    AltStable._test.MenuClick("forget")
+    popup = WoW.popups[1]
+    check("the record survives an unanswered confirmation", AltStableDB.gone ~= nil)
+
+    local dialog = StaticPopupDialogs[popup and popup.which]
+    check("the dialog is registered", dialog ~= nil)
+    if dialog then
+        eq("  its accept button is not a yes/no", dialog.button1, ACCEPT)
+        dialog.OnAccept(nil, popup.data)
+    end
+    eq("accepting forgets the character", AltStableDB.gone, nil)
+    check("  and the grid drops the row",
+          joined(AltStable._test.DisplayNames()):find("Goner") == nil,
+          joined(AltStable._test.DisplayNames()))
+
+    -- Put the world back the way the next section expects to find it: Goner
+    -- present and hidden. This block deletes a character, and leaving that
+    -- deletion lying around would make the Options restore list below fail for
+    -- a reason that has nothing to do with the Options restore list.
+    build({
+        keep = { guid = "keep", name = "Keeper", class = "MAGE", realm = "R", level = 60,
+                 ilvl = 60, money = 100 * GOLD, lastUpdate = 1 },
+        gone = { guid = "gone", name = "Goner", class = "ROGUE", realm = "R", level = 40,
+                 ilvl = 20, money = 50 * GOLD, lastUpdate = 1 },
+    })
+    AltStable.SetCharacterHidden("gone", true)
+    AltStable.RefreshSheet()
+end
 
 ------------------------------------------------------------
 -- The restore list in Options
@@ -282,9 +490,11 @@ eq("the list shows a full page", #rows, 6)
 check("  and counts the rest", (note or ""):find("2 more", 1, true) ~= nil, tostring(note))
 footer = refresh()
 if footer then
-    check("every character can be hidden", footer:find("(8 hidden)", 1, true) ~= nil, footer)
     check("  leaving an empty grid, not an error", #AltStable._test.DisplayNames() == 0)
 end
+check("every character can be hidden",
+      (AltStable._test.HiddenToggleText() or ""):find("(8 hidden)", 1, true) ~= nil,
+      tostring(AltStable._test.HiddenToggleText()))
 
 ------------------------------------------------------------
 -- Keyed by guid, because names are not unique
@@ -343,27 +553,46 @@ local row = AltStable.CreateFrozenRow(WoW.makeFrame(), 18, 100)
 AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
 local onClick = row.nameTipBtn:GetScript("OnClick")
 check("the name row handles clicks", type(onClick) == "function")
+
+-- The registration, not just the handler.
+--
+-- A Button fires OnClick for the LEFT button only until RegisterForClicks says
+-- otherwise. Every check below calls the handler directly with "RightButton",
+-- which the client would never do on an unregistered button - so without this
+-- one assertion the whole section can pass against a menu that cannot be
+-- opened in game.
+check("the row listens for right-clicks at all",
+      row.nameTipBtn:HandlesClick("RightButton"),
+      table.concat(row.nameTipBtn:RegisteredClicks(), ","))
+
 if onClick then
+    AltStable.CloseCharacterMenu()
     onClick(row.nameTipBtn, "LeftButton")
-    eq("a left-click does nothing", #WoW.popups, 0)
+    check("a left-click opens no menu", AltStable._test.MenuIsShown() == false)
+
     onClick(row.nameTipBtn, "RightButton")
-    eq("a right-click asks", #WoW.popups, 1)
+    check("a right-click opens the menu", AltStable._test.MenuIsShown())
     check("  about the character under the cursor",
-          WoW.popups[1] and WoW.popups[1].arg1 == "Here", tostring(WoW.popups[1] and WoW.popups[1].arg1))
+          table.concat(AltStable._test.MenuLabels(), "|"):find("Here", 1, true) ~= nil,
+          table.concat(AltStable._test.MenuLabels(), "|"))
+    eq("  and still asks nothing", #WoW.popups, 0)
 
     -- A recycled row carries no character. Group rows and fillers go through
-    -- the same pool, and a right-click there must not hide whatever was drawn
-    -- in that row last.
+    -- the same pool, and a right-click there must not offer to act on whatever
+    -- was drawn in that row last.
+    AltStable.CloseCharacterMenu()
     AltStable.HideFrozenRow(row)
     onClick(row.nameTipBtn, "RightButton")
-    eq("a right-click on an empty row does nothing", #WoW.popups, 1)
+    check("a right-click on an empty row opens nothing",
+          AltStable._test.MenuIsShown() == false)
 
     -- The realm header is the one that actually happens: collapse a realm and
     -- the row that drew a character now draws its header, at the same index.
     AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
     AltStable.RenderFrozenGroupRow(row, { kind = "group", realm = "R", count = 1 })
     onClick(row.nameTipBtn, "RightButton")
-    eq("a right-click on a realm header hides nothing", #WoW.popups, 1)
+    check("a right-click on a realm header opens nothing",
+          AltStable._test.MenuIsShown() == false)
 
     WoW.tooltipLines = {}
     row.nameTipBtn:GetScript("OnEnter")()
@@ -373,23 +602,25 @@ if onClick then
     AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
     AltStable.RenderFrozenFillerRow(row, 1)
     onClick(row.nameTipBtn, "RightButton")
-    eq("a right-click on a filler row hides nothing", #WoW.popups, 1)
+    check("a right-click on a filler row opens nothing",
+          AltStable._test.MenuIsShown() == false)
 end
 
--- The same guard, asked directly: the row is not the only caller (a plugin or
--- a slash command could route here), so the entry point has to hold it too.
-local okNil = pcall(AltStable.RequestHideCharacter, nil)
-check("asking to hide nothing is not an error", okNil)
-AltStable.RequestHideCharacter({ name = "No guid" })
-eq("  and raises no confirmation", #WoW.popups, 1)
+-- The same guard, asked directly: the row is not the only caller (the Roster
+-- card raises the same menu), so the entry point has to hold it too.
+AltStable.CloseCharacterMenu()
+local okNil = pcall(AltStable.ShowCharacterMenu, nil)
+check("asking for a menu on nothing is not an error", okNil)
+AltStable.ShowCharacterMenu({ name = "No guid" })
+check("  and opens nothing", AltStable._test.MenuIsShown() == false)
 
 AltStable.RenderFrozenCharRow(row, AltStableDB.here, 1)
 local onEnter = row.nameTipBtn:GetScript("OnEnter")
 if onEnter then
     WoW.tooltipLines = {}
     onEnter()
-    check("the tooltip says how to hide it",
-          joined(WoW.tooltipLines):find("Right%-click to hide") ~= nil,
+    check("the tooltip says the right-click does more than hide",
+          joined(WoW.tooltipLines):find("favourite") ~= nil,
           joined(WoW.tooltipLines))
 end
 

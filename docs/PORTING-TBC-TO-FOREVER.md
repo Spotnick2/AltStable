@@ -219,7 +219,19 @@ Implement only the contracts your code actually consumes. Don't build a historic
 - **Professions and Housing subsystems are compiled in but inert** (`Logs\Professions.log` and
   `Logs\Housing.log` exist and are 0 bytes). Don't call into the Retail profession UI.
 - **`UIDropDownMenu` / `EasyMenu`** are the usual Retail-migration killers. If your addon uses them,
-  budget for that separately.
+  budget for that separately. `MenuUtil` is present (32 functions) as the modern replacement, but
+  **nobody has yet confirmed it behaves** on this client — probe before building on it:
+  `/run MenuUtil.CreateContextMenu(UIParent, function(_, root) root:CreateButton("hi") end)`.
+  A hand-rolled menu frame is a viable third option and is what AltStable shipped; the costs are
+  itemised in `docs/forever-api-notes.md`, and the one that surprises people is Escape — a frame in
+  `UISpecialFrames` does not get the key if an earlier frame in that list is also open.
+- **Anything that hides `UIParent`** (`SetUIVisibility(false)`, for a cinematic or showcase mode)
+  breaks every frame you did not build yourself. **No strata makes the child of a hidden parent
+  draw**, and `StaticPopup`s and menus are children of `UIParent` — so confirmations and context
+  menus silently do not appear, which reads as a click that did nothing rather than as a bug. The
+  cure is to reparent the frame out from under `UIParent` for the duration and put it back after;
+  make that helper **idempotent**, or a second lift saves the already-lifted strata and the restore
+  leaves the frame raised for good.
 
 ### Characters have surnames — first names are not unique
 

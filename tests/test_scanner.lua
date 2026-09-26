@@ -250,6 +250,7 @@ WoW.reset()
 -- RowRenderer needs the palette from Theme.lua at load.
 dofile("Theme.lua")
 dofile("RowRenderer.lua")
+dofile("CharacterMenu.lua")
 local iconOf = AltStable._test and AltStable._test.RaceIconText
 
 if iconOf then
