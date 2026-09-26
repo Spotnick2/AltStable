@@ -606,6 +606,13 @@ function StartCountdown(why)
         :format(why, WARN_SECONDS))
     pending = C_Timer.NewTimer(WARN_SECONDS, function()
         pending = nil
+        -- Asked again at the moment it fires, not only when it was scheduled.
+        -- Cancelling on the /asrender auto path covers the command; this covers
+        -- every other way the answer could have changed in those five seconds.
+        if not AutoEnabled() then
+            Out("auto-capture was turned off - not taking the picture")
+            return
+        end
         Capture()
     end)
 end
@@ -716,6 +723,11 @@ SlashCmdList["ASRENDER"] = function(msg)
         AltStableProbeDB = AltStableProbeDB or {}
         AltStableProbeDB.autoCaptureOff = AutoEnabled() and true or nil
         Out("auto-capture " .. (AutoEnabled() and "|cff55ff55on|r" or "|cffff5555off|r"))
+        -- Turning it off has to stop what is already coming. Otherwise the
+        -- countdown announced a moment ago still fires, and the interface
+        -- vanishes for three seconds directly after the player was told
+        -- auto-capture is off.
+        if not AutoEnabled() then CancelPending("auto-capture turned off", true) end
         return
     end
     if msg == "status" then

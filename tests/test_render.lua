@@ -59,6 +59,14 @@ WoW.inCombat = false
 
 local function renders() return (AltStableProbeDB.renders or {}) end
 local function resetCapture()
+    -- Module state too, not just the stubs. pending / combatSettle / capturing
+    -- are locals in Render.lua, and StartCountdown is idempotent - so a stale
+    -- `pending` leaking in from an earlier block makes the next
+    -- StartCountdown a silent no-op while pendingKind() still answers
+    -- "countdown", and the block passes against a timer it never created.
+    if AltStableProbe and AltStableProbe._test and AltStableProbe._test.CancelPending then
+        AltStableProbe._test.CancelPending()
+    end
     AltStableProbeDB = { renders = {}, looks = {} }
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.timers = {}
@@ -333,8 +341,15 @@ do
     T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_ENABLED")
     WoW.chatOut = {}
     SlashCmdList["ASRENDER"]("cancel")
+    -- On the CONTENT, not the line count. "nothing pending" is also one line,
+    -- so a CancelPending that cancelled the timer and reported false would
+    -- satisfy a count - and reporting false while cancelling is exactly the
+    -- regression this function's own comment records as having shipped once.
+    local answer = table.concat(WoW.chatOut or {}, " ")
     check("/asrender cancel confirms it cancelled the quiet wait",
-          #(WoW.chatOut or {}) > 0, "the command answered nothing")
+          answer:find("cancelled", 1, true) ~= nil, answer)
+    check("  and does not claim nothing was pending",
+          answer:find("nothing pending", 1, true) == nil, answer)
     eq("  and there is nothing left pending", T.pendingKind(), nil)
 end
 
@@ -356,6 +371,46 @@ do
 
     WoW.chatOut = {}
     eq("cancelling nothing reports nothing was pending", T.CancelPending(nil, true), false)
+end
+
+------------------------------------------------------------
+-- Turning auto-capture off stops what is already coming
+------------------------------------------------------------
+-- The countdown announces itself five seconds ahead. Type /asrender auto inside
+-- that window and you are told auto-capture is off - and then, three seconds
+-- later, the interface vanishes for a capture anyway.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoCaptureOff = nil
+    T.StartCountdown("gear changed")
+    eq("a countdown is pending", T.pendingKind(), "countdown")
+
+    WoW.chatOut = {}
+    SlashCmdList["ASRENDER"]("auto")
+    eq("  turning auto off cancels it", T.pendingKind(), nil)
+    local said = table.concat(WoW.chatOut or {}, " ")
+    check("  and says so, rather than going quiet",
+          said:find("cancelled", 1, true) ~= nil, said)
+
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("  so no picture is taken", WoW.screenshots, 0)
+    AltStableProbeDB.autoCaptureOff = nil
+end
+
+do
+    -- And the countdown asks again when it fires, for every other way the
+    -- answer could have changed in those five seconds.
+    resetCapture()
+    AltStableProbeDB.autoCaptureOff = nil
+    T.StartCountdown("gear changed")
+    AltStableProbeDB.autoCaptureOff = true    -- changed behind the command's back
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("a countdown that fires with auto off takes no picture", WoW.screenshots, 0)
+    check("  and is not left capturing", not T.capturing())
+    AltStableProbeDB.autoCaptureOff = nil
 end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))
