@@ -10,6 +10,44 @@ first.
 
 ---
 
+
+## #44, measured: the blob is 1.3 KB, and the bank half of it is 52 bytes
+
+Measured 2026-09-26 against this machine's real store, with
+`Tools/Sync/measure-blob.py`. Re-run it rather than trusting these numbers as
+the roster grows.
+
+```
+characters with inventory : 35
+bag entries / bytes       : 180 / 1251
+bank entries / bytes      :   7 /   52
+total blob payload        : 1303 bytes (+1225 framing)
+```
+
+#44's concern is that changing one bag re-sends the bank too. On this database
+that waste is **52 bytes** — 4% of the payload, one entry on one character, well
+under a single 220-byte chunk. The issue estimated "~150 unique items, roughly
+1.5 KB per record, ~30 KB for 20 alts"; the largest character here has 27 bag
+entries and 216 bytes, and the whole 35-character roster is 2.5 KB including
+framing.
+
+**So the split is not justified yet**, and it is not a free change: it is a
+`BLOB_VERSION` bump with cross-version compatibility to get right, for 4% of
+1.3 KB. The issue already called it "a growth problem, not a present failure" —
+this is the number that says the growth has not happened.
+
+**What would change the answer.** A character with a full bank is roughly 120
+entries, about 700 bytes of bank alone. Twenty such alts is ~14 KB re-sent on
+every bag change, which is worth the format bump. This roster is levels 1–16
+with barely a bank between them, so it is nowhere near that. Re-measure when
+characters start hoarding.
+
+**The unexpected number** is framing: 1,225 bytes against 1,303 of payload,
+because `v1|s=…|kt=…|b=|k=` costs ~35 bytes per character and most characters
+carry only a handful of items. If blob size ever does matter, that is the larger
+share today — and it is a cheaper fix than splitting the sections.
+
+
 ## The problem, stated precisely
 
 Sync is whisper-only to a hand-typed whitelist. A whisper needs a character name, and the name that
