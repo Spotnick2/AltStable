@@ -4,6 +4,7 @@
 ## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: dev
+## Dependencies: AltStable
 ## SavedVariables: AltStableProbeDB
 ## SavedVariablesPerCharacter: AltStableProbeCharDB
 ## SavedVariablesMachine: AltStableProbeMachineDB

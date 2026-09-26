@@ -225,6 +225,16 @@ for _, file in ipairs(ICON_FILES) do
     if icon and WANTED_ICON then
         eq("  and it is the one SheetUI uses", icon, WANTED_ICON)
     end
+
+    -- ## Dependencies: AltStable is what nests a folder UNDER the main addon in
+    -- the AddOns list. Without it a member of this family sits at the top level
+    -- among unrelated addons, which is how Cutouts and the Probe looked until
+    -- someone noticed. The main addon is the parent and depends on nobody.
+    if file ~= "AltStable.toc" then
+        check("  and hangs off the main addon in the list",
+              src:match("##%s*Dependencies:[^\n]*AltStable") ~= nil,
+              "it would sit at the top level on its own")
+    end
 end
 
 print(("test_packaging: %d passed, %d failed"):format(passed, failed))
