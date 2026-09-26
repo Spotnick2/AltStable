@@ -809,11 +809,20 @@ local function RenderScene(chars)
             card.figure:SetSize(w, h)
             card.figure:Show()
 
-            card.label:SetWidth(math.max(slot, w))
+            -- The name sizes to ITSELF, not to the slot.
+            --
+            -- Constraining it to the slot and disabling word wrap means the
+            -- client truncates: tightening the spacing turned "Morphisto
+            -- Ruskador" into "Morphisto Ruska...". A name is the one thing on
+            -- this card that has to be readable, and Forever's surnames make
+            -- them long. Width 0 lets the string be as wide as its text, so it
+            -- may reach a little over a neighbour's empty floor - which costs
+            -- nothing, because the figures are what occupy the slots.
+            card.label:SetWidth(0)
             card.label:SetText(AltStable.ClassColor
                 and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
                 or (char.name or "?"))
-            card.sub:SetWidth(math.max(slot, w))
+            card.sub:SetWidth(0)
             card.sub:SetText(("level %d"):format(char.level or 0))
             card.highlight:SetShown(Roster.selected == char.guid)
             card.charGuid = char.guid
