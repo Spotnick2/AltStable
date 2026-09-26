@@ -38,6 +38,11 @@ $excludeDirs = @(
     # misleading to diagnose what the client actually loaded.
     (Join-Path $RepoRoot ".claude"),
     (Join-Path $RepoRoot ".vscode"),
+    # Scene REFERENCE screenshots: ~79 MB of source material the client never
+    # reads. Excluded like dist/ and for the same reason - a deployed tree that
+    # carries the sources makes it harder to see what the game actually loaded.
+    # (The PNG masters beside them are already covered by the *.png file rule.)
+    (Join-Path $RepoRoot "Media/Scene/References"),
     (Join-Path $RepoRoot ".idea"),
     (Join-Path $RepoRoot "dist"),
     (Join-Path $RepoRoot "__pycache__"),
