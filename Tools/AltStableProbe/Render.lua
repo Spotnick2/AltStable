@@ -570,15 +570,31 @@ if type(StaticPopupDialogs) == "table" then
     }
 end
 
-function CancelPending(reason)
+-- Cancel whatever is queued. Returns whether anything was.
+--
+-- Only the COUNTDOWN is announced, because only the countdown was announced
+-- when it started ("refreshing your portrait in 5s"). Cancelling it silently
+-- would leave the player waiting for a picture that is not coming.
+--
+-- The quiet-after-combat wait is different: nothing told the player it was
+-- running, so nothing should tell them it stopped. It did, and the result was
+-- "[render] auto-capture cancelled - combat started" on EVERY pull - the timer
+-- is armed when combat ends and cancelled the moment the next fight starts,
+-- which while questing is a line of chat per mob.
+--
+-- announce forces the message for "/asrender cancel", where the player asked
+-- and silence would look like the command did nothing.
+function CancelPending(reason, announce)
     -- The quiet-after-combat wait counts as pending. Without this, "/asrender
     -- cancel" during that window answered "nothing pending" and then took the
     -- picture thirty seconds later anyway.
-    local had = false
-    if combatSettle then combatSettle:Cancel(); combatSettle = nil; had = true end
-    if pending then pending:Cancel(); pending = nil; had = true end
-    if not had then return false end
-    Out("auto-capture cancelled" .. (reason and (" - " .. reason) or ""))
+    local hadCountdown, hadSettle = false, false
+    if combatSettle then combatSettle:Cancel(); combatSettle = nil; hadSettle = true end
+    if pending then pending:Cancel(); pending = nil; hadCountdown = true end
+    if not (hadCountdown or hadSettle) then return false end
+    if hadCountdown or announce then
+        Out("auto-capture cancelled" .. (reason and (" - " .. reason) or ""))
+    end
     return true
 end
 
@@ -663,7 +679,8 @@ SlashCmdList["ASRENDER"] = function(msg)
     msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
 
     if msg == "cancel" then
-        if not CancelPending() then Out("nothing pending") end
+        -- The player asked, so say something either way.
+        if not CancelPending(nil, true) then Out("nothing pending") end
         return
     end
     local deg = msg:match("^facing%s+(%-?%d+%.?%d*)$")
@@ -730,7 +747,6 @@ auto:SetScript("OnEvent", function(_, event)
         -- A fight started inside the countdown: hiding the UI for three
         -- seconds mid-pull is the one thing this must never do.
         CancelPending("combat started")
-        if combatSettle then combatSettle:Cancel(); combatSettle = nil end
         -- Abandon an in-flight capture on EVERY path, not just the fallback.
         -- The engine hide is combat-safe to REVERSE, but leaving it in place
         -- means the player fights the pull with no action bars until the chain
@@ -778,6 +794,11 @@ AltStableProbe._test = {
     capturing      = function() return capturing and true or false end,
     token          = function() return captureToken end,
     renderMark     = function() return renderMark end,
+    CancelPending  = function(r, a) return CancelPending(r, a) end,
+    StartCountdown = function(why) return StartCountdown(why) end,
+    pendingKind    = function()
+        return (pending and "countdown") or (combatSettle and "settle") or nil
+    end,
     KEY_DELAY      = KEY_DELAY,
     SHOT_DELAY     = SHOT_DELAY,
     SWAP_DELAY     = SWAP_DELAY,

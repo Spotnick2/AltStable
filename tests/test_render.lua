@@ -270,5 +270,83 @@ check("  and matches the constants it is built from",
 check("the watchdog outlasts the whole sequence",
       watchdogDelay > (shots[2] or 0), ("%.1f vs %.2f"):format(watchdogDelay, shots[2] or 0))
 
+------------------------------------------------------------
+-- The quiet-after-combat wait cancels quietly
+------------------------------------------------------------
+-- Reported from a live session: "[render] auto-capture cancelled - combat
+-- started" on EVERY pull. The wait is armed when combat ends and cancelled the
+-- moment the next fight begins, so while questing that is a line of chat per
+-- mob - announcing the end of something whose beginning was never announced.
+--
+-- The countdown is the opposite case. It says "refreshing your portrait in 5s"
+-- when it starts, so cancelling it silently would leave the player waiting for
+-- a picture that is not coming.
+
+do
+    resetCapture()
+    local events = T.events:GetScript("OnEvent")
+
+    -- Leaving combat arms the silent wait.
+    events(T.events, "PLAYER_REGEN_ENABLED")
+    eq("leaving combat arms the quiet wait", T.pendingKind(), "settle")
+
+    -- Entering it again cancels the wait, and says nothing.
+    WoW.chatOut = {}
+    events(T.events, "PLAYER_REGEN_DISABLED")
+    eq("  and the next pull cancels it", T.pendingKind(), nil)
+    eq("  without a word, because nothing announced it", #(WoW.chatOut or {}), 0)
+
+    -- Ten pulls, still nothing.
+    WoW.chatOut = {}
+    for _ = 1, 10 do
+        events(T.events, "PLAYER_REGEN_ENABLED")
+        events(T.events, "PLAYER_REGEN_DISABLED")
+    end
+    eq("  ten pulls in a row produce ten lines of nothing", #(WoW.chatOut or {}), 0)
+end
+
+do
+    -- The countdown is the opposite case and must still speak. It announced
+    -- itself when it started, so cancelling it in silence leaves the player
+    -- waiting for a picture that is not coming.
+    resetCapture()
+    T.StartCountdown("gear changed")
+    eq("a countdown is pending", T.pendingKind(), "countdown")
+    WoW.chatOut = {}
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
+    eq("  and combat cancels it", T.pendingKind(), nil)
+    check("  but says so, because it had announced itself",
+          #(WoW.chatOut or {}) > 0, "the player was left waiting in silence")
+end
+
+do
+    -- /asrender cancel is the player asking, so silence would read as a command
+    -- that did nothing. Driven through the real command, because the argument
+    -- it passes is the whole point.
+    resetCapture()
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_ENABLED")
+    WoW.chatOut = {}
+    SlashCmdList["ASRENDER"]("cancel")
+    check("/asrender cancel confirms it cancelled the quiet wait",
+          #(WoW.chatOut or {}) > 0, "the command answered nothing")
+    eq("  and there is nothing left pending", T.pendingKind(), nil)
+end
+
+do
+    -- /asrender cancel is the player asking, so silence would read as a command
+    -- that did nothing.
+    resetCapture()
+    local events = T.events:GetScript("OnEvent")
+    events(T.events, "PLAYER_REGEN_ENABLED")
+    WoW.chatOut = {}
+    check("cancelling the quiet wait by hand is confirmed",
+          T.CancelPending(nil, true) == true)
+    check("  out loud", #(WoW.chatOut or {}) > 0,
+          "the player asked and got no answer")
+
+    WoW.chatOut = {}
+    eq("cancelling nothing reports nothing was pending", T.CancelPending(nil, true), false)
+end
+
 print(("test_render: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)
