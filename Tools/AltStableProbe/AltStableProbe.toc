@@ -11,3 +11,4 @@ Probe.lua
 Models.lua
 Scene.lua
 Render.lua
+WhatIcon.lua
