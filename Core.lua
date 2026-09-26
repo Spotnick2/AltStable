@@ -448,10 +448,23 @@ AltStable.AUTH_AUTO, AltStable.AUTH_ASK, AltStable.AUTH_NEVER = AUTH_AUTO, AUTH_
 -- under a key the handler never looked up: it printed "refusing karuzo" and
 -- went on serving them. A security control that silently no-ops on a
 -- capitalisation is worse than none, because it reports success.
+-- REALM INCLUDED. "Trusted-OtherRealm" and "Trusted" are two people.
+--
+-- Stripping the realm meant a whitelist entry for a character on another realm
+-- silently authorized the local character of the same name, who could then
+-- whisper a request and be served without ever being asked about. Folding case
+-- is right - WoW whisper targets are case-insensitive - but folding away the
+-- realm is not; it is the only thing distinguishing two players who chose the
+-- same name.
+--
+-- A sender with no realm suffix IS the local realm, and a whitelist entry with
+-- no suffix means the same, so those two match each other and neither matches a
+-- qualified name.
 local function AuthKey(peer)
-    local short = PeerShort(peer)
-    if type(short) ~= "string" or short == "" then return nil end
-    return short:lower()
+    if type(peer) ~= "string" or peer == "" then return nil end
+    local trimmed = peer:match("^%s*(.-)%s*$")
+    if trimmed == "" then return nil end
+    return trimmed:lower()
 end
 
 local function SyncAuthFor(peer)
@@ -1228,11 +1241,29 @@ local function DefineSyncServing()
 
         pendingAuth[AuthKey(peer) or owedShort] = nil
 
-        local replyChannel = (channel == "WHISPER") and "WHISPER" or "GUILD"
-        local replyTarget  = (channel == "WHISPER") and peer or nil
+        -- ALWAYS a whisper, to the character that asked.
+        --
+        -- A request arriving on GUILD used to be answered on GUILD, so every
+        -- guild member received the database - including the ones who had not
+        -- been authorized and the ones explicitly denied. Authorizing one peer
+        -- must not authorize a broadcast, and there is no reason for an answer
+        -- to a question to reach anyone but the asker. BroadcastDB is a
+        -- separate, deliberate act.
+        local replyChannel, replyTarget = "WHISPER", peer
+        if not peer or peer == "" then return end
         Print(peer .. " requested sync — sending data.")
         local delay = ReplyDelay(AltStable.API.PlayerFullName(), time())
         C_Timer.After(delay, function()
+            -- Check again. The reply is staggered by a few seconds, and in that
+            -- window the player can read the name, decide against it and type
+            -- /alts deny - which said "refusing" while the database went out
+            -- anyway. An answer given before the envelope is sealed has to
+            -- count.
+            if SyncAuthFor(peer) == AUTH_NEVER then
+                Print("|cffff8800" .. (PeerShort(peer) or peer)
+                    .. " was denied before the reply went out - nothing was sent.|r")
+                return
+            end
             SendFullDatabase(replyChannel, replyTarget, sinceTS)
         end)
     end
@@ -1857,6 +1888,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if senderName == PLAYER_NAME then
             return
         end
+        -- The name as it arrived, realm and all. senderName is the realm-less
+        -- form the routing and buffer keys have always used; authorization
+        -- needs the full identity, because two realms can hold the same name
+        -- and only one of them may have been approved (#61).
+        local senderFull = sender or senderName
 
         local cmd, payload = strsplit("|", message, 2)
 
@@ -1864,7 +1900,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if cmd == MSG_REQUEST_V then
             -- payload is the requester's delta watermark (0 / absent => full DB).
             local sinceTS = tonumber(payload) or 0
-            local mode = SyncAuthFor(senderName)
+            local mode = SyncAuthFor(senderFull)
 
             if mode == AUTH_NEVER then
                 -- Silently. They were told once, when the answer was given.
@@ -1872,11 +1908,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
 
             if mode == AUTH_ASK then
-                RememberPendingRequest(senderName, sinceTS, channel)
+                RememberPendingRequest(senderFull, sinceTS, channel)
                 return
             end
 
-            ServeSyncRequest(senderName, sinceTS, channel)
+            ServeSyncRequest(senderFull, sinceTS, channel)
             return
         end
 

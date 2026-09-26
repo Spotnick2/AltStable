@@ -111,6 +111,15 @@ Stranger is asking for your character database. Nothing has been sent.
 - `/alts auth` — what is stored, and who is waiting on you.
 - `/alts forget-peer <name>` — drop the stored answer and be asked again.
 
+**An answer is always a whisper to the character that asked.** A request
+arriving on the guild channel used to be answered on the guild channel, so
+approving one peer broadcast the database to every member. Nothing is sent to a
+room. (`BroadcastDB` is a separate, deliberate act.)
+
+**The realm is part of who they are.** `Trusted-OtherRealm` and `Trusted` are
+two different people, and approving one does not approve the other. Case is
+folded, because WoW whisper targets are case-insensitive; the realm is not.
+
 **Your whitelist counts as consent.** Peers you listed there are served without
 a prompt, because you already named them as your own — so an existing setup sees
 no new prompts. An explicit `deny` still beats the whitelist.

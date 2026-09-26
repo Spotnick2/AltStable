@@ -1766,6 +1766,23 @@ do
         eq(AltStable.ForgottenGuidFor("Twin Surname"), nil, "  every time, not by luck")
     end
     eq(AltStable.ForgottenGuidFor("Twin"), nil, "the shared first name is ambiguous too")
+    AltStableConfig = { whitelist = { "Mine-Realm" }, peerWatermarks = {} }
+    eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_AUTO,
+       "a peer we whitelisted is one we already chose to sync with")
+
+    -- THE REALM IS PART OF WHO THEY ARE. Stripping it meant a whitelist entry
+    -- for a character on another realm silently authorized the LOCAL character
+    -- of the same name, who could then ask and be served without a prompt.
+    eq(AltStable.SyncAuthFor("Mine"), AltStable.AUTH_ASK,
+       "  and the local character of the same name is somebody else")
+
+    AltStable.DenySyncPeer("Mine-Realm")
+    eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_NEVER,
+       "  but saying never to someone you whitelisted means never")
+
+    AltStable.ForgetSyncPeer("Mine-Realm")
+    eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_AUTO,
+       "  and forgetting the answer falls back to the whitelist, not to ask")
 
     -- The GUID is the way out.
     eq(AltStable.ForgottenGuidFor("Player-Dup-A"), "Player-Dup-A",
@@ -1992,8 +2009,11 @@ do
     AltStableConfig = { whitelist = { "karuzo" }, peerWatermarks = {} }
     eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_AUTO,
        "a whitelist entry matches the character whatever the case")
-    eq(AltStable.SyncAuthFor("KARUZO-Realm"), AltStable.AUTH_AUTO,
-       "  realm suffix and shouting included")
+    eq(AltStable.SyncAuthFor("KARUZO"), AltStable.AUTH_AUTO, "  including shouting")
+    -- An unqualified entry means the local character, so a qualified name is a
+    -- different person - not the same one written out more fully.
+    eq(AltStable.SyncAuthFor("Karuzo-OtherRealm"), AltStable.AUTH_ASK,
+       "  but somebody on another realm is not that character")
 
     AltStable.DenySyncPeer("karuzo")
     eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_NEVER,
@@ -2075,6 +2095,144 @@ do
     eq(#AltStable.PendingSyncRequests(), 1, "the request is remembered")
     WoW.now = (WoW.now or 0) + 3600
     eq(#AltStable.PendingSyncRequests(), 0, "  and an hour later it is gone, not merely hidden")
+end
+
+
+------------------------------------------------------------
+-- An answer goes to the asker, and only while they are still allowed
+------------------------------------------------------------
+
+do
+    -- THROUGH THE HANDLER, with a realm in play. Whitelisting a character on
+    -- another realm used to authorize the LOCAL character of the same name,
+    -- who could then whisper a request and be served without a prompt. The
+    -- handler strips the realm for routing and buffer keys; the consent
+    -- decision has to see the full identity.
+    WoW.reset()
+    AltStableConfig = { whitelist = { "Trusted Name-OtherRealm" }, peerWatermarks = {},
+                        syncAuth = {} }
+    AltStableDB = {
+        ["Player-Secret-9"] = { guid = "Player-Secret-9", name = "Secret", class = "MAGE",
+                                level = 60, money = 999999, lastUpdate = 1000,
+                                scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Trusted Name")
+    flushAll()
+    eq(#WoW.sentMessages(), 0,
+       "the local character sharing a whitelisted name is not served")
+
+    WoW.sent = {}
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Trusted Name-OtherRealm")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "  while the one actually whitelisted is")
+    for _, m in ipairs(WoW.sent) do
+        eq(m.target, "Trusted Name-OtherRealm",
+           "  and the reply is addressed across the realm, not to the local namesake")
+    end
+end
+
+do
+    -- An unknown CROSS-REALM requester. Everything the player then does has to
+    -- be about that person, not about whoever shares their name locally - so
+    -- the pending entry keeps the realm, approving by the realm-qualified name
+    -- works, and the reply is addressed back across the realm rather than
+    -- whispered to a local stranger.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Secret-8"] = { guid = "Player-Secret-8", name = "Secret", class = "MAGE",
+                                level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Faraway Name-OtherRealm")
+    local waiting = AltStable.PendingSyncRequests()
+    eq(#waiting, 1, "the cross-realm request is pending")
+    eq(waiting[1] and waiting[1].name, "Faraway Name-OtherRealm",
+       "  recorded with the realm, because that is who asked")
+
+    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_ASK,
+       "approving the local name would be approving somebody else")
+
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Faraway Name-OtherRealm")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "approving the one who asked answers them")
+    for _, m in ipairs(WoW.sent) do
+        eq(m.target, "Faraway Name-OtherRealm",
+           "  and the reply goes back across the realm, not to a local stranger")
+    end
+end
+
+
+do
+    -- A REQUEST ON GUILD USED TO BE ANSWERED ON GUILD. Approving one peer then
+    -- broadcast the database to the entire guild - every member, including the
+    -- ones never authorized and the ones explicitly denied. Authorizing one
+    -- person must not authorize a broadcast.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Priv-1"] = { guid = "Player-Priv-1", name = "Private", class = "MAGE",
+                              level = 60, money = 123456, lastUpdate = 1000,
+                              scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "GUILD",
+            "Guildie Surname")
+    eq(#WoW.sentMessages(), 0, "a guild request from a stranger is not answered")
+
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Guildie Surname")
+    flushAll()
+    local sent = WoW.sent
+    check(#sent > 0, "approving them does answer")
+    local broadcast = 0
+    for _, m in ipairs(sent) do
+        if m.channel ~= "WHISPER" then broadcast = broadcast + 1 end
+    end
+    eq(broadcast, 0, "  but privately - nothing goes to the guild")
+    for _, m in ipairs(sent) do
+        eq(m.target, "Guildie Surname", "  addressed to the character that asked")
+    end
+end
+
+do
+    -- DENYING DURING THE STAGGER. The reply is delayed a few seconds so peers
+    -- do not answer in unison; in that window the player can read the name,
+    -- think better of it and type /alts deny - which said "refusing" while the
+    -- database went out anyway.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Priv-2"] = { guid = "Player-Priv-2", name = "Private", class = "MAGE",
+                              level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Regret Surname")
+    AltStable.AllowSyncPeer("Regret Surname")      -- schedules the reply
+    WoW.sent = {}
+    AltStable.DenySyncPeer("Regret Surname")       -- before it fires
+    flushAll()
+    eq(#WoW.sentMessages(), 0,
+       "an answer withdrawn before the reply goes out means nothing is sent")
+
+    -- And the ordinary case still works.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, syncAuth = {} }
+    AltStableDB = {
+        ["Player-Priv-3"] = { guid = "Player-Priv-3", name = "Private", class = "MAGE",
+                              level = 60, lastUpdate = 1000, scannedHere = true },
+    }
+    onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
+            "Patient Surname")
+    AltStable.AllowSyncPeer("Patient Surname")
+    flushAll()
+    check(#WoW.sentMessages() > 0, "  while an answer left alone is still honoured")
 end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
