@@ -1138,6 +1138,13 @@ An id that does not resolve draws nothing, so the layer beneath shows through �
 no check, no branch, nothing to be wrong about. `SheetUI.lua`'s
 `ApplyRosterIcon` is the worked example.
 
+**With one condition: the top texture has to be opaque.** The measurement above
+says a *missing* id draws nothing; it says nothing about how much of the frame a
+*valid* one covers. Transparent pixels in the upper art reveal the backup at all
+times, which trades a hypothetical future defect for a visible present one — so
+look at it before shipping the pair. Checked for the Who-tab icon on 2026-09-26:
+opaque, no bleed-through.
+
 Finding the file-id half took a reviewer to doubt the check and one line in game
 to settle it. The stub had been written to the same assumption as the code, so
 the suite agreed with the mistake — and then the first correction asserted the

@@ -952,6 +952,12 @@ AltStable._PlayOpenAnimation = PlayOpenAnimation
 -- ever stops resolving, the layer beneath shows through and the button is the
 -- old icon rather than empty. No check, no branch, nothing to be wrong about.
 --
+-- This only holds while the Who-tab art is OPAQUE - transparent pixels in it
+-- would show the old icon through at all times, which is a present defect
+-- traded for a hypothetical one. Checked on the minimap button, 2026-09-26: the
+-- art covers the underlay completely, no bleed-through. Worth re-checking if
+-- the id is ever changed for a different texture.
+--
 -- If the icon ever does revert, /asicon on the Who tab gives the new id. (That
 -- command arrives with #82 and is not on main yet.)
 local ROSTER_ICON_FILE_ID = 8197123
