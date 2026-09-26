@@ -11,7 +11,7 @@ first.
 ---
 
 
-## #44, measured: the whole account's inventory is two chunks
+## #44, measured: the bank half is 52 bytes of 1.6 KB
 
 Measured 2026-09-26 with `Tools/Sync/measure-blob.py`, which reads the
 SavedVariables directly. Re-run it rather than trusting these numbers.
@@ -20,54 +20,59 @@ SavedVariables directly. Re-run it rather than trusting these numbers.
 account 50284074#12
   characters with inventory : 20
   bag / bank entries        : 100 / 7
-  blob payload, raw         : 1763 bytes
-  ... deflated              :  343 bytes
-  ... escaped, as sent      :  345 bytes  -> 2 chunks of 220
+  blob payload, raw         : 1592 bytes
+  ... deflated ALONE        :  403 bytes
   bank bytes, whole account :   52
 
 account 50284074#1
   characters with inventory : 15
   bag / bank entries        :  80 / 0
-  ... escaped, as sent      :  277 bytes  -> 2 chunks of 220
+  blob payload, raw         : 1188 bytes
+  ... deflated ALONE        :  317 bytes
 ```
 
-**The whole inventory blob for an account is two chunks.** Not "hundreds".
+**What the compressed figures are and are not.** The warband fragments are
+compressed here *on their own*. The real message interleaves them with the core
+character records in one DEFLATE stream, so these bound the fragments'
+contribution — they are not the size of a message anyone sends, and the chunk
+counts derived from them are not transport chunk counts. Enough to answer "is
+this worth a format change"; not a figure to quote as the size of a sync.
 
-#44's concern is that a bag change re-sends the bank too. Stated correctly:
-a bag change bumps **one** character's stamp, and `SerializeFullDB` filters on
-`lastUpdate`, so the delta carries that character alone. The bank re-sent with
-it is that one character's bank — the worst on this machine is 7 entries, 52
-raw bytes.
+**The decision does not rest on them anyway.** #44's concern is that a bag
+change re-sends the bank too. Stated correctly: a bag change bumps **one**
+character's stamp, and `SerializeFullDB` filters on `lastUpdate`, so the delta
+carries that character alone. The bank re-sent with it is that one character's
+bank — the worst on this machine is **7 entries, 52 raw bytes**.
 
-Even the worst case the issue imagines is small. A **full 120-item bank**, with
-distinct ids so it does not compress unrealistically, is 905 raw bytes → 420
-deflated → **2 chunks**. So the waste tops out at roughly one extra chunk, on
-the one character that changed.
+Even the worst case the issue imagines is small: a full 120-item bank, with
+distinct ids so it does not compress unrealistically, is 905 raw bytes.
 
 **So the split is not justified**, and it is not free: a `BLOB_VERSION` bump
 with cross-version compatibility to get right. Re-measure if characters start
-hoarding, but the shape of the answer will not change much — DEFLATE is doing
-the heavy lifting, not the format.
+hoarding.
 
-### Four ways the first attempt got this wrong
+### Five ways the first attempt got this wrong
 
 Recorded because each is an easy mistake to repeat, and the first version of
-this section stated all four as fact.
+this section stated all of them as fact.
 
-1. **Summing the account stores.** Each account is a separate client sending
-   its own blob; summing them measures a message nobody sends, and
-   double-counts the 13 characters both accounts know about. Reported 35
-   characters and 1,303 bytes for something that is really 20 and 744.
+1. **Summing the account stores.** Each account is a separate client sending its
+   own blob; summing them measures a message nobody sends and double-counts the
+   13 characters both accounts know. Reported 35 characters for something that
+   is really 20.
 2. **Counting chunks on raw bytes.** `ChunkAndSendPayload` DEFLATEs and escapes
-   before slicing at `MAX_CHUNK`, so raw size says nothing about chunk count.
-   1,763 raw is 345 on the wire — a factor of five.
-3. **Treating a delta as the whole roster.** The waste is per character, not
-   per database, because only the changed character rides the delta. This made
-   the recorded threshold about twenty times too high.
-4. **"Framing is half the blob."** True uncompressed — 35 identical
-   `plugin_warband:v1|s=…|kt=…` headers — and completely false on the wire,
-   because near-identical repeated headers are exactly what DEFLATE erases. The
-   suggestion that trimming framing was "the cheaper fix" is withdrawn.
+   before slicing, so raw size says nothing about chunk count.
+3. **Treating a delta as the whole roster.** The waste is per character, because
+   only the changed character rides the delta. This made the recorded threshold
+   about twenty times too high.
+4. **"Framing is half the blob."** True uncompressed, false on the wire:
+   near-identical repeated headers are what DEFLATE erases. The claim that
+   trimming framing was "the cheaper fix" is withdrawn.
+5. **Inventing the values being measured.** The script substituted one constant
+   stamp for every character and kept SavedVariables order instead of the
+   numeric order `EncodeMap` emits. Both flatter the compressor: with the real
+   stamps the same data deflates to **403 bytes rather than 343**, 17% worse.
+   Measuring a fixture is not measuring the thing.
 
 Note also that `EncodeForWoWAddonChannel` is **not** base64: it is
 `CreateCodec("\000", "\001", "")`, which escapes two byte values and costs

@@ -20,7 +20,10 @@ FOUR THINGS THIS HAS TO GET RIGHT, each of which the first version got wrong:
 2. ON THE WIRE. Core DEFLATEs the whole payload and escapes it before slicing
    at MAX_CHUNK (Core.lua, ChunkAndSendPayload), so chunk counts taken from raw
    bytes are meaningless - and repetitive per-character framing, which looks
-   enormous uncompressed, is exactly what DEFLATE erases.
+   enormous uncompressed, is exactly what DEFLATE erases. Note the limit of
+   even this: the warband fragments are compressed here on their own, while the
+   real stream also carries the core character records, so the figures bound
+   their contribution rather than measuring a message.
 
 3. PER DELTA. A bag change touches ONE character's stamp, and SerializeFullDB
    filters on lastUpdate, so the delta carries that character - not the roster.
@@ -82,8 +85,11 @@ def wire_map(body, name):
         elif body[j] == "}":
             depth -= 1
         j += 1
-    pairs = re.findall(r"\[(\d+)\]\s*=\s*(\d+)", body[m.end():j - 1])
-    return len(pairs), ";".join("%s,%s" % p for p in pairs)
+    found = re.findall(r"\[(\d+)\]\s*=\s*(\d+)", body[m.end():j - 1])
+    # EncodeMap sorts the ids before joining. SavedVariables order is arbitrary,
+    # and the order changes how well the result compresses.
+    found.sort(key=lambda pair: int(pair[0]))
+    return len(found), ";".join("%s,%s" % pair for pair in found)
 
 
 def on_wire(payload):
@@ -92,7 +98,13 @@ def on_wire(payload):
     LibDeflate's EncodeForWoWAddonChannel is CreateCodec("\\000", "\\001", "") -
     it escapes NUL and 0x01 and nothing else, so it costs one byte per occurrence
     rather than base64's third. zlib stands in for LibDeflate's DEFLATE; the
-    sizes are close, not identical, which is enough for a go/no-go.
+    sizes are close, not identical.
+
+    This compresses the warband fragments ALONE. The real payload interleaves
+    them with the core character records in a single DEFLATE stream, so a
+    fragment's compressed size is an upper bound on what it contributes - never
+    the size of a message anyone sends. Good enough for "is this worth a format
+    change", not for quoting as the size of a sync.
     """
     raw = payload.encode("utf-8", "replace")
     co = zlib.compressobj(8, zlib.DEFLATED, -15)
@@ -101,10 +113,20 @@ def on_wire(payload):
     return len(deflated), escaped, max(1, -(-escaped // MAX_CHUNK))
 
 
+def stamp_of(body, key):
+    m = re.search(r'\["' + key + r'"\]\s*=\s*(\d+)', body)
+    return m.group(1) if m else "0"
+
+
 def blob_for(body):
     bn, bwire = wire_map(body, "bags")
     kn, kwire = wire_map(body, "bank")
-    header = "v1|s=1758800000|kt=1758800000|b=" + bwire + "|k=" + kwire
+    # The REAL stamps. Substituting one constant for every character made every
+    # header identical, which is exactly the repetition DEFLATE is best at, so
+    # the compressed sizes came out better than the real thing would.
+    header = ("v1|s=" + stamp_of(body, "stamp")
+              + "|kt=" + stamp_of(body, "bankStamp")
+              + "|b=" + bwire + "|k=" + kwire)
     return bn, bwire, kn, kwire, PLUGIN_PREFIX + header
 
 
@@ -144,9 +166,13 @@ def main():
         print("  characters with inventory : %d" % n_with)
         print("  bag / bank entries        : %d / %d" % (bag_entries, bank_entries))
         print("  blob payload, raw         : %d bytes" % len(payload))
-        print("  ... deflated              : %d bytes" % deflated)
-        print("  ... escaped, as sent      : %d bytes  -> %d chunk(s) of %d"
+        print("  ... deflated ALONE        : %d bytes" % deflated)
+        print("  ... escaped               : %d bytes  (~%d chunk(s) of %d)"
               % (escaped, chunks, MAX_CHUNK))
+        print("     ^ these fragments compressed BY THEMSELVES. The real message")
+        print("       interleaves them with the core character records in one")
+        print("       DEFLATE stream, so this bounds their share - it is not the")
+        print("       size of anything actually sent.")
         print("  bank bytes, whole account : %d" % bank_bytes)
         print()
 
