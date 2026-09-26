@@ -568,48 +568,43 @@ end
 -- atlas and the art inside is set by FILE ID with no atlas and no filename - so
 -- an id is the only thing there is to write.
 --
--- There is no fallback, and that is deliberate. Measured on 1.60.1.70009:
+-- Measured on 1.60.1.70009 (see docs/forever-api-notes.md): SetTexture with a
+-- nonsense file id echoes it straight back from both getters. A file id is
+-- stored, not resolved, so no check on the texture can tell you the art is
+-- missing. An earlier version had a fallback behind exactly such a check: it
+-- could never fire, and it claimed the case was handled.
 --
---     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
---          print(t:GetTexture(), t:GetTextureFileID())
---     999999999   999999999
---
--- A file id is stored, not resolved. A nonsense one is echoed straight back, so
--- no check on the texture can tell you the art is missing. An earlier version
--- of this had a fallback behind exactly such a check: it could never fire, and
--- it said the case was handled when it was not.
+-- The fallback is DRAWN instead. The old icon sits on a lower layer with the
+-- file id over it, so if the id ever stops resolving - which the same
+-- measurement says draws nothing - the layer beneath shows through.
 
 do
     local T = AltStable._test
+    local btn = CreateFrame("Frame")
+    local over, under = T.ApplyRosterIcon(btn)
 
-    local tex = CreateFrame("Frame"):CreateTexture()
-    eq("the Who tab's icon is used", T.ApplyRosterIcon(tex), T.ROSTER_ICON_FILE_ID)
-    eq("  and actually set", tex:GetTextureFileID(), T.ROSTER_ICON_FILE_ID)
+    eq("the Who tab's icon is drawn", over:GetTextureFileID(), T.ROSTER_ICON_FILE_ID)
+    eq("  and the old icon underneath it", under:GetTexture(), T.ROSTER_ICON_UNDERLAY)
 
-    -- Not cropped. The icon this replaces was Interface\Icons\ art, 64x64 with
-    -- a border baked in, which is why it was trimmed by 8%. This is UI art from
-    -- inside a sidetab and has no margin, so the same trim would shave the
-    -- outer figures off the group.
-    check("  and drawn whole, not trimmed like an Icons file",
-          tex._texCoord and tex._texCoord[1] == 0 and tex._texCoord[2] == 1,
-          tostring(tex._texCoord and tex._texCoord[1]))
+    -- Order matters: BACKGROUND is beneath ARTWORK. The wrong way round and the
+    -- old icon covers the new one on every client that HAS the file.
+    eq("the old icon is on the lower layer", under:GetDrawLayer(), "BACKGROUND")
+    eq("  and the new one above it", over:GetDrawLayer(), "ARTWORK")
+
+    -- The Who tab art is not trimmed; the icon beneath it is.
+    check("the Who tab art is drawn whole",
+          over._texCoord and over._texCoord[1] == 0 and over._texCoord[2] == 1,
+          tostring(over._texCoord and over._texCoord[1]))
+    check("  while the Icons file under it is trimmed, as such art needs",
+          under._texCoord and under._texCoord[1] > 0,
+          tostring(under._texCoord and under._texCoord[1]))
 
     -- The measurement itself, pinned: if a future client ever DOES reject a bad
-    -- id, this fails and the fallback becomes worth writing.
+    -- id, this fails and a check becomes worth writing again.
     local bogus = CreateFrame("Frame"):CreateTexture()
     bogus:SetTexture(999999999)
     eq("a file id the client does not have is echoed back, not rejected",
        bogus:GetTextureFileID(), 999999999)
-    check("  which is why there is nothing to check and no fallback",
-          bogus:GetTexture() ~= nil)
-
-    -- A PATH is different: the client resolves it and can fail to, which is
-    -- what the Instances plugin's missing-texture fallback relies on.
-    local badPath = CreateFrame("Frame"):CreateTexture()
-    WoW.missingTexturePaths = { ["Interface\Nope"] = true }
-    badPath:SetTexture("Interface\Nope")
-    eq("a path the client cannot resolve comes back empty", badPath:GetTexture(), nil)
-    WoW.missingTexturePaths = {}
 
     check("nothing to draw on is not a crash", T.ApplyRosterIcon(nil) == nil)
 end

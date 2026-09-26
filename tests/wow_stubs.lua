@@ -32,10 +32,6 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
-    -- Texture PATHS this pretend client does not have. There is deliberately no
-    -- equivalent for file ids: the client cannot tell you a file id is bad
-    -- (measured - see SetTexture below), so neither can this.
-    missingTexturePaths = {},
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
@@ -64,7 +60,6 @@ function WoW.reset()
     -- Clearing them here is what left Core's stale-buffer sweep unreachable
     -- after the first WoW.reset().
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
-    WoW.missingTexturePaths = {}
     WoW.equipped = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
@@ -125,7 +120,16 @@ local function makeFrame()
         self["_hook_" .. tostring(ev)] = fn
         return self
     end
-    f.CreateTexture    = function() return makeFrame() end
+    -- The draw layer is REAL state. Which of two textures is on top is a
+    -- correctness question - an underlay drawn above its overlay hides the
+    -- thing it is backing up - and the chaining default swallowed it.
+    f.CreateTexture    = function(_, _, layer)
+        local t = makeFrame()
+        t._layer = layer
+        t.SetDrawLayer = function(self, v) self._layer = v; return self end
+        t.GetDrawLayer = function(self) return self._layer end
+        return t
+    end
     f.CreateFontString = function() return makeFrame() end
     -- Text is REMEMBERED, not swallowed: a footer or a label is a real
     -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
@@ -167,19 +171,22 @@ local function makeFrame()
     -- this stub returned nil for an unknown id, which made a validity check
     -- look testable when on the client it could never fire.
     --
-    -- A PATH is different: the client resolves it to a file id and can fail to,
-    -- which is why the Instances plugin's `not tex:GetTexture()` fallback
-    -- works. WoW.missingTexturePaths expresses that.
+    -- A PATH is believed to be different - the client resolving it to a file id
+    -- and being able to fail - but that half is NOT MEASURED. See the caveat in
+    -- docs/forever-api-notes.md. Modelled the optimistic way so the behaviour
+    -- is expressible, and driven by WoW.textures, which is the one table that
+    -- already decides whether a path exists (GetFileIDFromPath reads it too).
     f.SetTexture = function(self, v)
         if type(v) == "number" then
             self._texture, self._fileID = v, v     -- echoed, whatever it is
         elseif type(v) == "string" then
-            local missing = WoW.missingTexturePaths[v]
-            self._texture = (not missing) and v or nil
-            -- A path the client HAS resolves to some id. The number is not
-            -- knowable here, so no test should assert its value - only that
-            -- there is one.
-            self._fileID  = self._texture and 100000 or nil
+            -- The SAME table GetFileIDFromPath consults. Two notions of "a path
+            -- this client has" disagree the moment a test configures one of
+            -- them: with WoW.textures set, a missing path reported absent to
+            -- GetFileIDFromPath and present to SetTexture, at once.
+            local id = GetFileIDFromPath(v)
+            self._texture = id and v or nil
+            self._fileID  = id
         else
             self._texture, self._fileID = nil, nil
         end

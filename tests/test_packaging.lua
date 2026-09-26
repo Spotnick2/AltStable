@@ -187,20 +187,43 @@ for _, t in ipairs(TOCS) do
 end
 
 ------------------------------------------------------------
--- Every addon has an icon
+-- Every addon has an icon, and they all have the SAME one
 ------------------------------------------------------------
 -- Without ## IconTexture the AddOns list draws a red question mark, and with
--- six folders in this family that is six of them in a row. Pinned per TOC
--- rather than as one check, so adding a plugin without an icon fails on the
--- plugin rather than on a count nobody reads.
+-- this many folders that is a column of them.
+--
+-- The expected id is read out of SheetUI rather than written here. The comment
+-- beside it tells a future maintainer to re-derive the id with /asicon and
+-- update it there - and doing exactly that used to leave six TOCs and the
+-- Cutouts generator on the stale one, with a green suite and a minimap button
+-- that disagreed with the AddOns list.
+--
+-- The list is its own, not the TOCS above: that one holds the four PACKAGED
+-- addons, while the icon matters for the dev tools and the generated Cutouts
+-- template too. Dropping the line from the PS1 template regenerates every
+-- user's Cutouts folder with a question mark and nothing else would notice.
 
-for _, t in ipairs(TOCS) do
-    local src = read(t.toc)
+local WANTED_ICON = read("SheetUI.lua"):match("ROSTER_ICON_FILE_ID%s*=%s*(%d+)")
+check("SheetUI names the icon this checks against", WANTED_ICON ~= nil)
+
+local ICON_FILES = {
+    "AltStable.toc",
+    "Plugins/Warband/AltStableWarband.toc",
+    "Plugins/Instances/AltStableInstances.toc",
+    "Plugins/Roster/AltStableRoster.toc",
+    "Tools/AltStableProbe/AltStableProbe.toc",
+    "Tools/AltStableDevConfig/AltStableDevConfig.toc",
+    -- Not a TOC: the generator that WRITES one.
+    "Tools/RenderCutout/Update-Cutouts.ps1",
+}
+
+for _, file in ipairs(ICON_FILES) do
+    local src = read(file)
     local icon = src:match("##%s*IconTexture:%s*(%S+)")
-    check(t.toc .. " declares an icon", icon ~= nil,
+    check(file .. " declares an icon", icon ~= nil,
           "the AddOns list shows a red question mark without one")
-    if icon then
-        eq("  and they all use the same one", icon, "8197123")
+    if icon and WANTED_ICON then
+        eq("  and it is the one SheetUI uses", icon, WANTED_ICON)
     end
 end
 
