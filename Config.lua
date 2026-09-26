@@ -306,6 +306,183 @@ AltStable.EnsureConfigDefaults = EnsureDefaults
 -- owns persistence and the change notification.
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Forgotten characters (#65)
+--
+-- A record deleted locally comes straight back: a peer still holds it and
+-- re-sends it on the next sync. So forgetting has to be remembered.
+--
+-- PER ACCOUNT, and deliberately not on the wire. Each account forgets
+-- independently, which needs no protocol change and is the honest model given
+-- the config is per account anyway - account A deciding that a character is
+-- gone is not evidence for account B, which may still be playing it.
+--
+-- Each entry is { at = <when a peer last offered it>, name = <what it was
+-- called> }.
+--
+-- `at` is deliberately not "when it was forgotten". That is what lets the list
+-- expire safely: a tombstone has to outlive every peer that still remembers the
+-- character, and nothing else knows how long that is. While anyone keeps
+-- offering it the stamp keeps moving and the tombstone stays; once they have
+-- all forgotten too, it ages out and the list stops growing on an account that
+-- reorganises alts often.
+--
+-- `name` is kept only so the player can read the list and undo by name. The
+-- record itself is gone, so without it a mistake could only be undone by
+-- copying a GUID out of a chat line.
+------------------------------------------------------------
+
+-- Bounded by COUNT, not by age.
+--
+-- The first version expired a tombstone after a month with nobody offering the
+-- record, on the theory that the stamp would keep moving while any peer still
+-- held the character. It does not: a dead character's lastUpdate is frozen, so
+-- it never passes a delta's filter and rides only FULL replies. In the normal
+-- login-delta steady state the stamp never moves at all, the tombstone drops on
+-- day 31, and the next full sync - a /alts cleanup, a scope change, or the
+-- Warband plugin resetting watermarks at login when it has no inventory -
+-- brings the character straight back.
+--
+-- A count cap gets what the issue actually asked for ("so the list does not
+-- grow without bound on an account that reorganises alts often") without a
+-- clock that can resurrect a character. An entry is a guid, a name and a
+-- number; two hundred of them is nothing, and nobody deletes two hundred
+-- characters. When the cap is passed the OLDEST go, which is why the stamp is
+-- still refreshed when a peer offers the record: a tombstone anyone is still
+-- arguing about should be the last to be evicted.
+local TOMBSTONE_CAP = 200
+
+function AltStable.IsCharacterForgotten(guid)
+    if not guid then return false end
+    local gone = AltStableConfig and AltStableConfig.forgottenCharacters
+    return (gone and gone[guid]) and true or false
+end
+
+-- Records the tombstone, or refreshes how recently a peer offered the record.
+-- An existing name is never overwritten with nothing: the refresh path runs
+-- when a peer offers the record back, and the peer's copy is not the authority
+-- on what the player called it when they forgot it.
+function AltStable.MarkCharacterForgotten(guid, when, name)
+    if not guid then return false end
+    AltStableConfig = AltStableConfig or {}
+    local current = AltStableConfig.forgottenCharacters or {}
+    local copy = {}
+    for k, v in pairs(current) do copy[k] = v end
+    local prev = current[guid]
+    copy[guid] = {
+        at   = tonumber(when) or time(),
+        name = name or (type(prev) == "table" and prev.name) or nil,
+    }
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+    return true
+end
+
+-- The GUID we hold for a forgotten character of this name.
+--
+-- Same rule as ResolveCharacter, and for the same reason: returning the first
+-- match let /alts unforget Karuzo lift an arbitrary one of two tombstones,
+-- letting that character back on the next sync while the one the player meant
+-- stayed suppressed. Undo has to be as precise as the thing it undoes.
+--
+-- Returns guid, name - or nil, message when it cannot tell which.
+function AltStable.ForgottenGuidFor(name)
+    if not name or name == "" then return nil, "usage: a character name" end
+    local want = name:lower()
+
+    local full, partial = {}, {}
+    for guid, e in pairs((AltStableConfig or {}).forgottenCharacters or {}) do
+        local held = type(e) == "table" and e.name
+        if held then
+            local n = held:lower()
+            if n == want then
+                full[#full + 1] = { guid = guid, name = held }
+            elseif n:match("^(%S+)") == want then
+                partial[#partial + 1] = { guid = guid, name = held }
+            end
+        end
+    end
+
+    local function ambiguous(list)
+        table.sort(list, function(a, b)
+            if a.name ~= b.name then return a.name < b.name end
+            return a.guid < b.guid
+        end)
+        local shown = {}
+        for _, e in ipairs(list) do
+            -- The GUID, because two tombstones can hold the same name and the
+            -- records they came from are gone - there is no realm left to show.
+            shown[#shown + 1] = e.name .. " (" .. e.guid .. ")"
+        end
+        return nil, "|cffff8800" .. name .. " is ambiguous|r - " .. table.concat(shown, ", ")
+            .. ". Use the GUID."
+    end
+
+    -- A GUID is always an unambiguous answer, so accept one directly.
+    local byGuid = ((AltStableConfig or {}).forgottenCharacters or {})[name]
+    if type(byGuid) == "table" then return name, byGuid.name end
+
+    if #full == 1 then return full[1].guid, full[1].name end
+    if #full > 1 then return ambiguous(full) end
+    if #partial == 1 then return partial[1].guid, partial[1].name end
+    if #partial > 1 then return ambiguous(partial) end
+    return nil, "|cffff8800Not on the forgotten list:|r " .. name
+end
+
+function AltStable.UnforgetCharacter(guid)
+    if not guid or not AltStable.IsCharacterForgotten(guid) then return false end
+    local copy = {}
+    for k, v in pairs(AltStableConfig.forgottenCharacters or {}) do copy[k] = v end
+    copy[guid] = nil
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+
+    -- Dropping the tombstone is not enough to bring the character back, and
+    -- saying it was would be a lie. The record's lastUpdate is frozen at
+    -- whenever it was last played, and every peer's watermark for us has long
+    -- since passed it - so it fails the delta filter and is never offered
+    -- again. Only a full reply carries it, which means asking for one.
+    if AltStable.ResetPeerWatermarks then AltStable.ResetPeerWatermarks() end
+    return true
+end
+
+-- Keep the list under the cap, oldest out first. Returns how many went.
+function AltStable.PruneForgotten()
+    AltStableConfig = AltStableConfig or {}
+    local gone = AltStableConfig.forgottenCharacters
+    if not gone then return 0 end
+
+    local all = {}
+    for guid, e in pairs(gone) do
+        all[#all + 1] = { guid = guid, at = (type(e) == "table" and tonumber(e.at)) or 0 }
+    end
+    if #all <= TOMBSTONE_CAP then return 0 end
+
+    -- Newest first, then keep the first TOMBSTONE_CAP of them.
+    table.sort(all, function(a, b)
+        if a.at ~= b.at then return a.at > b.at end
+        return a.guid < b.guid     -- deterministic when stamps tie
+    end)
+
+    local copy = {}
+    for i = 1, TOMBSTONE_CAP do copy[all[i].guid] = gone[all[i].guid] end
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+    return #all - TOMBSTONE_CAP
+end
+
+function AltStable.ForgottenList()
+    local out = {}
+    for guid, e in pairs((AltStableConfig or {}).forgottenCharacters or {}) do
+        out[#out + 1] = {
+            guid = guid,
+            name = (type(e) == "table" and e.name) or nil,
+            lastOffered = (type(e) == "table" and e.at) or nil,
+        }
+    end
+    table.sort(out, function(a, b) return (a.name or a.guid) < (b.name or b.guid) end)
+    return out
+end
+
+AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
+
 function AltStable.IsCharacterHidden(guid)
     if not guid then return false end
     local hidden = AltStableConfig and AltStableConfig.hiddenCharacters
@@ -439,6 +616,10 @@ initFrame:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
     if event == "PLAYER_LOGIN" then
         EnsureDefaults()
         CheckClientBuild()
+        -- Drop tombstones nobody has offered in a month (#65). Once here,
+        -- because it only changes on the scale of months and a sweep on every
+        -- sync would rewrite the config for nothing.
+        AltStable.PruneForgotten()
     elseif event == "PLAYER_ENTERING_WORLD" then
         AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
     end

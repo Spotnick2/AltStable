@@ -63,6 +63,36 @@ A character with no measured height still appears; it is drawn at the common
 height, which is what every portrait did before heights existed. Only the
 gnome-beside-a-tauren proportions are lost.
 
+### Forgetting a character
+
+`/alts forget <name>` removes a character that no longer exists. Deleting the
+record is the easy half: a peer still holds it and re-sends it on the next
+sync, so forgetting also writes a **tombstone** that drops the record whenever
+a peer offers it back.
+
+- **Per account, and not on the wire.** Each account forgets independently.
+  Account A deciding a character is gone is not evidence for account B, which
+  may still be playing it — and it needs no protocol change.
+- **Tombstones do not expire by age.** They were going to, and that was wrong:
+  a dead character's `lastUpdate` is frozen, so it never passes a delta's filter
+  and rides only *full* replies. In the ordinary login-delta steady state the
+  stamp never moves, the tombstone would drop on day 31, and the next full sync
+  — a `/alts cleanup`, a scope change, or the Warband plugin resetting
+  watermarks at login — would bring the character straight back. The list is
+  bounded by **count** instead (200, oldest evicted), which is what "do not grow
+  without bound" actually needed.
+- **Not the character you are playing.** The next scan would rewrite the record
+  seconds later.
+- `/alts unforget <name>` undoes it. Dropping the tombstone is not enough on
+  its own — every peer's watermark is already past the dead record, so it would
+  never be offered again — so unforgetting also **resets the watermarks**, and
+  the next reply from each peer is a full one.
+- `/alts forgotten` lists them. Forgetting also drops the character's hidden and
+  favourite entries, since the record will not be coming back to need them.
+
+Hiding (#21) is a different thing and still the right one for "I do not want to
+look at my bank alt": the record stays and keeps syncing.
+
 ### What deploy does
 
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,
@@ -207,6 +237,9 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts whitelist` | List the whitelisted peers |
 | `/alts whitelist <name>` | Add one — no `add` keyword; the rest of the line is the name |
 | `/alts whitelist remove <name>` | Drop one |
+| `/alts forget <name>` | Remove a character that no longer exists, for good |
+| `/alts unforget <name>` | Undo that — it returns on the next sync |
+| `/alts forgotten` | What has been forgotten on this account |
 | `/alts account <n>` | This account's number, shown in the sheet |
 | `/alts export` | TSV of every character, for the spreadsheet |
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |

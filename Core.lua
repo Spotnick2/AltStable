@@ -646,6 +646,101 @@ local function AdvancePeerWatermark(name, ts, peerNow)
 end
 AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
 
+-- Forget a character: the record goes, and a tombstone stops peers putting it
+-- back. Returns false with a reason the caller can print.
+--
+-- Not the character being played. Its record would be rewritten by the next
+-- scan seconds later, so "forgetting" it would look broken rather than
+-- destructive - and the honest answer is that you cannot forget somebody you
+-- are standing on.
+function AltStable.ForgetCharacter(guid)
+    if not guid or not AltStableDB or not AltStableDB[guid] then
+        return false, "no such character"
+    end
+    if guid == (UnitGUID and UnitGUID("player")) then
+        return false, "that is the character you are playing - log in as someone else first"
+    end
+
+    local name = AltStableDB[guid].name or guid
+    AltStableDB[guid] = nil
+    AltStable.MarkCharacterForgotten(guid, time(), name)
+
+    -- Drop the display preferences with the record. The hidden list keeps
+    -- orphans on purpose, because "the record usually comes back on the next
+    -- sync" - here it never will, so the entry would sit in SavedVariables for
+    -- good, and an unforget would silently bring the character back invisible.
+    if AltStable.SetCharacterHidden then AltStable.SetCharacterHidden(guid, false) end
+    if AltStable.SetCharacterFavourite then AltStable.SetCharacterFavourite(guid, false) end
+
+    -- The plugins hold their own per-character tables and would otherwise keep
+    -- the inventory, recipes and lockouts of a character nothing shows.
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.OnForget then pcall(plugin.OnForget, guid) end
+    end
+
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    return true, name
+end
+
+-- A character by name, for the slash commands. Returns the GUID, or nil and a
+-- message to print.
+--
+-- Ambiguity is refused rather than guessed. The fallback match is on the first
+-- name, and this client has four pairs of alts sharing one - so iterating with
+-- pairs() deleted a different character run to run, silently, on a command
+-- whose whole job is to delete something. Naming the candidates costs one line
+-- and is the only answer that is not a coin toss.
+function AltStable.ResolveCharacter(name)
+    if not name or name == "" then return nil, "usage: a character name" end
+    local want = name:lower()
+
+    -- Three ways to name someone, narrowing as they go: "Name-Realm" is
+    -- unambiguous, a full name usually is, a first name often is not.
+    local exact, full, partial = {}, {}, {}
+    for guid, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and c.name then
+            local n = c.name:lower()
+            local qualified = c.realm and (n .. "-" .. tostring(c.realm):lower()) or nil
+            if qualified == want then
+                exact[#exact + 1] = { guid = guid, name = c.name, realm = c.realm }
+            elseif n == want then
+                full[#full + 1] = { guid = guid, name = c.name, realm = c.realm }
+            elseif n:match("^(%S+)") == want then
+                partial[#partial + 1] = { guid = guid, name = c.name, realm = c.realm }
+            end
+        end
+    end
+
+    -- A realm-qualified name is the selector, so it wins outright.
+    if #exact == 1 then return exact[1].guid end
+
+    local function ambiguous(list)
+        table.sort(list, function(a, b)
+            if a.name ~= b.name then return a.name < b.name end
+            return tostring(a.realm) < tostring(b.realm)
+        end)
+        local shown = {}
+        for _, e in ipairs(list) do
+            shown[#shown + 1] = e.realm and (e.name .. "-" .. e.realm) or e.name
+        end
+        return nil, "|cffff8800" .. name .. " is ambiguous|r - did you mean "
+            .. table.concat(shown, ", ") .. "? Name the realm too."
+    end
+
+    if #exact > 1 then return ambiguous(exact) end
+
+    -- A full name matching more than once is the case that was missed: the same
+    -- character name exists on a PvE and a PvP realm, and `exact = guid` in a
+    -- pairs() loop simply kept the last one seen.
+    if #full == 1 then return full[1].guid end
+    if #full > 1 then return ambiguous(full) end
+
+    if #partial == 1 then return partial[1].guid end
+    if #partial > 1 then return ambiguous(partial) end
+
+    return nil, "|cffff8800No character called|r " .. name
+end
+
 -- Mark a character dirty so the next delta sync includes it. Plugins call this
 -- when their own per-character data changes (e.g. a recipe learned) so the
 -- change actually rides a delta — otherwise the character would be filtered out
@@ -775,6 +870,26 @@ local function ShouldMerge(existing, incoming)
     return existingTime - incomingTime <= 60
 end
 
+-- Forgotten here (#65): the peer still holds this character and always will
+-- until they forget it too, so dropping it once locally is not enough - it
+-- arrives again every sync.
+--
+-- Shared, and called from BOTH receive paths. ReceiveCharacter's own header
+-- warns that the two "cannot drift - they had", and putting this check in only
+-- the bulk path drifted them again: the single-character path, still used by
+-- the chunked stream and by older peers, put the character straight back.
+--
+-- Refreshing the stamp keeps a contested tombstone at the front of the eviction
+-- queue.
+local function RefuseIfForgotten(c)
+    if not c or not c.guid then return false end
+    if not (AltStable.IsCharacterForgotten and AltStable.IsCharacterForgotten(c.guid)) then
+        return false
+    end
+    AltStable.MarkCharacterForgotten(c.guid, time())
+    return true
+end
+
 local function DeserializeFullDB(payload, sender)
 
     local current = {}
@@ -800,6 +915,11 @@ local function DeserializeFullDB(payload, sender)
                 -- (even rejected/skipped records) so the watermark advances past
                 -- them and they aren't re-requested next delta.
                 if (c.lastUpdate or 0) > maxTS then maxTS = c.lastUpdate end
+
+                if RefuseIfForgotten(c) then c = nil end
+            end
+
+            if c and c.guid then
 
                 -- Validate immutable fields before merging
                 if not ValidateIncoming(c, sender) then
@@ -1106,6 +1226,8 @@ local function ReceiveCharacter(c, sender)
     if not c or not c.guid then
         return
     end
+
+    if RefuseIfForgotten(c) then return end
 
     -- Validate immutable fields before merging
     if not ValidateIncoming(c, sender) then
@@ -2345,6 +2467,54 @@ SlashCmdList["ALTSTABLE"] = function(args)
     ----------------------------------------------------
     -- /alts account N  — set this client's account number
     ----------------------------------------------------
+
+    -- Forget a character that no longer exists (#65).
+    if cmd == "forget" or cmd == "unforget" then
+        if target == nil or target == "" then
+            Print("usage: |cffffff00/alts " .. cmd .. " <character>|r")
+            return
+        end
+
+        if cmd == "unforget" then
+            local guid, held = AltStable.ForgottenGuidFor(target)
+            if not guid then
+                Print(held or ("|cffff8800Not on the forgotten list:|r " .. target))
+                return
+            end
+            AltStable.UnforgetCharacter(guid)
+            Print("|cff88ff88" .. (held or target) .. "|r will be accepted from peers again, "
+                .. "and every peer will be asked in full so it can actually come back. "
+                .. "That takes one sync, not immediately.")
+            return
+        end
+
+        local match, why = AltStable.ResolveCharacter(target)
+        if not match then
+            Print(why)
+            return
+        end
+
+        local ok, info = AltStable.ForgetCharacter(match)
+        if ok then
+            Print("Forgotten |cffff8888" .. info .. "|r. The record is gone and peers offering "
+                .. "it back will be ignored. |cffffff00/alts unforget " .. info .. "|r to undo.")
+        else
+            Print("|cffff8800Cannot forget that:|r " .. tostring(info))
+        end
+        return
+    end
+
+    if cmd == "forgotten" then
+        local list = AltStable.ForgottenList()
+        if #list == 0 then
+            Print("Nothing forgotten. |cffffff00/alts forget <character>|r removes one for good.")
+            return
+        end
+        for _, e in ipairs(list) do
+            Print(("  %s  |cff888888(%s)|r"):format(e.name or "?", e.guid))
+        end
+        return
+    end
 
     if cmd == "account" then
         if target == nil or target == "" then
