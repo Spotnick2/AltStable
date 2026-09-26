@@ -1026,13 +1026,88 @@ do
     -- Fewer favourites than seats must not empty the camp.
     eq("the cast is still full", #cast, 2)
 
-    eq("the hint knows how many were chosen rather than guessed",
-       T.FavouritesAmong(T.AllCharacters()), 1)
+    -- The hint counts who is SEATED, not who is pinned. Only characters with a
+    -- portrait can be seated, so favouriting a portrait-less alt used to make
+    -- the hint claim "your favourites first" over a scene of pure level picks.
+    -- The first version of this test asserted the roster count and blessed it.
+    eq("the hint counts favourites actually seated", T.FavouritesAmong(cast), 1)
+
+    local function noArtForAlt1(c) return c.name ~= "Alt 1" and art or nil end
+    local castNoArt = T.SceneCast(T.AllCharacters(), noArtForAlt1, 2)
+    eq("a favourite with no portrait cannot be seated",
+       T.FavouritesAmong(castNoArt), 0)
+    check("  so the scene fills from level instead", castNoArt[1].name == "Alt 6")
+    check("  while the roster still counts it as pinned",
+          T.FavouritesAmong(T.AllCharacters()) == 1,
+          "the roster and the cast are different questions")
+
     AltStableConfig.favouriteCharacters = nil
-    eq("  and that none were, when none were", T.FavouritesAmong(T.AllCharacters()), 0)
+    eq("  and none are seated when none are pinned",
+       T.FavouritesAmong(T.SceneCast(T.AllCharacters(), cut, 2)), 0)
 
     AltStableDB = saved
     AltStableConfig.favouriteCharacters = nil
+end
+
+------------------------------------------------------------
+-- What the scene actually tells the player
+------------------------------------------------------------
+-- The hint claims either "your favourites first" or "highest level first", and
+-- which one is true depends on who got SEATED - not on who is pinned. Only
+-- characters with a portrait can be seated, so favouriting a portrait-less alt
+-- used to produce a scene of pure level picks under a hint claiming otherwise.
+--
+-- This drives the real panel, because the bug was the renderer handing the
+-- count the wrong list. Every test that checks FavouritesAmong directly passes
+-- whichever list it is given.
+
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = {}
+    for i = 1, 6 do
+        local guid = ("wire-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Wire %d"):format(i),
+                              level = i * 10, ilvl = i, class = "MAGE" }
+    end
+
+    -- Portraits for everyone EXCEPT Wire 1, who is the one we pin.
+    AltStableCutoutManifest = {}
+    for i = 2, 6 do
+        AltStableCutoutManifest[("wire-%d"):format(i)] =
+            { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    local guessed = T.HintText() or ""
+    check("with nobody pinned the hint says it is guessing",
+          guessed:find("highest level first", 1, true) ~= nil, guessed)
+
+    -- Pin the one character that CANNOT be seated.
+    AltStable.SetCharacterFavourite("wire-1", true)
+    T.Refresh()
+    local stillGuessing = T.HintText() or ""
+    check("pinning a character with no portrait does not make it a choice",
+          stillGuessing:find("highest level first", 1, true) ~= nil, stillGuessing)
+    check("  and the hint does not claim otherwise",
+          stillGuessing:find("favourites first", 1, true) == nil, stillGuessing)
+
+    -- Pin one that can.
+    AltStable.SetCharacterFavourite("wire-2", true)
+    T.Refresh()
+    local chosen = T.HintText() or ""
+    check("pinning a character that can be seated does",
+          chosen:find("favourites first", 1, true) ~= nil, chosen)
+
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterView = nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
 ------------------------------------------------------------

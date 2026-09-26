@@ -125,6 +125,12 @@ local function EnsureDefaults()
     -- is a display preference, not character data - and the record keeps
     -- syncing either way, so unhiding shows current data rather than starting a
     -- re-sync (which would also disturb the delta watermarks).
+    -- Same shape as hiddenCharacters, which means the same default. A direct
+    -- index - which the #69 menu will want - errors on a fresh profile without
+    -- it, and "deliberately the same shape" has to include this.
+    if AltStableConfig.favouriteCharacters == nil then
+        AltStableConfig.favouriteCharacters = {}
+    end
     AltStableConfig.hiddenCharacters = AltStableConfig.hiddenCharacters or {}
 
     -- Roster gear audit. minGemQuality is the lowest gem quality considered

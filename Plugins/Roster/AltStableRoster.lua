@@ -499,7 +499,8 @@ local function CharacterStore()
     return AltStableDB
 end
 
--- Everyone the addon knows about and is willing to show, highest level first.
+-- Everyone the addon knows about and is willing to show: favourites first
+-- (#66), then highest level.
 --
 -- Deliberately UNCAPPED. MAX_CARDS is a grid concern - it is how many cards the
 -- grid has to draw with - and applying it here made it a selection rule for the
@@ -758,7 +759,8 @@ local function FitScale(sizes, slot)
     return 1 / worst
 end
 
--- Who stands around the fire: the highest level first, then item level, capped.
+-- Who stands around the fire: favourites first (#66), then level, then item
+-- level, capped.
 -- Only characters with a portrait, because a class card pasted into a campsite
 -- looks like a mistake rather than a placeholder.
 local function SceneCast(chars, cutoutFor, limit)
@@ -787,8 +789,12 @@ local function SceneCast(chars, cutoutFor, limit)
     return out
 end
 
--- How many of the cast the player actually chose, so the hint can say whether
--- the scene is showing a preference or a guess.
+-- How many favourites are in a list.
+--
+-- Called on the CAST, never on the roster. Only characters with a portrait can
+-- be seated, so a favourite without one is pinned and absent - and counting the
+-- roster made the hint claim "your favourites first" while the scene was in
+-- fact five pure level picks.
 local function FavouritesAmong(chars)
     local n = 0
     for _, c in ipairs(chars) do
@@ -862,7 +868,9 @@ local function RenderScene(chars)
         end
     end
 
-    return withArt, #chars
+    -- The third value is how many of the SEATED characters were chosen rather
+    -- than guessed, which is the only honest basis for the hint below.
+    return withArt, #chars, FavouritesAmong(cast)
 end
 
 -- Where the hint goes, and how wide it may be.
@@ -907,10 +915,8 @@ function Roster.Refresh()
 
     if View() == "scene" then
         ApplyHintLayout(panel:GetWidth(), true)
-        local roster = CharactersFor("scene")
-        local shown, total = RenderScene(roster)
+        local shown, total, chosen = RenderScene(CharactersFor("scene"))
         if shown < total then
-            local chosen = FavouritesAmong(roster)
             hintText:SetText(chosen > 0
                 and ("showing %d of %d - your favourites first; the grid shows them all")
                     :format(shown, total)
@@ -1040,6 +1046,12 @@ function Roster._Bootstrap()
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             AllCharacters = AllCharacters, CharactersFor = CharactersFor,
             FavouritesAmong = FavouritesAmong,
+            -- What the player is actually told. Asserting the hint STRING is
+            -- the only way to catch the renderer handing the count the wrong
+            -- list: the composition is right either way.
+            HintText = function() return hintText and hintText:GetText() end,
+            Refresh = function() return Roster.Refresh() end,
+            Activate = function(main) return Roster.Activate(main) end,
             HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
             SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,

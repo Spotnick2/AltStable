@@ -1960,7 +1960,6 @@ do
     eq(AltStable.ResolveCharacter("Only"), "solo-1", "  and so does its first name")
 end
 
-
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else
