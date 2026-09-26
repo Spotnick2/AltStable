@@ -34,14 +34,79 @@ local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
 -- has, so a hardcoded row of twelve either overflows the panel or wastes it.
 local MIN_CARD_W    = 110
 local MIN_CARD_H    = 96      -- below this a portrait is not worth drawing
+
+-- Scene view. The ground line sits where the art puts the campfire's base, so
+-- the figures stand in the camp rather than floating above or sinking into it.
+local SCENE_GROUND   = 0.13   -- of panel height, from the bottom
+local SCENE_FIGURE_H = 0.62   -- of panel height, for the TALLEST character
+
+-- How many stand around the fire. Retail's warband campsite shows four or five
+-- and it reads as a scene; thirteen in a row reads as a police line-up, which
+-- is what the first version looked like. The grid remains the place to see
+-- everyone.
+local SCENE_CAST = 5
 local MAX_CARD_W    = 170
 local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
+
+-- The backdrops, as Media/Scene/README.md specifies them: a 1024x1024 texture
+-- whose real image is the top 1024x682 and whose remaining rows are opaque black
+-- padding. Anything drawing one MUST remap v by h/texh or the padding shows as a
+-- black band along the bottom - which is what the crop maths below is for.
+local SCENE_BACKDROPS = {
+    { id = "felwood", label = "Felwood",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-felwood.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "dustwallow", label = "Dustwallow Marsh",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-dustwallow.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "ashenvale-dusk", label = "Ashenvale at dusk",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-ashenvale-dusk.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "ashenvale-moonlight", label = "Ashenvale by moonlight",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-ashenvale-moonlight.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "elwynn", label = "Elwynn Forest",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-elwynn.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "mulgore", label = "Mulgore",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-mulgore.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "thunder-bluff", label = "Thunder Bluff",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-thunder-bluff.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "zephyras-isle", label = "Zephyras Isle",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-zephyras-isle.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "shendralas", label = "Shen'Dralas",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-shendralas.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "riverglades", label = "Riverglades",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-riverglades.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "mount-hyjal", label = "Mount Hyjal",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-mount-hyjal.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "dalaran", label = "Dalaran",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-dalaran.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "karazhan", label = "Karazhan",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-karazhan.tga", w = 1024, h = 682, texh = 1024 },
+    { id = "forest", label = "Forest Camp",
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-forest.tga", w = 1024, h = 682, texh = 1024 },
+}
 
 local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
 AltStable.RosterPlugin = Roster
 
-local panel, backdropTex, hintText
+local panel, backdropTex, hintText, sceneBar, sceneLabel, viewBtn
+
+-- Which view, and which backdrop, remembered per account. The grid is the
+-- default: it works for every character, whereas the scene needs a portrait and
+-- shows a gap where one is missing.
+local function View()
+    return (AltStableConfig and AltStableConfig.rosterView == "scene") and "scene" or "grid"
+end
+
+local function SceneIndex()
+    local want = AltStableConfig and AltStableConfig.rosterScene
+    for i, b in ipairs(SCENE_BACKDROPS) do
+        if b.id == want then return i end
+    end
+    return 1
+end
+
+local function CurrentScene()
+    return SCENE_BACKDROPS[SceneIndex()]
+end
 
 ------------------------------------------------------------
 -- Which cutout belongs to which character
@@ -82,13 +147,89 @@ local function TexCoordsFor(entry)
     return 0, math.min(1, w / tw), 0, math.min(1, h / th)
 end
 
--- Scaled to a common height so a gnome and a tauren stand on the same ground
--- line, which is the whole visual point of a lineup.
+-- Scaled to a common height. Right for the GRID, where each card is its own
+-- box and a figure filling it reads best.
 local function FigureSize(entry, targetH)
     local w = tonumber(entry and entry.w) or 0
     local h = tonumber(entry and entry.h) or 0
     if w <= 0 or h <= 0 then return targetH, targetH end
     return targetH * (w / h), targetH
+end
+
+-- Scaled to a common SCALE, which is what a scene needs: everyone standing on
+-- one floor at their real relative heights, so a gnome is visibly a gnome.
+--
+-- Every cutout is supersampled to the same pixel height, so w/h says nothing
+-- about how tall the character is - nativeH, recorded before that step, is the
+-- only surviving record. A cutout made before sidecars existed has none, and
+-- falls back to the common height it always had rather than guessing.
+local function RelativeFigureSize(entry, tallestNative, maxH)
+    local w = tonumber(entry and entry.w) or 0
+    local h = tonumber(entry and entry.h) or 0
+    if w <= 0 or h <= 0 then return maxH, maxH end
+
+    local native = tonumber(entry and entry.nativeH)
+    if not native or not tallestNative or tallestNative <= 0 then
+        return maxH * (w / h), maxH
+    end
+    local drawnH = maxH * (native / tallestNative)
+    return drawnH * (w / h), drawnH
+end
+
+-- The tallest character present, in native pixels, so everyone can be measured
+-- against it. Absent sidecars simply do not vote.
+local function TallestNative(chars, cutoutFor)
+    local tallest
+    for _, c in ipairs(chars) do
+        local e = cutoutFor(c)
+        local n = e and tonumber(e.nativeH)
+        if n and (not tallest or n > tallest) then tallest = n end
+    end
+    return tallest
+end
+
+-- Cover-crop a backdrop to the panel: fill it completely, keep the aspect, crop
+-- the overflow evenly, and never show the padding.
+--
+-- Pure arithmetic and returned rather than applied, so the thing most likely to
+-- be subtly wrong - the v remap by h/texh - is testable without a frame. Get it
+-- wrong and a black band appears along the bottom, which reads as "the art is
+-- broken" rather than "the texture coordinates are".
+local function BackdropTexCoords(panelW, panelH, entry)
+    local w = tonumber(entry and entry.w) or 0
+    local h = tonumber(entry and entry.h) or 0
+    local texh = tonumber(entry and entry.texh) or 0
+    if w <= 0 or h <= 0 or texh <= 0 or (panelW or 0) <= 0 or (panelH or 0) <= 0 then
+        return 0, 1, 0, 1
+    end
+
+    -- The content occupies v in [0, h/texh]; u is the whole width.
+    local vMax = h / texh
+
+    -- Which fraction of the CONTENT is visible, cropping the longer axis.
+    local panelAspect = panelW / panelH
+    local imageAspect = w / h
+    local uFrac, vFrac = 1, 1
+    if panelAspect > imageAspect then
+        vFrac = imageAspect / panelAspect      -- panel is wider: crop top/bottom
+    else
+        uFrac = panelAspect / imageAspect      -- panel is taller: crop the sides
+    end
+
+    local uPad = (1 - uFrac) / 2
+    local vPad = (1 - vFrac) / 2
+    return uPad, 1 - uPad, vMax * vPad, vMax * (1 - vPad)
+end
+
+-- Where the figures stand and how wide a slot each gets. They share one ground
+-- line and one height, which is the whole point of a lineup: a gnome beside a
+-- tauren, both standing on the same floor.
+local function SceneLayout(panelW, panelH, count)
+    if count <= 0 then return 0, 0, 0 end
+    local groundY = panelH * SCENE_GROUND        -- from the panel's BOTTOM
+    local figureH = panelH * SCENE_FIGURE_H
+    local slot = panelW / count
+    return groundY, figureH, slot
 end
 
 -- The figure is anchored ABOVE the name block, so the space available to it is
@@ -280,10 +421,131 @@ local function BuildPanel(mainFrame)
     hintText:SetPoint("TOP", 0, -8)
     hintText:SetTextColor(0.6, 0.6, 0.6)
 
+    -- Grid <-> Scene, and the backdrop picker. The picker only appears in scene
+    -- view, because fourteen arrows over an empty grid are just clutter.
+    viewBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    viewBtn:SetSize(64, 20)
+    viewBtn:SetPoint("TOPRIGHT", -8, -4)
+    viewBtn:SetText("Scene")
+    viewBtn:SetScript("OnClick", function()
+        AltStableConfig = AltStableConfig or {}
+        AltStable.SetConfigValue("rosterView", View() == "scene" and "grid" or "scene")
+        Roster.Refresh()
+    end)
+
+    sceneBar = CreateFrame("Frame", nil, panel)
+    sceneBar:SetPoint("TOPLEFT", 8, -4)
+    sceneBar:SetSize(240, 20)
+    sceneBar:Hide()
+
+    local prev = CreateFrame("Button", nil, sceneBar, "UIPanelButtonTemplate")
+    prev:SetSize(22, 20); prev:SetText("<"); prev:SetPoint("LEFT", 0, 0)
+    local next_ = CreateFrame("Button", nil, sceneBar, "UIPanelButtonTemplate")
+    next_:SetSize(22, 20); next_:SetText(">"); next_:SetPoint("LEFT", 200, 0)
+
+    sceneLabel = sceneBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    sceneLabel:SetPoint("LEFT", prev, "RIGHT", 6, 0)
+    sceneLabel:SetPoint("RIGHT", next_, "LEFT", -6, 0)
+    sceneLabel:SetJustifyH("CENTER")
+
+    local function Step(delta)
+        local i = SceneIndex() + delta
+        if i < 1 then i = #SCENE_BACKDROPS end
+        if i > #SCENE_BACKDROPS then i = 1 end
+        AltStable.SetConfigValue("rosterScene", SCENE_BACKDROPS[i].id)
+        Roster.Refresh()
+    end
+    prev:SetScript("OnClick", function() Step(-1) end)
+    next_:SetScript("OnClick", function() Step(1) end)
+
     for i = 1, MAX_CARDS do
         Roster.cards[i] = BuildCard(panel, i)
     end
     return panel
+end
+
+-- Who stands around the fire: the highest level first, then item level, capped.
+-- Only characters with a portrait, because a class card pasted into a campsite
+-- looks like a mistake rather than a placeholder.
+local function SceneCast(chars, cutoutFor, limit)
+    local out = {}
+    for _, c in ipairs(chars) do
+        if cutoutFor(c) then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b)
+        local la, lb = a.level or 0, b.level or 0
+        if la ~= lb then return la > lb end
+        local ia, ib = a.ilvl or 0, b.ilvl or 0
+        if ia ~= ib then return ia > ib end
+        return (a.name or "") < (b.name or "")
+    end)
+    while #out > (limit or SCENE_CAST) do table.remove(out) end
+    return out
+end
+
+-- One backdrop, everyone standing on it.
+local function RenderScene(chars)
+    local entry = CurrentScene()
+    local pw, ph = panel:GetWidth(), panel:GetHeight()
+
+    backdropTex:SetTexture(entry.file)
+    backdropTex:SetTexCoord(BackdropTexCoords(pw, ph, entry))
+    backdropTex:SetVertexColor(1, 1, 1, 1)
+
+    if sceneLabel then sceneLabel:SetText(entry.label) end
+
+    local cast = SceneCast(chars, CutoutFor, SCENE_CAST)
+    local groundY, figureH, slot = SceneLayout(pw, ph, #cast)
+    local tallest = TallestNative(cast, CutoutFor)
+    local withArt = 0
+
+    for i, card in ipairs(Roster.cards) do
+        local char = cast[i]
+        local cut = char and CutoutFor(char)
+        if char and cut then
+            withArt = withArt + 1
+            local w, h = RelativeFigureSize(cut, tallest, figureH)
+            -- Narrow the slot, not the figure: shrinking a wide capture to fit
+            -- made it SHORTER than its neighbours, which is the height
+            -- discrepancy the first version showed - a scaling artefact
+            -- masquerading as a short character.
+            if w > slot then
+                local overflow = w / slot
+                w, h = w / overflow, h / overflow
+            end
+
+            card:ClearAllPoints()
+            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
+                          slot * (i - 0.5), groundY - NAME_H - 4)
+            card:SetSize(math.max(slot, w), h + NAME_H + 4)
+
+            card.plate:Hide()
+            card.icon:Hide()
+            card.figure:SetTexture(cut.file)
+            card.figure:SetTexCoord(TexCoordsFor(cut))
+            card.figure:SetSize(w, h)
+            card.figure:Show()
+
+            card.label:SetWidth(math.max(slot, w))
+            card.label:SetText(AltStable.ClassColor
+                and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
+                or (char.name or "?"))
+            card.sub:SetWidth(math.max(slot, w))
+            card.sub:SetText(("level %d"):format(char.level or 0))
+            card.highlight:SetShown(Roster.selected == char.guid)
+            card.charGuid = char.guid
+            card:Show()
+        else
+            card:Hide()
+        end
+    end
+
+    return withArt, #chars
+end
+
+-- Exposed for the hint below: how many the scene chose to show.
+local function SceneCastSize(chars)
+    return #SceneCast(chars, CutoutFor, SCENE_CAST)
 end
 
 function Roster.Select(guid)
@@ -296,6 +558,24 @@ end
 function Roster.Refresh()
     if not panel then return end
     local chars = PickCharacters(MAX_CARDS)
+
+    if sceneBar then sceneBar:SetShown(View() == "scene") end
+    if viewBtn then viewBtn:SetText(View() == "scene" and "Grid" or "Scene") end
+
+    if View() == "scene" then
+        local shown, total = RenderScene(chars)
+        if shown < total then
+            hintText:SetText(("showing %d of %d - highest level first; the grid shows them all")
+                :format(shown, total))
+            hintText:Show()
+        else
+            hintText:Hide()
+        end
+        return
+    end
+
+    backdropTex:SetTexture(nil)
+    backdropTex:SetColorTexture(0.05, 0.05, 0.06, 1)
 
     local cols, rows, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
     local fits = cols * rows
@@ -401,7 +681,11 @@ function Roster._Bootstrap()
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
-            HookRefresh = HookRefresh,
+            HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
+            SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
+            SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,
+            TallestNative = TallestNative, SCENE_CAST = SCENE_CAST,
+            View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         },
     })

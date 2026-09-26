@@ -244,6 +244,200 @@ do
 end
 
 ------------------------------------------------------------
+-- Scene mode: the backdrop must never show its padding
+------------------------------------------------------------
+-- Media/Scene/README.md specifies a 1024x1024 texture whose real image is the
+-- top 1024x682 and whose remaining 342 rows are opaque black. Forget the v
+-- remap and a black band appears along the bottom, which reads as broken art
+-- rather than wrong texture coordinates.
+
+local V_MAX = 682 / 1024
+
+do
+    local entry = { w = 1024, h = 682, texh = 1024 }
+
+    -- A panel with the same aspect as the content: no crop, full content.
+    local l, r, t, b = T.BackdropTexCoords(1024, 682, entry)
+    eq("an exactly-matching panel shows the whole width", l, 0)
+    eq("  to the far edge", r, 1)
+    eq("  starting at the top", t, 0)
+    check("  and stopping at the content, not the canvas",
+          math.abs(b - V_MAX) < 0.0001, tostring(b))
+
+    -- Wider than the art: crop top and bottom, never past the content.
+    l, r, t, b = T.BackdropTexCoords(2000, 400, entry)
+    eq("a wide panel keeps the full width", l, 0)
+    eq("  still to the far edge", r, 1)
+    check("  and crops vertically", t > 0, tostring(t))
+    check("  without ever reaching the padding", b <= V_MAX + 0.0001,
+          ("%.4f > %.4f"):format(b, V_MAX))
+    check("  symmetrically", math.abs((V_MAX - b) - t) < 0.0001)
+
+    -- Taller than the art: crop the sides instead.
+    l, r, t, b = T.BackdropTexCoords(400, 800, entry)
+    check("a tall panel crops the sides", l > 0 and r < 1, ("%.3f..%.3f"):format(l, r))
+    eq("  and keeps the full content height", t, 0)
+    check("  up to the content edge", math.abs(b - V_MAX) < 0.0001)
+    check("  symmetrically", math.abs(l - (1 - r)) < 0.0001)
+
+    -- Nonsense in, whole texture out, rather than a divide by zero.
+    l, r, t, b = T.BackdropTexCoords(0, 0, entry)
+    check("an unmeasured panel is safe", l == 0 and r == 1 and t == 0 and b == 1)
+    l, r, t, b = T.BackdropTexCoords(800, 600, nil)
+    check("a missing entry is safe", l == 0 and r == 1 and t == 0 and b == 1)
+end
+
+------------------------------------------------------------
+-- Everyone stands on the same line
+------------------------------------------------------------
+
+do
+    local groundY, figureH, slot = T.SceneLayout(1400, 700, 7)
+    check("the ground line is above the panel floor", groundY > 0 and groundY < 700)
+    check("the figures fit above it", figureH > 0 and figureH < 700)
+    check("  with room for the ground line itself", groundY + figureH <= 700)
+    eq("the slots divide the width", slot, 1400 / 7)
+
+    local _, figureH2, slot2 = T.SceneLayout(1400, 700, 14)
+    eq("twice as many characters get half the width each", slot2, slot / 2)
+    eq("  but the same height, so they share a scale", figureH2, figureH)
+
+    local g, f, sl = T.SceneLayout(1400, 700, 0)
+    check("an empty roster lays out nothing", g == 0 and f == 0 and sl == 0)
+end
+
+------------------------------------------------------------
+-- The backdrops themselves
+------------------------------------------------------------
+
+do
+    local scenes = T.SCENE_BACKDROPS
+    check("there are backdrops to choose from", #scenes >= 2, tostring(#scenes))
+
+    local seen = {}
+    for _, b in ipairs(scenes) do
+        check("every backdrop has an id, a label and a file",
+              type(b.id) == "string" and type(b.label) == "string"
+              and type(b.file) == "string" and b.file ~= "")
+        check("  ids are unique (" .. tostring(b.id) .. ")", not seen[b.id])
+        seen[b.id] = true
+        -- The whole point of the padding contract: h must be SMALLER than texh,
+        -- or the entry is claiming the black rows are part of the picture.
+        check("  " .. b.id .. " declares content shorter than its canvas",
+              b.h < b.texh, ("h=%s texh=%s"):format(tostring(b.h), tostring(b.texh)))
+        check("  " .. b.id .. " points at a scene texture",
+              b.file:find("Scene", 1, true) ~= nil, b.file)
+    end
+end
+
+------------------------------------------------------------
+-- The view is remembered, and the grid is the default
+------------------------------------------------------------
+
+do
+    AltStableConfig.rosterView = nil
+    eq("the grid is the default view", T.View(), "grid")
+    AltStableConfig.rosterView = "scene"
+    eq("  and the scene is remembered when chosen", T.View(), "scene")
+    AltStableConfig.rosterView = "nonsense"
+    eq("  anything else falls back to the grid", T.View(), "grid")
+
+    AltStableConfig.rosterScene = nil
+    check("an unset backdrop picks the first", T.CurrentScene() == T.SCENE_BACKDROPS[1])
+    AltStableConfig.rosterScene = T.SCENE_BACKDROPS[3].id
+    check("  a chosen one is remembered", T.CurrentScene() == T.SCENE_BACKDROPS[3])
+    AltStableConfig.rosterScene = "a-scene-that-was-deleted"
+    check("  and one that no longer exists falls back rather than erroring",
+          T.CurrentScene() == T.SCENE_BACKDROPS[1])
+    AltStableConfig.rosterScene = nil
+    AltStableConfig.rosterView = nil
+end
+
+------------------------------------------------------------
+-- A gnome is shorter than a night elf
+------------------------------------------------------------
+-- Every cutout is supersampled to the SAME pixel height, so w/h carries no
+-- information about how tall the character is. nativeH, recorded before that
+-- step, is the only surviving record - and without it the scene drew a gnome
+-- exactly as tall as an elf, which is what made the first version look wrong.
+
+do
+    local elf   = { w = 144, h = 512, texw = 256, texh = 512, nativeH = 1382 }
+    local gnome = { w = 334, h = 512, texw = 512, texh = 512, nativeH = 874 }
+
+    local _, elfH = T.RelativeFigureSize(elf, 1382, 400)
+    local _, gnomeH = T.RelativeFigureSize(gnome, 1382, 400)
+    eq("the tallest character fills the target height", elfH, 400)
+    check("  and the gnome is visibly shorter", gnomeH < elfH * 0.75,
+          ("gnome %.1f vs elf %.1f"):format(gnomeH, elfH))
+    check("  in proportion to its real height",
+          math.abs(gnomeH - 400 * (874 / 1382)) < 0.01, tostring(gnomeH))
+
+    local w, h = T.RelativeFigureSize(elf, 1382, 400)
+    check("aspect ratio is preserved", math.abs(w / h - 144 / 512) < 0.0001)
+
+    -- A cutout captured before sidecars existed has no native height. It must
+    -- fall back to the common height it always had, not vanish or tower.
+    local legacy = { w = 200, h = 512, texw = 256, texh = 512 }
+    local _, legacyH = T.RelativeFigureSize(legacy, 1382, 400)
+    eq("a cutout with no native height falls back to the common one", legacyH, 400)
+
+    local _, noRefH = T.RelativeFigureSize(elf, nil, 400)
+    eq("  as does everyone when nothing has one", noRefH, 400)
+end
+
+do
+    local function cut(c) return c.entry end
+    local chars = {
+        { name = "Tall",  entry = { nativeH = 1382 } },
+        { name = "Short", entry = { nativeH = 874 } },
+        { name = "None",  entry = {} },
+    }
+    eq("the tallest native height wins", T.TallestNative(chars, cut), 1382)
+    eq("nobody with a height means nobody to measure against",
+       T.TallestNative({ { name = "None", entry = {} } }, cut), nil)
+end
+
+------------------------------------------------------------
+-- Who stands around the fire
+------------------------------------------------------------
+-- Thirteen in a row reads as a police line-up. Retail's warband campsite shows
+-- four or five, which is the look this is copying.
+
+do
+    local withArt = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    local function cut(c) return c.hasArt and withArt or nil end
+
+    local many = {}
+    for i = 1, 13 do
+        many[i] = { name = "Alt" .. i, level = i, ilvl = i, hasArt = true }
+    end
+
+    local cast = T.SceneCast(many, cut, T.SCENE_CAST)
+    eq("the cast is capped", #cast, T.SCENE_CAST)
+    eq("  highest level first", cast[1].name, "Alt13")
+    eq("  then the next", cast[2].name, "Alt12")
+
+    -- Item level breaks a tie, since a levelled roster is mostly one level.
+    local tied = {
+        { name = "Geared", level = 60, ilvl = 70, hasArt = true },
+        { name = "Naked",  level = 60, ilvl = 10, hasArt = true },
+    }
+    eq("item level breaks a level tie", T.SceneCast(tied, cut, 2)[1].name, "Geared")
+
+    -- Without a portrait there is nothing to draw.
+    local mixed = {
+        { name = "Pictured", level = 5, hasArt = true },
+        { name = "Bare",     level = 60 },
+    }
+    local only = T.SceneCast(mixed, cut, 5)
+    eq("only characters with a portrait appear", #only, 1)
+    eq("  even when a bare one outranks them", only[1].name, "Pictured")
+
+    eq("an empty roster casts nobody", #T.SceneCast({}, cut, 5), 0)
+end
+
+------------------------------------------------------------
 -- It builds
 ------------------------------------------------------------
 -- Frames are stubs, so this asserts that the panel can be constructed and

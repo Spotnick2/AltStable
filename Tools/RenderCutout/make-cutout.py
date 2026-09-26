@@ -35,6 +35,7 @@ Pass --keep-shots to leave them.
 import argparse
 import datetime
 import glob
+import json
 import os
 import re
 import sys
@@ -376,6 +377,24 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
     canvas = Image.new("RGBA", (pot(cw), pot(ch)), (0, 0, 0, 0))
     canvas.paste(cut, (0, 0))
     canvas.save(os.path.join(out_dir, base + ".tga"), compression=None)
+
+    # The NATIVE size, beside the texture.
+    #
+    # Supersampling normalises every cutout to the same height, which throws
+    # away the one thing a lineup needs: a gnome IS shorter than a night elf,
+    # and the capture knew it before this step. Without recording it here the
+    # scene can only draw everyone the same height, which is what it did.
+    #
+    # A sidecar rather than a filename convention, and it also means the
+    # manifest generator can read four numbers out of a file instead of
+    # launching a Python interpreter per texture to recompute them.
+    meta = {
+        "w": cw, "h": ch,
+        "texw": canvas.size[0], "texh": canvas.size[1],
+        "nativeW": native[0], "nativeH": native[1],
+    }
+    with open(os.path.join(out_dir, base + ".json"), "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2)
 
     print("  %-22s %4dx%-4d -> %3dx%-4d  canvas %sx%s%s"
           % (base, native[0], native[1], cw, ch, canvas.size[0], canvas.size[1],
