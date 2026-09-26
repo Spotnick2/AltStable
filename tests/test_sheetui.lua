@@ -46,9 +46,13 @@ local function plain(s)
     return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", ""))
 end
 
+-- EnsureSheetVisible, not ShowSheet: ShowSheet TOGGLES, so calling it on an
+-- already-open sheet closes it - and a closed sheet does not refresh, leaving
+-- every later assertion reading a stale footer. That went unnoticed while the
+-- stub's Hide() was a no-op; now that frames model shown-ness it matters.
 local function build(db)
     AltStableDB = db
-    local ok, err = pcall(AltStable.ShowSheet)
+    local ok, err = pcall(AltStable.EnsureSheetVisible)
     check("the sheet builds", ok, tostring(err))
     if ok then
         local ok2, err2 = pcall(AltStable.RefreshSheet)
@@ -152,9 +156,64 @@ eq("a right-click raises one confirmation", #WoW.popups, 1)
 local popup = WoW.popups[1]
 if popup then
     check("  naming the character", popup.arg1 == "Goner", tostring(popup.arg1))
-    check("  and carrying its guid, not its name",
-          type(popup.data) == "table" and popup.data.guid == "gone", tostring(popup.data))
+
+    -- The sheet is DIALOG strata and toplevel, and a StaticPopup is DIALOG too,
+    -- so this confirmation opened BEHIND the window and appeared only once the
+    -- sheet was closed. A question nobody can see reads as a click that did
+    -- nothing.
+    -- The confirmation was invisible until the sheet was closed, so the
+    -- right-click read as doing nothing. TWO things hid it:
+    --   * the sheet is DIALOG strata and SetToplevel(true), and a StaticPopup is
+    --     DIALOG too, so the sheet covers it;
+    --   * the camera showcase - on by default whenever the sheet is open -
+    --     hides UIParent outright, and a StaticPopup is a CHILD of UIParent. No
+    --     strata makes the child of a hidden parent draw.
+    --
+    -- Driven through the REAL path, because the first fix put the lift in the
+    -- dialog's OnShow: a frame that cannot become visible may never receive a
+    -- visibility event, so that fix would not have run. The stub therefore only
+    -- calls OnShow when the dialog can actually be seen.
+    local dialog = popup.dialog
+    check("the popup hands back a frame", dialog ~= nil)
+
+    if dialog then
+        eq("it is raised above the sheet", dialog:GetFrameStrata(), "FULLSCREEN_DIALOG")
+        check("  and is actually visible", dialog:IsVisible() == true)
+        StaticPopup_Hide(popup.which)
+        eq("  strata is put back, since the frame is shared with every addon",
+           dialog:GetFrameStrata(), "DIALOG")
+    end
+
+    -- Now the case that was broken: the showcase has hidden the whole UI.
+    local realHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return true end
+    UIParent:Hide()
+
+    WoW.popups = {}
+    AltStable.RequestHideCharacter(AltStableDB.gone)
+    local hiddenUIPopup = WoW.popups[#WoW.popups]
+    check("a confirmation is still raised with the UI hidden", hiddenUIPopup ~= nil)
+
+    if hiddenUIPopup and hiddenUIPopup.dialog then
+        local d = hiddenUIPopup.dialog
+        check("  it is lifted OUT from under the hidden UIParent",
+              d:GetParent() ~= UIParent, tostring(d:GetParent()))
+        check("  so the player can actually see the question", d:IsVisible() == true)
+
+        StaticPopup_Hide(hiddenUIPopup.which)
+        eq("  and is parented back on close", d:GetParent(), UIParent)
+        eq("  with its strata restored", d:GetFrameStrata(), "DIALOG")
+    end
+
+    UIParent:Show()
+    AltStable.IsGameUIHidden = realHidden
+
+    -- Back to the first dialog for the acceptance checks below.
+    WoW.popups = {}
+    AltStable.RequestHideCharacter(AltStableDB.gone)
+    popup = WoW.popups[1]
 end
+
 eq("nothing is hidden until it is accepted", AltStable.IsCharacterHidden("gone"), false)
 eq("  and the row is still drawn", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
 

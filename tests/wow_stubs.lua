@@ -127,6 +127,32 @@ local function makeFrame()
     for name, value in pairs(NUMERIC) do
         f[name] = function(self) return self["_" .. name] or value end
     end
+    f.GetEffectiveScale = function(self) return self._scale or 1 end
+    -- Strata, parent, scale and shown-ness are REAL state, not chained no-ops.
+    -- Code that lifts a frame out from under a hidden UIParent and puts it back
+    -- is exactly what needs testing, and with the chaining default every such
+    -- save/restore stored the FRAME ITSELF as "the saved strata" and restored
+    -- nothing - a silent no-op that reads as correct.
+    f.SetFrameStrata = function(self, v) self._strata = v; return self end
+    f.GetFrameStrata = function(self) return self._strata or "MEDIUM" end
+    f.SetParent      = function(self, p) self._parent = p; return self end
+    f.GetParent      = function(self) return self._parent end
+    f.SetScale       = function(self, v) self._scale = v; return self end
+    f.GetScale       = function(self) return self._scale or 1 end
+    f.Show           = function(self) self._shown = true; return self end
+    f.Hide           = function(self) self._shown = false; return self end
+    f.IsShown        = function(self) return self._shown ~= false end
+    -- Visible means shown AND every ancestor shown - the distinction the whole
+    -- hidden-UIParent problem turns on.
+    f.IsVisible      = function(self)
+        if self._shown == false then return false end
+        local p = self._parent
+        while p do
+            if p._shown == false then return false end
+            p = p._parent
+        end
+        return true
+    end
     f.SetWidth  = function(self, w) self._GetWidth = w; return self end
     f.SetHeight = function(self, h) self._GetHeight = h; return self end
     f.SetSize   = function(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
@@ -157,6 +183,14 @@ end
 WoW.makeFrame = makeFrame
 
 function CreateFrame() return makeFrame() end
+
+-- The roots of the client's frame hierarchy. Absent until now, so every
+-- CreateFrame(..., UIParent) passed nil and any code that lifts a frame OUT
+-- from under UIParent - to survive the showcase hiding it - had nothing to be
+-- compared against: "not parented to UIParent" was trivially true because
+-- UIParent was nil.
+UIParent = makeFrame()
+WorldFrame = makeFrame()
 
 -- WoW's table helpers, which are globals there and absent in plain Lua 5.1.
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
@@ -250,9 +284,51 @@ GameTooltip.IsShown = function() return WoW.tooltipShown == true end
 -- has to be able to see that the popup was RAISED and that accepting it is what
 -- performs the action - not the click itself.
 StaticPopupDialogs = {}
+-- Returns the dialog FRAME, as the client does - not the definition table. A
+-- stub handing back the definition lets caller-side code mutate a shared table
+-- by accident and hides the parent/visibility problem completely.
+--
+-- The dialog is parented to UIParent and OnShow only runs when it can actually
+-- become visible. That is the rule the whole "invisible confirmation" bug turns
+-- on: with the game UI hidden, a fix living in OnShow never runs at all.
 function StaticPopup_Show(which, arg1, arg2, data)
-    table.insert(WoW.popups, { which = which, arg1 = arg1, arg2 = arg2, data = data })
-    return StaticPopupDialogs[which]
+    local def = StaticPopupDialogs[which]
+    if not def then return nil end
+
+    local dialog = WoW.makeFrame()
+    dialog._parent = UIParent
+    dialog._strata = "DIALOG"
+    dialog.which = which
+    dialog:Show()
+
+    table.insert(WoW.popups, {
+        which = which, arg1 = arg1, arg2 = arg2, data = data, dialog = dialog,
+    })
+
+    if type(def.OnShow) == "function" and dialog:IsVisible() then
+        def.OnShow(dialog)
+    end
+    return dialog
+end
+
+function StaticPopup_Hide(which)
+    for i = #WoW.popups, 1, -1 do
+        local p = WoW.popups[i]
+        if p.which == which and p.dialog then
+            local def = StaticPopupDialogs[which]
+            p.dialog:Hide()
+            if type(def) == "table" and type(def.OnHide) == "function" then
+                def.OnHide(p.dialog)
+            end
+        end
+    end
+end
+
+function StaticPopup_Visible(which)
+    for _, p in ipairs(WoW.popups) do
+        if p.which == which and p.dialog and p.dialog:IsShown() then return true end
+    end
+    return false
 end
 -- The client's localized button captions. Defined because the dialog table
 -- reads them at file scope.
