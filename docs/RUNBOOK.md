@@ -38,6 +38,29 @@ Better still, install **BugGrabber + BugSack**: they catch the error with its lo
 the secret-value bug was diagnosed (the character record in the log showed `stat_str=<secret
 number>`, which named the cause outright).
 
+### Character portraits: when a re-capture is needed
+
+`pwsh Tools/RenderCutout/Update-Cutouts.ps1` converts staged captures, recovers
+what it can, and rebuilds the manifest. It deletes the screenshots it consumed,
+so anything it cannot work out from a sidecar is gone for good and the only
+remedy is `/asrender` on that character again. Three cases it reports:
+
+- **"sidecar predates unit normalisation"** - the cutout was filed before
+  heights were recorded as a fraction of screen height. Usually recovered
+  automatically from the probe store's `screenH`; if the store no longer has
+  that character's capture, re-capture.
+- **"cutout is full-screen height"** - the matte caught the whole window rather
+  than the character, normally because a tooltip or another frame was on screen.
+  Re-capture. The converter refuses these now, but any already filed are
+  excluded from the manifest: heights are *relative*, so one bogus entry draws
+  every other character at half size.
+- **"no screenshots for <name>"** - the pair was already converted, or was taken
+  on another machine. Harmless if that character already has a cutout.
+
+A character with no measured height still appears; it is drawn at the common
+height, which is what every portrait did before heights existed. Only the
+gnome-beside-a-tauren proportions are lost.
+
 ### What deploy does
 
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,

@@ -127,10 +127,13 @@ def _entries(text):
 def captures(wtf=WTF):
     """Every capture the addon recorded, newest last.
 
-    Each is a (character name, shot-1 stamp, shot-2 stamp) triple. The addon
-    writes one entry per screenshot with the second it was taken, which is the
-    key that matches them to files on disk - far more reliable than assuming
-    the folder is in the order we left it.
+    Each is a (character name, shot-1 stamp, shot-2 stamp, screen height) tuple.
+    The addon writes one entry per screenshot with the second it was taken,
+    which is the key that matches them to files on disk - far more reliable
+    than assuming the folder is in the order we left it.
+
+    The screen height comes along because the cutout's pixel size means nothing
+    on its own: see the normalisation in convert().
     """
     out = []
     for text in read_stores(wtf):
@@ -143,10 +146,10 @@ def captures(wtf=WTF):
             if not (guid and stamp):
                 continue
             if shot == "1":
-                pending[guid] = (e.get("name") or guid, stamp)
+                pending[guid] = (e.get("name") or guid, stamp, e.get("screenH"))
             elif shot == "2" and guid in pending:
-                name, first = pending.pop(guid)
-                out.append((name, first, stamp))
+                name, first, screen_h = pending.pop(guid)
+                out.append((name, first, stamp, screen_h))
 
     # Oldest first, so "the newest capture of each character" still means that
     # once both accounts are in one list.
@@ -356,6 +359,62 @@ def supersample(img, target_h):
     return out, True
 
 
+def renormalise(folder, wtf=WTF):
+    """Convert pre-convention sidecars in place, without re-capturing.
+
+    A sidecar written before nativeUnit existed holds raw screenshot pixels, and
+    the manifest generator refuses those - correctly, since they are not
+    comparable across resolutions. But they are recoverable: the probe store
+    still holds every capture's screenH, which is the physical screen size
+    (GetPhysicalScreenSize) and therefore the screenshot's own height. Dividing
+    by it gives exactly what convert() now writes.
+
+    Recovery matters because the screenshots are deleted after conversion, so
+    the alternative is re-capturing every character in game.
+    """
+    # Newest capture per character wins, matching run_all's own rule.
+    heights = {}
+    for text in read_stores(wtf):
+        for e in _entries(text):
+            name, sh = e.get("name"), e.get("screenH")
+            if name and sh:
+                try:
+                    heights[slug(name)] = float(sh)
+                except ValueError:
+                    pass
+
+    done, stuck = 0, []
+    for path in sorted(glob.glob(os.path.join(folder, "*.json"))):
+        base = os.path.splitext(os.path.basename(path))[0]
+        try:
+            with open(path, encoding="utf-8") as fh:
+                meta = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if meta.get("nativeUnit"):
+            continue
+        px = meta.get("nativePx") or [meta.get("nativeW"), meta.get("nativeH")]
+        shot_h = heights.get(base)
+        if not shot_h or not px or not px[1]:
+            stuck.append(base)
+            continue
+        meta["nativeUnit"] = "screen"
+        meta["nativePx"] = [px[0], px[1]]
+        meta["nativeW"] = round(px[0] / shot_h, 5)
+        meta["nativeH"] = round(px[1] / shot_h, 5)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2)
+        print("  renormalised %-22s  %d px / %d = %.5f"
+              % (base, px[1], shot_h, meta["nativeH"]))
+        done += 1
+
+    if done:
+        print("  recovered %d sidecar(s) without re-capturing" % done)
+    for base in stuck:
+        print("  %-22s no capture record - re-capture for a true height" % base)
+    return done
+
+
 def pot(n):
     p = 1
     while p < n:
@@ -367,6 +426,22 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
     """One pair -> one cutout on disk. Returns the manifest numbers."""
     cut = matte(black, white)
     native = cut.size
+    # The screenshot is the whole screen, so its height is the yardstick the
+    # character's height is measured against. Taken from the image rather than
+    # from the store record, because the image cannot be wrong about itself.
+    shot_h = Image.open(black).size[1]
+
+    # A figure cannot be as tall as the screen. The render stage is 760 UI units
+    # on a screen of a couple of thousand pixels, so a real cutout lands around
+    # 0.6 of the frame; anything near 1.0 means the matte caught the whole
+    # window, not the character. Two of those got filed before this check
+    # existed, and because nativeH is RELATIVE, one of them is enough to make
+    # every other character in the scene draw at half height.
+    if shot_h > 0 and native[1] >= shot_h * 0.95:
+        raise NotAPair(
+            "the cutout is %d of %d screen rows tall - the matte caught the "
+            "whole window, not the character" % (native[1], shot_h))
+
     cut, resampled = supersample(cut, target_height)
     cw, ch = cut.size
 
@@ -385,14 +460,37 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
     # and the capture knew it before this step. Without recording it here the
     # scene can only draw everyone the same height, which is what it did.
     #
-    # A sidecar rather than a filename convention, and it also means the
-    # manifest generator can read four numbers out of a file instead of
-    # launching a Python interpreter per texture to recompute them.
+    # But raw screenshot pixels are NOT comparable between captures, and this
+    # roster already proves it: the probe store here holds captures at screenH
+    # 1200 and at screenH 2160. The render stage is 420x760 *UI units*
+    # (Tools/AltStableProbe/Render.lua), so the same character comes out nearly
+    # twice as tall in the 2160 shots. Left raw, the scene would draw those
+    # characters twice the height of the others and call it a race difference.
+    #
+    # So record the fraction of SCREEN HEIGHT the character occupies:
+    #
+    #     nativeH = character pixels / screenshot pixels
+    #
+    # The screenshot is the whole screen and the stage is a fixed size in UI
+    # units, so this is the same number at any resolution. Only ratios between
+    # characters are ever used, which is why a dimensionless fraction is enough
+    # and no scale identity has to be assumed.
+    #
+    # nativeUnit records WHICH convention a sidecar holds. Sidecars written
+    # before this change hold raw pixels and say nothing; the manifest generator
+    # drops those rather than mixing the two, because half a roster measured in
+    # pixels and half in screen fractions is worse than none of it measured at
+    # all. --renormalise below converts them in place instead.
     meta = {
         "w": cw, "h": ch,
         "texw": canvas.size[0], "texh": canvas.size[1],
         "nativeW": native[0], "nativeH": native[1],
     }
+    if shot_h > 0:
+        meta["nativeUnit"] = "screen"
+        meta["nativeW"] = round(native[0] / shot_h, 5)
+        meta["nativeH"] = round(native[1] / shot_h, 5)
+        meta["nativePx"] = [native[0], native[1]]
     with open(os.path.join(out_dir, base + ".json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
 
@@ -467,7 +565,7 @@ def run_all(args):
     print("%d capture(s) to convert, %d screenshots on disk\n" % (len(caps), len(times)))
 
     done, missing, freed = 0, [], 0
-    for name, first, second in caps:
+    for name, first, second, screen_h in caps:
         black = match(first, times)
         white = match(second, times, exclude=(black,) if black else ())
         if not (black and white):
@@ -514,6 +612,9 @@ def main():
     ap.add_argument("--target-height", type=int, default=TARGET_HEIGHT,
                     help="supersample down to this content height for antialiased edges "
                          "(0 keeps the capture at native size)")
+    ap.add_argument("--renormalise", metavar="DIR",
+                    help="convert pre-convention sidecars in DIR to screen "
+                         "fractions, using the probe store's screenH, and exit")
     ap.add_argument("--all", action="store_true",
                     help="convert the newest capture of every character the addon recorded, "
                          "matching each to its screenshots by timestamp")
@@ -524,6 +625,10 @@ def main():
                     help="with --all: convert every capture ever recorded, not just the "
                          "newest of each character")
     args = ap.parse_args()
+
+    if args.renormalise:
+        renormalise(args.renormalise)
+        return
 
     if args.all:
         run_all(args)

@@ -100,6 +100,24 @@ This is an integration example, not an existing AltStable registration point.
 The renderer must remap vertical texture coordinates by `h / texh` after computing
 its content crop, so padding is never displayed.
 
+### Fire anchors are measured, not assumed
+
+The composition target below (centre 50%, base ~84%) is what the scenes were
+*commissioned* to; it is not what they are. `SCENE_BACKDROPS` carries a measured
+`fireX`/`fireBaseY` per backdrop, produced by:
+
+```
+python Tools/Scene/find-fire.py
+```
+
+which finds the brightest warm mass in the lower half of each TGA and prints the
+numbers in Lua table form. The generated scenes land between 0.487 and 0.510
+horizontally and 0.802 to 0.850 vertically; **Karazhan measures 0.551 / 0.900**,
+because it is an AltTracker original that predates the spec. Run it again after
+adding or regenerating a backdrop, and paste the line into the table - the scene
+view stands the cast around that point, so a wrong anchor puts the keep-out gap
+on empty ground.
+
 Once integrated, deploy with `pwsh Tools/deploy.ps1`, then test:
 
 1. Every texture loads, including after a reload and full client restart.

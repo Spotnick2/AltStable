@@ -114,6 +114,11 @@ CutoutManifest.lua
 # The manifest is regenerated wholesale from what is on disk, so deleting a TGA
 # is all it takes to retire a character - no second place to edit.
 function Write-Manifest {
+    # Sidecars written before nativeUnit existed hold raw screenshot pixels.
+    # They are recoverable from the probe store's screenH without re-capturing,
+    # so try that before the manifest decides they are unusable.
+    & python $converter --renormalise $mediaDir
+
     $entries = foreach ($tga in (Get-ChildItem $mediaDir -Filter *.tga -ErrorAction SilentlyContinue | Sort-Object Name)) {
         $slug = [IO.Path]::GetFileNameWithoutExtension($tga.Name)
         $side = [IO.Path]::ChangeExtension($tga.FullName, ".json")
@@ -125,7 +130,24 @@ function Write-Manifest {
         if (Test-Path $side) {
             $m = Get-Content $side -Raw | ConvertFrom-Json
             $w, $h, $tw, $th = $m.w, $m.h, $m.texw, $m.texh
-            $nw, $nh = $m.nativeW, $m.nativeH
+            # Only a sidecar that DECLARES its unit contributes a native size.
+            # The first version of this recorded raw screenshot pixels, which
+            # are not comparable between captures taken at different
+            # resolutions or UI scales. Mixing the two scales in one manifest
+            # is worse than having neither: it invents race differences.
+            if ($m.nativeUnit -eq 'screen' -and $m.nativeH -lt 0.95) {
+                $nw, $nh = $m.nativeW, $m.nativeH
+            } elseif ($m.nativeUnit -eq 'screen') {
+                # As tall as the screen: the matte caught the whole window, not
+                # the character. The converter refuses these now, but two were
+                # filed before that check existed - and because the height is
+                # RELATIVE, one bad entry halves every other character.
+                $nw, $nh = $null, $null
+                Write-Host ("  {0}: cutout is full-screen height - re-capture, it is not a figure" -f $slug) -ForegroundColor Red
+            } else {
+                $nw, $nh = $null, $null
+                Write-Host ("  {0}: sidecar predates unit normalisation - re-capture for true height" -f $slug) -ForegroundColor DarkYellow
+            }
         } else {
             # A cutout made before sidecars existed. Fall back to the image, and
             # leave the native size absent rather than inventing one - the scene

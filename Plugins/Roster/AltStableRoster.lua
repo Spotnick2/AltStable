@@ -27,6 +27,14 @@ local ADDON_ID = "roster"
 local CARD_GAP      = 10
 local NAME_H        = 28      -- two lines: name, then level
 local PAD_X, PAD_Y  = 16, 14
+
+-- The row of furniture across the top of the panel: the backdrop picker on the
+-- left, the Grid/Scene toggle on the right. Named because the hint line has to
+-- know where they are, and a second copy of "20" would drift from the first.
+local BAR_TOP       = 4       -- from the panel's top edge
+local BAR_H         = 20
+local SCENE_BAR_W   = 240
+local VIEW_BTN_W    = 64
 local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
 
 -- The card grid is measured from the panel at refresh time rather than fixed:
@@ -37,13 +45,23 @@ local MIN_CARD_H    = 96      -- below this a portrait is not worth drawing
 
 -- Scene view.
 --
--- The fire's position is not guessed. Media/Scene/README.md commissions every
--- backdrop with the campfire at horizontal centre 50% and its base at about 84%
--- of the image height, and those two numbers are what let the figures stand on
--- the ground the art drew and stand AROUND the fire rather than in it. The
--- first version used a ground line picked by eye and spaced everyone evenly
+-- Every backdrop carries its own MEASURED fire position (fireX, fireBaseY in
+-- SCENE_BACKDROPS), found by looking for the brightest warm mass in the lower
+-- half of each TGA - see Tools/Scene/find-fire.py, which regenerates them.
+--
+-- Not the art spec. Media/Scene/README.md commissions the twelve generated
+-- scenes at horizontal centre 50% and a base around 84%, but says in the same
+-- breath that these are "approximate art targets, not measured anchors" - and
+-- that Karazhan, an AltTracker original that predates the spec, "retains its
+-- original smaller, slightly right-of-center fire". It measures at 0.551/0.900.
+-- Hardcoding 0.50/0.84 for all fourteen puts the keep-out gap on empty ground
+-- and the cast below the drawn floor on exactly that backdrop.
+--
+-- The first version used a ground line picked by eye and spaced everyone evenly
 -- across the panel, which put somebody in the flames and hid the one element
 -- that makes the picture a campsite.
+-- Per-backdrop fallbacks. Each entry in SCENE_BACKDROPS carries its own
+-- measured fireX/fireBaseY; these only cover an entry that somehow has none.
 local FIRE_X         = 0.50   -- of the content width
 local FIRE_BASE_Y    = 0.84   -- of the content height, from the TOP
 local SCENE_FIGURE_H = 0.62   -- of panel height, for the TALLEST character
@@ -72,33 +90,47 @@ local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
 -- black band along the bottom - which is what the crop maths below is for.
 local SCENE_BACKDROPS = {
     { id = "felwood", label = "Felwood",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-felwood.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-felwood.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.510, fireBaseY = 0.833 },
     { id = "dustwallow", label = "Dustwallow Marsh",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-dustwallow.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-dustwallow.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.492, fireBaseY = 0.802 },
     { id = "ashenvale-dusk", label = "Ashenvale at dusk",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-ashenvale-dusk.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-ashenvale-dusk.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.493, fireBaseY = 0.804 },
     { id = "ashenvale-moonlight", label = "Ashenvale by moonlight",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-ashenvale-moonlight.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-ashenvale-moonlight.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.498, fireBaseY = 0.824 },
     { id = "elwynn", label = "Elwynn Forest",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-elwynn.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-elwynn.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.487, fireBaseY = 0.830 },
     { id = "mulgore", label = "Mulgore",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-mulgore.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-mulgore.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.487, fireBaseY = 0.850 },
     { id = "thunder-bluff", label = "Thunder Bluff",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-thunder-bluff.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-thunder-bluff.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.496, fireBaseY = 0.833 },
     { id = "zephyras-isle", label = "Zephyras Isle",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-zephyras-isle.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-zephyras-isle.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.495, fireBaseY = 0.814 },
     { id = "shendralas", label = "Shen'Dralas",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-shendralas.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-shendralas.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.500, fireBaseY = 0.824 },
     { id = "riverglades", label = "Riverglades",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-riverglades.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-riverglades.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.496, fireBaseY = 0.849 },
     { id = "mount-hyjal", label = "Mount Hyjal",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-mount-hyjal.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-mount-hyjal.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.494, fireBaseY = 0.820 },
     { id = "dalaran", label = "Dalaran",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-dalaran.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-dalaran.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.499, fireBaseY = 0.824 },
     { id = "karazhan", label = "Karazhan",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-karazhan.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-karazhan.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.551, fireBaseY = 0.900 },
     { id = "forest", label = "Forest Camp",
-      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-forest.tga", w = 1024, h = 682, texh = 1024 },
+      file = "Interface\\AddOns\\AltStable\\Media\\Scene\\scene-forest.tga", w = 1024, h = 682, texh = 1024,
+      fireX = 0.496, fireBaseY = 0.828 },
 }
 
 local Roster = { cards = {}, selected = nil }
@@ -260,14 +292,17 @@ local function FireAnchor(panelW, panelH, entry)
     local vMax = (tonumber(entry and entry.h) or 0) / (tonumber(entry and entry.texh) or 0)
     if not (vMax > 0) then vMax = 1 end
 
+    local fx = tonumber(entry and entry.fireX) or FIRE_X
+    local fy = tonumber(entry and entry.fireBaseY) or FIRE_BASE_Y
+
     -- Where the fire sits inside the VISIBLE part of the texture, 0..1.
-    local u = (r > l) and ((FIRE_X - l) / (r - l)) or 0.5
-    local v = (b > t) and ((FIRE_BASE_Y * vMax - t) / (b - t)) or FIRE_BASE_Y
+    local u = (r > l) and ((fx - l) / (r - l)) or 0.5
+    local v = (b > t) and ((fy * vMax - t) / (b - t)) or fy
 
     -- Cropped out of frame. Fall back to the middle of the floor rather than
     -- sending the whole cast off-screen after a fire nobody can see.
     if u < 0 or u > 1 then u = 0.5 end
-    if v < 0 or v > 1 then v = FIRE_BASE_Y end
+    if v < 0 or v > 1 then v = fy end
 
     return panelW * u, panelH * (1 - v)
 end
@@ -534,12 +569,13 @@ local function BuildPanel(mainFrame)
     hintText = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hintText:SetPoint("TOP", 0, -8)
     hintText:SetTextColor(0.6, 0.6, 0.6)
+    hintText:SetJustifyH("CENTER")
 
     -- Grid <-> Scene, and the backdrop picker. The picker only appears in scene
     -- view, because fourteen arrows over an empty grid are just clutter.
     viewBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    viewBtn:SetSize(64, 20)
-    viewBtn:SetPoint("TOPRIGHT", -8, -4)
+    viewBtn:SetSize(VIEW_BTN_W, BAR_H)
+    viewBtn:SetPoint("TOPRIGHT", -8, -BAR_TOP)
     viewBtn:SetText("Scene")
     viewBtn:SetScript("OnClick", function()
         AltStableConfig = AltStableConfig or {}
@@ -548,8 +584,8 @@ local function BuildPanel(mainFrame)
     end)
 
     sceneBar = CreateFrame("Frame", nil, panel)
-    sceneBar:SetPoint("TOPLEFT", 8, -4)
-    sceneBar:SetSize(240, 20)
+    sceneBar:SetPoint("TOPLEFT", 8, -BAR_TOP)
+    sceneBar:SetSize(SCENE_BAR_W, BAR_H)
     sceneBar:Hide()
 
     local prev = CreateFrame("Button", nil, sceneBar, "UIPanelButtonTemplate")
@@ -576,6 +612,31 @@ local function BuildPanel(mainFrame)
         Roster.cards[i] = BuildCard(panel, i)
     end
     return panel
+end
+
+-- One scale factor for the WHOLE cast, so nobody overflows their slot.
+--
+-- The per-figure clamp this replaces did precisely what its own comment said it
+-- avoided. "Narrow the slot, not the figure" described the intent; `w, h = w /
+-- overflow, h / overflow` is a uniform downscale of that one figure, identical
+-- in effect to the grid's clamp. It fired routinely - a wide capture is exactly
+-- the short-and-stocky races - so the gnome RelativeFigureSize had just
+-- carefully drawn at 63% of the elf's height got shortened again for being
+-- wide, and the height discrepancy came straight back.
+--
+-- Scaling EVERYONE by the worst overflow keeps the relative heights intact,
+-- which is the entire point of having measured them.
+local function FitScale(sizes, slot)
+    if not slot or slot <= 0 then return 1 end
+    local worst = 1
+    for _, wh in ipairs(sizes) do
+        local w = tonumber(wh[1]) or 0
+        if w > slot then
+            local over = w / slot
+            if over > worst then worst = over end
+        end
+    end
+    return 1 / worst
 end
 
 -- Who stands around the fire: the highest level first, then item level, capped.
@@ -611,6 +672,20 @@ local function RenderScene(chars)
     local cast = SceneCast(chars, CutoutFor, SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestNative(cast, CutoutFor)
+
+    -- Measure everyone first, then pick ONE scale that fits the widest of them.
+    local sizes = {}
+    for i, char in ipairs(cast) do
+        local cut = CutoutFor(char)
+        local spot = spots[i]
+        if cut and spot then
+            local w, h = RelativeFigureSize(cut, tallest, figureH)
+            sizes[i] = { w * spot.scale, h * spot.scale }
+        else
+            sizes[i] = { 0, 0 }
+        end
+    end
+    local fit = FitScale(sizes, slot)
     local withArt = 0
 
     for i, card in ipairs(Roster.cards) do
@@ -619,16 +694,7 @@ local function RenderScene(chars)
         local spot = spots[i]
         if char and cut and spot then
             withArt = withArt + 1
-            local w, h = RelativeFigureSize(cut, tallest, figureH)
-            w, h = w * spot.scale, h * spot.scale
-            -- Narrow the slot, not the figure: shrinking a wide capture to fit
-            -- made it SHORTER than its neighbours, which is the height
-            -- discrepancy the first version showed - a scaling artefact
-            -- masquerading as a short character.
-            if w > slot then
-                local overflow = w / slot
-                w, h = w / overflow, h / overflow
-            end
+            local w, h = sizes[i][1] * fit, sizes[i][2] * fit
 
             card:SetFrameLevel(panel:GetFrameLevel() + 1 + spot.level)
 
@@ -660,9 +726,31 @@ local function RenderScene(chars)
     return withArt, #chars
 end
 
--- Exposed for the hint below: how many the scene chose to show.
-local function SceneCastSize(chars)
-    return #SceneCast(chars, CutoutFor, SCENE_CAST)
+-- Where the hint goes, and how wide it may be.
+--
+-- The grid has a clear strip along the top and the hint can sit in it, centred.
+-- Scene mode does not: the backdrop picker takes the left 240px of that strip
+-- and the view toggle the right 64, and a centred string long enough to say
+-- "showing 3 of 12 - highest level first; the grid shows them all" runs
+-- straight through both. Dropping below the bar is better than squeezing the
+-- text into the 200px gap between them.
+--
+-- Returned rather than applied, because a collision that only appears at
+-- certain panel widths is not something anyone re-checks by eye.
+local function HintLayout(panelW, sceneView)
+    local w = math.max(0, (tonumber(panelW) or 0) - 2 * PAD_X)
+    if sceneView then
+        return -(BAR_TOP + BAR_H + 4), w    -- clear of the picker row
+    end
+    return -8, w
+end
+
+local function ApplyHintLayout(panelW, sceneView)
+    if not hintText then return end
+    local y, w = HintLayout(panelW, sceneView)
+    hintText:ClearAllPoints()
+    hintText:SetPoint("TOP", 0, y)
+    hintText:SetWidth(w)
 end
 
 function Roster.Select(guid)
@@ -680,6 +768,7 @@ function Roster.Refresh()
     if viewBtn then viewBtn:SetText(View() == "scene" and "Grid" or "Scene") end
 
     if View() == "scene" then
+        ApplyHintLayout(panel:GetWidth(), true)
         local shown, total = RenderScene(chars)
         if shown < total then
             hintText:SetText(("showing %d of %d - highest level first; the grid shows them all")
@@ -691,6 +780,7 @@ function Roster.Refresh()
         return
     end
 
+    ApplyHintLayout(panel:GetWidth(), false)
     backdropTex:SetTexture(nil)
     backdropTex:SetColorTexture(0.05, 0.05, 0.06, 1)
 
@@ -703,6 +793,12 @@ function Roster.Refresh()
         if char and cols > 0 and i <= fits then
             local col = (i - 1) % cols
             local row = math.floor((i - 1) / cols)
+            -- Put the frame level back. Scene mode raises cards by up to +11
+            -- to order the ring, and nothing here lowered them again: a card
+            -- left raised sits over the Grid/Scene button and eats its clicks
+            -- the moment the padding or the hint line changes height.
+            card:SetFrameLevel(panel:GetFrameLevel() + 1)
+
             card:ClearAllPoints()
             card:SetPoint("TOPLEFT", panel, "TOPLEFT",
                 PAD_X + col * (cardW + CARD_GAP),
@@ -803,6 +899,9 @@ function Roster._Bootstrap()
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,
             FireAnchor = FireAnchor, FIRE_CLEARANCE = FIRE_CLEARANCE,
             FIRE_X = FIRE_X, FIRE_BASE_Y = FIRE_BASE_Y,
+            FitScale = FitScale, HintLayout = HintLayout,
+            SCENE_BAR_W = SCENE_BAR_W, VIEW_BTN_W = VIEW_BTN_W,
+            BAR_TOP = BAR_TOP, BAR_H = BAR_H, PAD_X = PAD_X,
             TallestNative = TallestNative, SCENE_CAST = SCENE_CAST,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,

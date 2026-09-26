@@ -569,6 +569,118 @@ do
 end
 
 ------------------------------------------------------------
+-- Every backdrop knows where its own fire is
+------------------------------------------------------------
+-- The art spec is 50%/84%, but the README says in the same breath that those
+-- are "approximate art targets, not measured anchors", and that Karazhan - an
+-- AltTracker original that predates the spec - keeps its own smaller fire,
+-- right of centre. One hardcoded pair for all fourteen puts the keep-out gap on
+-- empty ground there.
+
+do
+    local missing, karazhan = {}, nil
+    for _, e in ipairs(T.SCENE_BACKDROPS) do
+        if type(e.fireX) ~= "number" or type(e.fireBaseY) ~= "number" then
+            missing[#missing + 1] = e.id
+        end
+        if e.id == "karazhan" then karazhan = e end
+    end
+    eq("every backdrop carries a measured fire anchor", #missing, 0)
+
+    check("Karazhan's fire is right of centre, as the README says",
+          karazhan and karazhan.fireX > 0.53,
+          karazhan and tostring(karazhan.fireX) or "no karazhan entry")
+    check("  and lower than the generated scenes",
+          karazhan and karazhan.fireBaseY > 0.87, tostring(karazhan.fireBaseY))
+
+    -- The anchor has to REACH the layout, not just sit in the table.
+    local spec  = { w = 1024, h = 682, texw = 1024, texh = 1024 }
+    local kara  = { w = 1024, h = 682, texw = 1024, texh = 1024,
+                    fireX = karazhan.fireX, fireBaseY = karazhan.fireBaseY }
+    local specX, specY = T.FireAnchor(1400, 700, spec)
+    local karaX, karaY = T.FireAnchor(1400, 700, kara)
+    check("a backdrop's own anchor moves the fire", karaX > specX + 40,
+          ("%.1f vs %.1f"):format(karaX, specX))
+    check("  and its ground line with it", karaY < specY - 10,
+          ("%.1f vs %.1f"):format(karaY, specY))
+
+    -- And the cast follows it, rather than clearing the middle of the panel.
+    local spots = T.SceneLayout(1400, 700, 5, kara)
+    for i, sp in ipairs(spots) do
+        check(("character %d clears Karazhan's own fire"):format(i),
+              math.abs(sp.x - karaX) >= 1400 * T.FIRE_CLEARANCE / 2,
+              ("x %.1f vs fire %.1f"):format(sp.x, karaX))
+    end
+end
+
+------------------------------------------------------------
+-- One scale for the whole cast
+------------------------------------------------------------
+-- The clamp this replaced shrank each too-wide figure on its own, which is a
+-- uniform downscale of that one character - exactly the "scaling artefact
+-- masquerading as a short character" its own comment claimed to have fixed.
+-- Wide captures are the short, stocky races, so it hit precisely the ones
+-- RelativeFigureSize had just measured.
+
+do
+    eq("nothing overflowing means nothing scaled",
+       T.FitScale({ { 50, 200 }, { 60, 210 } }, 100), 1)
+
+    -- One figure over the slot pulls EVERYONE down by the same factor.
+    local fit = T.FitScale({ { 200, 300 }, { 50, 400 } }, 100)
+    eq("the worst overflow sets the scale", fit, 0.5)
+
+    local wideH  = 300 * fit
+    local narrowH = 400 * fit
+    check("the tall narrow figure is still the taller one", narrowH > wideH)
+    check("  and the ratio between them is untouched",
+          math.abs((narrowH / wideH) - (400 / 300)) < 1e-9,
+          ("%.6f"):format(narrowH / wideH))
+
+    -- The old per-figure clamp, for contrast: it would have left the wide one
+    -- at 300 * (100/200) = 150 and the narrow one at 400, a ratio of 2.67.
+    check("  which the per-figure clamp did not preserve",
+          math.abs((400 / 150) - (400 / 300)) > 1,
+          "the fixture must actually distinguish the two")
+
+    eq("the worst of several overflows wins",
+       T.FitScale({ { 400, 100 }, { 200, 100 } }, 100), 0.25)
+    eq("an unmeasured slot scales nothing", T.FitScale({ { 400, 100 } }, 0), 1)
+    eq("an empty cast scales nothing", T.FitScale({}, 100), 1)
+end
+
+------------------------------------------------------------
+-- The hint does not sit on top of the backdrop picker
+------------------------------------------------------------
+-- Scene mode puts a 240px picker at the left of the top strip and the view
+-- toggle at the right. The grid has neither, which is why the hint could be
+-- centred there and nobody noticed.
+
+do
+    local gridY, gridW = T.HintLayout(700, false)
+    local sceneY, sceneW = T.HintLayout(700, true)
+
+    eq("the grid hint sits in the top strip", gridY, -8)
+    check("the scene hint drops below the picker row",
+          sceneY <= -(T.BAR_TOP + T.BAR_H),
+          ("%d vs bar bottom %d"):format(sceneY, -(T.BAR_TOP + T.BAR_H)))
+
+    eq("both get the panel's usable width", gridW, 700 - 2 * T.PAD_X)
+    eq("  including the scene", sceneW, gridW)
+
+    -- A centred string of this width WOULD have overlapped the furniture, which
+    -- is why it moved rather than narrowed: check the geometry that forced it.
+    local halfFree = (700 - T.SCENE_BAR_W - T.VIEW_BTN_W) / 2
+    check("there is not room to centre a hint between the two",
+          sceneW / 2 > halfFree,
+          ("half-hint %.1f vs free %.1f"):format(sceneW / 2, halfFree))
+
+    local _, narrow = T.HintLayout(40, true)
+    check("an absurdly narrow panel still gives a non-negative width",
+          narrow >= 0, tostring(narrow))
+end
+
+------------------------------------------------------------
 -- It builds
 ------------------------------------------------------------
 -- Frames are stubs, so this asserts that the panel can be constructed and
