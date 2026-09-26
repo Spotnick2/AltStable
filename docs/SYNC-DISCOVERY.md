@@ -11,42 +11,67 @@ first.
 ---
 
 
-## #44, measured: the blob is 1.3 KB, and the bank half of it is 52 bytes
+## #44, measured: the whole account's inventory is two chunks
 
-Measured 2026-09-26 against this machine's real store, with
-`Tools/Sync/measure-blob.py`. Re-run it rather than trusting these numbers as
-the roster grows.
+Measured 2026-09-26 with `Tools/Sync/measure-blob.py`, which reads the
+SavedVariables directly. Re-run it rather than trusting these numbers.
 
 ```
-characters with inventory : 35
-bag entries / bytes       : 180 / 1251
-bank entries / bytes      :   7 /   52
-total blob payload        : 1303 bytes (+1225 framing)
+account 50284074#12
+  characters with inventory : 20
+  bag / bank entries        : 100 / 7
+  blob payload, raw         : 1763 bytes
+  ... deflated              :  343 bytes
+  ... escaped, as sent      :  345 bytes  -> 2 chunks of 220
+  bank bytes, whole account :   52
+
+account 50284074#1
+  characters with inventory : 15
+  bag / bank entries        :  80 / 0
+  ... escaped, as sent      :  277 bytes  -> 2 chunks of 220
 ```
 
-#44's concern is that changing one bag re-sends the bank too. On this database
-that waste is **52 bytes** — 4% of the payload, one entry on one character, well
-under a single 220-byte chunk. The issue estimated "~150 unique items, roughly
-1.5 KB per record, ~30 KB for 20 alts"; the largest character here has 27 bag
-entries and 216 bytes, and the whole 35-character roster is 2.5 KB including
-framing.
+**The whole inventory blob for an account is two chunks.** Not "hundreds".
 
-**So the split is not justified yet**, and it is not a free change: it is a
-`BLOB_VERSION` bump with cross-version compatibility to get right, for 4% of
-1.3 KB. The issue already called it "a growth problem, not a present failure" —
-this is the number that says the growth has not happened.
+#44's concern is that a bag change re-sends the bank too. Stated correctly:
+a bag change bumps **one** character's stamp, and `SerializeFullDB` filters on
+`lastUpdate`, so the delta carries that character alone. The bank re-sent with
+it is that one character's bank — the worst on this machine is 7 entries, 52
+raw bytes.
 
-**What would change the answer.** A character with a full bank is roughly 120
-entries, about 700 bytes of bank alone. Twenty such alts is ~14 KB re-sent on
-every bag change, which is worth the format bump. This roster is levels 1–16
-with barely a bank between them, so it is nowhere near that. Re-measure when
-characters start hoarding.
+Even the worst case the issue imagines is small. A **full 120-item bank**, with
+distinct ids so it does not compress unrealistically, is 905 raw bytes → 420
+deflated → **2 chunks**. So the waste tops out at roughly one extra chunk, on
+the one character that changed.
 
-**The unexpected number** is framing: 1,225 bytes against 1,303 of payload,
-because `v1|s=…|kt=…|b=|k=` costs ~35 bytes per character and most characters
-carry only a handful of items. If blob size ever does matter, that is the larger
-share today — and it is a cheaper fix than splitting the sections.
+**So the split is not justified**, and it is not free: a `BLOB_VERSION` bump
+with cross-version compatibility to get right. Re-measure if characters start
+hoarding, but the shape of the answer will not change much — DEFLATE is doing
+the heavy lifting, not the format.
 
+### Four ways the first attempt got this wrong
+
+Recorded because each is an easy mistake to repeat, and the first version of
+this section stated all four as fact.
+
+1. **Summing the account stores.** Each account is a separate client sending
+   its own blob; summing them measures a message nobody sends, and
+   double-counts the 13 characters both accounts know about. Reported 35
+   characters and 1,303 bytes for something that is really 20 and 744.
+2. **Counting chunks on raw bytes.** `ChunkAndSendPayload` DEFLATEs and escapes
+   before slicing at `MAX_CHUNK`, so raw size says nothing about chunk count.
+   1,763 raw is 345 on the wire — a factor of five.
+3. **Treating a delta as the whole roster.** The waste is per character, not
+   per database, because only the changed character rides the delta. This made
+   the recorded threshold about twenty times too high.
+4. **"Framing is half the blob."** True uncompressed — 35 identical
+   `plugin_warband:v1|s=…|kt=…` headers — and completely false on the wire,
+   because near-identical repeated headers are exactly what DEFLATE erases. The
+   suggestion that trimming framing was "the cheaper fix" is withdrawn.
+
+Note also that `EncodeForWoWAddonChannel` is **not** base64: it is
+`CreateCodec("\000", "\001", "")`, which escapes two byte values and costs
+~0.6% rather than a third. See #20 item 5, which is about that choice.
 
 ## The problem, stated precisely
 
