@@ -576,23 +576,41 @@ end
 do
     local T = AltStable._test
 
-    -- The id resolves: use it.
-    WoW.knownFileIDs = { [T.ROSTER_ICON_FILE_ID] = true }
+    -- The client has it: use it.
+    WoW.missingFileIDs = {}
     local tex = CreateFrame("Frame"):CreateTexture()
     eq("the Who tab's icon is used when the client has it",
-       AltStable.ApplyRosterIcon(tex), T.ROSTER_ICON_FILE_ID)
+       T.ApplyRosterIcon(tex), T.ROSTER_ICON_FILE_ID)
     eq("  and actually set", tex:GetTextureFileID(), T.ROSTER_ICON_FILE_ID)
-    check("  cropped, like the icon it replaces", tex._texCoord ~= nil)
 
-    -- The id does not resolve - a later build, say. The button must not go blank.
-    WoW.knownFileIDs = {}
+    -- NOT cropped. The old icon was Interface\Icons\ art with a border baked
+    -- in; this is UI art from inside a sidetab, and the same 8% trim would
+    -- shave the outer figures off the group.
+    check("  and drawn whole, not trimmed like an Icons\ file",
+          tex._texCoord and tex._texCoord[1] == 0 and tex._texCoord[2] == 1,
+          tostring(tex._texCoord and tex._texCoord[1]))
+
+    -- A canonicalised id - an alias resolving to a different but perfectly
+    -- valid FileDataID - must not be thrown away. The question is "did anything
+    -- load", not "is it the number I asked for".
+    local aliased = CreateFrame("Frame"):CreateTexture()
+    aliased.GetTextureFileID = function() return 9999999 end
+    eq("an id the client redirected elsewhere is still accepted",
+       T.ApplyRosterIcon(aliased), T.ROSTER_ICON_FILE_ID)
+
+    -- The client does not have it - a later build, say. The button must not go
+    -- blank and say nothing.
+    WoW.missingFileIDs = { [T.ROSTER_ICON_FILE_ID] = true }
     local missing = CreateFrame("Frame"):CreateTexture()
     eq("an id this client does not have falls back rather than drawing nothing",
-       AltStable.ApplyRosterIcon(missing), T.ROSTER_ICON_FALLBACK)
-    eq("  to the old icon", missing:GetTexture(), T.ROSTER_ICON_FALLBACK)
-    check("  which does resolve", missing:GetTextureFileID() ~= nil)
+       T.ApplyRosterIcon(missing), T.ROSTER_ICON_FALLBACK)
+    eq("  to the old icon, by path", missing:GetTextureFilePath(), T.ROSTER_ICON_FALLBACK)
+    check("  cropped, because THAT one is an Icons\ file with a border",
+          missing._texCoord and missing._texCoord[1] > 0,
+          tostring(missing._texCoord and missing._texCoord[1]))
+    WoW.missingFileIDs = {}
 
-    check("nothing to draw on is not a crash", AltStable.ApplyRosterIcon(nil) == nil)
+    check("nothing to draw on is not a crash", T.ApplyRosterIcon(nil) == nil)
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))

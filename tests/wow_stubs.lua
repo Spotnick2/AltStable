@@ -32,9 +32,14 @@ local WoW = {
     loaded      = {},
     loadCalls   = {},
     timers      = {},
-    -- File ids this pretend client has. Empty by default: a test that relies on
-    -- one says so, which is the point.
-    knownFileIDs = {},
+    -- Art this pretend client does NOT have. Opt-out, not opt-in: real item
+    -- icons ARE file ids on this client (docs/forever-api-notes.md records
+    -- iconFileID=134534 from the item struct, and the Warband plugin feeds
+    -- exactly that into SetTexture), so a client that owns no files is the
+    -- wrong default and would fail unrelated tests the moment a fixture used a
+    -- numeric icon.
+    missingFileIDs = {},
+    missingTexturePaths = {},
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
@@ -59,7 +64,7 @@ function WoW.reset()
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
-    WoW.knownFileIDs = {}
+    WoW.missingFileIDs, WoW.missingTexturePaths = {}, {}
     WoW.equipped = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
@@ -149,21 +154,36 @@ local function makeFrame()
     -- nothing - a silent no-op that reads as correct.
     -- Textures: what was set, and whether the client knew it.
     --
-    -- SetTexture takes a path OR a file id, and an id the client does not have
-    -- leaves the texture EMPTY rather than erroring - so "did that id resolve"
-    -- can only be answered by asking the texture afterwards. Modelled here
-    -- because code that checks before falling back is code worth testing, and
-    -- the chaining default made both branches look identical.
+    -- SetTexture takes a path OR a file id, and art the client does not have
+    -- leaves the texture EMPTY rather than erroring - so "did that resolve" can
+    -- only be answered by asking the texture afterwards. Modelled here because
+    -- code that checks before falling back is code worth testing, and the
+    -- chaining default made both branches look identical.
     --
-    -- WoW.knownFileIDs decides which ids exist; anything not in it comes back
-    -- empty, the way an id from a previous build would.
+    -- WoW.missingFileIDs and WoW.missingTexturePaths name what is ABSENT.
+    -- Everything else resolves, because on a real client almost everything
+    -- does - and the Instances plugin's `not tex:GetTexture()` fallback needs a
+    -- missing PATH to be expressible, which an id-only allowlist could not do.
+    --
+    -- CAVEAT, unverified on the live client: whether SetTexture(<bad id>)
+    -- really leaves GetTextureFileID empty, rather than echoing the number
+    -- back, has not been measured. See the note on ApplyRosterIcon in
+    -- SheetUI.lua - if the client echoes, this stub is optimistic and the
+    -- fallback it lets us test is decorative.
     f.SetTexture = function(self, v)
         if type(v) == "number" then
-            self._fileID = WoW.knownFileIDs[v] and v or nil
-            self._texture = self._fileID and v or nil
+            local missing = WoW.missingFileIDs[v]
+            self._fileID  = (not missing) and v or nil
+            self._texture = self._fileID
+        elseif type(v) == "string" then
+            local missing = WoW.missingTexturePaths[v]
+            self._texture = (not missing) and v or nil
+            -- A path the client HAS resolves to some id. The number is not
+            -- knowable here, so it is deliberately not the path's own identity
+            -- and no test should assert its value - only that there is one.
+            self._fileID  = self._texture and 100000 or nil
         else
-            self._texture = v
-            self._fileID = v and 1 or nil     -- a path always resolves here
+            self._texture, self._fileID = nil, nil
         end
         return self
     end
