@@ -279,6 +279,14 @@ local function makeFrame()
     -- press, and with SetEnabled swallowed by the chaining default that claim
     -- was asserted nowhere - worse, a client missing the method entirely would
     -- have thrown while the suite stayed green.
+    -- Word wrap is REAL state. A FontString with only a left anchor is as wide
+    -- as its text, so whether it wraps decides whether a long line stays
+    -- inside the frame or runs out over the game world - which it did. With
+    -- SetWordWrap swallowed by the chaining default, and GetWordWrap returning
+    -- the frame itself (truthy), an assertion about it could not fail.
+    f.SetWordWrap = function(self, v) self._wrap = v ~= false; return self end
+    f.GetWordWrap = function(self) return self._wrap ~= false end
+
     f.SetEnabled  = function(self, v) self._enabled = v ~= false; return self end
     f.Enable      = function(self) self._enabled = true; return self end
     f.Disable     = function(self) self._enabled = false; return self end

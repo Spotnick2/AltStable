@@ -1761,6 +1761,47 @@ do
     check("a clean character is told so",
           clean:find("Every enchantable slot", 1, true) ~= nil, clean)
 
+    -- The reason line has to be BOUNDED. With only a TOPLEFT anchor a
+    -- FontString is as wide as its text, and the longest of these sentences
+    -- ran off the right of the panel and out over the game world - reported
+    -- from a live client.
+    do
+        local none = T.DetailAuditLine()
+        check("the reason line has a right edge", none and none:GetNumPoints() >= 2,
+              tostring(none and none:GetNumPoints()))
+        local hasRight = false
+        for i = 1, (none and none:GetNumPoints() or 0) do
+            if none:GetPoint(i) == "RIGHT" then hasRight = true end
+        end
+        check("  anchored on the right, so it wraps instead of running out", hasRight)
+        -- The stub has to MODEL wrapping for the line above to mean anything:
+        -- a chaining no-op leaves GetWordWrap returning the frame itself,
+        -- which is truthy, and the assertion passes either way. Pinned here
+        -- rather than assumed.
+        local scratch = CreateFrame("Frame"):CreateFontString()
+        scratch:SetWordWrap(false)
+        eq("wrapping is real state in the stubs", scratch:GetWordWrap(), false)
+        scratch:SetWordWrap(true)
+        eq("  both ways", scratch:GetWordWrap(), true)
+
+        check("  and wrapping is on for the reason line",
+              none:GetWordWrap() == true)
+    end
+
+    -- The gear icons must not be hidden by their own quality border. It was a
+    -- solid colour texture on OVERLAY - a lid, not a border - so every slot
+    -- came out a flat coloured square.
+    do
+        T.TabClick("Char")
+        local slot = T.DetailSlotFrame("chest")
+        check("a slot has an icon", slot and slot.icon ~= nil)
+        check("  and the quality border sits BEHIND it",
+              slot and slot.border:GetDrawLayer() == "BACKGROUND",
+              tostring(slot and slot.border:GetDrawLayer()))
+        check("  with the icon above", slot and slot.icon:GetDrawLayer() == "ARTWORK",
+              tostring(slot and slot.icon:GetDrawLayer()))
+    end
+
     -- And the one the clean bill must NOT be given to.
     -- The class-plate icon's PATH.
     --

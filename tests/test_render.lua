@@ -393,7 +393,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoCaptureOff = nil
+    AltStableProbeDB.autoCaptureOn = true
     T.StartCountdown("gear changed")
     eq("a countdown is pending", T.pendingKind(), "countdown")
 
@@ -407,21 +407,21 @@ do
     WoW.screenshots = 0
     WoW.flushTimers()
     eq("  so no picture is taken", WoW.screenshots, 0)
-    AltStableProbeDB.autoCaptureOff = nil
+    AltStableProbeDB.autoCaptureOn = true
 end
 
 do
     -- And the countdown asks again when it fires, for every other way the
     -- answer could have changed in those five seconds.
     resetCapture()
-    AltStableProbeDB.autoCaptureOff = nil
+    AltStableProbeDB.autoCaptureOn = true
     T.StartCountdown("gear changed")
-    AltStableProbeDB.autoCaptureOff = true    -- changed behind the command's back
+    AltStableProbeDB.autoCaptureOn = nil     -- changed behind the command's back
     WoW.screenshots = 0
     WoW.flushTimers()
     eq("a countdown that fires with auto off takes no picture", WoW.screenshots, 0)
     check("  and is not left capturing", not T.capturing())
-    AltStableProbeDB.autoCaptureOff = nil
+    AltStableProbeDB.autoCaptureOn = true
 end
 
 ------------------------------------------------------------
@@ -579,7 +579,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
 
     -- Alive and unphotographed: the capture is wanted.
     WoW.dead = false
@@ -606,7 +606,7 @@ do
     -- the timer was armed while the player was alive.
     WoW.dead = false
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     check("the countdown is running", T.pendingKind() == "countdown")
     WoW.dead = true                       -- they die while it counts
@@ -627,7 +627,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
 
     check("nothing is on screen to begin with", T.PromptText() == nil)
 
@@ -652,7 +652,7 @@ do
 
     -- Now: the "do it while I am standing still" button.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     check("Now is a button too", T.PromptClick("Now"))
     check("  which starts the capture immediately", T.capturing())
@@ -663,7 +663,7 @@ do
     -- Snooze: "not right now", which is the one the previous set had no way
     -- to say. Skip and Never were both refusals; neither of them was later.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.chatOut = {}
     T.StartCountdown("gear changed")
     check("Snooze is offered too", T.PromptClick("Snooze"))
@@ -685,7 +685,7 @@ do
     -- a zone change, a resurrection or a login arm a fresh countdown for the
     -- same unrecorded look seconds later - so the snooze did nothing at all.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.displayID = 4242
     T.StartCountdown("gear changed")
     T.PromptClick("Snooze")
@@ -703,7 +703,7 @@ do
     -- take the snooze with it, and the settle after the fight then started a
     -- fresh countdown - so a pull undid the button.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     T.PromptClick("Snooze")
     local deadline = T.snoozeUntil()
@@ -728,7 +728,7 @@ do
     -- and a deadline left behind would silently block every trigger for the
     -- rest of the ten minutes, including one for a look that changed again.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     T.PromptClick("Snooze")
     check("a snooze is in hand", T.snoozeUntil() ~= nil)
@@ -738,7 +738,7 @@ do
     resetCapture()
 
     -- Back to a fresh snooze for the cancellation check below.
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     T.PromptClick("Snooze")
 
@@ -750,7 +750,7 @@ do
     -- A snooze counts as pending, or "/asrender cancel" answers "nothing
     -- pending" and then takes the picture ten minutes later anyway.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     T.PromptClick("Snooze")
     eq("a snooze is something to cancel", T.pendingKind(), "snooze")
@@ -763,7 +763,7 @@ do
     -- Turning it off for good is a command now, not a button: the rarest of
     -- the four, and the chat line names it.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.chatOut = {}
     T.StartCountdown("gear changed")
     check("the countdown says how to stop being asked at all",
@@ -776,7 +776,7 @@ do
     -- otherwise it sits there reading "Portrait in 0s" over the capture that
     -- already started, offering a Skip button that skips nothing.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     check("a prompt is up while it counts", T.PromptText() ~= nil)
     WoW.flushTimers()
@@ -818,7 +818,7 @@ do
     -- Combat starting cancels the countdown; the prompt must not be left
     -- promising a portrait that is not coming.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     check("a prompt is up", T.PromptText() ~= nil)
     T.CancelPending("combat started")
@@ -902,7 +902,7 @@ do
 
     -- A REAL change still gets through, or the fix is just "never capture".
     WoW.displayID = 2000               -- a barber visit
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.ConsiderCapture("gear changed since your last portrait")
     check("a genuine look change is still noticed", T.pendingKind() == "countdown",
           tostring(T.pendingKind()))
@@ -920,7 +920,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.Capture()
     check("a capture is running", T.capturing())
 
@@ -948,7 +948,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.dead = true
     WoW.displayID = 3000                 -- something really did change
     T.ConsiderCapture("quiet since combat - gear changed since your last portrait")
@@ -977,7 +977,7 @@ do
     -- twice - two captures, two blackouts - and left the prompt on screen
     -- offering Now and Skip over a capture that had already finished.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     check("a countdown is armed", T.pendingKind() == "countdown")
 
@@ -996,7 +996,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     T.StartCountdown("gear changed")
     WoW.chatOut = {}
     T.PromptClick("Now")
@@ -1011,7 +1011,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     -- The exact string the combat-settle trigger passes, which is the one a
     -- player is most likely to see mid-session - and the one no test used.
     T.StartCountdown("quiet since combat - gear changed since your last portrait")
@@ -1030,7 +1030,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.displayID = 7000                    -- something to photograph
 
     -- A dungeon, and that includes a capture asked for by hand: the stage is a
@@ -1083,7 +1083,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
 
     -- Moving is refused, but NOT dropped. It is over in a second and has no
     -- event worth waiting on, so the countdown waits rather than throwing the
@@ -1114,7 +1114,7 @@ do
     -- Falling counts as moving: a capture that begins as somebody leaves the
     -- ground is worse than one taken mid-stride.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.speed, WoW.falling = 0, true
     T.Capture()
     check("falling is moving", not T.capturing())
@@ -1123,7 +1123,7 @@ do
     -- Something that is NOT moving ending the wait: it has its own event to
     -- bring the trigger back, so outlasting it here would be wrong.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     WoW.speed = 7
     T.StartCountdown("gear changed")
     WoW.flushTimers()
@@ -1144,7 +1144,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     local guid = UnitGUID("player")
     T.RememberFingerprint(guid, T.LookFingerprint())
 
@@ -1175,7 +1175,7 @@ end
 
 do
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
 
     -- The sheet is open, so the showcase has taken the interface down. Driven
     -- through SetUIVisibility, which is what the showcase actually calls -
@@ -1201,7 +1201,7 @@ do
     -- The other order: the countdown starts in the open, and the player opens
     -- the sheet during those five seconds.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     UIParent:Show()
 
     T.StartCountdown("gear changed")
@@ -1240,7 +1240,7 @@ do
     -- Waiting for stillness is the long one - up to ninety seconds - so it is
     -- the wait most likely to still be running when somebody opens the sheet.
     resetCapture()
-    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
     UIParent:Show()
     WoW.speed = 7
     T.StartCountdown("gear changed")
@@ -1415,6 +1415,87 @@ do
 
     AltStable.FinishOpenAnimation = realFinish
     sheet:Hide()
+end
+
+------------------------------------------------------------
+-- Automatic capture is OPT-IN
+------------------------------------------------------------
+-- A portrait is an aesthetic choice, not a data field. Transmogrification
+-- exists, so the gear somebody happens to be wearing when the addon notices a
+-- change is very often not the gear they want to be seen in - and the addon
+-- deciding that for them, by hiding their interface for three seconds to
+-- photograph it, is the wrong default however politely it asks first.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.displayID = 8888
+
+    -- A FRESH profile, with nothing recorded either way.
+    AltStableProbeDB.autoCaptureOn = nil
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("a fresh install captures nothing automatically", T.pendingKind(), nil)
+
+    -- The old key must NOT switch it on. Inverting the meaning of a persisted
+    -- key is how somebody who turned the feature off has it turned back on by
+    -- an update.
+    AltStableProbeDB.autoCaptureOff = nil
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("clearing the OLD key does not opt anybody in", T.pendingKind(), nil)
+    AltStableProbeDB.autoCaptureOff = false
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("  and neither does setting it false", T.pendingKind(), nil)
+    AltStableProbeDB.autoCaptureOff = nil
+
+    -- Opting in works.
+    AltStableProbeDB.autoCaptureOn = true
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("opting in arms the countdown", T.pendingKind(), "countdown")
+    T.CancelPending()
+
+    -- And the manual path works whatever the setting says: it is the
+    -- recommended one, because you press it when you look how you want to.
+    AltStableProbeDB.autoCaptureOn = nil
+    WoW.screenshots = 0
+    T.Capture()
+    check("the manual capture works with auto off", T.capturing())
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+
+    -- The sheet's button is the same path.
+    AltStableProbeDB.autoCaptureOn = nil
+    AltStableProbe.CapturePortrait()
+    check("  and so does the sheet's capture button", T.capturing())
+    resetCapture()
+    WoW.displayID = 56658
+end
+
+------------------------------------------------------------
+-- A login countdown must not burn down behind a loading screen
+------------------------------------------------------------
+-- PLAYER_LOGIN fires BEFORE the loading screen ends, so a countdown armed
+-- there ran out while the player was still watching a progress bar: the
+-- five-second warning was over before there was a screen to show it on, and
+-- the capture arrived looking instantaneous and unannounced. Reported live.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent, AltStableProbeDB.autoCaptureOn = "yes", true
+    WoW.displayID = 7777
+
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_LOGIN")
+    eq("PLAYER_LOGIN arms nothing on its own", T.pendingKind(), nil)
+    WoW.flushTimers()
+    eq("  not even after its timers run", T.pendingKind(), nil)
+    check("  and takes no picture", not T.capturing())
+
+    -- The event that means "there is a world on screen now" is the one that
+    -- does it, and it fires on login too.
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_ENTERING_WORLD")
+    WoW.flushTimers()
+    eq("being in the world is what arms it", T.pendingKind(), "countdown")
+    T.CancelPending()
+    WoW.displayID = 56658
 end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))

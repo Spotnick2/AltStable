@@ -1265,9 +1265,14 @@ local function BuildSlot(parent)
     -- other icon in this addon uses.
     b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- The quality border. A separate texture ON TOP rather than a tint of the
-    -- icon, so a purple item does not come out purple-tinted.
-    b.border = b:CreateTexture(nil, "OVERLAY")
+    -- The quality border, BEHIND the icon and one pixel larger on every side,
+    -- so only that margin shows.
+    --
+    -- It was a solid colour texture on OVERLAY - which is not a border, it is
+    -- a lid. Every equipped slot came out as a flat green or blue square with
+    -- the item level under it and the icon completely hidden behind it, which
+    -- is exactly what it looked like on screen.
+    b.border = b:CreateTexture(nil, "BACKGROUND")
     b.border:SetPoint("TOPLEFT", -1, 1)
     b.border:SetPoint("BOTTOMRIGHT", 1, -1)
     b.border:SetColorTexture(0, 0, 0, 0)
@@ -1362,7 +1367,13 @@ local function BuildDetail()
     detailAudit = { rows = {} }
     detailAudit.none = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     detailAudit.none:SetJustifyH("LEFT")
+    detailAudit.none:SetJustifyV("TOP")
     detailAudit.none:SetTextColor(0.45, 0.8, 0.45)
+    -- Bounded and wrapping. With only a TOPLEFT anchor a FontString is as wide
+    -- as its text, so the longest of these sentences - "Not audited below
+    -- level 60 - enchants on levelling gear are not a finding." - ran straight
+    -- off the right of the panel and out over the game world.
+    if detailAudit.none.SetWordWrap then detailAudit.none:SetWordWrap(true) end
     for _ = 1, maxFindings do
         local row = {}
         row.label = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1527,8 +1538,17 @@ local function RenderDetail(char)
     for i, b in ipairs(detail.tabs) do
         b:ClearAllPoints()
         b:SetPoint("TOPLEFT", detail, "TOPLEFT", x + (i - 1) * 74, figureTop + 24)
-        -- The active tab is the one you are NOT being invited to press.
-        b:SetEnabled(b.id ~= Roster.detailTab)
+        -- The active tab is the one you are NOT being invited to press - but
+        -- disabled READS as unavailable, not as "you are here", so the tab you
+        -- are on looked greyed out while the other one looked like the
+        -- selected one. The label carries the state as well.
+        local active = b.id == Roster.detailTab
+        b:SetEnabled(not active)
+        local fs = b.GetFontString and b:GetFontString()
+        if fs then
+            if active then fs:SetTextColor(unpack(AltStable.C.ACCENT))
+            else fs:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+        end
         b:Show()
     end
 
@@ -1564,6 +1584,11 @@ local function RenderDetail(char)
     if not onChar and #findings == 0 then
         detailAudit.none:ClearAllPoints()
         detailAudit.none:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
+        -- The right edge, so it wraps inside the column instead of running out
+        -- of the panel. Set here rather than at build time because the column
+        -- moves with the frame width.
+        detailAudit.none:SetPoint("RIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
+        detailAudit.none:SetHeight(STAT_ROW_H * 3)
         -- A reason means the audit did not RUN - nothing equipped, or the
         -- character is still levelling. That is not a clean bill, and saying
         -- "every enchantable slot is enchanted" to somebody wearing nothing is
@@ -1829,6 +1854,12 @@ local DETAIL_TEST = {
     DETAIL_TABS = DETAIL_TABS,
     DetailTabs = function() return (detail and detail.tabs) or {} end,
     DetailFrame = function() return detail end,
+    DetailAuditLine = function() return detailAudit and detailAudit.none end,
+    DetailSlotFrame = function(key)
+        for i, slot in ipairs(GEAR_SLOTS) do
+            if slot.key == key then return detailSlots and detailSlots[i] end
+        end
+    end,
     DetailClassIcon = function()
         if not detail or not detail.classIcon:IsShown() then return nil end
         return detail.classIcon:GetTexture()

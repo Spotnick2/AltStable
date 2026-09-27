@@ -790,8 +790,25 @@ end
 ------------------------------------------------------------
 
 
+-- Automatic capture is OPT-IN now.
+--
+-- A portrait is an aesthetic choice, not a data field. Transmogrification
+-- exists, so the gear somebody happens to be wearing when the addon notices a
+-- change is very often not the gear they want to be seen in - and the addon
+-- deciding that for them, by hiding their interface for three seconds to
+-- photograph it, is the wrong default however politely it asks first.
+--
+-- So the recommended path is the capture button: you press it when you look
+-- the way you want to look. Automatic capture is there for anyone who would
+-- rather it just kept up, and it is off until they say so.
+--
+-- A NEW key, `autoCaptureOn`, rather than inverting the meaning of the
+-- `autoCaptureOff` already on disk. Reinterpreting a persisted key is how
+-- somebody who once turned the feature off has it turned back on by an update
+-- - the old key simply stops being read, and absence means off, which is the
+-- answer anyone who never chose would want.
 local function AutoEnabled()
-    return not (AltStableProbeDB and AltStableProbeDB.autoCaptureOff)
+    return (AltStableProbeDB and AltStableProbeDB.autoCaptureOn) == true
 end
 
 ------------------------------------------------------------
@@ -1383,8 +1400,10 @@ SlashCmdList["ASRENDER"] = function(msg)
     end
     if msg == "auto" then
         AltStableProbeDB = AltStableProbeDB or {}
-        AltStableProbeDB.autoCaptureOff = AutoEnabled() and true or nil
-        Out("auto-capture " .. (AutoEnabled() and "|cff55ff55on|r" or "|cffff5555off|r"))
+        AltStableProbeDB.autoCaptureOn = (not AutoEnabled()) or nil
+        Out("auto-capture " .. (AutoEnabled() and "|cff55ff55on|r" or "|cffff5555off|r")
+            .. " - the |cffffff00capture button|r on the sheet takes one whenever you like, "
+            .. "which is usually what you want: it photographs you as you look NOW.")
         -- Turning it off has to stop what is already coming. Otherwise the
         -- countdown announced a moment ago still fires, and the interface
         -- vanishes for three seconds directly after the player was told
@@ -1466,9 +1485,22 @@ auto:SetScript("OnEvent", function(_, event)
         -- without an error report to show for it.
         AbandonCapture("|cffff8800combat started - portrait abandoned|r", true)
     elseif event == "PLAYER_LOGIN" then
-        -- Inventory is not reliably readable the instant the world loads, and
-        -- a fingerprint built from half-loaded gear would re-shoot every login.
-        C_Timer.After(LOGIN_SETTLE, function() ConsiderCapture("gear changed since your last portrait") end)
+        -- Nothing. Deliberately.
+        --
+        -- PLAYER_LOGIN fires BEFORE the loading screen ends, so a countdown
+        -- armed here burned down while the player was still watching a
+        -- progress bar: the five-second warning was over before there was a
+        -- screen to show it on, and the capture arrived looking instantaneous
+        -- and unannounced. Reported from a live login.
+        --
+        -- PLAYER_ENTERING_WORLD is the event that means "there is a world on
+        -- screen now", it fires on login too, and it already runs the same
+        -- settle - so the login case is handled there and does not want a
+        -- second, earlier timer racing it.
+        --
+        -- The registration stays: losing it would make this a silent
+        -- behaviour change rather than a stated one, and the branch is where
+        -- the reason lives.
     else
         -- First, anything we could not give back during the fight.
         if owedRestore then
