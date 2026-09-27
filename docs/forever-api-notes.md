@@ -1068,32 +1068,47 @@ coordinate space, so no scale conversion is involved. Fixed for our own button i
 
 ---
 
-## GetCritChance works; GetHitModifier exists but is UNMEASURED
+## GetCritChance and GetHitModifier both work — MEASURED
 
 ```
-GetCritChance()    ->  1.66            MEASURED, level 18 gnome warlock, 1.60.1.70009
-GetHitModifier()   ->  ?               PRESENT in the dump, runtime value not measured
+GetCritChance()    ->  1.66      level 18 gnome warlock
+GetHitModifier()   ->  0         a character with no +hit gear
 ```
 
-`GetCritChance` returns a real percentage, not a rating-derived zero, so `stat_crit` has a
-build-verified producer and is scanned.
+Both MEASURED on 1.60.1.70009. Both therefore have build-verified producers and are scanned;
+neither is on `RETIRED_FIELDS` any more.
 
-`GetHitModifier` **is in the 1.60.1.70009 dump**, with a signature —
-`GetHitModifier() -> result:number [PlayerScript]` — so any claim that it was removed with hit
-rating is wrong. What is not known is what it *returns* here. It reports the **bonus** hit from
-gear, which is zero for most characters, and the Combat row for it did not render on the live
-client — which is equally consistent with "no useful value" and "a genuine zero". Those are
-different things, and a stored zero cannot be told from an absence afterwards, so `stat_hitpct`
-stays on `RETIRED_FIELDS` and nothing produces it.
-
-Presence in the dump is evidence of an API's existence and **nothing at all** about its behaviour.
-Worth stating because it cuts the other way too: a function being listed is not a reason to use it.
-
-To settle it, one line in game:
+`GetHitModifier` was the doubtful one, and the useful part is **how** it was settled:
 
 ```
 /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+0
 ```
+
+`0`, not `ABSENT` and not `nil`. Written that way on purpose — the three outcomes are different
+facts and a bare `print(GetHitModifier())` cannot tell them apart:
+
+| printed | meaning |
+|---|---|
+| `ABSENT` | the global does not exist |
+| `nil` | it exists and returns nothing useful |
+| `0` | it exists, is callable, and answers |
+
+Before this, "the Combat row did not render in game" was being read as evidence the function was
+gone. It was evidence of a zero. Two rounds of comments in this repo asserted it was "a pre-WoD
+global removed when hit rating was" — it is in the dump at line 4912 with a full signature, and it
+runs.
+
+**What is still unobserved is a NONZERO reading.** It reports the hit percent your GEAR adds, so
+zero is the correct answer for a character with none, and no character with +hit has been measured.
+That is handled in the display rather than by withholding the field: the Roster's row has no
+`allowZero`, so it appears only for a character that actually has some. And the row is labelled
+**"Bonus Hit"**, not "Hit Chance" — "Hit Chance 0%" would be telling the player they always miss,
+which is the label being wrong rather than the number.
+
+The general rule, which cuts both ways: presence in the dump says nothing about behaviour, and
+absence of a rendered row says nothing about presence. For a value you intend to PERSIST, get one
+live reading that distinguishes absent from nil from zero before you write a producer for it.
 
 ---
 
@@ -1129,6 +1144,12 @@ UnitXPMax("player")         ->  400
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
+4b. ~~**`GetHitModifier`'s runtime value**~~ — **answered live: `0`**, see above. Not `ABSENT`, not
+   `nil`, so the function works and `stat_hitpct` came off `RETIRED_FIELDS`. What remains open is
+   narrower and cosmetic: **a NONZERO reading has never been seen**, because the measured character
+   had no +hit gear. The Roster's row has no `allowZero` and so hides at zero, which means nothing
+   incorrect is displayed either way - but if you ever equip something with +hit and the row stays
+   away, that is the case to report.
 5. ~~**`GetFramesRegisteredForEvent`'s return shape**~~ — **answered live**, see above. The
    unregister count came back `1` where a table read scored `0`, which can only happen if the
    first return value is a frame. A probe line would still be tidier than inference if one is

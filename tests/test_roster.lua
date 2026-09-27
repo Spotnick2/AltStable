@@ -1617,13 +1617,13 @@ do
     -- The two stats that exist in Vanilla and had to be added to the scanner.
     check("melee crit is shown to two places", stats:find("Melee Crit=12.50%", 1, true) ~= nil, stats)
 
-    -- Hit chance is NOT offered. GetHitModifier exists on this client - it is
-    -- in the 1.60.1.70009 dump with a signature - but its VALUE is unmeasured,
-    -- returns the BONUS hit from gear - zero for most characters, so the row
-    -- was invisible for nearly everybody - and stat_hitpct is still on Core's
-    -- RETIRED_FIELDS, which purges it at login and drops it from sync. A row
-    -- for a field the addon deletes is worse than no row.
-    check("hit chance is not offered", stats:find("Hit Chance", 1, true) == nil, stats)
+    -- Bonus hit IS offered now, and LABELLED as bonus hit. MEASURED on
+    -- 1.60.1.70009: GetHitModifier() printed 0, which is a number rather than
+    -- ABSENT or nil, so the function works. What it returns is the hit percent
+    -- your GEAR adds - so "Hit Chance" would have been the wrong label whatever
+    -- the value: no bonus hit is not a 0% chance to hit anything.
+    check("the row is labelled Bonus Hit, not Hit Chance",
+          stats:find("Hit Chance", 1, true) == nil, stats)
 
     -- And the two that do NOT exist pre-TBC, which must not have been ported
     -- along with the rest of AltTracker's table.
@@ -1637,7 +1637,47 @@ do
     check("haste is not in the table at all", not defined.stat_haste)
     check("  nor resilience", not defined.stat_resilience)
     check("  while the crit row is", defined.stat_crit)
-    check("  and the unmeasured hit one is not", not defined.stat_hitpct)
+    check("  and the bonus-hit row is too, now it is measured", defined.stat_hitpct)
+
+    -- The row HIDES at zero, which is the whole reason it is safe to offer.
+    -- GetHitModifier reports what gear adds, a nonzero reading is still
+    -- unobserved on this client, and allowZero is deliberately absent so nobody
+    -- is shown a precise 0.00% that might turn out to mean nothing.
+    do
+        local hitDef
+        for _, g in ipairs(T.CHAR_STAT_GROUPS) do
+            for _, d in ipairs(g.defs) do
+                if d.key == "stat_hitpct" then hitDef = d end
+            end
+        end
+        check("the bonus-hit row does not claim zero is worth showing",
+              hitDef and not hitDef.allowZero)
+        check("  so a character with no +hit gear is not given the row",
+              T.HasStatValue({ stat_hitpct = 0 }, hitDef) == false)
+        check("  while one that has some is",
+              T.HasStatValue({ stat_hitpct = 2 }, hitDef) == true)
+        -- And rendered as a percentage to two places, like crit beside it,
+        -- rather than a bare number.
+        eq("  formatted as a percentage", T.FormatStatValue({ stat_hitpct = 2 }, hitDef),
+           "2.00%")
+
+        -- Through the pane, not only the table: a character carrying some.
+        AltStableDB.hitty = { guid = "hitty", name = "Hit Ty", class = "WARRIOR",
+            realm = "R", level = 60, race = "Human", raceName = "Human", ilvl = 40,
+            money = 100, stat_int = 10, lastUpdate = time() - 60, stat_hitpct = 3 }
+        T.Refresh()
+        T.DrillDown("hitty")
+        local hitStats = table.concat(T.DetailStats(), " | ")
+        check("a character with bonus hit sees the row",
+              hitStats:find("Bonus Hit=3.00%", 1, true) ~= nil, hitStats)
+        AltStableDB.hitty.stat_hitpct = 0
+        T.DrillDown("hitty")
+        check("  and one without does not",
+              table.concat(T.DetailStats(), " | "):find("Bonus Hit", 1, true) == nil)
+        AltStableDB.hitty = nil
+        T.Refresh()
+        T.DrillDown("geared")
+    end
     check("haste is not rendered either", stats:find("Haste", 1, true) == nil, stats)
     check("  and the scanner does not invent them",
           AltStableDB.geared.stat_haste == nil and AltStableDB.geared.stat_resilience == nil)

@@ -649,18 +649,28 @@ function AltStable.ScanCharacter()
     -- rating-derived zero, which is what Core's RETIRED_FIELDS note asked for
     -- before taking a field off that list.
     --
-    -- GetHitModifier is NOT scanned, and not because it is absent: the
-    -- 1.60.1.70009 dump lists it with a signature. What is unknown is its
-    -- RUNTIME value. Its row did not render in game, which is equally consistent
-    -- with "the function returns nothing useful" and "the value is genuinely
-    -- zero" - it reports BONUS hit from gear, which is zero for most characters.
-    -- Writing the field either way stores a zero that cannot be told from an
-    -- absence, and stat_hitpct is still on Core's retired list, so it would be
-    -- purged at the next login regardless.
+    -- GetHitModifier is scanned now. MEASURED on 1.60.1.70009:
     --
-    -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+    --     /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+    --     0
+    --
+    -- Zero, not "ABSENT" and not nil - so the function exists and returns a
+    -- number, which is the build-verified producer Core's RETIRED_FIELDS note
+    -- asked for before taking a field off that list.
+    --
+    -- It is the BONUS hit from gear, so zero is the right answer for a character
+    -- with none, and a nonzero reading is still unobserved. The pane decides
+    -- whether to draw it (no allowZero, so a zero hides the row); the scanner's
+    -- job is only to store what the client says.
+    --
+    -- Guarded like GetCritChance beside it, and for the same reason: the scan
+    -- runs at login before anything else works, and neither is guaranteed on
+    -- every build.
     if GetCritChance then
         char.stat_crit = plain(GetCritChance())
+    end
+    if GetHitModifier then
+        char.stat_hitpct = plain(GetHitModifier())
     end
 
     --------------------------------------------------------

@@ -619,11 +619,15 @@ function GetSpellBonusDamage(school) return 700 + school end
 -- so a stub for either would let a port of the TBC table pass here and then
 -- report a real 0% in game for something that does not exist.
 --
--- GetHitModifier is stubbed BECAUSE IT EXISTS - it is in the 1.60.1.70009 dump
--- with a signature - and the scanner deliberately does not call it anyway: its
--- runtime value is unmeasured, and stat_hitpct is in Core's RETIRED_FIELDS. The
--- stub is here so a test can prove we leave a present function alone, which is
--- a different assertion from "the function is missing".
+-- Both are MEASURED on 1.60.1.70009 and both are scanned: GetCritChance gave
+-- 1.66% on a level 18 gnome warlock, GetHitModifier printed 0 rather than
+-- ABSENT or nil - a working function answering for a character with no +hit
+-- gear. Neither is on Core's RETIRED_FIELDS any more.
+--
+-- The values here are DISTINCT and neither is zero, deliberately: a stub
+-- returning 0 for bonus hit would make "the field is stored" and "the field was
+-- defaulted" the same observation, and the display rule under test is precisely
+-- what happens at zero.
 function GetCritChance() return WoW.critChance end
 function GetHitModifier() return WoW.hitModifier end
 

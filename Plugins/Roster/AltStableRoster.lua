@@ -617,13 +617,17 @@ local CHAR_STAT_GROUPS = {
         { label = "Attack Power", key = "stat_ap",      kind = "int" },
         { label = "Spell Power",  key = "stat_sp",      kind = "int" },
         { label = "Melee Crit",   key = "stat_crit",    kind = "percent2" },
-        -- No Hit Chance row. GetHitModifier exists on this client - it is in
-        -- the 1.60.1.70009 dump - but its VALUE is unmeasured here, and
-        -- returns the BONUS hit from gear, which is zero for most characters -
-        -- so the row was invisible for nearly everybody, and "Hit Chance" was
-        -- the wrong label for it besides: no bonus hit is not a 0% chance to
-        -- hit. See the note in Scanner.lua.
-
+        -- "Bonus Hit", NOT "Hit Chance". GetHitModifier returns the hit percent
+        -- your GEAR adds, not your chance to hit anything - so a row reading
+        -- "Hit Chance 0%" would be stating that the character always misses,
+        -- which is the label being wrong rather than the number.
+        --
+        -- MEASURED as 0 on 1.60.1.70009, which is a real answer for a character
+        -- with no +hit gear. Deliberately WITHOUT allowZero: a nonzero reading
+        -- is still unobserved on this client, and without it HasStatValue hides
+        -- the row at zero - so the row appears only for a character that has
+        -- some, and nobody is shown a figure that turns out to mean nothing.
+        { label = "Bonus Hit",    key = "stat_hitpct",  kind = "percent2" },
         { label = "Defense",      key = "stat_defense", kind = "int" },
     } },
 }

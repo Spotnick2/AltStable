@@ -1599,7 +1599,7 @@ end
 local retiredCount = 0
 for _ in pairs(T.RETIRED_FIELDS) do retiredCount = retiredCount + 1 end
 check(retiredCount >= 8, "the retired list is exposed and populated")
-for _, k in ipairs({ "stat_hitpct", "stat_haste", "stat_resilience",
+for _, k in ipairs({ "stat_haste", "stat_resilience",
                      "prof_Jewelcrafting", "profmax_Jewelcrafting", "spec", "specIcon" }) do
     check(T.RETIRED_FIELDS[k], k .. " is retired")
 end
@@ -1610,15 +1610,23 @@ end
 --
 -- GetCritChance has a verified producer - observed on 1.60.1.70009 reporting
 -- 1.66% for a level 18 gnome warlock - so the field is live and rides the wire.
--- GetHitModifier exists on this client - it is in the 1.60.1.70009 dump with a
--- signature - but its RUNTIME value is unmeasured and its row did not render in
--- game, so stat_hitpct stays retired and the scanner does not write it.
--- Releasing one without the other is the mistake this pair catches.
+-- Both are off the list now, and both for the same stated reason: a
+-- build-verified producer. GetCritChance reported 1.66% on a level 18 gnome
+-- warlock; GetHitModifier printed 0 rather than ABSENT or nil, which is a
+-- working function giving a real answer for a character with no +hit gear.
+--
+-- Asserted as a PAIR because the failure was treating them as interchangeable in
+-- the other direction: one was released while the other kept a producer writing
+-- a field login purged. The rule is per-field evidence, not a category.
 check(not T.RETIRED_FIELDS.stat_crit,
       "stat_crit is NOT retired - it has a verified producer")
-check(T.SerializeChar({ guid = "g", name = "n", level = 20, lastUpdate = 1,
-                        stat_crit = 1.66 }):find("stat_crit:1.66", 1, true) ~= nil,
-      "  so it rides the wire")
+check(not T.RETIRED_FIELDS.stat_hitpct,
+      "  nor is stat_hitpct, measured at 0 rather than ABSENT")
+local liveStats = T.SerializeChar({ guid = "g", name = "n", level = 20,
+                                    lastUpdate = 1, stat_crit = 1.66,
+                                    stat_hitpct = 2 })
+check(liveStats:find("stat_crit:1.66", 1, true) ~= nil, "  so crit rides the wire")
+check(liveStats:find("stat_hitpct:2", 1, true) ~= nil, "  and bonus hit does too")
 -- The TBC reputation slugs (#8): standings are rep_<factionID> now.
 for _, k in ipairs({ "aldor", "scryer", "thrallmar", "honorhold", "violeteye", "shatteredsun" }) do
     check(T.RETIRED_FIELDS[k], "TBC reputation field " .. k .. " is retired")
