@@ -1897,7 +1897,7 @@ local function RenderDetail(char)
     local rowH  = math.max(STAT_ROW_H, lineH)
     local headH = rowH + 2
     local gapH  = STAT_SECTION_GAP
-    local hidden = 0
+    local hidden, mightTruncate = 0, false
     if onChar then
         -- What the column needs at full size, counting only what will be drawn.
         local needed = 0
@@ -1911,14 +1911,23 @@ local function RenderDetail(char)
         -- The room between the column's top and the panel's bottom edge. y is a
         -- negative offset from the top, so -y is the distance already spent.
         local room = detail:GetHeight() + y - 4
-        if needed > room and needed > 0 then
+        mightTruncate = needed > room
+        if mightTruncate and needed > 0 then
             local scale = room / needed
             rowH  = math.max(lineH, math.floor(rowH * scale))
             headH = math.max(lineH + 2, math.floor(headH * scale))
             gapH  = math.max(2, math.floor(gapH * scale))
         end
     end
-    local floorY = -detail:GetHeight() + 4
+    -- The notice needs room too, and it is the thing that ANNOUNCES the
+    -- overflow - so it drawing outside the panel is the bug wearing its own
+    -- warning label. Reserved whenever truncation is possible at all, which is
+    -- exactly the condition that made the column compress: the loop cannot know
+    -- it will truncate until it has already spent the height, so the room has to
+    -- be set aside before it starts.
+    local noticeH = detail.statsMore:GetHeight() or 0
+    local bottomY = -detail:GetHeight() + 4
+    local floorY  = bottomY + (mightTruncate and (noticeH + 2) or 0)
 
     for _, group in ipairs(detailRows) do
         local any = false
@@ -1961,8 +1970,13 @@ local function RenderDetail(char)
         end
     end
 
+    -- Clamped as well as reserved for. `y` has had a section gap taken off it
+    -- since the last row was placed, so it can sit a little below the floor the
+    -- rows honoured - and the reserve above only holds while the arithmetic that
+    -- produced it does. This is the line that makes it true regardless.
     detail.statsMore:ClearAllPoints()
-    detail.statsMore:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
+    detail.statsMore:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6,
+                              math.max(y, bottomY + noticeH))
     detail.statsMore:SetText(hidden > 0
         and ("|cff888888+%d more - the window is too short|r"):format(hidden) or "")
     detail.statsMore:SetShown(hidden > 0)
@@ -2221,8 +2235,14 @@ local DETAIL_TEST = {
         if not detail or not detail.statsMore:IsShown() then return nil end
         return detail.statsMore:GetText()
     end,
-    -- Every drawn stat row and header, with the y it was placed at, so a test can
-    -- ask whether any of them left the panel rather than trusting the count.
+    -- EVERYTHING drawn in the stats column, with the y it was placed at, so a
+    -- test can ask whether any of it left the panel rather than trusting a count.
+    --
+    -- "Everything" is load-bearing. This used to walk headers and rows only, and
+    -- the one widget it left out - the overflow notice - was the one that then
+    -- drew below the panel edge, because it is appended after the loop has spent
+    -- the height. A widget added to this column belongs in this walk, or the
+    -- bounds tests pass without covering it.
     DetailStatRowYs = function()
         local out = {}
         for _, group in ipairs(detailRows or {}) do
@@ -2237,6 +2257,11 @@ local DETAIL_TEST = {
                     out[#out + 1] = e
                 end
             end
+        end
+        if detail and detail.statsMore:IsShown() then
+            local e = { select(5, detail.statsMore:GetPoint(1)) }
+            e.h = detail.statsMore:GetHeight()
+            out[#out + 1] = e
         end
         return out
     end,

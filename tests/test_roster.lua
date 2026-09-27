@@ -2449,7 +2449,14 @@ do
                 stat_crit = 12.5, stat_hitpct = 3 }
             T.Refresh()
 
-            for _, h in ipairs({ 800, 500, 310, 240 }) do
+            -- 321, 333 and 345 are not decoration. They are the heights where
+            -- the last row that fits is the last row of a SECTION, so the loop
+            -- takes a section gap off y before the notice is placed - and the
+            -- notice lands below the floor the rows honoured. A sweep of every
+            -- height from 180 to 800 with the notice's own clamp removed puts it
+            -- outside the panel at exactly these three and nowhere else, so
+            -- without them the clamp is a line no test can justify.
+            for _, h in ipairs({ 800, 500, 345, 333, 321, 310, 240 }) do
                 d:SetHeight(h)
                 T.DrillDown("loaded")
                 local rows = T.DetailStatRowYs()
@@ -2501,6 +2508,18 @@ do
             eq("a snug panel compresses instead of dropping rows",
                T.DetailStatsMore(), nil)
             eq("  keeping every row", #T.DetailStatRowYs(), tall)
+
+            -- The reserve for the notice is taken only when truncation is
+            -- POSSIBLE, not always. 425 is the height where the column fits
+            -- exactly: an unconditional reserve would take 14px it does not
+            -- need, drop the last row and then announce the drop it caused. The
+            -- same sweep says 425-428 is the whole band where that shows, so
+            -- this is the assertion that keeps the condition on the reserve.
+            d:SetHeight(425)
+            T.DrillDown("loaded")
+            eq("a column that fits exactly reserves nothing and drops nothing",
+               T.DetailStatsMore(), nil)
+            eq("  keeping every row at the boundary", #T.DetailStatRowYs(), tall)
 
             -- And when it genuinely cannot fit, it SAYS how many went. A row
             -- quietly not drawn is a stat the player has no way to know exists.
