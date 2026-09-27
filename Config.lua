@@ -146,19 +146,16 @@ local function EnsureDefaults()
         AltStableConfig.sheetShowHidden = false
     end
 
-    -- Roster gear audit. minGemQuality is the lowest gem quality considered
-    -- acceptable (0 disables gem checks entirely, 3 = Rare, 4 = Epic), matching
-    -- CLA's "minimum required gem quality" selector. auditMinLevel keeps the
-    -- audit quiet on levelling alts, where a bare enchant slot is not a finding.
-    if AltStableConfig.minGemQuality == nil then
-        AltStableConfig.minGemQuality = 3
-    end
-    -- The default is the client's level cap; a stored value above it (the old
-    -- TBC default of 70) could never be reached, so it is pulled down too.
-    local levelCap = AltStable.API.LevelCap()
-    if AltStableConfig.auditMinLevel == nil or AltStableConfig.auditMinLevel > levelCap then
-        AltStableConfig.auditMinLevel = levelCap
-    end
+    -- Retired with the gem audit. Sockets, gems and meta-gems were introduced
+    -- in TBC and do not exist here, so the audit these configured is
+    -- meaningless on this client - it is an enchant audit now, and enchants
+    -- need no quality threshold: a slot either has one or it does not.
+    --
+    -- Actively cleared rather than merely no longer defaulted. Both have been
+    -- written to real profiles on disk, and a key nothing reads is a key the
+    -- next reader has to work out the meaning of. Same treatment bisTier got.
+    AltStableConfig.minGemQuality = nil
+    AltStableConfig.auditMinLevel = nil
 
     -- Appearance defaults
     AltStableConfig.theme = AltStableConfig.theme or "dark"

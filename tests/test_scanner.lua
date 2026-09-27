@@ -1052,18 +1052,25 @@ eq("a real maximum still scans: 100 of 400 rested", c and c.restPercent, 25)
 eq("  and 50 of 400 through the level", c and c.xpPercent, 12)
 WoW.reset()
 
--- auditMinLevel defaulted to TBC's 70: unreachable here. It follows the cap,
--- and a stored value above the cap is pulled down.
+-- The gem audit's two settings are RETIRED, and a profile that already has
+-- them must come back without them. They were written to real profiles on
+-- disk, and a key nothing reads is one the next reader has to work out the
+-- meaning of - so they are cleared rather than merely no longer defaulted.
 if AltStable.EnsureConfigDefaults then
     AltStableConfig = {}
     AltStable.EnsureConfigDefaults()
-    eq("auditMinLevel defaults to the client cap", AltStableConfig.auditMinLevel, 60)
-    AltStableConfig = { auditMinLevel = 70 }
+    eq("a fresh profile has no gem-quality setting", AltStableConfig.minGemQuality, nil)
+    eq("  and no audit level", AltStableConfig.auditMinLevel, nil)
+
+    -- The case that matters: an existing profile carrying both.
+    AltStableConfig = { minGemQuality = 3, auditMinLevel = 70 }
     AltStable.EnsureConfigDefaults()
-    eq("  a stored 70 comes down to it", AltStableConfig.auditMinLevel, 60)
-    AltStableConfig = { auditMinLevel = 20 }
-    AltStable.EnsureConfigDefaults()
-    eq("  a lower choice is kept", AltStableConfig.auditMinLevel, 20)
+    eq("an existing profile has the gem setting cleared", AltStableConfig.minGemQuality, nil)
+    eq("  and the audit level too", AltStableConfig.auditMinLevel, nil)
+
+    -- And nothing else went with them.
+    check("the settings around them survive",
+          AltStableConfig.syncMode ~= nil and AltStableConfig.hiddenCharacters ~= nil)
 else
     check("EnsureConfigDefaults is exposed", false)
 end
