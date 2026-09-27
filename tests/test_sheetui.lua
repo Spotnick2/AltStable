@@ -951,7 +951,41 @@ do
             check("  and clipped, so it stops squaring the top corners",
                   bg:GetNumMaskTextures() > 0)
         end
+        -- The nav buttons as SwitchSection left them: exactly one selected, in
+        -- the accent colour, and the rest showing nothing.
+        local btns = T.sidebarBtns or {}
+        check("the sidebar has buttons", #btns > 1, tostring(#btns))
+        local lit, litBtn = 0, nil
+        for _, b in ipairs(btns) do
+            if b._skinState and b._skinState:IsShown() then
+                lit = lit + 1; litBtn = b
+            end
+        end
+        eq("exactly one nav button is selected", lit, 1)
+        if litBtn then
+            local accent = { AltStable.GetAccentRGB() }
+            local c = litBtn._skinState._colorTexture
+            check("  and it is painted in the accent colour",
+                  c and c[1] == accent[1], tostring(c and c[1]))
+        end
+        -- And an unselected label is the brighter glass value, not the 0.50
+        -- that reads as disabled over a translucent panel.
+        for _, b in ipairs(btns) do
+            if b ~= litBtn and b.lbl then
+                local lr = b.lbl:GetTextColor()
+                check("  unselected labels are not the disabled-looking dim",
+                      lr and lr > AltStable.C.TEXT_DIM[1], tostring(lr))
+                break
+            end
+        end
+
         local tt = T.titleText
+        if tt then
+            local tr, tg, tb = tt:GetTextColor()
+            check("the title is white, not competing with the accent selection",
+                  tr == tg and tg == tb and tr > 0.9,
+                  ("%s,%s,%s"):format(tostring(tr), tostring(tg), tostring(tb)))
+        end
         check("the title text has a shadow over the glass", tt ~= nil)
         if tt then
             local x, y = tt:GetShadowOffset()

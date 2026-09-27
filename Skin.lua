@@ -213,6 +213,113 @@ function AltStable.SkinTitleBand(bar, window, bg, sep)
     return true
 end
 
+-- A navigation button's state fill.
+--
+-- ONE function for what used to be four pairs of SetBackdropColor spread over
+-- SwitchSection, the button's own hover handlers and the plugin button's copy
+-- of both. They have to go through one place, because under glass the fill is
+-- not a backdrop any more and any site still calling SetBackdropColor would
+-- quietly paint a square that is no longer there - or worse, still there.
+--
+-- Under flat this IS the old call, so nothing changes.
+--
+-- Note the mask is anchored to the PILL, the opposite of SkinPanelFill. There
+-- the fill had to be trimmed by a shape it overlapped; here the fill IS the
+-- shape, and a rounded selection is the point rather than a side effect.
+local PILL = { left = 4, right = -6, top = -3, bottom = 3 }
+
+function AltStable.SkinButtonFill(btn, r, g, b, a)
+    if not btn then return end
+    if not AltStable.SkinIsGlass() then
+        if btn.SetBackdropColor then btn:SetBackdropColor(r, g, b, a or 1) end
+        return
+    end
+
+    local t = btn._skinState
+    if not t then
+        t = btn:CreateTexture(nil, "BACKGROUND", nil, -2)
+        t:SetPoint("TOPLEFT", btn, "TOPLEFT", PILL.left, PILL.top)
+        t:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", PILL.right, PILL.bottom)
+        -- The SMALL set: these buttons are 52px tall, over the ~40px the
+        -- material documents for it, so this is a deliberate tighter radius -
+        -- a rounded rectangle rather than a capsule, which is what a nav item
+        -- wants anyway.
+        local S = Glass.SIZES.small
+        btn._skinStateMask = Glass.Mask(btn, S.mask, S.maskMargin, 0, t)
+        t:AddMaskTexture(btn._skinStateMask)
+        btn._skinState = t
+    end
+    t:SetColorTexture(r, g, b, a or 1)
+    -- Hidden rather than painted transparent, so an idle button costs nothing
+    -- and so "is anything selected" is answerable.
+    t:SetShown((a or 1) > 0.01)
+end
+
+-- The accent-tinted selection, and the hover.
+--
+-- The accent rather than a fixed colour, so this follows the existing
+-- dark/class choice: gold by default, your class colour under the class theme.
+-- Low alpha, because a saturated pill on translucent glass reads as a sticker.
+function AltStable.SkinButtonActive(btn)
+    local r, g, b = AltStable.GetAccentRGB()
+    if AltStable.SkinIsGlass() then
+        AltStable.SkinButtonFill(btn, r, g, b, 0.22)
+    else
+        AltStable.SkinButtonFill(btn, unpack(AltStable.C.BG_BTN_ACTIVE))
+    end
+end
+
+function AltStable.SkinButtonHover(btn)
+    if AltStable.SkinIsGlass() then
+        AltStable.SkinButtonFill(btn, 1, 1, 1, 0.10)
+    else
+        AltStable.SkinButtonFill(btn, unpack(AltStable.C.BG_BTN_HOVER))
+    end
+end
+
+function AltStable.SkinButtonIdle(btn)
+    AltStable.SkinButtonFill(btn, unpack(AltStable.C.BG_BTN_IDLE))
+end
+
+-- An INACTIVE navigation label.
+--
+-- TEXT_DIM is 0.50, chosen against a near-black panel. On glass, with the world
+-- behind it, 0.50 stops reading as "not selected" and starts reading as
+-- "disabled" - which is what an outside eye said about the first screenshots.
+-- Brighter under glass, unchanged under flat.
+function AltStable.SkinNavDim()
+    if AltStable.SkinIsGlass() then return 0.78, 0.78, 0.80 end
+    return unpack(AltStable.C.TEXT_DIM)
+end
+
+-- The left accent stripe. It runs the full height of the button hard against
+-- its left edge, so over a rounded selection it cuts straight across both
+-- corners. The pill carries the accent now, so under glass the stripe steps
+-- aside rather than being redrawn.
+function AltStable.SkinStripe(stripe, show, r, g, b)
+    if not stripe then return end
+    if AltStable.SkinIsGlass() then stripe:Hide(); return end
+    if show then
+        stripe:SetColorTexture(r, g, b, 1)
+        stripe:Show()
+    else
+        stripe:Hide()
+    end
+end
+
+-- The window title.
+--
+-- White on glass, the accent on flat. The accent title was gold on near-black,
+-- where gold is the brightest thing in the window and reads as the heading. On
+-- a light translucent band it competes with the sidebar's selected item, which
+-- is also the accent - two golds at the top of the window saying different
+-- things. White is the quieter of the two and leaves the accent meaning
+-- "selected".
+function AltStable.SkinTitleColor()
+    if AltStable.SkinIsGlass() then return unpack(AltStable.C.TEXT_BRIGHT) end
+    return AltStable.GetAccentRGB()
+end
+
 -- Text that is now sitting on glass with the world behind it.
 -- GLASS-MATERIAL.md §6: a shadow is not decoration here, it is what keeps a
 -- label legible when something bright passes behind it.

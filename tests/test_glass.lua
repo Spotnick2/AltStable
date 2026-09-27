@@ -304,6 +304,115 @@ do
 end
 
 ------------------------------------------------------------
+-- The navigation buttons
+------------------------------------------------------------
+-- Three states sharing one shape: normal is nothing, hover is a faint rounded
+-- highlight, selected is a stronger one in the accent colour. The shape and
+-- padding are shared deliberately - only brightness and colour differ - so the
+-- sidebar reads as one control rather than two unrelated effects.
+
+AltStableConfig.skin = "flat"
+do
+    local btn = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
+    AltStable.ApplyBGOnly(btn, 0, 0, 0, 0)
+    AltStable.SkinButtonActive(btn)
+    eq("under flat the state is still a backdrop", btn._skinState, nil)
+    local r, g, b, a = btn:GetBackdropColor()
+    check("  painted with the flat palette's active colour",
+          a == AltStable.C.BG_BTN_ACTIVE[4], tostring(a))
+end
+
+AltStableConfig.skin = "clear"
+local pillPoints
+do
+    local btn = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
+
+    AltStable.SkinButtonActive(btn)
+    local t = btn._skinState
+    check("under glass the selection is a texture, not a backdrop", t ~= nil)
+    check("  rounded by a mask", t and t:GetNumMaskTextures() > 0)
+    eq("  owned by the button", btn._skinStateMask._maskOwner, btn)
+
+    -- Anchored to the PILL, the opposite of the corner case: there the fill had
+    -- to be trimmed by a shape it overlapped, here the fill IS the shape.
+    local _, rel = btn._skinStateMask:GetPoint(1)
+    eq("  and anchored to the pill itself, so it rounds rather than trims", rel, t)
+
+    -- Inset from the sidebar edges, or it is a full-width rectangle again -
+    -- which is the thing being replaced.
+    local _, _, _, lx = t:GetPoint(1)
+    check("  inset from the button's left edge", (lx or 0) > 0, tostring(lx))
+
+    local accent = { AltStable.GetAccentRGB() }
+    local c = t._colorTexture
+    check("  tinted with the accent, not a fixed colour",
+          c and c[1] == accent[1] and c[2] == accent[2], tostring(c and c[1]))
+    check("  and translucent, so it is a highlight and not a sticker",
+          c and c[4] < 0.5, tostring(c and c[4]))
+    local activeAlpha = c[4]
+
+    -- Same shape and padding for hover, differing only in brightness/colour.
+    pillPoints = { t:GetPoint(1) }
+    AltStable.SkinButtonHover(btn)
+    local hoverPoints = { btn._skinState:GetPoint(1) }
+    eq("hover uses the same shape as selection", hoverPoints[4], pillPoints[4])
+    local hc = btn._skinState._colorTexture
+    check("  but quieter", hc[4] < activeAlpha,
+          ("hover %s vs active %s"):format(tostring(hc[4]), tostring(activeAlpha)))
+    check("  and neutral rather than accented", hc[1] == hc[2] and hc[2] == hc[3])
+
+    AltStable.SkinButtonIdle(btn)
+    check("idle shows nothing at all", btn._skinState:IsShown() == false)
+end
+
+-- An inactive label reading as "disabled" was the other thing an outside eye
+-- caught. TEXT_DIM is 0.50, chosen against a near-black panel.
+do
+    AltStableConfig.skin = "clear"
+    local gr = AltStable.SkinNavDim()
+    AltStableConfig.skin = "flat"
+    local fr = AltStable.SkinNavDim()
+    check("nav labels are brighter on glass than on the flat panel", gr > fr,
+          ("%s vs %s"):format(tostring(gr), tostring(fr)))
+    eq("  and unchanged under flat", fr, AltStable.C.TEXT_DIM[1])
+end
+
+-- The stripe runs the full height hard against the left edge, so over a
+-- rounded selection it cuts across both corners.
+do
+    AltStableConfig.skin = "clear"
+    local stripe = CreateFrame("Frame", nil, UIParent):CreateTexture()
+    AltStable.SkinStripe(stripe, true, 1, 0.82, 0)
+    check("the stripe steps aside under glass", stripe:IsShown() == false)
+
+    AltStableConfig.skin = "flat"
+    AltStable.SkinStripe(stripe, true, 1, 0.82, 0)
+    check("  and is still drawn under flat", stripe:IsShown())
+    AltStable.SkinStripe(stripe, false)
+    check("  and hidden when not selected", stripe:IsShown() == false)
+end
+
+-- The title is white on glass and the accent on flat. Gold was the brightest
+-- thing in a near-black window and read as the heading; on a light band it
+-- competes with the sidebar's selected item, which is also the accent.
+do
+    AltStableConfig.skin = "clear"
+    local r, g, b = AltStable.SkinTitleColor()
+    check("the title is white on glass", r == g and g == b and r > 0.9,
+          ("%s,%s,%s"):format(tostring(r), tostring(g), tostring(b)))
+    -- All THREE components. Gold is (1, 0.82, 0) and white is (1, 1, 1), so
+    -- they share a red channel - comparing the first return alone passes
+    -- whichever one is handed back, which is exactly what it did.
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    AltStableConfig.skin = "flat"
+    local fr, fg, fb = AltStable.SkinTitleColor()
+    check("  and the accent on flat",
+          fr == ar and fg == ag and fb == ab,
+          ("%s,%s,%s vs accent %s,%s,%s"):format(tostring(fr), tostring(fg),
+              tostring(fb), tostring(ar), tostring(ag), tostring(ab)))
+end
+
+------------------------------------------------------------
 -- Text on glass
 ------------------------------------------------------------
 

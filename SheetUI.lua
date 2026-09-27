@@ -1998,22 +1998,15 @@ local function SwitchSection(section)
     local ar, ag, ab = AltStable.GetAccentRGB()
     for _, btn in ipairs(sidebarBtns) do
         if btn.sectionId == section.id then
-            btn:SetBackdropColor(
-                AltStable.C.BG_BTN_ACTIVE[1], AltStable.C.BG_BTN_ACTIVE[2],
-                AltStable.C.BG_BTN_ACTIVE[3], AltStable.C.BG_BTN_ACTIVE[4])
+            AltStable.SkinButtonActive(btn)
             btn.lbl:SetTextColor(ar, ag, ab)
             if btn.icon then btn.icon:SetAlpha(1.0) end
-            if btn.accentStripe then
-                btn.accentStripe:SetColorTexture(ar, ag, ab, 1)
-                btn.accentStripe:Show()
-            end
+            AltStable.SkinStripe(btn.accentStripe, true, ar, ag, ab)
         else
-            btn:SetBackdropColor(
-                AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-            btn.lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+            AltStable.SkinButtonIdle(btn)
+            btn.lbl:SetTextColor(AltStable.SkinNavDim())
             if btn.icon then btn.icon:SetAlpha(0.65) end
-            if btn.accentStripe then btn.accentStripe:Hide() end
+            AltStable.SkinStripe(btn.accentStripe, false)
         end
     end
 
@@ -2132,6 +2125,10 @@ local function CreateFrameIfNeeded()
     -- could see.
     AltStable._test = AltStable._test or {}
     AltStable._test.titleBar, AltStable._test.titleBarBG = titleBar, tbBg
+    -- The nav buttons, so a test can ask what SwitchSection actually painted.
+    -- Twice now a helper has been fully asserted while the line calling it had
+    -- no coverage at all, and deleting the call changed nothing the suite saw.
+    AltStable._test.sidebarBtns = sidebarBtns
 
     -- Title text — centered across the full width of the title bar.
     local titleText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -2141,8 +2138,7 @@ local function CreateFrameIfNeeded()
     AltStable.SkinText(titleText)
     AltStable._test.titleText = titleText
     local function UpdateTitleTextColor()
-        local r, g, b = AltStable.GetAccentRGB()
-        titleText:SetTextColor(r, g, b)
+        titleText:SetTextColor(AltStable.SkinTitleColor())
     end
     UpdateTitleTextColor()
     AltStable.RegisterThemeCallback(UpdateTitleTextColor)
@@ -2437,25 +2433,21 @@ local function CreateFrameIfNeeded()
         local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
         lbl:SetPoint("LEFT",52,0); lbl:SetPoint("RIGHT",-8,0)
         lbl:SetJustifyH("LEFT"); lbl:SetText(section.label)
-        lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        lbl:SetTextColor(AltStable.SkinNavDim())
         btn.lbl=lbl; btn.icon=icon
 
         btn:SetScript("OnClick",function() SwitchSection(section) end)
         btn:SetScript("OnEnter",function()
             if activeSection.id~=section.id then
-                btn:SetBackdropColor(
-                    AltStable.C.BG_BTN_HOVER[1], AltStable.C.BG_BTN_HOVER[2],
-                    AltStable.C.BG_BTN_HOVER[3], AltStable.C.BG_BTN_HOVER[4])
+                AltStable.SkinButtonHover(btn)
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
             end
         end)
         btn:SetScript("OnLeave",function()
             if activeSection.id~=section.id then
-                btn:SetBackdropColor(
-                    AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                    AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-                lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                AltStable.SkinButtonIdle(btn)
+                lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
             end
         end)
@@ -2523,23 +2515,19 @@ local function CreateFrameIfNeeded()
         local lbl=pbtn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
         lbl:SetPoint("LEFT",52,0); lbl:SetPoint("RIGHT",-8,0)
         lbl:SetJustifyH("LEFT"); lbl:SetText(plugin.label)
-        lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        lbl:SetTextColor(AltStable.SkinNavDim())
         pbtn.lbl=lbl; pbtn.icon=icon
 
         pbtn:SetScript("OnClick",function()
             for _, b in ipairs(sidebarBtns) do
-                b:SetBackdropColor(
-                    AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                    AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-                if b.lbl then b.lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM)) end
-                if b.accentStripe then b.accentStripe:Hide() end
+                AltStable.SkinButtonIdle(b)
+                if b.lbl then b.lbl:SetTextColor(AltStable.SkinNavDim()) end
+                AltStable.SkinStripe(b.accentStripe, false)
                 if b.icon then b.icon:SetAlpha(0.78) end
             end
-            pbtn:SetBackdropColor(
-                AltStable.C.BG_BTN_ACTIVE[1], AltStable.C.BG_BTN_ACTIVE[2],
-                AltStable.C.BG_BTN_ACTIVE[3], AltStable.C.BG_BTN_ACTIVE[4])
+            AltStable.SkinButtonActive(pbtn)
             local ar, ag, ab = AltStable.GetAccentRGB()
-            stripe:SetColorTexture(ar, ag, ab, 1); stripe:Show()
+            AltStable.SkinStripe(stripe, true, ar, ag, ab)
             lbl:SetTextColor(ar, ag, ab)
             icon:SetAlpha(1.0)
             if activeSection._isPlugin and activeSection.OnDeactivate then
@@ -2550,19 +2538,15 @@ local function CreateFrameIfNeeded()
         end)
         pbtn:SetScript("OnEnter",function()
             if activeSection.id~=plugin.id then
-                pbtn:SetBackdropColor(
-                    AltStable.C.BG_BTN_HOVER[1], AltStable.C.BG_BTN_HOVER[2],
-                    AltStable.C.BG_BTN_HOVER[3], AltStable.C.BG_BTN_HOVER[4])
+                AltStable.SkinButtonHover(pbtn)
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
             end
         end)
         pbtn:SetScript("OnLeave",function()
             if activeSection.id~=plugin.id then
-                pbtn:SetBackdropColor(
-                    AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                    AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-                lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                AltStable.SkinButtonIdle(pbtn)
+                lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
             end
         end)

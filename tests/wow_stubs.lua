@@ -211,6 +211,36 @@ local function makeFrame()
     -- something bright passes behind it, and the chaining default returned the
     -- frame for GetShadowOffset - truthy, non-zero, indistinguishable from a
     -- shadow that was actually set.
+    -- The backdrop, which was nowhere in here at all - so every ApplyBGOnly and
+    -- every SetBackdropColor in the addon went to the chaining default and the
+    -- FLAT path's painting could not be asserted. That matters more now that
+    -- flat is the documented revert: "the revert restores what was there" is a
+    -- claim, and until this existed nothing could check it.
+    f.SetBackdrop = function(self, bd) self._backdrop = bd; return self end
+    f.GetBackdrop = function(self) return self._backdrop end
+    f.SetBackdropColor = function(self, r, g, b, a)
+        self._backdropColor = { r, g, b, a }; return self
+    end
+    f.GetBackdropColor = function(self)
+        local c = self._backdropColor
+        if not c then return end
+        return c[1], c[2], c[3], c[4]
+    end
+    f.SetBackdropBorderColor = function(self, r, g, b, a)
+        self._backdropBorder = { r, g, b, a }; return self
+    end
+
+    -- Text colour, likewise real state. "Is this label readable" and "is this
+    -- the selected one" are both colour questions, and both were unanswerable.
+    f.SetTextColor = function(self, r, g, b, a)
+        self._textColor = { r, g, b, a }; return self
+    end
+    f.GetTextColor = function(self)
+        local c = self._textColor
+        if not c then return 1, 1, 1, 1 end
+        return c[1], c[2], c[3], c[4] or 1
+    end
+
     f.SetShadowOffset = function(self, x, y) self._shadowX, self._shadowY = x, y; return self end
     f.GetShadowOffset = function(self) return self._shadowX or 0, self._shadowY or 0 end
     f.SetShadowColor  = function(self, r, g, b, a)
