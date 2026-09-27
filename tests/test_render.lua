@@ -681,6 +681,20 @@ do
     -- is a net rather than the mechanism - every path hides it first.
     check("the prompt is not left where the showcase can hide it",
           T.prompt():GetParent() ~= UIParent)
+    -- Being un-hidden is not the same as being on screen. The sheet is DIALOG
+    -- and the player can drag it anywhere, including over a prompt at a fixed
+    -- top-centre position - and IsVisible() reports a frame hidden behind
+    -- another as perfectly visible, so nothing else in this file would catch
+    -- the warning being covered while the countdown ran out.
+    local RANK = {
+        BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4,
+        DIALOG = 5, FULLSCREEN = 6, FULLSCREEN_DIALOG = 7, TOOLTIP = 8,
+    }
+    local strata = T.prompt():GetFrameStrata()
+    check("the prompt draws above the sheet, which is DIALOG",
+          (RANK[strata] or 0) > RANK.DIALOG,
+          ("prompt is %s"):format(tostring(strata)))
+
     check("  and the blackout knows it by name",
           (function()
               for _, n in ipairs(T.STRAY_FRAMES or {}) do

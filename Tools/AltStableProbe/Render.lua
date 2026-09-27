@@ -911,11 +911,22 @@ local function BuildPrompt()
     -- very frame that stops receiving updates once its parent is hidden, which
     -- is the trap the previous version fell into. One statement, no transition
     -- to detect, no state to get wrong.
+    -- FULLSCREEN_DIALOG, and nothing may set it back afterwards.
+    --
+    -- The sheet is DIALOG, which is ABOVE High - so the strata this used to
+    -- end on left the warning underneath a window the player can drag
+    -- anywhere, including over it. Reparenting fixes a hidden ancestor and
+    -- does nothing about being covered by a sibling, and IsVisible() cannot
+    -- see occlusion either: the prompt would report itself perfectly visible
+    -- from behind the sheet while the countdown ran out.
+    --
+    -- The "HIGH" line that used to sit three lines below this was left over
+    -- from when the prompt was an ordinary UIParent child, and quietly undid
+    -- the strata set here.
     pcall(prompt.SetParent, prompt, WorldFrame)
     pcall(prompt.SetFrameStrata, prompt, "FULLSCREEN_DIALOG")
     prompt:SetSize(PROMPT_W, PROMPT_H)
     prompt:SetPoint("TOP", UIParent, "TOP", 0, -150)
-    prompt:SetFrameStrata("HIGH")
     if prompt.SetBackdrop then
         prompt:SetBackdrop({
             bgFile   = "Interface/Buttons/WHITE8X8",
