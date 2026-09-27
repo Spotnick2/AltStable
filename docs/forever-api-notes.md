@@ -1329,3 +1329,31 @@ face-down and ghost, and the capture guards that use it stand on their own
 merits — a portrait of a wisp is not a portrait, and hiding the interface for
 three seconds during a corpse run is its own bad idea. Those are not affected by
 any of the above.
+
+---
+
+## `## SavedVariablesMachine` is never written — MEASURED
+
+`AltStableProbe.toc` declares all three scopes:
+
+```
+## SavedVariables: AltStableProbeDB
+## SavedVariablesPerCharacter: AltStableProbeCharDB
+## SavedVariablesMachine: AltStableProbeMachineDB
+```
+
+The first two round-trip since 1.60.1.70009 (#23). The third produces **no file
+anywhere under `WTF`** — checked with a recursive search of the whole tree, not
+just the expected folder. The in-game symptom is the probe's own
+`SV never loaded` line naming `machine` thirty seconds after login, every login.
+
+This is the distinction that line exists to force: *not loaded* covers both "the
+client wrote a file and did not read it back" and "the client never wrote a file
+at all", and **nothing in Lua can tell them apart** — the global is nil either
+way. Only the disk can, and here it says the second.
+
+So machine scope is simply unsupported on this client. Do not store anything in
+it, and do not read a nil `AltStableProbeMachineDB` as a bug.
+
+The probe says so in one grey line now rather than a red one, because a known
+answer reported as a failure every login is how real failures stop being read.

@@ -893,15 +893,30 @@ boot:SetScript("OnEvent", function()
                 end
             end
             -- Say only what was observed. "Never loaded" covers two different
-            -- failures - a file written but not read (account, per-character on
-            -- 1.60.1.69913) and a file never written at all (machine scope, for
-            -- third-party addons) - and nothing in-game can tell them apart.
-            -- The disk can, so point there instead of guessing.
-            if #never > 0 then
+            -- failures - a file written but not read, and a file never written
+            -- at all - and nothing in-game can tell them apart. The disk can.
+            --
+            -- For MACHINE scope the disk has now been checked, so this stops
+            -- asking: ## SavedVariablesMachine produces no file anywhere under
+            -- WTF on 1.60.1.70009 (see docs/forever-api-notes.md). It is not a
+            -- fault and it is not news, so it does not get a red line every
+            -- login - it gets one grey line saying the question is settled.
+            local unexpected = {}
+            local machineSeen = false
+            for _, label in ipairs(never) do
+                if label == "machine" then machineSeen = true
+                else unexpected[#unexpected + 1] = label end
+            end
+
+            if #unexpected > 0 then
                 Out(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
                     .. "That only says they did not LOAD: check the files under WTF on disk "
                     .. "to tell 'written but not read' from 'never written'.")
-                    :format(table.concat(never, ", ")))
+                    :format(table.concat(unexpected, ", ")))
+            end
+            if machineSeen then
+                Out("|cff888888machine-scope SV is not written on this client "
+                    .. "(measured - no file under WTF). Expected, not a fault.|r")
             end
         end)
     end
