@@ -110,6 +110,31 @@ end
 
 local P = {}
 
+-- Where the SavedVariables counts live now that login is silent about them.
+--
+-- They are worth having when somebody is investigating persistence, which is
+-- what /asprobe is for, and worth nothing as a line of chat at every login.
+function P.savedvariables()
+    Section("savedvariables  (#23 - only a FULL EXIT proves anything)")
+    Record(("%-46s %s"):format("account loadCount",
+        ValStr(AltStableProbeDB and AltStableProbeDB.loadCount, 1)))
+    Record(("%-46s %s"):format("  last load",
+        ValStr(AltStableProbeDB and AltStableProbeDB.lastLoadStamp, 1)))
+    Record(("%-46s %s"):format("per-character loadCount",
+        ValStr(AltStableProbeCharDB and AltStableProbeCharDB.loadCount, 1)))
+    Record(("%-46s %s"):format("  last load",
+        ValStr(AltStableProbeCharDB and AltStableProbeCharDB.lastLoadStamp, 1)))
+    -- Stated rather than measured again: the answer is on disk and does not
+    -- change between sessions.
+    Record(("%-46s %s"):format("machine scope",
+        "NEVER WRITTEN on this client - no file under WTF (measured)"))
+    Record("A count only proves persistence if it climbs across a FULL EXIT and")
+    Record("relaunch. /reload keeps the process alive, so the value survives in")
+    Record("memory and the counter climbs without anything touching the disk -")
+    Record("which is how three separate tests concluded a store persisted when")
+    Record("it did not.")
+end
+
 function P.client()
     Section("client")
     local function buildinfo()
@@ -470,7 +495,7 @@ end
 -- Defined further down (needs the frame helpers); forward-declared so Run can call it.
 local ShowCopy
 
-local ORDER = { "client", "identity", "skills", "prof", "rep", "items", "containers", "bank", "tooltip", "instances", "events" }
+local ORDER = { "client", "savedvariables", "identity", "skills", "prof", "rep", "items", "containers", "bank", "tooltip", "instances", "events" }
 
 local function Run(which)
     lines = {}
@@ -803,49 +828,36 @@ boot:SetScript("OnEvent", function()
     -- Account-wide and per-character are SEPARATE mechanisms; test them
     -- independently. If only one is broken that is a real workaround for any
     -- addon whose state does not need sharing across characters.
-    local prev        = AltStableProbeDB.loadCount
-    local prevChar    = AltStableProbeCharDB.loadCount
-    local prevMachine = AltStableProbeMachineDB.loadCount
+    local prev     = AltStableProbeDB.loadCount
+    local prevChar = AltStableProbeCharDB.loadCount
 
+    -- SILENT WHEN THEY LOAD, which since #23 was fixed on 1.60.1.70009 is
+    -- every session.
+    --
+    -- This block used to report all three scopes at every login, in green when
+    -- they worked. That was the right shape while the question was open and
+    -- the answer changed from run to run; it is the wrong shape now. A status
+    -- line that says "still fine" every single session is one nobody reads,
+    -- which is how the day it says something else gets missed. The counts are
+    -- still there on demand under /asprobe.
+    --
+    -- Machine scope is gone from here entirely: it is never written on this
+    -- client (measured - no file anywhere under WTF, see
+    -- docs/forever-api-notes.md), so its line was a red "not loaded" at every
+    -- login, for ever, reporting a settled answer as a fault.
     if prev == nil then
-        Out("|cffff5555SavedVariables (account)|r first ever run - not loaded")
-    else
-        Out(("|cff55ff55SavedVariables (account) LOADED|r - previous loadCount=%s")
-            :format(tostring(prev)))
+        Out("|cffff5555SavedVariables (account)|r did not load - "
+            .. "first ever run, or #23 has come back")
     end
-
     if prevChar == nil then
-        Out("|cffff5555SavedVariablesPerCharacter|r first ever run - not loaded")
-    else
-        Out(("|cff55ff55SavedVariablesPerCharacter LOADED|r - previous loadCount=%s")
-            :format(tostring(prevChar)))
-    end
-
-    if prevMachine == nil then
-        Out("|cffff5555SavedVariablesMachine|r first ever run - not loaded")
-    else
-        Out(("|cff55ff55SavedVariablesMachine LOADED|r - previous loadCount=%s, last written on build %s")
-            :format(tostring(prevMachine), tostring(AltStableProbeMachineDB.lastBuild)))
+        Out("|cffff5555SavedVariablesPerCharacter|r did not load - "
+            .. "first ever run, or #23 has come back")
     end
 
     AltStableProbeDB.loadCount = (tonumber(prev) or 0) + 1
     AltStableProbeDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
     AltStableProbeCharDB.loadCount = (tonumber(prevChar) or 0) + 1
     AltStableProbeCharDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
-    AltStableProbeMachineDB.loadCount = (tonumber(prevMachine) or 0) + 1
-    AltStableProbeMachineDB.lastLoadStamp = date("%Y-%m-%d %H:%M:%S")
-    AltStableProbeMachineDB.lastBuild = select(2, GetBuildInfo())
-
-    -- This line used to say "reload and both must go up". That instruction is
-    -- how three separate tests concluded a store persisted when it did not:
-    -- /reload keeps the client process alive, so a value survives in memory and
-    -- the counter climbs without anything touching the disk. Only a count that
-    -- climbs across a FULL EXIT proves persistence - and the file on disk is
-    -- the evidence, not this chat line.
-    Out(("account #%d / per-character #%d / machine #%d - only a FULL EXIT and relaunch "
-        .. "counts; /reload proves nothing"):format(
-        AltStableProbeDB.loadCount, AltStableProbeCharDB.loadCount,
-        AltStableProbeMachineDB.loadCount))
 
     -- Rule out a LATE load: if the client executes a SavedVariables file after
     -- PLAYER_LOGIN, it REPLACES the global table. Different bug, different
@@ -857,10 +869,20 @@ boot:SetScript("OnEvent", function()
     -- indistinguishable from the probe's own 1, and a `now > 1` check can never
     -- fire. A per-session mark on each table can: a replaced table has lost it.
     local mark = tostring(GetTime()) .. ":" .. tostring(math.random(1, 1000000000))
+    -- Machine scope is deliberately NOT watched. It is never written on this
+    -- client - measured, no file anywhere under WTF, see
+    -- docs/forever-api-notes.md - so watching it meant reporting a settled
+    -- answer as a failure at every single login. A known non-fault shouted
+    -- every session is how real failures stop being read.
+    --
+    -- The other two are kept, and this is the whole remaining point of the
+    -- watcher: #23 is fixed on 1.60.1.70009, but this is a beta client and
+    -- everything the addon persists rides on those two scopes. Silent while
+    -- they work, loud the day a patch breaks them again - which is what a
+    -- canary is for, and it costs nothing while it is quiet.
     local STORES = {
-        { label = "account",       global = "AltStableProbeDB",        atLogin = prev },
-        { label = "per-character", global = "AltStableProbeCharDB",    atLogin = prevChar },
-        { label = "machine",       global = "AltStableProbeMachineDB", atLogin = prevMachine },
+        { label = "account",       global = "AltStableProbeDB",     atLogin = prev },
+        { label = "per-character", global = "AltStableProbeCharDB", atLogin = prevChar },
     }
     for _, store in ipairs(STORES) do
         -- Resolve through _G each time: a late load swaps the global itself.
@@ -893,10 +915,13 @@ boot:SetScript("OnEvent", function()
                 end
             end
             -- Say only what was observed. "Never loaded" covers two different
-            -- failures - a file written but not read (account, per-character on
-            -- 1.60.1.69913) and a file never written at all (machine scope, for
-            -- third-party addons) - and nothing in-game can tell them apart.
-            -- The disk can, so point there instead of guessing.
+            -- failures - a file written but not read, and a file never written
+            -- at all - and nothing in-game can tell them apart, because the
+            -- global is nil either way. Only the disk can, so this points
+            -- there rather than guessing which one it is.
+            --
+            -- Silent when they load, which after #23 is every session. This
+            -- line is now a regression alarm rather than a status report.
             if #never > 0 then
                 Out(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
                     .. "That only says they did not LOAD: check the files under WTF on disk "

@@ -70,6 +70,13 @@ function WoW.reset()
     WoW.chatOut = {}
     WoW.eventFrames = {}
     WoW.tooltipLines, WoW.tooltipShown = {}, false
+    WoW.dead = false
+    WoW.displayID = 56658
+    WoW.instanceType, WoW.speed, WoW.falling = "none", 0, false
+    -- UIParent is built ONCE for the whole run, so without this its child list
+    -- accumulates every frame every block ever created and a test walking it
+    -- sees strangers from three blocks ago.
+    if UIParent then UIParent._children = {} end
     WoW.popups = {}
     WoW.cvars = {}
     WoW.camera = { zoom = 4, view = 1, savedViews = {} }
@@ -207,7 +214,28 @@ local function makeFrame()
     -- behind eats every entry - and the chaining default made every level 1.
     f.SetFrameLevel = function(self, v) self._GetFrameLevel = v; return self end
 
-    f.SetParent      = function(self, p) self._parent = p; return self end
+    f.GetChildren = function(self) return unpack(self._children or {}) end
+
+    -- SetParent MAINTAINS the child list. Appending only at creation left
+    -- GetChildren disagreeing with GetParent exactly where this codebase
+    -- reparents frames - the showcase lifts the sheet out from under UIParent,
+    -- and the lifted frame would still have answered UIParent:GetChildren().
+    -- A test walking children instead of parents would have asserted the
+    -- opposite of the truth.
+    f.SetParent = function(self, p)
+        local old = self._parent
+        if type(old) == "table" and old._children then
+            for i = #old._children, 1, -1 do
+                if old._children[i] == self then table.remove(old._children, i) end
+            end
+        end
+        self._parent = p
+        if type(p) == "table" then
+            p._children = p._children or {}
+            p._children[#p._children + 1] = self
+        end
+        return self
+    end
     f.GetParent      = function(self) return self._parent end
     f.SetScale       = function(self, v) self._scale = v; return self end
     f.GetScale       = function(self) return self._scale or 1 end
@@ -360,6 +388,13 @@ WoW.makeFrame = makeFrame
 function CreateFrame(_, name, parent)
     local f = makeFrame()
     f._parent = parent
+    -- The parent keeps a CHILD LIST, because GetChildren() is how a test walks
+    -- a panel it did not build - the buttons on a prompt, say - and asks what
+    -- the player can actually press.
+    if type(parent) == "table" then
+        parent._children = parent._children or {}
+        parent._children[#parent._children + 1] = f
+    end
     if type(name) == "string" and name ~= "" then _G[name] = f end
     return f
 end
@@ -490,6 +525,47 @@ end
 -- its bugs lived in.
 WoW.inCombat = false
 function InCombatLockdown() return WoW.inCombat and true or false end
+
+-- Dead or a ghost. Both states, one call, which is why the code uses it: a
+-- corpse run is the second, and a portrait taken during one is a picture of a
+-- wisp - while C_PlayerInfo.GetDisplayID() reports the ghost display and makes
+-- the look fingerprint flip on every death and every resurrection.
+WoW.dead = false
+function UnitIsDeadOrGhost(unit)
+    if unit ~= "player" then return false end
+    return WoW.dead and true or false
+end
+
+-- The display id. Part of the look fingerprint, deliberately, because a barber
+-- visit or a race change should refresh a portrait - and without this stub the
+-- fingerprint silently appended "?" every time, so a constant in its place
+-- left the suite green.
+--
+-- It does NOT change when the player dies. MEASURED on 1.60.1.70009: 56658
+-- both alive and as a ghost. An earlier version of this stub returned a
+-- separate ghost display, which would have made a broken theory pass - exactly
+-- the failure mode the stub-fidelity rule exists for, since the theory was
+-- that this value flips on death.
+WoW.displayID = 56658
+C_PlayerInfo = C_PlayerInfo or {}
+function C_PlayerInfo.GetDisplayID()
+    return WoW.displayID
+end
+
+-- Where the player is, and whether they are standing still.
+--
+-- instanceType is "none" in the open world and names the kind otherwise.
+WoW.instanceType = "none"
+function IsInInstance()
+    return WoW.instanceType ~= "none", WoW.instanceType
+end
+
+WoW.speed, WoW.falling = 0, false
+function GetUnitSpeed(unit)
+    if unit ~= "player" then return 0 end
+    return WoW.speed or 0
+end
+function IsFalling() return WoW.falling and true or false end
 
 -- SetUIVisibility is what Alt+Z and Escape call. It is NOT protected, which is
 -- the whole reason the probe uses it instead of UIParent:Hide().

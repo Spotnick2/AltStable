@@ -1286,3 +1286,78 @@ Escape → open again → enter combat → press W.
 
 `false` plus an `ADDON_ACTION_BLOCKED`-shaped message means the restriction is
 live on this client and the guards above are load-bearing rather than cautious.
+
+### `C_PlayerInfo.GetDisplayID()` does NOT change when you die — MEASURED
+
+```
+/run print(C_PlayerInfo.GetDisplayID(), UnitIsDeadOrGhost("player"))
+56658   false        -- alive
+56658   true         -- a ghost, mid corpse run
+```
+
+Same character, same session, 1.60.1.70009. **The display id is identical in
+both states.** A ghost is a different *model* on screen and the same display id
+to the API.
+
+**This disproves a theory that was briefly in the code.** The portrait
+pipeline's look fingerprint (`Tools/AltStableProbe/Render.lua`,
+`LookFingerprint`) includes the display id, and a live corpse run produced three
+captures in as many minutes, each announced as "gear changed since your last
+portrait" on a character that had picked nothing up. Two events per death is the
+shape a value flipping and flipping back produces, the gear half could not
+explain it because equipment stays equipped while dead — so the display id was
+blamed, and a substitution was written to keep the "ghost display" out of the
+fingerprint.
+
+There is no ghost display. The substitution was removed; it guarded against
+something that does not happen.
+
+**The symptom is real and the cause is still unknown.** It is one of the
+nineteen equipment slots, since that is all the fingerprint has left.
+`LookFingerprint` now reports *which field* changed rather than only that
+something did, so the next occurrence names the slot instead of prompting
+another round of reasoning.
+
+**The lesson is the one this file already carries twice.** The theory was
+plausible, fitted every observed fact, and was wrong. It had been written down
+as "REASONED, NOT MEASURED" with the `/run` that would settle it — and settling
+it took one line and thirty seconds. Cheap to check, expensive to assume; check
+first next time.
+
+Separately: `UnitIsDeadOrGhost("player")` does what it says, covering both
+face-down and ghost, and the capture guards that use it stand on their own
+merits — a portrait of a wisp is not a portrait, and hiding the interface for
+three seconds during a corpse run is its own bad idea. Those are not affected by
+any of the above.
+
+---
+
+## `## SavedVariablesMachine` is never written — MEASURED
+
+`AltStableProbe.toc` declares all three scopes:
+
+```
+## SavedVariables: AltStableProbeDB
+## SavedVariablesPerCharacter: AltStableProbeCharDB
+## SavedVariablesMachine: AltStableProbeMachineDB
+```
+
+The first two round-trip since 1.60.1.70009 (#23). The third produces **no file
+anywhere under `WTF`** — checked with a recursive search of the whole tree, not
+just the expected folder. The in-game symptom is the probe's own
+`SV never loaded` line naming `machine` thirty seconds after login, every login.
+
+This is the distinction that line exists to force: *not loaded* covers both "the
+client wrote a file and did not read it back" and "the client never wrote a file
+at all", and **nothing in Lua can tell them apart** — the global is nil either
+way. Only the disk can, and here it says the second.
+
+So machine scope is simply unsupported on this client. Do not store anything in
+it, and do not read a nil `AltStableProbeMachineDB` as a bug.
+
+The probe no longer watches machine scope at all, and no longer reports the two
+that work. A status line saying "still fine" at every login is one nobody reads,
+which is how the day it says something else gets missed — so the login report is
+silent while the stores load and loud when they do not, and the counts moved to
+`/asprobe savedvariables` where somebody investigating persistence will look for
+them.
