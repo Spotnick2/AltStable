@@ -680,6 +680,73 @@ do
           "a snooze that never returned would be a Cancel with a friendlier label")
     T.CancelPending()
 
+    -- The promise holds against EVERY trigger, not just the one that was on
+    -- screen when it was pressed. Guarding only `pending` and `capturing` let
+    -- a zone change, a resurrection or a login arm a fresh countdown for the
+    -- same unrecorded look seconds later - so the snooze did nothing at all.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.displayID = 4242
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    eq("a snooze is running", T.pendingKind(), "snooze")
+
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("another trigger does not jump the queue", T.pendingKind(), "snooze")
+
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_UNGHOST")
+    eq("  nor does coming back from the dead", T.pendingKind(), "snooze")
+    T.CancelPending()
+
+    -- Fighting inside the ten minutes is an ordinary thing to do, not a
+    -- request to cancel the delay. Combat cancels the COUNTDOWN; it used to
+    -- take the snooze with it, and the settle after the fight then started a
+    -- fresh countdown - so a pull undid the button.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    local deadline = T.snoozeUntil()
+    check("the snooze has a deadline", deadline ~= nil)
+
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
+    eq("a fight does not cancel the promise", T.snoozeUntil(), deadline)
+    T.ConsiderCapture("quiet since combat - gear changed since your last portrait")
+    -- Still "snooze", not "countdown": the delay survived the fight AND the
+    -- settle that follows it, which is the whole point. Asserting nil here
+    -- would have been asserting that combat cancelled the snooze.
+    eq("  and the settle afterwards still respects it", T.pendingKind(), "snooze")
+
+    -- Dying is the same argument.
+    WoW.dead = true
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_DEAD")
+    eq("nor does dying", T.snoozeUntil(), deadline)
+    WoW.dead = false
+
+    -- A capture actually happening clears it too. The picture the snooze was
+    -- postponing has been taken, so the delay has nothing left to postpone -
+    -- and a deadline left behind would silently block every trigger for the
+    -- rest of the ten minutes, including one for a look that changed again.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    check("a snooze is in hand", T.snoozeUntil() ~= nil)
+    T.Capture()
+    check("  taking the picture by hand ends it", T.capturing())
+    eq("  deadline and all", T.snoozeUntil(), nil)
+    resetCapture()
+
+    -- Back to a fresh snooze for the cancellation check below.
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+
+    -- Explicit cancellation DOES clear it: the player asked.
+    T.CancelPending("you asked", true)
+    eq("  but asking to cancel clears it", T.snoozeUntil(), nil)
+    WoW.displayID = 56658
+
     -- A snooze counts as pending, or "/asrender cancel" answers "nothing
     -- pending" and then takes the picture ten minutes later anyway.
     resetCapture()

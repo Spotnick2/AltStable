@@ -861,14 +861,23 @@ end
 -- that quietly never returned would be a Cancel wearing a friendlier label.
 local SNOOZE_SECONDS = 600
 local snoozed
+-- The DEADLINE, kept beside the timer and outliving it.
+--
+-- The timer is what brings the portrait back; this is what keeps every other
+-- trigger away until then. Without it "in ten minutes" meant only "there is a
+-- timer for ten minutes" - a zone change, a resurrection or a login in the
+-- meantime armed a fresh countdown for the same unrecorded look, and the
+-- snooze the player pressed did nothing at all.
+local snoozeUntil
 
 -- "Not right now." Distinct from Cancel, which drops the trigger and waits for
 -- something natural to raise it again, and from Never, which is a slash
 -- command because it is the rare one.
 function SnoozeCapture(why)
     Supersede()                       -- silently: the player is being told below
+    snoozeUntil = GetTime() + SNOOZE_SECONDS
     snoozed = C_Timer.NewTimer(SNOOZE_SECONDS, function()
-        snoozed = nil
+        snoozed, snoozeUntil = nil, nil
         ConsiderCapture(why or "gear changed since your last portrait")
     end)
     Out(("portrait postponed - asking again in %d minutes. "
@@ -881,7 +890,10 @@ end
 function Supersede()
     if combatSettle then combatSettle:Cancel(); combatSettle = nil end
     if pending then pending:Cancel(); pending = nil end
+    -- The deadline goes too: a capture is happening right now, which is what
+    -- the snooze was postponing.
     if snoozed then snoozed:Cancel(); snoozed = nil end
+    snoozeUntil = nil
     HidePrompt()
 end
 
@@ -899,7 +911,15 @@ end
 --
 -- announce forces the message for "/asrender cancel", where the player asked
 -- and silence would look like the command did nothing.
-function CancelPending(reason, announce)
+-- keepSnooze: cancel the countdown but LEAVE the ten-minute delay alone.
+--
+-- Combat starting and dying both cancel a queued countdown, and both used to
+-- take the snooze with it - so a fight inside those ten minutes ended the
+-- delay, and the settle after the fight started a fresh countdown. Fighting
+-- during a snooze is an ordinary thing to do, not a request to cancel it.
+-- Explicit cancellation, turning auto-capture off, and a capture actually
+-- happening still clear it.
+function CancelPending(reason, announce, keepSnooze)
     -- The quiet-after-combat wait counts as pending. Without this, "/asrender
     -- cancel" during that window answered "nothing pending" and then took the
     -- picture thirty seconds later anyway.
@@ -909,7 +929,9 @@ function CancelPending(reason, announce)
     -- A snooze counts as pending: "/asrender cancel" during one answered
     -- "nothing pending" and then took the picture ten minutes later anyway,
     -- which is the same bug the quiet-after-combat wait had.
-    if snoozed then snoozed:Cancel(); snoozed = nil; hadSettle = true end
+    if snoozed and not keepSnooze then
+        snoozed:Cancel(); snoozed = nil; snoozeUntil = nil; hadSettle = true
+    end
     -- Every route out of the countdown passes through here - the buttons, the
     -- slash command, combat starting, the timer firing - so this is the one
     -- place the prompt has to come down. Unconditional: a prompt left on screen
@@ -1231,6 +1253,12 @@ function ConsiderCapture(why)
     if not AutoEnabled() then return end
     if pending or capturing then return end
 
+    -- The snooze is a promise about every trigger, not just the one that was
+    -- on screen when it was pressed. Checked against the DEADLINE rather than
+    -- the timer, because the timer can be cancelled by combat while the
+    -- promise still stands.
+    if snoozeUntil and GetTime() < snoozeUntil then return end
+
     local guid = UnitGUID("player")
     if not guid then return end
 
@@ -1416,7 +1444,7 @@ auto:SetScript("OnEvent", function(_, event)
         end)
         return
     elseif event == "PLAYER_DEAD" then
-        CancelPending("you died")
+        CancelPending("you died", nil, true)
         AbandonCapture("|cffff8800you died - portrait abandoned|r", true)
         return
     elseif event == "PLAYER_UNGHOST" or event == "PLAYER_ALIVE" then
@@ -1430,7 +1458,7 @@ auto:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_REGEN_DISABLED" then
         -- A fight started inside the countdown: hiding the UI for three
         -- seconds mid-pull is the one thing this must never do.
-        CancelPending("combat started")
+        CancelPending("combat started", nil, true)
         -- Abandon an in-flight capture on EVERY path, not just the fallback.
         -- The engine hide is combat-safe to REVERSE, but leaving it in place
         -- means the player fights the pull with no action bars until the chain
@@ -1481,6 +1509,7 @@ AltStableProbe._test = {
     CancelPending  = function(r, a) return CancelPending(r, a) end,
     DeadOrGhost    = function() return DeadOrGhost() end,
     SNOOZE_SECONDS = SNOOZE_SECONDS,
+    snoozeUntil    = function() return snoozeUntil end,
     STRAY_FRAMES   = STRAY_FRAMES,
     LookFingerprint = function(g) return LookFingerprint(g) end,
     StoredFingerprint = function(g) return StoredFingerprint(g) end,
