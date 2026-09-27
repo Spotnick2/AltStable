@@ -211,6 +211,104 @@ check("the character is still in the database",
       type(AltStableDB.gone) == "table" and AltStableDB.gone.name == "Goner")
 
 ------------------------------------------------------------
+-- The opening fade can be finished from outside
+------------------------------------------------------------
+-- It owns the sheet's alpha for 0.22 seconds, and the portrait capture
+-- borrows that alpha to hide the sheet for the shot. A capture starting
+-- inside the fade read 0 - or a third of the way up - while the fade carried
+-- on to 1 under its own timer, and the restore afterwards wrote the stale
+-- number back. A sheet shown and completely invisible, with nothing on screen
+-- to explain it.
+
+do
+    AltStableConfig.enableOpenAnimation = true
+    -- A scale that is NOT the fallback, or the settled-scale check below
+    -- compares 1.0 against 1.0 and a hardcoded SetScale(1) passes it.
+    AltStableConfig.scale = 1.4
+    local sheet = CreateFrame("Frame")
+    sheet:SetAlpha(1)
+
+    AltStable._PlayOpenAnimation(sheet)
+    eq("the fade starts the sheet invisible", sheet:GetAlpha(), 0)
+
+    check("the fade reports that it finished something",
+          AltStable.FinishOpenAnimation() == true)
+    eq("  and leaves the sheet at its settled alpha", sheet:GetAlpha(), 1)
+    eq("  and its settled scale", sheet:GetScale(), 1.4)
+
+    -- Idempotent, and honest about it: anything about to borrow the alpha
+    -- calls this whether or not a fade is running, so "nothing to finish" has
+    -- to be a normal answer rather than a second write.
+    sheet:SetAlpha(0.5)
+    check("finishing again reports there was nothing to do",
+          AltStable.FinishOpenAnimation() == false)
+    eq("  and touches nothing", sheet:GetAlpha(), 0.5)
+
+    -- Mid-fade, not only at the start: the capture can land anywhere in the
+    -- 0.22 seconds.
+    sheet:SetAlpha(1)
+    AltStable._PlayOpenAnimation(sheet)
+    local tick = AltStable._test.OpenAnimTick()
+    if tick then tick(0.1) end
+    check("part way through, the sheet is part way faded",
+          sheet:GetAlpha() > 0 and sheet:GetAlpha() < 1, tostring(sheet:GetAlpha()))
+    AltStable.FinishOpenAnimation()
+    eq("  and finishing still lands on 1", sheet:GetAlpha(), 1)
+
+    -- It still has to END BY ITSELF.
+    --
+    -- FinishOpenAnimation is now the only thing that stops the runner, and it
+    -- bails when `target` is nil - so a terminal condition that never fires
+    -- leaves a shown runner writing alpha and scale every frame for the rest
+    -- of the session, holding a live reference to the sheet. Nothing here
+    -- noticed: changing `p >= 1` to `p >= 99` left every check passing.
+    sheet:SetAlpha(1)
+    AltStable._PlayOpenAnimation(sheet)
+    local run = AltStable._test.OpenAnimTick()
+    run(0.3)                                    -- past the 0.22s duration
+    eq("the fade ends on its own", sheet:GetAlpha(), 1)
+    eq("  at the settled scale", sheet:GetScale(), 1.4)
+    check("  and really has stopped, not merely arrived",
+          AltStable.FinishOpenAnimation() == false,
+          "a runner still holding the sheet would report there was work to do")
+
+    -- The sheet's OWN capture is a second borrower of the same alpha, and was
+    -- left racing.
+    --
+    -- Its legacy path - reached when the probe's two-shot capture is missing
+    -- or declines - writes 0, waits 1.3s, shoots, then writes a hardcoded 1.
+    -- A live fade overwrites that 0 and climbs to 1 under its own timer well
+    -- before the shutter, so the sheet ends up fully visible in the portrait:
+    -- the exact thing hiding it was for, and the mirror image of the bug on
+    -- the probe's side.
+    do
+        AltStableDB[UnitGUID("player")] = AltStableDB[UnitGUID("player")]
+            or { guid = UnitGUID("player"), name = "Shooter", class = "MAGE",
+                 realm = "R", level = 60 }
+        AltStable.EnsureSheetVisible()
+
+        -- The probe declines, so the legacy path runs.
+        local realPortrait = AltStable.CapturePortrait
+        AltStable.CapturePortrait = function() return false end
+
+        AltStable._PlayOpenAnimation(AltStableSheet)
+        eq("a fade is running over the sheet", AltStableSheet:GetAlpha(), 0)
+
+        AltStable._test.ClickCaptureButton()
+        check("the capture settles the fade before borrowing the alpha",
+              AltStable.FinishOpenAnimation() == false,
+              "a live fade would climb back to 1 and put the sheet in the photo")
+        eq("  and the sheet is hidden for the shot", AltStableSheet:GetAlpha(), 0)
+
+        AltStable.CapturePortrait = realPortrait
+        AltStableSheet:SetAlpha(1)
+    end
+
+    AltStableConfig.enableOpenAnimation = nil
+    AltStableConfig.scale = nil
+end
+
+------------------------------------------------------------
 -- The menu does not outlive the window that raised it (#69)
 ------------------------------------------------------------
 

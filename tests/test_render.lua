@@ -525,16 +525,23 @@ do
     eq("Alt+Z mid-capture still gives the sheet back", sheet:GetAlpha(), 1)
 
     -- The fallback blackout, on a client with no SetUIVisibility. It hides
-    -- UIParent directly and has exactly the same blind spot.
+    -- UIParent directly and has exactly the same blind spot - and no hook,
+    -- since the hook is on the function that does not exist here.
     do
         local realSetUIVisibility = SetUIVisibility
         SetUIVisibility = nil
         UIParent:Show()
+        T.StartCountdown("gear changed")
         check("the fallback blackout reports success", T.HideUI())
         check("  UIParent is down", UIParent:IsShown() == false)
         eq("  and it covers the lifted sheet too", sheet:GetAlpha(), 0)
+        check("  and the prompt still followed the interface down",
+              T.prompt():GetParent() ~= UIParent,
+              "there is no SetUIVisibility hook on this path to do it")
         T.ShowUI()
         eq("  restoring brings it back", sheet:GetAlpha(), 1)
+        check("  and the prompt comes home", T.prompt():GetParent() == UIParent)
+        T.CancelPending()
         SetUIVisibility = realSetUIVisibility
     end
 
@@ -630,13 +637,18 @@ do
     check("  saying how long is left", (text or ""):find("Portrait in 5s", 1, true) ~= nil, text)
     check("  and why it is happening", (text or ""):find("gear changed", 1, true) ~= nil, text)
 
-    -- Skip: the whole point of the report.
-    check("Skip is a button, not a command", T.PromptClick("Skip"))
-    eq("  and it cancels the countdown", T.pendingKind(), nil)
+    -- Cancel: drop this one. It comes back at the next natural trigger, and
+    -- the message says so - a button that looks like a refusal but quietly
+    -- returns is worse than one that explains itself.
+    check("Cancel is a button, not a command", T.PromptClick("Cancel"))
+    eq("  and it drops the countdown", T.pendingKind(), nil)
     check("  and takes the prompt down", T.PromptText() == nil)
     WoW.screenshots = 0
     WoW.flushTimers()
     eq("  so no picture is taken", WoW.screenshots, 0)
+    check("  and the player is told when it will ask again",
+          table.concat(WoW.chatOut, " | "):find("next login", 1, true) ~= nil,
+          table.concat(WoW.chatOut, " | "))
 
     -- Now: the "do it while I am standing still" button.
     resetCapture()
@@ -648,17 +660,116 @@ do
     -- The timer must be dead, or it fires five seconds into this capture.
     eq("  leaving nothing queued behind it", T.pendingKind(), nil)
 
-    -- Never: for somebody who wants it to stop asking.
+    -- Snooze: "not right now", which is the one the previous set had no way
+    -- to say. Skip and Never were both refusals; neither of them was later.
     resetCapture()
     AltStableProbeDB.autoConsent = "yes"
-    AltStableProbeDB.autoCaptureOff = nil
+    WoW.chatOut = {}
     T.StartCountdown("gear changed")
-    check("Never is offered as well", T.PromptClick("Never"))
-    check("  and turns auto-capture off", AltStableProbeDB.autoCaptureOff == true)
-    eq("  cancelling this one too", T.pendingKind(), nil)
-    T.ConsiderCapture("gear changed")
-    eq("  so the next look change queues nothing", T.pendingKind(), nil)
-    AltStableProbeDB.autoCaptureOff = nil
+    check("Snooze is offered too", T.PromptClick("Snooze"))
+    check("  it takes the prompt down", T.PromptText() == nil)
+    eq("  and the countdown with it", T.pendingKind(), "snooze")
+    check("  saying when it will be back",
+          table.concat(WoW.chatOut, " | "):find("10 minutes", 1, true) ~= nil,
+          table.concat(WoW.chatOut, " | "))
+
+    WoW.screenshots = 0
+    check("  no picture in the meantime", WoW.screenshots == 0)
+    WoW.flushTimers()
+    check("  and it really does come back", T.pendingKind() == "countdown",
+          "a snooze that never returned would be a Cancel with a friendlier label")
+    T.CancelPending()
+
+    -- The promise holds against EVERY trigger, not just the one that was on
+    -- screen when it was pressed. Guarding only `pending` and `capturing` let
+    -- a zone change, a resurrection or a login arm a fresh countdown for the
+    -- same unrecorded look seconds later - so the snooze did nothing at all.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.displayID = 4242
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    eq("a snooze is running", T.pendingKind(), "snooze")
+
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("another trigger does not jump the queue", T.pendingKind(), "snooze")
+
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_UNGHOST")
+    eq("  nor does coming back from the dead", T.pendingKind(), "snooze")
+    T.CancelPending()
+
+    -- Fighting inside the ten minutes is an ordinary thing to do, not a
+    -- request to cancel the delay. Combat cancels the COUNTDOWN; it used to
+    -- take the snooze with it, and the settle after the fight then started a
+    -- fresh countdown - so a pull undid the button.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    local deadline = T.snoozeUntil()
+    check("the snooze has a deadline", deadline ~= nil)
+
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
+    eq("a fight does not cancel the promise", T.snoozeUntil(), deadline)
+    T.ConsiderCapture("quiet since combat - gear changed since your last portrait")
+    -- Still "snooze", not "countdown": the delay survived the fight AND the
+    -- settle that follows it, which is the whole point. Asserting nil here
+    -- would have been asserting that combat cancelled the snooze.
+    eq("  and the settle afterwards still respects it", T.pendingKind(), "snooze")
+
+    -- Dying is the same argument.
+    WoW.dead = true
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_DEAD")
+    eq("nor does dying", T.snoozeUntil(), deadline)
+    WoW.dead = false
+
+    -- A capture actually happening clears it too. The picture the snooze was
+    -- postponing has been taken, so the delay has nothing left to postpone -
+    -- and a deadline left behind would silently block every trigger for the
+    -- rest of the ten minutes, including one for a look that changed again.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    check("a snooze is in hand", T.snoozeUntil() ~= nil)
+    T.Capture()
+    check("  taking the picture by hand ends it", T.capturing())
+    eq("  deadline and all", T.snoozeUntil(), nil)
+    resetCapture()
+
+    -- Back to a fresh snooze for the cancellation check below.
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+
+    -- Explicit cancellation DOES clear it: the player asked.
+    T.CancelPending("you asked", true)
+    eq("  but asking to cancel clears it", T.snoozeUntil(), nil)
+    WoW.displayID = 56658
+
+    -- A snooze counts as pending, or "/asrender cancel" answers "nothing
+    -- pending" and then takes the picture ten minutes later anyway.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    T.PromptClick("Snooze")
+    eq("a snooze is something to cancel", T.pendingKind(), "snooze")
+    T.CancelPending("you asked", true)
+    eq("  and cancelling it clears it", T.pendingKind(), nil)
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("  so nothing fires later", WoW.screenshots, 0)
+
+    -- Turning it off for good is a command now, not a button: the rarest of
+    -- the four, and the chat line names it.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.chatOut = {}
+    T.StartCountdown("gear changed")
+    check("the countdown says how to stop being asked at all",
+          table.concat(WoW.chatOut, " | "):find("/asrender auto", 1, true) ~= nil,
+          table.concat(WoW.chatOut, " | "))
+    T.CancelPending()
 
     -- Letting it run to the end. The timer firing is the one exit that does
     -- not go through CancelPending, so it has to take the prompt down itself -
@@ -679,8 +790,8 @@ do
     -- player has. So it is covered the way the sheet is: by name, in the
     -- blackout's own list. Two independent guarantees, which is why the list
     -- is a net rather than the mechanism - every path hides it first.
-    check("the prompt is not left where the showcase can hide it",
-          T.prompt():GetParent() ~= UIParent)
+    check("the prompt is under UIParent while the interface is up",
+          T.prompt():GetParent() == UIParent)
     -- Being un-hidden is not the same as being on screen. The sheet is DIALOG
     -- and the player can drag it anywhere, including over a prompt at a fixed
     -- top-centre position - and IsVisible() reports a frame hidden behind
@@ -1066,8 +1177,10 @@ do
     resetCapture()
     AltStableProbeDB.autoConsent = "yes"
 
-    -- The sheet is open, so the showcase has taken the interface down.
-    UIParent:Hide()
+    -- The sheet is open, so the showcase has taken the interface down. Driven
+    -- through SetUIVisibility, which is what the showcase actually calls -
+    -- UIParent:Hide() on its own would skip the hook that does the work.
+    SetUIVisibility(false)
     T.StartCountdown("gear changed")
     check("the countdown still warns when the interface is hidden",
           T.PromptText() ~= nil,
@@ -1081,7 +1194,7 @@ do
     check("  with the prompt gone", T.PromptText() == nil)
     check("  and actually hidden, not merely moved", T.PromptShown() == false)
     check("  and hidden wherever it is parented", T.PromptShown() == false)
-    UIParent:Show()
+    SetUIVisibility(true)
 end
 
 do
@@ -1093,29 +1206,34 @@ do
 
     T.StartCountdown("gear changed")
     check("a countdown in the open is visible", T.PromptText() ~= nil)
-    check("  and kept out from under UIParent from the start",
-          T.prompt():GetParent() ~= UIParent,
-          "lifting it only once the interface goes down cannot work - the "
-          .. "frame that would do the lifting is the one that stops updating")
+    -- Under UIParent while the interface is UP. Parking it on WorldFrame
+    -- permanently fixed the showcase case and broke this one: WorldFrame is
+    -- the 3D scene, so a frame parented there sits beneath the whole
+    -- interface, and a countdown at login showed nothing at all.
+    check("  and is an ordinary piece of interface while the interface is up",
+          T.prompt():GetParent() == UIParent, tostring(T.prompt():GetParent()))
 
-    UIParent:Hide()                       -- they open the sheet mid-countdown
-    -- Nothing is driven here on purpose.
+    SetUIVisibility(false)                -- they open the sheet mid-countdown
+    -- Nothing of the prompt's own is driven here, on purpose.
     --
-    -- The previous version of this check fetched the prompt's OnUpdate and
-    -- called it by hand, which is an update the client would never deliver: a
-    -- frame whose parent is hidden receives none. It passed against a prompt
-    -- that was invisible for the rest of the countdown while the timer ran on
-    -- and took the picture anyway. The prompt is not under UIParent at all
-    -- now, so hiding UIParent is simply not its business.
+    -- An earlier version of this check fetched the prompt's OnUpdate and
+    -- called it by hand - an update the client never delivers, because a frame
+    -- whose parent is hidden receives none. It passed against a prompt that
+    -- was invisible for the rest of the countdown while the timer ran on and
+    -- took the picture anyway.
+    --
+    -- The move is driven by the SetUIVisibility hook instead, which keeps
+    -- running whatever the prompt's parent is doing.
     check("opening the showcase mid-countdown does not hide the warning",
           T.PromptText() ~= nil,
           "the player would get a capture with no visible way to stop it")
+    check("  it followed the interface down", T.prompt():GetParent() ~= UIParent)
 
-    -- Skip still works from there, which is the entire point.
-    check("Skip is still reachable", T.PromptClick("Skip"))
+    -- Cancel still works from there, which is the entire point.
+    check("Cancel is still reachable", T.PromptClick("Cancel"))
     eq("  and cancels", T.pendingKind(), nil)
     check("  and the prompt goes away", T.PromptText() == nil)
-    UIParent:Show()
+    SetUIVisibility(true)
 end
 
 do
@@ -1129,13 +1247,12 @@ do
     WoW.flushTimers()
     check("the stillness wait is up", T.PromptText() ~= nil)
 
-    UIParent:Hide()                       -- they open the sheet while it waits
-    WoW.flushTimers()
+    SetUIVisibility(false)                -- they open the sheet while it waits
     check("opening the showcase does not hide it either",
           T.PromptText() ~= nil,
           "a ninety-second wait is the one most likely to overlap the sheet")
 
-    UIParent:Show()
+    SetUIVisibility(true)
     WoW.speed = 0
     T.CancelPending()
 end
@@ -1180,18 +1297,22 @@ do
     resetCapture()
     UIParent:Show()
 
+    -- Under UIParent the scale is INHERITED, so setting it as well applies it
+    -- twice and the prompt comes out smaller than the rest of the interface.
     UIParent:SetScale(0.8)
     T.StartCountdown("gear changed")
-    eq("it is drawn at the player's UI scale", T.prompt():GetScale(), 0.8)
+    eq("under UIParent it inherits the scale rather than doubling it",
+       T.prompt():GetScale(), 1)
+
+    -- On WorldFrame it inherits nothing, so it has to be applied there.
+    SetUIVisibility(false)
+    eq("  and takes the UI scale on once it is lifted out",
+       T.prompt():GetScale(), 0.8)
+    SetUIVisibility(true)
+    eq("  and gives it back when the interface returns", T.prompt():GetScale(), 1)
     T.CancelPending()
 
-    -- On every show, not once at build: the scale can change while the addon
-    -- is loaded, and a prompt stuck at the scale of the first countdown of the
-    -- session would be wrong for every one after it.
     UIParent:SetScale(1)
-    T.StartCountdown("gear changed")
-    eq("  and follows it when it changes", T.prompt():GetScale(), 1)
-    T.CancelPending()
 end
 
 do
@@ -1202,10 +1323,10 @@ do
     T.ShowUI()
     UIParent:Show()
     T.StartCountdown("gear changed")
-    UIParent:Hide()
+    SetUIVisibility(false)
     check("the prompt is visible with the interface down", T.PromptText() ~= nil)
 
-    UIParent:Show()
+    SetUIVisibility(true)
     T.ShowUI()
     T.prompt():Show()                     -- pretend a path forgot to hide it
     T.HideUI()
@@ -1213,6 +1334,87 @@ do
        T.prompt():GetAlpha(), 0)
     T.ShowUI()
     T.CancelPending()
+end
+
+------------------------------------------------------------
+-- Never borrow an alpha somebody else is still animating
+------------------------------------------------------------
+-- The blackout hides the lifted sheet by saving its alpha and zeroing it, then
+-- writes the saved value back afterwards. The sheet's opening fade owns that
+-- same alpha for 0.22 seconds, climbing from 0 to 1 under its own timer - so a
+-- capture starting inside the fade saved 0, the fade finished at 1 regardless,
+-- and the restore put the 0 back. A sheet shown and completely invisible.
+--
+-- Two owners of one property need an order. The probe settles the fade before
+-- it reads, which is AltStable's job to provide and the probe's to ask for.
+
+do
+    resetCapture()
+    T.ShowUI()
+    UIParent:Show()
+
+    local sheet = CreateFrame("Frame", "AltStableSheet", UIParent)
+    sheet:SetParent(nil)                  -- as the showcase leaves it
+    sheet:Show()
+
+    -- A fade in progress: alpha is mid-climb and something else will carry it
+    -- to 1 whatever the capture does.
+    sheet:SetAlpha(0)
+    local finished = false
+    AltStable = AltStable or {}
+    local realFinish = AltStable.FinishOpenAnimation
+    AltStable.FinishOpenAnimation = function()
+        finished = true
+        sheet:SetAlpha(1)                 -- what finishing the fade does
+        return true
+    end
+
+    T.HideUI()
+    check("the capture asks for the fade to be settled first", finished,
+          "otherwise it saves a number the fade is about to overwrite")
+    eq("  and the sheet is blacked out for the shot", sheet:GetAlpha(), 0)
+
+    T.ShowUI()
+    eq("  and comes back at the alpha the fade settled on, not the one mid-fade",
+       sheet:GetAlpha(), 1)
+
+    -- A configured alpha is still preserved: settling the fade must not become
+    -- "restore everything to 1".
+    AltStable.FinishOpenAnimation = function() return false end   -- nothing running
+    sheet:SetAlpha(0.6)
+    T.HideUI()
+    eq("a sheet with no fade running is blacked out too", sheet:GetAlpha(), 0)
+    T.ShowUI()
+    eq("  and keeps the alpha its owner chose", sheet:GetAlpha(), 0.6)
+
+    -- The probe must not require AltStable to be loaded AT ALL: it is a
+    -- separate addon, and the guard it relies on is `AltStable and
+    -- type(AltStable.FinishOpenAnimation) == "function"`.
+    --
+    -- Nil-ing the FIELD leaves AltStable a table, so the `AltStable and` half
+    -- is never exercised - and with the global genuinely absent the capture
+    -- would error on indexing nil inside HideUI, immediately after the
+    -- interface had gone down. So the GLOBAL goes.
+    local savedAltStable = AltStable
+    AltStable = nil
+    sheet:SetAlpha(1)
+    local ok = pcall(function() T.HideUI() end)
+    check("no AltStable at all, no problem", ok)
+    T.ShowUI()
+    eq("  and the alpha still round-trips", sheet:GetAlpha(), 1)
+    AltStable = savedAltStable
+
+    -- And with the addon present but this particular function absent, which
+    -- is what an older AltStable looks like.
+    AltStable.FinishOpenAnimation = nil
+    sheet:SetAlpha(1)
+    check("an AltStable without the function is fine too",
+          pcall(function() T.HideUI() end))
+    T.ShowUI()
+    eq("  and that alpha round-trips as well", sheet:GetAlpha(), 1)
+
+    AltStable.FinishOpenAnimation = realFinish
+    sheet:Hide()
 end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))
