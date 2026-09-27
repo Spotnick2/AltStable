@@ -1473,6 +1473,14 @@ local function BuildDetail()
     local maxFindings = 0
     for _ in pairs(ENCHANTABLE_SLOTS) do maxFindings = maxFindings + 1 end
     detailAudit = { rows = {} }
+    -- Said out loud when the stats column runs out of room. A row quietly not
+    -- drawn is a stat the player has no way to know exists, which is the same
+    -- class of dishonesty as a clean bill for a character wearing nothing.
+    detail.statsMore = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    detail.statsMore:SetJustifyH("LEFT")
+    detail.statsMore:SetTextColor(0.55, 0.55, 0.55)
+    detail.statsMore:Hide()
+
     detailAudit.none = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     detailAudit.none:SetJustifyH("LEFT")
     detailAudit.none:SetJustifyV("TOP")
@@ -1859,35 +1867,105 @@ local function RenderDetail(char)
     -- Rows whose stat this character does not have are skipped, and a section
     -- with nothing left in it takes its header with it - a "Combat" heading
     -- over five dashes says nothing.
+    --
+    -- And the column is CLAMPED to the panel, the vertical half of the clamp the
+    -- tabs above already had. Seventeen rows and four headers is about 421px
+    -- measured from figureTop, the loop only ever decremented y, and `detail`
+    -- sets no SetClipsChildren - so a fully-statted character on a short
+    -- inherited frame drew its last rows below the panel edge and over the game
+    -- world. Sixteen rows already did; the Bonus Hit row made it one worse,
+    -- which is how it came up.
+    --
+    -- Compressed first, hidden second. Squeezing the rows keeps everything
+    -- visible for any panel that is merely snug, and only a genuinely short one
+    -- loses rows - with a line saying how many, because a row silently absent is
+    -- a stat the player cannot know exists.
+    -- The row's OWN measured height is the floor for everything below, not a
+    -- guessed number. A stride shorter than the text it steps over stacks the
+    -- rows on each other - the same trap as a slot stride below the icon size -
+    -- and it also makes the clamp lie, because the loop advances by the stride
+    -- while the label reaches further down than that.
+    --
+    -- Taking the floor HERE rather than at each clamp site is what keeps the two
+    -- honest about each other: with the stride provably at least as tall as the
+    -- text, the distance the loop advances is the distance the row occupies, and
+    -- "will the next row fit" needs no second quantity to compare against.
+    local lineH = 9
+    if detailRows[1] and detailRows[1].rows[1] then
+        lineH = math.max(lineH, detailRows[1].rows[1].label:GetHeight() or 0)
+    end
+    local rowH  = math.max(STAT_ROW_H, lineH)
+    local headH = rowH + 2
+    local gapH  = STAT_SECTION_GAP
+    local hidden = 0
+    if onChar then
+        -- What the column needs at full size, counting only what will be drawn.
+        local needed = 0
+        for _, group in ipairs(detailRows) do
+            local shown = 0
+            for _, row in ipairs(group.rows) do
+                if HasStatValue(char, row.def) then shown = shown + 1 end
+            end
+            if shown > 0 then needed = needed + headH + shown * rowH + gapH end
+        end
+        -- The room between the column's top and the panel's bottom edge. y is a
+        -- negative offset from the top, so -y is the distance already spent.
+        local room = detail:GetHeight() + y - 4
+        if needed > room and needed > 0 then
+            local scale = room / needed
+            rowH  = math.max(lineH, math.floor(rowH * scale))
+            headH = math.max(lineH + 2, math.floor(headH * scale))
+            gapH  = math.max(2, math.floor(gapH * scale))
+        end
+    end
+    local floorY = -detail:GetHeight() + 4
+
     for _, group in ipairs(detailRows) do
         local any = false
         for _, row in ipairs(group.rows) do
             if HasStatValue(char, row.def) then any = true; break end
         end
-        if not any or not onChar then
+        -- A header needs room for itself AND one row under it, or it is a
+        -- heading introducing nothing - the same rule as the empty-section case
+        -- just above, reached by running out of panel instead of out of stats.
+        if not any or not onChar or (y - headH - rowH) < floorY then
             group.header:Hide()
-            for _, row in ipairs(group.rows) do row.label:Hide(); row.value:Hide() end
+            for _, row in ipairs(group.rows) do
+                if any and onChar and HasStatValue(char, row.def) then
+                    hidden = hidden + 1
+                end
+                row.label:Hide(); row.value:Hide()
+            end
         else
             group.header:ClearAllPoints()
             group.header:SetPoint("TOPLEFT", detail, "TOPLEFT", x, y)
             group.header:Show()
-            y = y - STAT_ROW_H - 2
+            y = y - headH
             for _, row in ipairs(group.rows) do
-                if HasStatValue(char, row.def) then
+                if not HasStatValue(char, row.def) then
+                    row.label:Hide(); row.value:Hide()
+                elseif (y - rowH) < floorY then
+                    hidden = hidden + 1
+                    row.label:Hide(); row.value:Hide()
+                else
                     row.label:ClearAllPoints()
                     row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
                     row.value:ClearAllPoints()
                     row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
                     row.value:SetText(FormatStatValue(char, row.def))
                     row.label:Show(); row.value:Show()
-                    y = y - STAT_ROW_H
-                else
-                    row.label:Hide(); row.value:Hide()
+                    y = y - rowH
                 end
             end
-            y = y - STAT_SECTION_GAP
+            y = y - gapH
         end
     end
+
+    detail.statsMore:ClearAllPoints()
+    detail.statsMore:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
+    detail.statsMore:SetText(hidden > 0
+        and ("|cff888888+%d more - the window is too short|r"):format(hidden) or "")
+    detail.statsMore:SetShown(hidden > 0)
 end
 
 function Roster.Select(guid)
@@ -2131,6 +2209,37 @@ local DETAIL_TEST = {
         return { x = bx, right = detail.columnRight, panel = detail:GetWidth() }
     end,
     SlotScale = SlotScale,
+    -- The label the column measures its line height FROM. Exposed so a test can
+    -- give it a height larger than STAT_ROW_H and check the stride follows: no
+    -- font this stub models is that tall, and the floor that handles it would
+    -- otherwise be code no test ever reaches.
+    DetailStatFirstLabel = function()
+        return detailRows and detailRows[1] and detailRows[1].rows[1]
+           and detailRows[1].rows[1].label
+    end,
+    DetailStatsMore = function()
+        if not detail or not detail.statsMore:IsShown() then return nil end
+        return detail.statsMore:GetText()
+    end,
+    -- Every drawn stat row and header, with the y it was placed at, so a test can
+    -- ask whether any of them left the panel rather than trusting the count.
+    DetailStatRowYs = function()
+        local out = {}
+        for _, group in ipairs(detailRows or {}) do
+            if group.header:IsShown() then
+                out[#out + 1] = { select(5, group.header:GetPoint(1)) }
+                out[#out].h = group.header:GetHeight()
+            end
+            for _, row in ipairs(group.rows) do
+                if row.label:IsShown() then
+                    local e = { select(5, row.label:GetPoint(1)) }
+                    e.h = row.label:GetHeight()
+                    out[#out + 1] = e
+                end
+            end
+        end
+        return out
+    end,
     SLOT_SIZE = SLOT_SIZE, SLOT_STEP = SLOT_STEP, SLOT_MIN = SLOT_MIN,
     DetailStageOrder = function()
         if not detail then return {} end

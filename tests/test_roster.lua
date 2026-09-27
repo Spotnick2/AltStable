@@ -1439,6 +1439,20 @@ do
     -- the function works and nothing about whether clicking a card reaches it -
     -- and the card's handler used to call Select, which only moves a highlight.
     check("clicking a card drills in", T.CardClick(1))
+
+    -- The detail frame gets a REALISTIC SIZE from here on, because the stub does
+    -- not compute layout: `detail` fills the panel in game, so GetHeight is the
+    -- panel's height there and the stub's 20px default here. The stats column is
+    -- clamped against that height, so leaving it at 20 makes every row overflow
+    -- and the whole section below assert against a pane with nothing in it.
+    --
+    -- Set on the frame the code actually MEASURES, for the same reason the
+    -- narrow-panel block further down says: a size on the parent does not reach
+    -- the detail, and asserting against the parent's would be asserting against a
+    -- number the code never reads.
+    T.DetailFrame():SetWidth(1400)
+    T.DetailFrame():SetHeight(800)
+    T.Refresh()
     check("  the detail view is up", T.DetailShown())
     check("  showing the character on that card",
           (T.DetailText() or ""):find(T.Cards()[1].char.name, 1, true) ~= nil,
@@ -2415,6 +2429,119 @@ do
                       tostring(midX + sz / 2), tostring(figCx)))
         end
         d:SetHeight(800)
+
+        -- The STATS column has to stay inside the panel too, which is the
+        -- vertical half of the clamp the tabs got. Seventeen rows and four
+        -- headers is about 421px from the column's top, the render loop only ever
+        -- decremented y, and nothing here sets SetClipsChildren - so a
+        -- fully-statted character on a short frame drew its last rows over the
+        -- game world. Sixteen rows already did this; the Bonus Hit row made it
+        -- one worse, which is how it surfaced.
+        do
+            AltStableDB.loaded = { guid = "loaded", name = "Fully Loaded",
+                class = "WARRIOR", realm = "R", level = 59, race = "Human",
+                raceName = "Human", ilvl = 61.5, money = 573920,
+                lastUpdate = time() - 3600, restPercent = 42, xpPercent = 88,
+                stat_hp = 3210, stat_mana = 4870, stat_armor = 812,
+                stat_str = 42, stat_agi = 53, stat_sta = 290,
+                stat_int = 493, stat_spi = 446,
+                stat_ap = 32, stat_sp = 728, stat_defense = 300,
+                stat_crit = 12.5, stat_hitpct = 3 }
+            T.Refresh()
+
+            for _, h in ipairs({ 800, 500, 310, 240 }) do
+                d:SetHeight(h)
+                T.DrillDown("loaded")
+                local rows = T.DetailStatRowYs()
+                check(("the stats column draws something at %dpx"):format(h),
+                      #rows > 0, tostring(#rows))
+                for i, r in ipairs(rows) do
+                    check(("every drawn stat row is inside a %dpx panel"):format(h),
+                          (r[1] or 0) - (r.h or 0) >= -h,
+                          ("row bottom %s vs panel %d"):format(
+                              tostring((r[1] or 0) - (r.h or 0)), h))
+                    -- And no row sits on top of the one above it. This is the
+                    -- invariant the stride floor exists for: compressing the
+                    -- column is only legitimate down to the height of the text
+                    -- itself, and past that the rows stop being separate rows.
+                    -- It is also the reason the clamp can compare against the
+                    -- stride alone - the stride is provably at least as tall as
+                    -- what it steps over.
+                    if i > 1 then
+                        local prev = rows[i - 1]
+                        check(("stat rows do not overlap at %dpx"):format(h),
+                              (prev[1] or 0) - (r[1] or 0) >= (r.h or 0),
+                              ("stride %s vs text %s"):format(
+                                  tostring((prev[1] or 0) - (r[1] or 0)),
+                                  tostring(r.h)))
+                    end
+                end
+            end
+
+            -- At full height nothing is dropped, so the clamp is not just
+            -- "hide most of it".
+            d:SetHeight(800)
+            T.DrillDown("loaded")
+            eq("a tall panel hides no stat rows", T.DetailStatsMore(), nil)
+            local tall = #T.DetailStatRowYs()
+            check("  and draws every section", tall >= 21, tostring(tall))
+
+            -- Snug rather than short: the rows COMPRESS and everything survives.
+            -- Without this, "nothing draws outside" is satisfied by hiding rows
+            -- the moment the panel is anything less than generous.
+            --
+            -- 380 is chosen against the stub's font metrics, where a row of text
+            -- is 12px inside a 15px stride: this column wants 363px at full
+            -- spacing and can be squeezed to 268 before a stride would be
+            -- shorter than its own text, so a 380px panel (318px of room) sits
+            -- inside the band where compression is both necessary and sufficient.
+            -- The invariant under test is the behaviour, not the pixel.
+            d:SetHeight(380)
+            T.DrillDown("loaded")
+            eq("a snug panel compresses instead of dropping rows",
+               T.DetailStatsMore(), nil)
+            eq("  keeping every row", #T.DetailStatRowYs(), tall)
+
+            -- And when it genuinely cannot fit, it SAYS how many went. A row
+            -- quietly not drawn is a stat the player has no way to know exists.
+            d:SetHeight(200)
+            T.DrillDown("loaded")
+            local more = T.DetailStatsMore()
+            check("a panel too short to compress says how many rows it dropped",
+                  more ~= nil and more:find("more", 1, true) ~= nil, tostring(more))
+            check("  and drew fewer than it does when there is room",
+                  #T.DetailStatRowYs() < tall,
+                  ("%s vs %s"):format(tostring(#T.DetailStatRowYs()), tostring(tall)))
+
+            -- A font TALLER than the row stride. No font the stub models is
+            -- 22px, and STAT_ROW_H is 15 - so without forcing it, the floor that
+            -- keeps the stride at least as tall as the text is unreachable code,
+            -- and the whole clamp rests on an assumption it never checks.
+            d:SetHeight(800)
+            T.DrillDown("loaded")
+            local label = T.DetailStatFirstLabel()
+            check("the column has a label to measure from", label ~= nil)
+            if label then
+                label:SetHeight(22)
+                T.DrillDown("loaded")
+                local big = T.DetailStatRowYs()
+                check("a font taller than the stride still draws rows", #big > 2,
+                      tostring(#big))
+                local stride = nil
+                for i = 2, #big do
+                    local gap = (big[i - 1][1] or 0) - (big[i][1] or 0)
+                    if not stride or gap < stride then stride = gap end
+                end
+                check("  and the stride grows to match it, rather than the text overlapping",
+                      (stride or 0) >= 22, tostring(stride))
+                label:SetHeight(12)
+            end
+
+            AltStableDB.loaded = nil
+            d:SetHeight(800)
+            T.Refresh()
+            T.DrillDown("geared")
+        end
 
         -- The scale itself, at the boundaries.
         do

@@ -165,7 +165,19 @@ local function makeFrame()
         t.GetDrawLayer = function(self) return self._layer, self._sublevel end
         return t
     end
-    f.CreateFontString = function() return makeFrame() end
+    -- A FontString is SHORTER than a layout stride, and the generic 20px default
+    -- was not: it is taller than STAT_ROW_H (15), which inverts the relationship
+    -- the Roster column is built on - a stride that must never be shorter than
+    -- the text it steps over. With the default, compressing the rows silently
+    -- GREW them and the compression tests passed without exercising compression.
+    --
+    -- MODELLED, NOT MEASURED. The exact number does not matter; being smaller
+    -- than a stride does, and no client renders a small font at 20px.
+    f.CreateFontString = function()
+        local fs = makeFrame()
+        fs._GetHeight = 12
+        return fs
+    end
     -- Text is REMEMBERED, not swallowed: a footer or a label is a real
     -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
     -- display bug invisible to the suite.

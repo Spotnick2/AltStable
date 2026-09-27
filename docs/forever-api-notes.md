@@ -1078,21 +1078,44 @@ GetHitModifier()   ->  0         a character with no +hit gear
 Both MEASURED on 1.60.1.70009. Both therefore have build-verified producers and are scanned;
 neither is on `RETIRED_FIELDS` any more.
 
-`GetHitModifier` was the doubtful one, and the useful part is **how** it was settled:
+`GetHitModifier` was the doubtful one. What was run:
 
 ```
 /run print(GetHitModifier and GetHitModifier() or "ABSENT")
 0
 ```
 
-`0`, not `ABSENT` and not `nil`. Written that way on purpose — the three outcomes are different
-facts and a bare `print(GetHitModifier())` cannot tell them apart:
+`0`, which can only come from a call that returned `0` — so the function exists and answers, and
+that is settled.
 
-| printed | meaning |
-|---|---|
-| `ABSENT` | the global does not exist |
-| `nil` | it exists and returns nothing useful |
-| `0` | it exists, is callable, and answers |
+**The probe line is not the one to reuse, though.** Four outcomes matter and they lead to four
+different decisions:
+
+| printed | meaning | what you do |
+|---|---|---|
+| `ABSENT` | the global does not exist | drop the feature, or find its replacement |
+| `THREW ...` | it exists and errors when called this way | wrong arguments, or wrong API - see `C_Item.GetItemIcon` |
+| `RETURNED nil` | it exists and answers nothing useful | do not persist it |
+| `RETURNED 0` | it exists and answers | persist it; decide separately whether to DISPLAY a zero |
+
+> **Do not use `print(f and f() or "ABSENT")`.** It reads well and it cannot tell two of those cases
+> apart: `nil or "ABSENT"` is `"ABSENT"`, so a function that exists and returns nil reports as
+> missing. `GetProfessions` on this client returns `nil x7` and would print `ABSENT` under it. That
+> is the exact misdiagnosis this section exists to correct, and the line above was briefly
+> prescribed here as the recipe for avoiding it.
+>
+> It is still what was actually run for `GetHitModifier`, and the result stands: `0` can only come
+> from a call that returned `0`, because the two failure cases both print `ABSENT`. A truthy answer
+> is conclusive under the bad probe; that is the only thing it is good for.
+
+```
+/run local f=GetHitModifier if not f then print("ABSENT") else local ok,v=pcall(f) print(ok and "RETURNED "..tostring(v) or "THREW "..tostring(v)) end
+```
+
+ONE `/run`, deliberately: a `local` does not survive between chunks, so splitting it over two lines
+leaves `f` nil on the second and the probe reports `ABSENT` for everything. 150 characters with the
+slash command, inside the edit box's 255 limit. Verified against all four outcomes before being
+written down here - which is more than the line it replaces got.
 
 Before this, "the Combat row did not render in game" was being read as evidence the function was
 gone. It was evidence of a zero. Two rounds of comments in this repo asserted it was "a pre-WoD
@@ -1108,7 +1131,8 @@ which is the label being wrong rather than the number.
 
 The general rule, which cuts both ways: presence in the dump says nothing about behaviour, and
 absence of a rendered row says nothing about presence. For a value you intend to PERSIST, get one
-live reading that distinguishes absent from nil from zero before you write a producer for it.
+live reading that separates all four cases above before you write a producer for it — and check that
+the probe you wrote can actually express them, which the first one here could not.
 
 ---
 
@@ -1144,12 +1168,6 @@ UnitXPMax("player")         ->  400
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
-4b. ~~**`GetHitModifier`'s runtime value**~~ — **answered live: `0`**, see above. Not `ABSENT`, not
-   `nil`, so the function works and `stat_hitpct` came off `RETIRED_FIELDS`. What remains open is
-   narrower and cosmetic: **a NONZERO reading has never been seen**, because the measured character
-   had no +hit gear. The Roster's row has no `allowZero` and so hides at zero, which means nothing
-   incorrect is displayed either way - but if you ever equip something with +hit and the row stays
-   away, that is the case to report.
 5. ~~**`GetFramesRegisteredForEvent`'s return shape**~~ — **answered live**, see above. The
    unregister count came back `1` where a table read scored `0`, which can only happen if the
    first return value is a frame. A probe line would still be tidier than inference if one is
@@ -1181,6 +1199,11 @@ UnitXPMax("player")         ->  400
    > The lesson is not about CVars. "The client ignores this" and "the client obeys this and a
    > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
    > A working addon doing the same thing was the cheapest way to tell them apart.
+7. **A NONZERO `GetHitModifier`.** The function works — it printed `0`, see above — but it returns
+   the hit percent your GEAR adds, and the character measured had none, so no nonzero reading has
+   ever been seen on this client. Nothing incorrect is displayed either way: the Roster's Bonus Hit
+   row has no `allowZero` and hides at zero. If you equip something with +hit and the row stays
+   away, that is the case to report.
 
 ## What is under the cursor: GetMouseFoci, and it is a list
 
