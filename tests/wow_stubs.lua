@@ -73,6 +73,13 @@ function WoW.reset()
     WoW.dead = false
     WoW.displayID = 56658
     WoW.instanceType, WoW.speed, WoW.falling = "none", 0, false
+    -- Crit and hit are STATE, so they reset; the functions that read them are
+    -- defined at file scope like every other stub. An earlier version put the
+    -- whole stat block in here at column 0, which meant UnitStat and its
+    -- neighbours did not exist until something called WoW.reset() - and every
+    -- reset after that silently redefined them, quietly undoing anything a
+    -- test had substituted.
+    WoW.critChance, WoW.hitModifier = 12.5, 3
     -- UIParent is built ONCE for the whole run, so without this its child list
     -- accumulates every frame every block ever created and a test walking it
     -- sees strangers from three blocks ago.
@@ -131,11 +138,31 @@ local function makeFrame()
     -- The draw layer is REAL state. Which of two textures is on top is a
     -- correctness question - an underlay drawn above its overlay hides the
     -- thing it is backing up - and the chaining default swallowed it.
-    f.CreateTexture    = function(_, _, layer)
+    -- The SUBLEVEL is real state too, and the CREATION ORDER is recorded,
+    -- because between two textures the client resolves it in exactly that
+    -- priority: layer, then sublevel, then which was created first. A stub that
+    -- kept only the layer could not tell a border from a lid - the two are the
+    -- same layer - so the bug where an edge drawn after its inset covers it
+    -- completely was invisible to the suite. See T.TextureOrder.
+    -- The full client signature: CreateTexture(name, drawLayer, templateName,
+    -- subLevel). The TEMPLATE slot is third and easy to drop, and dropping it
+    -- silently shifts the sublevel into it - every explicit sublevel in the
+    -- addon read back as nil, so a draw-order assertion compared 0 against 0
+    -- and passed whatever the code said.
+    f.CreateTexture    = function(_, _, layer, _template, sublevel)
         local t = makeFrame()
-        t._layer = layer
-        t.SetDrawLayer = function(self, v) self._layer = v; return self end
-        t.GetDrawLayer = function(self) return self._layer end
+        t._layer, t._sublevel = layer, sublevel
+        WoW.textureSeq = (WoW.textureSeq or 0) + 1
+        t._created = WoW.textureSeq
+        t.SetDrawLayer = function(self, v, sub)
+            self._layer = v
+            -- The client's SetDrawLayer takes the sublevel as an optional
+            -- second argument and resets it to 0 when omitted, rather than
+            -- leaving the previous one in place.
+            self._sublevel = sub or 0
+            return self
+        end
+        t.GetDrawLayer = function(self) return self._layer, self._sublevel end
         return t
     end
     f.CreateFontString = function() return makeFrame() end
@@ -200,6 +227,21 @@ local function makeFrame()
         end
         return self
     end
+    -- A SOLID COLOUR is what most of this addon's textures are, and the colour
+    -- is the assertion: a quality border's whole job is which colour it is.
+    -- Swallowed by the chaining default, a palette could lose an entry and every
+    -- test still pass.
+    --
+    -- Recorded in `_colorTexture` rather than answered by a getter, because the
+    -- client has no GetColorTexture and GetVertexColor is a DIFFERENT thing - it
+    -- returns the vertex tint, which SetColorTexture does not touch. Inventing
+    -- a getter here would be a stub that models an API the client does not
+    -- have, which is the failure mode wow_stubs exists to avoid.
+    f.SetColorTexture = function(self, r, g, b, a)
+        self._colorTexture = { r, g, b, a }
+        self._texture = nil                     -- a colour replaces any art
+        return self
+    end
     f.GetTexture         = function(self) return self._texture end
     f.GetTextureFileID   = function(self) return self._fileID end
     f.GetTextureFilePath = function(self)
@@ -258,6 +300,39 @@ local function makeFrame()
         return self
     end
     f.IsShown        = function(self) return self._shown ~= false end
+    -- SetShown is Show/Hide with the condition inline, and the client has it.
+    -- Chaining meant SetShown(false) left the frame shown, so a renderer that
+    -- hid a widget conditionally looked identical to one that never hid it -
+    -- a mutation removing exactly that survived the suite.
+    f.SetShown = function(self, v)
+        if v then self:Show() else self:Hide() end
+        return self
+    end
+
+    -- Enabled state is REAL. The active tab is meant to be the one you cannot
+    -- press, and with SetEnabled swallowed by the chaining default that claim
+    -- was asserted nowhere - worse, a client missing the method entirely would
+    -- have thrown while the suite stayed green.
+    --
+    -- `nil` DISABLES, matching the client: these take a boolean, and a missing
+    -- argument is a falsy one, not "leave it alone". An earlier version wrote
+    -- `v ~= false`, which made SetEnabled(nil) and SetEnabled() enable the
+    -- widget - so a caller passing a nil flag by mistake looked correct here
+    -- and did the opposite in game. The DEFAULT, never having been called, is
+    -- still enabled, which is what a fresh frame is.
+    f.SetEnabled  = function(self, v) self._enabled = not not v; return self end
+    f.Enable      = function(self) self._enabled = true; return self end
+    f.Disable     = function(self) self._enabled = false; return self end
+    f.IsEnabled   = function(self) return self._enabled ~= false end
+
+    -- Word wrap is REAL state. A FontString with only a left anchor is as wide
+    -- as its text, so whether it wraps decides whether a long line stays
+    -- inside the frame or runs out over the game world - which it did. With
+    -- SetWordWrap swallowed by the chaining default, and GetWordWrap returning
+    -- the frame itself (truthy), an assertion about it could not fail. Same
+    -- nil rule as SetEnabled above.
+    f.SetWordWrap = function(self, v) self._wrap = not not v; return self end
+    f.GetWordWrap = function(self) return self._wrap ~= false end
     -- Visible means shown AND every ancestor shown - the distinction the whole
     -- hidden-UIParent problem turns on.
     f.IsVisible      = function(self)
@@ -525,6 +600,32 @@ end
 -- its bugs lived in.
 WoW.inCombat = false
 function InCombatLockdown() return WoW.inCombat and true or false end
+
+-- The stat block, so a full ScanCharacter runs. Values are arbitrary but
+-- DISTINCT: identical numbers would let a scan that wrote the wrong field into
+-- the wrong key pass unnoticed.
+function UnitStat(_, i) return 0, 10 + i end          -- base, total
+function UnitHealthMax() return 3210 end
+function UnitPowerMax() return 4870 end
+function UnitArmor() return 0, 812 end
+function UnitAttackPower() return 100, 20, 12 end     -- base, positive, negative
+function GetSpellBonusDamage(school) return 700 + school end
+-- (UnitDefenseSkill is stubbed further down, pinned to the MEASURED
+-- (base, modifier) pair. Do not redefine it here.)
+
+-- Melee crit and hit, for the detail pane's Combat section. Both exist in
+-- Vanilla. Their two neighbours in AltTracker's table are deliberately NOT
+-- stubbed - there is no haste rating pre-TBC and resilience is a TBC PvP stat,
+-- so a stub for either would let a port of the TBC table pass here and then
+-- report a real 0% in game for something that does not exist.
+--
+-- GetHitModifier is stubbed BECAUSE IT EXISTS - it is in the 1.60.1.70009 dump
+-- with a signature - and the scanner deliberately does not call it anyway: its
+-- runtime value is unmeasured, and stat_hitpct is in Core's RETIRED_FIELDS. The
+-- stub is here so a test can prove we leave a present function alone, which is
+-- a different assertion from "the function is missing".
+function GetCritChance() return WoW.critChance end
+function GetHitModifier() return WoW.hitModifier end
 
 -- Dead or a ghost. Both states, one call, which is why the code uses it: a
 -- corpse run is the second, and a portrait taken during one is a picture of a

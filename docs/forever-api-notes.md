@@ -988,6 +988,74 @@ model panel is viable on this client; what remains in #15 is content, not API.
 
 ---
 
+## Draw order inside one layer — sublevel first, then creation order
+
+`CreateTexture` takes **four** arguments and the third is the TEMPLATE, not the sublevel:
+
+```lua
+frame:CreateTexture(name, drawLayer, templateName, subLevel)
+```
+
+Which matters because dropping the template slot silently shifts the sublevel into it and the
+texture ends up with none. Between two textures the client resolves who is in front in this order:
+
+1. draw layer (`BACKGROUND` < `BORDER` < `ARTWORK` < `OVERLAY` < `HIGHLIGHT`)
+2. **sublevel** within that layer
+3. **creation order** — later wins
+
+So two textures in the same layer with no sublevel are ordered by which line of code ran first.
+This bit us twice in the same commit: an inset with a border drawn after it is not a border, it is
+a **lid** — the edge covers the whole inset and the result reads as one flat rectangle. Same for a
+quality border created after the icon it frames. Both look like a subtlety problem and are not.
+
+`SetDrawLayer(layer[, sublevel])` **resets the sublevel to 0** when the second argument is
+omitted, rather than leaving the previous one in place — so a later `SetDrawLayer` undoes a
+sublevel set at creation.
+
+There is **no `GetColorTexture`**, and `GetVertexColor` is a different thing: it returns the vertex
+tint, which `SetColorTexture` does not touch. A solid colour is write-only as far as the API is
+concerned, so a test suite has to record it at the stub.
+
+---
+
+## Two conflicting anchors beat an explicit SetHeight
+
+Anchoring `TOPLEFT` and `RIGHT` to the same y is a request for a height of zero: `TOPLEFT` pins the
+top there and `RIGHT` pins the vertical centre there. The widget vanishes, and a `SetHeight` after
+it does not rescue it. For a wrapping FontString that needs a left and a right edge, both points
+have to be on the same horizontal — `TOPLEFT` + `TOPRIGHT`.
+
+---
+
+## UIPanelButtonTemplate overrules SetTextColor when disabled
+
+A disabled `UIPanelButtonTemplate` button swaps in its **disabled font object**, which reapplies
+that object's colour and discards a `SetTextColor` set on the current font string. So "the active
+tab is the disabled one, tinted with the accent colour" loses its tint and reads as *unavailable*
+rather than *you are here*. State a button owns has to be a texture the addon creates, not a colour
+the template is entitled to reset.
+
+---
+
+## GetItemInfoInstant needs no cache — derive, do not store
+
+`GetItemInfoInstant(itemID)` takes a bare id and answers from the client's own item table, so it
+resolves on the first call with no `GET_ITEM_INFO_RECEIVED` round trip. Its fourth return is the
+**locale-independent** `equipLoc` token (`INVTYPE_SHIELD`, `INVTYPE_HOLDABLE`,
+`INVTYPE_WEAPONOFFHAND`); `itemSubType`, two positions earlier, is the **localised display string**
+and must never be compared against.
+
+The porting consequence is about SavedVariables and sync, not about items: a field derived from an
+id you already store is a field you should not store. We had `gearloc_<slot>` for seventeen slots
+per character, which then had to be excluded from the wire for size — which meant every
+peer-synced character could never answer the one question it existed for. Deriving it fixed the
+remote case and removed seventeen keys and two sync-boundary special cases at once.
+
+An id the client has genuinely never seen still returns nothing, and that resolves later as
+`GET_ITEM_INFO_RECEIVED` — so "cannot tell" should queue a retry rather than stand as a verdict.
+
+---
+
 ## Frame geometry — the minimap is 198, not 140
 
 ```
@@ -997,6 +1065,35 @@ Minimap:GetWidth(), Minimap:GetHeight()  ->  197.99984741211, 197.99998474121
 Classic's minimap is 140 across, so addons that hardcode a radius of ~80 to sit "just outside the
 ring" land their buttons 29px INSIDE it here - the ring is at 109. Measure the frame; it is a child
 coordinate space, so no scale conversion is involved. Fixed for our own button in #26.
+
+---
+
+## GetCritChance works; GetHitModifier exists but is UNMEASURED
+
+```
+GetCritChance()    ->  1.66            MEASURED, level 18 gnome warlock, 1.60.1.70009
+GetHitModifier()   ->  ?               PRESENT in the dump, runtime value not measured
+```
+
+`GetCritChance` returns a real percentage, not a rating-derived zero, so `stat_crit` has a
+build-verified producer and is scanned.
+
+`GetHitModifier` **is in the 1.60.1.70009 dump**, with a signature —
+`GetHitModifier() -> result:number [PlayerScript]` — so any claim that it was removed with hit
+rating is wrong. What is not known is what it *returns* here. It reports the **bonus** hit from
+gear, which is zero for most characters, and the Combat row for it did not render on the live
+client — which is equally consistent with "no useful value" and "a genuine zero". Those are
+different things, and a stored zero cannot be told from an absence afterwards, so `stat_hitpct`
+stays on `RETIRED_FIELDS` and nothing produces it.
+
+Presence in the dump is evidence of an API's existence and **nothing at all** about its behaviour.
+Worth stating because it cuts the other way too: a function being listed is not a reason to use it.
+
+To settle it, one line in game:
+
+```
+/run print(GetHitModifier and GetHitModifier() or "ABSENT")
+```
 
 ---
 

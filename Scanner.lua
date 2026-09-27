@@ -37,25 +37,36 @@ local ALL_PROFESSIONS = {
 -- Gear slots
 ------------------------------------------------------------
 
-local GEAR_SLOTS = {
-    { id=1,  key="head"     },
-    { id=2,  key="neck"     },
-    { id=3,  key="shoulder" },
-    { id=15, key="back"     },
-    { id=5,  key="chest"    },
-    { id=9,  key="wrist"    },
-    { id=10, key="hands"    },
-    { id=6,  key="waist"    },
-    { id=7,  key="legs"     },
-    { id=8,  key="feet"     },
-    { id=11, key="ring1"    },
-    { id=12, key="ring2"    },
-    { id=13, key="trinket1" },
-    { id=14, key="trinket2" },
-    { id=16, key="mainhand" },
-    { id=17, key="offhand"  },
-    { id=18, key="ranged"   },
+-- ONE table, published on AltStable, because the Roster's detail pane needs the
+-- same seventeen slots in the same order and had its own copy - seventeen rows
+-- of id/key duplicated, which is seventeen chances for the two to disagree
+-- about what `gearid_back` means.
+--
+-- `id` is the client's inventory slot, which is what the scanner reads and what
+-- an item tooltip needs. `label` and `side` are the paper doll's, and the ORDER
+-- is the paper doll's too: down the left, down the right, weapons along the
+-- bottom. The scanner does not care about the order, so the reader that does
+-- gets to set it.
+AltStable.GEAR_SLOTS = {
+    { id=1,  key="head",     label="Head",      side="left"   },
+    { id=2,  key="neck",     label="Neck",      side="left"   },
+    { id=3,  key="shoulder", label="Shoulder",  side="left"   },
+    { id=15, key="back",     label="Back",      side="left"   },
+    { id=5,  key="chest",    label="Chest",     side="left"   },
+    { id=9,  key="wrist",    label="Wrist",     side="left"   },
+    { id=10, key="hands",    label="Hands",     side="right"  },
+    { id=6,  key="waist",    label="Waist",     side="right"  },
+    { id=7,  key="legs",     label="Legs",      side="right"  },
+    { id=8,  key="feet",     label="Feet",      side="right"  },
+    { id=11, key="ring1",    label="Ring 1",    side="right"  },
+    { id=12, key="ring2",    label="Ring 2",    side="right"  },
+    { id=13, key="trinket1", label="Trinket 1", side="bottom" },
+    { id=14, key="trinket2", label="Trinket 2", side="bottom" },
+    { id=16, key="mainhand", label="Main Hand", side="bottom" },
+    { id=17, key="offhand",  label="Off Hand",  side="bottom" },
+    { id=18, key="ranged",   label="Ranged",    side="bottom" },
 }
+local GEAR_SLOTS = AltStable.GEAR_SLOTS
 
 local function ItemIDFromLink(link)
     if type(link) ~= "string" then return 0 end
@@ -622,6 +633,35 @@ function AltStable.ScanCharacter()
     char.stat_sp = spellPower
 
     char.stat_defense = plainSum(UnitDefenseSkill("player"))
+
+    -- Crit and hit, for the detail pane's Combat section (#91).
+    --
+    -- Both exist in Vanilla and are read from the player directly. The two
+    -- stats beside them in AltTracker's table do NOT come across: there is no
+    -- haste rating pre-TBC, and resilience is a TBC PvP stat - so they are
+    -- absent here rather than scanned as zero, which would have the pane
+    -- reporting a real 0% for something the game does not have.
+    --
+    -- Melee crit is the honest one to show: GetSpellCritChance takes a school
+    -- and the pane has one row, so picking a school would be arbitrary.
+    -- Crit only. GetCritChance has a verified producer: observed live on
+    -- 1.60.1.70009 reporting 1.66%, a real value rather than a
+    -- rating-derived zero, which is what Core's RETIRED_FIELDS note asked for
+    -- before taking a field off that list.
+    --
+    -- GetHitModifier is NOT scanned, and not because it is absent: the
+    -- 1.60.1.70009 dump lists it with a signature. What is unknown is its
+    -- RUNTIME value. Its row did not render in game, which is equally consistent
+    -- with "the function returns nothing useful" and "the value is genuinely
+    -- zero" - it reports BONUS hit from gear, which is zero for most characters.
+    -- Writing the field either way stores a zero that cannot be told from an
+    -- absence, and stat_hitpct is still on Core's retired list, so it would be
+    -- purged at the next login regardless.
+    --
+    -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+    if GetCritChance then
+        char.stat_crit = plain(GetCritChance())
+    end
 
     --------------------------------------------------------
     -- Scan professions

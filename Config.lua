@@ -146,18 +146,31 @@ local function EnsureDefaults()
         AltStableConfig.sheetShowHidden = false
     end
 
-    -- Roster gear audit. minGemQuality is the lowest gem quality considered
-    -- acceptable (0 disables gem checks entirely, 3 = Rare, 4 = Epic), matching
-    -- CLA's "minimum required gem quality" selector. auditMinLevel keeps the
-    -- audit quiet on levelling alts, where a bare enchant slot is not a finding.
-    if AltStableConfig.minGemQuality == nil then
-        AltStableConfig.minGemQuality = 3
-    end
-    -- The default is the client's level cap; a stored value above it (the old
-    -- TBC default of 70) could never be reached, so it is pulled down too.
-    local levelCap = AltStable.API.LevelCap()
-    if AltStableConfig.auditMinLevel == nil or AltStableConfig.auditMinLevel > levelCap then
-        AltStableConfig.auditMinLevel = levelCap
+    -- Retired with the gem audit. Sockets, gems and meta-gems were introduced in
+    -- TBC and do not exist here, so the quality threshold this configured is
+    -- meaningless on this client - it is an enchant audit now, and enchants need
+    -- no quality threshold: a slot either has one or it does not.
+    --
+    -- Actively cleared rather than merely no longer defaulted. It has been
+    -- written to real profiles on disk, and a key nothing reads is a key the
+    -- next reader has to work out the meaning of. Same treatment bisTier got.
+    AltStableConfig.minGemQuality = nil
+
+    -- auditMinLevel is NOT retired with it, which is the distinction the first
+    -- pass at this got wrong: it was cleared alongside minGemQuality on the
+    -- argument that enchants need no threshold, but that argument is about
+    -- QUALITY. A level gate is a different setting and enchants still want one -
+    -- a level 14 alt in quest greens does not need six amber rows about gear it
+    -- will replace this afternoon.
+    --
+    -- Nor is it hardcoded, which is what replaced it: a floor at the level cap
+    -- silently means "no character is audited until it is finished levelling",
+    -- and deciding that for the player while deleting the setting they had is
+    -- two changes wearing one coat. The default IS the cap; the key is honoured
+    -- when it is there.
+    if AltStableConfig.auditMinLevel == nil then
+        AltStableConfig.auditMinLevel =
+            (AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()) or 60
     end
 
     -- Appearance defaults

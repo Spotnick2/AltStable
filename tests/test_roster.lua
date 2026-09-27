@@ -28,7 +28,18 @@ AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
 dofile("Theme.lua")
 assert(loadfile("Core.lua"))()
+-- Scanner.lua owns AltStable.GEAR_SLOTS, the one list of the seventeen
+-- equipment slots. The detail pane's paper doll walks it, and it used to carry
+-- its own copy: two lists of seventeen rows, each naming the `gearid_<key>`
+-- fields that are the contract between the scanner that writes them and this
+-- pane that reads them. Loaded in the .toc order, which puts Scanner first.
+dofile("Scanner.lua")
 dofile("Config.lua")
+-- RowRenderer owns FormatMoney and FormatLastSeen, which the detail pane calls
+-- through AltStable. Without it they are NIL, FormatStatValue falls through to
+-- tostring, and every assertion about formatting passes against a raw number -
+-- "Gold=573920", "Last Online=1699996400".
+dofile("RowRenderer.lua")
 -- The card's right-click raises the shared character menu (#69).
 dofile("CharacterMenu.lua")
 ------------------------------------------------------------
@@ -1374,6 +1385,1022 @@ do
     check("  and the panel stops above it rather than covering it",
           bottomY ~= nil and bottomY >= footerH,
           ("panel bottom is %s, footer is %d tall"):format(tostring(bottomY), footerH))
+end
+
+------------------------------------------------------------
+-- The character detail view (#91)
+------------------------------------------------------------
+-- A drill-down: selecting a character replaces the grid or the camp, and Back
+-- returns you to whichever you came from. Every field it shows is already
+-- scanned and stored - this is presentation over data the addon has held all
+-- along and displayed nowhere.
+
+do
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+
+    AltStableDB = {
+        geared = { guid = "geared", name = "Geared One", class = "PRIEST", realm = "R",
+                   level = 60, race = "Human", raceName = "Human", guild = "A Guild",
+                   ilvl = 61.5, money = 573920, restPercent = 42, xpPercent = 88,
+                   lastUpdate = time() - 3600,
+                   stat_hp = 3210, stat_mana = 4870, stat_armor = 812,
+                   stat_str = 42, stat_agi = 53, stat_sta = 290,
+                   stat_int = 493, stat_spi = 446,
+                   stat_ap = 32, stat_sp = 728, stat_defense = 300,
+                   stat_crit = 12.5, stat_hitpct = 3,
+                   gear_head = 66, gearq_head = 4, gearid_head = 1001,
+                   gearname_head = "A Hat", gearlink_head = "|Hitem:1001|h[A Hat]|h",
+                   gear_chest = 58, gearq_chest = 3, gearid_chest = 1002,
+                   gearname_chest = "A Robe", gearlink_chest = "|Hitem:1002|h[A Robe]|h" },
+        bare   = { guid = "bare", name = "Bare One", class = "WARRIOR", realm = "R",
+                   level = 12, race = "Orc", raceName = "Orc",
+                   money = 0, lastUpdate = time() - 90000,
+                   -- Combat is PARTLY filled on purpose: a warrior has attack
+                   -- power and no spell power. A fixture where every stat in a
+                   -- section is absent only ever exercises the section-level
+                   -- filter, and a row-level one could be deleted unnoticed.
+                   stat_ap = 140, stat_defense = 60 },
+    }
+    AltStableConfig.hiddenCharacters = {}
+    AltStableConfig.favouriteCharacters = {}
+    AltStableConfig.rosterView = "grid"
+    T.Activate(main)
+    T.Refresh()
+
+    check("nothing is drilled into to begin with", T.DetailShown() == false)
+
+    ----------------------------------------------------------
+    -- Drilling in and back out
+    ----------------------------------------------------------
+
+    -- Through the CARD, not the function behind it. Calling DrillDown proves
+    -- the function works and nothing about whether clicking a card reaches it -
+    -- and the card's handler used to call Select, which only moves a highlight.
+    check("clicking a card drills in", T.CardClick(1))
+    check("  the detail view is up", T.DetailShown())
+    check("  showing the character on that card",
+          (T.DetailText() or ""):find(T.Cards()[1].char.name, 1, true) ~= nil,
+          T.DetailText())
+    T.Back()
+
+    check("a card drills into its character", T.DrillDown("geared"))
+    check("  the detail view is up again", T.DetailShown())
+
+    local head = T.DetailText() or ""
+    check("  naming the character", head:find("Geared One", 1, true) ~= nil, head)
+    check("  with level, race and class", head:find("Level 60 Human Priest", 1, true) ~= nil, head)
+    check("  the guild and realm", head:find("<A Guild> - R", 1, true) ~= nil, head)
+    check("  and the item level", head:find("61.5", 1, true) ~= nil, head)
+
+    -- The cards go. Left shown they sit behind the detail still taking the
+    -- mouse, so a click meant for the pane can land on a card and drill into
+    -- somebody else - and the frames are siblings, so strata does not save it.
+    do
+        local visible = 0
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() then visible = visible + 1 end
+        end
+        eq("no card is left behind the detail", visible, 0)
+    end
+
+    -- A guid that is not in the database is REFUSED. The pane would otherwise
+    -- open on a blank header, an empty paper doll and an audit with nothing to
+    -- audit, and say true - which is what a card rendered before a delete hands
+    -- it.
+    check("drilling into a character that is not there fails",
+          T.DrillDown("no-such-guid") == false)
+    check("  and leaves the pane where it was", T.DetailShown())
+
+    check("something is selected while drilled in", T.Selected() ~= nil)
+    check("Back leaves it", T.Back())
+    check("  and the view returns", T.DetailShown() == false)
+    -- A highlight left behind on the way out reads as a mode you cannot leave.
+    eq("  and nothing is left selected", T.Selected(), nil)
+
+    -- Leaving the tab leaves the drill-down. It is a per-visit state, like the
+    -- tab it opens on: left set, the next visit to the Roster started inside the
+    -- detail pane with no grid behind it and a Back button for a journey the
+    -- player did not take.
+    do
+        T.DrillDown("geared")
+        check("the pane is up before leaving the tab", T.DetailShown())
+        T.Deactivate(main)
+        T.Activate(main)
+        T.Refresh()
+        check("  and coming back to the tab shows the grid, not the pane",
+              T.DetailShown() == false)
+        eq("  with nothing selected", T.Selected(), nil)
+    end
+
+    -- Back must land where you came FROM. Leaving a camp and arriving in a
+    -- spreadsheet is disorienting.
+    AltStable.SetConfigValue("rosterView", "scene")
+    T.Refresh()
+    T.DrillDown("geared")
+    check("drilling in from the scene works too", T.DetailShown())
+    T.Back()
+    -- NOT `T.View()`: that reads back the config value this test set two lines
+    -- above, and nothing in Back writes it, so the assertion passed no matter
+    -- what Back did - including landing in the grid. The scene's own furniture
+    -- is what proves where you are.
+    check("  and Back leaves you in the scene, not the grid", T.SceneBarShown() == true)
+    eq("  with the button offering the way out of it", T.ViewButtonText(), "Grid")
+    check("  and the camp drawn again, not the detail pane", T.DetailShown() == false)
+    do
+        local visible = 0
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() then visible = visible + 1 end
+        end
+        eq("  with no grid cards behind it", visible, 0)
+    end
+
+    -- And the same assertion the other way round, or "the scene bar is up"
+    -- would be satisfied by a bar that is always up.
+    AltStable.SetConfigValue("rosterView", "grid")
+    T.Refresh()
+    T.DrillDown("geared")
+    T.Back()
+    check("Back from the grid leaves you in the grid", T.SceneBarShown() == false)
+    eq("  with the button offering the scene", T.ViewButtonText(), "Scene")
+    AltStable.SetConfigValue("rosterView", "scene")
+    T.Refresh()
+    AltStable.SetConfigValue("rosterView", "grid")
+    T.Refresh()
+
+    ----------------------------------------------------------
+    -- The stats
+    ----------------------------------------------------------
+
+    T.DrillDown("geared")
+    local stats = table.concat(T.DetailStats(), " | ")
+
+    check("the Status section is drawn", stats:find("Status", 1, true) ~= nil, stats)
+    -- The VALUE, not just the label. "Gold=" is true of the raw copper count.
+    check("gold is formatted as money, not a copper count",
+          stats:find("Gold=57", 1, true) ~= nil and stats:find("573920", 1, true) == nil, stats)
+    check("  and last online in words, not an epoch",
+          stats:find("ago", 1, true) ~= nil and stats:find("17", 1, true) == nil, stats)
+
+    -- "Online" is reserved for the character you are logged in as, and the flag
+    -- that says so was hardcoded to false here - so the one character whose
+    -- timestamp is guaranteed fresh was the only one that could never read it,
+    -- while reading "0m ago" about itself. RowRenderer's tooltip passes the same
+    -- comparison.
+    do
+        local mine = UnitGUID("player")
+        AltStableDB[mine] = { guid = mine, name = "Me", class = "MAGE", realm = "R",
+            level = 60, race = "Human", raceName = "Human", ilvl = 40, money = 100,
+            stat_int = 200, lastUpdate = time() - 5 }
+        T.Refresh()
+        T.DrillDown(mine)
+        -- Matched on the VALUE, not on "Online" anywhere in the string: the row
+        -- is LABELLED "Last Online", so a bare find passes for every character
+        -- ever rendered.
+        local own = table.concat(T.DetailStats(), " | ")
+        check("your own character reads Online, not '0m ago'",
+              own:find("Last Online=|cff00ff00Online", 1, true) ~= nil, own)
+        -- And a different character with the same fresh timestamp does NOT,
+        -- or "Online" would just mean "recent".
+        AltStableDB.fresh = { guid = "fresh", name = "Fresh One", class = "MAGE",
+            realm = "R", level = 60, race = "Human", raceName = "Human", ilvl = 40,
+            money = 100, stat_int = 200, lastUpdate = time() - 5 }
+        T.Refresh()
+        T.DrillDown("fresh")
+        local other = table.concat(T.DetailStats(), " | ")
+        check("  while somebody else that fresh reads minutes ago",
+              other:find("Last Online=|cff00ff00Online", 1, true) == nil
+              and other:find("ago", 1, true) ~= nil, other)
+        AltStableDB[mine], AltStableDB.fresh = nil, nil
+        T.Refresh()
+        T.DrillDown("geared")
+    end
+
+    -- The XP rows, which depend on the LEVEL and not only on the value.
+    --
+    -- `geared` is at the cap, and at the cap the scanner writes a literal 0 to
+    -- both XP fields to say "there is no next level". With allowZero set - which
+    -- these two rows need, since 0% rested while levelling is a real answer -
+    -- that produced "Rested XP 0%" and "XP Progress 0%" on every capped
+    -- character: a precise figure for a bar that is not on screen.
+    check("a capped character is not told its rested XP is 0%",
+          stats:find("Rested XP", 1, true) == nil, stats)
+    check("  nor its XP progress", stats:find("XP Progress", 1, true) == nil, stats)
+    -- And the rows are not simply gone: a levelling character still gets them,
+    -- or "hidden at the cap" would be satisfied by deleting them outright.
+    do
+        AltStableDB.levelling = { guid = "levelling", name = "Levelling One",
+            class = "PRIEST", realm = "R", level = 59, race = "Human",
+            raceName = "Human", ilvl = 40, money = 100, stat_int = 200,
+            restPercent = 42, xpPercent = 88, lastUpdate = time() - 3600 }
+        T.Refresh()
+        T.DrillDown("levelling")
+        local low = table.concat(T.DetailStats(), " | ")
+        check("a levelling character still gets its rested percent",
+              low:find("Rested XP=42%", 1, true) ~= nil, low)
+        check("  and its XP progress", low:find("XP Progress=88%", 1, true) ~= nil, low)
+        -- Zero is still a real answer BELOW the cap, which is what allowZero is
+        -- for and what the level test must not have thrown away.
+        AltStableDB.levelling.restPercent = 0
+        T.DrillDown("levelling")
+        check("  including a genuine 0% rested",
+              table.concat(T.DetailStats(), " | "):find("Rested XP=0%", 1, true) ~= nil)
+        AltStableDB.levelling = nil
+        T.Refresh()
+        T.DrillDown("geared")
+    end
+
+    check("Attributes are drawn", stats:find("Intellect=493", 1, true) ~= nil, stats)
+    check("Resources too", stats:find("Health=3210", 1, true) ~= nil, stats)
+
+    -- The two stats that exist in Vanilla and had to be added to the scanner.
+    check("melee crit is shown to two places", stats:find("Melee Crit=12.50%", 1, true) ~= nil, stats)
+
+    -- Hit chance is NOT offered. GetHitModifier exists on this client - it is
+    -- in the 1.60.1.70009 dump with a signature - but its VALUE is unmeasured,
+    -- returns the BONUS hit from gear - zero for most characters, so the row
+    -- was invisible for nearly everybody - and stat_hitpct is still on Core's
+    -- RETIRED_FIELDS, which purges it at login and drops it from sync. A row
+    -- for a field the addon deletes is worse than no row.
+    check("hit chance is not offered", stats:find("Hit Chance", 1, true) == nil, stats)
+
+    -- And the two that do NOT exist pre-TBC, which must not have been ported
+    -- along with the rest of AltTracker's table.
+    -- Asserted on the TABLE rather than the rendering. A row for a stat nobody
+    -- has is invisible either way, so a rendered check passes whether or not
+    -- the row was ported - the question is whether it is in the definition.
+    local defined = {}
+    for _, g in ipairs(T.CHAR_STAT_GROUPS) do
+        for _, d in ipairs(g.defs) do defined[d.key] = true end
+    end
+    check("haste is not in the table at all", not defined.stat_haste)
+    check("  nor resilience", not defined.stat_resilience)
+    check("  while the crit row is", defined.stat_crit)
+    check("  and the unmeasured hit one is not", not defined.stat_hitpct)
+    check("haste is not rendered either", stats:find("Haste", 1, true) == nil, stats)
+    check("  and the scanner does not invent them",
+          AltStableDB.geared.stat_haste == nil and AltStableDB.geared.stat_resilience == nil)
+
+    ----------------------------------------------------------
+    -- A character with almost nothing recorded
+    ----------------------------------------------------------
+
+    T.DrillDown("bare")
+    local bare = table.concat(T.DetailStats(), " | ")
+
+    -- Zero gold is a FACT and survives; a warrior's absent spell power is not
+    -- a zero and its row goes, taking an empty section's header with it.
+    check("zero gold is still shown", bare:find("Gold=", 1, true) ~= nil, bare)
+    check("  but absent stats are not rows of dashes",
+          bare:find("Intellect", 1, true) == nil, bare)
+    check("  and a section with nothing in it takes its header",
+          bare:find("Attributes", 1, true) == nil, bare)
+
+    -- The row-level filter, which the section-level one would otherwise hide.
+    check("a partly-filled section keeps its header", bare:find("Combat", 1, true) ~= nil, bare)
+    check("  and the stats that are there", bare:find("Attack Power=140", 1, true) ~= nil, bare)
+    check("  while the ones that are not are absent, not dashes",
+          bare:find("Spell Power", 1, true) == nil, bare)
+
+    ----------------------------------------------------------
+    -- The equipped slots
+    ----------------------------------------------------------
+
+    T.DrillDown("geared")
+    local slots = table.concat(T.DetailSlots(), " | ")
+    eq("every slot is drawn", #T.DetailSlots(), #T.GEAR_SLOTS)
+    check("  an equipped one carries its item level",
+          slots:find("head=66", 1, true) ~= nil, slots)
+    check("  and another", slots:find("chest=58", 1, true) ~= nil, slots)
+    -- An EMPTY slot still draws, blank. A paper doll with holes in it is how
+    -- you see the character has no cloak.
+    check("  an empty one is drawn without a number",
+          slots:find("back=", 1, true) ~= nil and slots:find("back=%d") == nil, slots)
+
+    ----------------------------------------------------------
+    -- Surviving what happens around it
+    ----------------------------------------------------------
+
+    -- The Roster repaints on every sync. A refresh must not bounce us out.
+    T.Refresh()
+    check("a refresh does not drop you out of the detail", T.DetailShown())
+
+    -- But a character that goes away while you are looking at it must not
+    -- leave a blank pane.
+    AltStableDB.geared = nil
+    T.Refresh()
+    check("a forgotten character falls back to the view", T.DetailShown() == false)
+end
+
+------------------------------------------------------------
+-- The enchant audit (#91)
+------------------------------------------------------------
+-- AltTracker audited gems, sockets and meta-gems across 842 lines. None of
+-- that exists pre-TBC. What is left is enchants.
+--
+-- Read from gearmod_<slot>, which is "ench:sockets:g1:g2:g3" and IS SYNCED -
+-- the scanner marks it so and test_comm asserts it must ride the wire. An
+-- earlier version read gearlink_, which Core strips at the sync boundary as
+-- too large: every peer-synced character came out as a wall of "cannot read
+-- the item", so the whole tab was noise for any character not scanned here.
+
+do
+    local FLOOR = T.AuditFloor()
+    check("there is a level floor", FLOOR and FLOOR > 1, tostring(FLOOR))
+
+    -- And it is a SETTING, not a law. It was briefly hardcoded to the level cap
+    -- in the same change that deleted the persisted `auditMinLevel` - the same
+    -- policy with the choice taken away. The gem settings went because sockets
+    -- do not exist on this client; the level gate is a different question.
+    do
+        local saved = AltStableConfig.auditMinLevel
+        AltStableConfig.auditMinLevel = 20
+        eq("the floor honours auditMinLevel", T.AuditFloor(), 20)
+        -- Clamped both ways: it is a number on disk. Above the cap audits
+        -- nobody and reads as a broken tab; at 0 it audits every level 1 alt.
+        AltStableConfig.auditMinLevel = 9999
+        eq("  clamped to the level cap", T.AuditFloor(), FLOOR)
+        AltStableConfig.auditMinLevel = 0
+        check("  and never below 2", T.AuditFloor() >= 2, tostring(T.AuditFloor()))
+        AltStableConfig.auditMinLevel = nil
+        eq("  with the cap as the default", T.AuditFloor(), FLOOR)
+        AltStableConfig.auditMinLevel = saved
+    end
+
+    ----------------------------------------------------------
+    -- Reading an enchant off the packed field
+    ----------------------------------------------------------
+
+    eq("a zero enchant means no enchant", T.EnchantFromMod("0:0:0:0:0"), nil)
+    eq("an enchant id is read", T.EnchantFromMod("2504:0:0:0:0"), 2504)
+    eq("  and one beside real sockets", T.EnchantFromMod("2661:2:24028:35759:0"), 2661)
+
+    -- tonumber, not a string compare. Classic-era links were historically
+    -- written with padded zero fields, and "00" is truthy as a string.
+    eq("a padded zero is still no enchant", T.EnchantFromMod("00:0:0:0:0"), nil)
+    eq("  and a signed one", T.EnchantFromMod("-0:0:0:0:0"), nil)
+
+    -- "Cannot tell" is a THIRD answer and must never collapse into "fine".
+    eq("an empty packed field cannot be read", T.EnchantFromMod(""), false)
+    eq("  nor a missing one", T.EnchantFromMod(nil), false)
+    eq("  nor a malformed one", T.EnchantFromMod("not packed at all"), false)
+
+    ----------------------------------------------------------
+    -- Which slots take one
+    ----------------------------------------------------------
+
+    check("chest does", T.ENCHANTABLE_SLOTS.chest)
+    check("  and weapons", T.ENCHANTABLE_SLOTS.mainhand)
+    check("rings do not", not T.ENCHANTABLE_SLOTS.ring1 and not T.ENCHANTABLE_SLOTS.ring2)
+    check("  nor the neck", not T.ENCHANTABLE_SLOTS.neck)
+
+    -- Offhand by EQUIP LOCATION, a locale-independent token. The item SUBTYPE
+    -- is the localised display string - "Shields" on enUS, "Schilde" on deDE -
+    -- so comparing against it would never fire outside English.
+    --
+    -- Resolved from gearid_offhand, which IS SYNCED, rather than read from a
+    -- stored token which was not: an earlier version stored the token for all
+    -- seventeen slots and then had to exclude it from sync, so every
+    -- peer-synced character reported "cannot tell" for its off-hand for ever.
+    -- GetItemInfoInstant needs no item cache, so there is nothing to store.
+    WoW.items[6001] = { name = "A Shield",   equipLoc = "INVTYPE_SHIELD",         icon = 1 }
+    WoW.items[6002] = { name = "An Off-hand", equipLoc = "INVTYPE_WEAPONOFFHAND", icon = 2 }
+    WoW.items[6003] = { name = "A Tome",     equipLoc = "INVTYPE_HOLDABLE",       icon = 3 }
+
+    eq("a shield takes an enchant",
+       T.EnchantableHere({ gearid_offhand = 6001 }, "offhand"), true)
+    -- The case a shields-only whitelist dropped: an off-hand WEAPON, one of
+    -- the most commonly forgotten enchants there is.
+    eq("so does an off-hand weapon",
+       T.EnchantableHere({ gearid_offhand = 6002 }, "offhand"), true)
+    eq("a held-in-hand frill does not",
+       T.EnchantableHere({ gearid_offhand = 6003 }, "offhand"), false)
+    -- The id is what rides the wire, so a remote character resolves the same
+    -- way a local one does - the case the stored token could never answer.
+    eq("  and a synced id resolves identically",
+       T.EnchantableHere({ gearid_offhand = "6003" }, "offhand"), false)
+    -- An id the client has no data for at all: still "cannot tell", never
+    -- "fine", and never a false "no enchant" finding.
+    eq("an id with no item data is 'cannot tell'",
+       T.EnchantableHere({ gearid_offhand = 999999 }, "offhand"), nil)
+    -- Nothing equipped is not "cannot tell": there is nothing to enchant.
+    eq("an empty off-hand is simply not enchantable",
+       T.EnchantableHere({}, "offhand"), false)
+
+    ----------------------------------------------------------
+    -- What gets reported
+    ----------------------------------------------------------
+
+    local function findings(char)
+        char.level = char.level or FLOOR
+        local out = {}
+        for _, f in ipairs(T.AuditCharacter(char)) do
+            out[#out + 1] = f.slot .. ":" .. f.issue
+        end
+        return table.concat(out, " | ")
+    end
+
+    eq("an unenchanted chest is a finding",
+       findings({ gearid_chest = 10, gearmod_chest = "0:0:0:0:0" }), "chest:no enchant")
+    eq("  and an enchanted one is not",
+       findings({ gearid_chest = 10, gearmod_chest = "2504:0:0:0:0" }), "")
+
+    -- A peer-synced character HAS gearmod_, which is the whole reason for
+    -- reading it: this is the case the old version got wrong for 100% of
+    -- remote characters.
+    eq("a synced character audits normally",
+       findings({ gearid_chest = 10, gearmod_chest = "0:0:0:0:0",
+                  gearid_wrist = 11, gearmod_wrist = "2504:0:0:0:0" }),
+       "chest:no enchant")
+
+    -- An EMPTY slot is not a finding: already obvious on the paper doll.
+    eq("an empty slot is not reported",
+       findings({ gearid_chest = 0, gearid_head = 10, gearmod_head = "0:0:0:0:0" }), "")
+
+    eq("an unreadable packed field says so",
+       findings({ gearid_wrist = 10, gearmod_wrist = "" }),
+       "wrist:cannot read the item")
+
+    -- An occupied off-hand whose kind is unknown is REPORTED as unknown, not
+    -- dropped. A slot silently vanishing from the audit is the same thing as
+    -- calling it clean.
+    eq("an off-hand of unknown kind is reported, not dropped",
+       findings({ gearid_offhand = 999999, gearmod_offhand = "0:0:0:0:0" }),
+       "offhand:cannot tell - no item data")
+    -- And the id is QUEUED, so "cannot tell" is a wait and not a verdict. Core
+    -- has watched this queue since the gem audit; with the gems gone nothing
+    -- filled it, so the branch there was dead code AND a remote character's
+    -- unknown off-hand stayed unreadable for the whole session. The id the
+    -- client cannot resolve arrives later as GET_ITEM_INFO_RECEIVED.
+    check("  and the unresolved id is queued for a retry",
+          AltStable.PendingAuditItems and AltStable.PendingAuditItems[999999] == true,
+          tostring(AltStable.PendingAuditItems))
+    -- An id that DID resolve is not queued: the queue is a list of things to
+    -- wait for, and everything-in-it is the same as nothing-in-it.
+    AltStable.PendingAuditItems = nil
+    findings({ gearid_offhand = 6001, gearmod_offhand = "2504:0:0:0:0" })
+    check("  while a resolvable one is not",
+          AltStable.PendingAuditItems == nil
+          or AltStable.PendingAuditItems[6001] == nil)
+    AltStable.PendingAuditItems = nil
+    eq("  while a known frill is simply not audited",
+       findings({ gearid_offhand = 6003, gearmod_offhand = "0:0:0:0:0" }), "")
+    eq("  and an unenchanted shield IS a finding",
+       findings({ gearid_offhand = 6001, gearmod_offhand = "0:0:0:0:0" }),
+       "offhand:no enchant")
+
+    -- Worst first, then alphabetical. The slots are chosen so the sorted order
+    -- differs from the order GEAR_SLOTS is WALKED in - wrist, hands, feet -
+    -- or deleting the sort would change nothing.
+    local both = T.AuditCharacter({
+        level = FLOOR,
+        gearid_wrist = 10, gearmod_wrist = "",
+        gearid_hands = 10, gearmod_hands = "0:0:0:0:0",
+        gearid_feet  = 10, gearmod_feet  = "0:0:0:0:0",
+    })
+    eq("three findings", #both, 3)
+    eq("findings are ordered worst first", both[1].issue, "no enchant")
+    eq("  alphabetically within that", both[1].label, "Feet")
+    eq("  and not in the order the slots are walked", both[2].label, "Hands")
+    eq("  with the unreadable one last", both[3].issue, "cannot read the item")
+
+    ----------------------------------------------------------
+    -- When the audit does not run at all
+    ----------------------------------------------------------
+
+    -- A level gate, which AltTracker had as auditMinLevel and which was
+    -- dropped along with the GEM settings by mistake: that argument was about
+    -- a quality threshold and this is a different setting. A levelling alt in
+    -- quest greens would otherwise get a screenful of non-actionable rows.
+    local lowFindings, lowReason = T.AuditCharacter({
+        level = 14, gearid_chest = 10, gearmod_chest = "0:0:0:0:0" })
+    eq("a levelling alt produces no findings", #lowFindings, 0)
+    check("  and is told why rather than called clean",
+          (lowReason or ""):find("Not audited below level", 1, true) ~= nil, tostring(lowReason))
+
+    -- "Nothing to check" is not "all clear" either.
+    local bareFindings, bareReason = T.AuditCharacter({ level = FLOOR })
+    eq("a character wearing nothing produces no findings", #bareFindings, 0)
+    check("  and is not told everything is enchanted",
+          (bareReason or ""):find("Nothing equipped", 1, true) ~= nil, tostring(bareReason))
+
+    ----------------------------------------------------------
+    -- The tab
+    ----------------------------------------------------------
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    AltStableDB = {
+        messy = { guid = "messy", name = "Messy One", class = "MAGE", realm = "R",
+                  level = FLOOR, race = "Human", raceName = "Human", ilvl = 50,
+                  money = 100, stat_int = 400,
+                  gearid_chest = 10, gearmod_chest = "0:0:0:0:0" },
+        tidy  = { guid = "tidy", name = "Tidy One", class = "MAGE", realm = "R",
+                  level = FLOOR, race = "Human", raceName = "Human", ilvl = 50,
+                  money = 100, stat_int = 400,
+                  gearid_chest = 10, gearmod_chest = "2504:0:0:0:0" },
+        naked = { guid = "naked", name = "Naked One", class = "MAGE", realm = "R",
+                  level = FLOOR, race = "Human", raceName = "Human", ilvl = 0,
+                  money = 100, stat_int = 400 },
+    }
+    AltStableConfig.hiddenCharacters = {}
+    AltStableConfig.favouriteCharacters = {}
+    AltStableConfig.rosterView = "grid"
+    T.Activate(main)
+    T.Refresh()
+
+    T.DrillDown("messy")
+    eq("drilling in opens on Char, not wherever you left it", T.DetailTab(), "char")
+    check("  so the stats are showing",
+          table.concat(T.DetailStats(), "|"):find("Intellect", 1, true) ~= nil)
+    eq("  and no audit rows are", #T.DetailAudit(), 0)
+
+    -- The ACTIVE tab is the one you are not invited to press, and a seam that
+    -- fires a disabled button's handler proves something the player cannot do.
+    check("the tab you are on cannot be pressed", T.TabClick("Char") == false)
+    -- The audit is not computed on the Char tab. Refresh runs on every sync
+    -- and Char is the tab you always land on, so a pass whose result is thrown
+    -- away is work on a timer - and it is invisible without counting.
+    do
+        local before = T.AuditCalls()
+        T.Refresh()
+        eq("a refresh on the Char tab does not run the audit", T.AuditCalls(), before)
+    end
+
+    check("the Audit tab is a button", T.TabClick("Audit"))
+    check("  and now Char is the one that can be", T.TabClick("Audit") == false)
+    eq("  which switches to it", T.DetailTab(), "audit")
+
+    -- The active tab carries a marker of its OWN, not only a text colour.
+    -- UIPanelButtonTemplate swaps in its disabled font object when a button is
+    -- disabled, which reapplies that object's colour and discards a SetTextColor
+    -- on the current font string - so on a client where it does that, the only
+    -- signal left was "greyed out", which reads as unavailable rather than "you
+    -- are here".
+    do
+        local marked = {}
+        for _, b in ipairs(T.DetailTabs()) do
+            if b.activeMark and b.activeMark:IsShown() then marked[#marked + 1] = b.id end
+        end
+        eq("exactly one tab is marked active", #marked, 1)
+        eq("  and it is the one you are on", marked[1], "audit")
+    end
+
+    local rows = table.concat(T.DetailAudit(), " | ")
+    check("  showing the finding", rows:find("Chest=no enchant", 1, true) ~= nil, rows)
+    do
+        local before = T.AuditCalls()
+        T.Refresh()
+        check("  and on THIS tab a refresh does run it", T.AuditCalls() > before)
+    end
+    eq("  and the stats step aside", #T.DetailStats(), 0)
+
+    check("Char is a button too", T.TabClick("Char"))
+    eq("  and switches back", T.DetailTab(), "char")
+    check("  bringing the stats with it", #T.DetailStats() > 0)
+
+    T.DrillDown("tidy")
+    T.TabClick("Audit")
+    local clean = table.concat(T.DetailAudit(), " | ")
+    check("a clean character is told so",
+          clean:find("Every enchantable slot", 1, true) ~= nil, clean)
+
+    -- The reason line has to be BOUNDED. With only a TOPLEFT anchor a
+    -- FontString is as wide as its text, and the longest of these sentences
+    -- ran off the right of the panel and out over the game world - reported
+    -- from a live client.
+    do
+        local none = T.DetailAuditLine()
+        check("the reason line has a right edge", none and none:GetNumPoints() >= 2,
+              tostring(none and none:GetNumPoints()))
+        -- TOPRIGHT specifically. A bare RIGHT pins the vertical CENTRE to the
+        -- same y that the TOPLEFT beside it pins the TOP to, which asks for a
+        -- height of zero: the line goes invisible, and the explicit SetHeight
+        -- cannot rescue it because two conflicting anchors beat a set size. So
+        -- the assertion is on the exact point and not merely "has a right
+        -- edge" - "has a right edge" is what the broken version passed.
+        local points = {}
+        for i = 1, (none and none:GetNumPoints() or 0) do
+            points[(none:GetPoint(i))] = true
+        end
+        check("  anchored TOPLEFT and TOPRIGHT, so it wraps at a real height",
+              points.TOPLEFT and points.TOPRIGHT,
+              table.concat((function() local t = {}
+                  for k in pairs(points) do t[#t + 1] = k end
+                  table.sort(t); return t end)(), "+"))
+        check("  and not on a bare RIGHT, which would collapse it", not points.RIGHT)
+        -- The stub has to MODEL wrapping for the line above to mean anything:
+        -- a chaining no-op leaves GetWordWrap returning the frame itself,
+        -- which is truthy, and the assertion passes either way. Pinned here
+        -- rather than assumed.
+        local scratch = CreateFrame("Frame"):CreateFontString()
+        scratch:SetWordWrap(false)
+        eq("wrapping is real state in the stubs", scratch:GetWordWrap(), false)
+        scratch:SetWordWrap(true)
+        eq("  both ways", scratch:GetWordWrap(), true)
+        -- And nil is FALSE, not "leave it alone". These take a boolean, so a
+        -- missing argument is a falsy one - the stub wrote `v ~= false`, which
+        -- turned SetWordWrap(nil) into SetWordWrap(true) and made a caller
+        -- passing a nil flag by mistake look correct here and do the opposite in
+        -- game.
+        scratch:SetWordWrap(nil)
+        eq("  and nil turns it off, as the client does", scratch:GetWordWrap(), false)
+        -- Untouched is still ON, which is what a fresh FontString is.
+        eq("  while a fresh one wraps",
+           CreateFrame("Frame"):CreateFontString():GetWordWrap(), true)
+
+        -- Same rule for enabled state, which the active tab depends on.
+        local btn = CreateFrame("Button")
+        eq("a fresh button is enabled", btn:IsEnabled(), true)
+        btn:SetEnabled(nil)
+        eq("  and SetEnabled(nil) disables it", btn:IsEnabled(), false)
+        btn:SetEnabled(true)
+        eq("  both ways", btn:IsEnabled(), true)
+
+        -- And the SUBLEVEL survives the client's real argument order:
+        -- CreateTexture(name, drawLayer, templateName, subLevel). The template
+        -- slot is third and easy to drop, and dropping it shifts the sublevel
+        -- into it - so every explicit sublevel in the addon read back nil and
+        -- every draw-order assertion compared 0 against 0.
+        local layered = CreateFrame("Frame"):CreateTexture(nil, "BACKGROUND", nil, 4)
+        local gotLayer, gotSub = layered:GetDrawLayer()
+        eq("the stub keeps a texture's layer", gotLayer, "BACKGROUND")
+        eq("  and its sublevel, from the fourth argument", gotSub, 4)
+        -- SetDrawLayer RESETS the sublevel when it is not given, rather than
+        -- leaving the previous one behind.
+        layered:SetDrawLayer("ARTWORK")
+        local _, resetSub = layered:GetDrawLayer()
+        eq("  which SetDrawLayer resets when it is omitted", resetSub, 0)
+
+        -- A solid colour is recorded too: a quality border's whole job is which
+        -- colour it is, and a chaining no-op let the palette lose an entry with
+        -- every test still passing.
+        local swatch = CreateFrame("Frame"):CreateTexture()
+        swatch:SetColorTexture(0.25, 0.5, 0.75, 1)
+        local c = swatch._colorTexture or {}
+        check("a solid colour is real state in the stubs",
+              c[1] == 0.25 and c[2] == 0.5 and c[3] == 0.75, tostring(c[1]))
+
+        check("  and wrapping is on for the reason line",
+              none:GetWordWrap() == true)
+    end
+
+    -- The gear icons themselves.
+    --
+    -- Every slot drew the question-mark fallback, because the lookup was a
+    -- bare GetItemIcon - which Compat names as a known trap and test_compat
+    -- asserts is nil on the adapter, since C_Item's version takes an
+    -- ItemLocation and errors on an id. The right call is GetItemIconByID.
+    do
+        WoW.items[4242] = { name = "A Real Chest", quality = 3, ilvl = 40,
+                            icon = 133076, equipLoc = "INVTYPE_CHEST" }
+        AltStableDB.messy.gearid_chest = 4242
+        AltStableDB.messy.gear_chest = 40
+        AltStableDB.messy.gearq_chest = 3
+        T.DrillDown("messy")
+        local slot = T.DetailSlotFrame("chest")
+        eq("an equipped slot shows the ITEM's icon", slot and slot.icon:GetTexture(), 133076)
+        check("  and not the question-mark fallback",
+              tostring(slot and slot.icon:GetTexture()):find("QuestionMark") == nil)
+
+        -- An empty slot still draws, and the fallback is right THERE.
+        local empty = T.DetailSlotFrame("ranged")
+        check("an empty slot keeps the placeholder",
+              tostring(empty and empty.icon:GetTexture()):find("QuestionMark") ~= nil,
+              tostring(empty and empty.icon:GetTexture()))
+    end
+
+    -- The slots are laid out AROUND the figure. The first version anchored the
+    -- left column at a fixed x and started the bottom row at the same one, so
+    -- the weapons ran underneath the figure rather than beneath it.
+    do
+        -- A realistic panel. The stub's default frame height is 20, which
+        -- trips the "too short for both" clamp - correct behaviour, and not
+        -- the geometry this block is about.
+        T.DrillDown("messy")
+        local d = T.DetailFrame()
+        d:SetWidth(1170)
+        d:SetHeight(700)
+        T.Refresh()
+
+        local function xOf(key)
+            local b = T.DetailSlotFrame(key)
+            local _, _, _, bx = b:GetPoint(1)
+            return bx or 0
+        end
+        local figureCx = 60 + 260 / 2
+        check("the left column sits left of the figure", xOf("head") < figureCx - 100,
+              tostring(xOf("head")))
+        check("  and the right column right of it", xOf("hands") > figureCx + 100,
+              tostring(xOf("hands")))
+        check("  and neither is off the left edge", xOf("head") >= 0, tostring(xOf("head")))
+
+        -- The bottom row is centred under the figure, not started at the left.
+        local first, last = xOf("trinket1"), xOf("ranged")
+        local mid = (first + last) / 2
+        check("the bottom row is centred under the figure",
+              math.abs(mid - figureCx) < 30,
+              ("row centre %d vs figure %d"):format(mid, figureCx))
+
+        -- And BELOW it, not across its legs. The weapons used to be placed six
+        -- rows down from the top regardless of how tall the figure was.
+        local function yOf(key)
+            local b = T.DetailSlotFrame(key)
+            local _, _, _, _, by = b:GetPoint(1)
+            return by or 0
+        end
+        local fig = T.DetailFigureBox()
+        check("the weapons sit below the figure, not on it",
+              yOf("mainhand") <= fig.bottom,
+              ("weapons at %s, figure ends at %s"):format(
+                  tostring(yOf("mainhand")), tostring(fig.bottom)))
+        check("  while the side columns start beside it",
+              yOf("head") > fig.bottom, tostring(yOf("head")))
+
+        -- A cutout is a transparent image with nothing behind it, so on a flat
+        -- panel it floats and anything near it reads as colliding. The box is
+        -- what makes the figure look like it is INSIDE something.
+        check("the figure sits in a box", fig.height > 0 and fig.width > 0,
+              ("%sx%s"):format(tostring(fig.width), tostring(fig.height)))
+        -- The invariant that actually matters: a weapons row's worth of space
+        -- below the box, INSIDE the panel. "The box is smaller than the panel"
+        -- is satisfied by a figure that still pushes the weapons off the
+        -- bottom edge, which is what the previous version of this allowed.
+        local roomBelow = fig.bottom - (-700)
+        check("  leaving a weapons row's room below it, inside the panel",
+              roomBelow >= 56,
+              ("only %s left below the figure"):format(tostring(roomBelow)))
+
+        -- And the box is BEHIND the figure, not over it.
+        check("the box is behind the figure",
+              T.DetailStageLayer() == "BACKGROUND", tostring(T.DetailStageLayer()))
+
+        -- The box is an inset with a BORDER, which means the edge has to be
+        -- BEHIND the inset. Both are BACKGROUND textures, so "same layer" is
+        -- not enough: within a layer the client resolves sublevel first and
+        -- creation order second, and with neither set the edge - created
+        -- afterwards - covered the inset completely and the whole box read as
+        -- one flat light-grey rectangle. Not subtle: a lid. Exactly the bug
+        -- this same change fixed for the item-quality border.
+        local ord = T.DetailStageOrder()
+        local function inFrontOf(a, b)
+            if a.layer ~= b.layer then return nil end        -- decided elsewhere
+            if a.sublevel ~= b.sublevel then return a.sublevel > b.sublevel end
+            return (a.created or 0) > (b.created or 0)
+        end
+        eq("the inset and its edge are in the same layer", ord.inset.layer, ord.edge.layer)
+        check("  and the inset draws in FRONT of the edge, so it is a border",
+              inFrontOf(ord.inset, ord.edge) == true,
+              ("inset sub=%s seq=%s vs edge sub=%s seq=%s"):format(
+                  tostring(ord.inset.sublevel), tostring(ord.inset.created),
+                  tostring(ord.edge.sublevel), tostring(ord.edge.created)))
+        -- And both in front of the panel fill, or the box is not there at all.
+        check("  with both in front of the panel background",
+              inFrontOf(ord.edge, ord.bg) == true,
+              ("edge sub=%s vs bg sub=%s"):format(
+                  tostring(ord.edge.sublevel), tostring(ord.bg.sublevel)))
+
+        d:SetWidth(100); d:SetHeight(20)
+    end
+
+    -- The quality palette is SHARED with the grid, not a third copy of it. The
+    -- copy that was here was missing Heirloom (7) entirely, so an heirloom drew
+    -- a Common white border in this pane and cyan in the grid beside it, for the
+    -- same item. Asserted through the pane's own rendering, and against the
+    -- shared table, so a private copy reappearing fails rather than drifting.
+    do
+        WoW.items[7001] = { name = "An Heirloom", quality = 7, ilvl = 1, icon = 7 }
+        AltStableDB.heir = { guid = "heir", name = "Heir Loom", class = "MAGE",
+            realm = "R", level = 60, race = "Human", raceName = "Human", ilvl = 1,
+            money = 100, stat_int = 200, lastUpdate = time() - 60,
+            gearid_chest = 7001, gear_chest = 1, gearq_chest = 7 }
+        T.Refresh()
+        T.DrillDown("heir")
+        T.TabClick("Char")
+        local want = { AltStable.QualityRGB(7) }
+        -- `_colorTexture` is the stub's bookkeeping for SetColorTexture, not a
+        -- client method: there is no GetColorTexture, and GetVertexColor returns
+        -- the vertex tint, which is a different thing SetColorTexture never sets.
+        local got = T.DetailSlotFrame("chest").border._colorTexture or {}
+        check("an heirloom slot draws in the heirloom colour",
+              got[1] == want[1] and got[2] == want[2] and got[3] == want[3],
+              ("%s,%s,%s vs %s,%s,%s"):format(tostring(got[1]), tostring(got[2]),
+                  tostring(got[3]), tostring(want[1]), tostring(want[2]), tostring(want[3])))
+        -- And heirloom is not just "whatever Common is": a palette that fell
+        -- back to Common for the missing entry would satisfy the line above if
+        -- both were read through the same fallback.
+        local common = { AltStable.QualityRGB(1) }
+        check("  which is not the Common colour",
+              want[1] ~= common[1] or want[2] ~= common[2] or want[3] ~= common[3])
+        AltStableDB.heir = nil
+        T.Refresh()
+        T.DrillDown("geared")
+    end
+
+    do
+        T.TabClick("Char")
+        local slot = T.DetailSlotFrame("chest")
+        check("a slot has an icon", slot and slot.icon ~= nil)
+        check("  and the quality border sits BEHIND it",
+              slot and slot.border:GetDrawLayer() == "BACKGROUND",
+              tostring(slot and slot.border:GetDrawLayer()))
+        check("  with the icon above", slot and slot.icon:GetDrawLayer() == "ARTWORK",
+              tostring(slot and slot.icon:GetDrawLayer()))
+    end
+
+    -- And the one the clean bill must NOT be given to.
+    -- The class-plate icon's PATH.
+    --
+    -- Lua 5.1 silently collapses an unknown escape, so "Interface\Icons\X"
+    -- becomes "InterfaceIconsX" and the texture never resolves - no error, no
+    -- warning, just a blank icon. It happened here, in the same function whose
+    -- comment warns about a blank class icon. Asserted on the resulting STRING
+    -- rather than on the source, because that is where the difference shows.
+    T.DrillDown("naked")
+    do
+        local tex = T.DetailClassIcon()
+        check("the class icon path survived its escapes",
+              (tex or ""):find("Icons", 1, true) ~= nil
+              and (tex or ""):find(string.char(92), 1, true) ~= nil,
+              tostring(tex))
+    end
+    T.TabClick("Audit")
+    local naked = table.concat(T.DetailAudit(), " | ")
+    check("a character wearing nothing is not told it is fully enchanted",
+          naked:find("Every enchantable slot", 1, true) == nil, naked)
+    check("  it is told there is nothing to check",
+          naked:find("Nothing equipped", 1, true) ~= nil, naked)
+
+    ----------------------------------------------------------
+    -- The tabs stay inside the panel
+    ----------------------------------------------------------
+    -- The Roster inherits whatever width the previous section left behind, so a
+    -- narrow frame is reachable. Nothing sets SetClipsChildren, so a control
+    -- laid out past the right edge draws over the game world - and the tabs
+    -- are the first thing out there a player can click.
+    do
+        -- Width set on the frame the code actually MEASURES. The stub does not
+        -- compute layout, so a width on the parent does not reach the detail -
+        -- and asserting against the parent's would be asserting against a
+        -- number the code never reads.
+        T.DrillDown("messy")
+        local d = T.DetailFrame()
+        local WIDE, NARROW = 1400, 589
+        for _, w in ipairs({ WIDE, NARROW, 320 }) do
+            -- SetWidth, not an overridden getter. Assigning the getter and
+            -- then clearing it removes the stub's numeric default and hands
+            -- back the chaining one, which returns the FRAME - and the next
+            -- render does arithmetic on a table.
+            d:SetWidth(w)
+            T.Refresh()
+            for _, b in ipairs(T.DetailTabs()) do
+                local _, _, _, bx = b:GetPoint(1)
+                check(("a tab stays inside a %dpx panel"):format(w),
+                      (bx or 0) >= 0 and (bx or 0) + b:GetWidth() <= w,
+                      ("tab at %s wide %s vs panel %d"):format(
+                          tostring(bx), tostring(b:GetWidth()), w))
+            end
+
+            -- The COLUMN's far edge, not just where it starts. A column that
+            -- begins inside the panel and then runs 250px past the right edge
+            -- is the same bug, and the tabs do not catch it: they sit at the
+            -- column's left, 74px apart.
+            local col = T.DetailColumn()
+            check(("the whole column fits a %dpx panel"):format(w),
+                  (col.right or 0) <= w,
+                  ("column %s..%s in %d"):format(tostring(col.x), tostring(col.right), w))
+        end
+
+        -- On a frame with room for both, nothing is given up: full width, at
+        -- the right edge. Without this, "clamped" is satisfied by a column
+        -- that is always narrow, and the clamp above would pass if the whole
+        -- calculation were replaced by a constant.
+        d:SetWidth(1400)
+        T.Refresh()
+        local wide = T.DetailColumn()
+        eq("on a wide frame the column keeps its full width",
+           (wide.right or 0) - (wide.x or 0), 250)
+        check("  and sits at the right edge",
+              1400 - (wide.right or 0) <= 10, tostring(wide.right))
+        -- While a narrow one gives up width rather than position, which is the
+        -- half of the trade the old double-clamp got backwards.
+        d:SetWidth(589)
+        T.Refresh()
+        local tight = T.DetailColumn()
+        check("a narrow frame narrows the column instead of moving it out",
+              (tight.right or 0) - (tight.x or 0) < 250,
+              tostring((tight.right or 0) - (tight.x or 0)))
+
+        -- And the same question about HEIGHT, which had the same bug for the
+        -- same reason: the figure used to be floored at six rows of slots, so on
+        -- a short panel the floor won, the figure ran past the bottom edge and
+        -- the weapons row went with it - seven item buttons drawn over the game
+        -- world, taking the mouse there. Nothing sets SetClipsChildren.
+        -- EVERY equipment button, not only the weapons row. The first version of
+        -- this checked weapons and trinkets, which hang off the figure's bottom
+        -- and so were the only ones the figure-height fix touched. The SIDE
+        -- columns are six rows at a fixed stride from a fixed top, so their
+        -- extent did not depend on the panel height at all - and raising the
+        -- stride from 40 to 48 put the sixth button 332px down whatever the panel
+        -- did.
+        --
+        -- 310 is in the list because it is the real floor: SheetUI's sidebar
+        -- floors the window at 364, BuildPanel takes 30 above and 24 below, and
+        -- ResizeFrameToContent deliberately does not resize for plugins.
+        d:SetWidth(1400)
+        local ALL_SLOTS = { "head", "neck", "shoulder", "back", "chest", "wrist",
+                            "hands", "waist", "legs", "feet", "ring1", "ring2",
+                            "trinket1", "trinket2", "mainhand", "offhand", "ranged" }
+        for _, h in ipairs({ 800, 420, 310, 260 }) do
+            d:SetHeight(h)
+            T.Refresh()
+            for _, key in ipairs(ALL_SLOTS) do
+                local b = T.DetailSlotFrame(key)
+                local _, _, _, _, by = b:GetPoint(1)
+                -- Anchored TOPLEFT from the panel's TOPLEFT, so the offset is
+                -- negative downwards and the button's own height hangs below it.
+                local bottom = (by or 0) - b:GetHeight()
+                check(("the %s stays inside a %dpx-tall panel"):format(key, h),
+                      bottom >= -h,
+                      ("%s bottom=%s panel=%d"):format(key, tostring(bottom), h))
+                -- And the ITEM LEVEL label, which is anchored TOP to the
+                -- button's BOTTOM and so reaches further down than the button
+                -- does. It is the part that landed on the footer.
+                local lh = b.ilvl:GetHeight() or 0
+                check(("  and its item level label does too, at %dpx"):format(h),
+                      bottom - lh >= -h,
+                      ("%s label bottom=%s panel=%d"):format(
+                          key, tostring(bottom - lh), h))
+            end
+            -- The figure still has to BE there, or "inside the panel" is
+            -- satisfied by a figure of zero height.
+            check(("  and the figure still has a height at %dpx"):format(h),
+                  (T.DetailFigureBox().height or 0) >= 24,
+                  tostring(T.DetailFigureBox().height))
+            -- And the icons have to stay legible, or "it fits" is satisfied by
+            -- shrinking them to nothing.
+            check(("  with slot icons still legible at %dpx"):format(h),
+                  (T.DetailSlotFrame("head"):GetWidth() or 0) >= T.SLOT_MIN,
+                  tostring(T.DetailSlotFrame("head"):GetWidth()))
+            -- Nor may they overlap: a stride smaller than the icon stacks them.
+            local a = select(5, T.DetailSlotFrame("head"):GetPoint(1))
+            local bY = select(5, T.DetailSlotFrame("neck"):GetPoint(1))
+            local sz = T.DetailSlotFrame("head"):GetHeight()
+            check(("  and not overlapping each other at %dpx"):format(h),
+                  (a - bY) >= sz,
+                  ("stride %s vs size %s"):format(tostring(a - bY), tostring(sz)))
+
+            -- The WEAPONS row scales with them, horizontally. It is laid out
+            -- from its own centred start at the same stride, so a row still
+            -- stepping by the full 48 while the buttons are 21 wide is spread
+            -- out of line with the figure it is supposed to sit under - and the
+            -- centring calculation and the placement have to use the SAME
+            -- stride or the row drifts right.
+            local mhX = select(4, T.DetailSlotFrame("mainhand"):GetPoint(1))
+            local ohX = select(4, T.DetailSlotFrame("offhand"):GetPoint(1))
+            -- Compared with a tolerance, not with ==: the stride is a division
+            -- and two float paths to the same number are not bit-identical.
+            check(("the weapons row steps by the same stride at %dpx"):format(h),
+                  math.abs((ohX - mhX) - (a - bY)) < 0.01,
+                  ("bottom %s vs side %s"):format(tostring(ohX - mhX), tostring(a - bY)))
+            -- And stays centred under the figure: five bottom slots, so the
+            -- middle one is the centre.
+            local midX = select(4, T.DetailSlotFrame("mainhand"):GetPoint(1))
+            local figCx = 60 + 260 / 2
+            check(("  centred under the figure at %dpx"):format(h),
+                  math.abs((midX + sz / 2) - figCx) <= 1,
+                  ("mainhand centre %s vs figure centre %s"):format(
+                      tostring(midX + sz / 2), tostring(figCx)))
+        end
+        d:SetHeight(800)
+
+        -- The scale itself, at the boundaries.
+        do
+            local size, step = T.SlotScale(6, 10000)
+            eq("a panel with room keeps the full slot size", size, T.SLOT_SIZE)
+            eq("  and the full stride", step, T.SLOT_STEP)
+            -- A panel so short the legibility floor and the fitting rule
+            -- disagree. The floor wins - an icon below SLOT_MIN is not a slot,
+            -- it is a smudge - and the STRIDE has to be lifted with it, or the
+            -- rows stack on top of each other, which is the one thing worse
+            -- than overflowing.
+            local tiny, tinyStep = T.SlotScale(6, 12)
+            check("an impossible panel still gives a legible icon", tiny >= T.SLOT_MIN,
+                  tostring(tiny))
+            check("  and lifts the stride with it rather than stacking rows",
+                  tinyStep >= tiny, ("%s vs %s"):format(tostring(tinyStep), tostring(tiny)))
+            local mid, midStep = T.SlotScale(6, 180)
+            check("a short panel shrinks it", mid < T.SLOT_SIZE and mid >= T.SLOT_MIN,
+                  tostring(mid))
+            check("  and the stride never falls below the icon", midStep >= mid,
+                  ("%s vs %s"):format(tostring(midStep), tostring(mid)))
+        end
+
+        d:SetWidth(100)
+        T.Back()
+    end
 end
 
 print(("test_roster: %d passed, %d failed"):format(passed, failed))

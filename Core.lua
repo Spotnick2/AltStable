@@ -574,11 +574,27 @@ end
 local RETIRED_FIELDS = {
     prof_Jewelcrafting = true, profmax_Jewelcrafting = true,   -- not a Vanilla profession
     stat_haste = true, stat_resilience = true,                 -- no Vanilla equivalent
-    -- Rating-derived, so always 0 here. Vanilla does have crit and hit chance
-    -- (GetCritChance, GetHitModifier): when the Roster port (#11) adds a
-    -- build-verified producer, take these two off the list. Until then a stored
-    -- 0 would sit beside characters that have no value at all.
-    stat_crit = true, stat_hitpct = true,
+    -- stat_crit is OFF this list now, which is what the note here asked for:
+    -- "when the Roster port adds a build-verified producer, take these two off
+    -- the list". GetCritChance has a verified producer - observed live on
+    -- 1.60.1.70009 reporting 1.66% for a level 18 gnome warlock, which is a
+    -- real value and not a rating-derived zero.
+    --
+    -- stat_hitpct STAYS retired, and NOT because the function is missing.
+    -- GetHitModifier is in the 1.60.1.70009 dump with a signature -
+    -- `GetHitModifier() -> result:number [PlayerScript]` - so an earlier version
+    -- of this note claiming it "appears in no dump" was simply wrong. Presence
+    -- is not useful behaviour, though.
+    --
+    -- What is actually known: the Combat row for it did not render on the live
+    -- client, which is equally consistent with a genuine zero (it reports BONUS
+    -- hit from gear, which is zero for most characters) and with the function
+    -- returning nothing useful. Those are different things, the RUNTIME value is
+    -- UNMEASURED, and a producer either way would store a zero that cannot be
+    -- told from an absence - exactly what this note warns about.
+    --
+    -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+    stat_hitpct = true,
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }
 -- The TBC reputation slugs. Standings are rep_<factionID> now (Reputations.lua).
@@ -2374,11 +2390,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local itemID, success = ...
         if not success then return end
 
-        -- Gem lookups the Roster audit could not resolve. Checked BEFORE the
-        -- gear-slot queue below, which is local-equipment-only and is nil
-        -- entirely when nothing local is pending -- the early return on it used
-        -- to drop these events on the floor, so an audit finding suppressed by
-        -- a cache miss stayed invisible until something else repainted the tab.
+        -- Item lookups the Roster audit could not resolve - an id the client has
+        -- never seen, which is what a peer syncs from a character whose gear we
+        -- have never met. Checked BEFORE the gear-slot queue below, which is
+        -- local-equipment-only and is nil entirely when nothing local is pending
+        -- -- the early return on it used to drop these events on the floor, so a
+        -- slot the audit could not read stayed unread until something else
+        -- repainted the tab.
         -- RefreshSheet is enough: the Roster plugin hooks it and already
         -- coalesces bursts into one deferred repaint.
         local pendingAudit = AltStable.PendingAuditItems

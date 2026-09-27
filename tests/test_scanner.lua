@@ -1052,23 +1052,95 @@ eq("a real maximum still scans: 100 of 400 rested", c and c.restPercent, 25)
 eq("  and 50 of 400 through the level", c and c.xpPercent, 12)
 WoW.reset()
 
--- auditMinLevel defaulted to TBC's 70: unreachable here. It follows the cap,
--- and a stored value above the cap is pulled down.
+-- The gem audit's quality setting is RETIRED, and a profile that already has it
+-- must come back without it. It was written to real profiles on disk, and a key
+-- nothing reads is one the next reader has to work out the meaning of - so it is
+-- cleared rather than merely no longer defaulted.
+--
+-- auditMinLevel is the one that must NOT go with it. Both were cleared at first,
+-- on the argument that enchants need no threshold - but that argument is about
+-- QUALITY, and a level gate is a different setting. The pair is asserted
+-- together because that is the mistake: they look alike and are not.
 if AltStable.EnsureConfigDefaults then
     AltStableConfig = {}
     AltStable.EnsureConfigDefaults()
-    eq("auditMinLevel defaults to the client cap", AltStableConfig.auditMinLevel, 60)
-    AltStableConfig = { auditMinLevel = 70 }
+    eq("a fresh profile has no gem-quality setting", AltStableConfig.minGemQuality, nil)
+    local cap = AltStable.API.LevelCap()
+    eq("  but it does have an audit level, defaulted to the cap",
+       AltStableConfig.auditMinLevel, cap)
+
+    -- The case that matters: an existing profile carrying both.
+    AltStableConfig = { minGemQuality = 3, auditMinLevel = 42 }
     AltStable.EnsureConfigDefaults()
-    eq("  a stored 70 comes down to it", AltStableConfig.auditMinLevel, 60)
-    AltStableConfig = { auditMinLevel = 20 }
-    AltStable.EnsureConfigDefaults()
-    eq("  a lower choice is kept", AltStableConfig.auditMinLevel, 20)
+    eq("an existing profile has the gem setting cleared", AltStableConfig.minGemQuality, nil)
+    eq("  and its audit level left alone, not overwritten with the default",
+       AltStableConfig.auditMinLevel, 42)
+
+    -- And nothing else went with them.
+    check("the settings around them survive",
+          AltStableConfig.syncMode ~= nil and AltStableConfig.hiddenCharacters ~= nil)
 else
     check("EnsureConfigDefaults is exposed", false)
 end
 
 ------------------------------------------------------------
+-- Melee crit, for the detail pane's Combat section (#91)
+------------------------------------------------------------
+-- Both exist in Vanilla and are read straight off the player. The two stats
+-- beside them in AltTracker's table are deliberately NOT collected: there is
+-- no haste rating pre-TBC and resilience is a TBC PvP stat, so scanning them
+-- as zero would have the pane report a real 0% for something the game does
+-- not have.
+
+do
+    WoW.critChance, WoW.hitModifier = 17.25, 4
+    WoW.items[5001] = { name = "A Shield", quality = 2, ilvl = 40,
+                        itemType = "Armor", subType = "Shields",
+                        equipLoc = "INVTYPE_SHIELD" }
+    WoW.equipped[17] = "|Hitem:5001|h[A Shield]|h"
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+
+    local me = AltStableDB[UnitGUID("player")]
+    check("the scan stored a character", type(me) == "table")
+    if me then
+        eq("melee crit is scanned", me.stat_crit, 17.25)
+        eq("haste is not scanned", me.stat_haste, nil)
+        eq("  nor resilience", me.stat_resilience, nil)
+
+        -- Hit chance is NOT scanned, even though the stub offers a
+        -- GetHitModifier - and the function is REAL on this client, listed in
+        -- the 1.60.1.70009 dump with a signature. What is unmeasured is its
+        -- runtime value. Core.lua lists stat_hitpct in RETIRED_FIELDS and purges
+        -- it at login, so a producer here would write a field the addon deletes
+        -- on the next load, which is what an earlier version of this commit did.
+        eq("hit chance is not scanned", me.stat_hitpct, nil)
+
+        check("the stats around them are still there",
+              me.stat_ap ~= nil and me.stat_defense ~= nil and me.stat_armor ~= nil)
+
+        -- The equip location is NOT stored. It is resolved on demand from
+        -- gearid_, which is synced, so storing it would be seventeen keys per
+        -- character carrying a fact already on the wire - and one that the
+        -- sync boundary then had to strip, leaving every remote character
+        -- unable to answer it at all.
+        eq("the equip location is not stored", me.gearloc_offhand, nil)
+        check("  because the id it is derived from is",
+              (tonumber(me.gearid_offhand) or 0) == 5001, tostring(me.gearid_offhand))
+    end
+
+    -- A client without it must not crash the scan. GetCritChance is not
+    -- guaranteed on every build, and the scan runs on login before anything
+    -- else works.
+    local realCrit = GetCritChance
+    GetCritChance = nil
+    AltStableDB = {}
+    check("a client without GetCritChance still scans", pcall(AltStable.ScanCharacter))
+    local bare = AltStableDB[UnitGUID("player")]
+    check("  and simply has no crit", bare == nil or bare.stat_crit == nil)
+    GetCritChance = realCrit
+    WoW.critChance, WoW.hitModifier = 12.5, 3
+end
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
