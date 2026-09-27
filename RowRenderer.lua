@@ -228,6 +228,18 @@ local function FormatSecondarySkill(value, max)
     return FormatMax(value, max) .. "/" .. (max or "")
 end
 
+-- Money and "last seen", exposed on AltStable rather than kept local.
+--
+-- The Roster is a SEPARATE addon and cannot reach a local in here, so the
+-- detail pane (#91) would have needed its own copy - and there were already
+-- two copies of the last-seen rule in this file alone, one colour-coded for
+-- the grid and one plain for a tooltip, which had already drifted: the
+-- tooltip's stopped at "d ago" where the column goes on to weeks.
+--
+-- One rule, one place, and the colour is a parameter.
+function AltStable.FormatMoney(copper)     return FormatMoney(copper) end
+function AltStable.FormatMoneyShort(copper) return FormatMoneySmall(copper) end
+
 local function FormatLastOnline(ts, isCurrentPlayer)
     if not ts or ts==0 then return "|cff888888--|r" end
     local diff = time()-ts
@@ -240,6 +252,7 @@ local function FormatLastOnline(ts, isCurrentPlayer)
     else                      local d=math.floor(diff/86400);      return "|cff666666"..d..(d==1 and " day"  or " days") .."|r"
     end
 end
+AltStable.FormatLastSeen = FormatLastOnline
 
 ------------------------------------------------------------
 -- Gear slot coloring — standard WoW item quality colors
@@ -837,14 +850,13 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         end
         GameTooltip:AddLine("Right-click for favourite, hide, forget", 0.5,0.5,0.5)
         if c.lastUpdate then
-            local diff = time()-c.lastUpdate
-            local isMe = c.guid == UnitGUID("player")
-            local onlineStr
-            if isMe and diff<300 then onlineStr="|cff00ff00Online|r"
-            elseif diff<3600 then onlineStr=math.floor(diff/60).."m ago"
-            elseif diff<86400 then onlineStr=math.floor(diff/3600).."h ago"
-            else onlineStr=math.floor(diff/86400).."d ago" end
-            GameTooltip:AddLine("Last seen: "..onlineStr, 0.7,0.7,0.7)
+            -- The shared rule, not a second copy of it. This one used to stop
+            -- at "d ago" where the column already counted weeks, so the same
+            -- character read differently in the grid and in its own tooltip.
+            GameTooltip:AddLine(
+                "Last seen: " .. AltStable.FormatLastSeen(c.lastUpdate,
+                    c.guid == UnitGUID("player")),
+                0.7, 0.7, 0.7)
         end
         GameTooltip:Show()
     end)

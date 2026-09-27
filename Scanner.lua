@@ -623,6 +623,23 @@ function AltStable.ScanCharacter()
 
     char.stat_defense = plainSum(UnitDefenseSkill("player"))
 
+    -- Crit and hit, for the detail pane's Combat section (#91).
+    --
+    -- Both exist in Vanilla and are read from the player directly. The two
+    -- stats beside them in AltTracker's table do NOT come across: there is no
+    -- haste rating pre-TBC, and resilience is a TBC PvP stat - so they are
+    -- absent here rather than scanned as zero, which would have the pane
+    -- reporting a real 0% for something the game does not have.
+    --
+    -- Melee crit is the honest one to show: GetSpellCritChance takes a school
+    -- and the pane has one row, so picking a school would be arbitrary.
+    if GetCritChance then
+        char.stat_crit = plain(GetCritChance())
+    end
+    if GetHitModifier then
+        char.stat_hitpct = plain(GetHitModifier())
+    end
+
     --------------------------------------------------------
     -- Scan professions
     --------------------------------------------------------

@@ -1070,5 +1070,45 @@ end
 
 ------------------------------------------------------------
 
+------------------------------------------------------------
+-- Crit and hit, for the detail pane's Combat section (#91)
+------------------------------------------------------------
+-- Both exist in Vanilla and are read straight off the player. The two stats
+-- beside them in AltTracker's table are deliberately NOT collected: there is
+-- no haste rating pre-TBC and resilience is a TBC PvP stat, so scanning them
+-- as zero would have the pane report a real 0% for something the game does
+-- not have.
+
+do
+    WoW.critChance, WoW.hitModifier = 17.25, 4
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+
+    local me = AltStableDB[UnitGUID("player")]
+    check("the scan stored a character", type(me) == "table")
+    if me then
+        eq("melee crit is scanned", me.stat_crit, 17.25)
+        eq("  and hit chance", me.stat_hitpct, 4)
+        eq("haste is not scanned", me.stat_haste, nil)
+        eq("  nor resilience", me.stat_resilience, nil)
+
+        -- The neighbours, so a mutation that drops the whole block is caught
+        -- by more than the two new rows.
+        check("the stats around them are still there",
+              me.stat_ap ~= nil and me.stat_defense ~= nil and me.stat_armor ~= nil)
+    end
+
+    -- A client without them must not crash the scan. Neither is guaranteed on
+    -- every build, and the scan runs on login before anything else works.
+    local realCrit, realHit = GetCritChance, GetHitModifier
+    GetCritChance, GetHitModifier = nil, nil
+    AltStableDB = {}
+    check("a client with neither still scans", pcall(AltStable.ScanCharacter))
+    local bare = AltStableDB[UnitGUID("player")]
+    check("  and simply has no crit", bare == nil or bare.stat_crit == nil)
+    GetCritChance, GetHitModifier = realCrit, realHit
+    WoW.critChance, WoW.hitModifier = 12.5, 3
+end
+
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -559,6 +559,116 @@ local function CharactersFor(view)
                           AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false)
 end
 
+
+------------------------------------------------------------
+-- The character detail view (#91)
+--
+-- A DRILL-DOWN, not a third pane. AltTracker gave the character list, the
+-- paper doll and the stats card a column each, permanently. This panel spends
+-- its width on portraits instead, which is the point of the view - so
+-- selecting a character replaces the grid or the camp rather than squeezing in
+-- beside it, and a Back button returns you to whichever you came from.
+--
+-- The figure is the CUTOUT. AltTracker rendered the character live in its
+-- middle pane; we cannot - offline characters cannot be textured on this
+-- client, which is the measured constraint the whole capture pipeline exists
+-- to work around. A cutout is already a full-body figure at capture
+-- resolution, so it is the paper doll, and the class plate stands in when
+-- there is not one.
+------------------------------------------------------------
+
+local STAT_ROW_H, STAT_SECTION_GAP = 15, 10
+
+-- Ported from AltTracker's CHAR_STAT_GROUPS, minus two.
+--
+-- Haste and Resilience are gone rather than scanned as zero: there is no haste
+-- rating before TBC and resilience is a TBC PvP stat, so a row reading "0%"
+-- would be reporting a real value for something the game does not have. The
+-- scanner does not collect them either, for the same reason.
+local CHAR_STAT_GROUPS = {
+    { header = "Status", defs = {
+        { label = "Gold",        key = "money",       kind = "money",    allowZero = true },
+        { label = "Rested XP",   key = "restPercent", kind = "percent0", allowZero = true },
+        { label = "XP Progress", key = "xpPercent",   kind = "percent0", allowZero = true },
+        { label = "Last Online", key = "lastUpdate",  kind = "lastseen", allowZero = true },
+    } },
+    { header = "Resources", defs = {
+        { label = "Health", key = "stat_hp",    kind = "int" },
+        { label = "Mana",   key = "stat_mana",  kind = "int" },
+        { label = "Armor",  key = "stat_armor", kind = "int" },
+    } },
+    { header = "Attributes", defs = {
+        { label = "Strength",  key = "stat_str", kind = "int" },
+        { label = "Agility",   key = "stat_agi", kind = "int" },
+        { label = "Stamina",   key = "stat_sta", kind = "int" },
+        { label = "Intellect", key = "stat_int", kind = "int" },
+        { label = "Spirit",    key = "stat_spi", kind = "int" },
+    } },
+    { header = "Combat", defs = {
+        { label = "Attack Power", key = "stat_ap",      kind = "int" },
+        { label = "Spell Power",  key = "stat_sp",      kind = "int" },
+        { label = "Melee Crit",   key = "stat_crit",    kind = "percent2" },
+        { label = "Hit Chance",   key = "stat_hitpct",  kind = "percent2" },
+        { label = "Defense",      key = "stat_defense", kind = "int" },
+    } },
+}
+
+-- The equipped slots, in the order a paper doll reads them: down the left,
+-- down the right, weapons along the bottom. slotID is the client's, kept
+-- because it is what an item tooltip needs.
+local GEAR_SLOTS = {
+    { key = "head",     label = "Head",      id = 1,  side = "left" },
+    { key = "neck",     label = "Neck",      id = 2,  side = "left" },
+    { key = "shoulder", label = "Shoulder",  id = 3,  side = "left" },
+    { key = "back",     label = "Back",      id = 15, side = "left" },
+    { key = "chest",    label = "Chest",     id = 5,  side = "left" },
+    { key = "wrist",    label = "Wrist",     id = 9,  side = "left" },
+    { key = "hands",    label = "Hands",     id = 10, side = "right" },
+    { key = "waist",    label = "Waist",     id = 6,  side = "right" },
+    { key = "legs",     label = "Legs",      id = 7,  side = "right" },
+    { key = "feet",     label = "Feet",      id = 8,  side = "right" },
+    { key = "ring1",    label = "Ring 1",    id = 11, side = "right" },
+    { key = "ring2",    label = "Ring 2",    id = 12, side = "right" },
+    { key = "trinket1", label = "Trinket 1", id = 13, side = "bottom" },
+    { key = "trinket2", label = "Trinket 2", id = 14, side = "bottom" },
+    { key = "mainhand", label = "Main Hand", id = 16, side = "bottom" },
+    { key = "offhand",  label = "Off Hand",  id = 17, side = "bottom" },
+    { key = "ranged",   label = "Ranged",    id = 18, side = "bottom" },
+}
+
+-- Ported verbatim. `allowZero` exists because 0 gold and 0% rested are facts,
+-- while 0 spell power on a warrior is an absence - the difference decides
+-- whether a row is drawn at all.
+local function FormatStatValue(char, def)
+    if not char then return "-" end
+    local value = char[def.key]
+    if value == nil then return "-" end
+    if def.kind == "money" then
+        return AltStable.FormatMoney and AltStable.FormatMoney(value) or tostring(value)
+    elseif def.kind == "int" then
+        return tostring(value)
+    elseif def.kind == "percent0" then
+        return string.format("%d%%", math.floor(tonumber(value) or 0))
+    elseif def.kind == "percent2" then
+        return string.format("%.2f%%", tonumber(value) or 0)
+    elseif def.kind == "lastseen" then
+        return AltStable.FormatLastSeen and AltStable.FormatLastSeen(value, false)
+            or tostring(value)
+    end
+    return tostring(value)
+end
+
+-- Whether a row is worth drawing. A character with no spell power has no
+-- stat_sp at all, and a row of "-" for every stat the class does not use is
+-- noise; but zero gold is a real answer and has to survive.
+local function HasStatValue(char, def)
+    if not char then return false end
+    local value = char[def.key]
+    if value == nil then return false end
+    if def.allowZero then return true end
+    return (tonumber(value) or 0) ~= 0
+end
+
 ------------------------------------------------------------
 -- The panel
 ------------------------------------------------------------
@@ -638,7 +748,7 @@ local function BuildCard(parent, index)
             end
             return
         end
-        Roster.Select(self.charGuid)
+        Roster.DrillDown(self.charGuid)
     end)
     card:Hide()
     return card
@@ -958,6 +1068,271 @@ local function ApplyHintLayout(panelW, sceneView)
     hintText:SetWidth(w)
 end
 
+------------------------------------------------------------
+-- Building it
+------------------------------------------------------------
+
+local detail, detailRows, detailSlots
+
+local DETAIL_FIGURE_W = 260
+local SLOT_SIZE, SLOT_STEP = 34, 40
+
+local function BuildSlot(parent)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(SLOT_SIZE, SLOT_SIZE)
+
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetAllPoints()
+    -- Icons carry a border baked into the art; the standard trim is what every
+    -- other icon in this addon uses.
+    b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- The quality border. A separate texture ON TOP rather than a tint of the
+    -- icon, so a purple item does not come out purple-tinted.
+    b.border = b:CreateTexture(nil, "OVERLAY")
+    b.border:SetPoint("TOPLEFT", -1, 1)
+    b.border:SetPoint("BOTTOMRIGHT", 1, -1)
+    b.border:SetColorTexture(0, 0, 0, 0)
+
+    b.ilvl = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    b.ilvl:SetPoint("TOP", b, "BOTTOM", 0, 1)
+    b.ilvl:SetJustifyH("CENTER")
+
+    b:SetScript("OnEnter", function(self)
+        if not self.link or self.link == "" then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        -- SetHyperlink rather than SetInventoryItem: the item belongs to a
+        -- character who is not logged in, so there is no inventory slot to
+        -- point at - only the link we stored when they were.
+        local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, self.link)
+        if not ok then
+            GameTooltip:AddLine(self.itemName or self.slotLabel or "", 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return b
+end
+
+local function BuildDetail()
+    if detail then return detail end
+
+    detail = CreateFrame("Frame", nil, panel)
+    detail:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+    detail:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    detail:Hide()
+
+    detail.bg = detail:CreateTexture(nil, "BACKGROUND")
+    detail.bg:SetAllPoints()
+    detail.bg:SetColorTexture(0.05, 0.05, 0.06, 1)
+
+    local back = CreateFrame("Button", nil, detail, "UIPanelButtonTemplate")
+    back:SetSize(70, BAR_H)
+    back:SetPoint("TOPLEFT", 8, -BAR_TOP)
+    back:SetText("< Back")
+    back:SetScript("OnClick", function() Roster.Back() end)
+    detail.back = back
+
+    detail.name = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    detail.name:SetPoint("TOPLEFT", back, "TOPRIGHT", 14, -2)
+    detail.name:SetJustifyH("LEFT")
+
+    detail.sub = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    detail.sub:SetPoint("TOPLEFT", detail.name, "BOTTOMLEFT", 0, -2)
+    detail.sub:SetJustifyH("LEFT")
+    detail.sub:SetTextColor(0.6, 0.6, 0.6)
+
+    detail.ilvl = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    detail.ilvl:SetPoint("TOPRIGHT", -12, -BAR_TOP)
+    detail.ilvl:SetJustifyH("RIGHT")
+
+    -- The figure, and its stand-in.
+    detail.figure = detail:CreateTexture(nil, "ARTWORK")
+    detail.plate = detail:CreateTexture(nil, "ARTWORK")
+    detail.classIcon = detail:CreateTexture(nil, "OVERLAY")
+    detail.classIcon:SetSize(64, 64)
+    detail.classIcon:SetPoint("CENTER", detail.plate, "CENTER", 0, 0)
+
+    detailSlots = {}
+    for i, slot in ipairs(GEAR_SLOTS) do
+        detailSlots[i] = BuildSlot(detail)
+        detailSlots[i].slotLabel = slot.label
+    end
+
+    -- The stats column.
+    detailRows = {}
+    for _, group in ipairs(CHAR_STAT_GROUPS) do
+        local g = { header = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"),
+                    rows = {} }
+        g.header:SetText(group.header)
+        g.header:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        g.header:SetJustifyH("LEFT")
+        for _, def in ipairs(group.defs) do
+            local row = { def = def }
+            row.label = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.label:SetText(def.label)
+            row.label:SetJustifyH("LEFT")
+            row.label:SetTextColor(0.62, 0.62, 0.62)
+            row.value = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.value:SetJustifyH("RIGHT")
+            row.value:SetTextColor(unpack(AltStable.C.TEXT_VALUE))
+            g.rows[#g.rows + 1] = row
+        end
+        detailRows[#detailRows + 1] = g
+    end
+
+    return detail
+end
+
+------------------------------------------------------------
+-- Drawing it
+------------------------------------------------------------
+
+local QUALITY_RGB = {
+    [0] = { 0.62, 0.62, 0.62 }, [1] = { 1, 1, 1 },        [2] = { 0.12, 1, 0 },
+    [3] = { 0, 0.44, 0.87 },    [4] = { 0.64, 0.21, 0.93 }, [5] = { 1, 0.50, 0 },
+    [6] = { 0.90, 0.80, 0.50 },
+}
+
+local function RenderDetailSlots(char, leftX, topY, rightX)
+    local li, ri, bi = 0, 0, 0
+    for i, slot in ipairs(GEAR_SLOTS) do
+        local b = detailSlots[i]
+        local ilvl = tonumber(char["gear_" .. slot.key]) or 0
+        local id   = tonumber(char["gearid_" .. slot.key]) or 0
+
+        b.link = char["gearlink_" .. slot.key]
+        b.itemName = char["gearname_" .. slot.key]
+
+        if slot.side == "left" then
+            b:SetPoint("TOPLEFT", detail, "TOPLEFT", leftX, topY - li * SLOT_STEP)
+            li = li + 1
+        elseif slot.side == "right" then
+            b:SetPoint("TOPLEFT", detail, "TOPLEFT", rightX, topY - ri * SLOT_STEP)
+            ri = ri + 1
+        else
+            b:SetPoint("TOPLEFT", detail, "TOPLEFT",
+                       leftX + bi * SLOT_STEP, topY - 6 * SLOT_STEP - 10)
+            bi = bi + 1
+        end
+
+        -- An EMPTY slot still draws, greyed. A paper doll with holes in it is
+        -- information: it is how you see the character is missing a cloak.
+        if id > 0 then
+            local icon = GetItemIcon and GetItemIcon(id)
+            b.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            b.icon:SetDesaturated(false)
+            b.icon:SetAlpha(1)
+            local q = QUALITY_RGB[tonumber(char["gearq_" .. slot.key]) or 1] or QUALITY_RGB[1]
+            b.border:SetColorTexture(q[1], q[2], q[3], 0.9)
+            b.ilvl:SetText(ilvl > 0 and tostring(ilvl) or "")
+            b.ilvl:SetTextColor(q[1], q[2], q[3])
+        else
+            b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+            b.icon:SetDesaturated(true)
+            b.icon:SetAlpha(0.28)
+            b.border:SetColorTexture(0.25, 0.25, 0.25, 0.6)
+            b.ilvl:SetText("")
+        end
+        b:Show()
+    end
+end
+
+local function RenderDetail(char)
+    if not char then return end
+    BuildDetail()
+
+    detail.name:SetText(AltStable.ClassColor
+        and (AltStable.ClassColor(char.class) .. (char.name or "?") .. "|r")
+        or (char.name or "?"))
+
+    local raceName = char.raceName or char.race or ""
+    local className = (char.class or ""):sub(1, 1):upper() .. (char.class or ""):sub(2):lower()
+    local where = char.guild and char.guild ~= ""
+        and ("<" .. char.guild .. "> - " .. (char.realm or ""))
+        or (char.realm or "")
+    detail.sub:SetText(("Level %d %s %s      %s"):format(
+        char.level or 0, raceName, className, where))
+
+    detail.ilvl:SetText(("|cffaaaaaaiLvl|r  %.1f"):format(tonumber(char.ilvl) or 0))
+
+    -- The figure: the cutout, or the class plate when there is not one. Same
+    -- fallback the grid uses, so a character without a portrait looks the same
+    -- here as it does there rather than looking broken.
+    local entry = CutoutFor(char)
+    local figureTop, figureH = -(BAR_TOP + BAR_H + 34), detail:GetHeight() - 120
+    if figureH < 80 then figureH = 80 end
+
+    if entry then
+        local w, h = FigureSize(entry, figureH)
+        if w > DETAIL_FIGURE_W then h = h * (DETAIL_FIGURE_W / w); w = DETAIL_FIGURE_W end
+        detail.figure:SetTexture(entry.file)
+        detail.figure:SetTexCoord(TexCoordsFor(entry))
+        detail.figure:SetSize(w, h)
+        detail.figure:ClearAllPoints()
+        detail.figure:SetPoint("TOP", detail, "TOPLEFT", 60 + DETAIL_FIGURE_W / 2, figureTop)
+        detail.figure:Show()
+        detail.plate:Hide(); detail.classIcon:Hide()
+    else
+        detail.figure:Hide()
+        local r, g, b = AltStable.GetClassRGB(char.class)
+        detail.plate:SetColorTexture(r * 0.35, g * 0.35, b * 0.35, 1)
+        detail.plate:SetSize(DETAIL_FIGURE_W * 0.7, figureH * 0.8)
+        detail.plate:ClearAllPoints()
+        detail.plate:SetPoint("TOP", detail, "TOPLEFT", 60 + DETAIL_FIGURE_W / 2, figureTop)
+        detail.plate:Show()
+        -- Built the same way the grid's plate builds it, by path. There is no
+        -- ClassIconPath helper on AltStable - I reached for one that does not
+        -- exist, and the guard around it would have left this icon silently
+        -- blank on every character without a portrait.
+        local cls = type(char.class) == "string" and char.class or ""
+        cls = cls:sub(1, 1):upper() .. cls:sub(2):lower()
+        if cls ~= "" then
+            detail.classIcon:SetTexture("Interface\Icons\ClassIcon_" .. cls)
+            detail.classIcon:Show()
+        else
+            detail.classIcon:Hide()
+        end
+    end
+
+    RenderDetailSlots(char, 12, figureTop, 60 + DETAIL_FIGURE_W + 26)
+
+    -- The stats column, on the right. Rows whose stat this character does not
+    -- have are skipped, and a section with nothing left in it takes its header
+    -- with it - a "Combat" heading over five dashes says nothing.
+    local x = math.max(360 + DETAIL_FIGURE_W, detail:GetWidth() - 260)
+    local y = figureTop
+    for _, group in ipairs(detailRows) do
+        local any = false
+        for _, row in ipairs(group.rows) do
+            if HasStatValue(char, row.def) then any = true; break end
+        end
+        if not any then
+            group.header:Hide()
+            for _, row in ipairs(group.rows) do row.label:Hide(); row.value:Hide() end
+        else
+            group.header:ClearAllPoints()
+            group.header:SetPoint("TOPLEFT", detail, "TOPLEFT", x, y)
+            group.header:Show()
+            y = y - STAT_ROW_H - 2
+            for _, row in ipairs(group.rows) do
+                if HasStatValue(char, row.def) then
+                    row.label:ClearAllPoints()
+                    row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
+                    row.value:ClearAllPoints()
+                    row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + 240, y)
+                    row.value:SetText(FormatStatValue(char, row.def))
+                    row.label:Show(); row.value:Show()
+                    y = y - STAT_ROW_H
+                else
+                    row.label:Hide(); row.value:Hide()
+                end
+            end
+            y = y - STAT_SECTION_GAP
+        end
+    end
+end
+
 function Roster.Select(guid)
     Roster.selected = guid
     for _, card in ipairs(Roster.cards) do
@@ -965,8 +1340,60 @@ function Roster.Select(guid)
     end
 end
 
+-- Drill in, and back out.
+--
+-- Back lands in whichever view you left WITHOUT remembering it. Drilling does
+-- not change rosterView and the view toggle is hidden while you are in here,
+-- so there is nothing to restore - the view you return to is still the one you
+-- were in. An earlier version stored a `detailFrom` and put it back on the way
+-- out; it could not be made to fail a test, because the value it restored was
+-- always the value already there.
+function Roster.DrillDown(guid)
+    if not guid then return false end
+    Roster.Select(guid)
+    Roster.detail = guid
+    Roster.Refresh()
+    return true
+end
+
+function Roster.Back()
+    if not Roster.detail then return false end
+    Roster.detail = nil
+    -- The selection goes too. It only ever existed to mark which card you were
+    -- about to drill into, and a highlight left behind on the way out reads as
+    -- a mode you cannot leave.
+    Roster.selected = nil
+    Roster.Refresh()
+    return true
+end
+
 function Roster.Refresh()
     if not panel then return end
+
+    -- Drilled into a character: that replaces the view entirely.
+    --
+    -- Checked FIRST and returning, rather than hiding things afterwards. The
+    -- Roster repaints on every sync, and a refresh that rebuilt the grid
+    -- underneath would flicker it through the detail on each one.
+    if Roster.detail then
+        local char = CharacterStore()[Roster.detail]
+        if char then
+            BuildDetail()
+            for _, card in ipairs(Roster.cards) do card:Hide() end
+            if sceneBar then sceneBar:Hide() end
+            if viewBtn then viewBtn:Hide() end
+            if hintText then hintText:Hide() end
+            RenderDetail(char)
+            detail:Show()
+            return
+        end
+        -- The character went away while we were looking at it - forgotten, or
+        -- hidden from another view. Fall out rather than drawing a blank.
+        Roster.detail, Roster.selected = nil, nil
+    end
+
+    if detail then detail:Hide() end
+    if viewBtn then viewBtn:Show() end
 
     if sceneBar then sceneBar:SetShown(View() == "scene") end
     if viewBtn then viewBtn:SetText(View() == "scene" and "Grid" or "Scene") end
@@ -1108,6 +1535,47 @@ function Roster._Bootstrap()
             -- The card itself, so its right-click and its dimming can be
             -- driven rather than inferred from the functions behind them.
             BuildCard = BuildCard, RenderCard = RenderCard,
+            DrillDown = function(g) return Roster.DrillDown(g) end,
+            Back = function() return Roster.Back() end,
+            Selected = function() return Roster.selected end,
+            CardClick = function(i)
+                local card = Roster.cards[i]
+                if not card or not card:IsShown() then return false end
+                local fn = card:GetScript("OnClick")
+                if not fn then return false end
+                fn(card, "LeftButton")
+                return true
+            end,
+            DetailShown = function() return detail ~= nil and detail:IsShown() and true or false end,
+            DetailText = function()
+                if not detail or not detail:IsShown() then return nil end
+                return (detail.name:GetText() or "") .. " | " .. (detail.sub:GetText() or "")
+                    .. " | " .. (detail.ilvl:GetText() or "")
+            end,
+            DetailStats = function()
+                local out = {}
+                for _, g in ipairs(detailRows or {}) do
+                    if g.header:IsShown() then out[#out + 1] = g.header:GetText() end
+                    for _, r in ipairs(g.rows) do
+                        if r.value:IsShown() then
+                            out[#out + 1] = r.def.label .. "=" .. (r.value:GetText() or "")
+                        end
+                    end
+                end
+                return out
+            end,
+            DetailSlots = function()
+                local out = {}
+                for i, slot in ipairs(GEAR_SLOTS) do
+                    local b = detailSlots and detailSlots[i]
+                    if b and b:IsShown() then
+                        out[#out + 1] = slot.key .. "=" .. (b.ilvl:GetText() or "")
+                    end
+                end
+                return out
+            end,
+            CHAR_STAT_GROUPS = CHAR_STAT_GROUPS, GEAR_SLOTS = GEAR_SLOTS,
+            FormatStatValue = FormatStatValue, HasStatValue = HasStatValue,
             HIDDEN_CARD_ALPHA = HIDDEN_CARD_ALPHA,
             RenderScene = RenderScene, Cards = function() return Roster.cards end,
             Panel = function() return panel end,

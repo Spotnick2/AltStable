@@ -73,6 +73,19 @@ function WoW.reset()
     WoW.dead = false
     WoW.displayID = 56658
     WoW.instanceType, WoW.speed, WoW.falling = "none", 0, false
+    -- The rest of the stat block, so a full ScanCharacter runs. Values are
+-- arbitrary but DISTINCT: identical numbers would let a scan that wrote the
+-- wrong field into the wrong key pass unnoticed.
+function UnitStat(_, i) return 0, 10 + i end          -- base, total
+function UnitHealthMax() return 3210 end
+function UnitPowerMax() return 4870 end
+function UnitArmor() return 0, 812 end
+function UnitAttackPower() return 100, 20, 12 end     -- base, positive, negative
+function GetSpellBonusDamage(school) return 700 + school end
+-- (UnitDefenseSkill is stubbed further down, pinned to the MEASURED
+-- (base, modifier) pair. Do not redefine it here.)
+
+WoW.critChance, WoW.hitModifier = 12.5, 3
     -- UIParent is built ONCE for the whole run, so without this its child list
     -- accumulates every frame every block ever created and a test walking it
     -- sees strangers from three blocks ago.
@@ -258,6 +271,14 @@ local function makeFrame()
         return self
     end
     f.IsShown        = function(self) return self._shown ~= false end
+    -- SetShown is Show/Hide with the condition inline, and the client has it.
+    -- Chaining meant SetShown(false) left the frame shown, so a renderer that
+    -- hid a widget conditionally looked identical to one that never hid it -
+    -- a mutation removing exactly that survived the suite.
+    f.SetShown = function(self, v)
+        if v then self:Show() else self:Hide() end
+        return self
+    end
     -- Visible means shown AND every ancestor shown - the distinction the whole
     -- hidden-UIParent problem turns on.
     f.IsVisible      = function(self)
@@ -530,6 +551,15 @@ function InCombatLockdown() return WoW.inCombat and true or false end
 -- corpse run is the second, and a portrait taken during one is a picture of a
 -- wisp - while C_PlayerInfo.GetDisplayID() reports the ghost display and makes
 -- the look fingerprint flip on every death and every resurrection.
+-- Melee crit and hit, for the detail pane's Combat section. Both exist in
+-- Vanilla. Their two neighbours in AltTracker's table are deliberately NOT
+-- stubbed - there is no haste rating pre-TBC and resilience is a TBC PvP stat,
+-- so a stub for either would let a port of the TBC table pass here and then
+-- report a real 0% in game for something that does not exist.
+WoW.critChance, WoW.hitModifier = 12.5, 3
+function GetCritChance() return WoW.critChance end
+function GetHitModifier() return WoW.hitModifier end
+
 WoW.dead = false
 function UnitIsDeadOrGhost(unit)
     if unit ~= "player" then return false end

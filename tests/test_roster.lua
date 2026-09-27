@@ -1376,5 +1376,187 @@ do
           ("panel bottom is %s, footer is %d tall"):format(tostring(bottomY), footerH))
 end
 
+------------------------------------------------------------
+-- The character detail view (#91)
+------------------------------------------------------------
+-- A drill-down: selecting a character replaces the grid or the camp, and Back
+-- returns you to whichever you came from. Every field it shows is already
+-- scanned and stored - this is presentation over data the addon has held all
+-- along and displayed nowhere.
+
+do
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+
+    AltStableDB = {
+        geared = { guid = "geared", name = "Geared One", class = "PRIEST", realm = "R",
+                   level = 60, race = "Human", raceName = "Human", guild = "A Guild",
+                   ilvl = 61.5, money = 573920, restPercent = 42, xpPercent = 88,
+                   lastUpdate = time() - 3600,
+                   stat_hp = 3210, stat_mana = 4870, stat_armor = 812,
+                   stat_str = 42, stat_agi = 53, stat_sta = 290,
+                   stat_int = 493, stat_spi = 446,
+                   stat_ap = 32, stat_sp = 728, stat_defense = 300,
+                   stat_crit = 12.5, stat_hitpct = 3,
+                   gear_head = 66, gearq_head = 4, gearid_head = 1001,
+                   gearname_head = "A Hat", gearlink_head = "|Hitem:1001|h[A Hat]|h",
+                   gear_chest = 58, gearq_chest = 3, gearid_chest = 1002,
+                   gearname_chest = "A Robe", gearlink_chest = "|Hitem:1002|h[A Robe]|h" },
+        bare   = { guid = "bare", name = "Bare One", class = "WARRIOR", realm = "R",
+                   level = 12, race = "Orc", raceName = "Orc",
+                   money = 0, lastUpdate = time() - 90000,
+                   -- Combat is PARTLY filled on purpose: a warrior has attack
+                   -- power and no spell power. A fixture where every stat in a
+                   -- section is absent only ever exercises the section-level
+                   -- filter, and a row-level one could be deleted unnoticed.
+                   stat_ap = 140, stat_defense = 60 },
+    }
+    AltStableConfig.hiddenCharacters = {}
+    AltStableConfig.favouriteCharacters = {}
+    AltStableConfig.rosterView = "grid"
+    T.Activate(main)
+    T.Refresh()
+
+    check("nothing is drilled into to begin with", T.DetailShown() == false)
+
+    ----------------------------------------------------------
+    -- Drilling in and back out
+    ----------------------------------------------------------
+
+    -- Through the CARD, not the function behind it. Calling DrillDown proves
+    -- the function works and nothing about whether clicking a card reaches it -
+    -- and the card's handler used to call Select, which only moves a highlight.
+    check("clicking a card drills in", T.CardClick(1))
+    check("  the detail view is up", T.DetailShown())
+    check("  showing the character on that card",
+          (T.DetailText() or ""):find(T.Cards()[1].char.name, 1, true) ~= nil,
+          T.DetailText())
+    T.Back()
+
+    check("a card drills into its character", T.DrillDown("geared"))
+    check("  the detail view is up again", T.DetailShown())
+
+    local head = T.DetailText() or ""
+    check("  naming the character", head:find("Geared One", 1, true) ~= nil, head)
+    check("  with level, race and class", head:find("Level 60 Human Priest", 1, true) ~= nil, head)
+    check("  the guild and realm", head:find("<A Guild> - R", 1, true) ~= nil, head)
+    check("  and the item level", head:find("61.5", 1, true) ~= nil, head)
+
+    -- The cards go. Left shown they sit behind the detail still taking the
+    -- mouse, so a click meant for the pane can land on a card and drill into
+    -- somebody else - and the frames are siblings, so strata does not save it.
+    do
+        local visible = 0
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() then visible = visible + 1 end
+        end
+        eq("no card is left behind the detail", visible, 0)
+    end
+
+    check("something is selected while drilled in", T.Selected() ~= nil)
+    check("Back leaves it", T.Back())
+    check("  and the view returns", T.DetailShown() == false)
+    -- A highlight left behind on the way out reads as a mode you cannot leave.
+    eq("  and nothing is left selected", T.Selected(), nil)
+
+    -- Back must land where you came FROM. Leaving a camp and arriving in a
+    -- spreadsheet is disorienting.
+    AltStable.SetConfigValue("rosterView", "scene")
+    T.Refresh()
+    T.DrillDown("geared")
+    check("drilling in from the scene works too", T.DetailShown())
+    T.Back()
+    eq("  and Back leaves you in the scene, not the grid", T.View(), "scene")
+    check("  with the camp drawn again", T.DetailShown() == false)
+    AltStable.SetConfigValue("rosterView", "grid")
+    T.Refresh()
+
+    ----------------------------------------------------------
+    -- The stats
+    ----------------------------------------------------------
+
+    T.DrillDown("geared")
+    local stats = table.concat(T.DetailStats(), " | ")
+
+    check("the Status section is drawn", stats:find("Status", 1, true) ~= nil, stats)
+    check("  gold formatted as money", stats:find("Gold=", 1, true) ~= nil, stats)
+    check("  rested as a whole percent", stats:find("Rested XP=42%", 1, true) ~= nil, stats)
+    check("  and last online in words", stats:find("Last Online=", 1, true) ~= nil, stats)
+
+    check("Attributes are drawn", stats:find("Intellect=493", 1, true) ~= nil, stats)
+    check("Resources too", stats:find("Health=3210", 1, true) ~= nil, stats)
+
+    -- The two stats that exist in Vanilla and had to be added to the scanner.
+    check("melee crit is shown to two places", stats:find("Melee Crit=12.50%", 1, true) ~= nil, stats)
+    check("  and hit chance", stats:find("Hit Chance=3.00%", 1, true) ~= nil, stats)
+
+    -- And the two that do NOT exist pre-TBC, which must not have been ported
+    -- along with the rest of AltTracker's table.
+    -- Asserted on the TABLE rather than the rendering. A row for a stat nobody
+    -- has is invisible either way, so a rendered check passes whether or not
+    -- the row was ported - the question is whether it is in the definition.
+    local defined = {}
+    for _, g in ipairs(T.CHAR_STAT_GROUPS) do
+        for _, d in ipairs(g.defs) do defined[d.key] = true end
+    end
+    check("haste is not in the table at all", not defined.stat_haste)
+    check("  nor resilience", not defined.stat_resilience)
+    check("  while the crit and hit rows are", defined.stat_crit and defined.stat_hitpct)
+    check("haste is not rendered either", stats:find("Haste", 1, true) == nil, stats)
+    check("  and the scanner does not invent them",
+          AltStableDB.geared.stat_haste == nil and AltStableDB.geared.stat_resilience == nil)
+
+    ----------------------------------------------------------
+    -- A character with almost nothing recorded
+    ----------------------------------------------------------
+
+    T.DrillDown("bare")
+    local bare = table.concat(T.DetailStats(), " | ")
+
+    -- Zero gold is a FACT and survives; a warrior's absent spell power is not
+    -- a zero and its row goes, taking an empty section's header with it.
+    check("zero gold is still shown", bare:find("Gold=", 1, true) ~= nil, bare)
+    check("  but absent stats are not rows of dashes",
+          bare:find("Intellect", 1, true) == nil, bare)
+    check("  and a section with nothing in it takes its header",
+          bare:find("Attributes", 1, true) == nil, bare)
+
+    -- The row-level filter, which the section-level one would otherwise hide.
+    check("a partly-filled section keeps its header", bare:find("Combat", 1, true) ~= nil, bare)
+    check("  and the stats that are there", bare:find("Attack Power=140", 1, true) ~= nil, bare)
+    check("  while the ones that are not are absent, not dashes",
+          bare:find("Spell Power", 1, true) == nil, bare)
+
+    ----------------------------------------------------------
+    -- The equipped slots
+    ----------------------------------------------------------
+
+    T.DrillDown("geared")
+    local slots = table.concat(T.DetailSlots(), " | ")
+    eq("every slot is drawn", #T.DetailSlots(), #T.GEAR_SLOTS)
+    check("  an equipped one carries its item level",
+          slots:find("head=66", 1, true) ~= nil, slots)
+    check("  and another", slots:find("chest=58", 1, true) ~= nil, slots)
+    -- An EMPTY slot still draws, blank. A paper doll with holes in it is how
+    -- you see the character has no cloak.
+    check("  an empty one is drawn without a number",
+          slots:find("back=", 1, true) ~= nil and slots:find("back=%d") == nil, slots)
+
+    ----------------------------------------------------------
+    -- Surviving what happens around it
+    ----------------------------------------------------------
+
+    -- The Roster repaints on every sync. A refresh must not bounce us out.
+    T.Refresh()
+    check("a refresh does not drop you out of the detail", T.DetailShown())
+
+    -- But a character that goes away while you are looking at it must not
+    -- leave a blank pane.
+    AltStableDB.geared = nil
+    T.Refresh()
+    check("a forgotten character falls back to the view", T.DetailShown() == false)
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
