@@ -19,3 +19,28 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------------
+
+THIRD-PARTY COMPONENTS
+
+The MIT terms above cover AltStable's own code. They do NOT relicense the
+libraries bundled under Libs/, each of which is redistributed under its own
+terms and remains the work of its authors:
+
+  Libs/LibStub             LibStub, by Kaelten, Cladhaire, ckknight, Mikk,
+                           Ammo, Nevcairiel and joshborke.
+                           Placed in the Public Domain by its authors.
+
+  Libs/LibDeflate          LibDeflate, copyright (c) 2018-2020 Haoqian He.
+                           zlib License. See the header of LibDeflate.lua.
+
+  Libs/ChatThrottleLib     ChatThrottleLib, by Mikk.
+                           Carries no licence header. It is embedded in a
+                           great many addons by long-standing convention
+                           rather than by a stated grant, which is recorded
+                           here rather than glossed over.
+
+Media/ contains artwork generated for this addon and textures referenced by
+file id from the game client; the latter are Blizzard's and are not
+redistributed here.

@@ -237,5 +237,46 @@ for _, file in ipairs(ICON_FILES) do
     end
 end
 
+------------------------------------------------------------
+-- Every bundled library is named in LICENSE
+------------------------------------------------------------
+-- The MIT terms cover this addon's own code and do not relicense anything
+-- under Libs/. LICENSE says so and names each one - and LICENSE is the file
+-- that SHIPS, unlike README, so it is the one that has to be right.
+--
+-- Pinned per directory rather than as a count, because the failure is silent:
+-- vendoring a fourth library and forgetting the note leaves a distribution
+-- claiming MIT over somebody else's work. The test fails on the library's
+-- name, which is also the thing to go and write about.
+
+do
+    local lic = read("LICENSE") or ""
+    check("LICENSE exists and is not empty", #lic > 0)
+    check("  it still carries the MIT grant",
+          lic:find("MIT License", 1, true) ~= nil)
+    check("  and says the bundled libraries are not covered by it",
+          lic:find("THIRD-PARTY COMPONENTS", 1, true) ~= nil)
+
+    local windows = package.config:sub(1, 1) == "\\"
+    local cmd = windows and "dir /b /ad Libs 2>nul" or "ls -1 Libs 2>/dev/null"
+    local libs = {}
+    local pipe = io.popen and io.popen(cmd)
+    if pipe then
+        for name in pipe:lines() do
+            name = name:gsub("%s+$", "")
+            if name ~= "" then libs[#libs + 1] = name end
+        end
+        pipe:close()
+    end
+    -- Asserted, because a listing command that returns nothing would make
+    -- every check below pass without testing anything.
+    check("the bundled libraries could be listed", #libs > 0, tostring(#libs))
+
+    for _, name in ipairs(libs) do
+        check("  LICENSE names " .. name, lic:find(name, 1, true) ~= nil,
+              "a distribution claiming MIT over somebody else's work")
+    end
+end
+
 print(("test_packaging: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
