@@ -231,7 +231,7 @@ local frame, model, backdrop, hint
 -- the prompt down, and Capture is defined several hundred lines before either.
 -- Without this the names resolve to globals, which are nil - so the call errors
 -- at the exact moment somebody presses the sheet's Capture button.
-local StartCountdown, CancelPending, HidePrompt, Supersede
+local StartCountdown, CancelPending, HidePrompt, Supersede, WaitForStillness
 local savedFormat
 local previewing
 local capturing          -- one at a time, always
@@ -339,11 +339,64 @@ local function StoredFingerprint(guid)
     return rec and rec.fp
 end
 
--- The display component of the last fingerprint we stored, which is by
--- construction a LIVE one.
-local function StoredDisplay(guid)
-    local fp = StoredFingerprint(guid)
-    return fp and fp:match("([^:]*)$") or nil
+-- Inside a dungeon, raid, battleground or arena.
+--
+-- Never, and that includes a capture asked for by hand. The stage is a flat
+-- backdrop, so where the character is standing makes no difference to the
+-- picture - but hiding the entire interface for three seconds does make a
+-- difference when there are four other people relying on you, and the request
+-- was "never in a dungeon" rather than "not usually".
+--
+-- instanceType is "none" in the open world and names the kind otherwise, so
+-- this covers scenarios and anything a future patch adds without a list to
+-- keep up to date.
+local function InInstance()
+    if type(IsInInstance) ~= "function" then return false end
+    local ok, inside, kind = pcall(IsInInstance)
+    if not ok then return false end
+    if kind and kind ~= "none" then return true end
+    return inside and true or false
+end
+
+-- Moving, falling, or otherwise not standing still.
+--
+-- The two shots have to be the SAME POSE - the matte subtracts one from the
+-- other - and the model is frozen for that. But the character is also being
+-- photographed mid-stride if the player is running, which is not what a roster
+-- portrait should look like, and a capture that begins as somebody leaves the
+-- ground is worse still.
+local function Moving()
+    if type(GetUnitSpeed) == "function" then
+        local ok, speed = pcall(GetUnitSpeed, "player")
+        if ok and (tonumber(speed) or 0) > 0 then return true end
+    end
+    if type(IsFalling) == "function" then
+        local ok, falling = pcall(IsFalling)
+        if ok and falling then return true end
+    end
+    return false
+end
+
+-- Why a capture cannot happen right now, or nil if it can.
+--
+-- One function, so that every entry point refuses for the same reasons and
+-- says the same thing. Ordered by how permanent the answer is: combat and
+-- death end on their own and have events that bring the trigger back, a
+-- dungeon needs the player to leave, and standing still is a second away.
+local function BlockedReason()
+    if InCombatLockdown and InCombatLockdown() then
+        return "not while you are in combat", "combat"
+    end
+    if DeadOrGhost() then
+        return "not while you are dead - a portrait of a wisp is not a portrait", "dead"
+    end
+    if InInstance() then
+        return "not inside a dungeon - it would hide your interface mid-run", "instance"
+    end
+    if Moving() then
+        return "not while you are moving", "moving"
+    end
+    return nil
 end
 
 local function LookFingerprint(guid)
@@ -357,27 +410,64 @@ local function LookFingerprint(guid)
     -- The display id changes with a barber-shop visit or a race change, which
     -- is exactly the kind of "looks different" this is for.
     --
-    -- It ALSO changes when you die, because a ghost has its own display - and
-    -- that is not a change in how the character looks, it is a change in
-    -- whether the character is currently a wisp. Letting it in meant two
-    -- "your look changed" events per death, so a corpse run announced a gear
-    -- change every time the player released and every time they resurrected.
+    -- It does NOT change when you die. MEASURED on 1.60.1.70009, both states,
+    -- same character:
     --
-    -- Filtered HERE, where the value enters, rather than at the callers who
-    -- act on it. Equipment is still readable while dead, so the rest of the
-    -- fingerprint is honest; only this one field is lying, and substituting
-    -- the last live value makes the whole thing stable across a death instead
-    -- of leaving a bad value reachable by anything that reads it later -
-    -- Finish() storing one, /asrender status printing one.
+    --     /run print(C_PlayerInfo.GetDisplayID(), UnitIsDeadOrGhost("player"))
+    --     56658  false          (alive)
+    --     56658  true           (a ghost, mid corpse run)
+    --
+    -- Which kills the theory this file briefly carried: that a ghost's own
+    -- display id was flipping the fingerprint twice per death and producing
+    -- "gear changed" on a corpse run where nothing had changed. It is not. The
+    -- symptom is real and reproduced; the cause is NOT this field, and no
+    -- substitution here would have helped. See docs/forever-api-notes.md.
     local displayID
-    if DeadOrGhost() then
-        displayID = StoredDisplay(guid or (UnitGUID and UnitGUID("player")))
-    elseif C_PlayerInfo and type(C_PlayerInfo.GetDisplayID) == "function" then
+    if C_PlayerInfo and type(C_PlayerInfo.GetDisplayID) == "function" then
         local ok, id = pcall(C_PlayerInfo.GetDisplayID)
         if ok then displayID = id end
     end
     parts[#parts + 1] = tostring(displayID or "?")
     return table.concat(parts, ":")
+end
+
+-- WHICH part of the look changed, as a short human-readable list.
+--
+-- Written because the cause of the repeated "gear changed" on a corpse run is
+-- still unknown: the display id was measured and cleared, so it is one of the
+-- nineteen equipment slots, and guessing which has already cost one wrong
+-- theory. The next time this fires, the chat line names the slot instead of
+-- describing the symptom - which turns the next occurrence into a measurement
+-- rather than another round of reasoning.
+local SLOT_NAMES = {
+    "head", "neck", "shoulder", "shirt", "chest", "belt", "legs", "feet",
+    "wrist", "gloves", "ring 1", "ring 2", "trinket 1", "trinket 2", "back",
+    "main hand", "off hand", "ranged", "tabard",
+}
+
+local function FingerprintDiff(a, b)
+    if not a or not b then return "no previous fingerprint" end
+    -- Split on a TRAILING separator, not "[^:]*" on its own: the star matches
+    -- the empty string between every pair of fields too, so the naive pattern
+    -- returns twice as many parts and every index is doubled - which named the
+    -- display id "field 39".
+    local function split(fp)
+        local out = {}
+        for part in (fp .. ":"):gmatch("([^:]*):") do out[#out + 1] = part end
+        return out
+    end
+    local old, new = split(a), split(b)
+
+    local changed = {}
+    for i = 1, math.max(#old, #new) do
+        if old[i] ~= new[i] then
+            local name = SLOT_NAMES[i] or (i == 20 and "display id") or ("field " .. i)
+            changed[#changed + 1] = ("%s %s->%s"):format(
+                name, tostring(old[i] or "-"), tostring(new[i] or "-"))
+        end
+    end
+    if #changed == 0 then return "nothing" end
+    return table.concat(changed, ", ")
 end
 
 local function RememberFingerprint(guid, fp)
@@ -516,18 +606,14 @@ local function Capture()
     -- for the automatic path, but /asrender and the notice's own button both
     -- reach here directly - and hiding the interface for three seconds during a
     -- pull is the single worst thing this feature can do.
-    if InCombatLockdown and InCombatLockdown() then
-        Out("|cffff8800not while you are in combat|r - try again once the fight is over")
-        return
-    end
-
-    -- Same reasoning as combat, and checked HERE as well as in
-    -- ConsiderCapture: the countdown fires five seconds after it was armed,
-    -- and dying inside those five seconds is not unusual - it is most of what
-    -- a corpse run consists of. /asrender and the notice's button also land
-    -- here directly.
-    if DeadOrGhost() then
-        Out("|cffff8800not while you are dead|r - a portrait of a wisp is not a portrait")
+    -- Checked HERE as well as in ConsiderCapture, because the countdown fires
+    -- five seconds after it was armed and any of these can become true inside
+    -- those five seconds - dying is most of what a corpse run consists of, and
+    -- walking away is the most ordinary thing in the world. /asrender and the
+    -- sheet's button also land here directly.
+    local why = BlockedReason()
+    if why then
+        Out("|cffff8800" .. why .. "|r")
         return
     end
 
@@ -885,6 +971,19 @@ local function Paint(p, left)
     p.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r"):format(left, p.why or ""))
 end
 
+-- The prompt while it waits for the player to stand still. Same frame, same
+-- buttons - Skip still skips - with the countdown replaced by what it is
+-- actually waiting for, because "Portrait in 0s" forever is a bug report.
+local function PromptWaiting(why)
+    local p = BuildPrompt()
+    p.why = why
+    p.shown = nil
+    p:SetScript("OnUpdate", nil)
+    p.label:SetText(("|cffffffffPortrait when you stand still|r  |cffaaaaaa%s|r")
+        :format(why or ""))
+    p:Show()
+end
+
 local function ShowPrompt(why, seconds)
     local p = BuildPrompt()
     p.deadline = GetTime() + seconds
@@ -922,41 +1021,105 @@ function StartCountdown(why)
     ShowPrompt(why, WARN_SECONDS)
     pending = C_Timer.NewTimer(WARN_SECONDS, function()
         pending = nil
+        -- Asked again at the moment it fires, not only when it was scheduled.
+        -- Cancelling on the /asrender auto path covers the command; this covers
+        -- every other way the answer could have changed in those five seconds.
+        if not AutoEnabled() then
+            HidePrompt()
+            Out("auto-capture was turned off - not taking the picture")
+            return
+        end
+
+        -- Still moving? WAIT, do not drop it.
+        --
+        -- Dropping the picture here would repeat the mistake the ghost guard
+        -- made: refusing consumes the trigger, and the next thing to ask is a
+        -- login or the end of a fight. Standing still is a second away, so the
+        -- prompt changes what it says and keeps its Skip button, which is the
+        -- honest version of "waiting for a good moment".
+        if Moving() then
+            WaitForStillness(why)
+            return
+        end
+
         -- The timer FIRING is the one exit that does not go through
         -- CancelPending, so it hides the prompt itself. Left up, it would sit
         -- there reading "Portrait in 0s" over the capture that already
         -- happened, with a Skip button that skips nothing.
         HidePrompt()
-        -- Asked again at the moment it fires, not only when it was scheduled.
-        -- Cancelling on the /asrender auto path covers the command; this covers
-        -- every other way the answer could have changed in those five seconds.
-        if not AutoEnabled() then
-            Out("auto-capture was turned off - not taking the picture")
-            return
-        end
         Capture()
     end)
+end
+
+-- How long to keep waiting for somebody to stand still before letting it go.
+-- Long enough to cover running back to an inn, short enough that a player who
+-- is questing for an hour is not followed around by a prompt.
+local STILLNESS_LIMIT = 90
+
+function WaitForStillness(why)
+    local waitedUntil = GetTime() + STILLNESS_LIMIT
+    PromptWaiting(why)
+
+    local function poll()
+        pending = nil
+        if not AutoEnabled() then HidePrompt(); return end
+
+        -- Anything ELSE that blocks - a fight started, they died, they zoned
+        -- into a dungeon - ends the wait rather than outlasting it. Those have
+        -- their own events to bring the trigger back; this one does not.
+        local blocked, kind = BlockedReason()
+        if blocked and kind ~= "moving" then
+            HidePrompt()
+            return
+        end
+
+        if not blocked then
+            HidePrompt()
+            Capture()
+            return
+        end
+
+        if GetTime() >= waitedUntil then
+            HidePrompt()
+            Out("still moving - portrait postponed, it will ask again later")
+            return
+        end
+        pending = C_Timer.NewTimer(1, poll)
+    end
+
+    pending = C_Timer.NewTimer(1, poll)
 end
 
 local function ConsiderCapture(why)
     if not AutoEnabled() then return end
     if pending or capturing then return end
 
-    -- Before the fingerprint is consulted, not after: while you are a ghost the
-    -- fingerprint is a ghost's, so asking it first is what produced "gear
-    -- changed" on a corpse run where nothing had changed.
-    if DeadOrGhost() then return end
-
     local guid = UnitGUID("player")
     if not guid then return end
 
-    local fp = LookFingerprint()
+    local fp = LookFingerprint(guid)
     if fp == StoredFingerprint(guid) then return end          -- looks the same
 
-    -- Never interrupt a fight to take a photograph, and never put a popup on
-    -- screen during one either. PLAYER_REGEN_ENABLED brings us back.
-    if InCombatLockdown and InCombatLockdown() then
-        Out("gear changed - portrait will refresh after combat")
+    -- Never interrupt a fight to take a photograph, never do it in a dungeon,
+    -- and never put a popup on screen during either. Each of these has an
+    -- event that brings the trigger back: PLAYER_REGEN_ENABLED after a fight,
+    -- PLAYER_UNGHOST / PLAYER_ALIVE after a death, PLAYER_ENTERING_WORLD on
+    -- the way out of an instance.
+    --
+    -- Moving is deliberately NOT one of them. It is over in a second, it has
+    -- no event worth waiting on, and the countdown itself handles it: the
+    -- prompt waits for the player to stand still rather than dropping the
+    -- picture and hoping something asks again.
+    -- Name the change. One line, only when something really did change, and it
+    -- is the only way the remaining mystery gets solved: the display id has
+    -- been ruled out by measurement, so it is a slot, and this says which.
+    Out("look changed: " .. FingerprintDiff(StoredFingerprint(guid), fp))
+
+    local blocked, kind = BlockedReason()
+    if blocked and kind ~= "moving" then
+        if kind == "combat" then
+            Out("gear changed - portrait will refresh after combat")
+        end
         return
     end
 
@@ -1097,8 +1260,18 @@ auto:RegisterEvent("PLAYER_REGEN_DISABLED")
 auto:RegisterEvent("PLAYER_DEAD")
 auto:RegisterEvent("PLAYER_UNGHOST")
 auto:RegisterEvent("PLAYER_ALIVE")
+-- And on the way out of a dungeon. Refusing inside one CONSUMES the trigger,
+-- so without this a gear change made in an instance would wait for the next
+-- fight or the next login. Same settle delay as login: zoning is a loading
+-- screen, and inventory is not reliably readable the instant it ends.
+auto:RegisterEvent("PLAYER_ENTERING_WORLD")
 auto:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_DEAD" then
+    if event == "PLAYER_ENTERING_WORLD" then
+        C_Timer.After(LOGIN_SETTLE, function()
+            ConsiderCapture("gear changed since your last portrait")
+        end)
+        return
+    elseif event == "PLAYER_DEAD" then
         CancelPending("you died")
         AbandonCapture("|cffff8800you died - portrait abandoned|r", true)
         return

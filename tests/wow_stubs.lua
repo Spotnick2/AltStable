@@ -71,7 +71,8 @@ function WoW.reset()
     WoW.eventFrames = {}
     WoW.tooltipLines, WoW.tooltipShown = {}, false
     WoW.dead = false
-    WoW.displayID, WoW.ghostDisplayID = 1000, 99999
+    WoW.displayID = 56658
+    WoW.instanceType, WoW.speed, WoW.falling = "none", 0, false
     -- UIParent is built ONCE for the whole run, so without this its child list
     -- accumulates every frame every block ever created and a test walking it
     -- sees strangers from three blocks ago.
@@ -535,19 +536,36 @@ function UnitIsDeadOrGhost(unit)
     return WoW.dead and true or false
 end
 
--- The display id, and the reason the whole ghost problem exists.
+-- The display id. Part of the look fingerprint, deliberately, because a barber
+-- visit or a race change should refresh a portrait - and without this stub the
+-- fingerprint silently appended "?" every time, so a constant in its place
+-- left the suite green.
 --
--- A ghost has its OWN display, so this value flips on death and flips back on
--- resurrection - and it is part of the look fingerprint, deliberately, because
--- a barber visit or a race change should refresh a portrait. Without this stub
--- the fingerprint silently appended "?" every time, so the half of it that
--- causes the bug was not modelled at all and a constant in its place left the
--- suite green.
-WoW.displayID, WoW.ghostDisplayID = 1000, 99999
+-- It does NOT change when the player dies. MEASURED on 1.60.1.70009: 56658
+-- both alive and as a ghost. An earlier version of this stub returned a
+-- separate ghost display, which would have made a broken theory pass - exactly
+-- the failure mode the stub-fidelity rule exists for, since the theory was
+-- that this value flips on death.
+WoW.displayID = 56658
 C_PlayerInfo = C_PlayerInfo or {}
 function C_PlayerInfo.GetDisplayID()
-    return WoW.dead and WoW.ghostDisplayID or WoW.displayID
+    return WoW.displayID
 end
+
+-- Where the player is, and whether they are standing still.
+--
+-- instanceType is "none" in the open world and names the kind otherwise.
+WoW.instanceType = "none"
+function IsInInstance()
+    return WoW.instanceType ~= "none", WoW.instanceType
+end
+
+WoW.speed, WoW.falling = 0, false
+function GetUnitSpeed(unit)
+    if unit ~= "player" then return 0 end
+    return WoW.speed or 0
+end
+function IsFalling() return WoW.falling and true or false end
 
 -- SetUIVisibility is what Alt+Z and Escape call. It is NOT protected, which is
 -- the whole reason the probe uses it instead of UIParent:Hide().

@@ -699,17 +699,16 @@ end
 -- nothing to do with the addon.
 
 do
-    -- The flip IS the bug. Without it the fingerprint silently appends the
-    -- same value dead or alive, every assertion about ghosts holds vacuously,
-    -- and replacing the whole display id with a constant leaves the suite
-    -- green - which it did.
+    -- MEASURED on 1.60.1.70009: 56658 alive and 56658 as a ghost, same
+    -- character. Pinned as a fact, not as scaffolding - an earlier stub
+    -- returned a separate ghost display, which is what a wrong theory about
+    -- this value needed in order to pass.
     WoW.dead = false
     local alive = C_PlayerInfo.GetDisplayID()
     WoW.dead = true
     local ghost = C_PlayerInfo.GetDisplayID()
     WoW.dead = false
-    check("the client reports a different display id for a ghost", alive ~= ghost,
-          ("alive %s, ghost %s"):format(tostring(alive), tostring(ghost)))
+    eq("dying does not change the display id", ghost, alive)
 
     -- GetChildren against GetParent. This codebase reparents frames on purpose
     -- - the showcase lifts the sheet out from under UIParent - so a child list
@@ -746,15 +745,10 @@ do
     check("the display id is part of the fingerprint",
           alive:find(tostring(WoW.displayID), 1, true) ~= nil, alive)
 
-    -- Nothing stored yet: the best that can be done is a stable placeholder,
-    -- never the ghost's own display.
-    WoW.dead = true
-    local asGhost = T.LookFingerprint()
-    check("a ghost display never appears in a fingerprint",
-          asGhost:find(tostring(WoW.ghostDisplayID), 1, true) == nil, asGhost)
-
-    -- With a live fingerprint on record, dying must not change the answer.
-    WoW.dead = false
+    -- Dying changes nothing about the fingerprint, which follows from the
+    -- measurement above rather than from any filtering in LookFingerprint -
+    -- there is none, and the version that had some was guarding against a
+    -- ghost display that does not exist.
     T.RememberFingerprint(guid, T.LookFingerprint())
     local stored = T.StoredFingerprint(guid)
     WoW.dead = true
@@ -893,6 +887,143 @@ do
     check("  and it wraps rather than running off the side",
           p.label.GetWordWrap == nil or p.label:GetWordWrap() ~= false)
     T.CancelPending()
+end
+
+------------------------------------------------------------
+-- Never in a dungeon, never while moving
+------------------------------------------------------------
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.displayID = 7000                    -- something to photograph
+
+    -- A dungeon, and that includes a capture asked for by hand: the stage is a
+    -- flat backdrop so the location makes no difference to the picture, but
+    -- hiding the whole interface for three seconds does make a difference when
+    -- four other people are relying on you.
+    WoW.instanceType = "party"
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("a dungeon queues nothing", T.pendingKind(), nil)
+
+    WoW.screenshots = 0
+    T.Capture()
+    check("  and refuses a capture asked for by hand", not T.capturing())
+    eq("  taking no picture", WoW.screenshots, 0)
+    eq("  and never touching the interface", WoW.uiVisible, true)
+
+    -- Raids, battlegrounds and arenas are the same answer, and the check reads
+    -- instanceType rather than a list, so a kind added by a future patch is
+    -- covered without an edit.
+    for _, kind in ipairs({ "raid", "pvp", "arena", "scenario", "something-new" }) do
+        WoW.instanceType = kind
+        T.Capture()
+        check("  " .. kind .. " too", not T.capturing())
+    end
+
+    -- Leaving brings the trigger back. Refusing CONSUMES it otherwise - the
+    -- same trap the corpse-run guard fell into - so a gear change made in a
+    -- dungeon would wait for the next fight or the next login.
+    WoW.instanceType = "none"
+    -- The REGISTRATION, not just the handler. Calling the handler with an
+    -- event name it never registered for proves nothing - and this test passed
+    -- that way first, because the unrecognised name fell through to the
+    -- combat-ended branch and armed the settle timer by accident.
+    check("the addon listens for the zone change at all",
+          T.events:IsEventRegistered("PLAYER_ENTERING_WORLD"),
+          "leaving a dungeon would never be noticed in game")
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_ENTERING_WORLD")
+    -- Zoning is not "a fight ended". Without its own branch the event falls
+    -- through to the combat-ended one and arms a THIRTY second quiet-wait, so
+    -- the countdown below would appear either way and this block would pass
+    -- against a handler that does not know what a zone change is.
+    eq("  and handles it as a zone change, not as a fight ending",
+       T.pendingKind(), nil)
+    WoW.flushTimers()
+    check("leaving the dungeon picks the portrait back up",
+          T.pendingKind() == "countdown", tostring(T.pendingKind()))
+    T.CancelPending()
+    WoW.displayID = 56658
+end
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+
+    -- Moving is refused, but NOT dropped. It is over in a second and has no
+    -- event worth waiting on, so the countdown waits rather than throwing the
+    -- picture away and hoping something asks again later.
+    WoW.speed = 7
+    WoW.screenshots = 0
+    T.Capture()
+    check("a capture asked for while running is refused", not T.capturing())
+    eq("  and takes no picture", WoW.screenshots, 0)
+
+    T.StartCountdown("gear changed")
+    check("the countdown starts anyway", T.pendingKind() == "countdown")
+    WoW.flushTimers()
+    eq("  but fires no capture while still moving", WoW.screenshots, 0)
+    check("  and does not drop it either", T.pendingKind() ~= nil,
+          "the trigger would be gone and nothing would ask again")
+
+    local waiting = T.PromptText()
+    check("  the prompt says what it is waiting for",
+          (waiting or ""):find("stand still", 1, true) ~= nil, tostring(waiting))
+
+    -- Standing still lets it through.
+    WoW.speed = 0
+    WoW.flushTimers()
+    check("standing still takes the picture", T.capturing())
+    check("  and the prompt comes down", T.PromptText() == nil)
+
+    -- Falling counts as moving: a capture that begins as somebody leaves the
+    -- ground is worse than one taken mid-stride.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.speed, WoW.falling = 0, true
+    T.Capture()
+    check("falling is moving", not T.capturing())
+    WoW.falling = false
+
+    -- Something that is NOT moving ending the wait: it has its own event to
+    -- bring the trigger back, so outlasting it here would be wrong.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.speed = 7
+    T.StartCountdown("gear changed")
+    WoW.flushTimers()
+    check("waiting for stillness", T.PromptText() ~= nil)
+    WoW.dead = true
+    WoW.flushTimers()
+    check("dying ends the wait rather than outlasting it", T.PromptText() == nil)
+    check("  and takes no picture", not T.capturing())
+    WoW.dead, WoW.speed = false, 0
+end
+
+------------------------------------------------------------
+-- Say WHICH part of the look changed
+------------------------------------------------------------
+-- The display id was measured and cleared, so the cause of the repeated
+-- "gear changed" on a corpse run is one of the nineteen slots. Naming it turns
+-- the next occurrence into a measurement instead of another theory.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    local guid = UnitGUID("player")
+    T.RememberFingerprint(guid, T.LookFingerprint())
+
+    WoW.displayID = 9001
+    WoW.chatOut = {}
+    T.ConsiderCapture("gear changed since your last portrait")
+    local said = table.concat(WoW.chatOut, " | ")
+    check("the change is named, not just announced",
+          said:find("look changed", 1, true) ~= nil, said)
+    check("  naming the field that moved",
+          said:find("display id", 1, true) ~= nil, said)
+    check("  with both values", said:find("9001", 1, true) ~= nil, said)
+    T.CancelPending()
+    WoW.displayID = 56658
 end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))
