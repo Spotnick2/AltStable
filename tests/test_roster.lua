@@ -2164,7 +2164,10 @@ do
             local _, _, _, bx = b:GetPoint(1)
             return bx or 0
         end
-        local figureCx = 60 + 260 / 2
+        -- Read from the stage rather than reconstructed from a margin: the
+        -- composition is centred on a wide panel, so the figure's centre is not
+        -- a constant any more.
+        local figureCx = T.DetailFigureBox().centre
         check("the left column sits left of the figure", xOf("head") < figureCx - 100,
               tostring(xOf("head")))
         check("  and the right column right of it", xOf("hands") > figureCx + 100,
@@ -2356,8 +2359,69 @@ do
         local wide = T.DetailColumn()
         eq("on a wide frame the column keeps its full width",
            (wide.right or 0) - (wide.x or 0), 250)
-        check("  and sits at the right edge",
-              1400 - (wide.right or 0) <= 10, tostring(wide.right))
+        -- NOT at the right edge. It used to be, and on a wide panel that pulled
+        -- the stats away from the paper doll they describe - five hundred pixels
+        -- of nothing between them, with the numbers against the window frame.
+        -- They are one composition and are centred as one.
+        do
+            local box = T.DetailFigureBox()
+            local gap = (wide.x or 0) - ((box.left or 0) + (box.width or 0))
+            check("  a fixed gap past the paper doll, not pinned to the edge",
+                  gap > 0 and gap < 120, tostring(gap))
+            -- Centred as a group: the space left of the doll and the space
+            -- right of the column match.
+            --
+            -- Measured from the SLOTS, not from the stage. The slots overhang
+            -- the box on both sides, so the box's left edge is not the
+            -- composition's left edge - comparing it against the column's right
+            -- edge compares unlike things and reports an asymmetry that is not
+            -- there, or hides one that is.
+            local leftRoom  = select(4, T.DetailSlotFrame("head"):GetPoint(1)) or 0
+            local rightRoom = 1400 - (wide.right or 0)
+            -- Tight, because the symmetry is exact up to one floor(): a loose
+            -- tolerance here passed a version that centred the FIGURE rather
+            -- than the group, which leans the whole composition left by the
+            -- slot overhang - about forty pixels, and invisible under a sixty
+            -- pixel allowance.
+            check("  with the pair centred in the panel",
+                  math.abs(leftRoom - rightRoom) <= 4,
+                  ("left %s vs right %s"):format(tostring(leftRoom), tostring(rightRoom)))
+            -- And the ART moved with the box. The cutout and the class plate are
+            -- placed by their OWN SetPoint calls, so either can be left behind
+            -- at the old fixed margin while the box centres - a character
+            -- standing outside its own frame.
+            --
+            -- Both are checked, with a cutout put in place for the first: the
+            -- fixtures here have no portraits, so without one the plate is the
+            -- only path this ever exercises and the cutout's placement is
+            -- untested. A mutation proved it - moving the figure's anchor back
+            -- to the fixed margin changed nothing the suite could see.
+            check("  and the class plate is centred in its box",
+                  box.art and math.abs(box.art - (box.centre or 0)) <= 1,
+                  ("plate at %s, box centre %s"):format(
+                      tostring(box.art), tostring(box.centre)))
+
+            -- "messy", not "geared": an earlier block replaced AltStableDB
+            -- wholesale, so `geared` is not in it here and DrillDown correctly
+            -- refuses an unknown guid - which left this drilling into nothing
+            -- and asserting against the previous render. The manifest key is
+            -- the character's slug, so it has to match whoever is actually
+            -- there.
+            local savedManifest = AltStableCutoutManifest
+            AltStableCutoutManifest = { ["messy-one"] = {
+                file = "Interface\AddOns\AltStable\Media\Cutouts\messy-one.tga",
+                w = 144, h = 512, texw = 256, texh = 512 } }
+            T.DrillDown("messy")
+            check("  the cutout path is the one being exercised",
+                  T.CutoutFor(AltStableDB.messy) ~= nil)
+            local withArt = T.DetailFigureBox()
+            check("  and a real cutout is centred in its box too",
+                  withArt.art and math.abs(withArt.art - (withArt.centre or 0)) <= 1,
+                  ("cutout at %s, box centre %s"):format(
+                      tostring(withArt.art), tostring(withArt.centre)))
+            AltStableCutoutManifest = savedManifest
+            T.DrillDown("messy")
+        end
         -- While a narrow one gives up width rather than position, which is the
         -- half of the trade the old double-clamp got backwards.
         d:SetWidth(589)
@@ -2441,8 +2505,11 @@ do
                   ("bottom %s vs side %s"):format(tostring(ohX - mhX), tostring(a - bY)))
             -- And stays centred under the figure: five bottom slots, so the
             -- middle one is the centre.
+            -- Read from the stage, not computed from a margin. The whole
+            -- composition is centred on a wide panel now, so a hardcoded
+            -- `60 + W/2` asserts against where the figure used to be.
             local midX = select(4, T.DetailSlotFrame("mainhand"):GetPoint(1))
-            local figCx = 60 + 260 / 2
+            local figCx = T.DetailFigureBox().centre
             check(("  centred under the figure at %dpx"):format(h),
                   math.abs((midX + sz / 2) - figCx) <= 1,
                   ("mainhand centre %s vs figure centre %s"):format(

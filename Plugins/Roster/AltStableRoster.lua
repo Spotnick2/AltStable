@@ -1700,8 +1700,65 @@ local function RenderDetail(char)
     if figureH < 24 then figureH = 24 end
     local figureBottom = figureTop - figureH
 
+    -- The side columns get the figure's own vertical extent, which is what they
+    -- flank - so they can never reach the weapons row hanging below it either.
+    local sideRows = 0
+    do
+        local li, ri = 0, 0
+        for _, slot in ipairs(GEAR_SLOTS) do
+            if slot.side == "left" then li = li + 1
+            elseif slot.side == "right" then ri = ri + 1 end
+        end
+        sideRows = math.max(li, ri)
+    end
+    local slotSize, slotStep = SlotScale(sideRows, figureH)
+
+    -- How wide the stats column gets.
+    --
+    -- The Roster inherits whatever width the previous section left behind -
+    -- SheetUI's ResizeFrameToContent early-outs for plugins - so a frame too
+    -- narrow to hold both the paper doll and a 250px column beside it is
+    -- reachable. The two goals conflict there, and FITTING INSIDE THE PANEL
+    -- WINS: `detail` sets no SetClipsChildren, so a control laid out past the
+    -- right edge draws over the game world, and the tabs are the first thing out
+    -- there a player can click. Sitting clear of the figure is cosmetic.
+    --
+    -- So the column NARROWS rather than moving out. An earlier version clamped
+    -- the POSITION twice instead, `min(max(620, V), max(0, V))`, which is just
+    -- `max(0, V)` for any V - the floor it looked like it had could never bind,
+    -- and the tabs went outside the panel anyway.
+    --
+    -- The floor is the TAB ROW's own width, not an arbitrary number: the tabs
+    -- are laid out from the column's left at a fixed stride, so a column
+    -- narrower than the row puts the last tab back outside - clamped column,
+    -- unclamped tabs.
+    local tabRow = (#detail.tabs - 1) * DETAIL_TAB_STRIDE + DETAIL_TAB_W
+    local COLUMN_W = math.max(tabRow, math.min(250,
+                              detail:GetWidth() - (360 + DETAIL_FIGURE_W) - 10))
+
+    -- And WHERE the whole composition sits, before anything is placed.
+    --
+    -- The paper doll and the stats column are one thing, and pinning the column
+    -- to the right edge pulled them apart: on a 1520px panel the doll ended at
+    -- 1180 and the stats began at 1680, five hundred pixels of nothing between
+    -- them and the numbers jammed against the window frame. Two unrelated
+    -- objects that had drifted to opposite walls.
+    --
+    -- So the pair is CENTRED as a unit when there is room to spare, and only
+    -- falls back to the left margin when there is not. The slots overhang the
+    -- figure on both sides, so the block's real edges are a gutter wider than
+    -- the figure itself - centring on the figure would centre the wrong
+    -- rectangle and lean the whole thing left by that gutter.
+    local GROUP_GAP, EDGE_MIN = 40, 18
+    local slotGutter = slotSize + 8
+    local groupW = slotGutter + DETAIL_FIGURE_W + slotGutter + GROUP_GAP + COLUMN_W
+    local figureL = EDGE_MIN + slotGutter
+    if detail:GetWidth() - groupW > figureL * 2 then
+        figureL = math.floor((detail:GetWidth() - groupW) / 2) + slotGutter
+    end
+
     -- The box, sized to the figure's column and the room left for it.
-    local stageL = 60 - 6
+    local stageL = figureL - 6
     local stageW = DETAIL_FIGURE_W + 12
     detail.stageEdge:ClearAllPoints()
     detail.stageEdge:SetPoint("TOPLEFT", detail, "TOPLEFT", stageL - 1, figureTop + 1)
@@ -1718,7 +1775,7 @@ local function RenderDetail(char)
         detail.figure:SetTexCoord(TexCoordsFor(entry))
         detail.figure:SetSize(w, h)
         detail.figure:ClearAllPoints()
-        detail.figure:SetPoint("TOP", detail, "TOPLEFT", 60 + DETAIL_FIGURE_W / 2, figureTop)
+        detail.figure:SetPoint("TOP", detail, "TOPLEFT", figureL + DETAIL_FIGURE_W / 2, figureTop)
         detail.figure:Show()
         detail.plate:Hide(); detail.classIcon:Hide()
     else
@@ -1727,7 +1784,7 @@ local function RenderDetail(char)
         detail.plate:SetColorTexture(r * 0.35, g * 0.35, b * 0.35, 1)
         detail.plate:SetSize(DETAIL_FIGURE_W * 0.7, figureH * 0.8)
         detail.plate:ClearAllPoints()
-        detail.plate:SetPoint("TOP", detail, "TOPLEFT", 60 + DETAIL_FIGURE_W / 2, figureTop)
+        detail.plate:SetPoint("TOP", detail, "TOPLEFT", figureL + DETAIL_FIGURE_W / 2, figureTop)
         detail.plate:Show()
         -- Built the same way the grid's plate builds it, by path. There is no
         -- ClassIconPath helper on AltStable - I reached for one that does not
@@ -1743,45 +1800,15 @@ local function RenderDetail(char)
         end
     end
 
-    -- The side columns get the figure's own vertical extent, which is what they
-    -- flank - so they can never reach the weapons row hanging below it either.
-    local sideRows = 0
-    do
-        local li, ri = 0, 0
-        for _, slot in ipairs(GEAR_SLOTS) do
-            if slot.side == "left" then li = li + 1
-            elseif slot.side == "right" then ri = ri + 1 end
-        end
-        sideRows = math.max(li, ri)
-    end
-    local slotSize, slotStep = SlotScale(sideRows, figureH)
-    RenderDetailSlots(char, 60 + DETAIL_FIGURE_W / 2, figureTop, DETAIL_FIGURE_W / 2,
+    RenderDetailSlots(char, figureL + DETAIL_FIGURE_W / 2, figureTop, DETAIL_FIGURE_W / 2,
                       figureBottom, slotSize, slotStep)
 
-    -- The right-hand column, and which tab owns it.
-    --
-    -- The Roster inherits whatever width the previous section left behind -
-    -- SheetUI's ResizeFrameToContent early-outs for plugins - so a frame too
-    -- narrow to hold both the paper doll and a 250px column beside it is
-    -- reachable. The two goals conflict there, and FITTING INSIDE THE PANEL
-    -- WINS: `detail` sets no SetClipsChildren, so a control laid out past the
-    -- right edge draws over the game world, and the tabs are the first thing
-    -- out there a player can click. Sitting clear of the figure is cosmetic.
-    --
-    -- So the column NARROWS rather than moving out, and only the amount left
-    -- over decides where it starts. Written as one clamp on the width and one
-    -- on the position: the previous version clamped the position twice,
-    -- `min(max(620, V), max(0, V))`, which is just `max(0, V)` for any V - the
-    -- floor it looked like it had could never bind, and the tabs went outside
-    -- the panel anyway.
-    -- The floor is the TAB ROW's own width, not an arbitrary 120: the tabs are
-    -- laid out from the column's left at a fixed stride, so a column narrower
-    -- than the row leaves the last tab outside the panel again - clamped
-    -- column, unclamped tabs.
-    local tabRow = (#detail.tabs - 1) * DETAIL_TAB_STRIDE + DETAIL_TAB_W
-    local COLUMN_W = math.max(tabRow, math.min(250,
-                              detail:GetWidth() - (360 + DETAIL_FIGURE_W) - 10))
-    local x = math.max(10, detail:GetWidth() - COLUMN_W - 10)
+    -- The stats column starts a fixed gap past the paper doll's right-hand
+    -- slots, wherever the group ended up - so the two stay a pair. Clamped to
+    -- the panel on the way out, because on a frame too narrow to hold both, the
+    -- gap is the thing that gives.
+    local x = figureL + DETAIL_FIGURE_W + slotGutter + GROUP_GAP
+    x = math.max(10, math.min(x, detail:GetWidth() - COLUMN_W - 10))
     detail.columnRight = x + COLUMN_W
     local y = figureTop
 
@@ -2296,9 +2323,21 @@ local DETAIL_TEST = {
     end,
     DetailFigureBox = function()
         if not detail then return {} end
-        local _, _, _, _, top = detail.stage:GetPoint(1)
-        return { top = top, height = detail.stage:GetHeight(),
+        local _, _, _, left, top = detail.stage:GetPoint(1)
+        return { top = top, left = left, height = detail.stage:GetHeight(),
                  width = detail.stage:GetWidth(),
+                 -- The figure's centre, which MOVES: the composition is centred
+                 -- as a whole on a wide panel, so anything that has to line up
+                 -- under the figure must read this rather than assume a margin.
+                 centre = (left or 0) + (detail.stage:GetWidth() or 0) / 2,
+                 -- Where the ART is anchored, which is a SEPARATE fact from
+                 -- where the box is: the cutout and the class plate are placed
+                 -- by their own SetPoint calls, and a mutation that leaves
+                 -- either behind while the box moves is invisible to anything
+                 -- that only looks at the box.
+                 art = (detail.figure:IsShown() and select(4, detail.figure:GetPoint(1)))
+                    or (detail.plate:IsShown() and select(4, detail.plate:GetPoint(1)))
+                    or nil,
                  bottom = (top or 0) - (detail.stage:GetHeight() or 0) }
     end,
     DetailAuditLine = function() return detailAudit and detailAudit.none end,
