@@ -1108,13 +1108,14 @@ do
         eq("haste is not scanned", me.stat_haste, nil)
         eq("  nor resilience", me.stat_resilience, nil)
 
-        -- Hit chance is NOT scanned, even though the stub offers a
-        -- GetHitModifier - and the function is REAL on this client, listed in
-        -- the 1.60.1.70009 dump with a signature. What is unmeasured is its
-        -- runtime value. Core.lua lists stat_hitpct in RETIRED_FIELDS and purges
-        -- it at login, so a producer here would write a field the addon deletes
-        -- on the next load, which is what an earlier version of this commit did.
-        eq("hit chance is not scanned", me.stat_hitpct, nil)
+        -- Bonus hit IS scanned now. MEASURED on 1.60.1.70009: GetHitModifier
+        -- printed 0, not ABSENT and not nil, so the function works and Core has
+        -- taken stat_hitpct off RETIRED_FIELDS.
+        --
+        -- Asserted as the stubbed VALUE, not merely non-nil: the field reads
+        -- non-nil from a producer that wrote a constant, and the point is that it
+        -- carries what the client answered.
+        eq("bonus hit is scanned", me.stat_hitpct, 4)
 
         check("the stats around them are still there",
               me.stat_ap ~= nil and me.stat_defense ~= nil and me.stat_armor ~= nil)
@@ -1129,16 +1130,31 @@ do
               (tonumber(me.gearid_offhand) or 0) == 5001, tostring(me.gearid_offhand))
     end
 
-    -- A client without it must not crash the scan. GetCritChance is not
-    -- guaranteed on every build, and the scan runs on login before anything
-    -- else works.
-    local realCrit = GetCritChance
-    GetCritChance = nil
-    AltStableDB = {}
-    check("a client without GetCritChance still scans", pcall(AltStable.ScanCharacter))
-    local bare = AltStableDB[UnitGUID("player")]
-    check("  and simply has no crit", bare == nil or bare.stat_crit == nil)
-    GetCritChance = realCrit
+    -- A client without them must not crash the scan. Neither is guaranteed on
+    -- every build, and the scan runs on login before anything else works - so an
+    -- unguarded call there takes the whole login path down, not one stat.
+    --
+    -- Both are cleared, and each is cleared ALONE as well: a single test with
+    -- both missing passes for a scanner that guards one of them and calls the
+    -- other, because the first guard returns before the second line runs.
+    local realCrit, realHit = GetCritChance, GetHitModifier
+    for _, case in ipairs({ { crit = false, hit = false, what = "neither" },
+                            { crit = true,  hit = false, what = "no GetHitModifier" },
+                            { crit = false, hit = true,  what = "no GetCritChance" } }) do
+        GetCritChance = case.crit and realCrit or nil
+        GetHitModifier = case.hit and realHit or nil
+        AltStableDB = {}
+        check(("a client with %s still scans"):format(case.what),
+              pcall(AltStable.ScanCharacter))
+        local bare = AltStableDB[UnitGUID("player")]
+        if not case.crit then
+            check("  and simply has no crit", bare == nil or bare.stat_crit == nil)
+        end
+        if not case.hit then
+            check("  nor bonus hit", bare == nil or bare.stat_hitpct == nil)
+        end
+    end
+    GetCritChance, GetHitModifier = realCrit, realHit
     WoW.critChance, WoW.hitModifier = 12.5, 3
 end
 

@@ -580,21 +580,22 @@ local RETIRED_FIELDS = {
     -- 1.60.1.70009 reporting 1.66% for a level 18 gnome warlock, which is a
     -- real value and not a rating-derived zero.
     --
-    -- stat_hitpct STAYS retired, and NOT because the function is missing.
-    -- GetHitModifier is in the 1.60.1.70009 dump with a signature -
-    -- `GetHitModifier() -> result:number [PlayerScript]` - so an earlier version
-    -- of this note claiming it "appears in no dump" was simply wrong. Presence
-    -- is not useful behaviour, though.
+    -- stat_hitpct is OFF this list too, now, and the measurement is what did it.
     --
-    -- What is actually known: the Combat row for it did not render on the live
-    -- client, which is equally consistent with a genuine zero (it reports BONUS
-    -- hit from gear, which is zero for most characters) and with the function
-    -- returning nothing useful. Those are different things, the RUNTIME value is
-    -- UNMEASURED, and a producer either way would store a zero that cannot be
-    -- told from an absence - exactly what this note warns about.
+    --     /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+    --     0
     --
-    -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")
-    stat_hitpct = true,
+    -- MEASURED on 1.60.1.70009. Not "ABSENT" and not nil: the function exists,
+    -- is callable, and returns a number. That resolves the ambiguity this note
+    -- used to hedge on - "the row did not render" was equally consistent with a
+    -- missing function and a genuine zero, and it was the zero.
+    --
+    -- So there is a build-verified producer, which is exactly the condition this
+    -- note set. What is STILL unobserved is a NONZERO reading: it reports the
+    -- bonus hit from gear, and the character measured had none. That is handled
+    -- in the display rather than here - the Roster row has no allowZero, so it
+    -- appears only for a character that actually has some - and it is not a
+    -- reason to keep purging a field the client will answer for.
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }
 -- The TBC reputation slugs. Standings are rep_<factionID> now (Reputations.lua).

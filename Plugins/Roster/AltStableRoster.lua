@@ -617,13 +617,17 @@ local CHAR_STAT_GROUPS = {
         { label = "Attack Power", key = "stat_ap",      kind = "int" },
         { label = "Spell Power",  key = "stat_sp",      kind = "int" },
         { label = "Melee Crit",   key = "stat_crit",    kind = "percent2" },
-        -- No Hit Chance row. GetHitModifier exists on this client - it is in
-        -- the 1.60.1.70009 dump - but its VALUE is unmeasured here, and
-        -- returns the BONUS hit from gear, which is zero for most characters -
-        -- so the row was invisible for nearly everybody, and "Hit Chance" was
-        -- the wrong label for it besides: no bonus hit is not a 0% chance to
-        -- hit. See the note in Scanner.lua.
-
+        -- "Bonus Hit", NOT "Hit Chance". GetHitModifier returns the hit percent
+        -- your GEAR adds, not your chance to hit anything - so a row reading
+        -- "Hit Chance 0%" would be stating that the character always misses,
+        -- which is the label being wrong rather than the number.
+        --
+        -- MEASURED as 0 on 1.60.1.70009, which is a real answer for a character
+        -- with no +hit gear. Deliberately WITHOUT allowZero: a nonzero reading
+        -- is still unobserved on this client, and without it HasStatValue hides
+        -- the row at zero - so the row appears only for a character that has
+        -- some, and nobody is shown a figure that turns out to mean nothing.
+        { label = "Bonus Hit",    key = "stat_hitpct",  kind = "percent2" },
         { label = "Defense",      key = "stat_defense", kind = "int" },
     } },
 }
@@ -1469,6 +1473,14 @@ local function BuildDetail()
     local maxFindings = 0
     for _ in pairs(ENCHANTABLE_SLOTS) do maxFindings = maxFindings + 1 end
     detailAudit = { rows = {} }
+    -- Said out loud when the stats column runs out of room. A row quietly not
+    -- drawn is a stat the player has no way to know exists, which is the same
+    -- class of dishonesty as a clean bill for a character wearing nothing.
+    detail.statsMore = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    detail.statsMore:SetJustifyH("LEFT")
+    detail.statsMore:SetTextColor(0.55, 0.55, 0.55)
+    detail.statsMore:Hide()
+
     detailAudit.none = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     detailAudit.none:SetJustifyH("LEFT")
     detailAudit.none:SetJustifyV("TOP")
@@ -1855,35 +1867,139 @@ local function RenderDetail(char)
     -- Rows whose stat this character does not have are skipped, and a section
     -- with nothing left in it takes its header with it - a "Combat" heading
     -- over five dashes says nothing.
+    --
+    -- And the column is CLAMPED to the panel, the vertical half of the clamp the
+    -- tabs above already had. Seventeen rows and four headers is about 421px
+    -- measured from figureTop, the loop only ever decremented y, and `detail`
+    -- sets no SetClipsChildren - so a fully-statted character on a short
+    -- inherited frame drew its last rows below the panel edge and over the game
+    -- world. Sixteen rows already did; the Bonus Hit row made it one worse,
+    -- which is how it came up.
+    --
+    -- Compressed first, hidden second. Squeezing the rows keeps everything
+    -- visible for any panel that is merely snug, and only a genuinely short one
+    -- loses rows - with a line saying how many, because a row silently absent is
+    -- a stat the player cannot know exists.
+    -- The row's OWN measured height is the floor for everything below, not a
+    -- guessed number. A stride shorter than the text it steps over stacks the
+    -- rows on each other - the same trap as a slot stride below the icon size -
+    -- and it also makes the clamp lie, because the loop advances by the stride
+    -- while the label reaches further down than that.
+    --
+    -- Taking the floor HERE rather than at each clamp site is what keeps the two
+    -- honest about each other: with the stride provably at least as tall as the
+    -- text, the distance the loop advances is the distance the row occupies, and
+    -- "will the next row fit" needs no second quantity to compare against.
+    local lineH = 9
+    if detailRows[1] and detailRows[1].rows[1] then
+        lineH = math.max(lineH, detailRows[1].rows[1].label:GetHeight() or 0)
+    end
+    local rowH  = math.max(STAT_ROW_H, lineH)
+    local headH = rowH + 2
+    local gapH  = STAT_SECTION_GAP
+    local hidden, mightTruncate = 0, false
+    if onChar then
+        -- What the column needs at full size, counting only what will be drawn.
+        local needed = 0
+        for _, group in ipairs(detailRows) do
+            local shown = 0
+            for _, row in ipairs(group.rows) do
+                if HasStatValue(char, row.def) then shown = shown + 1 end
+            end
+            if shown > 0 then needed = needed + headH + shown * rowH + gapH end
+        end
+        -- The room between the column's top and the panel's bottom edge. y is a
+        -- negative offset from the top, so -y is the distance already spent.
+        local room = detail:GetHeight() + y - 4
+        mightTruncate = needed > room
+        if mightTruncate and needed > 0 then
+            local scale = room / needed
+            rowH  = math.max(lineH, math.floor(rowH * scale))
+            headH = math.max(lineH + 2, math.floor(headH * scale))
+            gapH  = math.max(2, math.floor(gapH * scale))
+        end
+    end
+    -- The notice needs room too, and it is the thing that ANNOUNCES the
+    -- overflow - so it drawing outside the panel is the bug wearing its own
+    -- warning label. Reserved whenever truncation is possible at all, which is
+    -- exactly the condition that made the column compress: the loop cannot know
+    -- it will truncate until it has already spent the height, so the room has to
+    -- be set aside before it starts.
+    -- Measured from a POPULATED font string, never from the notice itself.
+    --
+    -- An auto-sized FontString with no text has no height, and the notice is
+    -- created empty and cleared back to "" by every render that hides nothing -
+    -- so measuring it returns 0 on the first short panel, and on every
+    -- tall-then-short transition. Both the reservation and the clamp below then
+    -- reserve nothing, and the notice overflows by its own full height: the
+    -- original bug, surviving the fix for it, in the one lifecycle the fix did
+    -- not cover.
+    --
+    -- `lineH` comes from a stat row's label, which is given its text at build
+    -- time and never loses it, and which uses the same font object as the
+    -- notice - so it is the notice's height, measured somewhere the measurement
+    -- is always valid.
+    --
+    -- Just lineH, not max(lineH, whatever the notice says). The notice is one
+    -- line in the same font and has no width constraint, so it cannot wrap and
+    -- cannot exceed it; a max() would be a branch nothing can reach, which is
+    -- worse than none. If this ever gains a width and wraps, that changes and
+    -- this line has to change with it.
+    local noticeH = lineH
+    local bottomY = -detail:GetHeight() + 4
+    local floorY  = bottomY + (mightTruncate and (noticeH + 2) or 0)
+
     for _, group in ipairs(detailRows) do
         local any = false
         for _, row in ipairs(group.rows) do
             if HasStatValue(char, row.def) then any = true; break end
         end
-        if not any or not onChar then
+        -- A header needs room for itself AND one row under it, or it is a
+        -- heading introducing nothing - the same rule as the empty-section case
+        -- just above, reached by running out of panel instead of out of stats.
+        if not any or not onChar or (y - headH - rowH) < floorY then
             group.header:Hide()
-            for _, row in ipairs(group.rows) do row.label:Hide(); row.value:Hide() end
+            for _, row in ipairs(group.rows) do
+                if any and onChar and HasStatValue(char, row.def) then
+                    hidden = hidden + 1
+                end
+                row.label:Hide(); row.value:Hide()
+            end
         else
             group.header:ClearAllPoints()
             group.header:SetPoint("TOPLEFT", detail, "TOPLEFT", x, y)
             group.header:Show()
-            y = y - STAT_ROW_H - 2
+            y = y - headH
             for _, row in ipairs(group.rows) do
-                if HasStatValue(char, row.def) then
+                if not HasStatValue(char, row.def) then
+                    row.label:Hide(); row.value:Hide()
+                elseif (y - rowH) < floorY then
+                    hidden = hidden + 1
+                    row.label:Hide(); row.value:Hide()
+                else
                     row.label:ClearAllPoints()
                     row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
                     row.value:ClearAllPoints()
                     row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
                     row.value:SetText(FormatStatValue(char, row.def))
                     row.label:Show(); row.value:Show()
-                    y = y - STAT_ROW_H
-                else
-                    row.label:Hide(); row.value:Hide()
+                    y = y - rowH
                 end
             end
-            y = y - STAT_SECTION_GAP
+            y = y - gapH
         end
     end
+
+    -- Clamped as well as reserved for. `y` has had a section gap taken off it
+    -- since the last row was placed, so it can sit a little below the floor the
+    -- rows honoured - and the reserve above only holds while the arithmetic that
+    -- produced it does. This is the line that makes it true regardless.
+    detail.statsMore:ClearAllPoints()
+    detail.statsMore:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6,
+                              math.max(y, bottomY + noticeH))
+    detail.statsMore:SetText(hidden > 0
+        and ("|cff888888+%d more - the window is too short|r"):format(hidden) or "")
+    detail.statsMore:SetShown(hidden > 0)
 end
 
 function Roster.Select(guid)
@@ -2127,6 +2243,48 @@ local DETAIL_TEST = {
         return { x = bx, right = detail.columnRight, panel = detail:GetWidth() }
     end,
     SlotScale = SlotScale,
+    -- The label the column measures its line height FROM. Exposed so a test can
+    -- give it a height larger than STAT_ROW_H and check the stride follows: no
+    -- font this stub models is that tall, and the floor that handles it would
+    -- otherwise be code no test ever reaches.
+    DetailStatFirstLabel = function()
+        return detailRows and detailRows[1] and detailRows[1].rows[1]
+           and detailRows[1].rows[1].label
+    end,
+    DetailStatsMore = function()
+        if not detail or not detail.statsMore:IsShown() then return nil end
+        return detail.statsMore:GetText()
+    end,
+    -- EVERYTHING drawn in the stats column, with the y it was placed at, so a
+    -- test can ask whether any of it left the panel rather than trusting a count.
+    --
+    -- "Everything" is load-bearing. This used to walk headers and rows only, and
+    -- the one widget it left out - the overflow notice - was the one that then
+    -- drew below the panel edge, because it is appended after the loop has spent
+    -- the height. A widget added to this column belongs in this walk, or the
+    -- bounds tests pass without covering it.
+    DetailStatRowYs = function()
+        local out = {}
+        for _, group in ipairs(detailRows or {}) do
+            if group.header:IsShown() then
+                out[#out + 1] = { select(5, group.header:GetPoint(1)) }
+                out[#out].h = group.header:GetHeight()
+            end
+            for _, row in ipairs(group.rows) do
+                if row.label:IsShown() then
+                    local e = { select(5, row.label:GetPoint(1)) }
+                    e.h = row.label:GetHeight()
+                    out[#out + 1] = e
+                end
+            end
+        end
+        if detail and detail.statsMore:IsShown() then
+            local e = { select(5, detail.statsMore:GetPoint(1)) }
+            e.h = detail.statsMore:GetHeight()
+            out[#out + 1] = e
+        end
+        return out
+    end,
     SLOT_SIZE = SLOT_SIZE, SLOT_STEP = SLOT_STEP, SLOT_MIN = SLOT_MIN,
     DetailStageOrder = function()
         if not detail then return {} end

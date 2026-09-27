@@ -1068,32 +1068,77 @@ coordinate space, so no scale conversion is involved. Fixed for our own button i
 
 ---
 
-## GetCritChance works; GetHitModifier exists but is UNMEASURED
+## GetCritChance and GetHitModifier both work — MEASURED
 
 ```
-GetCritChance()    ->  1.66            MEASURED, level 18 gnome warlock, 1.60.1.70009
-GetHitModifier()   ->  ?               PRESENT in the dump, runtime value not measured
+GetCritChance()    ->  1.66      level 18 gnome warlock
+GetHitModifier()   ->  0         a character with no +hit gear
 ```
 
-`GetCritChance` returns a real percentage, not a rating-derived zero, so `stat_crit` has a
-build-verified producer and is scanned.
+Both MEASURED on 1.60.1.70009. Both therefore have build-verified producers and are scanned;
+neither is on `RETIRED_FIELDS` any more.
 
-`GetHitModifier` **is in the 1.60.1.70009 dump**, with a signature —
-`GetHitModifier() -> result:number [PlayerScript]` — so any claim that it was removed with hit
-rating is wrong. What is not known is what it *returns* here. It reports the **bonus** hit from
-gear, which is zero for most characters, and the Combat row for it did not render on the live
-client — which is equally consistent with "no useful value" and "a genuine zero". Those are
-different things, and a stored zero cannot be told from an absence afterwards, so `stat_hitpct`
-stays on `RETIRED_FIELDS` and nothing produces it.
-
-Presence in the dump is evidence of an API's existence and **nothing at all** about its behaviour.
-Worth stating because it cuts the other way too: a function being listed is not a reason to use it.
-
-To settle it, one line in game:
+`GetHitModifier` was the doubtful one, and it was measured twice — first with a two-state probe
+that happened to be conclusive, then with the four-state one below, which agreed:
 
 ```
 /run print(GetHitModifier and GetHitModifier() or "ABSENT")
+0
+
+/run local f=GetHitModifier if not f then ... end
+RETURNED 0
 ```
+
+The second reading is the one that settles it, because it is the one that *could* have said
+something else. Four outcomes matter and they lead to four different decisions:
+
+| printed | meaning | what you do |
+|---|---|---|
+| `ABSENT` | the global does not exist | drop the feature, or find its replacement |
+| `THREW ...` | it exists and errors when called this way | wrong arguments, or wrong API - see `C_Item.GetItemIcon` |
+| `RETURNED nil` | it exists and answers nothing useful | do not persist it |
+| `RETURNED 0` | it exists and answers | persist it; decide separately whether to DISPLAY a zero |
+
+> **Do not use `print(f and f() or "ABSENT")`.** It reads well and it cannot tell two of those cases
+> apart: `nil or "ABSENT"` is `"ABSENT"`, so a function that exists and returns nil reports as
+> missing. `GetProfessions` on this client returns `nil x7` and would print `ABSENT` under it. That
+> is the exact misdiagnosis this section exists to correct, and the line above was briefly
+> prescribed here as the recipe for avoiding it.
+>
+> It was the first thing run for `GetHitModifier`, and its answer did stand — `0` can only come
+> from a call that returned `0`, because both failure cases print `ABSENT`. A truthy answer is
+> conclusive under the bad probe; that is the only thing it is good for, and it is luck rather than
+> method: the same line would have reported `ABSENT` for a function that exists.
+
+```
+/run local f=GetHitModifier if not f then print("ABSENT") else local ok,v=pcall(f) print(ok and "RETURNED "..tostring(v) or "THREW "..tostring(v)) end
+```
+
+ONE `/run`, deliberately: a `local` does not survive between chunks, so splitting it over two lines
+leaves `f` nil on the second and the probe reports `ABSENT` for everything. 150 characters with the
+slash command, inside the edit box's 255 limit.
+
+**VERIFIED IN GAME on 1.60.1.70009**, not merely reasoned about: pasted into the chat box as one
+line, it printed `RETURNED 0`. So the length, the quoting, the `pcall` on a bare global and the
+single-chunk `local` all work on this client, and the four branches were checked against all four
+outcomes locally first. Copy it as-is.
+
+Before this, "the Combat row did not render in game" was being read as evidence the function was
+gone. It was evidence of a zero. Two rounds of comments in this repo asserted it was "a pre-WoD
+global removed when hit rating was" — it is in the dump at line 4912 with a full signature, and it
+runs.
+
+**What is still unobserved is a NONZERO reading.** It reports the hit percent your GEAR adds, so
+zero is the correct answer for a character with none, and no character with +hit has been measured.
+That is handled in the display rather than by withholding the field: the Roster's row has no
+`allowZero`, so it appears only for a character that actually has some. And the row is labelled
+**"Bonus Hit"**, not "Hit Chance" — "Hit Chance 0%" would be telling the player they always miss,
+which is the label being wrong rather than the number.
+
+The general rule, which cuts both ways: presence in the dump says nothing about behaviour, and
+absence of a rendered row says nothing about presence. For a value you intend to PERSIST, get one
+live reading that separates all four cases above before you write a producer for it — and check that
+the probe you wrote can actually express them, which the first one here could not.
 
 ---
 
@@ -1160,6 +1205,12 @@ UnitXPMax("player")         ->  400
    > The lesson is not about CVars. "The client ignores this" and "the client obeys this and a
    > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
    > A working addon doing the same thing was the cheapest way to tell them apart.
+7. **A NONZERO `GetHitModifier`.** The function works — measured twice, `0` and `RETURNED 0`, the
+   second under a probe that could have said otherwise — but it returns
+   the hit percent your GEAR adds, and the character measured had none, so no nonzero reading has
+   ever been seen on this client. Nothing incorrect is displayed either way: the Roster's Bonus Hit
+   row has no `allowZero` and hides at zero. If you equip something with +hit and the row stays
+   away, that is the case to report.
 
 ## What is under the cursor: GetMouseFoci, and it is a list
 

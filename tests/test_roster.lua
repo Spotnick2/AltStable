@@ -1439,6 +1439,20 @@ do
     -- the function works and nothing about whether clicking a card reaches it -
     -- and the card's handler used to call Select, which only moves a highlight.
     check("clicking a card drills in", T.CardClick(1))
+
+    -- The detail frame gets a REALISTIC SIZE from here on, because the stub does
+    -- not compute layout: `detail` fills the panel in game, so GetHeight is the
+    -- panel's height there and the stub's 20px default here. The stats column is
+    -- clamped against that height, so leaving it at 20 makes every row overflow
+    -- and the whole section below assert against a pane with nothing in it.
+    --
+    -- Set on the frame the code actually MEASURES, for the same reason the
+    -- narrow-panel block further down says: a size on the parent does not reach
+    -- the detail, and asserting against the parent's would be asserting against a
+    -- number the code never reads.
+    T.DetailFrame():SetWidth(1400)
+    T.DetailFrame():SetHeight(800)
+    T.Refresh()
     check("  the detail view is up", T.DetailShown())
     check("  showing the character on that card",
           (T.DetailText() or ""):find(T.Cards()[1].char.name, 1, true) ~= nil,
@@ -1617,13 +1631,13 @@ do
     -- The two stats that exist in Vanilla and had to be added to the scanner.
     check("melee crit is shown to two places", stats:find("Melee Crit=12.50%", 1, true) ~= nil, stats)
 
-    -- Hit chance is NOT offered. GetHitModifier exists on this client - it is
-    -- in the 1.60.1.70009 dump with a signature - but its VALUE is unmeasured,
-    -- returns the BONUS hit from gear - zero for most characters, so the row
-    -- was invisible for nearly everybody - and stat_hitpct is still on Core's
-    -- RETIRED_FIELDS, which purges it at login and drops it from sync. A row
-    -- for a field the addon deletes is worse than no row.
-    check("hit chance is not offered", stats:find("Hit Chance", 1, true) == nil, stats)
+    -- Bonus hit IS offered now, and LABELLED as bonus hit. MEASURED on
+    -- 1.60.1.70009: GetHitModifier() printed 0, which is a number rather than
+    -- ABSENT or nil, so the function works. What it returns is the hit percent
+    -- your GEAR adds - so "Hit Chance" would have been the wrong label whatever
+    -- the value: no bonus hit is not a 0% chance to hit anything.
+    check("the row is labelled Bonus Hit, not Hit Chance",
+          stats:find("Hit Chance", 1, true) == nil, stats)
 
     -- And the two that do NOT exist pre-TBC, which must not have been ported
     -- along with the rest of AltTracker's table.
@@ -1637,7 +1651,47 @@ do
     check("haste is not in the table at all", not defined.stat_haste)
     check("  nor resilience", not defined.stat_resilience)
     check("  while the crit row is", defined.stat_crit)
-    check("  and the unmeasured hit one is not", not defined.stat_hitpct)
+    check("  and the bonus-hit row is too, now it is measured", defined.stat_hitpct)
+
+    -- The row HIDES at zero, which is the whole reason it is safe to offer.
+    -- GetHitModifier reports what gear adds, a nonzero reading is still
+    -- unobserved on this client, and allowZero is deliberately absent so nobody
+    -- is shown a precise 0.00% that might turn out to mean nothing.
+    do
+        local hitDef
+        for _, g in ipairs(T.CHAR_STAT_GROUPS) do
+            for _, d in ipairs(g.defs) do
+                if d.key == "stat_hitpct" then hitDef = d end
+            end
+        end
+        check("the bonus-hit row does not claim zero is worth showing",
+              hitDef and not hitDef.allowZero)
+        check("  so a character with no +hit gear is not given the row",
+              T.HasStatValue({ stat_hitpct = 0 }, hitDef) == false)
+        check("  while one that has some is",
+              T.HasStatValue({ stat_hitpct = 2 }, hitDef) == true)
+        -- And rendered as a percentage to two places, like crit beside it,
+        -- rather than a bare number.
+        eq("  formatted as a percentage", T.FormatStatValue({ stat_hitpct = 2 }, hitDef),
+           "2.00%")
+
+        -- Through the pane, not only the table: a character carrying some.
+        AltStableDB.hitty = { guid = "hitty", name = "Hit Ty", class = "WARRIOR",
+            realm = "R", level = 60, race = "Human", raceName = "Human", ilvl = 40,
+            money = 100, stat_int = 10, lastUpdate = time() - 60, stat_hitpct = 3 }
+        T.Refresh()
+        T.DrillDown("hitty")
+        local hitStats = table.concat(T.DetailStats(), " | ")
+        check("a character with bonus hit sees the row",
+              hitStats:find("Bonus Hit=3.00%", 1, true) ~= nil, hitStats)
+        AltStableDB.hitty.stat_hitpct = 0
+        T.DrillDown("hitty")
+        check("  and one without does not",
+              table.concat(T.DetailStats(), " | "):find("Bonus Hit", 1, true) == nil)
+        AltStableDB.hitty = nil
+        T.Refresh()
+        T.DrillDown("geared")
+    end
     check("haste is not rendered either", stats:find("Haste", 1, true) == nil, stats)
     check("  and the scanner does not invent them",
           AltStableDB.geared.stat_haste == nil and AltStableDB.geared.stat_resilience == nil)
@@ -2011,6 +2065,26 @@ do
         eq("  while a fresh one wraps",
            CreateFrame("Frame"):CreateFontString():GetWordWrap(), true)
 
+        -- A FontString's height is TEXT-DEPENDENT, and empty means zero.
+        --
+        -- Pinned directly because it is a stub contract that nothing else
+        -- exercises any more: the Roster stopped measuring an empty font string,
+        -- which is the bug this models, so without an assertion here the stub
+        -- could quietly go back to a fixed height and the next piece of code
+        -- that reserves room for a font string would overflow in game and pass
+        -- in the suite. That is exactly what happened.
+        local empty = CreateFrame("Frame"):CreateFontString()
+        eq("an empty font string has no height", empty:GetHeight(), 0)
+        empty:SetText("something")
+        check("  and a populated one does", empty:GetHeight() > 0,
+              tostring(empty:GetHeight()))
+        empty:SetText("")
+        eq("  and clearing it takes the height away again", empty:GetHeight(), 0)
+        -- Told how tall to be rather than asked: an explicit size wins, as on
+        -- the client, or the Roster's own reason line could not set its height.
+        empty:SetHeight(33)
+        eq("  while an explicit SetHeight wins over both", empty:GetHeight(), 33)
+
         -- Same rule for enabled state, which the active tab depends on.
         local btn = CreateFrame("Button")
         eq("a fresh button is enabled", btn:IsEnabled(), true)
@@ -2375,6 +2449,166 @@ do
                       tostring(midX + sz / 2), tostring(figCx)))
         end
         d:SetHeight(800)
+
+        -- The STATS column has to stay inside the panel too, which is the
+        -- vertical half of the clamp the tabs got. Seventeen rows and four
+        -- headers is about 421px from the column's top, the render loop only ever
+        -- decremented y, and nothing here sets SetClipsChildren - so a
+        -- fully-statted character on a short frame drew its last rows over the
+        -- game world. Sixteen rows already did this; the Bonus Hit row made it
+        -- one worse, which is how it surfaced.
+        do
+            AltStableDB.loaded = { guid = "loaded", name = "Fully Loaded",
+                class = "WARRIOR", realm = "R", level = 59, race = "Human",
+                raceName = "Human", ilvl = 61.5, money = 573920,
+                lastUpdate = time() - 3600, restPercent = 42, xpPercent = 88,
+                stat_hp = 3210, stat_mana = 4870, stat_armor = 812,
+                stat_str = 42, stat_agi = 53, stat_sta = 290,
+                stat_int = 493, stat_spi = 446,
+                stat_ap = 32, stat_sp = 728, stat_defense = 300,
+                stat_crit = 12.5, stat_hitpct = 3 }
+            T.Refresh()
+
+            -- 321, 333 and 345 are not decoration. They are the heights where
+            -- the last row that fits is the last row of a SECTION, so the loop
+            -- takes a section gap off y before the notice is placed - and the
+            -- notice lands below the floor the rows honoured. A sweep of every
+            -- height from 180 to 800 with the notice's own clamp removed puts it
+            -- outside the panel at exactly these three and nowhere else, so
+            -- without them the clamp is a line no test can justify.
+            for _, h in ipairs({ 800, 500, 345, 333, 321, 310, 240 }) do
+                d:SetHeight(h)
+                T.DrillDown("loaded")
+                local rows = T.DetailStatRowYs()
+                check(("the stats column draws something at %dpx"):format(h),
+                      #rows > 0, tostring(#rows))
+                for i, r in ipairs(rows) do
+                    check(("every drawn stat row is inside a %dpx panel"):format(h),
+                          (r[1] or 0) - (r.h or 0) >= -h,
+                          ("row bottom %s vs panel %d"):format(
+                              tostring((r[1] or 0) - (r.h or 0)), h))
+                    -- And no row sits on top of the one above it. This is the
+                    -- invariant the stride floor exists for: compressing the
+                    -- column is only legitimate down to the height of the text
+                    -- itself, and past that the rows stop being separate rows.
+                    -- It is also the reason the clamp can compare against the
+                    -- stride alone - the stride is provably at least as tall as
+                    -- what it steps over.
+                    if i > 1 then
+                        local prev = rows[i - 1]
+                        check(("stat rows do not overlap at %dpx"):format(h),
+                              (prev[1] or 0) - (r[1] or 0) >= (r.h or 0),
+                              ("stride %s vs text %s"):format(
+                                  tostring((prev[1] or 0) - (r[1] or 0)),
+                                  tostring(r.h)))
+                    end
+                end
+            end
+
+            -- At full height nothing is dropped, so the clamp is not just
+            -- "hide most of it".
+            d:SetHeight(800)
+            T.DrillDown("loaded")
+            eq("a tall panel hides no stat rows", T.DetailStatsMore(), nil)
+            local tall = #T.DetailStatRowYs()
+            check("  and draws every section", tall >= 21, tostring(tall))
+
+            -- Snug rather than short: the rows COMPRESS and everything survives.
+            -- Without this, "nothing draws outside" is satisfied by hiding rows
+            -- the moment the panel is anything less than generous.
+            --
+            -- 380 is chosen against the stub's font metrics, where a row of text
+            -- is 12px inside a 15px stride: this column wants 363px at full
+            -- spacing and can be squeezed to 268 before a stride would be
+            -- shorter than its own text, so a 380px panel (318px of room) sits
+            -- inside the band where compression is both necessary and sufficient.
+            -- The invariant under test is the behaviour, not the pixel.
+            d:SetHeight(380)
+            T.DrillDown("loaded")
+            eq("a snug panel compresses instead of dropping rows",
+               T.DetailStatsMore(), nil)
+            eq("  keeping every row", #T.DetailStatRowYs(), tall)
+
+            -- The reserve for the notice is taken only when truncation is
+            -- POSSIBLE, not always. 425 is the height where the column fits
+            -- exactly: an unconditional reserve would take 14px it does not
+            -- need, drop the last row and then announce the drop it caused. The
+            -- same sweep says 425-428 is the whole band where that shows, so
+            -- this is the assertion that keeps the condition on the reserve.
+            d:SetHeight(425)
+            T.DrillDown("loaded")
+            eq("a column that fits exactly reserves nothing and drops nothing",
+               T.DetailStatsMore(), nil)
+            eq("  keeping every row at the boundary", #T.DetailStatRowYs(), tall)
+
+            -- And when it genuinely cannot fit, it SAYS how many went. A row
+            -- quietly not drawn is a stat the player has no way to know exists.
+            d:SetHeight(200)
+            T.DrillDown("loaded")
+            local more = T.DetailStatsMore()
+            check("a panel too short to compress says how many rows it dropped",
+                  more ~= nil and more:find("more", 1, true) ~= nil, tostring(more))
+            check("  and drew fewer than it does when there is room",
+                  #T.DetailStatRowYs() < tall,
+                  ("%s vs %s"):format(tostring(#T.DetailStatRowYs()), tostring(tall)))
+
+            -- The EMPTY-TO-VISIBLE transition, which is the lifecycle the
+            -- reservation has to survive.
+            --
+            -- The notice is created without text and cleared back to "" by every
+            -- render that hides nothing, and an auto-sized FontString with no
+            -- text has no height. So a tall panel leaves it empty, and the next
+            -- short render measures zero, reserves nothing, and the notice
+            -- overflows by its own full height - the original bug living through
+            -- its own fix. Driven from a TALL panel each time, deliberately: a
+            -- test that only ever shrinks finds the notice already populated by
+            -- the previous case and never measures the empty one.
+            for _, h in ipairs({ 240, 310, 321 }) do
+                d:SetHeight(900)
+                T.DrillDown("loaded")
+                eq(("the notice starts empty before the %dpx case"):format(h),
+                   T.DetailStatsMore(), nil)
+                d:SetHeight(h)
+                T.DrillDown("loaded")
+                check(("the notice appears on the first short render at %dpx"):format(h),
+                      T.DetailStatsMore() ~= nil)
+                for _, r in ipairs(T.DetailStatRowYs()) do
+                    check(("  and everything is inside the panel at %dpx"):format(h),
+                          (r[1] or 0) - (r.h or 0) >= -h,
+                          ("bottom %s vs panel %d"):format(
+                              tostring((r[1] or 0) - (r.h or 0)), h))
+                end
+            end
+
+            -- A font TALLER than the row stride. No font the stub models is
+            -- 22px, and STAT_ROW_H is 15 - so without forcing it, the floor that
+            -- keeps the stride at least as tall as the text is unreachable code,
+            -- and the whole clamp rests on an assumption it never checks.
+            d:SetHeight(800)
+            T.DrillDown("loaded")
+            local label = T.DetailStatFirstLabel()
+            check("the column has a label to measure from", label ~= nil)
+            if label then
+                label:SetHeight(22)
+                T.DrillDown("loaded")
+                local big = T.DetailStatRowYs()
+                check("a font taller than the stride still draws rows", #big > 2,
+                      tostring(#big))
+                local stride = nil
+                for i = 2, #big do
+                    local gap = (big[i - 1][1] or 0) - (big[i][1] or 0)
+                    if not stride or gap < stride then stride = gap end
+                end
+                check("  and the stride grows to match it, rather than the text overlapping",
+                      (stride or 0) >= 22, tostring(stride))
+                label:SetHeight(12)
+            end
+
+            AltStableDB.loaded = nil
+            d:SetHeight(800)
+            T.Refresh()
+            T.DrillDown("geared")
+        end
 
         -- The scale itself, at the boundaries.
         do

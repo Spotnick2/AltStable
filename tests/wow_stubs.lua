@@ -165,7 +165,33 @@ local function makeFrame()
         t.GetDrawLayer = function(self) return self._layer, self._sublevel end
         return t
     end
-    f.CreateFontString = function() return makeFrame() end
+    -- A FontString is SHORTER than a layout stride, and the generic 20px default
+    -- was not: it is taller than STAT_ROW_H (15), which inverts the relationship
+    -- the Roster column is built on - a stride that must never be shorter than
+    -- the text it steps over. With the default, compressing the rows silently
+    -- GREW them and the compression tests passed without exercising compression.
+    --
+    -- And it is TEXT-DEPENDENT: an auto-sized FontString with no text has no
+    -- height. A fixed 12 hid a real bug - code that measures a font string to
+    -- reserve room for it reads 0 before the text is set, and the fixed stub
+    -- made that lifecycle unreachable, so the reservation looked correct in the
+    -- suite and overflowed in game on the first render.
+    --
+    -- An explicit SetHeight still wins, as it does on the client: that is a
+    -- FontString told how tall to be rather than asked.
+    --
+    -- MODELLED, NOT MEASURED. The exact number does not matter; being smaller
+    -- than a stride does, being zero when empty does, and no client renders a
+    -- small font at 20px.
+    f.CreateFontString = function()
+        local fs = makeFrame()
+        fs.GetHeight = function(self)
+            if self._GetHeight then return self._GetHeight end
+            local t = self._text
+            return (t and t ~= "") and 12 or 0
+        end
+        return fs
+    end
     -- Text is REMEMBERED, not swallowed: a footer or a label is a real
     -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
     -- display bug invisible to the suite.
@@ -619,11 +645,15 @@ function GetSpellBonusDamage(school) return 700 + school end
 -- so a stub for either would let a port of the TBC table pass here and then
 -- report a real 0% in game for something that does not exist.
 --
--- GetHitModifier is stubbed BECAUSE IT EXISTS - it is in the 1.60.1.70009 dump
--- with a signature - and the scanner deliberately does not call it anyway: its
--- runtime value is unmeasured, and stat_hitpct is in Core's RETIRED_FIELDS. The
--- stub is here so a test can prove we leave a present function alone, which is
--- a different assertion from "the function is missing".
+-- Both are MEASURED on 1.60.1.70009 and both are scanned: GetCritChance gave
+-- 1.66% on a level 18 gnome warlock, GetHitModifier printed 0 rather than
+-- ABSENT or nil - a working function answering for a character with no +hit
+-- gear. Neither is on Core's RETIRED_FIELDS any more.
+--
+-- The values here are DISTINCT and neither is zero, deliberately: a stub
+-- returning 0 for bonus hit would make "the field is stored" and "the field was
+-- defaulted" the same observation, and the display rule under test is precisely
+-- what happens at zero.
 function GetCritChance() return WoW.critChance end
 function GetHitModifier() return WoW.hitModifier end
 
