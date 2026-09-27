@@ -413,5 +413,138 @@ do
     AltStableProbeDB.autoCaptureOff = nil
 end
 
+------------------------------------------------------------
+-- The blackout has to cover what somebody lifted out of UIParent
+------------------------------------------------------------
+-- AltStable's showcase reparents the sheet and GameTooltip out from under
+-- UIParent so that hiding the game UI does not take them with it. Hiding
+-- UIParent therefore does not hide them - and UIParent:IsShown() reports the
+-- interface gone while the addon's own window is still in front of the camera.
+--
+-- This is not hypothetical. Every portrait taken with the sheet's capture
+-- button was a picture of the sheet, tooltip included, because the button
+-- lives in the sheet's title bar - so the sheet is open every time it is used.
+
+do
+    -- The sheet as the showcase leaves it: shown, opaque, and parented OUTSIDE
+    -- UIParent. The global name is how the probe finds it, the probe being a
+    -- separate addon with no access to AltStable's internals.
+    local sheet = CreateFrame("Frame", "AltStableSheet", UIParent)
+    -- The NAME is the contract. The probe is a separate addon and cannot reach
+    -- into AltStable's locals, so the global a named frame creates is the only
+    -- handle it has - rename the sheet's frame and the blackout stops covering
+    -- it, silently.
+    check("a named frame is reachable by that name", _G["AltStableSheet"] == sheet)
+    sheet:SetParent(nil)
+    sheet:Show()
+    sheet:SetAlpha(1)
+
+    GameTooltip:SetParent(nil)
+    GameTooltip:Show()
+    GameTooltip:SetAlpha(1)
+
+    -- Earlier blocks in this file leave the blackout on, and HideUI short-
+    -- circuits when it is already hidden. Start from a known interface.
+    T.ShowUI()
+    UIParent:Show()
+    check("the interface starts up", UIParent:IsShown())
+
+    check("the blackout reports success", T.HideUI())
+    check("  UIParent is down", UIParent:IsShown() == false)
+    eq("  and the lifted sheet is invisible too", sheet:GetAlpha(), 0)
+    eq("  as is the lifted tooltip", GameTooltip:GetAlpha(), 0)
+
+    T.ShowUI()
+    eq("restoring brings the sheet back", sheet:GetAlpha(), 1)
+    eq("  and the tooltip", GameTooltip:GetAlpha(), 1)
+    check("  and the interface", UIParent:IsShown())
+
+    -- The alpha that was THERE, not a hardcoded 1: a player running the sheet
+    -- at reduced opacity must not have it reset by taking a picture.
+    sheet:SetAlpha(0.6)
+    T.HideUI()
+    eq("a translucent sheet still goes fully invisible", sheet:GetAlpha(), 0)
+    T.ShowUI()
+    eq("  and comes back at the alpha it had", sheet:GetAlpha(), 0.6)
+    sheet:SetAlpha(1)
+
+    -- A capture abandoned after the blackout leaves no uiHidden to key off, so
+    -- the restore has to happen outside that branch or the player is left
+    -- looking at an invisible sheet with no way to know why.
+    T.HideUI()
+    eq("the sheet is invisible mid-capture", sheet:GetAlpha(), 0)
+    T.ShowUI()                       -- the real restore, clears uiHidden
+    T.ShowUI()                       -- and again, as an abandoned capture would
+    eq("a second restore is harmless", sheet:GetAlpha(), 1)
+
+    -- A sheet that is NOT lifted is already covered by the blackout, and is
+    -- left alone. Touching it would add a second thing that has to be undone
+    -- for no gain - and the one failure mode here is an invisible window, so
+    -- the fewer frames whose alpha is on loan, the better.
+    T.ShowUI()
+    sheet:SetParent(UIParent)
+    T.HideUI()
+    check("a sheet still under UIParent is not collected", (function()
+        for _, e in ipairs(T.strays() or {}) do
+            if e.frame == sheet then return false end
+        end
+        return true
+    end)(), "the lifted GameTooltip is expected here; the sheet is not")
+    eq("  and its alpha is left alone", sheet:GetAlpha(), 1)
+    T.ShowUI()
+    sheet:SetParent(nil)
+
+    -- Alt+Z mid-capture, driven through a REAL capture rather than HideUI on
+    -- its own, because the hook that makes this dangerous only fires while a
+    -- capture is running.
+    --
+    -- The engine call is how the player takes their interface back. The hook
+    -- clears uiHidden on the spot and abandons the shot - so a restore that
+    -- keyed off uiHidden would skip the strays and leave the sheet at alpha 0
+    -- with nothing to explain why. The player's only clue would be that their
+    -- addon window had vanished, and Alt+Z is exactly what somebody does when
+    -- an addon starts taking pictures unexpectedly.
+    resetCapture()
+    T.Capture()
+    check("a capture is running", T.capturing())
+    eq("  and the sheet went invisible with the interface", sheet:GetAlpha(), 0)
+
+    SetUIVisibility(true)              -- the player presses Alt+Z
+    check("  which abandons the capture", not T.capturing())
+    eq("Alt+Z mid-capture still gives the sheet back", sheet:GetAlpha(), 1)
+
+    -- The fallback blackout, on a client with no SetUIVisibility. It hides
+    -- UIParent directly and has exactly the same blind spot.
+    do
+        local realSetUIVisibility = SetUIVisibility
+        SetUIVisibility = nil
+        UIParent:Show()
+        check("the fallback blackout reports success", T.HideUI())
+        check("  UIParent is down", UIParent:IsShown() == false)
+        eq("  and it covers the lifted sheet too", sheet:GetAlpha(), 0)
+        T.ShowUI()
+        eq("  restoring brings it back", sheet:GetAlpha(), 1)
+        SetUIVisibility = realSetUIVisibility
+    end
+
+    -- A sheet that is CLOSED is not something to restore: bringing it back at
+    -- alpha 1 would be fine, but recording it at all is noise, and the same
+    -- rule keeps the probe from touching frames it has no business in.
+    sheet:Hide()
+    T.HideUI()
+    check("a closed sheet is not collected", (function()
+        for _, e in ipairs(T.strays() or {}) do
+            if e.frame == sheet then return false end
+        end
+        return true
+    end)())
+    T.ShowUI()
+    sheet:Show()
+
+    -- Put the world back for anything after this block.
+    GameTooltip:SetParent(UIParent)
+    sheet:Hide()
+end
+
 print(("test_render: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)

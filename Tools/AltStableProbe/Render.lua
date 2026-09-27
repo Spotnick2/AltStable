@@ -92,6 +92,61 @@ local uiHidden        -- "engine" | "uiparent" | nil
 local uiWasShown      -- was the interface up before we touched it?
 local owedRestore     -- a protected restore we could not make during combat
 
+-- Frames that survive the blackout because somebody lifted them OUT from under
+-- UIParent on purpose.
+--
+-- AltStable's showcase reparents exactly two - the sheet and GameTooltip - so
+-- that hiding the game UI does not take them with it. Hiding UIParent therefore
+-- does not hide them, and UIParent:IsShown() says the interface is gone while
+-- the addon's own window is still standing in front of the camera. The
+-- portraits that came out of the sheet's capture button were pictures of the
+-- sheet, tooltip included, and the check below was satisfied every time.
+--
+-- Named rather than discovered. "Anything not under UIParent" would also match
+-- the STAGE, which is parented to WorldFrame for this very reason and is the
+-- thing being photographed.
+--
+-- Alpha, not Hide: hiding the sheet fires its OnHide, which tears the showcase
+-- down and restores the interface in the middle of the capture. Alpha is
+-- invisible to the screenshot and to the frame.
+local STRAY_FRAMES = { "AltStableSheet" }
+local strays
+
+local function SuppressStrays()
+    strays = {}
+
+    local function zero(f)
+        if type(f) ~= "table" then return end
+        if type(f.GetAlpha) ~= "function" or type(f.SetAlpha) ~= "function" then return end
+        if f.IsShown and f:IsShown() == false then return end
+
+        -- Only a frame that is genuinely NOT under UIParent. One that still is
+        -- has already gone with the rest of the interface, and zeroing it would
+        -- hand the player back an invisible window afterwards.
+        local p = f.GetParent and f:GetParent()
+        while p do
+            if p == UIParent then return end
+            p = p.GetParent and p:GetParent()
+        end
+
+        strays[#strays + 1] = { frame = f, alpha = f:GetAlpha() }
+        pcall(f.SetAlpha, f, 0)
+    end
+
+    for _, name in ipairs(STRAY_FRAMES) do zero(_G[name]) end
+    zero(GameTooltip)
+    return #strays
+end
+
+-- Unconditional, and called before every early return in ShowUI: a capture that
+-- is abandoned half way through must not leave the player's sheet at alpha 0.
+local function RestoreStrays()
+    for _, s in ipairs(strays or {}) do
+        pcall(s.frame.SetAlpha, s.frame, s.alpha or 1)
+    end
+    strays = nil
+end
+
 -- Returns true only if the interface is ACTUALLY gone. The caller aborts
 -- otherwise: two screenshots of a character behind a full interface are not a
 -- portrait, and the fingerprint that follows would record the ruin as done.
@@ -105,6 +160,7 @@ local function HideUI()
         if UIParent and UIParent:IsShown() then
             return false            -- the call did not take
         end
+        SuppressStrays()
         uiHidden = "engine"
         return true
     end
@@ -115,6 +171,7 @@ local function HideUI()
     if UIParent and UIParent:IsShown() then
         pcall(UIParent.Hide, UIParent)
         if UIParent:IsShown() then return false end
+        SuppressStrays()
         uiHidden = "uiparent"
         return true
     end
@@ -129,6 +186,19 @@ end
 -- an interface and nothing tracking that. That is the reported bug with an
 -- extra step.
 local function ShowUI()
+    -- Before every branch below, including the early returns: the combat path
+    -- gives up still owing a restore, and "leave the interface off, that is how
+    -- we found it" is a statement about UIParent, not about frames whose alpha
+    -- we borrowed.
+    --
+    -- Stated plainly because it matters for anyone changing this: the strays
+    -- are set and cleared together with uiHidden, so `not uiHidden` with strays
+    -- still pending is not reachable today - the one path that produced it,
+    -- Alt+Z clearing uiHidden mid-capture, is handled at AbandonCapture where
+    -- ShowUI is deliberately not called. This position is insurance against the
+    -- next thing that clears uiHidden, and no test covers it on its own.
+    RestoreStrays()
+
     if not uiHidden then return true end
 
     -- Leave it off if that is how we found it. The quiet-after-combat trigger
@@ -328,6 +398,18 @@ local function AbandonCapture(message, restoreUI)
     if renders then
         for i = #renders, renderMark + 1, -1 do table.remove(renders, i) end
     end
+
+    -- The strays come back WHATEVER restoreUI says.
+    --
+    -- restoreUI is false when the player took their own interface back - Alt+Z
+    -- mid-capture - and re-showing UIParent would then be the addon overruling
+    -- them. That reasoning does not extend to frames whose alpha we borrowed:
+    -- nobody else knows they are at zero, so skipping this leaves the player
+    -- with the game UI they just asked for and an AltStable window that has
+    -- silently vanished. Alt+Z is exactly what somebody presses when an addon
+    -- starts taking pictures unexpectedly, so this is the likely path, not the
+    -- exotic one.
+    RestoreStrays()
 
     local back = true
     if restoreUI then back = ShowUI() end
@@ -807,6 +889,9 @@ AltStableProbe._test = {
     token          = function() return captureToken end,
     renderMark     = function() return renderMark end,
     CancelPending  = function(r, a) return CancelPending(r, a) end,
+    HideUI         = function() return HideUI() end,
+    ShowUI         = function() return ShowUI() end,
+    strays         = function() return strays end,
     StartCountdown = function(why) return StartCountdown(why) end,
     pendingKind    = function()
         return (pending and "countdown") or (combatSettle and "settle") or nil
