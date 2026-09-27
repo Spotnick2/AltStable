@@ -251,12 +251,40 @@ local function Build()
     --   * close on Escape regardless of whether the propagation call took. The
     --     degradation if it did not is that Escape also reaches the sheet and
     --     closes both, which is tolerable; a menu that will not close is not.
+    --   * GIVE THE KEYBOARD BACK when the call fails, which is the part a
+    --     pcall alone does not do. Catching the error preserves the handler and
+    --     leaves the frame keyboard-enabled with its last propagation state -
+    --     and that state is false whenever the previous key was Escape. So:
+    --     open the menu, press Escape, open it again, enter combat, press W -
+    --     the restricted call fails silently, propagation is still false from
+    --     the Escape, and the player cannot walk. Releasing the keyboard is the
+    --     only thing that actually restores movement, because it stops the keys
+    --     arriving here at all.
     root:SetScript("OnKeyDown", function(self, key)
         local stop = (key == "ESCAPE")
+        local handed = true
         if type(self.SetPropagateKeyboardInput) == "function" then
-            pcall(self.SetPropagateKeyboardInput, self, not stop)
+            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
+        end
+        if not handed and type(self.EnableKeyboard) == "function" then
+            pcall(self.EnableKeyboard, self, false)
         end
         if stop then AltStable.CloseCharacterMenu() end
+    end)
+
+    -- Combat starting with the menu ALREADY open.
+    --
+    -- The guard when the menu opens cannot see this: the menu was opened out of
+    -- combat and is still sitting there when the pull happens. Releasing the
+    -- keyboard here means no key is ever swallowed - the handler above is the
+    -- safety net for a restriction that arrives some other way, and a net that
+    -- only catches the SECOND keypress is not much of one when the first is the
+    -- one you needed to run away.
+    root:RegisterEvent("PLAYER_REGEN_DISABLED")
+    root:SetScript("OnEvent", function(self)
+        if type(self.EnableKeyboard) == "function" then
+            pcall(self.EnableKeyboard, self, false)
+        end
     end)
 end
 
@@ -329,6 +357,15 @@ function AltStable.ShowCharacterMenu(char)
     if type(root.EnableKeyboard) == "function"
         and not (InCombatLockdown and InCombatLockdown()) then
         root:EnableKeyboard(true)
+        -- Propagation is frame state that OUTLIVES the menu, and the last key
+        -- of the previous opening is usually Escape - which set it to false.
+        -- Reopening without resetting it means the first key of this opening is
+        -- swallowed if the call to hand it back ever fails. Out of combat this
+        -- always takes; doing it here is what makes "false" impossible to
+        -- inherit.
+        if type(root.SetPropagateKeyboardInput) == "function" then
+            pcall(root.SetPropagateKeyboardInput, root, true)
+        end
     end
     return true
 end
@@ -395,6 +432,29 @@ AltStable._test.MenuCatcher = function() return catcher end
 -- The key handler's verdict on one key, without a frame to press it on: true
 -- when the menu swallowed it, false when it let it through to the game. A menu
 -- that eats W is a menu you cannot walk away from.
+-- Would a key pressed right now be eaten?
+--
+-- The question the movement tests actually need, and not the same as "did the
+-- handler throw": a handler that survives while the frame keeps the keyboard
+-- and propagation is false swallows the key just as completely as one that
+-- errored. Keyboard released, or propagation on, means the key reaches the
+-- game.
+AltStable._test.MenuSwallowsKeys = function()
+    if not root then return false end
+    if type(root.IsKeyboardEnabled) == "function" and not root:IsKeyboardEnabled() then
+        return false
+    end
+    return root._propagate == false
+end
+
+AltStable._test.MenuCombat = function()
+    if not root then return false end
+    local fn = root:GetScript("OnEvent")
+    if not fn then return false end
+    fn(root, "PLAYER_REGEN_DISABLED")
+    return true
+end
+
 AltStable._test.MenuKey = function(key)
     if not root then return nil end
     local fn = root:GetScript("OnKeyDown")

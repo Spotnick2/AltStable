@@ -1257,10 +1257,25 @@ betting on one:
 - the keyboard is taken **out of combat only** — not grabbing it costs Escape,
   which the sheet's own `UISpecialFrames` entry still answers; grabbing it and
   failing costs walking;
-- the propagation call is `pcall`ed, because entering combat with the menu
-  already open leaves the handler installed, and an error there fires on *every*
-  keypress;
+- **propagation is reset to true when the menu opens.** It is frame state that
+  outlives the menu, and the last key of the previous opening is usually Escape,
+  which set it to *false*. Inheriting that is how the first key of the next
+  opening gets eaten;
+- **the keyboard is released on `PLAYER_REGEN_DISABLED`.** The guard above only
+  sees combat that was already running when the menu opened; this is the menu
+  that was already open when the pull started;
+- **and released again if the propagation call ever fails.** A `pcall` on its
+  own preserves the handler and leaves the frame keyboard-enabled with its last
+  propagation state — which swallows the key just as completely as an error
+  would. Releasing the keyboard is the only thing that actually restores
+  movement, because it stops the keys arriving at the frame at all;
 - Escape closes the menu whether or not the propagation call took.
+
+**The trap here is worth stating on its own**, because catching the exception
+looks like handling it: *surviving is not working*. The first version of this
+guard `pcall`ed the call and tested that pressing W did not throw. It did not
+throw, and W still did not reach the game. The reachable sequence is open →
+Escape → open again → enter combat → press W.
 
 **To settle it**, with the character in combat:
 

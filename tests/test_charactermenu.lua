@@ -327,12 +327,96 @@ do
     end
     local ok = pcall(function() return T.MenuKey("W") end)
     check("a restricted propagation call does not take out the key handler", ok)
-    check("  and Escape still closes the menu when it throws",
+
+    -- Surviving is not the same as working. A handler that catches the error
+    -- and leaves the frame keyboard-enabled with propagation still false eats
+    -- the key just as completely as one that threw - and the first version of
+    -- this test asserted only that W did not throw, so it passed against
+    -- exactly that.
+    check("  and the key actually reaches the game", not T.MenuSwallowsKeys(),
+          "the menu kept the keyboard and never handed the key back")
+
+    check("  while Escape still closes the menu",
           pcall(function() return T.MenuEscape() end) and T.MenuIsShown() == false,
           "a menu that cannot be closed is worse than one that shares Escape")
     root.SetPropagateKeyboardInput = realSet
 
     InCombatLockdown = realCombat
+    AltStable.CloseCharacterMenu()
+end
+
+do
+    -- The reachable sequence, start to finish.
+    --
+    -- Escape sets propagation to FALSE and that state outlives the menu. Open
+    -- again, enter combat while it sits there - which the open-time guard
+    -- cannot see, because the menu was opened out of combat - and press a
+    -- movement key. The restricted call fails silently, propagation is still
+    -- false from the Escape, and the player cannot walk.
+    local realCombat = InCombatLockdown
+
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowCharacterMenu(OTHER)
+    T.MenuEscape()                       -- leaves propagation false
+    check("Escape closed it", T.MenuIsShown() == false)
+
+    AltStable.ShowCharacterMenu(OTHER)   -- still out of combat
+    check("reopening resets propagation rather than inheriting the Escape",
+          not T.MenuSwallowsKeys(),
+          "the first key of this opening would be swallowed")
+
+    -- Combat begins with the menu already open.
+    InCombatLockdown = function() return true end
+    check("the combat event is handled", T.MenuCombat())
+    check("  and the menu lets go of the keyboard",
+          T.MenuRoot():IsKeyboardEnabled() == false,
+          "no key should ever have to be swallowed first")
+
+    local root = T.MenuRoot()
+    local realSet = root.SetPropagateKeyboardInput
+    root.SetPropagateKeyboardInput = function()
+        error("ADDON_ACTION_BLOCKED: SetPropagateKeyboardInput")
+    end
+    T.MenuKey("W")
+    check("so W reaches the game in the full sequence", not T.MenuSwallowsKeys(),
+          "open, Escape, reopen, enter combat, press W - and you cannot move")
+    root.SetPropagateKeyboardInput = realSet
+
+    InCombatLockdown = realCombat
+    AltStable.CloseCharacterMenu()
+end
+
+do
+    -- The same trap with the combat event taken away.
+    --
+    -- Both other defences are keyed to combat: the release on
+    -- PLAYER_REGEN_DISABLED, and the reset when the menu opens, which succeeds
+    -- because opening happens out of combat. Neither helps if the restriction
+    -- is not strictly combat-keyed - and whether it is on this client is the
+    -- unmeasured part, so it is the case worth being right about.
+    --
+    -- Here the reset at open time fails silently, leaving propagation false
+    -- from the previous Escape. Releasing the keyboard when the call fails is
+    -- then the ONLY thing standing between the player and a key that never
+    -- arrives.
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowCharacterMenu(OTHER)
+    T.MenuEscape()                        -- propagation left false
+
+    local root = T.MenuRoot()
+    local realSet = root.SetPropagateKeyboardInput
+    root.SetPropagateKeyboardInput = function()
+        error("ADDON_ACTION_BLOCKED: SetPropagateKeyboardInput")
+    end
+
+    AltStable.ShowCharacterMenu(OTHER)    -- out of combat; the reset throws
+    check("the menu took the keyboard", root:IsKeyboardEnabled())
+    T.MenuKey("W")
+    check("a key that cannot be handed back releases the keyboard instead",
+          not T.MenuSwallowsKeys(),
+          "propagation was left false and the frame kept the keyboard")
+
+    root.SetPropagateKeyboardInput = realSet
     AltStable.CloseCharacterMenu()
 end
 
