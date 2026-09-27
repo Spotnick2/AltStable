@@ -1355,5 +1355,9 @@ way. Only the disk can, and here it says the second.
 So machine scope is simply unsupported on this client. Do not store anything in
 it, and do not read a nil `AltStableProbeMachineDB` as a bug.
 
-The probe says so in one grey line now rather than a red one, because a known
-answer reported as a failure every login is how real failures stop being read.
+The probe no longer watches machine scope at all, and no longer reports the two
+that work. A status line saying "still fine" at every login is one nobody reads,
+which is how the day it says something else gets missed — so the login report is
+silent while the stores load and loud when they do not, and the counts moved to
+`/asprobe savedvariables` where somebody investigating persistence will look for
+them.
