@@ -133,6 +133,19 @@ local function EnsureDefaults()
     end
     AltStableConfig.hiddenCharacters = AltStableConfig.hiddenCharacters or {}
 
+    -- Show hidden characters in the SHEET, dimmed, so they can be unhidden from
+    -- where they were hidden (#69). Off by default, because on means the sheet
+    -- is showing you rows you told it not to.
+    --
+    -- Named for the sheet on purpose. It is a management view; the Roster's
+    -- 3D camp is a showcase and never shows a hidden character whatever this
+    -- says. A name like "showHidden" would have invited exactly that.
+    -- Additive, absence means off: a profile written before this existed reads
+    -- back unchanged.
+    if AltStableConfig.sheetShowHidden == nil then
+        AltStableConfig.sheetShowHidden = false
+    end
+
     -- Roster gear audit. minGemQuality is the lowest gem quality considered
     -- acceptable (0 disables gem checks entirely, 3 = Rare, 4 = Epic), matching
     -- CLA's "minimum required gem quality" selector. auditMinLevel keeps the
@@ -540,6 +553,21 @@ function AltStable.FavouriteFirst(within)
         return within(a, b)
     end
 end
+-- Whether the SHEET is currently listing hidden characters (dimmed).
+--
+-- A separate question from IsCharacterHidden, and they must not be conflated:
+-- this changes what the grid LISTS, never whether a character is hidden. The
+-- totals still leave hidden characters out and the "(N hidden)" count still
+-- counts them, on or off.
+function AltStable.IsShowingHidden()
+    return (AltStableConfig and AltStableConfig.sheetShowHidden) and true or false
+end
+
+function AltStable.SetShowingHidden(show)
+    AltStableConfig = AltStableConfig or {}
+    AltStable.SetConfigValue("sheetShowHidden", show and true or false)
+end
+
 function AltStable.IsCharacterHidden(guid)
     if not guid then return false end
     local hidden = AltStableConfig and AltStableConfig.hiddenCharacters

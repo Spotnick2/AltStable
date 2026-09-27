@@ -202,12 +202,33 @@ local function makeFrame()
 
     f.SetFrameStrata = function(self, v) self._strata = v; return self end
     f.GetFrameStrata = function(self) return self._strata or "MEDIUM" end
+    -- Frame level is REAL state. "Which of two siblings takes the click" is a
+    -- correctness question - a catcher drawn over the menu it is meant to sit
+    -- behind eats every entry - and the chaining default made every level 1.
+    f.SetFrameLevel = function(self, v) self._GetFrameLevel = v; return self end
+
     f.SetParent      = function(self, p) self._parent = p; return self end
     f.GetParent      = function(self) return self._parent end
     f.SetScale       = function(self, v) self._scale = v; return self end
     f.GetScale       = function(self) return self._scale or 1 end
-    f.Show           = function(self) self._shown = true; return self end
-    f.Hide           = function(self) self._shown = false; return self end
+    -- Show and Hide FIRE their scripts, because that is where cleanup lives.
+    -- A frame's OnHide is how it lets go of things it raised, and with Hide as
+    -- a bare flag flip none of that ran: the sheet could close while leaving a
+    -- full-screen click-catcher over the game and the suite saw a tidy world.
+    -- Only on an actual change, as the client does - re-hiding a hidden frame
+    -- fires nothing.
+    f.Show = function(self)
+        local was = self._shown
+        self._shown = true
+        if was ~= true and self._script_OnShow then self:_script_OnShow() end
+        return self
+    end
+    f.Hide = function(self)
+        local was = self._shown
+        self._shown = false
+        if was ~= false and self._script_OnHide then self:_script_OnHide() end
+        return self
+    end
     f.IsShown        = function(self) return self._shown ~= false end
     -- Visible means shown AND every ancestor shown - the distinction the whole
     -- hidden-UIParent problem turns on.
@@ -220,6 +241,84 @@ local function makeFrame()
         end
         return true
     end
+    -- Anchors are RECORDED. Placing a menu at the cursor is arithmetic - divide
+    -- the cursor's physical pixels by the frame's effective scale, then clamp
+    -- to the screen - and with SetPoint as a no-op none of that arithmetic was
+    -- observable. A menu that opens at a multiple of the right distance from
+    -- the corner looks like it opened somewhere random, and no test could see
+    -- it.
+    --
+    -- SetPoint is variadic in the client; all three arities are normalised here
+    -- so a caller does not have to know which one this stub prefers.
+    f.SetPoint = function(self, point, a, b, c, d)
+        local rel, relPoint, x, y
+        if type(a) == "number" then
+            x, y = a, b                       -- SetPoint(point, x, y)
+        elseif type(b) == "number" then
+            rel, x, y = a, b, c               -- SetPoint(point, rel, x, y)
+        else
+            rel, relPoint, x, y = a, b, c, d  -- SetPoint(point, rel, relPoint, x, y)
+        end
+        -- REPLACES the anchor for a point already set, which is what the
+        -- client does. Appending instead meant a frame re-anchored on every
+        -- open - which every pooled menu entry is - accumulated stale anchors,
+        -- and GetPoint(1) handed back a position from several openings ago. A
+        -- placement assertion could then pass, or fail, for the wrong reason,
+        -- which defeats the point of recording anchors at all.
+        self._points = self._points or {}
+        for _, existing in ipairs(self._points) do
+            if existing.point == point then
+                existing.rel, existing.relPoint, existing.x, existing.y = rel, relPoint, x, y
+                return self
+            end
+        end
+        self._points[#self._points + 1] =
+            { point = point, rel = rel, relPoint = relPoint, x = x, y = y }
+        return self
+    end
+    f.ClearAllPoints = function(self) self._points = nil; return self end
+    f.GetNumPoints   = function(self) return self._points and #self._points or 0 end
+    f.GetPoint = function(self, i)
+        local pt = self._points and self._points[i or 1]
+        if not pt then return nil end
+        return pt.point, pt.rel, pt.relPoint, pt.x, pt.y
+    end
+
+    -- Alpha is REAL state. Dimming a hidden character's row IS the feature
+    -- (#69), and rows come from a pool - so "was it set back to 1 for the next
+    -- character" is the assertion, and the chaining default answered every
+    -- alpha question with the constant 1.
+    f.SetAlpha = function(self, a) self._GetAlpha = a; return self end
+    f.GetAlpha = function(self) return self._GetAlpha or 1 end
+
+    -- Which buttons a Button actually listens for.
+    --
+    -- Not bookkeeping: a Button fires OnClick for the LEFT button only until
+    -- RegisterForClicks says otherwise. A right-click handler on a button that
+    -- never registered right-clicks is dead code in game and perfect code to a
+    -- test that calls the handler directly. Recording it is what lets a test
+    -- ask the question the client asks.
+    f.RegisterForClicks = function(self, ...)
+        self._clicks = { ... }
+        return self
+    end
+    f.RegisteredClicks = function(self) return self._clicks or {} end
+    f.HandlesClick = function(self, button)
+        for _, c in ipairs(self._clicks or {}) do
+            if c == button .. "Up" or c == button .. "Down" or c == "AnyUp" or c == "AnyDown" then
+                return true
+            end
+        end
+        -- The client's default for a Button with no registration at all.
+        return self._clicks == nil and button == "LeftButton" or false
+    end
+
+    f.EnableMouse    = function(self, v) self._mouse = v ~= false; return self end
+    f.IsMouseEnabled = function(self) return self._mouse ~= false end
+    f.EnableKeyboard = function(self, v) self._keyboard = v ~= false; return self end
+    f.IsKeyboardEnabled = function(self) return self._keyboard == true end
+    f.SetPropagateKeyboardInput = function(self, v) self._propagate = v; return self end
+
     f.SetWidth  = function(self, w) self._GetWidth = w; return self end
     f.SetHeight = function(self, h) self._GetHeight = h; return self end
     f.SetSize   = function(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
@@ -249,7 +348,21 @@ local function makeFrame()
 end
 WoW.makeFrame = makeFrame
 
-function CreateFrame() return makeFrame() end
+-- The PARENT argument is honoured, and a named frame becomes a global, because
+-- the client does both.
+--
+-- This used to be `function CreateFrame() return makeFrame() end`, which threw
+-- the parent away. Everything about lifting a frame out from under a hidden
+-- UIParent then only worked because the code under test called SetParent by
+-- hand: a frame that was merely CREATED as a child of UIParent looked like an
+-- orphan, so "it is not parented to UIParent" was trivially true and the
+-- assertion proved nothing.
+function CreateFrame(_, name, parent)
+    local f = makeFrame()
+    f._parent = parent
+    if type(name) == "string" and name ~= "" then _G[name] = f end
+    return f
+end
 
 -- The roots of the client's frame hierarchy. Absent until now, so every
 -- CreateFrame(..., UIParent) passed nil and any code that lifts a frame OUT
@@ -258,6 +371,14 @@ function CreateFrame() return makeFrame() end
 -- UIParent was nil.
 UIParent = makeFrame()
 WorldFrame = makeFrame()
+
+-- The cursor, in PHYSICAL pixels - which is the trap this models. Frame offsets
+-- are in the frame's own scaled units, so code that places something at the
+-- cursor has to divide by the effective scale. A stub that returned values
+-- already in frame units would make the division look optional.
+WoW.cursorX, WoW.cursorY = 800, 600
+function GetCursorPosition() return WoW.cursorX, WoW.cursorY end
+
 
 -- WoW's table helpers, which are globals there and absent in plain Lua 5.1.
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
@@ -504,8 +625,12 @@ function StaticPopup_Visible(which)
     return false
 end
 -- The client's localized button captions. Defined because the dialog table
--- reads them at file scope.
+-- reads them at file scope. ACCEPT/CANCEL matter as much as YES/NO now that
+-- the forget confirmation uses them: absent, "ACCEPT or 'Forget'" silently
+-- takes the fallback and a test on the button text passes for the wrong
+-- reason.
 YES, NO = "Yes", "No"
+ACCEPT, CANCEL = "Accept", "Cancel"
 
 ------------------------------------------------------------
 -- Enums, measured from the live client

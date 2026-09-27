@@ -739,8 +739,20 @@ do
 
     -- Lift a frame out from under UIParent (state=true) or put it back (false),
     -- compensating scale so its on-screen size is unchanged either way.
+    -- Idempotent in BOTH directions, and that is load-bearing rather than
+    -- tidiness. Lifting an already-lifted frame used to overwrite the saved
+    -- scale and strata with the LIFTED ones - so the restore afterwards put the
+    -- frame back at FULLSCREEN_DIALOG, permanently raised, and the only symptom
+    -- was somebody else's dialog appearing in the wrong place. The two callers
+    -- that existed happened to guard at their own end (HideGameUI bails on
+    -- self.uiHidden, LiftPopup on _altstableLifted), which meant the trap sat
+    -- one careless caller away from firing. The flag lives on the frame, so it
+    -- covers callers that have no state of their own.
     function AltStableCameraPresentation:_TakeOut(frame, strata, state)
         if not frame then return end
+        state = state and true or false
+        if (frame._atLifted or false) == state then return end
+        frame._atLifted = state
         if state then
             frame._atSavedStrata = frame:GetFrameStrata()
             frame._atSavedScale  = frame:GetScale()
@@ -752,6 +764,7 @@ do
             pcall(frame.SetParent, frame, UIParent)
             pcall(frame.SetScale, frame, frame._atSavedScale or 1)
             if frame._atSavedStrata then pcall(frame.SetFrameStrata, frame, frame._atSavedStrata) end
+            frame._atSavedStrata, frame._atSavedScale = nil, nil
         end
     end
 
@@ -1231,6 +1244,17 @@ local function IsHidden(char)
     return AltStable.IsCharacterHidden(char.guid)
 end
 
+-- #69. The "show hidden" toggle changes WHAT THE GRID LISTS and nothing else.
+--
+-- Two predicates, not one, and the split is the whole point: IsHidden still
+-- decides the totals and the "(N hidden)" count, so those mean the same thing
+-- whether the toggle is on or off. Folding the toggle into IsHidden would have
+-- made switching a view silently change the account's reported gold.
+local function ShouldShowInGrid(char)
+    if not IsHidden(char) then return true end
+    return AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false
+end
+
 local function BuildDisplayList()
     wipe(displayList)
     totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0; hiddenCount=0
@@ -1263,7 +1287,9 @@ local function BuildDisplayList()
 
     local allChars = {}
     for _, char in next, store do
-        if type(char)=="table" and char.name and not IsHidden(char) then
+        -- ShouldShowInGrid, not IsHidden: this is the LIST. The totals above
+        -- and the iLvl average below deliberately still use IsHidden.
+        if type(char)=="table" and char.name and ShouldShowInGrid(char) then
             table.insert(allChars, char)
         end
     end
@@ -1420,13 +1446,32 @@ local function UpdateTotalsBar()
     if totalsBar.mid then totalsBar.mid:SetText(avgIlvlStr) end
     local goldNote = (goldUnknown > 0)
         and ("  |cffff8800(" .. goldUnknown .. " unknown)|r") or ""
-    -- Dim, and after the gold: it is not a warning, it is a reminder that the
-    -- numbers to its left describe fewer characters than the database holds.
-    local hiddenNote = (hiddenCount > 0)
-        and ("  |cff808080(" .. hiddenCount .. " hidden)|r") or ""
     totalsBar.right:SetText(
         "|cffaaaaaa" .. math.floor(totalGold/10000) .. GOLD_ICON_SM .. " total gold|r"
-        .. goldNote .. hiddenNote)
+        .. goldNote)
+
+    -- The hidden note, now a button (#69). Dim, and left of the gold: it is not
+    -- a warning, it is a reminder that the numbers beside it describe fewer
+    -- characters than the database holds.
+    --
+    -- Shown when there ARE hidden characters OR while the toggle is on. The
+    -- second half is not belt and braces: unhide the last hidden character
+    -- while listing them and the button would otherwise vanish with the
+    -- preference still set, so the next character hidden would silently stay
+    -- on screen with no control in sight to explain why.
+    local btn = totalsBar.hiddenBtn
+    if btn then
+        local showing = AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false
+        if hiddenCount > 0 or showing then
+            btn.label:SetText(showing
+                and ("|cffffd100(" .. hiddenCount .. " hidden, listed - not counted)|r")
+                or  ("|cff808080(" .. hiddenCount .. " hidden)|r"))
+            btn:SetWidth(math.max(1, btn.label:GetStringWidth() or 1))
+            btn:Show()
+        else
+            btn:Hide()
+        end
+    end
 end
 
 ------------------------------------------------------------
@@ -1992,6 +2037,12 @@ local function CreateFrameIfNeeded()
         end
     end)
     frame:SetScript("OnHide", function()
+        -- The character menu goes with the window that raised it (#69). It is
+        -- FULLSCREEN_DIALOG with a full-screen click-catcher under it, so a
+        -- menu outliving the sheet is not a stray widget - it is an invisible
+        -- sheet of glass over the whole game that eats every click until
+        -- something else closes it.
+        if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
         if AltStableCameraPresentation and AltStableCameraPresentation.Exit then
             AltStableCameraPresentation:Exit("sheet-hide")
         end
@@ -3285,6 +3336,49 @@ local function CreateFrameIfNeeded()
     totalsBar.right:SetPoint("RIGHT",-10,0); totalsBar.right:SetJustifyH("RIGHT")
     totalsBar.right:SetTextColor(unpack(AltStable.C.TEXT_NORM))
 
+    -- "(N hidden)" is its OWN button rather than a run of text inside
+    -- totalsBar.right, because it has to be clickable and the rest of that
+    -- string must not be: a click on the gold total silently changing which
+    -- characters the grid lists would be indistinguishable from a bug.
+    --
+    -- It sits in the footer, which every tab shows - including the Roster - so
+    -- there is a route back from wherever a character was hidden. That is what
+    -- let the hide confirmation go.
+    --
+    -- "Including the Roster" was an assumption when this was written and was
+    -- FALSE: that panel covered the footer and then hid it outright, making the
+    -- Roster the one tab where a card could be hidden with no way back on it.
+    -- The panel stops above the footer now, and test_roster pins both the gap
+    -- and the visibility - being shown underneath an opaque panel looks exactly
+    -- like being shown.
+    totalsBar.hiddenBtn = CreateFrame("Button", nil, totalsBar)
+    totalsBar.hiddenBtn:SetHeight(16)
+    totalsBar.hiddenBtn:SetPoint("RIGHT", totalsBar.right, "LEFT", -4, 0)
+    totalsBar.hiddenBtn.label = totalsBar.hiddenBtn:CreateFontString(
+        nil, "OVERLAY", "GameFontHighlightSmall")
+    totalsBar.hiddenBtn.label:SetAllPoints()
+    totalsBar.hiddenBtn.label:SetJustifyH("RIGHT")
+    totalsBar.hiddenBtn:SetScript("OnClick", function()
+        if not AltStable.SetShowingHidden then return end
+        AltStable.SetShowingHidden(not AltStable.IsShowingHidden())
+        AltStable.RefreshSheet()
+    end)
+    totalsBar.hiddenBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        if AltStable.IsShowingHidden and AltStable.IsShowingHidden() then
+            GameTooltip:AddLine("Hidden characters are listed, dimmed.", 1, 1, 1)
+            GameTooltip:AddLine("Right-click one to unhide it. Click here to stop listing them.",
+                                0.7, 0.7, 0.7, true)
+        else
+            GameTooltip:AddLine("Click to list hidden characters, dimmed,", 1, 1, 1)
+            GameTooltip:AddLine("so you can right-click one and unhide it.", 1, 1, 1)
+        end
+        GameTooltip:AddLine("They are left out of the totals either way.", 0.5, 0.5, 0.5, true)
+        GameTooltip:Show()
+    end)
+    totalsBar.hiddenBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    totalsBar.hiddenBtn:Hide()
+
     --------------------------------------------------------
     -- Frozen header (Name column)
     --------------------------------------------------------
@@ -3525,14 +3619,21 @@ function AltStable.RefreshSheet()
 end
 
 ------------------------------------------------------------
--- Hiding a character (#21)
+-- Forgetting a character (#65), confirmed
 --
--- Confirmed, because the row vanishes from the grid on a single right-click
--- and the only way back is a list in Options - which the user has no reason to
--- know about at the moment they misclick. The popup says where it went.
+-- Hiding used to be the thing confirmed here, and is not any more (#69). The
+-- confirmation existed because the row vanished on a single right-click and
+-- the only way back was a list in Options the user had no reason to know
+-- about. The menu removed the single right-click and the footer's "(N hidden)"
+-- toggle removed the Options trip, so the popup was asking permission for
+-- something now visibly reversible from where it happened.
+--
+-- Forget keeps it, and always will: it deletes the record and writes a
+-- tombstone so peers cannot put it back. That is the one action here that is
+-- not a view preference.
 ------------------------------------------------------------
 
-local HIDE_POPUP = "ALTSTABLE_CONFIRM_HIDE_CHARACTER"
+local FORGET_POPUP = "ALTSTABLE_CONFIRM_FORGET_CHARACTER"
 
 -- Make a StaticPopup visible over our own window, and put the shared frame back
 -- afterwards.
@@ -3582,15 +3683,32 @@ AltStable._test.LiftPopup = LiftPopup
 AltStable._test.DropPopup = DropPopup
 
 if type(StaticPopupDialogs) == "table" then
-    StaticPopupDialogs[HIDE_POPUP] = {
-        text = "Hide |cffffffff%s|r from the sheet?\n\nIt keeps syncing and updating - it is "
-            .. "only left out of the grid and the totals. Restore it under "
-            .. "Options, \"Hidden characters\".",
-        button1 = YES or "Yes",
-        button2 = NO or "No",
+    StaticPopupDialogs[FORGET_POPUP] = {
+        -- The recovery route is NAMED, because there is one and this dialog used
+        -- to deny it. "There is no undo" was false - /alts unforget lifts the
+        -- tombstone and re-asks every peer in full - and "it will only reappear
+        -- by logging into it" was worse than false: logging in on ANOTHER
+        -- account does not clear THIS account's tombstone, so a player following
+        -- that instruction leaves the record rejected indefinitely. The slash
+        -- command has printed the right answer all along; the dialog
+        -- contradicted it.
+        text = "Forget |cffffffff%s|r?\n\nThe local record is deleted, and a tombstone stops "
+            .. "other accounts sending it back. This is not hiding.\n\n"
+            .. "|cffffff00/alts unforget|r lifts the tombstone, and the character can then come "
+            .. "back from a peer on the next full sync - not instantly, and not by logging "
+            .. "into it.",
+        button1 = ACCEPT or "Forget",
+        button2 = CANCEL or "Cancel",
         OnAccept = function(self, data)
             DropPopup(self)
-            AltStable.HideCharacter(type(data) == "table" and data.guid or data)
+            local guid = type(data) == "table" and data.guid or data
+            -- ForgetCharacter re-checks: it refuses the character you are
+            -- playing. It is the authority on that, not the menu that offered
+            -- the entry - state can change while a dialog sits open.
+            local ok, info = AltStable.ForgetCharacter(guid)
+            if not ok then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r " .. tostring(info))
+            end
         end,
         OnCancel = function(self) DropPopup(self) end,
         timeout = 0,
@@ -3628,17 +3746,20 @@ function AltStable.ShowCharacter(guid)
     AltStable.RefreshSheet()
 end
 
--- Called by the row on a right-click. Asks first.
-function AltStable.RequestHideCharacter(char)
+-- Called by the menu's Forget entry. Asks first, always.
+function AltStable.RequestForgetCharacter(char)
     if type(char) ~= "table" or not char.guid then return end
     if type(StaticPopup_Show) == "function" and StaticPopupDialogs
-        and StaticPopupDialogs[HIDE_POPUP] then
-        LiftPopup(StaticPopup_Show(HIDE_POPUP, char.name or "?", nil, { guid = char.guid }))
+        and StaticPopupDialogs[FORGET_POPUP] then
+        LiftPopup(StaticPopup_Show(FORGET_POPUP, char.name or "?", nil, { guid = char.guid }))
         return
     end
-    -- No popup API (never seen on this client, but the click should still do
-    -- what it says rather than nothing at all - Options can undo it).
-    AltStable.HideCharacter(char.guid)
+    -- No popup API. Unlike hiding, this is NOT done anyway: forgetting is
+    -- irreversible, and doing it unconfirmed because the confirmation was
+    -- unavailable is the worst of the three possible behaviours.
+    DEFAULT_CHAT_FRAME:AddMessage(
+        "|cff00ccff[AltStable]|r cannot confirm here - use |cffffff00/alts forget "
+        .. (char.name or "?") .. "|r")
 end
 
 -- Test seam (the AltStable._test convention). The sheet loads and builds under
@@ -3654,6 +3775,24 @@ AltStable._test.DisplayNames = function()
         if item.kind == "char" then names[#names + 1] = item.data.name end
     end
     return names
+end
+
+-- The hidden toggle is its OWN widget, so it gets its own seam rather than
+-- being folded into FooterText: a test that could not tell the two apart would
+-- not notice the note moving out of the gold string, which is the change.
+AltStable._test.HiddenToggleText = function()
+    local btn = totalsBar and totalsBar.hiddenBtn
+    if not btn or not btn:IsShown() then return nil end
+    return btn.label:GetText()
+end
+
+AltStable._test.ClickHiddenToggle = function()
+    local btn = totalsBar and totalsBar.hiddenBtn
+    if not btn or not btn:IsShown() then return false end
+    local fn = btn:GetScript("OnClick")
+    if not fn then return false end
+    fn(btn)
+    return true
 end
 
 AltStable._test.FooterText = function()

@@ -509,13 +509,22 @@ end
 -- could be cut before the scene ever saw it, purely for sorting late
 -- alphabetically, and a roster whose portraits all sat past the cap produced an
 -- empty camp.
-local function AllCharacters()
+local function AllCharacters(includeHidden)
     local out = {}
     for _, c in next, CharacterStore() do
         if type(c) == "table" and c.name then
             -- Hidden characters stay hidden here too (#21): one setting, every
             -- view, or "hidden" means nothing.
-            if not (AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(c.guid)) then
+            --
+            -- The sheet's "show hidden" toggle (#69) reaches the card GRID,
+            -- which is a management view - you right-click a card to unhide it,
+            -- exactly as you would a row. It deliberately does NOT reach the
+            -- scene: the camp is a showcase, and a dimmed figure standing in a
+            -- diorama says nothing to anybody. CharactersFor already had to
+            -- tell those two views apart, which is why this is a parameter and
+            -- not a read of the config right here.
+            local hidden = AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(c.guid)
+            if not hidden or includeHidden then
                 out[#out + 1] = c
             end
         end
@@ -532,8 +541,8 @@ local function AllCharacters()
 end
 
 -- The grid's page: as many as it has cards for.
-local function PickCharacters(limit)
-    local out = AllCharacters()
+local function PickCharacters(limit, includeHidden)
+    local out = AllCharacters(includeHidden)
     while #out > (limit or MAX_CARDS) do table.remove(out) end
     return out
 end
@@ -544,13 +553,36 @@ end
 -- about who is eligible for the camp. Inline, the wiring was untestable - the
 -- composition could be asserted while the call site kept doing the wrong thing.
 local function CharactersFor(view)
-    if view == "scene" then return AllCharacters() end
-    return PickCharacters(MAX_CARDS)
+    -- The scene is never given a hidden character, whatever the toggle says.
+    if view == "scene" then return AllCharacters(false) end
+    return PickCharacters(MAX_CARDS,
+                          AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false)
 end
 
 ------------------------------------------------------------
 -- The panel
 ------------------------------------------------------------
+
+-- Matches HIDDEN_ROW_ALPHA in RowRenderer.lua. Not shared through a constant:
+-- the plugin is a separate addon and may load without the main one's internals
+-- available, and a hardcoded 0.45 in two files is honest about that.
+local HIDDEN_CARD_ALPHA = 0.45
+
+-- Who a card is currently about. Called by BOTH renderers, which is the point.
+--
+-- There are two of them - the grid and the scene - drawing from ONE pool of
+-- cards, and the scene originally set only `charGuid`. So a card that held
+-- somebody in the grid kept their whole record when the scene redrew it, and a
+-- right-click on a figure opened a menu titled with the wrong character and
+-- offered to forget them. Three properties that must move together, in one
+-- function, so a third renderer cannot take two of them.
+local function SetCardSubject(card, char)
+    card.char     = char
+    card.charGuid = char and char.guid or nil
+    local dim = char and AltStable.IsCharacterHidden
+        and AltStable.IsCharacterHidden(char.guid) or false
+    card:SetAlpha(dim and HIDDEN_CARD_ALPHA or 1)
+end
 
 local function BuildCard(parent, index)
     local card = CreateFrame("Button", nil, parent)
@@ -591,13 +623,29 @@ local function BuildCard(parent, index)
     card:SetScript("OnLeave", function(self)
         if Roster.selected ~= self.charGuid then self.highlight:Hide() end
     end)
-    card:SetScript("OnClick", function(self) Roster.Select(self.charGuid) end)
+    -- Right-click needs asking for. A Button fires OnClick for the LEFT button
+    -- only until RegisterForClicks says otherwise, so adding the branch below
+    -- without this line gives a menu that never opens - and a test that calls
+    -- the handler directly passes, because the handler is right. The missing
+    -- registration is the bug.
+    card:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    card:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            -- The same menu the sheet row raises (#69), so the two views cannot
+            -- offer different things.
+            if self.char and AltStable.ShowCharacterMenu then
+                AltStable.ShowCharacterMenu(self.char)
+            end
+            return
+        end
+        Roster.Select(self.charGuid)
+    end)
     card:Hide()
     return card
 end
 
 local function RenderCard(card, char, cardW, cardH)
-    card.charGuid = char.guid
+    SetCardSubject(card, char)
     card:SetSize(cardW, cardH)
     -- The gap is fair game for text: a name that reaches a little into it reads
     -- better than one cut off mid-surname.
@@ -656,8 +704,18 @@ local function BuildPanel(mainFrame)
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
 
     panel = CreateFrame("Frame", nil, mainFrame)
+    -- Stopping SHORT of the footer, which the panel used to cover.
+    --
+    -- The sheet's totals bar carries the "(N hidden)" toggle (#69), and that is
+    -- the only control that lists hidden characters so one can be right-clicked
+    -- and unhidden. Covering it here - and then hiding it in Activate, which is
+    -- what covering it forced - meant the Roster was the one tab where you
+    -- could hide a character from a card and then find no way back on that tab.
+    -- Hiding is unconfirmed now, so "the way back is visible" is load-bearing
+    -- rather than a nicety.
+    local footerH = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
     panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
-    panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
+    panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, footerH + 2)
     panel:Hide()
 
     backdropTex = panel:CreateTexture(nil, "BACKGROUND")
@@ -861,7 +919,7 @@ local function RenderScene(chars)
             card.sub:SetWidth(0)
             card.sub:SetText(("level %d"):format(char.level or 0))
             card.highlight:SetShown(Roster.selected == char.guid)
-            card.charGuid = char.guid
+            SetCardSubject(card, char)
             card:Show()
         else
             card:Hide()
@@ -999,7 +1057,9 @@ function Roster.Activate(mainFrame)
     if mainFrame.headerScroll then mainFrame.headerScroll:Hide() end
     if mainFrame.frozenHeader then mainFrame.frozenHeader:Hide() end
     if mainFrame.hScrollBar   then mainFrame.hScrollBar:Hide()   end
-    if mainFrame.totalsBar    then mainFrame.totalsBar:Hide()    end
+    -- The totals bar deliberately STAYS: see BuildPanel. It is where the
+    -- "(N hidden)" toggle lives, and a card hidden on this tab has to be
+    -- recoverable on this tab.
     panel:Show()
     Roster.Refresh()
 end
@@ -1012,7 +1072,6 @@ function Roster.Deactivate(mainFrame)
     if mainFrame.headerScroll then mainFrame.headerScroll:Show() end
     if mainFrame.frozenHeader then mainFrame.frozenHeader:Show() end
     if mainFrame.hScrollBar   then mainFrame.hScrollBar:Show()   end
-    if mainFrame.totalsBar    then mainFrame.totalsBar:Show()    end
 end
 
 ------------------------------------------------------------
@@ -1046,6 +1105,12 @@ function Roster._Bootstrap()
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             AllCharacters = AllCharacters, CharactersFor = CharactersFor,
             FavouritesAmong = FavouritesAmong,
+            -- The card itself, so its right-click and its dimming can be
+            -- driven rather than inferred from the functions behind them.
+            BuildCard = BuildCard, RenderCard = RenderCard,
+            HIDDEN_CARD_ALPHA = HIDDEN_CARD_ALPHA,
+            RenderScene = RenderScene, Cards = function() return Roster.cards end,
+            Panel = function() return panel end,
             -- What the player is actually told. Asserting the hint STRING is
             -- the only way to catch the renderer handing the count the wrong
             -- list: the composition is right either way.

@@ -1188,3 +1188,101 @@ the stage has to stop auto-framing - a fixed camera distance and position via
 `SetCamDistanceScale` / `SetPosition`, identical for every capture - and every
 existing cutout has to be retaken against it.
 
+
+---
+
+## A menu of our own, and why MenuUtil went unused — UNMEASURED
+
+`MenuUtil` is present on this client (32 functions), and it is the modern Retail
+route. `AltStable`'s character menu (`CharacterMenu.lua`, #69) does not use it.
+
+**What is actually known:** that the table exists and how many functions it has.
+Nothing here has called `MenuUtil.CreateContextMenu` on this client. The decision
+is a judgement, not a measurement, and it should be read as one. To settle the
+first half of it:
+
+```
+/run MenuUtil.CreateContextMenu(UIParent, function(_, root) root:CreateButton("hi") end)
+```
+
+**The judgement.** Two of the reasons are about this client and one is about this
+addon:
+
+- *Present is not behaves.* That has been wrong repeatedly on this port, and a
+  menu is not something Lua can interrogate the way it can a return value — you
+  find out by looking at the screen.
+- *The showcase problem is not hypothetical.* While the sheet is open the addon
+  hides the game UI with `SetUIVisibility(false)`, and **no strata makes the
+  child of a hidden parent draw**. The cure is to reparent out from under
+  `UIParent` (`AltStable.LiftAboveHiddenUI`), which needs a handle to the frame.
+  A menu built by somebody else does not reliably hand one over. This already bit
+  the hide confirmation once, where a `StaticPopup` is likewise a child of
+  `UIParent`.
+- *The addon has its own dark theme*, so a Blizzard-styled menu over it is the
+  inconsistent choice rather than the consistent one.
+
+**What hand-rolling costs**, listed because it is the honest price and because
+each item is a real bug somebody will otherwise rediscover:
+
+| Concern | What goes wrong | What was done |
+|---|---|---|
+| Dismissal | nothing closes the menu, or the catcher eats the menu's own clicks | full-screen catcher as a **sibling below** the panel under one root; the panel takes the mouse itself so its padding does not fall through |
+| Escape | `UISpecialFrames` closes the **sheet** instead — the sheet is registered too and comes first, and only one frame closes per Escape | the menu handles `OnKeyDown` itself and propagates every other key, or it is a menu you cannot walk away from |
+| Cursor | `GetCursorPosition()` is in **physical pixels**, an anchor offset is in the frame's own units | divide by `GetEffectiveScale()`, then clamp to the screen |
+| Lifetime | the menu outlives the window that raised it | the sheet's `OnHide` closes it — otherwise a full-screen click-catcher stays over the game, eating every click |
+| Ordering | the action runs while the menu is still up, and the catcher swallows the first click at the confirmation it just raised | close first, then dispatch |
+
+**Reparenting is idempotent now.** `_TakeOut` in `SheetUI.lua` previously saved
+the frame's strata and scale on every lift, so lifting twice saved the *lifted*
+values and the restore afterwards left the frame permanently at
+`FULLSCREEN_DIALOG`. The two callers that existed each guarded at their own end,
+which put the trap one careless caller away. The flag lives on the frame now.
+
+### `SetPropagateKeyboardInput` in combat — UNMEASURED
+
+Mainline's API documentation marks this method **restricted**, and Forever's own
+`DialogueUI` guards it with `not InCombatLockdown()`. The build-matched dump
+proves the method *exists* on 1.60.1.70009; it says nothing about whether
+calling it in combat throws here.
+
+That matters for anything that grabs the keyboard, because the grab and the
+release are the same mechanism: `EnableKeyboard(true)` routes **every** key to
+your frame, and `SetPropagateKeyboardInput(true)` is how each one is handed back.
+If the release is unavailable, a frame that grabbed the keyboard swallows the
+movement keys with no way to let go.
+
+`CharacterMenu.lua` is written to be correct under either answer rather than
+betting on one:
+
+- the keyboard is taken **out of combat only** — not grabbing it costs Escape,
+  which the sheet's own `UISpecialFrames` entry still answers; grabbing it and
+  failing costs walking;
+- **propagation is reset to true when the menu opens.** It is frame state that
+  outlives the menu, and the last key of the previous opening is usually Escape,
+  which set it to *false*. Inheriting that is how the first key of the next
+  opening gets eaten;
+- **the keyboard is released on `PLAYER_REGEN_DISABLED`.** The guard above only
+  sees combat that was already running when the menu opened; this is the menu
+  that was already open when the pull started;
+- **and released again if the propagation call ever fails.** A `pcall` on its
+  own preserves the handler and leaves the frame keyboard-enabled with its last
+  propagation state — which swallows the key just as completely as an error
+  would. Releasing the keyboard is the only thing that actually restores
+  movement, because it stops the keys arriving at the frame at all;
+- Escape closes the menu whether or not the propagation call took.
+
+**The trap here is worth stating on its own**, because catching the exception
+looks like handling it: *surviving is not working*. The first version of this
+guard `pcall`ed the call and tested that pressing W did not throw. It did not
+throw, and W still did not reach the game. The reachable sequence is open →
+Escape → open again → enter combat → press W.
+
+**To settle it**, with the character in combat:
+
+```
+/run local f=CreateFrame("Frame") f:EnableKeyboard(true)
+     print(pcall(f.SetPropagateKeyboardInput, f, true))
+```
+
+`false` plus an `ADDON_ACTION_BLOCKED`-shaped message means the restriction is
+live on this client and the guards above are load-bearing rather than cautious.

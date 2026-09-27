@@ -282,6 +282,27 @@ AltStable._test.ComputeLiveRestedPercent = ComputeLiveRestedPercent
 -- cleanly on top at low alpha.
 ------------------------------------------------------------
 
+-- How a hidden character looks when the sheet is listing them (#69).
+--
+-- Rows come from a POOL and are re-rendered by index, so this is a two-way
+-- statement, never "dim it if hidden": the row drawing a dimmed hidden
+-- character a frame ago draws a normal one next, and a one-way version leaves
+-- a perfectly visible character greyed out for no reason the user can see.
+-- That is why every renderer calls it, including the group and filler ones
+-- that can never be dim - a call that is always there cannot be the one
+-- somebody forgets.
+local HIDDEN_ROW_ALPHA = 0.45
+
+local function DimRow(row, char)
+    if not row or not row.SetAlpha then return end
+    local dim = char ~= nil and AltStable.IsCharacterHidden
+        and AltStable.IsCharacterHidden(char.guid) or false
+    row:SetAlpha(dim and HIDDEN_ROW_ALPHA or 1)
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.HIDDEN_ROW_ALPHA = HIDDEN_ROW_ALPHA
+
 local function SetRowBg(row, index)
     local C = AltStable.C
     if index % 2 == 0 then
@@ -488,6 +509,7 @@ end
 -- so the label can't be a single string spanning both panels — we split it
 -- intentionally. Together they read as one continuous "Dreamscythe (Account: Default)".
 function AltStable.RenderGroupRow(row, item)
+    DimRow(row, nil)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     for _, cell in ipairs(row.cells) do cell:SetText("") end
@@ -518,6 +540,7 @@ function AltStable.RenderGroupRow(row, item)
 end
 
 function AltStable.RenderRow(row, char, index, columns)
+    DimRow(row, char)
     SetRowBg(row, index)
     -- Pool reuse: a row that previously rendered as a group header may carry
     -- a leftover groupLabel. Hide it so it doesn't bleed onto this char row.
@@ -745,6 +768,7 @@ end
 -- index is 1-based RELATIVE to the start of the filler region so the
 -- alternating pattern continues seamlessly from the last real row.
 function AltStable.RenderFillerRow(row, index)
+    DimRow(row, nil)
     SetRowBg(row, index)
     if row.classTint  then row.classTint:SetColorTexture(0,0,0,0) end
     if row.groupLabel then row.groupLabel:Hide() end
@@ -811,7 +835,7 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
             local copper = c.money % 100
             GameTooltip:AddLine(string.format("Gold: %d%s %ds %dc", gold,GOLD_ICON,silver,copper), 0.9,0.85,0.1)
         end
-        GameTooltip:AddLine("Right-click to hide this character", 0.5,0.5,0.5)
+        GameTooltip:AddLine("Right-click for favourite, hide, forget", 0.5,0.5,0.5)
         if c.lastUpdate then
             local diff = time()-c.lastUpdate
             local isMe = c.guid == UnitGUID("player")
@@ -825,16 +849,18 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         GameTooltip:Show()
     end)
     tipBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    -- Right-click hides the character (#21). The row only reports the click:
-    -- the confirmation and the config write live in SheetUI, which owns the
-    -- view. charData is nil on group, filler and recycled rows, so those
-    -- right-clicks do nothing.
+    -- Right-click opens the character menu (#69): favourite, hide/unhide,
+    -- forget. It used to go straight to "hide this character?", which spent the
+    -- whole gesture on one of the four things that want it. The row only
+    -- reports the click; the menu and every action behind it live elsewhere, so
+    -- the Roster card can raise the same one. charData is nil on group, filler
+    -- and recycled rows, so those right-clicks do nothing.
     tipBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     tipBtn:SetScript("OnClick", function(_, button)
         if button ~= "RightButton" then return end
         local c = tipBtn.charData
-        if c and AltStable.RequestHideCharacter then
-            AltStable.RequestHideCharacter(c)
+        if c and AltStable.ShowCharacterMenu then
+            AltStable.ShowCharacterMenu(c)
         end
     end)
     row.nameTipBtn = tipBtn
@@ -843,6 +869,7 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
 end
 
 function AltStable.RenderFrozenGroupRow(row, item)
+    DimRow(row, nil)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Show()
@@ -885,6 +912,7 @@ function AltStable.RenderFrozenGroupRow(row, item)
 end
 
 function AltStable.RenderFrozenCharRow(row, char, index)
+    DimRow(row, char)
     SetRowBg(row, index)
     if row.classTint then
         local r, g, b = AltStable.GetClassRGB(char.class)
@@ -912,6 +940,7 @@ end
 -- Filler row on the frozen side. Same alternating-bg as the scrollable
 -- side filler. No name, no class icon, no collapse button.
 function AltStable.RenderFrozenFillerRow(row, index)
+    DimRow(row, nil)
     SetRowBg(row, index)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Hide()
