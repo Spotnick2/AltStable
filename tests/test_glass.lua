@@ -202,9 +202,19 @@ do
           AltStable.SkinPanelFill(footer, window, AltStable.C.BG_FOOTER))
     check("  painted as a TEXTURE, because a backdrop cannot be masked",
           footer._skinFill ~= nil)
-    check("  in the colour asked for",
-          footer._skinFill._colorTexture ~= nil
-          and footer._skinFill._colorTexture[1] == AltStable.C.BG_FOOTER[1])
+    -- In the PANE colour, not the flat palette's. BG_FOOTER is opaque - it was
+    -- painted on an opaque window - and reusing it here lays a solid slab with
+    -- hard edges over the material, which is what the first attempt did and what
+    -- it looked like in game: a black box pasted onto the glass.
+    local fc = footer._skinFill._colorTexture
+    local pane = AltStable.SkinPaneColor()
+    check("  in the pane colour, not the flat palette's",
+          fc and fc[1] == pane[1] and fc[4] == pane[4],
+          fc and ("%s a=%s"):format(tostring(fc[1]), tostring(fc[4])))
+    check("  which is translucent, so the material still shows through",
+          pane[4] < 1, tostring(pane[4]))
+    check("  and darkens with the preset",
+          AltStable.SKINS.smoked.pane[4] > AltStable.SKINS.clear.pane[4])
 
     -- THE point of the whole exercise, and the easiest thing to get backwards.
     eq("  the mask is owned by the PANEL", footer._skinMask._maskOwner, footer)
@@ -231,6 +241,66 @@ do
     local _, rel2 = opts._skinMask:GetPoint(1)
     eq("  anchored to the window too", rel2, window)
     eq("  and no second fill is painted over its own", opts._skinFill, nil)
+end
+
+------------------------------------------------------------
+-- The title band
+------------------------------------------------------------
+-- It owns BOTH top corners and it painted an opaque fill flush to (0, 0), so
+-- before this it drew them square - listed as a corner owner in the plan and
+-- then not wired. The assertion is therefore as much about the clipping as
+-- about the look.
+
+AltStableConfig.skin = "clear"
+do
+    local window = freshHost()
+    AltStable.SkinWindow(window)
+    local bar = CreateFrame("Frame", nil, window)
+    local bg  = bar:CreateTexture(nil, "BACKGROUND")
+    local sep = bar:CreateTexture(nil, "OVERLAY")
+    bg:SetColorTexture(0.10, 0.10, 0.10, 1)   -- what it was: opaque and dark
+    sep:SetColorTexture(0, 0, 0, 1)
+
+    check("the title band is restyled", AltStable.SkinTitleBand(bar, window, bg, sep))
+
+    -- LIGHTER than the body, not darker. A dark band across the top of a
+    -- translucent window reads as a lid laid on the glass.
+    local c = bg._colorTexture
+    check("  painted light rather than dark", c and c[1] > 0.5, tostring(c and c[1]))
+
+    -- And graded, brightest at the top, agreeing with the body's own wash.
+    -- VERTICAL takes min at the BOTTOM, so max is the top edge.
+    local grad = bg._gradient
+    check("  with a vertical gradient", grad ~= nil and grad.orient == "VERTICAL")
+    check("  brightest at the top edge",
+          grad and grad.max.a > grad.min.a,
+          grad and ("%s -> %s"):format(tostring(grad.min.a), tostring(grad.max.a)))
+    -- Translucent, or the world stops showing through and it is just a bar.
+    check("  and translucent enough to see through",
+          grad and grad.max.a < 0.5, grad and tostring(grad.max.a))
+
+    -- The corner fix, which is the part that was actually broken.
+    eq("  clipped by a mask the bar owns", bar._skinMask._maskOwner, bar)
+    local _, rel = bar._skinMask:GetPoint(1)
+    eq("  anchored to the window", rel, window)
+    eq("  and carried by the fill", bg:GetMaskTexture(1), bar._skinMask)
+
+    -- The divider stops being a hard black line across a light band.
+    local sc = sep._colorTexture
+    check("  the divider is light, not black", sc and sc[1] > 0.5 and sc[4] < 0.5,
+          sc and ("%s a=%s"):format(tostring(sc[1]), tostring(sc[4])))
+end
+
+AltStableConfig.skin = "flat"
+do
+    local bar = CreateFrame("Frame", nil, UIParent)
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetColorTexture(0.10, 0.10, 0.10, 1)
+    eq("under flat the title band is left alone",
+       AltStable.SkinTitleBand(bar, UIParent, bg, nil), false)
+    local c = bg._colorTexture
+    check("  keeping its opaque dark fill", c and c[1] == 0.10 and c[4] == 1)
+    eq("  and gaining no mask", bar._skinMask, nil)
 end
 
 ------------------------------------------------------------

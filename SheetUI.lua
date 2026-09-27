@@ -2122,10 +2122,24 @@ local function CreateFrameIfNeeded()
     tbSep:SetPoint("BOTTOMRIGHT", titleBar, "BOTTOMRIGHT", 0, 0)
     tbSep:SetColorTexture(0, 0, 0, 1)
 
+    -- Under glass the band is lighter than the body rather than darker, and is
+    -- clipped to the window so it stops squaring off the top corners. Called
+    -- after both textures exist because it restyles them in place.
+    AltStable.SkinTitleBand(titleBar, frame, tbBg, tbSep)
+    -- Exposed so a test can prove the CALL happens, not merely that the helper
+    -- works when called: the helper had fifteen assertions on it and the line
+    -- that invokes it had none, so deleting this line changed nothing the suite
+    -- could see.
+    AltStable._test = AltStable._test or {}
+    AltStable._test.titleBar, AltStable._test.titleBarBG = titleBar, tbBg
+
     -- Title text — centered across the full width of the title bar.
     local titleText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
     titleText:SetText("AltStable")
+    -- Centred over a band the world shows through, so it needs the shadow.
+    AltStable.SkinText(titleText)
+    AltStable._test.titleText = titleText
     local function UpdateTitleTextColor()
         local r, g, b = AltStable.GetAccentRGB()
         titleText:SetTextColor(r, g, b)
@@ -3545,7 +3559,11 @@ local function CreateFrameIfNeeded()
         local dataBG = frame:CreateTexture(nil, "BACKGROUND", nil, -3)
         dataBG:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDEBAR_WIDTH, -BodyTopY())
         dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 36)
-        dataBG:SetColorTexture(unpack(AltStable.C.BG_MAIN))
+        -- The pane colour, not BG_MAIN: an opaque slab here is a black box
+        -- pasted on the glass, which is exactly how the first attempt looked.
+        dataBG:SetColorTexture(unpack(AltStable.SkinPaneColor()))
+        -- And clipped, because it runs to the window's right edge.
+        AltStable.SkinClipTexture(frame, dataBG, frame)
         AltStable._dataBG = dataBG
     end
 

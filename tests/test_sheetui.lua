@@ -933,6 +933,32 @@ end
 
 do
     local T = AltStable._test
+
+    -- The title band, through the BUILT sheet rather than the helper. The helper
+    -- has its own tests in test_glass; what those cannot say is whether SheetUI
+    -- actually calls it, and the title bar was listed as a corner owner in the
+    -- plan and then not wired at all.
+    do
+        local bg = T.titleBarBG
+        check("the title bar is restyled when the sheet is built", bg ~= nil)
+        if bg then
+            local c = bg._colorTexture
+            check("  painted light rather than the old opaque dark",
+                  c and c[1] > 0.5, tostring(c and c[1]))
+            check("  and graded", bg._gradient ~= nil)
+            -- The corner fix: it spans (0, 0) to the top corners, so without a
+            -- mask it draws them square.
+            check("  and clipped, so it stops squaring the top corners",
+                  bg:GetNumMaskTextures() > 0)
+        end
+        local tt = T.titleText
+        check("the title text has a shadow over the glass", tt ~= nil)
+        if tt then
+            local x, y = tt:GetShadowOffset()
+            check("  a real one", x ~= 0 or y ~= 0,
+                  ("%s,%s"):format(tostring(x), tostring(y)))
+        end
+    end
     local btn = CreateFrame("Frame")
     local over, under = T.ApplyRosterIcon(btn)
 

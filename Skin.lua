@@ -37,6 +37,8 @@ AltStable.SKINS = {
     clear = {
         material = true, label = "Clear glass",
         tint = { 0.13, 0.16, 0.22, 0.24 }, grain = 0.45, wash = 0.18,
+        -- The reading surface. See SkinPaneColor.
+        pane = { 0.04, 0.05, 0.07, 0.62 },
     },
 
     -- Darker, for reading. The body is a denser, cooler grey and the top-down
@@ -45,6 +47,7 @@ AltStable.SKINS = {
     smoked = {
         material = true, label = "Smoked glass",
         tint = { 0.05, 0.06, 0.08, 0.62 }, grain = 0.35, wash = 0.14,
+        pane = { 0.03, 0.03, 0.04, 0.80 },
     },
 }
 
@@ -71,6 +74,22 @@ end
 ------------------------------------------------------------
 -- Applying it
 ------------------------------------------------------------
+
+-- The colour of a READING SURFACE laid on the glass.
+--
+-- Not the flat palette's value. BG_MAIN and BG_FOOTER are opaque by design -
+-- they were painted on an opaque window - and reusing them here puts a solid
+-- black slab with hard square edges on top of the material, which is what the
+-- first attempt did and what it looked like: a box pasted onto the glass rather
+-- than a pane set into it.
+--
+-- So the panes are translucent and belong to the PRESET, which is also what
+-- lets smoked be smoked: the body and the reading surface darken together.
+-- Dense enough that small text over a moving world stays readable, light enough
+-- that the material is still visible through it.
+function AltStable.SkinPaneColor()
+    return AltStable.Skin().pane
+end
 
 -- The window itself. Returns the material's region table, or nil under flat -
 -- so a caller reads `if not g then <keep the old backdrop> end` rather than
@@ -111,8 +130,10 @@ function AltStable.SkinPanelFill(frame, window, c)
         fill:SetAllPoints(frame)
         frame._skinFill = fill
     end
-    c = c or AltStable.C.BG_MAIN
-    fill:SetColorTexture(c[1], c[2], c[3], c[4] or 1)
+    -- The caller's colour is the FLAT palette entry, kept for the flat path and
+    -- deliberately ignored here: see SkinPaneColor.
+    local pane = AltStable.SkinPaneColor()
+    fill:SetColorTexture(pane[1], pane[2], pane[3], pane[4])
 
     local S = Glass.SIZES.large
     -- Masked to the WINDOW's shape, not its own. A mask anchored to the fill
@@ -153,6 +174,42 @@ function AltStable.SkinClipTexture(frame, tex, window)
         tex:AddMaskTexture(frame._skinMask)
         tex._skinMasked = true
     end
+    return true
+end
+
+-- The title band.
+--
+-- Two problems in one, and the first is mine: the bar paints an OPAQUE fill
+-- flush to (0, 0), so under glass it owned both top corners and drew them
+-- square - listed as a corner owner in the plan and then not wired, which is
+-- the bug the plan existed to prevent.
+--
+-- The second is what it should look like instead. A darker band across the top
+-- of a translucent window reads as a lid sitting on the glass; the material's
+-- own body already has a top-down wash saying "light falls from above", and the
+-- title band wants to agree with it rather than fight it. So it becomes a
+-- LIGHTER band, brightest at the top edge, and the world shows through it more
+-- than through the body below - which is what makes it read as the same slab of
+-- glass, caught by the light, rather than as a separate strip.
+--
+-- White at low alpha rather than a grey: a grey light enough to brighten the
+-- body also greys out whatever is behind it, and the point is that the scene
+-- still shows through.
+function AltStable.SkinTitleBand(bar, window, bg, sep)
+    if not AltStable.SkinIsGlass() then return false end
+    if not bar or not window or not bg then return false end
+
+    -- SetColorTexture then SetGradient: the colour is the canvas the gradient
+    -- multiplies, so a gradient on an unpainted texture shows nothing.
+    bg:SetColorTexture(1, 1, 1, 1)
+    bg:SetGradient("VERTICAL",
+        CreateColor(1, 1, 1, 0.05),   -- VERTICAL: min is the BOTTOM
+        CreateColor(1, 1, 1, 0.16))   -- and max the top, where the light lands
+    AltStable.SkinClipTexture(bar, bg, window)
+
+    -- The divider was pure black, which is a hard line across a light band.
+    -- White at low alpha reads as the edge of the slab instead of a gap in it.
+    if sep then sep:SetColorTexture(1, 1, 1, 0.14) end
     return true
 end
 
