@@ -153,6 +153,12 @@ local function EntryButton(index)
     if entries[index] then return entries[index] end
 
     local b = CreateFrame("Button", nil, panel)
+    -- Both buttons, because the menu was OPENED with a right-click and
+    -- right-clicking the entry is the natural continuation of that gesture.
+    -- The entry takes the mouse, so an unregistered right-click is not passed
+    -- down to the catcher either: it does nothing at all, which reads as a
+    -- dead menu rather than as a button that only likes left-clicks.
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     b:SetHeight(ENTRY_H)
     b:SetPoint("LEFT", panel, "LEFT", PAD, 0)
     b:SetPoint("RIGHT", panel, "RIGHT", -PAD, 0)
@@ -347,6 +353,15 @@ AltStable._test.MenuClickOutside = function()
     if not fn then return false end
     fn(catcher)
     return true
+end
+
+-- One entry button by id, so a test can ask what the CLIENT would ask it:
+-- which buttons does it listen for, where is it anchored.
+AltStable._test.MenuEntry = function(id)
+    for _, b in ipairs(entries or {}) do
+        if b:IsShown() and b._id == id then return b end
+    end
+    return nil
 end
 
 AltStable._test.MenuRoot    = function() return root end

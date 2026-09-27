@@ -568,6 +568,22 @@ end
 -- available, and a hardcoded 0.45 in two files is honest about that.
 local HIDDEN_CARD_ALPHA = 0.45
 
+-- Who a card is currently about. Called by BOTH renderers, which is the point.
+--
+-- There are two of them - the grid and the scene - drawing from ONE pool of
+-- cards, and the scene originally set only `charGuid`. So a card that held
+-- somebody in the grid kept their whole record when the scene redrew it, and a
+-- right-click on a figure opened a menu titled with the wrong character and
+-- offered to forget them. Three properties that must move together, in one
+-- function, so a third renderer cannot take two of them.
+local function SetCardSubject(card, char)
+    card.char     = char
+    card.charGuid = char and char.guid or nil
+    local dim = char and AltStable.IsCharacterHidden
+        and AltStable.IsCharacterHidden(char.guid) or false
+    card:SetAlpha(dim and HIDDEN_CARD_ALPHA or 1)
+end
+
 local function BuildCard(parent, index)
     local card = CreateFrame("Button", nil, parent)
 
@@ -629,17 +645,7 @@ local function BuildCard(parent, index)
 end
 
 local function RenderCard(card, char, cardW, cardH)
-    card.charGuid = char.guid
-    -- The whole record, not just the guid: the menu needs the name for its
-    -- title and the Forget confirmation. Cards are pooled, so this is
-    -- overwritten on every render rather than only when set.
-    card.char = char
-
-    -- Dimmed exactly as a hidden ROW is, and for the same reason - this is the
-    -- card you right-click to unhide. Set both ways: the card showed somebody
-    -- else a frame ago.
-    local dim = AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(char.guid)
-    card:SetAlpha(dim and HIDDEN_CARD_ALPHA or 1)
+    SetCardSubject(card, char)
     card:SetSize(cardW, cardH)
     -- The gap is fair game for text: a name that reaches a little into it reads
     -- better than one cut off mid-surname.
@@ -698,8 +704,18 @@ local function BuildPanel(mainFrame)
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
 
     panel = CreateFrame("Frame", nil, mainFrame)
+    -- Stopping SHORT of the footer, which the panel used to cover.
+    --
+    -- The sheet's totals bar carries the "(N hidden)" toggle (#69), and that is
+    -- the only control that lists hidden characters so one can be right-clicked
+    -- and unhidden. Covering it here - and then hiding it in Activate, which is
+    -- what covering it forced - meant the Roster was the one tab where you
+    -- could hide a character from a card and then find no way back on that tab.
+    -- Hiding is unconfirmed now, so "the way back is visible" is load-bearing
+    -- rather than a nicety.
+    local footerH = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
     panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
-    panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
+    panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, footerH + 2)
     panel:Hide()
 
     backdropTex = panel:CreateTexture(nil, "BACKGROUND")
@@ -903,7 +919,7 @@ local function RenderScene(chars)
             card.sub:SetWidth(0)
             card.sub:SetText(("level %d"):format(char.level or 0))
             card.highlight:SetShown(Roster.selected == char.guid)
-            card.charGuid = char.guid
+            SetCardSubject(card, char)
             card:Show()
         else
             card:Hide()
@@ -1041,7 +1057,9 @@ function Roster.Activate(mainFrame)
     if mainFrame.headerScroll then mainFrame.headerScroll:Hide() end
     if mainFrame.frozenHeader then mainFrame.frozenHeader:Hide() end
     if mainFrame.hScrollBar   then mainFrame.hScrollBar:Hide()   end
-    if mainFrame.totalsBar    then mainFrame.totalsBar:Hide()    end
+    -- The totals bar deliberately STAYS: see BuildPanel. It is where the
+    -- "(N hidden)" toggle lives, and a card hidden on this tab has to be
+    -- recoverable on this tab.
     panel:Show()
     Roster.Refresh()
 end
@@ -1054,7 +1072,6 @@ function Roster.Deactivate(mainFrame)
     if mainFrame.headerScroll then mainFrame.headerScroll:Show() end
     if mainFrame.frozenHeader then mainFrame.frozenHeader:Show() end
     if mainFrame.hScrollBar   then mainFrame.hScrollBar:Show()   end
-    if mainFrame.totalsBar    then mainFrame.totalsBar:Show()    end
 end
 
 ------------------------------------------------------------
@@ -1092,6 +1109,8 @@ function Roster._Bootstrap()
             -- driven rather than inferred from the functions behind them.
             BuildCard = BuildCard, RenderCard = RenderCard,
             HIDDEN_CARD_ALPHA = HIDDEN_CARD_ALPHA,
+            RenderScene = RenderScene, Cards = function() return Roster.cards end,
+            Panel = function() return panel end,
             -- What the player is actually told. Asserting the hint STRING is
             -- the only way to catch the renderer handing the count the wrong
             -- list: the composition is right either way.

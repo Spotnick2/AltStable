@@ -187,6 +187,37 @@ do
           table.concat(cat:RegisteredClicks(), ","))
 end
 
+do
+    -- The menu was OPENED with a right-click, so right-clicking an entry is the
+    -- natural continuation of the gesture. The entry takes the mouse, so an
+    -- unregistered right-click is not passed down to the catcher either: it
+    -- does nothing whatsoever, which reads as a dead menu.
+    AltStable.ShowCharacterMenu(OTHER)
+    local entry = T.MenuEntry("hide")
+    check("an entry hears the right button", entry and entry:HandlesClick("RightButton"),
+          entry and table.concat(entry:RegisteredClicks(), ","))
+    check("  and the left one", entry and entry:HandlesClick("LeftButton"),
+          entry and table.concat(entry:RegisteredClicks(), ","))
+    AltStable.CloseCharacterMenu()
+end
+
+do
+    -- Entry buttons are POOLED, so every opening re-anchors the same button.
+    -- An anchor list that grew instead of being replaced would leave the first
+    -- recorded TOP behind for ever, and every placement assertion in this file
+    -- would be reading a position from the first opening.
+    AltStable.ShowCharacterMenu(OTHER)
+    local e = T.MenuEntry("hide")
+    local firstTop = select(5, e:GetPoint(1))
+    local n = e:GetNumPoints()
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowCharacterMenu(OTHER)
+    eq("re-opening the menu does not stack another anchor on a pooled entry",
+       T.MenuEntry("hide"):GetNumPoints(), n)
+    check("  (and the anchor it keeps is a real one)", firstTop ~= nil)
+    AltStable.CloseCharacterMenu()
+end
+
 ------------------------------------------------------------
 -- The frame: where it opens
 ------------------------------------------------------------

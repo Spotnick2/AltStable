@@ -3344,6 +3344,13 @@ local function CreateFrameIfNeeded()
     -- It sits in the footer, which every tab shows - including the Roster - so
     -- there is a route back from wherever a character was hidden. That is what
     -- let the hide confirmation go.
+    --
+    -- "Including the Roster" was an assumption when this was written and was
+    -- FALSE: that panel covered the footer and then hid it outright, making the
+    -- Roster the one tab where a card could be hidden with no way back on it.
+    -- The panel stops above the footer now, and test_roster pins both the gap
+    -- and the visibility - being shown underneath an opaque panel looks exactly
+    -- like being shown.
     totalsBar.hiddenBtn = CreateFrame("Button", nil, totalsBar)
     totalsBar.hiddenBtn:SetHeight(16)
     totalsBar.hiddenBtn:SetPoint("RIGHT", totalsBar.right, "LEFT", -4, 0)

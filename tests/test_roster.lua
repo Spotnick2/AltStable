@@ -1264,5 +1264,117 @@ do
     eq("  and the next card drawn in it is not", card:GetAlpha(), 1)
 end
 
+------------------------------------------------------------
+-- The scene draws from the SAME pool of cards as the grid
+------------------------------------------------------------
+-- Which makes every per-card property the two renderers do not both set a bug
+-- waiting for a view switch. The right-click menu reads card.char, so a scene
+-- that set only charGuid opened a menu titled with whoever that card held in
+-- the GRID - and offered to forget them.
+
+do
+    AltStableDB = {}
+    AltStableCutoutManifest = {}
+    AltStableConfig.hiddenCharacters = {}
+    AltStableConfig.favouriteCharacters = {}
+    for i = 1, 8 do
+        local guid = ("pool-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Pool %d"):format(i), class = "MAGE",
+                              realm = "R", level = 60 - i, race = "Human" }
+        -- Only the LAST few get portraits, so the scene's cast is a different
+        -- set of characters from the grid's first cards - which is what makes
+        -- a stale card.char point at the wrong person rather than the right one.
+        if i >= 6 then
+            AltStableCutoutManifest[("pool-%d"):format(i)] =
+                { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+        end
+    end
+
+    local main = CreateFrame("Frame")
+    main.GetWidth  = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    local first = T.Cards()[1]
+    check("the grid put a character on the first card", first and first.char ~= nil)
+    local inGrid = first and first.char and first.char.name
+
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    check("the scene put a character on the first card too",
+          first and first.char ~= nil,
+          "a right-click on a scene figure would open a menu about nobody")
+    eq("  and it is the one that card's guid says it is",
+       first.char and first.char.guid, first.charGuid)
+    check("  not the one the GRID left there",
+          first.char and first.char.name ~= inGrid,
+          ("both views put %s on card 1 - pick a fixture where they differ"):format(
+              tostring(inGrid)))
+
+    -- Same pool, same dimming rule. With the toggle on, the grid can leave a
+    -- card at 45%; the scene must not inherit it.
+    AltStable.SetShowingHidden(true)
+    AltStable.SetCharacterHidden("pool-1", true)
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    local dimmed
+    for _, c in ipairs(T.Cards()) do
+        if c.charGuid == "pool-1" then dimmed = c end
+    end
+    check("the hidden character's card is dimmed in the grid",
+          dimmed and dimmed:GetAlpha() == T.HIDDEN_CARD_ALPHA,
+          tostring(dimmed and dimmed:GetAlpha()))
+
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    if dimmed and dimmed:IsShown() then
+        eq("  and the scene figure drawn in that same card is not",
+           dimmed:GetAlpha(), 1)
+    end
+
+    AltStable.SetCharacterHidden("pool-1", false)
+    AltStable.SetShowingHidden(false)
+end
+
+------------------------------------------------------------
+-- The way back is on this tab too
+------------------------------------------------------------
+
+do
+    -- Hiding is unconfirmed since #69, and the only control that lists hidden
+    -- characters so one can be right-clicked and unhidden is the sheet's
+    -- footer. The Roster used to cover it with the panel and then hide it
+    -- outright, which made this the one tab where you could hide a character
+    -- from a card and find no way back without discovering that another tab
+    -- has one.
+    local main = CreateFrame("Frame")
+    main.GetWidth  = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    main.totalsBar = CreateFrame("Frame", nil, main)
+    main.bodyScroll = CreateFrame("Frame", nil, main)
+
+    T.Activate(main)
+    check("the footer stays on screen on the Roster tab",
+          main.totalsBar:IsShown(),
+          "the (N hidden) toggle is the only route back from an unconfirmed hide")
+    check("  while the grid it replaced does not", main.bodyScroll:IsShown() == false)
+
+    -- Shown is not the same as VISIBLE. The panel is opaque and spans the body;
+    -- leaving the totals bar shown underneath it looks identical to this test
+    -- and identical to a covered footer in game, so the gap is asserted too.
+    local footerH = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
+    local bottomY
+    local pnl = T.Panel()
+    for i = 1, pnl:GetNumPoints() do
+        local point, _, _, _, y = pnl:GetPoint(i)
+        if point == "BOTTOMRIGHT" then bottomY = y end
+    end
+    check("  and the panel stops above it rather than covering it",
+          bottomY ~= nil and bottomY >= footerH,
+          ("panel bottom is %s, footer is %d tall"):format(tostring(bottomY), footerH))
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

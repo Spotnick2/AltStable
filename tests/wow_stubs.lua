@@ -259,7 +259,19 @@ local function makeFrame()
         else
             rel, relPoint, x, y = a, b, c, d  -- SetPoint(point, rel, relPoint, x, y)
         end
+        -- REPLACES the anchor for a point already set, which is what the
+        -- client does. Appending instead meant a frame re-anchored on every
+        -- open - which every pooled menu entry is - accumulated stale anchors,
+        -- and GetPoint(1) handed back a position from several openings ago. A
+        -- placement assertion could then pass, or fail, for the wrong reason,
+        -- which defeats the point of recording anchors at all.
         self._points = self._points or {}
+        for _, existing in ipairs(self._points) do
+            if existing.point == point then
+                existing.rel, existing.relPoint, existing.x, existing.y = rel, relPoint, x, y
+                return self
+            end
+        end
         self._points[#self._points + 1] =
             { point = point, rel = rel, relPoint = relPoint, x = x, y = y }
         return self
