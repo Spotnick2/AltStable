@@ -2215,6 +2215,18 @@ local function CreateFrameIfNeeded()
                 end
             end
 
+            -- Settle the opening fade first, for the same reason the probe's
+            -- blackout does. This path is the MIRROR of that bug: it writes 0
+            -- and then a hardcoded 1, so a live fade overwrites the 0 and
+            -- climbs to 1 under its own timer well before the shutter - and
+            -- the sheet ends up fully visible in the portrait, which is the
+            -- exact thing hiding it was for.
+            --
+            -- Two ways in: pressing the title-bar button within 0.22s of the
+            -- sheet opening, or the sheet being hidden and re-shown anywhere
+            -- inside the 1.3s settle below, since `capturing` - which is what
+            -- stops OnShow replaying the fade - is not set until after it.
+            if AltStable.FinishOpenAnimation then AltStable.FinishOpenAnimation() end
             frame:SetAlpha(0)
             C_Timer.After(1.3, function()   -- let the weapon draw + zoom + recenter settle
                 -- Blackout for the shot. When the showcase is active the engine has
@@ -2319,6 +2331,14 @@ local function CreateFrameIfNeeded()
     refTip:Hide()
 
     refBtn:SetScript("OnClick", CaptureReferenceFromSheet)
+    -- The title-bar capture button, reachable from a test. Both it and the
+    -- handler are locals in here, so without this the legacy path below -
+    -- the one that borrows the sheet's alpha - could not be driven at all.
+    AltStable._test = AltStable._test or {}
+    AltStable._test.ClickCaptureButton = function()
+        local fn = refBtn:GetScript("OnClick")
+        if fn then fn(refBtn) end
+    end
     refBtn:SetScript("OnEnter", function()
         refBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
         refTip:Show()

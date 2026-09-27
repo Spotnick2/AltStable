@@ -1320,14 +1320,31 @@ do
     T.ShowUI()
     eq("  and keeps the alpha its owner chose", sheet:GetAlpha(), 0.6)
 
-    -- The probe must not require AltStable to be loaded at all: it is a
-    -- separate addon and can run without it.
-    AltStable.FinishOpenAnimation = nil
+    -- The probe must not require AltStable to be loaded AT ALL: it is a
+    -- separate addon, and the guard it relies on is `AltStable and
+    -- type(AltStable.FinishOpenAnimation) == "function"`.
+    --
+    -- Nil-ing the FIELD leaves AltStable a table, so the `AltStable and` half
+    -- is never exercised - and with the global genuinely absent the capture
+    -- would error on indexing nil inside HideUI, immediately after the
+    -- interface had gone down. So the GLOBAL goes.
+    local savedAltStable = AltStable
+    AltStable = nil
     sheet:SetAlpha(1)
     local ok = pcall(function() T.HideUI() end)
-    check("no AltStable, no problem", ok)
+    check("no AltStable at all, no problem", ok)
     T.ShowUI()
     eq("  and the alpha still round-trips", sheet:GetAlpha(), 1)
+    AltStable = savedAltStable
+
+    -- And with the addon present but this particular function absent, which
+    -- is what an older AltStable looks like.
+    AltStable.FinishOpenAnimation = nil
+    sheet:SetAlpha(1)
+    check("an AltStable without the function is fine too",
+          pcall(function() T.HideUI() end))
+    T.ShowUI()
+    eq("  and that alpha round-trips as well", sheet:GetAlpha(), 1)
 
     AltStable.FinishOpenAnimation = realFinish
     sheet:Hide()
