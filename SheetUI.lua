@@ -924,6 +924,11 @@ local function PlayOpenAnimation(targetFrame)
     OpenAnimRunner = OpenAnimRunner or CreateFrame("Frame")
     OpenAnimRunner:Hide()
     OpenAnimRunner.elapsed = 0
+    -- Recorded on the runner so the fade can be COMPLETED from outside, which
+    -- is what FinishOpenAnimation below needs. In the closure alone, the only
+    -- thing that could end this animation was the animation itself.
+    OpenAnimRunner.target = targetFrame
+    OpenAnimRunner.finalScale = userScale
     OpenAnimRunner:SetScript("OnUpdate", function(self, dt)
         self.elapsed = (self.elapsed or 0) + (dt or 0)
         local p = math.min(1, self.elapsed / duration)
@@ -931,15 +936,43 @@ local function PlayOpenAnimation(targetFrame)
         targetFrame:SetAlpha(eased)
         targetFrame:SetScale(startScale + (userScale - startScale) * eased)
         if p >= 1 then
-            targetFrame:SetAlpha(1)
-            targetFrame:SetScale(userScale)
-            self:SetScript("OnUpdate", nil)
-            self:Hide()
+            AltStable.FinishOpenAnimation()
         end
     end)
     OpenAnimRunner:Show()
 end
 AltStable._PlayOpenAnimation = PlayOpenAnimation
+
+-- Snap the opening fade to its end, now, and return whether there was one.
+--
+-- This exists because the fade OWNS the sheet's alpha for 0.22 seconds, and
+-- something else borrows that alpha: the portrait capture hides the sheet by
+-- zeroing it and writes back whatever it found. Start a capture inside the
+-- fade and the value it finds is 0, or a third of the way up - the fade then
+-- finishes at 1 on its own, and the capture's restore puts the stale number
+-- back. A sheet that is shown and completely invisible, with nothing on screen
+-- to explain it.
+--
+-- Two owners of one property need an order, not a race. Anything about to
+-- borrow the alpha finishes the fade first, so what it reads is the settled
+-- value - which is also what the player would have seen a fifth of a second
+-- later anyway.
+function AltStable.FinishOpenAnimation()
+    -- `target` is the flag, and the only one: it is set when a fade starts and
+    -- cleared here when one ends, including when the fade ends by itself. A
+    -- second condition on the runner's shown-ness would be a different answer
+    -- to the same question, reachable only if the two ever disagreed - which
+    -- is a state nothing creates, so no test could pin it.
+    local runner = OpenAnimRunner
+    if not runner or not runner.target then return false end
+
+    runner.target:SetAlpha(1)
+    runner.target:SetScale(runner.finalScale or 1)
+    runner:SetScript("OnUpdate", nil)
+    runner:Hide()
+    runner.target = nil
+    return true
+end
 
 ------------------------------------------------------------
 -- The addon's icon: the group of figures from the client's Who tab.
@@ -3793,6 +3826,14 @@ AltStable._test.ClickHiddenToggle = function()
     if not fn then return false end
     fn(btn)
     return true
+end
+
+-- The fade's own driver, so a test can advance it rather than wait 0.22s.
+AltStable._test.OpenAnimTick = function()
+    if not OpenAnimRunner then return nil end
+    local fn = OpenAnimRunner:GetScript("OnUpdate")
+    if not fn then return nil end
+    return function(dt) fn(OpenAnimRunner, dt) end
 end
 
 AltStable._test.FooterText = function()

@@ -211,6 +211,51 @@ check("the character is still in the database",
       type(AltStableDB.gone) == "table" and AltStableDB.gone.name == "Goner")
 
 ------------------------------------------------------------
+-- The opening fade can be finished from outside
+------------------------------------------------------------
+-- It owns the sheet's alpha for 0.22 seconds, and the portrait capture
+-- borrows that alpha to hide the sheet for the shot. A capture starting
+-- inside the fade read 0 - or a third of the way up - while the fade carried
+-- on to 1 under its own timer, and the restore afterwards wrote the stale
+-- number back. A sheet shown and completely invisible, with nothing on screen
+-- to explain it.
+
+do
+    AltStableConfig.enableOpenAnimation = true
+    local sheet = CreateFrame("Frame")
+    sheet:SetAlpha(1)
+
+    AltStable._PlayOpenAnimation(sheet)
+    eq("the fade starts the sheet invisible", sheet:GetAlpha(), 0)
+
+    check("the fade reports that it finished something",
+          AltStable.FinishOpenAnimation() == true)
+    eq("  and leaves the sheet at its settled alpha", sheet:GetAlpha(), 1)
+    eq("  and its settled scale", sheet:GetScale(), AltStableConfig.scale or 1.0)
+
+    -- Idempotent, and honest about it: anything about to borrow the alpha
+    -- calls this whether or not a fade is running, so "nothing to finish" has
+    -- to be a normal answer rather than a second write.
+    sheet:SetAlpha(0.5)
+    check("finishing again reports there was nothing to do",
+          AltStable.FinishOpenAnimation() == false)
+    eq("  and touches nothing", sheet:GetAlpha(), 0.5)
+
+    -- Mid-fade, not only at the start: the capture can land anywhere in the
+    -- 0.22 seconds.
+    sheet:SetAlpha(1)
+    AltStable._PlayOpenAnimation(sheet)
+    local tick = AltStable._test.OpenAnimTick()
+    if tick then tick(0.1) end
+    check("part way through, the sheet is part way faded",
+          sheet:GetAlpha() > 0 and sheet:GetAlpha() < 1, tostring(sheet:GetAlpha()))
+    AltStable.FinishOpenAnimation()
+    eq("  and finishing still lands on 1", sheet:GetAlpha(), 1)
+
+    AltStableConfig.enableOpenAnimation = nil
+end
+
+------------------------------------------------------------
 -- The menu does not outlive the window that raised it (#69)
 ------------------------------------------------------------
 

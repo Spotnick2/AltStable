@@ -118,6 +118,19 @@ local strays
 local function SuppressStrays()
     strays = {}
 
+    -- Settle anything that is mid-animation BEFORE reading its alpha.
+    --
+    -- The sheet's opening fade owns its alpha for 0.22 seconds, from 0 up to
+    -- 1. A capture starting inside that window borrowed whatever it found -
+    -- 0, or a third of the way up - while the fade carried on to 1 under its
+    -- own timer; the restore afterwards then wrote the stale number back and
+    -- left a sheet that was shown and completely invisible.
+    --
+    -- Two owners of one property need an order, not a race. This is the order.
+    if AltStable and type(AltStable.FinishOpenAnimation) == "function" then
+        pcall(AltStable.FinishOpenAnimation)
+    end
+
     local function zero(f)
         if type(f) ~= "table" then return end
         if type(f.GetAlpha) ~= "function" or type(f.SetAlpha) ~= "function" then return end

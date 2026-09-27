@@ -1215,5 +1215,69 @@ do
     T.CancelPending()
 end
 
+------------------------------------------------------------
+-- Never borrow an alpha somebody else is still animating
+------------------------------------------------------------
+-- The blackout hides the lifted sheet by saving its alpha and zeroing it, then
+-- writes the saved value back afterwards. The sheet's opening fade owns that
+-- same alpha for 0.22 seconds, climbing from 0 to 1 under its own timer - so a
+-- capture starting inside the fade saved 0, the fade finished at 1 regardless,
+-- and the restore put the 0 back. A sheet shown and completely invisible.
+--
+-- Two owners of one property need an order. The probe settles the fade before
+-- it reads, which is AltStable's job to provide and the probe's to ask for.
+
+do
+    resetCapture()
+    T.ShowUI()
+    UIParent:Show()
+
+    local sheet = CreateFrame("Frame", "AltStableSheet", UIParent)
+    sheet:SetParent(nil)                  -- as the showcase leaves it
+    sheet:Show()
+
+    -- A fade in progress: alpha is mid-climb and something else will carry it
+    -- to 1 whatever the capture does.
+    sheet:SetAlpha(0)
+    local finished = false
+    AltStable = AltStable or {}
+    local realFinish = AltStable.FinishOpenAnimation
+    AltStable.FinishOpenAnimation = function()
+        finished = true
+        sheet:SetAlpha(1)                 -- what finishing the fade does
+        return true
+    end
+
+    T.HideUI()
+    check("the capture asks for the fade to be settled first", finished,
+          "otherwise it saves a number the fade is about to overwrite")
+    eq("  and the sheet is blacked out for the shot", sheet:GetAlpha(), 0)
+
+    T.ShowUI()
+    eq("  and comes back at the alpha the fade settled on, not the one mid-fade",
+       sheet:GetAlpha(), 1)
+
+    -- A configured alpha is still preserved: settling the fade must not become
+    -- "restore everything to 1".
+    AltStable.FinishOpenAnimation = function() return false end   -- nothing running
+    sheet:SetAlpha(0.6)
+    T.HideUI()
+    eq("a sheet with no fade running is blacked out too", sheet:GetAlpha(), 0)
+    T.ShowUI()
+    eq("  and keeps the alpha its owner chose", sheet:GetAlpha(), 0.6)
+
+    -- The probe must not require AltStable to be loaded at all: it is a
+    -- separate addon and can run without it.
+    AltStable.FinishOpenAnimation = nil
+    sheet:SetAlpha(1)
+    local ok = pcall(function() T.HideUI() end)
+    check("no AltStable, no problem", ok)
+    T.ShowUI()
+    eq("  and the alpha still round-trips", sheet:GetAlpha(), 1)
+
+    AltStable.FinishOpenAnimation = realFinish
+    sheet:Hide()
+end
+
 print(("test_render: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)
