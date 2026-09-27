@@ -580,13 +580,20 @@ local RETIRED_FIELDS = {
     -- 1.60.1.70009 reporting 1.66% for a level 18 gnome warlock, which is a
     -- real value and not a rating-derived zero.
     --
-    -- stat_hitpct STAYS retired. GetHitModifier is a pre-WoD global that was
-    -- removed when hit rating was, it appears in no dump or note in this repo,
-    -- and the Combat row for it did not render on the live client - which is
-    -- consistent with the function being absent OR with a genuine zero, and
-    -- those are different things. Until one line in game tells them apart, a
-    -- producer for it would be exactly the "stored 0 beside characters that
-    -- have no value at all" this note warns about.
+    -- stat_hitpct STAYS retired, and NOT because the function is missing.
+    -- GetHitModifier is in the 1.60.1.70009 dump with a signature -
+    -- `GetHitModifier() -> result:number [PlayerScript]` - so an earlier version
+    -- of this note claiming it "appears in no dump" was simply wrong. Presence
+    -- is not useful behaviour, though.
+    --
+    -- What is actually known: the Combat row for it did not render on the live
+    -- client, which is equally consistent with a genuine zero (it reports BONUS
+    -- hit from gear, which is zero for most characters) and with the function
+    -- returning nothing useful. Those are different things, the RUNTIME value is
+    -- UNMEASURED, and a producer either way would store a zero that cannot be
+    -- told from an absence - exactly what this note warns about.
+    --
+    -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")
     stat_hitpct = true,
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }

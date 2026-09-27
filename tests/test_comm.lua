@@ -1610,9 +1610,10 @@ end
 --
 -- GetCritChance has a verified producer - observed on 1.60.1.70009 reporting
 -- 1.66% for a level 18 gnome warlock - so the field is live and rides the wire.
--- GetHitModifier is a pre-WoD global that no longer exists, so stat_hitpct
--- stays retired and the scanner does not write it. Releasing one without the
--- other is the mistake this pair catches.
+-- GetHitModifier exists on this client - it is in the 1.60.1.70009 dump with a
+-- signature - but its RUNTIME value is unmeasured and its row did not render in
+-- game, so stat_hitpct stays retired and the scanner does not write it.
+-- Releasing one without the other is the mistake this pair catches.
 check(not T.RETIRED_FIELDS.stat_crit,
       "stat_crit is NOT retired - it has a verified producer")
 check(T.SerializeChar({ guid = "g", name = "n", level = 20, lastUpdate = 1,

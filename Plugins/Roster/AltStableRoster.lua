@@ -617,7 +617,8 @@ local CHAR_STAT_GROUPS = {
         { label = "Attack Power", key = "stat_ap",      kind = "int" },
         { label = "Spell Power",  key = "stat_sp",      kind = "int" },
         { label = "Melee Crit",   key = "stat_crit",    kind = "percent2" },
-        -- No Hit Chance row. GetHitModifier is unmeasured on this client and
+        -- No Hit Chance row. GetHitModifier exists on this client - it is in
+        -- the 1.60.1.70009 dump - but its VALUE is unmeasured here, and
         -- returns the BONUS hit from gear, which is zero for most characters -
         -- so the row was invisible for nearly everybody, and "Hit Chance" was
         -- the wrong label for it besides: no bonus hit is not a 0% chance to
@@ -1533,12 +1534,43 @@ end
 -- so the weapons ran underneath the figure instead of beneath it, and nothing
 -- was centred on anything. This takes the figure's centre and works outwards,
 -- which is what a paper doll is.
-local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY)
+-- How big the slot buttons can be, given the room the side columns have.
+--
+-- The side columns are the tallest part of the layout: six rows at a fixed
+-- stride from a fixed top, so their extent did not depend on the panel height at
+-- all - and raising the stride from 40 to 48 in this same change put the sixth
+-- button at 332px below the panel top. A 310px panel is reachable (SheetUI's
+-- sidebar floors the window at 364, BuildPanel takes 30 above and 24 below, and
+-- ResizeFrameToContent deliberately does not resize for plugins), so wrist and
+-- ring 2 and their item-level labels sat on the footer and past the bottom edge.
+--
+-- Fixing the figure height was not enough: that bounds the WEAPONS row, which
+-- hangs off the figure's bottom, and never touched the side stride. So the whole
+-- equipment layout scales instead, keeping the stride-to-size ratio so the
+-- item-level label keeps the gap it lives in.
+--
+-- Returns size, step. Never larger than the constants: a big panel is unchanged.
+local SLOT_MIN = 18
+local function SlotScale(rows, room)
+    rows = math.max(1, rows or 1)
+    local step = math.min(SLOT_STEP, (room or 0) / rows)
+    local size = math.floor(step * (SLOT_SIZE / SLOT_STEP))
+    if size < SLOT_MIN then size = SLOT_MIN end
+    if size > SLOT_SIZE then size = SLOT_SIZE end
+    if step < size then step = size end
+    return size, step
+end
+
+-- `size` and `step` are passed in, not read from the constants, because a short
+-- panel has to SHRINK the whole equipment layout rather than run off the bottom
+-- of it. See SlotScale.
+local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY, size, step)
+    size, step = size or SLOT_SIZE, step or SLOT_STEP
     -- No clamp on leftX, because it cannot go negative: the caller passes
     -- figureCx as (margin + W/2) and figureHalf as (W/2), so the width cancels
-    -- and this is always margin - SLOT_SIZE - 8. A guard here would be a
-    -- branch nothing can reach, which is worse than none.
-    local leftX  = figureCx - figureHalf - SLOT_SIZE - 8
+    -- and this is always margin - size - 8. A guard here would be a branch
+    -- nothing can reach, which is worse than none.
+    local leftX  = figureCx - figureHalf - size - 8
     local rightX = figureCx + figureHalf + 8
 
     -- Count the bottom row first so it can be centred under the figure.
@@ -1546,7 +1578,7 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY)
     for _, slot in ipairs(GEAR_SLOTS) do
         if slot.side == "bottom" then bottomN = bottomN + 1 end
     end
-    local bottomX = figureCx - (bottomN * SLOT_STEP - (SLOT_STEP - SLOT_SIZE)) / 2
+    local bottomX = figureCx - (bottomN * step - (step - size)) / 2
 
     local li, ri, bi = 0, 0, 0
     for i, slot in ipairs(GEAR_SLOTS) do
@@ -1558,18 +1590,19 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY)
         b.itemName = char["gearname_" .. slot.key]
 
         b:ClearAllPoints()
+        b:SetSize(size, size)
         if slot.side == "left" then
-            b:SetPoint("TOPLEFT", detail, "TOPLEFT", leftX, topY - li * SLOT_STEP)
+            b:SetPoint("TOPLEFT", detail, "TOPLEFT", leftX, topY - li * step)
             li = li + 1
         elseif slot.side == "right" then
-            b:SetPoint("TOPLEFT", detail, "TOPLEFT", rightX, topY - ri * SLOT_STEP)
+            b:SetPoint("TOPLEFT", detail, "TOPLEFT", rightX, topY - ri * step)
             ri = ri + 1
         else
             -- BELOW the figure, not at a fixed offset from the top. The
             -- weapons used to be placed six rows down regardless of how tall
             -- the figure was, which put them across its legs.
             b:SetPoint("TOPLEFT", detail, "TOPLEFT",
-                       bottomX + bi * SLOT_STEP, bottomY - 8)
+                       bottomX + bi * step, bottomY - 8)
             bi = bi + 1
         end
 
@@ -1632,7 +1665,12 @@ local function RenderDetail(char)
     -- ours only looked acceptable there because that figure had a background
     -- behind it, which made the overlap read as deliberate.
     local figureTop = -(BAR_TOP + BAR_H + 34)
-    local WEAPON_ROW_H = SLOT_STEP + 22
+    -- Reserved from the full-size slot, NOT from SLOT_STEP: the stride is what
+    -- SlotScale derives from the room left over here, so reserving a stride's
+    -- worth would make the two chase each other. An icon plus its item-level
+    -- label plus breathing room, at the largest the icon can be, so the reserve
+    -- is never short.
+    local WEAPON_ROW_H = SLOT_SIZE + 22
     -- figureTop is a negative offset from the top, so this is what is left
     -- between it and the bottom of the panel.
     local figureH = detail:GetHeight() + figureTop - WEAPON_ROW_H - 16
@@ -1693,8 +1731,20 @@ local function RenderDetail(char)
         end
     end
 
+    -- The side columns get the figure's own vertical extent, which is what they
+    -- flank - so they can never reach the weapons row hanging below it either.
+    local sideRows = 0
+    do
+        local li, ri = 0, 0
+        for _, slot in ipairs(GEAR_SLOTS) do
+            if slot.side == "left" then li = li + 1
+            elseif slot.side == "right" then ri = ri + 1 end
+        end
+        sideRows = math.max(li, ri)
+    end
+    local slotSize, slotStep = SlotScale(sideRows, figureH)
     RenderDetailSlots(char, 60 + DETAIL_FIGURE_W / 2, figureTop, DETAIL_FIGURE_W / 2,
-                      figureBottom)
+                      figureBottom, slotSize, slotStep)
 
     -- The right-hand column, and which tab owns it.
     --
@@ -2076,6 +2126,8 @@ local DETAIL_TEST = {
         local _, _, _, bx = detail.tabs[1]:GetPoint(1)
         return { x = bx, right = detail.columnRight, panel = detail:GetWidth() }
     end,
+    SlotScale = SlotScale,
+    SLOT_SIZE = SLOT_SIZE, SLOT_STEP = SLOT_STEP, SLOT_MIN = SLOT_MIN,
     DetailStageOrder = function()
         if not detail then return {} end
         local function of(t)

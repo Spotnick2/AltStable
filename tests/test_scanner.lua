@@ -1108,11 +1108,12 @@ do
         eq("haste is not scanned", me.stat_haste, nil)
         eq("  nor resilience", me.stat_resilience, nil)
 
-        -- Hit chance is NOT scanned, even though the stub still offers a
-        -- GetHitModifier. It is a pre-WoD global, Core.lua lists stat_hitpct in
-        -- RETIRED_FIELDS and purges it at login, so a producer here would write
-        -- a field the addon deletes on the next load - which is what an earlier
-        -- version of this commit did.
+        -- Hit chance is NOT scanned, even though the stub offers a
+        -- GetHitModifier - and the function is REAL on this client, listed in
+        -- the 1.60.1.70009 dump with a signature. What is unmeasured is its
+        -- runtime value. Core.lua lists stat_hitpct in RETIRED_FIELDS and purges
+        -- it at login, so a producer here would write a field the addon deletes
+        -- on the next load, which is what an earlier version of this commit did.
         eq("hit chance is not scanned", me.stat_hitpct, nil)
 
         check("the stats around them are still there",

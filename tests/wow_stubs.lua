@@ -619,10 +619,11 @@ function GetSpellBonusDamage(school) return 700 + school end
 -- so a stub for either would let a port of the TBC table pass here and then
 -- report a real 0% in game for something that does not exist.
 --
--- GetHitModifier is stubbed and the scanner deliberately does NOT call it: it
--- is a pre-WoD global that no longer exists on this client, stat_hitpct is in
--- Core's RETIRED_FIELDS, and the stub is kept only so a test can prove we
--- leave it alone.
+-- GetHitModifier is stubbed BECAUSE IT EXISTS - it is in the 1.60.1.70009 dump
+-- with a signature - and the scanner deliberately does not call it anyway: its
+-- runtime value is unmeasured, and stat_hitpct is in Core's RETIRED_FIELDS. The
+-- stub is here so a test can prove we leave a present function alone, which is
+-- a different assertion from "the function is missing".
 function GetCritChance() return WoW.critChance end
 function GetHitModifier() return WoW.hitModifier end
 

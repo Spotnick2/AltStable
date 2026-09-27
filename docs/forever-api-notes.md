@@ -1068,6 +1068,35 @@ coordinate space, so no scale conversion is involved. Fixed for our own button i
 
 ---
 
+## GetCritChance works; GetHitModifier exists but is UNMEASURED
+
+```
+GetCritChance()    ->  1.66            MEASURED, level 18 gnome warlock, 1.60.1.70009
+GetHitModifier()   ->  ?               PRESENT in the dump, runtime value not measured
+```
+
+`GetCritChance` returns a real percentage, not a rating-derived zero, so `stat_crit` has a
+build-verified producer and is scanned.
+
+`GetHitModifier` **is in the 1.60.1.70009 dump**, with a signature —
+`GetHitModifier() -> result:number [PlayerScript]` — so any claim that it was removed with hit
+rating is wrong. What is not known is what it *returns* here. It reports the **bonus** hit from
+gear, which is zero for most characters, and the Combat row for it did not render on the live
+client — which is equally consistent with "no useful value" and "a genuine zero". Those are
+different things, and a stored zero cannot be told from an absence afterwards, so `stat_hitpct`
+stays on `RETIRED_FIELDS` and nothing produces it.
+
+Presence in the dump is evidence of an API's existence and **nothing at all** about its behaviour.
+Worth stating because it cuts the other way too: a function being listed is not a reason to use it.
+
+To settle it, one line in game:
+
+```
+/run print(GetHitModifier and GetHitModifier() or "ABSENT")
+```
+
+---
+
 ## Other stats
 
 ```

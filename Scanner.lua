@@ -649,12 +649,13 @@ function AltStable.ScanCharacter()
     -- rating-derived zero, which is what Core's RETIRED_FIELDS note asked for
     -- before taking a field off that list.
     --
-    -- GetHitModifier is NOT scanned. It is a pre-WoD global removed when hit
-    -- rating was, it appears in no dump or note here, and its row did not
-    -- render in game - which is equally consistent with "the function is
-    -- absent" and "the value is genuinely zero". Writing the field either way
-    -- would store a zero that cannot be told from an absence, and
-    -- stat_hitpct is still on Core's retired list, so the value would be
+    -- GetHitModifier is NOT scanned, and not because it is absent: the
+    -- 1.60.1.70009 dump lists it with a signature. What is unknown is its
+    -- RUNTIME value. Its row did not render in game, which is equally consistent
+    -- with "the function returns nothing useful" and "the value is genuinely
+    -- zero" - it reports BONUS hit from gear, which is zero for most characters.
+    -- Writing the field either way stores a zero that cannot be told from an
+    -- absence, and stat_hitpct is still on Core's retired list, so it would be
     -- purged at the next login regardless.
     --
     -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")

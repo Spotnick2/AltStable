@@ -1617,7 +1617,8 @@ do
     -- The two stats that exist in Vanilla and had to be added to the scanner.
     check("melee crit is shown to two places", stats:find("Melee Crit=12.50%", 1, true) ~= nil, stats)
 
-    -- Hit chance is NOT offered. GetHitModifier is unmeasured on this client,
+    -- Hit chance is NOT offered. GetHitModifier exists on this client - it is
+    -- in the 1.60.1.70009 dump with a signature - but its VALUE is unmeasured,
     -- returns the BONUS hit from gear - zero for most characters, so the row
     -- was invisible for nearly everybody - and stat_hitpct is still on Core's
     -- RETIRED_FIELDS, which purges it at login and drops it from sync. A row
@@ -2297,28 +2298,105 @@ do
         -- a short panel the floor won, the figure ran past the bottom edge and
         -- the weapons row went with it - seven item buttons drawn over the game
         -- world, taking the mouse there. Nothing sets SetClipsChildren.
+        -- EVERY equipment button, not only the weapons row. The first version of
+        -- this checked weapons and trinkets, which hang off the figure's bottom
+        -- and so were the only ones the figure-height fix touched. The SIDE
+        -- columns are six rows at a fixed stride from a fixed top, so their
+        -- extent did not depend on the panel height at all - and raising the
+        -- stride from 40 to 48 put the sixth button 332px down whatever the panel
+        -- did.
+        --
+        -- 310 is in the list because it is the real floor: SheetUI's sidebar
+        -- floors the window at 364, BuildPanel takes 30 above and 24 below, and
+        -- ResizeFrameToContent deliberately does not resize for plugins.
         d:SetWidth(1400)
-        for _, h in ipairs({ 800, 420, 260 }) do
+        local ALL_SLOTS = { "head", "neck", "shoulder", "back", "chest", "wrist",
+                            "hands", "waist", "legs", "feet", "ring1", "ring2",
+                            "trinket1", "trinket2", "mainhand", "offhand", "ranged" }
+        for _, h in ipairs({ 800, 420, 310, 260 }) do
             d:SetHeight(h)
             T.Refresh()
-            for _, key in ipairs({ "mainhand", "offhand", "ranged",
-                                   "trinket1", "trinket2" }) do
+            for _, key in ipairs(ALL_SLOTS) do
                 local b = T.DetailSlotFrame(key)
                 local _, _, _, _, by = b:GetPoint(1)
                 -- Anchored TOPLEFT from the panel's TOPLEFT, so the offset is
                 -- negative downwards and the button's own height hangs below it.
+                local bottom = (by or 0) - b:GetHeight()
                 check(("the %s stays inside a %dpx-tall panel"):format(key, h),
-                      (by or 0) - b:GetHeight() >= -h,
-                      ("%s at %s, %s tall, panel %d"):format(
-                          key, tostring(by), tostring(b:GetHeight()), h))
+                      bottom >= -h,
+                      ("%s bottom=%s panel=%d"):format(key, tostring(bottom), h))
+                -- And the ITEM LEVEL label, which is anchored TOP to the
+                -- button's BOTTOM and so reaches further down than the button
+                -- does. It is the part that landed on the footer.
+                local lh = b.ilvl:GetHeight() or 0
+                check(("  and its item level label does too, at %dpx"):format(h),
+                      bottom - lh >= -h,
+                      ("%s label bottom=%s panel=%d"):format(
+                          key, tostring(bottom - lh), h))
             end
             -- The figure still has to BE there, or "inside the panel" is
             -- satisfied by a figure of zero height.
             check(("  and the figure still has a height at %dpx"):format(h),
                   (T.DetailFigureBox().height or 0) >= 24,
                   tostring(T.DetailFigureBox().height))
+            -- And the icons have to stay legible, or "it fits" is satisfied by
+            -- shrinking them to nothing.
+            check(("  with slot icons still legible at %dpx"):format(h),
+                  (T.DetailSlotFrame("head"):GetWidth() or 0) >= T.SLOT_MIN,
+                  tostring(T.DetailSlotFrame("head"):GetWidth()))
+            -- Nor may they overlap: a stride smaller than the icon stacks them.
+            local a = select(5, T.DetailSlotFrame("head"):GetPoint(1))
+            local bY = select(5, T.DetailSlotFrame("neck"):GetPoint(1))
+            local sz = T.DetailSlotFrame("head"):GetHeight()
+            check(("  and not overlapping each other at %dpx"):format(h),
+                  (a - bY) >= sz,
+                  ("stride %s vs size %s"):format(tostring(a - bY), tostring(sz)))
+
+            -- The WEAPONS row scales with them, horizontally. It is laid out
+            -- from its own centred start at the same stride, so a row still
+            -- stepping by the full 48 while the buttons are 21 wide is spread
+            -- out of line with the figure it is supposed to sit under - and the
+            -- centring calculation and the placement have to use the SAME
+            -- stride or the row drifts right.
+            local mhX = select(4, T.DetailSlotFrame("mainhand"):GetPoint(1))
+            local ohX = select(4, T.DetailSlotFrame("offhand"):GetPoint(1))
+            -- Compared with a tolerance, not with ==: the stride is a division
+            -- and two float paths to the same number are not bit-identical.
+            check(("the weapons row steps by the same stride at %dpx"):format(h),
+                  math.abs((ohX - mhX) - (a - bY)) < 0.01,
+                  ("bottom %s vs side %s"):format(tostring(ohX - mhX), tostring(a - bY)))
+            -- And stays centred under the figure: five bottom slots, so the
+            -- middle one is the centre.
+            local midX = select(4, T.DetailSlotFrame("mainhand"):GetPoint(1))
+            local figCx = 60 + 260 / 2
+            check(("  centred under the figure at %dpx"):format(h),
+                  math.abs((midX + sz / 2) - figCx) <= 1,
+                  ("mainhand centre %s vs figure centre %s"):format(
+                      tostring(midX + sz / 2), tostring(figCx)))
         end
         d:SetHeight(800)
+
+        -- The scale itself, at the boundaries.
+        do
+            local size, step = T.SlotScale(6, 10000)
+            eq("a panel with room keeps the full slot size", size, T.SLOT_SIZE)
+            eq("  and the full stride", step, T.SLOT_STEP)
+            -- A panel so short the legibility floor and the fitting rule
+            -- disagree. The floor wins - an icon below SLOT_MIN is not a slot,
+            -- it is a smudge - and the STRIDE has to be lifted with it, or the
+            -- rows stack on top of each other, which is the one thing worse
+            -- than overflowing.
+            local tiny, tinyStep = T.SlotScale(6, 12)
+            check("an impossible panel still gives a legible icon", tiny >= T.SLOT_MIN,
+                  tostring(tiny))
+            check("  and lifts the stride with it rather than stacking rows",
+                  tinyStep >= tiny, ("%s vs %s"):format(tostring(tinyStep), tostring(tiny)))
+            local mid, midStep = T.SlotScale(6, 180)
+            check("a short panel shrinks it", mid < T.SLOT_SIZE and mid >= T.SLOT_MIN,
+                  tostring(mid))
+            check("  and the stride never falls below the icon", midStep >= mid,
+                  ("%s vs %s"):format(tostring(midStep), tostring(mid)))
+        end
 
         d:SetWidth(100)
         T.Back()
