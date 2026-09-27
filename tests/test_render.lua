@@ -1026,5 +1026,140 @@ do
     WoW.displayID = 56658
 end
 
+------------------------------------------------------------
+-- The warning has to be VISIBLE, not merely shown
+------------------------------------------------------------
+-- AltStable's showcase hides UIParent for the whole time the sheet is open.
+-- The prompt is parented to UIParent so it stays out of the photograph - which
+-- also meant that a countdown firing while the sheet was up left it shown and
+-- invisible: the timer ran on, the capture happened, and the visible chance to
+-- cancel was not on screen.
+--
+-- Every assertion in this block uses PromptText, which asks IsVisible. The
+-- version that asked IsShown could not see this at all.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+
+    -- The sheet is open, so the showcase has taken the interface down.
+    UIParent:Hide()
+    T.StartCountdown("gear changed")
+    check("the countdown still warns when the interface is hidden",
+          T.PromptText() ~= nil,
+          "shown but invisible is the same as absent, and the capture goes ahead")
+    check("  by getting out from under the hidden UIParent",
+          T.prompt():GetParent() ~= UIParent, tostring(T.prompt():GetParent()))
+
+    -- And it must not then be standing in the photograph.
+    WoW.flushTimers()
+    check("the capture went ahead", T.capturing())
+    check("  with the prompt gone", T.PromptText() == nil)
+    check("  and actually hidden, not merely moved", T.PromptShown() == false)
+    check("  and parented back under UIParent", T.prompt():GetParent() == UIParent)
+    UIParent:Show()
+end
+
+do
+    -- The other order: the countdown starts in the open, and the player opens
+    -- the sheet during those five seconds.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    UIParent:Show()
+
+    T.StartCountdown("gear changed")
+    check("a countdown in the open is visible", T.PromptText() ~= nil)
+    check("  and parented normally", T.prompt():GetParent() == UIParent)
+
+    UIParent:Hide()                       -- they open the sheet mid-countdown
+    -- Re-checked as it ticks rather than only when it was shown.
+    local tick = T.prompt():GetScript("OnUpdate")
+    T.prompt().shown = nil                -- force the once-a-second repaint
+    if tick then tick(T.prompt()) end
+    check("opening the showcase mid-countdown does not hide the warning",
+          T.PromptText() ~= nil,
+          "the player would get a capture with no visible way to stop it")
+
+    -- Skip still works from there, which is the entire point.
+    check("Skip is still reachable", T.PromptClick("Skip"))
+    eq("  and cancels", T.pendingKind(), nil)
+    check("  and puts the prompt back under UIParent",
+          T.prompt():GetParent() == UIParent)
+    UIParent:Show()
+end
+
+do
+    -- Waiting for stillness is the long one - up to ninety seconds - so it is
+    -- the wait most likely to still be running when somebody opens the sheet.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    UIParent:Show()
+    WoW.speed = 7
+    T.StartCountdown("gear changed")
+    WoW.flushTimers()
+    check("the stillness wait is up", T.PromptText() ~= nil)
+
+    UIParent:Hide()                       -- they open the sheet while it waits
+    WoW.flushTimers()
+    check("opening the showcase does not hide it either",
+          T.PromptText() ~= nil,
+          "a ninety-second wait is the one most likely to overlap the sheet")
+
+    UIParent:Show()
+    WoW.speed = 0
+    T.CancelPending()
+end
+
+do
+    -- The SEAM, asserted directly.
+    --
+    -- Every on-screen check in this file goes through PromptText. Asking
+    -- IsShown instead of IsVisible makes a prompt hidden behind the showcase
+    -- indistinguishable from one on screen - which is precisely how the bug
+    -- above survived a suite full of prompt assertions. It only differs from
+    -- IsShown when something is broken, so it is pinned here rather than
+    -- relied upon to fail somewhere else.
+    resetCapture()
+    UIParent:Show()
+    T.StartCountdown("gear changed")
+    check("the prompt is on screen", T.PromptText() ~= nil)
+
+    -- Force the exact state the fix prevents: shown, under a hidden UIParent.
+    T.prompt():SetParent(UIParent)
+    UIParent:Hide()
+    check("  it is still 'shown'", T.PromptShown())
+    check("  but the seam reports nothing, because nobody can see it",
+          T.PromptText() == nil,
+          "a seam that cannot tell shown from visible hides this class of bug")
+
+    UIParent:Show()
+    T.CancelPending()
+end
+
+do
+    -- The safety net, independent of every path above: if the prompt is
+    -- somehow still up when the blackout runs, it is covered like any other
+    -- frame that escaped UIParent, rather than printed into the portrait.
+    resetCapture()
+    T.ShowUI()
+    UIParent:Show()
+    T.StartCountdown("gear changed")
+    UIParent:Hide()
+    local tick = T.prompt():GetScript("OnUpdate")
+    T.prompt().shown = nil
+    if tick then tick(T.prompt()) end
+    check("the prompt is lifted and visible", T.PromptText() ~= nil)
+
+    UIParent:Show()
+    T.ShowUI()
+    T.prompt():SetParent(WorldFrame)      -- pretend a path forgot to put it back
+    T.prompt():Show()
+    T.HideUI()
+    eq("a prompt that escaped is blacked out with everything else",
+       T.prompt():GetAlpha(), 0)
+    T.ShowUI()
+    T.CancelPending()
+end
+
 print(("test_render: %d passed, %d failed"):format(passed, failed))
 os.exit(failed > 0 and 1 or 0)

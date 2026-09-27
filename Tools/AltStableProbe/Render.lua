@@ -109,7 +109,10 @@ local owedRestore     -- a protected restore we could not make during combat
 -- Alpha, not Hide: hiding the sheet fires its OnHide, which tears the showcase
 -- down and restores the interface in the middle of the capture. Alpha is
 -- invisible to the screenshot and to the frame.
-local STRAY_FRAMES = { "AltStableSheet" }
+-- The prompt is in here too, as a safety net rather than as the mechanism:
+-- every path hides it before the shutter, and if one ever forgets, the
+-- blackout catches it rather than printing it into the portrait.
+local STRAY_FRAMES = { "AltStableSheet", "AltStableRenderPrompt" }
 local strays
 
 local function SuppressStrays()
@@ -971,6 +974,41 @@ local function Paint(p, left)
     p.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r"):format(left, p.why or ""))
 end
 
+-- Keep the prompt where it can actually be SEEN.
+--
+-- Parenting it to UIParent keeps it out of the photograph, and that is right
+-- for the blackout this file owns - but AltStable's showcase hides UIParent for
+-- the whole time the sheet is open. So a countdown that fires while the sheet
+-- is up, or a sheet opened during a countdown, left the prompt shown and
+-- invisible: the timer ran on, the capture happened, and the visible chance to
+-- cancel that the prompt exists to provide was not on screen.
+--
+-- WorldFrame is how the stage survives the same hide, and it is the same
+-- answer here. The prompt goes back under UIParent the moment the interface
+-- does, and HidePrompt puts it back regardless, so nothing is left parented
+-- outside the hierarchy.
+--
+-- This does NOT risk the photograph: every path hides the prompt before the
+-- shutter, and STRAY_FRAMES covers it if one ever stops doing so.
+local function KeepPromptVisible()
+    if not prompt then return end
+    local interfaceDown = UIParent and UIParent.IsShown and UIParent:IsShown() == false
+
+    if interfaceDown and not prompt._lifted then
+        prompt._lifted = true
+        prompt._savedScale = prompt:GetScale()
+        local eff = prompt:GetEffectiveScale()      -- captured while still parented
+        pcall(prompt.SetParent, prompt, WorldFrame)
+        pcall(prompt.SetFrameStrata, prompt, "FULLSCREEN_DIALOG")
+        pcall(prompt.SetScale, prompt, eff)         -- same apparent size either way
+    elseif not interfaceDown and prompt._lifted then
+        prompt._lifted = nil
+        pcall(prompt.SetParent, prompt, UIParent)
+        pcall(prompt.SetScale, prompt, prompt._savedScale or 1)
+        pcall(prompt.SetFrameStrata, prompt, "HIGH")
+    end
+end
+
 -- The prompt while it waits for the player to stand still. Same frame, same
 -- buttons - Skip still skips - with the countdown replaced by what it is
 -- actually waiting for, because "Portrait in 0s" forever is a bug report.
@@ -981,6 +1019,7 @@ local function PromptWaiting(why)
     p:SetScript("OnUpdate", nil)
     p.label:SetText(("|cffffffffPortrait when you stand still|r  |cffaaaaaa%s|r")
         :format(why or ""))
+    KeepPromptVisible()
     p:Show()
 end
 
@@ -993,19 +1032,35 @@ local function ShowPrompt(why, seconds)
         -- Only when the number actually changes. Repainting every frame is
         -- ~300 string.format and SetText calls per countdown where five are
         -- needed, on something armed at every login and every gear change.
-        if left ~= self.shown then Paint(self, left) end
+        if left ~= self.shown then
+            Paint(self, left)
+            -- Re-checked as it ticks, not only when it was shown: the player
+            -- can open the sheet - and with it the showcase - at any point in
+            -- those five seconds.
+            KeepPromptVisible()
+        end
         if left <= 0 then self:SetScript("OnUpdate", nil) end
     end)
     -- Paint once immediately: with only OnUpdate the frame shows for one frame
     -- with whatever text it had last time, which on the second countdown is the
     -- previous reason.
     Paint(p, seconds)
+    KeepPromptVisible()
     p:Show()
 end
 
 function HidePrompt()
     if not prompt then return end
     prompt:SetScript("OnUpdate", nil)
+    -- Put it back under UIParent whatever happens. A frame left parented to
+    -- WorldFrame is one the interface's own hide no longer covers, which is
+    -- the whole problem in reverse.
+    if prompt._lifted then
+        prompt._lifted = nil
+        pcall(prompt.SetParent, prompt, UIParent)
+        pcall(prompt.SetScale, prompt, prompt._savedScale or 1)
+        pcall(prompt.SetFrameStrata, prompt, "HIGH")
+    end
     prompt:Hide()
 end
 
@@ -1063,6 +1118,7 @@ function WaitForStillness(why)
     local function poll()
         pending = nil
         if not AutoEnabled() then HidePrompt(); return end
+        KeepPromptVisible()
 
         -- Anything ELSE that blocks - a fight started, they died, they zoned
         -- into a dungeon - ends the wait rather than outlasting it. Those have
@@ -1341,7 +1397,14 @@ AltStableProbe._test = {
     RememberFingerprint = function(g, fp) return RememberFingerprint(g, fp) end,
     ConsiderCapture = function(why) return ConsiderCapture(why) end,
     prompt         = function() return prompt end,
-    PromptText     = function() return prompt and prompt:IsShown() and prompt.label:GetText() or nil end,
+    -- IsVisible, not IsShown. A shown frame under a hidden parent is not on
+    -- screen, and a seam that cannot tell them apart let the prompt vanish
+    -- behind the showcase with every on-screen assertion still passing.
+    PromptText     = function()
+        if not prompt or not prompt:IsVisible() then return nil end
+        return prompt.label:GetText()
+    end,
+    PromptShown    = function() return prompt and prompt:IsShown() and true or false end,
     PromptClick    = function(text)
         if not prompt or not prompt:IsShown() then return false end
         for _, b in ipairs({ prompt:GetChildren() }) do
