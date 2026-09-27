@@ -64,9 +64,14 @@ local function resetCapture()
     -- `pending` leaking in from an earlier block makes the next
     -- StartCountdown a silent no-op while pendingKind() still answers
     -- "countdown", and the block passes against a timer it never created.
-    if AltStableProbe and AltStableProbe._test and AltStableProbe._test.CancelPending then
-        AltStableProbe._test.CancelPending()
-    end
+    local t = AltStableProbe and AltStableProbe._test
+    if t and t.CancelPending then t.CancelPending() end
+    -- `capturing` too, which this helper claimed to reset and did not. A block
+    -- that leaves a capture RUNNING makes the next StartCountdown a silent
+    -- no-op - it refuses while one is in flight - so the block after it tests
+    -- a countdown that was never started. No message: this is housekeeping
+    -- between blocks, not something a player did.
+    if t and t.AbandonCapture then t.AbandonCapture(nil, true) end
     AltStableProbeDB = { renders = {}, looks = {} }
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.timers = {}
@@ -544,6 +549,139 @@ do
     -- Put the world back for anything after this block.
     GameTooltip:SetParent(UIParent)
     sheet:Hide()
+end
+
+------------------------------------------------------------
+-- A corpse run is not a gear change
+------------------------------------------------------------
+-- Reported from a live level-one corpse run: three captures in as many
+-- minutes, each announced as "gear changed since your last portrait", on a
+-- character that had never picked anything up.
+--
+-- C_PlayerInfo.GetDisplayID() returns the GHOST display while you are one, and
+-- it is part of the look fingerprint - deliberately, because a barber visit or
+-- a race change should refresh the portrait. So dying flips the fingerprint and
+-- resurrecting flips it back: two "your look changed" events per death, and
+-- every picture taken in between is of a wisp.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+
+    -- Alive and unphotographed: the capture is wanted.
+    WoW.dead = false
+    T.ConsiderCapture("gear changed since your last portrait")
+    check("alive, a look change starts a countdown", T.pendingKind() == "countdown",
+          tostring(T.pendingKind()))
+    T.CancelPending()
+
+    -- The same look change, as a ghost.
+    WoW.dead = true
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("dead, nothing is queued at all", T.pendingKind(), nil)
+
+    -- The direct routes land in Capture() without passing ConsiderCapture, and
+    -- /asrender is what a player reaches for when they want a picture NOW.
+    WoW.screenshots = 0
+    T.Capture()
+    check("a capture asked for directly is refused while dead", not T.capturing())
+    eq("  and nothing was photographed", WoW.screenshots, 0)
+    eq("  and the interface was never touched", WoW.uiVisible, true)
+
+    -- Dying inside the five-second countdown. Most of a corpse run is exactly
+    -- this, so the check at the top of ConsiderCapture is not enough on its own:
+    -- the timer was armed while the player was alive.
+    WoW.dead = false
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    check("the countdown is running", T.pendingKind() == "countdown")
+    WoW.dead = true                       -- they die while it counts
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("a countdown that fires after you die takes no picture", WoW.screenshots, 0)
+    check("  and is not left capturing", not T.capturing())
+
+    WoW.dead = false
+end
+
+------------------------------------------------------------
+-- The countdown is cancellable on screen
+------------------------------------------------------------
+-- It used to be a line of chat saying to type /asrender cancel. That scrolls
+-- away behind combat spam, and it asks somebody who is mid-corpse-run to find
+-- and type a command inside five seconds.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+
+    check("nothing is on screen to begin with", T.PromptText() == nil)
+
+    T.StartCountdown("gear changed since your last portrait")
+    local text = T.PromptText()
+    check("the countdown puts a prompt on screen", text ~= nil, tostring(text))
+    check("  saying how long is left", (text or ""):find("Portrait in 5s", 1, true) ~= nil, text)
+    check("  and why it is happening", (text or ""):find("gear changed", 1, true) ~= nil, text)
+
+    -- Skip: the whole point of the report.
+    check("Skip is a button, not a command", T.PromptClick("Skip"))
+    eq("  and it cancels the countdown", T.pendingKind(), nil)
+    check("  and takes the prompt down", T.PromptText() == nil)
+    WoW.screenshots = 0
+    WoW.flushTimers()
+    eq("  so no picture is taken", WoW.screenshots, 0)
+
+    -- Now: the "do it while I am standing still" button.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    check("Now is a button too", T.PromptClick("Now"))
+    check("  which starts the capture immediately", T.capturing())
+    check("  and takes the prompt down", T.PromptText() == nil)
+    -- The timer must be dead, or it fires five seconds into this capture.
+    eq("  leaving nothing queued behind it", T.pendingKind(), nil)
+
+    -- Never: for somebody who wants it to stop asking.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    AltStableProbeDB.autoCaptureOff = nil
+    T.StartCountdown("gear changed")
+    check("Never is offered as well", T.PromptClick("Never"))
+    check("  and turns auto-capture off", AltStableProbeDB.autoCaptureOff == true)
+    eq("  cancelling this one too", T.pendingKind(), nil)
+    T.ConsiderCapture("gear changed")
+    eq("  so the next look change queues nothing", T.pendingKind(), nil)
+    AltStableProbeDB.autoCaptureOff = nil
+
+    -- Letting it run to the end. The timer firing is the one exit that does
+    -- not go through CancelPending, so it has to take the prompt down itself -
+    -- otherwise it sits there reading "Portrait in 0s" over the capture that
+    -- already started, offering a Skip button that skips nothing.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    check("a prompt is up while it counts", T.PromptText() ~= nil)
+    WoW.flushTimers()
+    check("  the capture went ahead", T.capturing())
+    check("  and the prompt came down with it", T.PromptText() == nil,
+          tostring(T.PromptText()))
+    resetCapture()
+
+    -- The prompt must never end up IN the photograph. It is parented to
+    -- UIParent for that reason, so the blackout takes it with everything else -
+    -- unlike the sheet, which is lifted out and has to be handled by name.
+    check("the prompt is under UIParent, so the blackout covers it",
+          T.prompt():GetParent() == UIParent)
+
+    -- Combat starting cancels the countdown; the prompt must not be left
+    -- promising a portrait that is not coming.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    check("a prompt is up", T.PromptText() ~= nil)
+    T.CancelPending("combat started")
+    check("  and combat takes it down with the countdown", T.PromptText() == nil)
 end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))

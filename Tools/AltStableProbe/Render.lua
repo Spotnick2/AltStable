@@ -300,6 +300,26 @@ end
 -- rerolls do not trigger a pointless re-shoot, and neither does levelling.
 ------------------------------------------------------------
 
+-- Dead, or a ghost on a corpse run.
+--
+-- Two reasons, and the second is the one that actually bit:
+--
+--   * a portrait of a wisp is not a portrait of the character;
+--   * C_PlayerInfo.GetDisplayID() returns the GHOST display while you are one,
+--     so the fingerprint below flips the moment you die and flips back when you
+--     resurrect. Every death is therefore "your gear changed" - twice. A level
+--     one corpse run produced three captures in as many minutes, each of them a
+--     picture of a wisp, and the reported reason was gear the player had never
+--     touched.
+--
+-- UnitIsDeadOrGhost covers both states in one call: face-down before releasing,
+-- and the ghost afterwards.
+local function DeadOrGhost()
+    if type(UnitIsDeadOrGhost) ~= "function" then return false end
+    local ok, dead = pcall(UnitIsDeadOrGhost, "player")
+    return ok and dead and true or false
+end
+
 local function LookFingerprint()
     local parts = {}
     for slot = 1, 19 do
@@ -465,6 +485,16 @@ local function Capture()
         return
     end
 
+    -- Same reasoning as combat, and checked HERE as well as in
+    -- ConsiderCapture: the countdown fires five seconds after it was armed,
+    -- and dying inside those five seconds is not unusual - it is most of what
+    -- a corpse run consists of. /asrender and the notice's button also land
+    -- here directly.
+    if DeadOrGhost() then
+        Out("|cffff8800not while you are dead|r - a portrait of a wisp is not a portrait")
+        return
+    end
+
     capturing = true
     captureStartedAt = GetTime()
     captureToken = captureToken + 1
@@ -615,7 +645,10 @@ end
 -- Both are defined below and both are called from the popup's buttons. Without
 -- the forward declaration those closures resolve a nil GLOBAL at click time -
 -- which is invisible until someone presses the button.
-local StartCountdown, CancelPending
+-- HidePrompt is declared here because CancelPending calls it and is defined
+-- first. Without the forward declaration the name resolves to a global, which
+-- is nil - so the call errors at the exact moment the player presses Skip.
+local StartCountdown, CancelPending, HidePrompt
 
 if type(StaticPopupDialogs) == "table" then
     StaticPopupDialogs[CONSENT_POPUP] = {
@@ -673,11 +706,111 @@ function CancelPending(reason, announce)
     local hadCountdown, hadSettle = false, false
     if combatSettle then combatSettle:Cancel(); combatSettle = nil; hadSettle = true end
     if pending then pending:Cancel(); pending = nil; hadCountdown = true end
+    -- Every route out of the countdown passes through here - the buttons, the
+    -- slash command, combat starting, the timer firing - so this is the one
+    -- place the prompt has to come down. Unconditional: a prompt left on screen
+    -- promising a portrait that is not coming is worse than no prompt.
+    HidePrompt()
     if not (hadCountdown or hadSettle) then return false end
     if hadCountdown or announce then
         Out("auto-capture cancelled" .. (reason and (" - " .. reason) or ""))
     end
     return true
+end
+
+------------------------------------------------------------
+-- The countdown, on screen and cancellable
+--
+-- It used to be a line of chat saying to type /asrender cancel. That is the
+-- wrong shape for a five-second warning: it scrolls away behind combat spam,
+-- it asks the player to find and type a command while the clock runs, and if
+-- they are moving - a corpse run, say - they have neither the time nor a free
+-- hand. The report that prompted this was exactly that: "I need to be able to
+-- cancel it and I don't see the warning dialog."
+--
+-- So the buttons are on screen. NOT a StaticPopup: those take the centre of
+-- the screen for what is a five-second interruption, and the consent notice
+-- already uses one - two dialogs for one feature is one too many.
+--
+-- Parented to UIParent ON PURPOSE. The blackout hides it along with the rest
+-- of the interface, so the prompt can never appear in the photograph.
+------------------------------------------------------------
+
+local prompt
+
+local function BuildPrompt()
+    if prompt then return prompt end
+
+    prompt = CreateFrame("Frame", "AltStableRenderPrompt", UIParent, "BackdropTemplate")
+    prompt:SetSize(300, 62)
+    prompt:SetPoint("TOP", UIParent, "TOP", 0, -150)
+    prompt:SetFrameStrata("HIGH")
+    if prompt.SetBackdrop then
+        prompt:SetBackdrop({
+            bgFile   = "Interface/Buttons/WHITE8X8",
+            edgeFile = "Interface/Buttons/WHITE8X8",
+            tile = true, tileSize = 8, edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        prompt:SetBackdropColor(0.06, 0.06, 0.06, 0.94)
+        prompt:SetBackdropBorderColor(0, 0, 0, 1)
+    end
+
+    prompt.label = prompt:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    prompt.label:SetPoint("TOPLEFT", 10, -9)
+    prompt.label:SetPoint("TOPRIGHT", -10, -9)
+    prompt.label:SetJustifyH("LEFT")
+
+    local function button(text, width, x, onClick)
+        local b = CreateFrame("Button", nil, prompt, "UIPanelButtonTemplate")
+        b:SetSize(width, 20)
+        b:SetPoint("BOTTOMLEFT", prompt, "BOTTOMLEFT", x, 8)
+        b:SetText(text)
+        b:SetScript("OnClick", onClick)
+        return b
+    end
+
+    button("Now", 70, 10, function()
+        -- Cancel FIRST. Capture() refuses to start while one is pending in
+        -- some paths, and a live timer would fire a second capture five
+        -- seconds into this one.
+        CancelPending(nil, false)
+        Capture()
+    end)
+    button("Skip", 70, 88, function()
+        CancelPending("you skipped it", true)
+    end)
+    button("Never", 100, 190, function()
+        AltStableProbeDB = AltStableProbeDB or {}
+        AltStableProbeDB.autoCaptureOff = true
+        CancelPending("auto-capture turned off - |cffffff00/asrender auto|r turns it back on", true)
+    end)
+
+    prompt:Hide()
+    return prompt
+end
+
+local function ShowPrompt(why, seconds)
+    local p = BuildPrompt()
+    p.deadline = GetTime() + seconds
+    p.why = why
+    p:SetScript("OnUpdate", function(self)
+        local left = math.max(0, (self.deadline or 0) - GetTime())
+        self.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r")
+            :format(math.ceil(left), self.why or ""))
+        if left <= 0 then self:SetScript("OnUpdate", nil) end
+    end)
+    -- Paint once immediately: with only OnUpdate the frame shows for one frame
+    -- with whatever text it had last time, which on the second countdown is the
+    -- previous reason.
+    p.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r"):format(seconds, why or ""))
+    p:Show()
+end
+
+function HidePrompt()
+    if not prompt then return end
+    prompt:SetScript("OnUpdate", nil)
+    prompt:Hide()
 end
 
 function StartCountdown(why)
@@ -686,8 +819,14 @@ function StartCountdown(why)
     if pending or capturing then return end
     Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender cancel|r to skip.")
         :format(why, WARN_SECONDS))
+    ShowPrompt(why, WARN_SECONDS)
     pending = C_Timer.NewTimer(WARN_SECONDS, function()
         pending = nil
+        -- The timer FIRING is the one exit that does not go through
+        -- CancelPending, so it hides the prompt itself. Left up, it would sit
+        -- there reading "Portrait in 0s" over the capture that already
+        -- happened, with a Skip button that skips nothing.
+        HidePrompt()
         -- Asked again at the moment it fires, not only when it was scheduled.
         -- Cancelling on the /asrender auto path covers the command; this covers
         -- every other way the answer could have changed in those five seconds.
@@ -702,6 +841,12 @@ end
 local function ConsiderCapture(why)
     if not AutoEnabled() then return end
     if pending or capturing then return end
+
+    -- Before the fingerprint is consulted, not after: while you are a ghost the
+    -- fingerprint is a ghost's, so asking it first is what produced "gear
+    -- changed" on a corpse run where nothing had changed.
+    if DeadOrGhost() then return end
+
     local guid = UnitGUID("player")
     if not guid then return end
 
@@ -889,6 +1034,21 @@ AltStableProbe._test = {
     token          = function() return captureToken end,
     renderMark     = function() return renderMark end,
     CancelPending  = function(r, a) return CancelPending(r, a) end,
+    DeadOrGhost    = function() return DeadOrGhost() end,
+    ConsiderCapture = function(why) return ConsiderCapture(why) end,
+    prompt         = function() return prompt end,
+    PromptText     = function() return prompt and prompt:IsShown() and prompt.label:GetText() or nil end,
+    PromptClick    = function(text)
+        if not prompt or not prompt:IsShown() then return false end
+        for _, b in ipairs({ prompt:GetChildren() }) do
+            if b.GetText and b:GetText() == text then
+                local fn = b:GetScript("OnClick")
+                if fn then fn(b) end
+                return true
+            end
+        end
+        return false
+    end,
     HideUI         = function() return HideUI() end,
     ShowUI         = function() return ShowUI() end,
     strays         = function() return strays end,

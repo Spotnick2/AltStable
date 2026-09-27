@@ -70,6 +70,7 @@ function WoW.reset()
     WoW.chatOut = {}
     WoW.eventFrames = {}
     WoW.tooltipLines, WoW.tooltipShown = {}, false
+    WoW.dead = false
     WoW.popups = {}
     WoW.cvars = {}
     WoW.camera = { zoom = 4, view = 1, savedViews = {} }
@@ -206,6 +207,8 @@ local function makeFrame()
     -- correctness question - a catcher drawn over the menu it is meant to sit
     -- behind eats every entry - and the chaining default made every level 1.
     f.SetFrameLevel = function(self, v) self._GetFrameLevel = v; return self end
+
+    f.GetChildren = function(self) return unpack(self._children or {}) end
 
     f.SetParent      = function(self, p) self._parent = p; return self end
     f.GetParent      = function(self) return self._parent end
@@ -360,6 +363,13 @@ WoW.makeFrame = makeFrame
 function CreateFrame(_, name, parent)
     local f = makeFrame()
     f._parent = parent
+    -- The parent keeps a CHILD LIST, because GetChildren() is how a test walks
+    -- a panel it did not build - the buttons on a prompt, say - and asks what
+    -- the player can actually press.
+    if type(parent) == "table" then
+        parent._children = parent._children or {}
+        parent._children[#parent._children + 1] = f
+    end
     if type(name) == "string" and name ~= "" then _G[name] = f end
     return f
 end
@@ -490,6 +500,16 @@ end
 -- its bugs lived in.
 WoW.inCombat = false
 function InCombatLockdown() return WoW.inCombat and true or false end
+
+-- Dead or a ghost. Both states, one call, which is why the code uses it: a
+-- corpse run is the second, and a portrait taken during one is a picture of a
+-- wisp - while C_PlayerInfo.GetDisplayID() reports the ghost display and makes
+-- the look fingerprint flip on every death and every resurrection.
+WoW.dead = false
+function UnitIsDeadOrGhost(unit)
+    if unit ~= "player" then return false end
+    return WoW.dead and true or false
+end
 
 -- SetUIVisibility is what Alt+Z and Escape call. It is NOT protected, which is
 -- the whole reason the probe uses it instead of UIParent:Hide().
