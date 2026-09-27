@@ -674,11 +674,21 @@ do
           tostring(T.PromptText()))
     resetCapture()
 
-    -- The prompt must never end up IN the photograph. It is parented to
-    -- UIParent for that reason, so the blackout takes it with everything else -
-    -- unlike the sheet, which is lifted out and has to be handled by name.
-    check("the prompt is under UIParent, so the blackout covers it",
-          T.prompt():GetParent() == UIParent)
+    -- The prompt must never end up IN the photograph, and it is NOT under
+    -- UIParent - it cannot be, or the showcase would hide the one warning the
+    -- player has. So it is covered the way the sheet is: by name, in the
+    -- blackout's own list. Two independent guarantees, which is why the list
+    -- is a net rather than the mechanism - every path hides it first.
+    check("the prompt is not left where the showcase can hide it",
+          T.prompt():GetParent() ~= UIParent)
+    check("  and the blackout knows it by name",
+          (function()
+              for _, n in ipairs(T.STRAY_FRAMES or {}) do
+                  if n == "AltStableRenderPrompt" then return true end
+              end
+              return false
+          end)(),
+          "nothing else would keep it out of the picture")
 
     -- Combat starting cancels the countdown; the prompt must not be left
     -- promising a portrait that is not coming.
@@ -1056,7 +1066,7 @@ do
     check("the capture went ahead", T.capturing())
     check("  with the prompt gone", T.PromptText() == nil)
     check("  and actually hidden, not merely moved", T.PromptShown() == false)
-    check("  and parented back under UIParent", T.prompt():GetParent() == UIParent)
+    check("  and hidden wherever it is parented", T.PromptShown() == false)
     UIParent:Show()
 end
 
@@ -1069,13 +1079,20 @@ do
 
     T.StartCountdown("gear changed")
     check("a countdown in the open is visible", T.PromptText() ~= nil)
-    check("  and parented normally", T.prompt():GetParent() == UIParent)
+    check("  and kept out from under UIParent from the start",
+          T.prompt():GetParent() ~= UIParent,
+          "lifting it only once the interface goes down cannot work - the "
+          .. "frame that would do the lifting is the one that stops updating")
 
     UIParent:Hide()                       -- they open the sheet mid-countdown
-    -- Re-checked as it ticks rather than only when it was shown.
-    local tick = T.prompt():GetScript("OnUpdate")
-    T.prompt().shown = nil                -- force the once-a-second repaint
-    if tick then tick(T.prompt()) end
+    -- Nothing is driven here on purpose.
+    --
+    -- The previous version of this check fetched the prompt's OnUpdate and
+    -- called it by hand, which is an update the client would never deliver: a
+    -- frame whose parent is hidden receives none. It passed against a prompt
+    -- that was invisible for the rest of the countdown while the timer ran on
+    -- and took the picture anyway. The prompt is not under UIParent at all
+    -- now, so hiding UIParent is simply not its business.
     check("opening the showcase mid-countdown does not hide the warning",
           T.PromptText() ~= nil,
           "the player would get a capture with no visible way to stop it")
@@ -1083,8 +1100,7 @@ do
     -- Skip still works from there, which is the entire point.
     check("Skip is still reachable", T.PromptClick("Skip"))
     eq("  and cancels", T.pendingKind(), nil)
-    check("  and puts the prompt back under UIParent",
-          T.prompt():GetParent() == UIParent)
+    check("  and the prompt goes away", T.PromptText() == nil)
     UIParent:Show()
 end
 
@@ -1124,7 +1140,9 @@ do
     T.StartCountdown("gear changed")
     check("the prompt is on screen", T.PromptText() ~= nil)
 
-    -- Force the exact state the fix prevents: shown, under a hidden UIParent.
+    -- Force the exact state the design prevents: shown, under a hidden
+    -- UIParent. Reachable only by putting it back there by hand, which is the
+    -- point - nothing in the code does.
     T.prompt():SetParent(UIParent)
     UIParent:Hide()
     check("  it is still 'shown'", T.PromptShown())
@@ -1132,7 +1150,33 @@ do
           T.PromptText() == nil,
           "a seam that cannot tell shown from visible hides this class of bug")
 
+    -- Put it back where the code keeps it. This block reaches in and moves the
+    -- prompt somewhere nothing in the addon would, so it owns undoing that -
+    -- leaving it under UIParent made the next two blocks fail for a reason
+    -- that had nothing to do with what they were testing.
+    T.prompt():SetParent(WorldFrame)
     UIParent:Show()
+    T.CancelPending()
+end
+
+do
+    -- WorldFrame does not carry the player's UI scale, so without copying it
+    -- the prompt is drawn at a different size from every other piece of
+    -- interface - the cost of parking it outside UIParent, paid explicitly.
+    resetCapture()
+    UIParent:Show()
+
+    UIParent:SetScale(0.8)
+    T.StartCountdown("gear changed")
+    eq("it is drawn at the player's UI scale", T.prompt():GetScale(), 0.8)
+    T.CancelPending()
+
+    -- On every show, not once at build: the scale can change while the addon
+    -- is loaded, and a prompt stuck at the scale of the first countdown of the
+    -- session would be wrong for every one after it.
+    UIParent:SetScale(1)
+    T.StartCountdown("gear changed")
+    eq("  and follows it when it changes", T.prompt():GetScale(), 1)
     T.CancelPending()
 end
 
@@ -1145,15 +1189,11 @@ do
     UIParent:Show()
     T.StartCountdown("gear changed")
     UIParent:Hide()
-    local tick = T.prompt():GetScript("OnUpdate")
-    T.prompt().shown = nil
-    if tick then tick(T.prompt()) end
-    check("the prompt is lifted and visible", T.PromptText() ~= nil)
+    check("the prompt is visible with the interface down", T.PromptText() ~= nil)
 
     UIParent:Show()
     T.ShowUI()
-    T.prompt():SetParent(WorldFrame)      -- pretend a path forgot to put it back
-    T.prompt():Show()
+    T.prompt():Show()                     -- pretend a path forgot to hide it
     T.HideUI()
     eq("a prompt that escaped is blacked out with everything else",
        T.prompt():GetAlpha(), 0)
