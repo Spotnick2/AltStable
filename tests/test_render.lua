@@ -1445,7 +1445,18 @@ do
     AltStableProbeDB.autoCaptureOff = false
     T.ConsiderCapture("gear changed since your last portrait")
     eq("  and neither does setting it false", T.pendingKind(), nil)
-    AltStableProbeDB.autoCaptureOff = nil
+
+    -- And it is CLEARED at login, once nothing reads it - the same treatment
+    -- Config.lua gives its own retired keys. Left on disk it is a key whose
+    -- meaning the next reader has to reconstruct, and its value is deliberately
+    -- not consulted on the way out: "off" is the new default anyway, and "on"
+    -- is now a choice to make once rather than one an update makes for you.
+    AltStableProbeDB.autoCaptureOff = false
+    AltStableProbeDB.autoCaptureOn = true      -- must survive; it is the live key
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_LOGIN")
+    eq("login clears the retired autoCaptureOff", AltStableProbeDB.autoCaptureOff, nil)
+    eq("  and leaves the live autoCaptureOn alone", AltStableProbeDB.autoCaptureOn, true)
+    AltStableProbeDB.autoCaptureOn = nil
 
     -- Opting in works.
     AltStableProbeDB.autoCaptureOn = true

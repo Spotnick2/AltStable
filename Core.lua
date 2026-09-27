@@ -574,11 +574,20 @@ end
 local RETIRED_FIELDS = {
     prof_Jewelcrafting = true, profmax_Jewelcrafting = true,   -- not a Vanilla profession
     stat_haste = true, stat_resilience = true,                 -- no Vanilla equivalent
-    -- Rating-derived, so always 0 here. Vanilla does have crit and hit chance
-    -- (GetCritChance, GetHitModifier): when the Roster port (#11) adds a
-    -- build-verified producer, take these two off the list. Until then a stored
-    -- 0 would sit beside characters that have no value at all.
-    stat_crit = true, stat_hitpct = true,
+    -- stat_crit is OFF this list now, which is what the note here asked for:
+    -- "when the Roster port adds a build-verified producer, take these two off
+    -- the list". GetCritChance has a verified producer - observed live on
+    -- 1.60.1.70009 reporting 1.66% for a level 18 gnome warlock, which is a
+    -- real value and not a rating-derived zero.
+    --
+    -- stat_hitpct STAYS retired. GetHitModifier is a pre-WoD global that was
+    -- removed when hit rating was, it appears in no dump or note in this repo,
+    -- and the Combat row for it did not render on the live client - which is
+    -- consistent with the function being absent OR with a genuine zero, and
+    -- those are different things. Until one line in game tells them apart, a
+    -- producer for it would be exactly the "stored 0 beside characters that
+    -- have no value at all" this note warns about.
+    stat_hitpct = true,
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
 }
 -- The TBC reputation slugs. Standings are rep_<factionID> now (Reputations.lua).
@@ -629,10 +638,6 @@ local function SerializeChar(c, sinceTS)
         and not RETIRED_FIELDS[k]
         and not k:find("^gearlink_")   -- item links are local-only (too large for sync)
                                       -- gearid_* stays included (compact + sync-safe)
-        and not k:find("^gearloc_")    -- local-only: the equip-location token is
-                                       -- derived from the item id, which IS synced,
-                                       -- so sending it would be sending the same
-                                       -- fact twice
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
                                       -- synced alts fall back to keyword inference on gearname_
         and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
@@ -998,7 +1003,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^gear_") or k:find("^gearq_")
         or k:find("^gearname_") or k:find("^gearid_")
         or k:find("^gearmod_")   -- NOTE: "^gear_" does NOT match "gearmod_"
-        or k:find("^gearlink_") or k:find("^gearsubtype_") or k:find("^gearloc_")  -- local-only (see note above)
+        or k:find("^gearlink_") or k:find("^gearsubtype_")  -- both local-only (see note above)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
@@ -2378,11 +2383,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local itemID, success = ...
         if not success then return end
 
-        -- Gem lookups the Roster audit could not resolve. Checked BEFORE the
-        -- gear-slot queue below, which is local-equipment-only and is nil
-        -- entirely when nothing local is pending -- the early return on it used
-        -- to drop these events on the floor, so an audit finding suppressed by
-        -- a cache miss stayed invisible until something else repainted the tab.
+        -- Item lookups the Roster audit could not resolve - an id the client has
+        -- never seen, which is what a peer syncs from a character whose gear we
+        -- have never met. Checked BEFORE the gear-slot queue below, which is
+        -- local-equipment-only and is nil entirely when nothing local is pending
+        -- -- the early return on it used to drop these events on the floor, so a
+        -- slot the audit could not read stayed unread until something else
+        -- repainted the tab.
         -- RefreshSheet is enough: the Roster plugin hooks it and already
         -- coalesces bursts into one deferred repaint.
         local pendingAudit = AltStable.PendingAuditItems

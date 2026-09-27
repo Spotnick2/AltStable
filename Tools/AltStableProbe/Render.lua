@@ -1500,7 +1500,19 @@ auto:SetScript("OnEvent", function(_, event)
         --
         -- The registration stays: losing it would make this a silent
         -- behaviour change rather than a stated one, and the branch is where
-        -- the reason lives.
+        -- the reason lives. And it earns its keep with the line below.
+
+        -- The retired key goes, now that nothing reads it.
+        --
+        -- Its VALUE is deliberately not consulted on the way out - that is the
+        -- whole point of having stopped reading it - and nothing is lost either
+        -- way: `autoCaptureOff = true` meant "off", which is the new default,
+        -- and `false` meant "on", which is now a choice to make once rather
+        -- than one an update makes on your behalf. What is gained is that the
+        -- file on disk stops carrying a key whose meaning the next reader has
+        -- to reconstruct, which is the treatment Config.lua gives its own
+        -- retired keys.
+        if AltStableProbeDB then AltStableProbeDB.autoCaptureOff = nil end
     else
         -- First, anything we could not give back during the fight.
         if owedRestore then

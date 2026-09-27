@@ -1052,21 +1052,29 @@ eq("a real maximum still scans: 100 of 400 rested", c and c.restPercent, 25)
 eq("  and 50 of 400 through the level", c and c.xpPercent, 12)
 WoW.reset()
 
--- The gem audit's two settings are RETIRED, and a profile that already has
--- them must come back without them. They were written to real profiles on
--- disk, and a key nothing reads is one the next reader has to work out the
--- meaning of - so they are cleared rather than merely no longer defaulted.
+-- The gem audit's quality setting is RETIRED, and a profile that already has it
+-- must come back without it. It was written to real profiles on disk, and a key
+-- nothing reads is one the next reader has to work out the meaning of - so it is
+-- cleared rather than merely no longer defaulted.
+--
+-- auditMinLevel is the one that must NOT go with it. Both were cleared at first,
+-- on the argument that enchants need no threshold - but that argument is about
+-- QUALITY, and a level gate is a different setting. The pair is asserted
+-- together because that is the mistake: they look alike and are not.
 if AltStable.EnsureConfigDefaults then
     AltStableConfig = {}
     AltStable.EnsureConfigDefaults()
     eq("a fresh profile has no gem-quality setting", AltStableConfig.minGemQuality, nil)
-    eq("  and no audit level", AltStableConfig.auditMinLevel, nil)
+    local cap = AltStable.API.LevelCap()
+    eq("  but it does have an audit level, defaulted to the cap",
+       AltStableConfig.auditMinLevel, cap)
 
     -- The case that matters: an existing profile carrying both.
-    AltStableConfig = { minGemQuality = 3, auditMinLevel = 70 }
+    AltStableConfig = { minGemQuality = 3, auditMinLevel = 42 }
     AltStable.EnsureConfigDefaults()
     eq("an existing profile has the gem setting cleared", AltStableConfig.minGemQuality, nil)
-    eq("  and the audit level too", AltStableConfig.auditMinLevel, nil)
+    eq("  and its audit level left alone, not overwritten with the default",
+       AltStableConfig.auditMinLevel, 42)
 
     -- And nothing else went with them.
     check("the settings around them survive",
@@ -1076,9 +1084,7 @@ else
 end
 
 ------------------------------------------------------------
-
-------------------------------------------------------------
--- Crit and hit, for the detail pane's Combat section (#91)
+-- Melee crit, for the detail pane's Combat section (#91)
 ------------------------------------------------------------
 -- Both exist in Vanilla and are read straight off the player. The two stats
 -- beside them in AltTracker's table are deliberately NOT collected: there is
@@ -1088,9 +1094,6 @@ end
 
 do
     WoW.critChance, WoW.hitModifier = 17.25, 4
-    -- A shield in the off-hand, because that is the slot whose equip location
-    -- the enchant audit has to read - and the token is the thing that makes it
-    -- work on a non-English client.
     WoW.items[5001] = { name = "A Shield", quality = 2, ilvl = 40,
                         itemType = "Armor", subType = "Shields",
                         equipLoc = "INVTYPE_SHIELD" }
@@ -1102,36 +1105,39 @@ do
     check("the scan stored a character", type(me) == "table")
     if me then
         eq("melee crit is scanned", me.stat_crit, 17.25)
-        eq("  and hit chance", me.stat_hitpct, 4)
         eq("haste is not scanned", me.stat_haste, nil)
         eq("  nor resilience", me.stat_resilience, nil)
 
-            check("the stats around them are still there",
+        -- Hit chance is NOT scanned, even though the stub still offers a
+        -- GetHitModifier. It is a pre-WoD global, Core.lua lists stat_hitpct in
+        -- RETIRED_FIELDS and purges it at login, so a producer here would write
+        -- a field the addon deletes on the next load - which is what an earlier
+        -- version of this commit did.
+        eq("hit chance is not scanned", me.stat_hitpct, nil)
+
+        check("the stats around them are still there",
               me.stat_ap ~= nil and me.stat_defense ~= nil and me.stat_armor ~= nil)
 
-        -- The equip-location token, for the enchant audit's off-hand test.
-        --
-        -- Asserted as the ACTUAL TOKEN, not merely non-nil: the scanner seeds
-        -- every gear field to "" first, so `~= nil` passes whether the real
-        -- value was written or not - and a mutation replacing it with "" did.
-        -- This is the locale-independent token, unlike the item subtype beside
-        -- it, which is the localised display string.
-        eq("the equip location is scanned as its token",
-           me.gearloc_offhand, "INVTYPE_SHIELD")
-        check("  which is a token and not a display name",
-              (me.gearloc_offhand or ""):find("INVTYPE", 1, true) ~= nil,
-              tostring(me.gearloc_offhand))
+        -- The equip location is NOT stored. It is resolved on demand from
+        -- gearid_, which is synced, so storing it would be seventeen keys per
+        -- character carrying a fact already on the wire - and one that the
+        -- sync boundary then had to strip, leaving every remote character
+        -- unable to answer it at all.
+        eq("the equip location is not stored", me.gearloc_offhand, nil)
+        check("  because the id it is derived from is",
+              (tonumber(me.gearid_offhand) or 0) == 5001, tostring(me.gearid_offhand))
     end
 
-    -- A client without them must not crash the scan. Neither is guaranteed on
-    -- every build, and the scan runs on login before anything else works.
-    local realCrit, realHit = GetCritChance, GetHitModifier
-    GetCritChance, GetHitModifier = nil, nil
+    -- A client without it must not crash the scan. GetCritChance is not
+    -- guaranteed on every build, and the scan runs on login before anything
+    -- else works.
+    local realCrit = GetCritChance
+    GetCritChance = nil
     AltStableDB = {}
-    check("a client with neither still scans", pcall(AltStable.ScanCharacter))
+    check("a client without GetCritChance still scans", pcall(AltStable.ScanCharacter))
     local bare = AltStableDB[UnitGUID("player")]
     check("  and simply has no crit", bare == nil or bare.stat_crit == nil)
-    GetCritChance, GetHitModifier = realCrit, realHit
+    GetCritChance = realCrit
     WoW.critChance, WoW.hitModifier = 12.5, 3
 end
 

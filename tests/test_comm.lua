@@ -281,7 +281,6 @@ local char = {
     guid = "Player-4-0001", name = "Bob", class = "WARRIOR",
     level = 70, ilvl = 123.6, account = 1, lastUpdate = 1000,
     gearlink_head = "|Hitem:12345|h[Helm]|h",  -- must be excluded (local-only)
-    gearloc_head  = "INVTYPE_HEAD",              -- must be excluded (derived from the id)
     -- gearmod_ is the opposite of gearlink_: it MUST ride the wire. The value
     -- carries colons, which is the interesting case for the "^([^:]+):(.*)$"
     -- split in DeserializeChar.
@@ -293,12 +292,6 @@ local char = {
 }
 local s = T.SerializeChar(char)
 check(not s:find("gearlink_head", 1, true), "gearlink_ fields excluded from serialization")
--- The equip-location token is derived from the item id, which IS synced, so
--- sending it would be sending the same fact twice. It is also what the enchant
--- audit reads to decide whether an off-hand can take an enchant, which makes
--- "is it on the wire" a question with a real consequence rather than a
--- bookkeeping detail.
-check(not s:find("gearloc_head", 1, true),  "gearloc_ fields excluded from serialization")
 check(s:find("gearmod_head", 1, true) ~= nil, "gearmod_ fields ARE included in serialization")
 check(not s:find("specIcon", 1, true),      "specIcon excluded from serialization")
 check(not s:find("someTable", 1, true),     "table-valued fields excluded from serialization")
@@ -1455,12 +1448,17 @@ T.CheckMailAlerts()
 check(not chatHas("Mail expiring soon"), "mail alerts: disabling the toggle suppresses the warning")
 
 ------------------------------------------------------------
--- GET_ITEM_INFO_RECEIVED must reach the Roster audit's pending gems
+-- GET_ITEM_INFO_RECEIVED must reach the Roster audit's pending items
 --
 -- The handler used to bail on `not AltStable.PendingGearSlots`, a queue that
 -- only ever holds LOCAL equipment slots and is nil whenever nothing local is
--- waiting. Audit gem lookups never enter it, so a finding suppressed by a cache
--- miss stayed invisible and the tab kept reading "No issues found".
+-- waiting. The audit's own lookups never enter it, so a slot the audit could
+-- not read stayed unread and the tab kept its "cannot tell" row all session.
+--
+-- The queue was the gem audit's, and the gems are gone - which briefly left
+-- this branch with no producer at all. Its producer now is the enchant audit's
+-- off-hand test: an item id the client has never seen resolves only after the
+-- server answers, and this is the event that says it did.
 ------------------------------------------------------------
 
 local refreshes = 0
@@ -1471,8 +1469,8 @@ AltStable.PendingGearSlots  = nil          -- the case that used to return early
 AltStable.PendingAuditItems = { [88888] = true }
 
 onEvent(T.frame, "GET_ITEM_INFO_RECEIVED", 88888, true)
-eq(refreshes, 1, "a resolved audit gem repaints even with no local gear pending")
-eq(AltStable.PendingAuditItems[88888], nil, "the resolved gem leaves the pending queue")
+eq(refreshes, 1, "a resolved audit item repaints even with no local gear pending")
+eq(AltStable.PendingAuditItems[88888], nil, "the resolved item leaves the pending queue")
 
 -- Unrelated items must not repaint: the queue is the whole point of the filter.
 onEvent(T.frame, "GET_ITEM_INFO_RECEIVED", 77777, true)
@@ -1482,7 +1480,7 @@ eq(refreshes, 1, "an item nobody is waiting on triggers no repaint")
 AltStable.PendingAuditItems = { [88888] = true }
 onEvent(T.frame, "GET_ITEM_INFO_RECEIVED", 88888, false)
 eq(refreshes, 1, "a failed cache event does not repaint")
-check(AltStable.PendingAuditItems[88888], "a failed cache event leaves the gem queued")
+check(AltStable.PendingAuditItems[88888], "a failed cache event leaves the item queued")
 
 AltStable.RefreshSheet = prevRefresh
 AltStable.PendingAuditItems = nil
@@ -1601,10 +1599,25 @@ end
 local retiredCount = 0
 for _ in pairs(T.RETIRED_FIELDS) do retiredCount = retiredCount + 1 end
 check(retiredCount >= 8, "the retired list is exposed and populated")
-for _, k in ipairs({ "stat_crit", "stat_hitpct", "stat_haste", "stat_resilience",
+for _, k in ipairs({ "stat_hitpct", "stat_haste", "stat_resilience",
                      "prof_Jewelcrafting", "profmax_Jewelcrafting", "spec", "specIcon" }) do
     check(T.RETIRED_FIELDS[k], k .. " is retired")
 end
+
+-- stat_crit is NOT on the list, and the pair is asserted together because the
+-- note on the list itself makes the difference between them the whole point:
+-- retire a field until something verified produces it, then release it.
+--
+-- GetCritChance has a verified producer - observed on 1.60.1.70009 reporting
+-- 1.66% for a level 18 gnome warlock - so the field is live and rides the wire.
+-- GetHitModifier is a pre-WoD global that no longer exists, so stat_hitpct
+-- stays retired and the scanner does not write it. Releasing one without the
+-- other is the mistake this pair catches.
+check(not T.RETIRED_FIELDS.stat_crit,
+      "stat_crit is NOT retired - it has a verified producer")
+check(T.SerializeChar({ guid = "g", name = "n", level = 20, lastUpdate = 1,
+                        stat_crit = 1.66 }):find("stat_crit:1.66", 1, true) ~= nil,
+      "  so it rides the wire")
 -- The TBC reputation slugs (#8): standings are rep_<factionID> now.
 for _, k in ipairs({ "aldor", "scryer", "thrallmar", "honorhold", "violeteye", "shatteredsun" }) do
     check(T.RETIRED_FIELDS[k], "TBC reputation field " .. k .. " is retired")

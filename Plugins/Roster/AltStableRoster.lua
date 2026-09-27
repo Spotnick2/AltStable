@@ -579,6 +579,7 @@ end
 
 -- Through the adapter, like every other client call in this addon.
 local GetItemIconByID = AltStable.API and AltStable.API.GetItemIconByID
+local GetItemInfoInstant = AltStable.API and AltStable.API.GetItemInfoInstant
 
 local STAT_ROW_H, STAT_SECTION_GAP = 15, 10
 
@@ -591,8 +592,13 @@ local STAT_ROW_H, STAT_SECTION_GAP = 15, 10
 local CHAR_STAT_GROUPS = {
     { header = "Status", defs = {
         { label = "Gold",        key = "money",       kind = "money",    allowZero = true },
-        { label = "Rested XP",   key = "restPercent", kind = "percent0", allowZero = true },
-        { label = "XP Progress", key = "xpPercent",   kind = "percent0", allowZero = true },
+        -- allowZero AND hideAtCap: 0% rested is a real answer while you are
+        -- still levelling, and at the cap there is no bar at all. See
+        -- HasStatValue.
+        { label = "Rested XP",   key = "restPercent", kind = "percent0",
+          allowZero = true, hideAtCap = true },
+        { label = "XP Progress", key = "xpPercent",   kind = "percent0",
+          allowZero = true, hideAtCap = true },
         { label = "Last Online", key = "lastUpdate",  kind = "lastseen", allowZero = true },
     } },
     { header = "Resources", defs = {
@@ -611,33 +617,24 @@ local CHAR_STAT_GROUPS = {
         { label = "Attack Power", key = "stat_ap",      kind = "int" },
         { label = "Spell Power",  key = "stat_sp",      kind = "int" },
         { label = "Melee Crit",   key = "stat_crit",    kind = "percent2" },
-        { label = "Hit Chance",   key = "stat_hitpct",  kind = "percent2" },
+        -- No Hit Chance row. GetHitModifier is unmeasured on this client and
+        -- returns the BONUS hit from gear, which is zero for most characters -
+        -- so the row was invisible for nearly everybody, and "Hit Chance" was
+        -- the wrong label for it besides: no bonus hit is not a 0% chance to
+        -- hit. See the note in Scanner.lua.
+
         { label = "Defense",      key = "stat_defense", kind = "int" },
     } },
 }
 
--- The equipped slots, in the order a paper doll reads them: down the left,
--- down the right, weapons along the bottom. slotID is the client's, kept
--- because it is what an item tooltip needs.
-local GEAR_SLOTS = {
-    { key = "head",     label = "Head",      id = 1,  side = "left" },
-    { key = "neck",     label = "Neck",      id = 2,  side = "left" },
-    { key = "shoulder", label = "Shoulder",  id = 3,  side = "left" },
-    { key = "back",     label = "Back",      id = 15, side = "left" },
-    { key = "chest",    label = "Chest",     id = 5,  side = "left" },
-    { key = "wrist",    label = "Wrist",     id = 9,  side = "left" },
-    { key = "hands",    label = "Hands",     id = 10, side = "right" },
-    { key = "waist",    label = "Waist",     id = 6,  side = "right" },
-    { key = "legs",     label = "Legs",      id = 7,  side = "right" },
-    { key = "feet",     label = "Feet",      id = 8,  side = "right" },
-    { key = "ring1",    label = "Ring 1",    id = 11, side = "right" },
-    { key = "ring2",    label = "Ring 2",    id = 12, side = "right" },
-    { key = "trinket1", label = "Trinket 1", id = 13, side = "bottom" },
-    { key = "trinket2", label = "Trinket 2", id = 14, side = "bottom" },
-    { key = "mainhand", label = "Main Hand", id = 16, side = "bottom" },
-    { key = "offhand",  label = "Off Hand",  id = 17, side = "bottom" },
-    { key = "ranged",   label = "Ranged",    id = 18, side = "bottom" },
-}
+-- The equipped slots, in the order a paper doll reads them: down the left, down
+-- the right, weapons along the bottom.
+--
+-- The scanner's table, not a copy of it. There was a second copy here, and two
+-- lists of seventeen slots each is two chances to disagree about which key a
+-- slot writes - while the field names they produce (`gearid_back`,
+-- `gearmod_back`) are the contract between the two files.
+local GEAR_SLOTS = AltStable.GEAR_SLOTS
 
 -- Ported verbatim. `allowZero` exists because 0 gold and 0% rested are facts,
 -- while 0 spell power on a warrior is an absence - the difference decides
@@ -655,7 +652,13 @@ local function FormatStatValue(char, def)
     elseif def.kind == "percent2" then
         return string.format("%.2f%%", tonumber(value) or 0)
     elseif def.kind == "lastseen" then
-        return AltStable.FormatLastSeen and AltStable.FormatLastSeen(value, false)
+        -- The second argument is "is this the character you are logged in as",
+        -- and it decides whether a recent timestamp reads "Online" or "0m ago".
+        -- Passing a flat false meant your OWN character - the one whose row is
+        -- guaranteed fresh - was the single character that could never say
+        -- Online, which is how RowRenderer's tooltip already calls it.
+        return AltStable.FormatLastSeen
+            and AltStable.FormatLastSeen(value, char.guid == UnitGUID("player"))
             or tostring(value)
     end
     return tostring(value)
@@ -668,6 +671,16 @@ local function HasStatValue(char, def)
     if not char then return false end
     local value = char[def.key]
     if value == nil then return false end
+    -- At the level cap there is no XP bar, and the scanner writes a literal 0
+    -- for both XP fields to say exactly that. Combined with allowZero - which
+    -- those two rows need, because 0% rested below the cap is a real answer -
+    -- a capped character read "Rested XP 0%" and "XP Progress 0%": a precise
+    -- number for a bar that does not exist. `allowZero` cannot tell those two
+    -- zeroes apart, so the level does.
+    if def.hideAtCap then
+        local cap = AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()
+        if cap and (tonumber(char.level) or 0) >= cap then return false end
+    end
     if def.allowZero then return true end
     return (tonumber(value) or 0) ~= 0
 end
@@ -1127,10 +1140,18 @@ local ENCHANTABLE_SLOTS = {
 -- otherwise get six amber rows telling it to enchant gear it will replace this
 -- afternoon.
 --
--- Not a setting any more: the level cap is the only threshold worth having,
--- and it is a question the client can answer.
+-- So it is still a setting, and Config.lua defaults it to the level cap. It was
+-- briefly hardcoded to the cap instead, which is the same policy with the choice
+-- taken away: "nothing is audited until it is finished levelling" is a
+-- reasonable default and a poor law.
 local function AuditFloor()
-    return (AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()) or 60
+    local cap = (AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()) or 60
+    local set = AltStableConfig and tonumber(AltStableConfig.auditMinLevel)
+    -- Clamped, not trusted: this is a number on disk, and a floor of 0 audits
+    -- every level 1 alt while a floor above the cap audits nobody at all and
+    -- looks like the tab is broken.
+    if set then return math.max(2, math.min(cap, set)) end
+    return cap
 end
 
 -- The enchant on a slot, from the PACKED field rather than the item link.
@@ -1150,9 +1171,15 @@ local function EnchantFromMod(packed)
     if type(packed) ~= "string" then return false end
     local ench = packed:match("^(%-?%d+):")
     if not ench then return false end
-    -- tonumber, not a string compare. "00" and "-0" are both zero and both
-    -- read as enchanted under `ench == "0"`, and Classic-era links were
-    -- historically written with padded zero fields.
+    -- tonumber, not a string compare: "00" and "-0" are both zero and both read
+    -- as ENCHANTED under `ench == "0"`.
+    --
+    -- Not a hypothetical. This field is SYNCED, so the string here is whatever
+    -- arrived on the wire - and the peer that wrote it is running whatever
+    -- version of this addon it is running. Our own PackGearMod formats with %d
+    -- and cannot emit a padded zero, which is exactly why the defence has to be
+    -- justified by the wire and not by the producer: the producer is not
+    -- necessarily us.
     local n = tonumber(ench)
     if not n then return false end
     if n == 0 then return nil end
@@ -1171,13 +1198,31 @@ end
 -- item subtype is the localised display string - "Shields" on enUS, "Schilde"
 -- on deDE - so a comparison against it would never fire outside English.
 --
--- The token is local-only, so for a peer-synced character it is absent and the
--- answer is "cannot tell" rather than a guess in either direction.
+-- The token is RESOLVED from the item id rather than stored, so it answers for
+-- a peer-synced character exactly as it does for a local one. "Cannot tell" is
+-- reserved for an id the client genuinely has no data for, which is a wait
+-- rather than a verdict: AuditCharacter queues it for GET_ITEM_INFO_RECEIVED.
 local function EnchantableHere(char, slotKey)
     if not ENCHANTABLE_SLOTS[slotKey] then return false end
     if slotKey ~= "offhand" then return true end
-    local loc = char["gearloc_offhand"]
-    if type(loc) ~= "string" or loc == "" then return nil end   -- cannot tell
+
+    -- Resolved from the item ID, which IS synced, rather than from a stored
+    -- token that is not.
+    --
+    -- A stored gearloc_ field meant every peer-synced character reported
+    -- "cannot tell" for its off-hand for ever - the same always-on remote
+    -- noise that moving off gearlink_ was supposed to end. And it was stored
+    -- for all seventeen slots when one is read, which is seventeen keys per
+    -- character plus two sync-boundary special cases, for a fact already on
+    -- the wire.
+    --
+    -- GetItemInfoInstant needs no item cache and takes a bare id, so this
+    -- works for local and remote characters alike.
+    local id = tonumber(char["gearid_offhand"]) or 0
+    if id <= 0 then return false end
+    if not GetItemInfoInstant then return nil end               -- cannot tell
+    local ok, _, _, _, loc = pcall(GetItemInfoInstant, id)
+    if not ok or type(loc) ~= "string" or loc == "" then return nil end
     return loc ~= "INVTYPE_HOLDABLE"
 end
 
@@ -1216,6 +1261,20 @@ local function AuditCharacter(char)
                 -- thing as calling it clean.
                 out[#out + 1] = { slot = slot.key, label = slot.label,
                                   issue = "cannot tell - no item data", rank = 3 }
+                -- And QUEUED, so the row is temporary rather than permanent.
+                -- GetItemInfoInstant needs no cache for an item the client
+                -- knows, but an id it has never seen - which a peer can sync
+                -- from a character whose gear we have never met - resolves only
+                -- after the server answers, and that arrives as
+                -- GET_ITEM_INFO_RECEIVED. Core's handler repaints the sheet when
+                -- an id in this queue lands.
+                --
+                -- Core has read this queue since the gem audit and nothing has
+                -- filled it since the gems went, which made that branch dead
+                -- code - and, less obviously, made "cannot tell" a permanent
+                -- verdict for exactly the remote characters this tab is for.
+                AltStable.PendingAuditItems = AltStable.PendingAuditItems or {}
+                AltStable.PendingAuditItems[tonumber(char["gearid_" .. slot.key])] = true
             elseif can then
                 local ench = EnchantFromMod(char["gearmod_" .. slot.key])
                 if ench == nil then
@@ -1256,6 +1315,11 @@ local DETAIL_TABS = {
 }
 
 local DETAIL_FIGURE_W = 260
+-- The tab buttons' size and the stride between them. Named because the column
+-- width is clamped against the row they form: a column narrower than its own
+-- tabs puts the last tab back outside the panel, which is the thing the clamp
+-- exists to prevent.
+local DETAIL_TAB_W, DETAIL_TAB_STRIDE = 72, 74
 -- STEP leaves room for the item level drawn UNDER each icon; at 40 the
 -- number sat against the next slot's border.
 local SLOT_SIZE, SLOT_STEP = 34, 48
@@ -1310,7 +1374,7 @@ local function BuildDetail()
     detail:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
     detail:Hide()
 
-    detail.bg = detail:CreateTexture(nil, "BACKGROUND")
+    detail.bg = detail:CreateTexture(nil, "BACKGROUND", nil, 0)
     detail.bg:SetAllPoints()
     detail.bg:SetColorTexture(0.05, 0.05, 0.06, 1)
 
@@ -1341,10 +1405,17 @@ local function BuildDetail()
     -- put a scene back there and that is why its icons looked placed rather
     -- than dropped on top. This is the cheap version of the same idea: a
     -- darker inset with a border, so the figure is visibly INSIDE something.
-    detail.stage = detail:CreateTexture(nil, "BACKGROUND")
-    detail.stage:SetColorTexture(0.03, 0.03, 0.04, 1)
-    detail.stageEdge = detail:CreateTexture(nil, "BACKGROUND")
+    -- EXPLICIT SUBLEVELS, because within one draw layer order is creation
+    -- order: created second, the edge drew over the whole inset and the box
+    -- read as a flat light-grey rectangle - "not a border, a lid", the same bug
+    -- as the item-quality border two hundred lines above, in the same commit
+    -- that fixed that one. Sublevels say what is in front regardless of the
+    -- order these lines happen to be in, which is how
+    -- Plugins/Instances/AltStableInstances.lua layers its row bands.
+    detail.stageEdge = detail:CreateTexture(nil, "BACKGROUND", nil, 1)
     detail.stageEdge:SetColorTexture(0.16, 0.16, 0.18, 1)
+    detail.stage = detail:CreateTexture(nil, "BACKGROUND", nil, 2)
+    detail.stage:SetColorTexture(0.03, 0.03, 0.04, 1)
 
     -- The figure, and its stand-in.
     detail.figure = detail:CreateTexture(nil, "ARTWORK")
@@ -1368,10 +1439,25 @@ local function BuildDetail()
     detail.tabs = {}
     for _, def in ipairs(DETAIL_TABS) do
         local b = CreateFrame("Button", nil, detail, "UIPanelButtonTemplate")
-        b:SetSize(72, BAR_H)
+        b:SetSize(DETAIL_TAB_W, BAR_H)
         b:SetText(def.label)
         b.id = def.id
         b:SetScript("OnClick", function() Roster.SetDetailTab(def.id) end)
+        -- The active marker is a TEXTURE, not a text colour.
+        --
+        -- The active tab is disabled, and UIPanelButtonTemplate swaps in its
+        -- DISABLED font object when a button is disabled - which reapplies that
+        -- object's colour and throws away a SetTextColor set on the current font
+        -- string. So the accent tint below is a hint that the template is
+        -- entitled to overrule, and on a client where it does, the only signal
+        -- left was "greyed out", which reads as unavailable rather than "you are
+        -- here". A texture we own cannot be overruled.
+        b.activeMark = b:CreateTexture(nil, "OVERLAY")
+        b.activeMark:SetColorTexture(unpack(AltStable.C.ACCENT))
+        b.activeMark:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 4, 1)
+        b.activeMark:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -4, 1)
+        b.activeMark:SetHeight(2)
+        b.activeMark:Hide()
         detail.tabs[#detail.tabs + 1] = b
     end
 
@@ -1430,11 +1516,15 @@ end
 -- Drawing it
 ------------------------------------------------------------
 
-local QUALITY_RGB = {
-    [0] = { 0.62, 0.62, 0.62 }, [1] = { 1, 1, 1 },        [2] = { 0.12, 1, 0 },
-    [3] = { 0, 0.44, 0.87 },    [4] = { 0.64, 0.21, 0.93 }, [5] = { 1, 0.50, 0 },
-    [6] = { 0.90, 0.80, 0.50 },
-}
+-- The shared palette, not a third copy of it. The copy that was here was
+-- missing Heirloom (7), so an heirloom drew a Common white border in this pane
+-- and cyan in the grid beside it. The fallback is for the case this plugin
+-- somehow loads without RowRenderer, and is a grey that is obviously not a
+-- quality colour rather than a second palette to drift from.
+local function QualityRGB(quality)
+    if AltStable.QualityRGB then return AltStable.QualityRGB(quality) end
+    return 0.5, 0.5, 0.5
+end
 
 -- Laid out AROUND the figure rather than from the left edge.
 --
@@ -1497,10 +1587,10 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY)
             b.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             b.icon:SetDesaturated(false)
             b.icon:SetAlpha(1)
-            local q = QUALITY_RGB[tonumber(char["gearq_" .. slot.key]) or 1] or QUALITY_RGB[1]
-            b.border:SetColorTexture(q[1], q[2], q[3], 0.9)
+            local qr, qg, qb = QualityRGB(char["gearq_" .. slot.key])
+            b.border:SetColorTexture(qr, qg, qb, 0.9)
             b.ilvl:SetText(ilvl > 0 and tostring(ilvl) or "")
-            b.ilvl:SetTextColor(q[1], q[2], q[3])
+            b.ilvl:SetTextColor(qr, qg, qb)
         else
             b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
             b.icon:SetDesaturated(true)
@@ -1546,10 +1636,18 @@ local function RenderDetail(char)
     -- figureTop is a negative offset from the top, so this is what is left
     -- between it and the bottom of the panel.
     local figureH = detail:GetHeight() + figureTop - WEAPON_ROW_H - 16
-    -- The side columns need six rows whatever the figure does; a panel too
-    -- short for both is the panel's problem, not the figure's.
-    local minH = 6 * SLOT_STEP
-    if figureH < minH then figureH = minH end
+    -- No six-row floor. There was one - `if figureH < 6 * SLOT_STEP then ...` -
+    -- on the argument that the side columns need six rows whatever the figure
+    -- does, and it produced exactly the bug the column clamp above fixes: the
+    -- floor won on a short panel, figureBottom went past the bottom edge, and
+    -- the weapons row went with it. Nothing here sets SetClipsChildren, so those
+    -- seven item buttons drew over the game world and took the mouse there.
+    --
+    -- The two goals genuinely conflict on a short panel and the weapons row
+    -- wins, for the same reason as before: overlapping side icons are ugly, and
+    -- clickable buttons outside the window are a bug. So the figure takes the
+    -- room that is actually there, and only refuses to invert.
+    if figureH < 24 then figureH = 24 end
     local figureBottom = figureTop - figureH
 
     -- The box, sized to the figure's column and the room left for it.
@@ -1599,27 +1697,46 @@ local function RenderDetail(char)
                       figureBottom)
 
     -- The right-hand column, and which tab owns it.
-    -- Clamped to the panel, not just pushed right. The Roster inherits
-    -- whatever width the previous section left behind - SheetUI's
-    -- ResizeFrameToContent early-outs for plugins - so on a narrow frame
-    -- `width - 260` went NEGATIVE relative to the column and the max() pushed
-    -- the tabs past the right edge instead. `detail` sets no SetClipsChildren,
-    -- so they drew over the game world outside the window, and the tabs are
-    -- the first thing out there a player can click.
-    local COLUMN_W = 250
-    local x = math.min(math.max(360 + DETAIL_FIGURE_W, detail:GetWidth() - COLUMN_W - 10),
-                       math.max(0, detail:GetWidth() - COLUMN_W - 10))
+    --
+    -- The Roster inherits whatever width the previous section left behind -
+    -- SheetUI's ResizeFrameToContent early-outs for plugins - so a frame too
+    -- narrow to hold both the paper doll and a 250px column beside it is
+    -- reachable. The two goals conflict there, and FITTING INSIDE THE PANEL
+    -- WINS: `detail` sets no SetClipsChildren, so a control laid out past the
+    -- right edge draws over the game world, and the tabs are the first thing
+    -- out there a player can click. Sitting clear of the figure is cosmetic.
+    --
+    -- So the column NARROWS rather than moving out, and only the amount left
+    -- over decides where it starts. Written as one clamp on the width and one
+    -- on the position: the previous version clamped the position twice,
+    -- `min(max(620, V), max(0, V))`, which is just `max(0, V)` for any V - the
+    -- floor it looked like it had could never bind, and the tabs went outside
+    -- the panel anyway.
+    -- The floor is the TAB ROW's own width, not an arbitrary 120: the tabs are
+    -- laid out from the column's left at a fixed stride, so a column narrower
+    -- than the row leaves the last tab outside the panel again - clamped
+    -- column, unclamped tabs.
+    local tabRow = (#detail.tabs - 1) * DETAIL_TAB_STRIDE + DETAIL_TAB_W
+    local COLUMN_W = math.max(tabRow, math.min(250,
+                              detail:GetWidth() - (360 + DETAIL_FIGURE_W) - 10))
+    local x = math.max(10, detail:GetWidth() - COLUMN_W - 10)
+    detail.columnRight = x + COLUMN_W
     local y = figureTop
 
     for i, b in ipairs(detail.tabs) do
         b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", detail, "TOPLEFT", x + (i - 1) * 74, figureTop + 24)
+        b:SetPoint("TOPLEFT", detail, "TOPLEFT",
+                   x + (i - 1) * DETAIL_TAB_STRIDE, figureTop + 24)
         -- The active tab is the one you are NOT being invited to press - but
         -- disabled READS as unavailable, not as "you are here", so the tab you
         -- are on looked greyed out while the other one looked like the
         -- selected one. The label carries the state as well.
         local active = b.id == Roster.detailTab
         b:SetEnabled(not active)
+        b.activeMark:SetShown(active)
+        -- Attempted as well, because when the template does NOT overrule it the
+        -- label reading in the accent colour is the clearer of the two signals.
+        -- Never the only one: see activeMark above.
         local fs = b.GetFontString and b:GetFontString()
         if fs then
             if active then fs:SetTextColor(unpack(AltStable.C.ACCENT))
@@ -1663,7 +1780,12 @@ local function RenderDetail(char)
         -- The right edge, so it wraps inside the column instead of running out
         -- of the panel. Set here rather than at build time because the column
         -- moves with the frame width.
-        detailAudit.none:SetPoint("RIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
+        --
+        -- TOPRIGHT, not RIGHT: RIGHT pins the vertical CENTRE to the same y the
+        -- TOPLEFT above pins the TOP to, which is a request for a height of
+        -- zero. The line went invisible and the SetHeight below could not save
+        -- it, because two conflicting anchors beat an explicit size.
+        detailAudit.none:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
         detailAudit.none:SetHeight(STAT_ROW_H * 3)
         -- A reason means the audit did not RUN - nothing equipped, or the
         -- character is still levelling. That is not a clean bill, and saying
@@ -1731,6 +1853,11 @@ end
 -- always the value already there.
 function Roster.DrillDown(guid)
     if not guid then return false end
+    -- The character has to EXIST. Opening the pane on a guid that is not in the
+    -- database gives a header with no name, an empty paper doll and an audit
+    -- that cannot run, and returning true said it worked - so a stale guid from
+    -- a card rendered before a delete drilled into nothing at all.
+    if not (AltStableDB and AltStableDB[guid]) then return false end
     Roster.Select(guid)
     Roster.detail = guid
     -- Always open on Char. The tab is a per-visit choice, not a setting: a
@@ -1884,6 +2011,12 @@ end
 
 function Roster.Deactivate(mainFrame)
     Roster.isActive = false
+    -- The drill-down is a per-visit state, like the tab it opens on. Left set,
+    -- switching to another sheet tab and coming back landed you straight in the
+    -- detail pane with no grid and nothing to say why - and the only way out was
+    -- a Back button for a journey you did not take.
+    Roster.detail = nil
+    Roster.selected = nil
     if panel then panel:Hide() end
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Show()   end
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Show() end
@@ -1916,11 +2049,10 @@ local DETAIL_TEST = {
     DrillDown = function(g) return Roster.DrillDown(g) end,
     Back = function() return Roster.Back() end,
     Selected = function() return Roster.selected end,
-    -- Direct references, not wrappers. Each `function() return f() end`
-    -- is its own closure capturing its own upvalue, and this table is
-    -- already near Lua 5.1's sixty-upvalue ceiling for the enclosing
-    -- function - four more tipped it over and the file stopped
-    -- loading. A plain reference costs none.,
+    -- These are plain references rather than wrappers because they need no
+    -- late binding: they are file-scope locals already defined above, unlike
+    -- the entries around them, which have to reach `detail` or `Roster.*` as
+    -- they are at call time.
     AuditCharacter = AuditCharacter,
     EnchantFromMod = EnchantFromMod,
     EnchantableHere = EnchantableHere,
@@ -1931,6 +2063,27 @@ local DETAIL_TEST = {
     DetailTabs = function() return (detail and detail.tabs) or {} end,
     DetailFrame = function() return detail end,
     DetailStageLayer = function() return detail and detail.stage:GetDrawLayer() end,
+    -- What is actually in front of what, the way the client resolves it:
+    -- layer, then sublevel, then creation order. Reported rather than
+    -- asserted here so the test can state the invariant - the inset is in
+    -- front of its edge - without caring which of the three settles it.
+    -- Where the right-hand column landed, and how wide it ended up. Both,
+    -- because on a narrow frame the column narrows instead of moving out, and
+    -- "it starts inside the panel" is satisfied by a column whose right edge
+    -- is still outside it.
+    DetailColumn = function()
+        if not detail then return {} end
+        local _, _, _, bx = detail.tabs[1]:GetPoint(1)
+        return { x = bx, right = detail.columnRight, panel = detail:GetWidth() }
+    end,
+    DetailStageOrder = function()
+        if not detail then return {} end
+        local function of(t)
+            local layer, sub = t:GetDrawLayer()
+            return { layer = layer, sublevel = sub or 0, created = t._created }
+        end
+        return { bg = of(detail.bg), edge = of(detail.stageEdge), inset = of(detail.stage) }
+    end,
     DetailFigureBox = function()
         if not detail then return {} end
         local _, _, _, _, top = detail.stage:GetPoint(1)
@@ -2017,9 +2170,7 @@ local DETAIL_TEST = {
 }
 
 function Roster._Bootstrap()
-    
-
-if not AltStable or not AltStable.RegisterPlugin then
+    if not AltStable or not AltStable.RegisterPlugin then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable Roster]|r AltStable not found.")
         return
     end
@@ -2042,6 +2193,12 @@ if not AltStable or not AltStable.RegisterPlugin then
             BuildCard = BuildCard, RenderCard = RenderCard,
             HIDDEN_CARD_ALPHA = HIDDEN_CARD_ALPHA,
             RenderScene = RenderScene, Cards = function() return Roster.cards end,
+            -- What the panel is ACTUALLY showing, rather than what the config
+            -- says it should be. The config is what a test sets; these are what
+            -- the render did with it, which is the thing a "Back lands you in
+            -- the scene" assertion has to look at.
+            SceneBarShown = function() return sceneBar and sceneBar:IsShown() end,
+            ViewButtonText = function() return viewBtn and viewBtn:GetText() end,
             Panel = function() return panel end,
             -- What the player is actually told. Asserting the hint STRING is
             -- the only way to catch the renderer handing the count the wrong
@@ -2049,6 +2206,7 @@ if not AltStable or not AltStable.RegisterPlugin then
             HintText = function() return hintText and hintText:GetText() end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
+            Deactivate = function(main) return Roster.Deactivate(main) end,
             HookRefresh = HookRefresh, BackdropTexCoords = BackdropTexCoords,
             SceneLayout = SceneLayout, SCENE_BACKDROPS = SCENE_BACKDROPS,
             SceneCast = SceneCast, RelativeFigureSize = RelativeFigureSize,

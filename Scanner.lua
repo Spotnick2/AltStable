@@ -6,12 +6,6 @@ local API = AltStable.API
 local GetNumSkillLines = API.GetNumSkillLines
 local GetSkillLineInfo = API.GetSkillLineInfo
 local UnitDefenseSkill = API.UnitDefenseSkill
--- The equip-location token. Through the adapter like everything else: Compat
--- deliberately does not inject these into _G, and a bare global call here
--- would work on this client and break the moment the adapter has to translate
--- it - which is the whole reason the adapter exists. A source scan in
--- test_scanner enforces it, and caught exactly that.
-local GetItemInfoInstant = API.GetItemInfoInstant
 -- Unit stats can come back "secret" on this client: storable, but arithmetic or
 -- tostring on one throws (see Compat.lua). Every unit number below is read
 -- through these, so a secret becomes nil - unknown - instead of aborting the
@@ -43,25 +37,36 @@ local ALL_PROFESSIONS = {
 -- Gear slots
 ------------------------------------------------------------
 
-local GEAR_SLOTS = {
-    { id=1,  key="head"     },
-    { id=2,  key="neck"     },
-    { id=3,  key="shoulder" },
-    { id=15, key="back"     },
-    { id=5,  key="chest"    },
-    { id=9,  key="wrist"    },
-    { id=10, key="hands"    },
-    { id=6,  key="waist"    },
-    { id=7,  key="legs"     },
-    { id=8,  key="feet"     },
-    { id=11, key="ring1"    },
-    { id=12, key="ring2"    },
-    { id=13, key="trinket1" },
-    { id=14, key="trinket2" },
-    { id=16, key="mainhand" },
-    { id=17, key="offhand"  },
-    { id=18, key="ranged"   },
+-- ONE table, published on AltStable, because the Roster's detail pane needs the
+-- same seventeen slots in the same order and had its own copy - seventeen rows
+-- of id/key duplicated, which is seventeen chances for the two to disagree
+-- about what `gearid_back` means.
+--
+-- `id` is the client's inventory slot, which is what the scanner reads and what
+-- an item tooltip needs. `label` and `side` are the paper doll's, and the ORDER
+-- is the paper doll's too: down the left, down the right, weapons along the
+-- bottom. The scanner does not care about the order, so the reader that does
+-- gets to set it.
+AltStable.GEAR_SLOTS = {
+    { id=1,  key="head",     label="Head",      side="left"   },
+    { id=2,  key="neck",     label="Neck",      side="left"   },
+    { id=3,  key="shoulder", label="Shoulder",  side="left"   },
+    { id=15, key="back",     label="Back",      side="left"   },
+    { id=5,  key="chest",    label="Chest",     side="left"   },
+    { id=9,  key="wrist",    label="Wrist",     side="left"   },
+    { id=10, key="hands",    label="Hands",     side="right"  },
+    { id=6,  key="waist",    label="Waist",     side="right"  },
+    { id=7,  key="legs",     label="Legs",      side="right"  },
+    { id=8,  key="feet",     label="Feet",      side="right"  },
+    { id=11, key="ring1",    label="Ring 1",    side="right"  },
+    { id=12, key="ring2",    label="Ring 2",    side="right"  },
+    { id=13, key="trinket1", label="Trinket 1", side="bottom" },
+    { id=14, key="trinket2", label="Trinket 2", side="bottom" },
+    { id=16, key="mainhand", label="Main Hand", side="bottom" },
+    { id=17, key="offhand",  label="Off Hand",  side="bottom" },
+    { id=18, key="ranged",   label="Ranged",    side="bottom" },
 }
+local GEAR_SLOTS = AltStable.GEAR_SLOTS
 
 local function ItemIDFromLink(link)
     if type(link) ~= "string" then return 0 end
@@ -345,7 +350,6 @@ local function ResetCharacter(char)
         char["gearsubtype_"..slot.key] = ""  -- item subtype ("Dagger", "Mail", ...) — authoritative gear type
         char["gearlink_"..slot.key] = ""   -- full item link (for tooltips)
         char["gearmod_"..slot.key]  = ""   -- packed "ench:sockets:g1:g2:g3" (synced)
-        char["gearloc_"..slot.key]  = ""   -- equip location token, locale-free (local-only)
     end
 
     -- Helm/cloak display toggles. 1 = hidden, 0 = shown.
@@ -640,11 +644,22 @@ function AltStable.ScanCharacter()
     --
     -- Melee crit is the honest one to show: GetSpellCritChance takes a school
     -- and the pane has one row, so picking a school would be arbitrary.
+    -- Crit only. GetCritChance has a verified producer: observed live on
+    -- 1.60.1.70009 reporting 1.66%, a real value rather than a
+    -- rating-derived zero, which is what Core's RETIRED_FIELDS note asked for
+    -- before taking a field off that list.
+    --
+    -- GetHitModifier is NOT scanned. It is a pre-WoD global removed when hit
+    -- rating was, it appears in no dump or note here, and its row did not
+    -- render in game - which is equally consistent with "the function is
+    -- absent" and "the value is genuinely zero". Writing the field either way
+    -- would store a zero that cannot be told from an absence, and
+    -- stat_hitpct is still on Core's retired list, so the value would be
+    -- purged at the next login regardless.
+    --
+    -- To settle it:  /run print(GetHitModifier and GetHitModifier() or "ABSENT")
     if GetCritChance then
         char.stat_crit = plain(GetCritChance())
-    end
-    if GetHitModifier then
-        char.stat_hitpct = plain(GetHitModifier())
     end
 
     --------------------------------------------------------
@@ -688,20 +703,6 @@ function AltStable.ScanCharacter()
             -- even while the item itself is uncached; only the socket count inside
             -- PackGearMod can come back unresolved ("?").
             char["gearmod_"..slot.key] = PackGearMod(link, itemID)
-            -- The equip location, which is a LOCALE-INDEPENDENT token
-            -- ("INVTYPE_SHIELD", "INVTYPE_HOLDABLE"). itemSubType below is the
-            -- localised display string - "Shields" on enUS, "Schilde" on deDE -
-            -- so anything that has to make a decision about what KIND of item
-            -- this is must use this and not that. The enchant audit compares
-            -- against INVTYPE_HOLDABLE, and would silently never fire on a
-            -- non-English client if it read the subtype instead.
-            --
-            -- GetItemInfoInstant does not need the item cached, so unlike the
-            -- block below this resolves on the first scan.
-            if GetItemInfoInstant then
-                local _, _, _, equipLoc = GetItemInfoInstant(itemID or link)
-                char["gearloc_"..slot.key] = equipLoc or ""
-            end
             local itemName, _, quality, ilvl, _, _, itemSubType = GetItemInfo(link)
             if ilvl then
                 char["gear_"..slot.key]      = ilvl
@@ -719,7 +720,6 @@ function AltStable.ScanCharacter()
             char["gearid_"..slot.key]    = 0
             char["gearname_"..slot.key]  = ""
             char["gearsubtype_"..slot.key] = ""
-            char["gearloc_"..slot.key]   = ""
             char["gearlink_"..slot.key]  = ""
             char["gearmod_"..slot.key]   = ""
         end

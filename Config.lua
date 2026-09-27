@@ -146,16 +146,32 @@ local function EnsureDefaults()
         AltStableConfig.sheetShowHidden = false
     end
 
-    -- Retired with the gem audit. Sockets, gems and meta-gems were introduced
-    -- in TBC and do not exist here, so the audit these configured is
-    -- meaningless on this client - it is an enchant audit now, and enchants
-    -- need no quality threshold: a slot either has one or it does not.
+    -- Retired with the gem audit. Sockets, gems and meta-gems were introduced in
+    -- TBC and do not exist here, so the quality threshold this configured is
+    -- meaningless on this client - it is an enchant audit now, and enchants need
+    -- no quality threshold: a slot either has one or it does not.
     --
-    -- Actively cleared rather than merely no longer defaulted. Both have been
+    -- Actively cleared rather than merely no longer defaulted. It has been
     -- written to real profiles on disk, and a key nothing reads is a key the
     -- next reader has to work out the meaning of. Same treatment bisTier got.
     AltStableConfig.minGemQuality = nil
-    AltStableConfig.auditMinLevel = nil
+
+    -- auditMinLevel is NOT retired with it, which is the distinction the first
+    -- pass at this got wrong: it was cleared alongside minGemQuality on the
+    -- argument that enchants need no threshold, but that argument is about
+    -- QUALITY. A level gate is a different setting and enchants still want one -
+    -- a level 14 alt in quest greens does not need six amber rows about gear it
+    -- will replace this afternoon.
+    --
+    -- Nor is it hardcoded, which is what replaced it: a floor at the level cap
+    -- silently means "no character is audited until it is finished levelling",
+    -- and deciding that for the player while deleting the setting they had is
+    -- two changes wearing one coat. The default IS the cap; the key is honoured
+    -- when it is there.
+    if AltStableConfig.auditMinLevel == nil then
+        AltStableConfig.auditMinLevel =
+            (AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()) or 60
+    end
 
     -- Appearance defaults
     AltStableConfig.theme = AltStableConfig.theme or "dark"

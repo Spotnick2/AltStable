@@ -266,16 +266,41 @@ AltStable.FormatLastSeen = FormatLastOnline
 --   7 Heirloom  : light blue   two; unmeasured on Forever)
 ------------------------------------------------------------
 
-local QUALITY_COLORS = {
-    [0] = "|cff9d9d9d",  -- grey   (Poor)
-    [1] = "|cffffffff",  -- white  (Common)
-    [2] = "|cff1eff00",  -- green  (Uncommon)
-    [3] = "|cff0070dd",  -- blue   (Rare)
-    [4] = "|cffa335ee",  -- purple (Epic)
-    [5] = "|cffff8000",  -- orange (Legendary)
-    [6] = "|cffe6cc80",  -- gold   (Artifact)
-    [7] = "|cff00ccff",  -- cyan   (Heirloom)
+-- ONE palette, in 0..1 components, with the |cff strings derived from it.
+--
+-- There were three copies: this one as hex, a second in the Roster detail pane
+-- as RGB triples, and the tooltip's. They had already drifted - the Roster's
+-- was missing Heirloom (7) entirely, so an heirloom drew with a Common white
+-- border in the pane and cyan in the grid, for the same item. RGB is the
+-- primary form because SetColorTexture and SetTextColor need components and a
+-- hex string has to be unpacked to get them, while the reverse is one format
+-- call.
+AltStable.QUALITY_RGB = {
+    [0] = { 0.616, 0.616, 0.616 },  -- grey   (Poor)
+    [1] = { 1,     1,     1     },  -- white  (Common)
+    [2] = { 0.118, 1,     0     },  -- green  (Uncommon)
+    [3] = { 0,     0.439, 0.867 },  -- blue   (Rare)
+    [4] = { 0.639, 0.208, 0.933 },  -- purple (Epic)
+    [5] = { 1,     0.502, 0     },  -- orange (Legendary)
+    [6] = { 0.902, 0.800, 0.502 },  -- gold   (Artifact)
+    [7] = { 0,     0.800, 1     },  -- cyan   (Heirloom)
 }
+
+-- Always a triple, never nil: every caller was writing `or PALETTE[1]` after
+-- the lookup, and the one that forgot passed nil into SetColorTexture.
+function AltStable.QualityRGB(quality)
+    local c = AltStable.QUALITY_RGB[tonumber(quality) or 1]
+        or AltStable.QUALITY_RGB[1]
+    return c[1], c[2], c[3]
+end
+
+local QUALITY_COLORS = {}
+for q, c in pairs(AltStable.QUALITY_RGB) do
+    QUALITY_COLORS[q] = ("|cff%02x%02x%02x"):format(
+        math.floor(c[1] * 255 + 0.5),
+        math.floor(c[2] * 255 + 0.5),
+        math.floor(c[3] * 255 + 0.5))
+end
 
 local function FormatGearIlvl(slotIlvl, slotQuality)
     if not slotIlvl or slotIlvl == 0 then
