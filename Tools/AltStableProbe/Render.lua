@@ -88,6 +88,14 @@ end
 --
 -- The stage survives it by being parented to WorldFrame rather than UIParent,
 -- so the engine's hide does not take it with the rest of the interface.
+-- Forward declarations, and they live UP HERE rather than beside the things
+-- they name, because the blackout below is defined first and calls into them:
+-- HideUI moves the prompt when the interface goes down, and Capture supersedes
+-- a queued countdown. Declared later, those names resolve to globals - always
+-- nil - and the call errors at the exact moment somebody is watching.
+local StartCountdown, CancelPending, HidePrompt, Supersede, WaitForStillness
+local PlacePrompt, SnoozeCapture, ConsiderCapture
+
 local uiHidden        -- "engine" | "uiparent" | nil
 local uiWasShown      -- was the interface up before we touched it?
 local owedRestore     -- a protected restore we could not make during combat
@@ -177,6 +185,9 @@ local function HideUI()
             return false            -- the call did not take
         end
         SuppressStrays()
+        -- No PlacePrompt here: this branch just called SetUIVisibility, and
+        -- the hook on it does the move. A second call would be a second answer
+        -- to the same question, and no test could fail it.
         uiHidden = "engine"
         return true
     end
@@ -188,6 +199,10 @@ local function HideUI()
         pcall(UIParent.Hide, UIParent)
         if UIParent:IsShown() then return false end
         SuppressStrays()
+        -- HERE it is load-bearing: this is the fallback for a client with no
+        -- SetUIVisibility, so there is no hook to fire and nothing else would
+        -- move the prompt out from under the UIParent just hidden.
+        PlacePrompt()
         uiHidden = "uiparent"
         return true
     end
@@ -235,6 +250,11 @@ local function ShowUI()
         return false
     end
     pcall(UIParent.Show, UIParent)
+    -- AFTER the interface is actually back, and only on this branch: the
+    -- engine branch above returns through SetUIVisibility, whose hook does it.
+    -- Called before the Show, it would read the interface as still down and
+    -- leave the prompt out on WorldFrame.
+    PlacePrompt()
     uiHidden = nil
     owedRestore = nil
     return true
@@ -247,7 +267,6 @@ local frame, model, backdrop, hint
 -- the prompt down, and Capture is defined several hundred lines before either.
 -- Without this the names resolve to globals, which are nil - so the call errors
 -- at the exact moment somebody presses the sheet's Capture button.
-local StartCountdown, CancelPending, HidePrompt, Supersede, WaitForStillness
 local savedFormat
 local previewing
 local capturing          -- one at a time, always
@@ -835,12 +854,34 @@ if type(StaticPopupDialogs) == "table" then
     }
 end
 
+-- How long "not right now" lasts before it asks again.
+--
+-- Ten minutes: long enough that it is genuinely out of the way, short enough
+-- that a portrait the player does want still happens this session. A snooze
+-- that quietly never returned would be a Cancel wearing a friendlier label.
+local SNOOZE_SECONDS = 600
+local snoozed
+
+-- "Not right now." Distinct from Cancel, which drops the trigger and waits for
+-- something natural to raise it again, and from Never, which is a slash
+-- command because it is the rare one.
+function SnoozeCapture(why)
+    Supersede()                       -- silently: the player is being told below
+    snoozed = C_Timer.NewTimer(SNOOZE_SECONDS, function()
+        snoozed = nil
+        ConsiderCapture(why or "gear changed since your last portrait")
+    end)
+    Out(("portrait postponed - asking again in %d minutes. "
+        .. "|cffffff00/asrender auto|r stops it asking at all."):format(SNOOZE_SECONDS / 60))
+end
+
 -- Drop the queued countdown WITHOUT a word, because something is about to do
 -- the thing it was counting down to. The player is about to be told "staging...
 -- hold still"; a cancellation notice in front of that is a contradiction.
 function Supersede()
     if combatSettle then combatSettle:Cancel(); combatSettle = nil end
     if pending then pending:Cancel(); pending = nil end
+    if snoozed then snoozed:Cancel(); snoozed = nil end
     HidePrompt()
 end
 
@@ -865,6 +906,10 @@ function CancelPending(reason, announce)
     local hadCountdown, hadSettle = false, false
     if combatSettle then combatSettle:Cancel(); combatSettle = nil; hadSettle = true end
     if pending then pending:Cancel(); pending = nil; hadCountdown = true end
+    -- A snooze counts as pending: "/asrender cancel" during one answered
+    -- "nothing pending" and then took the picture ten minutes later anyway,
+    -- which is the same bug the quiet-after-combat wait had.
+    if snoozed then snoozed:Cancel(); snoozed = nil; hadSettle = true end
     -- Every route out of the countdown passes through here - the buttons, the
     -- slash command, combat starting, the timer firing - so this is the one
     -- place the prompt has to come down. Unconditional: a prompt left on screen
@@ -928,15 +973,11 @@ local function BuildPrompt()
     --
     -- The sheet is DIALOG, which is ABOVE High - so the strata this used to
     -- end on left the warning underneath a window the player can drag
-    -- anywhere, including over it. Reparenting fixes a hidden ancestor and
-    -- does nothing about being covered by a sibling, and IsVisible() cannot
-    -- see occlusion either: the prompt would report itself perfectly visible
-    -- from behind the sheet while the countdown ran out.
+    -- anywhere, including over it. Being un-hidden is not the same as being on
+    -- screen, and IsVisible() cannot see occlusion by a sibling either.
     --
-    -- The "HIGH" line that used to sit three lines below this was left over
-    -- from when the prompt was an ordinary UIParent child, and quietly undid
-    -- the strata set here.
-    pcall(prompt.SetParent, prompt, WorldFrame)
+    -- The parent is set by PlacePrompt on every show; UIParent is only where
+    -- it starts.
     pcall(prompt.SetFrameStrata, prompt, "FULLSCREEN_DIALOG")
     prompt:SetSize(PROMPT_W, PROMPT_H)
     prompt:SetPoint("TOP", UIParent, "TOP", 0, -150)
@@ -974,23 +1015,28 @@ local function BuildPrompt()
         return b
     end
 
+    -- Now / Snooze / Cancel.
+    --
+    -- The three questions a player actually has, which the previous set did
+    -- not cover: "Skip" and "Never" are both refusals, and neither of them is
+    -- "not right now". Skip did come back eventually - at the next login or
+    -- the end of the next fight - but nothing said so, and a button that
+    -- looks like a refusal is not a way to say "later".
+    --
+    -- Turning it off for good is not a button any more. It is the rarest of
+    -- the four and the only irreversible-feeling one, and it lives on
+    -- /asrender auto, which the chat line names.
     button("Now", 70, 10, function()
-        -- Just Capture(). It cancels the countdown itself now, which is the
+        -- Just Capture(). It supersedes the countdown itself, which is the
         -- only way every other entry point gets the same treatment.
-        --
-        -- This used to call CancelPending(nil, false) first, and the `false`
-        -- was dead: CancelPending announces whenever a countdown was live, so
-        -- pressing Now printed "auto-capture cancelled" a moment before the
-        -- capture it had just started.
         Capture()
     end)
-    button("Skip", 70, 88, function()
-        CancelPending("you skipped it", true)
+    button("Snooze", 80, 88, function()
+        SnoozeCapture(prompt and prompt.why)
     end)
-    button("Never", 100, 190, function()
-        AltStableProbeDB = AltStableProbeDB or {}
-        AltStableProbeDB.autoCaptureOff = true
-        CancelPending("auto-capture turned off - |cffffff00/asrender auto|r turns it back on", true)
+    button("Cancel", 80, 176, function()
+        CancelPending("cancelled - it will ask again at the next login or "
+            .. "after your next fight", true)
     end)
 
     prompt:Hide()
@@ -1021,14 +1067,38 @@ end
 --
 -- It still cannot reach the photograph. Every path hides it before the
 -- shutter, and STRAY_FRAMES covers it if one ever stops doing so.
--- WorldFrame does not carry the player's UI scale, so the prompt would be
--- drawn at a different size from every other piece of interface. Copied on
--- each show rather than once at build time, because the scale can change while
--- the addon is loaded.
-local function MatchUIScale()
+-- Where the prompt has to live depends on whether the interface is up, and
+-- there is no single answer.
+--
+-- Under UIParent it is an ordinary piece of interface and draws where the
+-- player expects - but the showcase hides UIParent, and a shown frame under a
+-- hidden parent is not on screen. Under WorldFrame it survives that hide, but
+-- WorldFrame is the 3D scene: with the interface UP, a frame parented there
+-- sits beneath all of it. Parking it there permanently fixed the showcase case
+-- and broke the ordinary one - a countdown at login showed nothing at all,
+-- which is the report that brought this back.
+--
+-- So it moves, and the thing that moves it is the blackout - not the prompt's
+-- own OnUpdate, which stops arriving the moment its parent is hidden and was
+-- the reason the first attempt at this could never work. Called from the
+-- SetUIVisibility hook and from HideUI/ShowUI, both of which keep running
+-- whatever the prompt's parent is doing.
+function PlacePrompt()
     if not prompt then return end
+    local interfaceDown = UIParent and UIParent.IsShown and UIParent:IsShown() == false
+    local want = interfaceDown and WorldFrame or UIParent
+
+    if prompt:GetParent() ~= want then
+        pcall(prompt.SetParent, prompt, want)
+        pcall(prompt.SetFrameStrata, prompt, "FULLSCREEN_DIALOG")
+    end
+
+    -- WorldFrame does not carry the player's UI scale, so a prompt parked
+    -- there would be drawn at a different size from every other piece of
+    -- interface. Under UIParent the scale is inherited and must be left at 1,
+    -- or it is applied twice.
     local eff = UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()
-    if eff and eff > 0 then pcall(prompt.SetScale, prompt, eff) end
+    pcall(prompt.SetScale, prompt, (interfaceDown and eff and eff > 0) and eff or 1)
 end
 
 -- The prompt while it waits for the player to stand still. Same frame, same
@@ -1041,10 +1111,7 @@ local function PromptWaiting(why)
     p:SetScript("OnUpdate", nil)
     p.label:SetText(("|cffffffffPortrait when you stand still|r  |cffaaaaaa%s|r")
         :format(why or ""))
-    -- No MatchUIScale here: this is only ever reached from a countdown that
-    -- has just shown the same frame, so the scale is already the player's. A
-    -- second call would be a line no test could fail, which is worse than a
-    -- line that is missing.
+    PlacePrompt()
     p:Show()
 end
 
@@ -1064,7 +1131,7 @@ local function ShowPrompt(why, seconds)
     -- with whatever text it had last time, which on the second countdown is the
     -- previous reason.
     Paint(p, seconds)
-    MatchUIScale()
+    PlacePrompt()
     p:Show()
 end
 
@@ -1086,7 +1153,8 @@ function StartCountdown(why)
     -- screen, and two mechanisms for one job is the thing the prompt was added
     -- to stop. It still SAYS what is happening, because chat is the record a
     -- player scrolls back through afterwards.
-    Out(("%s - refreshing your portrait in %ds."):format(why, WARN_SECONDS))
+    Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender auto|r stops it asking.")
+        :format(why, WARN_SECONDS))
     ShowPrompt(why, WARN_SECONDS)
     pending = C_Timer.NewTimer(WARN_SECONDS, function()
         pending = nil
@@ -1159,7 +1227,7 @@ function WaitForStillness(why)
     pending = C_Timer.NewTimer(1, poll)
 end
 
-local function ConsiderCapture(why)
+function ConsiderCapture(why)
     if not AutoEnabled() then return end
     if pending or capturing then return end
 
@@ -1226,6 +1294,13 @@ end
 -- capture.
 if type(hooksecurefunc) == "function" and type(SetUIVisibility) == "function" then
     hooksecurefunc("SetUIVisibility", function(visible)
+        -- FIRST, and regardless of whether a capture is running. This is the
+        -- event that tells us the interface went down or came back, and the
+        -- showcase uses it every time the sheet opens - so it is how a prompt
+        -- shown during an ordinary countdown follows the interface without
+        -- depending on updates it stops receiving.
+        PlacePrompt()
+
         if visible and capturing and uiHidden then
             uiHidden = nil          -- they restored it; we no longer own it
             -- Abandon, do not merely mark. Flagging it left the chain running:
@@ -1405,6 +1480,7 @@ AltStableProbe._test = {
     renderMark     = function() return renderMark end,
     CancelPending  = function(r, a) return CancelPending(r, a) end,
     DeadOrGhost    = function() return DeadOrGhost() end,
+    SNOOZE_SECONDS = SNOOZE_SECONDS,
     STRAY_FRAMES   = STRAY_FRAMES,
     LookFingerprint = function(g) return LookFingerprint(g) end,
     StoredFingerprint = function(g) return StoredFingerprint(g) end,
@@ -1435,7 +1511,8 @@ AltStableProbe._test = {
     strays         = function() return strays end,
     StartCountdown = function(why) return StartCountdown(why) end,
     pendingKind    = function()
-        return (pending and "countdown") or (combatSettle and "settle") or nil
+        return (pending and "countdown") or (snoozed and "snooze")
+            or (combatSettle and "settle") or nil
     end,
     KEY_DELAY      = KEY_DELAY,
     SHOT_DELAY     = SHOT_DELAY,
