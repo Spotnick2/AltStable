@@ -1334,6 +1334,18 @@ local function BuildDetail()
     detail.ilvl:SetPoint("TOPRIGHT", -12, -BAR_TOP)
     detail.ilvl:SetJustifyH("RIGHT")
 
+    -- A box behind the figure, like the game's own character pane.
+    --
+    -- A cutout is a transparent PNG with nothing behind it, so on a flat panel
+    -- it floats and anything near it reads as colliding with it. AltTracker
+    -- put a scene back there and that is why its icons looked placed rather
+    -- than dropped on top. This is the cheap version of the same idea: a
+    -- darker inset with a border, so the figure is visibly INSIDE something.
+    detail.stage = detail:CreateTexture(nil, "BACKGROUND")
+    detail.stage:SetColorTexture(0.03, 0.03, 0.04, 1)
+    detail.stageEdge = detail:CreateTexture(nil, "BACKGROUND")
+    detail.stageEdge:SetColorTexture(0.16, 0.16, 0.18, 1)
+
     -- The figure, and its stand-in.
     detail.figure = detail:CreateTexture(nil, "ARTWORK")
     detail.plate = detail:CreateTexture(nil, "ARTWORK")
@@ -1431,7 +1443,7 @@ local QUALITY_RGB = {
 -- so the weapons ran underneath the figure instead of beneath it, and nothing
 -- was centred on anything. This takes the figure's centre and works outwards,
 -- which is what a paper doll is.
-local function RenderDetailSlots(char, figureCx, topY, figureHalf)
+local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY)
     -- No clamp on leftX, because it cannot go negative: the caller passes
     -- figureCx as (margin + W/2) and figureHalf as (W/2), so the width cancels
     -- and this is always margin - SLOT_SIZE - 8. A guard here would be a
@@ -1463,8 +1475,11 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf)
             b:SetPoint("TOPLEFT", detail, "TOPLEFT", rightX, topY - ri * SLOT_STEP)
             ri = ri + 1
         else
+            -- BELOW the figure, not at a fixed offset from the top. The
+            -- weapons used to be placed six rows down regardless of how tall
+            -- the figure was, which put them across its legs.
             b:SetPoint("TOPLEFT", detail, "TOPLEFT",
-                       bottomX + bi * SLOT_STEP, topY - 6 * SLOT_STEP - 14)
+                       bottomX + bi * SLOT_STEP, bottomY - 8)
             bi = bi + 1
         end
 
@@ -1519,8 +1534,34 @@ local function RenderDetail(char)
     -- fallback the grid uses, so a character without a portrait looks the same
     -- here as it does there rather than looking broken.
     local entry = CutoutFor(char)
-    local figureTop, figureH = -(BAR_TOP + BAR_H + 34), detail:GetHeight() - 120
-    if figureH < 80 then figureH = 80 end
+    -- The figure is sized to leave ROOM for the weapons row beneath it.
+    --
+    -- It used to take the whole panel height and the weapons were placed at a
+    -- fixed offset from the top, so they landed across the character's legs.
+    -- The game's own pane puts them below the model and so did AltTracker;
+    -- ours only looked acceptable there because that figure had a background
+    -- behind it, which made the overlap read as deliberate.
+    local figureTop = -(BAR_TOP + BAR_H + 34)
+    local WEAPON_ROW_H = SLOT_STEP + 22
+    -- figureTop is a negative offset from the top, so this is what is left
+    -- between it and the bottom of the panel.
+    local figureH = detail:GetHeight() + figureTop - WEAPON_ROW_H - 16
+    -- The side columns need six rows whatever the figure does; a panel too
+    -- short for both is the panel's problem, not the figure's.
+    local minH = 6 * SLOT_STEP
+    if figureH < minH then figureH = minH end
+    local figureBottom = figureTop - figureH
+
+    -- The box, sized to the figure's column and the room left for it.
+    local stageL = 60 - 6
+    local stageW = DETAIL_FIGURE_W + 12
+    detail.stageEdge:ClearAllPoints()
+    detail.stageEdge:SetPoint("TOPLEFT", detail, "TOPLEFT", stageL - 1, figureTop + 1)
+    detail.stageEdge:SetSize(stageW + 2, figureH + 2)
+    detail.stage:ClearAllPoints()
+    detail.stage:SetPoint("TOPLEFT", detail, "TOPLEFT", stageL, figureTop)
+    detail.stage:SetSize(stageW, figureH)
+
 
     if entry then
         local w, h = FigureSize(entry, figureH)
@@ -1554,7 +1595,8 @@ local function RenderDetail(char)
         end
     end
 
-    RenderDetailSlots(char, 60 + DETAIL_FIGURE_W / 2, figureTop, DETAIL_FIGURE_W / 2)
+    RenderDetailSlots(char, 60 + DETAIL_FIGURE_W / 2, figureTop, DETAIL_FIGURE_W / 2,
+                      figureBottom)
 
     -- The right-hand column, and which tab owns it.
     -- Clamped to the panel, not just pushed right. The Roster inherits
@@ -1888,6 +1930,14 @@ local DETAIL_TEST = {
     DETAIL_TABS = DETAIL_TABS,
     DetailTabs = function() return (detail and detail.tabs) or {} end,
     DetailFrame = function() return detail end,
+    DetailStageLayer = function() return detail and detail.stage:GetDrawLayer() end,
+    DetailFigureBox = function()
+        if not detail then return {} end
+        local _, _, _, _, top = detail.stage:GetPoint(1)
+        return { top = top, height = detail.stage:GetHeight(),
+                 width = detail.stage:GetWidth(),
+                 bottom = (top or 0) - (detail.stage:GetHeight() or 0) }
+    end,
     DetailAuditLine = function() return detailAudit and detailAudit.none end,
     DetailSlotFrame = function(key)
         for i, slot in ipairs(GEAR_SLOTS) do

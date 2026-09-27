@@ -1817,7 +1817,15 @@ do
     -- left column at a fixed x and started the bottom row at the same one, so
     -- the weapons ran underneath the figure rather than beneath it.
     do
+        -- A realistic panel. The stub's default frame height is 20, which
+        -- trips the "too short for both" clamp - correct behaviour, and not
+        -- the geometry this block is about.
         T.DrillDown("messy")
+        local d = T.DetailFrame()
+        d:SetWidth(1170)
+        d:SetHeight(700)
+        T.Refresh()
+
         local function xOf(key)
             local b = T.DetailSlotFrame(key)
             local _, _, _, bx = b:GetPoint(1)
@@ -1836,6 +1844,41 @@ do
         check("the bottom row is centred under the figure",
               math.abs(mid - figureCx) < 30,
               ("row centre %d vs figure %d"):format(mid, figureCx))
+
+        -- And BELOW it, not across its legs. The weapons used to be placed six
+        -- rows down from the top regardless of how tall the figure was.
+        local function yOf(key)
+            local b = T.DetailSlotFrame(key)
+            local _, _, _, _, by = b:GetPoint(1)
+            return by or 0
+        end
+        local fig = T.DetailFigureBox()
+        check("the weapons sit below the figure, not on it",
+              yOf("mainhand") <= fig.bottom,
+              ("weapons at %s, figure ends at %s"):format(
+                  tostring(yOf("mainhand")), tostring(fig.bottom)))
+        check("  while the side columns start beside it",
+              yOf("head") > fig.bottom, tostring(yOf("head")))
+
+        -- A cutout is a transparent image with nothing behind it, so on a flat
+        -- panel it floats and anything near it reads as colliding. The box is
+        -- what makes the figure look like it is INSIDE something.
+        check("the figure sits in a box", fig.height > 0 and fig.width > 0,
+              ("%sx%s"):format(tostring(fig.width), tostring(fig.height)))
+        -- The invariant that actually matters: a weapons row's worth of space
+        -- below the box, INSIDE the panel. "The box is smaller than the panel"
+        -- is satisfied by a figure that still pushes the weapons off the
+        -- bottom edge, which is what the previous version of this allowed.
+        local roomBelow = fig.bottom - (-700)
+        check("  leaving a weapons row's room below it, inside the panel",
+              roomBelow >= 56,
+              ("only %s left below the figure"):format(tostring(roomBelow)))
+
+        -- And the box is BEHIND the figure, not over it.
+        check("the box is behind the figure",
+              T.DetailStageLayer() == "BACKGROUND", tostring(T.DetailStageLayer()))
+
+        d:SetWidth(100); d:SetHeight(20)
     end
 
     do
@@ -1888,7 +1931,11 @@ do
         local d = T.DetailFrame()
         local WIDE, NARROW = 1400, 589
         for _, w in ipairs({ WIDE, NARROW, 320 }) do
-            d.GetWidth = function() return w end
+            -- SetWidth, not an overridden getter. Assigning the getter and
+            -- then clearing it removes the stub's numeric default and hands
+            -- back the chaining one, which returns the FRAME - and the next
+            -- render does arithmetic on a table.
+            d:SetWidth(w)
             T.Refresh()
             for _, b in ipairs(T.DetailTabs()) do
                 local _, _, _, bx = b:GetPoint(1)
@@ -1898,7 +1945,7 @@ do
                           tostring(bx), tostring(b:GetWidth()), w))
             end
         end
-        d.GetWidth = nil
+        d:SetWidth(100)
         T.Back()
     end
 end
