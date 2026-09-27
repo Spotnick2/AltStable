@@ -577,6 +577,9 @@ end
 -- there is not one.
 ------------------------------------------------------------
 
+-- Through the adapter, like every other client call in this addon.
+local GetItemIconByID = AltStable.API and AltStable.API.GetItemIconByID
+
 local STAT_ROW_H, STAT_SECTION_GAP = 15, 10
 
 -- Ported from AltTracker's CHAR_STAT_GROUPS, minus two.
@@ -1253,7 +1256,9 @@ local DETAIL_TABS = {
 }
 
 local DETAIL_FIGURE_W = 260
-local SLOT_SIZE, SLOT_STEP = 34, 40
+-- STEP leaves room for the item level drawn UNDER each icon; at 40 the
+-- number sat against the next slot's border.
+local SLOT_SIZE, SLOT_STEP = 34, 48
 
 local function BuildSlot(parent)
     local b = CreateFrame("Button", nil, parent)
@@ -1419,7 +1424,28 @@ local QUALITY_RGB = {
     [6] = { 0.90, 0.80, 0.50 },
 }
 
-local function RenderDetailSlots(char, leftX, topY, rightX)
+-- Laid out AROUND the figure rather than from the left edge.
+--
+-- The first version put the left column at a fixed x, the right column at
+-- figure-width plus a margin, and the bottom row starting at the same left x -
+-- so the weapons ran underneath the figure instead of beneath it, and nothing
+-- was centred on anything. This takes the figure's centre and works outwards,
+-- which is what a paper doll is.
+local function RenderDetailSlots(char, figureCx, topY, figureHalf)
+    -- No clamp on leftX, because it cannot go negative: the caller passes
+    -- figureCx as (margin + W/2) and figureHalf as (W/2), so the width cancels
+    -- and this is always margin - SLOT_SIZE - 8. A guard here would be a
+    -- branch nothing can reach, which is worse than none.
+    local leftX  = figureCx - figureHalf - SLOT_SIZE - 8
+    local rightX = figureCx + figureHalf + 8
+
+    -- Count the bottom row first so it can be centred under the figure.
+    local bottomN = 0
+    for _, slot in ipairs(GEAR_SLOTS) do
+        if slot.side == "bottom" then bottomN = bottomN + 1 end
+    end
+    local bottomX = figureCx - (bottomN * SLOT_STEP - (SLOT_STEP - SLOT_SIZE)) / 2
+
     local li, ri, bi = 0, 0, 0
     for i, slot in ipairs(GEAR_SLOTS) do
         local b = detailSlots[i]
@@ -1429,6 +1455,7 @@ local function RenderDetailSlots(char, leftX, topY, rightX)
         b.link = char["gearlink_" .. slot.key]
         b.itemName = char["gearname_" .. slot.key]
 
+        b:ClearAllPoints()
         if slot.side == "left" then
             b:SetPoint("TOPLEFT", detail, "TOPLEFT", leftX, topY - li * SLOT_STEP)
             li = li + 1
@@ -1437,14 +1464,21 @@ local function RenderDetailSlots(char, leftX, topY, rightX)
             ri = ri + 1
         else
             b:SetPoint("TOPLEFT", detail, "TOPLEFT",
-                       leftX + bi * SLOT_STEP, topY - 6 * SLOT_STEP - 10)
+                       bottomX + bi * SLOT_STEP, topY - 6 * SLOT_STEP - 14)
             bi = bi + 1
         end
 
         -- An EMPTY slot still draws, greyed. A paper doll with holes in it is
         -- information: it is how you see the character is missing a cloak.
         if id > 0 then
-            local icon = GetItemIcon and GetItemIcon(id)
+            -- GetItemIconByID, through the adapter.
+            --
+            -- NOT GetItemIcon: Compat.lua names this as a known trap and
+            -- test_compat asserts API.GetItemIcon is nil, because C_Item's
+            -- version takes an ItemLocation and errors on an id. A bare global
+            -- here found nothing, so every slot drew the question-mark
+            -- fallback - which is exactly what it looked like on screen.
+            local icon = GetItemIconByID and GetItemIconByID(id)
             b.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             b.icon:SetDesaturated(false)
             b.icon:SetAlpha(1)
@@ -1520,7 +1554,7 @@ local function RenderDetail(char)
         end
     end
 
-    RenderDetailSlots(char, 12, figureTop, 60 + DETAIL_FIGURE_W + 26)
+    RenderDetailSlots(char, 60 + DETAIL_FIGURE_W / 2, figureTop, DETAIL_FIGURE_W / 2)
 
     -- The right-hand column, and which tab owns it.
     -- Clamped to the panel, not just pushed right. The Roster inherits

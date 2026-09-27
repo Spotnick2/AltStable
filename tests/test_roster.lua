@@ -1788,9 +1788,56 @@ do
               none:GetWordWrap() == true)
     end
 
-    -- The gear icons must not be hidden by their own quality border. It was a
-    -- solid colour texture on OVERLAY - a lid, not a border - so every slot
-    -- came out a flat coloured square.
+    -- The gear icons themselves.
+    --
+    -- Every slot drew the question-mark fallback, because the lookup was a
+    -- bare GetItemIcon - which Compat names as a known trap and test_compat
+    -- asserts is nil on the adapter, since C_Item's version takes an
+    -- ItemLocation and errors on an id. The right call is GetItemIconByID.
+    do
+        WoW.items[4242] = { name = "A Real Chest", quality = 3, ilvl = 40,
+                            icon = 133076, equipLoc = "INVTYPE_CHEST" }
+        AltStableDB.messy.gearid_chest = 4242
+        AltStableDB.messy.gear_chest = 40
+        AltStableDB.messy.gearq_chest = 3
+        T.DrillDown("messy")
+        local slot = T.DetailSlotFrame("chest")
+        eq("an equipped slot shows the ITEM's icon", slot and slot.icon:GetTexture(), 133076)
+        check("  and not the question-mark fallback",
+              tostring(slot and slot.icon:GetTexture()):find("QuestionMark") == nil)
+
+        -- An empty slot still draws, and the fallback is right THERE.
+        local empty = T.DetailSlotFrame("ranged")
+        check("an empty slot keeps the placeholder",
+              tostring(empty and empty.icon:GetTexture()):find("QuestionMark") ~= nil,
+              tostring(empty and empty.icon:GetTexture()))
+    end
+
+    -- The slots are laid out AROUND the figure. The first version anchored the
+    -- left column at a fixed x and started the bottom row at the same one, so
+    -- the weapons ran underneath the figure rather than beneath it.
+    do
+        T.DrillDown("messy")
+        local function xOf(key)
+            local b = T.DetailSlotFrame(key)
+            local _, _, _, bx = b:GetPoint(1)
+            return bx or 0
+        end
+        local figureCx = 60 + 260 / 2
+        check("the left column sits left of the figure", xOf("head") < figureCx - 100,
+              tostring(xOf("head")))
+        check("  and the right column right of it", xOf("hands") > figureCx + 100,
+              tostring(xOf("hands")))
+        check("  and neither is off the left edge", xOf("head") >= 0, tostring(xOf("head")))
+
+        -- The bottom row is centred under the figure, not started at the left.
+        local first, last = xOf("trinket1"), xOf("ranged")
+        local mid = (first + last) / 2
+        check("the bottom row is centred under the figure",
+              math.abs(mid - figureCx) < 30,
+              ("row centre %d vs figure %d"):format(mid, figureCx))
+    end
+
     do
         T.TabClick("Char")
         local slot = T.DetailSlotFrame("chest")
