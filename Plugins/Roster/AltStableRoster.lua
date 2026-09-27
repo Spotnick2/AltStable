@@ -1925,7 +1925,27 @@ local function RenderDetail(char)
     -- exactly the condition that made the column compress: the loop cannot know
     -- it will truncate until it has already spent the height, so the room has to
     -- be set aside before it starts.
-    local noticeH = detail.statsMore:GetHeight() or 0
+    -- Measured from a POPULATED font string, never from the notice itself.
+    --
+    -- An auto-sized FontString with no text has no height, and the notice is
+    -- created empty and cleared back to "" by every render that hides nothing -
+    -- so measuring it returns 0 on the first short panel, and on every
+    -- tall-then-short transition. Both the reservation and the clamp below then
+    -- reserve nothing, and the notice overflows by its own full height: the
+    -- original bug, surviving the fix for it, in the one lifecycle the fix did
+    -- not cover.
+    --
+    -- `lineH` comes from a stat row's label, which is given its text at build
+    -- time and never loses it, and which uses the same font object as the
+    -- notice - so it is the notice's height, measured somewhere the measurement
+    -- is always valid.
+    --
+    -- Just lineH, not max(lineH, whatever the notice says). The notice is one
+    -- line in the same font and has no width constraint, so it cannot wrap and
+    -- cannot exceed it; a max() would be a branch nothing can reach, which is
+    -- worse than none. If this ever gains a width and wraps, that changes and
+    -- this line has to change with it.
+    local noticeH = lineH
     local bottomY = -detail:GetHeight() + 4
     local floorY  = bottomY + (mightTruncate and (noticeH + 2) or 0)
 

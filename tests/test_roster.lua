@@ -2065,6 +2065,26 @@ do
         eq("  while a fresh one wraps",
            CreateFrame("Frame"):CreateFontString():GetWordWrap(), true)
 
+        -- A FontString's height is TEXT-DEPENDENT, and empty means zero.
+        --
+        -- Pinned directly because it is a stub contract that nothing else
+        -- exercises any more: the Roster stopped measuring an empty font string,
+        -- which is the bug this models, so without an assertion here the stub
+        -- could quietly go back to a fixed height and the next piece of code
+        -- that reserves room for a font string would overflow in game and pass
+        -- in the suite. That is exactly what happened.
+        local empty = CreateFrame("Frame"):CreateFontString()
+        eq("an empty font string has no height", empty:GetHeight(), 0)
+        empty:SetText("something")
+        check("  and a populated one does", empty:GetHeight() > 0,
+              tostring(empty:GetHeight()))
+        empty:SetText("")
+        eq("  and clearing it takes the height away again", empty:GetHeight(), 0)
+        -- Told how tall to be rather than asked: an explicit size wins, as on
+        -- the client, or the Roster's own reason line could not set its height.
+        empty:SetHeight(33)
+        eq("  while an explicit SetHeight wins over both", empty:GetHeight(), 33)
+
         -- Same rule for enabled state, which the active tab depends on.
         local btn = CreateFrame("Button")
         eq("a fresh button is enabled", btn:IsEnabled(), true)
@@ -2531,6 +2551,34 @@ do
             check("  and drew fewer than it does when there is room",
                   #T.DetailStatRowYs() < tall,
                   ("%s vs %s"):format(tostring(#T.DetailStatRowYs()), tostring(tall)))
+
+            -- The EMPTY-TO-VISIBLE transition, which is the lifecycle the
+            -- reservation has to survive.
+            --
+            -- The notice is created without text and cleared back to "" by every
+            -- render that hides nothing, and an auto-sized FontString with no
+            -- text has no height. So a tall panel leaves it empty, and the next
+            -- short render measures zero, reserves nothing, and the notice
+            -- overflows by its own full height - the original bug living through
+            -- its own fix. Driven from a TALL panel each time, deliberately: a
+            -- test that only ever shrinks finds the notice already populated by
+            -- the previous case and never measures the empty one.
+            for _, h in ipairs({ 240, 310, 321 }) do
+                d:SetHeight(900)
+                T.DrillDown("loaded")
+                eq(("the notice starts empty before the %dpx case"):format(h),
+                   T.DetailStatsMore(), nil)
+                d:SetHeight(h)
+                T.DrillDown("loaded")
+                check(("the notice appears on the first short render at %dpx"):format(h),
+                      T.DetailStatsMore() ~= nil)
+                for _, r in ipairs(T.DetailStatRowYs()) do
+                    check(("  and everything is inside the panel at %dpx"):format(h),
+                          (r[1] or 0) - (r.h or 0) >= -h,
+                          ("bottom %s vs panel %d"):format(
+                              tostring((r[1] or 0) - (r.h or 0)), h))
+                end
+            end
 
             -- A font TALLER than the row stride. No font the stub models is
             -- 22px, and STAT_ROW_H is 15 - so without forcing it, the floor that

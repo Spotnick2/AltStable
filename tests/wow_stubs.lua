@@ -171,11 +171,25 @@ local function makeFrame()
     -- the text it steps over. With the default, compressing the rows silently
     -- GREW them and the compression tests passed without exercising compression.
     --
+    -- And it is TEXT-DEPENDENT: an auto-sized FontString with no text has no
+    -- height. A fixed 12 hid a real bug - code that measures a font string to
+    -- reserve room for it reads 0 before the text is set, and the fixed stub
+    -- made that lifecycle unreachable, so the reservation looked correct in the
+    -- suite and overflowed in game on the first render.
+    --
+    -- An explicit SetHeight still wins, as it does on the client: that is a
+    -- FontString told how tall to be rather than asked.
+    --
     -- MODELLED, NOT MEASURED. The exact number does not matter; being smaller
-    -- than a stride does, and no client renders a small font at 20px.
+    -- than a stride does, being zero when empty does, and no client renders a
+    -- small font at 20px.
     f.CreateFontString = function()
         local fs = makeFrame()
-        fs._GetHeight = 12
+        fs.GetHeight = function(self)
+            if self._GetHeight then return self._GetHeight end
+            local t = self._text
+            return (t and t ~= "") and 12 or 0
+        end
         return fs
     end
     -- Text is REMEMBERED, not swallowed: a footer or a label is a real
