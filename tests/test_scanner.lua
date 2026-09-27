@@ -1088,6 +1088,13 @@ end
 
 do
     WoW.critChance, WoW.hitModifier = 17.25, 4
+    -- A shield in the off-hand, because that is the slot whose equip location
+    -- the enchant audit has to read - and the token is the thing that makes it
+    -- work on a non-English client.
+    WoW.items[5001] = { name = "A Shield", quality = 2, ilvl = 40,
+                        itemType = "Armor", subType = "Shields",
+                        equipLoc = "INVTYPE_SHIELD" }
+    WoW.equipped[17] = "|Hitem:5001|h[A Shield]|h"
     AltStableDB = {}
     AltStable.ScanCharacter()
 
@@ -1099,10 +1106,21 @@ do
         eq("haste is not scanned", me.stat_haste, nil)
         eq("  nor resilience", me.stat_resilience, nil)
 
-        -- The neighbours, so a mutation that drops the whole block is caught
-        -- by more than the two new rows.
-        check("the stats around them are still there",
+            check("the stats around them are still there",
               me.stat_ap ~= nil and me.stat_defense ~= nil and me.stat_armor ~= nil)
+
+        -- The equip-location token, for the enchant audit's off-hand test.
+        --
+        -- Asserted as the ACTUAL TOKEN, not merely non-nil: the scanner seeds
+        -- every gear field to "" first, so `~= nil` passes whether the real
+        -- value was written or not - and a mutation replacing it with "" did.
+        -- This is the locale-independent token, unlike the item subtype beside
+        -- it, which is the localised display string.
+        eq("the equip location is scanned as its token",
+           me.gearloc_offhand, "INVTYPE_SHIELD")
+        check("  which is a token and not a display name",
+              (me.gearloc_offhand or ""):find("INVTYPE", 1, true) ~= nil,
+              tostring(me.gearloc_offhand))
     end
 
     -- A client without them must not crash the scan. Neither is guaranteed on

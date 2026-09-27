@@ -1562,38 +1562,66 @@ end
 -- The enchant audit (#91)
 ------------------------------------------------------------
 -- AltTracker audited gems, sockets and meta-gems across 842 lines. None of
--- that exists pre-TBC. What is left is enchants, and it needs no threshold - a
--- slot either has one or it does not - so the two settings that configured the
--- gem audit are retired rather than ported.
+-- that exists pre-TBC. What is left is enchants.
 --
--- The enchant comes out of the item link we already store. MEASURED against
--- real links on 1.60.1.70009: the field is EMPTY on an unenchanted item.
---
---     |cnIQ1:|Hitem:36::::::::1:1489::75:::::::|h[Worn Mace]|h|r
+-- Read from gearmod_<slot>, which is "ench:sockets:g1:g2:g3" and IS SYNCED -
+-- the scanner marks it so and test_comm asserts it must ride the wire. An
+-- earlier version read gearlink_, which Core strips at the sync boundary as
+-- too large: every peer-synced character came out as a wall of "cannot read
+-- the item", so the whole tab was noise for any character not scanned here.
 
 do
+    local FLOOR = T.AuditFloor()
+    check("there is a level floor", FLOOR and FLOOR > 1, tostring(FLOOR))
+
     ----------------------------------------------------------
-    -- Reading an enchant off a link
+    -- Reading an enchant off the packed field
     ----------------------------------------------------------
 
-    eq("an empty enchant field means no enchant",
-       T.EnchantOnLink("|cnIQ1:|Hitem:36::::::::1:1489::75:::::::|h[Worn Mace]|h|r"), nil)
-    eq("  and so does a literal zero",
-       T.EnchantOnLink("|Hitem:36:0:::::::1:1489::75:::::::|h[Worn Mace]|h|r"), nil)
-    eq("an enchant id is read",
-       T.EnchantOnLink("|Hitem:36:2504:::::::1:1489::75:::::::|h[Worn Mace]|h|r"), 2504)
+    eq("a zero enchant means no enchant", T.EnchantFromMod("0:0:0:0:0"), nil)
+    eq("an enchant id is read", T.EnchantFromMod("2504:0:0:0:0"), 2504)
+    eq("  and one beside real sockets", T.EnchantFromMod("2661:2:24028:35759:0"), 2661)
 
-    -- "Cannot tell" is a THIRD answer, and must never collapse into "fine". A
-    -- peer can sync a record whose link did not survive.
-    eq("a missing link cannot be read", T.EnchantOnLink(nil), false)
-    eq("  nor an empty one", T.EnchantOnLink(""), false)
-    eq("  nor a malformed one", T.EnchantOnLink("not a link at all"), false)
+    -- tonumber, not a string compare. Classic-era links were historically
+    -- written with padded zero fields, and "00" is truthy as a string.
+    eq("a padded zero is still no enchant", T.EnchantFromMod("00:0:0:0:0"), nil)
+    eq("  and a signed one", T.EnchantFromMod("-0:0:0:0:0"), nil)
+
+    -- "Cannot tell" is a THIRD answer and must never collapse into "fine".
+    eq("an empty packed field cannot be read", T.EnchantFromMod(""), false)
+    eq("  nor a missing one", T.EnchantFromMod(nil), false)
+    eq("  nor a malformed one", T.EnchantFromMod("not packed at all"), false)
+
+    ----------------------------------------------------------
+    -- Which slots take one
+    ----------------------------------------------------------
+
+    check("chest does", T.ENCHANTABLE_SLOTS.chest)
+    check("  and weapons", T.ENCHANTABLE_SLOTS.mainhand)
+    check("rings do not", not T.ENCHANTABLE_SLOTS.ring1 and not T.ENCHANTABLE_SLOTS.ring2)
+    check("  nor the neck", not T.ENCHANTABLE_SLOTS.neck)
+
+    -- Offhand by EQUIP LOCATION, a locale-independent token. The item SUBTYPE
+    -- is the localised display string - "Shields" on enUS, "Schilde" on deDE -
+    -- so comparing against it would never fire outside English.
+    eq("a shield takes an enchant",
+       T.EnchantableHere({ gearloc_offhand = "INVTYPE_SHIELD" }, "offhand"), true)
+    -- The case a shields-only whitelist dropped: an off-hand WEAPON, one of
+    -- the most commonly forgotten enchants there is.
+    eq("so does an off-hand weapon",
+       T.EnchantableHere({ gearloc_offhand = "INVTYPE_WEAPONOFFHAND" }, "offhand"), true)
+    eq("a held-in-hand frill does not",
+       T.EnchantableHere({ gearloc_offhand = "INVTYPE_HOLDABLE" }, "offhand"), false)
+    -- Absent for every peer-synced character, since the token is local-only.
+    eq("and with no token at all the answer is 'cannot tell'",
+       T.EnchantableHere({}, "offhand"), nil)
 
     ----------------------------------------------------------
     -- What gets reported
     ----------------------------------------------------------
 
     local function findings(char)
+        char.level = char.level or FLOOR
         local out = {}
         for _, f in ipairs(T.AuditCharacter(char)) do
             out[#out + 1] = f.slot .. ":" .. f.issue
@@ -1601,66 +1629,71 @@ do
         return table.concat(out, " | ")
     end
 
-    -- An enchantable slot with an item and no enchant.
     eq("an unenchanted chest is a finding",
-       findings({ gearid_chest = 10, gearlink_chest = "|Hitem:10::::::::1:1::::::::|h[C]|h" }),
+       findings({ gearid_chest = 10, gearmod_chest = "0:0:0:0:0" }), "chest:no enchant")
+    eq("  and an enchanted one is not",
+       findings({ gearid_chest = 10, gearmod_chest = "2504:0:0:0:0" }), "")
+
+    -- A peer-synced character HAS gearmod_, which is the whole reason for
+    -- reading it: this is the case the old version got wrong for 100% of
+    -- remote characters.
+    eq("a synced character audits normally",
+       findings({ gearid_chest = 10, gearmod_chest = "0:0:0:0:0",
+                  gearid_wrist = 11, gearmod_wrist = "2504:0:0:0:0" }),
        "chest:no enchant")
 
-    -- The same slot, enchanted.
-    eq("  and an enchanted one is not",
-       findings({ gearid_chest = 10, gearlink_chest = "|Hitem:10:2504:::::::1:1::::::::|h[C]|h" }),
-       "")
+    -- An EMPTY slot is not a finding: already obvious on the paper doll.
+    eq("an empty slot is not reported",
+       findings({ gearid_chest = 0, gearid_head = 10, gearmod_head = "0:0:0:0:0" }), "")
 
-    -- An EMPTY slot is not an enchant finding. It is already obvious on the
-    -- paper doll beside this, and "no enchant" for a slot with nothing in it
-    -- would bury the real findings.
-    eq("an empty slot is not reported", findings({ gearid_chest = 0 }), "")
-
-    -- Slots that cannot take an enchant on this client are never reported. The
-    -- failure mode of getting this table wrong is a FALSE finding, so it is
-    -- deliberately short.
-    check("head is not enchantable here", not T.ENCHANTABLE_SLOTS.head)
-    check("  nor legs", not T.ENCHANTABLE_SLOTS.legs)
-    check("  nor rings", not T.ENCHANTABLE_SLOTS.ring1 and not T.ENCHANTABLE_SLOTS.ring2)
-    eq("  so an unenchanted head says nothing",
-       findings({ gearid_head = 10, gearlink_head = "|Hitem:10::::::::1:1::::::::|h[H]|h" }), "")
-
-    -- Offhand is the awkward one: a shield takes an enchant, a held-in-hand
-    -- frill cannot, and the stored subtype is what tells them apart.
-    eq("an unenchanted shield is a finding",
-       findings({ gearid_offhand = 10, gearsubtype_offhand = "Shields",
-                  gearlink_offhand = "|Hitem:10::::::::1:1::::::::|h[S]|h" }),
-       "offhand:no enchant")
-    eq("  but a held-in-hand item is not",
-       findings({ gearid_offhand = 10, gearsubtype_offhand = "Miscellaneous",
-                  gearlink_offhand = "|Hitem:10::::::::1:1::::::::|h[F]|h" }), "")
-    eq("  and neither is one whose subtype is unknown",
-       findings({ gearid_offhand = 10, gearsubtype_offhand = "",
-                  gearlink_offhand = "|Hitem:10::::::::1:1::::::::|h[F]|h" }), "")
-
-    -- An unreadable link on an enchantable slot is reported as unreadable, not
-    -- as clean and not as missing.
-    eq("an unreadable item says so",
-       findings({ gearid_wrist = 10, gearlink_wrist = "mangled" }),
+    eq("an unreadable packed field says so",
+       findings({ gearid_wrist = 10, gearmod_wrist = "" }),
        "wrist:cannot read the item")
 
-    -- Worst first, then alphabetical, so the list is stable between refreshes.
-    --
-    -- The slots are chosen so the sorted order differs from the order they are
-    -- WALKED in: GEAR_SLOTS runs wrist, hands, feet, so an unsorted list comes
-    -- out wrist-hands-feet where the sorted one is Feet-Hands-wrist. A fixture
-    -- that happens to be in slot order already cannot tell the two apart, and
-    -- the first version of this check was exactly that.
+    -- An occupied off-hand whose kind is unknown is REPORTED as unknown, not
+    -- dropped. A slot silently vanishing from the audit is the same thing as
+    -- calling it clean.
+    eq("an off-hand of unknown kind is reported, not dropped",
+       findings({ gearid_offhand = 10, gearmod_offhand = "0:0:0:0:0" }),
+       "offhand:cannot tell - no item data")
+    eq("  while a known frill is simply not audited",
+       findings({ gearid_offhand = 10, gearmod_offhand = "0:0:0:0:0",
+                  gearloc_offhand = "INVTYPE_HOLDABLE" }), "")
+
+    -- Worst first, then alphabetical. The slots are chosen so the sorted order
+    -- differs from the order GEAR_SLOTS is WALKED in - wrist, hands, feet -
+    -- or deleting the sort would change nothing.
     local both = T.AuditCharacter({
-        gearid_wrist = 10, gearlink_wrist = "mangled",
-        gearid_hands = 10, gearlink_hands = "|Hitem:10::::::::1:1::::::::|h[G]|h",
-        gearid_feet  = 10, gearlink_feet  = "|Hitem:10::::::::1:1::::::::|h[B]|h",
+        level = FLOOR,
+        gearid_wrist = 10, gearmod_wrist = "",
+        gearid_hands = 10, gearmod_hands = "0:0:0:0:0",
+        gearid_feet  = 10, gearmod_feet  = "0:0:0:0:0",
     })
     eq("three findings", #both, 3)
     eq("findings are ordered worst first", both[1].issue, "no enchant")
     eq("  alphabetically within that", both[1].label, "Feet")
     eq("  and not in the order the slots are walked", both[2].label, "Hands")
     eq("  with the unreadable one last", both[3].issue, "cannot read the item")
+
+    ----------------------------------------------------------
+    -- When the audit does not run at all
+    ----------------------------------------------------------
+
+    -- A level gate, which AltTracker had as auditMinLevel and which was
+    -- dropped along with the GEM settings by mistake: that argument was about
+    -- a quality threshold and this is a different setting. A levelling alt in
+    -- quest greens would otherwise get a screenful of non-actionable rows.
+    local lowFindings, lowReason = T.AuditCharacter({
+        level = 14, gearid_chest = 10, gearmod_chest = "0:0:0:0:0" })
+    eq("a levelling alt produces no findings", #lowFindings, 0)
+    check("  and is told why rather than called clean",
+          (lowReason or ""):find("Not audited below level", 1, true) ~= nil, tostring(lowReason))
+
+    -- "Nothing to check" is not "all clear" either.
+    local bareFindings, bareReason = T.AuditCharacter({ level = FLOOR })
+    eq("a character wearing nothing produces no findings", #bareFindings, 0)
+    check("  and is not told everything is enchanted",
+          (bareReason or ""):find("Nothing equipped", 1, true) ~= nil, tostring(bareReason))
 
     ----------------------------------------------------------
     -- The tab
@@ -1671,13 +1704,16 @@ do
     main.GetHeight = function() return 800 end
     AltStableDB = {
         messy = { guid = "messy", name = "Messy One", class = "MAGE", realm = "R",
-                  level = 60, race = "Human", raceName = "Human", ilvl = 50,
+                  level = FLOOR, race = "Human", raceName = "Human", ilvl = 50,
                   money = 100, stat_int = 400,
-                  gearid_chest = 10, gearlink_chest = "|Hitem:10::::::::1:1::::::::|h[C]|h" },
+                  gearid_chest = 10, gearmod_chest = "0:0:0:0:0" },
         tidy  = { guid = "tidy", name = "Tidy One", class = "MAGE", realm = "R",
-                  level = 60, race = "Human", raceName = "Human", ilvl = 50,
+                  level = FLOOR, race = "Human", raceName = "Human", ilvl = 50,
                   money = 100, stat_int = 400,
-                  gearid_chest = 10, gearlink_chest = "|Hitem:10:2504:::::::1:1::::::::|h[C]|h" },
+                  gearid_chest = 10, gearmod_chest = "2504:0:0:0:0" },
+        naked = { guid = "naked", name = "Naked One", class = "MAGE", realm = "R",
+                  level = FLOOR, race = "Human", raceName = "Human", ilvl = 0,
+                  money = 100, stat_int = 400 },
     }
     AltStableConfig.hiddenCharacters = {}
     AltStableConfig.favouriteCharacters = {}
@@ -1691,23 +1727,92 @@ do
           table.concat(T.DetailStats(), "|"):find("Intellect", 1, true) ~= nil)
     eq("  and no audit rows are", #T.DetailAudit(), 0)
 
+    -- The ACTIVE tab is the one you are not invited to press, and a seam that
+    -- fires a disabled button's handler proves something the player cannot do.
+    check("the tab you are on cannot be pressed", T.TabClick("Char") == false)
+    -- The audit is not computed on the Char tab. Refresh runs on every sync
+    -- and Char is the tab you always land on, so a pass whose result is thrown
+    -- away is work on a timer - and it is invisible without counting.
+    do
+        local before = T.AuditCalls()
+        T.Refresh()
+        eq("a refresh on the Char tab does not run the audit", T.AuditCalls(), before)
+    end
+
     check("the Audit tab is a button", T.TabClick("Audit"))
+    check("  and now Char is the one that can be", T.TabClick("Audit") == false)
     eq("  which switches to it", T.DetailTab(), "audit")
     local rows = table.concat(T.DetailAudit(), " | ")
     check("  showing the finding", rows:find("Chest=no enchant", 1, true) ~= nil, rows)
-    -- One column, one tab: the Char rows must go, not sit underneath.
+    do
+        local before = T.AuditCalls()
+        T.Refresh()
+        check("  and on THIS tab a refresh does run it", T.AuditCalls() > before)
+    end
     eq("  and the stats step aside", #T.DetailStats(), 0)
 
     check("Char is a button too", T.TabClick("Char"))
     eq("  and switches back", T.DetailTab(), "char")
     check("  bringing the stats with it", #T.DetailStats() > 0)
 
-    -- A clean character gets told so, rather than an empty pane that looks
-    -- like the tab is broken.
     T.DrillDown("tidy")
     T.TabClick("Audit")
     local clean = table.concat(T.DetailAudit(), " | ")
-    check("a clean character is told so", clean:find("Every enchantable slot", 1, true) ~= nil, clean)
+    check("a clean character is told so",
+          clean:find("Every enchantable slot", 1, true) ~= nil, clean)
+
+    -- And the one the clean bill must NOT be given to.
+    -- The class-plate icon's PATH.
+    --
+    -- Lua 5.1 silently collapses an unknown escape, so "Interface\Icons\X"
+    -- becomes "InterfaceIconsX" and the texture never resolves - no error, no
+    -- warning, just a blank icon. It happened here, in the same function whose
+    -- comment warns about a blank class icon. Asserted on the resulting STRING
+    -- rather than on the source, because that is where the difference shows.
+    T.DrillDown("naked")
+    do
+        local tex = T.DetailClassIcon()
+        check("the class icon path survived its escapes",
+              (tex or ""):find("Icons", 1, true) ~= nil
+              and (tex or ""):find(string.char(92), 1, true) ~= nil,
+              tostring(tex))
+    end
+    T.TabClick("Audit")
+    local naked = table.concat(T.DetailAudit(), " | ")
+    check("a character wearing nothing is not told it is fully enchanted",
+          naked:find("Every enchantable slot", 1, true) == nil, naked)
+    check("  it is told there is nothing to check",
+          naked:find("Nothing equipped", 1, true) ~= nil, naked)
+
+    ----------------------------------------------------------
+    -- The tabs stay inside the panel
+    ----------------------------------------------------------
+    -- The Roster inherits whatever width the previous section left behind, so a
+    -- narrow frame is reachable. Nothing sets SetClipsChildren, so a control
+    -- laid out past the right edge draws over the game world - and the tabs
+    -- are the first thing out there a player can click.
+    do
+        -- Width set on the frame the code actually MEASURES. The stub does not
+        -- compute layout, so a width on the parent does not reach the detail -
+        -- and asserting against the parent's would be asserting against a
+        -- number the code never reads.
+        T.DrillDown("messy")
+        local d = T.DetailFrame()
+        local WIDE, NARROW = 1400, 589
+        for _, w in ipairs({ WIDE, NARROW, 320 }) do
+            d.GetWidth = function() return w end
+            T.Refresh()
+            for _, b in ipairs(T.DetailTabs()) do
+                local _, _, _, bx = b:GetPoint(1)
+                check(("a tab stays inside a %dpx panel"):format(w),
+                      (bx or 0) >= 0 and (bx or 0) + b:GetWidth() <= w,
+                      ("tab at %s wide %s vs panel %d"):format(
+                          tostring(bx), tostring(b:GetWidth()), w))
+            end
+        end
+        d.GetWidth = nil
+        T.Back()
+    end
 end
 
 print(("test_roster: %d passed, %d failed"):format(passed, failed))

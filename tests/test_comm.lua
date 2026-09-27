@@ -281,6 +281,7 @@ local char = {
     guid = "Player-4-0001", name = "Bob", class = "WARRIOR",
     level = 70, ilvl = 123.6, account = 1, lastUpdate = 1000,
     gearlink_head = "|Hitem:12345|h[Helm]|h",  -- must be excluded (local-only)
+    gearloc_head  = "INVTYPE_HEAD",              -- must be excluded (derived from the id)
     -- gearmod_ is the opposite of gearlink_: it MUST ride the wire. The value
     -- carries colons, which is the interesting case for the "^([^:]+):(.*)$"
     -- split in DeserializeChar.
@@ -292,6 +293,12 @@ local char = {
 }
 local s = T.SerializeChar(char)
 check(not s:find("gearlink_head", 1, true), "gearlink_ fields excluded from serialization")
+-- The equip-location token is derived from the item id, which IS synced, so
+-- sending it would be sending the same fact twice. It is also what the enchant
+-- audit reads to decide whether an off-hand can take an enchant, which makes
+-- "is it on the wire" a question with a real consequence rather than a
+-- bookkeeping detail.
+check(not s:find("gearloc_head", 1, true),  "gearloc_ fields excluded from serialization")
 check(s:find("gearmod_head", 1, true) ~= nil, "gearmod_ fields ARE included in serialization")
 check(not s:find("specIcon", 1, true),      "specIcon excluded from serialization")
 check(not s:find("someTable", 1, true),     "table-valued fields excluded from serialization")

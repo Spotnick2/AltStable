@@ -6,6 +6,12 @@ local API = AltStable.API
 local GetNumSkillLines = API.GetNumSkillLines
 local GetSkillLineInfo = API.GetSkillLineInfo
 local UnitDefenseSkill = API.UnitDefenseSkill
+-- The equip-location token. Through the adapter like everything else: Compat
+-- deliberately does not inject these into _G, and a bare global call here
+-- would work on this client and break the moment the adapter has to translate
+-- it - which is the whole reason the adapter exists. A source scan in
+-- test_scanner enforces it, and caught exactly that.
+local GetItemInfoInstant = API.GetItemInfoInstant
 -- Unit stats can come back "secret" on this client: storable, but arithmetic or
 -- tostring on one throws (see Compat.lua). Every unit number below is read
 -- through these, so a secret becomes nil - unknown - instead of aborting the
@@ -339,6 +345,7 @@ local function ResetCharacter(char)
         char["gearsubtype_"..slot.key] = ""  -- item subtype ("Dagger", "Mail", ...) — authoritative gear type
         char["gearlink_"..slot.key] = ""   -- full item link (for tooltips)
         char["gearmod_"..slot.key]  = ""   -- packed "ench:sockets:g1:g2:g3" (synced)
+        char["gearloc_"..slot.key]  = ""   -- equip location token, locale-free (local-only)
     end
 
     -- Helm/cloak display toggles. 1 = hidden, 0 = shown.
@@ -681,6 +688,20 @@ function AltStable.ScanCharacter()
             -- even while the item itself is uncached; only the socket count inside
             -- PackGearMod can come back unresolved ("?").
             char["gearmod_"..slot.key] = PackGearMod(link, itemID)
+            -- The equip location, which is a LOCALE-INDEPENDENT token
+            -- ("INVTYPE_SHIELD", "INVTYPE_HOLDABLE"). itemSubType below is the
+            -- localised display string - "Shields" on enUS, "Schilde" on deDE -
+            -- so anything that has to make a decision about what KIND of item
+            -- this is must use this and not that. The enchant audit compares
+            -- against INVTYPE_HOLDABLE, and would silently never fire on a
+            -- non-English client if it read the subtype instead.
+            --
+            -- GetItemInfoInstant does not need the item cached, so unlike the
+            -- block below this resolves on the first scan.
+            if GetItemInfoInstant then
+                local _, _, _, equipLoc = GetItemInfoInstant(itemID or link)
+                char["gearloc_"..slot.key] = equipLoc or ""
+            end
             local itemName, _, quality, ilvl, _, _, itemSubType = GetItemInfo(link)
             if ilvl then
                 char["gear_"..slot.key]      = ilvl
@@ -698,6 +719,7 @@ function AltStable.ScanCharacter()
             char["gearid_"..slot.key]    = 0
             char["gearname_"..slot.key]  = ""
             char["gearsubtype_"..slot.key] = ""
+            char["gearloc_"..slot.key]   = ""
             char["gearlink_"..slot.key]  = ""
             char["gearmod_"..slot.key]   = ""
         end

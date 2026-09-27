@@ -1093,13 +1093,18 @@ end
 
 -- Which slots take an enchant.
 --
--- REASONED FROM VANILLA ENCHANTING, NOT MEASURED ON THIS CLIENT. Vanilla
--- enchants chest, cloak, bracers, gloves, boots, weapons and shields; head,
--- legs, shoulders, rings, neck and trinkets came later. If that is wrong here,
--- THIS TABLE is the single thing to correct - and the failure mode is a false
--- "no enchant" on a slot that cannot take one, which is why the table is
--- deliberately short rather than generous. Confirm in game before trusting a
--- finding on a slot you did not expect.
+-- REASONED, NOT MEASURED, and the reason matters because an earlier version of
+-- this comment was wrong. Vanilla DOES have head and leg enchantments - the
+-- Dire Maul librams and arcanums are permanent and occupy the link's enchant
+-- field - and Engineering scopes are permanent enchants on the ranged slot.
+-- They are omitted anyway, deliberately: almost nobody has them, so including
+-- them would report a finding on nearly every character for something most
+-- players never intend to do. A false finding is the failure mode here.
+--
+-- Shoulders, rings, neck and trinkets genuinely take none.
+--
+-- If a finding appears on a slot you did not expect, THIS TABLE is the single
+-- thing to correct.
 local ENCHANTABLE_SLOTS = {
     chest    = true,
     back     = true,
@@ -1107,59 +1112,125 @@ local ENCHANTABLE_SLOTS = {
     hands    = true,
     feet     = true,
     mainhand = true,
-    offhand  = true,   -- shields only; see EnchantableHere
+    offhand  = true,   -- weapons and shields, but not frills; see EnchantableHere
 }
 
--- The enchant id on a stored link, or nil when there is none.
+-- Below this, a bare slot is not a finding.
 --
--- Returns nil for "no enchant" and false for "cannot tell" - a malformed or
--- missing link must never read as a clean slot, which is the same rule
--- AltTracker's ParseGearMod had and the reason it refused to guess.
-local function EnchantOnLink(link)
-    if type(link) ~= "string" or link == "" then return false end
-    local body = link:match("Hitem:([%-%d:]*)")
-    if not body then return false end
-    -- Field 2. `:-?%d*` rather than `%d+` because the field is EMPTY when
-    -- absent, and an id can in principle be negative.
-    local _, ench = body:match("^(%-?%d+):(%-?%d*)")
-    if not ench then return false end
-    if ench == "" or ench == "0" then return nil end
-    return tonumber(ench) or false
+-- AltTracker had `auditMinLevel` for exactly this and it was removed with the
+-- gem settings - which was a mistake, because it was a LEVEL gate and the
+-- argument for dropping the others was that enchants need no QUALITY
+-- threshold. Two different settings. A level 14 alt in quest greens would
+-- otherwise get six amber rows telling it to enchant gear it will replace this
+-- afternoon.
+--
+-- Not a setting any more: the level cap is the only threshold worth having,
+-- and it is a question the client can answer.
+local function AuditFloor()
+    return (AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()) or 60
 end
 
--- Whether THIS character's slot can take one. Offhand is the awkward case: a
--- shield takes an enchant, a held-in-off-hand frill cannot. The stored
--- subtype answers it, and is the scanner's authoritative gear type.
+-- The enchant on a slot, from the PACKED field rather than the item link.
+--
+-- gearmod_<slot> is "ench:sockets:g1:g2:g3" and IS SYNCED - the scanner marks
+-- it so, and test_comm asserts it must ride the wire. gearlink_ is stripped at
+-- the sync boundary as too large, which an earlier version of this read: every
+-- peer-synced character came out as a wall of "cannot read the item", and the
+-- PR calling that a rare case had it exactly backwards. It was every remote
+-- character, always, by design.
+--
+-- Returns nil for "no enchant", false for "cannot tell", a number otherwise.
+local function EnchantFromMod(packed)
+    -- No separate empty-string case: the pattern below fails on "" anyway, and
+    -- a branch that can never be the one that catches something is a branch no
+    -- test can distinguish.
+    if type(packed) ~= "string" then return false end
+    local ench = packed:match("^(%-?%d+):")
+    if not ench then return false end
+    -- tonumber, not a string compare. "00" and "-0" are both zero and both
+    -- read as enchanted under `ench == "0"`, and Classic-era links were
+    -- historically written with padded zero fields.
+    local n = tonumber(ench)
+    if not n then return false end
+    if n == 0 then return nil end
+    return n
+end
+
+-- Whether THIS character's slot can take one.
+--
+-- Offhand is the awkward case, and the discriminator is EXCLUSION rather than
+-- a whitelist: a shield takes an enchant and so does an off-hand WEAPON, while
+-- a held-in-off-hand frill takes none. Whitelisting shields dropped every
+-- dual-wielder's off-hand silently - one of the most commonly forgotten
+-- enchants there is, so it dropped the highest-value case this exists for.
+--
+-- Compared against the equip-location TOKEN, which is locale-independent. The
+-- item subtype is the localised display string - "Shields" on enUS, "Schilde"
+-- on deDE - so a comparison against it would never fire outside English.
+--
+-- The token is local-only, so for a peer-synced character it is absent and the
+-- answer is "cannot tell" rather than a guess in either direction.
 local function EnchantableHere(char, slotKey)
     if not ENCHANTABLE_SLOTS[slotKey] then return false end
     if slotKey ~= "offhand" then return true end
-    return (char["gearsubtype_offhand"] or "") == "Shields"
+    local loc = char["gearloc_offhand"]
+    if type(loc) ~= "string" or loc == "" then return nil end   -- cannot tell
+    return loc ~= "INVTYPE_HOLDABLE"
 end
 
--- The findings, worst first. Returns a list of { slot, label, issue }.
+-- The findings, worst first. Returns a list of { slot, label, issue, rank }
+-- and a reason string when the character was not audited at all.
 --
--- An EMPTY slot is not an enchant finding. It is already obvious on the paper
--- doll beside this, and reporting "no enchant" for a slot with nothing in it
--- would bury the real findings under noise.
-local function AuditCharacter(char)
-    local out = {}
-    if type(char) ~= "table" then return out end
+-- An EMPTY slot is not a finding: it is already obvious on the paper doll
+-- beside this, and "no enchant" for a slot with nothing in it would bury the
+-- real ones.
+-- Counted, so a refresh that computes the audit and discards it is visible to
+-- a test. Refresh runs on every sync and Char is the tab you always land on,
+-- so the wasted pass was work on a timer - and "it was computed pointlessly"
+-- is otherwise indistinguishable from "it was not".
+local auditCalls = 0
 
+local function AuditCharacter(char)
+    auditCalls = auditCalls + 1
+    local out = {}
+    if type(char) ~= "table" then return out, "no character" end
+
+    local floor = AuditFloor()
+    if (tonumber(char.level) or 0) < floor then
+        return out, ("Not audited below level %d - enchants on levelling gear are not a finding.")
+            :format(floor)
+    end
+
+    local occupied = 0
     for _, slot in ipairs(GEAR_SLOTS) do
         local id = tonumber(char["gearid_" .. slot.key]) or 0
-        if id > 0 and EnchantableHere(char, slot.key) then
-            local ench = EnchantOnLink(char["gearlink_" .. slot.key])
-            if ench == nil then
+        if id > 0 then
+            occupied = occupied + 1
+            local can = EnchantableHere(char, slot.key)
+            if can == nil then
+                -- Cannot tell whether it takes one. Reported, not dropped: an
+                -- occupied slot silently vanishing from the audit is the same
+                -- thing as calling it clean.
                 out[#out + 1] = { slot = slot.key, label = slot.label,
-                                  issue = "no enchant", rank = 1 }
-            elseif ench == false then
-                -- Said plainly rather than swallowed: a peer can sync a record
-                -- whose link did not survive, and "we cannot tell" is a
-                -- different thing from "it is fine".
-                out[#out + 1] = { slot = slot.key, label = slot.label,
-                                  issue = "cannot read the item", rank = 2 }
+                                  issue = "cannot tell - no item data", rank = 3 }
+            elseif can then
+                local ench = EnchantFromMod(char["gearmod_" .. slot.key])
+                if ench == nil then
+                    out[#out + 1] = { slot = slot.key, label = slot.label,
+                                      issue = "no enchant", rank = 1 }
+                elseif ench == false then
+                    out[#out + 1] = { slot = slot.key, label = slot.label,
+                                      issue = "cannot read the item", rank = 2 }
+                end
             end
         end
+    end
+
+    -- "Nothing to check" is not "all clear". A character wearing nothing has
+    -- no findings and no clean bill either, and collapsing the two is the same
+    -- mistake as letting "cannot tell" read as "fine".
+    if occupied == 0 then
+        return out, "Nothing equipped to check."
     end
 
     table.sort(out, function(a, b)
@@ -1273,7 +1344,6 @@ local function BuildDetail()
     -- is not there yet, and the bar is built from a table so adding them is a
     -- line each.
     detail.tabs = {}
-    local tabX = 0
     for _, def in ipairs(DETAIL_TABS) do
         local b = CreateFrame("Button", nil, detail, "UIPanelButtonTemplate")
         b:SetSize(72, BAR_H)
@@ -1281,16 +1351,19 @@ local function BuildDetail()
         b.id = def.id
         b:SetScript("OnClick", function() Roster.SetDetailTab(def.id) end)
         detail.tabs[#detail.tabs + 1] = b
-        tabX = tabX + 74
     end
 
-    -- Audit rows, pooled: a character can be missing every enchant it could
-    -- have, which is one per enchantable slot.
+    -- Audit rows, pooled to the REAL bound. A character can produce at most one
+    -- finding per slot that could take an enchant - not one per gear slot,
+    -- which was 17 where 7 suffice, and the comment said one thing while the
+    -- loop did another.
+    local maxFindings = 0
+    for _ in pairs(ENCHANTABLE_SLOTS) do maxFindings = maxFindings + 1 end
     detailAudit = { rows = {} }
     detailAudit.none = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     detailAudit.none:SetJustifyH("LEFT")
     detailAudit.none:SetTextColor(0.45, 0.8, 0.45)
-    for _ = 1, #GEAR_SLOTS do
+    for _ = 1, maxFindings do
         local row = {}
         row.label = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         row.label:SetJustifyH("LEFT")
@@ -1429,7 +1502,7 @@ local function RenderDetail(char)
         local cls = type(char.class) == "string" and char.class or ""
         cls = cls:sub(1, 1):upper() .. cls:sub(2):lower()
         if cls ~= "" then
-            detail.classIcon:SetTexture("Interface\Icons\ClassIcon_" .. cls)
+            detail.classIcon:SetTexture("Interface\\Icons\\ClassIcon_" .. cls)
             detail.classIcon:Show()
         else
             detail.classIcon:Hide()
@@ -1439,7 +1512,16 @@ local function RenderDetail(char)
     RenderDetailSlots(char, 12, figureTop, 60 + DETAIL_FIGURE_W + 26)
 
     -- The right-hand column, and which tab owns it.
-    local x = math.max(360 + DETAIL_FIGURE_W, detail:GetWidth() - 260)
+    -- Clamped to the panel, not just pushed right. The Roster inherits
+    -- whatever width the previous section left behind - SheetUI's
+    -- ResizeFrameToContent early-outs for plugins - so on a narrow frame
+    -- `width - 260` went NEGATIVE relative to the column and the max() pushed
+    -- the tabs past the right edge instead. `detail` sets no SetClipsChildren,
+    -- so they drew over the game world outside the window, and the tabs are
+    -- the first thing out there a player can click.
+    local COLUMN_W = 250
+    local x = math.min(math.max(360 + DETAIL_FIGURE_W, detail:GetWidth() - COLUMN_W - 10),
+                       math.max(0, detail:GetWidth() - COLUMN_W - 10))
     local y = figureTop
 
     for i, b in ipairs(detail.tabs) do
@@ -1455,7 +1537,11 @@ local function RenderDetail(char)
     ----------------------------------------------------------
     -- Audit
     ----------------------------------------------------------
-    local findings = AuditCharacter(char)
+    -- Only computed when it is being shown. Refresh runs on every sync, and
+    -- Char is the tab you always land on - walking every slot, allocating a
+    -- table and sorting it to throw the result away was work done on a timer.
+    local findings, reason = {}, nil
+    if not onChar then findings, reason = AuditCharacter(char) end
     for i, row in ipairs(detailAudit.rows) do
         local f = findings[i]
         if f and not onChar then
@@ -1463,7 +1549,7 @@ local function RenderDetail(char)
             row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
             row.label:SetText(f.label)
             row.value:ClearAllPoints()
-            row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + 240, y)
+            row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
             row.value:SetText(f.issue)
             -- Amber for a finding, grey for "cannot tell". Not red: a missing
             -- enchant is a thing to do, not a fault.
@@ -1478,7 +1564,13 @@ local function RenderDetail(char)
     if not onChar and #findings == 0 then
         detailAudit.none:ClearAllPoints()
         detailAudit.none:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
-        detailAudit.none:SetText("Every enchantable slot is enchanted.")
+        -- A reason means the audit did not RUN - nothing equipped, or the
+        -- character is still levelling. That is not a clean bill, and saying
+        -- "every enchantable slot is enchanted" to somebody wearing nothing is
+        -- the same conflation this file refuses everywhere else.
+        detailAudit.none:SetText(reason or "Every enchantable slot is enchanted.")
+        if reason then detailAudit.none:SetTextColor(0.55, 0.55, 0.55)
+        else detailAudit.none:SetTextColor(0.45, 0.8, 0.45) end
         detailAudit.none:Show()
     else
         detailAudit.none:Hide()
@@ -1508,7 +1600,7 @@ local function RenderDetail(char)
                     row.label:ClearAllPoints()
                     row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
                     row.value:ClearAllPoints()
-                    row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + 240, y)
+                    row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
                     row.value:SetText(FormatStatValue(char, row.def))
                     row.label:Show(); row.value:Show()
                     y = y - STAT_ROW_H
@@ -1711,8 +1803,108 @@ end
 -- placeholder in its place. A texture that genuinely is missing draws as
 -- nothing, which is what the fallback amounted to anyway.
 
+-- The detail view's test seams, built at FILE SCOPE and reached through
+-- __index below.
+--
+-- Not entries in the registration table directly: each one is an upvalue of
+-- the function that builds it, and that function was already near Lua 5.1's
+-- sixty-upvalue ceiling. Adding the audit's four tipped it over and the file
+-- stopped loading outright - a limit with no warning until the parser refuses
+-- the whole plugin. One table is one upvalue.
+local DETAIL_TEST = {
+    DrillDown = function(g) return Roster.DrillDown(g) end,
+    Back = function() return Roster.Back() end,
+    Selected = function() return Roster.selected end,
+    -- Direct references, not wrappers. Each `function() return f() end`
+    -- is its own closure capturing its own upvalue, and this table is
+    -- already near Lua 5.1's sixty-upvalue ceiling for the enclosing
+    -- function - four more tipped it over and the file stopped
+    -- loading. A plain reference costs none.,
+    AuditCharacter = AuditCharacter,
+    EnchantFromMod = EnchantFromMod,
+    EnchantableHere = EnchantableHere,
+    AuditFloor = AuditFloor,
+    AuditCalls = function() return auditCalls end,
+    ENCHANTABLE_SLOTS = ENCHANTABLE_SLOTS,
+    DETAIL_TABS = DETAIL_TABS,
+    DetailTabs = function() return (detail and detail.tabs) or {} end,
+    DetailFrame = function() return detail end,
+    DetailClassIcon = function()
+        if not detail or not detail.classIcon:IsShown() then return nil end
+        return detail.classIcon:GetTexture()
+    end,
+    SetDetailTab = function(id) return Roster.SetDetailTab(id) end,
+    DetailTab = function() return Roster.detailTab end,
+    TabClick = function(label)
+        for _, b in ipairs((detail and detail.tabs) or {}) do
+            -- ENABLED as well as shown. A disabled button cannot be pressed
+            -- in game, so a seam that fires its handler anyway proves
+            -- something the player cannot do - and the active tab is
+            -- deliberately the disabled one.
+            if b:IsShown() and b:IsEnabled() and b:GetText() == label then
+                local fn = b:GetScript("OnClick")
+                if fn then fn(b) end
+                return true
+            end
+        end
+        return false
+    end,
+    DetailAudit = function()
+        local out = {}
+        if detailAudit and detailAudit.none:IsShown() then
+            out[#out + 1] = detailAudit.none:GetText()
+        end
+        for _, r in ipairs((detailAudit and detailAudit.rows) or {}) do
+            if r.value:IsShown() then
+        out[#out + 1] = (r.label:GetText() or "") .. "=" .. (r.value:GetText() or "")
+            end
+        end
+        return out
+    end,
+    CardClick = function(i)
+        local card = Roster.cards[i]
+        if not card or not card:IsShown() then return false end
+        local fn = card:GetScript("OnClick")
+        if not fn then return false end
+        fn(card, "LeftButton")
+        return true
+    end,
+    DetailShown = function() return detail ~= nil and detail:IsShown() and true or false end,
+    DetailText = function()
+        if not detail or not detail:IsShown() then return nil end
+        return (detail.name:GetText() or "") .. " | " .. (detail.sub:GetText() or "")
+            .. " | " .. (detail.ilvl:GetText() or "")
+    end,
+    DetailStats = function()
+        local out = {}
+        for _, g in ipairs(detailRows or {}) do
+            if g.header:IsShown() then out[#out + 1] = g.header:GetText() end
+            for _, r in ipairs(g.rows) do
+        if r.value:IsShown() then
+            out[#out + 1] = r.def.label .. "=" .. (r.value:GetText() or "")
+        end
+            end
+        end
+        return out
+    end,
+    DetailSlots = function()
+        local out = {}
+        for i, slot in ipairs(GEAR_SLOTS) do
+            local b = detailSlots and detailSlots[i]
+            if b and b:IsShown() then
+        out[#out + 1] = slot.key .. "=" .. (b.ilvl:GetText() or "")
+            end
+        end
+        return out
+    end,
+    CHAR_STAT_GROUPS = CHAR_STAT_GROUPS, GEAR_SLOTS = GEAR_SLOTS,
+    FormatStatValue = FormatStatValue, HasStatValue = HasStatValue,
+}
+
 function Roster._Bootstrap()
-    if not AltStable or not AltStable.RegisterPlugin then
+    
+
+if not AltStable or not AltStable.RegisterPlugin then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable Roster]|r AltStable not found.")
         return
     end
@@ -1724,7 +1916,7 @@ function Roster._Bootstrap()
         _isPlugin    = true,
         OnActivate   = function(mainFrame) Roster.Activate(mainFrame) end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
-        _test        = {
+        _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
@@ -1733,75 +1925,6 @@ function Roster._Bootstrap()
             -- The card itself, so its right-click and its dimming can be
             -- driven rather than inferred from the functions behind them.
             BuildCard = BuildCard, RenderCard = RenderCard,
-            DrillDown = function(g) return Roster.DrillDown(g) end,
-            Back = function() return Roster.Back() end,
-            Selected = function() return Roster.selected end,
-            AuditCharacter = function(c) return AuditCharacter(c) end,
-            EnchantOnLink = function(l) return EnchantOnLink(l) end,
-            ENCHANTABLE_SLOTS = ENCHANTABLE_SLOTS,
-            DETAIL_TABS = DETAIL_TABS,
-            SetDetailTab = function(id) return Roster.SetDetailTab(id) end,
-            DetailTab = function() return Roster.detailTab end,
-            TabClick = function(label)
-                for _, b in ipairs((detail and detail.tabs) or {}) do
-                    if b:IsShown() and b:GetText() == label then
-                        local fn = b:GetScript("OnClick")
-                        if fn then fn(b) end
-                        return true
-                    end
-                end
-                return false
-            end,
-            DetailAudit = function()
-                local out = {}
-                if detailAudit and detailAudit.none:IsShown() then
-                    out[#out + 1] = detailAudit.none:GetText()
-                end
-                for _, r in ipairs((detailAudit and detailAudit.rows) or {}) do
-                    if r.value:IsShown() then
-                        out[#out + 1] = (r.label:GetText() or "") .. "=" .. (r.value:GetText() or "")
-                    end
-                end
-                return out
-            end,
-            CardClick = function(i)
-                local card = Roster.cards[i]
-                if not card or not card:IsShown() then return false end
-                local fn = card:GetScript("OnClick")
-                if not fn then return false end
-                fn(card, "LeftButton")
-                return true
-            end,
-            DetailShown = function() return detail ~= nil and detail:IsShown() and true or false end,
-            DetailText = function()
-                if not detail or not detail:IsShown() then return nil end
-                return (detail.name:GetText() or "") .. " | " .. (detail.sub:GetText() or "")
-                    .. " | " .. (detail.ilvl:GetText() or "")
-            end,
-            DetailStats = function()
-                local out = {}
-                for _, g in ipairs(detailRows or {}) do
-                    if g.header:IsShown() then out[#out + 1] = g.header:GetText() end
-                    for _, r in ipairs(g.rows) do
-                        if r.value:IsShown() then
-                            out[#out + 1] = r.def.label .. "=" .. (r.value:GetText() or "")
-                        end
-                    end
-                end
-                return out
-            end,
-            DetailSlots = function()
-                local out = {}
-                for i, slot in ipairs(GEAR_SLOTS) do
-                    local b = detailSlots and detailSlots[i]
-                    if b and b:IsShown() then
-                        out[#out + 1] = slot.key .. "=" .. (b.ilvl:GetText() or "")
-                    end
-                end
-                return out
-            end,
-            CHAR_STAT_GROUPS = CHAR_STAT_GROUPS, GEAR_SLOTS = GEAR_SLOTS,
-            FormatStatValue = FormatStatValue, HasStatValue = HasStatValue,
             HIDDEN_CARD_ALPHA = HIDDEN_CARD_ALPHA,
             RenderScene = RenderScene, Cards = function() return Roster.cards end,
             Panel = function() return panel end,
@@ -1825,7 +1948,7 @@ function Roster._Bootstrap()
             SCENE_CAST = SCENE_CAST,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
-        },
+        }, { __index = DETAIL_TEST }),
     })
 end
 

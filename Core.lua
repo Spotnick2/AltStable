@@ -629,6 +629,10 @@ local function SerializeChar(c, sinceTS)
         and not RETIRED_FIELDS[k]
         and not k:find("^gearlink_")   -- item links are local-only (too large for sync)
                                       -- gearid_* stays included (compact + sync-safe)
+        and not k:find("^gearloc_")    -- local-only: the equip-location token is
+                                       -- derived from the item id, which IS synced,
+                                       -- so sending it would be sending the same
+                                       -- fact twice
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
                                       -- synced alts fall back to keyword inference on gearname_
         and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
@@ -994,7 +998,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^gear_") or k:find("^gearq_")
         or k:find("^gearname_") or k:find("^gearid_")
         or k:find("^gearmod_")   -- NOTE: "^gear_" does NOT match "gearmod_"
-        or k:find("^gearlink_") or k:find("^gearsubtype_")  -- both local-only (see note above)
+        or k:find("^gearlink_") or k:find("^gearsubtype_") or k:find("^gearloc_")  -- local-only (see note above)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)

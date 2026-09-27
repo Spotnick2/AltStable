@@ -275,6 +275,15 @@ local function makeFrame()
     -- Chaining meant SetShown(false) left the frame shown, so a renderer that
     -- hid a widget conditionally looked identical to one that never hid it -
     -- a mutation removing exactly that survived the suite.
+    -- Enabled state is REAL. The active tab is meant to be the one you cannot
+    -- press, and with SetEnabled swallowed by the chaining default that claim
+    -- was asserted nowhere - worse, a client missing the method entirely would
+    -- have thrown while the suite stayed green.
+    f.SetEnabled  = function(self, v) self._enabled = v ~= false; return self end
+    f.Enable      = function(self) self._enabled = true; return self end
+    f.Disable     = function(self) self._enabled = false; return self end
+    f.IsEnabled   = function(self) return self._enabled ~= false end
+
     f.SetShown = function(self, v)
         if v then self:Show() else self:Hide() end
         return self
