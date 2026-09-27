@@ -905,9 +905,19 @@ end
 function AT_SI.ApplyTheme()
     if not panel then return end
     local C = AltStable.C
-    AltStable.ApplyBGOnly(panel, C.BG_MAIN[1], C.BG_MAIN[2], C.BG_MAIN[3], C.BG_MAIN[4])
+    -- Both of these reach the window's bottom edge - the panel to
+    -- BOTTOMRIGHT (0, 1) and its stats bar along the bottom of that - so under
+    -- glass they own the bottom corners on this tab and their fills are clipped
+    -- to the window outline. A backdrop cannot be masked, so SkinPanelFill
+    -- paints a texture instead; under flat nothing changes.
+    local win = panel:GetParent()
+    if not AltStable.SkinPanelFill(panel, win, C.BG_MAIN) then
+        AltStable.ApplyBGOnly(panel, C.BG_MAIN[1], C.BG_MAIN[2], C.BG_MAIN[3], C.BG_MAIN[4])
+    end
     if statsBar then
-        AltStable.ApplyBGOnly(statsBar, C.BG_FOOTER[1], C.BG_FOOTER[2], C.BG_FOOTER[3], C.BG_FOOTER[4])
+        if not AltStable.SkinPanelFill(statsBar, win, C.BG_FOOTER) then
+            AltStable.ApplyBGOnly(statsBar, C.BG_FOOTER[1], C.BG_FOOTER[2], C.BG_FOOTER[3], C.BG_FOOTER[4])
+        end
     end
     if AT_SI._hbarThumb then
         AT_SI._hbarThumb:SetColorTexture(C.ACCENT[1], C.ACCENT[2], C.ACCENT[3], 0.85)

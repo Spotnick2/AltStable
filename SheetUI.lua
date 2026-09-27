@@ -2049,9 +2049,15 @@ local function CreateFrameIfNeeded()
     frame:SetSize(FRAME_W, FRAME_H)
     ApplyWindowPosition()
     frame:SetFrameStrata("DIALOG"); frame:SetToplevel(true)
-    AltStable.ApplyBackdrop(frame,
-        AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2],
-        AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    -- The window is either a flat backdrop or the glass material, never both:
+    -- a backdrop is an opaque square, and inside a rounded body it would draw
+    -- the corners straight back on - the same mistake the fills below make.
+    AltStable.glass = AltStable.SkinWindow(frame)
+    if not AltStable.glass then
+        AltStable.ApplyBackdrop(frame,
+            AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2],
+            AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    end
     frame:SetScale(AltStableConfig.scale or 1.0)
     frame:SetMovable(true); frame:EnableMouse(false)  -- drag handled by titleBar
     tinsert(UISpecialFrames,"AltStableSheet")
@@ -2361,9 +2367,14 @@ local function CreateFrameIfNeeded()
     -- the grid's left edge — visible as a vertical strip of empty dark
     -- space in screenshots.
     sidebar:SetWidth(SIDEBAR_WIDTH-1)
-    AltStable.ApplyBGOnly(sidebar,
-        AltStable.C.BG_SIDEBAR[1], AltStable.C.BG_SIDEBAR[2],
-        AltStable.C.BG_SIDEBAR[3], AltStable.C.BG_SIDEBAR[4])
+    -- Under glass the sidebar shows the material through instead of covering it
+    -- with a panel of its own: it is a region OF the window rather than a card
+    -- sitting on one, and its fill is what squares off both left corners.
+    if not AltStable.SkinIsGlass() then
+        AltStable.ApplyBGOnly(sidebar,
+            AltStable.C.BG_SIDEBAR[1], AltStable.C.BG_SIDEBAR[2],
+            AltStable.C.BG_SIDEBAR[3], AltStable.C.BG_SIDEBAR[4])
+    end
 
     -- Sidebar right border (1px separator)
     local sbRightLine = sidebar:CreateTexture(nil,"OVERLAY")
@@ -2578,6 +2589,10 @@ local function CreateFrameIfNeeded()
     local optBG = optionsPanel:CreateTexture(nil, "BACKGROUND")
     optBG:SetAllPoints()
     optBG:SetColorTexture(unpack(AltStable.C.BG_MAIN))
+    -- Reaches BOTTOMRIGHT (0, 1), so it owns the window's bottom-right corner on
+    -- this tab. Already a texture rather than a backdrop, so it only needs
+    -- clipping to the window outline, not replacing.
+    AltStable.SkinClipTexture(optionsPanel, optBG, frame)
 
     local optionsScroll = CreateFrame("ScrollFrame", nil, optionsPanel, "UIPanelScrollFrameTemplate")
     optionsScroll:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
@@ -3367,12 +3382,16 @@ local function CreateFrameIfNeeded()
     --------------------------------------------------------
 
     totalsBar=CreateFrame("Frame",nil,frame,"BackdropTemplate")
+    -- CORNER-SAFE. This reaches the bottom-right corner, so under glass its
+    -- fill is clipped to the window's outline. See AltStable.SkinPanelFill.
     totalsBar:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",SIDEBAR_WIDTH,1)
     totalsBar:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-1,1)
     totalsBar:SetHeight(22)
-    AltStable.ApplyBGOnly(totalsBar,
-        AltStable.C.BG_FOOTER[1], AltStable.C.BG_FOOTER[2],
-        AltStable.C.BG_FOOTER[3], AltStable.C.BG_FOOTER[4])
+    if not AltStable.SkinPanelFill(totalsBar, frame, AltStable.C.BG_FOOTER) then
+        AltStable.ApplyBGOnly(totalsBar,
+            AltStable.C.BG_FOOTER[1], AltStable.C.BG_FOOTER[2],
+            AltStable.C.BG_FOOTER[3], AltStable.C.BG_FOOTER[4])
+    end
     -- top border line
     local totLine=frame:CreateTexture(nil,"OVERLAY"); totLine:SetHeight(1)
     totLine:SetPoint("BOTTOMLEFT",totalsBar,"TOPLEFT",0,0)
@@ -3506,6 +3525,29 @@ local function CreateFrameIfNeeded()
     sbBorder:SetPoint("TOPLEFT",frame,"TOPLEFT",SIDEBAR_WIDTH,-TITLE_H)
     sbBorder:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",SIDEBAR_WIDTH,0)
     sbBorder:SetColorTexture(0, 0, 0, 1)
+
+    --------------------------------------------------------
+    -- The data region stays OPAQUE under glass
+    --------------------------------------------------------
+    -- "The rows have alpha-1.00 fills, so the table is already opaque" is not
+    -- true, and the exception is the one that would look worst. DimRow in
+    -- RowRenderer sets the WHOLE row - background included - to
+    -- HIDDEN_ROW_ALPHA = 0.45 for a hidden character, so once the nearly opaque
+    -- main backdrop stops being there, scenery shows through exactly the rows
+    -- already marked as less important. Same for the frozen name column beside
+    -- them.
+    --
+    -- One underlay behind both viewports rather than a change to row rendering:
+    -- dimming, alternating bands, class tint and hover all keep working, and
+    -- the space below the last row is covered too. Glass is for the chrome; the
+    -- table is a reading surface.
+    if AltStable.SkinIsGlass() then
+        local dataBG = frame:CreateTexture(nil, "BACKGROUND", nil, -3)
+        dataBG:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDEBAR_WIDTH, -BodyTopY())
+        dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 36)
+        dataBG:SetColorTexture(unpack(AltStable.C.BG_MAIN))
+        AltStable._dataBG = dataBG
+    end
 
     --------------------------------------------------------
     -- Frozen body scroll

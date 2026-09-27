@@ -826,7 +826,12 @@ local function BuildPanel(mainFrame)
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
     panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
-    AltStable.ApplyBGOnly(panel, AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2], AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    -- Reaches BOTTOMRIGHT (0, 1), so under glass this panel owns the window's
+    -- bottom-right corner and its fill has to be clipped to the window outline.
+    -- A backdrop cannot be masked; SkinPanelFill paints a texture instead.
+    if not AltStable.SkinPanelFill(panel, mainFrame, AltStable.C.BG_MAIN) then
+        AltStable.ApplyBGOnly(panel, AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2], AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    end
     panel:Hide()
 
     titleFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")

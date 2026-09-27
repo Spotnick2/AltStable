@@ -183,6 +183,17 @@ local function makeFrame()
     -- MODELLED, NOT MEASURED. The exact number does not matter; being smaller
     -- than a stride does, being zero when empty does, and no client renders a
     -- small font at 20px.
+    -- Owned by the frame that creates it, and that ownership is the assertion:
+    -- Glass.Mask deliberately puts the mask on the region being clipped while
+    -- ANCHORING it to the shape to clip against, and getting those two the wrong
+    -- way round rounds the panel into a floating capsule instead of trimming a
+    -- corner.
+    f.CreateMaskTexture = function(self, name, layer, template, sublevel)
+        local m = self:CreateTexture(name, layer, template, sublevel)
+        m._isMask = true
+        m._maskOwner = self
+        return m
+    end
     f.CreateFontString = function()
         local fs = makeFrame()
         fs.GetHeight = function(self)
@@ -195,6 +206,21 @@ local function makeFrame()
     -- Text is REMEMBERED, not swallowed: a footer or a label is a real
     -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
     -- display bug invisible to the suite.
+    -- A text shadow is REAL state and defaults to none, which is the whole
+    -- assertion: over glass a shadow is what keeps a label legible when
+    -- something bright passes behind it, and the chaining default returned the
+    -- frame for GetShadowOffset - truthy, non-zero, indistinguishable from a
+    -- shadow that was actually set.
+    f.SetShadowOffset = function(self, x, y) self._shadowX, self._shadowY = x, y; return self end
+    f.GetShadowOffset = function(self) return self._shadowX or 0, self._shadowY or 0 end
+    f.SetShadowColor  = function(self, r, g, b, a)
+        self._shadowColor = { r, g, b, a }; return self
+    end
+    f.GetShadowColor  = function(self)
+        local c = self._shadowColor
+        if not c then return 0, 0, 0, 0 end
+        return c[1], c[2], c[3], c[4]
+    end
     f.SetText = function(self, text) self._text = text; return self end
     f.GetText = function(self) return self._text end
     -- Geometry getters return NUMBERS. The chaining default would hand back the
@@ -268,6 +294,34 @@ local function makeFrame()
         self._texture = nil                     -- a colour replaces any art
         return self
     end
+    -- The material's API (#97). All of it records REAL state, because the whole
+    -- point of the glass layer stack is which region is masked by what and in
+    -- what order, and a chaining no-op would make every one of those questions
+    -- unanswerable - which is how this repo shipped three layout bugs already.
+    f.SetTextureSliceMargins = function(self, l, t, r, b)
+        self._slice = { l, t, r, b }; return self
+    end
+    f.GetTextureSliceMargins = function(self) return self._slice end
+    f.SetTextureSliceMode = function(self, m) self._sliceMode = m; return self end
+    f.GetTextureSliceMode = function(self) return self._sliceMode end
+    f.SetHorizTile = function(self, v) self._hTile = not not v; return self end
+    f.SetVertTile  = function(self, v) self._vTile = not not v; return self end
+    f.SetBlendMode = function(self, m) self._blend = m; return self end
+    f.GetBlendMode = function(self) return self._blend end
+    f.SetGradient  = function(self, orient, minC, maxC)
+        self._gradient = { orient = orient, min = minC, max = maxC }
+        return self
+    end
+    -- A mask affects textures of the frame that OWNS it. `_maskOwner` is
+    -- recorded because attaching a mask to the wrong frame is silent in game and
+    -- was the single likeliest way to get the corner clipping wrong.
+    f.AddMaskTexture = function(self, mask)
+        self._masks = self._masks or {}
+        self._masks[#self._masks + 1] = mask
+        return self
+    end
+    f.GetNumMaskTextures = function(self) return self._masks and #self._masks or 0 end
+    f.GetMaskTexture = function(self, i) return self._masks and self._masks[i] end
     f.GetTexture         = function(self) return self._texture end
     f.GetTextureFileID   = function(self) return self._fileID end
     f.GetTextureFilePath = function(self)
@@ -625,6 +679,15 @@ end
 -- test able to load it at all. Combat lockdown and Alt+Z are exactly the states
 -- its bugs lived in.
 WoW.inCombat = false
+-- A colour OBJECT, which is what SetGradient takes on this client - not four
+-- numbers. Absent entirely until the glass material needed it, so Glass.Apply
+-- threw on load in the test harness while working fine in game.
+function CreateColor(r, g, b, a)
+    return { r = r, g = g, b = b, a = a,
+             GetRGBA = function(self) return self.r, self.g, self.b, self.a end,
+             GetRGB  = function(self) return self.r, self.g, self.b end }
+end
+
 function InCombatLockdown() return WoW.inCombat and true or false end
 
 -- The stat block, so a full ScanCharacter runs. Values are arbitrary but
