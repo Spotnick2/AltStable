@@ -225,6 +225,13 @@ local function ShowUI()
 end
 
 local frame, model, backdrop, hint
+
+-- Forward declarations, and they have to be UP HERE rather than beside the
+-- countdown they belong to: Capture() cancels the queued countdown and takes
+-- the prompt down, and Capture is defined several hundred lines before either.
+-- Without this the names resolve to globals, which are nil - so the call errors
+-- at the exact moment somebody presses the sheet's Capture button.
+local StartCountdown, CancelPending, HidePrompt, Supersede
 local savedFormat
 local previewing
 local capturing          -- one at a time, always
@@ -237,6 +244,12 @@ local capturing          -- one at a time, always
 local captureToken = 0
 local renderMark = 0
 local combatSettle       -- the quiet-after-combat wait, cancellable like the rest
+-- Beside combatSettle rather than beside the countdown it belongs to, because
+-- Capture() reads it to cancel a queued countdown and is defined first.
+-- Declared later, `pending` inside Capture was a GLOBAL - always nil - so the
+-- cancel never ran and the test that should have caught it read `pending` from
+-- the right scope and saw the timer still armed.
+local pending            -- the countdown timer, so it can be cancelled
 local captureStartedAt
 local watchdog           -- cancelled by Finish, or it fires into the NEXT capture
 local toldConverter      -- the "run the converter" hint: once a session
@@ -320,28 +333,51 @@ local function DeadOrGhost()
     return ok and dead and true or false
 end
 
-local function LookFingerprint()
+local function StoredFingerprint(guid)
+    local looks = AltStableProbeDB and AltStableProbeDB.looks
+    local rec = looks and looks[guid]
+    return rec and rec.fp
+end
+
+-- The display component of the last fingerprint we stored, which is by
+-- construction a LIVE one.
+local function StoredDisplay(guid)
+    local fp = StoredFingerprint(guid)
+    return fp and fp:match("([^:]*)$") or nil
+end
+
+local function LookFingerprint(guid)
     local parts = {}
     for slot = 1, 19 do
         local link = GetInventoryItemLink("player", slot)
         local id = link and link:match("item:(%d+)")
         parts[#parts + 1] = id or "-"
     end
+
     -- The display id changes with a barber-shop visit or a race change, which
     -- is exactly the kind of "looks different" this is for.
+    --
+    -- It ALSO changes when you die, because a ghost has its own display - and
+    -- that is not a change in how the character looks, it is a change in
+    -- whether the character is currently a wisp. Letting it in meant two
+    -- "your look changed" events per death, so a corpse run announced a gear
+    -- change every time the player released and every time they resurrected.
+    --
+    -- Filtered HERE, where the value enters, rather than at the callers who
+    -- act on it. Equipment is still readable while dead, so the rest of the
+    -- fingerprint is honest; only this one field is lying, and substituting
+    -- the last live value makes the whole thing stable across a death instead
+    -- of leaving a bad value reachable by anything that reads it later -
+    -- Finish() storing one, /asrender status printing one.
     local displayID
-    if C_PlayerInfo and type(C_PlayerInfo.GetDisplayID) == "function" then
+    if DeadOrGhost() then
+        displayID = StoredDisplay(guid or (UnitGUID and UnitGUID("player")))
+    elseif C_PlayerInfo and type(C_PlayerInfo.GetDisplayID) == "function" then
         local ok, id = pcall(C_PlayerInfo.GetDisplayID)
         if ok then displayID = id end
     end
     parts[#parts + 1] = tostring(displayID or "?")
     return table.concat(parts, ":")
-end
-
-local function StoredFingerprint(guid)
-    local looks = AltStableProbeDB and AltStableProbeDB.looks
-    local rec = looks and looks[guid]
-    return rec and rec.fp
 end
 
 local function RememberFingerprint(guid, fp)
@@ -495,6 +531,23 @@ local function Capture()
         return
     end
 
+    -- Take the queued countdown with us, HERE rather than at each caller.
+    --
+    -- Every entry point has to do this or the armed timer fires five seconds
+    -- into the capture it was overtaken by, and the player gets two captures
+    -- and two interface blackouts. The Now button did it; /asrender and the
+    -- sheet's Capture button did not - so pressing the sheet button while a
+    -- countdown was up ran the whole chain twice. One place, and the rule
+    -- cannot be forgotten by the next caller.
+    --
+    -- Supersede, not CancelPending: the countdown was not cancelled, it was
+    -- overtaken, and the picture is being taken right now. CancelPending
+    -- announces whenever a countdown was live - its `announce` argument only
+    -- ever FORCES the message, there is no way to ask it for silence - so
+    -- routing this through it told the player "auto-capture cancelled" one
+    -- line before "staging... hold still".
+    Supersede()
+
     capturing = true
     captureStartedAt = GetTime()
     captureToken = captureToken + 1
@@ -615,7 +668,6 @@ end
 -- Auto-capture: keep portraits current without anyone typing anything
 ------------------------------------------------------------
 
-local pending        -- the countdown timer, so it can be cancelled
 
 local function AutoEnabled()
     return not (AltStableProbeDB and AltStableProbeDB.autoCaptureOff)
@@ -645,10 +697,6 @@ end
 -- Both are defined below and both are called from the popup's buttons. Without
 -- the forward declaration those closures resolve a nil GLOBAL at click time -
 -- which is invisible until someone presses the button.
--- HidePrompt is declared here because CancelPending calls it and is defined
--- first. Without the forward declaration the name resolves to a global, which
--- is nil - so the call errors at the exact moment the player presses Skip.
-local StartCountdown, CancelPending, HidePrompt
 
 if type(StaticPopupDialogs) == "table" then
     StaticPopupDialogs[CONSENT_POPUP] = {
@@ -683,6 +731,15 @@ if type(StaticPopupDialogs) == "table" then
         noCancelOnEscape = true,
         showAlert = false,
     }
+end
+
+-- Drop the queued countdown WITHOUT a word, because something is about to do
+-- the thing it was counting down to. The player is about to be told "staging...
+-- hold still"; a cancellation notice in front of that is a contradiction.
+function Supersede()
+    if combatSettle then combatSettle:Cancel(); combatSettle = nil end
+    if pending then pending:Cancel(); pending = nil end
+    HidePrompt()
 end
 
 -- Cancel whatever is queued. Returns whether anything was.
@@ -738,11 +795,29 @@ end
 
 local prompt
 
+-- The longest reason there is, which is the one a player sees mid-session:
+-- the combat-settle trigger passes "quiet since combat - gear changed since
+-- your last portrait". Sized for that rather than for the short one every test
+-- happened to use, and the label is given its own height so it can wrap above
+-- the buttons instead of through them.
+local PROMPT_W, PROMPT_H = 360, 82
+local PROMPT_LABEL_H = 40
+
 local function BuildPrompt()
     if prompt then return prompt end
 
-    prompt = CreateFrame("Frame", "AltStableRenderPrompt", UIParent, "BackdropTemplate")
-    prompt:SetSize(300, 62)
+    -- pcall on the template, matching Probe.lua's Button/CreateCopyFrame in
+    -- this same addon. A template that is missing on some build would
+    -- otherwise throw inside ShowPrompt - which StartCountdown calls AFTER it
+    -- has already promised a portrait in chat and BEFORE it arms the timer, so
+    -- the player is told a picture is coming, sees an addon error, and no
+    -- picture is ever taken.
+    local ok, f = pcall(CreateFrame, "Frame", "AltStableRenderPrompt", UIParent, "BackdropTemplate")
+    if not ok or not f then
+        f = CreateFrame("Frame", "AltStableRenderPrompt", UIParent)
+    end
+    prompt = f
+    prompt:SetSize(PROMPT_W, PROMPT_H)
     prompt:SetPoint("TOP", UIParent, "TOP", 0, -150)
     prompt:SetFrameStrata("HIGH")
     if prompt.SetBackdrop then
@@ -759,22 +834,34 @@ local function BuildPrompt()
     prompt.label = prompt:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     prompt.label:SetPoint("TOPLEFT", 10, -9)
     prompt.label:SetPoint("TOPRIGHT", -10, -9)
+    prompt.label:SetHeight(PROMPT_LABEL_H)
     prompt.label:SetJustifyH("LEFT")
+    prompt.label:SetJustifyV("TOP")
+    if prompt.label.SetWordWrap then prompt.label:SetWordWrap(true) end
 
     local function button(text, width, x, onClick)
-        local b = CreateFrame("Button", nil, prompt, "UIPanelButtonTemplate")
+        local ok2, b = pcall(CreateFrame, "Button", nil, prompt, "UIPanelButtonTemplate")
+        if not ok2 or not b then
+            b = CreateFrame("Button", nil, prompt)
+            local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetAllPoints(); fs:SetJustifyH("CENTER")
+            b.Text = fs
+        end
         b:SetSize(width, 20)
         b:SetPoint("BOTTOMLEFT", prompt, "BOTTOMLEFT", x, 8)
-        b:SetText(text)
+        if b.SetText then b:SetText(text) elseif b.Text then b.Text:SetText(text) end
         b:SetScript("OnClick", onClick)
         return b
     end
 
     button("Now", 70, 10, function()
-        -- Cancel FIRST. Capture() refuses to start while one is pending in
-        -- some paths, and a live timer would fire a second capture five
-        -- seconds into this one.
-        CancelPending(nil, false)
+        -- Just Capture(). It cancels the countdown itself now, which is the
+        -- only way every other entry point gets the same treatment.
+        --
+        -- This used to call CancelPending(nil, false) first, and the `false`
+        -- was dead: CancelPending announces whenever a countdown was live, so
+        -- pressing Now printed "auto-capture cancelled" a moment before the
+        -- capture it had just started.
         Capture()
     end)
     button("Skip", 70, 88, function()
@@ -790,20 +877,30 @@ local function BuildPrompt()
     return prompt
 end
 
+-- One definition of the line, used by the immediate paint and by OnUpdate.
+-- Written twice, a colour or wording change applied to one shows a different
+-- first frame from every frame after it.
+local function Paint(p, left)
+    p.shown = left
+    p.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r"):format(left, p.why or ""))
+end
+
 local function ShowPrompt(why, seconds)
     local p = BuildPrompt()
     p.deadline = GetTime() + seconds
     p.why = why
     p:SetScript("OnUpdate", function(self)
-        local left = math.max(0, (self.deadline or 0) - GetTime())
-        self.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r")
-            :format(math.ceil(left), self.why or ""))
+        local left = math.ceil(math.max(0, (self.deadline or 0) - GetTime()))
+        -- Only when the number actually changes. Repainting every frame is
+        -- ~300 string.format and SetText calls per countdown where five are
+        -- needed, on something armed at every login and every gear change.
+        if left ~= self.shown then Paint(self, left) end
         if left <= 0 then self:SetScript("OnUpdate", nil) end
     end)
     -- Paint once immediately: with only OnUpdate the frame shows for one frame
     -- with whatever text it had last time, which on the second countdown is the
     -- previous reason.
-    p.label:SetText(("|cffffffffPortrait in %ds|r  |cffaaaaaa%s|r"):format(seconds, why or ""))
+    Paint(p, seconds)
     p:Show()
 end
 
@@ -817,8 +914,11 @@ function StartCountdown(why)
     -- Idempotent. Five of these queued at once is what turned one dismissed
     -- popup into a capture loop.
     if pending or capturing then return end
-    Out(("%s - refreshing your portrait in %ds. |cffffff00/asrender cancel|r to skip.")
-        :format(why, WARN_SECONDS))
+    -- The chat line no longer explains how to cancel: there is a Skip button on
+    -- screen, and two mechanisms for one job is the thing the prompt was added
+    -- to stop. It still SAYS what is happening, because chat is the record a
+    -- player scrolls back through afterwards.
+    Out(("%s - refreshing your portrait in %ds."):format(why, WARN_SECONDS))
     ShowPrompt(why, WARN_SECONDS)
     pending = C_Timer.NewTimer(WARN_SECONDS, function()
         pending = nil
@@ -981,7 +1081,35 @@ local auto = CreateFrame("Frame")
 auto:RegisterEvent("PLAYER_LOGIN")
 auto:RegisterEvent("PLAYER_REGEN_ENABLED")
 auto:RegisterEvent("PLAYER_REGEN_DISABLED")
+-- Dying, and coming back.
+--
+-- The guards on ConsiderCapture and Capture only look at the moment a capture
+-- is asked for. A capture takes about three seconds, and dying inside those
+-- three seconds is not exotic on a corpse run: shot one is the character, shot
+-- two is a wisp, and the converter pairs them happily into a cutout that
+-- overwrites the good portrait.
+--
+-- PLAYER_UNGHOST / PLAYER_ALIVE re-arm the other half. Refusing while dead
+-- CONSUMES the trigger - the combat-settle timer fires during the corpse run,
+-- finds the player dead and returns - so without these a genuine gear change
+-- that happened to coincide with a death would wait for the next fight or the
+-- next login.
+auto:RegisterEvent("PLAYER_DEAD")
+auto:RegisterEvent("PLAYER_UNGHOST")
+auto:RegisterEvent("PLAYER_ALIVE")
 auto:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_DEAD" then
+        CancelPending("you died")
+        AbandonCapture("|cffff8800you died - portrait abandoned|r", true)
+        return
+    elseif event == "PLAYER_UNGHOST" or event == "PLAYER_ALIVE" then
+        -- Only if there is something to do: ConsiderCapture compares the
+        -- fingerprint and returns quietly when the look is unchanged, which
+        -- after an ordinary death it is.
+        ConsiderCapture("gear changed since your last portrait")
+        return
+    end
+
     if event == "PLAYER_REGEN_DISABLED" then
         -- A fight started inside the countdown: hiding the UI for three
         -- seconds mid-pull is the one thing this must never do.
@@ -1035,6 +1163,9 @@ AltStableProbe._test = {
     renderMark     = function() return renderMark end,
     CancelPending  = function(r, a) return CancelPending(r, a) end,
     DeadOrGhost    = function() return DeadOrGhost() end,
+    LookFingerprint = function(g) return LookFingerprint(g) end,
+    StoredFingerprint = function(g) return StoredFingerprint(g) end,
+    RememberFingerprint = function(g, fp) return RememberFingerprint(g, fp) end,
     ConsiderCapture = function(why) return ConsiderCapture(why) end,
     prompt         = function() return prompt end,
     PromptText     = function() return prompt and prompt:IsShown() and prompt.label:GetText() or nil end,

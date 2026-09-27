@@ -72,6 +72,12 @@ local function resetCapture()
     -- a countdown that was never started. No message: this is housekeeping
     -- between blocks, not something a player did.
     if t and t.AbandonCapture then t.AbandonCapture(nil, true) end
+    -- WoW.dead too. A block that leaves it set turns every later Capture() into
+    -- a refusal and every ConsiderCapture() into an early return, so the block
+    -- after it asserts "nothing was queued" and passes against a feature that
+    -- is simply switched off. Exactly the leak this helper's comment describes,
+    -- with a new flag.
+    WoW.dead = false
     AltStableProbeDB = { renders = {}, looks = {} }
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.timers = {}
@@ -682,6 +688,211 @@ do
     check("a prompt is up", T.PromptText() ~= nil)
     T.CancelPending("combat started")
     check("  and combat takes it down with the countdown", T.PromptText() == nil)
+end
+
+------------------------------------------------------------
+-- The stubs have to model the thing being fixed
+------------------------------------------------------------
+-- Asserted directly, because both of these are invisible from the code under
+-- test: a stub that does not flip the display id, or does not move a frame
+-- between child lists, makes the tests below pass for reasons that have
+-- nothing to do with the addon.
+
+do
+    -- The flip IS the bug. Without it the fingerprint silently appends the
+    -- same value dead or alive, every assertion about ghosts holds vacuously,
+    -- and replacing the whole display id with a constant leaves the suite
+    -- green - which it did.
+    WoW.dead = false
+    local alive = C_PlayerInfo.GetDisplayID()
+    WoW.dead = true
+    local ghost = C_PlayerInfo.GetDisplayID()
+    WoW.dead = false
+    check("the client reports a different display id for a ghost", alive ~= ghost,
+          ("alive %s, ghost %s"):format(tostring(alive), tostring(ghost)))
+
+    -- GetChildren against GetParent. This codebase reparents frames on purpose
+    -- - the showcase lifts the sheet out from under UIParent - so a child list
+    -- maintained only at creation would have the lifted frame still answering
+    -- UIParent:GetChildren(), and a test walking children would assert the
+    -- opposite of the truth.
+    local a, b = CreateFrame("Frame"), CreateFrame("Frame")
+    local kid = CreateFrame("Frame", nil, a)
+    local function childOf(parent)
+        for _, c in ipairs({ parent:GetChildren() }) do
+            if c == kid then return true end
+        end
+        return false
+    end
+    check("a new frame is listed under its parent", childOf(a))
+    kid:SetParent(b)
+    check("  reparenting moves it to the new parent", childOf(b))
+    check("  and takes it off the old one", not childOf(a))
+end
+
+------------------------------------------------------------
+-- The ghost never reaches the fingerprint at all
+------------------------------------------------------------
+-- Filtering at the two entry points suppressed the symptom and left the bad
+-- value reachable: Finish() stores a fingerprint, /asrender status prints one,
+-- and neither asks whether the player is a ghost.
+
+do
+    resetCapture()
+    local guid = UnitGUID("player")
+
+    WoW.dead = false
+    local alive = T.LookFingerprint()
+    check("the display id is part of the fingerprint",
+          alive:find(tostring(WoW.displayID), 1, true) ~= nil, alive)
+
+    -- Nothing stored yet: the best that can be done is a stable placeholder,
+    -- never the ghost's own display.
+    WoW.dead = true
+    local asGhost = T.LookFingerprint()
+    check("a ghost display never appears in a fingerprint",
+          asGhost:find(tostring(WoW.ghostDisplayID), 1, true) == nil, asGhost)
+
+    -- With a live fingerprint on record, dying must not change the answer.
+    WoW.dead = false
+    T.RememberFingerprint(guid, T.LookFingerprint())
+    local stored = T.StoredFingerprint(guid)
+    WoW.dead = true
+    eq("dying does not change what the character looks like",
+       T.LookFingerprint(), stored)
+    WoW.dead = false
+    eq("  and neither does coming back", T.LookFingerprint(), stored)
+
+    -- The whole reported symptom, stated once: no trigger either way.
+    WoW.dead = true
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("dying queues nothing", T.pendingKind(), nil)
+    WoW.dead = false
+    T.ConsiderCapture("gear changed since your last portrait")
+    eq("  and resurrecting queues nothing either", T.pendingKind(), nil)
+
+    -- A REAL change still gets through, or the fix is just "never capture".
+    WoW.displayID = 2000               -- a barber visit
+    AltStableProbeDB.autoConsent = "yes"
+    T.ConsiderCapture("gear changed since your last portrait")
+    check("a genuine look change is still noticed", T.pendingKind() == "countdown",
+          tostring(T.pendingKind()))
+    T.CancelPending()
+    WoW.displayID = 1000
+end
+
+------------------------------------------------------------
+-- Dying part-way through a capture
+------------------------------------------------------------
+-- A capture takes about three seconds. Both guards run before it starts, so
+-- neither sees a death one second in: shot one is the character, shot two is a
+-- wisp, and the converter pairs them happily into a cutout that overwrites the
+-- good portrait.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.Capture()
+    check("a capture is running", T.capturing())
+
+    WoW.dead = true
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_DEAD")
+    check("dying abandons it", not T.capturing())
+
+    WoW.flushTimers()
+    check("  so no complete pair is left on disk", #renders() < 2, tostring(#renders()))
+
+    -- And the fingerprint is NOT recorded, or the next live look would differ
+    -- from a ghost's and fire another capture.
+    WoW.dead = false
+    eq("  and no fingerprint was stored for it",
+       T.StoredFingerprint(UnitGUID("player")), nil)
+end
+
+------------------------------------------------------------
+-- Coming back re-arms the trigger that being dead consumed
+------------------------------------------------------------
+-- Refusing while dead THROWS AWAY the trigger: the combat-settle timer fires
+-- during the corpse run, finds the player dead and returns. Without an
+-- event on the way back, a genuine gear change that coincided with a death
+-- waits for the next fight or the next login.
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    WoW.dead = true
+    WoW.displayID = 3000                 -- something really did change
+    T.ConsiderCapture("quiet since combat - gear changed since your last portrait")
+    eq("while dead the trigger is dropped", T.pendingKind(), nil)
+
+    WoW.dead = false
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_UNGHOST")
+    check("coming back picks it up again", T.pendingKind() == "countdown",
+          tostring(T.pendingKind()))
+    T.CancelPending()
+
+    -- PLAYER_ALIVE covers a resurrection that never involved a ghost.
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_ALIVE")
+    check("  and so does PLAYER_ALIVE", T.pendingKind() == "countdown")
+    T.CancelPending()
+    WoW.displayID = 1000
+end
+
+------------------------------------------------------------
+-- Every entry point takes the queued countdown with it
+------------------------------------------------------------
+
+do
+    -- The sheet's Capture button goes straight to Capture() without touching
+    -- the countdown, so pressing it while one was armed ran the whole chain
+    -- twice - two captures, two blackouts - and left the prompt on screen
+    -- offering Now and Skip over a capture that had already finished.
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    check("a countdown is armed", T.pendingKind() == "countdown")
+
+    AltStableProbe.CapturePortrait()      -- the sheet's button
+    check("the sheet's button captures", T.capturing())
+    eq("  and disarms the countdown it overtook", T.pendingKind(), nil)
+    check("  and takes the prompt down with it", T.PromptText() == nil)
+
+    WoW.flushTimers()
+    check("  so only one capture ran", #renders() <= 2, tostring(#renders()))
+end
+
+------------------------------------------------------------
+-- Now does not announce a cancellation
+------------------------------------------------------------
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    T.StartCountdown("gear changed")
+    WoW.chatOut = {}
+    T.PromptClick("Now")
+    local said = table.concat(WoW.chatOut, " | ")
+    check("pressing Now does not say the capture was cancelled",
+          said:find("cancelled", 1, true) == nil, said)
+end
+
+------------------------------------------------------------
+-- The prompt fits the longest reason there is
+------------------------------------------------------------
+
+do
+    resetCapture()
+    AltStableProbeDB.autoConsent = "yes"
+    -- The exact string the combat-settle trigger passes, which is the one a
+    -- player is most likely to see mid-session - and the one no test used.
+    T.StartCountdown("quiet since combat - gear changed since your last portrait")
+    local p = T.prompt()
+    check("the label has room to wrap above the buttons",
+          p.label:GetHeight() + 20 + 16 <= p:GetHeight(),
+          ("label %d + buttons in %d"):format(p.label:GetHeight(), p:GetHeight()))
+    check("  and it wraps rather than running off the side",
+          p.label.GetWordWrap == nil or p.label:GetWordWrap() ~= false)
+    T.CancelPending()
 end
 
 print(("test_render: %d passed, %d failed"):format(passed, failed))

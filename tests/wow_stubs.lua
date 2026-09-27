@@ -71,6 +71,11 @@ function WoW.reset()
     WoW.eventFrames = {}
     WoW.tooltipLines, WoW.tooltipShown = {}, false
     WoW.dead = false
+    WoW.displayID, WoW.ghostDisplayID = 1000, 99999
+    -- UIParent is built ONCE for the whole run, so without this its child list
+    -- accumulates every frame every block ever created and a test walking it
+    -- sees strangers from three blocks ago.
+    if UIParent then UIParent._children = {} end
     WoW.popups = {}
     WoW.cvars = {}
     WoW.camera = { zoom = 4, view = 1, savedViews = {} }
@@ -210,7 +215,26 @@ local function makeFrame()
 
     f.GetChildren = function(self) return unpack(self._children or {}) end
 
-    f.SetParent      = function(self, p) self._parent = p; return self end
+    -- SetParent MAINTAINS the child list. Appending only at creation left
+    -- GetChildren disagreeing with GetParent exactly where this codebase
+    -- reparents frames - the showcase lifts the sheet out from under UIParent,
+    -- and the lifted frame would still have answered UIParent:GetChildren().
+    -- A test walking children instead of parents would have asserted the
+    -- opposite of the truth.
+    f.SetParent = function(self, p)
+        local old = self._parent
+        if type(old) == "table" and old._children then
+            for i = #old._children, 1, -1 do
+                if old._children[i] == self then table.remove(old._children, i) end
+            end
+        end
+        self._parent = p
+        if type(p) == "table" then
+            p._children = p._children or {}
+            p._children[#p._children + 1] = self
+        end
+        return self
+    end
     f.GetParent      = function(self) return self._parent end
     f.SetScale       = function(self, v) self._scale = v; return self end
     f.GetScale       = function(self) return self._scale or 1 end
@@ -509,6 +533,20 @@ WoW.dead = false
 function UnitIsDeadOrGhost(unit)
     if unit ~= "player" then return false end
     return WoW.dead and true or false
+end
+
+-- The display id, and the reason the whole ghost problem exists.
+--
+-- A ghost has its OWN display, so this value flips on death and flips back on
+-- resurrection - and it is part of the look fingerprint, deliberately, because
+-- a barber visit or a race change should refresh a portrait. Without this stub
+-- the fingerprint silently appended "?" every time, so the half of it that
+-- causes the bug was not modelled at all and a constant in its place left the
+-- suite green.
+WoW.displayID, WoW.ghostDisplayID = 1000, 99999
+C_PlayerInfo = C_PlayerInfo or {}
+function C_PlayerInfo.GetDisplayID()
+    return WoW.dead and WoW.ghostDisplayID or WoW.displayID
 end
 
 -- SetUIVisibility is what Alt+Z and Escape call. It is NOT protected, which is

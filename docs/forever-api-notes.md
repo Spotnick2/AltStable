@@ -1286,3 +1286,42 @@ Escape → open again → enter combat → press W.
 
 `false` plus an `ADDON_ACTION_BLOCKED`-shaped message means the restriction is
 live on this client and the guards above are load-bearing rather than cautious.
+
+### `C_PlayerInfo.GetDisplayID()` and the ghost — REASONED, NOT MEASURED
+
+The portrait pipeline's "has this character's look changed" fingerprint
+(`Tools/AltStableProbe/Render.lua`, `LookFingerprint`) includes the display id,
+deliberately: a barber-shop visit or a race change should refresh a portrait,
+and item ids alone do not see either.
+
+**The belief:** a ghost has its own display, so this value changes on death and
+changes back on resurrection.
+
+**The evidence is circumstantial**, and should be read that way. What was
+actually observed, on a level-one corpse run on 1.60.1.70009, is the *symptom*:
+three captures in as many minutes, each announced as "gear changed since your
+last portrait", on a character that had picked nothing up — two events per
+death, which is the shape a value flipping and flipping back produces. The gear
+half of the fingerprint cannot explain it, because equipment stays equipped
+while dead. Nobody has printed the id itself on both sides of a death.
+
+**To settle it**, alive and then as a ghost:
+
+```
+/run print(C_PlayerInfo.GetDisplayID(), UnitIsDeadOrGhost("player"))
+```
+
+**What was done about it.** The ghost display is kept out of the fingerprint at
+the point it enters, not at the callers that act on it: while
+`UnitIsDeadOrGhost("player")` is true, the display component of the *last
+stored* fingerprint is substituted, so the fingerprint is stable across a death
+rather than merely ignored during one. Filtering at the callers instead left the
+bad value reachable by everything that reads it later — `Finish()` storing one
+after a capture, `/asrender status` printing one.
+
+`UnitIsDeadOrGhost` covers both states in one call: face-down before releasing,
+and the ghost afterwards.
+
+**If the measurement comes back negative** — the id does not change — then
+something else produces two look-changes per death and the substitution above is
+harmless but not the fix. The `/run` is the only way to know.
