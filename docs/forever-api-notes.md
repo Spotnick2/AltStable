@@ -1078,18 +1078,19 @@ GetHitModifier()   ->  0         a character with no +hit gear
 Both MEASURED on 1.60.1.70009. Both therefore have build-verified producers and are scanned;
 neither is on `RETIRED_FIELDS` any more.
 
-`GetHitModifier` was the doubtful one. What was run:
+`GetHitModifier` was the doubtful one, and it was measured twice — first with a two-state probe
+that happened to be conclusive, then with the four-state one below, which agreed:
 
 ```
 /run print(GetHitModifier and GetHitModifier() or "ABSENT")
 0
+
+/run local f=GetHitModifier if not f then ... end
+RETURNED 0
 ```
 
-`0`, which can only come from a call that returned `0` — so the function exists and answers, and
-that is settled.
-
-**The probe line is not the one to reuse, though.** Four outcomes matter and they lead to four
-different decisions:
+The second reading is the one that settles it, because it is the one that *could* have said
+something else. Four outcomes matter and they lead to four different decisions:
 
 | printed | meaning | what you do |
 |---|---|---|
@@ -1104,9 +1105,10 @@ different decisions:
 > is the exact misdiagnosis this section exists to correct, and the line above was briefly
 > prescribed here as the recipe for avoiding it.
 >
-> It is still what was actually run for `GetHitModifier`, and the result stands: `0` can only come
-> from a call that returned `0`, because the two failure cases both print `ABSENT`. A truthy answer
-> is conclusive under the bad probe; that is the only thing it is good for.
+> It was the first thing run for `GetHitModifier`, and its answer did stand — `0` can only come
+> from a call that returned `0`, because both failure cases print `ABSENT`. A truthy answer is
+> conclusive under the bad probe; that is the only thing it is good for, and it is luck rather than
+> method: the same line would have reported `ABSENT` for a function that exists.
 
 ```
 /run local f=GetHitModifier if not f then print("ABSENT") else local ok,v=pcall(f) print(ok and "RETURNED "..tostring(v) or "THREW "..tostring(v)) end
@@ -1114,8 +1116,12 @@ different decisions:
 
 ONE `/run`, deliberately: a `local` does not survive between chunks, so splitting it over two lines
 leaves `f` nil on the second and the probe reports `ABSENT` for everything. 150 characters with the
-slash command, inside the edit box's 255 limit. Verified against all four outcomes before being
-written down here - which is more than the line it replaces got.
+slash command, inside the edit box's 255 limit.
+
+**VERIFIED IN GAME on 1.60.1.70009**, not merely reasoned about: pasted into the chat box as one
+line, it printed `RETURNED 0`. So the length, the quoting, the `pcall` on a bare global and the
+single-chunk `local` all work on this client, and the four branches were checked against all four
+outcomes locally first. Copy it as-is.
 
 Before this, "the Combat row did not render in game" was being read as evidence the function was
 gone. It was evidence of a zero. Two rounds of comments in this repo asserted it was "a pre-WoD
@@ -1199,7 +1205,8 @@ UnitXPMax("player")         ->  400
    > The lesson is not about CVars. "The client ignores this" and "the client obeys this and a
    > second setting undoes it" produce the SAME observable, and only one of them is a dead end.
    > A working addon doing the same thing was the cheapest way to tell them apart.
-7. **A NONZERO `GetHitModifier`.** The function works — it printed `0`, see above — but it returns
+7. **A NONZERO `GetHitModifier`.** The function works — measured twice, `0` and `RETURNED 0`, the
+   second under a probe that could have said otherwise — but it returns
    the hit percent your GEAR adds, and the character measured had none, so no nonzero reading has
    ever been seen on this client. Nothing incorrect is displayed either way: the Roster's Bonus Hit
    row has no `allowZero` and hides at zero. If you equip something with +hit and the row stays
