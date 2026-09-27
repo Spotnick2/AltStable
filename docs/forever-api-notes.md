@@ -1237,3 +1237,37 @@ the frame's strata and scale on every lift, so lifting twice saved the *lifted*
 values and the restore afterwards left the frame permanently at
 `FULLSCREEN_DIALOG`. The two callers that existed each guarded at their own end,
 which put the trap one careless caller away. The flag lives on the frame now.
+
+### `SetPropagateKeyboardInput` in combat — UNMEASURED
+
+Mainline's API documentation marks this method **restricted**, and Forever's own
+`DialogueUI` guards it with `not InCombatLockdown()`. The build-matched dump
+proves the method *exists* on 1.60.1.70009; it says nothing about whether
+calling it in combat throws here.
+
+That matters for anything that grabs the keyboard, because the grab and the
+release are the same mechanism: `EnableKeyboard(true)` routes **every** key to
+your frame, and `SetPropagateKeyboardInput(true)` is how each one is handed back.
+If the release is unavailable, a frame that grabbed the keyboard swallows the
+movement keys with no way to let go.
+
+`CharacterMenu.lua` is written to be correct under either answer rather than
+betting on one:
+
+- the keyboard is taken **out of combat only** — not grabbing it costs Escape,
+  which the sheet's own `UISpecialFrames` entry still answers; grabbing it and
+  failing costs walking;
+- the propagation call is `pcall`ed, because entering combat with the menu
+  already open leaves the handler installed, and an error there fires on *every*
+  keypress;
+- Escape closes the menu whether or not the propagation call took.
+
+**To settle it**, with the character in combat:
+
+```
+/run local f=CreateFrame("Frame") f:EnableKeyboard(true)
+     print(pcall(f.SetPropagateKeyboardInput, f, true))
+```
+
+`false` plus an `ADDON_ACTION_BLOCKED`-shaped message means the restriction is
+live on this client and the guards above are load-bearing rather than cautious.

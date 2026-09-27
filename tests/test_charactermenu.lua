@@ -287,6 +287,55 @@ do
     AltStable.CloseCharacterMenu()
 end
 
+------------------------------------------------------------
+-- Combat
+------------------------------------------------------------
+-- SetPropagateKeyboardInput is a protected method (Mainline marks it
+-- restricted; Forever's own DialogueUI guards it with InCombatLockdown).
+-- Whether THIS client throws is unmeasured, so the menu is written to survive
+-- both answers rather than betting on one.
+
+do
+    local realCombat = InCombatLockdown
+    InCombatLockdown = function() return true end
+
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowCharacterMenu(OTHER)
+    check("the menu still opens in combat", T.MenuIsShown())
+    check("  but does not grab the keyboard",
+          T.MenuRoot():IsKeyboardEnabled() == false,
+          "grabbing it means handing every movement key back one at a time "
+          .. "through a method that may be restricted in combat")
+
+    -- It is still fully usable, because the gesture that opens it is a mouse
+    -- gesture and so is every way out of it.
+    check("  and an outside click still dismisses it",
+          T.MenuClickOutside() and T.MenuIsShown() == false)
+
+    -- Entering combat with the menu ALREADY open leaves the handler installed,
+    -- which is why the propagation call is wrapped rather than merely guarded:
+    -- an error there would fire on every keypress, in combat.
+    InCombatLockdown = realCombat
+    AltStable.ShowCharacterMenu(OTHER)
+    check("the keyboard is taken out of combat", T.MenuRoot():IsKeyboardEnabled())
+    InCombatLockdown = function() return true end
+
+    local root = T.MenuRoot()
+    local realSet = root.SetPropagateKeyboardInput
+    root.SetPropagateKeyboardInput = function()
+        error("ADDON_ACTION_BLOCKED: SetPropagateKeyboardInput")
+    end
+    local ok = pcall(function() return T.MenuKey("W") end)
+    check("a restricted propagation call does not take out the key handler", ok)
+    check("  and Escape still closes the menu when it throws",
+          pcall(function() return T.MenuEscape() end) and T.MenuIsShown() == false,
+          "a menu that cannot be closed is worse than one that shares Escape")
+    root.SetPropagateKeyboardInput = realSet
+
+    InCombatLockdown = realCombat
+    AltStable.CloseCharacterMenu()
+end
+
 do
     -- Closed BEFORE the action runs, not merely closed by the time anyone
     -- looks. Forget raises a confirmation, and a menu still on screen

@@ -3684,9 +3684,19 @@ AltStable._test.DropPopup = DropPopup
 
 if type(StaticPopupDialogs) == "table" then
     StaticPopupDialogs[FORGET_POPUP] = {
-        text = "Forget |cffffffff%s|r?\n\nThe record is deleted and a tombstone stops other "
-            .. "accounts sending it back. This is not hiding - there is no undo, and if the "
-            .. "character still exists it will only reappear by logging into it.",
+        -- The recovery route is NAMED, because there is one and this dialog used
+        -- to deny it. "There is no undo" was false - /alts unforget lifts the
+        -- tombstone and re-asks every peer in full - and "it will only reappear
+        -- by logging into it" was worse than false: logging in on ANOTHER
+        -- account does not clear THIS account's tombstone, so a player following
+        -- that instruction leaves the record rejected indefinitely. The slash
+        -- command has printed the right answer all along; the dialog
+        -- contradicted it.
+        text = "Forget |cffffffff%s|r?\n\nThe local record is deleted, and a tombstone stops "
+            .. "other accounts sending it back. This is not hiding.\n\n"
+            .. "|cffffff00/alts unforget|r lifts the tombstone, and the character can then come "
+            .. "back from a peer on the next full sync - not instantly, and not by logging "
+            .. "into it.",
         button1 = ACCEPT or "Forget",
         button2 = CANCEL or "Cancel",
         OnAccept = function(self, data)

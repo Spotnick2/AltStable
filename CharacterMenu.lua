@@ -238,10 +238,23 @@ local function Build()
     -- is earlier in the list, so one Escape would close the whole window and
     -- leave the menu behind. Handling the key on the menu and propagating
     -- everything else keeps movement keys working while it is open.
+    -- SetPropagateKeyboardInput is a PROTECTED method: Mainline's API docs mark
+    -- it restricted, and Forever's own DialogueUI guards it with
+    -- InCombatLockdown. Whether this client actually throws is NOT measured
+    -- here - the dump proves the method exists, not how it behaves in combat -
+    -- so this is written to be correct either way rather than on a guess:
+    --
+    --   * pcall, so a restriction cannot take out the handler and with it the
+    --     Escape that closes the menu. An error here would fire on EVERY
+    --     keypress while the menu is open, in combat, which is the worst
+    --     possible moment for a wall of Lua errors.
+    --   * close on Escape regardless of whether the propagation call took. The
+    --     degradation if it did not is that Escape also reaches the sheet and
+    --     closes both, which is tolerable; a menu that will not close is not.
     root:SetScript("OnKeyDown", function(self, key)
         local stop = (key == "ESCAPE")
         if type(self.SetPropagateKeyboardInput) == "function" then
-            self:SetPropagateKeyboardInput(not stop)
+            pcall(self.SetPropagateKeyboardInput, self, not stop)
         end
         if stop then AltStable.CloseCharacterMenu() end
     end)
@@ -305,7 +318,18 @@ function AltStable.ShowCharacterMenu(char)
     end
     root:Show()
     PlaceAtCursor()
-    if type(root.EnableKeyboard) == "function" then root:EnableKeyboard(true) end
+    -- The keyboard is taken OUT OF COMBAT ONLY.
+    --
+    -- Grabbing it means every key arrives here and has to be handed back one at
+    -- a time through SetPropagateKeyboardInput. If that method is restricted in
+    -- combat on this client - see the note on the handler; unmeasured - then
+    -- grabbing the keyboard in combat would swallow the movement keys with no
+    -- way to release them. Not grabbing it costs Escape, which the sheet's own
+    -- registration still answers; grabbing it and failing costs walking.
+    if type(root.EnableKeyboard) == "function"
+        and not (InCombatLockdown and InCombatLockdown()) then
+        root:EnableKeyboard(true)
+    end
     return true
 end
 

@@ -429,6 +429,25 @@ do
     check("the dialog is registered", dialog ~= nil)
     if dialog then
         eq("  its accept button is not a yes/no", dialog.button1, ACCEPT)
+
+        -- The text has to match what the addon can actually do. It used to say
+        -- "there is no undo" and that the character "will only reappear by
+        -- logging into it" - and BOTH were wrong: /alts unforget lifts the
+        -- tombstone, while logging in on another account does not clear THIS
+        -- account's, so a player following that sentence leaves the record
+        -- rejected for good. The slash command printed the right answer all
+        -- along, which is what makes this a contradiction rather than a gap.
+        check("  the recovery route it names really exists",
+              type(AltStable.UnforgetCharacter) == "function")
+        check("  and the dialog names it",
+              dialog.text:find("/alts unforget", 1, true) ~= nil, dialog.text)
+        check("  without claiming there is no undo",
+              dialog.text:find("no undo", 1, true) == nil, dialog.text)
+        check("  and without sending the player to log into it instead",
+              dialog.text:find("only reappear by logging", 1, true) == nil, dialog.text)
+        check("  while still saying it is not instant",
+              dialog.text:find("not instantly", 1, true) ~= nil, dialog.text)
+
         dialog.OnAccept(nil, popup.data)
     end
     eq("accepting forgets the character", AltStableDB.gone, nil)
