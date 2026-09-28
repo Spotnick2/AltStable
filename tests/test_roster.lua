@@ -2817,5 +2817,50 @@ do
     end
 end
 
+------------------------------------------------------------
+-- The hint names a command the player actually has
+------------------------------------------------------------
+-- `/asrender` is registered in AltStableProbe, a development tool that
+-- `.pkgmeta` excludes from the package. So for everyone who installed this from
+-- CurseForge - which is everyone who did not clone the repo - the scene view
+-- was telling them to type a command the client answers with "Type /help".
+do
+    local held = _G.AltStableProbe
+    -- The GRID's hint. The scene view has its own line about favourites.
+    AltStableConfig.rosterView = "grid"
+
+    _G.AltStableProbe = nil
+    pcall(AltStable.RosterPlugin.Refresh)
+    local without = T.HintText() or ""
+    check("with no capture tool the hint does not name the command",
+          not without:find("asrender", 1, true), without)
+    check("  and says where portraits come from instead",
+          without:find("capture tool", 1, true) ~= nil, without)
+
+    _G.AltStableProbe = { CapturePortrait = function() end }
+    pcall(AltStable.RosterPlugin.Refresh)
+    local with = T.HintText() or ""
+    check("with the tool installed it names the command",
+          with:find("asrender", 1, true) ~= nil, with)
+
+    -- A probe that is THERE but cannot capture is the same to the player as no
+    -- probe at all: an older build, or the global existing for another reason.
+    -- Testing the table rather than the function sends them to a command that
+    -- answers nothing.
+    _G.AltStableProbe = {}
+    pcall(AltStable.RosterPlugin.Refresh)
+    local stale = T.HintText() or ""
+    check("a probe that cannot capture does not get the command either",
+          not stale:find("asrender", 1, true), stale)
+
+    -- Both still say how many are missing, which is the hint's actual job.
+    check("both forms still count the portraits",
+          without:find("of", 1, true) and with:find("of", 1, true))
+
+    _G.AltStableProbe = held
+    AltStableConfig.rosterView = nil
+    pcall(AltStable.RosterPlugin.Refresh)
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
