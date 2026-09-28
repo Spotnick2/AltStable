@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.1-beta
+
+A text fix, and only a text fix — no behaviour changed. Everything in
+v0.2.0-beta below applies.
+
+- **The Roster stopped telling you to type a command you do not have.** Its grid
+  hint named `/asrender`, which is registered in a development tool that is not
+  part of this download, so on a packaged install the client answered it with
+  "Type /help for a list of available commands". The hint now names that command
+  only when the tool is installed, and otherwise says where portraits actually
+  come from ([#15](https://github.com/Spotnick2/AltStable/issues/15)).
+- The v0.2.0-beta notes below described portrait capture as something the addon
+  does. It is a separate workflow in the project's repository, and they now say
+  so.
+
 ## v0.2.0-beta
 
 Measured against client build **1.60.1.70009**, which is also the build that
