@@ -521,6 +521,171 @@ function AltStable.SkinHeaderBand()
     return lift(d[1]), lift(d[2]), lift(d[3]), 1
 end
 
+------------------------------------------------------------
+-- The SHARED tooltip, and only while it is ours
+------------------------------------------------------------
+-- GameTooltip belongs to everybody. Restyling it outright would repaint the
+-- game's own tooltips and every other addon's, which is why this was left
+-- alone twice while the rest of the window was done - a glass box over a
+-- quest reward is not our call to make.
+--
+-- So the material goes on only while WE own the tooltip, and comes off the
+-- moment we do not. Ownership is read from the tooltip itself and walked up
+-- the parent chain to a marked root, so no call site changes: the sheet's
+-- twenty-two SetOwner sites, the plugins' and the menu's all keep working as
+-- they are.
+--
+-- THE FAILURE THAT MATTERS is not getting the material on - it is failing to
+-- take it off. The stock border is hidden by alpha while ours is up, so an
+-- error midway, or an owner change without a hide, would leave every tooltip
+-- in the game borderless until a reload. Hence:
+--
+--   * ONE idempotent reconcile, called from OnShow, from a post-hook on
+--     SetOwner (a tooltip can change hands while visible, with no hide in
+--     between) and from OnHide. Every path asks the same question.
+--   * The restore is recorded BEFORE the change that needs restoring, so a
+--     failure between them still has a way back.
+--   * What we put back is the alpha we found, not an assumed 1, and only if
+--     it is still the 0 we set - if another addon has moved it since, it has
+--     an opinion and we do not fight over it.
+--
+-- Comparison tooltips (ShoppingTooltip1/2) are separate frames and stay stock,
+-- deliberately: they appear beside an item tooltip that is usually not ours.
+--
+-- NineSlice is where an 11.x client keeps the tooltip's border. Every access
+-- here is guarded, so on a client that does not have it the material simply
+-- does not go on rather than erroring on a frame everyone shares.
+local tip = { applied = false, saved = nil }
+
+function AltStable.MarkTooltipHost(frame)
+    if frame then frame.__altstableHost = true end
+end
+
+local function OwnedByUs(tt)
+    local owner = tt.GetOwner and tt:GetOwner()
+    local hops = 0
+    while owner and hops < 8 do
+        if owner.__altstableHost then return true end
+        owner = owner.GetParent and owner:GetParent() or nil
+        hops = hops + 1
+    end
+    return false
+end
+
+-- A FIXED-LENGTH list walked numerically. `ipairs` stops at the first nil, so
+-- a missing region would have hidden the walk itself - leaving g.top, which
+-- carries the rim, drawn over somebody else's tooltip. The per-part guards
+-- below say nils are expected; ipairs made them unreachable.
+local TIP_PART_KEYS = { "shadow", "tint", "grain", "wash", "top" }
+
+local function ForEachTipPart(g, fn)
+    if not g then return end
+    for i = 1, #TIP_PART_KEYS do
+        local part = g[TIP_PART_KEYS[i]]
+        if part then fn(part) end
+    end
+end
+
+local function RestoreTooltip(tt)
+    if not tip.applied then return end
+
+    -- THE BORDER GOES BACK FIRST, before the flag that guards this and before
+    -- our own regions come off. Hiding first and restoring after put the one
+    -- irreversible step last: anything throwing in between left the border
+    -- hidden AND `applied` false, so every later restore early-returned and
+    -- every tooltip in the game - the client's own and every other addon's -
+    -- stayed borderless until a reload. That is the exact outcome this section
+    -- exists to prevent, and the order defeated it.
+    local ns = tt and tt.NineSlice
+    if ns and ns.SetAlpha and tip.saved ~= nil then
+        -- Only if it is still ours to give back.
+        if not ns.GetAlpha or ns:GetAlpha() == 0 then ns:SetAlpha(tip.saved) end
+    end
+
+    ForEachTipPart(tip.g, function(part) if part.Hide then part:Hide() end end)
+    tip.applied = false
+    tip.saved = nil
+end
+
+local function ApplyTooltip(tt)
+    if tip.applied then return end
+
+    -- THE BORDER CONTAINER FIRST, before anything is built.
+    --
+    -- NineSlice is where an 11.x client keeps the tooltip's border, and that is
+    -- unverified here. Checking it only at the point of hiding meant the
+    -- unsupported client got the WORST of both: the material created and shown,
+    -- over a stock border still fully drawn, because only the hide was skipped.
+    -- The promise is that an unrecognised tooltip is left alone, so the check
+    -- belongs before the material exists rather than after.
+    --
+    -- Readable as well as writable: a border we cannot read the alpha of is one
+    -- we cannot put back, which is the half that can hurt.
+    --
+    -- A TYPE check, not a truthiness one. A frame that answers every unknown
+    -- field with something callable - which the test harness does, and which
+    -- is the same shape as the client's "a function in the dump is not a
+    -- working function" - makes `if tt.NineSlice then` true for a tooltip that
+    -- has no border container at all, and the next index errors on a frame
+    -- every addon shares.
+    local ns = tt.NineSlice
+    if type(ns) ~= "table" then return end
+    if type(ns.SetAlpha) ~= "function" or type(ns.GetAlpha) ~= "function" then return end
+
+    if not tip.g then tip.g = AltStable.SkinWindow(tt, "small") end
+    if not tip.g then return end
+    -- Recorded FIRST, and the flag with it: everything after this point is
+    -- undoable even if it does not finish.
+    tip.saved = ns:GetAlpha()
+    tip.applied = true
+    ns:SetAlpha(0)
+    -- RE-PINNED on every apply. Glass.Apply sets the rim's frame level from the
+    -- host's at creation, and this host is shared: the client and other addons
+    -- raise tooltips to keep them above their owner, and each one leaves our
+    -- rim behind. The sheet's own reference tooltip already hit this on a
+    -- PRIVATE frame - "from the second hover onwards it would have been a bare
+    -- panel with no edge" - and a shared one moves far more often.
+    if AltStable.SkinRelevel then AltStable.SkinRelevel(tt) end
+    ForEachTipPart(tip.g, function(part) if part.Show then part:Show() end end)
+end
+
+function AltStable.ReconcileTooltip()
+    local tt = _G.GameTooltip
+    if not tt then return end
+    local ours = AltStable.SkinIsGlass()
+        and (not tt.IsShown or tt:IsShown())
+        and OwnedByUs(tt)
+    if ours then ApplyTooltip(tt) else RestoreTooltip(tt) end
+end
+
+function AltStable.InstallTooltipSkin()
+    local tt = _G.GameTooltip
+    if not tt or tip.hooked then return false end
+    if not AltStable.SkinIsGlass() then return false end
+    local installed = 0
+    if tt.HookScript then
+        tt:HookScript("OnShow", AltStable.ReconcileTooltip)
+        tt:HookScript("OnHide", function() RestoreTooltip(tt) end)
+        installed = installed + 2
+    end
+    -- A tooltip can change hands WITHOUT hiding - the client reuses one frame,
+    -- and the next owner may be a quest giver. That is the state an OnShow hook
+    -- alone never sees.
+    if hooksecurefunc and tt.SetOwner then
+        hooksecurefunc(tt, "SetOwner", AltStable.ReconcileTooltip)
+        installed = installed + 1
+    end
+    -- Only "hooked" if something actually hooked. Setting the flag first and
+    -- returning true regardless made the answer meaningless and, worse,
+    -- permanent: a client missing one of these would never be retried, with a
+    -- green return saying it had been handled.
+    tip.hooked = installed > 0
+    return tip.hooked
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.TooltipState = function() return tip end
+
 -- A WELL cut into the panel, and the hairline round it.
 --
 -- The figure box on the character sheet is the one that exists, and it was two

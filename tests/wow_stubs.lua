@@ -132,6 +132,15 @@ local function makeFrame()
         if ev == "OnTooltipSetItem" or ev == "OnTooltipSetUnit" then
             error("bad argument #2 to 'HookScript' (Usage: self:HookScript(scriptTypeName, script))", 2)
         end
+        -- CHAINED INTO THE SAME DISPATCH as SetScript, because a hook that is
+        -- only recorded is a hook nothing can test. Storing it under its own
+        -- key meant Show()/Hide() - which fire _script_ - never ran it, so an
+        -- addon could stop hooking OnHide entirely with every suite green.
+        local prev = self["_script_" .. tostring(ev)]
+        self["_script_" .. tostring(ev)] = function(...)
+            if prev then prev(...) end
+            fn(...)
+        end
         self["_hook_" .. tostring(ev)] = fn
         return self
     end
@@ -888,10 +897,23 @@ function GetScreenHeight() return WoW.screenH / 2 end
 -- A REAL post-hook: it wraps the global so the hook actually runs afterwards.
 -- An inert stub would have made the Alt+Z-during-capture path untestable, which
 -- is the path that had the bug.
-function hooksecurefunc(name, fn)
-    local prev = _G[name]
-    if type(prev) ~= "function" then return end
-    _G[name] = function(...)
+-- BOTH FORMS, as the client has them: hooksecurefunc(name, fn) for a global,
+-- and hooksecurefunc(table, name, fn) for a method. Only the first existed
+-- here, so a hook on GameTooltip:SetOwner - the one that catches a tooltip
+-- changing hands WITHOUT hiding - silently did nothing and could not be
+-- tested at all.
+function hooksecurefunc(a, b, c)
+    local host, name, fn
+    if type(a) == "table" then host, name, fn = a, b, c
+    else host, name, fn = _G, a, b end
+    local prev = host[name]
+    -- The client raises "Attempt to hook a nonexistent function". Returning
+    -- quietly here installs nothing and no test can tell - which is the gap
+    -- this stub was just extended to close, reopened one line lower.
+    if type(prev) ~= "function" then
+        error("Attempt to hook a nonexistent function: " .. tostring(name), 2)
+    end
+    host[name] = function(...)
         local r = { prev(...) }
         fn(...)
         return unpack(r)
@@ -911,9 +933,26 @@ GameTooltip.AddDoubleLine = function(_, l, r)
     table.insert(WoW.tooltipLines, tostring(l) .. "|" .. tostring(r))
 end
 GameTooltip.NumLines = function() return #WoW.tooltipLines end
-GameTooltip.Hide = function() WoW.tooltipShown = false end
-GameTooltip.Show = function() WoW.tooltipShown = true end
+-- Show/Hide RECORD the flag and still fire the frame's scripts. Replacing
+-- makeFrame's versions with bare flag flips meant OnShow and OnHide never ran
+-- on this frame, and anything hooked to them was untestable.
+do
+    local baseShow, baseHide = GameTooltip.Show, GameTooltip.Hide
+    GameTooltip.Show = function(self, ...)
+        WoW.tooltipShown = true
+        return baseShow(self or GameTooltip, ...)
+    end
+    GameTooltip.Hide = function(self, ...)
+        WoW.tooltipShown = false
+        return baseHide(self or GameTooltip, ...)
+    end
+end
 GameTooltip.IsShown = function() return WoW.tooltipShown == true end
+-- The border an 11.x client keeps in a NineSlice child. Modelled because the
+-- addon hides it while a tooltip is ours and has to put it back afterwards -
+-- and "did it put it back" is the whole risk of touching a frame every other
+-- addon shares.
+GameTooltip.NineSlice = makeFrame()
 
 ------------------------------------------------------------
 -- CVars and the camera

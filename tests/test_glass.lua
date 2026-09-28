@@ -898,6 +898,171 @@ do
 end
 
 ------------------------------------------------------------
+-- The shared tooltip, and putting it back
+------------------------------------------------------------
+-- GameTooltip belongs to everybody, so the material goes on only while we own
+-- it. Getting it ON is the easy half and not the one that can hurt: the stock
+-- border is hidden by alpha while ours is up, so a failure to RESTORE leaves
+-- every tooltip in the game borderless until a reload - the game's own, and
+-- every other addon's.
+do
+    useSkin("clear")
+    local tt = _G.GameTooltip
+    local ns = tt.NineSlice
+    local ours   = CreateFrame("Frame", nil, UIParent)
+    local theirs = CreateFrame("Frame", nil, UIParent)
+    AltStable.MarkTooltipHost(ours)
+    local child = CreateFrame("Frame", nil, ours)   -- a plugin panel, say
+
+    check("the hooks install under glass", AltStable.InstallTooltipSkin() == true)
+    check("  and only once", AltStable.InstallTooltipSkin() == false)
+
+    tt:SetOwner(ours, "ANCHOR_RIGHT")
+    tt:Show()
+    AltStable.ReconcileTooltip()
+    local state = AltStable._test.TooltipState()
+    check("our own tooltip wears the material", state.applied == true)
+    eq("  and the stock border is out of the way", ns:GetAlpha(), 0)
+
+    -- A CHILD of a marked frame counts: the plugins' panels live inside the
+    -- window, and marking each of them would be a list that goes stale.
+    tt:SetOwner(child, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    check("a panel inside the window is still us",
+          AltStable._test.TooltipState().applied == true)
+
+    -- THE STATE THAT MATTERS. The client reuses one tooltip frame, so it can
+    -- change hands with no hide in between - ours, then a quest giver's. An
+    -- OnShow hook alone never sees that, which is why SetOwner is hooked too.
+    tt:SetOwner(theirs, "ANCHOR_RIGHT")
+    check("a tooltip handed to somebody else loses the material",
+          AltStable._test.TooltipState().applied == false)
+    eq("  and gets its border back", ns:GetAlpha(), 1)
+
+    -- THROUGH THE HOOKS, with no reconcile of our own. Every assertion above
+    -- reaches the code either through the SetOwner post-hook or through an
+    -- explicit ReconcileTooltip, so both HookScript lines could be deleted with
+    -- the suite green - and OnHide is the one that runs in game when the mouse
+    -- leaves a row.
+    tt:Hide()
+    tt:SetOwner(ours, "ANCHOR_RIGHT")
+    tt:Show()
+    check("showing it fires the hook that puts the material on",
+          AltStable._test.TooltipState().applied == true)
+    tt:Hide()
+    check("and hiding it fires the one that takes it off",
+          AltStable._test.TooltipState().applied == false)
+    eq("  giving the border back", ns:GetAlpha(), 1)
+
+    -- Hiding restores too, and restoring twice is not an error.
+    tt:Show()
+    tt:SetOwner(ours, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    check("ours again", AltStable._test.TooltipState().applied == true)
+    tt:Hide()
+    AltStable.ReconcileTooltip()
+    check("hiding puts it back", AltStable._test.TooltipState().applied == false)
+    eq("  to the alpha it had", ns:GetAlpha(), 1)
+    AltStable.ReconcileTooltip()
+    eq("  and reconciling again changes nothing", ns:GetAlpha(), 1)
+
+    -- WE PUT BACK WHAT WE FOUND, not an assumed 1. Another addon dimming the
+    -- border is an opinion; ours is not the only one.
+    ns:SetAlpha(0.5)
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    eq("the border is hidden while ours is up", ns:GetAlpha(), 0)
+    tt:Hide(); AltStable.ReconcileTooltip()
+    eq("  and comes back at the alpha it actually had", ns:GetAlpha(), 0.5)
+    ns:SetAlpha(1)
+
+    -- AND WE DO NOT FIGHT. If something else has moved the alpha while our
+    -- material is up, it has an opinion more recent than ours.
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+    ns:SetAlpha(0.25)                       -- somebody else, mid-tooltip
+    tt:Hide(); AltStable.ReconcileTooltip()
+    eq("a border moved by somebody else is left alone", ns:GetAlpha(), 0.25)
+    ns:SetAlpha(1)
+
+    -- THE RIM FOLLOWS THE HOST'S LEVEL. Glass.Apply pins it at host + 10 when
+    -- it is built, and this host is shared: the client and other addons raise
+    -- tooltips above their owner, and every one of those leaves our rim behind.
+    -- The sheet's own reference tooltip hit this on a PRIVATE frame and needed
+    -- the same re-pin - a bare panel with no edge from the second hover on.
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+    local g = AltStable._test.TooltipState().g
+    check("the material is built on the tooltip", g and g.top)
+    if g and g.top then
+        tt:Hide()
+        tt:SetFrameLevel(tt:GetFrameLevel() + 40)     -- somebody raises it
+        tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+        check("  and its rim follows the host that moved under it",
+              g.top:GetFrameLevel() > tt:GetFrameLevel(),
+              ("rim %s vs host %s"):format(g.top:GetFrameLevel(), tt:GetFrameLevel()))
+    end
+    tt:Hide()
+
+    -- AND "hooked" MEANS HOOKED. A client with neither HookScript nor SetOwner
+    -- has nothing to hang this on, and saying so is the difference between a
+    -- capability problem and a silent one - the flag is permanent, so a blind
+    -- true would never be retried.
+    do
+        local state = AltStable._test.TooltipState()
+        local heldHooked, heldTip = state.hooked, _G.GameTooltip
+        state.hooked = false
+        _G.GameTooltip = { GetOwner = function() end }   -- nothing to hook
+        check("a tooltip with nothing to hook reports failure",
+              AltStable.InstallTooltipSkin() == false)
+        check("  and stays retryable", state.hooked == false)
+        _G.GameTooltip, state.hooked = heldTip, heldHooked
+    end
+
+    -- A TOOLTIP WHOSE BORDER WE DO NOT RECOGNISE IS LEFT ALONE - which means
+    -- no material either, not "material over a stock border". NineSlice is
+    -- where an 11.x client keeps it and that is unverified on Forever, so this
+    -- is the path a wrong guess actually takes.
+    do
+        local state = AltStable._test.TooltipState()
+        local heldTip, heldG, heldApplied = _G.GameTooltip, state.g, state.applied
+        state.g, state.applied = nil, false
+        local bare = CreateFrame("Frame", nil, UIParent)   -- no NineSlice
+        bare.GetOwner = function() return ours end
+        bare.IsShown = function() return true end
+        _G.GameTooltip = bare
+        AltStable.ReconcileTooltip()
+        check("an unrecognised tooltip gets no material at all",
+              state.applied == false and state.g == nil,
+              ("applied=%s g=%s"):format(tostring(state.applied), tostring(state.g)))
+        check("  and nothing was built on it", bare._glass == nil)
+
+        -- A border we can hide but cannot READ is worse than one we cannot
+        -- touch: the alpha we would have to give back is the thing we could
+        -- not learn, so hiding it is a one-way trip.
+        state.g, state.applied = nil, false
+        local writeOnly = CreateFrame("Frame", nil, UIParent)
+        writeOnly.GetOwner = function() return ours end
+        writeOnly.IsShown = function() return true end
+        writeOnly.NineSlice = { SetAlpha = function() end }   -- no GetAlpha
+        _G.GameTooltip = writeOnly
+        AltStable.ReconcileTooltip()
+        check("a border we cannot read is left alone too",
+              state.applied == false and state.g == nil,
+              ("applied=%s"):format(tostring(state.applied)))
+        _G.GameTooltip, state.g, state.applied = heldTip, heldG, heldApplied
+    end
+
+    -- FLAT NEVER TOUCHES IT. Not "looks the same" - never hooks, never hides.
+    useSkin("flat")
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    check("flat leaves the shared tooltip entirely alone",
+          AltStable._test.TooltipState().applied == false)
+    eq("  border untouched", ns:GetAlpha(), 1)
+    tt:Hide()
+    useSkin("clear")
+end
+
+------------------------------------------------------------
 -- The CALL SITES, not the helpers (#97 phase 2)
 ------------------------------------------------------------
 -- Every helper above has its own tests. What those cannot say is whether the

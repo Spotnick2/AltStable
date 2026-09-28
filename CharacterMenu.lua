@@ -262,6 +262,9 @@ local function Build()
     -- not enlarge the click area: a click on the visible shadow still reaches
     -- the catcher and dismisses the menu, which is what it looks like it should
     -- do. Same for the transparent rounded corners.
+    -- The menu stands on its own rather than inside the sheet, so the parent
+    -- walk from a tooltip owner never reaches the window's mark.
+    if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(panel) end
     if not (AltStable.SkinWindow and AltStable.SkinWindow(panel, "small")) then
         if AltStable.ApplyBackdrop then
             local c = AltStable.C.BG_HEADER
