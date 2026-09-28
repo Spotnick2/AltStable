@@ -474,7 +474,7 @@ end
 -- lands at `C + s(1 - C)`, so the step shrinks as the surface brightens. Over
 -- these near-black surfaces the values below reproduce the old spacing to
 -- within a thousandth, and the test asserts that rather than the alphas.
-local STRIPE_LIFT, GROUP_LIFT = 0.035, 0.075
+local STRIPE_LIFT, GROUP_LIFT, HEADER_LIFT = 0.035, 0.075, 0.053
 
 function AltStable.SkinDataColor()
     -- The same question its siblings ask, not "does this preset name a colour".
@@ -500,6 +500,25 @@ end
 function AltStable.SkinGroupBand()
     if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_GROUP) end
     return 1, 1, 1, GROUP_LIFT
+end
+
+-- The COLUMN HEADER, which labels the table and therefore belongs to it.
+--
+-- The last flat-palette colour left inside the reading area: a neutral 0.11
+-- chosen against the old charcoal body, sitting between a glass title bar and a
+-- table whose surface now comes from the skin, and reading warm against the
+-- rows it labels. The same drift as the Roster's hand-rolled 0.05/0.05/0.06,
+-- and the last of it.
+--
+-- Opaque, and lifted from the reading surface rather than from the pane, even
+-- though the window material is what is actually behind it: these are column
+-- labels in small text, and the argument for not putting small text on
+-- something translucent does not change because the text is bold.
+function AltStable.SkinHeaderBand()
+    if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_HEADER) end
+    local d = AltStable.SkinDataColor()
+    local function lift(c) return c + HEADER_LIFT * (1 - c) end
+    return lift(d[1]), lift(d[2]), lift(d[3]), 1
 end
 
 -- A WELL cut into the panel, and the hairline round it.

@@ -678,6 +678,13 @@ function AT_SI.Refresh()
     headerBG:ClearAllPoints()
     headerBG:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, hdrTop)
     headerBG:SetPoint("BOTTOMRIGHT", panel, "TOPLEFT", visibleR, hdrTop - HEADER_H)
+    -- NOT SkinHeaderBand. That lifts from the sheet's reading surface, and
+    -- this panel does not have one: a plugin section hides the underlay along
+    -- with the viewports, so the lift would be taken from a colour that is not
+    -- behind it - landing DARKER than this grid's own rows, which are still
+    -- their own hardcoded values a few lines below, and inverting the ordering
+    -- the sheet's test exists to protect. This plugin's palette is its own
+    -- slice of work; it is not "the last of it" as the sheet's was.
     headerBG:SetColorTexture(unpack(AltStable.C.BG_HEADER))
     headerBG:Show()
     headerSep:ClearAllPoints()
