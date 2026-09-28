@@ -555,7 +555,7 @@ end
 -- NineSlice is where an 11.x client keeps the tooltip's border. Every access
 -- here is guarded, so on a client that does not have it the material simply
 -- does not go on rather than erroring on a frame everyone shares.
-local tip = { applied = false, saved = nil }
+local tip = { applied = false, saved = nil, hookedLevel = {} }
 
 function AltStable.MarkTooltipHost(frame)
     if frame then frame.__altstableHost = true end
@@ -708,6 +708,28 @@ function AltStable.InstallTooltipSkin()
         and type(tt.SetOwner) == "function" then
         hooksecurefunc(tt, "SetOwner", AltStable.ReconcileTooltip)
         tip.hookedOwner = true
+    end
+
+    -- AND THE LEVEL ITSELF, which is the only way the raise scenario is ever
+    -- observed. Nothing fires when another addon calls Raise() or
+    -- SetFrameLevel() on a tooltip that is already shown: OnShow has run,
+    -- OnHide has not, and SetOwner is not involved. Re-levelling from the
+    -- reconcile only repaired it on the NEXT hover, which means the hover
+    -- somebody is actually looking at keeps a rim underneath its own host.
+    --
+    -- Safe to re-enter: SkinRelevel writes to the rim's own frame, never to
+    -- this one, so the hook cannot call itself.
+    for _, method in ipairs({ "SetFrameLevel", "Raise" }) do
+        if not tip.hookedLevel[method]
+            and type(hooksecurefunc) == "function"
+            and type(tt[method]) == "function" then
+            hooksecurefunc(tt, method, function()
+                if tip.applied and tip.host == tt and AltStable.SkinRelevel then
+                    AltStable.SkinRelevel(tt)
+                end
+            end)
+            tip.hookedLevel[method] = true
+        end
     end
 
     tip.hooked = tip.hookedScripts and tip.hookedOwner or false

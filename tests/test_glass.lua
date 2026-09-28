@@ -1010,11 +1010,49 @@ do
     tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
     local g2 = AltStable._test.TooltipState().g
     if g2 and g2.top then
-        tt:SetFrameLevel(tt:GetFrameLevel() + 25)   -- raised, still shown, still ours
-        AltStable.ReconcileTooltip()
-        check("a raise with the material already up re-pins the rim",
-              g2.top:GetFrameLevel() > tt:GetFrameLevel(),
-              ("rim %s vs host %s"):format(g2.top:GetFrameLevel(), tt:GetFrameLevel()))
+        -- NO RECONCILE OF OUR OWN. Nothing fires when another addon raises a
+        -- tooltip that is already shown - OnShow has run, OnHide has not, and
+        -- SetOwner is not involved - so a test that calls the reconciler here
+        -- supplies the very trigger the code was missing, and proves only that
+        -- the repair works once something asks for it.
+        -- EXACTLY ten above, not merely above. "Above" is satisfied by a rim
+        -- left behind at an older, higher level - which is how a missing hook
+        -- on one of the two methods passed: the other had already repaired the
+        -- rim by more than the second call moved the host.
+        tt:SetFrameLevel(tt:GetFrameLevel() + 25)   -- raised, still shown, ours
+        eq("a raise with the material already up re-pins the rim",
+           g2.top:GetFrameLevel(), tt:GetFrameLevel() + 10)
+        -- And through Raise(), which is what an addon keeping its tooltip above
+        -- its owner actually calls.
+        if type(tt.Raise) == "function" then
+            tt:Raise()
+            eq("  and through Raise as well",
+               g2.top:GetFrameLevel(), tt:GetFrameLevel() + 10)
+        end
+
+        -- AND ONLY FOR THE HOST THE MATERIAL IS ON. The hook stays installed on
+        -- the frame it was hooked to, so if another tooltip becomes the one in
+        -- play, the old frame's level changes must not drag a rim that is no
+        -- longer ours.
+        do
+            local state = AltStable._test.TooltipState()
+            local heldTip = _G.GameTooltip
+            local heldG, heldApplied, heldHost = state.g, state.applied, state.host
+            local fresh = CreateFrame("Frame", nil, UIParent)
+            fresh.NineSlice = { _a = 1,
+                SetAlpha = function(self, a) self._a = a end,
+                GetAlpha = function(self) return self._a end }
+            fresh.GetOwner = function() return ours end
+            fresh.IsShown = function() return true end
+            state.g, state.applied = nil, false
+            _G.GameTooltip = fresh
+            AltStable.ReconcileTooltip()          -- the material moves to `fresh`
+            local before = g2.top:GetFrameLevel()
+            tt:SetFrameLevel(tt:GetFrameLevel() + 40)
+            eq("the old host's rim is left where it was", g2.top:GetFrameLevel(), before)
+            _G.GameTooltip = heldTip
+            state.g, state.applied, state.host = heldG, heldApplied, heldHost
+        end
     end
     tt:Hide()
 

@@ -411,6 +411,14 @@ local function makeFrame()
     -- correctness question - a catcher drawn over the menu it is meant to sit
     -- behind eats every entry - and the chaining default made every level 1.
     f.SetFrameLevel = function(self, v) self._GetFrameLevel = v; return self end
+    -- Raise MOVES THE LEVEL. The client puts the frame above the others in its
+    -- strata; what matters to anything watching is that the level changed, and
+    -- the chaining default changed nothing - so a test that raised a frame and
+    -- checked what followed was asserting against a no-op.
+    f.Raise = function(self)
+        self._GetFrameLevel = (self._GetFrameLevel or 0) + 5
+        return self
+    end
 
     f.GetChildren = function(self) return unpack(self._children or {}) end
 
