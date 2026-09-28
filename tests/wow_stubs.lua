@@ -268,6 +268,10 @@ local function makeFrame()
         f[name] = function(self) return self["_" .. name] or value end
     end
     f.GetEffectiveScale = function(self) return self._scale or 1 end
+    -- Real state: "is the window kept on the display" is the question #99 is
+    -- about, and the chaining default answered it with the frame itself.
+    f.SetClampedToScreen = function(self, v) self._clamped = not not v; return self end
+    f.IsClampedToScreen  = function(self) return self._clamped == true end
     -- Strata, parent, scale and shown-ness are REAL state, not chained no-ops.
     -- Code that lifts a frame out from under a hidden UIParent and puts it back
     -- is exactly what needs testing, and with the chaining default every such
@@ -589,7 +593,19 @@ end
 -- from under UIParent - to survive the showcase hiding it - had nothing to be
 -- compared against: "not parented to UIParent" was trivially true because
 -- UIParent was nil.
+-- A DISPLAY-SIZED UIParent.
+--
+-- It was a bare frame, so it inherited the generic 20px default - a screen
+-- twenty pixels tall. Nothing noticed because nothing measured it, and that is
+-- precisely why a window running off the bottom of the display could not be
+-- caught here: every sane clamp against a 20px screen is indistinguishable from
+-- a broken one.
+--
+-- MODELLED, NOT MEASURED. 1920x1080 is a plausible display rather than any
+-- particular one; what matters is that it is bigger than the window and that
+-- the ratio between the two is real.
 UIParent = makeFrame()
+UIParent:SetSize(1920, 1080)
 WorldFrame = makeFrame()
 
 -- The cursor, in PHYSICAL pixels - which is the trap this models. Frame offsets

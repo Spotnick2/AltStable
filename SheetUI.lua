@@ -1831,10 +1831,48 @@ end
 -- window stays wherever the user left it.  No need to ClearAllPoints.
 ------------------------------------------------------------
 
+-- The largest window this display can actually show, in the FRAME's own
+-- coordinate space (#99).
+--
+-- Nothing clamped this before, and Options is the one section that asks for a
+-- fixed size - ResizeFrame(820, 760) - rather than sizing to its content. On a
+-- shorter display, or at scale 1.25 where 760 becomes an effective 950, the
+-- window simply ran off the bottom of the screen and the last options went with
+-- it. The scroll frame inside it cannot help: the part that is off-screen is the
+-- window, not the content.
+--
+-- Converted through effective scale rather than compared raw. The frame carries
+-- the user's scale setting and UIParent carries the client's, so `760` and
+-- `UIParent:GetHeight()` are numbers in two different spaces and comparing them
+-- directly is wrong by exactly the ratio nobody notices at scale 1.0.
+local SCREEN_MARGIN = 40
+
+local function FitToScreen(w, h)
+    if not (frame and UIParent) then return w, h end
+    local fs = frame:GetEffectiveScale() or 1
+    local us = UIParent:GetEffectiveScale() or 1
+    if fs <= 0 then return w, h end
+    local maxW = (UIParent:GetWidth()  * us) / fs - SCREEN_MARGIN
+    local maxH = (UIParent:GetHeight() * us) / fs - SCREEN_MARGIN
+    -- A floor as well, or a tiny UIParent - or a bad read during load - produces
+    -- a window with no room for anything and no way to get it back.
+    if maxW > 200 and w > maxW then w = maxW end
+    if maxH > 200 and h > maxH then h = maxH end
+    return w, h
+end
+
 local function ResizeFrame(w, h)
     if not frame then return end
-    frame:SetSize(w, h)
+    frame:SetSize(FitToScreen(w, h))
 end
+
+-- The helper AND the two paths that are supposed to use it. Three times this
+-- week a helper has been fully asserted while the line calling it had no
+-- coverage, so deleting the call changed nothing the suite could see.
+AltStable._test = AltStable._test or {}
+AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
+AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
+AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 
 local function SaveWindowPosition()
     if not (frame and AltStableConfig and AltStableConfig.rememberWindowPosition) then
@@ -1945,10 +1983,13 @@ end
 
 local function ResizeFrameToContent()
     if not frame then return end
+    AltStable._test.ResizeFrameToContent = ResizeFrameToContent
     -- Plugins (Recipes, Options) manage their own sizing — don't fight them.
     if activeSection and activeSection._isPlugin then return end
     local w, h, needsH, needsV = ComputeContentSize()
-    frame:SetSize(w, h)
+    -- Through the same clamp: a roster long enough to want more height than the
+    -- display has is just as reachable as the Options tab asking for a fixed 760.
+    frame:SetSize(FitToScreen(w, h))
     -- ComputeContentSize is the authority on scrollbar visibility — it's
     -- derived purely from row count and column width vs the frame size we
     -- just set, so it's always self-consistent. UpdateScroll's measure()
@@ -2052,6 +2093,14 @@ local function CreateFrameIfNeeded()
             AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
     end
     frame:SetScale(AltStableConfig.scale or 1.0)
+    -- Fitting is not the same as being ON the display. The position is
+    -- remembered from whenever it was last dragged, and a window that fits can
+    -- still have been saved with its bottom past the edge - which is what the
+    -- Options tab did, because growing taller moves the bottom down while the
+    -- saved anchor holds the top still.
+    frame:SetClampedToScreen(true)
+    AltStable._test = AltStable._test or {}
+    AltStable._test.frame = frame
     frame:SetMovable(true); frame:EnableMouse(false)  -- drag handled by titleBar
     tinsert(UISpecialFrames,"AltStableSheet")
     frame:SetScript("OnShow", function()
