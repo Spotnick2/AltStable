@@ -555,7 +555,7 @@ end
 -- NineSlice is where an 11.x client keeps the tooltip's border. Every access
 -- here is guarded, so on a client that does not have it the material simply
 -- does not go on rather than erroring on a frame everyone shares.
-local tip = { applied = false, saved = nil }
+local tip = { applied = false, saved = nil, hookedLevel = {} }
 
 function AltStable.MarkTooltipHost(frame)
     if frame then frame.__altstableHost = true end
@@ -589,6 +589,14 @@ end
 local function RestoreTooltip(tt)
     if not tip.applied then return end
 
+    -- THE FRAME WE RECORDED FROM, or nothing. The saved alpha belongs to one
+    -- tooltip; writing it onto a different one puts a number back where it was
+    -- never taken from AND clears the record, so the frame we actually dimmed
+    -- keeps a hidden border with nothing left saying we hid it. That is the
+    -- unrecoverable case this whole section is built to avoid, so it refuses
+    -- rather than guessing.
+    if tip.host and tt ~= tip.host then return end
+
     -- THE BORDER GOES BACK FIRST, before the flag that guards this and before
     -- our own regions come off. Hiding first and restoring after put the one
     -- irreversible step last: anything throwing in between left the border
@@ -596,10 +604,14 @@ local function RestoreTooltip(tt)
     -- every tooltip in the game - the client's own and every other addon's -
     -- stayed borderless until a reload. That is the exact outcome this section
     -- exists to prevent, and the order defeated it.
+    -- TYPE, as the apply side checks it: a frame that answers every unknown
+    -- field with something callable makes this truthy and errors on the index.
     local ns = tt and tt.NineSlice
-    if ns and ns.SetAlpha and tip.saved ~= nil then
+    if type(ns) == "table" and type(ns.SetAlpha) == "function" and tip.saved ~= nil then
         -- Only if it is still ours to give back.
-        if not ns.GetAlpha or ns:GetAlpha() == 0 then ns:SetAlpha(tip.saved) end
+        if type(ns.GetAlpha) ~= "function" or ns:GetAlpha() == 0 then
+            ns:SetAlpha(tip.saved)
+        end
     end
 
     ForEachTipPart(tip.g, function(part) if part.Hide then part:Hide() end end)
@@ -637,15 +649,9 @@ local function ApplyTooltip(tt)
     -- Recorded FIRST, and the flag with it: everything after this point is
     -- undoable even if it does not finish.
     tip.saved = ns:GetAlpha()
+    tip.host = tt
     tip.applied = true
     ns:SetAlpha(0)
-    -- RE-PINNED on every apply. Glass.Apply sets the rim's frame level from the
-    -- host's at creation, and this host is shared: the client and other addons
-    -- raise tooltips to keep them above their owner, and each one leaves our
-    -- rim behind. The sheet's own reference tooltip already hit this on a
-    -- PRIVATE frame - "from the second hover onwards it would have been a bare
-    -- panel with no edge" - and a shared one moves far more often.
-    if AltStable.SkinRelevel then AltStable.SkinRelevel(tt) end
     ForEachTipPart(tip.g, function(part) if part.Show then part:Show() end end)
 end
 
@@ -655,31 +661,78 @@ function AltStable.ReconcileTooltip()
     local ours = AltStable.SkinIsGlass()
         and (not tt.IsShown or tt:IsShown())
         and OwnedByUs(tt)
-    if ours then ApplyTooltip(tt) else RestoreTooltip(tt) end
+    if not ours then return RestoreTooltip(tt) end
+
+    ApplyTooltip(tt)
+
+    -- RE-PINNED HERE, not inside the apply. Glass.Apply sets the rim's frame
+    -- level from the host's at creation, and this host is shared: the client
+    -- and other addons raise tooltips to keep them above their owner. The case
+    -- this exists for is a raise while our material is ALREADY up - and the
+    -- apply returns early when it is, so putting the call in there covered only
+    -- a fresh hover and left the very scenario it was written for. The test
+    -- passed because it hid the tooltip before raising it.
+    --
+    -- Reconcile runs on every SetOwner in the game, so this is the frequent
+    -- path and it is one comparison plus a SetPoint when nothing has moved.
+    if tip.applied and AltStable.SkinRelevel then AltStable.SkinRelevel(tt) end
 end
 
 function AltStable.InstallTooltipSkin()
     local tt = _G.GameTooltip
     if not tt or tip.hooked then return false end
     if not AltStable.SkinIsGlass() then return false end
-    local installed = 0
-    if tt.HookScript then
+    -- The host this is being hooked to, which is what the restore state below
+    -- belongs to. See RestoreTooltip.
+    tip.host = tt
+    -- TWO MECHANISMS, TRACKED APART. A count of both together reported success
+    -- when one worked - and the flag is permanent, so a client with HookScript
+    -- but no hooksecurefunc would have been left for the session without the
+    -- SetOwner hook, which is the one the section says OnShow alone never sees.
+    -- Each is installed only if missing, so a retry cannot double-hook.
+    if not tip.hookedScripts and type(tt.HookScript) == "function" then
         tt:HookScript("OnShow", AltStable.ReconcileTooltip)
         tt:HookScript("OnHide", function() RestoreTooltip(tt) end)
-        installed = installed + 2
+        tip.hookedScripts = true
     end
     -- A tooltip can change hands WITHOUT hiding - the client reuses one frame,
     -- and the next owner may be a quest giver. That is the state an OnShow hook
     -- alone never sees.
-    if hooksecurefunc and tt.SetOwner then
+    -- TYPE, not truthiness - the same check the border container gets twenty
+    -- lines up. hooksecurefunc RAISES on a target that is not a function, and
+    -- this runs in the middle of building the window: an error here left the
+    -- sheet half-built for the session, because CreateFrameIfNeeded early-
+    -- returns on a frame that exists.
+    if not tip.hookedOwner
+        and type(hooksecurefunc) == "function"
+        and type(tt.SetOwner) == "function" then
         hooksecurefunc(tt, "SetOwner", AltStable.ReconcileTooltip)
-        installed = installed + 1
+        tip.hookedOwner = true
     end
-    -- Only "hooked" if something actually hooked. Setting the flag first and
-    -- returning true regardless made the answer meaningless and, worse,
-    -- permanent: a client missing one of these would never be retried, with a
-    -- green return saying it had been handled.
-    tip.hooked = installed > 0
+
+    -- AND THE LEVEL ITSELF, which is the only way the raise scenario is ever
+    -- observed. Nothing fires when another addon calls Raise() or
+    -- SetFrameLevel() on a tooltip that is already shown: OnShow has run,
+    -- OnHide has not, and SetOwner is not involved. Re-levelling from the
+    -- reconcile only repaired it on the NEXT hover, which means the hover
+    -- somebody is actually looking at keeps a rim underneath its own host.
+    --
+    -- Safe to re-enter: SkinRelevel writes to the rim's own frame, never to
+    -- this one, so the hook cannot call itself.
+    for _, method in ipairs({ "SetFrameLevel", "Raise" }) do
+        if not tip.hookedLevel[method]
+            and type(hooksecurefunc) == "function"
+            and type(tt[method]) == "function" then
+            hooksecurefunc(tt, method, function()
+                if tip.applied and tip.host == tt and AltStable.SkinRelevel then
+                    AltStable.SkinRelevel(tt)
+                end
+            end)
+            tip.hookedLevel[method] = true
+        end
+    end
+
+    tip.hooked = tip.hookedScripts and tip.hookedOwner or false
     return tip.hooked
 end
 

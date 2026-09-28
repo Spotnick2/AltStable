@@ -1002,19 +1002,153 @@ do
     end
     tt:Hide()
 
+    -- A RAISE WHILE OUR MATERIAL IS ALREADY UP, which is the case the re-pin
+    -- was written for and the case it could not reach: the apply returns early
+    -- when it is already applied, so the call inside it only ever ran on a
+    -- fresh hover. The first test passed because it HID the tooltip before
+    -- raising it, which is not what another addon calling Raise() does.
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+    local g2 = AltStable._test.TooltipState().g
+    if g2 and g2.top then
+        -- NO RECONCILE OF OUR OWN. Nothing fires when another addon raises a
+        -- tooltip that is already shown - OnShow has run, OnHide has not, and
+        -- SetOwner is not involved - so a test that calls the reconciler here
+        -- supplies the very trigger the code was missing, and proves only that
+        -- the repair works once something asks for it.
+        -- EXACTLY ten above, not merely above. "Above" is satisfied by a rim
+        -- left behind at an older, higher level - which is how a missing hook
+        -- on one of the two methods passed: the other had already repaired the
+        -- rim by more than the second call moved the host.
+        tt:SetFrameLevel(tt:GetFrameLevel() + 25)   -- raised, still shown, ours
+        eq("a raise with the material already up re-pins the rim",
+           g2.top:GetFrameLevel(), tt:GetFrameLevel() + 10)
+        -- And through Raise(), which is what an addon keeping its tooltip above
+        -- its owner actually calls.
+        if type(tt.Raise) == "function" then
+            tt:Raise()
+            eq("  and through Raise as well",
+               g2.top:GetFrameLevel(), tt:GetFrameLevel() + 10)
+        end
+
+        -- AND ONLY FOR THE HOST THE MATERIAL IS ON. The hook stays installed on
+        -- the frame it was hooked to, so if another tooltip becomes the one in
+        -- play, the old frame's level changes must not drag a rim that is no
+        -- longer ours.
+        do
+            local state = AltStable._test.TooltipState()
+            local heldTip = _G.GameTooltip
+            local heldG, heldApplied, heldHost = state.g, state.applied, state.host
+            local fresh = CreateFrame("Frame", nil, UIParent)
+            fresh.NineSlice = { _a = 1,
+                SetAlpha = function(self, a) self._a = a end,
+                GetAlpha = function(self) return self._a end }
+            fresh.GetOwner = function() return ours end
+            fresh.IsShown = function() return true end
+            state.g, state.applied = nil, false
+            _G.GameTooltip = fresh
+            AltStable.ReconcileTooltip()          -- the material moves to `fresh`
+            local before = g2.top:GetFrameLevel()
+            tt:SetFrameLevel(tt:GetFrameLevel() + 40)
+            eq("the old host's rim is left where it was", g2.top:GetFrameLevel(), before)
+            _G.GameTooltip = heldTip
+            state.g, state.applied, state.host = heldG, heldApplied, heldHost
+        end
+    end
+    tt:Hide()
+
+    -- THE RESTORE BELONGS TO THE FRAME IT WAS RECORDED FROM. Writing a saved
+    -- alpha onto a different tooltip puts a number back where it was never
+    -- taken from and clears the record - so the frame we actually dimmed keeps
+    -- a hidden border with nothing left saying we hid it.
+    do
+        local state = AltStable._test.TooltipState()
+        tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+        check("ours is dimmed", state.applied == true and ns:GetAlpha() == 0)
+        local impostor = CreateFrame("Frame", nil, UIParent)
+        impostor.NineSlice = { _a = 1,
+            SetAlpha = function(self, a) self._a = a end,
+            GetAlpha = function(self) return self._a end }
+        impostor.GetOwner = function() return theirs end
+        impostor.IsShown = function() return true end
+        local heldTip = _G.GameTooltip
+        _G.GameTooltip = impostor
+        AltStable.ReconcileTooltip()
+        eq("another frame does not get our saved alpha", impostor.NineSlice._a, 1)
+        check("  and the record of the one we dimmed survives", state.applied == true)
+        _G.GameTooltip = heldTip
+        AltStable.ReconcileTooltip()          -- back to the real one
+        tt:Hide(); AltStable.ReconcileTooltip()
+        eq("  so it can still be put back", ns:GetAlpha(), 1)
+    end
+
+    -- A DIFFERENT tooltip frame can become the one in play - another addon
+    -- replacing _G.GameTooltip, or a client that swaps it. The host has to be
+    -- recorded when the material goes ON, not only when the hooks went in, or
+    -- the restore refuses against the frame it is actually holding and the
+    -- material never comes off at all.
+    do
+        local state = AltStable._test.TooltipState()
+        local heldTip = _G.GameTooltip
+        local fresh = CreateFrame("Frame", nil, UIParent)
+        fresh.NineSlice = { _a = 1,
+            SetAlpha = function(self, a) self._a = a end,
+            GetAlpha = function(self) return self._a end }
+        fresh.GetOwner = function() return ours end
+        fresh.IsShown = function() return true end
+        state.g, state.applied, state.saved = nil, false, nil
+        _G.GameTooltip = fresh
+        AltStable.ReconcileTooltip()
+        check("a replacement tooltip gets the material", state.applied == true)
+        eq("  and its border is hidden", fresh.NineSlice._a, 0)
+        fresh.IsShown = function() return false end
+        AltStable.ReconcileTooltip()
+        check("  and the material comes back off it", state.applied == false)
+        eq("  border restored", fresh.NineSlice._a, 1)
+        _G.GameTooltip = heldTip
+        state.g, state.applied, state.saved = nil, false, nil
+    end
+
     -- AND "hooked" MEANS HOOKED. A client with neither HookScript nor SetOwner
     -- has nothing to hang this on, and saying so is the difference between a
     -- capability problem and a silent one - the flag is permanent, so a blind
     -- true would never be retried.
     do
         local state = AltStable._test.TooltipState()
-        local heldHooked, heldTip = state.hooked, _G.GameTooltip
-        state.hooked = false
+        local heldTip = _G.GameTooltip
+        local held = { state.hooked, state.hookedScripts, state.hookedOwner }
+        state.hooked, state.hookedScripts, state.hookedOwner = false, false, false
         _G.GameTooltip = { GetOwner = function() end }   -- nothing to hook
         check("a tooltip with nothing to hook reports failure",
               AltStable.InstallTooltipSkin() == false)
         check("  and stays retryable", state.hooked == false)
-        _G.GameTooltip, state.hooked = heldTip, heldHooked
+
+        -- A PARTIAL install is a failure too, and the two mechanisms are
+        -- tracked apart so the retry only installs what is missing. Counting
+        -- them together reported success when one worked - permanently, and
+        -- the one that can go missing is the SetOwner hook, which is the case
+        -- OnShow alone never sees.
+        state.hooked, state.hookedScripts, state.hookedOwner = false, false, false
+        -- A PLAIN table, not a stub frame: a frame answers every unknown field
+        -- with something callable, so `SetOwner = nil` on one is still a
+        -- function by the time anybody asks.
+        _G.GameTooltip = { HookScript = function() end, GetOwner = function() end }
+        check("half a hook is not hooked", AltStable.InstallTooltipSkin() == false)
+        check("  but the half that worked is not repeated",
+              state.hookedScripts == true and state.hookedOwner ~= true)
+
+        -- A FIELD THAT IS THERE BUT IS NOT A FUNCTION. hooksecurefunc RAISES on
+        -- one, and this used to run in the middle of building the window - so
+        -- the sheet was left half-built for the session, since its builder
+        -- early-returns on a frame that exists. Truthiness cannot tell the two
+        -- apart; type can.
+        state.hooked, state.hookedScripts, state.hookedOwner = false, false, false
+        _G.GameTooltip = { HookScript = function() end, GetOwner = function() end,
+                           SetOwner = {} }
+        local ok = pcall(AltStable.InstallTooltipSkin)
+        check("a SetOwner that is not a function does not raise", ok == true)
+
+        _G.GameTooltip = heldTip
+        state.hooked, state.hookedScripts, state.hookedOwner = held[1], held[2], held[3]
     end
 
     -- A TOOLTIP WHOSE BORDER WE DO NOT RECOGNISE IS LEFT ALONE - which means
