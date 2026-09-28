@@ -1066,6 +1066,26 @@ do
         T.ResizeFrame(820, 760)
         eq("a window that fits is sized exactly as asked", f:GetHeight(), 760)
 
+        -- SCALING is a third way to stop fitting, and it goes through neither
+        -- resize path: the numbers stay the same and the display they occupy
+        -- changes. Driven through the real AltStable.SetScale rather than by
+        -- setting the scale and calling the clamp by hand, because the bug was
+        -- precisely that SetScale did not call it.
+        do
+            local savedH = UIParent:GetHeight()
+            local savedScale = f:GetEffectiveScale()
+            UIParent:SetHeight(900)
+            T.ResizeFrame(820, 760)
+            eq("a window that fits at scale 1 is left alone", f:GetHeight(), 760)
+            AltStable.SetScale(1.25)
+            local lim = (900 * UIParent:GetEffectiveScale()) / 1.25 - T.SCREEN_MARGIN
+            check("and scaling it up refits it rather than leaving it oversized",
+                  f:GetHeight() <= lim,
+                  ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(lim)))
+            AltStable.SetScale(savedScale)
+            UIParent:SetHeight(savedH)
+        end
+
         -- The OTHER path. ResizeFrameToContent sets the size directly rather
         -- than going through ResizeFrame, so it needed the clamp of its own -
         -- and a roster long enough to want more height than the display has is

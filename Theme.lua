@@ -160,7 +160,16 @@ function AltStable.SetScale(scale)
     AltStableConfig      = AltStableConfig or {}
     AltStable.SetConfigValue("scale", scale)
     local f = _G["AltStableSheet"]
-    if f then f:SetScale(scale) end
+    if f then
+        f:SetScale(scale)
+        -- REFIT. The screen limit runs when a size is requested, and scaling
+        -- does not request one - so a window that fitted a moment ago can stop
+        -- fitting without anything asking it to resize. At 900px of screen,
+        -- 820x760 fits at scale 1 and is 950 tall at 1.25, which is the exact
+        -- scale the limit exists for. SetClampedToScreen can move it back on
+        -- screen but cannot make 950 pixels fit in 900.
+        if AltStable.RefitWindow then AltStable.RefitWindow() end
+    end
 end
 
 ------------------------------------------------------------

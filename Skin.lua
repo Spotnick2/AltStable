@@ -53,13 +53,39 @@ AltStable.SKINS = {
 
 local DEFAULT_SKIN = "clear"
 
--- Resolved at CALL time, never captured at load: this file loads before
--- SavedVariables are read, so a value cached here would be the default for the
--- whole session no matter what is on disk.
-function AltStable.SkinName()
+-- The choice ON DISK, which may not be the one the window is currently wearing.
+local function StoredSkin()
     local name = AltStableConfig and AltStableConfig.skin
     if type(name) == "string" and AltStable.SKINS[name] then return name end
     return DEFAULT_SKIN
+end
+AltStable.PendingSkinName = StoredSkin
+
+-- The ACTIVE skin: resolved once, then held for the session.
+--
+-- This used to read the config on every call, which is wrong in both directions
+-- at once. It cannot be captured at LOAD, because this file runs before
+-- SavedVariables are read and would freeze the default. But reading it live
+-- means `/alts skin flat` changes the answer immediately - while the window is
+-- still made of glass - so every later hover, tab switch and lazily built panel
+-- takes the flat path. A selected button keeps its glass pill, because the flat
+-- path paints a backdrop and never hides that texture, and you end up wearing
+-- both skins at once until you reload.
+--
+-- So: resolved on FIRST USE, which is when the window is built and therefore
+-- after SavedVariables have loaded, and stable from then on. The command writes
+-- the config and says reload; the config is the pending choice, not the live one.
+local active
+function AltStable.SkinName()
+    if not active then active = StoredSkin() end
+    return active
+end
+
+-- For tests, which drive several skins through one Lua state. Nothing in the
+-- addon calls this: in game the whole point is that the active skin does not
+-- change under the window's feet.
+function AltStable._ResetSkinCache()
+    active = nil
 end
 
 function AltStable.Skin()

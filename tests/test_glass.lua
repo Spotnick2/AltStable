@@ -35,6 +35,14 @@ assert(loadfile("Glass.lua"))("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 
+-- The active skin is resolved ONCE and held for the session, so a test that
+-- drives several through one Lua state has to clear it - in game the whole
+-- point is that it does not change under the window's feet.
+local function useSkin(name)
+    AltStableConfig.skin = name
+    AltStable._ResetSkinCache()
+end
+
 local Glass = AltStable.Glass
 check("the material loaded", Glass ~= nil)
 if not Glass then
@@ -91,21 +99,21 @@ check("  and the skin after it, since it reads AltStable.C",
 -- Choosing a skin
 ------------------------------------------------------------
 
-AltStableConfig.skin = nil
+useSkin(nil)
 eq("an unset skin falls back to a default", AltStable.SkinName(), "clear")
 check("  which is a glass one", AltStable.SkinIsGlass())
 
-AltStableConfig.skin = "smoked"
+useSkin("smoked")
 eq("a chosen skin is honoured", AltStable.SkinName(), "smoked")
 
 -- A value on DISK, so it can be anything. A junk name must not produce a nil
 -- preset that then indexes into an error on the next render.
-AltStableConfig.skin = "chartreuse"
+useSkin("chartreuse")
 eq("an unknown skin falls back rather than erroring", AltStable.SkinName(), "clear")
-AltStableConfig.skin = 42
+useSkin(42)
 eq("  and so does a non-string", AltStable.SkinName(), "clear")
 
-AltStableConfig.skin = "flat"
+useSkin("flat")
 check("flat is not glass", AltStable.SkinIsGlass() == false)
 
 -- The presets differ in the BODY only. The rim is deliberately shared:
@@ -125,11 +133,59 @@ end
 -- Applying the material
 ------------------------------------------------------------
 
+-- The active skin is resolved on FIRST USE, not at load.
+--
+-- The real order is: Skin.lua loads, SavedVariables arrive, the window is built
+-- and asks. Capturing at load would freeze the default before the player's
+-- choice exists, which is why this is lazy rather than a module-level constant -
+-- and a test that sets the config and then clears the cache cannot tell the two
+-- apart, because it has already put the value in place. So this reloads the
+-- file with nothing on disk, the way the client does.
+do
+    AltStableConfig.skin = nil
+    assert(loadfile("Skin.lua"))("AltStable")     -- loads before the config exists
+    AltStableConfig.skin = "smoked"               -- SavedVariables arrive
+    eq("a skin saved on disk is honoured, not the default frozen at load",
+       AltStable.SkinName(), "smoked")
+    useSkin("clear")
+end
+
+-- Changing the skin does NOT change the one the window is wearing.
+--
+-- The command writes the config and asks for a reload. If the active skin
+-- followed the config live, the window would still be made of glass while every
+-- later hover, tab switch and lazily built panel took the flat path - and a
+-- selected button would keep its glass pill, because the flat path paints a
+-- backdrop and never hides that texture. Both skins at once until reload.
+do
+    useSkin("clear")
+    eq("the active skin is the stored one to begin with", AltStable.SkinName(), "clear")
+
+    local btn = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
+    AltStable.SkinButtonActive(btn)
+    check("a selected button has a glass pill", btn._skinState:IsShown())
+
+    -- The command, WITHOUT the cache reset a test would normally do - because
+    -- in game there is no reset, and that is the whole point.
+    AltStableConfig.skin = "flat"
+    eq("the pending choice is recorded", AltStable.PendingSkinName(), "flat")
+    eq("  but the window keeps the skin it was built with",
+       AltStable.SkinName(), "clear")
+
+    -- Navigating after the command: the pill must still be handled by the glass
+    -- path, or it stays lit for ever.
+    AltStable.SkinButtonIdle(btn)
+    check("  so deselecting still hides the pill rather than leaving it lit",
+          btn._skinState:IsShown() == false)
+
+    useSkin("clear")
+end
+
 local function freshHost()
     return CreateFrame("Frame", nil, UIParent)
 end
 
-AltStableConfig.skin = "flat"
+useSkin("flat")
 do
     local host = freshHost()
     eq("under flat, no material is applied", AltStable.SkinWindow(host), nil)
@@ -143,7 +199,7 @@ do
     eq("  and no mask", host._skinMask, nil)
 end
 
-AltStableConfig.skin = "clear"
+useSkin("clear")
 local host = freshHost()
 local g = AltStable.SkinWindow(host)
 check("under glass, the material is applied", g ~= nil)
@@ -178,7 +234,7 @@ end
 -- The preset reaches the material. Changing skin and re-applying has to change
 -- what gets painted, or the presets are decoration.
 do
-    AltStableConfig.skin = "smoked"
+    useSkin("smoked")
     local dark = AltStable.SkinWindow(freshHost())
     check("the smoked preset paints a denser body",
           dark and dark.tint._colorTexture and
@@ -192,7 +248,7 @@ end
 -- The reason phase 1 could not be "the window and nothing else". Every fill
 -- that reaches the frame edge draws the rounded corner straight back on.
 
-AltStableConfig.skin = "clear"
+useSkin("clear")
 do
     local window = freshHost()
     AltStable.SkinWindow(window)
@@ -251,7 +307,7 @@ end
 -- then not wired. The assertion is therefore as much about the clipping as
 -- about the look.
 
-AltStableConfig.skin = "clear"
+useSkin("clear")
 do
     local window = freshHost()
     AltStable.SkinWindow(window)
@@ -291,7 +347,7 @@ do
           sc and ("%s a=%s"):format(tostring(sc[1]), tostring(sc[4])))
 end
 
-AltStableConfig.skin = "flat"
+useSkin("flat")
 do
     local bar = CreateFrame("Frame", nil, UIParent)
     local bg = bar:CreateTexture(nil, "BACKGROUND")
@@ -311,7 +367,7 @@ end
 -- padding are shared deliberately - only brightness and colour differ - so the
 -- sidebar reads as one control rather than two unrelated effects.
 
-AltStableConfig.skin = "flat"
+useSkin("flat")
 do
     local btn = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
     AltStable.ApplyBGOnly(btn, 0, 0, 0, 0)
@@ -322,7 +378,7 @@ do
           a == AltStable.C.BG_BTN_ACTIVE[4], tostring(a))
 end
 
-AltStableConfig.skin = "clear"
+useSkin("clear")
 local pillPoints
 do
     local btn = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
@@ -370,9 +426,9 @@ end
 -- An inactive label reading as "disabled" was the other thing an outside eye
 -- caught. TEXT_DIM is 0.50, chosen against a near-black panel.
 do
-    AltStableConfig.skin = "clear"
+    useSkin("clear")
     local gr = AltStable.SkinNavDim()
-    AltStableConfig.skin = "flat"
+    useSkin("flat")
     local fr = AltStable.SkinNavDim()
     check("nav labels are brighter on glass than on the flat panel", gr > fr,
           ("%s vs %s"):format(tostring(gr), tostring(fr)))
@@ -382,12 +438,12 @@ end
 -- The stripe runs the full height hard against the left edge, so over a
 -- rounded selection it cuts across both corners.
 do
-    AltStableConfig.skin = "clear"
+    useSkin("clear")
     local stripe = CreateFrame("Frame", nil, UIParent):CreateTexture()
     AltStable.SkinStripe(stripe, true, 1, 0.82, 0)
     check("the stripe steps aside under glass", stripe:IsShown() == false)
 
-    AltStableConfig.skin = "flat"
+    useSkin("flat")
     AltStable.SkinStripe(stripe, true, 1, 0.82, 0)
     check("  and is still drawn under flat", stripe:IsShown())
     AltStable.SkinStripe(stripe, false)
@@ -398,7 +454,7 @@ end
 -- thing in a near-black window and read as the heading; on a light band it
 -- competes with the sidebar's selected item, which is also the accent.
 do
-    AltStableConfig.skin = "clear"
+    useSkin("clear")
     local r, g, b = AltStable.SkinTitleColor()
     check("the title is white on glass", r == g and g == b and r > 0.9,
           ("%s,%s,%s"):format(tostring(r), tostring(g), tostring(b)))
@@ -406,7 +462,7 @@ do
     -- they share a red channel - comparing the first return alone passes
     -- whichever one is handed back, which is exactly what it did.
     local ar, ag, ab = AltStable.GetAccentRGB()
-    AltStableConfig.skin = "flat"
+    useSkin("flat")
     local fr, fg, fb = AltStable.SkinTitleColor()
     check("  and the accent on flat",
           fr == ar and fg == ag and fb == ab,
@@ -419,14 +475,14 @@ end
 ------------------------------------------------------------
 
 do
-    AltStableConfig.skin = "clear"
+    useSkin("clear")
     local fs = freshHost():CreateFontString()
     AltStable.SkinText(fs)
     local x, y = fs:GetShadowOffset()
     check("chrome text gains a shadow under glass", x ~= 0 or y ~= 0,
           ("%s,%s"):format(tostring(x), tostring(y)))
 
-    AltStableConfig.skin = "flat"
+    useSkin("flat")
     local plain = freshHost():CreateFontString()
     AltStable.SkinText(plain)
     local px, py = plain:GetShadowOffset()

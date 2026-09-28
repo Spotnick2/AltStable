@@ -1874,6 +1874,14 @@ AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
 AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
 AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 
+-- Re-apply the screen limit to the size the window already has. Called after a
+-- scale change, which alters how much display the same numbers occupy without
+-- going through either resize path.
+function AltStable.RefitWindow()
+    if not frame then return end
+    frame:SetSize(FitToScreen(frame:GetWidth(), frame:GetHeight()))
+end
+
 local function SaveWindowPosition()
     if not (frame and AltStableConfig and AltStableConfig.rememberWindowPosition) then
         return
