@@ -248,7 +248,12 @@ WoW.reset()
 ------------------------------------------------------------
 
 -- RowRenderer needs the palette from Theme.lua at load.
+-- The material and the skin seam, in .toc order: CharacterMenu below asks the
+-- skin whether it is glass, so a harness without them is a load order that
+-- cannot happen in game.
+assert(loadfile("Glass.lua"))("AltStable")
 dofile("Theme.lua")
+dofile("Skin.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
 local iconOf = AltStable._test and AltStable._test.RaceIconText

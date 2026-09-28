@@ -121,6 +121,28 @@ local owedRestore     -- a protected restore we could not make during combat
 -- every path hides it before the shutter, and if one ever forgets, the
 -- blackout catches it rather than printing it into the portrait.
 local STRAY_FRAMES = { "AltStableSheet", "AltStableRenderPrompt" }
+
+-- The character menu is CLOSED before a capture rather than dimmed, and it is
+-- not on the list above.
+--
+-- Zeroing alpha is how the sheet is suppressed, and the menu cannot be handled
+-- that way: during the showcase it is lifted to its own parentless root, so it
+-- is not a child of the sheet and the sheet's alpha does not reach it. The
+-- sheet closes the menu from OnHide, but a capture never hides the sheet - it
+-- makes it invisible - so that handler does not run either.
+--
+-- Closing it uses the path that already exists: it releases the keyboard, hides
+-- the full-screen click catcher and puts the menu back under its real parent. A
+-- catcher left invisible but alive would still be eating every click on screen
+-- during the capture, which is worse than a menu in the portrait.
+--
+-- This gap predates the glass work - the flat menu was equally unsuppressed -
+-- and was found reviewing it.
+local function CloseStrayMenu()
+    if AltStable and AltStable.CloseCharacterMenu then
+        pcall(AltStable.CloseCharacterMenu)
+    end
+end
 local strays
 
 local function SuppressStrays()
@@ -157,6 +179,7 @@ local function SuppressStrays()
         pcall(f.SetAlpha, f, 0)
     end
 
+    CloseStrayMenu()
     for _, name in ipairs(STRAY_FRAMES) do zero(_G[name]) end
     zero(GameTooltip)
     return #strays
@@ -1555,6 +1578,11 @@ AltStableProbe._test = {
     SNOOZE_SECONDS = SNOOZE_SECONDS,
     snoozeUntil    = function() return snoozeUntil end,
     STRAY_FRAMES   = STRAY_FRAMES,
+    SuppressStrays = function() return SuppressStrays() end,
+    -- Its counterpart. Suppression zeroes real alphas and records them in a
+    -- module-local table; a test that calls one without the other leaves those
+    -- frames invisible for every assertion after it.
+    RestoreStrays  = function() return RestoreStrays() end,
     LookFingerprint = function(g) return LookFingerprint(g) end,
     StoredFingerprint = function(g) return StoredFingerprint(g) end,
     RememberFingerprint = function(g, fp) return RememberFingerprint(g, fp) end,

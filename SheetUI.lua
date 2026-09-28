@@ -2346,7 +2346,20 @@ local function CreateFrameIfNeeded()
             -- inside the 1.3s settle below, since `capturing` - which is what
             -- stops OnShow replaying the fade - is not set until after it.
             if AltStable.FinishOpenAnimation then AltStable.FinishOpenAnimation() end
-            frame:SetAlpha(0)
+            -- Close the character menu before blacking out.
+    --
+    -- The fix for this first went into the probe's SuppressStrays, which is the
+    -- wrong altitude twice over: the probe is a dev-only addon that may not be
+    -- installed at all, and the SHEET has its own capture path right here.
+    --
+    -- The menu cannot be handled by the blackout that follows. During the
+    -- showcase its root is lifted out from under UIParent, so neither
+    -- UIParent:Hide() nor this frame's alpha reaches it - and an alpha-0 frame
+    -- still takes the mouse, so a right-click during the settle opens a menu
+    -- that lands in the portrait and leaves a full-screen catcher eating every
+    -- click for the rest of the capture.
+    if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
+    frame:SetAlpha(0)
             C_Timer.After(1.3, function()   -- let the weapon draw + zoom + recenter settle
                 -- Blackout for the shot. When the showcase is active the engine has
                 -- ALREADY hidden the whole UI via SetUIVisibility(false), so the
@@ -2440,8 +2453,22 @@ local function CreateFrameIfNeeded()
     refTip:SetFrameLevel(200)
     refTip:SetPoint("TOPRIGHT", refBtn, "BOTTOMRIGHT", 0, -5)
     refTip:SetSize(258, 62)
-    AltStable.ApplyBackdrop(refTip, 0.05, 0.05, 0.05, 0.96)
+    -- A floating surface with its own outline, even though it is parented to
+    -- the sheet: TOOLTIP strata, toplevel, its own frame level, and it draws
+    -- clear of the window. So it gets the material like the menu and the toast
+    -- rather than being left as one flat panel beside them.
+    if not AltStable.SkinWindow(refTip, "small") then
+        AltStable.ApplyBackdrop(refTip, 0.05, 0.05, 0.05, 0.96)
+    end
     local refTipText = refTip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    AltStable.SkinText(refTipText)
+    AltStable._test.refTip, AltStable._test.refTipText = refTip, refTipText
+    -- The button, so a test can drive the REAL hover rather than calling the
+    -- re-levelling helper itself - the bug was the hover not calling it.
+    AltStable._test.refBtn = refBtn
+    -- And the sheet's own capture path, which is where the menu has to be
+    -- closed: the probe is a dev-only addon that may not be installed.
+    AltStable._test.CaptureReferenceFromSheet = CaptureReferenceFromSheet
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
@@ -2462,6 +2489,11 @@ local function CreateFrameIfNeeded()
         refBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
         refTip:Show()
         refTip:Raise()
+        -- Raise() moves the HOST. The material's rim is a child frame pinned to
+        -- host level + 10 when it was applied, so raising the tooltip climbs it
+        -- above its own outline and its body then draws over the rim - from the
+        -- second hover onwards it would have been a bare panel with no edge.
+        AltStable.SkinRelevel(refTip)
     end)
     refBtn:SetScript("OnLeave", function()
         refBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
@@ -3628,15 +3660,25 @@ local function CreateFrameIfNeeded()
     sbBorder:SetColorTexture(0, 0, 0, 1)
 
     --------------------------------------------------------
-    -- The data region stays OPAQUE under glass
+    -- The data region gets an UNDERLAY under glass
     --------------------------------------------------------
-    -- "The rows have alpha-1.00 fills, so the table is already opaque" is not
-    -- true, and the exception is the one that would look worst. DimRow in
-    -- RowRenderer sets the WHOLE row - background included - to
-    -- HIDDEN_ROW_ALPHA = 0.45 for a hidden character, so once the nearly opaque
-    -- main backdrop stops being there, scenery shows through exactly the rows
-    -- already marked as less important. Same for the frozen name column beside
-    -- them.
+    -- Ordinary rows need no help: their backgrounds are already alpha 1.00, as
+    -- are group rows and column headers, and class tint and hover sit above
+    -- those. Making the window translucent does not expose scenery through
+    -- them, and this underlay is not what makes them opaque.
+    --
+    -- HIDDEN CHARACTERS are the exception, and the one that would look worst.
+    -- DimRow takes the WHOLE row - background, text, tint and highlight - to
+    -- HIDDEN_ROW_ALPHA = 0.45, so the window behind it shows through. Same for
+    -- the frozen name column beside them.
+    --
+    -- This REDUCES that rather than removing it, and the numbers are worth
+    -- writing down because the pane is deliberately not opaque: composited over
+    -- the body tint, a dimmed row lets ~16% of the world through under `clear`
+    -- and ~4% under `smoked`, against ~42% with no underlay at all. Whether the
+    -- remainder reads as "de-emphasised" or as "broken" is a look-at-it
+    -- question - those rows are meant to recede - and an opaque pane here would
+    -- buy it by killing the material across the whole table.
     --
     -- One underlay behind both viewports rather than a change to row rendering:
     -- dimming, alternating bands, class tint and hover all keep working, and

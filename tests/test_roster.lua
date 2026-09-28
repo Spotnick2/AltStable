@@ -26,7 +26,12 @@ end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
+-- The material and the skin seam, in .toc order: CharacterMenu below asks the
+-- skin whether it is glass, so a harness without them is a load order that
+-- cannot happen in game.
+assert(loadfile("Glass.lua"))("AltStable")
 dofile("Theme.lua")
+dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
 -- Scanner.lua owns AltStable.GEAR_SLOTS, the one list of the seventeen
 -- equipment slots. The detail pane's paper doll walks it, and it used to carry

@@ -979,6 +979,70 @@ do
             end
         end
 
+        -- The reference tooltip's CALL SITE. Replacing it with `if true then` -
+        -- shipping the old flat backdrop and no material - left every suite
+        -- green, which is how the PR came to claim coverage it did not have.
+        do
+            local tip = T.refTip
+            check("the reference tooltip is built", tip ~= nil)
+            if tip then
+                check("  and wears the material", tip._glass ~= nil)
+                if tip._glass and tip._glass.top then
+                    -- It raises itself on hover, and the rim is a CHILD pinned
+                    -- at Apply time - so without re-levelling the tooltip climbs
+                    -- above its own outline and draws its body over it.
+                    -- Driven through the REAL hover handler, not by calling the
+                    -- helper: the bug was that the hover raised the tooltip and
+                    -- did not re-level the rim, so a test that calls
+                    -- SkinRelevel itself proves only that the helper works.
+                    local before = tip._glass.top:GetFrameLevel()
+                    tip:SetFrameLevel((tip:GetFrameLevel() or 0) + 50)
+                    local onEnter = T.refBtn and T.refBtn:GetScript("OnEnter")
+                    check("the reference button has a hover handler", onEnter ~= nil)
+                    if onEnter then onEnter(T.refBtn) end
+                    check("  and its rim follows when the tooltip is raised",
+                          tip._glass.top:GetFrameLevel() > before,
+                          ("%s -> %s"):format(tostring(before),
+                              tostring(tip._glass.top:GetFrameLevel())))
+                    check("    staying above it",
+                          tip._glass.top:GetFrameLevel() > tip:GetFrameLevel())
+                end
+            end
+            local txt = T.refTipText
+            check("the reference tooltip's text is reachable", txt ~= nil)
+            if txt then
+                local sx, sy = txt:GetShadowOffset()
+                check("  and has a shadow", sx ~= 0 or sy ~= 0,
+                      ("%s,%s"):format(tostring(sx), tostring(sy)))
+            end
+        end
+
+        -- The SHEET's own capture path closes the menu. The fix first went into
+        -- the probe's SuppressStrays, which is the wrong altitude twice over:
+        -- the probe is a dev-only addon that may not be installed, and an
+        -- alpha-0 sheet still takes the mouse - so a right-click during the
+        -- settle opened a menu that landed in the portrait and left a
+        -- full-screen catcher eating every click.
+        do
+            -- A character record, or the capture bails before the blackout it
+            -- is being tested for and the assertion passes on a path that never
+            -- ran.
+            local savedDB = AltStableDB
+            AltStableDB = { [UnitGUID("player")] = {
+                guid = UnitGUID("player"), name = "Me", class = "MAGE",
+                realm = "R", level = 1 } }
+            local closed = 0
+            local realClose = AltStable.CloseCharacterMenu
+            AltStable.CloseCharacterMenu = function() closed = closed + 1 end
+            if T.CaptureReferenceFromSheet then
+                pcall(T.CaptureReferenceFromSheet)
+            end
+            AltStable.CloseCharacterMenu = realClose
+            AltStableDB = savedDB
+            check("the sheet's own capture closes the character menu first",
+                  closed > 0, tostring(closed))
+        end
+
         local tt = T.titleText
         if tt then
             local tr, tg, tb = tt:GetTextColor()

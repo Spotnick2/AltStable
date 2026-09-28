@@ -101,20 +101,34 @@ end
 local toastFrame
 local toastLines = {}   -- reusable FontStrings for list entries
 
+AltStable._test = AltStable._test or {}
+AltStable._test.ToastFrame = function() return toastFrame end
+AltStable._test.ToastLine  = function(i) return toastLines and toastLines[i] end
+
 local function BuildToastFrame()
     if toastFrame then return toastFrame end
 
     local f = CreateFrame("Frame", "AltStableAggregateToast", UIParent, "BackdropTemplate")
     f:SetSize(TOAST_WIDTH, TOAST_HEADER_H + TOAST_LINE_H + TOAST_PADDING * 2)
     f:SetFrameStrata("FULLSCREEN_DIALOG")
-    f:SetBackdrop({
-        bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
-        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    f:SetBackdropColor(0.08, 0.08, 0.12, 0.95)
-    f:SetBackdropBorderColor(0.4, 0.4, 0.5, 0.9)
+    -- The material, or the tooltip backdrop it has always had.
+    --
+    -- The toast animates its ALPHA from 1 to 0 and back, and every region the
+    -- material makes belongs to this frame or to a child of it, so the whole
+    -- thing fades together - nothing here opts out of parent alpha. There is no
+    -- translation animation and no ADD-blended layer in Glass.Apply; the ADD
+    -- highlights live in Glass.Bar and Glass.Sheen, which this addon does not
+    -- ship the art for.
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
+        f:SetBackdrop({
+            bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        f:SetBackdropColor(0.08, 0.08, 0.12, 0.95)
+        f:SetBackdropBorderColor(0.4, 0.4, 0.5, 0.9)
+    end
 
     -- Header icon (changes per-call based on profession composition)
     local icon = f:CreateTexture(nil, "ARTWORK")
@@ -130,6 +144,7 @@ local function BuildToastFrame()
     title:SetPoint("TOPRIGHT", f,    "TOPRIGHT", -30, -4)
     title:SetJustifyH("LEFT")
     title:SetTextColor(1, 0.82, 0)
+    AltStable.SkinText(title)
     f.title = title
 
     -- Subtitle with dismiss hint
@@ -138,11 +153,22 @@ local function BuildToastFrame()
     sub:SetPoint("TOPRIGHT", title, "BOTTOMRIGHT", 0, -2)
     sub:SetJustifyH("LEFT")
     sub:SetText("|cff888888Click to dismiss · auto-hides in 10s|r")
+    -- The grey hint is the least legible thing here and the first to suffer
+    -- when the backing gets thinner, so it gets a shadow too.
+    AltStable.SkinText(sub)
     f.sub = sub
 
     -- Close button (clickable X)
+    -- ABOVE the rim. The material puts its rim on a child frame at host + 10,
+    -- and this button defaults to host + 1 while being anchored 2px OUTSIDE the
+    -- frame - which is exactly where the rim art is opaque. Under the old
+    -- tooltip border nothing covered it; under glass the rim line was drawn
+    -- straight across the X.
+    f.closeBtn = nil
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetFrameLevel((f:GetFrameLevel() or 0) + 12)
     close:SetSize(24, 24)
+    f.closeBtn = close
     close:SetPoint("TOPRIGHT", 2, 2)
     close:SetScript("OnClick", function()
         if AltStable.DismissToast then AltStable.DismissToast() end
@@ -179,6 +205,15 @@ local function GetToastLine(index, parent)
     if toastLines[index] then return toastLines[index] end
     local fs = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
     fs:SetJustifyH("LEFT")
+    -- These are the lines the denser popup body exists to protect - the
+    -- class-coloured name and the cooldown, the one thing the toast is for -
+    -- and they were the only text on it NOT given a shadow. The header above
+    -- them had one, which is the wrong way round: the header is static and
+    -- these are what you actually read.
+    --
+    -- Here rather than at each use, because the lines are pooled and created
+    -- once.
+    AltStable.SkinText(fs)
     toastLines[index] = fs
     return fs
 end
