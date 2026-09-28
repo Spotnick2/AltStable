@@ -928,6 +928,101 @@ end
 
 do
     local T = AltStable._test
+
+    ------------------------------------------------------------
+    -- The window fits the display (#99)
+    ------------------------------------------------------------
+    -- Options is the only section that asks for a FIXED size rather than
+    -- sizing to its content - ResizeFrame(820, 760) - and nothing clamped it,
+    -- so on a shorter display, or at scale 1.25 where 760 is an effective 950,
+    -- the bottom of the window ran off the screen and took the last options
+    -- with it. The scroll frame inside cannot help: what is off-screen is the
+    -- window, not the content.
+    do
+        local f = T.frame
+        check("the sheet frame is reachable", f ~= nil)
+        local screenH = UIParent:GetHeight()
+        check("the stubs model a display-sized UIParent", screenH > 500,
+              tostring(screenH))
+
+        local w, h = T.FitToScreen(820, 760)
+        eq("a window that fits is left alone", w, 820)
+        eq("  in both directions", h, 760)
+
+        local _, tall = T.FitToScreen(820, 5000)
+        check("a window taller than the display is clamped", tall < 5000)
+        check("  to inside it, with a margin", tall <= screenH - T.SCREEN_MARGIN,
+              ("%s vs %s"):format(tostring(tall), tostring(screenH)))
+
+        local wide = T.FitToScreen(9000, 760)
+        check("and the same for width", wide <= UIParent:GetWidth() - T.SCREEN_MARGIN)
+
+        -- SCALE. The frame carries the user's scale and UIParent the client's,
+        -- so the two heights are numbers in different spaces - comparing them
+        -- raw is wrong by exactly the ratio nobody notices at 1.0, which is the
+        -- scale everything gets tested at.
+        local prev = f:GetEffectiveScale()
+        f:SetScale(1.25)
+        local _, scaled = T.FitToScreen(820, 5000)
+        f:SetScale(prev)
+        local _, unscaled = T.FitToScreen(820, 5000)
+        check("a scaled-up window is clamped sooner, in its own units",
+              scaled < unscaled,
+              ("1.25 gives %s, 1.0 gives %s"):format(tostring(scaled), tostring(unscaled)))
+
+        -- A floor, or a bad read during load leaves a window with no room for
+        -- anything and no way to get it back.
+        local savedH = UIParent:GetHeight()
+        UIParent:SetHeight(10)
+        local _, floored = T.FitToScreen(820, 760)
+        UIParent:SetHeight(savedH)
+        eq("an implausible screen does not shrink the window to nothing", floored, 760)
+
+        -- Fitting is not the same as being ON the display: the position is
+        -- remembered, and growing taller moves the bottom down while the saved
+        -- anchor holds the top still.
+        check("the window is kept on the screen", f:IsClampedToScreen())
+
+        -- Through the real resize, not just the helper. This is the half that
+        -- was missing: FitToScreen had eight assertions and the two lines that
+        -- call it had none, so removing them changed nothing the suite saw.
+        local maxH = (UIParent:GetHeight() * UIParent:GetEffectiveScale())
+                     / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+        T.ResizeFrame(820, 5000)
+        check("asking the window for more height than the display has is refused",
+              f:GetHeight() <= maxH,
+              ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(maxH)))
+        T.ResizeFrame(9000, 760)
+        check("  and more width", f:GetWidth() <= (UIParent:GetWidth()
+              * UIParent:GetEffectiveScale()) / (f:GetEffectiveScale() or 1)
+              - T.SCREEN_MARGIN)
+        -- And a reasonable request still goes through untouched, or "clamped"
+        -- would be satisfied by a window that is always the same size.
+        T.ResizeFrame(820, 760)
+        eq("a window that fits is sized exactly as asked", f:GetHeight(), 760)
+
+        -- The OTHER path. ResizeFrameToContent sets the size directly rather
+        -- than going through ResizeFrame, so it needed the clamp of its own -
+        -- and a roster long enough to want more height than the display has is
+        -- just as reachable as the Options tab asking for a fixed 760.
+        if T.ResizeFrameToContent then
+            local saved = UIParent:GetHeight()
+            -- 250, not something roomier: the sidebar alone floors the computed height
+            -- near 480, so a limit above that never binds and the assertion
+            -- passes whether the clamp is there or not. It has to be shorter
+            -- than the content genuinely wants.
+            UIParent:SetHeight(250)
+            T.ResizeFrameToContent()
+            local lim = (250 * UIParent:GetEffectiveScale())
+                        / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+            check("sizing to content is clamped to the display too",
+                  f:GetHeight() <= lim,
+                  ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(lim)))
+            UIParent:SetHeight(saved)
+        else
+            check("the content-sizing path is reachable from a test", false)
+        end
+    end
     local btn = CreateFrame("Frame")
     local over, under = T.ApplyRosterIcon(btn)
 
