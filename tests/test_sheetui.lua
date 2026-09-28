@@ -1879,11 +1879,18 @@ do
     -- The selected button is the one ON DISK, not the one loaded - that is the
     -- whole point of showing a pending state at all.
     other:GetScript("OnClick")(other)
+    -- ALL THREE CHANNELS. The accent is gold, {1.00, 0.82, 0.00}, so checking
+    -- red alone is satisfied by plain white - and the painter is SHARED with
+    -- the accent row now, so one slip there would drop the selection colour
+    -- from both rows at once with the suite green.
+    local function isAccent(fs)
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        local r, g, b = fs:GetTextColor()
+        return r == ar and g == ag and b == ab
+    end
     local lit, litName = 0, nil
     for _, b in ipairs(btns) do
-        local ar = { AltStable.GetAccentRGB() }
-        local r = b.lbl:GetTextColor()
-        if r == ar[1] then lit = lit + 1; litName = b.skinName end
+        if isAccent(b.lbl) then lit = lit + 1; litName = b.skinName end
     end
     eq("exactly one skin button reads as chosen", lit, 1)
     -- And it is the one ON DISK. Lighting the LOADED one instead passes a
@@ -1891,6 +1898,64 @@ do
     eq("  and it is the one just chosen, not the one loaded",
        litName, other.skinName)
     check("  which is not the loaded one", other.skinName ~= loaded)
+
+    -- CHANGING THE ACCENT REPAINTS THIS ROW. Its selected button is painted in
+    -- the accent, so it goes stale on exactly the same event the accent row
+    -- does - and that row has always refreshed itself.
+    do
+        local heldTheme = AltStableConfig.theme
+        -- OPEN, because the callback is guarded on the panel being shown - a
+        -- repaint of a hidden panel is work nobody sees, and OnShow covers the
+        -- other direction. Driving this with the panel hidden tests neither.
+        local panel = AltStable._test.optionsPanel
+        local wasShown = panel:IsShown()
+        panel:Show()
+        local before = { AltStable.GetAccentRGB() }
+        AltStable.SetConfigValue("theme", AltStableConfig.theme == "class" and "dark" or "class")
+        AltStable.ApplyTheme()
+        local after = { AltStable.GetAccentRGB() }
+        if after[1] ~= before[1] or after[2] ~= before[2] or after[3] ~= before[3] then
+            local stale = 0
+            for _, b in ipairs(btns) do
+                if b.skinName == AltStable.PendingSkinName() and not isAccent(b.lbl) then
+                    stale = stale + 1
+                end
+            end
+            eq("the chosen skin is repainted when the accent changes", stale, 0)
+        else
+            check("the accent actually changed, or this proves nothing", false,
+                  "class colour matched gold")
+        end
+        AltStable.SetConfigValue("theme", heldTheme)
+        AltStable.ApplyTheme()
+        if not wasShown then panel:Hide() end
+    end
+
+    -- AND THE PANEL RE-SYNCS IT ON OPEN. `/alts skin` writes the config from
+    -- outside this panel and says "reload" in chat; opening Options after that
+    -- and seeing the OLD skin lit, with no pending line, contradicts the
+    -- message the player just read - and invites them to click the lit button
+    -- and discard the choice they made.
+    do
+        local other2
+        for _, b in ipairs(btns) do
+            if b.skinName ~= AltStable.SkinName() then other2 = b end
+        end
+        AltStable.SetConfigValue("skin", AltStable.SkinName())   -- nothing pending
+        AltStable._test.RefreshSkinRow()
+        eq("nothing pending to start with", AltStable._test.SkinReloadPrompt(), nil)
+        AltStable.SetConfigValue("skin", other2.skinName)        -- as /alts skin does
+        -- THROUGH THE PANEL'S OWN OnShow, not by calling the refresher: the
+        -- bug was that OnShow re-synced every other control and not this one,
+        -- and a test that refreshes it itself cannot see that.
+        local optPanel = AltStable._test.optionsPanel
+        optPanel:GetScript("OnShow")(optPanel)
+        check("a skin chosen from the command line shows as pending on open",
+              AltStable._test.SkinReloadPrompt() ~= nil)
+        local chosen
+        for _, b in ipairs(btns) do if isAccent(b.lbl) then chosen = b.skinName end end
+        eq("  and the row lights the one that was chosen", chosen, other2.skinName)
+    end
 
     AltStableConfig.skin = held
 end

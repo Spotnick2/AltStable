@@ -2927,14 +2927,16 @@ local function CreateFrameIfNeeded()
         prevSkinBtn = b
     end
 
-    Y = Y - 26
-
     -- WHAT IS ON DISK vs WHAT IS ON SCREEN. The material is built when the
     -- window is, so choosing one here changes the next load, not this one -
     -- and saying so only when they disagree keeps a permanent instruction off
     -- a panel where nothing is pending.
+    --
+    -- BESIDE the buttons rather than under them, like the accent hint on the
+    -- next row. Reserving a line below would hold 30px open on every login -
+    -- the state nothing is pending in - for a message almost never shown.
     local optSkinReload = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optSkinReload:SetPoint("TOPLEFT", P + 60, Y)
+    optSkinReload:SetPoint("LEFT", prevSkinBtn, "RIGHT", 14, 0)
     optSkinReload:SetJustifyH("LEFT")
     optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
 
@@ -2961,6 +2963,8 @@ local function CreateFrameIfNeeded()
         optSkinReloadBtn:SetShown(waiting)
     end
     RefreshSkinRow()
+    AltStable._test.RefreshSkinRow = RefreshSkinRow
+    AltStable._test.optionsPanel = optionsPanel
     AltStable._test.skinBtns = skinBtns
     AltStable._test.SkinReloadPrompt = function()
         return optSkinReload:IsShown() and optSkinReload:GetText() or nil
@@ -3618,8 +3622,13 @@ local function CreateFrameIfNeeded()
     optHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
     optHint:SetJustifyH("LEFT"); optHint:SetWordWrap(true)
     optHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optHint:SetText("Class theme uses the current player class color as the UI accent. "
-        .."Character rows still use each character's own class color.")
+    -- The row above is "Accent" now, so a footnote about a "Class theme" is a
+    -- setting the player cannot find. What is worth keeping is the DISTINCTION
+    -- it draws, which the row's own hint has no room for: the accent is one
+    -- colour for the UI, and it is not what colours the character rows.
+    optHint:SetText("The accent is the UI's highlight colour. Character names "
+        .."and rows always use each character's own class colour, whichever "
+        .."accent is chosen.")
 
     -- Content height is known once the layout cursor has run; the scroll range
     -- derives from it. Extra padding covers the wrapped hint text below.
@@ -3662,6 +3671,13 @@ local function CreateFrameIfNeeded()
         OptRefreshWhitelist()
         OptRefreshHidden()
         RefreshThemeBtns()
+        -- And the skin row, which is the ONE control here that can be changed
+        -- from outside this panel: `/alts skin` writes the config and says
+        -- "reload" in chat. Without this, opening Options after that command
+        -- lights the old skin and shows no pending line - contradicting the
+        -- message the player has just read, and inviting them to click the
+        -- lit button and silently discard the choice they made.
+        RefreshSkinRow()
     end)
 
     -- Add the Options sidebar button
