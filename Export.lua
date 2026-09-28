@@ -258,6 +258,12 @@ function AltStable.ShowExport()
     exportFrame.editBox:SetText(tsv)
     exportFrame.editBox._selected = false
     exportFrame:Show()
+    -- ABOVE THE SHEET. Both are DIALOG and both are toplevel, so whichever was
+    -- raised last wins - and clicking the sheet raises it. That was survivable
+    -- while the sheet let clicks through to whatever was under it; since it
+    -- takes the mouse (#74) an export window left underneath is dead in the
+    -- overlap, which is most of it.
+    if exportFrame.Raise then exportFrame:Raise() end
     exportFrame.editBox:SetFocus()
     exportFrame.editBox:HighlightText()
 end

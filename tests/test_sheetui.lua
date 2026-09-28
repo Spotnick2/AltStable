@@ -2004,16 +2004,59 @@ end
 -- across the sheet the whole time it is open.
 do
     local sheet = AltStable._test.frame
+    -- Any capture left pending by an earlier test gets to finish first: its
+    -- restore is a timer, and asserting before it runs is asserting mid-shot.
+    WoW.flushTimers()
     check("the window takes the mouse itself", sheet:IsMouseEnabled())
+    -- As built, not as left by whatever ran before: a capture's restore turns
+    -- it back on, so the state now answers yes even if the window was created
+    -- click-through.
+    check("  and was built that way", AltStable._test.frameMouseAtBuild == true)
+
+    -- THE HARNESS AGREES WITH THE CLIENT about a nil. EnableMouse(nil) is a
+    -- disable there; reading it as an enable here would put the wrong default
+    -- back by another door, for any call site that ever passes a config value.
+    do
+        local probe = CreateFrame("Frame", nil, UIParent)
+        check("a fresh frame does not take the mouse", not probe:IsMouseEnabled())
+        probe:EnableMouse(nil)
+        check("  and EnableMouse(nil) does not give it one",
+              not probe:IsMouseEnabled())
+        local btn = CreateFrame("Button", nil, UIParent)
+        check("  while a button has it from the start", btn:IsMouseEnabled())
+    end
+
+    -- AND IT LETS GO FOR THE BLACKOUT, then takes it back. An alpha-0 frame
+    -- still takes the mouse, so a capture would otherwise leave an invisible
+    -- full-size dead zone for its two seconds - and for ever, if the chain of
+    -- timers behind it breaks before the restore.
+    -- The blackout and its restore as a PAIR, because they have to agree: the
+    -- sheet hides by alpha so OnHide does not tear the camera presentation
+    -- down, and an alpha-0 frame still takes the mouse.
+    AltStable._test.BlackoutSheetForCapture()
+    check("  and lets go of the mouse for the capture blackout",
+          not sheet:IsMouseEnabled())
+    eq("  while it is invisible", sheet:GetAlpha(), 0)
+
+    -- WITHOUT THE NORMAL RESTORE EVER RUNNING. That one sits at the end of four
+    -- nested timers; this is the case where something on the way errors or
+    -- returns early, which would otherwise leave an invisible full-size frame
+    -- holding the mouse for the session, its own close button unreachable.
+    WoW.flushTimers()
+    check("  and a broken capture still gives the mouse back",
+          sheet:IsMouseEnabled())
+    eq("  and the window with it", sheet:GetAlpha(), 1)
     -- And it is still DRAGGABLE, which is what the old comment was protecting:
     -- the title bar owns the drag, and enabling the mouse here does not touch
     -- that.
     check("  and is still movable", sheet:IsMovable())
+    -- NOT behind `if bar then`: a guard around the only assertion protecting
+    -- "dragging still works" means renaming the seam deletes the guarantee
+    -- without anything going red.
     local bar = AltStable._test.titleBar
-    if bar then
-        check("  with the title bar still holding the drag",
-              bar:IsMouseEnabled() and bar:GetScript("OnDragStart") ~= nil)
-    end
+    check("the title bar seam is exported", bar ~= nil)
+    check("  and the title bar still holds the drag",
+          bar and bar:IsMouseEnabled() and bar:GetScript("OnDragStart") ~= nil)
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))

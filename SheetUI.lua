@@ -2259,6 +2259,11 @@ local function CreateFrameIfNeeded()
     -- Dragging still belongs to the title bar; enabling the mouse here only
     -- stops clicks and hovers falling through to the world behind.
     frame:EnableMouse(true)
+    -- Recorded at BUILD, because by the time a test can look, a capture's
+    -- blackout may have turned it off and its restore turned it back on - so
+    -- "the window takes the mouse" answers yes either way and the decision
+    -- made here goes unasserted.
+    AltStable._test.frameMouseAtBuild = frame:IsMouseEnabled()
     tinsert(UISpecialFrames,"AltStableSheet")
     frame:SetScript("OnShow", function()
         -- The capture's UIParent:Show() re-fires this OnShow; skip re-entering the
@@ -2367,6 +2372,32 @@ local function CreateFrameIfNeeded()
     -- hide THIS window (via alpha, so we don't fire OnHide/Exit and tear the
     -- presentation down), draw weapons, Screenshot(), then restore. Stamps
     -- refshot_ts on the player's record for the pipeline to match.
+    -- HIDING THE SHEET FOR A SHOT, and coming back from it. One pair, because
+    -- they have to agree: it hides by ALPHA rather than Hide(), so OnHide does
+    -- not fire and tear the camera presentation down - and an alpha-0 frame
+    -- still takes the mouse. Since #74 this window does take it, so alpha alone
+    -- leaves an invisible full-size dead zone for the two seconds of the
+    -- capture, with nothing on screen to explain it and a camera drag that
+    -- starts inside it doing nothing.
+    --
+    -- The restore is also armed on a TIMER of its own, because the normal one
+    -- sits at the end of four nested timers: anything that returns early or
+    -- errors on the way would otherwise leave this window invisible AND holding
+    -- the mouse, permanently, with its own close button unreachable. Idempotent
+    -- and later than the capture takes, so it only ever fires when the normal
+    -- path did not.
+    local function RestoreSheetFromCapture()
+        frame:SetAlpha(1)
+        frame:EnableMouse(true)
+    end
+    local function BlackoutSheetForCapture()
+        frame:SetAlpha(0)
+        frame:EnableMouse(false)
+        if C_Timer and C_Timer.After then C_Timer.After(4, RestoreSheetFromCapture) end
+    end
+    AltStable._test.BlackoutSheetForCapture = BlackoutSheetForCapture
+    AltStable._test.RestoreSheetFromCapture = RestoreSheetFromCapture
+
     local function CaptureReferenceFromSheet()
         -- The two-shot capture when it is available, which is what produces a
         -- portrait anything actually reads. This button used to take a single
@@ -2462,7 +2493,8 @@ local function CreateFrameIfNeeded()
     -- that lands in the portrait and leaves a full-screen catcher eating every
     -- click for the rest of the capture.
     if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
-    frame:SetAlpha(0)
+    BlackoutSheetForCapture()
+
             C_Timer.After(1.3, function()   -- let the weapon draw + zoom + recenter settle
                 -- Blackout for the shot. When the showcase is active the engine has
                 -- ALREADY hidden the whole UI via SetUIVisibility(false), so the
@@ -2499,7 +2531,7 @@ local function CreateFrameIfNeeded()
                             end
                         end
                         AltStableCameraPresentation.capturing = false
-                        frame:SetAlpha(1)
+                        RestoreSheetFromCapture()
                         if type(SetCVar) == "function" then
                             for k, v in pairs(saved) do
                                 if v then
