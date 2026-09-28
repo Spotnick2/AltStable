@@ -1835,5 +1835,65 @@ do
     end
 end
 
+------------------------------------------------------------
+-- The skin picker in Options (#108)
+------------------------------------------------------------
+-- The material shipped reachable only from `/alts skin`, so a player who never
+-- read the release notes never knew there was one.
+do
+    local btns = AltStable._test.skinBtns or {}
+    eq("there is a button per skin", #btns, 3)
+    -- BUILT FROM THE TABLE, so a fourth preset arrives on its own rather than
+    -- being a fourth place to remember.
+    local labels = {}
+    for i, b in ipairs(btns) do labels[i] = b.lbl:GetText() end
+    eq("flat comes first, because it is the unstyled one", btns[1].skinName, "flat")
+    for _, b in ipairs(btns) do
+        eq("  " .. b.skinName .. " wears its own label",
+           b.lbl:GetText(), AltStable.SKINS[b.skinName].label or b.skinName)
+    end
+
+    local held = AltStableConfig.skin
+    -- CHOOSING ONE WRITES IT AND SAYS SO. The material is built when the window
+    -- is, so this changes the next load - and a picker that looked like it had
+    -- done nothing is why the command version says "reload" in chat.
+    local loaded = AltStable.SkinName()
+    local other
+    for _, b in ipairs(btns) do if b.skinName ~= loaded then other = b end end
+    other:GetScript("OnClick")(other)
+    eq("clicking a skin stores it", AltStableConfig.skin, other.skinName)
+    local prompt = AltStable._test.SkinReloadPrompt()
+    check("  and the panel says it needs a reload", prompt ~= nil, tostring(prompt))
+    check("  naming the one you picked",
+          prompt and prompt:find(AltStable.SKINS[other.skinName].label, 1, true) ~= nil,
+          tostring(prompt))
+
+    -- And NOT while the choice matches what the window is already wearing:
+    -- a permanent "reload" on a panel with nothing pending is noise.
+    local current
+    for _, b in ipairs(btns) do if b.skinName == loaded then current = b end end
+    current:GetScript("OnClick")(current)
+    eq("choosing the loaded skin is not a pending change",
+       AltStable._test.SkinReloadPrompt(), nil)
+
+    -- The selected button is the one ON DISK, not the one loaded - that is the
+    -- whole point of showing a pending state at all.
+    other:GetScript("OnClick")(other)
+    local lit, litName = 0, nil
+    for _, b in ipairs(btns) do
+        local ar = { AltStable.GetAccentRGB() }
+        local r = b.lbl:GetTextColor()
+        if r == ar[1] then lit = lit + 1; litName = b.skinName end
+    end
+    eq("exactly one skin button reads as chosen", lit, 1)
+    -- And it is the one ON DISK. Lighting the LOADED one instead passes a
+    -- count and shows the player their choice did not take.
+    eq("  and it is the one just chosen, not the one loaded",
+       litName, other.skinName)
+    check("  which is not the loaded one", other.skinName ~= loaded)
+
+    AltStableConfig.skin = held
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
