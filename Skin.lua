@@ -477,8 +477,12 @@ end
 local STRIPE_LIFT, GROUP_LIFT, HEADER_LIFT = 0.035, 0.075, 0.053
 
 function AltStable.SkinDataColor()
-    local skin = AltStable.Skin()
-    return skin.data or AltStable.C.BG_ROW_ODD
+    -- The same question its siblings ask, not "does this preset name a colour".
+    -- SkinIsGlass is `material and Glass ~= nil`, so if the material failed to
+    -- load every other path falls back to the flat palette while this one would
+    -- have gone on handing out a glass surface nothing else agreed with.
+    if not AltStable.SkinIsGlass() then return AltStable.C.BG_ROW_ODD end
+    return AltStable.Skin().data or AltStable.C.BG_ROW_ODD
 end
 
 -- The alternating band. Flat keeps its two absolute greys; under glass the odd

@@ -1774,6 +1774,55 @@ do
         end
     end
 
+    -- AND IT ENDS WHERE THE TABLE ENDS.
+    --
+    -- The surface was pinned once at frame creation, 36 from the bottom, while
+    -- the viewport's bottom MOVES: 23 with no horizontal scrollbar and 43 with
+    -- one. Thirteen pixels of difference, invisible while every row painted an
+    -- opaque band over it - and the moment the rows became lifts, a strip of
+    -- moving world under the last row. The top was frozen the same way, at the
+    -- header height of whichever section happened to build the frame.
+    do
+        local sheet = _G["AltStableSheet"]
+        local dataBG = AltStable._dataBG
+        local body = sheet and sheet.bodyScroll
+        local function edge(region, want)
+            for i = 1, (region:GetNumPoints() or 0) do
+                local point, _, _, x, y = region:GetPoint(i)
+                if point == want then return x, y end
+            end
+        end
+        check("there is a surface and a viewport to compare", dataBG and body)
+        if dataBG and body then
+            local _, surfaceBot = edge(dataBG, "BOTTOMRIGHT")
+            local _, viewBot    = edge(body,   "BOTTOMRIGHT")
+            eq("the surface ends where the table ends", surfaceBot, viewBot)
+            local _, surfaceTop = edge(dataBG, "TOPLEFT")
+            local _, viewTop    = edge(body,   "TOPLEFT")
+            eq("  and starts where it starts", surfaceTop, viewTop)
+
+            -- ON EVERY SECTION, not just the one that built the frame. The
+            -- header is 28 tall here and 64 on others, so a top frozen at
+            -- creation is right exactly once - and a test that only ever looks
+            -- at the default section cannot tell a tracked edge from a frozen
+            -- one that happens to match.
+            local moved = false
+            for _, b in ipairs(AltStable._test.sidebarBtns or {}) do
+                -- The TABLE sections. Options is a panel: it hides the body and
+                -- the surface with it, so there is nothing to line up there.
+                if b.sectionId and b.sectionId ~= "options" then
+                    b:GetScript("OnClick")(b)
+                    local _, t2 = edge(dataBG, "TOPLEFT")
+                    local _, v2 = edge(body,   "TOPLEFT")
+                    eq("  on every section's header height", t2, v2)
+                    if t2 ~= surfaceTop then moved = true end
+                end
+            end
+            check("  and at least one section moved that edge", moved,
+                  "otherwise this proves nothing")
+        end
+    end
+
     -- The surface itself, which had been painted with the PANE - a translucent
     -- panel colour - while twenty-one opaque rows sat on top hiding it.
     local dataBG = AltStable._dataBG
