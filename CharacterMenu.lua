@@ -141,8 +141,20 @@ local function PlaceAtCursor()
     -- screen in the same units the offsets are in.
     local sw, sh = root:GetWidth() or 0, root:GetHeight() or 0
     local pw, ph = panel:GetWidth() or 0, panel:GetHeight() or 0
-    if sw > 0 then x = math.max(0, math.min(x, sw - pw)) end
-    if sh > 0 then y = math.max(ph, math.min(y, sh)) end
+    -- The material's drop shadow hangs OUTSIDE the panel - 12px right and 14px
+    -- below for the small set - so a clamp that knows only the panel's own size
+    -- puts it flush to the edge and clips the shadow off on that side alone.
+    -- The menu then reads as a card lit from a different direction depending on
+    -- where it happened to open.
+    local padR, padB = 0, 0
+    if AltStable.SkinIsGlass and AltStable.SkinIsGlass()
+       and AltStable.Glass and AltStable.Glass.SIZES then
+        local sp = AltStable.Glass.SIZES.small.shadowPad
+        padR, padB = sp[3] or 0, -(sp[4] or 0)
+    end
+
+    if sw > 0 then x = math.max(0, math.min(x, sw - pw - padR)) end
+    if sh > 0 then y = math.max(ph + padB, math.min(y, sh)) end
 
     -- The panel hangs DOWN and RIGHT from the cursor, like every other menu.
     panel:SetPoint("TOPLEFT", root, "BOTTOMLEFT", x, y)
@@ -414,11 +426,16 @@ AltStable._test.MenuIsShown = function() return root ~= nil and root:IsShown() a
 -- The panel and the catcher, so a test can check the material did not disturb
 -- the input hierarchy: the catcher is a SIBLING below the panel, and the
 -- material adds a child frame ten levels above its host.
+AltStable._test.MenuRoot    = function() return root end
 AltStable._test.MenuPanel   = function() return panel end
 AltStable._test.MenuCatcher = function() return catcher end
 AltStable._test.MenuEntryBG = function(i)
     local b = entries and entries[i]
     return b and b.bg
+end
+AltStable._test.MenuEntryLabel = function(i)
+    local b = entries and entries[i]
+    return b and b.label
 end
 
 -- The labels actually WRITTEN on the buttons, not the generator's output: the

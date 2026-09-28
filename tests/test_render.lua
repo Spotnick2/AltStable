@@ -831,6 +831,10 @@ do
         local realClose = AltStable.CloseCharacterMenu
         AltStable.CloseCharacterMenu = function() closed = closed + 1 end
         T.SuppressStrays()
+        -- Restored, or this synthetic suppression leaves the sheet and the
+        -- tooltip at alpha 0 - and their real alphas in the module's stray
+        -- table - for every assertion after it.
+        if T.RestoreStrays then T.RestoreStrays() end
         AltStable.CloseCharacterMenu = realClose
         check("the blackout closes the character menu rather than dimming it",
               closed > 0, tostring(closed))

@@ -273,6 +273,32 @@ do
     check("  and one at the top keeps its bottom on screen too",
           cy <= 1080 and cy >= pnl:GetHeight(), tostring(cy))
 
+    -- The DROP SHADOW hangs outside the panel - 12px right and 14px below for
+    -- the small set - so a clamp that knows only the panel's own size puts it
+    -- flush to the edge and clips the shadow off on that side alone. The menu
+    -- then reads as a card lit from a different direction depending on where it
+    -- opened, which is the kind of thing you notice without being able to say
+    -- why.
+    if AltStable.SkinIsGlass() and AltStable.Glass then
+        local sp = AltStable.Glass.SIZES.small.shadowPad
+        -- The screen SIZE has to be supplied: the clamp measures `root`, the
+        -- stubs do not compute layout, and without a real size the clamp never
+        -- binds and any assertion about it passes on an unclamped position.
+        T.MenuRoot():SetSize(1920, 1080)
+        WoW.cursorX, WoW.cursorY = 1919, 1
+        AltStable.ShowCharacterMenu(OTHER)
+        local _, _, _, ex, ey = pnl:GetPoint(1)
+        cx, cy = ex, ey
+        check("a menu at the right edge leaves room for its shadow",
+              cx + pnl:GetWidth() + sp[3] <= 1920,
+              ("%s + %s + %s"):format(tostring(cx), tostring(pnl:GetWidth()),
+                                      tostring(sp[3])))
+        check("  and one at the bottom does too",
+              cy - pnl:GetHeight() - (-sp[4]) >= 0,
+              ("%s - %s - %s"):format(tostring(cy), tostring(pnl:GetHeight()),
+                                      tostring(-sp[4])))
+    end
+
     WoW.cursorX, WoW.cursorY = 5, 5
     AltStable.ShowCharacterMenu(OTHER)
     local _, _, _, lx, ly = pnl:GetPoint(1)
@@ -563,14 +589,47 @@ UnitGUID = realUnitGUID
 -- the catcher is a sibling below the panel, the panel eats clicks on its own
 -- padding, and Escape is handled on the root.
 do
-    AltStableConfig.skin = "clear"
-    AltStable._ResetSkinCache()
-
+    -- No skin setup here, deliberately. Build() ran at the top of this file and
+    -- early-returns on `if root then`, so setting a skin now cannot affect
+    -- anything below - the previous version did exactly that and passed only
+    -- because "clear" happens to be the default. The menu under test is the one
+    -- built with whatever skin was active then, which is the honest subject.
     AltStable.ShowCharacterMenu(OTHER)
     local panel   = T.MenuPanel()
     local catcher = T.MenuCatcher()
 
     check("there is a panel and a catcher", panel ~= nil and catcher ~= nil)
+
+    -- THE CALL SITE, not the helper. SkinWindow has its own tests; what those
+    -- cannot say is whether the menu asks for it - and replacing this call with
+    -- `if true then` (shipping the old flat backdrop and no material at all)
+    -- left every suite green.
+    check("the menu panel actually wears the material", panel._glass ~= nil)
+
+    if panel._glass and panel._glass.top then
+        -- The ORDER of the two lines in Build() is what this is about. The rim
+        -- is a child pinned to host level + 10 AT APPLY TIME, so applying the
+        -- material before the panel was raised above the catcher would leave
+        -- the rim ten above the CATCHER instead. Asserting
+        -- panel > catcher cannot see that, because the ordering does not change
+        -- it - the rim's own level is the only witness.
+        check("  with its rim pinned above the panel, not above the catcher",
+              panel._glass.top:GetFrameLevel() > panel:GetFrameLevel() + 9,
+              ("rim %s vs panel %s"):format(
+                  tostring(panel._glass.top:GetFrameLevel()),
+                  tostring(panel:GetFrameLevel())))
+    end
+
+    -- The label shadow, on the REAL label. SkinText has its own test; deleting
+    -- every call to it left the suite green, and a shadow is what keeps a menu
+    -- entry readable when something bright passes behind the panel.
+    local lbl = T.MenuEntryLabel(1)
+    check("an entry label has a shadow", lbl ~= nil)
+    if lbl then
+        local sx, sy = lbl:GetShadowOffset()
+        check("  a real one", sx ~= 0 or sy ~= 0,
+              ("%s,%s"):format(tostring(sx), tostring(sy)))
+    end
     if panel and catcher then
         -- The material puts its rim on a child frame at host level + 10, and
         -- that child takes the level the host has AT APPLY TIME. Applied before
@@ -596,10 +655,6 @@ do
     end
 
     AltStable.CloseCharacterMenu()
-
-    -- And under flat the menu keeps the backdrop it always had.
-    AltStableConfig.skin = "flat"
-    AltStable._ResetSkinCache()
 end
 
 print(("test_charactermenu: %d passed, %d failed"):format(passed, failed))

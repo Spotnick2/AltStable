@@ -1579,6 +1579,10 @@ AltStableProbe._test = {
     snoozeUntil    = function() return snoozeUntil end,
     STRAY_FRAMES   = STRAY_FRAMES,
     SuppressStrays = function() return SuppressStrays() end,
+    -- Its counterpart. Suppression zeroes real alphas and records them in a
+    -- module-local table; a test that calls one without the other leaves those
+    -- frames invisible for every assertion after it.
+    RestoreStrays  = function() return RestoreStrays() end,
     LookFingerprint = function(g) return LookFingerprint(g) end,
     StoredFingerprint = function(g) return StoredFingerprint(g) end,
     RememberFingerprint = function(g, fp) return RememberFingerprint(g, fp) end,
