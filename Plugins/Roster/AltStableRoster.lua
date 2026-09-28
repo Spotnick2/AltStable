@@ -869,7 +869,7 @@ local function BuildPanel(mainFrame)
     backdropTex:SetAllPoints()
     -- Left UNPAINTED here on purpose. Activate calls Refresh immediately after
     -- this, and every path out of it paints this texture - the grid through
-    -- PaintBackdrop, the scene with camp art, the drill-down by covering it. A
+    -- PaintBackdrop, the scene with camp art, the drill-down through it too. A
     -- colour set here is overwritten before a frame is drawn, which is also why
     -- a mutation deleting it could not be caught: nothing ever observes it.
 
@@ -2110,6 +2110,14 @@ function Roster.Refresh()
         local char = CharacterStore()[Roster.detail]
         if char then
             BuildDetail()
+            -- The scene's camp art lives on the panel backdrop, and the
+            -- drill-down's own background is the MATERIAL now - translucent.
+            -- Left there, Mount Hyjal came up through the stats, the slots and
+            -- the figure box: the same pane that reads as glass over the world
+            -- reads as a mess over a landscape. The drill-down is not the
+            -- scene, so it gets the tab's own background whichever view it was
+            -- opened from.
+            PaintBackdrop()
             for _, card in ipairs(Roster.cards) do card:Hide() end
             if sceneBar then sceneBar:Hide() end
             if viewBtn then viewBtn:Hide() end

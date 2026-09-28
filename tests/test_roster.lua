@@ -2737,6 +2737,34 @@ do
               c and ("a=%s"):format(c[4]) or "nil")
     end
 
+    -- THE SCENE'S ART DOES NOT COME UP THROUGH THE DRILL-DOWN.
+    --
+    -- The camp art lives on this same backdrop, and the drill-down's own
+    -- background is the material now - translucent. Left there, Mount Hyjal
+    -- came up through the stats, the slot icons and the figure box: the pane
+    -- that reads as glass over the world reads as a mess over a landscape.
+    if bd then
+        local savedView = AltStableConfig.rosterView
+        AltStableConfig.rosterView = "scene"
+        pcall(AltStable.RosterPlugin.Refresh)
+        check("the scene view puts art on the backdrop", bd._texture ~= nil,
+              tostring(bd._texture))
+        -- Whatever character the database holds by now; the fixtures earlier
+        -- in this file have been replaced several times over.
+        local anyGuid = next(AltStableDB)
+        check("  there is a character to drill into", T.DrillDown(anyGuid) == true,
+              tostring(anyGuid))
+        check("  and drilling in from it clears the art", bd._texture == nil,
+              tostring(bd._texture))
+        local c = bd._colorTexture
+        check("  back to the tab's own background",
+              c and c[1] == pane[1] and c[4] == pane[4],
+              c and ("a=%s"):format(c[4]) or "nil")
+        T.Back()
+        AltStableConfig.rosterView = savedView
+        pcall(AltStable.RosterPlugin.Refresh)
+    end
+
     -- And it is re-asked on every refresh, not painted once at build. The scene
     -- view puts camp ART on this same texture, so coming back from it has to
     -- repaint - and a repaint that hard-codes a colour is a second place for
