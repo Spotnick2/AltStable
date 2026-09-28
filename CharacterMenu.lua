@@ -167,11 +167,20 @@ local function EntryButton(index)
     b.bg:SetAllPoints()
     b.bg:SetColorTexture(1, 1, 1, 0.10)
     b.bg:Hide()
+    -- Rounded under glass, keeping its own full-entry bounds and its existing
+    -- show/hide - the hover colour is already the neutral white the sidebar
+    -- uses, so only the shape changes. The disabled guard in OnEnter is
+    -- untouched: a rounded highlight on an entry you cannot press would be a
+    -- new bug, not a nicer one.
+    AltStable.SkinRoundTexture(b, b.bg)
 
     b.label = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     b.label:SetPoint("LEFT", b, "LEFT", 4, 0)
     b.label:SetJustifyH("LEFT")
     b.label:SetWordWrap(false)
+    -- Over a translucent panel with the world behind it, the shadow is what
+    -- keeps a label readable when something bright passes behind the menu.
+    AltStable.SkinText(b.label)
 
     b:SetScript("OnEnter", function(self)
         if not self._disabled then self.bg:Show() end
@@ -222,14 +231,30 @@ local function Build()
     catcher:SetScript("OnClick", function() AltStable.CloseCharacterMenu() end)
 
     panel = CreateFrame("Frame", nil, root)
-    if AltStable.ApplyBackdrop then
-        local c = AltStable.C.BG_HEADER
-        AltStable.ApplyBackdrop(panel, c[1], c[2], c[3], 0.98)
-    end
     panel:EnableMouse(true)      -- a click on the panel's padding must not fall
                                  -- through to the catcher and close the menu
     if panel.SetFrameLevel and catcher.GetFrameLevel then
         panel:SetFrameLevel((catcher:GetFrameLevel() or 0) + 10)
+    end
+
+    -- The material, on the PANEL and never on root: root is full-screen, and a
+    -- rounded body with a drop shadow stretched across the whole display is not
+    -- a menu.
+    --
+    -- Applied AFTER the frame level above, because the material puts its rim on
+    -- a child frame at host level + 10 and that child takes the level the host
+    -- has at Apply time. Applied before it, the rim would sit ten above the
+    -- CATCHER instead of ten above the panel.
+    --
+    -- The shadow is a texture owned by the panel, not another frame, so it does
+    -- not enlarge the click area: a click on the visible shadow still reaches
+    -- the catcher and dismisses the menu, which is what it looks like it should
+    -- do. Same for the transparent rounded corners.
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(panel, "small")) then
+        if AltStable.ApplyBackdrop then
+            local c = AltStable.C.BG_HEADER
+            AltStable.ApplyBackdrop(panel, c[1], c[2], c[3], 0.98)
+        end
     end
 
     -- Escape.
@@ -377,6 +402,16 @@ end
 AltStable._test = AltStable._test or {}
 
 AltStable._test.MenuIsShown = function() return root ~= nil and root:IsShown() and true or false end
+
+-- The panel and the catcher, so a test can check the material did not disturb
+-- the input hierarchy: the catcher is a SIBLING below the panel, and the
+-- material adds a child frame ten levels above its host.
+AltStable._test.MenuPanel   = function() return panel end
+AltStable._test.MenuCatcher = function() return catcher end
+AltStable._test.MenuEntryBG = function(i)
+    local b = entries and entries[i]
+    return b and b.bg
+end
 
 -- The labels actually WRITTEN on the buttons, not the generator's output: the
 -- two can disagree, and the renderer is where they would.

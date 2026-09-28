@@ -200,6 +200,12 @@ do
 end
 
 useSkin("clear")
+-- The material's STYLE table is SHARED and persists between calls, so a value
+-- left by an earlier Apply makes "the preset reached the material" pass for
+-- free - a mutation deleting the line that writes it survived exactly that way.
+-- Poisoned first, so the assertions below can only pass if THIS call wrote them.
+Glass.STYLE.grain = -1
+Glass.STYLE.wash  = -1
 local host = freshHost()
 local g = AltStable.SkinWindow(host)
 check("under glass, the material is applied", g ~= nil)
@@ -229,6 +235,19 @@ if g then
     -- CreateColor was absent from the stubs until this file needed it.
     check("  the wash is a gradient of colour objects",
           g.wash._gradient ~= nil and type(g.wash._gradient.min) == "table")
+
+    -- ALL THREE body parameters reach the material, not just the tint. The
+    -- preset pushes tint, grain and wash into the material's shared STYLE
+    -- table, and only the tint was ever checked - so grain and wash could be
+    -- dropped from that line with everything still passing.
+    local preset = AltStable.Skin()
+    check("  the preset's grain reaches the material",
+          math.abs((g.grain:GetAlpha() or 0) - preset.grain) < 0.001,
+          ("grain alpha %s vs preset %s"):format(
+              tostring(g.grain:GetAlpha()), tostring(preset.grain)))
+    check("  and its wash",
+          math.abs((g.wash._gradient.max.a or 0) - preset.wash) < 0.001,
+          ("%s vs %s"):format(tostring(g.wash._gradient.max.a), tostring(preset.wash)))
 end
 
 -- The preset reaches the material. Changing skin and re-applying has to change
@@ -468,6 +487,89 @@ do
           fr == ar and fg == ag and fb == ab,
           ("%s,%s,%s vs accent %s,%s,%s"):format(tostring(fr), tostring(fg),
               tostring(fb), tostring(ar), tostring(ag), tostring(ab)))
+end
+
+------------------------------------------------------------
+-- The floating surfaces (#97 phase 2)
+------------------------------------------------------------
+
+-- A popup body is DENSER than the window's. It replaces a backdrop that was
+-- 0.95 opaque, and it is a thing you read once while something moves behind it
+-- - dropping straight to the window's tint takes the backing out from under
+-- class-coloured names and a grey hint, which a text shadow does not put back.
+do
+    useSkin("clear")
+    local win = AltStable.Skin().tint
+    local pop = AltStable.SkinPopupTint()
+    check("a popup body is denser than the window's", pop[4] > win[4],
+          ("%s vs %s"):format(tostring(pop[4]), tostring(win[4])))
+    check("  but still translucent, so it is still glass", pop[4] < 1,
+          tostring(pop[4]))
+    check("  and it darkens with the preset",
+          AltStable.SKINS.smoked.popup[4] > AltStable.SKINS.clear.popup[4])
+end
+
+-- SkinWindow, not Glass.Apply, is what everything goes through - because it is
+-- also what pushes the preset into the material's shared STYLE table. A toast
+-- that appeared before the sheet was ever built would otherwise wear the file's
+-- default look: clear glass in a smoked window.
+do
+    useSkin("smoked")
+    local popup = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "small")
+    check("a popup built first still gets the chosen preset", popup ~= nil)
+    if popup then
+        local c = popup.tint._colorTexture
+        check("  the smoked popup body, not the default clear one",
+              c and math.abs(c[4] - AltStable.SKINS.smoked.popup[4]) < 0.001,
+              tostring(c and c[4]))
+    end
+
+    -- And the SIZE reaches the material, not just the tint. The two are
+    -- independent: the preset decides the colour, the size decides which
+    -- texture set is loaded, and a popup wearing the large set has corners
+    -- built for a window.
+    if popup then
+        local art = popup.mask:GetTexture() or ""
+        check("  and the small texture set, not the window's",
+              art:find("_small", 1, true) ~= nil, art)
+    end
+
+    -- And the window still gets the WINDOW body, not the popup one.
+    local win = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    local wc = win.tint._colorTexture
+    check("  while a window keeps its own, lighter body",
+          wc and math.abs(wc[4] - AltStable.SKINS.smoked.tint[4]) < 0.001,
+          tostring(wc and wc[4]))
+    local wart = win.mask:GetTexture() or ""
+    check("  and the large texture set", wart:find("_small", 1, true) == nil, wart)
+    useSkin("clear")
+end
+
+-- Rounding a texture that IS the shape, for a menu entry's hover fill.
+do
+    useSkin("clear")
+    local entry = CreateFrame("Button", nil, UIParent)
+    local bg = entry:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+
+    check("an entry fill is rounded", AltStable.SkinRoundTexture(entry, bg))
+    check("  by a mask the entry owns", bg:GetNumMaskTextures() > 0)
+    -- Anchored to the TEXTURE, the opposite of the corner case: here the fill
+    -- IS the shape rather than something to be trimmed by one.
+    local mask = bg:GetMaskTexture(1)
+    local _, rel = mask:GetPoint(1)
+    eq("  anchored to the fill itself, so it rounds rather than trims", rel, bg)
+
+    -- Called again on a reused entry - the menu pools them - must not stack.
+    AltStable.SkinRoundTexture(entry, bg)
+    eq("  and rounding it twice does not stack masks", bg:GetNumMaskTextures(), 1)
+
+    useSkin("flat")
+    local plain = CreateFrame("Button", nil, UIParent)
+    local pbg = plain:CreateTexture(nil, "BACKGROUND")
+    eq("under flat nothing is rounded", AltStable.SkinRoundTexture(plain, pbg), false)
+    eq("  and no mask is attached", pbg:GetNumMaskTextures(), 0)
+    useSkin("clear")
 end
 
 ------------------------------------------------------------

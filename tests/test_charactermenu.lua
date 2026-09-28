@@ -26,7 +26,12 @@ end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
+-- The material and the skin seam, in .toc order. The menu asks the skin whether
+-- it is glass, so a harness without them is not the addon: it is a load order
+-- that cannot happen in game.
+assert(loadfile("Glass.lua"))("AltStable")
 dofile("Theme.lua")
+dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
 dofile("Scanner.lua")
 dofile("Reputations.lua")
@@ -549,6 +554,53 @@ check("  and one generator behind it",
       type(AltStable.CharacterMenuEntries) == "function")
 
 UnitGUID = realUnitGUID
+
+------------------------------------------------------------
+-- The material (#97 phase 2)
+------------------------------------------------------------
+-- The menu is a window in its own right, floating over the world beside a glass
+-- sheet. What matters is that dressing it did not disturb how it takes INPUT:
+-- the catcher is a sibling below the panel, the panel eats clicks on its own
+-- padding, and Escape is handled on the root.
+do
+    AltStableConfig.skin = "clear"
+    AltStable._ResetSkinCache()
+
+    AltStable.ShowCharacterMenu(OTHER)
+    local panel   = T.MenuPanel()
+    local catcher = T.MenuCatcher()
+
+    check("there is a panel and a catcher", panel ~= nil and catcher ~= nil)
+    if panel and catcher then
+        -- The material puts its rim on a child frame at host level + 10, and
+        -- that child takes the level the host has AT APPLY TIME. Applied before
+        -- the panel was raised above the catcher, the rim would sit ten above
+        -- the CATCHER instead - which is why the order of those two lines in
+        -- Build() is load-bearing rather than tidy.
+        check("the panel still sits above the catcher",
+              panel:GetFrameLevel() > catcher:GetFrameLevel(),
+              ("panel %s vs catcher %s"):format(
+                  tostring(panel:GetFrameLevel()), tostring(catcher:GetFrameLevel())))
+        check("  and the catcher still covers the screen and takes clicks",
+              catcher:IsShown() and catcher:HandlesClick("LeftButton"))
+    end
+
+    -- The hover fill is rounded, keeping its own full-entry bounds: the nav
+    -- painter insets 6px vertically, which on a 17px entry would leave an 11px
+    -- fill floating inside the row.
+    local bg = T.MenuEntryBG(1)
+    check("an entry's hover fill is rounded", bg ~= nil and bg:GetNumMaskTextures() > 0)
+    if bg then
+        local _, rel = bg:GetMaskTexture(1):GetPoint(1)
+        eq("  by a mask anchored to the fill itself", rel, bg)
+    end
+
+    AltStable.CloseCharacterMenu()
+
+    -- And under flat the menu keeps the backdrop it always had.
+    AltStableConfig.skin = "flat"
+    AltStable._ResetSkinCache()
+end
 
 print(("test_charactermenu: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -39,6 +39,8 @@ AltStable.SKINS = {
         tint = { 0.13, 0.16, 0.22, 0.24 }, grain = 0.45, wash = 0.18,
         -- The reading surface. See SkinPaneColor.
         pane = { 0.04, 0.05, 0.07, 0.62 },
+        -- A floating popup's body. See SkinPopupTint.
+        popup = { 0.05, 0.06, 0.09, 0.55 },
     },
 
     -- Darker, for reading. The body is a denser, cooler grey and the top-down
@@ -48,6 +50,7 @@ AltStable.SKINS = {
         material = true, label = "Smoked glass",
         tint = { 0.05, 0.06, 0.08, 0.62 }, grain = 0.35, wash = 0.14,
         pane = { 0.03, 0.03, 0.04, 0.80 },
+        popup = { 0.03, 0.04, 0.05, 0.72 },
     },
 }
 
@@ -120,16 +123,24 @@ end
 -- The window itself. Returns the material's region table, or nil under flat -
 -- so a caller reads `if not g then <keep the old backdrop> end` rather than
 -- asking about the skin twice.
-function AltStable.SkinWindow(frame)
+-- `size` is "large" (the default) or "small", the material's two texture sets.
+--
+-- Everything that wants the material goes through HERE rather than calling
+-- Glass.Apply directly, because this is also what pushes the preset into the
+-- material's shared STYLE table - and Glass reads that at Apply time. A toast
+-- that appeared before the sheet was ever built would otherwise get the file's
+-- default look rather than the chosen one: clear glass in a smoked window.
+function AltStable.SkinWindow(frame, size)
     if not AltStable.SkinIsGlass() then return nil end
     local preset = AltStable.Skin()
 
-    -- Applied to the shared STYLE table, which Glass reads at Apply time. Only
-    -- the three body parameters: see the note above about the rim.
+    -- Only the three body parameters: see the note above about the rim.
     local st = Glass.STYLE
-    st.tint, st.grain, st.wash = preset.tint, preset.grain, preset.wash
+    st.grain, st.wash = preset.grain, preset.wash
+    -- A popup gets the denser body: see SkinPopupTint.
+    st.tint = (size == "small") and preset.popup or preset.tint
 
-    return Glass.Apply(frame, "large")
+    return Glass.Apply(frame, size or "large")
 end
 
 -- A background fill for a panel that reaches into the window's rounded corners.
@@ -355,6 +366,43 @@ end
 function AltStable.SkinTitleColor()
     if AltStable.SkinIsGlass() then return unpack(AltStable.C.TEXT_BRIGHT) end
     return AltStable.GetAccentRGB()
+end
+
+-- A floating popup's body, which is DENSER than the window's.
+--
+-- The window is a big surface you look at; a toast is a small one you have to
+-- read, once, while something moves behind it - and it is replacing a backdrop
+-- that was 0.95 opaque. Dropping straight to the window's tint would take most
+-- of the backing out from under class-coloured names and a grey dismiss hint,
+-- and a text shadow does not put that back.
+--
+-- Still translucent, so it is still glass, and it darkens with the preset.
+function AltStable.SkinPopupTint()
+    return AltStable.Skin().popup
+end
+
+-- Round a texture that IS the shape - a menu entry's hover fill, say - rather
+-- than one that has to be trimmed by something else.
+--
+-- The mask is anchored to the texture, which is the SkinButtonFill case and the
+-- opposite of SkinPanelFill's. Deliberately not the nav painter itself: that
+-- insets by a fixed 6px vertically, which on a 17px menu entry leaves an 11px
+-- fill floating inside a 17px row, and its flat path paints a BACKDROP while a
+-- menu entry paints a texture on a plain Button - so it is not a drop-in either
+-- way. One small helper beats bending a control framework into shape.
+--
+-- The small set's slice margins are 8px against a 17px entry, so the corners
+-- are squeezed rather than fully rounded. GLASS-MATERIAL.md §6 records that as
+-- rendering fine, and a tighter radius is what a dense menu wants anyway.
+function AltStable.SkinRoundTexture(frame, tex)
+    if not AltStable.SkinIsGlass() then return false end
+    if not frame or not tex or not frame.CreateMaskTexture then return false end
+    if tex._skinRounded then return true end
+    local S = Glass.SIZES.small
+    local mask = Glass.Mask(frame, S.mask, S.maskMargin, 0, tex)
+    if tex.AddMaskTexture then tex:AddMaskTexture(mask) end
+    tex._skinRounded = true
+    return true
 end
 
 -- Text that is now sitting on glass with the world behind it.

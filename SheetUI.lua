@@ -2440,8 +2440,15 @@ local function CreateFrameIfNeeded()
     refTip:SetFrameLevel(200)
     refTip:SetPoint("TOPRIGHT", refBtn, "BOTTOMRIGHT", 0, -5)
     refTip:SetSize(258, 62)
-    AltStable.ApplyBackdrop(refTip, 0.05, 0.05, 0.05, 0.96)
+    -- A floating surface with its own outline, even though it is parented to
+    -- the sheet: TOOLTIP strata, toplevel, its own frame level, and it draws
+    -- clear of the window. So it gets the material like the menu and the toast
+    -- rather than being left as one flat panel beside them.
+    if not AltStable.SkinWindow(refTip, "small") then
+        AltStable.ApplyBackdrop(refTip, 0.05, 0.05, 0.05, 0.96)
+    end
     local refTipText = refTip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    AltStable.SkinText(refTipText)
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
@@ -3628,15 +3635,25 @@ local function CreateFrameIfNeeded()
     sbBorder:SetColorTexture(0, 0, 0, 1)
 
     --------------------------------------------------------
-    -- The data region stays OPAQUE under glass
+    -- The data region gets an UNDERLAY under glass
     --------------------------------------------------------
-    -- "The rows have alpha-1.00 fills, so the table is already opaque" is not
-    -- true, and the exception is the one that would look worst. DimRow in
-    -- RowRenderer sets the WHOLE row - background included - to
-    -- HIDDEN_ROW_ALPHA = 0.45 for a hidden character, so once the nearly opaque
-    -- main backdrop stops being there, scenery shows through exactly the rows
-    -- already marked as less important. Same for the frozen name column beside
-    -- them.
+    -- Ordinary rows need no help: their backgrounds are already alpha 1.00, as
+    -- are group rows and column headers, and class tint and hover sit above
+    -- those. Making the window translucent does not expose scenery through
+    -- them, and this underlay is not what makes them opaque.
+    --
+    -- HIDDEN CHARACTERS are the exception, and the one that would look worst.
+    -- DimRow takes the WHOLE row - background, text, tint and highlight - to
+    -- HIDDEN_ROW_ALPHA = 0.45, so the window behind it shows through. Same for
+    -- the frozen name column beside them.
+    --
+    -- This REDUCES that rather than removing it, and the numbers are worth
+    -- writing down because the pane is deliberately not opaque: composited over
+    -- the body tint, a dimmed row lets ~16% of the world through under `clear`
+    -- and ~4% under `smoked`, against ~42% with no underlay at all. Whether the
+    -- remainder reads as "de-emphasised" or as "broken" is a look-at-it
+    -- question - those rows are meant to recede - and an opaque pane here would
+    -- buy it by killing the material across the whole table.
     --
     -- One underlay behind both viewports rather than a change to row rendering:
     -- dimming, alternating bands, class tint and hover all keep working, and

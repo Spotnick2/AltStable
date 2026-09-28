@@ -815,6 +815,27 @@ do
           end)(),
           "nothing else would keep it out of the picture")
 
+    -- The character menu is CLOSED before a blackout, not dimmed.
+    --
+    -- It cannot be dimmed: during the showcase it is lifted to its own
+    -- parentless root, so it is not a child of the sheet and zeroing the
+    -- sheet's alpha does not reach it. The sheet closes it from OnHide, but a
+    -- capture never HIDES the sheet - it makes it invisible - so that does not
+    -- run either. A capture starting with the menu open therefore photographed
+    -- it, and worse, left a full-screen invisible click catcher eating every
+    -- click for the duration.
+    --
+    -- This predates the glass work; the flat menu was equally unsuppressed.
+    do
+        local closed = 0
+        local realClose = AltStable.CloseCharacterMenu
+        AltStable.CloseCharacterMenu = function() closed = closed + 1 end
+        T.SuppressStrays()
+        AltStable.CloseCharacterMenu = realClose
+        check("the blackout closes the character menu rather than dimming it",
+              closed > 0, tostring(closed))
+    end
+
     -- Combat starting cancels the countdown; the prompt must not be left
     -- promising a portrait that is not coming.
     resetCapture()

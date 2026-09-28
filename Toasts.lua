@@ -107,14 +107,24 @@ local function BuildToastFrame()
     local f = CreateFrame("Frame", "AltStableAggregateToast", UIParent, "BackdropTemplate")
     f:SetSize(TOAST_WIDTH, TOAST_HEADER_H + TOAST_LINE_H + TOAST_PADDING * 2)
     f:SetFrameStrata("FULLSCREEN_DIALOG")
-    f:SetBackdrop({
-        bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
-        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    f:SetBackdropColor(0.08, 0.08, 0.12, 0.95)
-    f:SetBackdropBorderColor(0.4, 0.4, 0.5, 0.9)
+    -- The material, or the tooltip backdrop it has always had.
+    --
+    -- The toast animates its ALPHA from 1 to 0 and back, and every region the
+    -- material makes belongs to this frame or to a child of it, so the whole
+    -- thing fades together - nothing here opts out of parent alpha. There is no
+    -- translation animation and no ADD-blended layer in Glass.Apply; the ADD
+    -- highlights live in Glass.Bar and Glass.Sheen, which this addon does not
+    -- ship the art for.
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
+        f:SetBackdrop({
+            bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        f:SetBackdropColor(0.08, 0.08, 0.12, 0.95)
+        f:SetBackdropBorderColor(0.4, 0.4, 0.5, 0.9)
+    end
 
     -- Header icon (changes per-call based on profession composition)
     local icon = f:CreateTexture(nil, "ARTWORK")
@@ -130,6 +140,7 @@ local function BuildToastFrame()
     title:SetPoint("TOPRIGHT", f,    "TOPRIGHT", -30, -4)
     title:SetJustifyH("LEFT")
     title:SetTextColor(1, 0.82, 0)
+    AltStable.SkinText(title)
     f.title = title
 
     -- Subtitle with dismiss hint
@@ -138,6 +149,9 @@ local function BuildToastFrame()
     sub:SetPoint("TOPRIGHT", title, "BOTTOMRIGHT", 0, -2)
     sub:SetJustifyH("LEFT")
     sub:SetText("|cff888888Click to dismiss · auto-hides in 10s|r")
+    -- The grey hint is the least legible thing here and the first to suffer
+    -- when the backing gets thinner, so it gets a shadow too.
+    AltStable.SkinText(sub)
     f.sub = sub
 
     -- Close button (clickable X)
