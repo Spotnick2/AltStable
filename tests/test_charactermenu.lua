@@ -226,12 +226,20 @@ do
     local root, pnl = T.MenuRoot(), T.MenuPanel()
     root:SetSize(1920, 1080)
 
+    -- Expectations derived from the EFFECTIVE scale, not written as constants.
+    -- They used to be 800 and 400, which was only right while UIParent's scale
+    -- was 1 - and a stub UIParent at scale 1 is the thing that made the whole
+    -- physical-pixels-to-frame-units conversion untestable everywhere it
+    -- appears. The division is still the assertion; the number it divides by is
+    -- now the real one.
     WoW.cursorX, WoW.cursorY = 800, 600
     pnl._scale = 1
     AltStable.ShowCharacterMenu(OTHER)
     local _, _, _, x, y = pnl:GetPoint(1)
-    eq("at scale 1 the menu opens at the cursor", x, 800)
-    eq("  vertically too", y, 600)
+    local es1 = pnl:GetEffectiveScale()
+    check("at scale 1 the menu opens at the cursor", math.abs(x - 800 / es1) < 0.01,
+          ("%s vs %s"):format(tostring(x), tostring(800 / es1)))
+    check("  vertically too", math.abs(y - 600 / es1) < 0.01)
 
     -- The trap. GetCursorPosition is in PHYSICAL pixels and an anchor offset is
     -- in the frame's own units, so the division is the whole job. Without it
@@ -240,8 +248,14 @@ do
     pnl._scale = 2
     AltStable.ShowCharacterMenu(OTHER)
     local _, _, _, x2, y2 = pnl:GetPoint(1)
-    eq("a scaled UI divides the cursor by the scale", x2, 400)
-    eq("  vertically too", y2, 300)
+    local es2 = pnl:GetEffectiveScale()
+    check("a scaled UI divides the cursor by the scale",
+          math.abs(x2 - 800 / es2) < 0.01,
+          ("%s vs %s"):format(tostring(x2), tostring(800 / es2)))
+    check("  vertically too", math.abs(y2 - 600 / es2) < 0.01)
+    -- And it really is a different divisor, or the two cases above are one case
+    -- written twice.
+    check("  which is a different number from the unscaled case", es2 > es1)
     pnl._scale = 1
 
     -- Right-clicking near an edge must not put the menu off-screen, where it

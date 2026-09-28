@@ -1010,9 +1010,19 @@ do
         check("the stubs model a display-sized UIParent", screenH > 500,
               tostring(screenH))
 
-        local w, h = T.FitToScreen(820, 760)
+        -- 600, not 760. On a default 1080p UI the screen is 768 units at an
+        -- effective scale of ~1.4, so the limit is ~728 - and the Options tab's
+        -- fixed 760 is ABOVE it. That is not a quirk of the fixture, it is the
+        -- reported bug: at default scale that tab asks for more height than the
+        -- display has, before any scaling makes it worse.
+        local w, h = T.FitToScreen(820, 600)
         eq("a window that fits is left alone", w, 820)
-        eq("  in both directions", h, 760)
+        eq("  in both directions", h, 600)
+
+        -- The reported case, stated as itself.
+        local _, opts = T.FitToScreen(820, 760)
+        check("the Options tab's fixed 760 does not fit a default 1080p UI",
+              opts < 760, tostring(opts))
 
         local _, tall = T.FitToScreen(820, 5000)
         check("a window taller than the display is clamped", tall < 5000)
@@ -1026,7 +1036,11 @@ do
         -- so the two heights are numbers in different spaces - comparing them
         -- raw is wrong by exactly the ratio nobody notices at 1.0, which is the
         -- scale everything gets tested at.
-        local prev = f:GetEffectiveScale()
+        -- GetScale, not GetEffectiveScale. Restoring an EFFECTIVE scale as if
+        -- it were a scale multiplies the parent's in a second time and leaves
+        -- the frame at the wrong size for everything downstream - which is only
+        -- invisible while UIParent's scale is 1.
+        local prev = f:GetScale()
         f:SetScale(1.25)
         local _, scaled = T.FitToScreen(820, 5000)
         f:SetScale(prev)
@@ -1063,8 +1077,8 @@ do
               - T.SCREEN_MARGIN)
         -- And a reasonable request still goes through untouched, or "clamped"
         -- would be satisfied by a window that is always the same size.
-        T.ResizeFrame(820, 760)
-        eq("a window that fits is sized exactly as asked", f:GetHeight(), 760)
+        T.ResizeFrame(820, 600)
+        eq("a window that fits is sized exactly as asked", f:GetHeight(), 600)
 
         -- SCALING is a third way to stop fitting, and it goes through neither
         -- resize path: the numbers stay the same and the display they occupy
@@ -1087,25 +1101,69 @@ do
         end
 
         -- The OTHER path. ResizeFrameToContent sets the size directly rather
-        -- than going through ResizeFrame, so it needed the clamp of its own -
-        -- and a roster long enough to want more height than the display has is
-        -- just as reachable as the Options tab asking for a fixed 760.
+        -- than going through ResizeFrame, so it needed the clamp of its own.
+        -- Exercised on WIDTH, because height has a floor it cannot go below -
+        -- see just after.
         if T.ResizeFrameToContent then
-            local saved = UIParent:GetHeight()
-            -- 250, not something roomier: the sidebar alone floors the computed height
-            -- near 480, so a limit above that never binds and the assertion
-            -- passes whether the clamp is there or not. It has to be shorter
-            -- than the content genuinely wants.
-            UIParent:SetHeight(250)
+            local savedW = UIParent:GetWidth()
+            UIParent:SetWidth(400)
             T.ResizeFrameToContent()
-            local lim = (250 * UIParent:GetEffectiveScale())
+            local lim = (400 * UIParent:GetEffectiveScale())
                         / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+            -- EQUAL to the limit, not merely under it. A one-sided check
+            -- passes for any mutation that clamps too hard, and one that drops
+            -- the scale conversion does exactly that.
             check("sizing to content is clamped to the display too",
-                  f:GetHeight() <= lim,
-                  ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(lim)))
-            UIParent:SetHeight(saved)
+                  math.abs(f:GetWidth() - lim) < 1,
+                  ("%s vs max %s"):format(tostring(f:GetWidth()), tostring(lim)))
+            UIParent:SetWidth(savedW)
         else
             check("the content-sizing path is reachable from a test", false)
+        end
+
+        -- LIFTED OUT of UIParent, which is what the capture pipeline does.
+        --
+        -- This is the only case where the UIParent factor in the conversion
+        -- does any work: for an ordinary child, `fs` already contains `us` and
+        -- the two cancel. Reparented, they do not - and dropping the factor
+        -- would then size the window against a screen measured in the wrong
+        -- units. A mutation removing it survives every other assertion here.
+        do
+            local savedParent = f:GetParent()
+            f:SetParent(WorldFrame or UIParent)
+            local us = UIParent:GetEffectiveScale()
+            local fs = f:GetEffectiveScale()
+            local lim = (UIParent:GetHeight() * us) / fs - T.SCREEN_MARGIN
+            local _, got = T.FitToScreen(820, 99999)
+            check("a window lifted out of UIParent is still measured against the screen",
+                  math.abs(got - lim) < 1,
+                  ("%s vs %s"):format(tostring(got), tostring(lim)))
+            check("  which is a different limit from the parented case",
+                  math.abs(fs - us) > 0.01,
+                  ("frame %s vs UIParent %s"):format(tostring(fs), tostring(us)))
+            f:SetParent(savedParent)
+        end
+
+        -- The HEIGHT floor, which is the sidebar's own requirement rather than
+        -- an arbitrary number.
+        --
+        -- ComputeContentSize raises the height so the last nav button clears the
+        -- totals bar, and the sidebar has no scroll of its own - so clamping
+        -- below that trades "the window is off-screen" for "half the navigation
+        -- is off-screen", which is not a fix. Below the floor the honest answer
+        -- is that the display cannot show this window, and an overflowing window
+        -- beats one with no way to reach Options and turn the scale down.
+        do
+            local savedH2 = UIParent:GetHeight()
+            UIParent:SetHeight(250)
+            T.ResizeFrameToContent()
+            local tooSmall = (250 * UIParent:GetEffectiveScale())
+                             / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+            check("a display too short for the sidebar is not clamped into it",
+                  f:GetHeight() > tooSmall,
+                  ("%s vs the would-be limit %s"):format(
+                      tostring(f:GetHeight()), tostring(tooSmall)))
+            UIParent:SetHeight(savedH2)
         end
     end
     local btn = CreateFrame("Frame")

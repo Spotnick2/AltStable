@@ -267,7 +267,19 @@ local function makeFrame()
     for name, value in pairs(NUMERIC) do
         f[name] = function(self) return self["_" .. name] or value end
     end
-    f.GetEffectiveScale = function(self) return self._scale or 1 end
+    -- EFFECTIVE scale walks the parent chain, which is the whole difference
+    -- between it and GetScale. Returning only the frame's own scale made the
+    -- two identical, so UIParent's scale was always 1 here and code converting
+    -- between the two coordinate spaces could be deleted without any test
+    -- noticing - which is exactly what happened to the window's screen clamp.
+    f.GetEffectiveScale = function(self)
+        local s, p, guard = self._scale or 1, self._parent, 0
+        while p and guard < 32 do
+            s = s * (p._scale or 1)
+            p, guard = p._parent, guard + 1
+        end
+        return s
+    end
     -- Real state: "is the window kept on the display" is the question #99 is
     -- about, and the chaining default answered it with the frame itself.
     f.SetClampedToScreen = function(self, v) self._clamped = not not v; return self end
@@ -605,7 +617,13 @@ end
 -- particular one; what matters is that it is bigger than the window and that
 -- the ratio between the two is real.
 UIParent = makeFrame()
-UIParent:SetSize(1920, 1080)
+-- 1365x768 at scale 1.4, which is ~1911x1075 physical: a 1080p display at the
+-- client's default UI scale. The NUMBERS matter less than the fact that the
+-- scale is not 1 - at 1, effective scale and own scale are the same thing and
+-- any conversion between the two is untestable. It was 1920x1080 at scale 1,
+-- and a mutation deleting the UIParent factor from the window clamp survived.
+UIParent:SetSize(1365, 768)
+UIParent:SetScale(1.4)
 WorldFrame = makeFrame()
 
 -- The cursor, in PHYSICAL pixels - which is the trap this models. Frame offsets
