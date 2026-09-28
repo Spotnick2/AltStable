@@ -1690,5 +1690,88 @@ do
     end
 end
 
+-- The rows ask the skin for their band (#97), and the underlay is the surface
+-- they sit on.
+--
+-- The arithmetic is asserted in test_glass; what cannot be asserted there is
+-- whether a rendered row actually uses it. Twenty-one opaque bands in the flat
+-- theme's charcoal is what the table WAS inside a glass window, and every one
+-- of them came through this one call.
+do
+    local row = AltStable.CreateRow(UIParent, 18, {})
+    local char = { guid = "Player-1-ROWBG", name = "R", class = "MAGE" }
+    local function same(got, want)
+        if not got then return false end
+        for i = 1, 4 do if got[i] ~= want[i] then return false end end
+        return true
+    end
+
+    AltStable.RenderRow(row, char, 2, {})
+    check("an even row is painted with the skin's band",
+          same(row.bg._colorTexture, { AltStable.SkinRowStripe(2) }),
+          table.concat(row.bg._colorTexture or {}, ","))
+    AltStable.RenderRow(row, char, 3, {})
+    check("  and an odd row with the odd one",
+          same(row.bg._colorTexture, { AltStable.SkinRowStripe(3) }),
+          table.concat(row.bg._colorTexture or {}, ","))
+
+    -- PARITY FOLLOWS THE DISPLAY INDEX, not the pooled row. Rows are reused as
+    -- the list scrolls, so parity read off the slot would make a row change
+    -- shade as it travelled rather than staying with the character in it.
+    local a = { unpack(row.bg._colorTexture) }
+    AltStable.RenderRow(row, char, 4, {})
+    check("  and the same row at the next index changes band",
+          not same(row.bg._colorTexture, a),
+          table.concat(row.bg._colorTexture or {}, ","))
+
+    -- The empty space below the last character is the same table, not a
+    -- different material: the fillers carry the striping to the bottom.
+    -- At the OPPOSITE parity to the row above, or the check passes on the
+    -- colour the previous render happened to leave behind - which is exactly
+    -- what it did, and a mutation deleting the paint survived it.
+    AltStable.RenderFillerRow(row, 3)
+    check("a filler row keeps the striping going",
+          same(row.bg._colorTexture, { AltStable.SkinRowStripe(3) }),
+          table.concat(row.bg._colorTexture or {}, ","))
+
+    AltStable.RenderGroupRow(row, { kind = "group", realm = "R", count = 1 })
+    check("and a realm band is the skin's band",
+          same(row.bg._colorTexture, { AltStable.SkinGroupBand() }),
+          table.concat(row.bg._colorTexture or {}, ","))
+
+    -- BOTH HALVES. The name lives in the frozen column and the data in the
+    -- scrollable one, side by side and separate - so a band asserted on one of
+    -- them is half a row. Found by a mutation that blanked the frozen filler
+    -- and passed everything above it.
+    local frozen = AltStable.CreateFrozenRow(UIParent, 18, 120)
+    AltStable.RenderFrozenCharRow(frozen, char, 3)
+    check("the frozen half is painted from the skin too",
+          same(frozen.bg._colorTexture, { AltStable.SkinRowStripe(3) }),
+          table.concat(frozen.bg._colorTexture or {}, ","))
+    -- The filler at the EVEN index, and the row above it odd. An odd row under
+    -- glass paints nothing at all, so checking a filler there cannot tell a
+    -- painted row from an unpainted one - which is how the first version of
+    -- this passed a mutation that blanked it.
+    AltStable.RenderFrozenFillerRow(frozen, 2)
+    check("  and keeps striping past the last character",
+          same(frozen.bg._colorTexture, { AltStable.SkinRowStripe(2) }),
+          table.concat(frozen.bg._colorTexture or {}, ","))
+    AltStable.RenderFrozenGroupRow(frozen, { kind = "group", realm = "R", count = 1 })
+    check("  and carries the realm band with the other half",
+          same(frozen.bg._colorTexture, { AltStable.SkinGroupBand() }),
+          table.concat(frozen.bg._colorTexture or {}, ","))
+
+    -- The surface itself, which had been painted with the PANE - a translucent
+    -- panel colour - while twenty-one opaque rows sat on top hiding it.
+    local dataBG = AltStable._dataBG
+    if dataBG then
+        local d = AltStable.SkinDataColor()
+        check("the underlay is the reading surface",
+              same(dataBG._colorTexture, { d[1], d[2], d[3], d[4] }),
+              table.concat(dataBG._colorTexture or {}, ","))
+        eq("  and it is opaque", dataBG._colorTexture[4], 1)
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

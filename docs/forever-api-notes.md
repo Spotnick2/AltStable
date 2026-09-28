@@ -1509,3 +1509,34 @@ which is how the day it says something else gets missed — so the login report 
 silent while the stores load and loud when they do not, and the counts moved to
 `/asprobe savedvariables` where somebody investigating persistence will look for
 them.
+
+## Translucent surfaces: what an addon can and cannot do about legibility
+
+There is **no blur**. An addon has no shader access and no API that hands it the
+rendered scene, so anything translucent shows the world through it *sharp* — and
+moving, because the world moves and the frame does not. This is a fixed property
+of the client, not a thing to tune around.
+
+Two consequences worth writing down, because both were discovered the expensive
+way while glassing this addon:
+
+**A translucent reading surface fails while the camera moves, not while it is
+still.** A screenshot of small text over a 0.86-alpha panel looks fine. The same
+panel with the camera turning behind it does not, because 14% of a moving scene
+reaches the glyphs. Judge any body alpha during movement or do not judge it.
+`SetShadowOffset(1, -1)` sharpens letter edges and does nothing about this — it
+is for text over a surface that is *already* readable, not a fix for one that is
+not.
+
+**Overlay alpha is not additive, and the step shrinks as the surface brightens.**
+A white overlay at `s` over a composited surface at `C` lands at:
+
+```
+C + s * (1 - C)
+```
+
+So the same overlay that lifts a 0.05 surface by 0.033 lifts a 0.20 surface by
+only 0.028. Replacing absolute row colours with overlays therefore preserves the
+old spacing only over a dark, *consistent* surface. Over a translucent one the
+contrast varies with whatever is behind the window, which is a second reason a
+reading surface wants to be opaque.

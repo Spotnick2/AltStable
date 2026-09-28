@@ -666,6 +666,72 @@ do
     useSkin("clear")
 end
 
+-- The table: one reading surface, and rows as overlays on it (#97).
+--
+-- The decision recorded here is that the surface is OPAQUE. There is no blur
+-- available, so what shows through a translucent table is the world moving
+-- sharp behind twenty-one rows of small text. The table was already opaque
+-- before any of this, but by accident - the row colours were the flat theme's
+-- and nobody had chosen them for a glass window.
+do
+    -- A white overlay at `s` over a surface at `C` lands at C + s(1 - C), so
+    -- the step SHRINKS as the surface brightens. That is why the alphas are not
+    -- the thing to assert: what has to survive is the spacing the flat table
+    -- had, and these are the two numbers it has to survive at.
+    local function over(c, s) return c + s * (1 - c) end
+    local FLAT_STRIPE = AltStable.C.BG_ROW_EVEN[1] - AltStable.C.BG_ROW_ODD[1]
+    local FLAT_GROUP  = AltStable.C.BG_GROUP[1]    - AltStable.C.BG_ROW_ODD[1]
+
+    for _, name in ipairs({ "clear", "smoked" }) do
+        useSkin(name)
+        local d = AltStable.SkinDataColor()
+        eq(name .. ": the reading surface is opaque", d[4], 1)
+
+        -- The odd row IS the surface. Painting it at all would be a second
+        -- layer of the same colour, and under a translucent surface that would
+        -- have doubled its density.
+        local _, _, _, oddA = AltStable.SkinRowStripe(1)
+        eq(name .. ": the odd row paints nothing", oddA, 0)
+
+        local er, _, _, ea = AltStable.SkinRowStripe(2)
+        eq(name .. ": the even row lifts rather than replaces", er, 1)
+        local step = over(d[1], ea) - d[1]
+        check(name .. ": and lands where the flat stripe did",
+              math.abs(step - FLAT_STRIPE) < 0.005,
+              ("step %.4f vs flat %.4f"):format(step, FLAT_STRIPE))
+
+        local gr, _, _, ga = AltStable.SkinGroupBand()
+        eq(name .. ": the realm band lifts too", gr, 1)
+        local gstep = over(d[1], ga) - d[1]
+        check(name .. ": and lands where the flat band did",
+              math.abs(gstep - FLAT_GROUP) < 0.005,
+              ("step %.4f vs flat %.4f"):format(gstep, FLAT_GROUP))
+
+        -- And the band still reads as stronger than the stripe, or the realm
+        -- headers stop separating anything.
+        check(name .. ": the band is the stronger of the two", gstep > step * 1.5,
+              ("%.4f vs %.4f"):format(gstep, step))
+    end
+
+    -- Flat keeps its two absolute greys, to the digit, and its band.
+    useSkin("flat")
+    local o = { AltStable.SkinRowStripe(1) }
+    local e = { AltStable.SkinRowStripe(2) }
+    local g = { AltStable.SkinGroupBand() }
+    local function same(got, want)
+        for i = 1, 4 do if got[i] ~= want[i] then return false end end
+        return true
+    end
+    check("flat odd rows are the palette's, unchanged",
+          same(o, AltStable.C.BG_ROW_ODD), table.concat(o, ","))
+    check("flat even rows too", same(e, AltStable.C.BG_ROW_EVEN), table.concat(e, ","))
+    check("and the realm band", same(g, AltStable.C.BG_GROUP), table.concat(g, ","))
+    -- Flat has no reading surface of its own; the rows ARE the surface there.
+    check("flat falls back to the row colour rather than inventing one",
+          same({ unpack(AltStable.SkinDataColor()) }, AltStable.C.BG_ROW_ODD))
+    useSkin("clear")
+end
+
 -- The well a figure stands in (#97).
 --
 -- Asserted as a GAP, not as numbers. The old values were absolute - a

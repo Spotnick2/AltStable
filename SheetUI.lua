@@ -3761,9 +3761,11 @@ local function CreateFrameIfNeeded()
         local dataBG = frame:CreateTexture(nil, "BACKGROUND", nil, -3)
         dataBG:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDEBAR_WIDTH, -BodyTopY())
         dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 36)
-        -- The pane colour, not BG_MAIN: an opaque slab here is a black box
-        -- pasted on the glass, which is exactly how the first attempt looked.
-        dataBG:SetColorTexture(unpack(AltStable.SkinPaneColor()))
+        -- The reading surface, which is a different colour from the panels
+        -- and deliberately opaque: see SkinDataColor. The rows on top of it
+        -- are lifts now, so this is what the table actually IS - not an
+        -- underlay that twenty-one opaque bands were hiding.
+        dataBG:SetColorTexture(unpack(AltStable.SkinDataColor()))
         -- And clipped, because it runs to the window's right edge.
         AltStable.SkinClipTexture(frame, dataBG, frame)
         AltStable._dataBG = dataBG
