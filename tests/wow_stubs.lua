@@ -241,6 +241,16 @@ local function makeFrame()
         return c[1], c[2], c[3], c[4] or 1
     end
 
+    -- A tooltip's OWNER and anchor point are real state. "Where does this
+    -- tooltip open" is a question the addon answers differently per call site,
+    -- and the chaining default answered it with the tooltip itself.
+    f.SetOwner = function(self, owner, anchor)
+        self._owner, self._ownerAnchor = owner, anchor
+        return self
+    end
+    f.GetOwner = function(self) return self._owner end
+    f.GetAnchorType = function(self) return self._ownerAnchor end
+
     f.SetShadowOffset = function(self, x, y) self._shadowX, self._shadowY = x, y; return self end
     f.GetShadowOffset = function(self) return self._shadowX or 0, self._shadowY or 0 end
     f.SetShadowColor  = function(self, r, g, b, a)

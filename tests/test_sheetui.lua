@@ -1429,5 +1429,46 @@ do
           txt:find("1", 1, true) and txt:find("2", 1, true), txt)
 end
 
+------------------------------------------------------------
+-- The row tooltip opens beside the window, not on it
+------------------------------------------------------------
+-- ANCHOR_RIGHT put it immediately right of the NAME cell - the leftmost column
+-- - so it covered the table it describes, and for rows near the top it covered
+-- the column headers and the title bar as well.
+
+do
+    local T = AltStable._test
+    local frozen = AltStable.CreateFrozenRow(UIParent, 18, 120)
+    local btn = frozen.nameTipBtn
+    check("the frozen row has a name button", btn ~= nil)
+    if btn then
+        btn.charData = { guid = "g", name = "N", class = "MAGE", money = 1 }
+        btn:GetScript("OnEnter")(btn)
+
+        -- The owner is recorded too: "which widget is this tooltip about" is
+        -- what the client uses to close it, and the stub answered it with the
+        -- tooltip itself until this test needed it.
+        eq("the tooltip knows which cell it is about", GameTooltip:GetOwner(), btn)
+
+        local point, rel, relPoint = GameTooltip:GetPoint(1)
+        check("the tooltip is anchored to the sheet, not the cell",
+              rel == _G["AltStableSheet"], tostring(rel))
+        check("  off its right edge", relPoint == "TOPRIGHT", tostring(relPoint))
+
+        -- The fallback matters: the Roster raises this same tooltip from a
+        -- card, where there is no sheet frame to hang off.
+        local saved = _G["AltStableSheet"]
+        _G["AltStableSheet"] = nil
+        btn:GetScript("OnEnter")(btn)
+        -- The ANCHOR TYPE, not the owner. The owner is already this button from
+        -- the anchored call above, so `GetOwner() == btn` passes whether the
+        -- fallback ran or not - which is exactly what it did.
+        check("  and falls back to the cell when there is no sheet",
+              GameTooltip:GetAnchorType() == "ANCHOR_RIGHT",
+              tostring(GameTooltip:GetAnchorType()))
+        _G["AltStableSheet"] = saved
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

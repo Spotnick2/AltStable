@@ -967,7 +967,25 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         if not tipBtn.charData then return end
         local c = tipBtn.charData
         local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:2:0|t"
-        GameTooltip:SetOwner(tipBtn, "ANCHOR_RIGHT")
+        -- OUTSIDE the window, not to the right of the cell.
+        --
+        -- ANCHOR_RIGHT puts the tooltip immediately right of the NAME cell,
+        -- which is the leftmost column - so it opened on top of the table it
+        -- describes and, for rows near the top, across the column headers and
+        -- the title bar. Readable, and covering the thing you were reading.
+        --
+        -- Anchored off the sheet's right edge instead, so it sits beside the
+        -- window rather than on it, and falls back to the old behaviour if the
+        -- sheet is not reachable - the Roster raises the same tooltip from a
+        -- card, and that one has no sheet frame to hang off.
+        local sheet = _G["AltStableSheet"]
+        if sheet and GameTooltip.SetPoint then
+            GameTooltip:SetOwner(tipBtn, "ANCHOR_NONE")
+            GameTooltip:ClearAllPoints()
+            GameTooltip:SetPoint("TOPLEFT", sheet, "TOPRIGHT", 8, 0)
+        else
+            GameTooltip:SetOwner(tipBtn, "ANCHOR_RIGHT")
+        end
         GameTooltip:ClearLines()
         GameTooltip:AddLine(AltStable.ClassColor(c.class)..(c.name or "").."|r", 1,1,1)
         if c.guild and c.guild ~= "" then
