@@ -1831,9 +1831,95 @@ end
 -- window stays wherever the user left it.  No need to ClearAllPoints.
 ------------------------------------------------------------
 
+-- The largest window this display can actually show, in the FRAME's own
+-- coordinate space (#99).
+--
+-- Nothing clamped this before, and Options is the one section that asks for a
+-- fixed size - ResizeFrame(820, 760) - rather than sizing to its content. On a
+-- shorter display, or at scale 1.25 where 760 becomes an effective 950, the
+-- window simply ran off the bottom of the screen and the last options went with
+-- it. The scroll frame inside it cannot help: the part that is off-screen is the
+-- window, not the content.
+--
+-- Converted through effective scale rather than compared raw. The frame carries
+-- the user's scale setting and UIParent carries the client's, so `760` and
+-- `UIParent:GetHeight()` are numbers in two different spaces and comparing them
+-- directly is wrong by exactly the ratio nobody notices at scale 1.0.
+local SCREEN_MARGIN = 40
+
+local function FitToScreen(w, h)
+    if not (frame and UIParent) then return w, h end
+    local fs = frame:GetEffectiveScale() or 1
+    local us = UIParent:GetEffectiveScale() or 1
+    if fs <= 0 then return w, h end
+    local maxW = (UIParent:GetWidth()  * us) / fs - SCREEN_MARGIN
+    local maxH = (UIParent:GetHeight() * us) / fs - SCREEN_MARGIN
+
+    -- The floor is the SIDEBAR's own requirement, not an arbitrary 200.
+    --
+    -- ComputeContentSize deliberately raises the height to
+    -- `TITLE_H + GetSidebarRequiredHeight()` so the last nav button does not
+    -- overlap the totals bar. Clamping below that undoes it, and the sidebar has
+    -- no scroll of its own - so the bottom sections simply render past the edge
+    -- and become unreachable. Trading "the window is off-screen" for "half the
+    -- navigation is off-screen" is not a fix.
+    --
+    -- Below the floor the honest answer is that the display cannot show this
+    -- window, and a window that overflows is better than one with no way to
+    -- reach Options and turn the scale down.
+    local floorH = TITLE_H + (AltStable.GetSidebarRequiredHeight
+                              and AltStable.GetSidebarRequiredHeight() or 0)
+    if floorH < 200 then floorH = 200 end
+
+    if maxW > 200    and w > maxW then w = maxW end
+    if maxH > floorH and h > maxH then h = maxH end
+    return w, h
+end
+
+-- The size last ASKED for, before the screen limit touched it.
+--
+-- Refitting against the CURRENT size is a one-way ratchet: FitToScreen only
+-- ever reduces, so scaling up shrinks the window and scaling back down sees
+-- something that already fits and does nothing. The window is left permanently
+-- short, and on the Options tab - which is where the scale slider lives, and
+-- which is a plugin section, so sizing-to-content early-outs - there is no way
+-- back at all without switching sections and returning.
+--
+-- So the request is remembered and the limit is re-applied to THAT. Scaling up
+-- clamps, scaling back down restores.
+local wantW, wantH
+
 local function ResizeFrame(w, h)
     if not frame then return end
-    frame:SetSize(w, h)
+    wantW, wantH = w, h
+    frame:SetSize(FitToScreen(w, h))
+end
+
+-- The helper AND the two paths that are supposed to use it. Three times this
+-- week a helper has been fully asserted while the line calling it had no
+-- coverage, so deleting the call changed nothing the suite could see.
+AltStable._test = AltStable._test or {}
+AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
+AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
+AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
+-- Forward-declared, because the hook below is registered before the function is
+-- defined and a closure written above the `local` would capture a nil GLOBAL of
+-- the same name instead - silently, and only failing when something calls it.
+local ResizeFrameToContent
+-- Registered HERE, not from inside the function body. It used to be assigned on
+-- every call, which made the export depend on something having resized first -
+-- so a reordering, or a refactor that made the earlier caller bail, would fail
+-- the suite for a reason unrelated to what was being tested. It also rewrote a
+-- table field on every roster refresh in game.
+AltStable._test.ResizeFrameToContent = function() return ResizeFrameToContent() end
+
+-- Re-apply the screen limit to the size the window already has. Called after a
+-- scale change, which alters how much display the same numbers occupy without
+-- going through either resize path.
+function AltStable.RefitWindow()
+    if not frame then return end
+    -- The remembered request, not the current size. See wantW/wantH above.
+    frame:SetSize(FitToScreen(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
 end
 
 local function SaveWindowPosition()
@@ -1943,16 +2029,25 @@ local function ComputeContentSize()
     return w, h, needsH, needsV
 end
 
-local function ResizeFrameToContent()
+function ResizeFrameToContent()
     if not frame then return end
     -- Plugins (Recipes, Options) manage their own sizing — don't fight them.
     if activeSection and activeSection._isPlugin then return end
     local w, h, needsH, needsV = ComputeContentSize()
-    frame:SetSize(w, h)
-    -- ComputeContentSize is the authority on scrollbar visibility — it's
-    -- derived purely from row count and column width vs the frame size we
-    -- just set, so it's always self-consistent. UpdateScroll's measure()
-    -- might disagree by a pixel due to rounding; ComputeContentSize wins.
+    wantW, wantH = w, h
+    -- Through the same clamp: a roster long enough to want more height than the
+    -- display has is just as reachable as the Options tab asking for a fixed 760.
+    frame:SetSize(FitToScreen(w, h))
+    -- ComputeContentSize decides scrollbar visibility from row count and column
+    -- width against the size it ASKED for.
+    --
+    -- That used to be the size the frame got, so the two were self-consistent by
+    -- construction. They are not any more: the screen clamp can hand back
+    -- something smaller, and then `needsH`/`needsV` describe a window that was
+    -- not built. UpdateScroll re-measures from the real bodyScroll and corrects
+    -- it - the failure mode is an extra vertical scrollbar appearing, not rows
+    -- being stranded - but the guarantee this comment used to claim is gone, and
+    -- claiming it anyway is how the next person trusts the wrong number.
     frame._layoutNeedsHScroll = needsH
     frame._layoutNeedsVScroll = needsV
     -- Apply final anchors and sync content sizes / scrollbar visibility.
@@ -1998,22 +2093,15 @@ local function SwitchSection(section)
     local ar, ag, ab = AltStable.GetAccentRGB()
     for _, btn in ipairs(sidebarBtns) do
         if btn.sectionId == section.id then
-            btn:SetBackdropColor(
-                AltStable.C.BG_BTN_ACTIVE[1], AltStable.C.BG_BTN_ACTIVE[2],
-                AltStable.C.BG_BTN_ACTIVE[3], AltStable.C.BG_BTN_ACTIVE[4])
+            AltStable.SkinButtonActive(btn)
             btn.lbl:SetTextColor(ar, ag, ab)
             if btn.icon then btn.icon:SetAlpha(1.0) end
-            if btn.accentStripe then
-                btn.accentStripe:SetColorTexture(ar, ag, ab, 1)
-                btn.accentStripe:Show()
-            end
+            AltStable.SkinStripe(btn.accentStripe, true, ar, ag, ab)
         else
-            btn:SetBackdropColor(
-                AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-            btn.lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+            AltStable.SkinButtonIdle(btn)
+            btn.lbl:SetTextColor(AltStable.SkinNavDim())
             if btn.icon then btn.icon:SetAlpha(0.65) end
-            if btn.accentStripe then btn.accentStripe:Hide() end
+            AltStable.SkinStripe(btn.accentStripe, false)
         end
     end
 
@@ -2049,10 +2137,24 @@ local function CreateFrameIfNeeded()
     frame:SetSize(FRAME_W, FRAME_H)
     ApplyWindowPosition()
     frame:SetFrameStrata("DIALOG"); frame:SetToplevel(true)
-    AltStable.ApplyBackdrop(frame,
-        AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2],
-        AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    -- The window is either a flat backdrop or the glass material, never both:
+    -- a backdrop is an opaque square, and inside a rounded body it would draw
+    -- the corners straight back on - the same mistake the fills below make.
+    AltStable.glass = AltStable.SkinWindow(frame)
+    if not AltStable.glass then
+        AltStable.ApplyBackdrop(frame,
+            AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2],
+            AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
+    end
     frame:SetScale(AltStableConfig.scale or 1.0)
+    -- Fitting is not the same as being ON the display. The position is
+    -- remembered from whenever it was last dragged, and a window that fits can
+    -- still have been saved with its bottom past the edge - which is what the
+    -- Options tab did, because growing taller moves the bottom down while the
+    -- saved anchor holds the top still.
+    frame:SetClampedToScreen(true)
+    AltStable._test = AltStable._test or {}
+    AltStable._test.frame = frame
     frame:SetMovable(true); frame:EnableMouse(false)  -- drag handled by titleBar
     tinsert(UISpecialFrames,"AltStableSheet")
     frame:SetScript("OnShow", function()
@@ -2116,13 +2218,30 @@ local function CreateFrameIfNeeded()
     tbSep:SetPoint("BOTTOMRIGHT", titleBar, "BOTTOMRIGHT", 0, 0)
     tbSep:SetColorTexture(0, 0, 0, 1)
 
+    -- Under glass the band is lighter than the body rather than darker, and is
+    -- clipped to the window so it stops squaring off the top corners. Called
+    -- after both textures exist because it restyles them in place.
+    AltStable.SkinTitleBand(titleBar, frame, tbBg, tbSep)
+    -- Exposed so a test can prove the CALL happens, not merely that the helper
+    -- works when called: the helper had fifteen assertions on it and the line
+    -- that invokes it had none, so deleting this line changed nothing the suite
+    -- could see.
+    AltStable._test = AltStable._test or {}
+    AltStable._test.titleBar, AltStable._test.titleBarBG = titleBar, tbBg
+    -- The nav buttons, so a test can ask what SwitchSection actually painted.
+    -- Twice now a helper has been fully asserted while the line calling it had
+    -- no coverage at all, and deleting the call changed nothing the suite saw.
+    AltStable._test.sidebarBtns = sidebarBtns
+
     -- Title text — centered across the full width of the title bar.
     local titleText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
     titleText:SetText("AltStable")
+    -- Centred over a band the world shows through, so it needs the shadow.
+    AltStable.SkinText(titleText)
+    AltStable._test.titleText = titleText
     local function UpdateTitleTextColor()
-        local r, g, b = AltStable.GetAccentRGB()
-        titleText:SetTextColor(r, g, b)
+        titleText:SetTextColor(AltStable.SkinTitleColor())
     end
     UpdateTitleTextColor()
     AltStable.RegisterThemeCallback(UpdateTitleTextColor)
@@ -2361,9 +2480,14 @@ local function CreateFrameIfNeeded()
     -- the grid's left edge — visible as a vertical strip of empty dark
     -- space in screenshots.
     sidebar:SetWidth(SIDEBAR_WIDTH-1)
-    AltStable.ApplyBGOnly(sidebar,
-        AltStable.C.BG_SIDEBAR[1], AltStable.C.BG_SIDEBAR[2],
-        AltStable.C.BG_SIDEBAR[3], AltStable.C.BG_SIDEBAR[4])
+    -- Under glass the sidebar shows the material through instead of covering it
+    -- with a panel of its own: it is a region OF the window rather than a card
+    -- sitting on one, and its fill is what squares off both left corners.
+    if not AltStable.SkinIsGlass() then
+        AltStable.ApplyBGOnly(sidebar,
+            AltStable.C.BG_SIDEBAR[1], AltStable.C.BG_SIDEBAR[2],
+            AltStable.C.BG_SIDEBAR[3], AltStable.C.BG_SIDEBAR[4])
+    end
 
     -- Sidebar right border (1px separator)
     local sbRightLine = sidebar:CreateTexture(nil,"OVERLAY")
@@ -2412,25 +2536,21 @@ local function CreateFrameIfNeeded()
         local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
         lbl:SetPoint("LEFT",52,0); lbl:SetPoint("RIGHT",-8,0)
         lbl:SetJustifyH("LEFT"); lbl:SetText(section.label)
-        lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        lbl:SetTextColor(AltStable.SkinNavDim())
         btn.lbl=lbl; btn.icon=icon
 
         btn:SetScript("OnClick",function() SwitchSection(section) end)
         btn:SetScript("OnEnter",function()
             if activeSection.id~=section.id then
-                btn:SetBackdropColor(
-                    AltStable.C.BG_BTN_HOVER[1], AltStable.C.BG_BTN_HOVER[2],
-                    AltStable.C.BG_BTN_HOVER[3], AltStable.C.BG_BTN_HOVER[4])
+                AltStable.SkinButtonHover(btn)
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
             end
         end)
         btn:SetScript("OnLeave",function()
             if activeSection.id~=section.id then
-                btn:SetBackdropColor(
-                    AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                    AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-                lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                AltStable.SkinButtonIdle(btn)
+                lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
             end
         end)
@@ -2498,23 +2618,19 @@ local function CreateFrameIfNeeded()
         local lbl=pbtn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
         lbl:SetPoint("LEFT",52,0); lbl:SetPoint("RIGHT",-8,0)
         lbl:SetJustifyH("LEFT"); lbl:SetText(plugin.label)
-        lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        lbl:SetTextColor(AltStable.SkinNavDim())
         pbtn.lbl=lbl; pbtn.icon=icon
 
         pbtn:SetScript("OnClick",function()
             for _, b in ipairs(sidebarBtns) do
-                b:SetBackdropColor(
-                    AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                    AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-                if b.lbl then b.lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM)) end
-                if b.accentStripe then b.accentStripe:Hide() end
+                AltStable.SkinButtonIdle(b)
+                if b.lbl then b.lbl:SetTextColor(AltStable.SkinNavDim()) end
+                AltStable.SkinStripe(b.accentStripe, false)
                 if b.icon then b.icon:SetAlpha(0.78) end
             end
-            pbtn:SetBackdropColor(
-                AltStable.C.BG_BTN_ACTIVE[1], AltStable.C.BG_BTN_ACTIVE[2],
-                AltStable.C.BG_BTN_ACTIVE[3], AltStable.C.BG_BTN_ACTIVE[4])
+            AltStable.SkinButtonActive(pbtn)
             local ar, ag, ab = AltStable.GetAccentRGB()
-            stripe:SetColorTexture(ar, ag, ab, 1); stripe:Show()
+            AltStable.SkinStripe(stripe, true, ar, ag, ab)
             lbl:SetTextColor(ar, ag, ab)
             icon:SetAlpha(1.0)
             if activeSection._isPlugin and activeSection.OnDeactivate then
@@ -2525,19 +2641,15 @@ local function CreateFrameIfNeeded()
         end)
         pbtn:SetScript("OnEnter",function()
             if activeSection.id~=plugin.id then
-                pbtn:SetBackdropColor(
-                    AltStable.C.BG_BTN_HOVER[1], AltStable.C.BG_BTN_HOVER[2],
-                    AltStable.C.BG_BTN_HOVER[3], AltStable.C.BG_BTN_HOVER[4])
+                AltStable.SkinButtonHover(pbtn)
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
             end
         end)
         pbtn:SetScript("OnLeave",function()
             if activeSection.id~=plugin.id then
-                pbtn:SetBackdropColor(
-                    AltStable.C.BG_BTN_IDLE[1], AltStable.C.BG_BTN_IDLE[2],
-                    AltStable.C.BG_BTN_IDLE[3], AltStable.C.BG_BTN_IDLE[4])
-                lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                AltStable.SkinButtonIdle(pbtn)
+                lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
             end
         end)
@@ -2578,6 +2690,10 @@ local function CreateFrameIfNeeded()
     local optBG = optionsPanel:CreateTexture(nil, "BACKGROUND")
     optBG:SetAllPoints()
     optBG:SetColorTexture(unpack(AltStable.C.BG_MAIN))
+    -- Reaches BOTTOMRIGHT (0, 1), so it owns the window's bottom-right corner on
+    -- this tab. Already a texture rather than a backdrop, so it only needs
+    -- clipping to the window outline, not replacing.
+    AltStable.SkinClipTexture(optionsPanel, optBG, frame)
 
     local optionsScroll = CreateFrame("ScrollFrame", nil, optionsPanel, "UIPanelScrollFrameTemplate")
     optionsScroll:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
@@ -3367,12 +3483,16 @@ local function CreateFrameIfNeeded()
     --------------------------------------------------------
 
     totalsBar=CreateFrame("Frame",nil,frame,"BackdropTemplate")
+    -- CORNER-SAFE. This reaches the bottom-right corner, so under glass its
+    -- fill is clipped to the window's outline. See AltStable.SkinPanelFill.
     totalsBar:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",SIDEBAR_WIDTH,1)
     totalsBar:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-1,1)
     totalsBar:SetHeight(22)
-    AltStable.ApplyBGOnly(totalsBar,
-        AltStable.C.BG_FOOTER[1], AltStable.C.BG_FOOTER[2],
-        AltStable.C.BG_FOOTER[3], AltStable.C.BG_FOOTER[4])
+    if not AltStable.SkinPanelFill(totalsBar, frame, AltStable.C.BG_FOOTER) then
+        AltStable.ApplyBGOnly(totalsBar,
+            AltStable.C.BG_FOOTER[1], AltStable.C.BG_FOOTER[2],
+            AltStable.C.BG_FOOTER[3], AltStable.C.BG_FOOTER[4])
+    end
     -- top border line
     local totLine=frame:CreateTexture(nil,"OVERLAY"); totLine:SetHeight(1)
     totLine:SetPoint("BOTTOMLEFT",totalsBar,"TOPLEFT",0,0)
@@ -3506,6 +3626,33 @@ local function CreateFrameIfNeeded()
     sbBorder:SetPoint("TOPLEFT",frame,"TOPLEFT",SIDEBAR_WIDTH,-TITLE_H)
     sbBorder:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",SIDEBAR_WIDTH,0)
     sbBorder:SetColorTexture(0, 0, 0, 1)
+
+    --------------------------------------------------------
+    -- The data region stays OPAQUE under glass
+    --------------------------------------------------------
+    -- "The rows have alpha-1.00 fills, so the table is already opaque" is not
+    -- true, and the exception is the one that would look worst. DimRow in
+    -- RowRenderer sets the WHOLE row - background included - to
+    -- HIDDEN_ROW_ALPHA = 0.45 for a hidden character, so once the nearly opaque
+    -- main backdrop stops being there, scenery shows through exactly the rows
+    -- already marked as less important. Same for the frozen name column beside
+    -- them.
+    --
+    -- One underlay behind both viewports rather than a change to row rendering:
+    -- dimming, alternating bands, class tint and hover all keep working, and
+    -- the space below the last row is covered too. Glass is for the chrome; the
+    -- table is a reading surface.
+    if AltStable.SkinIsGlass() then
+        local dataBG = frame:CreateTexture(nil, "BACKGROUND", nil, -3)
+        dataBG:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDEBAR_WIDTH, -BodyTopY())
+        dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 36)
+        -- The pane colour, not BG_MAIN: an opaque slab here is a black box
+        -- pasted on the glass, which is exactly how the first attempt looked.
+        dataBG:SetColorTexture(unpack(AltStable.SkinPaneColor()))
+        -- And clipped, because it runs to the window's right edge.
+        AltStable.SkinClipTexture(frame, dataBG, frame)
+        AltStable._dataBG = dataBG
+    end
 
     --------------------------------------------------------
     -- Frozen body scroll

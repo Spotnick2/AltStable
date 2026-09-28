@@ -59,11 +59,20 @@ depending on whether the evidence is in the prompt or in the repo:
   lead with *"OPINION ONLY — do NOT read files, edit, or run commands. Answer from the description
   below."* This keeps it fast and stops Codex wandering the tree. (Still run with `-s read-only`.)
 - **Code / repository review mode** (the request references a diff, file paths, or "review the
-  code"): **do NOT forbid reading** — Codex must inspect the evidence. Lead with *"Review the code.
-  Read these files: <paths>. Do NOT edit anything or run commands — read-only advice only."* The
-  `-s read-only` sandbox already blocks edits; the prompt just scopes what to read.
+  code"): **do NOT forbid reading, and do NOT forbid COMMANDS** — Codex has no file-reading tool of
+  its own, so it reads by running `cat`/`sed`/`grep`. Telling it "do not run commands" is therefore
+  the same instruction as "do not read the code", and it will correctly refuse the whole review:
 
-Never tell Codex to both "review the code" and "do not read files" — that contradiction produces a
+  > *"I can't complete the code-grounded review under the 'do not run commands' constraint… Local
+  > text-file access is available only through shell commands."*
+
+  That is a wasted round trip of several minutes. Lead with *"Review the code. Read these files:
+  <paths>. Use whatever read-only shell commands you need. The sandbox is read-only, so you cannot
+  edit anything; please also do not try to."* The `-s read-only` sandbox is what actually blocks
+  edits — say so, and let the prompt scope only WHICH files to read.
+
+Never tell Codex to both "review the code" and "do not read files" *or* "do not run commands" -
+reading is done BY running commands, so the two forbid the same thing. That contradiction produces a
 critique of nothing. Match the instruction to the mode.
 
 For AltStable specifically, good things to hand Codex: the `Core.lua` sync/wire-protocol logic,

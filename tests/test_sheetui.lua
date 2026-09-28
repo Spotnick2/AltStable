@@ -26,7 +26,12 @@ end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
+-- Glass.lua is loaded with the addon NAME, the way the client passes it: it
+-- derives its media path from `...`, and a bare dofile leaves that nil so every
+-- texture path comes out as "Interface\AddOns\nil\...".
+assert(loadfile("Glass.lua"))("AltStable")
 dofile("Theme.lua")
+dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
 dofile("Scanner.lua")
 dofile("Reputations.lua")
@@ -928,6 +933,262 @@ end
 
 do
     local T = AltStable._test
+
+    -- The title band, through the BUILT sheet rather than the helper. The helper
+    -- has its own tests in test_glass; what those cannot say is whether SheetUI
+    -- actually calls it, and the title bar was listed as a corner owner in the
+    -- plan and then not wired at all.
+    do
+        local bg = T.titleBarBG
+        check("the title bar is restyled when the sheet is built", bg ~= nil)
+        if bg then
+            local c = bg._colorTexture
+            check("  painted light rather than the old opaque dark",
+                  c and c[1] > 0.5, tostring(c and c[1]))
+            check("  and graded", bg._gradient ~= nil)
+            -- The corner fix: it spans (0, 0) to the top corners, so without a
+            -- mask it draws them square.
+            check("  and clipped, so it stops squaring the top corners",
+                  bg:GetNumMaskTextures() > 0)
+        end
+        -- The nav buttons as SwitchSection left them: exactly one selected, in
+        -- the accent colour, and the rest showing nothing.
+        local btns = T.sidebarBtns or {}
+        check("the sidebar has buttons", #btns > 1, tostring(#btns))
+        local lit, litBtn = 0, nil
+        for _, b in ipairs(btns) do
+            if b._skinState and b._skinState:IsShown() then
+                lit = lit + 1; litBtn = b
+            end
+        end
+        eq("exactly one nav button is selected", lit, 1)
+        if litBtn then
+            local accent = { AltStable.GetAccentRGB() }
+            local c = litBtn._skinState._colorTexture
+            check("  and it is painted in the accent colour",
+                  c and c[1] == accent[1], tostring(c and c[1]))
+        end
+        -- And an unselected label is the brighter glass value, not the 0.50
+        -- that reads as disabled over a translucent panel.
+        for _, b in ipairs(btns) do
+            if b ~= litBtn and b.lbl then
+                local lr = b.lbl:GetTextColor()
+                check("  unselected labels are not the disabled-looking dim",
+                      lr and lr > AltStable.C.TEXT_DIM[1], tostring(lr))
+                break
+            end
+        end
+
+        local tt = T.titleText
+        if tt then
+            local tr, tg, tb = tt:GetTextColor()
+            check("the title is white, not competing with the accent selection",
+                  tr == tg and tg == tb and tr > 0.9,
+                  ("%s,%s,%s"):format(tostring(tr), tostring(tg), tostring(tb)))
+        end
+        check("the title text has a shadow over the glass", tt ~= nil)
+        if tt then
+            local x, y = tt:GetShadowOffset()
+            check("  a real one", x ~= 0 or y ~= 0,
+                  ("%s,%s"):format(tostring(x), tostring(y)))
+        end
+    end
+
+    ------------------------------------------------------------
+    -- The window fits the display (#99)
+    ------------------------------------------------------------
+    -- Options is the only section that asks for a FIXED size rather than
+    -- sizing to its content - ResizeFrame(820, 760) - and nothing clamped it,
+    -- so on a shorter display, or at scale 1.25 where 760 is an effective 950,
+    -- the bottom of the window ran off the screen and took the last options
+    -- with it. The scroll frame inside cannot help: what is off-screen is the
+    -- window, not the content.
+    do
+        local f = T.frame
+        check("the sheet frame is reachable", f ~= nil)
+        local screenH = UIParent:GetHeight()
+        check("the stubs model a display-sized UIParent", screenH > 500,
+              tostring(screenH))
+
+        -- 600, not 760. On a default 1080p UI the screen is 768 units at an
+        -- effective scale of ~1.4, so the limit is ~728 - and the Options tab's
+        -- fixed 760 is ABOVE it. That is not a quirk of the fixture, it is the
+        -- reported bug: at default scale that tab asks for more height than the
+        -- display has, before any scaling makes it worse.
+        local w, h = T.FitToScreen(820, 600)
+        eq("a window that fits is left alone", w, 820)
+        eq("  in both directions", h, 600)
+
+        -- The reported case, stated as itself.
+        local _, opts = T.FitToScreen(820, 760)
+        check("the Options tab's fixed 760 does not fit a default 1080p UI",
+              opts < 760, tostring(opts))
+
+        local _, tall = T.FitToScreen(820, 5000)
+        check("a window taller than the display is clamped", tall < 5000)
+        check("  to inside it, with a margin", tall <= screenH - T.SCREEN_MARGIN,
+              ("%s vs %s"):format(tostring(tall), tostring(screenH)))
+
+        local wide = T.FitToScreen(9000, 760)
+        check("and the same for width", wide <= UIParent:GetWidth() - T.SCREEN_MARGIN)
+
+        -- SCALE. The frame carries the user's scale and UIParent the client's,
+        -- so the two heights are numbers in different spaces - comparing them
+        -- raw is wrong by exactly the ratio nobody notices at 1.0, which is the
+        -- scale everything gets tested at.
+        -- GetScale, not GetEffectiveScale. Restoring an EFFECTIVE scale as if
+        -- it were a scale multiplies the parent's in a second time and leaves
+        -- the frame at the wrong size for everything downstream - which is only
+        -- invisible while UIParent's scale is 1.
+        local prev = f:GetScale()
+        f:SetScale(1.25)
+        local _, scaled = T.FitToScreen(820, 5000)
+        f:SetScale(prev)
+        local _, unscaled = T.FitToScreen(820, 5000)
+        check("a scaled-up window is clamped sooner, in its own units",
+              scaled < unscaled,
+              ("1.25 gives %s, 1.0 gives %s"):format(tostring(scaled), tostring(unscaled)))
+
+        -- A floor, or a bad read during load leaves a window with no room for
+        -- anything and no way to get it back.
+        local savedH = UIParent:GetHeight()
+        UIParent:SetHeight(10)
+        local _, floored = T.FitToScreen(820, 760)
+        UIParent:SetHeight(savedH)
+        eq("an implausible screen does not shrink the window to nothing", floored, 760)
+
+        -- Fitting is not the same as being ON the display: the position is
+        -- remembered, and growing taller moves the bottom down while the saved
+        -- anchor holds the top still.
+        check("the window is kept on the screen", f:IsClampedToScreen())
+
+        -- Through the real resize, not just the helper. This is the half that
+        -- was missing: FitToScreen had eight assertions and the two lines that
+        -- call it had none, so removing them changed nothing the suite saw.
+        local maxH = (UIParent:GetHeight() * UIParent:GetEffectiveScale())
+                     / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+        T.ResizeFrame(820, 5000)
+        check("asking the window for more height than the display has is refused",
+              f:GetHeight() <= maxH,
+              ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(maxH)))
+        T.ResizeFrame(9000, 760)
+        check("  and more width", f:GetWidth() <= (UIParent:GetWidth()
+              * UIParent:GetEffectiveScale()) / (f:GetEffectiveScale() or 1)
+              - T.SCREEN_MARGIN)
+        -- And a reasonable request still goes through untouched, or "clamped"
+        -- would be satisfied by a window that is always the same size.
+        T.ResizeFrame(820, 600)
+        eq("a window that fits is sized exactly as asked", f:GetHeight(), 600)
+
+        -- SCALING is a third way to stop fitting, and it goes through neither
+        -- resize path: the numbers stay the same and the display they occupy
+        -- changes. Driven through the real AltStable.SetScale rather than by
+        -- setting the scale and calling the clamp by hand, because the bug was
+        -- precisely that SetScale did not call it.
+        do
+            local savedH = UIParent:GetHeight()
+            -- GetScale, not GetEffectiveScale: restoring an effective scale as
+            -- if it were a scale multiplies the parent's in a second time.
+            local savedScale = f:GetScale()
+            UIParent:SetHeight(900)
+            T.ResizeFrame(820, 760)
+            eq("a window that fits at scale 1 is left alone", f:GetHeight(), 760)
+            AltStable.SetScale(1.25)
+            local lim = (900 * UIParent:GetEffectiveScale())
+                        / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+            check("and scaling it up refits it rather than leaving it oversized",
+                  f:GetHeight() <= lim,
+                  ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(lim)))
+            -- And BACK. FitToScreen only ever reduces, so refitting against the
+            -- current size is a one-way ratchet: scaling up shrinks the window,
+            -- scaling back down sees something that already fits and does
+            -- nothing, and it stays short for ever. On the Options tab - the one
+            -- place the scale slider lives, and a plugin section, so
+            -- sizing-to-content early-outs - there is no way back at all.
+            AltStable.SetScale(1.0)
+            eq("and scaling back down restores the size that was asked for",
+               f:GetHeight(), 760)
+
+            -- And the CONTENT path remembers its own request too. Without that,
+            -- a refit after sizing-to-content restores whatever the last
+            -- explicit ResizeFrame asked for - a stale number from another tab.
+            T.ResizeFrameToContent()
+            local contentH = f:GetHeight()
+            AltStable.SetScale(1.25)
+            AltStable.SetScale(1.0)
+            eq("a content-sized window comes back to its own size, not another tab's",
+               f:GetHeight(), contentH)
+
+            AltStable.SetScale(savedScale)
+            UIParent:SetHeight(savedH)
+        end
+
+        -- The OTHER path. ResizeFrameToContent sets the size directly rather
+        -- than going through ResizeFrame, so it needed the clamp of its own.
+        -- Exercised on WIDTH, because height has a floor it cannot go below -
+        -- see just after.
+        if T.ResizeFrameToContent then
+            local savedW = UIParent:GetWidth()
+            UIParent:SetWidth(400)
+            T.ResizeFrameToContent()
+            local lim = (400 * UIParent:GetEffectiveScale())
+                        / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+            -- EQUAL to the limit, not merely under it. A one-sided check
+            -- passes for any mutation that clamps too hard, and one that drops
+            -- the scale conversion does exactly that.
+            check("sizing to content is clamped to the display too",
+                  math.abs(f:GetWidth() - lim) < 1,
+                  ("%s vs max %s"):format(tostring(f:GetWidth()), tostring(lim)))
+            UIParent:SetWidth(savedW)
+        else
+            check("the content-sizing path is reachable from a test", false)
+        end
+
+        -- LIFTED OUT of UIParent, which is what the capture pipeline does.
+        --
+        -- This is the only case where the UIParent factor in the conversion
+        -- does any work: for an ordinary child, `fs` already contains `us` and
+        -- the two cancel. Reparented, they do not - and dropping the factor
+        -- would then size the window against a screen measured in the wrong
+        -- units. A mutation removing it survives every other assertion here.
+        do
+            local savedParent = f:GetParent()
+            f:SetParent(WorldFrame or UIParent)
+            local us = UIParent:GetEffectiveScale()
+            local fs = f:GetEffectiveScale()
+            local lim = (UIParent:GetHeight() * us) / fs - T.SCREEN_MARGIN
+            local _, got = T.FitToScreen(820, 99999)
+            check("a window lifted out of UIParent is still measured against the screen",
+                  math.abs(got - lim) < 1,
+                  ("%s vs %s"):format(tostring(got), tostring(lim)))
+            check("  which is a different limit from the parented case",
+                  math.abs(fs - us) > 0.01,
+                  ("frame %s vs UIParent %s"):format(tostring(fs), tostring(us)))
+            f:SetParent(savedParent)
+        end
+
+        -- The HEIGHT floor, which is the sidebar's own requirement rather than
+        -- an arbitrary number.
+        --
+        -- ComputeContentSize raises the height so the last nav button clears the
+        -- totals bar, and the sidebar has no scroll of its own - so clamping
+        -- below that trades "the window is off-screen" for "half the navigation
+        -- is off-screen", which is not a fix. Below the floor the honest answer
+        -- is that the display cannot show this window, and an overflowing window
+        -- beats one with no way to reach Options and turn the scale down.
+        do
+            local savedH2 = UIParent:GetHeight()
+            UIParent:SetHeight(250)
+            T.ResizeFrameToContent()
+            local tooSmall = (250 * UIParent:GetEffectiveScale())
+                             / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
+            check("a display too short for the sidebar is not clamped into it",
+                  f:GetHeight() > tooSmall,
+                  ("%s vs the would-be limit %s"):format(
+                      tostring(f:GetHeight()), tostring(tooSmall)))
+            UIParent:SetHeight(savedH2)
+        end
+    end
     local btn = CreateFrame("Frame")
     local over, under = T.ApplyRosterIcon(btn)
 

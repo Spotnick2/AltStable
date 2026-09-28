@@ -174,6 +174,16 @@ local function EnsureDefaults()
     end
 
     -- Appearance defaults
+    --
+    -- `skin` is which MATERIAL the window is made of (#97); `theme` is the
+    -- older and much smaller question of whether the accent is gold or your
+    -- class colour. They are deliberately separate: one palette, two
+    -- independent choices on top of it.
+    --
+    -- Not defaulted here on purpose. AltStable.SkinName() resolves it at call
+    -- time and falls back, so an absent key means "the current default" rather
+    -- than freezing today's default onto every profile on disk - which is what
+    -- makes changing the default later a change rather than a migration.
     AltStableConfig.theme = AltStableConfig.theme or "dark"
     if AltStableConfig.scale == nil then
         AltStableConfig.scale = 1.0

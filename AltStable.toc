@@ -10,7 +10,9 @@ Libs\LibStub\LibStub.lua
 Libs\LibDeflate\LibDeflate.lua
 Libs\ChatThrottleLib\ChatThrottleLib.lua
 Compat.lua
+Glass.lua
 Theme.lua
+Skin.lua
 Core.lua
 Scanner.lua
 Reputations.lua

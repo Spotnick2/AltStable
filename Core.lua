@@ -2707,6 +2707,30 @@ SlashCmdList["ALTSTABLE"] = function(args)
     -- request.
     ----------------------------------------------------
 
+    ----------------------------------------------------
+    -- /alts skin [flat|clear|smoked]
+    --
+    -- Applied on the NEXT LOAD, not now. Glass.Apply creates its regions every
+    -- time it is called and has no teardown or update path, so switching in
+    -- place would mean caching material instances, hiding every region,
+    -- restoring the old fills and repainting the body - a lot of machinery for
+    -- a setting changed once. Saying "reload" is the honest version.
+    ----------------------------------------------------
+
+    if cmd == "skin" then
+        local names = {}
+        for k in pairs(AltStable.SKINS or {}) do names[#names + 1] = k end
+        table.sort(names)
+        if not target or target == "" or not (AltStable.SKINS or {})[target] then
+            Print("Skin is |cffffff00" .. AltStable.SkinName() .. "|r. Choose one of: "
+                  .. table.concat(names, ", "))
+            return
+        end
+        AltStable.SetConfigValue("skin", target)
+        Print("Skin set to |cffffff00" .. target .. "|r - |cffffff00/reload|r to see it.")
+        return
+    end
+
     if cmd == "sync" then
         if not target or target == "" then
             local pinged, skipped = BroadcastRequest(true)
