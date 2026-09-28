@@ -1561,8 +1561,17 @@ if it is still the value you set — another addon that has moved it since has a
 opinion more recent than yours.
 
 The border lives in `GameTooltip.NineSlice` on an 11.x client. **Unverified on
-Forever**: guard every access, and let the material fail to appear rather than
-erroring on a frame everyone shares. Comparison tooltips (`ShoppingTooltip1/2`)
+Forever**, so check for it **before building anything**, not at the point of
+hiding it: guarding only the hide gives an unrecognised client the worst of both
+— your material drawn over a stock border that is still fully there. Require it
+to be *readable* as well as writable, because an alpha you cannot read is one
+you cannot give back.
+
+Check the **type**, not the truthiness. A frame that answers every unknown field
+with something callable — which is what a chaining test harness does, and the
+same shape as "a function in the dump is not a working function" — makes
+`if tt.NineSlice then` true for a tooltip that has no border container at all,
+and the next index errors on a frame every addon shares. Comparison tooltips (`ShoppingTooltip1/2`)
 are separate frames and are not covered by anything done to `GameTooltip`.
 
 Related, and already recorded above: `GameTooltip:HookScript("OnTooltipSetItem",

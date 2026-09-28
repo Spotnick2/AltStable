@@ -1017,6 +1017,40 @@ do
         _G.GameTooltip, state.hooked = heldTip, heldHooked
     end
 
+    -- A TOOLTIP WHOSE BORDER WE DO NOT RECOGNISE IS LEFT ALONE - which means
+    -- no material either, not "material over a stock border". NineSlice is
+    -- where an 11.x client keeps it and that is unverified on Forever, so this
+    -- is the path a wrong guess actually takes.
+    do
+        local state = AltStable._test.TooltipState()
+        local heldTip, heldG, heldApplied = _G.GameTooltip, state.g, state.applied
+        state.g, state.applied = nil, false
+        local bare = CreateFrame("Frame", nil, UIParent)   -- no NineSlice
+        bare.GetOwner = function() return ours end
+        bare.IsShown = function() return true end
+        _G.GameTooltip = bare
+        AltStable.ReconcileTooltip()
+        check("an unrecognised tooltip gets no material at all",
+              state.applied == false and state.g == nil,
+              ("applied=%s g=%s"):format(tostring(state.applied), tostring(state.g)))
+        check("  and nothing was built on it", bare._glass == nil)
+
+        -- A border we can hide but cannot READ is worse than one we cannot
+        -- touch: the alpha we would have to give back is the thing we could
+        -- not learn, so hiding it is a one-way trip.
+        state.g, state.applied = nil, false
+        local writeOnly = CreateFrame("Frame", nil, UIParent)
+        writeOnly.GetOwner = function() return ours end
+        writeOnly.IsShown = function() return true end
+        writeOnly.NineSlice = { SetAlpha = function() end }   -- no GetAlpha
+        _G.GameTooltip = writeOnly
+        AltStable.ReconcileTooltip()
+        check("a border we cannot read is left alone too",
+              state.applied == false and state.g == nil,
+              ("applied=%s"):format(tostring(state.applied)))
+        _G.GameTooltip, state.g, state.applied = heldTip, heldG, heldApplied
+    end
+
     -- FLAT NEVER TOUCHES IT. Not "looks the same" - never hooks, never hides.
     useSkin("flat")
     tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT")

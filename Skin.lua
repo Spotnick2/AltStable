@@ -609,14 +609,36 @@ end
 
 local function ApplyTooltip(tt)
     if tip.applied then return end
+
+    -- THE BORDER CONTAINER FIRST, before anything is built.
+    --
+    -- NineSlice is where an 11.x client keeps the tooltip's border, and that is
+    -- unverified here. Checking it only at the point of hiding meant the
+    -- unsupported client got the WORST of both: the material created and shown,
+    -- over a stock border still fully drawn, because only the hide was skipped.
+    -- The promise is that an unrecognised tooltip is left alone, so the check
+    -- belongs before the material exists rather than after.
+    --
+    -- Readable as well as writable: a border we cannot read the alpha of is one
+    -- we cannot put back, which is the half that can hurt.
+    --
+    -- A TYPE check, not a truthiness one. A frame that answers every unknown
+    -- field with something callable - which the test harness does, and which
+    -- is the same shape as the client's "a function in the dump is not a
+    -- working function" - makes `if tt.NineSlice then` true for a tooltip that
+    -- has no border container at all, and the next index errors on a frame
+    -- every addon shares.
+    local ns = tt.NineSlice
+    if type(ns) ~= "table" then return end
+    if type(ns.SetAlpha) ~= "function" or type(ns.GetAlpha) ~= "function" then return end
+
     if not tip.g then tip.g = AltStable.SkinWindow(tt, "small") end
     if not tip.g then return end
-    local ns = tt.NineSlice
     -- Recorded FIRST, and the flag with it: everything after this point is
     -- undoable even if it does not finish.
-    tip.saved = (ns and ns.GetAlpha and ns:GetAlpha()) or nil
+    tip.saved = ns:GetAlpha()
     tip.applied = true
-    if ns and ns.SetAlpha then ns:SetAlpha(0) end
+    ns:SetAlpha(0)
     -- RE-PINNED on every apply. Glass.Apply sets the rim's frame level from the
     -- host's at creation, and this host is shared: the client and other addons
     -- raise tooltips to keep them above their owner, and each one leaves our
