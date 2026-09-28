@@ -939,7 +939,23 @@ do
           AltStable._test.TooltipState().applied == false)
     eq("  and gets its border back", ns:GetAlpha(), 1)
 
+    -- THROUGH THE HOOKS, with no reconcile of our own. Every assertion above
+    -- reaches the code either through the SetOwner post-hook or through an
+    -- explicit ReconcileTooltip, so both HookScript lines could be deleted with
+    -- the suite green - and OnHide is the one that runs in game when the mouse
+    -- leaves a row.
+    tt:Hide()
+    tt:SetOwner(ours, "ANCHOR_RIGHT")
+    tt:Show()
+    check("showing it fires the hook that puts the material on",
+          AltStable._test.TooltipState().applied == true)
+    tt:Hide()
+    check("and hiding it fires the one that takes it off",
+          AltStable._test.TooltipState().applied == false)
+    eq("  giving the border back", ns:GetAlpha(), 1)
+
     -- Hiding restores too, and restoring twice is not an error.
+    tt:Show()
     tt:SetOwner(ours, "ANCHOR_RIGHT")
     AltStable.ReconcileTooltip()
     check("ours again", AltStable._test.TooltipState().applied == true)
@@ -967,6 +983,39 @@ do
     tt:Hide(); AltStable.ReconcileTooltip()
     eq("a border moved by somebody else is left alone", ns:GetAlpha(), 0.25)
     ns:SetAlpha(1)
+
+    -- THE RIM FOLLOWS THE HOST'S LEVEL. Glass.Apply pins it at host + 10 when
+    -- it is built, and this host is shared: the client and other addons raise
+    -- tooltips above their owner, and every one of those leaves our rim behind.
+    -- The sheet's own reference tooltip hit this on a PRIVATE frame and needed
+    -- the same re-pin - a bare panel with no edge from the second hover on.
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+    local g = AltStable._test.TooltipState().g
+    check("the material is built on the tooltip", g and g.top)
+    if g and g.top then
+        tt:Hide()
+        tt:SetFrameLevel(tt:GetFrameLevel() + 40)     -- somebody raises it
+        tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+        check("  and its rim follows the host that moved under it",
+              g.top:GetFrameLevel() > tt:GetFrameLevel(),
+              ("rim %s vs host %s"):format(g.top:GetFrameLevel(), tt:GetFrameLevel()))
+    end
+    tt:Hide()
+
+    -- AND "hooked" MEANS HOOKED. A client with neither HookScript nor SetOwner
+    -- has nothing to hang this on, and saying so is the difference between a
+    -- capability problem and a silent one - the flag is permanent, so a blind
+    -- true would never be retried.
+    do
+        local state = AltStable._test.TooltipState()
+        local heldHooked, heldTip = state.hooked, _G.GameTooltip
+        state.hooked = false
+        _G.GameTooltip = { GetOwner = function() end }   -- nothing to hook
+        check("a tooltip with nothing to hook reports failure",
+              AltStable.InstallTooltipSkin() == false)
+        check("  and stays retryable", state.hooked == false)
+        _G.GameTooltip, state.hooked = heldTip, heldHooked
+    end
 
     -- FLAT NEVER TOUCHES IT. Not "looks the same" - never hooks, never hides.
     useSkin("flat")
