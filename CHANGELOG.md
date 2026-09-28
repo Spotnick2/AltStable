@@ -1,28 +1,114 @@
 # Changelog
 
-## Unreleased
+## v0.2.0-beta
 
-- **Surnames are back on the sheet.** Client 1.60.1.70009 moved the surname into
-  `UnitName`'s second return, so every character scanned on it was stored as just its first
-  name — and a persisted record then rejected its own updates over sync ("name changed: Kaleid
-  Sumner -> Kaleid"). Names are read whole again, and a record missing its surname gains one
-  back on the next sync instead of being refused. Both sides need this build: a peer still on the
-  previous one applies the old strict rule and will reject the repaired name
-  ([#56](https://github.com/Spotnick2/AltStable/issues/56)).
+Measured against client build **1.60.1.70009**, which is also the build that
+fixed SavedVariables — see below. A peer on v0.1.0-beta can still sync with this
+one, with one exception noted under Sync.
 
-- **Data survives a restart.** The beta client used to write SavedVariables and never read them
-  back; build 1.60.1.70009 fixed that, so characters, settings, the sync whitelist and the
-  hidden-character list are all still there on the next launch. Nothing in the addon changed for
-  this — it has been writing them correctly all along
-  ([#23](https://github.com/Spotnick2/AltStable/issues/23)).
-- Measured against client build 1.60.1.70009.
+### The Roster — a new tab
 
-- **Hide a character from the sheet.** Right-click its name and confirm; it
-  disappears from the grid and from the footer totals, which then say how many
-  were left out. The record keeps syncing and updating - nothing is deleted.
-  Restore it under Options, "Hidden characters". The list is per account and is
-  keyed by GUID, so two characters sharing a first name are not confused
+- **Your characters as characters, not rows.** The Roster shows each alt as a
+  portrait rather than a line of text. Capture one with `/asrender` while playing
+  that character; the addon poses it, takes the shot and cuts it out. A character
+  without a portrait still appears, with its class icon
+  ([#15](https://github.com/Spotnick2/AltStable/issues/15)).
+- **Scene mode** stands them together around a campfire, on fourteen backdrops.
+  The grid stays the default and both views share one selection, so switching
+  never loses your place ([#15](https://github.com/Spotnick2/AltStable/issues/15)).
+- **Click a character** for a paper doll: every equipped item, the stats the
+  client actually reports for it, and an **enchant audit** that names the slots
+  missing an enchant. Back returns you to whichever view you came from
+  ([#91](https://github.com/Spotnick2/AltStable/issues/91)).
+- **Favourites** pin characters to the top of the sheet, and choose who stands in
+  the scene ([#66](https://github.com/Spotnick2/AltStable/issues/66)).
+
+### A new look, and two of them
+
+- **Liquid glass.** The window, the sidebar, the menus and the toasts are a
+  translucent material with rounded corners and a lit rim, in **Clear** or
+  **Smoked**. Choose one with `/alts skin clear`, `/alts skin smoked` or
+  `/alts skin flat`, then `/reload` — the material is built when the window is,
+  so it changes on the next load rather than under your feet. **Flat** is still
+  there and is unchanged, so this is a preference and not a migration. There is
+  no Options control for it yet
+  ([#97](https://github.com/Spotnick2/AltStable/issues/97)).
+- There is no blur available to an addon, so the world behind the window shows
+  through sharp. The **table itself stays opaque** for that reason — glass is for
+  the frame, the table is somewhere to read.
+- **The window fits your screen now.** It clamps to the display and re-fits when
+  you change the UI scale, instead of growing past the bottom edge
+  ([#99](https://github.com/Spotnick2/AltStable/issues/99)).
+
+### Living with a lot of alts
+
+- **One right-click menu** on a character, in the sheet and in the Roster:
+  favourite, hide, unhide, forget. Hovering a name marks the row, and the mark
+  stays put while the menu is open, so there is no doubt which character you are
+  about to act on ([#69](https://github.com/Spotnick2/AltStable/issues/69)).
+- **Hide a character from the sheet.** It leaves the grid and the footer totals,
+  which then say how many were left out. The record keeps syncing — nothing is
+  deleted. Restore it under Options → Hidden characters
   ([#21](https://github.com/Spotnick2/AltStable/issues/21)).
+- **Forget a character that no longer exists.** Deleting the record was never the
+  hard part: a peer still holding it re-sends it within seconds. Forgetting now
+  leaves a tombstone, so a deleted character stays gone across sync
+  ([#65](https://github.com/Spotnick2/AltStable/issues/65)).
+- **Faction is captured at scan time** rather than derived from the race, because
+  Forever's two Skyborne races report one race key — so every Skyborne was
+  exported as Alliance, silently
+  ([#22](https://github.com/Spotnick2/AltStable/issues/22)).
+
+### Sync
+
+- **The request handler answered anyone.** The addon channel prefix ships on
+  CurseForge, so a crafted message could ask this addon for every record it held
+  — names, realms, guilds, levels, item levels, gold, mail, lockouts,
+  reputations — and on a default install it was not limited to one account. The
+  handler now requires authorization before it answers. **This is the reason to
+  take this build** ([#61](https://github.com/Spotnick2/AltStable/issues/61)).
+- **Surnames are back.** Client 1.60.1.70009 moved the surname into `UnitName`'s
+  second return, so characters scanned on it were stored under their first name
+  alone, and a persisted record then rejected its own updates ("name changed:
+  Kaleid Sumner -> Kaleid"). Names are read whole again, and a record missing its
+  surname gains one back on the next sync. **Both sides need this build** — a
+  peer still on v0.1.0-beta applies the old strict rule and will reject the
+  repaired name ([#56](https://github.com/Spotnick2/AltStable/issues/56)).
+
+### Fixes
+
+- **Data survives a restart.** The beta client used to write SavedVariables and
+  never read them back; build 1.60.1.70009 fixed that, so characters, settings,
+  the sync whitelist and the hidden-character list are all still there next
+  launch. Nothing in the addon changed — it had been writing them correctly all
+  along ([#23](https://github.com/Spotnick2/AltStable/issues/23)).
+- **The account number saves when you click away** from the box, not only when
+  you press Enter. It was never persisted, which read as "it doesn't persist"
+  ([#64](https://github.com/Spotnick2/AltStable/issues/64)).
+- **A corpse run is not a gear change.** Auto-capture stopped announcing three
+  portraits in as many minutes on a character that had picked nothing up, and
+  Skip is a button rather than a command you have five seconds to find
+  ([#86](https://github.com/Spotnick2/AltStable/issues/86)).
+- **One line of chat per pull, gone.** The quiet-after-combat wait announced its
+  own cancellation on every single mob
+  ([#81](https://github.com/Spotnick2/AltStable/issues/81)).
+- **The hide confirmation opened behind the sheet**
+  ([#68](https://github.com/Spotnick2/AltStable/issues/68)), and the capture
+  blackout could not see the window it was standing in front of
+  ([#87](https://github.com/Spotnick2/AltStable/issues/87)).
+- **Realm group headers** said "(Account: Default)" for everyone. That value never
+  existed — it was the fallback for a field nothing ever set. They name the
+  accounts their characters actually came from now, and say nothing at all when
+  there is only one.
+- **Bank storage measured, not estimated**: 52 bytes, against a 30 KB guess
+  ([#44](https://github.com/Spotnick2/AltStable/issues/44)).
+
+### Notes
+
+- **Licence.** MIT covers this addon's own code. The bundled libraries keep their
+  own licences, which the previous wording implied otherwise
+  ([#90](https://github.com/Spotnick2/AltStable/issues/90)).
+- `/asicon` names the texture under your cursor, for anyone picking icons.
 
 ## v0.1.0-beta
 
