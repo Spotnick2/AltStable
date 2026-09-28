@@ -1310,7 +1310,20 @@ local function CollectAccounts(chars)
             end
         end
     end
-    table.sort(out)
+    -- Sorted NUMERICALLY when they are numbers, which they are: the scanner
+    -- writes AltStableConfig.accountNumber, validated as a whole number from a
+    -- three-digit box. A plain sort is a string sort, so accounts 2 and 10 read
+    -- "(Accounts: 10, 2)" - and the test only ever used 1 and 2, which string
+    -- and numeric order agree on.
+    --
+    -- Falls back to comparing as text when either side is not a number, so a
+    -- hand-edited profile holding something odd still sorts predictably rather
+    -- than erroring mid-render.
+    table.sort(out, function(a, b)
+        local na, nb = tonumber(a), tonumber(b)
+        if na and nb then return na < nb end
+        return a < b
+    end)
     return out
 end
 

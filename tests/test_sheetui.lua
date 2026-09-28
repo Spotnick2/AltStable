@@ -1346,6 +1346,93 @@ do
             T.SetMenuSubject(nil)
             check("  and closing clears it", not row.mark:IsShown())
 
+            -- A POOLED RE-RENDER. Rows are reused by index, so a sync record
+            -- landing while the menu is open re-renders the row under it as
+            -- somebody else. Setting markGuid was not enough: the texture kept
+            -- whatever state the previous occupant left it in, so the addon
+            -- pointed at the wrong character as "the row this right-click acts
+            -- on" while the menu still belonged to the old one.
+            T.SetMenuSubject("Player-1-CCCC")
+            check("the subject's row is lit before the refresh", frozen.mark:IsShown())
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-EEEE", name = "E", class = "MAGE" }, 1)
+            check("  and a re-render as somebody else puts it out",
+                  not frozen.mark:IsShown())
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1)
+            check("  while re-rendering the subject lights it again",
+                  frozen.mark:IsShown())
+            T.SetMenuSubject(nil)
+
+            -- Every render path clears it, including the frozen filler - which
+            -- was the one that did not, so a hovered name left a lit band in an
+            -- empty name column when the list shortened under it.
+            frozen.nameTipBtn:GetScript("OnEnter")(frozen.nameTipBtn)
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1)
+            frozen.nameTipBtn.charData = { guid = "Player-1-CCCC" }
+            frozen.nameTipBtn:GetScript("OnEnter")(frozen.nameTipBtn)
+            check("a hovered row is lit", frozen.mark:IsShown())
+            AltStable.RenderFrozenFillerRow(frozen, 1)
+            check("  and becoming a filler row puts it out",
+                  not frozen.mark:IsShown())
+
+            -- The scrollable half's filler too. Found by a mutation aimed at
+            -- the frozen one that matched this instead, which is the more
+            -- useful kind of accident.
+            scroll.nameTipBtn = scroll.nameTipBtn or frozen.nameTipBtn
+            AltStable.RenderRow(scroll,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1, {})
+            T.SetMenuSubject("Player-1-CCCC")
+            check("the scrollable half lights for the menu", scroll.mark:IsShown())
+            AltStable.RenderFillerRow(scroll, 1)
+            check("  and its filler row puts it out", not scroll.mark:IsShown())
+            T.SetMenuSubject(nil)
+
+            -- A STALE HOVER. The cursor does not move when the list refreshes
+            -- under it, so OnLeave never fires - and without dropping the
+            -- hovered guid when its row becomes somebody else, it survives and
+            -- later lights whichever row happens to be given that character.
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-FFFF", name = "F", class = "MAGE" }, 1)
+            frozen.nameTipBtn.charData = { guid = "Player-1-FFFF", name = "F",
+                                           class = "MAGE", money = 1 }
+            frozen.nameTipBtn:GetScript("OnEnter")(frozen.nameTipBtn)
+            check("a hovered row is lit before the refresh", frozen.mark:IsShown())
+            -- The list refreshes and this row now holds somebody else.
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-GGGG", name = "G", class = "MAGE" }, 1)
+            check("  and it goes dark", not frozen.mark:IsShown())
+            -- The character that WAS hovered turns up on another row. Nothing
+            -- is under the cursor there, so it must not light.
+            AltStable.RenderRow(scroll,
+                { guid = "Player-1-FFFF", name = "F", class = "MAGE" }, 1, {})
+            check("  and the character it belonged to does not light elsewhere",
+                  not scroll.mark:IsShown())
+            frozen.nameTipBtn:GetScript("OnLeave")(frozen.nameTipBtn)
+            frozen.nameTipBtn:GetScript("OnLeave")(frozen.nameTipBtn)
+            -- Put the row back to a character, or the hover assertions further
+            -- down have a filler row to light and nothing to light it with.
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1)
+            frozen.nameTipBtn.charData = { guid = "Player-1-CCCC", name = "C",
+                                           class = "MAGE", money = 1 }
+
+            -- The two halves light EQUALLY. Within one draw layer order is
+            -- creation order, and the frozen half created its mark before the
+            -- class tint while the scrollable half created it after - so one
+            -- painted under the tint and the other over it, and the halves of
+            -- one row lit at different strengths.
+            -- `_created` is the stub's record of texture creation order,
+            -- which is what the client uses to break a tie within one draw
+            -- layer at the same sublevel.
+            local fm, ft = frozen.mark._created, frozen.classTint._created
+            local sm, st = scroll.mark._created, scroll.classTint._created
+            check("the frozen half paints its mark above the class tint",
+                  (fm or 0) > (ft or 0), ("%s vs %s"):format(tostring(fm), tostring(ft)))
+            check("  as the scrollable half does",
+                  (sm or 0) > (st or 0), ("%s vs %s"):format(tostring(sm), tostring(st)))
+
             -- Hover, through the real handler.
             row.nameTipBtn:GetScript("OnEnter")(row.nameTipBtn)
             check("hovering the name lights the row", row.mark:IsShown())
@@ -1406,6 +1493,13 @@ do
     local two = acc(2, 1, 2)
     eq("two accounts are both listed", #two, 2)
     eq("  in a stable order", two[1] .. "," .. two[2], "1,2")
+
+    -- NUMERIC order, not text. 1 and 2 sort the same either way, which is why
+    -- the check above could not see that a plain table.sort put account 10
+    -- before account 2.
+    local many = acc(10, 2, 1)
+    eq("ten accounts sort after two, not before",
+       table.concat(many, ","), "1,2,10")
 
     -- Numbers and strings are the same account: the scanner writes
     -- AltStableConfig.accountNumber, and a profile edited by hand can hold
@@ -1468,7 +1562,45 @@ do
         local sheet = _G["AltStableSheet"]
         local savedL, savedR = sheet._GetLeft, sheet._GetRight
         local savedUL, savedUR = UIParent._GetLeft, UIParent._GetRight
+        local savedSS, savedUS = sheet._scale, UIParent._scale
         UIParent._GetLeft, UIParent._GetRight = 0, 1000
+
+        -- DIFFERING SCALES, or the conversion is untestable: with both at 1,
+        -- every `* ss` and `* us` in SideRoomPx can be deleted and the suite
+        -- stays green. That is the exact mutation this work re-earned from the
+        -- Options tab, and it was unguarded here.
+        --
+        -- The sheet is a CHILD of UIParent, so its effective scale already
+        -- includes UIParent's: setting the two to different numbers does not
+        -- make their effective scales differ. Its OWN scale has to be the
+        -- inverse. At 0.5 under a UIParent of 2 the sheet's effective scale is
+        -- 1 against the screen's 2, so its raw coordinates are half the size
+        -- they look - a window that appears hard against the right edge is
+        -- really mid-display with room to spare.
+        sheet._scale, UIParent._scale = 0.5, 2
+        sheet._GetLeft, sheet._GetRight = 400, 995
+        btn:GetScript("OnEnter")(btn)
+        local _, _, scaledPoint = GameTooltip:GetPoint(1)
+        check("the room beside the window is measured in one coordinate space",
+              scaledPoint == "TOPRIGHT", tostring(scaledPoint))
+        sheet._scale, UIParent._scale = savedSS, savedUS
+
+        -- The WIDTH is in the tooltip's own units while the room is in physical
+        -- pixels, so the comparison needs the tooltip's scale too - the same
+        -- unit mixing, one layer up and in the one place it is not obvious.
+        -- With every scale at 1 that conversion is a no-op and can be deleted
+        -- with the suite green, which is exactly what it was.
+        local savedTS = GameTooltip._scale
+        GameTooltip._scale = 4          -- a 320-unit tooltip is 1280px wide
+        -- 400px on the right, 500 on the left. Enough for an UNCONVERTED 320,
+        -- not enough for the 1280 it really needs - and the left is roomier, so
+        -- the tiebreak cannot supply the right answer by accident.
+        sheet._GetLeft, sheet._GetRight = 500, 600
+        btn:GetScript("OnEnter")(btn)
+        local _, _, bigPoint = GameTooltip:GetPoint(1)
+        check("a tooltip wider than the room beside the window opens on the left",
+              bigPoint == "TOPLEFT", tostring(bigPoint))
+        GameTooltip._scale = savedTS
 
         -- Window hard against the right edge: no room there, plenty on the left.
         sheet._GetLeft, sheet._GetRight = 400, 995
@@ -1496,6 +1628,7 @@ do
 
         sheet._GetLeft, sheet._GetRight = savedL, savedR
         UIParent._GetLeft, UIParent._GetRight = savedUL, savedUR
+        sheet._scale, UIParent._scale = savedSS, savedUS
 
         -- The fallback matters: the Roster raises this same tooltip from a
         -- card, where there is no sheet frame to hang off.
