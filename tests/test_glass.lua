@@ -666,6 +666,57 @@ do
     useSkin("clear")
 end
 
+-- The well a figure stands in (#97).
+--
+-- Asserted as a GAP, not as numbers. The old values were absolute - a
+-- 0.03/0.03/0.04 fill in a 0.16/0.16/0.18 border - and under smoked the fill
+-- was the pane's own three channels, so the inset stopped being an inset and a
+-- one-pixel border was holding the box together on its own. Numbers cannot say
+-- that; the distance between them can, and it says it for a preset nobody has
+-- written yet.
+do
+    -- Perceptual weights, because the channels here are not equal: a pane that
+    -- is cool-blue and a well that is neutral can share a mean and still read
+    -- as different surfaces, and the eye follows green.
+    local function lum(r, g, b) return 0.299 * r + 0.587 * g + 0.114 * b end
+
+    for _, name in ipairs({ "clear", "smoked" }) do
+        useSkin(name)
+        local p = AltStable.SkinPaneColor()
+        local wr, wg, wb, wa = AltStable.SkinWellColor()
+        local er, eg, eb, ea = AltStable.SkinWellEdgeColor()
+        local pl, wl, el = lum(p[1], p[2], p[3]), lum(wr, wg, wb), lum(er, eg, eb)
+
+        -- OPAQUE is the load-bearing half. The pane is translucent, so over
+        -- bright scenery it lifts clear of the well and over dark scenery it
+        -- drops to meet it; a well that also let the world through would move
+        -- with it and the box would be legible depending on where you stand.
+        eq(name .. ": the well is opaque", wa, 1)
+        eq(name .. ": so is its hairline", ea, 1)
+        check(name .. ": the well is darker than the panel it is cut into",
+              wl < pl - 0.005, ("well %.4f vs pane %.4f"):format(wl, pl))
+        check(name .. ": the hairline is clear of the pane",
+              el > pl + 0.15, ("hairline %.4f vs pane %.4f"):format(el, pl))
+        check(name .. ": and clear of the well it outlines",
+              el > wl + 0.15, ("hairline %.4f vs well %.4f"):format(el, wl))
+        check(name .. ": and still a colour the client can draw",
+              er <= 1 and eg <= 1 and eb <= 1 and wr >= 0,
+              ("%.3f,%.3f,%.3f"):format(er, eg, eb))
+    end
+
+    -- Flat is the untouched status quo, to the digit.
+    useSkin("flat")
+    local fr, fg, fb, fa = AltStable.SkinWellColor()
+    check("flat keeps the well it always had",
+          fr == 0.03 and fg == 0.03 and fb == 0.04 and fa == 1,
+          ("%s,%s,%s,%s"):format(fr, fg, fb, fa))
+    local hr, hg, hb, ha = AltStable.SkinWellEdgeColor()
+    check("  and the border it always had",
+          hr == 0.16 and hg == 0.16 and hb == 0.18 and ha == 1,
+          ("%s,%s,%s,%s"):format(hr, hg, hb, ha))
+    useSkin("clear")
+end
+
 ------------------------------------------------------------
 -- The CALL SITES, not the helpers (#97 phase 2)
 ------------------------------------------------------------

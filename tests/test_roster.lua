@@ -2243,6 +2243,24 @@ do
         -- doubles the density the moment it is not: pane over pane came out at
         -- ~0.86 against the grid's 0.62, so the character sheet read darker
         -- than the tab it was opened from.
+        -- And painted from the SKIN. Two absolute numbers here put a
+        -- 0.03/0.03/0.04 well inside the smoked pane's own 0.03/0.03/0.04, so
+        -- the inset stopped being an inset and a one-pixel border was holding
+        -- the box together.
+        local well, hair = T.DetailWell()
+        check("the figure box has a well and a hairline", well and hair)
+        if well and hair then
+            local w, h = well._colorTexture, hair._colorTexture
+            local ew = { AltStable.SkinWellColor() }
+            local eh = { AltStable.SkinWellEdgeColor() }
+            check("  the well is the skin's",
+                  w and w[1] == ew[1] and w[4] == ew[4],
+                  w and ("%s a=%s"):format(w[1], w[4]) or "nil")
+            check("  and so is the hairline",
+                  h and h[1] == eh[1] and h[4] == eh[4],
+                  h and ("%s a=%s"):format(h[1], h[4]) or "nil")
+        end
+
         local own = 0
         for _, region in ipairs(T.DetailRegions()) do
             -- A FULL-FRAME fill. The figure box paints two of its own, and

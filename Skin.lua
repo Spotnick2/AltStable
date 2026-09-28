@@ -443,6 +443,42 @@ function AltStable.SkinTabBG()
     return unpack(AltStable.C.BG_MAIN)
 end
 
+-- A WELL cut into the panel, and the hairline round it.
+--
+-- The figure box on the character sheet is the one that exists, and it was two
+-- absolute numbers: a 0.03/0.03/0.04 fill inside a 0.16/0.16/0.18 border. Under
+-- clear that is a well in a 0.04/0.05/0.07 pane. Under smoked it IS the pane -
+-- the same three channels - so the inset stopped being an inset and the box was
+-- carried entirely by a one-pixel border.
+--
+-- Two guarantees rather than two numbers:
+--
+-- The well is OPAQUE, so unlike the pane around it nothing of the world comes
+-- through. That matters more than the fill value: the pane is translucent, so
+-- over bright scenery it lifts well clear of the well and over dark scenery it
+-- drops to meet it. An absolute fill is legible or not depending on where you
+-- happen to be standing, which is the failure mode glass invites.
+--
+-- And the hairline is lifted clear of BOTH, so the box keeps an outline
+-- whatever is behind the window. It is one pixel; it has to be bright.
+--
+-- Both are derived from the pane, so a fourth preset cannot land a well on its
+-- own panel colour the way smoked did. tests/test_glass.lua asserts the gap
+-- rather than the numbers.
+local WELL_DARKEN, HAIRLINE_LIFT = 0.5, 0.22
+
+function AltStable.SkinWellColor()
+    if not AltStable.SkinIsGlass() then return 0.03, 0.03, 0.04, 1 end
+    local p = AltStable.SkinPaneColor()
+    return p[1] * WELL_DARKEN, p[2] * WELL_DARKEN, p[3] * WELL_DARKEN, 1
+end
+
+function AltStable.SkinWellEdgeColor()
+    if not AltStable.SkinIsGlass() then return 0.16, 0.16, 0.18, 1 end
+    local p = AltStable.SkinPaneColor()
+    return p[1] + HAIRLINE_LIFT, p[2] + HAIRLINE_LIFT, p[3] + HAIRLINE_LIFT, 1
+end
+
 -- Round a texture that IS the shape - a menu entry's hover fill, say - rather
 -- than one trimmed by something else.
 --

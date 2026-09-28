@@ -1443,9 +1443,9 @@ local function BuildDetail()
     -- order these lines happen to be in, which is how
     -- Plugins/Instances/AltStableInstances.lua layers its row bands.
     detail.stageEdge = detail:CreateTexture(nil, "BACKGROUND", nil, 1)
-    detail.stageEdge:SetColorTexture(0.16, 0.16, 0.18, 1)
+    detail.stageEdge:SetColorTexture(AltStable.SkinWellEdgeColor())
     detail.stage = detail:CreateTexture(nil, "BACKGROUND", nil, 2)
-    detail.stage:SetColorTexture(0.03, 0.03, 0.04, 1)
+    detail.stage:SetColorTexture(AltStable.SkinWellColor())
 
     -- The figure, and its stand-in.
     detail.figure = detail:CreateTexture(nil, "ARTWORK")
@@ -2484,6 +2484,12 @@ function Roster._Bootstrap()
             -- The tab's own background, so a test can check this tab agrees
             -- with the others rather than trusting the helper alone.
             BackdropTex = function() return backdropTex end,
+            -- The figure box's two textures, so a test can ask what they were
+            -- PAINTED with and not only how they are stacked.
+            DetailWell = function()
+                if not detail then return nil end
+                return detail.stage, detail.stageEdge
+            end,
             DetailRegions = function()
                 if not detail then return {} end
                 return { detail:GetRegions() }
