@@ -1282,5 +1282,368 @@ do
     check("nothing to draw on is not a crash", T.ApplyRosterIcon(nil) == nil)
 end
 
+------------------------------------------------------------
+-- Which row a right-click will act on
+------------------------------------------------------------
+-- The menu opens UNDER THE CURSOR, so the moment it appears the pointer is
+-- over the menu and not over the row it belongs to. A hover highlight goes out
+-- exactly when you need to know which character you are about to forget.
+
+do
+    local T = AltStable._test
+    check("the renderer takes a menu subject", T.SetMenuSubject ~= nil)
+
+    if T.SetMenuSubject then
+        T.SetMenuSubject("Player-1-AAAA")
+        eq("the subject is remembered", T.MarkedGuid(), "Player-1-AAAA")
+
+        -- A GUID, not a row. Rows come from a POOL and are re-rendered by
+        -- index, so the row that held a character when the menu opened can be
+        -- showing somebody else by the time it closes - marking the row object
+        -- would light the wrong name.
+        T.SetMenuSubject(nil)
+        eq("and closing the menu clears it", T.MarkedGuid(), nil)
+    end
+
+    -- The PAINTING, not just the state. The mark is what the player sees, and
+    -- asserting the remembered guid says nothing about whether a texture
+    -- lit - a mutation that never showed it passed all of the above.
+    do
+        -- BOTH halves of a row. The name is in the frozen column and the data
+        -- in the scrollable one; they are separate frames, and a highlight on
+        -- one of them lights half a row. The first attempt put the mark on one
+        -- and the registration on the other, and this test skipped silently
+        -- because of its own `and row.nameTipBtn` guard.
+        local scroll = AltStable.CreateRow(UIParent, 18, {})
+        local frozen = AltStable.CreateFrozenRow(UIParent, 18, 120)
+        check("the scrollable half has a mark", scroll.mark ~= nil)
+        check("the frozen half has one too", frozen.mark ~= nil)
+        check("and the frozen half owns the right-click button",
+              frozen.nameTipBtn ~= nil)
+
+        local row = frozen
+        if true then
+            scroll.markGuid = "Player-1-CCCC"
+            frozen.markGuid = "Player-1-CCCC"
+            row.nameTipBtn.charData = { guid = "Player-1-CCCC", name = "C", class = "MAGE" }
+
+            T.SetMenuSubject("Player-1-CCCC")
+            check("the subject's row lights up", row.mark:IsShown())
+            check("  and so does its other half", scroll.mark:IsShown())
+            local c = row.mark._colorTexture
+            check("  at the menu strength",
+                  c and math.abs(c[4] - T.MARK_MENU) < 0.001, tostring(c and c[4]))
+
+            -- Brighter than hover, or the two states are one state: the menu
+            -- mark has to survive the pointer moving onto the menu.
+            check("  which is brighter than hover", T.MARK_MENU > T.MARK_HOVER,
+                  ("%s vs %s"):format(tostring(T.MARK_MENU), tostring(T.MARK_HOVER)))
+
+            -- Somebody else's menu does not light this row.
+            T.SetMenuSubject("Player-1-DDDD")
+            check("another character's menu leaves it dark", not row.mark:IsShown())
+
+            T.SetMenuSubject(nil)
+            check("  and closing clears it", not row.mark:IsShown())
+
+            -- A POOLED RE-RENDER. Rows are reused by index, so a sync record
+            -- landing while the menu is open re-renders the row under it as
+            -- somebody else. Setting markGuid was not enough: the texture kept
+            -- whatever state the previous occupant left it in, so the addon
+            -- pointed at the wrong character as "the row this right-click acts
+            -- on" while the menu still belonged to the old one.
+            T.SetMenuSubject("Player-1-CCCC")
+            check("the subject's row is lit before the refresh", frozen.mark:IsShown())
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-EEEE", name = "E", class = "MAGE" }, 1)
+            check("  and a re-render as somebody else puts it out",
+                  not frozen.mark:IsShown())
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1)
+            check("  while re-rendering the subject lights it again",
+                  frozen.mark:IsShown())
+            T.SetMenuSubject(nil)
+
+            -- Every render path clears it, including the frozen filler - which
+            -- was the one that did not, so a hovered name left a lit band in an
+            -- empty name column when the list shortened under it.
+            frozen.nameTipBtn:GetScript("OnEnter")(frozen.nameTipBtn)
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1)
+            frozen.nameTipBtn.charData = { guid = "Player-1-CCCC" }
+            frozen.nameTipBtn:GetScript("OnEnter")(frozen.nameTipBtn)
+            check("a hovered row is lit", frozen.mark:IsShown())
+            AltStable.RenderFrozenFillerRow(frozen, 1)
+            check("  and becoming a filler row puts it out",
+                  not frozen.mark:IsShown())
+
+            -- The scrollable half's filler too. Found by a mutation aimed at
+            -- the frozen one that matched this instead, which is the more
+            -- useful kind of accident.
+            scroll.nameTipBtn = scroll.nameTipBtn or frozen.nameTipBtn
+            AltStable.RenderRow(scroll,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1, {})
+            T.SetMenuSubject("Player-1-CCCC")
+            check("the scrollable half lights for the menu", scroll.mark:IsShown())
+            AltStable.RenderFillerRow(scroll, 1)
+            check("  and its filler row puts it out", not scroll.mark:IsShown())
+            T.SetMenuSubject(nil)
+
+            -- A STALE HOVER. The cursor does not move when the list refreshes
+            -- under it, so OnLeave never fires - and without dropping the
+            -- hovered guid when its row becomes somebody else, it survives and
+            -- later lights whichever row happens to be given that character.
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-FFFF", name = "F", class = "MAGE" }, 1)
+            frozen.nameTipBtn.charData = { guid = "Player-1-FFFF", name = "F",
+                                           class = "MAGE", money = 1 }
+            frozen.nameTipBtn:GetScript("OnEnter")(frozen.nameTipBtn)
+            check("a hovered row is lit before the refresh", frozen.mark:IsShown())
+            -- The list refreshes and this row now holds somebody else.
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-GGGG", name = "G", class = "MAGE" }, 1)
+            check("  and it goes dark", not frozen.mark:IsShown())
+            -- The character that WAS hovered turns up on another row. Nothing
+            -- is under the cursor there, so it must not light.
+            AltStable.RenderRow(scroll,
+                { guid = "Player-1-FFFF", name = "F", class = "MAGE" }, 1, {})
+            check("  and the character it belonged to does not light elsewhere",
+                  not scroll.mark:IsShown())
+            frozen.nameTipBtn:GetScript("OnLeave")(frozen.nameTipBtn)
+            frozen.nameTipBtn:GetScript("OnLeave")(frozen.nameTipBtn)
+            -- Put the row back to a character, or the hover assertions further
+            -- down have a filler row to light and nothing to light it with.
+            AltStable.RenderFrozenCharRow(frozen,
+                { guid = "Player-1-CCCC", name = "C", class = "MAGE" }, 1)
+            frozen.nameTipBtn.charData = { guid = "Player-1-CCCC", name = "C",
+                                           class = "MAGE", money = 1 }
+
+            -- The two halves light EQUALLY. Within one draw layer order is
+            -- creation order, and the frozen half created its mark before the
+            -- class tint while the scrollable half created it after - so one
+            -- painted under the tint and the other over it, and the halves of
+            -- one row lit at different strengths.
+            -- `_created` is the stub's record of texture creation order,
+            -- which is what the client uses to break a tie within one draw
+            -- layer at the same sublevel.
+            local fm, ft = frozen.mark._created, frozen.classTint._created
+            local sm, st = scroll.mark._created, scroll.classTint._created
+            check("the frozen half paints its mark above the class tint",
+                  (fm or 0) > (ft or 0), ("%s vs %s"):format(tostring(fm), tostring(ft)))
+            check("  as the scrollable half does",
+                  (sm or 0) > (st or 0), ("%s vs %s"):format(tostring(sm), tostring(st)))
+
+            -- Hover, through the real handler.
+            row.nameTipBtn:GetScript("OnEnter")(row.nameTipBtn)
+            check("hovering the name lights the row", row.mark:IsShown())
+            local h = row.mark._colorTexture
+            check("  at the fainter hover strength",
+                  h and math.abs(h[4] - T.MARK_HOVER) < 0.001, tostring(h and h[4]))
+            row.nameTipBtn:GetScript("OnLeave")(row.nameTipBtn)
+            check("  and leaving puts it out", not row.mark:IsShown())
+        end
+    end
+
+    -- Through the real menu, not just the setter: opening marks, closing
+    -- unmarks, and a menu that never opens marks nothing.
+    if AltStable.ShowCharacterMenu then
+        local char = { guid = "Player-1-BBBB", name = "Somebody", class = "MAGE" }
+        AltStable.ShowCharacterMenu(char)
+        eq("opening the menu marks its character", T.MarkedGuid(), "Player-1-BBBB")
+        AltStable.CloseCharacterMenu()
+        eq("  and closing it unmarks", T.MarkedGuid(), nil)
+
+        -- An entryless menu never opens, so it must not leave a row lit with
+        -- nothing on screen to explain it.
+        local realEntries = AltStable.CharacterMenuEntries
+        AltStable.CharacterMenuEntries = function() return {} end
+        AltStable.ShowCharacterMenu(char)
+        eq("a menu that never opens marks nothing", T.MarkedGuid(), nil)
+        AltStable.CharacterMenuEntries = realEntries
+    end
+end
+
+------------------------------------------------------------
+-- The account label on a group header
+------------------------------------------------------------
+-- It read "(Account: Default)" on every group for everybody, because the group
+-- item never carried an account at all: `item.account` was nil and "Default"
+-- was the fallback for nil, not a value anybody had.
+
+do
+    local T = AltStable._test
+    check("the account collection is reachable", T.CollectAccounts ~= nil)
+
+    local function acc(...)
+        local chars = {}
+        for _, a in ipairs({ ... }) do chars[#chars + 1] = { account = a } end
+        return T.CollectAccounts(chars)
+    end
+
+    eq("no accounts at all gives an empty list", #acc(), 0)
+    eq("  as does a character that never got one", #acc(nil), 0)
+    eq("  or an empty string, which is what the scanner writes when unset",
+       #acc(""), 0)
+
+    -- A SET: the same account on nine characters is one account, not nine.
+    eq("one account on many characters is one account", #acc(1, 1, 1), 1)
+
+    -- Two accounts on one realm is the entire point of the sync feature, and
+    -- the only case where naming them distinguishes anything.
+    local two = acc(2, 1, 2)
+    eq("two accounts are both listed", #two, 2)
+    eq("  in a stable order", two[1] .. "," .. two[2], "1,2")
+
+    -- NUMERIC order, not text. 1 and 2 sort the same either way, which is why
+    -- the check above could not see that a plain table.sort put account 10
+    -- before account 2.
+    local many = acc(10, 2, 1)
+    eq("ten accounts sort after two, not before",
+       table.concat(many, ","), "1,2,10")
+
+    -- Numbers and strings are the same account: the scanner writes
+    -- AltStableConfig.accountNumber, and a profile edited by hand can hold
+    -- either.
+    eq("1 and \"1\" are one account", #acc(1, "1"), 1)
+
+    -- The RENDERING, on a real row rather than a bare frame.
+    local grow = AltStable.CreateRow(UIParent, 18, {})
+    AltStable.RenderGroupRow(grow, { kind = "group", realm = "R", count = 2,
+                                     accounts = { "1" }, sumLevel = 2, sumGold = 0 })
+    check("a single-account group shows no account label",
+          grow.groupLabel and not grow.groupLabel:IsShown())
+    AltStable.RenderGroupRow(grow, { kind = "group", realm = "R", count = 2,
+                                     accounts = { "1", "2" }, sumLevel = 2, sumGold = 0 })
+    check("  while a mixed one names them", grow.groupLabel:IsShown())
+    local txt = grow.groupLabel:GetText() or ""
+    -- It read "(Account: Default)" on every group for everybody, because the
+    -- item never carried an account and "Default" was the fallback for nil.
+    check("  and never says Default", txt:find("Default", 1, true) == nil, txt)
+    check("  listing the accounts it found",
+          txt:find("1", 1, true) and txt:find("2", 1, true), txt)
+end
+
+------------------------------------------------------------
+-- The row tooltip opens beside the window, not on it
+------------------------------------------------------------
+-- ANCHOR_RIGHT put it immediately right of the NAME cell - the leftmost column
+-- - so it covered the table it describes, and for rows near the top it covered
+-- the column headers and the title bar as well.
+
+do
+    local T = AltStable._test
+    local frozen = AltStable.CreateFrozenRow(UIParent, 18, 120)
+    local btn = frozen.nameTipBtn
+    check("the frozen row has a name button", btn ~= nil)
+    if btn then
+        btn.charData = { guid = "g", name = "N", class = "MAGE", money = 1 }
+        btn:GetScript("OnEnter")(btn)
+
+        -- The owner is recorded too: "which widget is this tooltip about" is
+        -- what the client uses to close it, and the stub answered it with the
+        -- tooltip itself until this test needed it.
+        eq("the tooltip knows which cell it is about", GameTooltip:GetOwner(), btn)
+
+        local point, rel, relPoint = GameTooltip:GetPoint(1)
+        check("the tooltip is anchored to the sheet, not the cell",
+              rel == _G["AltStableSheet"], tostring(rel))
+        check("  off its right edge", relPoint == "TOPRIGHT", tostring(relPoint))
+
+        -- ...unless there is no ROOM there, which is what moving it off the
+        -- table bought at first: the sheet usually sits near the right edge of
+        -- the display, so "just outside its right edge" was just outside the
+        -- display, and the tooltip was clipped instead of covering anything.
+        --
+        -- The side is chosen from the room beside the window, before the
+        -- tooltip is populated. Measuring it afterwards and flipping looked
+        -- more precise and did not work: a tooltip's size is not final in the
+        -- frame it is shown, so the check read the layout it had before its
+        -- lines went in, agreed with itself, and still opened half off screen.
+        local sheet = _G["AltStableSheet"]
+        local savedL, savedR = sheet._GetLeft, sheet._GetRight
+        local savedUL, savedUR = UIParent._GetLeft, UIParent._GetRight
+        local savedSS, savedUS = sheet._scale, UIParent._scale
+        UIParent._GetLeft, UIParent._GetRight = 0, 1000
+
+        -- DIFFERING SCALES, or the conversion is untestable: with both at 1,
+        -- every `* ss` and `* us` in SideRoomPx can be deleted and the suite
+        -- stays green. That is the exact mutation this work re-earned from the
+        -- Options tab, and it was unguarded here.
+        --
+        -- The sheet is a CHILD of UIParent, so its effective scale already
+        -- includes UIParent's: setting the two to different numbers does not
+        -- make their effective scales differ. Its OWN scale has to be the
+        -- inverse. At 0.5 under a UIParent of 2 the sheet's effective scale is
+        -- 1 against the screen's 2, so its raw coordinates are half the size
+        -- they look - a window that appears hard against the right edge is
+        -- really mid-display with room to spare.
+        sheet._scale, UIParent._scale = 0.5, 2
+        sheet._GetLeft, sheet._GetRight = 400, 995
+        btn:GetScript("OnEnter")(btn)
+        local _, _, scaledPoint = GameTooltip:GetPoint(1)
+        check("the room beside the window is measured in one coordinate space",
+              scaledPoint == "TOPRIGHT", tostring(scaledPoint))
+        sheet._scale, UIParent._scale = savedSS, savedUS
+
+        -- The WIDTH is in the tooltip's own units while the room is in physical
+        -- pixels, so the comparison needs the tooltip's scale too - the same
+        -- unit mixing, one layer up and in the one place it is not obvious.
+        -- With every scale at 1 that conversion is a no-op and can be deleted
+        -- with the suite green, which is exactly what it was.
+        local savedTS = GameTooltip._scale
+        GameTooltip._scale = 4          -- a 320-unit tooltip is 1280px wide
+        -- 400px on the right, 500 on the left. Enough for an UNCONVERTED 320,
+        -- not enough for the 1280 it really needs - and the left is roomier, so
+        -- the tiebreak cannot supply the right answer by accident.
+        sheet._GetLeft, sheet._GetRight = 500, 600
+        btn:GetScript("OnEnter")(btn)
+        local _, _, bigPoint = GameTooltip:GetPoint(1)
+        check("a tooltip wider than the room beside the window opens on the left",
+              bigPoint == "TOPLEFT", tostring(bigPoint))
+        GameTooltip._scale = savedTS
+
+        -- Window hard against the right edge: no room there, plenty on the left.
+        sheet._GetLeft, sheet._GetRight = 400, 995
+        btn:GetScript("OnEnter")(btn)
+        local _, rel2, relPoint2 = GameTooltip:GetPoint(1)
+        check("with no room on the right the tooltip opens on the left",
+              relPoint2 == "TOPLEFT", tostring(relPoint2))
+        eq("  still anchored to the sheet", rel2, sheet)
+
+        -- Window on the left with room to spare: it stays on the right, or
+        -- "flips" quietly becomes "always on the left".
+        sheet._GetLeft, sheet._GetRight = 10, 400
+        btn:GetScript("OnEnter")(btn)
+        local _, _, relPoint3 = GameTooltip:GetPoint(1)
+        check("  while a window with room keeps it on the right",
+              relPoint3 == "TOPRIGHT", tostring(relPoint3))
+
+        -- Boxed in on both sides: it picks the roomier one rather than
+        -- guaranteeing a side, which is the only sensible answer.
+        sheet._GetLeft, sheet._GetRight = 50, 990
+        btn:GetScript("OnEnter")(btn)
+        local _, _, relPoint4 = GameTooltip:GetPoint(1)
+        check("  and with room on neither side it takes the roomier one",
+              relPoint4 == "TOPLEFT", tostring(relPoint4))
+
+        sheet._GetLeft, sheet._GetRight = savedL, savedR
+        UIParent._GetLeft, UIParent._GetRight = savedUL, savedUR
+        sheet._scale, UIParent._scale = savedSS, savedUS
+
+        -- The fallback matters: the Roster raises this same tooltip from a
+        -- card, where there is no sheet frame to hang off.
+        local saved = _G["AltStableSheet"]
+        _G["AltStableSheet"] = nil
+        btn:GetScript("OnEnter")(btn)
+        -- The ANCHOR TYPE, not the owner. The owner is already this button from
+        -- the anchored call above, so `GetOwner() == btn` passes whether the
+        -- fallback ran or not - which is exactly what it did.
+        check("  and falls back to the cell when there is no sheet",
+              GameTooltip:GetAnchorType() == "ANCHOR_RIGHT",
+              tostring(GameTooltip:GetAnchorType()))
+        _G["AltStableSheet"] = saved
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

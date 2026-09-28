@@ -328,6 +328,14 @@ end
 function AltStable.CloseCharacterMenu()
     if not root then return end
     subject = nil
+    -- Let the list stop marking the row.
+    --
+    -- After the `if not root then return end` above, not before it - which is
+    -- fine only because Build() always runs before a menu can be shown, so a
+    -- nil root means nothing was ever marked. An earlier comment here claimed
+    -- this ran ahead of that guard; it does not, and describing a guard that is
+    -- not there is how the next person reasons from the wrong shape.
+    if AltStable.SetMenuSubject then AltStable.SetMenuSubject(nil) end
     if type(root.EnableKeyboard) == "function" then root:EnableKeyboard(false) end
     -- Put the root back under UIParent. Leaving it reparented would strand a
     -- full-screen mouse-enabled frame outside the hierarchy that the showcase's
@@ -343,6 +351,10 @@ function AltStable.ShowCharacterMenu(char)
     local list = AltStable.CharacterMenuEntries(char)
     if #list == 0 then return false end
     subject = char
+    -- Mark the row this menu belongs to. Set AFTER the empty-list bail, so a
+    -- menu that never opens does not leave a row lit with nothing to explain
+    -- it.
+    if AltStable.SetMenuSubject then AltStable.SetMenuSubject(char.guid) end
 
     local width, y = MIN_W, -PAD
     for i, e in ipairs(list) do

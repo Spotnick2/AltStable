@@ -1288,6 +1288,48 @@ local function ShouldShowInGrid(char)
     return AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false
 end
 
+-- The distinct accounts a set of characters came from, sorted.
+--
+-- Its own function so it can be tested as itself: the group header printed
+-- "(Account: Default)" for the life of the addon because the item never
+-- carried an account at all, and the fix is worth an assertion that does not
+-- depend on getting a whole display list to build.
+--
+-- A SET, because a realm can hold characters from more than one account -
+-- which is the entire point of the sync feature - and because the same account
+-- appearing on nine characters is one account, not nine.
+local function CollectAccounts(chars)
+    local seen, out = {}, {}
+    for _, c in ipairs(chars or {}) do
+        local a = c and c.account
+        if a ~= nil and a ~= "" then
+            a = tostring(a)
+            if not seen[a] then
+                seen[a] = true
+                out[#out + 1] = a
+            end
+        end
+    end
+    -- Sorted NUMERICALLY when they are numbers, which they are: the scanner
+    -- writes AltStableConfig.accountNumber, validated as a whole number from a
+    -- three-digit box. A plain sort is a string sort, so accounts 2 and 10 read
+    -- "(Accounts: 10, 2)" - and the test only ever used 1 and 2, which string
+    -- and numeric order agree on.
+    --
+    -- Falls back to comparing as text when either side is not a number, so a
+    -- hand-edited profile holding something odd still sorts predictably rather
+    -- than erroring mid-render.
+    table.sort(out, function(a, b)
+        local na, nb = tonumber(a), tonumber(b)
+        if na and nb then return na < nb end
+        return a < b
+    end)
+    return out
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.CollectAccounts = CollectAccounts
+
 local function BuildDisplayList()
     wipe(displayList)
     totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0; hiddenCount=0
@@ -1357,7 +1399,17 @@ local function BuildDisplayList()
         for _, c in ipairs(chars) do
             sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)   -- nil = unreadable; the footer counts those
         end
+        -- Which accounts this realm's characters came from.
+        --
+        -- The group header has always printed "(Account: Default)" because the
+        -- item never carried an account at all - `item.account` was nil for
+        -- every group ever rendered, and "Default" was the fallback rather than
+        -- a value. It was a placeholder that shipped.
+        --
+        -- A SET, not one value: a realm can hold characters from more than one
+        -- account, which is the entire point of the sync feature.
         table.insert(displayList,{kind="group",realm=realm,count=#chars,
+            accounts=CollectAccounts(chars),
             sumLevel=sumLvl,sumGold=sumGold,collapsed=collapsed[realm]})
         if not collapsed[realm] then
             for _, char in ipairs(chars) do

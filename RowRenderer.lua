@@ -331,6 +331,142 @@ AltStable._test.ComputeLiveRestedPercent = ComputeLiveRestedPercent
 -- somebody forgets.
 local HIDDEN_ROW_ALPHA = 0.45
 
+-- How much room there is beside the window, in PHYSICAL pixels.
+--
+-- Converted through effective scale rather than compared raw, for the same
+-- reason the window's own screen clamp has to: the sheet carries the user's
+-- scale and UIParent the client's, so their GetRight() values are numbers in
+-- two different spaces and subtracting them directly is wrong by exactly the
+-- ratio nobody notices at scale 1.
+local function SideRoomPx(sheet)
+    local ss = (sheet.GetEffectiveScale and sheet:GetEffectiveScale()) or 1
+    local us = (UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
+    local sheetL = (sheet:GetLeft()  or 0) * ss
+    local sheetR = (sheet:GetRight() or 0) * ss
+    local screenL = (UIParent:GetLeft()  or 0) * us
+    local screenR = (UIParent:GetRight() or 0) * us
+    return screenR - sheetR, sheetL - screenL     -- room right, room left
+end
+
+-- Wider than any line this tooltip builds: a name, a guild, a gold figure, a
+-- hint and a timestamp. A constant rather than a measurement, deliberately -
+-- see AnchorRowTooltip.
+local TOOLTIP_W_PX = 320
+
+-- Where a row's tooltip opens.
+--
+-- Not ANCHOR_RIGHT. That anchors to the right of the NAME cell, and the name is
+-- the leftmost column - so the tooltip opened on top of the table it describes
+-- and, for rows near the top, across the column headers and the title bar.
+-- Readable, and covering the thing you were reading.
+--
+-- Beside the window instead. The fallback is the old behaviour, for when there
+-- is no sheet to hang off: the Roster raises this same tooltip from a card.
+local function AnchorRowTooltip(owner)
+    local sheet = _G["AltStableSheet"]
+    if not (sheet and GameTooltip.SetPoint) then
+        GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+        return
+    end
+    GameTooltip:SetOwner(owner, "ANCHOR_NONE")
+    GameTooltip:ClearAllPoints()
+
+    -- WHICH SIDE is decided from the room beside the window, before the tooltip
+    -- is populated - not by measuring it afterwards and flipping.
+    --
+    -- Measuring looked more precise and does not work: a tooltip's size is not
+    -- final in the frame it is shown, so GetRight() straight after Show reads
+    -- the layout it had before its lines went in. The first version of this
+    -- checked exactly that, agreed with itself, and still opened half off the
+    -- screen.
+    --
+    -- So: a conservative width, and whichever side has room for it. The width
+    -- is a constant because the alternative is measuring, which is the thing
+    -- that does not work here.
+    local roomR, roomL = SideRoomPx(sheet)
+    -- Converted too. SideRoomPx returns PHYSICAL pixels, and this constant is
+    -- in the tooltip's own units - comparing them raw is the same unit mixing
+    -- the comment above SideRoomPx warns about, one layer up and in the one
+    -- place it is not obvious. At a high UI scale a 320-unit tooltip is far
+    -- wider than 320 physical pixels, so the code would see enough room on the
+    -- right, take it, and be clipped: the failure the last two attempts existed
+    -- to remove.
+    local ts = (GameTooltip.GetEffectiveScale and GameTooltip:GetEffectiveScale()) or 1
+    local needed = TOOLTIP_W_PX * ts
+    if roomR >= needed or roomR >= roomL then
+        GameTooltip:SetPoint("TOPLEFT", sheet, "TOPRIGHT", 8, 0)
+    else
+        GameTooltip:SetPoint("TOPRIGHT", sheet, "TOPLEFT", -8, 0)
+    end
+end
+
+-- The guid whose menu is open, and the guid under the cursor. Separate,
+-- because they can be different characters at the same time: the menu stays on
+-- the one it was opened for while the pointer wanders.
+local markedGuid, hoveredGuid
+local markRows = {}
+
+local MARK_HOVER, MARK_MENU = 0.05, 0.12
+
+-- A row is TWO frames. The name lives in the frozen column and the data in the
+-- scrollable one, side by side, and they are separate objects - so a highlight
+-- that lights only one of them lights half a row. Both carry `markGuid`, both
+-- register, and both paint from the same two pieces of state.
+--
+-- The guid is set by the renderers rather than read out of a child, because
+-- only the frozen half has the name button the right-click lives on: reading it
+-- from there meant the scrollable half could never match.
+local function PaintMark(row)
+    if not row or not row.mark then return end
+    local guid = row.markGuid
+    if guid and guid == markedGuid then
+        row.mark:SetColorTexture(1, 1, 1, MARK_MENU)
+        row.mark:Show()
+    elseif guid and guid == hoveredGuid then
+        row.mark:SetColorTexture(1, 1, 1, MARK_HOVER)
+        row.mark:Show()
+    else
+        row.mark:Hide()
+    end
+end
+
+local function RepaintMarks()
+    for row in pairs(markRows) do PaintMark(row) end
+end
+
+-- Say whose row this is, and repaint it.
+--
+-- Setting markGuid on its own was not enough, and the gap was the bug: rows
+-- come from a POOL, so a sync record landing while the menu is open re-renders
+-- the row under it as somebody else. markGuid moved; the texture did not. The
+-- addon then pointed at the wrong character as "the row this right-click will
+-- act on" while the menu still belonged to the old one - and the old one's new
+-- row stayed dark. CharacterMenu's own comment expects exactly that refresh.
+--
+-- The hover is dropped when the row it belonged to becomes somebody else. The
+-- cursor has not moved, so OnLeave never fires, and without this the hovered
+-- guid survives a scroll and later lights whichever row happens to hold it.
+local function SetRowGuid(row, guid)
+    if not row then return end
+    local was = row.markGuid
+    row.markGuid = guid
+    if was and was == hoveredGuid and guid ~= was then hoveredGuid = nil end
+    PaintMark(row)
+end
+
+-- Called by the character menu when it opens and closes. A guid rather than a
+-- row, because rows come from a POOL and are re-rendered by index: the row that
+-- held a character when the menu opened may be showing somebody else by the
+-- time it closes, and marking the row object would light the wrong name.
+function AltStable.SetMenuSubject(guid)
+    markedGuid = guid
+    RepaintMarks()
+end
+
+AltStable._test.SetMenuSubject = AltStable.SetMenuSubject
+AltStable._test.MarkedGuid = function() return markedGuid end
+AltStable._test.MARK_HOVER, AltStable._test.MARK_MENU = MARK_HOVER, MARK_MENU
+
 local function DimRow(row, char)
     if not row or not row.SetAlpha then return end
     local dim = char ~= nil and AltStable.IsCharacterHidden
@@ -403,10 +539,34 @@ function AltStable.CreateRow(parent, height, columns)
     row.classTint:SetAllPoints()
     row.classTint:SetColorTexture(0,0,0,0)  -- invisible until a char is rendered
 
-    -- Hover highlight
+    -- Hover highlight.
+    --
+    -- HIGHLIGHT is a layer the client draws only while the frame is
+    -- HIGHLIGHTED, and that is a Button behaviour - `row` is a plain Frame, so
+    -- this texture has never had anything to switch it on. It is left in place
+    -- because it costs nothing and a Button row may happen later; the mark
+    -- below is what actually lights up.
     row.hover = row:CreateTexture(nil,"HIGHLIGHT")
     row.hover:SetAllPoints()
     row.hover:SetColorTexture(1,1,1,0.05)
+
+    -- WHICH ROW A RIGHT-CLICK WILL ACT ON.
+    --
+    -- Two states, one texture. Hovering the name lights it faintly; opening the
+    -- menu on that character holds it brighter until the menu closes.
+    --
+    -- The second is the one that matters and the one hover cannot do: the menu
+    -- opens under the cursor, so the moment it appears the pointer is over the
+    -- MENU and not over the row it belongs to. A pure hover highlight goes out
+    -- exactly when you need to know which character you are about to forget.
+    --
+    -- ARTWORK above the class tint rather than HIGHLIGHT, so it is drawn on its
+    -- own terms rather than waiting for a highlight state that never comes.
+    row.mark = row:CreateTexture(nil,"ARTWORK")
+    row.mark:SetAllPoints()
+    row.mark:SetColorTexture(1,1,1,0.07)
+    row.mark:Hide()
+    markRows[row] = true
 
     local x=10; local padding=6
     for i, col in ipairs(columns) do
@@ -547,6 +707,8 @@ end
 -- so the label can't be a single string spanning both panels — we split it
 -- intentionally. Together they read as one continuous "Dreamscythe (Account: Default)".
 function AltStable.RenderGroupRow(row, item)
+    -- Not a character any more, so it must not stay lit.
+    SetRowGuid(row, nil)
     DimRow(row, nil)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
@@ -564,20 +726,40 @@ function AltStable.RenderGroupRow(row, item)
         lbl:SetJustifyH("LEFT")
         row.groupLabel = lbl
     end
-    -- Account name is a placeholder until/unless the data model ever carries
-    -- a real account label. Color: dim gray for the parens, accent green for
-    -- the value, matching the approved mockup.
-    local accountName = (item.account ~= nil and tostring(item.account)) or "Default"
-    row.groupLabel:SetText(
-        "|cffaaaaaa(Account: |r"
-        .. "|cff66ff66" .. accountName .. "|r"
-        .. "|cffaaaaaa)|r"
-    )
-    row.groupLabel:Show()
+    -- The accounts this realm's characters actually came from, and NOTHING at
+    -- all when that says nothing.
+    --
+    -- This used to read "(Account: Default)" on every group for everybody,
+    -- because the group item never carried an account and "Default" was the
+    -- fallback for nil. A label that is the same on every row is not
+    -- information, and one that claims to name something it never received is
+    -- worse than blank.
+    --
+    -- Shown only when there is more than one account in play, because that is
+    -- the only time it distinguishes anything: on a single-account install
+    -- every group would carry the same number, which is the old problem with a
+    -- different constant in it.
+    local list = item.accounts
+    if type(list) == "table" and #list > 1 then
+        row.groupLabel:SetText(
+            "|cffaaaaaa(Accounts: |r"
+            .. "|cff66ff66" .. table.concat(list, ", ") .. "|r"
+            .. "|cffaaaaaa)|r"
+        )
+        row.groupLabel:Show()
+    else
+        row.groupLabel:SetText("")
+        row.groupLabel:Hide()
+    end
     row:Show()
 end
 
 function AltStable.RenderRow(row, char, index, columns)
+    -- Rows come from a POOL and are re-rendered by index, so this has to be set
+    -- on every render rather than once: the row that held a character a moment
+    -- ago may be showing somebody else now, and a stale guid lights the wrong
+    -- name.
+    SetRowGuid(row, char and char.guid or nil)
     DimRow(row, char)
     SetRowBg(row, index)
     -- Pool reuse: a row that previously rendered as a group header may carry
@@ -791,6 +973,8 @@ function AltStable.RenderRow(row, char, index, columns)
 end
 
 function AltStable.HideRow(row)
+    -- Not a character any more, so it must not stay lit.
+    SetRowGuid(row, nil)
     for _, cell in ipairs(row.cells) do cell:SetText("") end
     row.bg:SetColorTexture(0,0,0,0)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
@@ -806,6 +990,8 @@ end
 -- index is 1-based RELATIVE to the start of the filler region so the
 -- alternating pattern continues seamlessly from the last real row.
 function AltStable.RenderFillerRow(row, index)
+    -- Not a character any more, so it must not stay lit.
+    SetRowGuid(row, nil)
     DimRow(row, nil)
     SetRowBg(row, index)
     if row.classTint  then row.classTint:SetColorTexture(0,0,0,0) end
@@ -832,6 +1018,19 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
     row.classTint = row:CreateTexture(nil,"ARTWORK")
     row.classTint:SetAllPoints()
     row.classTint:SetColorTexture(0,0,0,0)
+
+    -- Which row a right-click will act on, the frozen half.
+    --
+    -- AFTER the class tint, like the scrollable half. Within one draw layer
+    -- order is creation order, and this was created BEFORE it - so the frozen
+    -- half painted the mark under the class tint while the scrollable half
+    -- painted it over, and the two halves of one row lit at visibly different
+    -- strengths. Which is precisely the thing "a row is two frames" was about.
+    row.mark = row:CreateTexture(nil,"ARTWORK")
+    row.mark:SetAllPoints()
+    row.mark:SetColorTexture(1,1,1,0.07)
+    row.mark:Hide()
+    markRows[row] = true
 
     row.hover = row:CreateTexture(nil,"HIGHLIGHT")
     row.hover:SetAllPoints()
@@ -860,7 +1059,7 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         if not tipBtn.charData then return end
         local c = tipBtn.charData
         local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:2:0|t"
-        GameTooltip:SetOwner(tipBtn, "ANCHOR_RIGHT")
+        AnchorRowTooltip(tipBtn)
         GameTooltip:ClearLines()
         GameTooltip:AddLine(AltStable.ClassColor(c.class)..(c.name or "").."|r", 1,1,1)
         if c.guild and c.guild ~= "" then
@@ -884,8 +1083,14 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
                 0.7, 0.7, 0.7)
         end
         GameTooltip:Show()
+        hoveredGuid = c.guid
+        RepaintMarks()
     end)
-    tipBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    tipBtn:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+        hoveredGuid = nil
+        RepaintMarks()
+    end)
     -- Right-click opens the character menu (#69): favourite, hide/unhide,
     -- forget. It used to go straight to "hide this character?", which spent the
     -- whole gesture on one of the four things that want it. The row only
@@ -901,11 +1106,14 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         end
     end)
     row.nameTipBtn = tipBtn
+    markRows[row] = true
 
     return row
 end
 
 function AltStable.RenderFrozenGroupRow(row, item)
+    -- Not a character any more, so it must not stay lit.
+    SetRowGuid(row, nil)
     DimRow(row, nil)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
@@ -949,6 +1157,7 @@ function AltStable.RenderFrozenGroupRow(row, item)
 end
 
 function AltStable.RenderFrozenCharRow(row, char, index)
+    SetRowGuid(row, char and char.guid or nil)
     DimRow(row, char)
     SetRowBg(row, index)
     if row.classTint then
@@ -966,6 +1175,8 @@ function AltStable.RenderFrozenCharRow(row, char, index)
 end
 
 function AltStable.HideFrozenRow(row)
+    -- Not a character any more, so it must not stay lit.
+    SetRowGuid(row, nil)
     row.bg:SetColorTexture(0,0,0,0)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Hide()
@@ -977,6 +1188,12 @@ end
 -- Filler row on the frozen side. Same alternating-bg as the scrollable
 -- side filler. No name, no class icon, no collapse button.
 function AltStable.RenderFrozenFillerRow(row, index)
+    -- The mark clear was on every other render path but this one, so a hovered
+    -- name near the end of the list left a lit white band in the empty name
+    -- column when the list shortened under it - and the stale guid survived, so
+    -- a later menu on that character re-lit an empty filler row at full
+    -- strength.
+    SetRowGuid(row, nil)
     DimRow(row, nil)
     SetRowBg(row, index)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
