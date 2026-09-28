@@ -2253,12 +2253,18 @@ do
             local w, h = well._colorTexture, hair._colorTexture
             local ew = { AltStable.SkinWellColor() }
             local eh = { AltStable.SkinWellEdgeColor() }
-            check("  the well is the skin's",
-                  w and w[1] == ew[1] and w[4] == ew[4],
-                  w and ("%s a=%s"):format(w[1], w[4]) or "nil")
-            check("  and so is the hairline",
-                  h and h[1] == eh[1] and h[4] == eh[4],
-                  h and ("%s a=%s"):format(h[1], h[4]) or "nil")
+            -- ALL FOUR channels. Comparing red and alpha catches a swap but
+            -- not a scramble, and green and blue reaching the wrong texture is
+            -- exactly the mix-up worth catching here.
+            local function same(got, want)
+                if not got then return false end
+                for i = 1, 4 do if got[i] ~= want[i] then return false end end
+                return true
+            end
+            check("  the well is the skin's", same(w, ew),
+                  w and table.concat(w, ",") or "nil")
+            check("  and so is the hairline", same(h, eh),
+                  h and table.concat(h, ",") or "nil")
         end
 
         local own = 0

@@ -693,8 +693,14 @@ do
         -- with it and the box would be legible depending on where you stand.
         eq(name .. ": the well is opaque", wa, 1)
         eq(name .. ": so is its hairline", ea, 1)
-        check(name .. ": the well is darker than the panel it is cut into",
-              wl < pl - 0.005, ("well %.4f vs pane %.4f"):format(wl, pl))
+        -- Against the pane's FLOOR - what it composites to over black
+        -- scenery - not against its nominal colour, which is a surface that is
+        -- never on screen. The nominal comparison held for both presets and
+        -- inverted below alpha 0.5, which is this failure class with the sign
+        -- flipped: an opaque well brighter than the panel it is cut into.
+        local floor = pl * p[4]
+        check(name .. ": the well is darker than the panel at its darkest",
+              wl < floor - 0.002, ("well %.4f vs pane floor %.4f"):format(wl, floor))
         check(name .. ": the hairline is clear of the pane",
               el > pl + 0.15, ("hairline %.4f vs pane %.4f"):format(el, pl))
         check(name .. ": and clear of the well it outlines",
@@ -703,6 +709,43 @@ do
               er <= 1 and eg <= 1 and eb <= 1 and wr >= 0,
               ("%.3f,%.3f,%.3f"):format(er, eg, eb))
     end
+
+    -- AND THEY CAN FAIL. Two of these gaps are algebraically implied by the
+    -- formula for the presets that exist - the weights sum to 1, so a uniform
+    -- lift IS the luminance gap - and a check that cannot fail is decoration.
+    -- Each one gets a preset built to break it.
+    local function probe(pane)
+        AltStable.SKINS.probe = { material = true, label = "Probe",
+                                  tint = { 0.1, 0.1, 0.1, 0.3 }, grain = 0.4,
+                                  wash = 0.1, pane = pane, popup = pane }
+        useSkin("probe")
+        local p = AltStable.SkinPaneColor()
+        local wr, wg, wb = AltStable.SkinWellColor()
+        local er, eg, eb = AltStable.SkinWellEdgeColor()
+        return lum(p[1], p[2], p[3]) * p[4], lum(wr, wg, wb), lum(er, eg, eb),
+               lum(p[1], p[2], p[3])
+    end
+
+    -- A THIN pane. This is the one the alpha fix exists for: scaling the
+    -- nominal colour by 0.5 put the well above a pane that only contributes
+    -- 45% of itself, so the inset came out brighter than its surround over
+    -- dark scenery. It has to stay an inset here.
+    local floor, well = probe({ 0.82, 0.84, 0.88, 0.45 })
+    check("a thin pane still has a well cut INTO it, not raised out of it",
+          well < floor, ("well %.4f vs pane floor %.4f"):format(well, floor))
+
+    -- A LIGHT pane, which this helper does not cover: 0.85 lifted by 0.22
+    -- saturates to white and the outline vanishes into the panel. The clamp
+    -- keeps the colour legal, and the gap check is what refuses to pass it -
+    -- which is the point. If somebody teaches the hairline to go dark on a
+    -- light pane, this is the assertion that should be deleted with it.
+    local _, _, hair, nominal = probe({ 0.90, 0.92, 0.95, 0.95 })
+    check("a light pane cannot keep its hairline, and the gap check says so",
+          not (hair > nominal + 0.15),
+          ("hairline %.4f vs pane %.4f"):format(hair, nominal))
+    check("  while the colour it returns is still one the client can draw",
+          hair <= 1, ("%.4f"):format(hair))
+    AltStable.SKINS.probe = nil
 
     -- Flat is the untouched status quo, to the digit.
     useSkin("flat")

@@ -463,20 +463,36 @@ end
 -- whatever is behind the window. It is one pixel; it has to be bright.
 --
 -- Both are derived from the pane, so a fourth preset cannot land a well on its
--- own panel colour the way smoked did. tests/test_glass.lua asserts the gap
--- rather than the numbers.
+-- own panel colour the way smoked did.
+--
+-- Derived through the pane's ALPHA, not just its colour. The pane is what you
+-- see it over: its floor, over black scenery, is `alpha x colour`, and that is
+-- what the well has to beat - comparing against the nominal colour compares
+-- against a surface that is never on screen. Scaling the nominal value alone
+-- held for the two presets that exist and inverted below alpha 0.5: an opaque
+-- well came out BRIGHTER than the translucent panel it was cut into, which is
+-- this whole failure class with the sign flipped.
 local WELL_DARKEN, HAIRLINE_LIFT = 0.5, 0.22
 
 function AltStable.SkinWellColor()
     if not AltStable.SkinIsGlass() then return 0.03, 0.03, 0.04, 1 end
     local p = AltStable.SkinPaneColor()
-    return p[1] * WELL_DARKEN, p[2] * WELL_DARKEN, p[3] * WELL_DARKEN, 1
+    local k = p[4] * WELL_DARKEN
+    return p[1] * k, p[2] * k, p[3] * k, 1
 end
 
+-- CLAMPED, so the guarantee lives in the code and not only in the suite.
+--
+-- What the clamp cannot do is invent a dark hairline for a light pane: lifting
+-- a 0.85 panel by 0.22 saturates to white and the outline disappears into it.
+-- No preset here is light, so this is deliberately not handled - and the test
+-- asserts the lift survives, which is what fails the day somebody writes one,
+-- rather than a helper quietly shipping a border you cannot see.
 function AltStable.SkinWellEdgeColor()
     if not AltStable.SkinIsGlass() then return 0.16, 0.16, 0.18, 1 end
     local p = AltStable.SkinPaneColor()
-    return p[1] + HAIRLINE_LIFT, p[2] + HAIRLINE_LIFT, p[3] + HAIRLINE_LIFT, 1
+    local function lift(c) return math.min(1, c + HAIRLINE_LIFT) end
+    return lift(p[1]), lift(p[2]), lift(p[3]), 1
 end
 
 -- Round a texture that IS the shape - a menu entry's hover fill, say - rather
