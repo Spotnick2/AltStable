@@ -1218,5 +1218,152 @@ do
     check("nothing to draw on is not a crash", T.ApplyRosterIcon(nil) == nil)
 end
 
+------------------------------------------------------------
+-- Which row a right-click will act on
+------------------------------------------------------------
+-- The menu opens UNDER THE CURSOR, so the moment it appears the pointer is
+-- over the menu and not over the row it belongs to. A hover highlight goes out
+-- exactly when you need to know which character you are about to forget.
+
+do
+    local T = AltStable._test
+    check("the renderer takes a menu subject", T.SetMenuSubject ~= nil)
+
+    if T.SetMenuSubject then
+        T.SetMenuSubject("Player-1-AAAA")
+        eq("the subject is remembered", T.MarkedGuid(), "Player-1-AAAA")
+
+        -- A GUID, not a row. Rows come from a POOL and are re-rendered by
+        -- index, so the row that held a character when the menu opened can be
+        -- showing somebody else by the time it closes - marking the row object
+        -- would light the wrong name.
+        T.SetMenuSubject(nil)
+        eq("and closing the menu clears it", T.MarkedGuid(), nil)
+    end
+
+    -- The PAINTING, not just the state. The mark is what the player sees, and
+    -- asserting the remembered guid says nothing about whether a texture
+    -- lit - a mutation that never showed it passed all of the above.
+    do
+        -- BOTH halves of a row. The name is in the frozen column and the data
+        -- in the scrollable one; they are separate frames, and a highlight on
+        -- one of them lights half a row. The first attempt put the mark on one
+        -- and the registration on the other, and this test skipped silently
+        -- because of its own `and row.nameTipBtn` guard.
+        local scroll = AltStable.CreateRow(UIParent, 18, {})
+        local frozen = AltStable.CreateFrozenRow(UIParent, 18, 120)
+        check("the scrollable half has a mark", scroll.mark ~= nil)
+        check("the frozen half has one too", frozen.mark ~= nil)
+        check("and the frozen half owns the right-click button",
+              frozen.nameTipBtn ~= nil)
+
+        local row = frozen
+        if true then
+            scroll.markGuid = "Player-1-CCCC"
+            frozen.markGuid = "Player-1-CCCC"
+            row.nameTipBtn.charData = { guid = "Player-1-CCCC", name = "C", class = "MAGE" }
+
+            T.SetMenuSubject("Player-1-CCCC")
+            check("the subject's row lights up", row.mark:IsShown())
+            check("  and so does its other half", scroll.mark:IsShown())
+            local c = row.mark._colorTexture
+            check("  at the menu strength",
+                  c and math.abs(c[4] - T.MARK_MENU) < 0.001, tostring(c and c[4]))
+
+            -- Brighter than hover, or the two states are one state: the menu
+            -- mark has to survive the pointer moving onto the menu.
+            check("  which is brighter than hover", T.MARK_MENU > T.MARK_HOVER,
+                  ("%s vs %s"):format(tostring(T.MARK_MENU), tostring(T.MARK_HOVER)))
+
+            -- Somebody else's menu does not light this row.
+            T.SetMenuSubject("Player-1-DDDD")
+            check("another character's menu leaves it dark", not row.mark:IsShown())
+
+            T.SetMenuSubject(nil)
+            check("  and closing clears it", not row.mark:IsShown())
+
+            -- Hover, through the real handler.
+            row.nameTipBtn:GetScript("OnEnter")(row.nameTipBtn)
+            check("hovering the name lights the row", row.mark:IsShown())
+            local h = row.mark._colorTexture
+            check("  at the fainter hover strength",
+                  h and math.abs(h[4] - T.MARK_HOVER) < 0.001, tostring(h and h[4]))
+            row.nameTipBtn:GetScript("OnLeave")(row.nameTipBtn)
+            check("  and leaving puts it out", not row.mark:IsShown())
+        end
+    end
+
+    -- Through the real menu, not just the setter: opening marks, closing
+    -- unmarks, and a menu that never opens marks nothing.
+    if AltStable.ShowCharacterMenu then
+        local char = { guid = "Player-1-BBBB", name = "Somebody", class = "MAGE" }
+        AltStable.ShowCharacterMenu(char)
+        eq("opening the menu marks its character", T.MarkedGuid(), "Player-1-BBBB")
+        AltStable.CloseCharacterMenu()
+        eq("  and closing it unmarks", T.MarkedGuid(), nil)
+
+        -- An entryless menu never opens, so it must not leave a row lit with
+        -- nothing on screen to explain it.
+        local realEntries = AltStable.CharacterMenuEntries
+        AltStable.CharacterMenuEntries = function() return {} end
+        AltStable.ShowCharacterMenu(char)
+        eq("a menu that never opens marks nothing", T.MarkedGuid(), nil)
+        AltStable.CharacterMenuEntries = realEntries
+    end
+end
+
+------------------------------------------------------------
+-- The account label on a group header
+------------------------------------------------------------
+-- It read "(Account: Default)" on every group for everybody, because the group
+-- item never carried an account at all: `item.account` was nil and "Default"
+-- was the fallback for nil, not a value anybody had.
+
+do
+    local T = AltStable._test
+    check("the account collection is reachable", T.CollectAccounts ~= nil)
+
+    local function acc(...)
+        local chars = {}
+        for _, a in ipairs({ ... }) do chars[#chars + 1] = { account = a } end
+        return T.CollectAccounts(chars)
+    end
+
+    eq("no accounts at all gives an empty list", #acc(), 0)
+    eq("  as does a character that never got one", #acc(nil), 0)
+    eq("  or an empty string, which is what the scanner writes when unset",
+       #acc(""), 0)
+
+    -- A SET: the same account on nine characters is one account, not nine.
+    eq("one account on many characters is one account", #acc(1, 1, 1), 1)
+
+    -- Two accounts on one realm is the entire point of the sync feature, and
+    -- the only case where naming them distinguishes anything.
+    local two = acc(2, 1, 2)
+    eq("two accounts are both listed", #two, 2)
+    eq("  in a stable order", two[1] .. "," .. two[2], "1,2")
+
+    -- Numbers and strings are the same account: the scanner writes
+    -- AltStableConfig.accountNumber, and a profile edited by hand can hold
+    -- either.
+    eq("1 and \"1\" are one account", #acc(1, "1"), 1)
+
+    -- The RENDERING, on a real row rather than a bare frame.
+    local grow = AltStable.CreateRow(UIParent, 18, {})
+    AltStable.RenderGroupRow(grow, { kind = "group", realm = "R", count = 2,
+                                     accounts = { "1" }, sumLevel = 2, sumGold = 0 })
+    check("a single-account group shows no account label",
+          grow.groupLabel and not grow.groupLabel:IsShown())
+    AltStable.RenderGroupRow(grow, { kind = "group", realm = "R", count = 2,
+                                     accounts = { "1", "2" }, sumLevel = 2, sumGold = 0 })
+    check("  while a mixed one names them", grow.groupLabel:IsShown())
+    local txt = grow.groupLabel:GetText() or ""
+    -- It read "(Account: Default)" on every group for everybody, because the
+    -- item never carried an account and "Default" was the fallback for nil.
+    check("  and never says Default", txt:find("Default", 1, true) == nil, txt)
+    check("  listing the accounts it found",
+          txt:find("1", 1, true) and txt:find("2", 1, true), txt)
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
