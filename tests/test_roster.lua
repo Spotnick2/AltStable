@@ -2238,11 +2238,18 @@ do
               ("inset sub=%s seq=%s vs edge sub=%s seq=%s"):format(
                   tostring(ord.inset.sublevel), tostring(ord.inset.created),
                   tostring(ord.edge.sublevel), tostring(ord.edge.created)))
-        -- And both in front of the panel fill, or the box is not there at all.
-        check("  with both in front of the panel background",
-              inFrontOf(ord.edge, ord.bg) == true,
-              ("edge sub=%s vs bg sub=%s"):format(
-                  tostring(ord.edge.sublevel), tostring(ord.bg.sublevel)))
+        -- And the pane they sit on belongs to the TAB, not to the drill-down.
+        -- It used to paint its own, which is invisible while it is opaque and
+        -- doubles the density the moment it is not: pane over pane came out at
+        -- ~0.86 against the grid's 0.62, so the character sheet read darker
+        -- than the tab it was opened from.
+        local own = 0
+        for _, region in ipairs(T.DetailRegions()) do
+            -- A FULL-FRAME fill. The figure box paints two of its own, and
+            -- those are a box inside the pane rather than a second pane.
+            if region._colorTexture and region._allPoints then own = own + 1 end
+        end
+        eq("  and the drill-down paints no background of its own", own, 0)
 
         d:SetWidth(100); d:SetHeight(20)
     end
@@ -2729,13 +2736,9 @@ do
               c and ("%s,%s,%s a=%s"):format(c[1], c[2], c[3], c[4]) or "nil")
     end
 
-    local dbg = T.DetailBG and T.DetailBG()
-    if dbg then
-        local c = dbg._colorTexture
-        check("as is the character drill-down behind it",
-              c and c[1] == pane[1] and c[4] == pane[4],
-              c and ("a=%s"):format(c[4]) or "nil")
-    end
+    -- The drill-down has no background of its own to check; the assertion that
+    -- it must not grow one lives with the figure box above, where the sublevels
+    -- it would have fought with are.
 
     -- THE SCENE'S ART DOES NOT COME UP THROUGH THE DRILL-DOWN.
     --
@@ -2770,6 +2773,12 @@ do
     -- repaint - and a repaint that hard-codes a colour is a second place for
     -- the skin to disagree with itself.
     if bd then
+        -- PINNED to the grid. The scene branch returns before PaintBackdrop, so
+        -- an ambient "scene" left by another test would have this read back the
+        -- colour the previous refresh happened to leave - passing for a reason
+        -- that has nothing to do with the skin.
+        local heldView = AltStableConfig.rosterView
+        AltStableConfig.rosterView = "grid"
         AltStableConfig.skin = "flat"
         AltStable._ResetSkinCache()
         pcall(AltStable.RosterPlugin.Refresh)
@@ -2778,6 +2787,7 @@ do
               c and c[1] == AltStable.C.BG_MAIN[1] and c[4] == AltStable.C.BG_MAIN[4],
               c and ("%s a=%s"):format(c[1], c[4]) or "nil")
         AltStableConfig.skin = nil
+        AltStableConfig.rosterView = heldView
         AltStable._ResetSkinCache()
         pcall(AltStable.RosterPlugin.Refresh)
     end

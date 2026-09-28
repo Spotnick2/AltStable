@@ -1399,9 +1399,14 @@ local function BuildDetail()
     detail:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
     detail:Hide()
 
-    detail.bg = detail:CreateTexture(nil, "BACKGROUND", nil, 0)
-    detail.bg:SetAllPoints()
-    detail.bg:SetColorTexture(AltStable.SkinTabBG())
+    -- NO background of its own.
+    --
+    -- The tab's is directly behind it and is repainted on the way in, and a
+    -- translucent material does not stack: pane over pane came out at ~0.86
+    -- where the grid two clicks away was 0.62, so the character sheet read
+    -- noticeably denser than the tab it opened from - the same per-surface
+    -- disagreement this whole phase exists to remove. Opaque, it could not
+    -- have shown; that is why it was there.
 
     local back = CreateFrame("Button", nil, detail, "UIPanelButtonTemplate")
     back:SetSize(70, BAR_H)
@@ -2346,7 +2351,7 @@ local DETAIL_TEST = {
             local layer, sub = t:GetDrawLayer()
             return { layer = layer, sublevel = sub or 0, created = t._created }
         end
-        return { bg = of(detail.bg), edge = of(detail.stageEdge), inset = of(detail.stage) }
+        return { edge = of(detail.stageEdge), inset = of(detail.stage) }
     end,
     DetailFigureBox = function()
         if not detail then return {} end
@@ -2479,7 +2484,10 @@ function Roster._Bootstrap()
             -- The tab's own background, so a test can check this tab agrees
             -- with the others rather than trusting the helper alone.
             BackdropTex = function() return backdropTex end,
-            DetailBG = function() return detail and detail.bg end,
+            DetailRegions = function()
+                if not detail then return {} end
+                return { detail:GetRegions() }
+            end,
             -- What the player is actually told. Asserting the hint STRING is
             -- the only way to catch the renderer handing the count the wrong
             -- list: the composition is right either way.

@@ -1662,5 +1662,33 @@ do
     end
 end
 
+-- And the data underlay gets out from under it.
+--
+-- That underlay spans the body viewports - below the column headers, above the
+-- footer - while a plugin panel runs from the title bar to the footer. Left
+-- shown underneath a translucent one, the overlapping part was two layers of
+-- pane and the rest was one: a hard horizontal seam about 30px below the title
+-- and another near the bottom. It has been there since the underlay was added
+-- and could not be seen while those panels were opaque.
+do
+    local dataBG = AltStable._dataBG
+    check("the data underlay exists under glass", dataBG ~= nil)
+    local btns = AltStable._test.sidebarBtns or {}
+    local optBtn, tableBtn
+    for _, b in ipairs(btns) do
+        if b.sectionId == "options" then optBtn = b
+        elseif not optBtn and not tableBtn then tableBtn = b end
+    end
+    if dataBG and optBtn and tableBtn then
+        optBtn:GetScript("OnClick")(optBtn)
+        check("a panel tab puts it away", not dataBG:IsShown())
+        tableBtn:GetScript("OnClick")(tableBtn)
+        check("  and a table tab brings it back", dataBG:IsShown())
+    else
+        check("there is a panel tab and a table tab to switch between",
+              false, "no nav buttons to drive")
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

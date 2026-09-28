@@ -2120,6 +2120,23 @@ local function AdjustHeaderHeight(h)
     -- after this in SwitchSection, so no need to set anchors here.
 end
 
+-- The data underlay belongs to the TABLE.
+--
+-- It spans the body viewports - below the column headers, above the footer -
+-- while a plugin panel starts at the title bar and runs down to the footer.
+-- Left shown underneath one, the part of the panel that overlapped it was two
+-- layers of pane and the part above it was one: a hard horizontal seam about
+-- 30px below the title, and another near the bottom. Invisible while those
+-- panels were opaque, which is why it has been there since the underlay was.
+--
+-- Called from BOTH routes, because a plugin button does not go through
+-- SwitchSection - it swaps activeSection and calls OnActivate itself, and
+-- putting this in one of the two would have covered the way back and not the
+-- way in.
+local function ShowDataUnderlay(show)
+    if AltStable._dataBG then AltStable._dataBG:SetShown(show) end
+end
+
 local function SwitchSection(section)
     -- If a plugin is currently active, deactivate it first
     if activeSection._isPlugin and activeSection.OnDeactivate then
@@ -2137,6 +2154,8 @@ local function SwitchSection(section)
     end
 
     activeSection = section
+
+    ShowDataUnderlay(not section._isPlugin)
 
     -- Adjust header height for this section
     AdjustHeaderHeight(section.headerHeight or HEADER_HEIGHT)
@@ -2721,6 +2740,7 @@ local function CreateFrameIfNeeded()
                 activeSection.OnDeactivate(frame)
             end
             activeSection = plugin
+            ShowDataUnderlay(false)
             plugin.OnActivate(frame)
         end)
         pbtn:SetScript("OnEnter",function()
