@@ -1835,5 +1835,164 @@ do
     end
 end
 
+------------------------------------------------------------
+-- The skin picker in Options (#108)
+------------------------------------------------------------
+-- The material shipped reachable only from `/alts skin`, so a player who never
+-- read the release notes never knew there was one.
+do
+    local btns = AltStable._test.skinBtns or {}
+    eq("there is a button per skin", #btns, 3)
+    -- BUILT FROM THE TABLE, so a fourth preset arrives on its own rather than
+    -- being a fourth place to remember.
+    local labels = {}
+    for i, b in ipairs(btns) do labels[i] = b.lbl:GetText() end
+    eq("flat comes first, because it is the unstyled one", btns[1].skinName, "flat")
+    for _, b in ipairs(btns) do
+        eq("  " .. b.skinName .. " wears its own label",
+           b.lbl:GetText(), AltStable.SKINS[b.skinName].label or b.skinName)
+    end
+
+    local held = AltStableConfig.skin
+    -- CHOOSING ONE WRITES IT AND SAYS SO. The material is built when the window
+    -- is, so this changes the next load - and a picker that looked like it had
+    -- done nothing is why the command version says "reload" in chat.
+    local loaded = AltStable.SkinName()
+    local other
+    for _, b in ipairs(btns) do if b.skinName ~= loaded then other = b end end
+    other:GetScript("OnClick")(other)
+    eq("clicking a skin stores it", AltStableConfig.skin, other.skinName)
+    local prompt = AltStable._test.SkinReloadPrompt()
+    check("  and the panel says it needs a reload", prompt ~= nil, tostring(prompt))
+    check("  naming the one you picked",
+          prompt and prompt:find(AltStable.SKINS[other.skinName].label, 1, true) ~= nil,
+          tostring(prompt))
+
+    -- And NOT while the choice matches what the window is already wearing:
+    -- a permanent "reload" on a panel with nothing pending is noise.
+    local current
+    for _, b in ipairs(btns) do if b.skinName == loaded then current = b end end
+    current:GetScript("OnClick")(current)
+    eq("choosing the loaded skin is not a pending change",
+       AltStable._test.SkinReloadPrompt(), nil)
+
+    -- The selected button is the one ON DISK, not the one loaded - that is the
+    -- whole point of showing a pending state at all.
+    other:GetScript("OnClick")(other)
+    -- ALL THREE CHANNELS. The accent is gold, {1.00, 0.82, 0.00}, so checking
+    -- red alone is satisfied by plain white - and the painter is SHARED with
+    -- the accent row now, so one slip there would drop the selection colour
+    -- from both rows at once with the suite green.
+    local function isAccent(fs)
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        local r, g, b = fs:GetTextColor()
+        return r == ar and g == ag and b == ab
+    end
+    local lit, litName = 0, nil
+    for _, b in ipairs(btns) do
+        if isAccent(b.lbl) then lit = lit + 1; litName = b.skinName end
+    end
+    eq("exactly one skin button reads as chosen", lit, 1)
+    -- And it is the one ON DISK. Lighting the LOADED one instead passes a
+    -- count and shows the player their choice did not take.
+    eq("  and it is the one just chosen, not the one loaded",
+       litName, other.skinName)
+    check("  which is not the loaded one", other.skinName ~= loaded)
+
+    -- CHANGING THE ACCENT REPAINTS THIS ROW. Its selected button is painted in
+    -- the accent, so it goes stale on exactly the same event the accent row
+    -- does - and that row has always refreshed itself.
+    do
+        local heldTheme = AltStableConfig.theme
+        -- OPEN, because the callback is guarded on the panel being shown - a
+        -- repaint of a hidden panel is work nobody sees, and OnShow covers the
+        -- other direction. Driving this with the panel hidden tests neither.
+        local panel = AltStable._test.optionsPanel
+        local wasShown = panel:IsShown()
+        panel:Show()
+        local before = { AltStable.GetAccentRGB() }
+        AltStable.SetConfigValue("theme", AltStableConfig.theme == "class" and "dark" or "class")
+        AltStable.ApplyTheme()
+        local after = { AltStable.GetAccentRGB() }
+        if after[1] ~= before[1] or after[2] ~= before[2] or after[3] ~= before[3] then
+            local stale = 0
+            for _, b in ipairs(btns) do
+                if b.skinName == AltStable.PendingSkinName() and not isAccent(b.lbl) then
+                    stale = stale + 1
+                end
+            end
+            eq("the chosen skin is repainted when the accent changes", stale, 0)
+        else
+            check("the accent actually changed, or this proves nothing", false,
+                  "class colour matched gold")
+        end
+        AltStable.SetConfigValue("theme", heldTheme)
+        AltStable.ApplyTheme()
+        if not wasShown then panel:Hide() end
+    end
+
+    -- AND THE PANEL RE-SYNCS IT ON OPEN. `/alts skin` writes the config from
+    -- outside this panel and says "reload" in chat; opening Options after that
+    -- and seeing the OLD skin lit, with no pending line, contradicts the
+    -- message the player just read - and invites them to click the lit button
+    -- and discard the choice they made.
+    do
+        local other2
+        for _, b in ipairs(btns) do
+            if b.skinName ~= AltStable.SkinName() then other2 = b end
+        end
+        AltStable.SetConfigValue("skin", AltStable.SkinName())   -- nothing pending
+        AltStable._test.RefreshSkinRow()
+        eq("nothing pending to start with", AltStable._test.SkinReloadPrompt(), nil)
+        AltStable.SetConfigValue("skin", other2.skinName)        -- as /alts skin does
+        -- THROUGH THE PANEL'S OWN OnShow, not by calling the refresher: the
+        -- bug was that OnShow re-synced every other control and not this one,
+        -- and a test that refreshes it itself cannot see that.
+        local optPanel = AltStable._test.optionsPanel
+        optPanel:GetScript("OnShow")(optPanel)
+        check("a skin chosen from the command line shows as pending on open",
+              AltStable._test.SkinReloadPrompt() ~= nil)
+        local chosen
+        for _, b in ipairs(btns) do if isAccent(b.lbl) then chosen = b.skinName end end
+        eq("  and the row lights the one that was chosen", chosen, other2.skinName)
+    end
+
+    -- THE RELOAD BUTTON IS REACHABLE. It sat beside the skin buttons first,
+    -- and the Options viewport is not the 820 the tab asks for - the sidebar
+    -- and the scrollbar take it to about 563, the three choices already end
+    -- near 382, and the button was pushed off the right edge. The panel
+    -- scrolls vertically only, so the one action this row exists to offer
+    -- could not be reached at all.
+    do
+        local btn = AltStable._test.SkinReloadButton()
+        local VIEWPORT = 820 - (AltStable.LAYOUT.SIDEBAR_WIDTH or 230) - 26
+        local right
+        for i = 1, btn:GetNumPoints() do
+            local point, _, relPoint, x = btn:GetPoint(i)
+            if point == "TOPRIGHT" and relPoint == "TOPRIGHT" then right = x end
+        end
+        check("the Reload button hangs off the panel's own right edge",
+              right ~= nil and right < 0, tostring(right))
+        -- Pinned to the right means its LEFT is viewport - padding - width, and
+        -- it cannot be pushed anywhere by a longer message.
+        local leftEdge = VIEWPORT + (right or 0) - btn:GetWidth()
+        check("  so it sits inside the viewport whatever the message says",
+              leftEdge > 0 and leftEdge < VIEWPORT,
+              ("left %s of %s"):format(tostring(leftEdge), VIEWPORT))
+        -- And the message is bounded by it rather than running under it.
+        local bounded = false
+        local fs = AltStable._test.SkinReloadText and AltStable._test.SkinReloadText()
+        if fs then
+            for i = 1, fs:GetNumPoints() do
+                local point, rel = fs:GetPoint(i)
+                if point == "RIGHT" and rel == btn then bounded = true end
+            end
+            check("  with the message stopping where the button starts", bounded)
+        end
+    end
+
+    AltStableConfig.skin = held
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

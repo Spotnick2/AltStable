@@ -2868,43 +2868,11 @@ local function CreateFrameIfNeeded()
     optSectionHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     Y = Y - 20
 
-    -- Theme row
-    local optThemeLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optThemeLabel:SetPoint("TOPLEFT", P, Y)
-    optThemeLabel:SetText("Theme")
-    optThemeLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
-
-    local BTNY = Y + 1   -- vertically aligned with label text
-    local BTN_W, BTN_H = 72, 22
-
-    local optDarkBtn = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
-    optDarkBtn:SetSize(BTN_W, BTN_H)
-    optDarkBtn:SetPoint("TOPLEFT", P + 60, BTNY)
-    AltStable.ApplyBackdrop(optDarkBtn, 0.12, 0.12, 0.12, 1)
-    local optDarkLbl = optDarkBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    optDarkLbl:SetAllPoints(); optDarkLbl:SetJustifyH("CENTER"); optDarkLbl:SetText("Dark")
-
-    local optClassBtn = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
-    optClassBtn:SetSize(BTN_W, BTN_H)
-    optClassBtn:SetPoint("LEFT", optDarkBtn, "RIGHT", 8, 0)
-    AltStable.ApplyBackdrop(optClassBtn, 0.12, 0.12, 0.12, 1)
-    local optClassLbl = optClassBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    optClassLbl:SetAllPoints(); optClassLbl:SetJustifyH("CENTER"); optClassLbl:SetText("Class")
-
-    -- Theme hint text (to right of buttons)
-    local optThemeHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optThemeHint:SetPoint("LEFT", optClassBtn, "RIGHT", 14, 0)
-    optThemeHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
-    optThemeHint:SetJustifyH("LEFT"); optThemeHint:SetWordWrap(true)
-    optThemeHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optThemeHint:SetText("Class uses current player class color as accent.")
-
-    -- Refresh theme button highlight (no callbacks, no side effects)
-    -- Must NOT call ApplyTheme or SwitchSection
-    -- The selected theme gets a persistent pressed state: accent-filled
-    -- background + accent border + accent label. Text color alone was too
-    -- subtle to read as "active" at a glance (issue #5).
-    local function SetThemeBtnState(btn, lbl, active)
+    -- The pressed state both choice rows use. Hoisted out of the Theme row so
+    -- the Skin row above can wear it too: one selected look, not two that drift.
+    -- The selected one gets an accent fill, an accent border and an accent
+    -- label - text colour alone was too subtle to read as "active" (#5).
+    local function SetChoiceBtnState(btn, lbl, active)
         local ar, ag, ab = AltStable.GetAccentRGB()
         if active then
             btn:SetBackdropColor(
@@ -2918,6 +2886,153 @@ local function CreateFrameIfNeeded()
             lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
         end
     end
+
+    -- ── Skin row (#108) ───────────────────────────────────
+    -- The material was reachable only from `/alts skin`, so a player who never
+    -- read the release notes never knew there was one. Built FROM the table
+    -- rather than three hard-coded buttons, so a fourth preset appears here on
+    -- its own - with flat first, because it is the unstyled one and the order
+    -- should read as "none, then these".
+    local optSkinLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optSkinLabel:SetPoint("TOPLEFT", P, Y)
+    optSkinLabel:SetText("Skin")
+    optSkinLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+
+    local skinNames = {}
+    for name in pairs(AltStable.SKINS or {}) do skinNames[#skinNames + 1] = name end
+    table.sort(skinNames, function(a, b)
+        if (a == "flat") ~= (b == "flat") then return a == "flat" end
+        return a < b
+    end)
+
+    local skinBtns = {}
+    local RefreshSkinRow
+    local prevSkinBtn
+    for _, name in ipairs(skinNames) do
+        local preset = AltStable.SKINS[name]
+        local b = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+        b:SetSize(96, 22)
+        if prevSkinBtn then b:SetPoint("LEFT", prevSkinBtn, "RIGHT", 8, 0)
+        else b:SetPoint("TOPLEFT", P + 60, Y + 1) end
+        AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+        local lbl = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbl:SetAllPoints(); lbl:SetJustifyH("CENTER")
+        lbl:SetText(preset.label or name)
+        b.skinName, b.lbl = name, lbl
+        b:SetScript("OnClick", function()
+            AltStable.SetConfigValue("skin", name)
+            RefreshSkinRow()
+        end)
+        skinBtns[#skinBtns + 1] = b
+        prevSkinBtn = b
+    end
+
+    -- WHAT IS ON DISK vs WHAT IS ON SCREEN. The material is built when the
+    -- window is, so choosing one here changes the next load, not this one -
+    -- and saying so only when they disagree keeps a permanent instruction off
+    -- a panel where nothing is pending.
+    --
+    -- ON ITS OWN ROW, and measured rather than guessed.
+    --
+    -- Beside the buttons is where this was, to avoid holding a line open in the
+    -- state where nothing is pending - but the OPTIONS VIEWPORT is not the 820
+    -- the tab asks for: the sidebar and the scrollbar take it to about 563, the
+    -- three choices already end near 382, and what was left could not hold the
+    -- message, let alone the button after it. The Reload button was pushed off
+    -- the right edge, in a panel that scrolls vertically only, so the one
+    -- action the row exists to offer could not be reached at all.
+    --
+    -- So: the BUTTON is pinned to the right edge, and the message is bounded
+    -- between the choices and the button. Neither can push the other out, at
+    -- this width or at a clamped one. Twenty-four quiet pixels on a login where
+    -- nothing is pending is a cheaper thing to spend than a Reload nobody can
+    -- click.
+    Y = Y - 24
+
+    local optSkinReloadBtn = CreateFrame("Button", nil, optionsFrame, "UIPanelButtonTemplate")
+    optSkinReloadBtn:SetSize(80, 20)
+    optSkinReloadBtn:SetPoint("TOPRIGHT", optionsFrame, "TOPRIGHT", -P, Y)
+    optSkinReloadBtn:SetText("Reload")
+
+    local optSkinReload = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    -- LEFT/RIGHT, not TOPLEFT/RIGHT: two corners at one y give a font string
+    -- no height at all, which is its own bug in this file's history.
+    optSkinReload:SetPoint("LEFT", optionsFrame, "TOPLEFT", P + 60, Y - 10)
+    optSkinReload:SetPoint("RIGHT", optSkinReloadBtn, "LEFT", -10, 0)
+    optSkinReload:SetJustifyH("LEFT")
+    optSkinReload:SetWordWrap(false)
+    optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optSkinReloadBtn:SetScript("OnClick", function()
+        if type(ReloadUI) == "function" then ReloadUI() end
+    end)
+
+    AltStable._test.SkinReloadButton = function() return optSkinReloadBtn end
+    AltStable._test.SkinReloadText = function() return optSkinReload end
+
+    RefreshSkinRow = function()
+        local pending = AltStable.PendingSkinName()
+        for _, b in ipairs(skinBtns) do
+            SetChoiceBtnState(b, b.lbl, b.skinName == pending)
+        end
+        -- Against what the WINDOW is wearing, which is resolved once per
+        -- session: choosing the one already loaded is not a pending change.
+        local waiting = pending ~= AltStable.SkinName()
+        optSkinReload:SetText(waiting
+            and ("|cffffcc00" .. (AltStable.SKINS[pending] and AltStable.SKINS[pending].label
+                 or pending) .. "|r takes effect after a reload") or "")
+        optSkinReload:SetShown(waiting)
+        optSkinReloadBtn:SetShown(waiting)
+    end
+    RefreshSkinRow()
+    AltStable._test.RefreshSkinRow = RefreshSkinRow
+    AltStable._test.optionsPanel = optionsPanel
+    AltStable._test.skinBtns = skinBtns
+    AltStable._test.SkinReloadPrompt = function()
+        return optSkinReload:IsShown() and optSkinReload:GetText() or nil
+    end
+
+    Y = Y - 30
+
+    -- Accent row
+    local optThemeLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optThemeLabel:SetPoint("TOPLEFT", P, Y)
+    -- ACCENT, not "Theme". It changes one colour - the gold highlight - and
+    -- nothing else: not a background, not a row, not a border. Calling that
+    -- the theme is what made the material above look like it had nowhere to
+    -- live. The stored values stay `dark` and `class`, because they are on
+    -- disk in everybody's SavedVariables and a label is not worth a migration.
+    optThemeLabel:SetText("Accent")
+    optThemeLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+
+    local BTNY = Y + 1   -- vertically aligned with label text
+    local BTN_W, BTN_H = 72, 22
+
+    local optDarkBtn = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+    optDarkBtn:SetSize(BTN_W, BTN_H)
+    optDarkBtn:SetPoint("TOPLEFT", P + 60, BTNY)
+    AltStable.ApplyBackdrop(optDarkBtn, 0.12, 0.12, 0.12, 1)
+    local optDarkLbl = optDarkBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optDarkLbl:SetAllPoints(); optDarkLbl:SetJustifyH("CENTER"); optDarkLbl:SetText("Gold")
+
+    local optClassBtn = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+    optClassBtn:SetSize(BTN_W, BTN_H)
+    optClassBtn:SetPoint("LEFT", optDarkBtn, "RIGHT", 8, 0)
+    AltStable.ApplyBackdrop(optClassBtn, 0.12, 0.12, 0.12, 1)
+    local optClassLbl = optClassBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optClassLbl:SetAllPoints(); optClassLbl:SetJustifyH("CENTER")
+    optClassLbl:SetText("Class colour")
+
+    -- Theme hint text (to right of buttons)
+    local optThemeHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optThemeHint:SetPoint("LEFT", optClassBtn, "RIGHT", 14, 0)
+    optThemeHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optThemeHint:SetJustifyH("LEFT"); optThemeHint:SetWordWrap(true)
+    optThemeHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optThemeHint:SetText("The highlight colour - the gold in the title, the "
+        .. "selected tab and the totals.")
+
+    -- No callbacks, no side effects: must NOT call ApplyTheme or SwitchSection.
+    local SetThemeBtnState = SetChoiceBtnState
     local function RefreshThemeBtns()
         local cur = AltStableConfig and AltStableConfig.theme or "dark"
         SetThemeBtnState(optDarkBtn,  optDarkLbl,  cur == "dark")
@@ -2925,7 +3040,12 @@ local function CreateFrameIfNeeded()
     end
     -- Sync when accent changes (sidebar callback won't call SwitchSection)
     AltStable.RegisterThemeCallback(function()
-        if optionsPanel:IsShown() then RefreshThemeBtns() end
+        if optionsPanel:IsShown() then
+            RefreshThemeBtns()
+            -- The skin row's selected button is painted in the accent too, so
+            -- it goes stale on exactly the same event.
+            RefreshSkinRow()
+        end
     end)
 
     optDarkBtn:SetScript("OnClick", function()
@@ -3523,8 +3643,13 @@ local function CreateFrameIfNeeded()
     optHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
     optHint:SetJustifyH("LEFT"); optHint:SetWordWrap(true)
     optHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optHint:SetText("Class theme uses the current player class color as the UI accent. "
-        .."Character rows still use each character's own class color.")
+    -- The row above is "Accent" now, so a footnote about a "Class theme" is a
+    -- setting the player cannot find. What is worth keeping is the DISTINCTION
+    -- it draws, which the row's own hint has no room for: the accent is one
+    -- colour for the UI, and it is not what colours the character rows.
+    optHint:SetText("The accent is the UI's highlight colour. Character names "
+        .."and rows always use each character's own class colour, whichever "
+        .."accent is chosen.")
 
     -- Content height is known once the layout cursor has run; the scroll range
     -- derives from it. Extra padding covers the wrapped hint text below.
@@ -3567,6 +3692,13 @@ local function CreateFrameIfNeeded()
         OptRefreshWhitelist()
         OptRefreshHidden()
         RefreshThemeBtns()
+        -- And the skin row, which is the ONE control here that can be changed
+        -- from outside this panel: `/alts skin` writes the config and says
+        -- "reload" in chat. Without this, opening Options after that command
+        -- lights the old skin and shows no pending line - contradicting the
+        -- message the player has just read, and inviting them to click the
+        -- lit button and silently discard the choice they made.
+        RefreshSkinRow()
     end)
 
     -- Add the Options sidebar button

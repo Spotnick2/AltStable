@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **The skin is in Options now.** Flat, Clear glass and Smoked glass as a row of
+  buttons, with the panel saying when a choice needs a reload and offering one —
+  the material is built when the window is, so a choice takes effect on the next
+  load. `/alts skin` still works
+  ([#108](https://github.com/Spotnick2/AltStable/issues/108)).
+- **"Theme" is called "Accent"**, because that is what it is: one highlight
+  colour, Gold or your class colour. It never changed a background, a row or a
+  border. Your setting is unchanged — only the name is
+  ([#108](https://github.com/Spotnick2/AltStable/issues/108)).
+- **Our own tooltips wear the glass**, and only ours: the game's tooltips and
+  every other addon's are left exactly as they were
+  ([#97](https://github.com/Spotnick2/AltStable/issues/97)).
+
 ## v0.2.1-beta
 
 A text fix, and only a text fix — no behaviour changed. Everything in
