@@ -888,10 +888,18 @@ function GetScreenHeight() return WoW.screenH / 2 end
 -- A REAL post-hook: it wraps the global so the hook actually runs afterwards.
 -- An inert stub would have made the Alt+Z-during-capture path untestable, which
 -- is the path that had the bug.
-function hooksecurefunc(name, fn)
-    local prev = _G[name]
+-- BOTH FORMS, as the client has them: hooksecurefunc(name, fn) for a global,
+-- and hooksecurefunc(table, name, fn) for a method. Only the first existed
+-- here, so a hook on GameTooltip:SetOwner - the one that catches a tooltip
+-- changing hands WITHOUT hiding - silently did nothing and could not be
+-- tested at all.
+function hooksecurefunc(a, b, c)
+    local host, name, fn
+    if type(a) == "table" then host, name, fn = a, b, c
+    else host, name, fn = _G, a, b end
+    local prev = host[name]
     if type(prev) ~= "function" then return end
-    _G[name] = function(...)
+    host[name] = function(...)
         local r = { prev(...) }
         fn(...)
         return unpack(r)
@@ -914,6 +922,11 @@ GameTooltip.NumLines = function() return #WoW.tooltipLines end
 GameTooltip.Hide = function() WoW.tooltipShown = false end
 GameTooltip.Show = function() WoW.tooltipShown = true end
 GameTooltip.IsShown = function() return WoW.tooltipShown == true end
+-- The border an 11.x client keeps in a NineSlice child. Modelled because the
+-- addon hides it while a tooltip is ours and has to put it back afterwards -
+-- and "did it put it back" is the whole risk of touching a frame every other
+-- addon shares.
+GameTooltip.NineSlice = makeFrame()
 
 ------------------------------------------------------------
 -- CVars and the camera

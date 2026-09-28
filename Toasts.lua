@@ -119,6 +119,7 @@ local function BuildToastFrame()
     -- translation animation and no ADD-blended layer in Glass.Apply; the ADD
     -- highlights live in Glass.Bar and Glass.Sheen, which this addon does not
     -- ship the art for.
+    if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(f) end
     if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
         f:SetBackdrop({
             bgFile   = "Interface/Tooltips/UI-Tooltip-Background",

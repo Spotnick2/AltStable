@@ -1540,3 +1540,31 @@ only 0.028. Replacing absolute row colours with overlays therefore preserves the
 old spacing only over a dark, *consistent* surface. Over a translucent one the
 contrast varies with whatever is behind the window, which is a second reason a
 reading surface wants to be opaque.
+
+## GameTooltip is shared state, and the risk is the restore
+
+`GameTooltip` is one frame the client reuses for everything: our rows, a quest
+giver, another addon's item counts. Two consequences for anything that restyles
+it.
+
+**It changes hands without hiding.** `SetOwner` can be called on a tooltip that
+is already visible, so an `OnShow` hook alone never sees the moment it stops
+being yours. Post-hook `SetOwner` as well — `hooksecurefunc(GameTooltip,
+"SetOwner", ...)`, the table-method form — and route both to one idempotent
+reconcile that asks "is this ours right now" rather than tracking transitions.
+
+**Hiding the stock border is a debt.** If it is suppressed while your material
+is up, every failure to restore leaves the game's own tooltips and every other
+addon's borderless until a `/reload`. Record the restore *before* the change
+that needs it, restore the value you found rather than an assumed `1`, and only
+if it is still the value you set — another addon that has moved it since has an
+opinion more recent than yours.
+
+The border lives in `GameTooltip.NineSlice` on an 11.x client. **Unverified on
+Forever**: guard every access, and let the material fail to appear rather than
+erroring on a frame everyone shares. Comparison tooltips (`ShoppingTooltip1/2`)
+are separate frames and are not covered by anything done to `GameTooltip`.
+
+Related, and already recorded above: `GameTooltip:HookScript("OnTooltipSetItem",
+...)` is gone here — `TooltipDataProcessor.AddTooltipPostCall` is the
+replacement. `OnShow`/`OnHide` are ordinary frame scripts and still work.

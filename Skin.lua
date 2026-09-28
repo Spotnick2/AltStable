@@ -521,6 +521,122 @@ function AltStable.SkinHeaderBand()
     return lift(d[1]), lift(d[2]), lift(d[3]), 1
 end
 
+------------------------------------------------------------
+-- The SHARED tooltip, and only while it is ours
+------------------------------------------------------------
+-- GameTooltip belongs to everybody. Restyling it outright would repaint the
+-- game's own tooltips and every other addon's, which is why this was left
+-- alone twice while the rest of the window was done - a glass box over a
+-- quest reward is not our call to make.
+--
+-- So the material goes on only while WE own the tooltip, and comes off the
+-- moment we do not. Ownership is read from the tooltip itself and walked up
+-- the parent chain to a marked root, so no call site changes: the sheet's
+-- twenty-two SetOwner sites, the plugins' and the menu's all keep working as
+-- they are.
+--
+-- THE FAILURE THAT MATTERS is not getting the material on - it is failing to
+-- take it off. The stock border is hidden by alpha while ours is up, so an
+-- error midway, or an owner change without a hide, would leave every tooltip
+-- in the game borderless until a reload. Hence:
+--
+--   * ONE idempotent reconcile, called from OnShow, from a post-hook on
+--     SetOwner (a tooltip can change hands while visible, with no hide in
+--     between) and from OnHide. Every path asks the same question.
+--   * The restore is recorded BEFORE the change that needs restoring, so a
+--     failure between them still has a way back.
+--   * What we put back is the alpha we found, not an assumed 1, and only if
+--     it is still the 0 we set - if another addon has moved it since, it has
+--     an opinion and we do not fight over it.
+--
+-- Comparison tooltips (ShoppingTooltip1/2) are separate frames and stay stock,
+-- deliberately: they appear beside an item tooltip that is usually not ours.
+--
+-- NineSlice is where an 11.x client keeps the tooltip's border. Every access
+-- here is guarded, so on a client that does not have it the material simply
+-- does not go on rather than erroring on a frame everyone shares.
+local tip = { applied = false, saved = nil }
+
+function AltStable.MarkTooltipHost(frame)
+    if frame then frame.__altstableHost = true end
+end
+
+local function OwnedByUs(tt)
+    local owner = tt.GetOwner and tt:GetOwner()
+    local hops = 0
+    while owner and hops < 8 do
+        if owner.__altstableHost then return true end
+        owner = owner.GetParent and owner:GetParent() or nil
+        hops = hops + 1
+    end
+    return false
+end
+
+local function TipParts(g)
+    return { g.shadow, g.tint, g.grain, g.wash, g.top }
+end
+
+local function RestoreTooltip(tt)
+    if not tip.applied then return end
+    tip.applied = false
+    if tip.g then
+        for _, part in ipairs(TipParts(tip.g)) do
+            if part and part.Hide then part:Hide() end
+        end
+    end
+    local ns = tt and tt.NineSlice
+    if ns and ns.SetAlpha and tip.saved ~= nil then
+        -- Only if it is still ours to give back.
+        if not ns.GetAlpha or ns:GetAlpha() == 0 then ns:SetAlpha(tip.saved) end
+    end
+    tip.saved = nil
+end
+
+local function ApplyTooltip(tt)
+    if tip.applied then return end
+    if not tip.g then tip.g = AltStable.SkinWindow(tt, "small") end
+    if not tip.g then return end
+    local ns = tt.NineSlice
+    -- Recorded FIRST, and the flag with it: everything after this point is
+    -- undoable even if it does not finish.
+    tip.saved = (ns and ns.GetAlpha and ns:GetAlpha()) or nil
+    tip.applied = true
+    if ns and ns.SetAlpha then ns:SetAlpha(0) end
+    for _, part in ipairs(TipParts(tip.g)) do
+        if part and part.Show then part:Show() end
+    end
+end
+
+function AltStable.ReconcileTooltip()
+    local tt = _G.GameTooltip
+    if not tt then return end
+    local ours = AltStable.SkinIsGlass()
+        and (not tt.IsShown or tt:IsShown())
+        and OwnedByUs(tt)
+    if ours then ApplyTooltip(tt) else RestoreTooltip(tt) end
+end
+
+function AltStable.InstallTooltipSkin()
+    local tt = _G.GameTooltip
+    if not tt or tip.hooked then return false end
+    if not AltStable.SkinIsGlass() then return false end
+    tip.hooked = true
+    if tt.HookScript then
+        tt:HookScript("OnShow", AltStable.ReconcileTooltip)
+        tt:HookScript("OnHide", function() RestoreTooltip(tt) end)
+    end
+    -- A tooltip can change hands WITHOUT hiding - the client reuses one frame,
+    -- and the next owner may be a quest giver. That is the state an OnShow hook
+    -- alone never sees.
+    if hooksecurefunc and tt.SetOwner then
+        hooksecurefunc(tt, "SetOwner", AltStable.ReconcileTooltip)
+    end
+    return true
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.TooltipState = function() return tip end
+
 -- A WELL cut into the panel, and the hairline round it.
 --
 -- The figure box on the character sheet is the one that exists, and it was two

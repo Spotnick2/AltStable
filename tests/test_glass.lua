@@ -898,6 +898,88 @@ do
 end
 
 ------------------------------------------------------------
+-- The shared tooltip, and putting it back
+------------------------------------------------------------
+-- GameTooltip belongs to everybody, so the material goes on only while we own
+-- it. Getting it ON is the easy half and not the one that can hurt: the stock
+-- border is hidden by alpha while ours is up, so a failure to RESTORE leaves
+-- every tooltip in the game borderless until a reload - the game's own, and
+-- every other addon's.
+do
+    useSkin("clear")
+    local tt = _G.GameTooltip
+    local ns = tt.NineSlice
+    local ours   = CreateFrame("Frame", nil, UIParent)
+    local theirs = CreateFrame("Frame", nil, UIParent)
+    AltStable.MarkTooltipHost(ours)
+    local child = CreateFrame("Frame", nil, ours)   -- a plugin panel, say
+
+    check("the hooks install under glass", AltStable.InstallTooltipSkin() == true)
+    check("  and only once", AltStable.InstallTooltipSkin() == false)
+
+    tt:SetOwner(ours, "ANCHOR_RIGHT")
+    tt:Show()
+    AltStable.ReconcileTooltip()
+    local state = AltStable._test.TooltipState()
+    check("our own tooltip wears the material", state.applied == true)
+    eq("  and the stock border is out of the way", ns:GetAlpha(), 0)
+
+    -- A CHILD of a marked frame counts: the plugins' panels live inside the
+    -- window, and marking each of them would be a list that goes stale.
+    tt:SetOwner(child, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    check("a panel inside the window is still us",
+          AltStable._test.TooltipState().applied == true)
+
+    -- THE STATE THAT MATTERS. The client reuses one tooltip frame, so it can
+    -- change hands with no hide in between - ours, then a quest giver's. An
+    -- OnShow hook alone never sees that, which is why SetOwner is hooked too.
+    tt:SetOwner(theirs, "ANCHOR_RIGHT")
+    check("a tooltip handed to somebody else loses the material",
+          AltStable._test.TooltipState().applied == false)
+    eq("  and gets its border back", ns:GetAlpha(), 1)
+
+    -- Hiding restores too, and restoring twice is not an error.
+    tt:SetOwner(ours, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    check("ours again", AltStable._test.TooltipState().applied == true)
+    tt:Hide()
+    AltStable.ReconcileTooltip()
+    check("hiding puts it back", AltStable._test.TooltipState().applied == false)
+    eq("  to the alpha it had", ns:GetAlpha(), 1)
+    AltStable.ReconcileTooltip()
+    eq("  and reconciling again changes nothing", ns:GetAlpha(), 1)
+
+    -- WE PUT BACK WHAT WE FOUND, not an assumed 1. Another addon dimming the
+    -- border is an opinion; ours is not the only one.
+    ns:SetAlpha(0.5)
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    eq("the border is hidden while ours is up", ns:GetAlpha(), 0)
+    tt:Hide(); AltStable.ReconcileTooltip()
+    eq("  and comes back at the alpha it actually had", ns:GetAlpha(), 0.5)
+    ns:SetAlpha(1)
+
+    -- AND WE DO NOT FIGHT. If something else has moved the alpha while our
+    -- material is up, it has an opinion more recent than ours.
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
+    ns:SetAlpha(0.25)                       -- somebody else, mid-tooltip
+    tt:Hide(); AltStable.ReconcileTooltip()
+    eq("a border moved by somebody else is left alone", ns:GetAlpha(), 0.25)
+    ns:SetAlpha(1)
+
+    -- FLAT NEVER TOUCHES IT. Not "looks the same" - never hooks, never hides.
+    useSkin("flat")
+    tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT")
+    AltStable.ReconcileTooltip()
+    check("flat leaves the shared tooltip entirely alone",
+          AltStable._test.TooltipState().applied == false)
+    eq("  border untouched", ns:GetAlpha(), 1)
+    tt:Hide()
+    useSkin("clear")
+end
+
+------------------------------------------------------------
 -- The CALL SITES, not the helpers (#97 phase 2)
 ------------------------------------------------------------
 -- Every helper above has its own tests. What those cannot say is whether the

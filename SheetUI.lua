@@ -2225,6 +2225,10 @@ local function CreateFrameIfNeeded()
     -- The window is either a flat backdrop or the glass material, never both:
     -- a backdrop is an opaque square, and inside a rounded body it would draw
     -- the corners straight back on - the same mistake the fills below make.
+    -- Tooltips raised from anywhere inside this window are ours; the plugins'
+    -- panels are its children, so one mark covers them. See MarkTooltipHost.
+    if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(frame) end
+    if AltStable.InstallTooltipSkin then AltStable.InstallTooltipSkin() end
     AltStable.glass = AltStable.SkinWindow(frame)
     if not AltStable.glass then
         AltStable.ApplyBackdrop(frame,
