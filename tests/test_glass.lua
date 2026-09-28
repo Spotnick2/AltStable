@@ -713,6 +713,40 @@ do
               ("%.4f vs %.4f"):format(gstep, step))
     end
 
+    for _, name in ipairs({ "clear", "smoked" }) do
+        useSkin(name)
+        local d = AltStable.SkinDataColor()
+        local hr, hg, hb, ha = AltStable.SkinHeaderBand()
+        local FLAT_HEADER = AltStable.C.BG_HEADER[1] - AltStable.C.BG_ROW_ODD[1]
+        eq(name .. ": the column header is opaque too", ha, 1)
+        check(name .. ": and lands where the flat header did",
+              math.abs((hr - d[1]) - FLAT_HEADER) < 0.005,
+              ("step %.4f vs flat %.4f"):format(hr - d[1], FLAT_HEADER))
+        -- THE ORDER the flat table had: the realm band is the loudest thing on
+        -- the table, then the header that labels it, then the stripe. Three
+        -- lifts chosen separately can land in any order, and the one that
+        -- matters is that a realm break still out-shouts a column label.
+        local _, _, _, ga = AltStable.SkinGroupBand()
+        local _, _, _, sa = AltStable.SkinRowStripe(2)
+        local band, stripe = over(d[1], ga), over(d[1], sa)
+        check(name .. ": the realm band still out-shouts the header",
+              band > hr, ("band %.4f vs header %.4f"):format(band, hr))
+        check(name .. ": and the header out-shouts the stripe",
+              hr > stripe, ("header %.4f vs stripe %.4f"):format(hr, stripe))
+        -- Which is the order flat has, so the two skins do not disagree about
+        -- what the loudest thing on the table is.
+        check(name .. ": the same order flat has",
+              AltStable.C.BG_GROUP[1] > AltStable.C.BG_HEADER[1]
+              and AltStable.C.BG_HEADER[1] > AltStable.C.BG_ROW_EVEN[1])
+        -- Channel by channel, so the band keeps the surface's HUE instead of
+        -- flattening to grey. Checking each channel merely rose catches
+        -- nothing: lifting red three times clears the other two as well,
+        -- because the surface is cool and red is its smallest channel.
+        check(name .. ": the band keeps the surface's cast",
+              (hb - hr) > 0 and (d[3] - d[1]) > 0,
+              ("header b-r %.4f, surface b-r %.4f"):format(hb - hr, d[3] - d[1]))
+    end
+
     -- Flat keeps its two absolute greys, to the digit, and its band.
     useSkin("flat")
     local o = { AltStable.SkinRowStripe(1) }
@@ -726,6 +760,8 @@ do
           same(o, AltStable.C.BG_ROW_ODD), table.concat(o, ","))
     check("flat even rows too", same(e, AltStable.C.BG_ROW_EVEN), table.concat(e, ","))
     check("and the realm band", same(g, AltStable.C.BG_GROUP), table.concat(g, ","))
+    check("and the column header", same({ AltStable.SkinHeaderBand() },
+          AltStable.C.BG_HEADER), table.concat({ AltStable.SkinHeaderBand() }, ","))
     -- Flat has no reading surface of its own; the rows ARE the surface there.
     check("flat falls back to the row colour rather than inventing one",
           same({ unpack(AltStable.SkinDataColor()) }, AltStable.C.BG_ROW_ODD))

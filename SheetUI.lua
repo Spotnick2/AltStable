@@ -3666,9 +3666,8 @@ local function CreateFrameIfNeeded()
     frozenHeader:SetSize(FROZEN_WIDTH,HEADER_HEIGHT)
     local fhBg=frozenHeader:CreateTexture(nil,"BACKGROUND")
     fhBg:SetAllPoints()
-    fhBg:SetColorTexture(
-        AltStable.C.BG_HEADER[1], AltStable.C.BG_HEADER[2],
-        AltStable.C.BG_HEADER[3], AltStable.C.BG_HEADER[4])
+    fhBg:SetColorTexture(AltStable.SkinHeaderBand())
+    AltStable._test.frozenHeaderBG = fhBg
     local fhLine=frozenHeader:CreateTexture(nil,"OVERLAY")
     fhLine:SetHeight(1); fhLine:SetPoint("BOTTOMLEFT"); fhLine:SetPoint("BOTTOMRIGHT")
     fhLine:SetColorTexture(unpack(AltStable.C.SEP))
@@ -3712,9 +3711,8 @@ local function CreateFrameIfNeeded()
     headerScroll:SetScrollChild(headerContent)
     local hBg=headerContent:CreateTexture(nil,"BACKGROUND")
     hBg:SetAllPoints()
-    hBg:SetColorTexture(
-        AltStable.C.BG_HEADER[1], AltStable.C.BG_HEADER[2],
-        AltStable.C.BG_HEADER[3], AltStable.C.BG_HEADER[4])
+    hBg:SetColorTexture(AltStable.SkinHeaderBand())
+    AltStable._test.headerBG = hBg
     local hLine=headerContent:CreateTexture(nil,"OVERLAY")
     hLine:SetHeight(1); hLine:SetPoint("BOTTOMLEFT"); hLine:SetPoint("BOTTOMRIGHT")
     hLine:SetColorTexture(unpack(AltStable.C.SEP))

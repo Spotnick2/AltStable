@@ -1761,6 +1761,19 @@ do
           same(frozen.bg._colorTexture, { AltStable.SkinGroupBand() }),
           table.concat(frozen.bg._colorTexture or {}, ","))
 
+    -- BOTH column headers, which are two frames for the same reason the rows
+    -- are: the name column is frozen and the rest scrolls under it. One of them
+    -- left behind is a header that changes colour halfway across the table.
+    for _, key in ipairs({ "headerBG", "frozenHeaderBG" }) do
+        local bg = AltStable._test[key]
+        check(key .. " exists", bg ~= nil)
+        if bg then
+            check("  and is painted with the skin's header band",
+                  same(bg._colorTexture, { AltStable.SkinHeaderBand() }),
+                  table.concat(bg._colorTexture or {}, ","))
+        end
+    end
+
     -- The surface itself, which had been painted with the PANE - a translucent
     -- panel colour - while twenty-one opaque rows sat on top hiding it.
     local dataBG = AltStable._dataBG
