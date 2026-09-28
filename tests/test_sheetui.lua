@@ -1087,15 +1087,38 @@ do
         -- precisely that SetScale did not call it.
         do
             local savedH = UIParent:GetHeight()
-            local savedScale = f:GetEffectiveScale()
+            -- GetScale, not GetEffectiveScale: restoring an effective scale as
+            -- if it were a scale multiplies the parent's in a second time.
+            local savedScale = f:GetScale()
             UIParent:SetHeight(900)
             T.ResizeFrame(820, 760)
             eq("a window that fits at scale 1 is left alone", f:GetHeight(), 760)
             AltStable.SetScale(1.25)
-            local lim = (900 * UIParent:GetEffectiveScale()) / 1.25 - T.SCREEN_MARGIN
+            local lim = (900 * UIParent:GetEffectiveScale())
+                        / (f:GetEffectiveScale() or 1) - T.SCREEN_MARGIN
             check("and scaling it up refits it rather than leaving it oversized",
                   f:GetHeight() <= lim,
                   ("%s vs max %s"):format(tostring(f:GetHeight()), tostring(lim)))
+            -- And BACK. FitToScreen only ever reduces, so refitting against the
+            -- current size is a one-way ratchet: scaling up shrinks the window,
+            -- scaling back down sees something that already fits and does
+            -- nothing, and it stays short for ever. On the Options tab - the one
+            -- place the scale slider lives, and a plugin section, so
+            -- sizing-to-content early-outs - there is no way back at all.
+            AltStable.SetScale(1.0)
+            eq("and scaling back down restores the size that was asked for",
+               f:GetHeight(), 760)
+
+            -- And the CONTENT path remembers its own request too. Without that,
+            -- a refit after sizing-to-content restores whatever the last
+            -- explicit ResizeFrame asked for - a stale number from another tab.
+            T.ResizeFrameToContent()
+            local contentH = f:GetHeight()
+            AltStable.SetScale(1.25)
+            AltStable.SetScale(1.0)
+            eq("a content-sized window comes back to its own size, not another tab's",
+               f:GetHeight(), contentH)
+
             AltStable.SetScale(savedScale)
             UIParent:SetHeight(savedH)
         end

@@ -1876,8 +1876,22 @@ local function FitToScreen(w, h)
     return w, h
 end
 
+-- The size last ASKED for, before the screen limit touched it.
+--
+-- Refitting against the CURRENT size is a one-way ratchet: FitToScreen only
+-- ever reduces, so scaling up shrinks the window and scaling back down sees
+-- something that already fits and does nothing. The window is left permanently
+-- short, and on the Options tab - which is where the scale slider lives, and
+-- which is a plugin section, so sizing-to-content early-outs - there is no way
+-- back at all without switching sections and returning.
+--
+-- So the request is remembered and the limit is re-applied to THAT. Scaling up
+-- clamps, scaling back down restores.
+local wantW, wantH
+
 local function ResizeFrame(w, h)
     if not frame then return end
+    wantW, wantH = w, h
     frame:SetSize(FitToScreen(w, h))
 end
 
@@ -1904,7 +1918,8 @@ AltStable._test.ResizeFrameToContent = function() return ResizeFrameToContent() 
 -- going through either resize path.
 function AltStable.RefitWindow()
     if not frame then return end
-    frame:SetSize(FitToScreen(frame:GetWidth(), frame:GetHeight()))
+    -- The remembered request, not the current size. See wantW/wantH above.
+    frame:SetSize(FitToScreen(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
 end
 
 local function SaveWindowPosition()
@@ -2019,6 +2034,7 @@ function ResizeFrameToContent()
     -- Plugins (Recipes, Options) manage their own sizing — don't fight them.
     if activeSection and activeSection._isPlugin then return end
     local w, h, needsH, needsV = ComputeContentSize()
+    wantW, wantH = w, h
     -- Through the same clamp: a roster long enough to want more height than the
     -- display has is just as reachable as the Options tab asking for a fixed 760.
     frame:SetSize(FitToScreen(w, h))
