@@ -331,6 +331,46 @@ AltStable._test.ComputeLiveRestedPercent = ComputeLiveRestedPercent
 -- somebody forgets.
 local HIDDEN_ROW_ALPHA = 0.45
 
+-- Where a row's tooltip opens.
+--
+-- Not ANCHOR_RIGHT. That anchors to the right of the NAME cell, and the name is
+-- the leftmost column - so the tooltip opened on top of the table it describes
+-- and, for rows near the top, across the column headers and the title bar.
+-- Readable, and covering the thing you were reading.
+--
+-- Beside the window instead. The fallback is the old behaviour, for when there
+-- is no sheet to hang off: the Roster raises this same tooltip from a card.
+local function AnchorRowTooltip(owner)
+    local sheet = _G["AltStableSheet"]
+    if not (sheet and GameTooltip.SetPoint) then
+        GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+        return
+    end
+    GameTooltip:SetOwner(owner, "ANCHOR_NONE")
+    GameTooltip:ClearAllPoints()
+    GameTooltip:SetPoint("TOPLEFT", sheet, "TOPRIGHT", 8, 0)
+end
+
+-- ...and flipped to the other side when that would leave the screen.
+--
+-- Moving the tooltip off the table traded one problem for another: the sheet
+-- often sits near the right edge of the display, so "just outside its right
+-- edge" was just outside the SCREEN, and the tooltip was clipped rather than
+-- covering anything.
+--
+-- Called after Show, because a tooltip has no width until it has lines - and
+-- measured rather than guessed from the sheet's position, because the width
+-- depends on the longest line in it: a guild name, or none.
+local function KeepRowTooltipOnScreen()
+    local sheet = _G["AltStableSheet"]
+    if not (sheet and GameTooltip.SetPoint and GameTooltip.GetRight) then return end
+    local right = GameTooltip:GetRight()
+    local limit = UIParent and UIParent.GetRight and UIParent:GetRight()
+    if not (right and limit) or right <= limit then return end
+    GameTooltip:ClearAllPoints()
+    GameTooltip:SetPoint("TOPRIGHT", sheet, "TOPLEFT", -8, 0)
+end
+
 -- The guid whose menu is open, and the guid under the cursor. Separate,
 -- because they can be different characters at the same time: the menu stays on
 -- the one it was opened for while the pointer wanders.
@@ -967,25 +1007,7 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
         if not tipBtn.charData then return end
         local c = tipBtn.charData
         local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:2:0|t"
-        -- OUTSIDE the window, not to the right of the cell.
-        --
-        -- ANCHOR_RIGHT puts the tooltip immediately right of the NAME cell,
-        -- which is the leftmost column - so it opened on top of the table it
-        -- describes and, for rows near the top, across the column headers and
-        -- the title bar. Readable, and covering the thing you were reading.
-        --
-        -- Anchored off the sheet's right edge instead, so it sits beside the
-        -- window rather than on it, and falls back to the old behaviour if the
-        -- sheet is not reachable - the Roster raises the same tooltip from a
-        -- card, and that one has no sheet frame to hang off.
-        local sheet = _G["AltStableSheet"]
-        if sheet and GameTooltip.SetPoint then
-            GameTooltip:SetOwner(tipBtn, "ANCHOR_NONE")
-            GameTooltip:ClearAllPoints()
-            GameTooltip:SetPoint("TOPLEFT", sheet, "TOPRIGHT", 8, 0)
-        else
-            GameTooltip:SetOwner(tipBtn, "ANCHOR_RIGHT")
-        end
+        AnchorRowTooltip(tipBtn)
         GameTooltip:ClearLines()
         GameTooltip:AddLine(AltStable.ClassColor(c.class)..(c.name or "").."|r", 1,1,1)
         if c.guild and c.guild ~= "" then
@@ -1009,6 +1031,8 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
                 0.7, 0.7, 0.7)
         end
         GameTooltip:Show()
+        -- After Show, because a tooltip has no width until it has lines.
+        KeepRowTooltipOnScreen()
         hoveredGuid = c.guid
         RepaintMarks()
     end)

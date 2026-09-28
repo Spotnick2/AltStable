@@ -1455,6 +1455,28 @@ do
               rel == _G["AltStableSheet"], tostring(rel))
         check("  off its right edge", relPoint == "TOPRIGHT", tostring(relPoint))
 
+        -- ...unless that would put it off the SCREEN, which is what moving it
+        -- off the table bought at first: the sheet usually sits near the right
+        -- edge of the display, so "just outside its right edge" was just
+        -- outside the display, and the tooltip was clipped instead of covering
+        -- anything.
+        local savedRight = GameTooltip._GetRight
+        GameTooltip:SetWidth(GameTooltip:GetWidth())
+        GameTooltip._GetRight = (UIParent:GetRight() or 0) + 50
+        btn:GetScript("OnEnter")(btn)
+        local _, rel2, relPoint2 = GameTooltip:GetPoint(1)
+        check("a tooltip that would leave the screen flips to the other side",
+              relPoint2 == "TOPLEFT", tostring(relPoint2))
+        eq("  still anchored to the sheet", rel2, _G["AltStableSheet"])
+        GameTooltip._GetRight = savedRight
+
+        -- And one that fits is left where it was, or "flips" would just mean
+        -- "always on the left".
+        btn:GetScript("OnEnter")(btn)
+        local _, _, relPoint3 = GameTooltip:GetPoint(1)
+        check("  while one that fits stays on the right",
+              relPoint3 == "TOPRIGHT", tostring(relPoint3))
+
         -- The fallback matters: the Roster raises this same tooltip from a
         -- card, where there is no sheet frame to hang off.
         local saved = _G["AltStableSheet"]
