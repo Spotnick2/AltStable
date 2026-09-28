@@ -37,8 +37,10 @@ AltStable.SKINS = {
     clear = {
         material = true, label = "Clear glass",
         tint = { 0.13, 0.16, 0.22, 0.24 }, grain = 0.45, wash = 0.18,
-        -- The reading surface. See SkinPaneColor.
+        -- Panels. See SkinPaneColor.
         pane = { 0.04, 0.05, 0.07, 0.62 },
+        -- The TABLE, which is a different job. See SkinDataColor.
+        data = { 0.05, 0.06, 0.08, 1.00 },
         -- A floating popup's body. See SkinPopupTint.
         popup = { 0.05, 0.06, 0.09, 0.55 },
     },
@@ -50,6 +52,7 @@ AltStable.SKINS = {
         material = true, label = "Smoked glass",
         tint = { 0.05, 0.06, 0.08, 0.62 }, grain = 0.35, wash = 0.14,
         pane = { 0.03, 0.03, 0.04, 0.80 },
+        data = { 0.04, 0.04, 0.05, 1.00 },
         popup = { 0.03, 0.04, 0.05, 0.72 },
     },
 }
@@ -441,6 +444,62 @@ end
 function AltStable.SkinTabBG()
     if AltStable.SkinIsGlass() then return unpack(AltStable.SkinPaneColor()) end
     return unpack(AltStable.C.BG_MAIN)
+end
+
+-- THE READING SURFACE, and the two overlays that mark rows out on it.
+--
+-- Opaque, on purpose, and that is the decision this whole section exists to
+-- make rather than inherit. The window has no blur available to it, so what
+-- shows through a translucent table is the world moving SHARP behind twenty-one
+-- rows of small text read at a glance. Glass is for the chrome; the table is
+-- somewhere to read. If a visibly translucent body is ever wanted, this is the
+-- one alpha to lower - 0.92 to 0.96 first, and judged while the camera is
+-- MOVING rather than in a still shot, which is the condition it fails in.
+--
+-- The table was already opaque before any of this, but by accident: the row
+-- colours were the flat theme's and nobody had chosen them for a glass window.
+-- The difference is that the surface is now ONE texture that belongs to the
+-- skin, and the rows are overlays on it rather than twenty-one opaque bands
+-- each repainting the whole width in a colour from another palette.
+--
+-- AND NO TEXT SHADOWS ON THE TABLE, which is the other half of the same
+-- decision. Shadows exist here because text over a translucent surface is read
+-- against whatever is moving behind it; over an opaque one they are invisible
+-- and cost a second draw on every cell of a twenty-one row grid. Lower the
+-- alpha above and the shadows have to come with it - see AltStable.SkinText,
+-- which the popups and toasts use for exactly that reason.
+--
+-- The lifts are white at low alpha, which is not the same arithmetic as the
+-- absolute greys they replace: a white overlay at `s` over a surface at `C`
+-- lands at `C + s(1 - C)`, so the step shrinks as the surface brightens. Over
+-- these near-black surfaces the values below reproduce the old spacing to
+-- within a thousandth, and the test asserts that rather than the alphas.
+local STRIPE_LIFT, GROUP_LIFT = 0.035, 0.075
+
+function AltStable.SkinDataColor()
+    -- The same question its siblings ask, not "does this preset name a colour".
+    -- SkinIsGlass is `material and Glass ~= nil`, so if the material failed to
+    -- load every other path falls back to the flat palette while this one would
+    -- have gone on handing out a glass surface nothing else agreed with.
+    if not AltStable.SkinIsGlass() then return AltStable.C.BG_ROW_ODD end
+    return AltStable.Skin().data or AltStable.C.BG_ROW_ODD
+end
+
+-- The alternating band. Flat keeps its two absolute greys; under glass the odd
+-- row is the surface itself, untouched, and only the even one is painted.
+function AltStable.SkinRowStripe(index)
+    if not AltStable.SkinIsGlass() then
+        local c = (index % 2 == 0) and AltStable.C.BG_ROW_EVEN or AltStable.C.BG_ROW_ODD
+        return c[1], c[2], c[3], c[4]
+    end
+    if index % 2 == 0 then return 1, 1, 1, STRIPE_LIFT end
+    return 0, 0, 0, 0
+end
+
+-- The realm band, which is the same idea one step stronger.
+function AltStable.SkinGroupBand()
+    if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_GROUP) end
+    return 1, 1, 1, GROUP_LIFT
 end
 
 -- A WELL cut into the panel, and the hairline round it.

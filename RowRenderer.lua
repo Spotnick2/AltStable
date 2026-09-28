@@ -477,21 +477,22 @@ end
 AltStable._test = AltStable._test or {}
 AltStable._test.HIDDEN_ROW_ALPHA = HIDDEN_ROW_ALPHA
 
+-- The band, from the skin.
+--
+-- Under glass a row does not paint a background at all - it paints a LIFT on
+-- the one reading surface behind the whole table, or nothing. Twenty-one opaque
+-- bands in the flat theme's charcoal was how the table came to be a slab of
+-- another palette sitting inside a glass window.
+--
+-- `index` is the DISPLAY index, not the pooled row's slot. Rows are reused as
+-- the list scrolls, so parity taken from the slot would make a row change
+-- shade as it moves rather than staying with the character in it.
 local function SetRowBg(row, index)
-    local C = AltStable.C
-    if index % 2 == 0 then
-        row.bg:SetColorTexture(
-            C.BG_ROW_EVEN[1], C.BG_ROW_EVEN[2],
-            C.BG_ROW_EVEN[3], C.BG_ROW_EVEN[4])
-    else
-        row.bg:SetColorTexture(
-            C.BG_ROW_ODD[1], C.BG_ROW_ODD[2],
-            C.BG_ROW_ODD[3], C.BG_ROW_ODD[4])
-    end
+    row.bg:SetColorTexture(AltStable.SkinRowStripe(index))
 end
 
 -- Group / realm header row background
-local function GetGroupBG() return unpack(AltStable.C.BG_GROUP) end
+local function GetGroupBG() return AltStable.SkinGroupBand() end
 
 ------------------------------------------------------------
 -- Scrollable row  (receives only the non-frozen columns)

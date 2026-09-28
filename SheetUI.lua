@@ -1594,6 +1594,20 @@ local function ApplyContentAnchors(needsH, needsV)
     bodyScroll:SetPoint("TOPLEFT",     frame, "TOPLEFT",     SIDEBAR_WIDTH + FROZEN_WIDTH, -BodyTopY())
     bodyScroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -rightInset, bodyBot)
 
+    -- The reading surface spans the two viewports, so it is anchored WITH
+    -- them. It used to be pinned once at frame creation, 36 from the bottom,
+    -- while this bottom moves: 23 with no horizontal scrollbar and 43 with one.
+    -- The 13px difference was invisible while every row painted an opaque band
+    -- over it, and the moment the rows became lifts it was a strip of moving
+    -- world under the last row. The top has the same problem in reverse - it
+    -- was frozen at the header height of whichever section built the frame,
+    -- and the taller ones poked the surface up into the header.
+    if AltStable._dataBG then
+        AltStable._dataBG:ClearAllPoints()
+        AltStable._dataBG:SetPoint("TOPLEFT",     frame, "TOPLEFT",     SIDEBAR_WIDTH, -BodyTopY())
+        AltStable._dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -rightInset, bodyBot)
+    end
+
     frozenScroll:ClearAllPoints()
     frozenScroll:SetPoint("TOPLEFT",    frame, "TOPLEFT",    SIDEBAR_WIDTH, -BodyTopY())
     frozenScroll:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", SIDEBAR_WIDTH, bodyBot)
@@ -3733,37 +3747,37 @@ local function CreateFrameIfNeeded()
     sbBorder:SetColorTexture(0, 0, 0, 1)
 
     --------------------------------------------------------
-    -- The data region gets an UNDERLAY under glass
+    -- The data region IS this texture under glass
     --------------------------------------------------------
-    -- Ordinary rows need no help: their backgrounds are already alpha 1.00, as
-    -- are group rows and column headers, and class tint and hover sit above
-    -- those. Making the window translucent does not expose scenery through
-    -- them, and this underlay is not what makes them opaque.
+    -- Not an underlay any more. It began as one - the rows were opaque bands in
+    -- the flat theme's charcoal and this sat behind them, doing nothing except
+    -- for hidden characters - and it is now the table's actual surface, with
+    -- the rows painting lifts on it or nothing at all. See SkinDataColor.
     --
-    -- HIDDEN CHARACTERS are the exception, and the one that would look worst.
-    -- DimRow takes the WHOLE row - background, text, tint and highlight - to
-    -- HIDDEN_ROW_ALPHA = 0.45, so the window behind it shows through. Same for
-    -- the frozen name column beside them.
+    -- OPAQUE, which is the decision: there is no blur available, so what shows
+    -- through a translucent table is the world moving sharp behind small text.
+    -- That also settles what used to be the hard case here. DimRow takes a
+    -- hidden character's whole row - background, text, tint and highlight - to
+    -- HIDDEN_ROW_ALPHA, and when this was a 0.62 pane that meant ~16% of the
+    -- world came through a dimmed row under `clear`. Against an opaque surface
+    -- a dimmed row reveals the surface and nothing else, which is what "these
+    -- rows recede" was always supposed to mean.
     --
-    -- This REDUCES that rather than removing it, and the numbers are worth
-    -- writing down because the pane is deliberately not opaque: composited over
-    -- the body tint, a dimmed row lets ~16% of the world through under `clear`
-    -- and ~4% under `smoked`, against ~42% with no underlay at all. Whether the
-    -- remainder reads as "de-emphasised" or as "broken" is a look-at-it
-    -- question - those rows are meant to recede - and an opaque pane here would
-    -- buy it by killing the material across the whole table.
-    --
-    -- One underlay behind both viewports rather than a change to row rendering:
+    -- One texture behind both viewports rather than a change to row rendering:
     -- dimming, alternating bands, class tint and hover all keep working, and
-    -- the space below the last row is covered too. Glass is for the chrome; the
-    -- table is a reading surface.
+    -- the space below the last row is the same surface as the rows above it.
+    -- Glass is for the chrome; the table is somewhere to read.
     if AltStable.SkinIsGlass() then
         local dataBG = frame:CreateTexture(nil, "BACKGROUND", nil, -3)
+        -- Placed properly by ApplyContentAnchors, which knows where the
+        -- viewports actually end; these are only so it is never unanchored.
         dataBG:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDEBAR_WIDTH, -BodyTopY())
-        dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 36)
-        -- The pane colour, not BG_MAIN: an opaque slab here is a black box
-        -- pasted on the glass, which is exactly how the first attempt looked.
-        dataBG:SetColorTexture(unpack(AltStable.SkinPaneColor()))
+        dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 23)
+        -- The reading surface, which is a different colour from the panels
+        -- and deliberately opaque: see SkinDataColor. The rows on top of it
+        -- are lifts now, so this is what the table actually IS - not an
+        -- underlay that twenty-one opaque bands were hiding.
+        dataBG:SetColorTexture(unpack(AltStable.SkinDataColor()))
         -- And clipped, because it runs to the window's right edge.
         AltStable.SkinClipTexture(frame, dataBG, frame)
         AltStable._dataBG = dataBG
