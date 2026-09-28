@@ -2264,6 +2264,24 @@ local function CreateFrameIfNeeded()
     -- "the window takes the mouse" answers yes either way and the decision
     -- made here goes unasserted.
     AltStable._test.frameMouseAtBuild = frame:IsMouseEnabled()
+
+    -- AND THE MOUSE FOLLOWS THE ALPHA, whoever sets it.
+    --
+    -- An invisible frame that still takes the mouse is a dead zone with nothing
+    -- on screen to explain it, and this window is hidden by ALPHA in three
+    -- different places - the open fade, its own capture blackout, and the
+    -- probe's, which is a separate addon reaching in and knows nothing about
+    -- any contract of ours. Pairing EnableMouse with each SetAlpha by hand
+    -- covers the ones we can see and misses that third one entirely.
+    --
+    -- Hooked, so it cannot be missed: invisible means click-through, by
+    -- construction, with no timing assumption about when a capture ends. The
+    -- hook writes EnableMouse, never SetAlpha, so it cannot call itself.
+    if type(hooksecurefunc) == "function" then
+        hooksecurefunc(frame, "SetAlpha", function(self, a)
+            self:EnableMouse((tonumber(a) or 1) > 0)
+        end)
+    end
     tinsert(UISpecialFrames,"AltStableSheet")
     frame:SetScript("OnShow", function()
         -- The capture's UIParent:Show() re-fires this OnShow; skip re-entering the
@@ -2386,14 +2404,27 @@ local function CreateFrameIfNeeded()
     -- the mouse, permanently, with its own close button unreachable. Idempotent
     -- and later than the capture takes, so it only ever fires when the normal
     -- path did not.
+    -- A GENERATION, so a watchdog cannot outlive the capture it was armed for.
+    -- Captures can follow each other: the fallback finishes about 1.9s after
+    -- its blackout, so a second one started three seconds later is still dark
+    -- when the FIRST watchdog comes due - and an unconditional restore then put
+    -- the sheet back into somebody else's screenshot. Each blackout claims a
+    -- number; a restore retires it; a timer whose number has moved does
+    -- nothing.
+    local captureGen = 0
     local function RestoreSheetFromCapture()
-        frame:SetAlpha(1)
-        frame:EnableMouse(true)
+        captureGen = captureGen + 1
+        frame:SetAlpha(1)               -- the hook above gives the mouse back
     end
     local function BlackoutSheetForCapture()
-        frame:SetAlpha(0)
-        frame:EnableMouse(false)
-        if C_Timer and C_Timer.After then C_Timer.After(4, RestoreSheetFromCapture) end
+        captureGen = captureGen + 1
+        local gen = captureGen
+        frame:SetAlpha(0)               -- and takes it away
+        if C_Timer and C_Timer.After then
+            C_Timer.After(4, function()
+                if gen == captureGen then RestoreSheetFromCapture() end
+            end)
+        end
     end
     AltStable._test.BlackoutSheetForCapture = BlackoutSheetForCapture
     AltStable._test.RestoreSheetFromCapture = RestoreSheetFromCapture

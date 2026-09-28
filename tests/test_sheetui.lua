@@ -2038,6 +2038,62 @@ do
           not sheet:IsMouseEnabled())
     eq("  while it is invisible", sheet:GetAlpha(), 0)
 
+    -- ANY alpha-0 counts, not just ours. The probe is a separate addon that
+    -- hides this window by alpha and knows nothing about our blackout - and
+    -- with it installed, CaptureReferenceFromSheet hands off before the
+    -- blackout is ever reached, so pairing the two by hand covered every path
+    -- except the one the owner actually uses.
+    sheet:SetAlpha(1)
+    check("visible means clickable", sheet:IsMouseEnabled())
+    sheet:SetAlpha(0)
+    check("  and somebody else hiding it by alpha releases the mouse too",
+          not sheet:IsMouseEnabled())
+    sheet:SetAlpha(1)
+    check("  and showing it takes the mouse back", sheet:IsMouseEnabled())
+
+    -- A WATCHDOG MUST NOT OUTLIVE ITS CAPTURE. Captures follow each other: the
+    -- fallback finishes about 1.9s after its blackout, so a second one started
+    -- three seconds later is still dark when the FIRST watchdog comes due. An
+    -- unconditional restore then put the sheet back into somebody else's shot.
+    WoW.flushTimers()                                  -- start from quiet
+    AltStable._test.BlackoutSheetForCapture()          -- capture A
+    -- A's watchdog, held so it can be fired ON ITS OWN. One flush runs every
+    -- pending timer regardless of when it was queued, so flushing here would
+    -- fire B's rescue in the same breath and hide the thing being tested.
+    local staleWatchdog = WoW.timers[#WoW.timers]
+    check("A armed a watchdog", staleWatchdog and staleWatchdog.fn ~= nil)
+    AltStable._test.RestoreSheetFromCapture()          -- A finishes normally
+    AltStable._test.BlackoutSheetForCapture()          -- capture B starts
+    eq("the second capture is dark", sheet:GetAlpha(), 0)
+    if staleWatchdog and staleWatchdog.fn then staleWatchdog.fn() end
+    eq("  and a stale watchdog does not light it up", sheet:GetAlpha(), 0)
+    check("  nor give the mouse back mid-shot", not sheet:IsMouseEnabled())
+    WoW.flushTimers()                                  -- B's own watchdog
+    eq("  while B's own still rescues it", sheet:GetAlpha(), 1)
+
+    -- A FINISHED capture retires its watchdog, or it goes off during whatever
+    -- is dark NEXT - including a probe capture, which hides this window by
+    -- alpha and claims no generation of ours at all.
+    WoW.flushTimers()
+    AltStable._test.BlackoutSheetForCapture()
+    local finishedWatchdog = WoW.timers[#WoW.timers]
+    AltStable._test.RestoreSheetFromCapture()          -- that capture is over
+    sheet:SetAlpha(0)                                  -- the probe's blackout
+    if finishedWatchdog and finishedWatchdog.fn then finishedWatchdog.fn() end
+    eq("a finished capture's watchdog leaves somebody else's blackout alone",
+       sheet:GetAlpha(), 0)
+
+    -- And two blackouts with no restore between them: the second must retire
+    -- the first, or the first's watchdog lights up the second.
+    WoW.flushTimers()
+    AltStable._test.BlackoutSheetForCapture()
+    local firstOfTwo = WoW.timers[#WoW.timers]
+    AltStable._test.BlackoutSheetForCapture()
+    if firstOfTwo and firstOfTwo.fn then firstOfTwo.fn() end
+    eq("back-to-back blackouts retire each other", sheet:GetAlpha(), 0)
+    WoW.flushTimers()
+    eq("  and the live one still recovers", sheet:GetAlpha(), 1)
+
     -- WITHOUT THE NORMAL RESTORE EVER RUNNING. That one sits at the end of four
     -- nested timers; this is the case where something on the way errors or
     -- returns early, which would otherwise leave an invisible full-size frame
