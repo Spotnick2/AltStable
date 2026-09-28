@@ -2244,7 +2244,21 @@ local function CreateFrameIfNeeded()
     frame:SetClampedToScreen(true)
     AltStable._test = AltStable._test or {}
     AltStable._test.frame = frame
-    frame:SetMovable(true); frame:EnableMouse(false)  -- drag handled by titleBar
+    frame:SetMovable(true)
+    -- THE WINDOW EATS THE MOUSE (#74).
+    --
+    -- It did not, and the comment here said "drag handled by titleBar" - true,
+    -- and it is why nobody noticed the rest. A frame with the mouse disabled is
+    -- transparent to it, so the 3D world underneath kept receiving mouseover
+    -- through every part of this window that is not a row or a button: the
+    -- sidebar, the gaps between rows, the footer, the whole panel on a plugin
+    -- tab. In a city that is a unit tooltip following your cursor across the
+    -- sheet the entire time, and the glass made it plain because you can see
+    -- the player standing behind the window.
+    --
+    -- Dragging still belongs to the title bar; enabling the mouse here only
+    -- stops clicks and hovers falling through to the world behind.
+    frame:EnableMouse(true)
     tinsert(UISpecialFrames,"AltStableSheet")
     frame:SetScript("OnShow", function()
         -- The capture's UIParent:Show() re-fires this OnShow; skip re-entering the

@@ -588,8 +588,12 @@ local function makeFrame()
         return self._clicks == nil and button == "LeftButton" or false
     end
 
+    -- DISABLED BY DEFAULT, as a frame is on the client. Defaulting to enabled
+    -- meant "does this window eat the mouse" answered yes for a window that
+    -- had never been asked to - so the world showing through it (#74) was not
+    -- a question a test could put.
     f.EnableMouse    = function(self, v) self._mouse = v ~= false; return self end
-    f.IsMouseEnabled = function(self) return self._mouse ~= false end
+    f.IsMouseEnabled = function(self) return self._mouse == true end
     f.EnableKeyboard = function(self, v) self._keyboard = v ~= false; return self end
     f.IsKeyboardEnabled = function(self) return self._keyboard == true end
     f.SetPropagateKeyboardInput = function(self, v) self._propagate = v; return self end

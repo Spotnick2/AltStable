@@ -1994,5 +1994,27 @@ do
     AltStableConfig.skin = held
 end
 
+------------------------------------------------------------
+-- The window eats the mouse (#74)
+------------------------------------------------------------
+-- A frame with the mouse disabled is transparent to it, so the 3D world
+-- underneath kept getting mouseover through every part of this window that is
+-- not a row or a button - the sidebar, the gaps between rows, the footer, a
+-- whole plugin panel. In a city that is a unit tooltip following the cursor
+-- across the sheet the whole time it is open.
+do
+    local sheet = AltStable._test.frame
+    check("the window takes the mouse itself", sheet:IsMouseEnabled())
+    -- And it is still DRAGGABLE, which is what the old comment was protecting:
+    -- the title bar owns the drag, and enabling the mouse here does not touch
+    -- that.
+    check("  and is still movable", sheet:IsMovable())
+    local bar = AltStable._test.titleBar
+    if bar then
+        check("  with the title bar still holding the drag",
+              bar:IsMouseEnabled() and bar:GetScript("OnDragStart") ~= nil)
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
