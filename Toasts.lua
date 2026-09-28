@@ -101,6 +101,10 @@ end
 local toastFrame
 local toastLines = {}   -- reusable FontStrings for list entries
 
+AltStable._test = AltStable._test or {}
+AltStable._test.ToastFrame = function() return toastFrame end
+AltStable._test.ToastLine  = function(i) return toastLines and toastLines[i] end
+
 local function BuildToastFrame()
     if toastFrame then return toastFrame end
 
@@ -155,8 +159,16 @@ local function BuildToastFrame()
     f.sub = sub
 
     -- Close button (clickable X)
+    -- ABOVE the rim. The material puts its rim on a child frame at host + 10,
+    -- and this button defaults to host + 1 while being anchored 2px OUTSIDE the
+    -- frame - which is exactly where the rim art is opaque. Under the old
+    -- tooltip border nothing covered it; under glass the rim line was drawn
+    -- straight across the X.
+    f.closeBtn = nil
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetFrameLevel((f:GetFrameLevel() or 0) + 12)
     close:SetSize(24, 24)
+    f.closeBtn = close
     close:SetPoint("TOPRIGHT", 2, 2)
     close:SetScript("OnClick", function()
         if AltStable.DismissToast then AltStable.DismissToast() end
@@ -193,6 +205,15 @@ local function GetToastLine(index, parent)
     if toastLines[index] then return toastLines[index] end
     local fs = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
     fs:SetJustifyH("LEFT")
+    -- These are the lines the denser popup body exists to protect - the
+    -- class-coloured name and the cooldown, the one thing the toast is for -
+    -- and they were the only text on it NOT given a shadow. The header above
+    -- them had one, which is the wrong way round: the header is static and
+    -- these are what you actually read.
+    --
+    -- Here rather than at each use, because the lines are pooled and created
+    -- once.
+    AltStable.SkinText(fs)
     toastLines[index] = fs
     return fs
 end

@@ -135,12 +135,77 @@ function AltStable.SkinWindow(frame, size)
     local preset = AltStable.Skin()
 
     -- Only the three body parameters: see the note above about the rim.
+    --
+    -- COPIED, never aliased. `st.tint = preset.tint` would make the material's
+    -- process-global STYLE table hold the preset table ITSELF, so an in-place
+    -- write anywhere - a debug command, a future upstream Glass change doing
+    -- `STYLE.tint[4] = x` - would edit AltStable.SKINS permanently, for the
+    -- rest of the session, for every window. Glass.lua is a copy that is meant
+    -- to stay in step with upstream, which makes shared mutable state exactly
+    -- the wrong thing to hand it.
+    local body = (size == "small") and AltStable.SkinPopupTint() or preset.tint
     local st = Glass.STYLE
     st.grain, st.wash = preset.grain, preset.wash
-    -- A popup gets the denser body: see SkinPopupTint.
-    st.tint = (size == "small") and preset.popup or preset.tint
+    st.tint = { body[1], body[2], body[3], body[4] }
 
-    return Glass.Apply(frame, size or "large")
+    -- Kept on the frame. The rim lives on a CHILD at host level + 10, pinned at
+    -- Apply time, so anything that moves the host's level afterwards leaves the
+    -- rim behind - and without a handle neither production nor a test can see
+    -- that, let alone fix it. See SkinRelevel.
+    local g = Glass.Apply(frame, size or "large")
+    frame._glass = g
+    return g
+end
+
+-- Re-pin the material's rim above its host.
+--
+-- Raise() and SetFrameLevel() move the HOST, and the rim is a separate child
+-- whose level was set once when the material was applied. A frame that raises
+-- itself on hover therefore climbs above its own outline and draws its body
+-- over it: the reference tooltip does exactly that, so from the second hover it
+-- would have rendered as a bare panel with no rim at all.
+function AltStable.SkinRelevel(frame)
+    local g = frame and frame._glass
+    if not (g and g.top and frame.GetFrameLevel) then return false end
+    g.top:SetFrameLevel((frame:GetFrameLevel() or 0) + 10)
+    return true
+end
+
+-- Mask `tex` to the shape of `anchor`, with a mask owned by `frame`.
+--
+-- The owner and the anchor are separate arguments because that IS the decision:
+-- a mask only affects textures of the frame that created it, while what it is
+-- anchored to decides what shape gets cut. Anchor it to a window and a fill is
+-- trimmed where the two overlap; anchor it to the fill and the fill becomes the
+-- shape. Every masking helper here is one of those two.
+--
+-- The sentinel is set INSIDE the attach, not after it. Setting it regardless
+-- meant a region without AddMaskTexture was recorded as done, the caller was
+-- told it succeeded, and a later retry short-circuited for ever on a texture
+-- that had never been masked at all.
+local function MaskTexture(frame, tex, anchor, size)
+    if not AltStable.SkinIsGlass() then return false end
+    if not frame or not tex or not anchor or not frame.CreateMaskTexture then
+        return false
+    end
+    if tex._skinMasked then return true end
+    if not tex.AddMaskTexture then return false end
+
+    local S = Glass.SIZES[size or "large"]
+    -- One mask per frame per anchor. The window case reuses `_skinMask`, which
+    -- several textures on one panel can share; a texture masked to ITSELF needs
+    -- its own, because the shape is different for each.
+    local mask
+    if anchor == tex then
+        mask = Glass.Mask(frame, S.mask, S.maskMargin, 0, tex)
+    else
+        frame._skinMask = frame._skinMask
+            or Glass.Mask(frame, S.mask, S.maskMargin, 0, anchor)
+        mask = frame._skinMask
+    end
+    tex:AddMaskTexture(mask)
+    tex._skinMasked = true
+    return true
 end
 
 -- A background fill for a panel that reaches into the window's rounded corners.
@@ -181,17 +246,10 @@ function AltStable.SkinPanelFill(frame, window, c)
     -- The mask is owned by `frame`, because a mask only affects textures of the
     -- frame that created it. That is why this cannot be done once on the window
     -- and why every corner-owning panel needs its own call.
-    if not frame._skinMask then
-        frame._skinMask = Glass.Mask(frame, S.mask, S.maskMargin, 0, window)
-    end
-    -- Attached ONCE. AddMaskTexture appends, so guarding only the mask's
-    -- creation still stacks a second reference to the same mask on every call -
-    -- and the Raids tab re-paints its fills from ApplyTheme on every theme
-    -- change, so this is a real path rather than a defensive one.
-    if fill.AddMaskTexture and not fill._skinMasked then
-        fill:AddMaskTexture(frame._skinMask)
-        fill._skinMasked = true
-    end
+    -- Attached ONCE, through the shared helper: AddMaskTexture appends, and the
+    -- Raids tab re-paints its fills from ApplyTheme on every theme change, so a
+    -- second call is a real path rather than a defensive one.
+    MaskTexture(frame, fill, window, "large")
     return true
 end
 
@@ -199,19 +257,7 @@ end
 -- a backdrop, so there is nothing to replace - only to clip. Options is the one
 -- that does this today.
 function AltStable.SkinClipTexture(frame, tex, window)
-    if not AltStable.SkinIsGlass() then return false end
-    if not frame or not tex or not window or not frame.CreateMaskTexture then
-        return false
-    end
-    local S = Glass.SIZES.large
-    if not frame._skinMask then
-        frame._skinMask = Glass.Mask(frame, S.mask, S.maskMargin, 0, window)
-    end
-    if tex.AddMaskTexture and not tex._skinMasked then
-        tex:AddMaskTexture(frame._skinMask)
-        tex._skinMasked = true
-    end
-    return true
+    return MaskTexture(frame, tex, window, "large")
 end
 
 -- The title band.
@@ -382,27 +428,25 @@ function AltStable.SkinPopupTint()
 end
 
 -- Round a texture that IS the shape - a menu entry's hover fill, say - rather
--- than one that has to be trimmed by something else.
+-- than one trimmed by something else.
 --
--- The mask is anchored to the texture, which is the SkinButtonFill case and the
--- opposite of SkinPanelFill's. Deliberately not the nav painter itself: that
--- insets by a fixed 6px vertically, which on a 17px menu entry leaves an 11px
--- fill floating inside a 17px row, and its flat path paints a BACKDROP while a
--- menu entry paints a texture on a plain Button - so it is not a drop-in either
--- way. One small helper beats bending a control framework into shape.
+-- The mask is anchored to the TEXTURE, the opposite of SkinClipTexture's, which
+-- anchors to the window so the fill is cut where the two overlap. That one
+-- difference is the whole difference, so this shares its implementation rather
+-- than being a third near-copy of it: the two used to differ only in the size
+-- set, the anchor and the name of the sentinel field - and getting that third
+-- difference wrong is what let this one mark a texture as done when the attach
+-- had not happened.
+--
+-- Deliberately not the nav painter: that insets 6px vertically, which on a 17px
+-- menu entry leaves an 11px fill floating in the row, and its flat path paints
+-- a BACKDROP where a menu entry paints a texture on a plain Button.
 --
 -- The small set's slice margins are 8px against a 17px entry, so the corners
--- are squeezed rather than fully rounded. GLASS-MATERIAL.md §6 records that as
+-- squeeze rather than round fully. GLASS-MATERIAL.md §6 records that as
 -- rendering fine, and a tighter radius is what a dense menu wants anyway.
 function AltStable.SkinRoundTexture(frame, tex)
-    if not AltStable.SkinIsGlass() then return false end
-    if not frame or not tex or not frame.CreateMaskTexture then return false end
-    if tex._skinRounded then return true end
-    local S = Glass.SIZES.small
-    local mask = Glass.Mask(frame, S.mask, S.maskMargin, 0, tex)
-    if tex.AddMaskTexture then tex:AddMaskTexture(mask) end
-    tex._skinRounded = true
-    return true
+    return MaskTexture(frame, tex, tex, "small")
 end
 
 -- Text that is now sitting on glass with the world behind it.

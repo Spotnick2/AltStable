@@ -2346,7 +2346,20 @@ local function CreateFrameIfNeeded()
             -- inside the 1.3s settle below, since `capturing` - which is what
             -- stops OnShow replaying the fade - is not set until after it.
             if AltStable.FinishOpenAnimation then AltStable.FinishOpenAnimation() end
-            frame:SetAlpha(0)
+            -- Close the character menu before blacking out.
+    --
+    -- The fix for this first went into the probe's SuppressStrays, which is the
+    -- wrong altitude twice over: the probe is a dev-only addon that may not be
+    -- installed at all, and the SHEET has its own capture path right here.
+    --
+    -- The menu cannot be handled by the blackout that follows. During the
+    -- showcase its root is lifted out from under UIParent, so neither
+    -- UIParent:Hide() nor this frame's alpha reaches it - and an alpha-0 frame
+    -- still takes the mouse, so a right-click during the settle opens a menu
+    -- that lands in the portrait and leaves a full-screen catcher eating every
+    -- click for the rest of the capture.
+    if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
+    frame:SetAlpha(0)
             C_Timer.After(1.3, function()   -- let the weapon draw + zoom + recenter settle
                 -- Blackout for the shot. When the showcase is active the engine has
                 -- ALREADY hidden the whole UI via SetUIVisibility(false), so the
@@ -2449,6 +2462,13 @@ local function CreateFrameIfNeeded()
     end
     local refTipText = refTip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     AltStable.SkinText(refTipText)
+    AltStable._test.refTip, AltStable._test.refTipText = refTip, refTipText
+    -- The button, so a test can drive the REAL hover rather than calling the
+    -- re-levelling helper itself - the bug was the hover not calling it.
+    AltStable._test.refBtn = refBtn
+    -- And the sheet's own capture path, which is where the menu has to be
+    -- closed: the probe is a dev-only addon that may not be installed.
+    AltStable._test.CaptureReferenceFromSheet = CaptureReferenceFromSheet
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
@@ -2469,6 +2489,11 @@ local function CreateFrameIfNeeded()
         refBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
         refTip:Show()
         refTip:Raise()
+        -- Raise() moves the HOST. The material's rim is a child frame pinned to
+        -- host level + 10 when it was applied, so raising the tooltip climbs it
+        -- above its own outline and its body then draws over the rim - from the
+        -- second hover onwards it would have been a bare panel with no edge.
+        AltStable.SkinRelevel(refTip)
     end)
     refBtn:SetScript("OnLeave", function()
         refBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
