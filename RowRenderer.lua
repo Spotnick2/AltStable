@@ -331,6 +331,28 @@ AltStable._test.ComputeLiveRestedPercent = ComputeLiveRestedPercent
 -- somebody forgets.
 local HIDDEN_ROW_ALPHA = 0.45
 
+-- How much room there is beside the window, in PHYSICAL pixels.
+--
+-- Converted through effective scale rather than compared raw, for the same
+-- reason the window's own screen clamp has to: the sheet carries the user's
+-- scale and UIParent the client's, so their GetRight() values are numbers in
+-- two different spaces and subtracting them directly is wrong by exactly the
+-- ratio nobody notices at scale 1.
+local function SideRoomPx(sheet)
+    local ss = (sheet.GetEffectiveScale and sheet:GetEffectiveScale()) or 1
+    local us = (UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
+    local sheetL = (sheet:GetLeft()  or 0) * ss
+    local sheetR = (sheet:GetRight() or 0) * ss
+    local screenL = (UIParent:GetLeft()  or 0) * us
+    local screenR = (UIParent:GetRight() or 0) * us
+    return screenR - sheetR, sheetL - screenL     -- room right, room left
+end
+
+-- Wider than any line this tooltip builds: a name, a guild, a gold figure, a
+-- hint and a timestamp. A constant rather than a measurement, deliberately -
+-- see AnchorRowTooltip.
+local TOOLTIP_W_PX = 320
+
 -- Where a row's tooltip opens.
 --
 -- Not ANCHOR_RIGHT. That anchors to the right of the NAME cell, and the name is
@@ -348,27 +370,26 @@ local function AnchorRowTooltip(owner)
     end
     GameTooltip:SetOwner(owner, "ANCHOR_NONE")
     GameTooltip:ClearAllPoints()
-    GameTooltip:SetPoint("TOPLEFT", sheet, "TOPRIGHT", 8, 0)
-end
 
--- ...and flipped to the other side when that would leave the screen.
---
--- Moving the tooltip off the table traded one problem for another: the sheet
--- often sits near the right edge of the display, so "just outside its right
--- edge" was just outside the SCREEN, and the tooltip was clipped rather than
--- covering anything.
---
--- Called after Show, because a tooltip has no width until it has lines - and
--- measured rather than guessed from the sheet's position, because the width
--- depends on the longest line in it: a guild name, or none.
-local function KeepRowTooltipOnScreen()
-    local sheet = _G["AltStableSheet"]
-    if not (sheet and GameTooltip.SetPoint and GameTooltip.GetRight) then return end
-    local right = GameTooltip:GetRight()
-    local limit = UIParent and UIParent.GetRight and UIParent:GetRight()
-    if not (right and limit) or right <= limit then return end
-    GameTooltip:ClearAllPoints()
-    GameTooltip:SetPoint("TOPRIGHT", sheet, "TOPLEFT", -8, 0)
+    -- WHICH SIDE is decided from the room beside the window, before the tooltip
+    -- is populated - not by measuring it afterwards and flipping.
+    --
+    -- Measuring looked more precise and does not work: a tooltip's size is not
+    -- final in the frame it is shown, so GetRight() straight after Show reads
+    -- the layout it had before its lines went in. The first version of this
+    -- checked exactly that, agreed with itself, and still opened half off the
+    -- screen.
+    --
+    -- So: a conservative width, and whichever side has room for it. The width
+    -- is a constant because the alternative is measuring, which is the thing
+    -- that does not work here.
+    local roomR, roomL = SideRoomPx(sheet)
+    local needed = TOOLTIP_W_PX
+    if roomR >= needed or roomR >= roomL then
+        GameTooltip:SetPoint("TOPLEFT", sheet, "TOPRIGHT", 8, 0)
+    else
+        GameTooltip:SetPoint("TOPRIGHT", sheet, "TOPLEFT", -8, 0)
+    end
 end
 
 -- The guid whose menu is open, and the guid under the cursor. Separate,
@@ -1031,8 +1052,6 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
                 0.7, 0.7, 0.7)
         end
         GameTooltip:Show()
-        -- After Show, because a tooltip has no width until it has lines.
-        KeepRowTooltipOnScreen()
         hoveredGuid = c.guid
         RepaintMarks()
     end)

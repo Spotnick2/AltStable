@@ -1455,27 +1455,47 @@ do
               rel == _G["AltStableSheet"], tostring(rel))
         check("  off its right edge", relPoint == "TOPRIGHT", tostring(relPoint))
 
-        -- ...unless that would put it off the SCREEN, which is what moving it
-        -- off the table bought at first: the sheet usually sits near the right
-        -- edge of the display, so "just outside its right edge" was just
-        -- outside the display, and the tooltip was clipped instead of covering
-        -- anything.
-        local savedRight = GameTooltip._GetRight
-        GameTooltip:SetWidth(GameTooltip:GetWidth())
-        GameTooltip._GetRight = (UIParent:GetRight() or 0) + 50
+        -- ...unless there is no ROOM there, which is what moving it off the
+        -- table bought at first: the sheet usually sits near the right edge of
+        -- the display, so "just outside its right edge" was just outside the
+        -- display, and the tooltip was clipped instead of covering anything.
+        --
+        -- The side is chosen from the room beside the window, before the
+        -- tooltip is populated. Measuring it afterwards and flipping looked
+        -- more precise and did not work: a tooltip's size is not final in the
+        -- frame it is shown, so the check read the layout it had before its
+        -- lines went in, agreed with itself, and still opened half off screen.
+        local sheet = _G["AltStableSheet"]
+        local savedL, savedR = sheet._GetLeft, sheet._GetRight
+        local savedUL, savedUR = UIParent._GetLeft, UIParent._GetRight
+        UIParent._GetLeft, UIParent._GetRight = 0, 1000
+
+        -- Window hard against the right edge: no room there, plenty on the left.
+        sheet._GetLeft, sheet._GetRight = 400, 995
         btn:GetScript("OnEnter")(btn)
         local _, rel2, relPoint2 = GameTooltip:GetPoint(1)
-        check("a tooltip that would leave the screen flips to the other side",
+        check("with no room on the right the tooltip opens on the left",
               relPoint2 == "TOPLEFT", tostring(relPoint2))
-        eq("  still anchored to the sheet", rel2, _G["AltStableSheet"])
-        GameTooltip._GetRight = savedRight
+        eq("  still anchored to the sheet", rel2, sheet)
 
-        -- And one that fits is left where it was, or "flips" would just mean
-        -- "always on the left".
+        -- Window on the left with room to spare: it stays on the right, or
+        -- "flips" quietly becomes "always on the left".
+        sheet._GetLeft, sheet._GetRight = 10, 400
         btn:GetScript("OnEnter")(btn)
         local _, _, relPoint3 = GameTooltip:GetPoint(1)
-        check("  while one that fits stays on the right",
+        check("  while a window with room keeps it on the right",
               relPoint3 == "TOPRIGHT", tostring(relPoint3))
+
+        -- Boxed in on both sides: it picks the roomier one rather than
+        -- guaranteeing a side, which is the only sensible answer.
+        sheet._GetLeft, sheet._GetRight = 50, 990
+        btn:GetScript("OnEnter")(btn)
+        local _, _, relPoint4 = GameTooltip:GetPoint(1)
+        check("  and with room on neither side it takes the roomier one",
+              relPoint4 == "TOPLEFT", tostring(relPoint4))
+
+        sheet._GetLeft, sheet._GetRight = savedL, savedR
+        UIParent._GetLeft, UIParent._GetRight = savedUL, savedUR
 
         -- The fallback matters: the Roster raises this same tooltip from a
         -- card, where there is no sheet frame to hang off.
