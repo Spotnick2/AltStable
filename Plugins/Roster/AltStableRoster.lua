@@ -825,6 +825,22 @@ local function RenderCard(card, char, cardW, cardH)
     card:Show()
 end
 
+-- The tab's own background, whenever it is a COLOUR rather than camp art.
+--
+-- Under glass that colour is the material's: painted opaque, this tab was a
+-- solid rectangle sitting inside a glass window while Raids and Warband beside
+-- it were not - they picked the pane up during the corner work, because their
+-- panels reach the window edge and had to become clipped textures.
+--
+-- One function for both sites because the scene view puts art on this same
+-- texture, so coming back from it has to repaint, and a repaint that names its
+-- own colour is a second place for the skin to disagree with itself.
+local function PaintBackdrop()
+    if not backdropTex then return end
+    backdropTex:SetTexture(nil)
+    backdropTex:SetColorTexture(AltStable.SkinTabBG())
+end
+
 local function BuildPanel(mainFrame)
     if panel then return panel end
 
@@ -851,7 +867,11 @@ local function BuildPanel(mainFrame)
 
     backdropTex = panel:CreateTexture(nil, "BACKGROUND")
     backdropTex:SetAllPoints()
-    backdropTex:SetColorTexture(0.05, 0.05, 0.06, 1)
+    -- Left UNPAINTED here on purpose. Activate calls Refresh immediately after
+    -- this, and every path out of it paints this texture - the grid through
+    -- PaintBackdrop, the scene with camp art, the drill-down by covering it. A
+    -- colour set here is overwritten before a frame is drawn, which is also why
+    -- a mutation deleting it could not be caught: nothing ever observes it.
 
     hintText = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hintText:SetPoint("TOP", 0, -8)
@@ -1381,7 +1401,7 @@ local function BuildDetail()
 
     detail.bg = detail:CreateTexture(nil, "BACKGROUND", nil, 0)
     detail.bg:SetAllPoints()
-    detail.bg:SetColorTexture(0.05, 0.05, 0.06, 1)
+    detail.bg:SetColorTexture(AltStable.SkinTabBG())
 
     local back = CreateFrame("Button", nil, detail, "UIPanelButtonTemplate")
     back:SetSize(70, BAR_H)
@@ -2127,8 +2147,7 @@ function Roster.Refresh()
 
     local chars = CharactersFor("grid")
     ApplyHintLayout(panel:GetWidth(), false)
-    backdropTex:SetTexture(nil)
-    backdropTex:SetColorTexture(0.05, 0.05, 0.06, 1)
+    PaintBackdrop()
 
     local cols, rows, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
     local fits = cols * rows
@@ -2449,6 +2468,10 @@ function Roster._Bootstrap()
             SceneBarShown = function() return sceneBar and sceneBar:IsShown() end,
             ViewButtonText = function() return viewBtn and viewBtn:GetText() end,
             Panel = function() return panel end,
+            -- The tab's own background, so a test can check this tab agrees
+            -- with the others rather than trusting the helper alone.
+            BackdropTex = function() return backdropTex end,
+            DetailBG = function() return detail and detail.bg end,
             -- What the player is actually told. Asserting the hint STRING is
             -- the only way to catch the renderer handing the count the wrong
             -- list: the composition is right either way.

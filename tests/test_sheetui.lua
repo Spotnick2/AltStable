@@ -1645,5 +1645,22 @@ do
     end
 end
 
+-- The Options tab's background is the material too (#97 phase 3).
+--
+-- This one was already a clipped texture rather than a backdrop - it owns the
+-- window's bottom-right corner - so it was rounded correctly and still opaque,
+-- a slab with a neatly trimmed corner.
+do
+    local optBG = AltStable._test.optBG
+    check("the Options tab has a background", optBG ~= nil)
+    if optBG then
+        local pane = AltStable.SkinPaneColor()
+        local c = optBG._colorTexture
+        check("  and it is the material, not a slab",
+              c and c[1] == pane[1] and c[4] == pane[4],
+              c and ("%s a=%s"):format(c[1], c[4]) or "nil")
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

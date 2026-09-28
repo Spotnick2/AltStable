@@ -2773,7 +2773,8 @@ local function CreateFrameIfNeeded()
     -- Background
     local optBG = optionsPanel:CreateTexture(nil, "BACKGROUND")
     optBG:SetAllPoints()
-    optBG:SetColorTexture(unpack(AltStable.C.BG_MAIN))
+    optBG:SetColorTexture(AltStable.SkinTabBG())
+    AltStable._test.optBG = optBG
     -- Reaches BOTTOMRIGHT (0, 1), so it owns the window's bottom-right corner on
     -- this tab. Already a texture rather than a backdrop, so it only needs
     -- clipping to the window outline, not replacing.

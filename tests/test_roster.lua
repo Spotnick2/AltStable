@@ -2709,5 +2709,51 @@ do
     end
 end
 
+------------------------------------------------------------
+-- The tab's background is the material (#97 phase 3)
+------------------------------------------------------------
+-- The helper has its own tests in test_glass. What those cannot say is whether
+-- THIS tab asks for it - and it did not: Raids and Warband picked the pane up
+-- during the corner work, because their panels reach the window edge and had to
+-- become clipped textures, while the Roster kept a hand-rolled opaque
+-- 0.05/0.05/0.06/1. Two tabs showed the material and two were solid rectangles
+-- sitting inside it, same window, same skin.
+do
+    local pane = AltStable.SkinPaneColor()
+    local bd = T.BackdropTex and T.BackdropTex()
+    check("the grid has a backdrop to paint", bd ~= nil)
+    if bd then
+        local c = bd._colorTexture
+        check("the grid backdrop is the material under glass",
+              c and c[1] == pane[1] and c[4] == pane[4],
+              c and ("%s,%s,%s a=%s"):format(c[1], c[2], c[3], c[4]) or "nil")
+    end
+
+    local dbg = T.DetailBG and T.DetailBG()
+    if dbg then
+        local c = dbg._colorTexture
+        check("as is the character drill-down behind it",
+              c and c[1] == pane[1] and c[4] == pane[4],
+              c and ("a=%s"):format(c[4]) or "nil")
+    end
+
+    -- And it is re-asked on every refresh, not painted once at build. The scene
+    -- view puts camp ART on this same texture, so coming back from it has to
+    -- repaint - and a repaint that hard-codes a colour is a second place for
+    -- the skin to disagree with itself.
+    if bd then
+        AltStableConfig.skin = "flat"
+        AltStable._ResetSkinCache()
+        pcall(AltStable.RosterPlugin.Refresh)
+        local c = bd._colorTexture
+        check("  and a refresh re-asks the skin rather than repeating a literal",
+              c and c[1] == AltStable.C.BG_MAIN[1] and c[4] == AltStable.C.BG_MAIN[4],
+              c and ("%s a=%s"):format(c[1], c[4]) or "nil")
+        AltStableConfig.skin = nil
+        AltStable._ResetSkinCache()
+        pcall(AltStable.RosterPlugin.Refresh)
+    end
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
