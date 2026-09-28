@@ -2243,6 +2243,30 @@ do
         -- doubles the density the moment it is not: pane over pane came out at
         -- ~0.86 against the grid's 0.62, so the character sheet read darker
         -- than the tab it was opened from.
+        -- And painted from the SKIN. Two absolute numbers here put a
+        -- 0.03/0.03/0.04 well inside the smoked pane's own 0.03/0.03/0.04, so
+        -- the inset stopped being an inset and a one-pixel border was holding
+        -- the box together.
+        local well, hair = T.DetailWell()
+        check("the figure box has a well and a hairline", well and hair)
+        if well and hair then
+            local w, h = well._colorTexture, hair._colorTexture
+            local ew = { AltStable.SkinWellColor() }
+            local eh = { AltStable.SkinWellEdgeColor() }
+            -- ALL FOUR channels. Comparing red and alpha catches a swap but
+            -- not a scramble, and green and blue reaching the wrong texture is
+            -- exactly the mix-up worth catching here.
+            local function same(got, want)
+                if not got then return false end
+                for i = 1, 4 do if got[i] ~= want[i] then return false end end
+                return true
+            end
+            check("  the well is the skin's", same(w, ew),
+                  w and table.concat(w, ",") or "nil")
+            check("  and so is the hairline", same(h, eh),
+                  h and table.concat(h, ",") or "nil")
+        end
+
         local own = 0
         for _, region in ipairs(T.DetailRegions()) do
             -- A FULL-FRAME fill. The figure box paints two of its own, and
