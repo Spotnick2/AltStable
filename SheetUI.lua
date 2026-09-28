@@ -1854,10 +1854,25 @@ local function FitToScreen(w, h)
     if fs <= 0 then return w, h end
     local maxW = (UIParent:GetWidth()  * us) / fs - SCREEN_MARGIN
     local maxH = (UIParent:GetHeight() * us) / fs - SCREEN_MARGIN
-    -- A floor as well, or a tiny UIParent - or a bad read during load - produces
-    -- a window with no room for anything and no way to get it back.
-    if maxW > 200 and w > maxW then w = maxW end
-    if maxH > 200 and h > maxH then h = maxH end
+
+    -- The floor is the SIDEBAR's own requirement, not an arbitrary 200.
+    --
+    -- ComputeContentSize deliberately raises the height to
+    -- `TITLE_H + GetSidebarRequiredHeight()` so the last nav button does not
+    -- overlap the totals bar. Clamping below that undoes it, and the sidebar has
+    -- no scroll of its own - so the bottom sections simply render past the edge
+    -- and become unreachable. Trading "the window is off-screen" for "half the
+    -- navigation is off-screen" is not a fix.
+    --
+    -- Below the floor the honest answer is that the display cannot show this
+    -- window, and a window that overflows is better than one with no way to
+    -- reach Options and turn the scale down.
+    local floorH = TITLE_H + (AltStable.GetSidebarRequiredHeight
+                              and AltStable.GetSidebarRequiredHeight() or 0)
+    if floorH < 200 then floorH = 200 end
+
+    if maxW > 200    and w > maxW then w = maxW end
+    if maxH > floorH and h > maxH then h = maxH end
     return w, h
 end
 
@@ -1873,6 +1888,16 @@ AltStable._test = AltStable._test or {}
 AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
 AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
 AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
+-- Forward-declared, because the hook below is registered before the function is
+-- defined and a closure written above the `local` would capture a nil GLOBAL of
+-- the same name instead - silently, and only failing when something calls it.
+local ResizeFrameToContent
+-- Registered HERE, not from inside the function body. It used to be assigned on
+-- every call, which made the export depend on something having resized first -
+-- so a reordering, or a refactor that made the earlier caller bail, would fail
+-- the suite for a reason unrelated to what was being tested. It also rewrote a
+-- table field on every roster refresh in game.
+AltStable._test.ResizeFrameToContent = function() return ResizeFrameToContent() end
 
 local function SaveWindowPosition()
     if not (frame and AltStableConfig and AltStableConfig.rememberWindowPosition) then
@@ -1981,19 +2006,24 @@ local function ComputeContentSize()
     return w, h, needsH, needsV
 end
 
-local function ResizeFrameToContent()
+function ResizeFrameToContent()
     if not frame then return end
-    AltStable._test.ResizeFrameToContent = ResizeFrameToContent
     -- Plugins (Recipes, Options) manage their own sizing — don't fight them.
     if activeSection and activeSection._isPlugin then return end
     local w, h, needsH, needsV = ComputeContentSize()
     -- Through the same clamp: a roster long enough to want more height than the
     -- display has is just as reachable as the Options tab asking for a fixed 760.
     frame:SetSize(FitToScreen(w, h))
-    -- ComputeContentSize is the authority on scrollbar visibility — it's
-    -- derived purely from row count and column width vs the frame size we
-    -- just set, so it's always self-consistent. UpdateScroll's measure()
-    -- might disagree by a pixel due to rounding; ComputeContentSize wins.
+    -- ComputeContentSize decides scrollbar visibility from row count and column
+    -- width against the size it ASKED for.
+    --
+    -- That used to be the size the frame got, so the two were self-consistent by
+    -- construction. They are not any more: the screen clamp can hand back
+    -- something smaller, and then `needsH`/`needsV` describe a window that was
+    -- not built. UpdateScroll re-measures from the real bodyScroll and corrects
+    -- it - the failure mode is an extra vertical scrollbar appearing, not rows
+    -- being stranded - but the guarantee this comment used to claim is gone, and
+    -- claiming it anyway is how the next person trusts the wrong number.
     frame._layoutNeedsHScroll = needsH
     frame._layoutNeedsVScroll = needsV
     -- Apply final anchors and sync content sizes / scrollbar visibility.
