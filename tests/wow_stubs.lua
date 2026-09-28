@@ -588,8 +588,19 @@ local function makeFrame()
         return self._clicks == nil and button == "LeftButton" or false
     end
 
-    f.EnableMouse    = function(self, v) self._mouse = v ~= false; return self end
-    f.IsMouseEnabled = function(self) return self._mouse ~= false end
+    -- DISABLED BY DEFAULT for a Frame, as on the client - a BUTTON is enabled
+    -- when it is created, which is why the kind is passed in below. Defaulting
+    -- everything to enabled meant "does this window eat the mouse" answered yes
+    -- for a window that had never been asked to, and the world showing through
+    -- it (#74) was not a question a test could put. Defaulting everything to
+    -- disabled would have been the same mistake pointed the other way: a test
+    -- asking whether a button takes the mouse would fail against correct code.
+    --
+    -- `v == true`, not `v ~= false`: the client reads EnableMouse(nil) as
+    -- DISABLE, so `f:EnableMouse(cfg.something)` with a nil config value is off
+    -- in game and would have been on here.
+    f.EnableMouse    = function(self, v) self._mouse = v == true; return self end
+    f.IsMouseEnabled = function(self) return self._mouse == true end
     f.EnableKeyboard = function(self, v) self._keyboard = v ~= false; return self end
     f.IsKeyboardEnabled = function(self) return self._keyboard == true end
     f.SetPropagateKeyboardInput = function(self, v) self._propagate = v; return self end
@@ -632,8 +643,12 @@ WoW.makeFrame = makeFrame
 -- hand: a frame that was merely CREATED as a child of UIParent looked like an
 -- orphan, so "it is not parented to UIParent" was trivially true and the
 -- assertion proved nothing.
-function CreateFrame(_, name, parent)
+function CreateFrame(kind, name, parent)
     local f = makeFrame()
+    -- The KIND, which this threw away. A Button takes the mouse from the
+    -- moment it exists; a Frame does not until something says so.
+    f._mouse = (kind == "Button" or kind == "CheckButton")
+    f._frameKind = kind
     f._parent = parent
     -- The parent keeps a CHILD LIST, because GetChildren() is how a test walks
     -- a panel it did not build - the buttons on a prompt, say - and asks what

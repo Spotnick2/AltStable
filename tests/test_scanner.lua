@@ -523,6 +523,26 @@ end
 -- layout can't depend on which factions anyone has met.
 dofile("Export.lua")
 
+-- The export window comes up ABOVE the sheet. Both are DIALOG and toplevel, so
+-- whichever was raised last wins, and clicking the sheet raises it - survivable
+-- while the sheet let clicks through to what was under it, dead in the overlap
+-- since it takes the mouse (#74).
+do
+    local raised = 0
+    local held = AltStable._test and AltStable._test.ExportFrame
+    AltStableDB = AltStableDB or {}
+    local ok = pcall(AltStable.ShowExport)
+    check("the export window opens", ok == true)
+    local f = _G["AltStableExport"]
+    check("  and is a real frame", f ~= nil)
+    if f then
+        f.Raise = function(self) raised = raised + 1; return self end
+        pcall(AltStable.ShowExport)
+        check("  raised above whatever was over it", raised > 0, tostring(raised))
+        f:Hide()
+    end
+end
+
 do
     local row = AltStable._test.ExportRow
     local function firstCols(line)

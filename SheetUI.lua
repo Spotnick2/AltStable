@@ -2244,7 +2244,44 @@ local function CreateFrameIfNeeded()
     frame:SetClampedToScreen(true)
     AltStable._test = AltStable._test or {}
     AltStable._test.frame = frame
-    frame:SetMovable(true); frame:EnableMouse(false)  -- drag handled by titleBar
+    frame:SetMovable(true)
+    -- THE WINDOW EATS THE MOUSE (#74).
+    --
+    -- It did not, and the comment here said "drag handled by titleBar" - true,
+    -- and it is why nobody noticed the rest. A frame with the mouse disabled is
+    -- transparent to it, so the 3D world underneath kept receiving mouseover
+    -- through every part of this window that is not a row or a button: the
+    -- sidebar, the gaps between rows, the footer, the whole panel on a plugin
+    -- tab. In a city that is a unit tooltip following your cursor across the
+    -- sheet the entire time, and the glass made it plain because you can see
+    -- the player standing behind the window.
+    --
+    -- Dragging still belongs to the title bar; enabling the mouse here only
+    -- stops clicks and hovers falling through to the world behind.
+    frame:EnableMouse(true)
+    -- Recorded at BUILD, because by the time a test can look, a capture's
+    -- blackout may have turned it off and its restore turned it back on - so
+    -- "the window takes the mouse" answers yes either way and the decision
+    -- made here goes unasserted.
+    AltStable._test.frameMouseAtBuild = frame:IsMouseEnabled()
+
+    -- AND THE MOUSE FOLLOWS THE ALPHA, whoever sets it.
+    --
+    -- An invisible frame that still takes the mouse is a dead zone with nothing
+    -- on screen to explain it, and this window is hidden by ALPHA in three
+    -- different places - the open fade, its own capture blackout, and the
+    -- probe's, which is a separate addon reaching in and knows nothing about
+    -- any contract of ours. Pairing EnableMouse with each SetAlpha by hand
+    -- covers the ones we can see and misses that third one entirely.
+    --
+    -- Hooked, so it cannot be missed: invisible means click-through, by
+    -- construction, with no timing assumption about when a capture ends. The
+    -- hook writes EnableMouse, never SetAlpha, so it cannot call itself.
+    if type(hooksecurefunc) == "function" then
+        hooksecurefunc(frame, "SetAlpha", function(self, a)
+            self:EnableMouse((tonumber(a) or 1) > 0)
+        end)
+    end
     tinsert(UISpecialFrames,"AltStableSheet")
     frame:SetScript("OnShow", function()
         -- The capture's UIParent:Show() re-fires this OnShow; skip re-entering the
@@ -2353,6 +2390,45 @@ local function CreateFrameIfNeeded()
     -- hide THIS window (via alpha, so we don't fire OnHide/Exit and tear the
     -- presentation down), draw weapons, Screenshot(), then restore. Stamps
     -- refshot_ts on the player's record for the pipeline to match.
+    -- HIDING THE SHEET FOR A SHOT, and coming back from it. One pair, because
+    -- they have to agree: it hides by ALPHA rather than Hide(), so OnHide does
+    -- not fire and tear the camera presentation down - and an alpha-0 frame
+    -- still takes the mouse. Since #74 this window does take it, so alpha alone
+    -- leaves an invisible full-size dead zone for the two seconds of the
+    -- capture, with nothing on screen to explain it and a camera drag that
+    -- starts inside it doing nothing.
+    --
+    -- The restore is also armed on a TIMER of its own, because the normal one
+    -- sits at the end of four nested timers: anything that returns early or
+    -- errors on the way would otherwise leave this window invisible AND holding
+    -- the mouse, permanently, with its own close button unreachable. Idempotent
+    -- and later than the capture takes, so it only ever fires when the normal
+    -- path did not.
+    -- A GENERATION, so a watchdog cannot outlive the capture it was armed for.
+    -- Captures can follow each other: the fallback finishes about 1.9s after
+    -- its blackout, so a second one started three seconds later is still dark
+    -- when the FIRST watchdog comes due - and an unconditional restore then put
+    -- the sheet back into somebody else's screenshot. Each blackout claims a
+    -- number; a restore retires it; a timer whose number has moved does
+    -- nothing.
+    local captureGen = 0
+    local function RestoreSheetFromCapture()
+        captureGen = captureGen + 1
+        frame:SetAlpha(1)               -- the hook above gives the mouse back
+    end
+    local function BlackoutSheetForCapture()
+        captureGen = captureGen + 1
+        local gen = captureGen
+        frame:SetAlpha(0)               -- and takes it away
+        if C_Timer and C_Timer.After then
+            C_Timer.After(4, function()
+                if gen == captureGen then RestoreSheetFromCapture() end
+            end)
+        end
+    end
+    AltStable._test.BlackoutSheetForCapture = BlackoutSheetForCapture
+    AltStable._test.RestoreSheetFromCapture = RestoreSheetFromCapture
+
     local function CaptureReferenceFromSheet()
         -- The two-shot capture when it is available, which is what produces a
         -- portrait anything actually reads. This button used to take a single
@@ -2448,7 +2524,8 @@ local function CreateFrameIfNeeded()
     -- that lands in the portrait and leaves a full-screen catcher eating every
     -- click for the rest of the capture.
     if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
-    frame:SetAlpha(0)
+    BlackoutSheetForCapture()
+
             C_Timer.After(1.3, function()   -- let the weapon draw + zoom + recenter settle
                 -- Blackout for the shot. When the showcase is active the engine has
                 -- ALREADY hidden the whole UI via SetUIVisibility(false), so the
@@ -2485,7 +2562,7 @@ local function CreateFrameIfNeeded()
                             end
                         end
                         AltStableCameraPresentation.capturing = false
-                        frame:SetAlpha(1)
+                        RestoreSheetFromCapture()
                         if type(SetCVar) == "function" then
                             for k, v in pairs(saved) do
                                 if v then
