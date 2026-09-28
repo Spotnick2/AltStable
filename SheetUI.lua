@@ -2227,8 +2227,8 @@ local function CreateFrameIfNeeded()
     -- the corners straight back on - the same mistake the fills below make.
     -- Tooltips raised from anywhere inside this window are ours; the plugins'
     -- panels are its children, so one mark covers them. See MarkTooltipHost.
+    -- (The hooks go in at the END of this function, not here: see below.)
     if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(frame) end
-    if AltStable.InstallTooltipSkin then AltStable.InstallTooltipSkin() end
     AltStable.glass = AltStable.SkinWindow(frame)
     if not AltStable.glass then
         AltStable.ApplyBackdrop(frame,
@@ -3852,6 +3852,17 @@ local function CreateFrameIfNeeded()
     -- Build initial headers and activate first section
     BuildHeaders()
     SwitchSection(SECTIONS[1])
+
+    -- THE TOOLTIP HOOKS GO IN LAST, with the window already built.
+    --
+    -- They are cosmetic, and they were being installed between this frame's
+    -- creation and its skinning - where a raise would leave the sheet
+    -- permanently half-built, because this function early-returns on a frame
+    -- that exists. No backdrop, no scrolls, no header, and every later /alts
+    -- returning to the same wreck. `hooksecurefunc` raises on a target that is
+    -- not a function, which is exactly the shape of thing an unfamiliar client
+    -- hands you. Guarded there too, and out of the way here.
+    if AltStable.InstallTooltipSkin then AltStable.InstallTooltipSkin() end
 
     -- Re-apply accent colours whenever the user changes theme.
     -- We must NOT call SwitchSection here — if the active section is a
