@@ -2190,9 +2190,22 @@ function Roster.Refresh()
 
     -- Say where the pictures come from, but only while some are missing: a
     -- permanent instruction on a finished lineup is clutter.
+    --
+    -- AND ONLY NAME A COMMAND THE PLAYER HAS. `/asrender` is registered in
+    -- AltStableProbe, which is a development tool: `.pkgmeta` excludes all of
+    -- Tools/, so it is not in the download. Everyone who installed this from
+    -- CurseForge was being told to type a command the client answers with
+    -- "Type /help for a list". The addon already knows how to ask - the shipped
+    -- capture path tests for the probe and says so when it is missing - and
+    -- this hint was the one place that assumed it.
     if withArt < #chars then
-        hintText:SetText(("%d of %d characters have a portrait - capture one with "
-            .. "|cffffff00/asrender|r while playing that character"):format(withArt, #chars))
+        local probe = _G.AltStableProbe
+        local how = (probe and type(probe.CapturePortrait) == "function")
+            and "capture one with |cffffff00/asrender|r while playing that character"
+            or  "they are made by the capture tool on the project page, which is "
+                .. "not part of the download"
+        hintText:SetText(("%d of %d characters have a portrait - %s")
+            :format(withArt, #chars, how))
         hintText:Show()
     else
         hintText:Hide()

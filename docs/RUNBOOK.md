@@ -302,12 +302,24 @@ CurseForge builds releases from the tag webhook, reading `.pkgmeta`. Nothing her
 4. **Check the published zip by hand.** CI dry-runs the BigWigs packager; CurseForge runs its own,
    so the file players download is not the file CI inspected.
 
-What to look for in the zip (verified on `v0.1.0-beta`, the first release):
+What to look for in the zip (re-verified on `v0.2.0-beta`):
 
-- three sibling folders: `AltStable`, `AltStableWarband`, `AltStableInstances`;
-- `## Version: v0.1.0-beta` in all three `.toc` files, not the raw keyword;
+- **four** sibling folders: `AltStable`, `AltStableWarband`, `AltStableInstances`,
+  `AltStableRoster` — the Roster shipped in v0.2.0-beta, and the count was three
+  before it;
+- the tag's version in **every** `.toc`, not the raw `@project-version@` keyword;
 - no `Tools/`, `tests/`, `docs/`, `.github/` or agent files;
-- the libraries, the icons and the raid art present.
+- the libraries, the icons and the raid art present;
+- **all nine `Media/Glass/*.tga`**. A missing one is silent in game: `SetTexture`
+  stores the path, the texture draws nothing, and the window comes up with no
+  body and no rim rather than with an error. `tests/test_glass.lua` checks them
+  against `Glass.SIZES` on disk; the zip is the only place to check they shipped.
+
+**And read the release notes back as a player.** `Tools/` is excluded, so
+anything registered in there - `/asrender`, `/asicon`, `/asprobe` - does not
+exist in what people download. Notes that name one, or UI that points at one,
+are telling players to type something the client answers with "Type /help"
+(found this way on v0.2.0-beta, after the tag was pushed).
 
 Known difference between the packagers: CurseForge leaves an empty `AltStable/Plugins/` entry where
 BigWigs deletes it. The client ignores it.

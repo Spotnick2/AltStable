@@ -9,9 +9,12 @@ one, with one exception noted under Sync.
 ### The Roster — a new tab
 
 - **Your characters as characters, not rows.** The Roster shows each alt as a
-  portrait rather than a line of text. Capture one with `/asrender` while playing
-  that character; the addon poses it, takes the shot and cuts it out. A character
-  without a portrait still appears, with its class icon
+  card — class colour, name, level — and as a **portrait** for anyone who has
+  one. **Portraits are not something this download can make.** They come from a
+  capture tool in the project's repository that takes two shots in game and
+  mattes them outside it, and that tool is not packaged here. Installed from
+  CurseForge, the card is what you get, and the Roster says so rather than
+  naming a command you do not have
   ([#15](https://github.com/Spotnick2/AltStable/issues/15)).
 - **Scene mode** stands them together around a campfire, on fourteen backdrops.
   The grid stays the default and both views share one selection, so switching
@@ -108,7 +111,10 @@ one, with one exception noted under Sync.
 - **Licence.** MIT covers this addon's own code. The bundled libraries keep their
   own licences, which the previous wording implied otherwise
   ([#90](https://github.com/Spotnick2/AltStable/issues/90)).
-- `/asicon` names the texture under your cursor, for anyone picking icons.
+- The repository also carries development tools — portrait capture, an icon
+  identifier, an API probe — that are **not** part of this download. Commands
+  like `/asrender` and `/asicon` belong to those, and the addon no longer points
+  at them unless they are installed.
 
 ## v0.1.0-beta
 
