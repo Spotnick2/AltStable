@@ -2932,21 +2932,42 @@ local function CreateFrameIfNeeded()
     -- and saying so only when they disagree keeps a permanent instruction off
     -- a panel where nothing is pending.
     --
-    -- BESIDE the buttons rather than under them, like the accent hint on the
-    -- next row. Reserving a line below would hold 30px open on every login -
-    -- the state nothing is pending in - for a message almost never shown.
-    local optSkinReload = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optSkinReload:SetPoint("LEFT", prevSkinBtn, "RIGHT", 14, 0)
-    optSkinReload:SetJustifyH("LEFT")
-    optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    -- ON ITS OWN ROW, and measured rather than guessed.
+    --
+    -- Beside the buttons is where this was, to avoid holding a line open in the
+    -- state where nothing is pending - but the OPTIONS VIEWPORT is not the 820
+    -- the tab asks for: the sidebar and the scrollbar take it to about 563, the
+    -- three choices already end near 382, and what was left could not hold the
+    -- message, let alone the button after it. The Reload button was pushed off
+    -- the right edge, in a panel that scrolls vertically only, so the one
+    -- action the row exists to offer could not be reached at all.
+    --
+    -- So: the BUTTON is pinned to the right edge, and the message is bounded
+    -- between the choices and the button. Neither can push the other out, at
+    -- this width or at a clamped one. Twenty-four quiet pixels on a login where
+    -- nothing is pending is a cheaper thing to spend than a Reload nobody can
+    -- click.
+    Y = Y - 24
 
     local optSkinReloadBtn = CreateFrame("Button", nil, optionsFrame, "UIPanelButtonTemplate")
     optSkinReloadBtn:SetSize(80, 20)
-    optSkinReloadBtn:SetPoint("LEFT", optSkinReload, "RIGHT", 10, 0)
+    optSkinReloadBtn:SetPoint("TOPRIGHT", optionsFrame, "TOPRIGHT", -P, Y)
     optSkinReloadBtn:SetText("Reload")
+
+    local optSkinReload = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    -- LEFT/RIGHT, not TOPLEFT/RIGHT: two corners at one y give a font string
+    -- no height at all, which is its own bug in this file's history.
+    optSkinReload:SetPoint("LEFT", optionsFrame, "TOPLEFT", P + 60, Y - 10)
+    optSkinReload:SetPoint("RIGHT", optSkinReloadBtn, "LEFT", -10, 0)
+    optSkinReload:SetJustifyH("LEFT")
+    optSkinReload:SetWordWrap(false)
+    optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     optSkinReloadBtn:SetScript("OnClick", function()
         if type(ReloadUI) == "function" then ReloadUI() end
     end)
+
+    AltStable._test.SkinReloadButton = function() return optSkinReloadBtn end
+    AltStable._test.SkinReloadText = function() return optSkinReload end
 
     RefreshSkinRow = function()
         local pending = AltStable.PendingSkinName()

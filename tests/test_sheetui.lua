@@ -1957,6 +1957,40 @@ do
         eq("  and the row lights the one that was chosen", chosen, other2.skinName)
     end
 
+    -- THE RELOAD BUTTON IS REACHABLE. It sat beside the skin buttons first,
+    -- and the Options viewport is not the 820 the tab asks for - the sidebar
+    -- and the scrollbar take it to about 563, the three choices already end
+    -- near 382, and the button was pushed off the right edge. The panel
+    -- scrolls vertically only, so the one action this row exists to offer
+    -- could not be reached at all.
+    do
+        local btn = AltStable._test.SkinReloadButton()
+        local VIEWPORT = 820 - (AltStable.LAYOUT.SIDEBAR_WIDTH or 230) - 26
+        local right
+        for i = 1, btn:GetNumPoints() do
+            local point, _, relPoint, x = btn:GetPoint(i)
+            if point == "TOPRIGHT" and relPoint == "TOPRIGHT" then right = x end
+        end
+        check("the Reload button hangs off the panel's own right edge",
+              right ~= nil and right < 0, tostring(right))
+        -- Pinned to the right means its LEFT is viewport - padding - width, and
+        -- it cannot be pushed anywhere by a longer message.
+        local leftEdge = VIEWPORT + (right or 0) - btn:GetWidth()
+        check("  so it sits inside the viewport whatever the message says",
+              leftEdge > 0 and leftEdge < VIEWPORT,
+              ("left %s of %s"):format(tostring(leftEdge), VIEWPORT))
+        -- And the message is bounded by it rather than running under it.
+        local bounded = false
+        local fs = AltStable._test.SkinReloadText and AltStable._test.SkinReloadText()
+        if fs then
+            for i = 1, fs:GetNumPoints() do
+                local point, rel = fs:GetPoint(i)
+                if point == "RIGHT" and rel == btn then bounded = true end
+            end
+            check("  with the message stopping where the button starts", bounded)
+        end
+    end
+
     AltStableConfig.skin = held
 end
 
