@@ -636,6 +636,36 @@ do
     check("  and is not marked as done", not tex._skinMasked)
 end
 
+-- Every tab's background is the same material (#97 phase 3).
+--
+-- Raids and Warband have had the pane since the corner work - their panels
+-- reach the window edge, so they had to be repainted as textures to be
+-- clipped, and repainting them meant using the pane colour. The Roster and
+-- Options never did, so two tabs showed the material and two were opaque
+-- rectangles sitting inside it: same window, same skin, different answer
+-- depending on which tab you were looking at.
+do
+    useSkin("clear")
+    local pane = AltStable.SkinPaneColor()
+    local r, g, b, a = AltStable.SkinTabBG()
+    check("a tab's background is the pane under glass",
+          r == pane[1] and a == pane[4], ("%s a=%s"):format(tostring(r), tostring(a)))
+    check("  which is translucent, so the material shows through", a < 1, tostring(a))
+
+    useSkin("flat")
+    local fr, fg, fb, fa = AltStable.SkinTabBG()
+    check("and the flat palette under flat",
+          fr == AltStable.C.BG_MAIN[1] and fa == AltStable.C.BG_MAIN[4],
+          ("%s a=%s"):format(tostring(fr), tostring(fa)))
+    -- Exactly BG_MAIN, which the Options tab already used. The Roster's was a
+    -- hand-rolled 0.05/0.05/0.06/1 that had drifted off the palette, so under
+    -- flat this tab now agrees with the others too.
+    check("  exactly, channel for channel",
+          fr == AltStable.C.BG_MAIN[1] and fg == AltStable.C.BG_MAIN[2]
+          and fb == AltStable.C.BG_MAIN[3] and fa == AltStable.C.BG_MAIN[4])
+    useSkin("clear")
+end
+
 ------------------------------------------------------------
 -- The CALL SITES, not the helpers (#97 phase 2)
 ------------------------------------------------------------

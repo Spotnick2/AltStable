@@ -427,6 +427,22 @@ function AltStable.SkinPopupTint()
     return AltStable.Skin().popup
 end
 
+-- The colour of a TAB's background.
+--
+-- Raids and Warband have had this since the corner work, because their panels
+-- reach the window edge and had to be repainted as textures to be clipped -
+-- and repainting them meant using the pane colour. The Roster and Options
+-- never did, so two tabs showed the material and two were opaque rectangles
+-- sitting inside it. Same window, same skin, different answer depending on
+-- which tab you were looking at.
+--
+-- The flat value is returned unchanged under flat, so a caller can use this
+-- unconditionally instead of branching at every site.
+function AltStable.SkinTabBG()
+    if AltStable.SkinIsGlass() then return unpack(AltStable.SkinPaneColor()) end
+    return unpack(AltStable.C.BG_MAIN)
+end
+
 -- Round a texture that IS the shape - a menu entry's hover fill, say - rather
 -- than one trimmed by something else.
 --

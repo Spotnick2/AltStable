@@ -149,9 +149,20 @@ local function makeFrame()
     -- silently shifts the sublevel into it - every explicit sublevel in the
     -- addon read back as nil, so a draw-order assertion compared 0 against 0
     -- and passed whatever the code said.
-    f.CreateTexture    = function(_, _, layer, _template, sublevel)
+    f.GetRegions       = function(self) return unpack(self._regions or {}) end
+    f.GetNumRegions    = function(self) return #(self._regions or {}) end
+    f.CreateTexture    = function(self, _, layer, _template, sublevel)
         local t = makeFrame()
         t._layer, t._sublevel = layer, sublevel
+        -- A frame knows what it drew, the way the client's GetRegions does.
+        -- Without this "how many backgrounds does this frame paint" is not a
+        -- question a test can ask, and the answer - one, not two stacked - is
+        -- the whole point of a translucent material.
+        if type(self) == "table" then
+            self._regions = self._regions or {}
+            self._regions[#self._regions + 1] = t
+            t._regionOwner = self
+        end
         WoW.textureSeq = (WoW.textureSeq or 0) + 1
         t._created = WoW.textureSeq
         t.SetDrawLayer = function(self, v, sub)
@@ -516,6 +527,14 @@ local function makeFrame()
         return self
     end
     f.ClearAllPoints = function(self) self._points = nil; return self end
+    -- REPLACES the anchors, as the client's does - it is not a fifth point.
+    -- Recorded because "does this region cover its whole frame" is what tells
+    -- a background apart from a box drawn inside one.
+    f.SetAllPoints   = function(self, rel)
+        self._points = nil
+        self._allPoints = rel or true
+        return self
+    end
     f.GetNumPoints   = function(self) return self._points and #self._points or 0 end
     f.GetPoint = function(self, i)
         local pt = self._points and self._points[i or 1]

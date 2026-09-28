@@ -2238,11 +2238,18 @@ do
               ("inset sub=%s seq=%s vs edge sub=%s seq=%s"):format(
                   tostring(ord.inset.sublevel), tostring(ord.inset.created),
                   tostring(ord.edge.sublevel), tostring(ord.edge.created)))
-        -- And both in front of the panel fill, or the box is not there at all.
-        check("  with both in front of the panel background",
-              inFrontOf(ord.edge, ord.bg) == true,
-              ("edge sub=%s vs bg sub=%s"):format(
-                  tostring(ord.edge.sublevel), tostring(ord.bg.sublevel)))
+        -- And the pane they sit on belongs to the TAB, not to the drill-down.
+        -- It used to paint its own, which is invisible while it is opaque and
+        -- doubles the density the moment it is not: pane over pane came out at
+        -- ~0.86 against the grid's 0.62, so the character sheet read darker
+        -- than the tab it was opened from.
+        local own = 0
+        for _, region in ipairs(T.DetailRegions()) do
+            -- A FULL-FRAME fill. The figure box paints two of its own, and
+            -- those are a box inside the pane rather than a second pane.
+            if region._colorTexture and region._allPoints then own = own + 1 end
+        end
+        eq("  and the drill-down paints no background of its own", own, 0)
 
         d:SetWidth(100); d:SetHeight(20)
     end
@@ -2706,6 +2713,83 @@ do
 
         d:SetWidth(100)
         T.Back()
+    end
+end
+
+------------------------------------------------------------
+-- The tab's background is the material (#97 phase 3)
+------------------------------------------------------------
+-- The helper has its own tests in test_glass. What those cannot say is whether
+-- THIS tab asks for it - and it did not: Raids and Warband picked the pane up
+-- during the corner work, because their panels reach the window edge and had to
+-- become clipped textures, while the Roster kept a hand-rolled opaque
+-- 0.05/0.05/0.06/1. Two tabs showed the material and two were solid rectangles
+-- sitting inside it, same window, same skin.
+do
+    local pane = AltStable.SkinPaneColor()
+    local bd = T.BackdropTex and T.BackdropTex()
+    check("the grid has a backdrop to paint", bd ~= nil)
+    if bd then
+        local c = bd._colorTexture
+        check("the grid backdrop is the material under glass",
+              c and c[1] == pane[1] and c[4] == pane[4],
+              c and ("%s,%s,%s a=%s"):format(c[1], c[2], c[3], c[4]) or "nil")
+    end
+
+    -- The drill-down has no background of its own to check; the assertion that
+    -- it must not grow one lives with the figure box above, where the sublevels
+    -- it would have fought with are.
+
+    -- THE SCENE'S ART DOES NOT COME UP THROUGH THE DRILL-DOWN.
+    --
+    -- The camp art lives on this same backdrop, and the drill-down's own
+    -- background is the material now - translucent. Left there, Mount Hyjal
+    -- came up through the stats, the slot icons and the figure box: the pane
+    -- that reads as glass over the world reads as a mess over a landscape.
+    if bd then
+        local savedView = AltStableConfig.rosterView
+        AltStableConfig.rosterView = "scene"
+        pcall(AltStable.RosterPlugin.Refresh)
+        check("the scene view puts art on the backdrop", bd._texture ~= nil,
+              tostring(bd._texture))
+        -- Whatever character the database holds by now; the fixtures earlier
+        -- in this file have been replaced several times over.
+        local anyGuid = next(AltStableDB)
+        check("  there is a character to drill into", T.DrillDown(anyGuid) == true,
+              tostring(anyGuid))
+        check("  and drilling in from it clears the art", bd._texture == nil,
+              tostring(bd._texture))
+        local c = bd._colorTexture
+        check("  back to the tab's own background",
+              c and c[1] == pane[1] and c[4] == pane[4],
+              c and ("a=%s"):format(c[4]) or "nil")
+        T.Back()
+        AltStableConfig.rosterView = savedView
+        pcall(AltStable.RosterPlugin.Refresh)
+    end
+
+    -- And it is re-asked on every refresh, not painted once at build. The scene
+    -- view puts camp ART on this same texture, so coming back from it has to
+    -- repaint - and a repaint that hard-codes a colour is a second place for
+    -- the skin to disagree with itself.
+    if bd then
+        -- PINNED to the grid. The scene branch returns before PaintBackdrop, so
+        -- an ambient "scene" left by another test would have this read back the
+        -- colour the previous refresh happened to leave - passing for a reason
+        -- that has nothing to do with the skin.
+        local heldView = AltStableConfig.rosterView
+        AltStableConfig.rosterView = "grid"
+        AltStableConfig.skin = "flat"
+        AltStable._ResetSkinCache()
+        pcall(AltStable.RosterPlugin.Refresh)
+        local c = bd._colorTexture
+        check("  and a refresh re-asks the skin rather than repeating a literal",
+              c and c[1] == AltStable.C.BG_MAIN[1] and c[4] == AltStable.C.BG_MAIN[4],
+              c and ("%s a=%s"):format(c[1], c[4]) or "nil")
+        AltStableConfig.skin = nil
+        AltStableConfig.rosterView = heldView
+        AltStable._ResetSkinCache()
+        pcall(AltStable.RosterPlugin.Refresh)
     end
 end
 
