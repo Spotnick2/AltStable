@@ -347,8 +347,10 @@ do
     local c = t._colorTexture
     check("  tinted with the accent, not a fixed colour",
           c and c[1] == accent[1] and c[2] == accent[2], tostring(c and c[1]))
-    check("  and translucent, so it is a highlight and not a sticker",
-          c and c[4] < 0.5, tostring(c and c[4]))
+    -- A TINT, not a button face. At 0.22 this read as a flat mustard block in
+    -- game; enough charcoal has to show through that it stays part of the glass.
+    check("  and a tint rather than a fill, so charcoal shows through",
+          c and c[4] <= 0.16, tostring(c and c[4]))
     local activeAlpha = c[4]
 
     -- Same shape and padding for hover, differing only in brightness/colour.

@@ -263,7 +263,18 @@ end
 function AltStable.SkinButtonActive(btn)
     local r, g, b = AltStable.GetAccentRGB()
     if AltStable.SkinIsGlass() then
-        AltStable.SkinButtonFill(btn, r, g, b, 0.22)
+        -- 0.15, down a third from the 0.22 first tried in game, where it read
+        -- as a flat mustard block rather than a tint: at this strength enough
+        -- charcoal shows through that it stays part of the glass.
+        --
+        -- The label stays GOLD. It was briefly turned white, on the same
+        -- argument that made the title white - the pill already carries the
+        -- accent - but that was treating the symptom. The label was hard to
+        -- read because the pill was too strong, and with the pill corrected the
+        -- gold reads fine and the accent keeps meaning one thing throughout.
+        -- The title is a different case: nothing sits behind it to say what it
+        -- is, so there the accent was competing rather than reinforcing.
+        AltStable.SkinButtonFill(btn, r, g, b, 0.15)
     else
         AltStable.SkinButtonFill(btn, unpack(AltStable.C.BG_BTN_ACTIVE))
     end
