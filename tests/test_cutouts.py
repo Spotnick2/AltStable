@@ -367,6 +367,27 @@ with tempfile.TemporaryDirectory() as tmp:
     eq("a store of an unknown version yields no captures", len(refused), 0)
     check("  and says to update the converter", "update" in buf.getvalue(), buf.getvalue())
 
+    # Height recovery reads the same stores, and must refuse the same way: a
+    # legacy sidecar whose only possible source is an unsupported store stays
+    # exactly as it was. Rewritten, it would be stamped nativeUnit and never
+    # revisited (Codex review on #125 reproduced exactly that).
+    legacy = os.path.join(tmp, "legacy")
+    os.makedirs(legacy)
+    side = os.path.join(legacy, "twin-name.json")
+    before = {"w": 100, "h": 512, "texw": 128, "texh": 512,
+              "nativeW": 100, "nativeH": 600}
+    with open(side, "w", encoding="utf-8") as fh:
+        json.dump(before, fh)
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_CONTRACT.replace('["version"] = 1', '["version"] = 2')
+                 .replace('["epoch"] = 1792888800 }',
+                          '["epoch"] = 1792888800, ["screenH"] = 1200 }'))
+    with contextlib.redirect_stdout(io.StringIO()):
+        mc.renormalise(legacy, wtf=os.path.join(tmp, "WTF"))
+    with open(side, encoding="utf-8") as fh:
+        after = json.load(fh)
+    eq("height recovery ignores a store of an unknown version", after, before)
+
     # Two characters, one name: the second gets its own file.
     out = os.path.join(tmp, "out")
     os.makedirs(out)

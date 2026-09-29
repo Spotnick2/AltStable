@@ -97,8 +97,17 @@ def read_stores(wtf=WTF):
                 text = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
-            if '["renders"]' in text:
-                out.append(text)
+            if '["renders"]' not in text:
+                continue
+            # A store in a contract version this does not know is REFUSED here,
+            # for every consumer - pairing AND height recovery - rather than
+            # guessed at (docs/PORTRAIT-CONTRACT.md). Probe stores carry none.
+            version = store_version(text)
+            if version is not None and version > SUPPORTED_VERSION:
+                print("  %s is capture store version %d; this converter understands %d - "
+                      "update it" % (full, version, SUPPORTED_VERSION))
+                continue
+            out.append(text)
     return out
 
 
@@ -241,13 +250,7 @@ def captures(wtf=WTF):
     """
     out = []
     for text in read_stores(wtf):
-        # A store in a contract version this does not know is REFUSED, not
-        # guessed at (docs/PORTRAIT-CONTRACT.md). Probe stores carry none.
-        version = store_version(text)
-        if version is not None and version > SUPPORTED_VERSION:
-            print("  a capture store is version %d; this converter understands %d - "
-                  "update it" % (version, SUPPORTED_VERSION))
-            continue
+        # (read_stores has already refused stores of an unknown version.)
         # Pairing is per store: shot 1 and shot 2 of one capture are always
         # recorded by the same client, and two accounts shooting at the same
         # moment must not have their halves paired with each other.
