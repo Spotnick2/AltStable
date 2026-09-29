@@ -36,11 +36,11 @@ you like, it is not AltStable's data.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `guid` | string | The character's GUID — its identity. Names are not unique. |
+| `guid` | string | The character's GUID - its identity. Names are not unique. |
 | `name` | string | The best name known: normally the full name with its surname (`"Karuzo Elegia"`); a record from an older peer can lack the surname. |
-| `realm` | string | |
+| `realm` | string or nil | nil only on a record too old or too partial to carry it. |
 | `faction` | string or nil | `"Alliance"` / `"Horde"`. |
-| `class` | string | Class file token, `"PRIEST"` — use it with `RAID_CLASS_COLORS`. |
+| `class` | string or nil | Class file token, `"PRIEST"` - use it with `RAID_CLASS_COLORS`, and guard the nil. |
 | `level` | number or nil | |
 | `money` | number or nil | Copper. **nil means unknown** (the client would not say), never 0. |
 | `account` | string | The number the player gave that WoW account in AltStable's options, as a string (`"2"`); `""` when unset. |
@@ -48,8 +48,10 @@ you like, it is not AltStable's data.
 | `hidden` | boolean | The player hid it from AltStable's sheet. Yours to show dimmed or skip. |
 | `current` | boolean | It is the character logged in right now. |
 
-Characters the player **forgot** are not included. **Hidden** ones are, flagged — see
-`GetTotals` for the numbers that leave them out.
+These are the characters AltStable's sheet lists: every one it has a record for. A character
+the player **forgot** has no record, so it is not here - unless the player has logged into it
+since, in which case it is back on the sheet and here too. **Hidden** ones are included,
+flagged; `GetTotals` leaves them out, as the sheet's footer does.
 
 ## `AltStable.GetTotals()` → table
 
@@ -60,7 +62,7 @@ function, so a bar that shows "total gold" shows the same figure.
 |---|---|
 | `money` | Copper across the characters that count, known amounts only. |
 | `unknown` | How many of those have no readable money. They are not counted as 0 — say so, e.g. `12,345g (+1 unknown)`. |
-| `characters` | How many count: every character not hidden and not forgotten. Low-level bank alts count; they hold gold. |
+| `characters` | How many count: every character the sheet lists, less the hidden ones. Low-level bank alts count; they hold gold. |
 | `hidden` | How many were left out for being hidden. |
 | `levels` | Their levels summed. |
 
@@ -79,6 +81,8 @@ the callback carries nothing else.
 - It can also fire when nothing you show changed. Repainting is cheap; missing a change is not.
 - Your function runs under `pcall`: an error in it is reported through the normal error
   handler and does not stop AltStable or other listeners.
+- A refresh you make from INSIDE the callback (keeping AltStable's sheet in step, say) is
+  not a new change and does not call you again.
 - Registering does not call you; the first call is the next change. A listener registered
   from inside a callback is called from the next change on. One unregistered from inside a
   callback may still receive the call already in progress.

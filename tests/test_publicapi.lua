@@ -27,13 +27,23 @@ dofile("Config.lua")
 -- The sheet, reduced to what the API touches. PublicAPI.lua wraps RefreshSheet
 -- at load, as the plugins do after it, so it has to exist first.
 local refreshes, opened, scans = 0, 0, 0
-AltStable.RefreshSheet = function() refreshes = refreshes + 1 end
+crashRefresh = false
+AltStable.RefreshSheet = function()
+    if crashRefresh then error("render bug") end             -- a sheet that breaks
+    refreshes = refreshes + 1
+end
 -- The scanner, reduced: the login scan (Core, 2s after login) calls it and
 -- never RefreshSheet, so the API has to hear about it on its own.
 AltStable.ScanCharacter = function() scans = scans + 1; return "scanned" end
 AltStable.EnsureSheetVisible = function()
     opened = opened + 1
     if _G.AltStableSheet then _G.AltStableSheet:Show() end
+end
+local toggles = 0
+AltStable.ShowSheet = function()                                -- the sheet's own toggle
+    toggles = toggles + 1
+    local s = _G.AltStableSheet
+    if s:IsShown() then s:Hide() else s:Show() end
 end
 dofile("PublicAPI.lua")
 
@@ -74,10 +84,14 @@ check("  and the Retail adapter keeps its own name",
 ------------------------------------------------------------
 seed()
 local chars = AltStable.GetCharacters()
-eq("every character that counts, forgotten ones left out", #chars, 4)
+eq("every character with a record, as the grid lists them", #chars, 5)
 local by = {}
 for _, c in ipairs(chars) do by[c.name] = c end
-check("  the forgotten one is not there", by["Gone Guy"] == nil)
+-- A forgotten character normally has no record. One that has a record AGAIN
+-- (logged into after forgetting it) is on the sheet, so it is here too: a list
+-- that disagreed with the sheet was the bug the review of #126 found.
+check("  a forgotten character that has a record again is there, as on the sheet",
+      by["Gone Guy"] ~= nil)
 
 local me = by["Example Surname"]
 eq("fields come across: realm", me.realm, "Classic Beta PvE")
@@ -108,7 +122,7 @@ seed()
 
 -- Sorted by realm, then name.
 eq("sorted: first by realm", chars[1].realm, "Another Realm")
-eq("  then by name", chars[1].name, "Hidden Hero")
+eq("  then by name", chars[1].name, "Gone Guy")
 
 -- COPIES: a consumer writing to what it was given changes nothing here.
 me.money = 1
@@ -130,11 +144,24 @@ eq("a secret money value arrives as unknown", fromSecret.money, nil)
 ------------------------------------------------------------
 seed()
 local t = AltStable.GetTotals()
-eq("characters that count: not hidden, not forgotten", t.characters, 3)
+eq("characters that count: every one the grid lists, less the hidden", t.characters, 4)
 eq("hidden ones are counted as hidden", t.hidden, 1)
-eq("money sums the known amounts, bank alt included", t.money, 125000 + 5000000)
+eq("money sums the known amounts, bank alt included", t.money, 125000 + 5000000 + 777)
 eq("unreadable money is counted as unknown, not as 0", t.unknown, 1)
-eq("levels sum the ones that count", t.levels, 60 + 1 + 20)
+eq("levels sum the ones that count", t.levels, 60 + 1 + 20 + 10)
+check("they are the sheet's own numbers", (function()
+    local s = AltStable.CharacterTotals()
+    for k, v in pairs(t) do if s[k] ~= v then return false end end
+    return true
+end)())
+t.money = 1
+eq("a consumer changing them changes nothing", AltStable.GetTotals().money, 125000 + 5000000 + 777)
+-- Wrapping the PUBLIC function must not change AltStable's own numbers.
+local realGetTotals = AltStable.GetTotals
+AltStable.GetTotals = function() return { money = 0, unknown = 0, characters = 0, hidden = 0, levels = 0 } end
+eq("the sheet's totals do not go through the public, wrappable function",
+   AltStable.CharacterTotals().characters, 4)
+AltStable.GetTotals = realGetTotals
 
 ------------------------------------------------------------
 -- Opening and toggling the sheet
@@ -143,17 +170,21 @@ local sheet = CreateFrame("Frame", "AltStableSheet", UIParent)
 sheet:Hide()
 AltStable.ToggleSheet()
 check("toggle opens a closed sheet", sheet:IsShown())
-eq("  through the normal open path", opened, 1)
+eq("  through the sheet's own toggle, not a copy of it", toggles, 1)
 AltStable.ToggleSheet()
 check("and closes an open one", not sheet:IsShown())
 AltStable.OpenSheet()
 AltStable.OpenSheet()
 check("open only ever opens", sheet:IsShown())
+eq("  through the normal open path", opened, 2)
 
 ------------------------------------------------------------
 -- CharactersChanged: once per burst, and a consumer's error stays its own
 ------------------------------------------------------------
 WoW.timers = {}
+AltStable.RefreshSheet(); AltStable.TouchCharacter(ME)
+eq("with nobody listening, a change schedules nothing", #WoW.timers, 0)
+
 local heard = 0
 local function listener() heard = heard + 1 end
 AltStable.RegisterCallback("CharactersChanged", listener)
@@ -207,6 +238,34 @@ AltStable.RefreshSheet()
 WoW.flushTimers()
 eq("unregistered consumers hear nothing", heard, 3)
 
+-- A listener that refreshes the sheet from inside its callback - to keep it in
+-- step with what it was just told - is not a new change. Notifying it again
+-- called it again, which refreshed again: every frame, for ever.
+local syncs = 0
+local function syncer()
+    syncs = syncs + 1
+    AltStable.RefreshSheet()
+end
+AltStable.RegisterCallback("CharactersChanged", syncer)
+AltStable.RefreshSheet()
+WoW.flushTimers()
+WoW.flushTimers()
+WoW.flushTimers()
+eq("a refresh made from inside a callback does not notify again", syncs, 1)
+eq("  and leaves nothing scheduled", #WoW.timers, 0)
+AltStable.UnregisterCallback("CharactersChanged", syncer)
+
+-- The notification is queued BEFORE the wrapped function runs: a render error
+-- in the sheet, after the data already changed, must not swallow it.
+AltStable.RegisterCallback("CharactersChanged", listener)
+local beforeCrash = heard
+crashRefresh = true
+check("a refresh that errors still errors for its caller", not pcall(AltStable.RefreshSheet))
+crashRefresh = false
+WoW.flushTimers()
+eq("  but consumers still hear about the change", heard, beforeCrash + 1)
+AltStable.UnregisterCallback("CharactersChanged", listener)
+
 -- A listener that registers another from inside its callback: the new one is
 -- heard from the NEXT change, and this pass completes cleanly.
 local late = 0
@@ -237,9 +296,10 @@ check("  and so is something that is not a function",
 local inner = AltStable.RefreshSheet
 AltStable.RefreshSheet = function(...) return inner(...) end
 AltStable.RegisterCallback("CharactersChanged", listener)
+local beforeWrap = heard
 AltStable.RefreshSheet()
 WoW.flushTimers()
-eq("a refresh through a plugin's wrapper still notifies", heard, 4)
+eq("a refresh through a plugin's wrapper still notifies", heard, beforeWrap + 1)
 
 print(("test_publicapi: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

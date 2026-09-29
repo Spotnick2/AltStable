@@ -1346,10 +1346,12 @@ local function BuildDisplayList()
     -- whole account's gold while silently leaving one character out, so the
     -- footer says how many are missing instead.
     --
-    -- Computed by AltStable.GetTotals (PublicAPI.lua), the same function other
-    -- addons call (#123): a bar showing "total gold" and this footer cannot
-    -- disagree if there is only one piece of arithmetic behind both.
-    local t = AltStable.GetTotals()
+    -- Computed by AltStable.CharacterTotals (Core.lua), which the public
+    -- GetTotals() also returns (#123): a bar showing "total gold" and this
+    -- footer cannot disagree if there is one piece of arithmetic behind both.
+    -- Internal on purpose - the footer must not depend on a function other
+    -- addons can see and overwrite.
+    local t = AltStable.CharacterTotals()
     totalChars, totalLevel, totalGold = t.characters, t.levels, t.money
     goldUnknown, hiddenCount = t.unknown, t.hidden
 
