@@ -1345,18 +1345,15 @@ local function BuildDisplayList()
     -- money field at all. Counting it as zero would present the sum as the
     -- whole account's gold while silently leaving one character out, so the
     -- footer says how many are missing instead.
-    for _, char in next, store do
-        if type(char)=="table" and char.name then
-            if IsHidden(char) then
-                hiddenCount = hiddenCount + 1
-            else
-                totalLevel = totalLevel + (char.level or 0)
-                if char.money == nil then goldUnknown = goldUnknown + 1
-                else totalGold = totalGold + char.money end
-                totalChars = totalChars + 1
-            end
-        end
-    end
+    --
+    -- Computed by AltStable.CharacterTotals (Core.lua), which the public
+    -- GetTotals() also returns (#123): a bar showing "total gold" and this
+    -- footer cannot disagree if there is one piece of arithmetic behind both.
+    -- Internal on purpose - the footer must not depend on a function other
+    -- addons can see and overwrite.
+    local t = AltStable.CharacterTotals()
+    totalChars, totalLevel, totalGold = t.characters, t.levels, t.money
+    goldUnknown, hiddenCount = t.unknown, t.hidden
 
     local allChars = {}
     for _, char in next, store do

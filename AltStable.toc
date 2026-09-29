@@ -23,4 +23,5 @@ RowRenderer.lua
 CharacterMenu.lua
 SheetUI.lua
 Capture.lua
+PublicAPI.lua
 Export.lua

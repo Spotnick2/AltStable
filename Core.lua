@@ -229,6 +229,43 @@ end
 AltStable.Print = Print
 
 ------------------------------------------------------------
+-- Character totals: what the sheet's footer shows (#123)
+------------------------------------------------------------
+-- One piece of arithmetic behind both the footer and the public GetTotals()
+-- (PublicAPI.lua), so a bar showing "total gold" and the sheet cannot disagree.
+-- It lives HERE, internal, rather than in PublicAPI: the footer must not depend
+-- on a function other addons can see and overwrite, nor on a later file loading.
+--
+-- Which characters count is the GRID's rule - any record with a name - with
+-- hidden ones left out and counted separately. A forgotten character normally
+-- has no record at all; one that has a record again (the player logged into it
+-- after forgetting it, and the scan rewrote it) is listed by the grid, so it is
+-- counted here too, or the footer and the rows above it would disagree.
+--
+-- Low-level bank alts count: they hold gold, and the total is expected to match
+-- other addons (ElvUI, etc.) that count them. A character whose money is
+-- UNREADABLE (a secret value, see Compat.lua) is counted as unknown, not as 0:
+-- counting it as zero would present the sum as the whole account's gold while
+-- silently leaving one character out.
+function AltStable.CharacterTotals()
+    local Plain = AltStable.API.PlainNumber
+    local t = { money = 0, unknown = 0, characters = 0, hidden = 0, levels = 0 }
+    for _, char in pairs(type(AltStableDB) == "table" and AltStableDB or {}) do
+        if type(char) == "table" and char.name then
+            if AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(char.guid) then
+                t.hidden = t.hidden + 1
+            else
+                t.characters = t.characters + 1
+                t.levels = t.levels + (Plain(char.level) or 0)
+                local m = Plain(char.money)
+                if m == nil then t.unknown = t.unknown + 1 else t.money = t.money + m end
+            end
+        end
+    end
+    return t
+end
+
+------------------------------------------------------------
 -- The account number
 --
 -- ONE place that coerces, validates, stores and reports. The Options box and

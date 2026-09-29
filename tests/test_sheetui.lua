@@ -43,6 +43,7 @@ dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
 -- Capture.lua follows SheetUI in the .toc; the title-bar button hands off to it.
 dofile("Capture.lua")
+dofile("PublicAPI.lua")
 
 local GOLD = 10000   -- copper per gold
 
@@ -216,6 +217,32 @@ eq("a marker says how many were left out", AltStable._test.HiddenToggleText(),
 -- The record itself is untouched: hiding is not deleting.
 check("the character is still in the database",
       type(AltStableDB.gone) == "table" and AltStableDB.gone.name == "Goner")
+
+-- The footer counts what the GRID lists (review of #126). Forget a character
+-- while playing another, then log into it: the scan rewrites its record, and
+-- nothing clears the tombstone. The grid shows it - so the footer must count
+-- it, or the totals quietly disagree with the rows right above them.
+AltStableConfig.hiddenCharacters = {}
+AltStableConfig.forgottenCharacters = { gone = { stamp = 1, name = "Goner" } }
+footer = refresh()
+eq("a forgotten character with a record again is listed", joined(AltStable._test.DisplayNames()), "Keeper,Goner")
+if footer then
+    check("  and the footer counts it as the grid does", footer:find("2%s+chars") ~= nil, footer)
+    check("  gold included", footer:find("150", 1, true) ~= nil, footer)
+end
+-- And through AltStable's OWN arithmetic, not the public GetTotals: another
+-- addon wrapping that (it is a writable field on a global) must not be able to
+-- change what AltStable's footer says.
+local realGetTotals = AltStable.GetTotals
+AltStable.GetTotals = function() return { money = 0, unknown = 0, characters = 0, hidden = 0, levels = 0 } end
+footer = refresh()
+AltStable.GetTotals = realGetTotals
+if footer then
+    check("another addon wrapping GetTotals does not change the footer",
+          footer:find("2%s+chars") ~= nil, footer)
+end
+AltStableConfig.forgottenCharacters = nil
+AltStableConfig.hiddenCharacters = { gone = true }
 
 ------------------------------------------------------------
 -- The opening fade can be finished from outside

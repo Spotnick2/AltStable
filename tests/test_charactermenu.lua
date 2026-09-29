@@ -41,6 +41,8 @@ dofile("Columns.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
+-- PublicAPI.lua (after SheetUI in the .toc): the footer computes its totals through it.
+dofile("PublicAPI.lua")
 
 AltStable.EnsureConfigDefaults()
 

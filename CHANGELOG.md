@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Other addons can read your characters.** A small read-only API -
+  `AltStable.GetCharacters()`, `AltStable.GetTotals()`, `AltStable.ToggleSheet()`
+  and a `CharactersChanged` callback - so an info bar can show your total gold
+  and alts without keeping its own copy of them. First user: GlassPanel. The
+  sheet's footer now computes its totals through the same function, so the two
+  always agree. Documented in `docs/PUBLIC-API.md`
+  ([#123](https://github.com/Spotnick2/AltStable/issues/123)).
 - **Portrait capture ships with the addon.** `/alts portrait`, or the camera
   button in the sheet's title bar, takes the two-shot capture the Roster's
   lineup is made from; it used to live in a development tool the download never
