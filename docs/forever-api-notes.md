@@ -1448,8 +1448,8 @@ both states.** A ghost is a different *model* on screen and the same display id
 to the API.
 
 **This disproves a theory that was briefly in the code.** The portrait
-pipeline's look fingerprint (`Tools/AltStableProbe/Render.lua`,
-`LookFingerprint`) includes the display id, and a live corpse run produced three
+pipeline's look fingerprint (`LookFingerprint` in the probe's `Render.lua`, removed
+in #89 when capture moved into the addon without auto-capture — see git history) includes the display id, and a live corpse run produced three
 captures in as many minutes, each announced as "gear changed since your last
 portrait" on a character that had picked nothing up. Two events per death is the
 shape a value flipping and flipping back produces, the gear half could not

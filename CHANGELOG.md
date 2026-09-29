@@ -2,12 +2,31 @@
 
 ## Unreleased
 
+- **Portrait capture ships with the addon.** `/alts portrait`, or the camera
+  button in the sheet's title bar, takes the two-shot capture the Roster's
+  lineup is made from; it used to live in a development tool the download never
+  had. It refuses in combat, in a dungeon, while dead or moving, and gives up
+  cleanly if you enter combat, die or bring your interface back mid-capture.
+  Each of the two shots makes the camera's shutter sound. Afterwards it offers a reload,
+  because the record of whose screenshots these are is only saved on a reload
+  or logout. `/alts portrait preview` shows the framing first, and
+  `/alts portrait facing <degrees>` turns the character. Turning captures into
+  portraits still happens outside the game, with the converter on the project
+  page; a companion app is next
+  ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
+- **New saved data: `AltStablePortraits`.** It holds the capture records and is
+  only created the first time you capture. Nothing existing changed shape.
+- **A portrait belongs to the character, not the name.** Two characters sharing
+  a name no longer show each other's portrait
+  ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
+- **`/alts update-reference` is gone.** It took one plain screenshot for a
+  pipeline that no longer exists, and nothing read it; it now points you at
+  `/alts portrait`.
 - **The Roster's scene says so when nobody has a portrait.** It used to show an
   empty campfire captioned "showing 0 of 12 - highest level first; favourite the
-  ones you want here", which no amount of favouriting could fix: portraits are
-  made outside the game, by a tool that is not in this download yet. The grid
-  still shows characters without one as cards. The title-bar capture button's
-  tooltip stops promising a portrait for the same reason ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
+  ones you want here", which no amount of favouriting could fix. It now says
+  there are none yet and how to capture one; the grid still shows characters
+  without one as cards ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
 
 ## v0.3.1-beta
 

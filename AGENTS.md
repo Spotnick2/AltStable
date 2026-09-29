@@ -39,8 +39,9 @@ AltStable-specific.
 - **Target:** WoW: Forever only. Forever runs Vanilla content on Blizzard's **Mainline (Retail)
   codebase**, so bare Classic globals are mostly gone — use the adapter, not TBC-era APIs.
 - **Namespace:** one global table `AltStable`; every file starts `AltStable = AltStable or {}`.
-- **SavedVariables:** `AltStableDB` (character records keyed by GUID) and `AltStableConfig`
-  (user settings). Declared in `AltStable.toc`. They persist again as of client 1.60.1.70009
+- **SavedVariables:** `AltStableDB` (character records keyed by GUID), `AltStableConfig`
+  (user settings) and `AltStablePortraits` (portrait capture records — a contract a converter
+  parses, see `docs/PORTRAIT-CONTRACT.md`). Declared in `AltStable.toc`. They persist again as of client 1.60.1.70009
   (#23 is fixed), so the shape on disk now holds real data across sessions — and a load failure
   would still be invisible in `AltStableDB`, because `ScanCharacter` rewrites the current
   character every login. Verify persistence with a full client exit, never a `/reload`.
@@ -52,7 +53,7 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 
 `Libs/` (LibStub, LibDeflate, ChatThrottleLib) → `Compat.lua` → `Theme.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
-`RowRenderer.lua` → `SheetUI.lua` → `Export.lua`.
+`RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `Export.lua`.
 
 - `Compat.lua` is the **Retail-API adapter layer** (`AltStable.API`). Consuming files take a
   file-local alias (`local GetItemInfo = AltStable.API.GetItemInfo`); nothing is injected into
@@ -62,7 +63,8 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
   capped at 255 bytes; the sync path chunks payloads (`MAX_CHUNK = 220`) with an inter-packet
   delay, base64 + checksum over the reassembled stream.
 - `tests/` — Lua 5.1 unit tests (see below).
-- `Tools/deploy.ps1` — deploy script. `Tools/AltStableProbe/` — in-game API probe addon.
+- `Tools/deploy.ps1` — deploy script. `Tools/AltStableProbe/` — in-game API probe addon (portrait
+  capture used to live there; it ships in `Capture.lua` now).
   `Tools/` is ignored by `.pkgmeta` and never ships.
 - `docs/` — the porting guide, the measured API notes, and `docs/WORKFLOW.md` (issue → branch →
   PR → Codex review → merge).

@@ -1,6 +1,6 @@
 """make-cutout.py — turn two staged screenshots into one transparent cutout.
 
-The addon (`/asrender`) photographs the live character twice in an identical
+The addon (`/alts portrait`) photographs the live character twice in an identical
 frozen pose: once on a BLACK backdrop, once on WHITE. That pair is enough to
 recover exact alpha, which a chroma key cannot do:
 
@@ -56,7 +56,7 @@ WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF\Account"
 
 
 def latest_capture(wtf=WTF):
-    """Who the addon photographed last, from AltStableProbe's SavedVariables.
+    """Who the addon photographed last, from its capture records.
 
     Beats a hand-typed name: the file is named after the character it actually
     shows, so a capture cannot be filed under the wrong alt. Returns None when
@@ -67,8 +67,15 @@ def latest_capture(wtf=WTF):
     return caps[-1][0] if caps else None
 
 
+# Where the capture records live. AltStable.lua holds AltStablePortraits since
+# capture shipped with the addon (#89, docs/PORTRAIT-CONTRACT.md); the probe's
+# AltStableProbe.lua is still read for the captures taken before that, which
+# the height recovery below needs.
+STORE_FILES = ("AltStable.lua", "AltStableProbe.lua")
+
+
 def read_stores(wtf=WTF):
-    """EVERY account-wide AltStableProbe.lua, as text.
+    """EVERY account-wide capture store, as text.
 
     All of them, not the newest: a player with two accounts captures from both,
     and every client writes screenshots into the SAME folder. Read one store and
@@ -77,22 +84,30 @@ def read_stores(wtf=WTF):
     portrait. That is exactly how it presented - the two that failed were both
     from account 2.
 
-    Per-character SavedVariables share the filename AltStableProbe.lua and are
-    often newer than the account file, so the filter is on CONTENT: only the
-    account store holds the renders array.
+    Per-character SavedVariables can share an account file's name and are often
+    newer, so the filter is on CONTENT: only a store holds the renders array.
     """
     out = []
     for root, _dirs, files in os.walk(wtf):
         for f in files:
-            if f != "AltStableProbe.lua":
+            if f not in STORE_FILES:
                 continue
             full = os.path.join(root, f)
             try:
                 text = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
-            if '["renders"]' in text:
-                out.append(text)
+            if '["renders"]' not in text:
+                continue
+            # A store in a contract version this does not know is REFUSED here,
+            # for every consumer - pairing AND height recovery - rather than
+            # guessed at (docs/PORTRAIT-CONTRACT.md). Probe stores carry none.
+            version = store_version(text)
+            if version is not None and version > SUPPORTED_VERSION:
+                print("  %s is capture store version %d; this converter understands %d - "
+                      "update it" % (full, version, SUPPORTED_VERSION))
+                continue
+            out.append(text)
     return out
 
 
@@ -101,8 +116,23 @@ def slug(name):
 
 
 def _entries(text):
-    """Every { ... } block inside the renders array, as dicts."""
-    start = text.find('["renders"]')
+    """Every { ... } block inside the renders array, as dicts.
+
+    In AltStable.lua the capture table shares the file with AltStableDB, which
+    is large; the search starts at AltStablePortraits when it is there, so the
+    array found is the one the contract names and not a key of the same name
+    somewhere in the character records.
+    """
+    # The top-level ASSIGNMENT, at the start of a line - not the first mention
+    # of the name, which a comment or a string can make anywhere.
+    m = re.search(r"^AltStablePortraits\s*=\s*\{", text, re.M)
+    # Declared but not a table - `AltStablePortraits = nil`, which is what the
+    # client writes for an account that never captured (measured). That is
+    # "no captures"; searching on from the top of the file would read any
+    # `renders` key in the character data as capture records.
+    if not m and re.search(r"^AltStablePortraits\s*=", text, re.M):
+        return []
+    start = text.find('["renders"]', m.start() if m else 0)
     if start < 0:
         return []
     out, i, n = [], text.find("{", start) + 1, len(text)
@@ -130,7 +160,7 @@ def store_is_stale(caps, times, slack=60):
     Returns (newest screenshot, newest record) when the screenshots on disk run
     ahead of the store, otherwise None.
 
-    AltStableProbeDB is only written on logout or /reload, but the client writes
+    The capture store is only written on logout or /reload, but the client writes
     a screenshot the instant it is taken. So the normal state right after a
     capture is: both images on disk, no record of them anywhere. The converter
     then works from the PREVIOUS records and reports something true but
@@ -159,10 +189,64 @@ def store_is_stale(caps, times, slack=60):
     return None
 
 
+SUPPORTED_VERSION = 1
+
+
+def store_version(text):
+    """The AltStablePortraits version in a store's text, or None (probe store)."""
+    m = re.search(r"^AltStablePortraits\s*=\s*\{", text, re.M)
+    if not m:
+        return None
+    v = re.search(r'\["version"\]\s*=\s*(\d+)', text[m.end():])
+    return int(v.group(1)) if v else None
+
+
+def capture_order(cap):
+    """Sort key: the epoch when the record has one, else the local stamp.
+
+    Local time repeats an hour when the clocks go back, so a capture after the
+    change can sort before one taken just before it; the epoch cannot. Older
+    records have no epoch and fall back to the stamp, read as local time.
+    """
+    epoch = cap[5] if len(cap) > 5 else None
+    try:
+        return float(epoch)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.datetime.strptime(cap[1], "%Y-%m-%d %H:%M:%S").timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def output_base(name, guid, out_dir=OUT):
+    """The file name a character's cutout is written under.
+
+    The name's slug, unless another character already owns that file - two
+    characters can share a name - in which case the guid's last six characters
+    are appended so neither overwrites the other. A sidecar without a guid
+    predates this and is taken to be the same character.
+    """
+    base = slug(name)
+    if not guid:
+        return base
+    side = os.path.join(out_dir, base + ".json")
+    try:
+        with open(side, encoding="utf-8") as fh:
+            owner = json.load(fh).get("guid")
+    except (OSError, ValueError):
+        owner = None
+    if owner and owner != guid:
+        return "%s-%s" % (base, re.sub(r"[^A-Za-z0-9]", "", guid)[-6:].lower())
+    return base
+
+
 def captures(wtf=WTF):
     """Every capture the addon recorded, newest last.
 
-    Each is a (character name, shot-1 stamp, shot-2 stamp, screen height) tuple.
+    Each is a (character name, shot-1 stamp, shot-2 stamp, screen height, guid,
+    shot-1 epoch) tuple; the epoch is None for captures recorded before it
+    existed.
     The addon writes one entry per screenshot with the second it was taken,
     which is the key that matches them to files on disk - far more reliable
     than assuming the folder is in the order we left it.
@@ -172,6 +256,7 @@ def captures(wtf=WTF):
     """
     out = []
     for text in read_stores(wtf):
+        # (read_stores has already refused stores of an unknown version.)
         # Pairing is per store: shot 1 and shot 2 of one capture are always
         # recorded by the same client, and two accounts shooting at the same
         # moment must not have their halves paired with each other.
@@ -181,14 +266,15 @@ def captures(wtf=WTF):
             if not (guid and stamp):
                 continue
             if shot == "1":
-                pending[guid] = (e.get("name") or guid, stamp, e.get("screenH"))
+                pending[guid] = (e.get("name") or guid, stamp, e.get("screenH"),
+                                 e.get("epoch"))
             elif shot == "2" and guid in pending:
-                name, first, screen_h = pending.pop(guid)
-                out.append((name, first, stamp, screen_h))
+                name, first, screen_h, epoch = pending.pop(guid)
+                out.append((name, first, stamp, screen_h, guid, epoch))
 
     # Oldest first, so "the newest capture of each character" still means that
     # once both accounts are in one list.
-    out.sort(key=lambda c: c[1])
+    out.sort(key=capture_order)
     return out
 
 
@@ -473,7 +559,7 @@ def pot(n):
     return p
 
 
-def convert(black, white, base, target_height, keep_png, out_dir=OUT):
+def convert(black, white, base, target_height, keep_png, out_dir=OUT, guid=None):
     """One pair -> one cutout on disk. Returns the manifest numbers."""
     cut = matte(black, white)
     native = cut.size
@@ -523,7 +609,7 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
     # But raw screenshot pixels are NOT comparable between captures, and this
     # roster already proves it: the probe store here holds captures at screenH
     # 1200 and at screenH 2160. The render stage is 420x760 *UI units*
-    # (Tools/AltStableProbe/Render.lua), so the same character comes out nearly
+    # (Capture.lua), so the same character comes out nearly
     # twice as tall in the 2160 shots. Left raw, the scene would draw those
     # characters twice the height of the others and call it a race difference.
     #
@@ -551,6 +637,10 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
         meta["nativeW"] = round(native[0] / shot_h, 5)
         meta["nativeH"] = round(native[1] / shot_h, 5)
         meta["nativePx"] = [native[0], native[1]]
+    # WHOSE portrait this is. The manifest keys the entry by it, so two
+    # characters sharing a name never show each other's (docs/PORTRAIT-CONTRACT.md).
+    if guid:
+        meta["guid"] = guid
     with open(os.path.join(out_dir, base + ".json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
 
@@ -623,12 +713,14 @@ def run_all(args):
     # each character's file several times over, newest not necessarily last.
     superseded = {}
     if not args.history:
+        # Per character means per GUID: two characters can share a name.
         latest = {}
         for cap in caps:
-            prev = latest.get(cap[0])
+            who = cap[4] or cap[0]
+            prev = latest.get(who)
             if prev:
-                superseded.setdefault(cap[0], []).append(prev)
-            latest[cap[0]] = cap          # recorded oldest first, so this keeps the newest
+                superseded.setdefault(who, []).append(prev)
+            latest[who] = cap             # sorted oldest first, so this keeps the newest
         chosen = [latest[k] for k in sorted(latest)]
         if len(chosen) != len(caps):
             print("%d capture(s) of %d character(s) - taking the newest of each"
@@ -643,13 +735,13 @@ def run_all(args):
         print("  |  Your client has not written its capture records yet.")
         print("  |  Newest screenshot: %s" % shot.strftime("%Y-%m-%d %H:%M:%S"))
         print("  |  Newest record:     %s" % (rec.strftime("%Y-%m-%d %H:%M:%S") if rec else "none at all"))
-        print("  |  AltStableProbeDB is only saved on /reload or logout, so a capture")
+        print("  |  The capture store is only saved on /reload or logout, so a capture")
         print("  |  taken just now is two images with nothing describing them.")
         print("  |  Run /reload in game, then run this again.")
         print("")
 
     done, missing, collided, freed = 0, [], [], 0
-    for name, first, second, screen_h in caps:
+    for name, first, second, screen_h, guid, _epoch in caps:
         # Both shots recorded at the same second means one filename, and the
         # client overwrote the first with the second. There is no pair to find
         # and "no screenshots for X" is a misleading way to say so - the file is
@@ -663,7 +755,8 @@ def run_all(args):
             missing.append((name, first))
             continue
         try:
-            convert(black, white, slug(name), args.target_height, args.keep_png)
+            convert(black, white, output_base(name, guid), args.target_height,
+                    args.keep_png, guid=guid)
         except NotAPair as err:
             # Leave the screenshots alone: the capture can be salvaged, and a
             # bad cutout filed under a character's name is worse than none.
@@ -678,7 +771,7 @@ def run_all(args):
             spent = [black, white]
             # Older shots of the SAME character are superseded by the cutout we
             # just made, so they go with it.
-            for old_cap in superseded.get(name, []):
+            for old_cap in superseded.get(guid or name, []):
                 for stamp in (old_cap[1], old_cap[2]):
                     hit = match(stamp, times)
                     if hit:

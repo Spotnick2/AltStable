@@ -736,11 +736,10 @@ function AltStable.ScanCharacter()
         end
     end
 
-    -- Helm/cloak display toggles. The render pipeline needs these because the Battle.net
-    -- armory render respects them but the equipment list does not: a character with the helm
-    -- hidden would otherwise be drawn wearing a helmet they never see in game. Synced on
-    -- purpose (same reasoning as refshot_ts) — the pipeline reads ONE aggregator account, so
-    -- an alt's toggle has to ride sync to reach it.
+    -- Helm/cloak display toggles. A portrait pipeline needs these because the equipment
+    -- list alone cannot say a slot is hidden: a character with the helm hidden would
+    -- otherwise be drawn wearing a helmet they never see in game. Synced on purpose — a
+    -- pipeline reads ONE aggregator account, so an alt's toggle has to ride sync to reach it.
     -- Guarded: these are TBC-era APIs, and a missing global must not abort the whole scan.
     char.hidehelm  = (ShowingHelm  and not ShowingHelm())  and 1 or 0
     char.hidecloak = (ShowingCloak and not ShowingCloak()) and 1 or 0

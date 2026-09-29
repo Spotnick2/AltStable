@@ -177,8 +177,26 @@ with tempfile.TemporaryDirectory() as tmp:
 # and the converter must say WHY - "no screenshots for X" points at the wrong
 # thing when the file is sitting right there, just one file where two are needed.
 
+# In the shipped layout (#89): AltStable.lua, where the capture table follows
+# AltStableDB - large, nested, and read by the same brace scanner.
 STORE_COLLIDED = '''
-AltStableProbeDB = {
+AltStableDB = {
+    ["Player-1-0001"] = {
+        ["name"] = "Some Alt",
+        ["gear"] = { { ["id"] = 1 }, { ["id"] = 2 } },
+        -- A decoy with the contract's key name: the scanner must find the
+        -- array under AltStablePortraits, not the first one in the file.
+        ["renders"] = {
+            { ["name"] = "Some Alt", ["guid"] = "gx", ["shot"] = 1, ["stamp"] = "2020-01-01 00:00:00" },
+            { ["name"] = "Some Alt", ["guid"] = "gx", ["shot"] = 2, ["stamp"] = "2020-01-01 00:00:02" },
+        },
+    },
+}
+AltStableConfig = {
+    ["rosterView"] = "scene",
+}
+AltStablePortraits = {
+    ["version"] = 1,
     ["renders"] = {
         { ["name"] = "Split Second", ["guid"] = "g9", ["shot"] = 1,
           ["stamp"] = "2026-09-26 02:14:44", ["screenH"] = 2160 },
@@ -195,11 +213,13 @@ AltStableProbeDB = {
 with tempfile.TemporaryDirectory() as tmp:
     wtf = os.path.join(tmp, "WTF", "Account", "1#1", "SavedVariables")
     os.makedirs(wtf)
-    with open(os.path.join(wtf, "AltStableProbe.lua"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(wtf, "AltStable.lua"), "w", encoding="utf-8") as fh:
         fh.write(STORE_COLLIDED)
 
     caps = {c[0]: c for c in mc.captures(wtf=os.path.join(tmp, "WTF"))}
-    eq("both captures are recorded as pairs", len(caps), 2)
+    eq("both captures are recorded as pairs, from AltStable.lua", len(caps), 2)
+    check("  and nothing from the character records beside them",
+          "Some Alt" not in caps, sorted(caps))
 
     collided = caps["Split Second"]
     eq("  and the collided one has identical stamps", collided[1], collided[2])
@@ -297,6 +317,101 @@ with tempfile.TemporaryDirectory() as tmp:
         eq("a truly missing file frees nothing", mc.discard([missing], "test"), 0)
     check("  and is still reported", "could not delete" in buf.getvalue(),
           buf.getvalue().strip())
+
+
+# ---------------------------------------------------------------------------
+# The contract's identity and ordering rules (#89, docs/PORTRAIT-CONTRACT.md)
+# ---------------------------------------------------------------------------
+# Newest by EPOCH: local time repeats an hour when the clocks go back, so a
+# capture taken after the change can carry an earlier stamp than one before it.
+# Identity by GUID: two characters sharing a name are two characters.
+
+STORE_CONTRACT = '''
+AltStablePortraits = {
+    ["version"] = 1,
+    ["renders"] = {
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 1,
+          ["stamp"] = "2026-10-25 01:40:00", ["epoch"] = 1792888800 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 2,
+          ["stamp"] = "2026-10-25 01:40:02", ["epoch"] = 1792888802 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 1,
+          ["stamp"] = "2026-10-25 01:20:00", ["epoch"] = 1792890000 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 2,
+          ["stamp"] = "2026-10-25 01:20:02", ["epoch"] = 1792890002 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-2-BBBBBBBB", ["shot"] = 1,
+          ["stamp"] = "2026-10-25 02:00:00", ["epoch"] = 1792893600 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-2-BBBBBBBB", ["shot"] = 2,
+          ["stamp"] = "2026-10-25 02:00:02", ["epoch"] = 1792893602 },
+    },
+}
+'''
+
+with tempfile.TemporaryDirectory() as tmp:
+    sv = os.path.join(tmp, "WTF", "Account", "1#1", "SavedVariables")
+    os.makedirs(sv)
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_CONTRACT)
+    caps = mc.captures(wtf=os.path.join(tmp, "WTF"))
+    eq("every capture carries its GUID", [c[4] for c in caps].count(None), 0)
+    mine = [c for c in caps if c[4] == "Player-1-AAAAAAAA"]
+    eq("  and the two shots of a capture are paired per GUID", len(mine), 2)
+    eq("newest is decided by epoch, not by the local stamp that repeats at DST",
+       mine[-1][1], "2026-10-25 01:20:00")
+
+    # A store in a version this converter does not know is refused.
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_CONTRACT.replace('["version"] = 1', '["version"] = 2'))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        refused = mc.captures(wtf=os.path.join(tmp, "WTF"))
+    eq("a store of an unknown version yields no captures", len(refused), 0)
+    check("  and says to update the converter", "update" in buf.getvalue(), buf.getvalue())
+
+    # Height recovery reads the same stores, and must refuse the same way: a
+    # legacy sidecar whose only possible source is an unsupported store stays
+    # exactly as it was. Rewritten, it would be stamped nativeUnit and never
+    # revisited (Codex review on #125 reproduced exactly that).
+    legacy = os.path.join(tmp, "legacy")
+    os.makedirs(legacy)
+    side = os.path.join(legacy, "twin-name.json")
+    before = {"w": 100, "h": 512, "texw": 128, "texh": 512,
+              "nativeW": 100, "nativeH": 600}
+    with open(side, "w", encoding="utf-8") as fh:
+        json.dump(before, fh)
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_CONTRACT.replace('["version"] = 1', '["version"] = 2')
+                 .replace('["epoch"] = 1792888800 }',
+                          '["epoch"] = 1792888800, ["screenH"] = 1200 }'))
+    with contextlib.redirect_stdout(io.StringIO()):
+        mc.renormalise(legacy, wtf=os.path.join(tmp, "WTF"))
+    with open(side, encoding="utf-8") as fh:
+        after = json.load(fh)
+    eq("height recovery ignores a store of an unknown version", after, before)
+
+    # `AltStablePortraits = nil` is what the client writes for an account
+    # that never captured (measured on 1.60.1.70009). It means NO captures -
+    # even with a `renders` key elsewhere in the file.
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_COLLIDED.split("AltStablePortraits = {")[0]
+                 + "AltStablePortraits = nil\n")
+    eq("a store written as AltStablePortraits = nil has no captures",
+       mc.captures(wtf=os.path.join(tmp, "WTF")), [])
+
+    # Two characters, one name: the second gets its own file.
+    out = os.path.join(tmp, "out")
+    os.makedirs(out)
+    eq("the first character with a name gets the plain slug",
+       mc.output_base("Twin Name", "Player-1-AAAAAAAA", out), "twin-name")
+    with open(os.path.join(out, "twin-name.json"), "w", encoding="utf-8") as fh:
+        json.dump({"guid": "Player-1-AAAAAAAA"}, fh)
+    eq("  and keeps it on a re-capture",
+       mc.output_base("Twin Name", "Player-1-AAAAAAAA", out), "twin-name")
+    eq("a namesake gets the slug plus the end of its GUID",
+       mc.output_base("Twin Name", "Player-2-BBBBBBBB", out), "twin-name-bbbbbb")
+    with open(os.path.join(out, "twin-name.json"), "w", encoding="utf-8") as fh:
+        json.dump({"w": 1}, fh)
+    eq("a legacy sidecar with no GUID is taken to be the same character",
+       mc.output_base("Twin Name", "Player-2-BBBBBBBB", out), "twin-name")
 
 
 print("test_cutouts: %d passed, %d failed" % (passed, failed))

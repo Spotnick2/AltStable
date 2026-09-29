@@ -41,6 +41,8 @@ dofile("Columns.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
+-- Capture.lua follows SheetUI in the .toc; the title-bar button hands off to it.
+dofile("Capture.lua")
 
 local GOLD = 10000   -- copper per gold
 
@@ -277,36 +279,19 @@ do
           AltStable.FinishOpenAnimation() == false,
           "a runner still holding the sheet would report there was work to do")
 
-    -- The sheet's OWN capture is a second borrower of the same alpha, and was
-    -- left racing.
-    --
-    -- Its legacy path - reached when the probe's two-shot capture is missing
-    -- or declines - writes 0, waits 1.3s, shoots, then writes a hardcoded 1.
-    -- A live fade overwrites that 0 and climbs to 1 under its own timer well
-    -- before the shutter, so the sheet ends up fully visible in the portrait:
-    -- the exact thing hiding it was for, and the mirror image of the bug on
-    -- the probe's side.
+    -- The title-bar button is the capture (#89): one path, Capture.lua's, which
+    -- settles this fade before borrowing the alpha (pinned in test_capture).
+    -- It used to run a second, single-shot path of its own that raced the
+    -- fade; that path is gone, and the button must not grow another.
     do
-        AltStableDB[UnitGUID("player")] = AltStableDB[UnitGUID("player")]
-            or { guid = UnitGUID("player"), name = "Shooter", class = "MAGE",
-                 realm = "R", level = 60 }
-        AltStable.EnsureSheetVisible()
-
-        -- The probe declines, so the legacy path runs.
+        local asked = 0
         local realPortrait = AltStable.CapturePortrait
-        AltStable.CapturePortrait = function() return false end
-
-        AltStable._PlayOpenAnimation(AltStableSheet)
-        eq("a fade is running over the sheet", AltStableSheet:GetAlpha(), 0)
-
+        AltStable.CapturePortrait = function() asked = asked + 1; return true end
+        local shotsBefore = WoW.screenshots
         AltStable._test.ClickCaptureButton()
-        check("the capture settles the fade before borrowing the alpha",
-              AltStable.FinishOpenAnimation() == false,
-              "a live fade would climb back to 1 and put the sheet in the photo")
-        eq("  and the sheet is hidden for the shot", AltStableSheet:GetAlpha(), 0)
-
+        eq("the capture button hands the capture to Capture.lua", asked, 1)
+        eq("  and takes no picture of its own", WoW.screenshots, shotsBefore)
         AltStable.CapturePortrait = realPortrait
-        AltStableSheet:SetAlpha(1)
     end
 
     AltStableConfig.enableOpenAnimation = nil
@@ -1016,27 +1001,22 @@ do
                       ("%s,%s"):format(tostring(sx), tostring(sy)))
             end
 
-            -- What it promises depends on whether the button can deliver.
-            -- Without the dev-only probe there is no portrait capture in the
-            -- download (#89); with it, the button takes the real two shots.
-            -- Asked on hover, not at build: the probe can load after the sheet.
+            -- What it promises is what the button does now (#89): the two-shot
+            -- capture, and the reload that saves it. Not the retired "AI
+            -- portrait", and not the "not in this download" of the release
+            -- before capture shipped.
             local onEnter = T.refBtn and T.refBtn:GetScript("OnEnter")
             if txt and onEnter then
-                local heldProbe = _G.AltStableProbe
-                _G.AltStableProbe = nil
                 onEnter(T.refBtn)
-                local bare = txt:GetText() or ""
-                check("without the capture tool the tooltip says it is not in the download",
-                      bare:find("Not in this download", 1, true) ~= nil, bare)
+                local tip = txt:GetText() or ""
+                check("the capture tooltip describes the two-shot capture",
+                      tip:find("two screenshots", 1, true) ~= nil, tip)
+                check("  and the reload that follows it",
+                      tip:find("reload", 1, true) ~= nil, tip)
                 check("  and no longer promises an AI portrait",
-                      bare:find("AI", 1, true) == nil, bare)
-
-                _G.AltStableProbe = { CapturePortrait = function() end }
-                onEnter(T.refBtn)
-                local tooled = txt:GetText() or ""
-                check("with the capture tool the tooltip describes the capture",
-                      tooled:find("two screenshots", 1, true) ~= nil, tooled)
-                _G.AltStableProbe = heldProbe
+                      tip:find("AI", 1, true) == nil, tip)
+                check("  nor says capture is not in the download",
+                      tip:find("Not in this download", 1, true) == nil, tip)
             end
         end
 
@@ -1047,23 +1027,19 @@ do
         -- settle opened a menu that landed in the portrait and left a
         -- full-screen catcher eating every click.
         do
-            -- A character record, or the capture bails before the blackout it
-            -- is being tested for and the assertion passes on a path that never
-            -- ran.
-            local savedDB = AltStableDB
-            AltStableDB = { [UnitGUID("player")] = {
-                guid = UnitGUID("player"), name = "Me", class = "MAGE",
-                realm = "R", level = 1 } }
             local closed = 0
             local realClose = AltStable.CloseCharacterMenu
             AltStable.CloseCharacterMenu = function() closed = closed + 1 end
-            if T.CaptureReferenceFromSheet then
-                pcall(T.CaptureReferenceFromSheet)
+            check("the sheet's capture handler is reachable",
+                  T.CapturePortraitFromSheet ~= nil)
+            if T.CapturePortraitFromSheet then
+                pcall(T.CapturePortraitFromSheet)
             end
             AltStable.CloseCharacterMenu = realClose
-            AltStableDB = savedDB
             check("the sheet's own capture closes the character menu first",
                   closed > 0, tostring(closed))
+            -- Leave nothing running for the blocks below.
+            AltStable._test.portrait.AbandonCapture(nil, true)
         end
 
         local tt = T.titleText
@@ -2049,83 +2025,20 @@ do
         check("  while a button has it from the start", btn:IsMouseEnabled())
     end
 
-    -- AND IT LETS GO FOR THE BLACKOUT, then takes it back. An alpha-0 frame
-    -- still takes the mouse, so a capture would otherwise leave an invisible
-    -- full-size dead zone for its two seconds - and for ever, if the chain of
-    -- timers behind it breaks before the restore.
-    -- The blackout and its restore as a PAIR, because they have to agree: the
-    -- sheet hides by alpha so OnHide does not tear the camera presentation
-    -- down, and an alpha-0 frame still takes the mouse.
-    AltStable._test.BlackoutSheetForCapture()
-    check("  and lets go of the mouse for the capture blackout",
-          not sheet:IsMouseEnabled())
-    eq("  while it is invisible", sheet:GetAlpha(), 0)
-
-    -- ANY alpha-0 counts, not just ours. The probe is a separate addon that
-    -- hides this window by alpha and knows nothing about our blackout - and
-    -- with it installed, CaptureReferenceFromSheet hands off before the
-    -- blackout is ever reached, so pairing the two by hand covered every path
-    -- except the one the owner actually uses.
+    -- AND IT LETS GO WHEN IT IS INVISIBLE, then takes the mouse back. An
+    -- alpha-0 frame still takes the mouse, and the capture hides this window by
+    -- alpha (Capture.lua), so without this a capture would leave an invisible
+    -- full-size dead zone for its three seconds.
+    -- ANY alpha-0 counts: the hook is on SetAlpha itself, so whoever zeroes it.
     sheet:SetAlpha(1)
     check("visible means clickable", sheet:IsMouseEnabled())
     sheet:SetAlpha(0)
-    check("  and somebody else hiding it by alpha releases the mouse too",
+    check("  and hiding it by alpha releases the mouse",
           not sheet:IsMouseEnabled())
     sheet:SetAlpha(1)
     check("  and showing it takes the mouse back", sheet:IsMouseEnabled())
 
-    -- A WATCHDOG MUST NOT OUTLIVE ITS CAPTURE. Captures follow each other: the
-    -- fallback finishes about 1.9s after its blackout, so a second one started
-    -- three seconds later is still dark when the FIRST watchdog comes due. An
-    -- unconditional restore then put the sheet back into somebody else's shot.
-    WoW.flushTimers()                                  -- start from quiet
-    AltStable._test.BlackoutSheetForCapture()          -- capture A
-    -- A's watchdog, held so it can be fired ON ITS OWN. One flush runs every
-    -- pending timer regardless of when it was queued, so flushing here would
-    -- fire B's rescue in the same breath and hide the thing being tested.
-    local staleWatchdog = WoW.timers[#WoW.timers]
-    check("A armed a watchdog", staleWatchdog and staleWatchdog.fn ~= nil)
-    AltStable._test.RestoreSheetFromCapture()          -- A finishes normally
-    AltStable._test.BlackoutSheetForCapture()          -- capture B starts
-    eq("the second capture is dark", sheet:GetAlpha(), 0)
-    if staleWatchdog and staleWatchdog.fn then staleWatchdog.fn() end
-    eq("  and a stale watchdog does not light it up", sheet:GetAlpha(), 0)
-    check("  nor give the mouse back mid-shot", not sheet:IsMouseEnabled())
-    WoW.flushTimers()                                  -- B's own watchdog
-    eq("  while B's own still rescues it", sheet:GetAlpha(), 1)
-
-    -- A FINISHED capture retires its watchdog, or it goes off during whatever
-    -- is dark NEXT - including a probe capture, which hides this window by
-    -- alpha and claims no generation of ours at all.
-    WoW.flushTimers()
-    AltStable._test.BlackoutSheetForCapture()
-    local finishedWatchdog = WoW.timers[#WoW.timers]
-    AltStable._test.RestoreSheetFromCapture()          -- that capture is over
-    sheet:SetAlpha(0)                                  -- the probe's blackout
-    if finishedWatchdog and finishedWatchdog.fn then finishedWatchdog.fn() end
-    eq("a finished capture's watchdog leaves somebody else's blackout alone",
-       sheet:GetAlpha(), 0)
-
-    -- And two blackouts with no restore between them: the second must retire
-    -- the first, or the first's watchdog lights up the second.
-    WoW.flushTimers()
-    AltStable._test.BlackoutSheetForCapture()
-    local firstOfTwo = WoW.timers[#WoW.timers]
-    AltStable._test.BlackoutSheetForCapture()
-    if firstOfTwo and firstOfTwo.fn then firstOfTwo.fn() end
-    eq("back-to-back blackouts retire each other", sheet:GetAlpha(), 0)
-    WoW.flushTimers()
-    eq("  and the live one still recovers", sheet:GetAlpha(), 1)
-
-    -- WITHOUT THE NORMAL RESTORE EVER RUNNING. That one sits at the end of four
-    -- nested timers; this is the case where something on the way errors or
-    -- returns early, which would otherwise leave an invisible full-size frame
-    -- holding the mouse for the session, its own close button unreachable.
-    WoW.flushTimers()
-    check("  and a broken capture still gives the mouse back",
-          sheet:IsMouseEnabled())
-    eq("  and the window with it", sheet:GetAlpha(), 1)
-    -- And it is still DRAGGABLE, which is what the old comment was protecting:
+    -- It is still DRAGGABLE, which is what the old comment was protecting:
     -- the title bar owns the drag, and enabling the mouse here does not touch
     -- that.
     check("  and is still movable", sheet:IsMovable())
@@ -2136,6 +2049,195 @@ do
     check("the title bar seam is exported", bar ~= nil)
     check("  and the title bar still holds the drag",
           bar and bar:IsMouseEnabled() and bar:GetScript("OnDragStart") ~= nil)
+end
+
+------------------------------------------------------------
+-- A popup lifted out of a hidden interface, and put back cleanly (#89 review)
+------------------------------------------------------------
+-- A StaticPopup is a child of UIParent. With the interface hidden - by the
+-- showcase, or by a player who pressed Alt+Z - a popup under it is shown and
+-- invisible. LiftPopup takes it out; DropPopup puts it back when it closes.
+-- Driven with the Forget confirmation, the popup that uses them.
+do
+    local which = "ALTSTABLE_CONFIRM_FORGET_CHARACTER"
+    local def = StaticPopupDialogs[which]
+    check("the forget confirmation is defined", def ~= nil)
+    local Lift, Drop = AltStable._test.LiftPopup, AltStable._test.DropPopup
+
+    -- Alt+Z, no showcase: the showcase does not own the hiding, and the lift
+    -- used to ask only the showcase.
+    WoW.popups = {}
+    SetUIVisibility(false)
+    local dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
+    check("with the interface hidden by Alt+Z a popup is lifted out of it",
+          dialog and dialog:GetParent() ~= UIParent)
+    check("  and can actually be seen", dialog and dialog:IsVisible())
+    Drop(dialog)
+    eq("dropping puts it back under UIParent", dialog:GetParent(), UIParent)
+    eq("  at the strata it had", dialog:GetFrameStrata(), "DIALOG")
+    eq("  with nothing left marked as lifted", dialog._altstableLifted, nil)
+
+    -- RE-ENTRANT: putting the dialog back under a hidden UIParent can fire its
+    -- OnHide - another DropPopup - half way through the first. Modelled by
+    -- having the reparent itself call DropPopup, as the client's hide would.
+    dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
+    local realSetParent = dialog.SetParent
+    dialog.SetParent = function(self, parent)
+        local r = realSetParent(self, parent)
+        if parent == UIParent then Drop(self) end
+        return r
+    end
+    Drop(dialog)
+    dialog.SetParent = realSetParent
+    eq("a drop interrupted by its own OnHide still ends at the right strata",
+       dialog:GetFrameStrata(), "DIALOG")
+    eq("  and under UIParent", dialog:GetParent(), UIParent)
+
+    SetUIVisibility(true)
+    dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
+    eq("with the interface up nothing is lifted", dialog:GetParent(), UIParent)
+    Drop(dialog)
+    WoW.popups = {}
+end
+
+------------------------------------------------------------
+-- "Reload now?" - with a button that is ALLOWED to reload (#89)
+------------------------------------------------------------
+-- ReloadUI() from our code is blocked on this client (measured). The prompt's
+-- Reload button is a secure /reload macro, so the click is Blizzard's code.
+do
+    WoW.reloaded = 0
+    check("a reload can be offered", AltStable.ShowReloadPrompt("Reload now?") == true)
+    local f = AltStable._test.ReloadPrompt()
+    check("  and the prompt is up", f and f:IsShown())
+    check("  saying what it was asked to", f and f.text:GetText() == "Reload now?")
+    local r = f.reload
+    eq("its Reload button runs a macro", r:GetAttribute("type"), "macro")
+    eq("  the /reload macro", r:GetAttribute("macrotext"), "/reload")
+    eq("  and has no click handler of ours, which would make the click ours",
+       r:GetScript("OnClick"), nil)
+    check("  and answers the press as well as the release",
+          (function()
+              local up, down = false, false
+              for _, c in ipairs(r:RegisteredClicks()) do
+                  if c == "AnyUp" then up = true end
+                  if c == "AnyDown" then down = true end
+              end
+              return up and down
+          end)())
+    eq("nothing of ours called ReloadUI to get here", WoW.reloaded, 0)
+
+    -- Not a child of the sheet: a protected frame's parent cannot be hidden in
+    -- combat, and the sheet has to close on Escape mid-fight.
+    local p, inSheet = f:GetParent(), false
+    while p do
+        if p == AltStable._test.frame then inSheet = true end
+        p = p.GetParent and p:GetParent()
+    end
+    check("the prompt is not inside the sheet", not inSheet)
+    eq("  it hangs from nothing, so a hidden interface does not hide it", f:GetParent(), nil)
+    SetUIVisibility(false)
+    check("  and stays visible with the interface hidden", f:IsVisible())
+    SetUIVisibility(true)
+
+    f.later:GetScript("OnClick")(f.later)
+    check("Later puts it away", not f:IsShown())
+
+    AltStable.ShowReloadPrompt("again")
+    f:GetScript("OnEvent")(f, "PLAYER_REGEN_DISABLED")
+    check("combat puts it away before the lockdown", not f:IsShown())
+
+    WoW.inCombat = true
+    check("in combat it is not offered at all", AltStable.ShowReloadPrompt("x") == false)
+    check("  and does not appear", not f:IsShown())
+    WoW.inCombat = false
+
+    -- The Options skin row's Reload offers the same prompt.
+    local btn = AltStable._test.SkinReloadButton()
+    btn:GetScript("OnClick")(btn)
+    check("the skin row's Reload offers the prompt", f:IsShown())
+    check("  saying why", tostring(f.text:GetText()):find("skin", 1, true) ~= nil,
+          tostring(f.text:GetText()))
+    eq("  without reloading by itself", WoW.reloaded, 0)
+    f:Hide()
+end
+
+------------------------------------------------------------
+-- A capture through the REAL camera showcase (#89 review)
+------------------------------------------------------------
+-- The showcase hides the game UI and lifts the sheet out of it. A capture
+-- then hides UIParent itself - and hiding a parent fires OnHide on the
+-- children still shown, the sheet included when it is under UIParent. The
+-- sheet has to tell that apart from being CLOSED: the first must leave the
+-- showcase alone, the second must end it. A flag set for the whole capture
+-- could not: Alt+Z mid-capture closed the sheet and the showcase stayed on,
+-- camera and all, with no window to close it from.
+do
+    local P = AltStable._test.portrait
+    local Cam = AltStable._test.CameraPresentation
+    local sheet = AltStable._test.frame
+    AltStableConfig.enableWorldCameraPresentation = true
+    WoW.cvars["test_cameraOverShoulder"] = "0"
+
+    local function openSheet()
+        sheet:Hide()
+        pcall(Cam.ForceRestore, Cam, "test")
+        Cam.active, Cam.mode = false, nil
+        SetUIVisibility(true)
+        AltStable.EnsureSheetVisible()
+    end
+
+    -- Alt+Z mid-capture, showcase on.
+    openSheet()
+    check("the sheet is open with the showcase running", sheet:IsShown() and Cam.active)
+    P.Capture()
+    check("a capture starts from the open sheet", P.capturing())
+    SetUIVisibility(true)                       -- the player presses Alt+Z
+    check("  Alt+Z abandons it", not P.capturing())
+    check("  and closes the sheet, as Alt+Z does with the showcase up", not sheet:IsShown())
+    eq("  and the showcase gives the interface back", Cam.uiHidden, false)
+    eq("  and is on its way out, not left running", Cam.mode, "exit")
+    eq("  with the sheet back under UIParent", sheet:GetParent(), UIParent)
+
+    -- Showcase NOT hiding the UI: the sheet stays under UIParent, so the
+    -- capture's own hide reaches it as a parent hide. That must not end the
+    -- showcase, and the interface coming back must not replay the open.
+    AltStableConfig.hideGameUIOnPresentation = false
+    openSheet()
+    check("with the UI left up, the sheet is under UIParent", sheet:GetParent() == UIParent)
+    local enters = 0
+    local realEnter = Cam.Enter
+    Cam.Enter = function(self, ...) enters = enters + 1; return realEnter(self, ...) end
+    P.Capture()
+    check("  a capture hides the interface", not UIParent:IsShown())
+    check("  and the showcase survives the sheet losing its parent", Cam.active and Cam.mode ~= "exit")
+    P.AbandonCapture(nil, true)                 -- cancel, the watchdog, death
+    check("  the interface is back", UIParent:IsShown())
+    eq("  and coming back did not re-enter the showcase", enters, 0)
+    check("  the sheet is still open", sheet:IsShown())
+
+    -- CLOSED while the capture has UIParent down: the sheet was not visible,
+    -- so the client fires no OnHide at all. The close still has to end the
+    -- showcase, and must not leave the next open swallowed.
+    P.Capture()
+    check("  a second capture has the interface down", not UIParent:IsShown())
+    local realOnHide = sheet:GetScript("OnHide")
+    sheet:SetScript("OnHide", nil)              -- what the client does here
+    sheet:Hide()
+    sheet:SetScript("OnHide", realOnHide)
+    eq("closing it mid-capture still ends the showcase", Cam.mode, "exit")
+    P.AbandonCapture(nil, true)
+    pcall(Cam.ForceRestore, Cam, "test")
+    Cam.active, Cam.mode = false, nil
+    enters = 0
+    AltStable.EnsureSheetVisible()
+    eq("  and the next open is a real one", enters, 1)
+    Cam.Enter = realEnter
+
+    AltStableConfig.hideGameUIOnPresentation = nil
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    AltStableConfig.enableWorldCameraPresentation = nil
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))

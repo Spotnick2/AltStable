@@ -597,6 +597,10 @@ local RETIRED_FIELDS = {
     -- appears only for a character that actually has some - and it is not a
     -- reason to keep purging a field the client will answer for.
     spec = true, specIcon = true,   -- the talent-tab API is gone on Forever; always ""
+    -- The reference-screenshot marker. It told the retired armory pipeline which
+    -- screenshot was fresh; the two-shot capture (#89) records to its own
+    -- store, so nothing has read this since, and it only rode the wire.
+    refshot_ts = true,
 }
 -- The TBC reputation slugs. Standings are rep_<factionID> now (Reputations.lua).
 for _, slug in ipairs({ "aldor", "scryer", "shatar", "lowercity", "cenarion", "consortium",
@@ -650,16 +654,12 @@ local function SerializeChar(c, sinceTS)
                                       -- synced alts fall back to keyword inference on gearname_
         and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
                                       -- would tell every peer the character was ITS own
-        -- NOTE: refshot_ts (reference-screenshot marker) IS synced on purpose. The render
-        -- pipeline reads ONE aggregator account, so an alt's marker must ride sync to reach it.
-        -- NOTE: hidehelm / hidecloak ride sync for the same reason — the pipeline has to know
+        -- NOTE: hidehelm / hidecloak ride sync on purpose — a portrait pipeline has to know
         -- the player hid a slot, since the equipped item list alone can't tell it. They are
         -- plain 1/0 numbers, so the tonumber() coercion below round-trips them unchanged.
         -- They must NOT become booleans: tostring(false) sends "false", which tonumber() leaves
         -- as the STRING "false" — and a non-empty string is truthy in Lua, so a hidden-cloak
         -- flag would read as shown and vice versa.
-        -- The screenshot lives in the install-wide Screenshots folder, so any account on this
-        -- machine resolves it; cross-machine peers just won't match and fall back to the saved ref.
         then
             parts[#parts+1] = k .. ":" .. tostring(v)
         end
@@ -2563,127 +2563,15 @@ end
 -- Slash commands
 ------------------------------------------------------------
 
-------------------------------------------------------------
--- Reference screenshot capture (feeds the AI render pipeline)
---
--- Hides the whole UI, takes an in-world Screenshot(), then restores the UI,
--- and stamps an epoch marker (refshot_ts) on the player's record. The external
--- render pipeline matches that marker to the resulting Screenshots/ file and
--- uses it as a FRESH identity/gear reference — fixing the stale-reference
--- problem where a months-old saved screenshot shows outdated transmog.
---
--- Screenshot() is asynchronous, so we sequence via C_Timer: hide UI -> let a
--- frame render UI-less -> capture -> let the file write -> show UI.
---
--- v1 is manual (`/alts update-reference`): the player frames the camera (mouse-
--- orbit to face the character) first. A portrait-UI button that auto-frames via
--- the world-camera presentation is the intended follow-up.
-------------------------------------------------------------
--- The portrait capture, wherever it is asked for.
---
--- Returns true when it has taken responsibility for the capture, so callers can
--- stop. Two things it settles that both old paths got wrong:
---
--- COMBAT. Both of them hid the interface with UIParent:Hide(), which is
--- protected: in combat the call is blocked, the player is left staring at
--- nothing, and an ADDON_ACTION_BLOCKED report names this addon. That is #70,
--- and these were the last two sites.
---
--- WHICH CAPTURE. The single reference shot fed the old .NET armory pipeline,
--- which no longer exists - the portraits now come from the probe's two-shot
--- matte, and nothing reads a lone screenshot or the refshot_ts marker beside
--- it. So when the probe is loaded, hand the job to it; that is what the button
--- was always meant to do.
--- Whether this install can take a portrait capture, and the one phrase every
--- hint uses to say where portraits come from. The Roster's two hints and the
--- sheet's capture button each used to word this themselves, and only one of
--- them asked whether the probe was loaded - so with the probe in, one view said
--- "use /asrender" while another said the tool was not in the download (#89).
-function AltStable.CanCapturePortrait()
-    local probe = _G.AltStableProbe
-    return type(probe) == "table" and type(probe.CapturePortrait) == "function"
-end
-
+-- Where Roster portraits come from, in the one phrase every hint uses: both
+-- Roster hints and the sheet's capture button used to word it themselves, and
+-- drifted (#89). The capture itself is Capture.lua; the matte that turns a
+-- capture into a portrait happens outside the game, because an addon can
+-- neither write an image nor read the Screenshots folder.
 function AltStable.PortraitSourceText()
-    if AltStable.CanCapturePortrait() then
-        return "capture one with |cffffff00/asrender|r while playing the character"
-    end
-    return "they are made by a capture tool on the project page, which is not part "
-        .. "of this download"
+    return "capture one with |cffffff00/alts portrait|r while playing the character; "
+        .. "the converter on the project page turns captures into portraits"
 end
-
-function AltStable.CapturePortrait(announce)
-    if InCombatLockdown and InCombatLockdown() then
-        Print("|cffff8800Not while you are in combat|r - try again once the fight is over.")
-        return true
-    end
-    if AltStable.CanCapturePortrait() then
-        _G.AltStableProbe.CapturePortrait()
-        return true
-    end
-    if announce then
-        Print("|cffff8800Portrait capture needs the AltStableProbe addon|r - it is the "
-            .. "tool that takes the two shots the cutout is matted from.")
-    end
-    return false
-end
-
-local function CaptureReferenceScreenshot()
-    if AltStable.CapturePortrait(true) then return end
-    if type(Screenshot) ~= "function" then
-        Print("|cffff8800Screenshot() is unavailable on this client.|r")
-        return
-    end
-    local guid = UnitGUID("player")
-    local char = guid and AltStableDB and AltStableDB[guid]
-    if not char then
-        Print("|cffff8800No character record yet|r — run |cffffff00/alts|r once so it scans, then retry.")
-        return
-    end
-
-    -- Draw weapons so they show in the reference (a caster's weapon in hand, a
-    -- hunter's bow, etc.). GetSheathState() == 1 means stowed; ToggleSheath()
-    -- draws them. Remember the original state and restore it afterward so we
-    -- don't leave the player's weapons changed.
-    local restoreSheath = false
-    if type(GetSheathState) == "function" and type(ToggleSheath) == "function" then
-        local ok, state = pcall(GetSheathState)
-        if ok and state == 1 then
-            pcall(ToggleSheath)   -- draw
-            restoreSheath = true
-        end
-    end
-
-    Print("Capturing reference screenshot — drawing weapons, hiding UI...")
-    -- Let the draw-weapon animation settle before hiding the UI and capturing.
-    C_Timer.After(0.6, function()
-        -- SetUIVisibility, not UIParent:Hide(): the engine call is what Alt+Z
-        -- makes and is NOT protected, so it cannot be blocked and cannot strand
-        -- the player without an interface (#70).
-        if type(SetUIVisibility) == "function" then
-            pcall(SetUIVisibility, false)
-        else
-            pcall(UIParent.Hide, UIParent)
-        end
-        C_Timer.After(0.2, function()
-            char.refshot_ts = time()   -- marker the render pipeline matches against
-            Screenshot()
-            C_Timer.After(0.7, function()
-                if type(SetUIVisibility) == "function" then
-                    pcall(SetUIVisibility, true)
-                else
-                    pcall(UIParent.Show, UIParent)
-                end
-                if restoreSheath and type(ToggleSheath) == "function" then
-                    pcall(ToggleSheath)   -- restore the stowed state
-                end
-                Print("|cff88ff88Reference captured|r (in your Screenshots folder). "
-                    .. "Run |cffffff00/reload|r to flush it to SavedVariables, then re-run the render pipeline.")
-            end)
-        end)
-    end)
-end
-AltStable.CaptureReferenceScreenshot = CaptureReferenceScreenshot
 
 -- Split "<cmd> <target>" where the target may contain spaces.
 --
@@ -3021,11 +2909,21 @@ SlashCmdList["ALTSTABLE"] = function(args)
     end
 
     ----------------------------------------------------
-    -- /alts update-reference  — capture a fresh render reference
+    -- /alts portrait [preview | facing <deg> | cancel]
+    --
+    -- The two-shot capture the Roster's portraits are matted from
+    -- (Capture.lua). Replaces /alts update-reference, whose single plain
+    -- screenshot fed the retired armory pipeline and nothing reads.
     ----------------------------------------------------
 
+    if cmd == "portrait" then
+        if AltStable.PortraitCommand then AltStable.PortraitCommand(target) end
+        return
+    end
+    -- The retired name says where it went, rather than falling through to the
+    -- bare /alts below, which opens the sheet and pings every peer for a sync.
     if cmd == "update-reference" or cmd == "updateref" then
-        CaptureReferenceScreenshot()
+        Print("|cffffff00/alts update-reference|r is now |cffffff00/alts portrait|r.")
         return
     end
 

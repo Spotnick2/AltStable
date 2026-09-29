@@ -655,7 +655,7 @@ end
 -- a stamp and a build number on the last session that wrote this file. That is
 -- the first thing worth knowing when a store looks stale or a future build
 -- regresses. Measuring persistence per build is still the probe's job
--- (Tools/AltStableProbe, and docs/RUNBOOK.md).
+-- (Tools/AltStableProbe/Probe.lua, and docs/RUNBOOK.md).
 ------------------------------------------------------------
 
 local function CurrentBuild()

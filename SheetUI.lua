@@ -644,8 +644,6 @@ do
     end
 
     function AltStableCameraPresentation:Exit(reason)
-        -- Ignore the transient OnHide fired by the capture's UIParent:Hide().
-        if self.capturing then return end
         if not self.active or self.mode == "exit" then
             return
         end
@@ -2283,10 +2281,22 @@ local function CreateFrameIfNeeded()
         end)
     end
     tinsert(UISpecialFrames,"AltStableSheet")
+    -- A PARENT'S HIDE IS NOT A CLOSE. Hiding UIParent - a portrait capture, or
+    -- Alt+Z - fires OnHide on every child still shown, this window included
+    -- when it sits under UIParent, and showing it again fires OnShow. Neither
+    -- is the player closing or opening the sheet, and treating them as such
+    -- tore the showcase down mid-capture and replayed the whole opening
+    -- afterwards. The window can tell for itself: after a parent's hide its
+    -- own shown flag is still set. That replaced a `capturing` flag another
+    -- file set for the whole capture, which could not tell a parent's hide
+    -- from a REAL close in the middle of one - so Alt+Z mid-capture closed the
+    -- sheet and left the camera showcase running with nothing to end it (#89).
+    local hiddenByParent = false
     frame:SetScript("OnShow", function()
-        -- The capture's UIParent:Show() re-fires this OnShow; skip re-entering the
-        -- presentation / replaying the open animation during a capture.
-        if AltStableCameraPresentation and AltStableCameraPresentation.capturing then return end
+        if hiddenByParent then
+            hiddenByParent = false      -- the parent came back; we never left
+            return
+        end
         -- Camera presentation runs first so the frame-shift it performs
         -- happens before the open-animation alpha fade — otherwise the
         -- frame would fade in at its old position and jump.
@@ -2297,7 +2307,9 @@ local function CreateFrameIfNeeded()
             AltStable._PlayOpenAnimation(frame)
         end
     end)
-    frame:SetScript("OnHide", function()
+    -- The sheet CLOSING, however it happens.
+    local function Closed()
+        hiddenByParent = false
         -- The character menu goes with the window that raised it (#69). It is
         -- FULLSCREEN_DIALOG with a full-screen click-catcher under it, so a
         -- menu outliving the sheet is not a stray widget - it is an invisible
@@ -2307,7 +2319,23 @@ local function CreateFrameIfNeeded()
         if AltStableCameraPresentation and AltStableCameraPresentation.Exit then
             AltStableCameraPresentation:Exit("sheet-hide")
         end
+    end
+    frame:SetScript("OnHide", function()
+        if frame:IsShown() then
+            hiddenByParent = true       -- see OnShow: not a close
+            return
+        end
+        Closed()
     end)
+    -- Closed while its parent is ALREADY hidden - Escape during a capture with
+    -- the sheet under UIParent. The window was not visible, so the client
+    -- fires no OnHide: without this nothing ends the showcase, and the stale
+    -- `hiddenByParent` swallows the next real open's OnShow.
+    if type(hooksecurefunc) == "function" then
+        hooksecurefunc(frame, "Hide", function()
+            if hiddenByParent then Closed() end
+        end)
+    end
 
     -- The camera presentation reparents this sheet out from under UIParent while
     -- it hides the game UI, so it needs a handle to it.
@@ -2384,220 +2412,14 @@ local function CreateFrameIfNeeded()
     close:SetScript("OnEnter",  function() close:SetBackdropColor(0.35, 0.08, 0.08, 1) end)
     close:SetScript("OnLeave",  function() close:SetBackdropColor(0.18, 0.05, 0.05, 1) end)
 
-    -- Update-reference (screenshot) button — captures a clean shot of the
-    -- presented character for the AI portrait pipeline. The camera presentation
-    -- has already framed/faced the character and hidden the game UI, so we only
-    -- hide THIS window (via alpha, so we don't fire OnHide/Exit and tear the
-    -- presentation down), draw weapons, Screenshot(), then restore. Stamps
-    -- refshot_ts on the player's record for the pipeline to match.
-    -- HIDING THE SHEET FOR A SHOT, and coming back from it. One pair, because
-    -- they have to agree: it hides by ALPHA rather than Hide(), so OnHide does
-    -- not fire and tear the camera presentation down - and an alpha-0 frame
-    -- still takes the mouse. Since #74 this window does take it, so alpha alone
-    -- leaves an invisible full-size dead zone for the two seconds of the
-    -- capture, with nothing on screen to explain it and a camera drag that
-    -- starts inside it doing nothing.
-    --
-    -- The restore is also armed on a TIMER of its own, because the normal one
-    -- sits at the end of four nested timers: anything that returns early or
-    -- errors on the way would otherwise leave this window invisible AND holding
-    -- the mouse, permanently, with its own close button unreachable. Idempotent
-    -- and later than the capture takes, so it only ever fires when the normal
-    -- path did not.
-    -- A GENERATION, so a watchdog cannot outlive the capture it was armed for.
-    -- Captures can follow each other: the fallback finishes about 1.9s after
-    -- its blackout, so a second one started three seconds later is still dark
-    -- when the FIRST watchdog comes due - and an unconditional restore then put
-    -- the sheet back into somebody else's screenshot. Each blackout claims a
-    -- number; a restore retires it; a timer whose number has moved does
-    -- nothing.
-    local captureGen = 0
-    local function RestoreSheetFromCapture()
-        captureGen = captureGen + 1
-        frame:SetAlpha(1)               -- the hook above gives the mouse back
-    end
-    local function BlackoutSheetForCapture()
-        captureGen = captureGen + 1
-        local gen = captureGen
-        frame:SetAlpha(0)               -- and takes it away
-        if C_Timer and C_Timer.After then
-            C_Timer.After(4, function()
-                if gen == captureGen then RestoreSheetFromCapture() end
-            end)
-        end
-    end
-    AltStable._test.BlackoutSheetForCapture = BlackoutSheetForCapture
-    AltStable._test.RestoreSheetFromCapture = RestoreSheetFromCapture
-
-    local function CaptureReferenceFromSheet()
-        -- The two-shot capture when it is available, which is what produces a
-        -- portrait anything actually reads. This button used to take a single
-        -- plain screenshot for the retired .NET armory pipeline - the picture
-        -- went to the Screenshots folder and nothing ever collected it, which
-        -- is exactly what it looked like from the outside.
-        if AltStable.CapturePortrait and AltStable.CapturePortrait(true) then return end
-        if type(Screenshot) ~= "function" then return end
-        local guid = UnitGUID("player")
-        local char = guid and AltStableDB and AltStableDB[guid]
-        if not char then
-            print("|cffff8800AltStable:|r no character record yet — reopen once so it scans.")
-            return
-        end
-
-        -- Which weapon to show. GetSheathState: 1=sheathed, 2=melee drawn,
-        -- 3=ranged drawn. Hunters want the bow (3); everyone else wants their
-        -- main-hand melee weapon (2), NOT their wand. We toggle until the target
-        -- state, re-checking after each (it's animated), then leave extra settle
-        -- time so the draw finishes before the shot (a bow takes a beat).
-        local _, classFile = UnitClass("player")
-        local targetState = (classFile == "HUNTER") and 3 or 2
-        local haveSheath = type(GetSheathState) == "function" and type(ToggleSheath) == "function"
-        local wasSheathed = false
-        if haveSheath then
-            local ok, s0 = pcall(GetSheathState)
-            wasSheathed = (ok and s0 == 1)
-        end
-
-        local saved = {}
-        -- test_* CVars trip the experimental-CVar confirmation popup, so the
-        -- owner has to be unregistered immediately before each write - a
-        -- single call at load is not enough (see
-        -- SuppressExperimentalCVarPopup). Routing every write through setcv
-        -- means the restore path below gets the same treatment.
-        local function SilenceExperimental(k)
-            if k:find("^test_") and AltStable.SuppressExperimentalCVarPopup then
-                AltStable.SuppressExperimentalCVarPopup()
-            end
-        end
-        local function setcv(k, v)
-            if type(GetCVar) == "function" and type(SetCVar) == "function" then
-                saved[k] = GetCVar(k)
-                SilenceExperimental(k)
-                pcall(SetCVar, k, v)
-            end
-        end
-
-        local function doCapture()
-            -- Nameplates survive UIParent:Hide, so always hide them for the shot.
-            setcv("nameplateShowEnemies", 0)
-            setcv("nameplateShowFriends", 0)
-            setcv("nameplateShowAll", 0)
-
-            -- Auto-frame (default): center the character (the presentation shifts
-            -- it aside for this window) and zoom out to full-body. When
-            -- AltStableConfig.refCaptureUseCurrentView is set, skip both and
-            -- capture the camera exactly as the player has framed it.
-            local savedZoom
-            if not (AltStableConfig and AltStableConfig.refCaptureUseCurrentView) then
-                setcv("test_cameraOverShoulder", 0)
-                if type(GetCameraZoom) == "function" then
-                    savedZoom = GetCameraZoom()
-                    local target = tonumber(AltStableConfig and AltStableConfig.refCaptureZoom) or 6.5
-                    local delta = target - (savedZoom or 0)
-                    if delta > 0.05 and type(CameraZoomOut) == "function" then pcall(CameraZoomOut, delta)
-                    elseif delta < -0.05 and type(CameraZoomIn) == "function" then pcall(CameraZoomIn, -delta) end
-                end
-            end
-
-            -- Settle the opening fade first, for the same reason the probe's
-            -- blackout does. This path is the MIRROR of that bug: it writes 0
-            -- and then a hardcoded 1, so a live fade overwrites the 0 and
-            -- climbs to 1 under its own timer well before the shutter - and
-            -- the sheet ends up fully visible in the portrait, which is the
-            -- exact thing hiding it was for.
-            --
-            -- Two ways in: pressing the title-bar button within 0.22s of the
-            -- sheet opening, or the sheet being hidden and re-shown anywhere
-            -- inside the 1.3s settle below, since `capturing` - which is what
-            -- stops OnShow replaying the fade - is not set until after it.
-            if AltStable.FinishOpenAnimation then AltStable.FinishOpenAnimation() end
-            -- Close the character menu before blacking out.
-    --
-    -- The fix for this first went into the probe's SuppressStrays, which is the
-    -- wrong altitude twice over: the probe is a dev-only addon that may not be
-    -- installed at all, and the SHEET has its own capture path right here.
-    --
-    -- The menu cannot be handled by the blackout that follows. During the
-    -- showcase its root is lifted out from under UIParent, so neither
-    -- UIParent:Hide() nor this frame's alpha reaches it - and an alpha-0 frame
-    -- still takes the mouse, so a right-click during the settle opens a menu
-    -- that lands in the portrait and leaves a full-screen catcher eating every
-    -- click for the rest of the capture.
-    if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
-    BlackoutSheetForCapture()
-
-            C_Timer.After(1.3, function()   -- let the weapon draw + zoom + recenter settle
-                -- Blackout for the shot. When the showcase is active the engine has
-                -- ALREADY hidden the whole UI via SetUIVisibility(false), so the
-                -- sheet (now alpha 0) is the only thing left to hide — don't touch
-                -- UIParent, or UIParent:Show() below would un-hide all the clutter
-                -- mid-showcase. When the showcase is OFF (hideGameUI disabled), we
-                -- own the blackout: UIParent:Hide() hides ALL UI, including driver-
-                -- controlled frames (unit frames, DPS meters), so the shot is still
-                -- spotless. `capturing` stops the sheet's OnHide (fired by hiding
-                -- UIParent) from tearing the showcase down, and stops OnShow from
-                -- re-running Enter when we bring UIParent back.
-                AltStableCameraPresentation.capturing = true
-                local ownBlackout = not AltStableCameraPresentation.uiHidden
-                -- SetUIVisibility over UIParent:Hide(): the engine call is the
-                -- one Alt+Z makes and is not protected (#70). The fallback is
-                -- kept for a client without it, but it is the protected one and
-                -- is why this path could strand a player's interface.
-                if ownBlackout then
-                    if type(SetUIVisibility) == "function" then
-                        pcall(SetUIVisibility, false)
-                    elseif UIParent and UIParent.Hide then
-                        UIParent:Hide()
-                    end
-                end
-                C_Timer.After(0.1, function()
-                    char.refshot_ts = time()
-                    Screenshot()
-                    C_Timer.After(0.5, function()
-                        if ownBlackout then
-                            if type(SetUIVisibility) == "function" then
-                                pcall(SetUIVisibility, true)
-                            elseif UIParent and UIParent.Show then
-                                UIParent:Show()
-                            end
-                        end
-                        AltStableCameraPresentation.capturing = false
-                        RestoreSheetFromCapture()
-                        if type(SetCVar) == "function" then
-                            for k, v in pairs(saved) do
-                                if v then
-                                    SilenceExperimental(k)
-                                    pcall(SetCVar, k, v)
-                                end
-                            end
-                        end
-                        if savedZoom and type(GetCameraZoom) == "function" then
-                            local cur = GetCameraZoom()
-                            local d = savedZoom - cur
-                            if d > 0.05 and type(CameraZoomOut) == "function" then pcall(CameraZoomOut, d)
-                            elseif d < -0.05 and type(CameraZoomIn) == "function" then pcall(CameraZoomIn, -d) end
-                        end
-                        if wasSheathed and type(ToggleSheath) == "function" then pcall(ToggleSheath) end
-                        print("|cff88ff88AltStable:|r reference captured. |cffffff00/reload|r to save it, then re-run the render pipeline.")
-                    end)
-                end)
-            end)
-        end
-
-        if haveSheath then
-            local function reach(n)
-                local ok, s = pcall(GetSheathState)
-                if (not ok) or s == targetState or n >= 4 then
-                    doCapture()
-                else
-                    pcall(ToggleSheath)
-                    C_Timer.After(0.45, function() reach(n + 1) end)
-                end
-            end
-            reach(0)
-        else
-            doCapture()
-        end
+    -- The portrait capture button (#89). The capture is Capture.lua: it hides
+    -- the interface, borrows this window's ALPHA rather than hiding it (OnHide
+    -- would tear the camera showcase down; the SetAlpha hook above gives the
+    -- mouse back with it) and restores everything on every way out. This
+    -- button used to run a second, single-screenshot path of its own for the
+    -- retired armory pipeline, which nothing read.
+    local function CapturePortraitFromSheet()
+        if AltStable.CapturePortrait then AltStable.CapturePortrait() end
     end
 
     local refBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
@@ -2632,31 +2454,18 @@ local function CreateFrameIfNeeded()
     -- The button, so a test can drive the REAL hover rather than calling the
     -- re-levelling helper itself - the bug was the hover not calling it.
     AltStable._test.refBtn = refBtn
-    -- And the sheet's own capture path, which is where the menu has to be
-    -- closed: the probe is a dev-only addon that may not be installed.
-    AltStable._test.CaptureReferenceFromSheet = CaptureReferenceFromSheet
+    AltStable._test.CapturePortraitFromSheet = CapturePortraitFromSheet
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
-    -- Two texts, chosen on hover. With the dev-only probe loaded this button
-    -- takes the real two-shot capture; without it the Roster's portraits
-    -- cannot be made from this download at all (#89), and promising one here
-    -- was the last place the addon still did.
-    local function RefTipText()
-        if AltStable.CanCapturePortrait and AltStable.CanCapturePortrait() then
-            return "|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for a " ..
-                "moment and takes two screenshots for the Roster lineup.|r"
-        end
-        return "|cffffffffPortrait capture|r\n|cffbbbbbbNot in this download yet - " ..
-            "Roster portraits are made by a tool on the project page.|r"
-    end
-    refTipText:SetText(RefTipText())
+    refTipText:SetText("|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for about " ..
+        "three seconds and takes two screenshots for the Roster lineup. You will be " ..
+        "offered a reload afterwards, so the capture is saved.|r")
     refTip:Hide()
 
-    refBtn:SetScript("OnClick", CaptureReferenceFromSheet)
+    refBtn:SetScript("OnClick", CapturePortraitFromSheet)
     -- The title-bar capture button, reachable from a test. Both it and the
-    -- handler are locals in here, so without this the legacy path below -
-    -- the one that borrows the sheet's alpha - could not be driven at all.
+    -- handler are locals in here.
     AltStable._test = AltStable._test or {}
     AltStable._test.ClickCaptureButton = function()
         local fn = refBtn:GetScript("OnClick")
@@ -2664,7 +2473,6 @@ local function CreateFrameIfNeeded()
     end
     refBtn:SetScript("OnEnter", function()
         refBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
-        refTipText:SetText(RefTipText())
         refTip:Show()
         refTip:Raise()
         -- Raise() moves the HOST. The material's rim is a child frame pinned to
@@ -3051,8 +2859,13 @@ local function CreateFrameIfNeeded()
     optSkinReload:SetJustifyH("LEFT")
     optSkinReload:SetWordWrap(false)
     optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    -- Through the secure prompt: ReloadUI() from our own click is blocked on
+    -- this client (see AltStable.ShowReloadPrompt).
     optSkinReloadBtn:SetScript("OnClick", function()
-        if type(ReloadUI) == "function" then ReloadUI() end
+        if not AltStable.ShowReloadPrompt("Reload now to put on the new skin?") then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r type |cffffff00/reload|r "
+                .. "once the fight is over to put on the new skin.")
+        end
     end)
 
     AltStable._test.SkinReloadButton = function() return optSkinReloadBtn end
@@ -4211,14 +4024,19 @@ local FORGET_POPUP = "ALTSTABLE_CONFIRM_FORGET_CHARACTER"
 --     so the sheet covers it;
 --   * the camera showcase hides UIParent outright, and a StaticPopup is a CHILD
 --     of UIParent - no strata makes the child of a hidden parent draw.
+--
+-- Lifted when UIParent is ACTUALLY hidden, not only when the showcase owns the
+-- hiding: a player who pressed Alt+Z before a capture has no showcase running,
+-- and the capture's reload prompt would be shown and invisible.
 local function LiftPopup(dialog)
     if type(dialog) ~= "table" then return dialog end
     if dialog._altstablePrevStrata == nil and dialog.GetFrameStrata then
         dialog._altstablePrevStrata = dialog:GetFrameStrata()
         pcall(dialog.SetFrameStrata, dialog, "FULLSCREEN_DIALOG")
     end
-    if not dialog._altstableLifted
-        and AltStable.IsGameUIHidden and AltStable.IsGameUIHidden() then
+    local hidden = (AltStable.IsGameUIHidden and AltStable.IsGameUIHidden())
+        or (UIParent and UIParent.IsShown and not UIParent:IsShown())
+    if not dialog._altstableLifted and hidden and AltStable.LiftAboveHiddenUI then
         dialog._altstableLifted = true
         AltStable.LiftAboveHiddenUI(dialog, true)
     end
@@ -4229,17 +4047,116 @@ end
 -- buttons and the hide event. Whichever runs first wins and the rest no-op -
 -- the frame is shared with every other addon, so leaving it moved or raised
 -- would quietly change where their confirmations appear.
+--
+-- And RE-ENTRANT, which idempotent alone is not. Putting the dialog back under a
+-- hidden UIParent can fire its OnHide - which calls this again - while the
+-- outer call is still half way through. The flags are therefore taken and
+-- cleared BEFORE anything moves, so a nested call finds nothing left to undo
+-- and cannot restore a strata the outer call then overwrites.
 local function DropPopup(dialog)
     if type(dialog) ~= "table" then return end
-    if dialog._altstableLifted then
+    local lifted, strata = dialog._altstableLifted, dialog._altstablePrevStrata
+    dialog._altstableLifted, dialog._altstablePrevStrata = nil, nil
+    if lifted and AltStable.LiftAboveHiddenUI then
         AltStable.LiftAboveHiddenUI(dialog, false)
-        dialog._altstableLifted = nil
     end
-    if dialog._altstablePrevStrata then
-        pcall(dialog.SetFrameStrata, dialog, dialog._altstablePrevStrata)
-        dialog._altstablePrevStrata = nil
+    if strata then
+        pcall(dialog.SetFrameStrata, dialog, strata)
     end
 end
+
+AltStable.LiftPopup = LiftPopup
+AltStable.DropPopup = DropPopup
+
+------------------------------------------------------------
+-- "Reload now?" - with a button that is ALLOWED to reload
+------------------------------------------------------------
+-- ReloadUI() from AltStable's own code is blocked on this client, MEASURED on
+-- 1.60.1.70009 (#89):
+--
+--   [ADDON_ACTION_BLOCKED] AddOn 'AltStable' tried to call the protected
+--   function 'Reload()'.   ...  AltStable/Capture.lua: in function 'OnAccept'
+--
+-- Not every time - the same StaticPopup reloaded after `/alts portrait` and was
+-- blocked after the sheet's capture button, where the dialog had been lifted
+-- out of the hidden interface by our code - which is exactly why a plain call
+-- cannot be trusted. Typing /reload always works, because it is Blizzard's own
+-- code that runs. So the Reload button here is a SecureActionButton whose
+-- action is the macro "/reload": the click runs C_Macro.RunMacroText in the
+-- secure template (Blizzard_FrameXML/SecureTemplates.lua), the same path as
+-- typing it.
+--
+-- A frame of its OWN, not a StaticPopup and not a child of the sheet. A secure
+-- button is a protected frame, and hiding a protected frame's parent is blocked
+-- in combat: inside the sheet it would stop the sheet closing on Escape
+-- mid-fight. Parented to nothing, so a hidden interface (the showcase, Alt+Z)
+-- cannot hide it either, and dismissed when combat starts - PLAYER_REGEN_DISABLED
+-- arrives before the lockdown does.
+local reloadPrompt
+
+local function BuildReloadPrompt()
+    if reloadPrompt then return reloadPrompt end
+    local f = CreateFrame("Frame", "AltStableReloadPrompt", nil, "BackdropTemplate")
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetToplevel(true)
+    f:SetSize(320, 104)
+    f:SetPoint("TOP", 0, -180)
+    f:EnableMouse(true)
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
+        if AltStable.ApplyBackdrop then AltStable.ApplyBackdrop(f, 0.05, 0.05, 0.05, 0.96) end
+    end
+    f:Hide()
+
+    local text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    text:SetPoint("TOPLEFT", 14, -14)
+    text:SetPoint("TOPRIGHT", -14, -14)
+    text:SetJustifyH("CENTER")
+    if AltStable.SkinText then AltStable.SkinText(text) end
+    f.text = text
+
+    -- The secure one. Its attributes are set once, here, out of combat, and
+    -- nothing of ours is ever put on its OnClick: replacing the template's
+    -- handler would make the click ours again, and blocked.
+    local reload = CreateFrame("Button", "AltStableReloadPromptReload", f,
+        "SecureActionButtonTemplate, UIPanelButtonTemplate")
+    reload:SetSize(110, 22)
+    reload:SetPoint("BOTTOMRIGHT", f, "BOTTOM", -6, 14)
+    reload:SetText("Reload")
+    reload:SetAttribute("type", "macro")
+    reload:SetAttribute("macrotext", "/reload")
+    -- Down as well as up: with ActionButtonUseKeyDown on, a secure action
+    -- button acts on the press and never sees a click registered for Up only.
+    reload:RegisterForClicks("AnyUp", "AnyDown")
+    f.reload = reload
+
+    local later = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    later:SetSize(110, 22)
+    later:SetPoint("BOTTOMLEFT", f, "BOTTOM", 6, 14)
+    later:SetText("Later")
+    later:SetScript("OnClick", function() f:Hide() end)
+    f.later = later
+
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:SetScript("OnEvent", function(self) self:Hide() end)
+
+    reloadPrompt = f
+    return f
+end
+
+-- Offer a reload, saying why. Returns false when it cannot be offered now:
+-- in combat the prompt cannot be built or shown, and the caller's chat line
+-- has to do.
+function AltStable.ShowReloadPrompt(message)
+    if InCombatLockdown and InCombatLockdown() then return false end
+    local f = BuildReloadPrompt()
+    f.text:SetText(message or "Reload now?")
+    f:Show()
+    f:Raise()
+    return true
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.ReloadPrompt = function() return reloadPrompt end
 
 AltStable._test = AltStable._test or {}
 AltStable._test.LiftPopup = LiftPopup

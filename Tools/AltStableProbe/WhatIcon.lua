@@ -18,7 +18,7 @@
 -- frame, correctly identified and entirely beside the point.
 --
 -- So it waits, and you move the pointer onto the thing while it does. Same
--- reason the capture in Render.lua counts down before hiding the interface.
+-- reason the old auto-capture (Render.lua, removed in #89) counted down first.
 -- `now` is there for a keybind, which is the precise version of this: press it
 -- while already hovering and there is nothing to wait for.
 --

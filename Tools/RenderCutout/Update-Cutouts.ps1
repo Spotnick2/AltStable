@@ -11,7 +11,7 @@
     With -Watch it sits on the Screenshots folder and does all of that the
     moment a new pair appears, so the in-game flow is just:
 
-        log in on an alt  ->  /asrender  ->  done
+        log in on an alt  ->  /alts portrait  ->  Reload  ->  done
 
     The heavy per-pixel work stays in Python (Pillow): the same loop written in
     PowerShell takes minutes per image rather than seconds.
@@ -184,7 +184,13 @@ print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
         }
 
         $native = if ($nh) { ", nativeW = $nw, nativeH = $nh" } else { "" }
-        "    ['$slug'] = { file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
+        # Keyed by the character's GUID when the sidecar knows it, so two
+        # characters sharing a name never show each other's portrait. Older
+        # sidecars have none and keep the name key (docs/PORTRAIT-CONTRACT.md).
+        $guid = if ((Test-Path $side) -and $m.guid) { [string]$m.guid } else { $null }
+        $key  = if ($guid) { $guid } else { $slug }
+        $who  = if ($guid) { "guid = '$guid', " } else { "" }
+        "    ['$key'] = { $($who)file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
     }
 
     $lua = @"
@@ -216,7 +222,7 @@ if (-not $Watch) {
     return
 }
 
-Write-Host "Watching $Shots - capture with /asrender in game. Ctrl-C to stop." -ForegroundColor Cyan
+Write-Host "Watching $Shots - capture with /alts portrait in game. Ctrl-C to stop." -ForegroundColor Cyan
 Write-Host "A new pair converts once the game writes its record (on /reload or logout)." -ForegroundColor DarkGray
 
 # Deliberately NOT a "seen" list.
@@ -235,8 +241,14 @@ Write-Host "A new pair converts once the game writes its record (on /reload or l
 function Get-State {
     $shots = @(Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue |
                ForEach-Object { "$($_.Name):$($_.Length)" })
-    $stores = @(Get-ChildItem (Split-Path $Shots -Parent) -Recurse -Filter AltStableProbe.lua -ErrorAction SilentlyContinue |
-                ForEach-Object { "$($_.FullName):$($_.LastWriteTimeUtc.Ticks)" })
+    # AltStable.lua since capture shipped (#89); AltStableProbe.lua for older
+    # captures. Two -Filter walks of WTF\Account only: -Include over the whole
+    # client folder enumerates everything under it in managed code, every 2s.
+    $accounts = Join-Path (Split-Path $Shots -Parent) "WTF\Account"
+    $stores = @(foreach ($name in "AltStable.lua", "AltStableProbe.lua") {
+                    Get-ChildItem $accounts -Recurse -Filter $name -ErrorAction SilentlyContinue |
+                        ForEach-Object { "$($_.FullName):$($_.LastWriteTimeUtc.Ticks)" }
+                })
     return (($shots + $stores) -join "|")
 }
 
