@@ -11,7 +11,7 @@
     With -Watch it sits on the Screenshots folder and does all of that the
     moment a new pair appears, so the in-game flow is just:
 
-        log in on an alt  ->  /asrender  ->  done
+        log in on an alt  ->  /alts portrait  ->  Reload  ->  done
 
     The heavy per-pixel work stays in Python (Pillow): the same loop written in
     PowerShell takes minutes per image rather than seconds.
@@ -216,7 +216,7 @@ if (-not $Watch) {
     return
 }
 
-Write-Host "Watching $Shots - capture with /asrender in game. Ctrl-C to stop." -ForegroundColor Cyan
+Write-Host "Watching $Shots - capture with /alts portrait in game. Ctrl-C to stop." -ForegroundColor Cyan
 Write-Host "A new pair converts once the game writes its record (on /reload or logout)." -ForegroundColor DarkGray
 
 # Deliberately NOT a "seen" list.
@@ -235,7 +235,8 @@ Write-Host "A new pair converts once the game writes its record (on /reload or l
 function Get-State {
     $shots = @(Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue |
                ForEach-Object { "$($_.Name):$($_.Length)" })
-    $stores = @(Get-ChildItem (Split-Path $Shots -Parent) -Recurse -Filter AltStableProbe.lua -ErrorAction SilentlyContinue |
+    # AltStable.lua since capture shipped (#89); AltStableProbe.lua for older captures.
+    $stores = @(Get-ChildItem (Split-Path $Shots -Parent) -Recurse -Include AltStable.lua, AltStableProbe.lua -ErrorAction SilentlyContinue |
                 ForEach-Object { "$($_.FullName):$($_.LastWriteTimeUtc.Ticks)" })
     return (($shots + $stores) -join "|")
 }

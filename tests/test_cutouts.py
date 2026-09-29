@@ -177,8 +177,26 @@ with tempfile.TemporaryDirectory() as tmp:
 # and the converter must say WHY - "no screenshots for X" points at the wrong
 # thing when the file is sitting right there, just one file where two are needed.
 
+# In the shipped layout (#89): AltStable.lua, where the capture table follows
+# AltStableDB - large, nested, and read by the same brace scanner.
 STORE_COLLIDED = '''
-AltStableProbeDB = {
+AltStableDB = {
+    ["Player-1-0001"] = {
+        ["name"] = "Some Alt",
+        ["gear"] = { { ["id"] = 1 }, { ["id"] = 2 } },
+        -- A decoy with the contract's key name: the scanner must find the
+        -- array under AltStablePortraits, not the first one in the file.
+        ["renders"] = {
+            { ["name"] = "Some Alt", ["guid"] = "gx", ["shot"] = 1, ["stamp"] = "2020-01-01 00:00:00" },
+            { ["name"] = "Some Alt", ["guid"] = "gx", ["shot"] = 2, ["stamp"] = "2020-01-01 00:00:02" },
+        },
+    },
+}
+AltStableConfig = {
+    ["rosterView"] = "scene",
+}
+AltStablePortraits = {
+    ["version"] = 1,
     ["renders"] = {
         { ["name"] = "Split Second", ["guid"] = "g9", ["shot"] = 1,
           ["stamp"] = "2026-09-26 02:14:44", ["screenH"] = 2160 },
@@ -195,11 +213,13 @@ AltStableProbeDB = {
 with tempfile.TemporaryDirectory() as tmp:
     wtf = os.path.join(tmp, "WTF", "Account", "1#1", "SavedVariables")
     os.makedirs(wtf)
-    with open(os.path.join(wtf, "AltStableProbe.lua"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(wtf, "AltStable.lua"), "w", encoding="utf-8") as fh:
         fh.write(STORE_COLLIDED)
 
     caps = {c[0]: c for c in mc.captures(wtf=os.path.join(tmp, "WTF"))}
-    eq("both captures are recorded as pairs", len(caps), 2)
+    eq("both captures are recorded as pairs, from AltStable.lua", len(caps), 2)
+    check("  and nothing from the character records beside them",
+          "Some Alt" not in caps, sorted(caps))
 
     collided = caps["Split Second"]
     eq("  and the collided one has identical stamps", collided[1], collided[2])

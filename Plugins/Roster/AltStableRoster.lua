@@ -4,10 +4,10 @@
 -- A character-select style lineup: every alt side by side on one backdrop,
 -- click to select, hover for detail. The TBC original drew PNG "cutouts"
 -- scraped from the Battle.net armory by a .NET tool. Forever has no armory, so
--- the images now come from the client itself: a capture photographs the LIVE
--- character on a flat stage, an offline matte turns the pair into a transparent
--- TGA, and CutoutManifest.lua lists what exists. Neither the capture nor the
--- matte is in the download yet (#89).
+-- the images now come from the client itself: /alts portrait (Capture.lua)
+-- photographs the LIVE character on a flat stage, a converter outside the game
+-- mattes the pair into a transparent TGA, and CutoutManifest.lua lists what
+-- exists. The capture ships; the converter does not, yet (#89).
 --
 -- WHY NOT LIVE MODELS. Measured on 1.60.1.70009 (docs/forever-api-notes.md):
 -- a character who is not logged in renders as correct GEOMETRY with NO TEXTURE.
@@ -180,14 +180,29 @@ end
 -- An entry only counts when it can actually be DRAWN. The renderer requires
 -- entry.file, so a counter asking a weaker question would hide the "N of M have
 -- a portrait" hint at exactly the moment every card is a fallback.
+local function Drawable(entry)
+    return type(entry) == "table" and type(entry.file) == "string" and entry.file ~= ""
+end
+
+-- By GUID first, then by name (#89).
+--
+-- A name is not an identity: two characters on different realms or accounts
+-- can share one, and punctuation or accents can fold two different names into
+-- one slug. A manifest keyed by name alone would hang one character's portrait
+-- on both. So an entry is looked up by the character's GUID, and the name key
+-- is the legacy fallback for manifests written before entries carried one - and
+-- even then an entry that NAMES a different GUID is refused rather than shown
+-- on the wrong character.
 local function CutoutFor(char)
     local manifest = AltStableCutoutManifest
     if type(manifest) ~= "table" or type(char) ~= "table" then return nil end
+    if type(char.guid) == "string" and Drawable(manifest[char.guid]) then
+        return manifest[char.guid]
+    end
     local slug = Slug(char.name)
     local entry = slug and manifest[slug] or nil
-    if type(entry) ~= "table" or type(entry.file) ~= "string" or entry.file == "" then
-        return nil
-    end
+    if not Drawable(entry) then return nil end
+    if entry.guid ~= nil and entry.guid ~= char.guid then return nil end
     return entry
 end
 
@@ -2208,11 +2223,8 @@ function Roster.Refresh()
     -- Say where the pictures come from, but only while some are missing: a
     -- permanent instruction on a finished lineup is clutter.
     --
-    -- AND ONLY NAME A COMMAND THE PLAYER HAS. `/asrender` is registered in
-    -- AltStableProbe, which is a development tool: `.pkgmeta` excludes all of
-    -- Tools/, so it is not in the download. PortraitSourceText asks whether
-    -- the probe is loaded, and is the same phrase the scene and the sheet's
-    -- capture button use, so the three cannot disagree.
+    -- PortraitSourceText is the same phrase the scene uses, so the two views
+    -- cannot give different instructions (#89).
     if withArt < #chars then
         hintText:SetText(("%d of %d characters have a portrait - %s")
             :format(withArt, #chars, AltStable.PortraitSourceText()))

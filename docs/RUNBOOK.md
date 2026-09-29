@@ -45,11 +45,11 @@ number>`, which named the cause outright).
 `pwsh Tools/RenderCutout/Update-Cutouts.ps1` converts staged captures, recovers
 what it can, and rebuilds the manifest. It deletes the screenshots it consumed,
 so anything it cannot work out from a sidecar is gone for good and the only
-remedy is `/asrender` on that character again. Three cases it reports:
+remedy is `/alts portrait` on that character again. Three cases it reports:
 
 - **"sidecar predates unit normalisation"** - the cutout was filed before
   heights were recorded as a fraction of screen height. Usually recovered
-  automatically from the probe store's `screenH`; if the store no longer has
+  automatically from the capture store's `screenH`; if the store no longer has
   that character's capture, re-capture.
 - **"cutout is full-screen height"** - the matte caught the whole window rather
   than the character, normally because a tooltip or another frame was on screen.
@@ -146,7 +146,7 @@ Deploy is a file copy. There is no build step, and nothing in the repo changes.
 _classic_beta_\WTF\Account\<id>\SavedVariables\AltStable.lua            account-wide
 _classic_beta_\WTF\Account\<id>\<Realm>\<Character>\SavedVariables\...  per-character
 _classic_beta_\WTF\SavedVariables\                                      machine scope (Blizzard only)
-_classic_beta_\Screenshots\                                             /alts update-reference output
+_classic_beta_\Screenshots\                                             /alts portrait's screenshot pairs
 _classic_beta_\Logs\                                                    client logs
 ```
 
@@ -285,7 +285,7 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts export` | TSV of every character, for the spreadsheet |
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |
 | `/alts config` | Options panel |
-| `/alts update-reference` | Screenshot the character for the render pipeline |
+| `/alts portrait [preview \| facing <deg> \| cancel]` | Capture this character for the Roster lineup |
 | `/asprobe`, `/asprobe bank`, `/asprobe whisper <name>` | The dev probe (needs `deploy-probe.ps1`) |
 | `/apidump` | Dump the client's API surface to SavedVariables |
 
@@ -316,7 +316,7 @@ What to look for in the zip (re-verified on `v0.2.0-beta`):
   against `Glass.SIZES` on disk; the zip is the only place to check they shipped.
 
 **And read the release notes back as a player.** `Tools/` is excluded, so
-anything registered in there - `/asrender`, `/asicon`, `/asprobe` - does not
+anything registered in there - `/asicon`, `/asprobe`, `/asmodel` - does not
 exist in what people download. Notes that name one, or UI that points at one,
 are telling players to type something the client answers with "Type /help"
 (found this way on v0.2.0-beta, after the tag was pushed).
@@ -337,27 +337,35 @@ pictures taken earlier, of the **live** character, by this machine. No armory is
 involved and none is needed.
 
 ```
-in game:   /asrender                  (or let it happen at login when gear changed)
+in game:   /alts portrait    (or the camera button in the sheet's title bar)
+           -> "Reload now?"  Reload          (the record only reaches disk on a reload)
 outside:   pwsh Tools/RenderCutout/Update-Cutouts.ps1
            pwsh Tools/RenderCutout/Update-Cutouts.ps1 -Watch     # and forget about it
 ```
 
-**How it works.** The addon poses the live character on a flat stage and takes
-**two** screenshots of the identical frozen pose, one on black and one on white.
-From that pair the converter recovers exact alpha — `α = 1 − (white − black)` —
-which a chroma key cannot do: hair and blended edges come out right with no
-colour fringing. It then trims to content, supersamples down (the client emits
-**no partial alpha**, so edges are aliased until they are resampled), pads to a
-power of two, and writes the manifest.
+What the addon records and what the converter writes back is specified in
+`docs/PORTRAIT-CONTRACT.md` — read it before changing either side.
+
+**How it works.** The addon (`Capture.lua`) poses the live character on a flat
+stage and takes **two** screenshots of the identical frozen pose, one on black
+and one on white. From that pair the converter recovers exact alpha — `α = 1 −
+(white − black)` — which a chroma key cannot do: hair and blended edges come out
+right with no colour fringing. It then trims to content, supersamples down (the
+client emits **no partial alpha**, so edges are aliased until they are
+resampled), pads to a power of two, and writes the manifest.
 
 **Where things end up.**
 
 ```
+WTF\Account\<id>\SavedVariables\AltStable.lua          AltStablePortraits, the capture records
 Screenshots\WoWScrnShot_*.tga                       staged pairs, deleted once converted
 Tools\RenderCutout\out\<character>.tga              the build output (gitignored)
 Interface\AddOns\AltStableCutouts\Cutouts\*.tga     what the game loads
 Interface\AddOns\AltStableCutouts\CutoutManifest.lua
 ```
+
+Captures taken before #89 live in the probe's `AltStableProbe.lua`; the
+converter still reads those too.
 
 `AltStableCutouts` is a **generated addon folder**, not part of the repo. It has
 to be separate: a Lua file dropped into `AltStable/` is never loaded unless the
@@ -366,38 +374,39 @@ overwrite it on the next deploy anyway. Delete the whole folder to start over.
 
 ### Things that will catch you
 
+- **The converter says the client has not written its records.** The screenshots
+  hit the disk at once; the record of whose they are only on a reload or logout.
+  Press Reload on the prompt the capture offers, or `/reload`.
 - **A new portrait shows "0 of N" after `/reload`.** The client only discovers a
   new ADDON FOLDER at startup. The first time `AltStableCutouts` is created you
   need a full exit and relaunch; after that `/reload` is enough, because only the
   files inside it change.
 - **A cutout comes out nearly square.** Something other than the character was on
   screen and got matted in — a tooltip draws above the stage. The converter says
-  so; re-capture that one. The stage hides `UIParent` now, so this should be
-  historical.
-- **Screenshots must be TGA.** The addon switches the CVar for the capture and
-  restores it. JPEG makes the matte read compression noise as coverage.
+  so; re-capture that one.
+- **Screenshots must be TGA.** The capture switches the CVar and restores it, and
+  refuses to shoot if the switch does not take: JPEG makes the matte read
+  compression noise as coverage.
 - **Nothing is deleted that was not matched** to a capture the addon recorded, so
   screenshots taken by hand are never touched. The flip side: an unpaired shot
   lingers, and has to go by hand.
-- **A spoiled capture still counts as done.** The addon records that a LOOK was
-  photographed; only the converter can see whether the picture was any good. Use
-  `/asrender forget` to put that character back in the automatic queue.
+- **Not in combat, a dungeon, while dead or moving.** The capture refuses and
+  says why; combat, death or Alt+Z mid-capture abandons it and removes its
+  records.
 
 ### The commands
 
 | Command | What it does |
 |---|---|
-| `/asrender` | Capture now |
-| `/asrender preview` | Show the stage without shooting, to judge the framing |
-| `/asrender facing <deg>` | Turn the character; 0 faces you straight on |
-| `/asrender cancel` | Stop a capture that is counting down |
-| `/asrender auto` | Turn automatic capture off or back on |
-| `/asrender status` | What it thinks your look is, and whether auto is on |
-| `/asrender forget` | Re-capture this character at the next login (`forget all` for everyone) |
+| `/alts portrait` | Capture now (the title-bar button does the same) |
+| `/alts portrait preview` | Show the stage without shooting, to judge the framing; click to close |
+| `/alts portrait facing <deg>` | Turn the character; 0 faces you straight on (default 20) |
+| `/alts portrait cancel` | Stop a capture in flight |
 
-Automatic capture fires at login when the equipped-item fingerprint changed, never
-in combat, and announces itself the first time. An independent watchdog restores
-the interface after 12 seconds whatever happens, because the capture hides it.
+Automatic capture — noticing a changed look at login and offering a countdown —
+lived in the development probe and is not part of the shipped capture yet; it is
+a follow-up issue ([#124](https://github.com/Spotnick2/AltStable/issues/124)). An independent watchdog restores the interface after 12
+seconds whatever happens, because the capture hides it.
 
 ---
 

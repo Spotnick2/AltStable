@@ -85,6 +85,7 @@ function WoW.reset()
     -- sees strangers from three blocks ago.
     if UIParent then UIParent._children = {} end
     WoW.popups = {}
+    WoW.reloaded = 0
     WoW.cvars = {}
     WoW.camera = { zoom = 4, view = 1, savedViews = {} }
     WoW.now = 1700000000
@@ -901,6 +902,11 @@ end
 
 WoW.screenshots = 0
 function Screenshot() WoW.screenshots = WoW.screenshots + 1 end
+
+-- ReloadUI counts rather than reloads: a test asserts that the capture's reload
+-- prompt reloads when accepted, and nothing else in a stub run can.
+WoW.reloaded = 0
+function ReloadUI() WoW.reloaded = WoW.reloaded + 1 end
 
 -- What the player is wearing, by slot. The probe fingerprints this to decide
 -- whether a portrait is stale, so a capture that runs to completion reaches it.

@@ -1,6 +1,6 @@
 """make-cutout.py — turn two staged screenshots into one transparent cutout.
 
-The addon (`/asrender`) photographs the live character twice in an identical
+The addon (`/alts portrait`) photographs the live character twice in an identical
 frozen pose: once on a BLACK backdrop, once on WHITE. That pair is enough to
 recover exact alpha, which a chroma key cannot do:
 
@@ -56,7 +56,7 @@ WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF\Account"
 
 
 def latest_capture(wtf=WTF):
-    """Who the addon photographed last, from AltStableProbe's SavedVariables.
+    """Who the addon photographed last, from its capture records.
 
     Beats a hand-typed name: the file is named after the character it actually
     shows, so a capture cannot be filed under the wrong alt. Returns None when
@@ -67,8 +67,15 @@ def latest_capture(wtf=WTF):
     return caps[-1][0] if caps else None
 
 
+# Where the capture records live. AltStable.lua holds AltStablePortraits since
+# capture shipped with the addon (#89, docs/PORTRAIT-CONTRACT.md); the probe's
+# AltStableProbe.lua is still read for the captures taken before that, which
+# the height recovery below needs.
+STORE_FILES = ("AltStable.lua", "AltStableProbe.lua")
+
+
 def read_stores(wtf=WTF):
-    """EVERY account-wide AltStableProbe.lua, as text.
+    """EVERY account-wide capture store, as text.
 
     All of them, not the newest: a player with two accounts captures from both,
     and every client writes screenshots into the SAME folder. Read one store and
@@ -77,14 +84,13 @@ def read_stores(wtf=WTF):
     portrait. That is exactly how it presented - the two that failed were both
     from account 2.
 
-    Per-character SavedVariables share the filename AltStableProbe.lua and are
-    often newer than the account file, so the filter is on CONTENT: only the
-    account store holds the renders array.
+    Per-character SavedVariables can share an account file's name and are often
+    newer, so the filter is on CONTENT: only a store holds the renders array.
     """
     out = []
     for root, _dirs, files in os.walk(wtf):
         for f in files:
-            if f != "AltStableProbe.lua":
+            if f not in STORE_FILES:
                 continue
             full = os.path.join(root, f)
             try:
@@ -101,8 +107,17 @@ def slug(name):
 
 
 def _entries(text):
-    """Every { ... } block inside the renders array, as dicts."""
-    start = text.find('["renders"]')
+    """Every { ... } block inside the renders array, as dicts.
+
+    In AltStable.lua the capture table shares the file with AltStableDB, which
+    is large; the search starts at AltStablePortraits when it is there, so the
+    array found is the one the contract names and not a key of the same name
+    somewhere in the character records.
+    """
+    # The top-level ASSIGNMENT, at the start of a line - not the first mention
+    # of the name, which a comment or a string can make anywhere.
+    m = re.search(r"^AltStablePortraits\s*=\s*\{", text, re.M)
+    start = text.find('["renders"]', m.start() if m else 0)
     if start < 0:
         return []
     out, i, n = [], text.find("{", start) + 1, len(text)
@@ -130,7 +145,7 @@ def store_is_stale(caps, times, slack=60):
     Returns (newest screenshot, newest record) when the screenshots on disk run
     ahead of the store, otherwise None.
 
-    AltStableProbeDB is only written on logout or /reload, but the client writes
+    The capture store is only written on logout or /reload, but the client writes
     a screenshot the instant it is taken. So the normal state right after a
     capture is: both images on disk, no record of them anywhere. The converter
     then works from the PREVIOUS records and reports something true but
@@ -523,7 +538,7 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT):
     # But raw screenshot pixels are NOT comparable between captures, and this
     # roster already proves it: the probe store here holds captures at screenH
     # 1200 and at screenH 2160. The render stage is 420x760 *UI units*
-    # (Tools/AltStableProbe/Render.lua), so the same character comes out nearly
+    # (Capture.lua), so the same character comes out nearly
     # twice as tall in the 2160 shots. Left raw, the scene would draw those
     # characters twice the height of the others and call it a race difference.
     #
@@ -643,7 +658,7 @@ def run_all(args):
         print("  |  Your client has not written its capture records yet.")
         print("  |  Newest screenshot: %s" % shot.strftime("%Y-%m-%d %H:%M:%S"))
         print("  |  Newest record:     %s" % (rec.strftime("%Y-%m-%d %H:%M:%S") if rec else "none at all"))
-        print("  |  AltStableProbeDB is only saved on /reload or logout, so a capture")
+        print("  |  The capture store is only saved on /reload or logout, so a capture")
         print("  |  taken just now is two images with nothing describing them.")
         print("  |  Run /reload in game, then run this again.")
         print("")

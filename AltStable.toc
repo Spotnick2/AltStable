@@ -4,7 +4,7 @@
 ## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: @project-version@
-## SavedVariables: AltStableDB AltStableConfig
+## SavedVariables: AltStableDB AltStableConfig AltStablePortraits
 
 Libs\LibStub\LibStub.lua
 Libs\LibDeflate\LibDeflate.lua
@@ -22,4 +22,5 @@ Columns.lua
 RowRenderer.lua
 CharacterMenu.lua
 SheetUI.lua
+Capture.lua
 Export.lua

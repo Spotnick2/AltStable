@@ -2818,58 +2818,13 @@ do
 end
 
 ------------------------------------------------------------
--- The hint names a command the player actually has
+-- Both hints name the command that ships (#89)
 ------------------------------------------------------------
--- `/asrender` is registered in AltStableProbe, a development tool that
--- `.pkgmeta` excludes from the package. So for everyone who installed this from
--- CurseForge - which is everyone who did not clone the repo - the scene view
--- was telling them to type a command the client answers with "Type /help".
-do
-    local held = _G.AltStableProbe
-    -- The GRID's hint. The scene view has its own line about favourites.
-    AltStableConfig.rosterView = "grid"
-
-    _G.AltStableProbe = nil
-    pcall(AltStable.RosterPlugin.Refresh)
-    local without = T.HintText() or ""
-    check("with no capture tool the hint does not name the command",
-          not without:find("asrender", 1, true), without)
-    check("  and says where portraits come from instead",
-          without:find("capture tool", 1, true) ~= nil, without)
-
-    _G.AltStableProbe = { CapturePortrait = function() end }
-    pcall(AltStable.RosterPlugin.Refresh)
-    local with = T.HintText() or ""
-    check("with the tool installed it names the command",
-          with:find("asrender", 1, true) ~= nil, with)
-
-    -- A probe that is THERE but cannot capture is the same to the player as no
-    -- probe at all: an older build, or the global existing for another reason.
-    -- Testing the table rather than the function sends them to a command that
-    -- answers nothing.
-    _G.AltStableProbe = {}
-    pcall(AltStable.RosterPlugin.Refresh)
-    local stale = T.HintText() or ""
-    check("a probe that cannot capture does not get the command either",
-          not stale:find("asrender", 1, true), stale)
-
-    -- Both still say how many are missing, which is the hint's actual job.
-    check("both forms still count the portraits",
-          without:find("of", 1, true) and with:find("of", 1, true))
-
-    _G.AltStableProbe = held
-    AltStableConfig.rosterView = nil
-    pcall(AltStable.RosterPlugin.Refresh)
-end
-
-------------------------------------------------------------
--- The scene with nobody in it says why (#89)
-------------------------------------------------------------
--- The scene seats only characters with a portrait, and portraits are not made
--- by anything in the download. So for everyone who installed from CurseForge
--- the scene was an empty campfire captioned "showing 0 of 12 - favourite the
--- ones you want here": advice that cannot work, since a favourite with no
--- picture is not seated either.
+-- Capture ships with the addon now, as /alts portrait. The hints used to depend
+-- on whether the development probe happened to be loaded - naming /asrender
+-- when it was, and a tool "not part of the download" when it was not - and the
+-- two views did not even agree on that. Now there is one command, for
+-- everyone, and one phrase for it (AltStable.PortraitSourceText).
 do
     local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
     AltStableDB = {}
@@ -2884,35 +2839,33 @@ do
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
-
     AltStableConfig.favouriteCharacters = nil
-    AltStableConfig.rosterView = "scene"
-    T.Refresh()
-    local empty = T.HintText() or ""
-    check("a scene with no portraits says there are none",
-          empty:find("No portraits yet", 1, true) ~= nil, empty)
-    check("  and does not offer favouriting as the fix",
-          empty:find("favourite", 1, true) == nil, empty)
-    check("  and points at the grid, which shows them as cards",
-          empty:find("grid", 1, true) ~= nil, empty)
-    check("  and without the capture tool does not name its command",
-          empty:find("asrender", 1, true) == nil, empty)
 
-    -- With the probe loaded the scene gives the same instruction the grid
-    -- does. They used to disagree: the grid named /asrender and the scene sent
-    -- the one person who CAN capture to the project page.
     local heldProbe = _G.AltStableProbe
-    _G.AltStableProbe = { CapturePortrait = function() end }
-    T.Refresh()
-    local withTool = T.HintText() or ""
-    check("with the capture tool the empty scene names its command",
-          withTool:find("asrender", 1, true) ~= nil, withTool)
-    AltStableConfig.rosterView = "grid"
-    T.Refresh()
-    local gridWithTool = T.HintText() or ""
-    check("  as the grid does",
-          gridWithTool:find("asrender", 1, true) ~= nil, gridWithTool)
-    AltStableConfig.rosterView = "scene"
+    for _, probe in ipairs({ false, true }) do
+        _G.AltStableProbe = probe and { CapturePortrait = function() end } or nil
+        local label = probe and " (probe loaded)" or ""
+
+        AltStableConfig.rosterView = "grid"
+        T.Refresh()
+        local grid = T.HintText() or ""
+        check("the grid hint names /alts portrait" .. label,
+              grid:find("/alts portrait", 1, true) ~= nil, grid)
+        check("  and never the dev-only /asrender" .. label,
+              grid:find("asrender", 1, true) == nil, grid)
+        check("  and still counts the portraits" .. label,
+              grid:find("0 of 3", 1, true) ~= nil, grid)
+
+        AltStableConfig.rosterView = "scene"
+        T.Refresh()
+        local scene = T.HintText() or ""
+        check("an empty scene says there are no portraits" .. label,
+              scene:find("No portraits yet", 1, true) ~= nil, scene)
+        check("  names the same command" .. label,
+              scene:find("/alts portrait", 1, true) ~= nil, scene)
+        check("  and does not offer favouriting as the fix" .. label,
+              scene:find("favourite", 1, true) == nil, scene)
+    end
     _G.AltStableProbe = heldProbe
 
     -- One portrait, and the ordinary count comes back.
@@ -2938,6 +2891,48 @@ do
     AltStableConfig.rosterView = nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
     pcall(AltStable.RosterPlugin.Refresh)
+end
+
+------------------------------------------------------------
+-- A portrait belongs to a GUID, not to a name (#89)
+------------------------------------------------------------
+-- Two characters can share a name - different realms, different accounts - and
+-- punctuation or accents fold different names into one slug. A manifest keyed
+-- by name alone hangs one character's portrait on both. The name key stays as
+-- the fallback for manifests written before entries carried a GUID.
+do
+    local saved = AltStableCutoutManifest
+    local mine  = { guid = "Player-1-AAAA", name = "Twin Name" }
+    local other = { guid = "Player-2-BBBB", name = "Twin Name" }
+    local art = function(extra)
+        local e = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+        for k, v in pairs(extra or {}) do e[k] = v end
+        return e
+    end
+
+    AltStableCutoutManifest = { ["Player-1-AAAA"] = art({ guid = "Player-1-AAAA" }) }
+    check("a portrait keyed by GUID is found", T.CutoutFor(mine) ~= nil)
+    eq("  and is not found for a namesake", T.CutoutFor(other), nil)
+
+    AltStableCutoutManifest = { ["twin-name"] = art() }
+    check("a legacy name-keyed portrait is still found", T.CutoutFor(mine) ~= nil)
+
+    AltStableCutoutManifest = { ["twin-name"] = art({ guid = "Player-1-AAAA" }) }
+    check("a name-keyed entry that names its GUID is found for that character",
+          T.CutoutFor(mine) ~= nil)
+    eq("  and refused for anyone else with that name", T.CutoutFor(other), nil)
+
+    -- The GUID entry wins over a name entry that would also match.
+    local byGuid = art({ guid = "Player-2-BBBB", file = "other.tga" })
+    AltStableCutoutManifest = { ["twin-name"] = art(), ["Player-2-BBBB"] = byGuid }
+    eq("the GUID entry is preferred to the name entry", T.CutoutFor(other), byGuid)
+
+    -- And the GUID entry must be drawable too, or it falls back to the name.
+    AltStableCutoutManifest = { ["twin-name"] = art(), ["Player-2-BBBB"] = { guid = "Player-2-BBBB" } }
+    check("an undrawable GUID entry falls back to the name entry",
+          T.CutoutFor(other) ~= nil and T.CutoutFor(other).file == "x.tga")
+
+    AltStableCutoutManifest = saved
 end
 
 print(("test_roster: %d passed, %d failed"):format(passed, failed))

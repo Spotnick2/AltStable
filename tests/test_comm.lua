@@ -1600,7 +1600,9 @@ local retiredCount = 0
 for _ in pairs(T.RETIRED_FIELDS) do retiredCount = retiredCount + 1 end
 check(retiredCount >= 8, "the retired list is exposed and populated")
 for _, k in ipairs({ "stat_haste", "stat_resilience",
-                     "prof_Jewelcrafting", "profmax_Jewelcrafting", "spec", "specIcon" }) do
+                     "prof_Jewelcrafting", "profmax_Jewelcrafting", "spec", "specIcon",
+                     -- the armory pipeline's screenshot marker; nothing reads it (#89)
+                     "refshot_ts" }) do
     check(T.RETIRED_FIELDS[k], k .. " is retired")
 end
 
