@@ -1577,3 +1577,21 @@ are separate frames and are not covered by anything done to `GameTooltip`.
 Related, and already recorded above: `GameTooltip:HookScript("OnTooltipSetItem",
 ...)` is gone here — `TooltipDataProcessor.AddTooltipPostCall` is the
 replacement. `OnShow`/`OnHide` are ordinary frame scripts and still work.
+
+## UIPanelScrollFrameTemplate works here, measured
+
+The probe avoids it on purpose — "that template still exists on Mainline but its
+scrollbar internals changed in 10.1, and this is the one piece of UI that has to
+work on an unfamiliar client" — and that caution was never tested against the
+addon, which uses it in three places: the Options panel, the export window and
+`AltStableBodyScroll`, the main table.
+
+**Measured on 1.60.1.70009 with `scriptErrors` on**: opening the sheet, switching
+sections and scrolling the table produces no error from any of them. So the
+template is fine for this usage and the probe's caution does not need porting.
+
+What prompted the check is worth keeping too: another addon was erroring in
+`Blizzard_SharedXML/SecureScrollTemplates.lua:76`, inside
+`ScrollFrame_OnScrollRangeChanged` — a handler our own scroll frames also run.
+Somebody else's error is a reasonable prompt to check your own use of the same
+template; it is not evidence that yours is broken.

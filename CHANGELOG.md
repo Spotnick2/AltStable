@@ -14,6 +14,11 @@
 - **Our own tooltips wear the glass**, and only ours: the game's tooltips and
   every other addon's are left exactly as they were
   ([#97](https://github.com/Spotnick2/AltStable/issues/97)).
+- **The world stops reacting to your cursor through the window.** Moving the
+  mouse across the sheet used to keep firing unit tooltips for whatever happened
+  to be standing behind it, which in a city is constant. The window takes the
+  mouse now, so the world responds where the window is not — and nowhere it is
+  ([#74](https://github.com/Spotnick2/AltStable/issues/74)).
 
 ## v0.2.1-beta
 
