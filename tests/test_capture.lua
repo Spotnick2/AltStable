@@ -57,6 +57,11 @@ check("  and nothing was capturing to abandon", not T.capturing())
 WoW.inCombat = false
 eq("an install that never captured writes no store at all", AltStablePortraits, nil)
 
+-- The reload prompt lives in SheetUI (a secure button; pinned in test_sheetui).
+-- Here it is a spy: the question is only WHETHER the capture offers it.
+prompts = {}
+AltStable.ShowReloadPrompt = function(msg) prompts[#prompts + 1] = msg; return true end
+
 local function renders() return (AltStablePortraits and AltStablePortraits.renders) or {} end
 local function resetCapture()
     -- Module state too: a block that leaves a capture RUNNING makes the next
@@ -71,6 +76,7 @@ local function resetCapture()
     WoW.chatOut = {}
     WoW.popups = {}
     WoW.reloaded = 0
+    prompts = {}
     WoW.sounds = {}
     -- The client always has a format set; JPEG is its default. An empty
     -- stub CVar would make "put the player's format back" untestable.
@@ -173,21 +179,14 @@ eq("  screen height in physical pixels", r1.screenH, WoW.screenH)
 eq("  the UI scale", type(r1.uiScale), "number")
 
 -- The flush gap: SavedVariables reach disk on reload or logout only.
-local popup = WoW.popups[#WoW.popups]
-eq("the capture offers a reload", popup and popup.which, T.RELOAD_POPUP)
+eq("the capture offers a reload", #prompts, 1)
+check("  saying why", tostring(prompts[1]):find("converter", 1, true) ~= nil, tostring(prompts[1]))
 local told = false
 for _, line in ipairs(WoW.chatOut) do
     if tostring(line):find("reload", 1, true) then told = true end
 end
 check("  and says so in chat too", told)
-local def = StaticPopupDialogs[T.RELOAD_POPUP]
-check("  whose Reload button reloads", def ~= nil)
-if def then
-    def.OnAccept(popup.dialog)
-    eq("  once", WoW.reloaded, 1)
-    def.OnCancel(popup.dialog)
-    eq("  and whose Later does not", WoW.reloaded, 1)
-end
+eq("  and reloads nothing by itself - the click does that", WoW.reloaded, 0)
 eq("the screenshot format is put back", WoW.cvars.screenshotFormat, "jpeg")
 
 ------------------------------------------------------------
@@ -233,7 +232,7 @@ runChain()
 eq("  and the abandoned chain takes no pictures", WoW.screenshots, shotsBefore)
 eq("  and makes no shutter sound", #WoW.sounds, 0)
 eq("  and writes no records", #renders(), 0)
-eq("  and offers no reload", #WoW.popups, 0)
+eq("  and offers no reload", #prompts, 0)
 WoW.inCombat = false
 
 ------------------------------------------------------------
@@ -290,7 +289,7 @@ for _, case in ipairs({
     eq("[" .. case.label .. "] abandoning takes back what it wrote", #renders(), 2)
     eq("  and keeps the earlier capture intact", renders()[1] and renders()[1].name, "Old Alt")
     eq("  including its second shot", renders()[2] and renders()[2].shot, 2)
-    eq("  and offers no reload for a capture that was thrown away", #WoW.popups, 0)
+    eq("  and offers no reload for a capture that was thrown away", #prompts, 0)
 end
 
 ------------------------------------------------------------

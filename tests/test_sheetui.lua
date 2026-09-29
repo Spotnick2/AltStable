@@ -2052,58 +2052,114 @@ do
 end
 
 ------------------------------------------------------------
--- The capture's reload prompt is visible, and put back cleanly (#89)
+-- A popup lifted out of a hidden interface, and put back cleanly (#89 review)
 ------------------------------------------------------------
--- A StaticPopup is a child of UIParent. After a capture the interface can still
--- be hidden - by the sheet's showcase, or by a player who pressed Alt+Z first -
--- and a popup under a hidden parent is shown and invisible. LiftPopup takes it
--- out from under UIParent; DropPopup puts it back when it closes.
+-- A StaticPopup is a child of UIParent. With the interface hidden - by the
+-- showcase, or by a player who pressed Alt+Z - a popup under it is shown and
+-- invisible. LiftPopup takes it out; DropPopup puts it back when it closes.
+-- Driven with the Forget confirmation, the popup that uses them.
 do
-    local P = AltStable._test.portrait
-    local def = StaticPopupDialogs[P.RELOAD_POPUP]
-    check("the reload prompt is defined", def ~= nil)
+    local which = "ALTSTABLE_CONFIRM_FORGET_CHARACTER"
+    local def = StaticPopupDialogs[which]
+    check("the forget confirmation is defined", def ~= nil)
+    local Lift, Drop = AltStable._test.LiftPopup, AltStable._test.DropPopup
 
     -- Alt+Z, no showcase: the showcase does not own the hiding, and the lift
     -- used to ask only the showcase.
     WoW.popups = {}
     SetUIVisibility(false)
-    local dialog = AltStable.LiftPopup(StaticPopup_Show(P.RELOAD_POPUP))
-    check("with the interface hidden by Alt+Z the prompt is lifted out of it",
+    local dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
+    check("with the interface hidden by Alt+Z a popup is lifted out of it",
           dialog and dialog:GetParent() ~= UIParent)
     check("  and can actually be seen", dialog and dialog:IsVisible())
-
-    -- Later, then the hide the client fires after it.
-    def.OnCancel(dialog)
-    def.OnHide(dialog)
-    eq("Later puts it back under UIParent", dialog:GetParent(), UIParent)
+    Drop(dialog)
+    eq("dropping puts it back under UIParent", dialog:GetParent(), UIParent)
     eq("  at the strata it had", dialog:GetFrameStrata(), "DIALOG")
     eq("  with nothing left marked as lifted", dialog._altstableLifted, nil)
 
     -- RE-ENTRANT: putting the dialog back under a hidden UIParent can fire its
-    -- OnHide - another DropPopup - half way through the first. Modelled here by
-    -- having the reparent itself call OnHide, as the client's hide would.
-    dialog = AltStable.LiftPopup(StaticPopup_Show(P.RELOAD_POPUP))
+    -- OnHide - another DropPopup - half way through the first. Modelled by
+    -- having the reparent itself call DropPopup, as the client's hide would.
+    dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
     local realSetParent = dialog.SetParent
     dialog.SetParent = function(self, parent)
         local r = realSetParent(self, parent)
-        if parent == UIParent then def.OnHide(self) end
+        if parent == UIParent then Drop(self) end
         return r
     end
-    local realReload = ReloadUI
-    ReloadUI = function() end
-    def.OnAccept(dialog)
-    ReloadUI = realReload
+    Drop(dialog)
     dialog.SetParent = realSetParent
     eq("a drop interrupted by its own OnHide still ends at the right strata",
        dialog:GetFrameStrata(), "DIALOG")
     eq("  and under UIParent", dialog:GetParent(), UIParent)
 
-    -- With the interface up, nothing is lifted at all.
     SetUIVisibility(true)
-    dialog = AltStable.LiftPopup(StaticPopup_Show(P.RELOAD_POPUP))
-    eq("with the interface up the prompt stays under UIParent", dialog:GetParent(), UIParent)
-    def.OnHide(dialog)
+    dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
+    eq("with the interface up nothing is lifted", dialog:GetParent(), UIParent)
+    Drop(dialog)
     WoW.popups = {}
+end
+
+------------------------------------------------------------
+-- "Reload now?" - with a button that is ALLOWED to reload (#89)
+------------------------------------------------------------
+-- ReloadUI() from our code is blocked on this client (measured). The prompt's
+-- Reload button is a secure /reload macro, so the click is Blizzard's code.
+do
+    WoW.reloaded = 0
+    check("a reload can be offered", AltStable.ShowReloadPrompt("Reload now?") == true)
+    local f = AltStable._test.ReloadPrompt()
+    check("  and the prompt is up", f and f:IsShown())
+    check("  saying what it was asked to", f and f.text:GetText() == "Reload now?")
+    local r = f.reload
+    eq("its Reload button runs a macro", r:GetAttribute("type"), "macro")
+    eq("  the /reload macro", r:GetAttribute("macrotext"), "/reload")
+    eq("  and has no click handler of ours, which would make the click ours",
+       r:GetScript("OnClick"), nil)
+    check("  and answers the press as well as the release",
+          (function()
+              local up, down = false, false
+              for _, c in ipairs(r:RegisteredClicks()) do
+                  if c == "AnyUp" then up = true end
+                  if c == "AnyDown" then down = true end
+              end
+              return up and down
+          end)())
+    eq("nothing of ours called ReloadUI to get here", WoW.reloaded, 0)
+
+    -- Not a child of the sheet: a protected frame's parent cannot be hidden in
+    -- combat, and the sheet has to close on Escape mid-fight.
+    local p, inSheet = f:GetParent(), false
+    while p do
+        if p == AltStable._test.frame then inSheet = true end
+        p = p.GetParent and p:GetParent()
+    end
+    check("the prompt is not inside the sheet", not inSheet)
+    eq("  it hangs from nothing, so a hidden interface does not hide it", f:GetParent(), nil)
+    SetUIVisibility(false)
+    check("  and stays visible with the interface hidden", f:IsVisible())
+    SetUIVisibility(true)
+
+    f.later:GetScript("OnClick")(f.later)
+    check("Later puts it away", not f:IsShown())
+
+    AltStable.ShowReloadPrompt("again")
+    f:GetScript("OnEvent")(f, "PLAYER_REGEN_DISABLED")
+    check("combat puts it away before the lockdown", not f:IsShown())
+
+    WoW.inCombat = true
+    check("in combat it is not offered at all", AltStable.ShowReloadPrompt("x") == false)
+    check("  and does not appear", not f:IsShown())
+    WoW.inCombat = false
+
+    -- The Options skin row's Reload offers the same prompt.
+    local btn = AltStable._test.SkinReloadButton()
+    btn:GetScript("OnClick")(btn)
+    check("the skin row's Reload offers the prompt", f:IsShown())
+    check("  saying why", tostring(f.text:GetText()):find("skin", 1, true) ~= nil,
+          tostring(f.text:GetText()))
+    eq("  without reloading by itself", WoW.reloaded, 0)
+    f:Hide()
 end
 
 ------------------------------------------------------------

@@ -595,6 +595,15 @@ local function makeFrame()
     -- never registered right-clicks is dead code in game and perfect code to a
     -- test that calls the handler directly. Recording it is what lets a test
     -- ask the question the client asks.
+    -- Attributes are STORED. The chaining default made GetAttribute hand back
+    -- the frame itself - truthy, and nothing like the value - so a secure
+    -- button with no action at all looked configured.
+    f.SetAttribute = function(self, k, v)
+        self._attributes = self._attributes or {}
+        self._attributes[k] = v
+        return self
+    end
+    f.GetAttribute = function(self, k) return self._attributes and self._attributes[k] end
     f.RegisterForClicks = function(self, ...)
         self._clicks = { ... }
         return self

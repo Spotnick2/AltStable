@@ -2859,8 +2859,13 @@ local function CreateFrameIfNeeded()
     optSkinReload:SetJustifyH("LEFT")
     optSkinReload:SetWordWrap(false)
     optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    -- Through the secure prompt: ReloadUI() from our own click is blocked on
+    -- this client (see AltStable.ShowReloadPrompt).
     optSkinReloadBtn:SetScript("OnClick", function()
-        if type(ReloadUI) == "function" then ReloadUI() end
+        if not AltStable.ShowReloadPrompt("Reload now to put on the new skin?") then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r type |cffffff00/reload|r "
+                .. "once the fight is over to put on the new skin.")
+        end
     end)
 
     AltStable._test.SkinReloadButton = function() return optSkinReloadBtn end
@@ -4060,9 +4065,98 @@ local function DropPopup(dialog)
     end
 end
 
--- Public: the capture's reload prompt (Capture.lua) needs the same treatment.
 AltStable.LiftPopup = LiftPopup
 AltStable.DropPopup = DropPopup
+
+------------------------------------------------------------
+-- "Reload now?" - with a button that is ALLOWED to reload
+------------------------------------------------------------
+-- ReloadUI() from AltStable's own code is blocked on this client, MEASURED on
+-- 1.60.1.70009 (#89):
+--
+--   [ADDON_ACTION_BLOCKED] AddOn 'AltStable' tried to call the protected
+--   function 'Reload()'.   ...  AltStable/Capture.lua: in function 'OnAccept'
+--
+-- Not every time - the same StaticPopup reloaded after `/alts portrait` and was
+-- blocked after the sheet's capture button, where the dialog had been lifted
+-- out of the hidden interface by our code - which is exactly why a plain call
+-- cannot be trusted. Typing /reload always works, because it is Blizzard's own
+-- code that runs. So the Reload button here is a SecureActionButton whose
+-- action is the macro "/reload": the click runs C_Macro.RunMacroText in the
+-- secure template (Blizzard_FrameXML/SecureTemplates.lua), the same path as
+-- typing it.
+--
+-- A frame of its OWN, not a StaticPopup and not a child of the sheet. A secure
+-- button is a protected frame, and hiding a protected frame's parent is blocked
+-- in combat: inside the sheet it would stop the sheet closing on Escape
+-- mid-fight. Parented to nothing, so a hidden interface (the showcase, Alt+Z)
+-- cannot hide it either, and dismissed when combat starts - PLAYER_REGEN_DISABLED
+-- arrives before the lockdown does.
+local reloadPrompt
+
+local function BuildReloadPrompt()
+    if reloadPrompt then return reloadPrompt end
+    local f = CreateFrame("Frame", "AltStableReloadPrompt", nil, "BackdropTemplate")
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetToplevel(true)
+    f:SetSize(320, 104)
+    f:SetPoint("TOP", 0, -180)
+    f:EnableMouse(true)
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
+        if AltStable.ApplyBackdrop then AltStable.ApplyBackdrop(f, 0.05, 0.05, 0.05, 0.96) end
+    end
+    f:Hide()
+
+    local text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    text:SetPoint("TOPLEFT", 14, -14)
+    text:SetPoint("TOPRIGHT", -14, -14)
+    text:SetJustifyH("CENTER")
+    if AltStable.SkinText then AltStable.SkinText(text) end
+    f.text = text
+
+    -- The secure one. Its attributes are set once, here, out of combat, and
+    -- nothing of ours is ever put on its OnClick: replacing the template's
+    -- handler would make the click ours again, and blocked.
+    local reload = CreateFrame("Button", "AltStableReloadPromptReload", f,
+        "SecureActionButtonTemplate, UIPanelButtonTemplate")
+    reload:SetSize(110, 22)
+    reload:SetPoint("BOTTOMRIGHT", f, "BOTTOM", -6, 14)
+    reload:SetText("Reload")
+    reload:SetAttribute("type", "macro")
+    reload:SetAttribute("macrotext", "/reload")
+    -- Down as well as up: with ActionButtonUseKeyDown on, a secure action
+    -- button acts on the press and never sees a click registered for Up only.
+    reload:RegisterForClicks("AnyUp", "AnyDown")
+    f.reload = reload
+
+    local later = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    later:SetSize(110, 22)
+    later:SetPoint("BOTTOMLEFT", f, "BOTTOM", 6, 14)
+    later:SetText("Later")
+    later:SetScript("OnClick", function() f:Hide() end)
+    f.later = later
+
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:SetScript("OnEvent", function(self) self:Hide() end)
+
+    reloadPrompt = f
+    return f
+end
+
+-- Offer a reload, saying why. Returns false when it cannot be offered now:
+-- in combat the prompt cannot be built or shown, and the caller's chat line
+-- has to do.
+function AltStable.ShowReloadPrompt(message)
+    if InCombatLockdown and InCombatLockdown() then return false end
+    local f = BuildReloadPrompt()
+    f.text:SetText(message or "Reload now?")
+    f:Show()
+    f:Raise()
+    return true
+end
+
+AltStable._test = AltStable._test or {}
+AltStable._test.ReloadPrompt = function() return reloadPrompt end
 
 AltStable._test = AltStable._test or {}
 AltStable._test.LiftPopup = LiftPopup

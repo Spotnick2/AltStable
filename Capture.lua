@@ -57,7 +57,6 @@ local SWAP_DELAY  = 0.45   -- 0.65 + 0.45 = 1.10s between shutter and shutter
 -- interface, so an independent timer does it regardless.
 local WATCHDOG    = 12
 
-local RELOAD_POPUP = "ALTSTABLE_PORTRAIT_RELOAD"
 
 -- A camera shutter per shot, so the three seconds with no interface sound like
 -- what they are. SOUNDKIT.REPORT_SCREENSHOT_CAMERA (230810) is defined in the
@@ -493,38 +492,13 @@ end
 -- and the record that says whose they are only later - so the capture offers
 -- the reload itself rather than leaving the player to know.
 
+-- Through SheetUI's secure prompt, not a StaticPopup calling ReloadUI(): that
+-- call is blocked on this client when our code makes it (measured, #89; see
+-- AltStable.ShowReloadPrompt).
 local function ShowReloadPrompt()
-    if type(StaticPopup_Show) ~= "function" or type(StaticPopupDialogs) ~= "table"
-        or not StaticPopupDialogs[RELOAD_POPUP] then
-        return
+    if AltStable.ShowReloadPrompt then
+        AltStable.ShowReloadPrompt("Portrait captured.\nReload now so it reaches the converter?")
     end
-    local dialog = StaticPopup_Show(RELOAD_POPUP)
-    -- With the sheet open the showcase keeps UIParent hidden, and a
-    -- StaticPopup is its child - it would be shown and invisible.
-    if AltStable.LiftPopup then AltStable.LiftPopup(dialog) end
-end
-
-if type(StaticPopupDialogs) == "table" then
-    StaticPopupDialogs[RELOAD_POPUP] = {
-        text = "Portrait captured.\n\nReload now so it reaches the converter?",
-        button1 = "Reload",
-        button2 = "Later",
-        OnAccept = function(self)
-            if AltStable.DropPopup then AltStable.DropPopup(self) end
-            if type(ReloadUI) == "function" then ReloadUI() end
-        end,
-        -- Later, and every programmatic dismissal: the client calls this when
-        -- the popup is hidden for ANY reason, so it only puts the frame back.
-        OnCancel = function(self)
-            if AltStable.DropPopup then AltStable.DropPopup(self) end
-        end,
-        OnHide = function(self)
-            if AltStable.DropPopup then AltStable.DropPopup(self) end
-        end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-    }
 end
 
 local function Finish()
@@ -816,6 +790,5 @@ AltStable._test.portrait = {
     SHOT_DELAY     = SHOT_DELAY,
     SWAP_DELAY     = SWAP_DELAY,
     WATCHDOG       = WATCHDOG,
-    RELOAD_POPUP   = RELOAD_POPUP,
     STORE_VERSION  = STORE_VERSION,
 }
