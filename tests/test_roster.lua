@@ -107,7 +107,7 @@ eq("  an uncaptured one does not", T.CutoutFor(without), nil)
 eq("  and neither does a nameless record", T.CutoutFor({ guid = "c" }), nil)
 
 -- An entry the renderer could not draw must not count as a portrait either, or
--- the "capture one with /asrender" hint disappears exactly when every card is a
+-- the "N of M have a portrait" hint disappears exactly when every card is a
 -- fallback.
 AltStableCutoutManifest = { ["kaleid-sumner"] = { w = 144, h = 512, texw = 256, texh = 512 } }
 eq("an entry with no file is not a portrait", T.CutoutFor(withArt), nil)
@@ -2893,8 +2893,27 @@ do
           empty:find("No portraits yet", 1, true) ~= nil, empty)
     check("  and does not offer favouriting as the fix",
           empty:find("favourite", 1, true) == nil, empty)
-    check("  and points at the grid, which shows everyone",
+    check("  and points at the grid, which shows them as cards",
           empty:find("grid", 1, true) ~= nil, empty)
+    check("  and without the capture tool does not name its command",
+          empty:find("asrender", 1, true) == nil, empty)
+
+    -- With the probe loaded the scene gives the same instruction the grid
+    -- does. They used to disagree: the grid named /asrender and the scene sent
+    -- the one person who CAN capture to the project page.
+    local heldProbe = _G.AltStableProbe
+    _G.AltStableProbe = { CapturePortrait = function() end }
+    T.Refresh()
+    local withTool = T.HintText() or ""
+    check("with the capture tool the empty scene names its command",
+          withTool:find("asrender", 1, true) ~= nil, withTool)
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    local gridWithTool = T.HintText() or ""
+    check("  as the grid does",
+          gridWithTool:find("asrender", 1, true) ~= nil, gridWithTool)
+    AltStableConfig.rosterView = "scene"
+    _G.AltStableProbe = heldProbe
 
     -- One portrait, and the ordinary count comes back.
     AltStableCutoutManifest = { ["empty-2"] =
@@ -2903,6 +2922,18 @@ do
     local one = T.HintText() or ""
     check("with one portrait the scene counts again",
           one:find("showing 1 of 3", 1, true) ~= nil, one)
+
+    -- A panel with no size yet seats nobody - the layout has nowhere to put
+    -- them - and that is not the same thing as having no portraits.
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 0 end
+    p.GetHeight = function() return 0 end
+    T.Refresh()
+    local early = T.HintText() or ""
+    check("an unsized scene does not claim there are no portraits",
+          early:find("No portraits yet", 1, true) == nil, early)
+    p.GetWidth, p.GetHeight = heldW, heldH
 
     AltStableConfig.rosterView = nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest

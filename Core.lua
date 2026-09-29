@@ -2594,14 +2594,31 @@ end
 -- matte, and nothing reads a lone screenshot or the refshot_ts marker beside
 -- it. So when the probe is loaded, hand the job to it; that is what the button
 -- was always meant to do.
+-- Whether this install can take a portrait capture, and the one phrase every
+-- hint uses to say where portraits come from. The Roster's two hints and the
+-- sheet's capture button each used to word this themselves, and only one of
+-- them asked whether the probe was loaded - so with the probe in, one view said
+-- "use /asrender" while another said the tool was not in the download (#89).
+function AltStable.CanCapturePortrait()
+    local probe = _G.AltStableProbe
+    return type(probe) == "table" and type(probe.CapturePortrait) == "function"
+end
+
+function AltStable.PortraitSourceText()
+    if AltStable.CanCapturePortrait() then
+        return "capture one with |cffffff00/asrender|r while playing the character"
+    end
+    return "they are made by a capture tool on the project page, which is not part "
+        .. "of this download"
+end
+
 function AltStable.CapturePortrait(announce)
     if InCombatLockdown and InCombatLockdown() then
         Print("|cffff8800Not while you are in combat|r - try again once the fight is over.")
         return true
     end
-    local probe = _G.AltStableProbe
-    if probe and type(probe.CapturePortrait) == "function" then
-        probe.CapturePortrait()
+    if AltStable.CanCapturePortrait() then
+        _G.AltStableProbe.CapturePortrait()
         return true
     end
     if announce then
