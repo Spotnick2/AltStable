@@ -1015,6 +1015,29 @@ do
                 check("  and has a shadow", sx ~= 0 or sy ~= 0,
                       ("%s,%s"):format(tostring(sx), tostring(sy)))
             end
+
+            -- What it promises depends on whether the button can deliver.
+            -- Without the dev-only probe there is no portrait capture in the
+            -- download (#89); with it, the button takes the real two shots.
+            -- Asked on hover, not at build: the probe can load after the sheet.
+            local onEnter = T.refBtn and T.refBtn:GetScript("OnEnter")
+            if txt and onEnter then
+                local heldProbe = _G.AltStableProbe
+                _G.AltStableProbe = nil
+                onEnter(T.refBtn)
+                local bare = txt:GetText() or ""
+                check("without the capture tool the tooltip says it is not in the download",
+                      bare:find("Not in this download", 1, true) ~= nil, bare)
+                check("  and no longer promises an AI portrait",
+                      bare:find("AI", 1, true) == nil, bare)
+
+                _G.AltStableProbe = { CapturePortrait = function() end }
+                onEnter(T.refBtn)
+                local tooled = txt:GetText() or ""
+                check("with the capture tool the tooltip describes the capture",
+                      tooled:find("two screenshots", 1, true) ~= nil, tooled)
+                _G.AltStableProbe = heldProbe
+            end
         end
 
         -- The SHEET's own capture path closes the menu. The fix first went into

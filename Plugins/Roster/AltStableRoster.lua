@@ -4,9 +4,10 @@
 -- A character-select style lineup: every alt side by side on one backdrop,
 -- click to select, hover for detail. The TBC original drew PNG "cutouts"
 -- scraped from the Battle.net armory by a .NET tool. Forever has no armory, so
--- the images now come from the client itself: /asrender photographs the LIVE
+-- the images now come from the client itself: a capture photographs the LIVE
 -- character on a flat stage, an offline matte turns the pair into a transparent
--- TGA, and CutoutManifest.lua lists what exists.
+-- TGA, and CutoutManifest.lua lists what exists. Neither the capture nor the
+-- matte is in the download yet (#89).
 --
 -- WHY NOT LIVE MODELS. Measured on 1.60.1.70009 (docs/forever-api-notes.md):
 -- a character who is not logged in renders as correct GEOMETRY with NO TEXTURE.
@@ -177,8 +178,8 @@ local function Slug(name)
 end
 
 -- An entry only counts when it can actually be DRAWN. The renderer requires
--- entry.file, so a counter asking a weaker question would hide the "capture one
--- with /asrender" hint at exactly the moment every card is a fallback.
+-- entry.file, so a counter asking a weaker question would hide the "N of M have
+-- a portrait" hint at exactly the moment every card is a fallback.
 local function CutoutFor(char)
     local manifest = AltStableCutoutManifest
     if type(manifest) ~= "table" or type(char) ~= "table" then return nil end
@@ -2144,8 +2145,24 @@ function Roster.Refresh()
 
     if View() == "scene" then
         ApplyHintLayout(panel:GetWidth(), true)
-        local shown, total, chosen = RenderScene(CharactersFor("scene"))
-        if shown < total then
+        local sceneChars = CharactersFor("scene")
+        local shown, total, chosen = RenderScene(sceneChars)
+        -- Counted here rather than taken from `shown`: `shown` is how many
+        -- were SEATED, and nobody is seated while the panel has no size yet -
+        -- which would tell a player with portraits that they have none.
+        local withArt = 0
+        for _, c in ipairs(sceneChars) do
+            if CutoutFor(c) then withArt = withArt + 1 end
+        end
+        if withArt == 0 and total > 0 then
+            -- Nobody has a portrait, so nobody stands at the fire - and the
+            -- lines below would read as advice ("favourite the ones you want
+            -- here") that cannot help, because favouriting seats nobody who
+            -- has no picture. Say what is actually going on.
+            hintText:SetText("No portraits yet - " .. AltStable.PortraitSourceText()
+                .. ". The grid shows characters without one as cards.")
+            hintText:Show()
+        elseif shown < total then
             hintText:SetText(chosen > 0
                 and ("showing %d of %d - your favourites first; the grid shows them all")
                     :format(shown, total)
@@ -2193,19 +2210,12 @@ function Roster.Refresh()
     --
     -- AND ONLY NAME A COMMAND THE PLAYER HAS. `/asrender` is registered in
     -- AltStableProbe, which is a development tool: `.pkgmeta` excludes all of
-    -- Tools/, so it is not in the download. Everyone who installed this from
-    -- CurseForge was being told to type a command the client answers with
-    -- "Type /help for a list". The addon already knows how to ask - the shipped
-    -- capture path tests for the probe and says so when it is missing - and
-    -- this hint was the one place that assumed it.
+    -- Tools/, so it is not in the download. PortraitSourceText asks whether
+    -- the probe is loaded, and is the same phrase the scene and the sheet's
+    -- capture button use, so the three cannot disagree.
     if withArt < #chars then
-        local probe = _G.AltStableProbe
-        local how = (probe and type(probe.CapturePortrait) == "function")
-            and "capture one with |cffffff00/asrender|r while playing that character"
-            or  "they are made by the capture tool on the project page, which is "
-                .. "not part of the download"
         hintText:SetText(("%d of %d characters have a portrait - %s")
-            :format(withArt, #chars, how))
+            :format(withArt, #chars, AltStable.PortraitSourceText()))
         hintText:Show()
     else
         hintText:Hide()

@@ -2638,8 +2638,19 @@ local function CreateFrameIfNeeded()
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
-    refTipText:SetText("|cffffffffUpdate reference|r\n|cffbbbbbbClean screenshot of this character for its AI " ..
-        "portrait — draws the weapon, hides the UI, frames full-body. |r|cffffff00/reload|r|cffbbbbbb after to save it.|r")
+    -- Two texts, chosen on hover. With the dev-only probe loaded this button
+    -- takes the real two-shot capture; without it the Roster's portraits
+    -- cannot be made from this download at all (#89), and promising one here
+    -- was the last place the addon still did.
+    local function RefTipText()
+        if AltStable.CanCapturePortrait and AltStable.CanCapturePortrait() then
+            return "|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for a " ..
+                "moment and takes two screenshots for the Roster lineup.|r"
+        end
+        return "|cffffffffPortrait capture|r\n|cffbbbbbbNot in this download yet - " ..
+            "Roster portraits are made by a tool on the project page.|r"
+    end
+    refTipText:SetText(RefTipText())
     refTip:Hide()
 
     refBtn:SetScript("OnClick", CaptureReferenceFromSheet)
@@ -2653,6 +2664,7 @@ local function CreateFrameIfNeeded()
     end
     refBtn:SetScript("OnEnter", function()
         refBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
+        refTipText:SetText(RefTipText())
         refTip:Show()
         refTip:Raise()
         -- Raise() moves the HOST. The material's rim is a child frame pinned to
