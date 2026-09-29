@@ -683,7 +683,7 @@ function AT_SI.Refresh()
     -- that lifts from the sheet's reading surface, and a plugin section hides
     -- that surface along with the viewports, so the lift would come off a
     -- colour that is not behind this panel and land darker than its own rows.
-    headerBG:SetColorTexture(AltStable.SkinCardColor())
+    headerBG:SetColorTexture(AltStable.SkinCardHeaderColor())
     headerBG:Show()
     headerSep:ClearAllPoints()
     headerSep:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, hdrTop - HEADER_H)
@@ -726,7 +726,7 @@ function AT_SI.Refresh()
             gh:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, y)
             gh:SetSize(math.max(1, visibleR - PAD_X), GROUP_H)
             gh:SetFrameLevel(colScroll:GetFrameLevel() + 5)   -- above the scrolled cells
-            gh.bg:SetColorTexture(AltStable.SkinCardHeaderColor())
+            gh.bg:SetColorTexture(AltStable.SkinCardGroupColor())
             gh.icon:SetTexture(isCollapsed(drow.key)
                 and "Interface\\Buttons\\UI-PlusButton-Up"
                 or  "Interface\\Buttons\\UI-MinusButton-Up")

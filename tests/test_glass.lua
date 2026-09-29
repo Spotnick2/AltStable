@@ -817,40 +817,84 @@ do
         useSkin(name)
         local p = AltStable.SkinPaneColor()
         local cr, cg, cb, ca = AltStable.SkinCardColor()
-        local hr, hg, hb, ha = AltStable.SkinCardHeaderColor()
+        local hr, hg, hb, ha = AltStable.SkinCardGroupColor()
         local pl = lum(p[1], p[2], p[3])
 
         eq(name .. ": a card is opaque", ca, 1)
         eq(name .. ": so is a group header", ha, 1)
-        -- BRIGHTER than the pane at its brightest, not merely brighter than its
-        -- nominal colour: the pane is translucent and lifts over bright
-        -- scenery, and a card that only beat the nominal value would sink into
-        -- the panel exactly when the world behind it is light.
-        check(name .. ": a card is brighter than the panel it lies on",
-              lum(cr, cg, cb) > pl, ("card %.4f vs pane %.4f"):format(lum(cr, cg, cb), pl))
+        -- The column header matches a CARD under glass, which is how this grid
+        -- has always read. Under flat it does not - see below.
+        local xr, _, _, xa = AltStable.SkinCardHeaderColor()
+        check(name .. ": the column header reads as a card", xr == cr and xa == ca,
+              ("%s a=%s vs card %s"):format(xr, xa, cr))
+
+        -- AGAINST THE PANEL'S FLOOR, which is what it reaches over black
+        -- scenery - and what the card has to beat to avoid sinking into the
+        -- panel in the common case. NOT against the ceiling: an opaque card
+        -- that beat a translucent panel over WHITE scenery would have to be a
+        -- mid-grey plate, which is not this UI, and the comment in Skin.lua
+        -- says so rather than promising it.
+        local floor = pl * p[4]
+        check(name .. ": a card is brighter than the panel at its darkest",
+              lum(cr, cg, cb) > floor + 0.01,
+              ("card %.4f vs floor %.4f"):format(lum(cr, cg, cb), floor))
         check(name .. ": and a group header brighter still",
               lum(hr, hg, hb) > lum(cr, cg, cb),
               ("header %.4f vs card %.4f"):format(lum(hr, hg, hb), lum(cr, cg, cb)))
         -- Channel by channel, so the plate keeps the material's cast instead of
-        -- flattening to grey - the same slip the column header shipped.
-        check(name .. ": a card keeps the material's cast",
-              (cb - cr) > 0 and (p[3] - p[1]) > 0,
-              ("card b-r %.4f, pane b-r %.4f"):format(cb - cr, p[3] - p[1]))
+        -- flattening to grey - the same slip the column header shipped. Only
+        -- the HELPER is asserted here; whether a preset is cool at all belongs
+        -- with the presets, or a neutral one fails this under a name that
+        -- points at the wrong code.
+        if p[3] > p[1] then
+            check(name .. ": a card keeps the material's cast", (cb - cr) > 0,
+                  ("card b-r %.4f"):format(cb - cr))
+        end
         check(name .. ": and stays a colour the client can draw",
               hr <= 1 and hg <= 1 and hb <= 1)
     end
 
-    -- Flat keeps what this plugin had, to the digit - including the 0.92, which
-    -- is the one place in the old palette that was not opaque.
+    -- AND THE GUARANTEE CAN FAIL. A pane thin enough that its floor is dark is
+    -- the easy case; the one worth proving is that the margin is real rather
+    -- than arithmetic - a card lifted from a pane must clear that pane's floor
+    -- for a pane nobody has written yet.
+    do
+        AltStable.SKINS.cardprobe = { material = true, label = "Probe",
+                                      tint = { 0.1, 0.1, 0.1, 0.3 }, grain = 0.4,
+                                      wash = 0.1, pane = { 0.62, 0.64, 0.70, 0.95 },
+                                      popup = { 0.1, 0.1, 0.1, 0.5 } }
+        useSkin("cardprobe")
+        local p2 = AltStable.SkinPaneColor()
+        local r2, g2, b2 = AltStable.SkinCardColor()
+        local floor2 = lum(p2[1], p2[2], p2[3]) * p2[4]
+        check("a bright, nearly opaque pane still gets a card above its floor",
+              lum(r2, g2, b2) > floor2,
+              ("card %.4f vs floor %.4f"):format(lum(r2, g2, b2), floor2))
+        AltStable.SKINS.cardprobe = nil
+    end
+
+    -- Flat keeps what this plugin had, to the digit - and the three are NOT one
+    -- value there: the rows were a translucent 0.11/0.11/0.14, the column
+    -- header an opaque neutral 0.11, the group header 0.13. Folding them turned
+    -- the flat header translucent and blue-shifted, on the path that is
+    -- supposed to be untouched.
     useSkin("flat")
-    local fr, fg, fb, fa = AltStable.SkinCardColor()
-    check("flat keeps the card it always had",
-          fr == 0.11 and fg == 0.11 and fb == 0.14 and fa == 0.92,
-          ("%s,%s,%s,%s"):format(fr, fg, fb, fa))
-    local gr, gg, gb, ga = AltStable.SkinCardHeaderColor()
+    local function sameAs(got, want)
+        for i = 1, 4 do if got[i] ~= want[i] then return false end end
+        return true
+    end
+    check("flat keeps the row card it always had",
+          sameAs({ AltStable.SkinCardColor() }, AltStable.C.BG_RAID_ROW),
+          table.concat({ AltStable.SkinCardColor() }, ","))
+    check("  the column header it always had",
+          sameAs({ AltStable.SkinCardHeaderColor() }, AltStable.C.BG_HEADER),
+          table.concat({ AltStable.SkinCardHeaderColor() }, ","))
     check("  and the group header it always had",
-          gr == AltStable.C.BG_GROUP[1] and ga == AltStable.C.BG_GROUP[4],
-          ("%s a=%s"):format(gr, ga))
+          sameAs({ AltStable.SkinCardGroupColor() }, AltStable.C.BG_GROUP),
+          table.concat({ AltStable.SkinCardGroupColor() }, ","))
+    check("  which are three different values, not one",
+          AltStable.C.BG_RAID_ROW[4] ~= AltStable.C.BG_HEADER[4]
+          and AltStable.C.BG_HEADER[1] ~= AltStable.C.BG_GROUP[1])
     useSkin("clear")
 end
 

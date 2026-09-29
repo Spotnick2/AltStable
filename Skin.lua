@@ -748,15 +748,27 @@ AltStable._test.TooltipState = function() return tip end
 -- be a colour in its own right.
 --
 -- Opaque, for the same reason the table is: these carry small text over a
--- window with the world moving behind it. And BRIGHTER than the pane, because a
--- card reads as laid on the panel rather than cut into it - the opposite of the
--- figure box, which is why it is a separate pair rather than a reuse.
+-- window with the world moving behind it.
 --
--- Two values, matching what this plugin already had: the row band and the
--- column header shared one tone, and the group header sat a step above it.
--- Derived now, so a preset that changes the pane takes them with it, instead of
--- two absolutes that were chosen against a charcoal panel that no longer
--- exists.
+-- WHAT "BRIGHTER THAN THE PANEL" CAN AND CANNOT MEAN HERE, because the obvious
+-- claim is not deliverable and saying it anyway is how the figure box shipped
+-- wrong twice.
+--
+-- The panel is translucent, so what it reaches depends on the world: its floor,
+-- over black scenery, is `alpha x colour`, and its CEILING, over white, is
+-- `alpha x colour + (1 - alpha)` - about 0.41 under clear. An opaque card that
+-- beat the ceiling would have to be a mid-grey plate, which is not this UI. So:
+--
+--   * the card is guaranteed brighter than the panel's FLOOR, by a margin, so
+--     it never sinks into the panel over dark scenery - which is the common
+--     case and the one that would read as broken;
+--   * over bright scenery the panel WILL lift past it, and the cards then read
+--     as darker plates rather than raised ones. That is accepted, because these
+--     carry text and legible text beats a consistent illusion of depth.
+--
+-- The alternative - a translucent card riding on the panel, always brighter by
+-- construction - was considered and dropped: it puts the text on a surface that
+-- moves with the world, which is the thing the table's own decision refuses.
 local CARD_LIFT, CARD_HEADER_LIFT = 0.075, 0.10
 
 local function PlateOver(base, lift)
@@ -764,12 +776,24 @@ local function PlateOver(base, lift)
     return up(base[1]), up(base[2]), up(base[3]), 1
 end
 
+-- A row card.
 function AltStable.SkinCardColor()
-    if not AltStable.SkinIsGlass() then return 0.11, 0.11, 0.14, 0.92 end
+    if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_RAID_ROW) end
     return PlateOver(AltStable.SkinPaneColor(), CARD_LIFT)
 end
 
+-- The column header above them. It matches a card under glass, because that is
+-- how this grid has always read - but NOT under flat, where it was an opaque
+-- neutral 0.11 and the rows were a translucent 0.11/0.11/0.14. Folding those
+-- two into one value turned the flat header 8% translucent and blue-shifted,
+-- which is a change to the path that is supposed to be untouched.
 function AltStable.SkinCardHeaderColor()
+    if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_HEADER) end
+    return PlateOver(AltStable.SkinPaneColor(), CARD_LIFT)
+end
+
+-- The group header that separates them, a step above both.
+function AltStable.SkinCardGroupColor()
     if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_GROUP) end
     return PlateOver(AltStable.SkinPaneColor(), CARD_HEADER_LIFT)
 end

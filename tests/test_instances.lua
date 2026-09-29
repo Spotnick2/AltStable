@@ -376,8 +376,20 @@ do
             for i = 1, 4 do if got[i] ~= want[i] then same = false end end
             check("  painted with the skin's card, not a literal", same,
                   table.concat(got, ","))
-            -- The failure this closes: a header DARKER than the rows it labels.
-            check("  and no darker than a row band", got[1] >= want[1])
+            -- The failure this closes: a header DARKER than the rows it
+            -- labels. Against a band that was actually PAINTED - comparing it
+            -- to the same helper that painted the header is equal by
+            -- construction and says nothing about the ordering.
+            local firstBand
+            for _, b in ipairs(T.Bands() or {}) do
+                if b.row and b.row._colorTexture then firstBand = b.row; break end
+            end
+            check("  there is a painted row band to compare against", firstBand ~= nil)
+            if firstBand then
+                check("  and the header is no darker than one",
+                      got[1] >= firstBand._colorTexture[1],
+                      ("header %s vs band %s"):format(got[1], firstBand._colorTexture[1]))
+            end
         end
 
         -- The bands and group headers are only painted once there are rows to
@@ -397,7 +409,7 @@ do
         end
         for _, gh in ipairs(T.Groups() or {}) do
             if gh.bg and gh.bg._colorTexture then
-                local want = { AltStable.SkinCardHeaderColor() }
+                local want = { AltStable.SkinCardGroupColor() }
                 check("a group header is the skin's",
                       gh.bg._colorTexture[1] == want[1],
                       table.concat(gh.bg._colorTexture, ","))
