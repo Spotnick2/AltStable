@@ -678,14 +678,12 @@ function AT_SI.Refresh()
     headerBG:ClearAllPoints()
     headerBG:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, hdrTop)
     headerBG:SetPoint("BOTTOMRIGHT", panel, "TOPLEFT", visibleR, hdrTop - HEADER_H)
-    -- NOT SkinHeaderBand. That lifts from the sheet's reading surface, and
-    -- this panel does not have one: a plugin section hides the underlay along
-    -- with the viewports, so the lift would be taken from a colour that is not
-    -- behind it - landing DARKER than this grid's own rows, which are still
-    -- their own hardcoded values a few lines below, and inverting the ordering
-    -- the sheet's test exists to protect. This plugin's palette is its own
-    -- slice of work; it is not "the last of it" as the sheet's was.
-    headerBG:SetColorTexture(unpack(AltStable.C.BG_HEADER))
+    -- The same plate as a row card, which is what this grid always had: the
+    -- column header and the row bands shared one tone. NOT SkinHeaderBand -
+    -- that lifts from the sheet's reading surface, and a plugin section hides
+    -- that surface along with the viewports, so the lift would come off a
+    -- colour that is not behind this panel and land darker than its own rows.
+    headerBG:SetColorTexture(AltStable.SkinCardHeaderColor())
     headerBG:Show()
     headerSep:ClearAllPoints()
     headerSep:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, hdrTop - HEADER_H)
@@ -728,7 +726,7 @@ function AT_SI.Refresh()
             gh:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, y)
             gh:SetSize(math.max(1, visibleR - PAD_X), GROUP_H)
             gh:SetFrameLevel(colScroll:GetFrameLevel() + 5)   -- above the scrolled cells
-            gh.bg:SetColorTexture(unpack(AltStable.C.BG_GROUP))
+            gh.bg:SetColorTexture(AltStable.SkinCardGroupColor())
             gh.icon:SetTexture(isCollapsed(drow.key)
                 and "Interface\\Buttons\\UI-PlusButton-Up"
                 or  "Interface\\Buttons\\UI-MinusButton-Up")
@@ -746,7 +744,9 @@ function AT_SI.Refresh()
             band.row:ClearAllPoints()
             band.row:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, y)
             band.row:SetPoint("BOTTOMRIGHT", panel, "TOPLEFT", visibleR, y - rh)
-            band.row:SetColorTexture(0.11, 0.11, 0.14, 0.92)
+            -- The card this row is drawn on: opaque, and brighter than the
+            -- material it lies on. See AltStable.SkinCardColor.
+            band.row:SetColorTexture(AltStable.SkinCardColor())
             band.row:Show()
 
             local artPath = raid.art and ((AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\")
@@ -1092,6 +1092,11 @@ function AT_SI._Bootstrap()
             matchRaid = matchRaid, columnsForView = columnsForView,
             buildDisplayRows = buildDisplayRows, toggleCollapse = toggleCollapse,
             isCollapsed = isCollapsed, RAIDS = RAIDS,
+            -- The painted furniture, so a test can ask what colour this grid
+            -- actually used rather than only what the helper would return.
+            HeaderBG = function() return headerBG end,
+            Bands    = function() return AT_SI.bands end,
+            Groups   = function() return AT_SI.groups end,
         },
     })
 end

@@ -29,6 +29,11 @@ dofile("Compat.lua")
 dofile("Theme.lua")   -- the plugin colours headers with AltStable.GetClassRGB
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
+-- Skin.lua, because this plugin's palette comes from it now - and Glass first,
+-- the way the .toc loads them, or SkinIsGlass is false and every colour here
+-- would be the flat one.
+assert(loadfile("Glass.lua"))("AltStable")
+dofile("Skin.lua")
 dofile("Plugins/Instances/AltStableInstances.lua")
 WoW.flushTimers()
 
@@ -338,6 +343,81 @@ for _, r in ipairs(collapsed) do if not r.isGroup then shown = shown + 1 end end
 eq("  and its raids are hidden", shown, 0)
 T.toggleCollapse("vanilla")
 check("expanding brings them back", not T.isCollapsed("vanilla"))
+
+------------------------------------------------------------
+-- The grid's own palette comes from the skin (#97)
+------------------------------------------------------------
+-- This suite has never built a panel - it is pure logic - so every colour this
+-- plugin paints has been unasserted, which is how a column header shipped
+-- darker than the rows it labels. A panel is buildable here with a stand-in for
+-- the sheet, and that is cheaper than a third PR that names the gap again.
+do
+    AltStable.LAYOUT = AltStable.LAYOUT or {}
+    AltStable.LAYOUT.TITLE_H       = AltStable.LAYOUT.TITLE_H or 30
+    AltStable.LAYOUT.SIDEBAR_WIDTH = AltStable.LAYOUT.SIDEBAR_WIDTH or 230
+    AltStable.LAYOUT.FOOTER_HEIGHT = AltStable.LAYOUT.FOOTER_HEIGHT or 22
+
+    local main = CreateFrame("Frame", "AltStableSheet", UIParent)
+    main:SetSize(1000, 600)
+    for _, key in ipairs({ "bodyScroll", "frozenScroll", "headerScroll",
+                           "frozenHeader", "hScrollBar", "totalsBar" }) do
+        main[key] = CreateFrame("Frame", nil, main)
+    end
+
+    local ok, err = pcall(plugin.OnActivate, main)
+    check("the Raids panel builds", ok, tostring(err))
+    if ok then
+        local hdr = T.HeaderBG and T.HeaderBG()
+        check("  and has a column header", hdr ~= nil)
+        if hdr and hdr._colorTexture then
+            local want = { AltStable.SkinCardColor() }
+            local got = hdr._colorTexture
+            local same = true
+            for i = 1, 4 do if got[i] ~= want[i] then same = false end end
+            check("  painted with the skin's card, not a literal", same,
+                  table.concat(got, ","))
+            -- The failure this closes: a header DARKER than the rows it
+            -- labels. Against a band that was actually PAINTED - comparing it
+            -- to the same helper that painted the header is equal by
+            -- construction and says nothing about the ordering.
+            local firstBand
+            for _, b in ipairs(T.Bands() or {}) do
+                if b.row and b.row._colorTexture then firstBand = b.row; break end
+            end
+            check("  there is a painted row band to compare against", firstBand ~= nil)
+            if firstBand then
+                check("  and the header is no darker than one",
+                      got[1] >= firstBand._colorTexture[1],
+                      ("header %s vs band %s"):format(got[1], firstBand._colorTexture[1]))
+            end
+        end
+
+        -- The bands and group headers are only painted once there are rows to
+        -- paint, which depends on lockout data this suite does not create - so
+        -- whichever exist are checked, and the count is reported rather than
+        -- assumed.
+        local painted = 0
+        for _, band in ipairs(T.Bands() or {}) do
+            if band.row and band.row._colorTexture then
+                painted = painted + 1
+                local want = { AltStable.SkinCardColor() }
+                check("a row band is the skin's card",
+                      band.row._colorTexture[1] == want[1]
+                      and band.row._colorTexture[4] == want[4],
+                      table.concat(band.row._colorTexture, ","))
+            end
+        end
+        for _, gh in ipairs(T.Groups() or {}) do
+            if gh.bg and gh.bg._colorTexture then
+                local want = { AltStable.SkinCardGroupColor() }
+                check("a group header is the skin's",
+                      gh.bg._colorTexture[1] == want[1],
+                      table.concat(gh.bg._colorTexture, ","))
+            end
+        end
+        check("at least the header was painted", hdr ~= nil)
+    end
+end
 
 print(("test_instances: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -33,6 +33,7 @@ AltStable.C = {
     BG_ROW_ODD   = { 0.06, 0.06, 0.06, 1.00 },  -- odd body rows
     BG_ROW_EVEN  = { 0.09, 0.09, 0.09, 1.00 },  -- even body rows
     BG_GROUP     = { 0.13, 0.13, 0.13, 1.00 },  -- realm group header
+    BG_RAID_ROW  = { 0.11, 0.11, 0.14, 0.92 },  -- Raids: a row card (see SkinCardColor)
     BG_FOOTER    = { 0.08, 0.08, 0.08, 1.00 },  -- totals bar
 
     -- Sidebar button states — idle transparent, hover/active neutral gray
