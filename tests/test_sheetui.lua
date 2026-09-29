@@ -43,6 +43,7 @@ dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
 -- Capture.lua follows SheetUI in the .toc; the title-bar button hands off to it.
 dofile("Capture.lua")
+dofile("PublicAPI.lua")
 
 local GOLD = 10000   -- copper per gold
 
