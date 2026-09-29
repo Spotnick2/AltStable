@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.3.1-beta
+
+One tab's colours, and nothing else. Same client build, same data on disk, same
+sync — a peer on any v0.2.x or v0.3.x stays compatible.
 
 - **The Raids tab matches the rest under glass.** Its rows, group headers and
   column header were charcoal values chosen before the material existed, so the
