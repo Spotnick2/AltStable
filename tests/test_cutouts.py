@@ -388,6 +388,15 @@ with tempfile.TemporaryDirectory() as tmp:
         after = json.load(fh)
     eq("height recovery ignores a store of an unknown version", after, before)
 
+    # `AltStablePortraits = nil` is what the client writes for an account
+    # that never captured (measured on 1.60.1.70009). It means NO captures -
+    # even with a `renders` key elsewhere in the file.
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_COLLIDED.split("AltStablePortraits = {")[0]
+                 + "AltStablePortraits = nil\n")
+    eq("a store written as AltStablePortraits = nil has no captures",
+       mc.captures(wtf=os.path.join(tmp, "WTF")), [])
+
     # Two characters, one name: the second gets its own file.
     out = os.path.join(tmp, "out")
     os.makedirs(out)

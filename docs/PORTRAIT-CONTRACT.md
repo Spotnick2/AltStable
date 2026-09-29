@@ -67,10 +67,16 @@ AltStablePortraits = {
 must be read as an empty store:
 
 - no `AltStable.lua` for that account;
-- the file exists but has no `AltStablePortraits` (nobody has captured on that
-  account — the table is created on the first capture);
-- `AltStablePortraits = nil`;
+- `AltStablePortraits = nil` — what the client writes for an account that has
+  never captured (the table is created on the first capture). **Measured** on
+  1.60.1.70009: after a logout on such an account the file ends with exactly
+  that line; a declared SavedVariable that is nil is written out, not omitted;
+- no `AltStablePortraits` line at all — a file last written by a build that did
+  not declare it;
 - a table with an empty or missing `renders`.
+
+A reader that finds the `AltStablePortraits =` line but no table after it must
+stop there, not keep searching the file for a `["renders"]` key.
 
 A file that stops mid-table (unbalanced braces) is being written right now: retry
 shortly, do not treat it as data.

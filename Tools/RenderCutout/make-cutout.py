@@ -126,6 +126,12 @@ def _entries(text):
     # The top-level ASSIGNMENT, at the start of a line - not the first mention
     # of the name, which a comment or a string can make anywhere.
     m = re.search(r"^AltStablePortraits\s*=\s*\{", text, re.M)
+    # Declared but not a table - `AltStablePortraits = nil`, which is what the
+    # client writes for an account that never captured (measured). That is
+    # "no captures"; searching on from the top of the file would read any
+    # `renders` key in the character data as capture records.
+    if not m and re.search(r"^AltStablePortraits\s*=", text, re.M):
+        return []
     start = text.find('["renders"]', m.start() if m else 0)
     if start < 0:
         return []
