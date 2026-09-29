@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.3.0-beta
+
+Still measured against client build **1.60.1.70009**. Nothing changed on disk
+and nothing changed in sync, so a peer on v0.2.x stays compatible with this one.
+
+Mostly about what the window feels like to use: the glass look is now a setting
+you can find, it stops at the edge of what is ours, and the world behind the
+window stops answering your cursor.
 
 - **The skin is in Options now.** Flat, Clear glass and Smoked glass as a row of
   buttons, with the panel saying when a choice needs a reload and offering one —
