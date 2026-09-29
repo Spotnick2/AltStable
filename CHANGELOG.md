@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **The Raids tab matches the rest under glass.** Its rows, group headers and
+  column header were charcoal values chosen before the material existed, so the
+  one tab with its own grid was the one that still looked like the old theme.
+  They come from the skin now and move with it
+  ([#97](https://github.com/Spotnick2/AltStable/issues/97)).
+
 ## v0.3.0-beta
 
 Still measured against client build **1.60.1.70009**. Nothing changed on disk

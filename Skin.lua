@@ -739,6 +739,41 @@ end
 AltStable._test = AltStable._test or {}
 AltStable._test.TooltipState = function() return tip end
 
+-- A PLATE on the material, for a panel with no reading surface.
+--
+-- The Raids grid is not the sheet's table: its rows are separated cards with
+-- raid art, laid on the panel with the material showing between them, and a
+-- plugin section hides the reading surface along with the viewports. So the
+-- lift-on-a-surface pair above has nothing to lift from here, and a card has to
+-- be a colour in its own right.
+--
+-- Opaque, for the same reason the table is: these carry small text over a
+-- window with the world moving behind it. And BRIGHTER than the pane, because a
+-- card reads as laid on the panel rather than cut into it - the opposite of the
+-- figure box, which is why it is a separate pair rather than a reuse.
+--
+-- Two values, matching what this plugin already had: the row band and the
+-- column header shared one tone, and the group header sat a step above it.
+-- Derived now, so a preset that changes the pane takes them with it, instead of
+-- two absolutes that were chosen against a charcoal panel that no longer
+-- exists.
+local CARD_LIFT, CARD_HEADER_LIFT = 0.075, 0.10
+
+local function PlateOver(base, lift)
+    local function up(c) return math.min(1, c + lift * (1 - c)) end
+    return up(base[1]), up(base[2]), up(base[3]), 1
+end
+
+function AltStable.SkinCardColor()
+    if not AltStable.SkinIsGlass() then return 0.11, 0.11, 0.14, 0.92 end
+    return PlateOver(AltStable.SkinPaneColor(), CARD_LIFT)
+end
+
+function AltStable.SkinCardHeaderColor()
+    if not AltStable.SkinIsGlass() then return unpack(AltStable.C.BG_GROUP) end
+    return PlateOver(AltStable.SkinPaneColor(), CARD_HEADER_LIFT)
+end
+
 -- A WELL cut into the panel, and the hairline round it.
 --
 -- The figure box on the character sheet is the one that exists, and it was two
