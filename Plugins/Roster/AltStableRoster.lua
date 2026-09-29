@@ -4,9 +4,10 @@
 -- A character-select style lineup: every alt side by side on one backdrop,
 -- click to select, hover for detail. The TBC original drew PNG "cutouts"
 -- scraped from the Battle.net armory by a .NET tool. Forever has no armory, so
--- the images now come from the client itself: /asrender photographs the LIVE
+-- the images now come from the client itself: a capture photographs the LIVE
 -- character on a flat stage, an offline matte turns the pair into a transparent
--- TGA, and CutoutManifest.lua lists what exists.
+-- TGA, and CutoutManifest.lua lists what exists. Neither the capture nor the
+-- matte is in the download yet (#89).
 --
 -- WHY NOT LIVE MODELS. Measured on 1.60.1.70009 (docs/forever-api-notes.md):
 -- a character who is not logged in renders as correct GEOMETRY with NO TEXTURE.
@@ -177,8 +178,8 @@ local function Slug(name)
 end
 
 -- An entry only counts when it can actually be DRAWN. The renderer requires
--- entry.file, so a counter asking a weaker question would hide the "capture one
--- with /asrender" hint at exactly the moment every card is a fallback.
+-- entry.file, so a counter asking a weaker question would hide the "N of M have
+-- a portrait" hint at exactly the moment every card is a fallback.
 local function CutoutFor(char)
     local manifest = AltStableCutoutManifest
     if type(manifest) ~= "table" or type(char) ~= "table" then return nil end
@@ -2145,7 +2146,15 @@ function Roster.Refresh()
     if View() == "scene" then
         ApplyHintLayout(panel:GetWidth(), true)
         local shown, total, chosen = RenderScene(CharactersFor("scene"))
-        if shown < total then
+        if shown == 0 and total > 0 then
+            -- Nobody has a portrait, so nobody stands at the fire - and the
+            -- lines below would read as advice ("favourite the ones you want
+            -- here") that cannot help, because favouriting seats nobody who
+            -- has no picture. Say what is actually going on.
+            hintText:SetText("No portraits yet - they are made outside the game from "
+                .. "captures (see the project page). The grid shows everyone meanwhile.")
+            hintText:Show()
+        elseif shown < total then
             hintText:SetText(chosen > 0
                 and ("showing %d of %d - your favourites first; the grid shows them all")
                     :format(shown, total)

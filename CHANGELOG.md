@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **The Roster's scene says so when nobody has a portrait.** It used to show an
+  empty campfire captioned "showing 0 of 12 - favourite the ones you want here",
+  which no amount of favouriting could fix: portraits are made outside the game,
+  by a tool that is not in this download yet. The grid still shows everyone.
+  The title-bar capture button's tooltip stops promising a portrait for the same
+  reason ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
+
 ## v0.3.1-beta
 
 One tab's colours, and nothing else. Same client build, same data on disk, same

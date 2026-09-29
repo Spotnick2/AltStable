@@ -2862,5 +2862,52 @@ do
     pcall(AltStable.RosterPlugin.Refresh)
 end
 
+------------------------------------------------------------
+-- The scene with nobody in it says why (#89)
+------------------------------------------------------------
+-- The scene seats only characters with a portrait, and portraits are not made
+-- by anything in the download. So for everyone who installed from CurseForge
+-- the scene was an empty campfire captioned "showing 0 of 12 - favourite the
+-- ones you want here": advice that cannot work, since a favourite with no
+-- picture is not seated either.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = {}
+    for i = 1, 3 do
+        local guid = ("empty-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Empty %d"):format(i),
+                              level = i * 10, ilvl = i, class = "MAGE" }
+    end
+    AltStableCutoutManifest = nil
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    local empty = T.HintText() or ""
+    check("a scene with no portraits says there are none",
+          empty:find("No portraits yet", 1, true) ~= nil, empty)
+    check("  and does not offer favouriting as the fix",
+          empty:find("favourite", 1, true) == nil, empty)
+    check("  and points at the grid, which shows everyone",
+          empty:find("grid", 1, true) ~= nil, empty)
+
+    -- One portrait, and the ordinary count comes back.
+    AltStableCutoutManifest = { ["empty-2"] =
+        { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 } }
+    T.Refresh()
+    local one = T.HintText() or ""
+    check("with one portrait the scene counts again",
+          one:find("showing 1 of 3", 1, true) ~= nil, one)
+
+    AltStableConfig.rosterView = nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+    pcall(AltStable.RosterPlugin.Refresh)
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

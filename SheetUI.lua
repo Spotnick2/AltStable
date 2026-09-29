@@ -2638,8 +2638,12 @@ local function CreateFrameIfNeeded()
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
-    refTipText:SetText("|cffffffffUpdate reference|r\n|cffbbbbbbClean screenshot of this character for its AI " ..
-        "portrait — draws the weapon, hides the UI, frames full-body. |r|cffffff00/reload|r|cffbbbbbb after to save it.|r")
+    -- Neutral on purpose. Without the dev-only probe this takes one plain
+    -- screenshot that nothing reads, and the Roster needs a two-shot capture
+    -- this download cannot take yet (#89). Promising a portrait here was the
+    -- one place the addon still did.
+    refTipText:SetText("|cffffffffPortrait capture|r\n|cffbbbbbbNot in this download yet - " ..
+        "Roster portraits are made by a tool on the project page.|r")
     refTip:Hide()
 
     refBtn:SetScript("OnClick", CaptureReferenceFromSheet)
