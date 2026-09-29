@@ -71,10 +71,10 @@ local function resetCapture()
     WoW.chatOut = {}
     WoW.popups = {}
     WoW.reloaded = 0
+    WoW.sounds = {}
     -- The client always has a format set; JPEG is its default. An empty
     -- stub CVar would make "put the player's format back" untestable.
     WoW.cvars = { screenshotFormat = "jpeg" }
-    AltStable.AltStableCameraPresentation = nil
 end
 
 -- Walk the timer chain on a virtual clock, IN TIME ORDER, and record when each
@@ -137,6 +137,8 @@ eq("  and screenshots are switched to TGA", WoW.cvars.screenshotFormat, "tga")
 
 local shots = runChain()
 eq("a capture takes exactly two shots", #shots, 2)
+eq("  each with a shutter sound", #WoW.sounds, 2)
+eq("  the camera one", WoW.sounds[1], SOUNDKIT.REPORT_SCREENSHOT_CAMERA)
 check("  and finishes", not T.capturing())
 eq("  giving the interface back", WoW.uiVisible, true)
 eq("  and taking the stage down", T.stage():IsShown(), false)
@@ -229,6 +231,7 @@ eq("  and the interface is back", WoW.uiVisible, true)
 local shotsBefore = WoW.screenshots
 runChain()
 eq("  and the abandoned chain takes no pictures", WoW.screenshots, shotsBefore)
+eq("  and makes no shutter sound", #WoW.sounds, 0)
 eq("  and writes no records", #renders(), 0)
 eq("  and offers no reload", #WoW.popups, 0)
 WoW.inCombat = false
@@ -374,34 +377,13 @@ check("the watchdog outlasts the whole sequence", T.WATCHDOG > (times[2] or 0) +
       ("%.1f vs %.2f"):format(T.WATCHDOG, times[2] or 0))
 
 ------------------------------------------------------------
--- The sheet's camera showcase stands aside
+-- The sheet's camera showcase is not told anything
 ------------------------------------------------------------
--- Hiding UIParent fires the sheet's OnHide and, on the way back, its OnShow.
--- The showcase listens to both: Exit would tear it down mid-capture and OnShow
--- would re-enter it afterwards. `capturing` on the presentation is what tells
--- both to wait, and only the old legacy path used to set it.
-
-do
-    resetCapture()
-    local p = { active = true }
-    AltStable.AltStableCameraPresentation = p
-    local seen
-    local realHide = UIParent.Hide
-    UIParent.Hide = function(self, ...)
-        seen = p.capturing
-        return realHide(self, ...)
-    end
-    T.Capture()
-    UIParent.Hide = realHide
-    eq("the showcase is told a capture is running before the UI goes", seen, true)
-    runChain()
-    eq("  and told it is over when it finishes", p.capturing, nil)
-
-    T.Capture()
-    T.AbandonCapture(nil, true)
-    eq("  and when it is abandoned", p.capturing, nil)
-    AltStable.AltStableCameraPresentation = nil
-end
+-- It used to be, through a `capturing` flag that made the showcase ignore
+-- every hide of the sheet for the whole capture - including a real close, which
+-- left the camera showcase running with no window (#89 review). The sheet now
+-- tells its parent's hide from a close by itself; that is pinned in
+-- test_sheetui against the REAL showcase, which this file does not load.
 
 ------------------------------------------------------------
 -- The blackout has to cover what somebody lifted out of UIParent
@@ -484,6 +466,23 @@ do
         eq("  restoring brings it back", sheet:GetAlpha(), 1)
         SetUIVisibility = realSetUIVisibility
     end
+
+    -- The tooltip, HIDDEN when the capture starts - which is how the capture
+    -- leaves it - and then shown by the cursor resting on the invisible sheet.
+    -- It draws above the stage, so it must be neither visible nor opaque.
+    resetCapture()
+    GameTooltip:SetAlpha(1)
+    GameTooltip:Show()
+    T.Capture()
+    eq("the lifted tooltip is dimmed even though the capture hid it first",
+       GameTooltip:GetAlpha(), 0)
+    GameTooltip:Show()                     -- a row hovered mid-capture
+    check("  and a tooltip raised mid-capture is taken straight down",
+          not GameTooltip:IsShown())
+    runChain()
+    eq("  and its alpha is given back afterwards", GameTooltip:GetAlpha(), 1)
+    GameTooltip:Show()
+    check("  after which it shows normally", GameTooltip:IsShown())
 
     -- A CLOSED sheet is not collected.
     sheet:Hide()
@@ -630,6 +629,94 @@ do
     eq("AltStable.CapturePortrait answers for the capture", AltStable.CapturePortrait(), true)
     check("  and starts it", T.capturing())
     T.AbandonCapture(nil, true)
+end
+
+------------------------------------------------------------
+-- Review round on #125
+------------------------------------------------------------
+
+-- A reload or logout inside the three seconds: screenshotFormat is a SAVED
+-- CVar, and the timer chain that puts it back dies with the Lua state.
+do
+    resetCapture()
+    T.Capture()
+    eq("mid-capture, screenshots are TGA", WoW.cvars.screenshotFormat, "tga")
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_LOGOUT")
+    eq("a reload or logout puts the player's format back", WoW.cvars.screenshotFormat, "jpeg")
+    check("  the capture listens for it at all", T.events:IsEventRegistered("PLAYER_LOGOUT"))
+    T.AbandonCapture(nil, true)
+end
+
+-- No preview over a capture: re-posing unfreezes the model and repaints the
+-- backdrop between the two shots, and the pair would still be recorded.
+do
+    resetCapture()
+    T.Capture()
+    T.Preview()
+    check("a preview asked for mid-capture is refused", not T.previewing())
+    local times = runChain()
+    eq("  and the capture still takes its two shots", #times, 2)
+
+    WoW.inCombat = true
+    T.Preview()
+    check("no preview in combat", not T.previewing())
+    WoW.inCombat = false
+end
+
+-- A preview closed by combat stays closed: `facing` used to bring it back.
+do
+    resetCapture()
+    T.Preview()
+    check("a preview is up", T.previewing() and T.stage():IsShown())
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
+    check("  combat takes it down", not T.stage():IsShown())
+    check("  and ends it", not T.previewing())
+    SlashCmdList["ALTSTABLE"]("portrait facing 30")
+    check("  so turning the character does not bring it back", not T.stage():IsShown())
+    check("  nor leaves the stage taking the mouse", not T.stage():IsMouseEnabled())
+end
+
+-- Unit numbers can be secret on this client, and a comparison on one throws.
+do
+    resetCapture()
+    local realSpeed, realSex, realLevel = GetUnitSpeed, UnitSex, UnitLevel
+    GetUnitSpeed = function() return WoW.secret(7) end
+    UnitSex = function() return WoW.secret(3) end
+    UnitLevel = function() return WoW.secret(60) end
+    local ok, err = pcall(T.Capture)
+    check("a secret speed does not break the capture", ok, tostring(err))
+    check("  and unknown speed is not treated as moving", T.capturing())
+    runChain()
+    local r = renders()[1] or {}
+    eq("a secret sex is stored as unknown, not as a secret", r.sex, nil)
+    eq("  and so is a secret level", r.level, nil)
+    GetUnitSpeed, UnitSex, UnitLevel = realSpeed, realSex, realLevel
+end
+
+-- A store written by a NEWER AltStable is neither relabelled nor added to.
+do
+    resetCapture()
+    AltStablePortraits = { version = 2, renders = { { shot = 1, future = true } } }
+    T.Capture()
+    check("a capture into a newer store is refused", not T.capturing())
+    eq("  the store keeps its version", AltStablePortraits.version, 2)
+    eq("  and its records", #AltStablePortraits.renders, 1)
+    SlashCmdList["ALTSTABLE"]("portrait facing 10")
+    eq("  and setting the facing does not relabel it either", AltStablePortraits.version, 2)
+end
+
+-- The retired command says where it went instead of opening the sheet.
+do
+    resetCapture()
+    local opened = 0
+    local realOpen = AltStable.EnsureSheetVisible
+    AltStable.EnsureSheetVisible = function() opened = opened + 1 end
+    SlashCmdList["ALTSTABLE"]("update-reference")
+    AltStable.EnsureSheetVisible = realOpen
+    check("/alts update-reference names its replacement",
+          tostring(WoW.chatOut[#WoW.chatOut]):find("/alts portrait", 1, true) ~= nil,
+          tostring(WoW.chatOut[#WoW.chatOut]))
+    eq("  and does not fall through to opening the sheet", opened, 0)
 end
 
 ------------------------------------------------------------

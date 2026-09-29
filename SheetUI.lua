@@ -644,8 +644,6 @@ do
     end
 
     function AltStableCameraPresentation:Exit(reason)
-        -- Ignore the transient OnHide fired by the capture's UIParent:Hide().
-        if self.capturing then return end
         if not self.active or self.mode == "exit" then
             return
         end
@@ -2283,10 +2281,22 @@ local function CreateFrameIfNeeded()
         end)
     end
     tinsert(UISpecialFrames,"AltStableSheet")
+    -- A PARENT'S HIDE IS NOT A CLOSE. Hiding UIParent - a portrait capture, or
+    -- Alt+Z - fires OnHide on every child still shown, this window included
+    -- when it sits under UIParent, and showing it again fires OnShow. Neither
+    -- is the player closing or opening the sheet, and treating them as such
+    -- tore the showcase down mid-capture and replayed the whole opening
+    -- afterwards. The window can tell for itself: after a parent's hide its
+    -- own shown flag is still set. That replaced a `capturing` flag another
+    -- file set for the whole capture, which could not tell a parent's hide
+    -- from a REAL close in the middle of one - so Alt+Z mid-capture closed the
+    -- sheet and left the camera showcase running with nothing to end it (#89).
+    local hiddenByParent = false
     frame:SetScript("OnShow", function()
-        -- The capture's UIParent:Show() re-fires this OnShow; skip re-entering the
-        -- presentation / replaying the open animation during a capture.
-        if AltStableCameraPresentation and AltStableCameraPresentation.capturing then return end
+        if hiddenByParent then
+            hiddenByParent = false      -- the parent came back; we never left
+            return
+        end
         -- Camera presentation runs first so the frame-shift it performs
         -- happens before the open-animation alpha fade — otherwise the
         -- frame would fade in at its old position and jump.
@@ -2297,7 +2307,9 @@ local function CreateFrameIfNeeded()
             AltStable._PlayOpenAnimation(frame)
         end
     end)
-    frame:SetScript("OnHide", function()
+    -- The sheet CLOSING, however it happens.
+    local function Closed()
+        hiddenByParent = false
         -- The character menu goes with the window that raised it (#69). It is
         -- FULLSCREEN_DIALOG with a full-screen click-catcher under it, so a
         -- menu outliving the sheet is not a stray widget - it is an invisible
@@ -2307,7 +2319,23 @@ local function CreateFrameIfNeeded()
         if AltStableCameraPresentation and AltStableCameraPresentation.Exit then
             AltStableCameraPresentation:Exit("sheet-hide")
         end
+    end
+    frame:SetScript("OnHide", function()
+        if frame:IsShown() then
+            hiddenByParent = true       -- see OnShow: not a close
+            return
+        end
+        Closed()
     end)
+    -- Closed while its parent is ALREADY hidden - Escape during a capture with
+    -- the sheet under UIParent. The window was not visible, so the client
+    -- fires no OnHide: without this nothing ends the showcase, and the stale
+    -- `hiddenByParent` swallows the next real open's OnShow.
+    if type(hooksecurefunc) == "function" then
+        hooksecurefunc(frame, "Hide", function()
+            if hiddenByParent then Closed() end
+        end)
+    end
 
     -- The camera presentation reparents this sheet out from under UIParent while
     -- it hides the game UI, so it needs a handle to it.

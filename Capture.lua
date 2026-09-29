@@ -58,6 +58,17 @@ local SWAP_DELAY  = 0.45   -- 0.65 + 0.45 = 1.10s between shutter and shutter
 local WATCHDOG    = 12
 
 local RELOAD_POPUP = "ALTSTABLE_PORTRAIT_RELOAD"
+
+-- A camera shutter per shot, so the three seconds with no interface sound like
+-- what they are. SOUNDKIT.REPORT_SCREENSHOT_CAMERA (230810) is defined in the
+-- Mainline SoundKitConstants this client ships (wow-ui-source 1.60.1.70009),
+-- and MEASURED: `/run PlaySound(SOUNDKIT.REPORT_SCREENSHOT_CAMERA)` on
+-- 1.60.1.70009 is the selfie camera's shutter. Looked up at call time:
+-- SOUNDKIT is Blizzard's table.
+local function ShutterSound()
+    local id = type(SOUNDKIT) == "table" and SOUNDKIT.REPORT_SCREENSHOT_CAMERA
+    if id and type(PlaySound) == "function" then pcall(PlaySound, id) end
+end
 local STORE_VERSION = 1
 
 -- Which way the character is turned, in degrees. 0 is dead-on; a slight turn
@@ -67,11 +78,21 @@ local DEFAULT_FACING = 20
 
 -- The capture records. Created on first use, so an install that never
 -- captures never writes the table at all.
+--
+-- The version is written only on a store that has none. A NEWER version on
+-- disk - a downgrade after a later AltStable wrote it - is left alone and not
+-- written to: relabelling it 1 would make a converter parse its records as v1,
+-- which is the guess the contract says a reader must refuse to make.
 local function Store()
     AltStablePortraits = AltStablePortraits or {}
-    AltStablePortraits.version = STORE_VERSION
+    AltStablePortraits.version = AltStablePortraits.version or STORE_VERSION
     AltStablePortraits.renders = AltStablePortraits.renders or {}
     return AltStablePortraits
+end
+
+local function StoreTooNew()
+    local v = tonumber(AltStablePortraits and AltStablePortraits.version)
+    return v ~= nil and v > STORE_VERSION
 end
 
 local function Facing()
@@ -138,10 +159,14 @@ local function SuppressStrays()
         pcall(AltStable.FinishOpenAnimation)
     end
 
-    local function zero(f)
+    -- `evenHidden` is for the tooltip: it is hidden a moment before this runs,
+    -- but anything hovered during the capture shows it again - the sheet is
+    -- invisible, not gone, and its rows still answer the mouse - and a tooltip
+    -- shown at full alpha draws above the stage and is matted into the cutout.
+    local function zero(f, evenHidden)
         if type(f) ~= "table" then return end
         if type(f.GetAlpha) ~= "function" or type(f.SetAlpha) ~= "function" then return end
-        if f.IsShown and f:IsShown() == false then return end
+        if not evenHidden and f.IsShown and f:IsShown() == false then return end
 
         -- Only a frame genuinely NOT under UIParent. One that still is has
         -- already gone with the interface, and zeroing it would hand the
@@ -158,7 +183,7 @@ local function SuppressStrays()
 
     CloseStrayMenu()
     for _, name in ipairs(STRAY_FRAMES) do zero(_G[name]) end
-    zero(GameTooltip)
+    zero(GameTooltip, true)
     return #strays
 end
 
@@ -234,16 +259,6 @@ local function ShowUI()
     uiHidden = nil
     owedRestore = nil
     return true
-end
-
--- The sheet's showcase listens to the sheet's OnHide and OnShow, and hiding
--- UIParent fires both: Exit would tear the showcase down mid-capture and OnShow
--- would re-enter it afterwards. `capturing` on the presentation tells both to
--- stand aside (SheetUI's Exit and OnShow). Set for the whole capture, cleared
--- on every way out.
-local function ShowcaseCapturing(state)
-    local p = AltStable.AltStableCameraPresentation
-    if type(p) == "table" then p.capturing = state and true or nil end
 end
 
 local frame, model, backdrop, hint
@@ -339,8 +354,13 @@ end
 -- and one that begins as somebody leaves the ground is worse.
 local function Moving()
     if type(GetUnitSpeed) == "function" then
+        -- Through PlainNumber: a unit number can be a secret value, and a
+        -- comparison on one throws (docs/forever-api-notes.md, "Secret
+        -- values"). Unknown speed is not a reason to refuse.
         local ok, speed = pcall(GetUnitSpeed, "player")
-        if ok and (tonumber(speed) or 0) > 0 then return true end
+        local plain = ok and AltStable.API and AltStable.API.PlainNumber
+            and AltStable.API.PlainNumber(speed)
+        if plain and plain > 0 then return true end
     end
     if type(IsFalling) == "function" then
         local ok, falling = pcall(IsFalling)
@@ -385,10 +405,14 @@ local function RecordMetadata(shotIndex)
         w, h = GetScreenWidth(), GetScreenHeight()
     end
 
+    -- Unit numbers through PlainNumber: a secret value stored here would throw
+    -- on every later read, and the store is written to disk. nil, not 0, when
+    -- the client will not say - unknown is not zero.
+    local Plain = (AltStable.API and AltStable.API.PlainNumber) or tonumber
     table.insert(store.renders, {
         name = name, guid = UnitGUID("player"),
         race = raceToken, raceLoc = raceLoc, class = classToken,
-        sex = UnitSex("player"), level = UnitLevel("player"),
+        sex = Plain(UnitSex("player")), level = Plain(UnitLevel("player")),
         shot = shotIndex,                     -- 1 = on black, 2 = on white
         -- Local time, the same clock the screenshot's FILENAME uses, so a
         -- converter can match the record to the file.
@@ -421,15 +445,23 @@ end
 -- themselves; there is nothing to give them and nothing we still own.
 local function AbandonCapture(message, restoreUI)
     -- The stage goes first and unconditionally - but only if it EXISTS: it is
-    -- built lazily by the first capture or preview.
-    if frame then frame:Hide() end
+    -- built lazily by the first capture or preview. A preview goes with it
+    -- completely: left marked as previewing, a later `facing` brought back a
+    -- stage the player had not reopened - in the middle of the fight that
+    -- closed it.
+    if frame then
+        frame:Hide()
+        frame:EnableMouse(false)
+        frame:SetScript("OnMouseDown", nil)
+        if hint then hint:Hide() end
+    end
+    previewing = false
     if not capturing then return end
 
     captureToken = captureToken + 1     -- every pending callback is now void
     capturing = false
     if watchdog then watchdog:Cancel(); watchdog = nil end
     RestoreFormat()
-    ShowcaseCapturing(false)
 
     -- Drop whatever this capture already wrote. A lone shot-1 record is
     -- harmless (a converter only pairs a 1 with a 2), but a complete pair taken
@@ -504,7 +536,6 @@ local function Finish()
     -- player left staring at an empty screen is not.
     ShowUI()
     RestoreFormat()
-    ShowcaseCapturing(false)
 
     Out("portrait captured - |cffffff00/reload|r so it reaches the converter "
         .. "(the record is only written on reload or logout)")
@@ -529,6 +560,11 @@ local function Capture()
 
     if type(Screenshot) ~= "function" then
         Out("|cffff5555Screenshot() is unavailable on this client.|r")
+        return
+    end
+    if StoreTooNew() then
+        Out("|cffff8800your capture records were written by a newer AltStable - "
+            .. "update it to capture again|r")
         return
     end
 
@@ -563,13 +599,14 @@ local function Capture()
     backdrop:SetColorTexture(0, 0, 0, 1)
     Out("staging... hold still, two screenshots are coming")
 
-    -- Before the UI goes, so the sheet's showcase stands aside for the OnHide
-    -- that hiding UIParent fires.
-    ShowcaseCapturing(true)
+    -- Hiding UIParent fires the sheet's OnHide when the sheet is under it; the
+    -- sheet knows that is its parent going, not a close (SheetUI's OnHide).
     if GameTooltip and GameTooltip.Hide then pcall(GameTooltip.Hide, GameTooltip) end
+    -- And kept down: zeroing its alpha covers the lifted tooltip, but a tooltip
+    -- that resets its own alpha when shown would not stay covered. See the
+    -- Show hook at the bottom of the file.
     if not HideUI() then
         capturing = false
-        ShowcaseCapturing(false)
         RestoreFormat()
         Out("|cffff8800could not hide the interface - no portrait taken|r"
             .. (InCombatLockdown and InCombatLockdown() and " (in combat)" or ""))
@@ -590,6 +627,7 @@ local function Capture()
     C_Timer.After(KEY_DELAY, function()
         if token ~= captureToken then return end
         Screenshot()
+        ShutterSound()
         RecordMetadata(1)
         C_Timer.After(SHOT_DELAY, function()
             if token ~= captureToken then return end
@@ -597,6 +635,7 @@ local function Capture()
             C_Timer.After(SWAP_DELAY, function()
                 if token ~= captureToken then return end
                 Screenshot()
+                ShutterSound()
                 RecordMetadata(2)
                 C_Timer.After(SHOT_DELAY, function()
                     if token ~= captureToken then return end
@@ -611,6 +650,17 @@ end
 -- before two screenshots are spent on them. The UI stays up (this is not a
 -- capture) and a click dismisses it.
 local function Preview()
+    -- Not over a capture: re-posing unfreezes the model and repaints the
+    -- backdrop between the two shots, and the pair is recorded as good anyway.
+    if capturing then
+        Out("a capture is running - preview after it")
+        return
+    end
+    -- Not in combat either: the stage is a full-screen opaque frame.
+    if InCombatLockdown and InCombatLockdown() then
+        Out("|cffff8800not while you are in combat|r")
+        return
+    end
     Build()
     local _, deg = Facing()
     PoseLiveCharacter()
@@ -641,14 +691,30 @@ if type(hooksecurefunc) == "function" and type(SetUIVisibility) == "function" th
     end)
 end
 
+-- A tooltip shown DURING a capture is hidden again at once. The stage is at
+-- FULLSCREEN_DIALOG and a tooltip draws at TOOLTIP, above it, so one raised by
+-- the cursor resting on the (invisible, still hoverable) sheet is in the shot.
+if type(hooksecurefunc) == "function" and GameTooltip then
+    hooksecurefunc(GameTooltip, "Show", function(tip)
+        if capturing and uiHidden then pcall(tip.Hide, tip) end
+    end)
+end
+
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- Dying inside the three seconds is not exotic on a corpse run: shot one is
 -- the character, shot two a wisp, and a converter pairs them happily.
 events:RegisterEvent("PLAYER_DEAD")
+-- screenshotFormat is a SAVED CVar. A reload, logout or disconnect inside the
+-- three seconds ends the Lua state before the timer chain can put it back, and
+-- the player's screenshots would be TGA from then on. PLAYER_LOGOUT fires on
+-- a reload too.
+events:RegisterEvent("PLAYER_LOGOUT")
 events:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_DEAD" then
+    if event == "PLAYER_LOGOUT" then
+        RestoreFormat()
+    elseif event == "PLAYER_DEAD" then
         AbandonCapture("|cffff8800you died - portrait abandoned|r", true)
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- On EVERY path, not just the fallback. The engine hide is combat-safe

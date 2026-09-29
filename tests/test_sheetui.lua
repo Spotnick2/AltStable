@@ -2106,5 +2106,83 @@ do
     WoW.popups = {}
 end
 
+------------------------------------------------------------
+-- A capture through the REAL camera showcase (#89 review)
+------------------------------------------------------------
+-- The showcase hides the game UI and lifts the sheet out of it. A capture
+-- then hides UIParent itself - and hiding a parent fires OnHide on the
+-- children still shown, the sheet included when it is under UIParent. The
+-- sheet has to tell that apart from being CLOSED: the first must leave the
+-- showcase alone, the second must end it. A flag set for the whole capture
+-- could not: Alt+Z mid-capture closed the sheet and the showcase stayed on,
+-- camera and all, with no window to close it from.
+do
+    local P = AltStable._test.portrait
+    local Cam = AltStable._test.CameraPresentation
+    local sheet = AltStable._test.frame
+    AltStableConfig.enableWorldCameraPresentation = true
+    WoW.cvars["test_cameraOverShoulder"] = "0"
+
+    local function openSheet()
+        sheet:Hide()
+        pcall(Cam.ForceRestore, Cam, "test")
+        Cam.active, Cam.mode = false, nil
+        SetUIVisibility(true)
+        AltStable.EnsureSheetVisible()
+    end
+
+    -- Alt+Z mid-capture, showcase on.
+    openSheet()
+    check("the sheet is open with the showcase running", sheet:IsShown() and Cam.active)
+    P.Capture()
+    check("a capture starts from the open sheet", P.capturing())
+    SetUIVisibility(true)                       -- the player presses Alt+Z
+    check("  Alt+Z abandons it", not P.capturing())
+    check("  and closes the sheet, as Alt+Z does with the showcase up", not sheet:IsShown())
+    eq("  and the showcase gives the interface back", Cam.uiHidden, false)
+    eq("  and is on its way out, not left running", Cam.mode, "exit")
+    eq("  with the sheet back under UIParent", sheet:GetParent(), UIParent)
+
+    -- Showcase NOT hiding the UI: the sheet stays under UIParent, so the
+    -- capture's own hide reaches it as a parent hide. That must not end the
+    -- showcase, and the interface coming back must not replay the open.
+    AltStableConfig.hideGameUIOnPresentation = false
+    openSheet()
+    check("with the UI left up, the sheet is under UIParent", sheet:GetParent() == UIParent)
+    local enters = 0
+    local realEnter = Cam.Enter
+    Cam.Enter = function(self, ...) enters = enters + 1; return realEnter(self, ...) end
+    P.Capture()
+    check("  a capture hides the interface", not UIParent:IsShown())
+    check("  and the showcase survives the sheet losing its parent", Cam.active and Cam.mode ~= "exit")
+    P.AbandonCapture(nil, true)                 -- cancel, the watchdog, death
+    check("  the interface is back", UIParent:IsShown())
+    eq("  and coming back did not re-enter the showcase", enters, 0)
+    check("  the sheet is still open", sheet:IsShown())
+
+    -- CLOSED while the capture has UIParent down: the sheet was not visible,
+    -- so the client fires no OnHide at all. The close still has to end the
+    -- showcase, and must not leave the next open swallowed.
+    P.Capture()
+    check("  a second capture has the interface down", not UIParent:IsShown())
+    local realOnHide = sheet:GetScript("OnHide")
+    sheet:SetScript("OnHide", nil)              -- what the client does here
+    sheet:Hide()
+    sheet:SetScript("OnHide", realOnHide)
+    eq("closing it mid-capture still ends the showcase", Cam.mode, "exit")
+    P.AbandonCapture(nil, true)
+    pcall(Cam.ForceRestore, Cam, "test")
+    Cam.active, Cam.mode = false, nil
+    enters = 0
+    AltStable.EnsureSheetVisible()
+    eq("  and the next open is a real one", enters, 1)
+    Cam.Enter = realEnter
+
+    AltStableConfig.hideGameUIOnPresentation = nil
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    AltStableConfig.enableWorldCameraPresentation = nil
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

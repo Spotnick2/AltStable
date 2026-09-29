@@ -86,6 +86,7 @@ function WoW.reset()
     if UIParent then UIParent._children = {} end
     WoW.popups = {}
     WoW.reloaded = 0
+    WoW.sounds = {}
     WoW.cvars = {}
     WoW.camera = { zoom = 4, view = 1, savedViews = {} }
     WoW.now = 1700000000
@@ -452,16 +453,36 @@ local function makeFrame()
     -- full-screen click-catcher over the game and the suite saw a tidy world.
     -- Only on an actual change, as the client does - re-hiding a hidden frame
     -- fires nothing.
+    --
+    -- AND ON THE DESCENDANTS, as the client does: hiding a parent fires OnHide
+    -- on every child that was on screen - their own shown flag untouched - and
+    -- showing it again fires their OnShow. That is how hiding UIParent reaches
+    -- the sheet, and a stub that stopped at the frame itself hid every bug
+    -- that lives on that path (#89: a capture that hid UIParent and a sheet
+    -- that could not tell "my parent went" from "I was closed").
+    local function cascade(frame, script)
+        for _, c in ipairs(frame._children or {}) do
+            if c._shown ~= false then
+                local fn = c["_script_" .. script]
+                if fn then fn(c) end
+                cascade(c, script)
+            end
+        end
+    end
     f.Show = function(self)
         local was = self._shown
+        local wasVisible = self.IsVisible and self:IsVisible()
         self._shown = true
         if was ~= true and self._script_OnShow then self:_script_OnShow() end
+        if not wasVisible and self:IsVisible() then cascade(self, "OnShow") end
         return self
     end
     f.Hide = function(self)
         local was = self._shown
+        local wasVisible = self.IsVisible and self:IsVisible()
         self._shown = false
         if was ~= false and self._script_OnHide then self:_script_OnHide() end
+        if wasVisible then cascade(self, "OnHide") end
         return self
     end
     f.IsShown        = function(self) return self._shown ~= false end
@@ -907,6 +928,13 @@ function Screenshot() WoW.screenshots = WoW.screenshots + 1 end
 -- prompt reloads when accepted, and nothing else in a stub run can.
 WoW.reloaded = 0
 function ReloadUI() WoW.reloaded = WoW.reloaded + 1 end
+
+-- Sounds played, by kit ID. SOUNDKIT is Blizzard's constant table; only the
+-- entries the addon uses are here, with the values from the client's own
+-- Mainline SoundKitConstants.lua (1.60.1.70009).
+WoW.sounds = {}
+SOUNDKIT = { REPORT_SCREENSHOT_CAMERA = 230810 }
+function PlaySound(id) table.insert(WoW.sounds, id); return true end
 
 -- What the player is wearing, by slot. The probe fingerprints this to decide
 -- whether a portrait is stale, so a capture that runs to completion reaches it.

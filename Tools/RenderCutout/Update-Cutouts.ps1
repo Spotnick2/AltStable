@@ -184,7 +184,13 @@ print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
         }
 
         $native = if ($nh) { ", nativeW = $nw, nativeH = $nh" } else { "" }
-        "    ['$slug'] = { file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
+        # Keyed by the character's GUID when the sidecar knows it, so two
+        # characters sharing a name never show each other's portrait. Older
+        # sidecars have none and keep the name key (docs/PORTRAIT-CONTRACT.md).
+        $guid = if ((Test-Path $side) -and $m.guid) { [string]$m.guid } else { $null }
+        $key  = if ($guid) { $guid } else { $slug }
+        $who  = if ($guid) { "guid = '$guid', " } else { "" }
+        "    ['$key'] = { $($who)file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
     }
 
     $lua = @"
@@ -235,9 +241,14 @@ Write-Host "A new pair converts once the game writes its record (on /reload or l
 function Get-State {
     $shots = @(Get-ChildItem $Shots -Filter *.tga -ErrorAction SilentlyContinue |
                ForEach-Object { "$($_.Name):$($_.Length)" })
-    # AltStable.lua since capture shipped (#89); AltStableProbe.lua for older captures.
-    $stores = @(Get-ChildItem (Split-Path $Shots -Parent) -Recurse -Include AltStable.lua, AltStableProbe.lua -ErrorAction SilentlyContinue |
-                ForEach-Object { "$($_.FullName):$($_.LastWriteTimeUtc.Ticks)" })
+    # AltStable.lua since capture shipped (#89); AltStableProbe.lua for older
+    # captures. Two -Filter walks of WTF\Account only: -Include over the whole
+    # client folder enumerates everything under it in managed code, every 2s.
+    $accounts = Join-Path (Split-Path $Shots -Parent) "WTF\Account"
+    $stores = @(foreach ($name in "AltStable.lua", "AltStableProbe.lua") {
+                    Get-ChildItem $accounts -Recurse -Filter $name -ErrorAction SilentlyContinue |
+                        ForEach-Object { "$($_.FullName):$($_.LastWriteTimeUtc.Ticks)" }
+                })
     return (($shots + $stores) -join "|")
 }
 

@@ -6,7 +6,8 @@
   button in the sheet's title bar, takes the two-shot capture the Roster's
   lineup is made from; it used to live in a development tool the download never
   had. It refuses in combat, in a dungeon, while dead or moving, and gives up
-  cleanly if any of those happen mid-capture. Afterwards it offers a reload,
+  cleanly if you enter combat, die or bring your interface back mid-capture.
+  Each of the two shots makes the camera's shutter sound. Afterwards it offers a reload,
   because the record of whose screenshots these are is only saved on a reload
   or logout. `/alts portrait preview` shows the framing first, and
   `/alts portrait facing <degrees>` turns the character. Turning captures into
@@ -19,7 +20,8 @@
   a name no longer show each other's portrait
   ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
 - **`/alts update-reference` is gone.** It took one plain screenshot for a
-  pipeline that no longer exists, and nothing read it.
+  pipeline that no longer exists, and nothing read it; it now points you at
+  `/alts portrait`.
 - **The Roster's scene says so when nobody has a portrait.** It used to show an
   empty campfire captioned "showing 0 of 12 - highest level first; favourite the
   ones you want here", which no amount of favouriting could fix. It now says

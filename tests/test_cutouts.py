@@ -319,5 +319,70 @@ with tempfile.TemporaryDirectory() as tmp:
           buf.getvalue().strip())
 
 
+# ---------------------------------------------------------------------------
+# The contract's identity and ordering rules (#89, docs/PORTRAIT-CONTRACT.md)
+# ---------------------------------------------------------------------------
+# Newest by EPOCH: local time repeats an hour when the clocks go back, so a
+# capture taken after the change can carry an earlier stamp than one before it.
+# Identity by GUID: two characters sharing a name are two characters.
+
+STORE_CONTRACT = '''
+AltStablePortraits = {
+    ["version"] = 1,
+    ["renders"] = {
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 1,
+          ["stamp"] = "2026-10-25 01:40:00", ["epoch"] = 1792888800 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 2,
+          ["stamp"] = "2026-10-25 01:40:02", ["epoch"] = 1792888802 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 1,
+          ["stamp"] = "2026-10-25 01:20:00", ["epoch"] = 1792890000 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-1-AAAAAAAA", ["shot"] = 2,
+          ["stamp"] = "2026-10-25 01:20:02", ["epoch"] = 1792890002 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-2-BBBBBBBB", ["shot"] = 1,
+          ["stamp"] = "2026-10-25 02:00:00", ["epoch"] = 1792893600 },
+        { ["name"] = "Twin Name", ["guid"] = "Player-2-BBBBBBBB", ["shot"] = 2,
+          ["stamp"] = "2026-10-25 02:00:02", ["epoch"] = 1792893602 },
+    },
+}
+'''
+
+with tempfile.TemporaryDirectory() as tmp:
+    sv = os.path.join(tmp, "WTF", "Account", "1#1", "SavedVariables")
+    os.makedirs(sv)
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_CONTRACT)
+    caps = mc.captures(wtf=os.path.join(tmp, "WTF"))
+    eq("every capture carries its GUID", [c[4] for c in caps].count(None), 0)
+    mine = [c for c in caps if c[4] == "Player-1-AAAAAAAA"]
+    eq("  and the two shots of a capture are paired per GUID", len(mine), 2)
+    eq("newest is decided by epoch, not by the local stamp that repeats at DST",
+       mine[-1][1], "2026-10-25 01:20:00")
+
+    # A store in a version this converter does not know is refused.
+    with open(os.path.join(sv, "AltStable.lua"), "w", encoding="utf-8") as fh:
+        fh.write(STORE_CONTRACT.replace('["version"] = 1', '["version"] = 2'))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        refused = mc.captures(wtf=os.path.join(tmp, "WTF"))
+    eq("a store of an unknown version yields no captures", len(refused), 0)
+    check("  and says to update the converter", "update" in buf.getvalue(), buf.getvalue())
+
+    # Two characters, one name: the second gets its own file.
+    out = os.path.join(tmp, "out")
+    os.makedirs(out)
+    eq("the first character with a name gets the plain slug",
+       mc.output_base("Twin Name", "Player-1-AAAAAAAA", out), "twin-name")
+    with open(os.path.join(out, "twin-name.json"), "w", encoding="utf-8") as fh:
+        json.dump({"guid": "Player-1-AAAAAAAA"}, fh)
+    eq("  and keeps it on a re-capture",
+       mc.output_base("Twin Name", "Player-1-AAAAAAAA", out), "twin-name")
+    eq("a namesake gets the slug plus the end of its GUID",
+       mc.output_base("Twin Name", "Player-2-BBBBBBBB", out), "twin-name-bbbbbb")
+    with open(os.path.join(out, "twin-name.json"), "w", encoding="utf-8") as fh:
+        json.dump({"w": 1}, fh)
+    eq("a legacy sidecar with no GUID is taken to be the same character",
+       mc.output_base("Twin Name", "Player-2-BBBBBBBB", out), "twin-name")
+
+
 print("test_cutouts: %d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)

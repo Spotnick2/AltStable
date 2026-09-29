@@ -2920,6 +2920,12 @@ SlashCmdList["ALTSTABLE"] = function(args)
         if AltStable.PortraitCommand then AltStable.PortraitCommand(target) end
         return
     end
+    -- The retired name says where it went, rather than falling through to the
+    -- bare /alts below, which opens the sheet and pings every peer for a sync.
+    if cmd == "update-reference" or cmd == "updateref" then
+        Print("|cffffff00/alts update-reference|r is now |cffffff00/alts portrait|r.")
+        return
+    end
 
     ----------------------------------------------------
     -- /alts  (open sheet + sync via configured mode)
