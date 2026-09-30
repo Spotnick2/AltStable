@@ -96,7 +96,8 @@ look at my bank alt": the record stays and keeps syncing.
 ### Someone asked for your database
 
 Since #61 the sync request handler does not answer strangers. An unknown
-character whispering a request gets **nothing**, and you get a line naming them:
+character whispering a request gets **nothing**, and you get a prompt - Allow,
+Not now, Never - and a line naming them:
 
 ```
 Stranger is asking for your character database. Nothing has been sent.
@@ -110,6 +111,24 @@ Stranger is asking for your character database. Nothing has been sent.
   asked again.
 - `/alts auth` — what is stored, and who is waiting on you.
 - `/alts forget-peer <name>` — drop the stored answer and be asked again.
+
+**The prompt.** Each asker is prompted once per session, one at a time, never
+in combat (it waits for combat to end). **Escape is "Not now"**: it refuses
+nobody, and the request stays in Options → *Requests and answers* until it
+expires. Allow serves them and asks them back, so their characters come too.
+
+**Options → Requests and answers** lists every stored answer and every waiting
+request, with a button to change each and one to forget it.
+
+**Data coming in is gated too.** A stream is taken only from a peer you allowed
+(or whitelisted), or one you asked yourself in the last ten minutes - a login
+request, `/alts sync <name>`. Anything else is dropped with one line per peer:
+`<name> sent character data you did not ask for - nothing was taken`. A stream
+that started in time finishes however long it takes.
+
+**`/alts sync <name>` is consent for that exchange.** Their answer, and their
+own request back, are accepted for ten minutes without a prompt; nothing is
+stored. It refuses a peer set to never, and says so.
 
 **An answer is always a whisper to the character that asked.** A request
 arriving on the guild channel used to be answered on the guild channel, so

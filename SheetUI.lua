@@ -3430,6 +3430,120 @@ local function CreateFrameIfNeeded()
     end)
     optWlAddBox:SetScript("OnEnterPressed", function() optWlAddBtn:Click() end)
 
+    -- ── Who may sync with you (#61) ───────────────────────
+    -- Everyone who has asked and not been answered, and every stored answer.
+    -- The whitelist above is who WE ask; this is who may ask US, and the two
+    -- are separate on purpose.
+    local optAuthHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optAuthHdr:SetPoint("TOPLEFT", P, Y)
+    optAuthHdr:SetText("REQUESTS AND ANSWERS")
+    optAuthHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    Y = Y - 18
+
+    local optAuthHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optAuthHint:SetPoint("TOPLEFT", P, Y)
+    optAuthHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optAuthHint:SetJustifyH("LEFT"); optAuthHint:SetWordWrap(true)
+    optAuthHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAuthHint:SetText("Who may sync with you. Forget goes back to the whitelist, or to asking. "
+        .. "Allowing someone does not add them to the list above.")
+    Y = Y - 30
+
+    local function OptAuthButton(parent, anchor, dx)
+        local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
+        b:SetSize(52, 16)
+        b:SetPoint("LEFT", anchor, "RIGHT", dx, 0)
+        AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+        local l = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        l:SetAllPoints(); l:SetJustifyH("CENTER")
+        b.label = l
+        return b
+    end
+
+    local OPT_AUTH_ROWS = 6
+    local optAuthRows = {}
+    for i = 1, OPT_AUTH_ROWS do
+        local row = CreateFrame("Frame", nil, optionsFrame)
+        row:SetSize(360, 18)
+        row:SetPoint("TOPLEFT", P + 4, Y - (i - 1) * 18)
+        local lbl = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", 0, 0); lbl:SetWidth(200); lbl:SetJustifyH("LEFT")
+        lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        row.label = lbl
+        row.first = OptAuthButton(row, lbl, 8)
+        row.second = OptAuthButton(row, row.first, 4)
+        row:Hide()
+        optAuthRows[i] = row
+    end
+    Y = Y - (OPT_AUTH_ROWS * 18)
+    local optAuthMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optAuthMore:SetPoint("TOPLEFT", P + 4, Y)
+    optAuthMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    Y = Y - 20
+
+    local AUTH_STATE = {
+        waiting = "|cffffff00waiting|r",
+        [AltStable.AUTH_AUTO] = "|cff88ff88allowed|r",
+        [AltStable.AUTH_NEVER] = "|cffff8888never|r",
+    }
+    -- What each state's two buttons do: the first changes the answer, the
+    -- second takes it back. A waiting request has nothing to take back, so it
+    -- gets Allow and Never.
+    local AUTH_ACTIONS = {
+        waiting = { { "Allow", "AllowSyncPeer" }, { "Never", "DenySyncPeer" } },
+        [AltStable.AUTH_AUTO] = { { "Never", "DenySyncPeer" }, { "Forget", "ForgetSyncPeer" } },
+        [AltStable.AUTH_NEVER] = { { "Allow", "AllowSyncPeer" }, { "Forget", "ForgetSyncPeer" } },
+    }
+
+    -- Answers first, then who is waiting; one row per peer.
+    local function OptSyncAuthEntries()
+        local out, seen = {}, {}
+        for _, e in ipairs(AltStable.SyncAuthList and AltStable.SyncAuthList() or {}) do
+            if AUTH_ACTIONS[e.mode] and not seen[e.name] then
+                seen[e.name] = true
+                out[#out + 1] = { name = e.name, state = e.mode }
+            end
+        end
+        for _, e in ipairs(AltStable.PendingSyncRequests and AltStable.PendingSyncRequests() or {}) do
+            local key = e.key or (AltStable.PeerKey and AltStable.PeerKey(e.name)) or e.name
+            if not seen[key] then
+                seen[key] = true
+                out[#out + 1] = { name = e.name, state = "waiting" }
+            end
+        end
+        return out
+    end
+
+    local function OptRefreshSyncAuth()
+        local entries = OptSyncAuthEntries()
+        for i, row in ipairs(optAuthRows) do
+            local e = entries[i]
+            if e then
+                row.label:SetText(e.name .. "  " .. AUTH_STATE[e.state])
+                local actions = AUTH_ACTIONS[e.state]
+                for n, btn in ipairs({ row.first, row.second }) do
+                    local caption, fnName = actions[n][1], actions[n][2]
+                    btn.label:SetText(caption)
+                    -- Core redraws this list afterwards, through OnSyncAuthChanged.
+                    btn:SetScript("OnClick", function() AltStable[fnName](e.name) end)
+                end
+                row:Show()
+            else
+                -- Emptied as well as hidden: the label is what a test reads.
+                row.label:SetText("")
+                row:Hide()
+            end
+        end
+        local extra = #entries - OPT_AUTH_ROWS
+        optAuthMore:SetText(extra > 0
+            and ("+" .. extra .. " more - |cffffff00/alts auth|r") or "")
+    end
+    AltStable.RefreshSyncAnswers = function()
+        if optionsFrame:IsVisible() then OptRefreshSyncAuth() end
+    end
+    AltStable._test.SyncAuthRows = optAuthRows
+    AltStable._test.OptionsPanel = optionsPanel
+
     -- ── Toasts section ────────────────────────────────────
     local optToastHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optToastHdr:SetPoint("TOPLEFT", P, Y)
@@ -3638,6 +3752,7 @@ local function CreateFrameIfNeeded()
             cb:SetChecked(AltStableConfig.toastProfessions[profKey] ~= false)
         end
         OptRefreshWhitelist()
+        OptRefreshSyncAuth()
         OptRefreshHidden()
         RefreshThemeBtns()
         -- And the skin row, which is the ONE control here that can be changed
@@ -4259,6 +4374,111 @@ if type(StaticPopupDialogs) == "table" then
         OnHide = function(self) DropPopup(self) end,
     }
 end
+
+------------------------------------------------------------
+-- "<name> asks to sync with you" (#61)
+------------------------------------------------------------
+-- The chat line alone was easy to miss, and a request expires in five minutes.
+-- Each asker is prompted ONCE per session; after that the Options list
+-- ("Requests and answers") is where they wait.
+--
+-- The queue is not stored: the next peer is worked out from the pending
+-- requests every time, so an answer given anywhere else - the slash command,
+-- the Options list - just drops out of it, and an expired request is never
+-- prompted.
+local SYNC_ASK_POPUP = "ALTSTABLE_SYNC_ASK"
+local syncPrompted = {}      -- PeerKey -> true: already asked this session
+local syncPromptKey          -- the peer on screen now, if any
+
+local function NextSyncAsk()
+    local best
+    for _, e in ipairs(AltStable.PendingSyncRequests()) do
+        local key = e.key or AltStable.PeerKey(e.name)
+        if key and not syncPrompted[key]
+            and AltStable.SyncAuthFor(e.name) == AltStable.AUTH_ASK
+            and (not best or (e.at or 0) < (best.at or 0)) then
+            best = e
+        end
+    end
+    return best
+end
+
+local function ShowNextSyncAsk()
+    if syncPromptKey then return end    -- one at a time
+    -- Not in the middle of a fight: PLAYER_REGEN_ENABLED tries again.
+    if InCombatLockdown and InCombatLockdown() then return end
+    if type(StaticPopupDialogs) ~= "table" or not StaticPopup_Show then return end
+    if not AltStable.PendingSyncRequests then return end
+    local e = NextSyncAsk()
+    if not e then return end
+    local key = e.key or AltStable.PeerKey(e.name)
+    local dialog = StaticPopup_Show(SYNC_ASK_POPUP, e.name, nil, { name = e.name, key = key })
+    -- No frame (every dialog slot busy, or the client refused): not counted as
+    -- asked, so the next change tries again.
+    if not dialog then return end
+    syncPrompted[key] = true
+    syncPromptKey = key
+    LiftPopup(dialog)
+end
+
+if type(StaticPopupDialogs) == "table" then
+    StaticPopupDialogs[SYNC_ASK_POPUP] = {
+        text = "|cffffffff%s|r asks to sync with you.\n\nThey would receive every character "
+            .. "AltStable knows here - gold, bags, mail, lockouts.",
+        button1 = "Allow",
+        button2 = "Not now",
+        button3 = "Never",
+        OnAccept = function(self, data)
+            DropPopup(self)
+            if type(data) == "table" then AltStable.AllowSyncPeer(data.name) end
+        end,
+        -- "Not now", and ALSO what Escape does (hideOnEscape runs OnCancel), so
+        -- this must never refuse anyone: the request stays waiting.
+        OnCancel = function(self) DropPopup(self) end,
+        OnAlt = function(self, data)
+            DropPopup(self)
+            if type(data) == "table" then AltStable.DenySyncPeer(data.name) end
+        end,
+        -- Every route out ends here. The next asker is shown on the next frame,
+        -- not from inside this one: the dialog is still being torn down, and
+        -- DropPopup documents how its hide can re-enter.
+        OnHide = function(self)
+            DropPopup(self)
+            syncPromptKey = nil
+            if C_Timer and C_Timer.After then C_Timer.After(0, ShowNextSyncAsk) end
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+    }
+end
+
+-- Core calls this whenever an answer or a pending request changes.
+function AltStable.OnSyncAuthChanged()
+    if AltStable.RefreshSyncAnswers then AltStable.RefreshSyncAnswers() end
+    -- Answered some other way while the prompt was up: take the stale question
+    -- down, on the next frame so a button's own handler finishes first.
+    local shown = syncPromptKey
+    if shown and C_Timer and C_Timer.After then
+        C_Timer.After(0, function()
+            if syncPromptKey == shown and StaticPopup_Hide
+                and AltStable.SyncAuthFor(shown) ~= AltStable.AUTH_ASK then
+                StaticPopup_Hide(SYNC_ASK_POPUP)
+            end
+        end)
+    end
+    ShowNextSyncAsk()
+end
+
+do
+    local regen = CreateFrame("Frame")
+    regen:RegisterEvent("PLAYER_REGEN_ENABLED")
+    regen:SetScript("OnEvent", function() ShowNextSyncAsk() end)
+    AltStable._test.SyncAskRegenFrame = regen
+end
+
+AltStable._test.SyncAskPopup = SYNC_ASK_POPUP
+AltStable._test.ResetSyncPrompts = function() syncPrompted = {}; syncPromptKey = nil end
 
 function AltStable.HideCharacter(guid)
     if not guid or not AltStable.SetCharacterHidden then return end

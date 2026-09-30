@@ -85,6 +85,7 @@ function WoW.reset()
     -- sees strangers from three blocks ago.
     if UIParent then UIParent._children = {} end
     WoW.popups = {}
+    WoW.popupRefused = nil
     WoW.reloaded = 0
     WoW.sounds = {}
     WoW.cvars = {}
@@ -1061,6 +1062,13 @@ StaticPopupDialogs = {}
 function StaticPopup_Show(which, arg1, arg2, data)
     local def = StaticPopupDialogs[which]
     if not def then return nil end
+    -- The client returns nil when it cannot show one (every dialog slot busy,
+    -- or a show condition failed) - and calls OnCancel(nil, data) first. A
+    -- caller that counts the popup as shown without looking is wrong there.
+    if WoW.popupRefused then
+        if type(def.OnCancel) == "function" then def.OnCancel(nil, data) end
+        return nil
+    end
 
     local dialog = WoW.makeFrame()
     dialog._parent = UIParent
