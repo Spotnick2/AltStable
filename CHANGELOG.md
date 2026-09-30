@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The capture button tells you when a portrait is due.** It glows when the
+  character you are playing has no portrait yet, or when the gear a portrait
+  shows changed since the last capture - not rings, trinkets, the neck or the
+  ranged slot, but showing or hiding the helm or cloak does count; its
+  tooltip says which. A capture waiting for the converter does not glow. Never
+  in combat; `/alts portrait glow off` turns it off. Other addons can ask too:
+  `AltStable.GetPortraitStatus()` and a `PortraitStatusChanged` callback
+  ([#128](https://github.com/Spotnick2/AltStable/issues/128)).
 - **A Professions tab: which alt knows which recipe.** Open a profession's
   window on each alt once, and the tab shows every recipe of that profession
   with who knows it, the skill it needs, and where it comes from (trainer, drop,

@@ -167,44 +167,11 @@ end
 -- Which cutout belongs to which character
 ------------------------------------------------------------
 
--- The converter names each file after the character it photographed, lowercased
--- with every run of non-alphanumerics collapsed to a dash. This has to agree
--- with Tools/RenderCutout/make-cutout.py EXACTLY or every portrait silently
--- falls back to a card, so it is one function with one test.
-local function Slug(name)
-    if type(name) ~= "string" then return nil end
-    local s = name:lower():gsub("[^a-z0-9]+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
-    return (s ~= "") and s or nil
-end
-
--- An entry only counts when it can actually be DRAWN. The renderer requires
--- entry.file, so a counter asking a weaker question would hide the "N of M have
--- a portrait" hint at exactly the moment every card is a fallback.
-local function Drawable(entry)
-    return type(entry) == "table" and type(entry.file) == "string" and entry.file ~= ""
-end
-
--- By GUID first, then by name (#89).
---
--- A name is not an identity: two characters on different realms or accounts
--- can share one, and punctuation or accents can fold two different names into
--- one slug. A manifest keyed by name alone would hang one character's portrait
--- on both. So an entry is looked up by the character's GUID, and the name key
--- is the legacy fallback for manifests written before entries carried one - and
--- even then an entry that NAMES a different GUID is refused rather than shown
--- on the wrong character.
-local function CutoutFor(char)
-    local manifest = AltStableCutoutManifest
-    if type(manifest) ~= "table" or type(char) ~= "table" then return nil end
-    if type(char.guid) == "string" and Drawable(manifest[char.guid]) then
-        return manifest[char.guid]
-    end
-    local slug = Slug(char.name)
-    local entry = slug and manifest[slug] or nil
-    if not Drawable(entry) then return nil end
-    if entry.guid ~= nil and entry.guid ~= char.guid then return nil end
-    return entry
-end
+-- The identity rules live in the core (Core.lua), shared with the capture
+-- button's "is a portrait due" check (#128): a character with a portrait there
+-- has one here.
+local Slug      = AltStable.CutoutSlug
+local CutoutFor = AltStable.CutoutFor
 
 -- The image sits in the TOP-LEFT of a power-of-two canvas, so the rest of the
 -- texture is empty padding that must be cropped off rather than drawn.
