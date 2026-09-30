@@ -42,7 +42,10 @@ try {
     # (PORTRAIT-CONTRACT.md section 3). Pure PowerShell on temp files: no
     # Python, no client.
     Write-Host "── Update-Cutouts.ps1 -SelfTest ──────────────" -ForegroundColor Cyan
-    & pwsh -NoProfile -File (Join-Path $RepoRoot "Tools/RenderCutout/Update-Cutouts.ps1") -SelfTest
+    # An install path on a drive that does not exist: the script must not need
+    # one to self-test (the Linux CI runner has no C:, and that broke it once).
+    & pwsh -NoProfile -File (Join-Path $RepoRoot "Tools/RenderCutout/Update-Cutouts.ps1") -SelfTest -AddOnsPath "Q:
+o-such-install\AddOns"
     if ($LASTEXITCODE -ne 0) { $failed++ }
     Write-Host ""
 

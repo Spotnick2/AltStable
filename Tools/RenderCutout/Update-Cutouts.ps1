@@ -56,10 +56,14 @@ $outDir = Join-Path $here 'out'
 #
 # A separate folder is loaded by the client on its own, survives every deploy,
 # and can be deleted wholesale to start over.
-$cutoutAddon = Join-Path $AddOnsPath 'AltStableCutouts'
-$mediaDir = Join-Path $cutoutAddon 'Cutouts'
-$manifest = Join-Path $cutoutAddon 'CutoutManifest.lua'
-$cutoutToc = Join-Path $cutoutAddon 'AltStableCutouts.toc'
+#
+# [IO.Path]::Combine, not Join-Path: Join-Path resolves the drive, and on a
+# machine without the default install's (the Linux CI runner has no C:) it
+# threw here, before -SelfTest - which needs none of these - could run.
+$cutoutAddon = [IO.Path]::Combine($AddOnsPath, 'AltStableCutouts')
+$mediaDir = [IO.Path]::Combine($cutoutAddon, 'Cutouts')
+$manifest = [IO.Path]::Combine($cutoutAddon, 'CutoutManifest.lua')
+$cutoutToc = [IO.Path]::Combine($cutoutAddon, 'AltStableCutouts.toc')
 
 function Test-Prereqs {
     $python = Get-Command python -ErrorAction SilentlyContinue
@@ -148,14 +152,25 @@ function Get-EnhancedField([string] $primaryPath, [string] $guid, [string] $cuto
     $tga = Join-Path $enhDir "$base.tga"
     $side = Join-Path $enhDir "$base.json"
     if (-not (Test-Path -LiteralPath $tga) -or -not (Test-Path -LiteralPath $side)) { return "" }
-    try { $m = Get-Content -LiteralPath $side -Raw | ConvertFrom-Json } catch { return "" }
-    if ([string]$m.guid -ne $guid) { return "" }
-    $e = $m.enhancement
-    if (-not $e) { return "" }
-    $src = (Get-FileHash -LiteralPath $primaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ([string]$e.sourceHash -ne $src) { return "" }
-    $out = (Get-FileHash -LiteralPath $tga -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ([string]$e.outputHash -ne $out) { return "" }
+    # Everything below reads files the COMPANION owns and may be writing or
+    # replacing right now. Any failure means "no enhanced picture this time":
+    # under ErrorActionPreference Stop it used to abort the whole manifest -
+    # every character's plain portrait with it - and end the -Watch loop.
+    try {
+        $m = Get-Content -LiteralPath $side -Raw | ConvertFrom-Json
+        # -cne: the contract says EQUAL and lower-case hex. PowerShell's -ne
+        # ignores case, and attaching what the companion's exact comparison
+        # refuses would make the picture depend on which writer ran last.
+        if ([string]$m.guid -cne $guid) { return "" }
+        $e = $m.enhancement
+        if (-not $e) { return "" }
+        $src = (Get-FileHash -LiteralPath $primaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ([string]$e.sourceHash -cne $src) { return "" }
+        $out = (Get-FileHash -LiteralPath $tga -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ([string]$e.outputHash -cne $out) { return "" }
+    } catch {
+        return ""
+    }
     foreach ($k in 'w', 'h', 'texw', 'texh') {
         $v = $m.$k
         if (-not ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) -or $v -le 0) { return "" }
@@ -312,6 +327,17 @@ if ($SelfTest) {
     Sidecar @{}
     Set-Content -LiteralPath (Join-Path $enh 'karuzo-elegia.json') -Value '{ not json' -Encoding UTF8
     Check "an unreadable sidecar does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ sourceHash = (Hash $primary).ToUpperInvariant() }
+    Check "an upper-case hash does not attach (the contract says lower-case, exactly)" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ guid = $guid.ToLowerInvariant() }
+    Check "a guid differing only in case does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{}
+    $lock = [IO.File]::Open($etga, 'Open', 'Read', 'None')
+    try {
+        $locked = $null; $threw = $false
+        try { $locked = Get-EnhancedField $primary $guid $dir } catch { $threw = $true }
+        Check "a file the companion holds open is 'not this time', never an error" ((-not $threw) -and $locked -eq '')
+    } finally { $lock.Dispose() }
     Sidecar @{}
     Remove-Item -LiteralPath $etga
     Check "a missing enhanced TGA does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')

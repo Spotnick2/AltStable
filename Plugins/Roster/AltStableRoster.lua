@@ -186,9 +186,11 @@ local CutoutFor = AltStable.CutoutFor
 -- check that may never fire would only claim the case is handled. The guarantee
 -- is the writer's: the contract's attachment rule lists `enhanced` only when the
 -- file is on disk and its hash matches the sidecar's.
+local DESCRIPTOR_SIZES = { "w", "h", "texw", "texh" }
 local function UsableDescriptor(d)
-    if type(d) ~= "table" or type(d.file) ~= "string" or d.file == "" then return false end
-    for _, k in ipairs({ "w", "h", "texw", "texh" }) do
+    -- The file half is the same rule a primary entry is held to (Core).
+    if not AltStable.CutoutDrawable(d) then return false end
+    for _, k in ipairs(DESCRIPTOR_SIZES) do
         local v = d[k]
         if type(v) ~= "number" or v ~= v or v <= 0 or v == math.huge then return false end
     end
@@ -946,7 +948,9 @@ local function MeasureCast(cast, cutoutFor, spots, tallest, figureH)
         local spot = spots[i]
         if cut and spot then
             local w, h = RelativeFigureSize(cut, RaceHeight(char), tallest, figureH)
-            sizes[i] = { w * spot.scale, h * spot.scale }
+            -- The texture it measured goes along, so the draw loop draws that
+            -- one rather than resolving (and possibly disagreeing) again.
+            sizes[i] = { w * spot.scale, h * spot.scale, cut = cut }
         else
             sizes[i] = { 0, 0 }
         end
@@ -1046,7 +1050,7 @@ local function RenderScene(chars)
 
     for i, card in ipairs(Roster.cards) do
         local char = cast[i]
-        local cut = char and EffectiveTexture(CutoutFor(char))
+        local cut = char and sizes[i] and sizes[i].cut
         local spot = spots[i]
         if char and cut and spot then
             withArt = withArt + 1
@@ -2495,7 +2499,7 @@ function Roster._Bootstrap()
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
-            EffectiveTexture = EffectiveTexture, FigureSize = FigureSize,
+            EffectiveTexture = EffectiveTexture,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             AllCharacters = AllCharacters, CharactersFor = CharactersFor,
