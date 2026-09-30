@@ -39,3 +39,6 @@ Tools/RenderCutout/out/
 # rather than lost. The committed .tga files are what the client reads.
 Media/Scene/*.png
 Media/Scene/References/
+
+# Recipe generator page cache (Wowhead HTML) - regenerable, never committed
+Tools/RecipeData/.cache/

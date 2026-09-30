@@ -48,6 +48,11 @@ jobs:
             lua5.1 "$f" || exit 1
           done
 
+      # The recipe generator's parsing, on saved fixtures - never the network.
+      # (test_cutouts.py is left to local runs: it needs Pillow.)
+      - name: Recipe data generator tests
+        run: python3 tests/test_recipedata.py
+
       # Pinned to a SHA, not the moving v2 tag: v2 has already moved once during
       # this port (it now carries Forever support, commit 7391c8de).
       - name: Package (dry run)
