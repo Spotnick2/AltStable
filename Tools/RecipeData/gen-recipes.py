@@ -14,6 +14,10 @@ at runtime, in the player's own language, and a rename cannot leave them stale.
     python Tools/RecipeData/gen-recipes.py --refresh    # ignore the cache
     python Tools/RecipeData/gen-recipes.py --check      # compare with the committed file, write nothing
 
+A run also writes a human-readable copy - names included, one table per profession -
+to C:\Projects\Referencesorever-recipes-<snapshot date>.md/.tsv, beside the API
+dumps and the consumables list (--reference DIR to put it elsewhere, '' to skip).
+
 Run by the owner, never by CI (tests/test_recipedata.py covers the parsing with
 fixtures). Twelve page requests, 1.5 s apart; the cache under .cache/ makes a
 rerun free.
@@ -54,6 +58,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, ".cache")
 OUT = os.path.join(HERE, "RecipeData.lua")
+REFERENCES = r"C:\Projects\References"
 BASE = "https://www.wowhead.com/forever"
 USER_AGENT = "AltStable recipe data generator (github.com/Spotnick2/AltStable)"
 DELAY = 1.5
@@ -75,6 +80,11 @@ PROFESSIONS = [
     ("secondary-skills/first-aid", 129),
     ("secondary-skills/fishing", 356),
 ]
+
+
+PROFESSION_NAMES = {line: path.split("/")[1].replace("-", " ").title() for path, line in PROFESSIONS}
+SOURCE_LABELS = {1: "crafted", 2: "drop", 3: "pvp", 4: "quest", 5: "vendor", 6: "trainer",
+                 7: "discovery", 16: "fished", 21: "pickpocketed"}
 
 
 class DataError(Exception):
@@ -302,6 +312,91 @@ def source_line(text):
 
 
 # ---------------------------------------------------------------------------
+# The human-readable reference, in C:\Projects\References beside the API dumps
+# and the consumables list: for people and other projects, not for the addon
+# ---------------------------------------------------------------------------
+
+def _sources(recipe):
+    return ", ".join(SOURCE_LABELS.get(c, "code %d" % c) for c in recipe.get("src", []))
+
+
+def reference_rows(recipes, meta):
+    """One row per recipe, sorted by profession, required skill (unknown last), name."""
+    rows = []
+    for sid, r in recipes.items():
+        m = meta.get(sid, {})
+        rows.append({
+            "id": sid, "name": m.get("name", ""), "profession": m.get("profession", ""),
+            "learn": str(r["learn"]) if "learn" in r else "?",
+            "colors": "/".join(str(c) for c in r.get("colors", [])),
+            "makes": str(r.get("makes", "")), "source": _sources(r), "status": m.get("status", ""),
+        })
+    rows.sort(key=lambda x: (x["profession"], int(x["learn"]) if x["learn"] != "?" else 99999,
+                             x["name"], x["id"]))
+    return rows
+
+
+REFERENCE_COLUMNS = ["id", "profession", "learn", "colors", "makes", "source", "status", "name"]
+
+
+def render_reference_tsv(rows):
+    out = ["\t".join(REFERENCE_COLUMNS)]
+    for r in rows:
+        out.append("\t".join(str(r[c]).replace("\t", " ") for c in REFERENCE_COLUMNS))
+    return "\n".join(out) + "\n"
+
+
+def render_reference_md(rows, source):
+    date = source.rsplit(" ", 1)[-1]
+    lines = [
+        "# WoW: Forever recipes - Wowhead snapshot %s" % date,
+        "",
+        "Every recipe on Wowhead's Forever profession pages, as turned into the Professions",
+        "plugin's data by `AltStable/Tools/RecipeData/gen-recipes.py`. %d recipes; the raw TSV" % len(rows),
+        "is next to this file.",
+        "",
+        "**Wowhead's, not the client's.** The client lists a profession's recipes only while its",
+        "window is open, and that list is the authority for what a character can see. Where the",
+        "two disagree the client wins: Leatherworking here carries 12 new \"Adaptive\" recipes",
+        "that the client's 592 (1.60.1.70124) do not appear to include.",
+        "",
+        "Columns: spell ID (= the client's recipe ID), required skill (`?` = Wowhead does not",
+        "know - not 0), difficulty thresholds (orange/yellow/green/grey), crafted item ID (empty",
+        "for enchants), sources, and Wowhead's change flag against Vanilla (`new` = Forever-only).",
+        "Profession spells (ranks, specialisations, Find Herbs, Smelting...) are not recipes and",
+        "are left out.",
+        "",
+        "**Diffing:** rerun the generator after a patch. The file is named by the snapshot date,",
+        "which only moves when a recipe changed.",
+    ]
+    current = None
+    for r in rows:
+        if r["profession"] != current:
+            current = r["profession"]
+            n = sum(1 for x in rows if x["profession"] == current)
+            lines += ["", "## %s (%d)" % (current, n), "",
+                      "| ID | Name | Skill | Colours | Makes | Source | Status |",
+                      "|---:|---|---:|---|---:|---|---|"]
+        lines.append("| %d | %s | %s | %s | %s | %s | %s |" % (
+            r["id"], r["name"].replace("|", "/"), r["learn"], r["colors"], r["makes"],
+            r["source"], r["status"]))
+    return "\n".join(lines) + "\n"
+
+
+def write_reference(directory, recipes, meta, source, log):
+    if not directory or not os.path.isdir(directory):
+        log("reference: %r not found - skipped" % directory)
+        return
+    rows = reference_rows(recipes, meta)
+    stem = os.path.join(directory, "forever-recipes-%s" % source.rsplit(" ", 1)[-1])
+    with open(stem + ".md", "w", encoding="utf-8", newline="\n") as f:
+        f.write(render_reference_md(rows, source))
+    with open(stem + ".tsv", "w", encoding="utf-8", newline="\n") as f:
+        f.write(render_reference_tsv(rows))
+    log("wrote %s.md / .tsv" % stem)
+
+
+# ---------------------------------------------------------------------------
 # Fetching
 # ---------------------------------------------------------------------------
 
@@ -329,7 +424,9 @@ def fetch(url, refresh, parse):
     return parsed
 
 
-def build(refresh, log):
+def build(refresh, log, meta=None):
+    """All recipes, merged across pages. `meta`, when given, collects each kept
+    recipe's name, profession and Wowhead change status for the reference."""
     recipes = {}
     for path, skill_line in PROFESSIONS:
         url = "%s/spells/%s" % (BASE, path)
@@ -341,6 +438,15 @@ def build(refresh, log):
             if recipe is not None:
                 merge(recipes, int(rec["id"]), recipe, path)
                 kept += 1
+                if meta is not None:
+                    meta.setdefault(int(rec["id"]), {
+                        "name": rec.get("name") or "",
+                        # The spell's own line: a page can carry a neighbour's spell.
+                        "profession": PROFESSION_NAMES.get(
+                            skill_line if skill_line in recipe["skill"] else recipe["skill"][0],
+                            str(recipe["skill"][0])),
+                        "status": (rec.get("envChange") or {}).get("status") or "",
+                    })
         log("%-30s %4d rows, %4d recipes" % (path, len(records), kept))
 
     return recipes
@@ -351,12 +457,15 @@ def main(argv=None):
     ap.add_argument("--refresh", action="store_true", help="ignore the cache and fetch everything again")
     ap.add_argument("--check", action="store_true", help="compare with the committed file; write nothing")
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--reference", default=REFERENCES,
+                    help="folder for the human-readable .md/.tsv reference ('' to skip)")
     args = ap.parse_args(argv)
 
     def log(msg):
         print(msg, flush=True)
 
-    recipes = build(args.refresh, log)
+    meta = {}
+    recipes = build(args.refresh, log, meta)
     old_text = open(args.out, encoding="utf-8").read() if os.path.exists(args.out) else ""
     old_rows = recipes_in_lua(old_text)
 
@@ -365,7 +474,8 @@ def main(argv=None):
     probe = recipes_in_lua(render_lua(recipes, ""))
     # A committed file whose source line no longer reads back gets today's date,
     # not `source = null` for ever after (review of #130).
-    source = (probe == old_rows and source_line(old_text)) or         "wowhead forever %s" % time.strftime("%Y-%m-%d")
+    source = (probe == old_rows and source_line(old_text)) or \
+        "wowhead forever %s" % time.strftime("%Y-%m-%d")
     text = render_lua(recipes, source)
     # --check compares the WHOLE file: a change to the header or the row format
     # is a change too, not only a changed recipe.
@@ -384,6 +494,7 @@ def main(argv=None):
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     log("wrote %s" % args.out)
+    write_reference(args.reference, recipes, meta, source, log)
     return 0
 
 

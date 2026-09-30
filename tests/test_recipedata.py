@@ -175,13 +175,13 @@ out = os.path.join(tmp, "RecipeData.lua")
 with open(out, "w", encoding="utf-8", newline="\n") as f:
     f.write(gen.render_lua(recipes, "wowhead forever 2026-01-01"))
 real_build = gen.build
-gen.build = lambda refresh, log: {k: dict(v) for k, v in recipes.items()}
+gen.build = lambda refresh, log, meta=None: {k: dict(v) for k, v in recipes.items()}
 try:
     quiet = open(os.devnull, "w")
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        rc_check = gen.main(["--check", "--out", out])
-        gen.main(["--out", out])
+        rc_check = gen.main(["--check", "--out", out, "--reference", tmp])
+        gen.main(["--out", out, "--reference", tmp])
     finally:
         sys.stdout = old_stdout
     check("--check passes on unchanged content", rc_check == 0, str(rc_check))
@@ -190,10 +190,10 @@ try:
 
     grown = {k: dict(v) for k, v in recipes.items()}
     grown[99999] = {"skill": [185], "learn": 1}
-    gen.build = lambda refresh, log: grown
+    gen.build = lambda refresh, log, meta=None: grown
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        rc_changed = gen.main(["--check", "--out", out])
+        rc_changed = gen.main(["--check", "--out", out, "--reference", tmp])
     finally:
         sys.stdout = old_stdout
     check("--check fails when a recipe was added", rc_changed == 1, str(rc_changed))
@@ -201,13 +201,13 @@ try:
 
     # --check covers the whole file, not only the rows: a header edited by hand
     # (or a changed row format) is a difference.
-    gen.build = lambda refresh, log: {k: dict(v) for k, v in recipes.items()}
+    gen.build = lambda refresh, log, meta=None: {k: dict(v) for k, v in recipes.items()}
     body = open(out, encoding="utf-8").read()
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(body.replace("-- GENERATED", "-- generated", 1))
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        rc_header = gen.main(["--check", "--out", out])
+        rc_header = gen.main(["--check", "--out", out, "--reference", tmp])
     finally:
         sys.stdout = old_stdout
     check("--check notices a changed header", rc_header == 1, str(rc_header))
@@ -218,7 +218,7 @@ try:
         f.write(body.replace('source = "wowhead forever 2026-01-01",', "source = 'hand edited',", 1))
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        gen.main(["--out", out])
+        gen.main(["--out", out, "--reference", tmp])
     finally:
         sys.stdout = old_stdout
     rewritten = open(out, encoding="utf-8").read()
@@ -227,6 +227,36 @@ try:
           rewritten.splitlines()[10] if len(rewritten.splitlines()) > 10 else rewritten)
 finally:
     gen.build = real_build
+
+# ---------------------------------------------------------------------------
+# The human-readable reference (C:\Projects\References, like the consumables list)
+# ---------------------------------------------------------------------------
+
+meta = {2333: {"name": "Elixir of Lesser Agility", "profession": "Alchemy", "status": "unchanged"},
+        13648: {"name": "Enchant Bracer - Stamina", "profession": "Enchanting", "status": "new"},
+        3308: {"name": "Smelt Gold", "profession": "Mining", "status": "unchanged"},
+        1252982: {"name": "Beastculler's Adaptive Vest | x", "profession": "Leatherworking", "status": "new"}}
+rows = gen.reference_rows(recipes, meta)
+check("reference rows are sorted by profession", [r["profession"] for r in rows] ==
+      ["Alchemy", "Enchanting", "Leatherworking", "Mining"], repr([r["profession"] for r in rows]))
+by = {r["id"]: r for r in rows}
+check("an unknown requirement shows as ?, not 0", by[1252982]["learn"] == "?")
+check("sources are labelled", by[2333]["source"] == "drop, fished", by[2333]["source"])
+check("an unknown source code is shown as a code, not guessed",
+      gen._sources({"src": [2, 99]}) == "drop, code 99")
+tsv = gen.render_reference_tsv(rows)
+check("the TSV has a header and one line per recipe", len(tsv.strip().split("\n")) == 5)
+md = gen.render_reference_md(rows, "wowhead forever 2026-09-30")
+check("the Markdown is titled by the snapshot date", md.startswith("# WoW: Forever recipes - Wowhead snapshot 2026-09-30"))
+check("a | in a name cannot break the table", "Beastculler's Adaptive Vest / x" in md)
+
+refdir = tempfile.mkdtemp()
+gen.write_reference(refdir, recipes, meta, "wowhead forever 2026-09-30", lambda m: None)
+check("write_reference names both files by the snapshot date",
+      sorted(os.listdir(refdir)) == ["forever-recipes-2026-09-30.md", "forever-recipes-2026-09-30.tsv"],
+      repr(os.listdir(refdir)))
+gen.write_reference(os.path.join(refdir, "missing"), recipes, meta, "wowhead forever 2026-09-30", lambda m: None)
+check("a missing reference folder is skipped, not created", not os.path.exists(os.path.join(refdir, "missing")))
 
 print("test_recipedata: %d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)
