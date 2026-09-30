@@ -184,6 +184,13 @@ and is cross-realm *and* cross-faction — the ideal transport, except it needs 
 friend's** game account id. Our two WoW accounts live under one Battle.net account
 (`50284074#1` and `50284074#12`), and an account cannot friend itself. Closed.
 
+**Across factions, nothing.** Measured on 70124: an addon whisper to a character online on the
+other faction comes back as `No player named 'X' is currently playing.` - the same line as for
+someone offline. The server delivers no whisper across factions, addon messages included, and
+says nothing about why (mail is told "wrong faction"; whispers are not). So a Horde alt and an
+Alliance alt cannot sync directly by any route we have; each syncs with the same-faction
+characters of the other account. Any discovery design has to be per faction.
+
 **Guild.** Only reaches alts guilded with you. Closed for the general case; still the cheapest path
 for anyone whose alts *are* guilded together, so the login-announce handshake stays worth copying
 if that ever becomes the common setup.

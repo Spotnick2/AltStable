@@ -1341,7 +1341,25 @@ function IsInGuild() return false end
 
 SlashCmdList = {}
 UISpecialFrames = {}
-function ChatFrame_AddMessageEventFilter() end
+-- Message filters, recorded so a test can ask whether a line would be shown:
+-- WoW.chatFiltered(event, text) runs them like the chat frame does (a true
+-- return hides the line). Forever has ChatFrameUtil.AddMessageEventFilter,
+-- with the old global kept as a deprecated alias (UI source, 70009).
+WoW.chatFilters = {}
+ChatFrameUtil = {
+    AddMessageEventFilter = function(event, fn)
+        WoW.chatFilters[event] = WoW.chatFilters[event] or {}
+        table.insert(WoW.chatFilters[event], fn)
+    end,
+}
+ChatFrame_AddMessageEventFilter = ChatFrameUtil.AddMessageEventFilter
+function WoW.chatFiltered(event, text)
+    for _, fn in ipairs(WoW.chatFilters[event] or {}) do
+        if fn(nil, event, text) then return true end
+    end
+    return false
+end
+ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
 -- Like the bundled ChatThrottleLib v24 in the two ways that matter here: an
 -- unknown priority or an over-255-byte message RAISES, which is what
 -- QueueWire's raw fallback exists for - a stub that accepted anything left that
@@ -1350,7 +1368,8 @@ function ChatFrame_AddMessageEventFilter() end
 -- send fails so it can never leak onto the next raw send.
 local CTL_PRIORITIES = { BULK = true, NORMAL = true, ALERT = true }
 ChatThrottleLib = {
-    SendAddonMessage = function(_, prio, prefix, text, channel, target)
+    -- callbackFn runs after the send, as CTL's does (when the message leaves).
+    SendAddonMessage = function(_, prio, prefix, text, channel, target, _, callbackFn, callbackArg)
         if not CTL_PRIORITIES[prio] then
             error("ChatThrottleLib:SendAddonMessage(): unknown priority " .. tostring(prio), 2)
         end
@@ -1361,6 +1380,7 @@ ChatThrottleLib = {
         local ok, r = pcall(C_ChatInfo.SendAddonMessage, prefix, text, channel, target)
         WoW.pendingPrio = nil
         if not ok then error(r, 2) end
+        if callbackFn then callbackFn(callbackArg, true) end
         return r
     end,
 }

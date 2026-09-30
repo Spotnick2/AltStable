@@ -1278,14 +1278,98 @@ end
 -- `prio` defaults to BULK, which is right for chunks. A REQ goes at ALERT:
 -- it is one small message that must not queue behind - or be sent raw on top
 -- of - a large outgoing burst.
+--
+-- Each whisper stamps WHEN it actually left (ChatThrottleLib's per-message
+-- callback: a whole database is queued at once and drains for many seconds),
+-- so a "No player named X" arriving from the server can be told apart as the
+-- answer to OUR traffic - see the unreachable-target handling below.
+local lastWhisperAt = {}          -- AuthKey -> when addon traffic last went to them
+local function StampWhisper(key) lastWhisperAt[key] = time() end
+
 local function QueueWire(msg, channel, target, prio)
+    local key = channel == "WHISPER" and AuthKey(target) or nil
     if ChatThrottleLib then
-        local ok = pcall(ChatThrottleLib.SendAddonMessage, ChatThrottleLib, prio or "BULK", PREFIX, msg, channel, target)
+        -- Stamped by CTL's callback, when the message actually leaves.
+        local ok = pcall(ChatThrottleLib.SendAddonMessage, ChatThrottleLib, prio or "BULK", PREFIX, msg,
+                         channel, target, nil, key and StampWhisper or nil, key)
         if not ok then
             C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
+            if key then StampWhisper(key) end
         end
     else
         C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
+        if key then StampWhisper(key) end
+    end
+end
+
+------------------------------------------------------------
+-- Unreachable whisper targets
+------------------------------------------------------------
+-- Every addon whisper to someone who is offline - or on the OTHER FACTION,
+-- since the server delivers no whisper across factions, addon messages
+-- included - comes back as one "No player named 'X' is currently playing."
+-- A manual /alts sync pushes the database as dozens of whispers, so the chat
+-- filled with dozens of those lines (measured on 70124: a character online on
+-- the other faction). The server says nothing about WHY; mail is told "wrong
+-- faction", whispers are not.
+--
+-- So: the server's line is hidden while it is the echo of our own traffic (a
+-- few seconds after our last whisper to them - the player's own whisper to
+-- the same person inside that window loses its line too, which is the usual
+-- trade for addons that do this), a push is only sent once a single request
+-- has gone through without that answer, and a sync the player typed gets one
+-- line of ours - naming the faction when we know theirs from the database.
+local UNREACHABLE_ECHO = 10       -- seconds after our last whisper to them
+local unreachableAt = {}          -- AuthKey -> when the server said "no player named"
+local manualSyncAt = {}           -- AuthKey -> when the player typed /alts sync <them>
+local unreachableToldAt = {}      -- AuthKey -> when we last said so
+
+local function NotFoundName(text)
+    local fmt = ERR_CHAT_PLAYER_NOT_FOUND_S
+    if type(fmt) ~= "string" or type(text) ~= "string" then return nil end
+    local pattern = fmt:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0")
+    pattern = pattern:gsub("%%s", "(.+)", 1)
+    return text:match("^" .. pattern .. "$")
+end
+
+-- The echo of our own addon traffic, or someone else's business?
+local function OurEcho(text)
+    local name = NotFoundName(text)
+    local key = name and AuthKey(name)
+    if key and lastWhisperAt[key] and (time() - lastWhisperAt[key]) <= UNREACHABLE_ECHO then
+        return name, key
+    end
+end
+
+local function KnownFaction(key)
+    for _, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and c.name and AuthKey(c.name) == key then return c.faction end
+    end
+end
+
+local function SayUnreachable(name, key)
+    local now = time()
+    if unreachableToldAt[key] and (now - unreachableToldAt[key]) < 60 then return end
+    unreachableToldAt[key] = now
+    local mine = UnitFactionGroup and UnitFactionGroup("player")
+    local theirs = KnownFaction(key)
+    if mine and theirs and theirs ~= mine then
+        Print("|cffff8800" .. name .. " is " .. theirs .. " and you are " .. mine .. "|r - addon "
+            .. "messages do not cross factions, so this character cannot sync with them. "
+            .. "Nothing more was sent.")
+    else
+        Print("|cffff8800" .. name .. " cannot be reached|r - offline, or on the other faction "
+            .. "(addon messages do not cross factions). Nothing more was sent.")
+    end
+end
+
+do
+    local addFilter = (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter)
+        or ChatFrame_AddMessageEventFilter
+    if addFilter then
+        addFilter("CHAT_MSG_SYSTEM", function(_, _, text)
+            return OurEcho(text) ~= nil
+        end)
     end
 end
 
@@ -2505,6 +2589,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local text = ...
         if not text or type(text) ~= "string" then return end
 
+        -- "No player named X" answering our own whisper: remember it, and say
+        -- so once if the player asked for this sync by hand. The chat filter
+        -- has hidden the server's own copies.
+        local lostName, lostKey = OurEcho(text)
+        if lostName then
+            unreachableAt[lostKey] = time()
+            if manualSyncAt[lostKey] and (time() - manualSyncAt[lostKey]) <= 30 then
+                SayUnreachable(lostName, lostKey)
+            end
+            return
+        end
+
         -- "X has come online" notifications carry a player link.
         -- "X has gone offline" also carries one — guard against the
         -- gone-offline case so we don't fire a REQ at someone who
@@ -2929,15 +3025,22 @@ SlashCmdList["ALTSTABLE"] = function(args)
         -- come in, and their own request back may be served, for ten minutes.
         -- Nothing is stored.
         AltStable.GrantSyncConsent(target, true, true)
-        Print("Sending your data to " .. target .. " and requesting theirs...")
-        SendFullDatabase("WHISPER", target)
-        -- ChatThrottleLib paces the send in the background; fire the paired
-        -- request shortly after so both directions exchange.
+        local key = AltStable.PeerKey(target)
+        local asked = time()
+        manualSyncAt[key] = asked
+        Print("Requesting " .. target .. "'s data and sending yours...")
+        -- The request FIRST: one small whisper, which tells us whether they can
+        -- be reached at all. The push - dozens of whispers - follows only if the
+        -- server did not answer "no player named" to it. Pushing first put one
+        -- of those lines in chat per chunk for an offline or other-faction
+        -- target.
+        RequestCharacters("WHISPER", target, true)
         C_Timer.After(3, function()
+            if (unreachableAt[key] or 0) >= asked then return end   -- already said
             -- Only while the exchange the player started is still on: a deny,
             -- or a deny and then a forget, in these three seconds ends it.
             if not AltStable.MayServeSyncPeer(target) then return end
-            RequestCharacters("WHISPER", target, true)
+            SendFullDatabase("WHISPER", target)
         end)
         return
     end
@@ -3249,6 +3352,7 @@ end
 -- earlier one and failed far from the cause. Harmless in game: nothing calls it.
 local function ResetSyncState()
     pendingAuth = {}
+    lastWhisperAt, unreachableAt, manualSyncAt, unreachableToldAt = {}, {}, {}, {}
     refusedStreams = {}
     consent = {}
     refusedNotified = {}
