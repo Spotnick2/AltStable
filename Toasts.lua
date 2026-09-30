@@ -329,7 +329,13 @@ local function ScanCooldowns()
                 if type(k) == "string" then
                     local profKey, label = k:match("^cd_(.-)@(.+)$")
                     local expiry = label and tonumber(v)
+                    -- Ready within the last NOTIFIED_TTL only. The field itself
+                    -- stays (the grid shows "Ready!"), but the shown-set forgets
+                    -- an entry after NOTIFIED_TTL - without this bound, a
+                    -- cooldown that came up weeks ago toasted again at every
+                    -- login (review of #132).
                     if profKey and expiry and expiry > 0 and expiry <= now
+                    and expiry > now - NOTIFIED_TTL
                     and IsToastEnabled(profKey) then
                         local nKey = guid .. ":" .. k .. ":" .. expiry
                         if not shown[nKey] then

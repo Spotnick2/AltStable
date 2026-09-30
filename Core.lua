@@ -2568,17 +2568,18 @@ function AltStable.SetPluginEnabled(key, enabled)
     AltStableConfig.plugins[key] = enabled and true or false
     AltStable.OnConfigChanged("plugins")
     if enabled then
-        -- Read by the plugin's bootstrap: switched on just now, its store may be
-        -- partial and the peers' watermarks ahead of what it never received, so
-        -- it asks for a full pull (Professions; #14).
-        AltStable.pluginsEnabledThisSession = AltStable.pluginsEnabledThisSession or {}
-        AltStable.pluginsEnabledThisSession[key] = true
         for _, p in ipairs(AltStable.LOD_PLUGINS) do
             if p.key == key and not IsPluginLoaded(p.addon) then
                 local ok, err = LoadPluginAddon(p.addon)
                 if not ok then
                     DEFAULT_CHAT_FRAME:AddMessage(
                         "|cff00ccff[AltStable]|r could not load "..p.label.." ("..p.addon.."): "..tostring(err))
+                elseif AltStable.ResetPeerWatermarks then
+                    -- Switched on after sessions without it: its store may hold
+                    -- old data, and the peers' watermarks are ahead of what it
+                    -- never received, so a delta would never backfill it. One
+                    -- full pull, for any plugin that syncs (review of #132).
+                    AltStable.ResetPeerWatermarks()
                 end
             end
         end

@@ -20,17 +20,17 @@
 --     profs = { [skillLine] = { rank, max, known = { [spellID] = true },
 --                               full = time of the last COMPLETE scan, or nil } }
 --   }
---   no entry for a guid      -> never scanned: nothing is claimed about it
---   profs[line] with full=nil -> partial: only NEW_RECIPE_LEARNED seen; the
---                                recipes it lists are known, the rest unknown
---   profs = {}               -> scanned, has no professions
--- Only the client that plays a character writes its entry; everyone else
--- adopts it as sent. That, plus the strictly increasing stamp, is what keeps
--- two peers from bouncing different snapshots of one character between them.
+--   no entry for a guid        -> never scanned: nothing is claimed about it
+--   profs[line], known empty   -> owned, window never opened ("not scanned")
+--   profs[line], full = nil    -> partial: only NEW_RECIPE_LEARNED seen
+--   profs = {}                 -> scanned, has no professions
+-- A snapshot is written by the client playing the character and adopted by
+-- everyone else as sent; a stamp that only ever goes up per character is what
+-- orders them - also for our own alts played on another PC.
 --
--- Craft cooldowns go on the CORE record as cd_<Profession>@<recipe name>, the
--- field the grid's profession tooltip already reads (RowRenderer.lua), so the
--- core syncs and clears them like any other field.
+-- Craft cooldowns go on the CORE record as cd_<Profession>@<label>, the field
+-- the grid's profession tooltip and the login toast already read, so the core
+-- syncs and clears them like any other field.
 ------------------------------------------------------------
 
 AltStableProfessionsDB = AltStableProfessionsDB or {}
@@ -38,36 +38,46 @@ AltStableProfessionsDB = AltStableProfessionsDB or {}
 local ADDON_ID     = "professions"
 local BLOB_VERSION = "v1"
 local TRAINER      = 6
+-- An answer that says a profession is gone is believed only when a second read
+-- at least this long after the first still says so (see RefreshOwnership).
+local LOSS_CONFIRM = 5
 
 -- The twelve lines Forever gives recipes to (Camping reached even Fishing and
--- First Aid). `label` is the grid column's label, which is also the cd_ prefix.
-local PROFESSIONS = {
-    { line = 171, label = "Alchemy",        icon = "Interface\\Icons\\Trade_Alchemy" },
-    { line = 164, label = "Blacksmithing",  icon = "Interface\\Icons\\Trade_BlackSmithing" },
-    { line = 333, label = "Enchanting",     icon = "Interface\\Icons\\Trade_Engraving" },
-    { line = 202, label = "Engineering",    icon = "Interface\\Icons\\Trade_Engineering" },
-    { line = 165, label = "Leatherworking", icon = "Interface\\Icons\\Trade_LeatherWorking" },
-    { line = 197, label = "Tailoring",      icon = "Interface\\Icons\\Trade_Tailoring" },
-    { line = 186, label = "Mining",         icon = "Interface\\Icons\\Trade_Mining" },
-    { line = 182, label = "Herbalism",      icon = "Interface\\Icons\\Trade_Herbalism" },
-    { line = 393, label = "Skinning",       icon = "Interface\\Icons\\INV_Misc_Pelt_Wolf_01" },
-    { line = 185, label = "Cooking",        icon = "Interface\\Icons\\INV_Misc_Food_15" },
-    { line = 129, label = "First Aid",      icon = "Interface\\Icons\\Spell_Holy_SealOfSacrifice" },
-    { line = 356, label = "Fishing",        icon = "Interface\\Icons\\Trade_Fishing" },
+-- First Aid), by the grid column's label. The label, the core's skill field and
+-- the icon are taken FROM the column (Columns.lua), not repeated here: the
+-- cd_<label>@ prefix only shows up in the grid when it matches the column's
+-- label exactly.
+local LINES = {
+    { line = 171, label = "Alchemy" },       { line = 164, label = "Blacksmithing" },
+    { line = 333, label = "Enchanting" },    { line = 202, label = "Engineering" },
+    { line = 165, label = "Leatherworking" },{ line = 197, label = "Tailoring" },
+    { line = 186, label = "Mining" },        { line = 182, label = "Herbalism" },
+    { line = 393, label = "Skinning" },      { line = 185, label = "Cooking" },
+    { line = 129, label = "First Aid" },     { line = 356, label = "Fishing" },
 }
-local BY_LINE = {}
-for _, p in ipairs(PROFESSIONS) do BY_LINE[p.line] = p end
 
--- The core's skill fields, for alts this plugin has never scanned: they still
+local PROFESSIONS, BY_LINE = {}, {}
+local function BuildProfessions()
+    local columns = {}
+    for _, col in ipairs(AltStable.Columns or {}) do
+        if col.type == "profSkill" then columns[col.label] = col end
+    end
+    for i, l in ipairs(LINES) do
+        local col = columns[l.label]
+        PROFESSIONS[i] = { line = l.line, label = l.label,
+                           field = col and col.field, icon = col and col.profIcon
+                                   or "Interface\\Icons\\INV_Misc_QuestionMark" }
+        BY_LINE[l.line] = PROFESSIONS[i]
+    end
+end
+BuildProfessions()
+
+-- The core's skill field, for alts this plugin has never scanned: they still
 -- show up as "has it, not scanned" rather than not at all.
-local CORE_SKILL_FIELD = {
-    [185] = "cooking", [129] = "firstAid", [356] = "fishing",
-}
 local function CoreSkill(char, line)
     local p = BY_LINE[line]
-    if not p or type(char) ~= "table" then return nil end
-    local v = char[CORE_SKILL_FIELD[line] or ("prof_" .. p.label)]
-    v = tonumber(v)
+    if not p or not p.field or type(char) ~= "table" then return nil end
+    local v = tonumber(char[p.field])
     return (v and v > 0) and v or nil
 end
 
@@ -90,11 +100,23 @@ end
 
 local function Data() return (AltStableRecipeData and AltStableRecipeData.recipes) or {} end
 
--- The skill line a recipe belongs to when it is in several (one Leatherworking
--- spell is also Tailoring's): the one asked about if it is among them.
-local function RecipeInLine(r, line)
-    for _, s in ipairs(r.skill or {}) do if s == line then return true end end
-    return false
+-- Per-line lists of recipes with a known requirement, built once: the tab asks
+-- for a line's catalogue on every redraw, and walking 2500 recipes each time
+-- (twelve times over while searching) is the one cost here that adds up.
+local lineIndex
+local function LineRecipes(line)
+    if not lineIndex then
+        lineIndex = {}
+        for id, r in pairs(Data()) do
+            if r.learn then
+                for _, s in ipairs(r.skill or {}) do
+                    lineIndex[s] = lineIndex[s] or {}
+                    table.insert(lineIndex[s], id)
+                end
+            end
+        end
+    end
+    return lineIndex[line] or {}
 end
 
 ------------------------------------------------------------
@@ -117,7 +139,7 @@ end
 
 local function Changed(guid)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
-    if AT.isActive and AT.Refresh then AT.Refresh() end
+    if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
 end
 
 local function setsEqual(a, b)
@@ -127,33 +149,51 @@ local function setsEqual(a, b)
 end
 
 ------------------------------------------------------------
--- Cooldowns: cd_<Profession>@<recipe name> on the core record
+-- Cooldowns: cd_<Profession>@<label> on the core record
 ------------------------------------------------------------
 
--- cds = { [recipe name] = seconds remaining (0 = ready) } for one profession's
--- learned recipes that have a cooldown at all. Returns true if anything changed.
---   * a running cooldown is written as an absolute expiry; a shift under 60 s is
---     timing jitter between two reads and is not a change;
+-- The label a recipe's cooldown is filed under: the text before the first
+-- ":", so "Transmute: Arcanite" and every other transmute share "Transmute" -
+-- one cooldown in game, one field here. Stripping the colon matters beyond
+-- tidiness: the core sends every field as a "key:value" line, and a colon in
+-- the key cut it in the wrong place on every peer (review of #132).
+local function CooldownLabel(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    local label = name:match("^([^:]+):") or name
+    label = label:gsub("[:\n|]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return label ~= "" and label or nil
+end
+
+-- cds = { [label] = seconds remaining } for the learned recipes whose cooldown
+-- is RUNNING; knownLabels = every label a learned recipe files under. A ready
+-- cooldown may come back as nil or as 0 (Retail returns nil; Forever is not
+-- measured), so "known but not running" is what means ready. Returns true if
+-- anything changed.
+--   * a running cooldown is written as an absolute expiry; a shift under 60 s
+--     is timing jitter between two reads and is not a change;
 --   * one that has come back up keeps a past expiry, so the grid says "Ready!";
---   * a recipe no longer known takes its field with it.
-local function ApplyCooldowns(char, label, cds, knownNames)
+--   * a label no learned recipe files under any more takes its field with it.
+local function ApplyCooldowns(char, label, cds, knownLabels)
     if type(char) ~= "table" then return false end
     local prefix, now, changed = "cd_" .. label .. "@", time(), false
     for name, left in pairs(cds) do
-        local key = prefix .. name
-        local held = tonumber(char[key])
-        if left > 0 then
+        if left and left > 0 then
+            local key = prefix .. name
+            local held = tonumber(char[key])
             local expiry = now + left
             if not held or held <= now or math.abs(held - expiry) > 60 then
                 char[key] = expiry; changed = true
             end
-        elseif held and held > now then
-            char[key] = now; changed = true           -- ready again: a transition, never jitter
         end
     end
-    for key in pairs(char) do
+    for key, v in pairs(char) do
         if type(key) == "string" and key:sub(1, #prefix) == prefix then
-            if not knownNames[key:sub(#prefix + 1)] then char[key] = nil; changed = true end
+            local name = key:sub(#prefix + 1)
+            if not knownLabels[name] then
+                char[key] = nil; changed = true
+            elseif not (cds[name] and cds[name] > 0) and (tonumber(v) or 0) > now then
+                char[key] = now; changed = true    -- ready again: a transition, never jitter
+            end
         end
     end
     return changed
@@ -173,43 +213,66 @@ end
 ------------------------------------------------------------
 
 -- { [skillLine] = { rank, max } }, or nil when the API is missing or broken.
+-- All of GetProfessions' returns are read: Forever returns seven (measured,
+-- "nil x 7"), and a fixed five would drop whatever sits in the last two.
 local function ReadOwned()
     if type(GetProfessions) ~= "function" or type(GetProfessionInfo) ~= "function" then return nil end
-    local ok, a, b, c, d, e = pcall(GetProfessions)
-    if not ok then return nil end
+    local res = { pcall(GetProfessions) }
+    if not res[1] then return nil end
     local owned = {}
-    for _, idx in pairs({ a, b, c, d, e }) do
-        local ok2, _, _, rank, maxRank, _, _, line = pcall(GetProfessionInfo, idx)
-        if not ok2 then return nil end
-        line = tonumber(line)
-        if line and BY_LINE[line] then owned[line] = { rank = tonumber(rank) or 0, max = tonumber(maxRank) or 0 } end
+    for i = 2, table.maxn(res) do
+        local idx = res[i]
+        if idx then
+            local ok2, _, _, rank, maxRank, _, _, line = pcall(GetProfessionInfo, idx)
+            if not ok2 then return nil end
+            line = tonumber(line)
+            if line and BY_LINE[line] then owned[line] = { rank = tonumber(rank) or 0, max = tonumber(maxRank) or 0 } end
+        end
     end
     return owned
 end
 
-local emptyOnce = false
+local pendingLoss   -- { lines = "171,393", at = time() } awaiting confirmation
 
--- Reconcile the store with what the character has now. An EMPTY answer is only
--- believed the second time running: at login GetProfessions can answer before
--- the skill lines have loaded, and believing that once would prune everything.
+-- Reconcile the store with what the character has now.
+--
+-- LOSING a profession is believed only when two reads at least LOSS_CONFIRM
+-- seconds apart agree on exactly which lines are gone. At login GetProfessions
+-- can answer before the skill lines have loaded - empty, or with lines missing -
+-- and the login timer and the SKILL_LINES_CHANGED debounce can land two reads
+-- in the same second. Believing that would delete complete scans and sync the
+-- loss (review of #132). Gains and skill changes apply at once.
 local function RefreshOwnership()
     local guid = UnitGUID and UnitGUID("player")
     if not guid then return end
     local owned = ReadOwned()
     if not owned then return end
     local e = Entry(guid)
-    if not next(owned) and next(e.profs) and not emptyOnce then
-        emptyOnce = true
-        C_Timer.After(5, RefreshOwnership)
-        return
+
+    local lost = {}
+    for line in pairs(e.profs) do if not owned[line] then lost[#lost + 1] = line end end
+    table.sort(lost)
+    local lostKey = table.concat(lost, ",")
+    local confirmedLoss = false
+    if #lost > 0 then
+        if pendingLoss and pendingLoss.lines == lostKey and time() - pendingLoss.at >= LOSS_CONFIRM then
+            confirmedLoss = true
+            pendingLoss = nil
+        else
+            if not (pendingLoss and pendingLoss.lines == lostKey) then
+                pendingLoss = { lines = lostKey, at = time() }
+            end
+            C_Timer.After(LOSS_CONFIRM + 1, RefreshOwnership)
+        end
+    else
+        pendingLoss = nil
     end
-    emptyOnce = false
 
     local changed, char = false, AltStableDB and AltStableDB[guid]
-    for line, p in pairs(e.profs) do
-        if not owned[line] then
+    if confirmedLoss then
+        for _, line in ipairs(lost) do
             e.profs[line] = nil
-            ClearCooldowns(char, BY_LINE[line].label)
+            if BY_LINE[line] then ClearCooldowns(char, BY_LINE[line].label) end
             changed = true
         end
     end
@@ -249,10 +312,15 @@ local function Candidate()
     local okb, base = Try(t.GetBaseProfessionInfo)
     local line = okb and type(base) == "table" and tonumber(base.professionID)
     if not line or not BY_LINE[line] then return nil, "no profession" end
+    -- Only a profession this character has. A window can show one it does not
+    -- (Forever's overview has a tab per profession; unmeasured) and filing that
+    -- as a complete scan would make the alt an owner who knows nothing.
+    local owned = ReadOwned()
+    if not (owned and owned[line]) then return nil, "not owned" end
     local okr, ids = Try(t.GetAllRecipeIDs)
     if not okr or type(ids) ~= "table" or #ids == 0 then return nil, "no recipes" end
 
-    local known, cds, names = {}, {}, {}
+    local known, cds, labels = {}, {}, {}
     for _, id in ipairs(ids) do
         local oki, info = Try(t.GetRecipeInfo, id)
         -- Never measured to happen (727 IDs, no nil), but a half-read list
@@ -260,15 +328,17 @@ local function Candidate()
         if not oki or type(info) ~= "table" then return nil, "incomplete" end
         if info.learned then
             known[id] = true
-            local okc, left = Try(t.GetRecipeCooldown, id)
-            left = okc and tonumber(left) or nil
-            local name = info.name
-            if left and name then cds[name] = math.max(0, left) end
-            if name then names[name] = true end
+            local label = CooldownLabel(info.name)
+            if label then
+                labels[label] = true
+                local okc, left = Try(t.GetRecipeCooldown, id)
+                left = okc and tonumber(left) or nil
+                if left and left > 0 then cds[label] = math.max(cds[label] or 0, left) end
+            end
         end
     end
     return { line = line, rank = tonumber(base.skillLevel) or 0, max = tonumber(base.maxSkillLevel) or 0,
-             known = known, cds = cds, names = names }
+             known = known, cds = cds, labels = labels }
 end
 
 local function Commit(c)
@@ -286,7 +356,7 @@ local function Commit(c)
     end
     p.full = time()   -- "last verified", whether or not anything moved
     if changed then Bump(e) end
-    local cdChanged = ApplyCooldowns(AltStableDB and AltStableDB[guid], BY_LINE[c.line].label, c.cds, c.names)
+    local cdChanged = ApplyCooldowns(AltStableDB and AltStableDB[guid], BY_LINE[c.line].label, c.cds, c.labels)
     -- A cooldown alone must reach peers too: the core only sends a character
     -- whose lastUpdate moved, and no recipe changed.
     if changed or cdChanged then Changed(guid) end
@@ -369,6 +439,9 @@ local function SerializePlayer(guid)
     return BLOB_VERSION .. "|s=" .. e.stamp .. "|p=" .. table.concat(parts, ";")
 end
 
+-- Lines this build does not know (a newer peer's) are skipped, not stored: a
+-- stored line with no entry in BY_LINE has no label, and everything that files
+-- or clears a cooldown under it would fail.
 local function ParseProfs(s)
     local profs = {}
     if s == "" then return profs end
@@ -383,7 +456,9 @@ local function ParseProfs(s)
             if not n then return nil end
             known[n] = true
         end
-        profs[line] = { rank = tonumber(rank), max = tonumber(max), full = tonumber(full), known = known }
+        if BY_LINE[line] then
+            profs[line] = { rank = tonumber(rank), max = tonumber(max), full = tonumber(full), known = known }
+        end
     end
     return profs
 end
@@ -392,12 +467,13 @@ local function DeserializePlayer(guid, blob)
     if not guid or type(blob) ~= "string" or blob == "" then return end
     local ver, rest = blob:match("^(v%d+)|(.*)$")
     if ver ~= BLOB_VERSION then return end              -- a newer format: ignore, never wipe
-    -- Our own characters are ours: this client's scan is the authority for them.
-    local char = AltStableDB and AltStableDB[guid]
-    if type(char) == "table" and char.scannedHere then return end
     local stamp = tonumber(rest:match("^s=(%d+)"))
     local profStr = rest:match("|p=([^|]*)$")
     if not stamp or not profStr then return end
+    -- Strictly newer only. Stamps go up per character wherever it is played, so
+    -- this also takes one of our own alts played on another PC - the core takes
+    -- its record then, and refusing the snapshot left the two apart for good
+    -- (review of #132) - while our own echoes come back equal and are ignored.
     local held = AltStableProfessionsDB[guid]
     if type(held) == "table" and (held.stamp or 0) >= stamp then return end
     local profs = ParseProfs(profStr)
@@ -429,31 +505,35 @@ end
 -- Read model
 ------------------------------------------------------------
 
-local function Visible(guid)
-    return not (AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid))
+local function IsHidden(guid)
+    return AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) or false
 end
 
 -- Everyone who has this profession, as far as anything says so:
---   state "full"    - a complete scan to go on
---   state "partial" - only learned-recipe events
---   state "unscanned" - the core's skill field says they have it; the plugin
---                       has never seen their window
+--   "full"      - a complete scan to go on
+--   "partial"   - only learned-recipe events
+--   "unscanned" - owns it (GetProfessions, or the core's skill field for an alt
+--                 the plugin never saw), but no window was ever read
+-- Hidden characters are left out of the list, and counted: they still decide
+-- whether "nobody" can be said at all.
 local function Owners(line)
-    local out = {}
+    local out, hidden = {}, 0
     for guid, c in pairs(AltStableDB or {}) do
-        if type(c) == "table" and c.name and Visible(guid) then
+        if type(c) == "table" and c.name then
             local e = AltStableProfessionsDB[guid]
             local p = type(e) == "table" and e.profs and e.profs[line]
+            local o
             if p then
-                -- Owned but its window never opened (and nothing learned since)
-                -- is "unscanned": nothing is claimed either way.
                 local state = p.full and "full" or (next(p.known or {}) and "partial" or "unscanned")
-                out[#out + 1] = { guid = guid, name = c.name, class = c.class, realm = c.realm,
-                                  rank = p.rank or 0, max = p.max or 0, known = p.known or {},
-                                  full = p.full, state = state }
+                o = { guid = guid, name = c.name, class = c.class, realm = c.realm,
+                      rank = p.rank or 0, max = p.max or 0, known = p.known or {},
+                      full = p.full, state = state }
             elseif not (type(e) == "table" and e.stamp) and CoreSkill(c, line) then
-                out[#out + 1] = { guid = guid, name = c.name, class = c.class, realm = c.realm,
-                                  rank = CoreSkill(c, line), max = 0, known = {}, state = "unscanned" }
+                o = { guid = guid, name = c.name, class = c.class, realm = c.realm,
+                      rank = CoreSkill(c, line), max = 0, known = {}, state = "unscanned" }
+            end
+            if o then
+                if IsHidden(guid) then hidden = hidden + 1 else out[#out + 1] = o end
             end
         end
     end
@@ -461,7 +541,7 @@ local function Owners(line)
         if a.rank ~= b.rank then return a.rank > b.rank end
         return (a.name or "") < (b.name or "")
     end)
-    return out
+    return out, hidden
 end
 
 -- The recipes of a line: the generated catalogue, less those whose requirement
@@ -469,14 +549,16 @@ end
 -- alt actually knows that the catalogue lacks (a newer patch).
 local function Catalogue(line, owners)
     local set = {}
-    for id, r in pairs(Data()) do
-        if r.learn and RecipeInLine(r, line) then set[id] = true end
-    end
+    for _, id in ipairs(LineRecipes(line)) do set[id] = true end
     for _, o in ipairs(owners) do for id in pairs(o.known) do set[id] = true end end
     return set
 end
 
-local names = {}
+-- Names come from the client. One the client does not have yet is asked for
+-- ONCE; SPELL_DATA_LOAD_RESULT redraws only for an ID we asked about that did
+-- load. Asking again on every redraw, and redrawing on every answer, turned an
+-- ID the client lacks into a redraw every frame (review of #132).
+local names, requested = {}, {}
 local function RecipeName(id)
     if names[id] then return names[id] end
     local n
@@ -484,8 +566,23 @@ local function RecipeName(id)
         local ok, v = pcall(C_Spell.GetSpellName, id); if ok then n = v end
     end
     if n and n ~= "" then names[id] = n; return n end
-    if C_Spell and C_Spell.RequestLoadSpellData then pcall(C_Spell.RequestLoadSpellData, id) end
+    if not requested[id] then
+        requested[id] = true
+        if C_Spell and C_Spell.RequestLoadSpellData then pcall(C_Spell.RequestLoadSpellData, id) end
+    end
     return nil
+end
+
+local function OnSpellData(id, success)
+    id = tonumber(id)
+    if not id or not requested[id] then return false end
+    requested[id] = nil
+    if not success then
+        requested[id] = "failed"   -- never asked again this session
+        return false
+    end
+    if AT.isActive then AT.RequestRefresh() end
+    return true
 end
 
 local function RecipeIcon(id)
@@ -537,8 +634,20 @@ local function DifficultyColor(r, rank)
     return 0.5, 0.5, 0.5
 end
 
+-- Owners of every line, computed once per redraw and shared by the picker, the
+-- cards and the rows.
+local function AllOwners()
+    local by = {}
+    for _, p in ipairs(PROFESSIONS) do
+        local list, hidden = Owners(p.line)
+        by[p.line] = { list = list, hidden = hidden }
+    end
+    return by
+end
+
 -- Builds the list the panel shows. Pure: state in, rows out, so tests drive it.
---   state = { line, search, filter ("all"|"known"|"missing"|"nobody"), onlyDrops, focus (guid) }
+--   state = { line, search, filter ("all"|"known"|"missing"|"nobody"), onlyDrops,
+--             focus (guid), owners (from AllOwners, optional) }
 local function BuildRows(state)
     local lines = {}
     local search = (state.search or ""):lower()
@@ -547,12 +656,16 @@ local function BuildRows(state)
     else
         lines[1] = state.line
     end
+    local ownersBy = state.owners or AllOwners()
     local rows = {}
     for _, line in ipairs(lines) do
-        local owners = Owners(line)
+        local entry = ownersBy[line] or { list = {}, hidden = 0 }
+        local owners = entry.list
         local focus
         for _, o in ipairs(owners) do if o.guid == state.focus then focus = o end end
-        local allComplete = #owners > 0
+        -- "Nobody knows" needs every owner scanned in full - hidden ones too,
+        -- which are not in the list: one of them may know it.
+        local allComplete = #owners > 0 and entry.hidden == 0
         for _, o in ipairs(owners) do if o.state ~= "full" then allComplete = false end end
         for id in pairs(Catalogue(line, owners)) do
             local r = Data()[id]
@@ -564,9 +677,12 @@ local function BuildRows(state)
                 for _, o in ipairs(owners) do if o.known[id] then knownBy[#knownBy + 1] = o end end
                 local f = state.filter or "all"
                 if f == "known" then
-                    keep = focus and focus.known[id] or (not focus and #knownBy > 0)
+                    if focus then keep = focus.known[id] and true or false else keep = #knownBy > 0 end
                 elseif f == "missing" then
-                    if focus then keep = not focus.known[id]
+                    -- Missing is a claim about what someone does NOT know: only
+                    -- ever made for an alt with a complete scan.
+                    if focus then
+                        keep = focus.state == "full" and not focus.known[id]
                     else
                         keep = false
                         for _, o in ipairs(owners) do
@@ -594,22 +710,22 @@ local function BuildRows(state)
 end
 
 -- One card per owner: skill, known count against the catalogue, cooldowns.
-local function Cards(line)
-    local owners = Owners(line)
+local function Cards(line, owners)
+    owners = owners or Owners(line)
     local total = 0
     for _ in pairs(Catalogue(line, owners)) do total = total + 1 end
     local cards = {}
+    local prefix = "cd_" .. BY_LINE[line].label .. "@"
     for _, o in ipairs(owners) do
         local n = 0
         for _ in pairs(o.known) do n = n + 1 end
         local cd
         local char = AltStableDB and AltStableDB[o.guid]
-        local prefix = "cd_" .. BY_LINE[line].label .. "@"
         for k, v in pairs(char or {}) do
-            if type(k) == "string" and k:sub(1, #prefix) == prefix then
-                local left = (tonumber(v) or 0) - time()
-                local label = k:sub(#prefix + 1)
-                if not cd or left < cd.left then cd = { label = label, left = left } end
+            local expiry = type(k) == "string" and k:sub(1, #prefix) == prefix and tonumber(v)
+            if expiry then
+                local left = expiry - time()
+                if not cd or left < cd.left then cd = { label = k:sub(#prefix + 1), left = left } end
             end
         end
         cards[#cards + 1] = { owner = o, known = n, total = total, cooldown = cd }
@@ -621,7 +737,7 @@ end
 -- The panel
 ------------------------------------------------------------
 
-local panel, emptyFS, statusFS, searchBox
+local panel, emptyFS, statusFS, searchBox, strip
 local PAD, ROW_H, ICON = 10, 20, 16
 local PICK = 26
 local CARD_W, CARD_H = 150, 46
@@ -632,15 +748,15 @@ local TOP_ROWS = TOP_CARDS + CARD_H + 10
 
 local function C(key, fallback) return (AltStable.C and AltStable.C[key]) or fallback end
 
-local function ClassColor(class)
-    local cc = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-    if cc then return cc.r, cc.g, cc.b end
+-- The shared class colours (Theme.lua), with a neutral fallback.
+local function ClassRGB(class)
+    if AltStable.GetClassRGB then return AltStable.GetClassRGB(class) end
     return 0.9, 0.9, 0.9
 end
 
 local function ColorName(o)
-    local r, g, b = ClassColor(o.class)
-    return string.format("|cff%02x%02x%02x%s|r", r * 255, g * 255, b * 255, o.name or "?")
+    local esc = AltStable.ClassColor and AltStable.ClassColor(o.class) or ""
+    return (esc ~= "" and esc or "|cffe6e6e6") .. (o.name or "?") .. "|r"
 end
 
 local function KnownByText(row)
@@ -677,7 +793,7 @@ local function RowOnEnter(self)
     if #row.knownBy > 0 then
         GameTooltip:AddLine("Known by", 1, 0.82, 0)
         for _, o in ipairs(row.knownBy) do
-            local cr, cg, cb = ClassColor(o.class)
+            local cr, cg, cb = ClassRGB(o.class)
             GameTooltip:AddDoubleLine(o.name, o.rank .. (o.max > 0 and ("/" .. o.max) or ""), cr, cg, cb, 1, 1, 1)
         end
     else
@@ -688,7 +804,7 @@ local function RowOnEnter(self)
     if #meets > 0 then
         GameTooltip:AddLine("Meets the skill requirement", 0.25, 1, 0.25)
         for _, o in ipairs(meets) do
-            local cr, cg, cb = ClassColor(o.class)
+            local cr, cg, cb = ClassRGB(o.class)
             GameTooltip:AddDoubleLine(o.name, o.rank .. "/" .. o.max, cr, cg, cb, 1, 1, 1)
         end
         GameTooltip:AddLine("Specialisation, reputation and quest requirements are not checked.", 0.6, 0.6, 0.6, true)
@@ -781,12 +897,23 @@ function AT.Layout()
     for i = n + 1, #AT.rowsPool do AT.rowsPool[i]:Hide() end
 end
 
+local function CardsFit()
+    local width = panel and panel:GetWidth()
+    if not width or width < 200 then width = 600 end
+    return math.max(1, math.floor((width - 2 * PAD) / (CARD_W + 6)))
+end
+
+-- Sideways through the alt cards, a card at a time.
+local function ScrollCards(delta)
+    local fit = CardsFit()
+    local maxStart = math.max(0, #(AT.cardData or {}) - fit)
+    AT.cardStart = math.max(0, math.min((AT.cardStart or 0) - delta, maxStart))
+end
+
 local function LayoutCards()
     local cards = AT.cardData or {}
-    local width = panel:GetWidth()
-    if not width or width < 200 then width = 600 end
-    local fit = math.max(1, math.floor((width - 2 * PAD) / (CARD_W + 6)))
-    AT.cardStart = math.max(0, math.min(AT.cardStart or 0, math.max(0, #cards - fit)))
+    local fit = CardsFit()
+    ScrollCards(0)
     for i = 1, fit do
         local data = cards[AT.cardStart + i]
         local card = AT.cards[i]
@@ -843,10 +970,10 @@ local function LayoutCards()
     for i = fit + 1, #AT.cards do AT.cards[i]:Hide() end
 end
 
-local function LayoutPicker()
+local function LayoutPicker(ownersBy)
     for i, p in ipairs(PROFESSIONS) do
         local b = AT.pick[i]
-        local n = #Owners(p.line)
+        local n = #ownersBy[p.line].list
         b.count:SetText(n > 0 and tostring(n) or "")
         b.icon:SetDesaturated(n == 0)
         b:SetAlpha(n == 0 and 0.45 or 1)
@@ -856,23 +983,25 @@ end
 
 function AT.Refresh()
     if not panel or not panel:IsShown() then return end
+    local ownersBy = AllOwners()
+    AT._owners = ownersBy
     if not AT.line then
         -- Start on the profession most alts have.
         local best, bestN = PROFESSIONS[1].line, -1
         for _, p in ipairs(PROFESSIONS) do
-            local n = #Owners(p.line)
+            local n = #ownersBy[p.line].list
             if n > bestN then best, bestN = p.line, n end
         end
         AT.line = best
     end
     -- A focus on someone without this profession is dropped, not carried over.
-    AT.cardData = Cards(AT.line)
+    AT.cardData = Cards(AT.line, ownersBy[AT.line].list)
     local stillThere = false
     for _, c in ipairs(AT.cardData) do if c.owner.guid == AT.focus then stillThere = true end end
     if not stillThere then AT.focus = nil end
     AT.rows = BuildRows({ line = AT.line, search = AT.search, filter = AT.filter,
-                          onlyDrops = AT.onlyDrops, focus = AT.focus })
-    LayoutPicker()
+                          onlyDrops = AT.onlyDrops, focus = AT.focus, owners = ownersBy })
+    LayoutPicker(ownersBy)
     LayoutCards()
     for key, b in pairs(AT.filterButtons) do b.sel:SetShown(AT.filter == key) end
     local p = BY_LINE[AT.line]
@@ -891,6 +1020,20 @@ function AT.RequestRefresh()
     if AT._pending then return end
     AT._pending = true
     C_Timer.After(0, function() AT._pending = false; if AT.isActive then AT.Refresh() end end)
+end
+
+-- One wheel handler for the whole panel: over the card strip it moves the
+-- cards sideways, anywhere else it scrolls the list. (A second wheel-enabled
+-- frame for the strip sat under the panel and never got the wheel; review of
+-- #132.)
+function AT.OnWheel(delta, overCards)
+    if overCards then
+        ScrollCards(delta)
+        LayoutCards()
+    else
+        AT.scrollRow = math.max(0, (AT.scrollRow or 0) - delta * 3)
+        AT.Layout()
+    end
 end
 
 local FILTERS = { { "all", "All" }, { "known", "Known" }, { "missing", "Missing" }, { "nobody", "Nobody" } }
@@ -932,7 +1075,7 @@ local function BuildPanel(mainFrame)
         b:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
             GameTooltip:AddLine(p.label, 1, 1, 1)
-            local n = #Owners(p.line)
+            local n = AT._owners and AT._owners[p.line] and #AT._owners[p.line].list or 0
             GameTooltip:AddLine(n == 1 and "1 alt" or (n .. " alts"), 0.7, 0.7, 0.7)
             GameTooltip:Show()
         end)
@@ -985,22 +1128,16 @@ local function BuildPanel(mainFrame)
     emptyFS:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
     emptyFS:Hide()
 
-    -- Cards scroll sideways with the wheel when there are more than fit.
-    local strip = CreateFrame("Frame", nil, panel)
+    -- The card strip's area, for the wheel handler to test against. No mouse
+    -- of its own: the cards on top of it take the clicks.
+    strip = CreateFrame("Frame", nil, panel)
     strip:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -TOP_CARDS)
     strip:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
     strip:SetHeight(CARD_H)
-    strip:EnableMouseWheel(true)
-    strip:SetScript("OnMouseWheel", function(_, delta)
-        AT.cardStart = math.max(0, (AT.cardStart or 0) - delta)
-        LayoutCards()
-    end)
-    strip:SetFrameLevel(math.max(0, panel:GetFrameLevel() - 1))
 
     panel:EnableMouseWheel(true)
     panel:SetScript("OnMouseWheel", function(_, delta)
-        AT.scrollRow = math.max(0, (AT.scrollRow or 0) - delta * 3)
-        AT.Layout()
+        AT.OnWheel(delta, strip:IsMouseOver())
     end)
 
     -- Built last, as in Warband: the expendable part goes at the end.
@@ -1080,30 +1217,30 @@ local function BootstrapPlugin()
             Candidate = Candidate, Commit = Commit, RunScan = RunScan, ScheduleScan = ScheduleScan,
             OnShow = OnShow, OnClose = OnClose, OnChanging = OnChanging, OnRecipeLearned = OnRecipeLearned,
             RefreshOwnership = RefreshOwnership, ReadOwned = ReadOwned, ApplyCooldowns = ApplyCooldowns,
-            Owners = Owners, Catalogue = Catalogue, BuildRows = BuildRows, Cards = Cards,
+            CooldownLabel = CooldownLabel,
+            Owners = Owners, AllOwners = AllOwners, Catalogue = Catalogue, BuildRows = BuildRows, Cards = Cards,
             MeetsSkill = MeetsSkill, DifficultyColor = DifficultyColor, HasNonTrainerSource = HasNonTrainerSource,
+            RecipeName = RecipeName, OnSpellData = OnSpellData,
             PruneOrphans = PruneOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
-            scan = scan, names = names,
-            ResetEmptyGuard = function() emptyOnce = false end,
+            PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
+            ResetState = function() pendingLoss = nil; lineIndex = nil end,
         },
     })
 
     PruneOrphans()
-    -- A full pull from every peer when there is nothing to build on: when we
-    -- hold no snapshots at all, or when the plugin was switched on from Options
-    -- just now (a peer's watermark for us may be ahead of snapshots we never
-    -- received, which a delta pull would never backfill). NOT on "loaded on
-    -- demand" - that is every login (see Warband's bootstrap).
-    if AltStable.ResetPeerWatermarks then
-        local justEnabled = AltStable.pluginsEnabledThisSession and AltStable.pluginsEnabledThisSession[ADDON_ID]
-        if justEnabled or not next(AltStableProfessionsDB) then AltStable.ResetPeerWatermarks() end
+    -- A full pull from every peer when there is nothing to build on. Switching
+    -- the plugin on from Options is covered by the core (SetPluginEnabled resets
+    -- the watermarks for any plugin it loads). NOT on "loaded on demand" - that
+    -- is every login (see Warband's bootstrap).
+    if AltStable.ResetPeerWatermarks and not next(AltStableProfessionsDB) then
+        AltStable.ResetPeerWatermarks()
     end
     C_Timer.After(4, RefreshOwnership)
 end
 
 local frame = CreateFrame("Frame")
 local ownershipTimer
-frame:SetScript("OnEvent", function(_, event, arg1)
+frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         C_Timer.After(1, BootstrapPlugin)
     elseif event == "TRADE_SKILL_SHOW" then
@@ -1124,14 +1261,21 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         -- A craft with the window open may have started a cooldown.
         if arg1 == "player" and scan.open then ScheduleScan() end
     elseif event == "SPELL_DATA_LOAD_RESULT" then
-        if AT.isActive then AT.RequestRefresh() end
+        OnSpellData(arg1, arg2)
     end
 end)
 for _, ev in ipairs({ "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE",
                       "TRADE_SKILL_DATA_SOURCE_CHANGED", "TRADE_SKILL_DATA_SOURCE_CHANGING",
                       "TRADE_SKILL_CLOSE", "NEW_RECIPE_LEARNED", "SKILL_LINES_CHANGED",
-                      "UNIT_SPELLCAST_SUCCEEDED", "SPELL_DATA_LOAD_RESULT" }) do
+                      "SPELL_DATA_LOAD_RESULT" }) do
     frame:RegisterEvent(ev)
+end
+-- The player's casts only: registered for every unit, each party, raid and
+-- nameplate cast would wake this in combat.
+if frame.RegisterUnitEvent then
+    frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+else
+    frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 end
 
 -- Loaded on demand from the core's PLAYER_LOGIN handler, so PLAYER_LOGIN will

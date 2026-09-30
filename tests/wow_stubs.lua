@@ -1481,6 +1481,9 @@ local function ProfessionsReset()
         nilInfo = {},      -- [id] = true: GetRecipeInfo returns nil for it
     }
     WoW.spellNames = {}
+    WoW.unknownSpells = {}   -- [id] = true: GetSpellName returns nil, as for an ID the client lacks
+    WoW.spellRequests = {}   -- RequestLoadSpellData calls, in order
+    WoW.recipeLines = nil
 end
 ProfessionsReset()
 local resetBeforeProfessions = WoW.reset
@@ -1489,10 +1492,12 @@ function WoW.reset()
     ProfessionsReset()
 end
 
+-- Seven returns, as measured ("nil x 7"): a reader that stops at five would
+-- miss whatever sits in the last two.
 function GetProfessions()
     local idx = {}
-    for i = 1, 5 do idx[i] = WoW.professions[i] and (i + 4) or nil end
-    return idx[1], idx[2], idx[3], idx[4], idx[5]
+    for i = 1, 7 do idx[i] = WoW.professions[i] and (i + 4) or nil end
+    return idx[1], idx[2], idx[3], idx[4], idx[5], idx[6], idx[7]
 end
 
 function GetProfessionInfo(index)
@@ -1532,9 +1537,11 @@ C_TradeSkillUI = {
         return { recipeID = id, name = r.name, learned = r.learned and true or false,
                  icon = 134400, categoryID = 1, relativeDifficulty = 0 }
     end,
+    -- A ready cooldown is nil, not 0 (Retail's contract; not yet measured on
+    -- Forever): code that only handles 0 must fail here.
     GetRecipeCooldown = function(id)
         local r = WoW.tradeSkill.recipes[id]
-        if r and r.cooldown then return r.cooldown, false, 0, 0 end
+        if r and r.cooldown and r.cooldown > 0 then return r.cooldown, false, 0, 0 end
         return nil
     end,
     GetProfessionInfoByRecipeID = function(id)
@@ -1551,9 +1558,12 @@ C_TradeSkillUI = {
 }
 
 C_Spell = {
-    GetSpellName = function(id) return WoW.spellNames[id] or ("Spell " .. tostring(id)) end,
+    GetSpellName = function(id)
+        if WoW.unknownSpells[id] then return nil end
+        return WoW.spellNames[id] or ("Spell " .. tostring(id))
+    end,
     GetSpellTexture = function() return 136235, 136235 end,
-    RequestLoadSpellData = function() end,
+    RequestLoadSpellData = function(id) table.insert(WoW.spellRequests, id) end,
 }
 
 _G.WoW = WoW
