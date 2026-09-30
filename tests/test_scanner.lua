@@ -977,7 +977,7 @@ AltStable.CheckSavedVariablesLoad()
 check("stamping says nothing in chat", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 check("  and leaves a stamp", type(AltStableConfig.svLoadCheck) == "table"
       and AltStableConfig.svLoadCheck.stamp ~= nil)
-check("  naming the build that wrote it", AltStableConfig.svLoadCheck.build == "70009",
+check("  naming the build that wrote it", AltStableConfig.svLoadCheck.build == select(2, GetBuildInfo()),
       tostring(AltStableConfig.svLoadCheck.build))
 
 -- Identity, not type: svLoadCheck is already a table from the call above, so
