@@ -249,10 +249,12 @@ The companion can make a second picture of a character from its portrait
 stays at `version = 1`, and a reader that knows none of it draws the plain
 portrait.
 
-**Files.** `Cutouts\Enhanced\<base>.tga`, `<base>.json` (its sidecar) and
-`<base>.attempts.json` (the companion's own history), where `<base>` is the
-primary portrait's file name without `.tga`. A **subfolder**, because every
-reader of `Cutouts\` lists it non-recursively: nothing in `Enhanced\` can be
+**Files.** `Cutouts\Enhanced\<base>.tga` and `<base>.json` (its sidecar), where
+`<base>` is the primary portrait's file name without `.tga`, and
+`<guid>.attempts.json` (the companion's own history, one per character), keyed by
+the `Player-...` GUID the sidecar carries rather than by `<base>`, because a
+character keeps one history across renames and namesake files. A **subfolder**,
+because every reader of `Cutouts\` lists it non-recursively: nothing in `Enhanced\` can be
 taken for a primary portrait. The companion owns the folder. A file whose primary
 is gone is an orphan and stays; nothing else writes, moves or deletes there.
 
