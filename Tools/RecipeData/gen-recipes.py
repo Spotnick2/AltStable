@@ -21,7 +21,7 @@ rerun free.
 What the pages contain, measured 2026-09-29:
   * /forever/spells/professions/<slug> and /forever/spells/secondary-skills/<slug>
     carry `var listviewspells = [...]`: one record per spell with `id`, `skill`
-    (a list of skill lines), `learnedat` (9999 on the profession's rank spells),
+    (a list of skill lines), `learnedat` (9999 on the Apprentice rank spell),
     `colors` (the four difficulty thresholds), `creates` ([item, min, max], absent
     for an enchant), `reagents`, `source` (codes, below), `trainingcost`.
   * The wrong slug does not 404 - it returns a mixed listing capped at 1000 rows
@@ -120,6 +120,7 @@ def extract_array(text, start):
 
 
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_COLON = re.compile(r"\s*:")
 
 
 def js_to_json(js):
@@ -148,8 +149,7 @@ def js_to_json(js):
         m = _KEY.match(js, i)
         if m:
             word = m.group(0)
-            rest = js[m.end():].lstrip()
-            if last in "{," and rest.startswith(":"):
+            if last in "{," and _COLON.match(js, m.end()):
                 out.append('"%s"' % word)
             else:
                 out.append(word)
@@ -181,9 +181,22 @@ def parse_listview_var(html, var):
 # Turning records into the plugin's data
 # ---------------------------------------------------------------------------
 
+def is_rank_spell(rec):
+    """The profession's own rank spells: Apprentice, Journeyman, Expert, Artisan.
+
+    `learnedat == 9999` catches only Apprentice (review of #130); the higher ranks
+    carry 50, 125 and 200. `rank` alone is not the test either: Forever's Camping
+    recipes have one too ("Tier 1".."Tier 3", Mana Well, Fermenter) and they ARE
+    recipes. A rank spell is the one that makes nothing and has no difficulty.
+    """
+    if rec.get("learnedat") == 9999:
+        return True
+    return bool(rec.get("rank")) and not rec.get("colors") and not rec.get("creates")
+
+
 def recipe_from_record(rec):
     """One listviewspells record -> the fields the plugin keeps, or None for a rank spell."""
-    if rec.get("learnedat") == 9999:
+    if is_rank_spell(rec):
         return None
     skills = rec.get("skill") or []
     if not skills:
@@ -209,8 +222,9 @@ def check_page(records, skill_line, path):
                         % (path, len(records)))
     foreign = [r["id"] for r in records if skill_line not in (r.get("skill") or [])]
     # A page may carry the odd spell of a neighbouring line (tailoring lists one
-    # leatherworking spell). Many of them means the slug is wrong.
-    if len(foreign) > max(3, len(records) // 20):
+    # leatherworking spell). More than that - or a page that is half someone
+    # else's, however small - means the slug is wrong.
+    if len(foreign) > max(2, len(records) // 20) or len(foreign) * 2 >= len(records):
         raise DataError("%s: %d of %d rows are not skill %d - wrong page?"
                         % (path, len(foreign), len(records), skill_line))
 
@@ -280,13 +294,13 @@ def source_line(text):
 _last_fetch = [0.0]
 
 
-def fetch(url, refresh, validate):
-    """GET with a disk cache. `validate(html)` must pass before anything is cached."""
+def fetch(url, refresh, parse):
+    """GET with a disk cache -> parse(html). The parse must succeed before anything is cached."""
     key = hashlib.sha1(url.encode()).hexdigest()
     path = os.path.join(CACHE, key + ".html")
     if not refresh and os.path.exists(path):
         with open(path, encoding="utf-8") as f:
-            return f.read()
+            return parse(f.read())
     wait = DELAY - (time.time() - _last_fetch[0])
     if wait > 0:
         time.sleep(wait)
@@ -294,19 +308,18 @@ def fetch(url, refresh, validate):
     with urllib.request.urlopen(req, timeout=60) as resp:
         html = resp.read().decode("utf-8")
     _last_fetch[0] = time.time()
-    validate(html)
+    parsed = parse(html)
     os.makedirs(CACHE, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
-    return html
+    return parsed
 
 
 def build(refresh, log):
     recipes = {}
     for path, skill_line in PROFESSIONS:
         url = "%s/spells/%s" % (BASE, path)
-        html = fetch(url, refresh, lambda h: parse_listview_var(h, "listviewspells"))
-        records = parse_listview_var(html, "listviewspells")
+        records = fetch(url, refresh, lambda h: parse_listview_var(h, "listviewspells"))
         check_page(records, skill_line, path)
         kept = 0
         for rec in records:
@@ -336,10 +349,13 @@ def main(argv=None):
     # `source` names the snapshot the content came from. It changes only when the
     # content does, so a rerun that finds nothing new writes the same bytes.
     probe = recipes_in_lua(render_lua(recipes, ""))
-    unchanged = probe == old_rows
-    source = source_line(old_text) if unchanged and old_text else \
-        "wowhead forever %s" % time.strftime("%Y-%m-%d")
+    # A committed file whose source line no longer reads back gets today's date,
+    # not `source = null` for ever after (review of #130).
+    source = (probe == old_rows and source_line(old_text)) or         "wowhead forever %s" % time.strftime("%Y-%m-%d")
     text = render_lua(recipes, source)
+    # --check compares the WHOLE file: a change to the header or the row format
+    # is a change too, not only a changed recipe.
+    unchanged = text == old_text
 
     added = sorted(set(probe) - set(old_rows))
     removed = sorted(set(old_rows) - set(probe))

@@ -167,8 +167,15 @@ local function Cooldowns()
     for _, id in ipairs(ids) do
         local oki, info = Try(TS.GetRecipeInfo, id)
         if oki and info and info.learned then
-            local r = { pcall(TS.GetRecipeCooldown, id) }
-            if r[1] and (r[2] ~= nil or r[3] ~= nil or r[4] ~= nil or r[5] ~= nil) then
+            -- Try, not pcall: an absent or throwing GetRecipeCooldown must say
+            -- so, not read as "no cooldown" (review of #130).
+            local r = { Try(TS.GetRecipeCooldown, id) }
+            if not r[1] then
+                Out("GetRecipeCooldown: " .. tostring(r[2]))
+                AltStableProbeDB.profCooldowns = { at = date("%H:%M:%S"), error = tostring(r[2]) }
+                return
+            end
+            if r[2] ~= nil or r[3] ~= nil or r[4] ~= nil or r[5] ~= nil then
                 local line = string.format("%d %s cd=%s day=%s charges=%s/%s", id, tostring(SpellName(id)),
                     tostring(r[2]), tostring(r[3]), tostring(r[4]), tostring(r[5]))
                 rows[#rows + 1] = line
@@ -202,6 +209,10 @@ frame:SetScript("OnEvent", function(_, ev, ...)
     local evlog = AltStableProbeDB.profEvents
     evlog[#evlog + 1] = line
     while #evlog > 300 do table.remove(evlog, 1) end
+    -- SKILL_LINES_CHANGED also fires on every weapon and defense skill-up, and a
+    -- snapshot per skill-up in a fight would push the window snapshots out of
+    -- the capped log (review of #130). Logged, never snapshotted.
+    if ev == "SKILL_LINES_CHANGED" then return end
     if chatLog then Out("|cff888888" .. line .. "|r") end
     -- One snapshot per event name per second: LIST_UPDATE can fire in bursts.
     if not pending[ev] then

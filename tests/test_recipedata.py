@@ -12,7 +12,6 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "Tools", "RecipeData"))
 
 import importlib.util
 
@@ -74,7 +73,25 @@ check("an unbalanced array is an error", raises(lambda: gen.extract_array("x = [
 # Records -> recipes
 # ---------------------------------------------------------------------------
 
-check("the rank spell (learnedat 9999) is dropped", gen.recipe_from_record(recs[0]) is None)
+check("the Apprentice rank spell (learnedat 9999) is dropped", gen.recipe_from_record(recs[0]) is None)
+
+# A specialisation spell, as served on the Leatherworking page: 9999, and no
+# `rank` field - only the 9999 rule catches it.
+dragonscale = {"cat": 11, "id": 10656, "learnedat": 9999, "name": "Dragonscale Leatherworking",
+               "skill": [165], "specialization": 10656, "quality": -1}
+check("a specialisation spell (9999, no rank) is dropped", gen.recipe_from_record(dragonscale) is None)
+
+# The higher ranks, as served on the Alchemy page (review of #130: only 9999 was
+# filtered, and 30 of these shipped as trainer recipes).
+for rank, learn, sid in (("Journeyman", 50, 3101), ("Expert", 125, 3464), ("Artisan", 200, 11611)):
+    rec = {"id": sid, "name": "Alchemy", "learnedat": learn, "rank": rank, "skill": [171], "source": [6]}
+    check("the %s rank spell (learnedat %d) is dropped" % (rank, learn), gen.recipe_from_record(rec) is None)
+# ...while Forever's Camping recipes carry a `rank` too, and are recipes.
+mana_well = {"id": 1230564, "name": "Mana Well", "learnedat": 20, "rank": "Tier 1", "skill": [171],
+             "colors": [0, 20, 22, 25], "creates": [279990, 1, 1], "source": [6]}
+check("a Camping recipe with rank \"Tier 1\" is kept", gen.recipe_from_record(mana_well) is not None)
+tier_enchant = {"id": 7, "learnedat": 40, "rank": "Tier 2", "skill": [333], "colors": [40, 50, 60, 70]}
+check("a ranked recipe that makes nothing but has colours is kept", gen.recipe_from_record(tier_enchant) is not None)
 r = gen.recipe_from_record(recs[2])
 check("a recipe keeps skill, learn, colors, makes, src",
       r == {"skill": [171], "learn": 140, "colors": [140, 165, 185, 205], "makes": 3390, "src": [2, 16]}, repr(r))
@@ -97,6 +114,12 @@ check("a 1000-row page is refused (Wowhead's cap: a wrong slug returns one)",
       raises(lambda: gen.check_page([{"id": i, "skill": [171]} for i in range(1000)], 171, "p")))
 check("a mostly-foreign page is refused",
       raises(lambda: gen.check_page([{"id": i, "skill": [185]} for i in range(50)], 171, "p")))
+check("a tiny page that is all someone else's is refused (2 foreign of 2)",
+      raises(lambda: gen.check_page([{"id": i, "skill": [185]} for i in range(2)], 171, "p")))
+check("a small page that is half someone else's is refused (2 foreign of 4)",
+      raises(lambda: gen.check_page([{"id": i, "skill": [393]} for i in range(2)] + [{"id": 9 + i, "skill": [185]} for i in range(2)], 393, "p")))
+check("a page with 3 foreign rows is refused however large",
+      raises(lambda: gen.check_page([{"id": i, "skill": [197]} for i in range(40)] + [{"id": 90 + i, "skill": [165]} for i in range(3)], 197, "p")))
 check("one neighbouring spell is tolerated (tailoring lists one leatherworking spell)",
       not raises(lambda: gen.check_page([{"id": i, "skill": [197]} for i in range(50)] + [{"id": 99, "skill": [165]}], 197, "p")))
 
@@ -163,6 +186,33 @@ try:
         sys.stdout = old_stdout
     check("--check fails when a recipe was added", rc_changed == 1, str(rc_changed))
     check("--check writes nothing", "[99999]" not in open(out, encoding="utf-8").read())
+
+    # --check covers the whole file, not only the rows: a header edited by hand
+    # (or a changed row format) is a difference.
+    gen.build = lambda refresh, log: {k: dict(v) for k, v in recipes.items()}
+    body = open(out, encoding="utf-8").read()
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body.replace("-- GENERATED", "-- generated", 1))
+    old_stdout, sys.stdout = sys.stdout, quiet
+    try:
+        rc_header = gen.main(["--check", "--out", out])
+    finally:
+        sys.stdout = old_stdout
+    check("--check notices a changed header", rc_header == 1, str(rc_header))
+
+    # A source line that no longer reads back is replaced by today's date, never
+    # written as `source = null` (which Lua reads as nil, for ever after).
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body.replace('source = "wowhead forever 2026-01-01",', "source = 'hand edited',", 1))
+    old_stdout, sys.stdout = sys.stdout, quiet
+    try:
+        gen.main(["--out", out])
+    finally:
+        sys.stdout = old_stdout
+    rewritten = open(out, encoding="utf-8").read()
+    check("an unreadable source line becomes a dated one, not null",
+          "null" not in rewritten and (gen.source_line(rewritten) or "").startswith("wowhead forever "),
+          rewritten.splitlines()[10] if len(rewritten.splitlines()) > 10 else rewritten)
 finally:
     gen.build = real_build
 
