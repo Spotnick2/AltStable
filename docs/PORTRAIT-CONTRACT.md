@@ -167,6 +167,7 @@ AltStableCutoutManifest = {
         w = 146, h = 512,          -- content size in pixels
         texw = 256, texh = 512,    -- the power-of-two canvas it sits in, top-left
         nativeW = 0.08333, nativeH = 0.58333,  -- optional: fraction of screen height
+        epoch = 1790740285,        -- optional (#128): the capture it was made from
     },
     -- legacy entries, keyed by name slug (written before entries carried a guid):
     ['karuzo-elegia'] = { file = [[...]], w = 146, h = 512, texw = 256, texh = 512 },
@@ -190,3 +191,12 @@ already known to load. The Roster reads only `file`, `w`, `h`, `texw`, `texh`;
 it computes figure heights from race, not from the image.
 
 An entry counts only when `file` is a non-empty string.
+
+**`epoch`** (optional, since #128) names the capture the portrait was made from:
+the `epoch` of that capture's **first** shot record. The addon compares it with
+the newest capture it holds for the character - a newer capture is "waiting for
+the converter" until an entry names it, across reloads. Write it whenever the
+capture record had one; a converter that wrote the second shot's instead still
+reads as converted (the addon compares with `>`), never as waiting forever. An
+entry without it is read the old way: only a capture taken in the current
+session counts as waiting. Additive: no `version` bump.

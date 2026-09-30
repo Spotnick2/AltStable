@@ -838,16 +838,20 @@ end
 ------------------------------------------------------------
 
 -- The Roster's identity rules, from the core: a portrait there is one here.
-local function HasCutout(guid, name)
-    return AltStable.CutoutFor and AltStable.CutoutFor({ guid = guid, name = name }) ~= nil or false
+-- The character's manifest entry, or nil.
+local function CutoutEntry(guid, name)
+    return AltStable.CutoutFor and AltStable.CutoutFor({ guid = guid, name = name }) or nil
 end
 
--- The cutout manifest is loaded once, at startup, so a capture taken since
--- cannot be in it - however many older portraits the character has.
+-- For an entry that does not say which capture it was made from (written
+-- before entries carried `epoch`): the manifest is loaded once, at startup, so
+-- a capture taken since cannot be in it.
 local SESSION_START = time()
 
 -- The newest COMPLETE pair for a GUID (a shot 1 followed by its shot 2): an
--- abandoned half says nothing about what the portrait will show.
+-- abandoned half says nothing about what the portrait will show. Returns the
+-- second record (it carries the look) and the FIRST shot's epoch, which is the
+-- capture's identity in the contract.
 local function LatestPair(guid)
     local renders = AltStablePortraits and AltStablePortraits.renders
     if type(renders) ~= "table" then return nil end
@@ -855,7 +859,7 @@ local function LatestPair(guid)
         local r2, r1 = renders[i], renders[i - 1]
         if type(r2) == "table" and type(r1) == "table" and r2.guid == guid and r1.guid == guid
            and r2.shot == 2 and r1.shot == 1 then
-            return r2
+            return r2, tonumber(r1.epoch) or tonumber(r2.epoch)
         end
     end
     return nil
@@ -871,18 +875,26 @@ function PortraitStatus()
     local guid = UnitGUID and UnitGUID("player")
     local status = { due = false, reason = "none", changedSlots = {} }
     if not guid then return status end
-    local pair = LatestPair(guid)
+    local pair, captured = LatestPair(guid)
     local look = CurrentLook()
     local diff = (pair and pair.look and look) and LookDiff(pair.look, look) or {}
+    local entry = CutoutEntry(guid, PlayerName())
+    local madeFrom = entry and tonumber(entry.epoch)
     if #diff > 0 then
         status.due, status.reason, status.changedSlots = true, "changed", diff
-    elseif pair and (pair.epoch or 0) >= SESSION_START then
-        -- Taken this session: not converted yet, whatever older portrait exists.
+    elseif pair and not entry then
         status.reason = "pending"
-    elseif HasCutout(guid, PlayerName()) then
+    elseif pair and madeFrom then
+        -- The portrait says which capture it was made from: pending until that
+        -- is the newest one. Across reloads too - where "taken this session"
+        -- alone let a replacement read as done the moment the game reloaded,
+        -- with nothing converted (Codex review of #134).
+        status.reason = (captured and captured > madeFrom) and "pending" or "none"
+    elseif pair and (captured or 0) >= SESSION_START then
+        -- An entry from before `epoch`: only "taken this session" can be told.
+        status.reason = "pending"
+    elseif entry then
         status.reason = "none"
-    elseif pair then
-        status.reason = "pending"
     else
         status.due, status.reason = true, "missing"
     end
@@ -1001,7 +1013,7 @@ AltStable._test.portrait = {
     CurrentLook    = function() return CurrentLook() end,
     LookDiff       = LookDiff,
     PortraitStatus = function() return PortraitStatus() end,
-    HasCutout      = HasCutout,
+    CutoutEntry    = CutoutEntry,
     LOOK_SLOTS     = LOOK_SLOTS,
     ResetStatus    = function() lastStatusKey, lastStatus = nil, nil end,
     SetSessionStart = function(t) SESSION_START = t end,

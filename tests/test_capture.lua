@@ -831,6 +831,24 @@ AltStablePortraits = { version = 1, renders = {
     { guid = GUID, shot = 1, epoch = 100, look = T.CurrentLook() },
     { guid = GUID, shot = 2, epoch = 101, look = T.CurrentLook() } } }
 eq("a fresh capture with an older portrait on file is pending", T.PortraitStatus().reason, "pending")
+
+-- Across the reload the capture asks for (Codex review of #134): the capture
+-- is no longer "this session", and the old portrait is still in the manifest.
+-- The entry says which capture it was made from, so it stays pending...
+T.SetSessionStart(200)
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1, epoch = 40 } }
+eq("after a reload, a replacement not yet converted is still pending", T.PortraitStatus().reason, "pending")
+-- ...until the converter's entry names this capture (its first shot).
+AltStableCutoutManifest[GUID].epoch = 100
+eq("once converted from this capture, nothing is pending", T.PortraitStatus().reason, "none")
+AltStableCutoutManifest[GUID].epoch = 101
+eq("  also when a converter recorded the second shot's epoch", T.PortraitStatus().reason, "none")
+-- An entry from before `epoch` can only be judged by the session, as before.
+AltStableCutoutManifest[GUID].epoch = nil
+eq("an entry without an epoch, after a reload: the old reading (none)", T.PortraitStatus().reason, "none")
+T.SetSessionStart(50)
+eq("  and within the session: pending", T.PortraitStatus().reason, "pending")
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
 T.SetSessionStart(1700000000)
 
 -- An abandoned half says nothing: only a complete pair counts.

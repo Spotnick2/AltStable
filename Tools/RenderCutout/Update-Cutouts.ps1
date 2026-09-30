@@ -190,6 +190,11 @@ print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
         $guid = if ((Test-Path $side) -and $m.guid) { [string]$m.guid } else { $null }
         $key  = if ($guid) { $guid } else { $slug }
         $who  = if ($guid) { "guid = '$guid', " } else { "" }
+        # The capture this portrait was made from (PORTRAIT-CONTRACT.md): the
+        # addon compares it with the newest capture to know one is pending.
+        if ((Test-Path $side) -and ($m.epoch -is [int] -or $m.epoch -is [long] -or $m.epoch -is [double])) {
+            $who += "epoch = $([long]$m.epoch), "
+        }
         "    ['$key'] = { $($who)file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
     }
 
