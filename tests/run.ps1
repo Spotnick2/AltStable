@@ -44,8 +44,7 @@ try {
     Write-Host "── Update-Cutouts.ps1 -SelfTest ──────────────" -ForegroundColor Cyan
     # An install path on a drive that does not exist: the script must not need
     # one to self-test (the Linux CI runner has no C:, and that broke it once).
-    & pwsh -NoProfile -File (Join-Path $RepoRoot "Tools/RenderCutout/Update-Cutouts.ps1") -SelfTest -AddOnsPath "Q:
-o-such-install\AddOns"
+    & pwsh -NoProfile -File (Join-Path $RepoRoot "Tools/RenderCutout/Update-Cutouts.ps1") -SelfTest -AddOnsPath "Q:\no-such-install\AddOns"
     if ($LASTEXITCODE -ne 0) { $failed++ }
     Write-Host ""
 
