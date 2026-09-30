@@ -622,6 +622,17 @@ AT.isActive = false
 WoW.unknownSpells = {}
 WoW.flushTimers()
 
+-- One verdict per owner and recipe, for the tab and the tooltips alike.
+local vOwners = T.Owners(171)
+local vBy = {}
+for _, x in ipairs(vOwners) do vBy[x.name] = x end
+eq("Alder knows Minor Healing", T.Verdict(vBy.Alder, 2330), "known")
+eq("Birch meets Lesser Agility", T.Verdict(vBy.Birch, 2331), "meets")
+eq("Birch is too low for 2332", T.Verdict(vBy.Birch, 2332), "low")
+eq("an unscanned owner gets no verdict", T.Verdict(vBy.Umber, 2331), "unscanned")
+eq("nobody-text with a hidden owner", T.NobodyText({ vBy.Alder }, 1), "Nobody recorded")
+eq("nobody-text with every owner complete", T.NobodyText({ vBy.Alder, vBy.Birch }, 0), "Nobody knows")
+
 -- Meets the skill: only for a complete scan, only when not known.
 local birch
 for _, x in ipairs(T.Owners(171)) do if x.guid == B then birch = x end end
@@ -699,11 +710,38 @@ tip = tipFor(5555)
 check("a recipe for a profession nobody has says so", (tip["AltStable"] or ""):find("No alt has Blacksmithing", 1, true))
 eq("an item that teaches nothing gets no lines", #T.TooltipLines(424242), 0)
 
+-- The only Blacksmith is hidden: "No alt has Blacksmithing" would be false.
+AltStableProfessionsDB[H].profs[164] = { rank = 50, max = 75, full = 1, known = { [3100] = true } }
+tip = tipFor(5555)
+check("a profession only a hidden alt has is not 'nobody has'", tip["AltStable"] == nil, tostring(tip["AltStable"]))
+AltStableProfessionsDB[H].profs[164] = nil
+
 tip = tipFor(118)
 eq("a crafted item lists its crafters across every recipe, once each", tip["Crafted by"], "Alder, Birch")
 eq("a crafted item nobody can make gets no line", tipFor(2456)["Crafted by"], nil)
 
--- Through the hook, the way the client calls it.
+-- A recipe on two lines: an alt who knows it through the second is "Known",
+-- whatever the first line's skill (it was judged by the first line only).
+AltStableRecipeData.recipes[7000] = { skill = { 165, 197 }, learn = 40, makes = 5000, items = { 7777 } }
+T.ResetState()
+local ASH = "Player-Ash"
+AltStableDB[ASH] = { guid = ASH, name = "Ash", class = "WARRIOR" }
+AltStableProfessionsDB[ASH] = { stamp = 1, profs = {
+    [165] = { rank = 10, max = 75, full = 1, known = {} },
+    [197] = { rank = 60, max = 75, full = 1, known = { [7000] = true } } } }
+tip = tipFor(7777)
+eq("known through a second line is known", tip["Known by"], "Ash")
+eq("  and not 'too low' on the first", tip["Skill too low"], nil)
+AltStableDB[ASH], AltStableProfessionsDB[ASH] = nil, nil
+
+-- Name lists stop at four: a tooltip line does not wrap.
+local many = {}
+for i = 1, 6 do many[i] = { name = "Alt" .. i, class = "MAGE" } end
+local listed = T.NameList(many):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+eq("six names show as four and '+2'", listed, "Alt1, Alt2, Alt3, Alt4, +2")
+
+-- Through the hook, the way the client calls it - including a tooltip whose
+-- payload carries no id (the item comes from the tooltip's link).
 local lines = {}
 local tt = WoW.makeFrame()
 tt.AddLine = function(_, text) lines[#lines + 1] = tostring(text) end
@@ -711,9 +749,11 @@ tt.AddDoubleLine = function(_, l, r) lines[#lines + 1] = tostring(l) .. "|" .. t
 for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
 local firstCount = #lines
 check("the hook appends the lines", firstCount >= 5, table.concat(lines, " / "))
-lines = {}   -- a re-render starts from an empty tooltip
-for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
-eq("a re-render appends them once again, not twice", #lines, firstCount)
+lines = {}
+tt.GetItem = function() return "Recipe", "|cff1eff00|Hitem:3396::::::::60:::::|h[Recipe]|h|r" end
+for _, fn in ipairs(ttCalls) do fn(tt, {}) end
+eq("with no id in the payload, the item comes from the tooltip's link", #lines, firstCount)
+tt.GetItem = nil
 lines = {}
 AltStable.SetConfigValue("professionsTooltips", false)
 for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
