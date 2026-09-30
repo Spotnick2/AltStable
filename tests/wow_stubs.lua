@@ -1119,6 +1119,12 @@ ACCEPT, CANCEL = "Accept", "Cancel"
 ------------------------------------------------------------
 
 Enum = {
+    SendAddonMessageResult = {
+        Success = 0, InvalidPrefix = 1, InvalidMessage = 2, AddonMessageThrottle = 3,
+        InvalidChatType = 4, NotInGroup = 5, TargetRequired = 6, InvalidChannel = 7,
+        ChannelThrottle = 8, GeneralError = 9, NotInGuild = 10, AddOnMessageLockdown = 11,
+        TargetOffline = 12,
+    },
     BagIndex = {
         Keyring = -1, Characterbanktab = -2, Accountbanktab = -3,
         Backpack = 0, Bag_1 = 1, Bag_2 = 2, Bag_3 = 3, Bag_4 = 4,
@@ -1290,16 +1296,48 @@ function WoW.ctlDrain(n)
     end
 end
 
+-- SendAddonMessage returns an Enum.SendAddonMessageResult on this client, not
+-- a boolean (API docs, 70009): 0 Success, 3 AddonMessageThrottle - the server's
+-- per-prefix throttle - and so on. WoW.sendResults queues the results the next
+-- sends get (default Success); a throttled message is NOT delivered.
+-- ChatThrottleLib v24 ignored the result and lost throttled messages; v32
+-- retries them, which is what test_ctl checks against the real library.
+WoW.sendResults = {}
 C_ChatInfo = {
     RegisterAddonMessagePrefix = function() return true end,
     SendAddonMessage = function(prefix, text, channel, target)
+        local result = table.remove(WoW.sendResults, 1) or 0
+        if result ~= 0 then return result end
         -- prio is set only when the send came through ChatThrottleLib, so a
         -- raw send is distinguishable from a paced one.
         table.insert(WoW.sent, { prefix = prefix, text = text, channel = channel,
                                  target = target, prio = WoW.pendingPrio })
-        return true
+        return 0
     end,
+    -- Present on the client; ChatThrottleLib hooks both.
+    SendAddonMessageLogged = function() return 0 end,
+    SendChatMessage = function() end,
 }
+C_BattleNet = C_BattleNet or {}
+C_BattleNet.SendGameData = C_BattleNet.SendGameData or function() return 0 end
+
+-- What ChatThrottleLib v32 calls besides the chat API, as the client has them.
+function securecallfunction(fn, ...) return fn(...) end
+-- WoW's xpcall passes its extra arguments to the function - Blizzard's own
+-- code relies on it (FunctionUtil: xpcall(script, CallErrorHandler, frame, ...))
+-- and so does ChatThrottleLib v32. Stock Lua 5.1 drops them, and the send it
+-- wraps then ran with no arguments at all.
+do
+    local rawXpcall = xpcall
+    function xpcall(fn, handler, ...)
+        local n, args = select("#", ...), { ... }
+        return rawXpcall(function() return fn(unpack(args, 1, n)) end, handler)
+    end
+end
+-- The global form survives only as a deprecated alias (Blizzard_DeprecatedChatInfo).
+SendChatMessage = function(...) return C_ChatInfo.SendChatMessage(...) end
+function geterrorhandler() return function(e) error(e, 2) end end
+function GetFramerate() return 60 end
 
 ------------------------------------------------------------
 -- Plain globals that survived
@@ -1370,7 +1408,7 @@ function WoW.chatFiltered(event, text)
     return false
 end
 ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
--- Like the bundled ChatThrottleLib v24 in the two ways that matter here: an
+-- Like the bundled ChatThrottleLib (v32) in the two ways that matter here: an
 -- unknown priority or an over-255-byte message RAISES, which is what
 -- QueueWire's raw fallback exists for - a stub that accepted anything left that
 -- fallback untested. The priority is recorded on the captured send, so a paced
@@ -1378,7 +1416,8 @@ ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
 -- send fails so it can never leak onto the next raw send.
 local CTL_PRIORITIES = { BULK = true, NORMAL = true, ALERT = true }
 ChatThrottleLib = {
-    -- callbackFn runs after the send, as CTL's does (when the message leaves).
+    -- callbackFn runs after the send, as CTL v32's does (when the message
+    -- leaves), with (arg, didSend, sendResult).
     --
     -- WoW.ctlDefer = true holds every send in WoW.ctlQueue until
     -- WoW.ctlDrain() - as the real library does under its bandwidth budget or
@@ -1405,7 +1444,7 @@ ChatThrottleLib = {
         local ok, r = pcall(C_ChatInfo.SendAddonMessage, prefix, text, channel, target)
         WoW.pendingPrio = nil
         if not ok then error(r, 2) end
-        if callbackFn then callbackFn(callbackArg, true) end
+        if callbackFn then callbackFn(callbackArg, true, 0) end
         return r
     end,
 }
