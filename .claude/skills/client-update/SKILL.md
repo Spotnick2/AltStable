@@ -76,12 +76,20 @@ Each holds a `loadCount`. It is bumped in memory at load and written at logout/r
 exited - a `/reload` keeps the process and the Lua state, so the counter climbs from memory even
 with persistence broken. Before believing a rise:
 
-1. Compare the `.bak` mtime (previous write) with the file mtime (this write), and the gap between
-   a write and the next load. A write followed by a load **seconds** later is a `/reload`.
-2. A full exit shows as a write, then a gap of however long the owner took to relaunch, then the
-   next login - and the in-game line `[probe] SavedVariables (account) LOADED - previous
-   loadCount=N` where N is the value you last saw on disk. `first ever run - not loaded` means it
-   is broken - stop, this is #23 again.
+1. **Prove the process restarted.** Read the game's start time:
+   ```
+   Get-Process WowB | Select-Object Id, StartTime        # PowerShell
+   ```
+   The last write before the restart (the `.bak`, or the file as you last read it) must be
+   **older** than `StartTime`, and the load you are judging must come **after** it. If the owner
+   has already quit, their explicit "I exited the game fully" stands in for this. The gap between a
+   write and the next load is only a hint - a quick relaunch can be seconds, a slow `/reload` can
+   be long - never the proof on its own.
+2. **Then compare the counters.** The first write in the new process must hold the last
+   pre-restart value + 1, or the owner's login line `[probe] SavedVariables (account) LOADED -
+   previous loadCount=N` must name that value. `first ever run - not loaded` means it is broken -
+   stop, this is #23 again. Check the per-character store the same way: a store that did not load
+   restarts at 1.
 
 Ask for the owner's `[probe] …` lines from the login after a **full client exit** (Exit Game, wait
 for the process to go, relaunch). Lines tagged `[Probe]` with a capital P and "launch #n" are

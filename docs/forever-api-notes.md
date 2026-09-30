@@ -530,8 +530,8 @@ after a genuine full exit. The per-character store (Kaleid-Sumner) was at 51 in 
 where an unloaded store would restart at 1.
 
 The 70058 persistence attempt did not count: both of its "relaunches" were `/reload`s, four seconds
-between the write and the next load. Tell them apart by the timestamps (or the process start time),
-never by a counter going up. A `[Probe] … launch #1` line is **PriestlyProbe**, another project's
+between the write and the next load. Tell them apart by the game process's start time
+(`Get-Process WowB`), with the timestamps only as a hint - never by a counter going up. A `[Probe] … launch #1` line is **PriestlyProbe**, another project's
 probe, and says nothing about AltStable.
 
 `MEASURED_ON_BUILD` went from 70009 straight to 70124. 70058 was measured but never bumped to.
