@@ -298,6 +298,27 @@ check("ready staying ready is no change", not T.ApplyCooldowns(char, "Alchemy", 
 check("a label no learned recipe files under any more is removed", T.ApplyCooldowns(char, "Alchemy", {}, {}))
 eq("  gone", char["cd_Alchemy@Transmute"], nil)
 
+-- A cooldown read that FAILS is not "ready": the field stays as it was, and
+-- nothing is synced for it. The recipes still commit.
+fresh()
+setAlchemy({ [11479] = { name = "Transmute: Iron to Gold", learned = true, cooldown = 7200 } })
+T.OnShow(); WoW.flushTimers()
+local expiryBefore = AltStableDB[ME]["cd_Alchemy@Transmute"]
+local realCooldown = C_TradeSkillUI.GetRecipeCooldown
+C_TradeSkillUI.GetRecipeCooldown = function() error("boom") end
+WoW.now = WoW.now + 60
+AltStableDB[ME].lastUpdate = 1
+WoW.tradeSkill.recipes[11480] = { name = "Transmute: Mithril to Truesilver", learned = true }
+T.OnShow(); WoW.flushTimers()
+eq("a failing cooldown read leaves the running cooldown alone", AltStableDB[ME]["cd_Alchemy@Transmute"], expiryBefore)
+check("  while the recipes still commit", AltStableProfessionsDB[ME].profs[171].known[11480])
+C_TradeSkillUI.GetRecipeCooldown = nil
+WoW.tradeSkill.recipes[11481] = { name = "Transmute: Earth to Water", learned = true }
+T.OnShow(); WoW.flushTimers()
+eq("with no cooldown API at all, cooldowns are left alone", AltStableDB[ME]["cd_Alchemy@Transmute"], expiryBefore)
+check("  and scanning still works", AltStableProfessionsDB[ME].profs[171].known[11481])
+C_TradeSkillUI.GetRecipeCooldown = realCooldown
+
 -- A cooldown alone reaches peers: the character is touched.
 fresh()
 setAlchemy({ [2330] = { name = "Minor Healing Potion", learned = true } })
@@ -405,6 +426,45 @@ check("our own snapshot echoed back is ignored", AltStableProfessionsDB[ME].prof
 T.DeserializePlayer(ME, blob(999, { 2331 }))
 check("a strictly newer snapshot of our own alt, from another PC, is taken",
       AltStableProfessionsDB[ME].stamp == 999 and AltStableProfessionsDB[ME].profs[171].known[2331])
+
+-- The same, through the core: a PC whose own alt's core record is as new as
+-- the peer's (so the core keeps its copy) still takes the newer snapshot -
+-- the plugin was just switched on there, or reinstalled. Both receive paths.
+local function ownAltPayload(pstamp, coreTS)
+    AltStableDB = { [ALT] = { guid = ALT, name = "Brewer", class = "PRIEST", level = 40, lastUpdate = coreTS } }
+    AltStableProfessionsDB = { [ALT] = { stamp = pstamp, profs = { [171] = { rank = 90, max = 150, full = pstamp, known = { [2331] = true } } } } }
+    return Core.SerializeFullDB(false, 0), Core.SerializeChar(AltStableDB[ALT])
+end
+for _, coreTS in ipairs({ 1000, 900 }) do
+    local bulk, single = ownAltPayload(1001, coreTS)
+    local mine = { [ALT] = { guid = ALT, name = "Brewer", class = "PRIEST", level = 40, lastUpdate = 1000,
+                             scannedHere = true, prof_Alchemy = 95 } }
+    AltStableDB, AltStableProfessionsDB = mine, {}
+    Core.DeserializeFullDB(bulk, "Peer")
+    check("bulk path, peer's core record " .. (coreTS == 1000 and "equal" or "older") .. ": the snapshot arrives",
+          AltStableProfessionsDB[ALT] and AltStableProfessionsDB[ALT].profs[171] and AltStableProfessionsDB[ALT].profs[171].known[2331])
+    eq("  and our own core record is untouched", mine[ALT].prof_Alchemy, 95)
+    eq("  its lastUpdate too", mine[ALT].lastUpdate, 1000)
+    mine[ALT].prof_Alchemy = 95
+    AltStableDB, AltStableProfessionsDB = mine, {}
+    Core.ReceiveCharacter(Core.DeserializeChar(single), "Peer")
+    check("single path, peer's core record " .. (coreTS == 1000 and "equal" or "older") .. ": the snapshot arrives",
+          AltStableProfessionsDB[ALT] and AltStableProfessionsDB[ALT].profs[171] ~= nil)
+    eq("  and our own core record is untouched", mine[ALT].prof_Alchemy, 95)
+end
+-- Its own stamp still decides: an older snapshot does not replace a newer one.
+local bulkOld = ownAltPayload(500, 1000)
+AltStableDB = { [ALT] = { guid = ALT, name = "Brewer", class = "PRIEST", level = 40, lastUpdate = 1000, scannedHere = true } }
+AltStableProfessionsDB = { [ALT] = { stamp = 700, profs = { [171] = { rank = 90, max = 150, full = 700, known = { [2329] = true } } } } }
+Core.DeserializeFullDB(bulkOld, "Peer")
+eq("through the core, an older snapshot still loses", AltStableProfessionsDB[ALT].stamp, 700)
+-- Identity checks still come first: a record under another name hands over nothing.
+local impostor = Core.SerializeChar({ guid = ALT, name = "Impostor", class = "PRIEST", level = 40, lastUpdate = 1000 })
+    .. "\nplugin_professions:v1|s=5000|p=171:1:1:-:2332\n" .. Core.CHAR_SEP
+AltStableDB = { [ALT] = { guid = ALT, name = "Brewer", class = "PRIEST", level = 40, lastUpdate = 1000 } }
+AltStableProfessionsDB = {}
+Core.DeserializeFullDB(impostor, "Peer")
+eq("a record that fails validation hands its snapshot to nobody", AltStableProfessionsDB[ALT], nil)
 
 -- Empty, malformed, unknown.
 AltStableDB = { [ALT] = { guid = ALT, name = "Brewer" } }

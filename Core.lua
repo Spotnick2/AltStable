@@ -657,13 +657,19 @@ end
 
 -- Hand each plugin its own blob for an ACCEPTED character, then drop the
 -- carrier field so it never reaches the database or the wire.
-local function DispatchPluginPayloads(c)
+-- independentOnly: the record itself lost the merge (ShouldMerge), so only a
+-- plugin that versions its own data (plugin.independentStamp) gets its blob -
+-- its own stamp decides, and the core record is still not touched. That is how
+-- a store switched on after the fact, on a PC whose own alts' core records are
+-- already current, can still receive their plugin data (Codex review of #132).
+-- Validation and the forgotten check have run before either call.
+local function DispatchPluginPayloads(c, independentOnly)
     local payloads = c and c._pluginPayloads
     c._pluginPayloads = nil
     if not payloads or not AltStable.plugins then return end
     for _, plugin in ipairs(AltStable.plugins) do
         local blob = payloads[plugin.id]
-        if blob and plugin.OnDeserialize then
+        if blob and plugin.OnDeserialize and (not independentOnly or plugin.independentStamp) then
             pcall(plugin.OnDeserialize, c.guid, blob)
         end
     end
@@ -1147,6 +1153,8 @@ local function DeserializeFullDB(payload, sender)
                         end
                         KeepFullerName(existing, priorName)
                         AltStableDB[c.guid] = existing
+                    else
+                        DispatchPluginPayloads(c, true)
                     end
                 end
 
@@ -1585,6 +1593,7 @@ local function ReceiveCharacter(c, sender)
     -- The same merge rule as DeserializeFullDB, shared so the two paths cannot
     -- drift - they had: this one never got the first ownership fix.
     if not ShouldMerge(existing, c) then
+        DispatchPluginPayloads(c, true)   -- see DispatchPluginPayloads
         return
     end
 

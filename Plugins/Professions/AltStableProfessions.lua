@@ -320,7 +320,11 @@ local function Candidate()
     local okr, ids = Try(t.GetAllRecipeIDs)
     if not okr or type(ids) ~= "table" or #ids == 0 then return nil, "no recipes" end
 
-    local known, cds, labels = {}, {}, {}
+    -- cdOk: every cooldown read answered. A read that FAILED (absent or
+    -- throwing) says nothing about readiness - folding it into "nil" turned a
+    -- running cooldown into "ready" and synced that (Codex review of #132) - so
+    -- one failure leaves the whole profession's cooldown fields as they are.
+    local known, cds, labels, cdOk = {}, {}, {}, true
     for _, id in ipairs(ids) do
         local oki, info = Try(t.GetRecipeInfo, id)
         -- Never measured to happen (727 IDs, no nil), but a half-read list
@@ -332,13 +336,17 @@ local function Candidate()
             if label then
                 labels[label] = true
                 local okc, left = Try(t.GetRecipeCooldown, id)
-                left = okc and tonumber(left) or nil
-                if left and left > 0 then cds[label] = math.max(cds[label] or 0, left) end
+                if not okc then
+                    cdOk = false
+                else
+                    left = tonumber(left)
+                    if left and left > 0 then cds[label] = math.max(cds[label] or 0, left) end
+                end
             end
         end
     end
     return { line = line, rank = tonumber(base.skillLevel) or 0, max = tonumber(base.maxSkillLevel) or 0,
-             known = known, cds = cds, labels = labels }
+             known = known, cds = cds, labels = labels, cdOk = cdOk }
 end
 
 local function Commit(c)
@@ -356,7 +364,9 @@ local function Commit(c)
     end
     p.full = time()   -- "last verified", whether or not anything moved
     if changed then Bump(e) end
-    local cdChanged = ApplyCooldowns(AltStableDB and AltStableDB[guid], BY_LINE[c.line].label, c.cds, c.labels)
+    local cdChanged = c.cdOk
+        and ApplyCooldowns(AltStableDB and AltStableDB[guid], BY_LINE[c.line].label, c.cds, c.labels)
+        or false
     -- A cooldown alone must reach peers too: the core only sends a character
     -- whose lastUpdate moved, and no recipe changed.
     if changed or cdChanged then Changed(guid) end
@@ -1205,6 +1215,9 @@ local function BootstrapPlugin()
         label         = "Professions",
         icon          = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\recipes.tga",
         _isPlugin     = true,
+        -- Our snapshots carry their own stamp, so the core hands them over even
+        -- when it keeps its own copy of the character record.
+        independentStamp = true,
         OnActivate    = function(mf) AT.Activate(mf) end,
         OnDeactivate  = function(mf) AT.Deactivate(mf) end,
         OnSerialize   = function(g) return SerializePlayer(g) end,
