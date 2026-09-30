@@ -64,6 +64,10 @@ if not plugin then
 end
 local T = plugin._test
 local AT = plugin._at
+-- Captured now: WoW.reset() between sections clears the registry, and the hook
+-- is installed once, at bootstrap - before the tab is ever opened.
+local ttCalls = WoW.tooltipPostCalls[Enum.TooltipDataType.Item]
+check("the item-tooltip hook is installed at bootstrap", ttCalls ~= nil and #ttCalls == 1)
 
 local listed = false
 for _, p in ipairs(AltStable.LOD_PLUGINS) do if p.key == "professions" and p.addon == "AltStableProfessions" then listed = true end end
@@ -618,6 +622,17 @@ AT.isActive = false
 WoW.unknownSpells = {}
 WoW.flushTimers()
 
+-- One verdict per owner and recipe, for the tab and the tooltips alike.
+local vOwners = T.Owners(171)
+local vBy = {}
+for _, x in ipairs(vOwners) do vBy[x.name] = x end
+eq("Alder knows Minor Healing", T.Verdict(vBy.Alder, 2330), "known")
+eq("Birch meets Lesser Agility", T.Verdict(vBy.Birch, 2331), "meets")
+eq("Birch is too low for 2332", T.Verdict(vBy.Birch, 2332), "low")
+eq("an unscanned owner gets no verdict", T.Verdict(vBy.Umber, 2331), "unscanned")
+eq("nobody-text with a hidden owner", T.NobodyText({ vBy.Alder }, 1), "Nobody recorded")
+eq("nobody-text with every owner complete", T.NobodyText({ vBy.Alder, vBy.Birch }, 0), "Nobody knows")
+
 -- Meets the skill: only for a complete scan, only when not known.
 local birch
 for _, x in ipairs(T.Owners(171)) do if x.guid == B then birch = x end end
@@ -643,6 +658,114 @@ local cards = T.Cards(171)
 eq("one card per owner", #cards, 3)
 eq("  known against the catalogue", cards[1].known .. "/" .. cards[1].total, "3/4")
 eq("  with the soonest cooldown", cards[1].cooldown and cards[1].cooldown.label, "Transmute")
+
+------------------------------------------------------------
+-- Item tooltips
+------------------------------------------------------------
+
+local savedData = AltStableRecipeData
+AltStableRecipeData = { source = "tooltip test", recipes = {
+    [2331] = { skill = { 171 }, learn = 50, makes = 2455, items = { 3396 } },
+    [2333] = { skill = { 171 }, makes = 2456, items = { 9001 } },           -- requirement unknown
+    [2334] = { skill = { 171 }, learn = 1, makes = 118 },                    -- two recipes make 118
+    [2335] = { skill = { 171 }, learn = 5, makes = 118 },
+    [3100] = { skill = { 164 }, learn = 1, makes = 2862, items = { 5555 } }, -- nobody has Blacksmithing
+} }
+T.ResetState()
+local C1, H = "Player-C", "Player-H"
+AltStableDB = {
+    [A]  = { guid = A,  name = "Alder", class = "MAGE" },
+    [B]  = { guid = B,  name = "Birch", class = "PRIEST" },
+    [C1] = { guid = C1, name = "Cedar", class = "ROGUE" },
+    [U]  = { guid = U,  name = "Umber", class = "ROGUE", prof_Alchemy = 30 },   -- never scanned
+    [H]  = { guid = H,  name = "Hazel", class = "DRUID" },                      -- hidden
+}
+AltStableProfessionsDB = {
+    [A]  = { stamp = 1, profs = { [171] = { rank = 120, max = 150, full = 1, known = { [2331] = true, [2334] = true, [2335] = true } } } },
+    [B]  = { stamp = 1, profs = { [171] = { rank = 60, max = 75, full = 1, known = { [2335] = true } } } },
+    [C1] = { stamp = 1, profs = { [171] = { rank = 20, max = 75, full = 1, known = {} } } },
+    [H]  = { stamp = 1, profs = { [171] = { rank = 150, max = 150, full = 1, known = { [2331] = true } } } },
+}
+local realHidden2 = AltStable.IsCharacterHidden
+AltStable.IsCharacterHidden = function(guid) return guid == H end
+
+local function tipFor(itemID)
+    local out = {}
+    local function plain(x) return (x:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    for _, l in ipairs(T.TooltipLines(itemID)) do out[plain(l[1])] = plain(l[2]) end
+    return out
+end
+local tip = tipFor(3396)
+eq("a recipe item says who knows it", tip["Known by"], "Alder")
+eq("  who meets the skill (skill only)", tip["Meets skill"], "Birch (60)")
+eq("  whose skill is too low, and by how much", tip["Skill too low"], "Cedar (20, needs 50)")
+eq("  and whom it cannot speak for", tip["Not scanned"], "Umber")
+check("  never naming a hidden character", not (tip["Known by"] or ""):find("Hazel", 1, true))
+
+tip = tipFor(9001)
+eq("with the requirement unknown, no skill verdict is given", tip["Requirement unknown"], "Alder, Birch, Cedar")
+check("  neither 'meets' nor 'too low'", tip["Meets skill"] == nil and tip["Skill too low"] == nil)
+
+tip = tipFor(5555)
+check("a recipe for a profession nobody has says so", (tip["AltStable"] or ""):find("No alt has Blacksmithing", 1, true))
+eq("an item that teaches nothing gets no lines", #T.TooltipLines(424242), 0)
+
+-- The only Blacksmith is hidden: "No alt has Blacksmithing" would be false.
+AltStableProfessionsDB[H].profs[164] = { rank = 50, max = 75, full = 1, known = { [3100] = true } }
+tip = tipFor(5555)
+check("a profession only a hidden alt has is not 'nobody has'", tip["AltStable"] == nil, tostring(tip["AltStable"]))
+AltStableProfessionsDB[H].profs[164] = nil
+
+tip = tipFor(118)
+eq("a crafted item lists its crafters across every recipe, once each", tip["Crafted by"], "Alder, Birch")
+eq("a crafted item nobody can make gets no line", tipFor(2456)["Crafted by"], nil)
+
+-- A recipe on two lines: an alt who knows it through the second is "Known",
+-- whatever the first line's skill (it was judged by the first line only).
+AltStableRecipeData.recipes[7000] = { skill = { 165, 197 }, learn = 40, makes = 5000, items = { 7777 } }
+T.ResetState()
+local ASH = "Player-Ash"
+AltStableDB[ASH] = { guid = ASH, name = "Ash", class = "WARRIOR" }
+AltStableProfessionsDB[ASH] = { stamp = 1, profs = {
+    [165] = { rank = 10, max = 75, full = 1, known = {} },
+    [197] = { rank = 60, max = 75, full = 1, known = { [7000] = true } } } }
+tip = tipFor(7777)
+eq("known through a second line is known", tip["Known by"], "Ash")
+eq("  and not 'too low' on the first", tip["Skill too low"], nil)
+AltStableDB[ASH], AltStableProfessionsDB[ASH] = nil, nil
+
+-- Name lists stop at four: a tooltip line does not wrap.
+local many = {}
+for i = 1, 6 do many[i] = { name = "Alt" .. i, class = "MAGE" } end
+local listed = T.NameList(many):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+eq("six names show as four and '+2'", listed, "Alt1, Alt2, Alt3, Alt4, +2")
+
+-- Through the hook, the way the client calls it - including a tooltip whose
+-- payload carries no id (the item comes from the tooltip's link).
+local lines = {}
+local tt = WoW.makeFrame()
+tt.AddLine = function(_, text) lines[#lines + 1] = tostring(text) end
+tt.AddDoubleLine = function(_, l, r) lines[#lines + 1] = tostring(l) .. "|" .. tostring(r) end
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
+local firstCount = #lines
+check("the hook appends the lines", firstCount >= 5, table.concat(lines, " / "))
+lines = {}
+tt.GetItem = function() return "Recipe", "|cff1eff00|Hitem:3396::::::::60:::::|h[Recipe]|h|r" end
+for _, fn in ipairs(ttCalls) do fn(tt, {}) end
+eq("with no id in the payload, the item comes from the tooltip's link", #lines, firstCount)
+tt.GetItem = nil
+lines = {}
+AltStable.SetConfigValue("professionsTooltips", false)
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
+eq("with the option off, nothing is appended", #lines, 0)
+AltStable.SetConfigValue("professionsTooltips", nil)
+lines = {}
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 424242 }) end
+eq("an unrelated item gets nothing, not even a blank line", #lines, 0)
+
+AltStable.IsCharacterHidden = realHidden2
+AltStableRecipeData = savedData
+T.ResetState()
 
 ------------------------------------------------------------
 -- The panel builds and fills, and the wheel goes where the pointer is
