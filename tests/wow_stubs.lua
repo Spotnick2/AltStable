@@ -86,6 +86,7 @@ function WoW.reset()
     if UIParent then UIParent._children = {} end
     WoW.popups = {}
     WoW.popupRefused = nil
+    WoW.ctlDefer, WoW.ctlQueue = false, {}
     WoW.reloaded = 0
     WoW.sounds = {}
     WoW.cvars = {}
@@ -1280,6 +1281,15 @@ C_AddOns = {
     GetAddOnMetadata = function(_, field) return field == "Version" and "dev" or nil end,
 }
 
+WoW.ctlDefer, WoW.ctlQueue = false, {}
+function WoW.ctlDrain(n)
+    for _ = 1, n or #WoW.ctlQueue do
+        local send = table.remove(WoW.ctlQueue, 1)
+        if not send then return end
+        send()
+    end
+end
+
 C_ChatInfo = {
     RegisterAddonMessagePrefix = function() return true end,
     SendAddonMessage = function(prefix, text, channel, target)
@@ -1369,7 +1379,22 @@ ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
 local CTL_PRIORITIES = { BULK = true, NORMAL = true, ALERT = true }
 ChatThrottleLib = {
     -- callbackFn runs after the send, as CTL's does (when the message leaves).
-    SendAddonMessage = function(_, prio, prefix, text, channel, target, _, callbackFn, callbackArg)
+    --
+    -- WoW.ctlDefer = true holds every send in WoW.ctlQueue until
+    -- WoW.ctlDrain() - as the real library does under its bandwidth budget or
+    -- its start-up throttle, when even an ALERT waits. Otherwise it sends at
+    -- once and calls back at once.
+    SendAddonMessage = function(self, prio, prefix, text, channel, target, q, callbackFn, callbackArg)
+        if WoW.ctlDefer then
+            table.insert(WoW.ctlQueue, function()
+                WoW.ctlDefer = false
+                local ok, err = pcall(self.SendAddonMessage, self, prio, prefix, text, channel,
+                                      target, q, callbackFn, callbackArg)
+                WoW.ctlDefer = true
+                if not ok then error(err, 0) end
+            end)
+            return
+        end
         if not CTL_PRIORITIES[prio] then
             error("ChatThrottleLib:SendAddonMessage(): unknown priority " .. tostring(prio), 2)
         end

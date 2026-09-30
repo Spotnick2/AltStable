@@ -3056,6 +3056,60 @@ do
     check(not chatHas("other faction"), "  without suggesting the other faction")
     WoW.faction = "Horde"
 
+    -- The wait starts when the request LEAVES. ChatThrottleLib holding the
+    -- request (bandwidth, start-up throttle) must not let the push be queued
+    -- before the server has had anything to refuse.
+    local function donesTo(target)
+        local n = 0
+        for _, m in ipairs(WoW.sent) do
+            if m.target == target and m.text:sub(1, #T.MSG_DONE_V) == T.MSG_DONE_V then n = n + 1 end
+        end
+        return n
+    end
+    freshAuth()
+    AltStableDB = { ["Player-Mine-6"] = { guid = "Player-Mine-6", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    WoW.ctlDefer = true
+    slash("sync Held Surname")
+    flushAll()                               -- three seconds and more pass
+    eq(#WoW.ctlQueue, 1, "a request CTL is still holding: only the request is queued")
+    WoW.ctlDrain()                           -- it leaves now
+    notFound("Held Surname")                 -- and is refused
+    flushAll()
+    WoW.ctlDrain()
+    eq(chunksTo("Held Surname"), 0, "  so a refused request never had the database queued behind it")
+    WoW.ctlDefer = false
+
+    freshAuth()
+    AltStableDB = { ["Player-Mine-7"] = { guid = "Player-Mine-7", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    WoW.ctlDefer = true
+    slash("sync Late Surname")
+    flushAll()
+    WoW.ctlDrain()                           -- the request leaves late, and nobody refuses it
+    WoW.ctlDefer = false
+    flushAll()
+    eq(donesTo("Late Surname"), 1, "  and a late request that goes through is still followed by the push")
+
+    -- Each /alts sync is its own attempt. A retry does not erase the first
+    -- attempt's failure, and the two do not both push.
+    freshAuth()
+    AltStableDB = { ["Player-Mine-8"] = { guid = "Player-Mine-8", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Twice Surname")
+    notFound("Twice Surname")                -- the first attempt is refused
+    slash("sync Twice Surname")              -- retried before its timer fires
+    flushAll()
+    eq(donesTo("Twice Surname"), 1, "a retry pushes once, and the refused first attempt not at all")
+
+    freshAuth()
+    AltStableDB = { ["Player-Mine-9"] = { guid = "Player-Mine-9", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Double Surname")
+    slash("sync Double Surname")
+    flushAll()
+    eq(donesTo("Double Surname"), 1, "two quick /alts sync to a reachable peer push one database")
+
     -- A name that is not one: said, not "set to never".
     freshAuth()
     slash("sync -Realm")

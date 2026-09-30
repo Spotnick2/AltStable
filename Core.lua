@@ -1286,19 +1286,25 @@ end
 local lastWhisperAt = {}          -- AuthKey -> when addon traffic last went to them
 local function StampWhisper(key) lastWhisperAt[key] = time() end
 
-local function QueueWire(msg, channel, target, prio)
+-- onSent(didSend), optional, runs when the message actually leaves - which
+-- under ChatThrottleLib can be well after this call returns.
+local function QueueWire(msg, channel, target, prio, onSent)
     local key = channel == "WHISPER" and AuthKey(target) or nil
+    local function sent(_, didSend)
+        if key then StampWhisper(key) end
+        if onSent then onSent(didSend ~= false) end
+    end
     if ChatThrottleLib then
         -- Stamped by CTL's callback, when the message actually leaves.
         local ok = pcall(ChatThrottleLib.SendAddonMessage, ChatThrottleLib, prio or "BULK", PREFIX, msg,
-                         channel, target, nil, key and StampWhisper or nil, key)
+                         channel, target, nil, (key or onSent) and sent or nil, key)
         if not ok then
             C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
-            if key then StampWhisper(key) end
+            sent(key, true)
         end
     else
         C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
-        if key then StampWhisper(key) end
+        sent(key, true)
     end
 end
 
@@ -1320,14 +1326,15 @@ end
 -- has gone through without that answer, and a sync the player typed gets one
 -- line of ours - naming the faction when we know theirs from the database.
 local UNREACHABLE_ECHO = 10       -- seconds after our last whisper to them
--- unreachableAt and unreachableToldAt are CLEARED when the player starts a
--- sync, so "set" means "since this sync began" - no clock comparison (an echo
--- of an earlier request landing in the same second read as this one's), and
--- one line per /alts sync rather than per minute (a repeat inside the minute
--- went silent after announcing it was sending).
-local unreachableAt = {}          -- AuthKey -> when the server said "no player named"
+--
+-- Each /alts sync is an ATTEMPT with its own result: a retry must not erase
+-- an earlier attempt's failure (whose delayed push would then go out), and
+-- two attempts must not both push (Codex, review of #137). Only the current
+-- attempt for a peer may push. unreachableToldAt is cleared per attempt: one
+-- line per /alts sync, not per minute.
+local syncAttempt = {}            -- AuthKey -> the current manual attempt
 local manualSyncAt = {}           -- AuthKey -> when the player typed /alts sync <them>
-local unreachableToldAt = {}      -- AuthKey -> when we said so for this sync
+local unreachableToldAt = {}      -- AuthKey -> when we said so for this attempt
 
 -- Built once from the client's format string: this runs for every system
 -- message, in every chat frame's filter.
@@ -1722,7 +1729,7 @@ local function ClearSyncWatch(peer)
     syncWatch[PeerShort(peer)] = nil
 end
 
-function RequestCharacters(channel, target, force)
+function RequestCharacters(channel, target, force, onSent)
 
     channel = channel or "GUILD"
 
@@ -1751,7 +1758,7 @@ function RequestCharacters(channel, target, force)
     -- server-side drop. ALERT also puts it ahead of that queue - which
     -- /alts sync relies on, since its request is the reachability check that
     -- decides whether the push goes out at all.
-    QueueWire(MSG_REQUEST_V .. "|" .. wm, channel, target, "ALERT")
+    QueueWire(MSG_REQUEST_V .. "|" .. wm, channel, target, "ALERT", onSent)
     WatchSyncPeer(target)
     -- We asked, so their answer may come in (#61) - if it starts in time.
     if target then GrantConsent(target, false, true) end
@@ -2611,7 +2618,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- has hidden the server's own copies.
         local lostName, lostKey = OurEcho(text)
         if lostName then
-            unreachableAt[lostKey] = time()
+            if syncAttempt[lostKey] then syncAttempt[lostKey].unreachable = true end
             if manualSyncAt[lostKey] and (time() - manualSyncAt[lostKey]) <= 30 then
                 SayUnreachable(lostName, lostKey)
             end
@@ -3047,21 +3054,33 @@ SlashCmdList["ALTSTABLE"] = function(args)
         -- Nothing is stored.
         AltStable.GrantSyncConsent(target, true, true)
         local key = AltStable.PeerKey(target)
+        local attempt = {}
+        syncAttempt[key] = attempt
         manualSyncAt[key] = time()
-        unreachableAt[key], unreachableToldAt[key] = nil, nil   -- "since this sync began"
+        unreachableToldAt[key] = nil
         Print("Requesting " .. target .. "'s data and sending yours...")
         -- The request FIRST: one small whisper, which tells us whether they can
         -- be reached at all. The push - dozens of whispers - follows only if the
         -- server did not answer "no player named" to it. Pushing first put one
         -- of those lines in chat per chunk for an offline or other-faction
         -- target.
-        RequestCharacters("WHISPER", target, true)
-        C_Timer.After(3, function()
-            if unreachableAt[key] then return end   -- already said
-            -- Only while the exchange the player started is still on: a deny,
-            -- or a deny and then a forget, in these three seconds ends it.
-            if not AltStable.MayServeSyncPeer(target) then return end
-            SendFullDatabase("WHISPER", target)
+        --
+        -- The three seconds start when the request LEAVES, not when it is
+        -- queued: ChatThrottleLib can hold even an ALERT (bandwidth, start-up
+        -- or zoning throttle), and a window counted from the queueing could
+        -- close before the server had anything to refuse - queueing the whole
+        -- database behind a request that then fails (Codex, review of #137).
+        RequestCharacters("WHISPER", target, true, function(didSend)
+            if not didSend then return end
+            C_Timer.After(3, function()
+                -- A newer /alts sync to them owns the push now.
+                if syncAttempt[key] ~= attempt or attempt.unreachable then return end
+                syncAttempt[key] = nil
+                -- Only while the exchange the player started is still on: a
+                -- deny, or a deny and then a forget, in these seconds ends it.
+                if not AltStable.MayServeSyncPeer(target) then return end
+                SendFullDatabase("WHISPER", target)
+            end)
         end)
         return
     end
@@ -3373,7 +3392,7 @@ end
 -- earlier one and failed far from the cause. Harmless in game: nothing calls it.
 local function ResetSyncState()
     pendingAuth = {}
-    lastWhisperAt, unreachableAt, manualSyncAt, unreachableToldAt = {}, {}, {}, {}
+    lastWhisperAt, syncAttempt, manualSyncAt, unreachableToldAt = {}, {}, {}, {}
     refusedStreams = {}
     consent = {}
     refusedNotified = {}
