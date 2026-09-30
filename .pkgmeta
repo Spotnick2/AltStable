@@ -27,6 +27,7 @@ move-folders:
   AltStable/Plugins/Warband: AltStableWarband
   AltStable/Plugins/Instances: AltStableInstances
   AltStable/Plugins/Roster: AltStableRoster
+  AltStable/Plugins/Professions: AltStableProfessions
 
 manual-changelog:
   filename: CHANGELOG.md

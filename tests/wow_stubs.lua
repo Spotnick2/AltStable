@@ -1457,5 +1457,104 @@ function strsplit(sep, str, limit)
     return unpack(out)
 end
 
+------------------------------------------------------------
+-- Professions (#14), shaped by what 1.60.1.70124 measured (forever-api-notes.md,
+-- Professions):
+--   * GetProfessions() returns spellbook indices; GetProfessionInfo(i) carries
+--     the base skill line in position 7.
+--   * C_TradeSkillUI answers for the LAST profession shown - also after its
+--     window closed. Only WoW.tradeSkill.line decides what comes back, never
+--     whether a window is open: a plugin that reads after CLOSE must be caught.
+--   * GetAllRecipeIDs() lists learned and unlearned recipes.
+--   * GetProfessionInfoByRecipeID() names the CHILD line (2937 for Alchemy),
+--     with the base line in parentProfessionID.
+--   * GetAllProfessionTradeSkillLines() is every line, owned or not.
+------------------------------------------------------------
+
+local function ProfessionsReset()
+    WoW.professions = {}   -- { { name, rank, max, line }, ... } in spellbook order
+    WoW.tradeSkill = {
+        line = nil,        -- the source the client currently answers for (sticky)
+        rank = 0, max = 0,
+        recipes = {},      -- [id] = { name = , learned = , cooldown = seconds or nil }
+        ready = true, changing = false, linked = false, guild = false, npc = false,
+        nilInfo = {},      -- [id] = true: GetRecipeInfo returns nil for it
+    }
+    WoW.spellNames = {}
+end
+ProfessionsReset()
+local resetBeforeProfessions = WoW.reset
+function WoW.reset()
+    resetBeforeProfessions()
+    ProfessionsReset()
+end
+
+function GetProfessions()
+    local idx = {}
+    for i = 1, 5 do idx[i] = WoW.professions[i] and (i + 4) or nil end
+    return idx[1], idx[2], idx[3], idx[4], idx[5]
+end
+
+function GetProfessionInfo(index)
+    local p = WoW.professions[(index or 0) - 4]
+    if not p then return nil end
+    return p.name, 0, p.rank, p.max, 0, 0, p.line, 0, 0, 0, p.name
+end
+
+local CHILD_LINE = { [171] = 2937, [164] = 2938, [333] = 2940, [202] = 2941, [182] = 2944,
+                     [165] = 2945, [186] = 2946, [393] = 2947, [197] = 2948 }
+
+C_TradeSkillUI = {
+    GetAllProfessionTradeSkillLines = function()
+        return { 164, 165, 171, 182, 186, 197, 202, 333, 393, 2933, 2934, 2937, 2938, 2940, 2941,
+                 2944, 2945, 2946, 2947, 2948 }
+    end,
+    GetBaseProfessionInfo = function()
+        local ts = WoW.tradeSkill
+        if not ts.line then
+            return { professionID = 0, professionName = "", skillLevel = 0, maxSkillLevel = 0,
+                     isPrimaryProfession = false, skillModifier = 0, sourceCounter = 0 }
+        end
+        return { professionID = ts.line, professionName = "Line " .. ts.line, skillLevel = ts.rank,
+                 maxSkillLevel = ts.max, isPrimaryProfession = true, skillModifier = 0, sourceCounter = 1 }
+    end,
+    GetAllRecipeIDs = function()
+        local ids = {}
+        if WoW.tradeSkill.line then
+            for id in pairs(WoW.tradeSkill.recipes) do ids[#ids + 1] = id end
+            table.sort(ids)
+        end
+        return ids
+    end,
+    GetRecipeInfo = function(id)
+        local r = WoW.tradeSkill.recipes[id]
+        if not r or WoW.tradeSkill.nilInfo[id] then return nil end
+        return { recipeID = id, name = r.name, learned = r.learned and true or false,
+                 icon = 134400, categoryID = 1, relativeDifficulty = 0 }
+    end,
+    GetRecipeCooldown = function(id)
+        local r = WoW.tradeSkill.recipes[id]
+        if r and r.cooldown then return r.cooldown, false, 0, 0 end
+        return nil
+    end,
+    GetProfessionInfoByRecipeID = function(id)
+        local line = WoW.recipeLines and WoW.recipeLines[id]
+        if not line then return { professionID = 0, parentProfessionID = 0, professionName = "" } end
+        return { professionID = CHILD_LINE[line] or line, parentProfessionID = line,
+                 professionName = "Line " .. line }
+    end,
+    IsTradeSkillReady    = function() return WoW.tradeSkill.ready end,
+    IsDataSourceChanging = function() return WoW.tradeSkill.changing end,
+    IsTradeSkillLinked   = function() return WoW.tradeSkill.linked end,
+    IsTradeSkillGuild    = function() return WoW.tradeSkill.guild end,
+    IsNPCCrafting        = function() return WoW.tradeSkill.npc end,
+}
+
+C_Spell = {
+    GetSpellName = function(id) return WoW.spellNames[id] or ("Spell " .. tostring(id)) end,
+    GetSpellTexture = function() return 136235, 136235 end,
+    RequestLoadSpellData = function() end,
+}
+
 _G.WoW = WoW
 return WoW

@@ -2508,14 +2508,14 @@ AltStable.plugins = AltStable.plugins or {}
 -- only persists (WoW can't unload an addon until the next /reload).
 ------------------------------------------------------------
 
--- Each ported plugin adds its entry. Still to come:
---   Recipes   -> #14 (deferred)
--- Listing an addon that does not exist means a failed LoadAddOn at every
--- login, which would bury the real errors this build exists to surface.
+-- Each ported plugin adds its entry. Listing an addon that does not exist
+-- means a failed LoadAddOn at every login, which would bury the real errors
+-- this build exists to surface.
 AltStable.LOD_PLUGINS = {
     { key = "warband", addon = "AltStableWarband", label = "Warband" },
     { key = "instances", addon = "AltStableInstances", label = "Raids" },
     { key = "roster", addon = "AltStableRoster", label = "Roster" },
+    { key = "professions", addon = "AltStableProfessions", label = "Professions" },
 }
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
@@ -2568,6 +2568,11 @@ function AltStable.SetPluginEnabled(key, enabled)
     AltStableConfig.plugins[key] = enabled and true or false
     AltStable.OnConfigChanged("plugins")
     if enabled then
+        -- Read by the plugin's bootstrap: switched on just now, its store may be
+        -- partial and the peers' watermarks ahead of what it never received, so
+        -- it asks for a full pull (Professions; #14).
+        AltStable.pluginsEnabledThisSession = AltStable.pluginsEnabledThisSession or {}
+        AltStable.pluginsEnabledThisSession[key] = true
         for _, p in ipairs(AltStable.LOD_PLUGINS) do
             if p.key == key and not IsPluginLoaded(p.addon) then
                 local ok, err = LoadPluginAddon(p.addon)

@@ -57,7 +57,7 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, ".cache")
-OUT = os.path.join(HERE, "RecipeData.lua")
+OUT = os.path.join(HERE, "..", "..", "Plugins", "Professions", "RecipeData.lua")
 REFERENCES = r"C:\Projects\References"
 BASE = "https://www.wowhead.com/forever"
 USER_AGENT = "AltStable recipe data generator (github.com/Spotnick2/AltStable)"

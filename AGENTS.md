@@ -73,8 +73,8 @@ of fields, never live tables. Changing what a field means, or removing one, bump
 - `docs/` — the porting guide, the measured API notes, and `docs/WORKFLOW.md` (issue → branch →
   PR → Codex review → merge).
 
-There are **no in-repo plugins yet** (Recipes/Roster are issues #9 and #11) and no `BisData.lua`
-— both exist upstream in AltTracker but have not been ported.
+The in-repo plugins are Warband, Instances (Raids), Roster and Professions (#14). There is no
+`BisData.lua` — it exists upstream in AltTracker but has not been ported.
 
 ## Build & validate
 

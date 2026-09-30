@@ -687,10 +687,10 @@ function AltStable.ScanCharacter()
         AltStable.ScanReputations(char)
     end
 
-    -- Craft cooldowns are captured generically by the Professions plugin's
-    -- tradeskill scan (any recipe with GetTradeSkillCooldown(i) > 0), stored as
-    -- dynamic cd_<prof>@<label> fields on the character record, and displayed by
-    -- RowRenderer/Roster. No hand-maintained allowlist here anymore.
+    -- Craft cooldowns are captured by the Professions plugin's trade-skill scan
+    -- (C_TradeSkillUI.GetRecipeCooldown on every learned recipe, window open),
+    -- stored as cd_<Profession>@<recipe name> on the character record, and shown
+    -- by RowRenderer. No hand-maintained allowlist.
 
     --------------------------------------------------------
     -- Gear slots — item level per slot
