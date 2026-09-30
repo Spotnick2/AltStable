@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Sync no longer loses pieces to the server's message throttle.** The bundled
+  ChatThrottleLib is updated from v24 to v32: on this client the server can
+  refuse an addon message it considers too fast, and v24 treated the refused
+  piece as sent - the other side then reported chunks missing and asked again.
+  v32 waits and retries.
+
 - **`/alts sync` to someone unreachable no longer floods the chat.** A
   character offline, or online on the other faction (addon messages do not
   cross factions), used to produce one "No player named..." line per piece of

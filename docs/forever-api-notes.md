@@ -326,6 +326,20 @@ Three answers, all favourable:
 3. **The round trip works** — replying to the `sender` string verbatim also routed, so the string
    the event hands you is directly usable as a whisper target.
 
+**`SendAddonMessage` returns a result code, not a boolean** (API docs, 70009):
+`Enum.SendAddonMessageResult` - `0 Success`, `3 AddonMessageThrottle` (the server's per-prefix
+throttle refused it), `8 ChannelThrottle`, `12 TargetOffline`, and nine more. A throttled message
+is **not sent**. ChatThrottleLib v24 ignored the return and counted it as sent, so a sync chunk
+could vanish and surface as "chunks missing" and a resync; v32 (bundled since the CTL upgrade PR)
+retries throttled queues every 0.35 s - `tests/test_ctl.lua` runs the real library against it.
+**Unmeasured:** whether `TargetOffline` comes back *synchronously* for an offline or
+other-faction whisper target (it would replace parsing "No player named"), or only the async
+system message does. Addon whispers do not cross factions (measured, 70124).
+
+The global `SendChatMessage` exists only as a deprecated alias (`Blizzard_DeprecatedChatInfo`);
+`C_ChatInfo.SendChatMessage` is the real one. WoW's `xpcall` passes extra arguments through, unlike
+stock Lua 5.1 - the test stubs model that.
+
 **The sync design survives unmodified.** `PeerShort()` splits on `-` to strip a realm; the sender
 string contains a space and no hyphen, so it passes through intact, and the resulting watermark /
 whitelist key is the *full* name — which is unique even when two characters share a first name.

@@ -3110,6 +3110,73 @@ do
     flushAll()
     eq(donesTo("Double Surname"), 1, "two quick /alts sync to a reachable peer push one database")
 
+    -- One ChatThrottleLib queue per destination: v32's default is one per
+    -- prefix, which made every peer wait behind a push to any one of them.
+    freshAuth()
+    T.RequestCharacters("WHISPER", "Qa Surname", true)
+    T.RequestCharacters("WHISPER", "Qb Surname", true)
+    local qa, qb
+    for _, m in ipairs(WoW.sent) do
+        if m.target == "Qa Surname" then qa = m.queue end
+        if m.target == "Qb Surname" then qb = m.queue end
+    end
+    check(qa and qb and qa ~= qb, "each destination gets its own send queue: "
+          .. tostring(qa) .. " / " .. tostring(qb))
+
+    -- A chunk the server throttles is held and retried, in order - not lost.
+    freshAuth()
+    AltStableDB = {}
+    seedBig("Player-Thr-", 3)
+    WoW.sendResults = { 0, 3 }               -- the second message is throttled
+    T.SendFullDatabase("WHISPER", "Thr Surname")
+    local before = #WoW.sent
+    WoW.ctlDrain()
+    local wire = {}
+    for _, m in ipairs(WoW.sent) do if m.target == "Thr Surname" then wire[#wire + 1] = m.text end end
+    check(#wire > before, "a throttled chunk is held, then sent when the queue drains")
+    local seqs, inOrder = {}, true
+    for _, m in ipairs(wire) do
+        local seq = tonumber(m:match("^" .. T.MSG_CHUNK_V .. "|%d+|(%d+)/"))
+        if seq then
+            if seqs[#seqs] and seq ~= seqs[#seqs] + 1 then inOrder = false end
+            seqs[#seqs + 1] = seq
+        end
+    end
+    check(inOrder and seqs[1] == 1, "  and every chunk arrives once, in order: " .. table.concat(seqs, ","))
+    AltStableDB = {}
+    AltStableConfig.whitelist = { "Thr Surname" }   -- the receiving side approves them
+    deliver(wire, "Thr Surname")
+    check(holds("Player-Thr-"), "  so the peer reassembles it")
+
+    -- TargetOffline AT SEND TIME: the same as the chat line - no push, one line.
+    freshAuth()
+    AltStableDB = { ["Player-Mine-10"] = { guid = "Player-Mine-10", name = "Mine", class = "MAGE",
+                                          level = 60, lastUpdate = 1000, scannedHere = true } }
+    WoW.sendResults = { 12 }
+    slash("sync Offline Surname")
+    flushAll()
+    eq(chunksTo("Offline Surname"), 0, "a TargetOffline result for the request: nothing pushed")
+    check(chatHas("cannot be reached"), "  and the player is told")
+
+    -- Refused at send for any other reason: no push, and the player is told
+    -- rather than left at "Requesting...".
+    freshAuth()
+    AltStableDB = { ["Player-Mine-11"] = { guid = "Player-Mine-11", name = "Mine", class = "MAGE",
+                                          level = 60, lastUpdate = 1000, scannedHere = true } }
+    WoW.sendResults = { 9 }
+    slash("sync Failed Surname")
+    flushAll()
+    eq(chunksTo("Failed Surname"), 0, "a request refused at send: nothing pushed")
+    check(chatHas("could not be sent"), "  and the player is told")
+
+    -- A message refused at send is not stamped: no echo will follow it, so a
+    -- "no player named" for that character is not taken for ours.
+    freshAuth()
+    WoW.sendResults = { 9 }
+    T.RequestCharacters("WHISPER", "Refused Surname", true)
+    check(not WoW.chatFiltered("CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("Refused Surname")),
+          "a message refused at send leaves the chat line alone")
+
     -- A name that is not one: said, not "set to never".
     freshAuth()
     slash("sync -Realm")
