@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate the Professions plugin's recipe data from Wowhead's Forever database (#14).
+r"""Generate the Professions plugin's recipe data from Wowhead's Forever database (#14).
 
 The client can list a profession's recipes only while that profession's window is
 open (measured on 1.60.1.70124, docs/forever-api-notes.md, Professions). It cannot
@@ -15,7 +15,7 @@ at runtime, in the player's own language, and a rename cannot leave them stale.
     python Tools/RecipeData/gen-recipes.py --check      # compare with the committed file, write nothing
 
 A run also writes a human-readable copy - names included, one table per profession -
-to C:\Projects\Referencesorever-recipes-<snapshot date>.md/.tsv, beside the API
+to C:\Projects\References\forever-recipes-<snapshot date>.md/.tsv, beside the API
 dumps and the consumables list (--reference DIR to put it elsewhere, '' to skip).
 
 Run by the owner, never by CI (tests/test_recipedata.py covers the parsing with
@@ -466,7 +466,10 @@ def main(argv=None):
 
     meta = {}
     recipes = build(args.refresh, log, meta)
-    old_text = open(args.out, encoding="utf-8").read() if os.path.exists(args.out) else ""
+    old_text = ""
+    if os.path.exists(args.out):
+        with open(args.out, encoding="utf-8") as f:
+            old_text = f.read()
     old_rows = recipes_in_lua(old_text)
 
     # `source` names the snapshot the content came from. It changes only when the
