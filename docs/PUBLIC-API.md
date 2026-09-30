@@ -71,6 +71,22 @@ function, so a bar that shows "total gold" shows the same figure.
 `ToggleSheet` is what a click on an info-bar block should do: open the sheet, or close it if
 it is open. `OpenSheet` only ever opens. Neither asks other accounts for a sync.
 
+## `AltStable.GetPortraitStatus()` → `{ due, reason, changedSlots }`
+
+Whether a new portrait capture is worth taking for the character being played (#128) -
+the same answer that makes the sheet's capture button glow.
+
+| field | |
+|---|---|
+| `due` | `true` when a capture is worth taking |
+| `reason` | `"missing"` (no portrait, nothing captured), `"changed"` (the gear the portrait shows changed since the last capture), `"pending"` (captured, not yet turned into a portrait - **not** due) or `"none"` |
+| `changedSlots` | for `"changed"`, the slot names that differ: `"Chest"`, `"Main Hand"`, ... |
+
+Only the slots a portrait shows count (not rings, trinkets or the neck). A capture taken
+before AltStable recorded looks never reads as `"changed"`. The action is
+`AltStable.CapturePortrait()`, which refuses on its own in combat, in a dungeon, dead or
+moving. Each call returns a new table.
+
 ## `AltStable.RegisterCallback("CharactersChanged", fn)` / `UnregisterCallback`
 
 `fn("CharactersChanged")` is called after the characters change — a scan, a sync arriving,
@@ -86,7 +102,14 @@ the callback carries nothing else.
 - Registering does not call you; the first call is the next change. A listener registered
   from inside a callback is called from the next change on. One unregistered from inside a
   callback may still receive the call already in progress.
-- `"CharactersChanged"` is the only event. Registering anything else is an error.
+- The events are `"CharactersChanged"` and `"PortraitStatusChanged"` (below). Registering
+  anything else is an error.
+
+## `AltStable.RegisterCallback("PortraitStatusChanged", fn)`
+
+`fn("PortraitStatusChanged")` is called when `GetPortraitStatus()` would answer
+differently - gear changed, a capture was taken, the first look after logging in. One
+call per change, on the next frame, with the same rules as above.
 
 ## Example — a GlassPanel-style block
 

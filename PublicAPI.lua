@@ -92,6 +92,23 @@ function AltStable.OpenSheet()
     if AltStable.EnsureSheetVisible then AltStable.EnsureSheetVisible() end
 end
 
+-- Whether a new portrait capture is worth taking for the character being
+-- played (#128), as a copy:
+--   due          true when the capture button glows
+--   reason       "missing" (no portrait, nothing captured), "changed" (the
+--                gear shown in the portrait changed since the last capture),
+--                "pending" (captured, not yet converted - not due) or "none"
+--   changedSlots for "changed", the slot names that differ ("Chest", ...)
+-- The action is AltStable.CapturePortrait(); "PortraitStatusChanged" says when
+-- to ask again.
+function AltStable.GetPortraitStatus()
+    -- Built afresh on every call (Capture.lua), so it is already the caller's
+    -- own copy; the test pins that rather than this file copying it again.
+    local s = AltStable.CurrentPortraitStatus and AltStable.CurrentPortraitStatus()
+    if type(s) ~= "table" then return { due = false, reason = "none", changedSlots = {} } end
+    return s
+end
+
 -- What a click on an info-bar block does: open the sheet, or close it if open.
 -- The sheet's own toggle, the one the minimap button uses - not a second copy.
 function AltStable.ToggleSheet()
@@ -117,7 +134,7 @@ end
 --
 -- Every burst collapses into one callback on the next frame.
 local callbacks = {}          -- event -> { fn = true }
-local pending = false
+local pending = {}            -- event -> true while its callback is scheduled
 local firing = false
 
 local function Listeners(event)
@@ -146,24 +163,21 @@ local function Fire(event)
     firing = false
 end
 
-local function Run()
-    pending = false
-    Fire("CharactersChanged")
-end
-
-local function Changed()
+local function Changed(event)
+    event = event or "CharactersChanged"
     -- Nothing listening: nothing to schedule. The default for everyone without
     -- a consumer addon, on every coin looted and every bag change.
-    if not next(callbacks.CharactersChanged or {}) then return end
+    if not next(callbacks[event] or {}) then return end
     -- A refresh made FROM INSIDE a callback is the consumer syncing the sheet to
     -- what it was just told, not a new change. Notifying it again would call the
     -- consumer again, which refreshes again - every frame, for ever.
-    if firing or pending then return end
-    pending = true
-    if C_Timer and C_Timer.After then C_Timer.After(0, Run) else Run() end
+    if firing or pending[event] then return end
+    pending[event] = true
+    local function run() pending[event] = nil; Fire(event) end
+    if C_Timer and C_Timer.After then C_Timer.After(0, run) else run() end
 end
 
-local EVENTS = { CharactersChanged = true }
+local EVENTS = { CharactersChanged = true, PortraitStatusChanged = true }
 
 function AltStable.RegisterCallback(event, fn)
     if not EVENTS[event] then error("AltStable.RegisterCallback: unknown event " .. tostring(event), 2) end
@@ -194,3 +208,15 @@ end
 NotifyAround("RefreshSheet")
 NotifyAround("ScanCharacter")
 NotifyAround("TouchCharacter")
+
+-- "PortraitStatusChanged" (#128): Capture.lua calls PortraitStatusUpdated only
+-- when the answer changes, so this is one callback per change, next frame.
+do
+    local original = AltStable.PortraitStatusUpdated
+    if type(original) == "function" then
+        AltStable.PortraitStatusUpdated = function(...)
+            Changed("PortraitStatusChanged")
+            return original(...)
+        end
+    end
+end

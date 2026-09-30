@@ -2460,6 +2460,48 @@ local function CreateFrameIfNeeded()
         "offered a reload afterwards, so the capture is saved.|r")
     refTip:Hide()
 
+    -- The "a new capture is due" glow (#128): a soft pulse behind the icon, off
+    -- in combat, off with /alts portrait glow off. The tooltip says why.
+    local refGlow = refBtn:CreateTexture(nil, "ARTWORK")
+    refGlow:SetPoint("CENTER")
+    refGlow:SetSize(30, 30)
+    refGlow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+    refGlow:SetBlendMode("ADD")
+    refGlow:SetVertexColor(1, 0.82, 0.25)
+    refGlow:Hide()
+    local pulse = refGlow:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local fade = pulse:CreateAnimation("Alpha")
+    fade:SetFromAlpha(0.25)
+    fade:SetToAlpha(1)
+    fade:SetDuration(0.9)
+    local REF_TIP_BASE = "|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for about " ..
+        "three seconds and takes two screenshots for the Roster lineup. You will be " ..
+        "offered a reload afterwards, so the capture is saved.|r"
+    local STATUS_LINE = {
+        missing = "|cffffd100No portrait for this character yet.|r",
+        pending = "|cff88cc88Captured - waiting for the companion to turn it into a portrait.|r",
+    }
+    function AltStable.UpdateCaptureGlow(status)
+        status = status or (AltStable.CurrentPortraitStatus and AltStable.CurrentPortraitStatus())
+        if not status then return end
+        local line = STATUS_LINE[status.reason]
+        if status.reason == "changed" then
+            line = "|cffffd100Your gear changed since the last portrait (" ..
+                table.concat(status.changedSlots, ", ") .. ").|r"
+        end
+        refTipText:SetText(line and (REF_TIP_BASE .. "\n\n" .. line) or REF_TIP_BASE)
+        refTip:SetHeight(line and 92 or 62)
+        local on = status.due
+            and not (AltStableConfig and AltStableConfig.portraitGlow == false)
+            and not (InCombatLockdown and InCombatLockdown())
+        refBtn._glowing = on and true or false
+        if on then refGlow:Show(); pulse:Play() else pulse:Stop(); refGlow:Hide() end
+    end
+    AltStable._test.refGlow = refGlow
+    -- Built after the status may already be known (the sheet is built lazily).
+    AltStable.UpdateCaptureGlow()
+
     refBtn:SetScript("OnClick", CapturePortraitFromSheet)
     -- The title-bar capture button, reachable from a test. Both it and the
     -- handler are locals in here.

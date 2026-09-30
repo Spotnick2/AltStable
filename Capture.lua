@@ -386,6 +386,49 @@ local function BlockedReason()
     return nil
 end
 
+------------------------------------------------------------
+-- The look (#128): what the portrait would show, to tell when it is out of date
+------------------------------------------------------------
+
+-- The slots a portrait SHOWS. Rings, trinkets and the neck are invisible in a
+-- full-body shot, so changing one must not make a portrait "out of date".
+-- The display ID is left out too: it changes with a druid's forms, and the
+-- probe's auto-capture already found it an unreliable signal (#124).
+local LOOK_SLOTS = { 1, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17, 18, 19 }
+local SLOT_NAMES = {
+    [1] = "Head", [3] = "Shoulder", [4] = "Shirt", [5] = "Chest", [6] = "Waist", [7] = "Legs",
+    [8] = "Feet", [9] = "Wrist", [10] = "Hands", [15] = "Back", [16] = "Main Hand",
+    [17] = "Off Hand", [18] = "Ranged", [19] = "Tabard",
+}
+
+-- "slot:itemID;slot:itemID;..." for the visible slots, 0 for an empty one; nil
+-- when the client cannot say. `;`, not `,`: the converter's field reader stops
+-- a value at a comma.
+local function CurrentLook()
+    if type(GetInventoryItemID) ~= "function" then return nil end
+    local parts = {}
+    for _, slot in ipairs(LOOK_SLOTS) do
+        local ok, id = pcall(GetInventoryItemID, "player", slot)
+        if not ok then return nil end
+        parts[#parts + 1] = slot .. ":" .. tostring(tonumber(id) or 0)
+    end
+    return table.concat(parts, ";")
+end
+
+-- The names of the slots two looks disagree on, in slot order.
+local function LookDiff(a, b)
+    local function parse(s)
+        local t = {}
+        for slot, id in tostring(s or ""):gmatch("(%d+):(%d+)") do t[tonumber(slot)] = id end
+        return t
+    end
+    local pa, pb, out = parse(a), parse(b), {}
+    for _, slot in ipairs(LOOK_SLOTS) do
+        if pa[slot] ~= pb[slot] then out[#out + 1] = SLOT_NAMES[slot] end
+    end
+    return out
+end
+
 local function RecordMetadata(shotIndex)
     local store = Store()
 
@@ -421,6 +464,9 @@ local function RecordMetadata(shotIndex)
         epoch = time(),
         screenW = w, screenH = h,
         uiScale = UIParent:GetEffectiveScale(),
+        -- What the portrait shows, so a later change of gear can say it is out
+        -- of date (#128). Converters do not read it (PORTRAIT-CONTRACT.md).
+        look = CurrentLook(),
     })
 end
 
@@ -514,6 +560,7 @@ local function Finish()
     Out("portrait captured - |cffffff00/reload|r so it reaches the converter "
         .. "(the record is only written on reload or logout)")
     ShowReloadPrompt()
+    if AltStable.RefreshPortraitStatus then AltStable.RefreshPortraitStatus() end
 end
 
 local function Capture()
@@ -685,8 +732,23 @@ events:RegisterEvent("PLAYER_DEAD")
 -- the player's screenshots would be TGA from then on. PLAYER_LOGOUT fires on
 -- a reload too.
 events:RegisterEvent("PLAYER_LOGOUT")
+-- What can make a new capture due (#128). Inventory is not readable at once on
+-- entering the world (the probe measured it the hard way), so the first look
+-- waits; gear changes come in bursts and are coalesced.
+events:RegisterEvent("PLAYER_ENTERING_WORLD")
+events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+local STATUS_SETTLE, EQUIP_SETTLE = 8, 2
+local equipTimer
 events:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGOUT" then
+    if event == "PLAYER_ENTERING_WORLD" then
+        C_Timer.After(STATUS_SETTLE, AltStable.RefreshPortraitStatus)
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        if equipTimer then equipTimer:Cancel() end
+        equipTimer = C_Timer.NewTimer(EQUIP_SETTLE, function()
+            equipTimer = nil
+            AltStable.RefreshPortraitStatus()
+        end)
+    elseif event == "PLAYER_LOGOUT" then
         RestoreFormat()
     elseif event == "PLAYER_DEAD" then
         AbandonCapture("|cffff8800you died - portrait abandoned|r", true)
@@ -695,11 +757,14 @@ events:SetScript("OnEvent", function(_, event)
         -- to reverse, but leaving it in place means fighting the pull with no
         -- action bars until the chain finishes.
         AbandonCapture("|cffff8800combat started - portrait abandoned|r", true)
+        -- No glow in a fight: the button cannot be used there anyway.
+        if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(PortraitStatus()) end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if owedRestore then
             owedRestore = nil
             if ShowUI() then Out("interface restored") end
         end
+        if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(PortraitStatus()) end
     end
 end)
 
@@ -721,7 +786,94 @@ function AltStable.PortraitBlockedReason()
     return (BlockedReason())
 end
 
-local USAGE = "usage: |cffffff00/alts portrait|r [preview | facing <degrees> | cancel]"
+------------------------------------------------------------
+-- Is a new capture due? (#128)
+--
+-- For the character being played:
+--   "changed" - the newest capture's look differs from what is worn now
+--   "missing" - no portrait, and no capture waiting to become one
+--   "pending" - captured, not converted yet (NOT due: it is done, and the
+--               companion or a reload is what it waits for)
+--   "none"    - a portrait, and nothing says it is out of date
+-- A capture recorded before looks were (no `look`) never reads as "changed".
+------------------------------------------------------------
+
+-- The same identity the Roster uses (AltStableRoster.lua CutoutFor): the GUID
+-- first, the name as a legacy fallback, refused when it names another GUID.
+-- A copy - the Roster is a plugin that may not be loaded - kept in step by a
+-- test that compares the two.
+local function Slug(name)
+    if type(name) ~= "string" then return nil end
+    local s = name:lower():gsub("[^a-z0-9]+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
+    return (s ~= "") and s or nil
+end
+
+local function HasCutout(guid, name)
+    local manifest = AltStableCutoutManifest
+    if type(manifest) ~= "table" then return false end
+    local function drawable(e) return type(e) == "table" and type(e.file) == "string" and e.file ~= "" end
+    if guid and drawable(manifest[guid]) then return true end
+    local entry = Slug(name) and manifest[Slug(name)]
+    return drawable(entry) and (entry.guid == nil or entry.guid == guid) or false
+end
+
+-- The newest COMPLETE pair for a GUID (a shot 1 followed by its shot 2): an
+-- abandoned half says nothing about what the portrait will show.
+local function LatestPair(guid)
+    local renders = AltStablePortraits and AltStablePortraits.renders
+    if type(renders) ~= "table" then return nil end
+    for i = #renders, 2, -1 do
+        local r2, r1 = renders[i], renders[i - 1]
+        if type(r2) == "table" and type(r1) == "table" and r2.guid == guid and r1.guid == guid
+           and r2.shot == 2 and r1.shot == 1 then
+            return r2
+        end
+    end
+    return nil
+end
+
+local function PlayerName()
+    local first, surname = UnitName("player")
+    return (surname and surname ~= "") and (first .. " " .. surname) or first
+end
+
+local function PortraitStatus()
+    local guid = UnitGUID and UnitGUID("player")
+    local status = { due = false, reason = "none", changedSlots = {} }
+    if not guid then return status end
+    local pair = LatestPair(guid)
+    local look = CurrentLook()
+    if pair and pair.look and look and pair.look ~= look then
+        status.due, status.reason, status.changedSlots = true, "changed", LookDiff(pair.look, look)
+    elseif HasCutout(guid, PlayerName()) then
+        status.reason = "none"
+    elseif pair then
+        status.reason = "pending"
+    else
+        status.due, status.reason = true, "missing"
+    end
+    return status
+end
+AltStable.CurrentPortraitStatus = PortraitStatus
+
+-- Called whenever the status CHANGES. SheetUI's glow reads it, and PublicAPI
+-- wraps it to tell other addons ("PortraitStatusChanged"). Everything that can
+-- change the answer goes through RefreshPortraitStatus below.
+function AltStable.PortraitStatusUpdated(status)
+    if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(status) end
+end
+
+local lastStatusKey
+function AltStable.RefreshPortraitStatus()
+    local status = PortraitStatus()
+    local key = status.reason .. "|" .. table.concat(status.changedSlots, ",")
+    if key == lastStatusKey then return status end
+    lastStatusKey = key
+    AltStable.PortraitStatusUpdated(status)
+    return status
+end
+
+local USAGE = "usage: |cffffff00/alts portrait|r [preview | facing <degrees> | cancel | glow on|off]"
 
 -- /alts portrait [preview | facing <deg> | cancel]. `args` is what Core's
 -- dispatcher left after the subcommand, already trimmed, or nil.
@@ -748,6 +900,15 @@ function AltStable.PortraitCommand(args)
         local _, d = Facing()
         Out(("facing is %d\194\176 (0 faces you straight on) - "
             .. "|cffffff00/alts portrait facing <degrees>|r to change it"):format(d))
+        return
+    end
+    local glow = msg:match("^glow%s+(%a+)$")
+    if glow == "on" or glow == "off" then
+        -- Through the config seam, like every other setting write.
+        AltStable.SetConfigValue("portraitGlow", glow == "on")
+        Out(glow == "on" and "the capture button will glow when a new portrait is due"
+            or "the capture button will not glow")
+        if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(PortraitStatus()) end
         return
     end
     local deg = msg:match("^facing%s+(%-?%d+%.?%d*)$")
@@ -791,4 +952,11 @@ AltStable._test.portrait = {
     SWAP_DELAY     = SWAP_DELAY,
     WATCHDOG       = WATCHDOG,
     STORE_VERSION  = STORE_VERSION,
+    CurrentLook    = function() return CurrentLook() end,
+    LookDiff       = LookDiff,
+    PortraitStatus = function() return PortraitStatus() end,
+    HasCutout      = HasCutout,
+    Slug           = Slug,
+    LOOK_SLOTS     = LOOK_SLOTS,
+    ResetStatus    = function() lastStatusKey = nil end,
 }

@@ -736,5 +736,133 @@ do
     check("physical and UI screen widths differ in the stubs", pw ~= GetScreenWidth())
 end
 
+------------------------------------------------------------
+-- Is a new capture due? (#128)
+------------------------------------------------------------
+
+local GUID = WoW.player.guid
+local function wear(slots)
+    WoW.equipped = {}
+    for slot, id in pairs(slots) do WoW.equipped[slot] = "|Hitem:" .. id .. "::|h[x]|h" end
+end
+local function pair(look, guid)
+    AltStablePortraits = { version = 1, renders = {
+        { guid = guid or GUID, shot = 1, epoch = 100, look = look },
+        { guid = guid or GUID, shot = 2, epoch = 101, look = look },
+    } }
+end
+
+resetCapture()
+AltStableCutoutManifest = nil
+T.ResetStatus()
+wear({ [5] = 100, [7] = 200, [2] = 300 })
+local look = T.CurrentLook()
+check("the look covers the shown slots", look and look:find("5:100", 1, true) and look:find("7:200", 1, true), look)
+check("  and not the neck (invisible in a portrait)", look and not look:find("2:300", 1, true), look)
+check("  an empty slot reads as 0", look and look:find("1:0", 1, true), look)
+check("  and never a comma - the converter's reader stops at one", look and not look:find(",", 1, true))
+wear({ [5] = 100, [7] = 200, [2] = 999, [11] = 5 })
+eq("a new ring or neck does not change the look", T.CurrentLook(), look)
+
+local st = T.PortraitStatus()
+eq("no portrait and no capture: missing", st.reason, "missing")
+eq("  which is due", st.due, true)
+
+pair(look)
+st = T.PortraitStatus()
+eq("captured, not converted: pending", st.reason, "pending")
+eq("  which is NOT due - it is done, and waits for the converter", st.due, false)
+
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
+st = T.PortraitStatus()
+eq("a portrait and the same gear: nothing to do", st.reason, "none")
+eq("  not due", st.due, false)
+
+wear({ [5] = 101, [7] = 200 })
+st = T.PortraitStatus()
+eq("the chest changed since the capture: changed", st.reason, "changed")
+eq("  due", st.due, true)
+eq("  naming the slot", table.concat(st.changedSlots, ","), "Chest")
+
+-- A capture from before looks were recorded never reads as changed.
+pair(nil)
+st = T.PortraitStatus()
+eq("a capture with no look is never 'changed'", st.reason, "none")
+
+-- An abandoned half says nothing: only a complete pair counts.
+AltStableCutoutManifest = nil
+AltStablePortraits = { version = 1, renders = { { guid = GUID, shot = 1, epoch = 5, look = "x" } } }
+eq("a lone first shot is not a capture", T.PortraitStatus().reason, "missing")
+AltStablePortraits = { version = 1, renders = {
+    { guid = GUID, shot = 1, epoch = 5, look = "x" }, { guid = GUID, shot = 1, epoch = 9, look = "x" } } }
+eq("  nor are two first shots in a row (two abandoned captures)", T.PortraitStatus().reason, "missing")
+-- Someone else's capture is not ours.
+pair(look, "Player-other")
+eq("another character's capture does not count", T.PortraitStatus().reason, "missing")
+
+-- The Roster's identity rules: GUID first, then the name, refused when the
+-- name's entry names another GUID.
+local slugged = T.Slug("Example Surname")
+AltStablePortraits = nil
+AltStableCutoutManifest = { [slugged] = { file = "x.tga" } }
+eq("a legacy name-keyed portrait counts", T.PortraitStatus().reason, "none")
+AltStableCutoutManifest = { [slugged] = { file = "x.tga", guid = "Player-someone-else" } }
+eq("  unless it names another character", T.PortraitStatus().reason, "missing")
+AltStableCutoutManifest = { [GUID] = { file = "" } }
+eq("an entry with no file is no portrait", T.PortraitStatus().reason, "missing")
+
+-- The copy of the Roster's Slug must stay the Roster's.
+local function slugSource(path)
+    local text = io.open(path):read("*a")
+    return text:match("local function Slug%(name%)(.-)\nend")
+end
+local rosterSlug, captureSlug = slugSource("Plugins/Roster/AltStableRoster.lua"), slugSource("Capture.lua")
+check("Capture's Slug is the Roster's, byte for byte", rosterSlug ~= nil and rosterSlug == captureSlug)
+
+-- Notified on a change, once.
+AltStableCutoutManifest = nil
+AltStablePortraits = nil
+T.ResetStatus()
+local seen = {}
+local realUpdated = AltStable.PortraitStatusUpdated
+AltStable.PortraitStatusUpdated = function(s) seen[#seen + 1] = s.reason end
+AltStable.RefreshPortraitStatus()
+AltStable.RefreshPortraitStatus()
+eq("a refresh with nothing new notifies once", table.concat(seen, ","), "missing")
+pair(T.CurrentLook())
+AltStable.RefreshPortraitStatus()
+eq("  and again when the answer changes", table.concat(seen, ","), "missing,pending")
+AltStable.PortraitStatusUpdated = realUpdated
+
+-- Gear changes are coalesced, then re-evaluated.
+seen = {}
+AltStable.PortraitStatusUpdated = function(s) seen[#seen + 1] = s.reason end
+T.ResetStatus()
+WoW.timers = {}
+local onEvent = T.events:GetScript("OnEvent")
+onEvent(T.events, "PLAYER_EQUIPMENT_CHANGED")
+onEvent(T.events, "PLAYER_EQUIPMENT_CHANGED")
+eq("a burst of gear changes schedules one look", #WoW.timers, 1)
+WoW.flushTimers()
+eq("  which re-evaluates", #seen, 1)
+AltStable.PortraitStatusUpdated = realUpdated
+
+-- A real capture records the look it photographed.
+resetCapture()
+wear({ [5] = 4242 })
+AltStable.RefreshPortraitStatus = function() end   -- Finish calls it; not under test here
+T.Capture()
+runChain()
+local newest = renders()[#renders()]
+check("a capture records the look it photographed", newest and newest.look and newest.look:find("5:4242", 1, true),
+      newest and tostring(newest.look))
+
+-- /alts portrait glow off|on
+AltStable.SetConfigValue = AltStable.SetConfigValue or function(k, v) AltStableConfig[k] = v end
+AltStable.PortraitCommand("glow off")
+eq("/alts portrait glow off turns it off", AltStableConfig.portraitGlow, false)
+AltStable.PortraitCommand("glow on")
+eq("  and on", AltStableConfig.portraitGlow, true)
+
 print(("test_capture: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

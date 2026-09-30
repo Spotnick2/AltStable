@@ -286,7 +286,7 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts export` | TSV of every character, for the spreadsheet |
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |
 | `/alts config` | Options panel |
-| `/alts portrait [preview \| facing <deg> \| cancel]` | Capture this character for the Roster lineup |
+| `/alts portrait [preview \| facing <deg> \| cancel \| glow on\|off]` | Capture this character for the Roster lineup |
 | `/asprobe`, `/asprobe bank`, `/asprobe whisper <name>` | The dev probe (needs `deploy-probe.ps1`) |
 | `/apidump` | Dump the client's API surface to SavedVariables |
 
@@ -403,6 +403,7 @@ overwrite it on the next deploy anyway. Delete the whole folder to start over.
 | `/alts portrait preview` | Show the stage without shooting, to judge the framing; click to close |
 | `/alts portrait facing <deg>` | Turn the character; 0 faces you straight on (default 20) |
 | `/alts portrait cancel` | Stop a capture in flight |
+| `/alts portrait glow on\|off` | Whether the capture button glows when a new portrait is due (#128; on by default) |
 
 Automatic capture — noticing a changed look at login and offering a countdown —
 lived in the development probe and is not part of the shipped capture yet; it is

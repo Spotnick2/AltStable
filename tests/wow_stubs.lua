@@ -948,6 +948,11 @@ function PlaySound(id) table.insert(WoW.sounds, id); return true end
 -- What the player is wearing, by slot. The probe fingerprints this to decide
 -- whether a portrait is stale, so a capture that runs to completion reaches it.
 WoW.equipped = {}
+-- The id behind the link, as the client derives it: nothing equipped, nil.
+function GetInventoryItemID(unit, slot)
+    local link = WoW.equipped[slot]
+    return link and tonumber(tostring(link):match("item:(%d+)")) or nil
+end
 function GetInventoryItemLink(unit, slot)
     return WoW.equipped[slot]
 end
