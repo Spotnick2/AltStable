@@ -393,8 +393,7 @@ C_TradeSkillUI.GetAllProfessionTradeSkillLines()
 
 The low IDs are the familiar Vanilla skill lines (164 Blacksmithing, 165 Leatherworking,
 171 Alchemy, 182 Herbalism, 186 Mining, 197 Tailoring, 202 Engineering, 333 Enchanting,
-393 Skinning). The `29xx` block is Retail-era. Needs a re-run on a character *with* professions
-before the Professions plugin is designed — deferred anyway.
+393 Skinning). The `29xx` block is Retail-era.
 
 ---
 
@@ -505,6 +504,37 @@ type(TooltipDataProcessor)     -> "table"
 **Still unverified on this build:** whether CVars persist (they did not through 69977 — see the
 camera CVars, #25) and whether secret values behave the same on a PvP realm. Neither was
 re-measured here.
+
+---
+
+## Builds 1.60.1.70058 (2026-09-25) and 70124 (2026-09-29) — API unchanged, persistence holds
+
+Both were dumped (`forever-api-1.60.1.70058.md`, `forever-api-1.60.1.70124.md`) and compared with
+`Tools/ForeverAPIDump/Compare-Dumps.ps1`:
+
+```
+70009 -> 70058   documented functions, events, tables, widget methods, namespace functions: no change
+70058 -> 70124   no change in any of the five (6596 / 1805 / 797 / 7530 / 5417)
+```
+
+The `_G`-walk sections moved only by other addons' globals (Attune, Priestly, RaidProbe,
+RXPGuides), as on every previous build.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 19400 6966 -1 7 table` on 70058 and
+`60 16000 16540 -1 9 table` on 70124 (a different character), all as expected.
+
+**Persistence on 70124**, checked from disk and from the process rather than from chat:
+`WowB.exe` started at 22:13:46. The old process last wrote AltStableProbe's account store at 22:13:42
+with `loadCount = 333`. The first login of the new process (22:14:18) wrote 334, so it read 333 back
+after a genuine full exit. The per-character store (Kaleid-Sumner) was at 51 in the new process,
+where an unloaded store would restart at 1.
+
+The 70058 persistence attempt did not count: both of its "relaunches" were `/reload`s, four seconds
+between the write and the next load. Tell them apart by the game process's start time
+(`Get-Process WowB`), with the timestamps only as a hint - never by a counter going up. A `[Probe] … launch #1` line is **PriestlyProbe**, another project's
+probe, and says nothing about AltStable.
+
+`MEASURED_ON_BUILD` went from 70009 straight to 70124. 70058 was measured but never bumped to.
 
 ---
 

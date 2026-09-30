@@ -219,14 +219,15 @@ authoritatively as a current one.
 1. **Regenerate the dump.** `/apidump`, then `/reload`, then
    `pwsh Tools/ForeverAPIDump/Convert-Dump.ps1`. It writes
    `C:\Projects\References\forever-api-<version>.<build>.md` and says so when the build changed.
-2. **Diff the documented surfaces** against the previous file: documented functions, events, enums
+2. **Diff the documented surfaces** against the previous file -
+   `pwsh Tools/ForeverAPIDump/Compare-Dumps.ps1` does it: documented functions, events, enums
    and structures, widget methods, namespace functions. Ignore the global-functions and
    namespace-candidates sections — those pick up whatever addons were loaded when the dump ran.
 3. **Re-measure the behaviours**, because the dump proves shape, not behaviour:
    ```
    /run print(GetMaxPlayerLevel(), UnitXPMax("player"), GetXPExhaustion(), Enum.BagIndex.Keyring, C_Reputation.GetNumFactions(), type(TooltipDataProcessor))
    ```
-   Expected on 70009: `60`, a positive number, a number while rested (`nil` when not), `-1`,
+   Expected on 70124: `60`, a positive number, a number while rested (`nil` when not), `-1`,
    your faction count, `table`. Update this line with the build when you bump
    `MEASURED_ON_BUILD` below — an expectation pinned to an older build is the staleness this
    checklist exists to prevent.
