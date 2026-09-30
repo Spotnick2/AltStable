@@ -250,21 +250,34 @@ session, with two clients running:
 
 1. Does `C_ChatInfo.SendAddonMessage(prefix, msg, "CHANNEL", index)` actually deliver? What does
    `SendAddonMessageResult` report when it does not?
-2. **Are custom channels visible cross-realm?** This single answer decides whether the key is the
-   whole design or half of it.
+2. **Are custom channels shared across rulesets?** Forever's "realms" are four rulesets (PvP, PvE,
+   RP, Hardcore) over one region, with region-wide names. This single answer decides whether the
+   key is the whole design or half of it. And across factions: whispers are not (measured, 70124).
 3. Does `JoinTemporaryChannel` stay out of the chat frame, and does it survive a relog?
 4. What happens at the channel-count cap (historically 10)? Joining must fail loudly, not eat sync
    silently.
 5. What trailing args does `CHAT_MSG_ADDON` carry for a channel message? `Core.lua:1389` currently
    routes every non-whisper reply to `GUILD`, so a channel branch is needed before anything works.
-6. Does whispering an offline character produce a visible error line? That decides how aggressive
-   the probing in step 3 above can be.
+6. ~~Does whispering an offline character produce a visible error line?~~ **Yes** (measured, 70124):
+   `No player named 'X' is currently playing.`, the same for a character online on the other
+   faction. `/alts sync` now hides the echo of our own traffic (#137), so probing costs no chat
+   spam - but each probe of an offline name is still one server round trip.
 7. **A cross-realm request/reply round trip, end to end.** What exactly does `CHAT_MSG_ADDON`
    put in `sender` for a cross-realm whisper — and does a reply addressed to that value arrive?
    Everything in the cross-realm half rests on this, and both the client format and our own
    realm-stripping are unverified.
 
-A probe for 1–5 belongs in `Tools/AltStableProbe`, not in the addon.
+**The probe:** `/asprobe channel …` in `Tools/AltStableProbe/Channel.lua` (deploy with
+`pwsh Tools/deploy-probe.ps1`), everything to the wire log for `/asprobe copy`:
+
+| command | answers |
+|---|---|
+| `join <name> [password]` | 3: which join functions exist, what they return, whether a chat window lists it |
+| `send <name>` | 1: the `SendAddonMessageResult` for a channel send, number and string target |
+| (receiving a `CPING`) | 5: every `CHAT_MSG_ADDON` argument; replies `CPONG` on the channel (1, 2) and `WPONG` by whisper to `sender` verbatim (7) |
+| `status [name]`, and 8 s after login | 3: still joined after a relog |
+| `cap` | 4: joins `ASPCap1..15` until refused, logs the notices, leaves them all |
+| `leave <name>` | |
 
 ---
 

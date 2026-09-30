@@ -690,6 +690,8 @@ local function WireRecord(s)
     lines[#lines + 1] = entry
     Out(s)
 end
+AltStableProbe = AltStableProbe or {}
+AltStableProbe.WireRecord = WireRecord     -- Channel.lua logs through it
 
 -- Send the same ping to every plausible spelling of the target, each tagged
 -- with the form that produced it. Whichever tags come back as PONG are the
@@ -776,6 +778,10 @@ SlashCmdList["ASPROBE"] = function(msg)
     msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
     local cmd, arg = msg:match("^(%S+)%s*(.*)$")
     cmd = (cmd or ""):lower()
+    if cmd == "channel" then
+        AltStableProbe.Channel(arg)
+        return
+    end
     if cmd == "whisper" then
         if arg == "" then
             Out("usage: /asprobe whisper <CharacterName>   (log the other account in first)")
@@ -805,7 +811,7 @@ SlashCmdList["ASPROBE"] = function(msg)
         return
     end
     if msg ~= "" and not P[msg] then
-        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper copy dump")
+        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper channel copy dump")
         return
     end
     Run(msg ~= "" and msg or nil)

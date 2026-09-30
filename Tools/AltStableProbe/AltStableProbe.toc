@@ -10,6 +10,7 @@
 ## SavedVariablesMachine: AltStableProbeMachineDB
 
 Probe.lua
+Channel.lua
 Models.lua
 Scene.lua
 WhatIcon.lua
