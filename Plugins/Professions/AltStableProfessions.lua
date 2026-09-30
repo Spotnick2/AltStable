@@ -744,6 +744,140 @@ local function Cards(line, owners)
 end
 
 ------------------------------------------------------------
+-- Item tooltips: who wants this recipe, who can craft this
+--
+-- On a recipe item (RecipeData's `items`, matched by name - an item that
+-- matched no recipe or several has no line at all):
+--   Known by       alts that know it
+--   Meets skill    complete scan, the skill, not known - skill ONLY
+--   Skill too low  complete scan, not known, under the requirement
+--   Not scanned    owners of the profession we cannot speak for
+-- On a crafted item: Crafted by, across every recipe that makes it.
+-- Hidden characters are left out, as everywhere in the tab.
+------------------------------------------------------------
+
+local byTeach, byOutput
+local function ItemIndex()
+    if not byTeach then
+        byTeach, byOutput = {}, {}
+        for id, r in pairs(Data()) do
+            for _, item in ipairs(r.items or {}) do
+                byTeach[item] = byTeach[item] or {}
+                table.insert(byTeach[item], id)
+            end
+            if r.makes then
+                byOutput[r.makes] = byOutput[r.makes] or {}
+                table.insert(byOutput[r.makes], id)
+            end
+        end
+    end
+    return byTeach, byOutput
+end
+
+local function NameList(list, fmt)
+    local parts = {}
+    for _, o in ipairs(list) do
+        local esc = AltStable.ClassColor and AltStable.ClassColor(o.class) or ""
+        parts[#parts + 1] = (esc ~= "" and esc or "|cffe6e6e6") .. (o.name or "?") .. "|r"
+            .. (fmt and fmt(o) or "")
+    end
+    return table.concat(parts, ", ")
+end
+
+-- The lines for one item, as { { label, text }, ... }. Pure, so tests read it.
+local function TooltipLines(itemID)
+    itemID = tonumber(itemID)
+    if not itemID then return {} end
+    local teach, output = ItemIndex()
+    local out = {}
+    for _, id in ipairs(teach[itemID] or {}) do
+        local r = Data()[id]
+        local seen = {}
+        local known, meets, low, unscanned, unknownReq = {}, {}, {}, {}, {}
+        for _, line in ipairs(r.skill or {}) do
+            if BY_LINE[line] then
+                for _, o in ipairs((Owners(line))) do
+                    if not seen[o.guid] then
+                        seen[o.guid] = true
+                        if o.known[id] then known[#known + 1] = o
+                        elseif o.state ~= "full" then unscanned[#unscanned + 1] = o
+                        elseif not r.learn then unknownReq[#unknownReq + 1] = o
+                        elseif o.rank >= r.learn then meets[#meets + 1] = o
+                        else low[#low + 1] = o end
+                    end
+                end
+            end
+        end
+        local prof = BY_LINE[(r.skill or {})[1]]
+        if not next(seen) then
+            out[#out + 1] = { "|cff888888AltStable|r", "|cff888888No alt has " .. (prof and prof.label or "this profession") .. "|r" }
+        end
+        if #known > 0 then out[#out + 1] = { "Known by", NameList(known) } end
+        if #meets > 0 then
+            out[#out + 1] = { "Meets skill", NameList(meets, function(o) return " (" .. o.rank .. ")" end) }
+        end
+        if #low > 0 then
+            out[#out + 1] = { "Skill too low", NameList(low, function(o)
+                return " (" .. o.rank .. ", needs " .. r.learn .. ")" end) }
+        end
+        if #unknownReq > 0 then
+            out[#out + 1] = { "Requirement unknown", NameList(unknownReq) }
+        end
+        if #unscanned > 0 then out[#out + 1] = { "Not scanned", NameList(unscanned) } end
+    end
+    local crafters, seen = {}, {}
+    for _, id in ipairs(output[itemID] or {}) do
+        local r = Data()[id]
+        for _, line in ipairs(r.skill or {}) do
+            if BY_LINE[line] then
+                for _, o in ipairs((Owners(line))) do
+                    if o.known[id] and not seen[o.guid] then
+                        seen[o.guid] = true
+                        crafters[#crafters + 1] = o
+                    end
+                end
+            end
+        end
+    end
+    if #crafters > 0 then out[#out + 1] = { "Crafted by", NameList(crafters) } end
+    return out
+end
+
+local function TooltipsOn()
+    return not (AltStableConfig and AltStableConfig.professionsTooltips == false)
+end
+
+-- Installed at bootstrap, so it works before the tab is ever opened. A post-call
+-- re-fires on every render of the tooltip (an async item load re-renders it
+-- from scratch), so lines are added once per render, never twice.
+-- OnTooltipSetItem throws on Forever; TooltipDataProcessor is the replacement
+-- (Warband, #10).
+local ttHooked = false
+local function EnsureTooltipHook()
+    if ttHooked then return end
+    if not (TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall
+            and Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item) then
+        return
+    end
+    ttHooked = true
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data)
+        if not TooltipsOn() then return end
+        local id = data and data.id
+        if not id and tt.GetItem then
+            local _, link = tt:GetItem()
+            id = link and tonumber(link:match("item:(%d+)"))
+        end
+        local lines = TooltipLines(id)
+        if #lines == 0 then return end
+        tt:AddLine(" ")
+        for _, l in ipairs(lines) do
+            tt:AddDoubleLine(l[1], l[2], 1, 0.82, 0, 1, 1, 1)
+        end
+        if tt.Show then tt:Show() end
+    end)
+end
+
+------------------------------------------------------------
 -- The panel
 ------------------------------------------------------------
 
@@ -1130,6 +1264,20 @@ local function BuildPanel(mainFrame)
     dropsLbl:SetText("Not from a trainer")
     dropsLbl:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
 
+    -- The item-tooltip lines, on by default; the one setting this plugin has,
+    -- kept in its panel as Warband keeps its own.
+    local tips = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    tips:SetSize(18, 18)
+    tips:SetPoint("LEFT", dropsLbl, "RIGHT", 16, 0)
+    tips:SetChecked(TooltipsOn())
+    tips:SetScript("OnClick", function(self)
+        AltStable.SetConfigValue("professionsTooltips", self:GetChecked() and true or false)
+    end)
+    local tipsLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tipsLbl:SetPoint("LEFT", tips, "RIGHT", 2, 0)
+    tipsLbl:SetText("On item tooltips")
+    tipsLbl:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
+
     statusFS = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     statusFS:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -TOP_FILTER - 3)
 
@@ -1234,12 +1382,14 @@ local function BootstrapPlugin()
             Owners = Owners, AllOwners = AllOwners, Catalogue = Catalogue, BuildRows = BuildRows, Cards = Cards,
             MeetsSkill = MeetsSkill, DifficultyColor = DifficultyColor, HasNonTrainerSource = HasNonTrainerSource,
             RecipeName = RecipeName, OnSpellData = OnSpellData,
+            TooltipLines = TooltipLines, EnsureTooltipHook = EnsureTooltipHook,
             PruneOrphans = PruneOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
             PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
-            ResetState = function() pendingLoss = nil; lineIndex = nil end,
+            ResetState = function() pendingLoss = nil; lineIndex = nil; byTeach, byOutput = nil, nil end,
         },
     })
 
+    EnsureTooltipHook()
     PruneOrphans()
     -- A full pull from every peer when there is nothing to build on. Switching
     -- the plugin on from Options is covered by the core (SetPluginEnabled resets

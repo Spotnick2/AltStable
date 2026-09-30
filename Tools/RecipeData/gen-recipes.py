@@ -19,8 +19,8 @@ to C:\Projects\References\forever-recipes-<snapshot date>.md/.tsv, beside the AP
 dumps and the consumables list (--reference DIR to put it elsewhere, '' to skip).
 
 Run by the owner, never by CI (tests/test_recipedata.py covers the parsing with
-fixtures). Twelve page requests, 1.5 s apart; the cache under .cache/ makes a
-rerun free.
+fixtures). Twenty-one page requests, 1.5 s apart; the cache under .cache/ makes
+a rerun free.
 
 What the pages contain, measured 2026-09-29:
   * /forever/spells/professions/<slug> and /forever/spells/secondary-skills/<slug>
@@ -32,13 +32,21 @@ What the pages contain, measured 2026-09-29:
     (cooking under professions/ did exactly that). Every page is therefore checked:
     fewer than 1000 rows, and every row's skill list contains the expected line.
 
-Which ITEM teaches a recipe is deliberately not here. It is only on each spell's
-own page (/forever/spell=<id>, the `used-by-item` listview, filtered to Recipe
-items), and fetching those one by one - about 2000 pages - got the generator a
-403 from Wowhead after roughly 110 of them on 2026-09-29. A block is an answer:
-this tool does not retry, rotate or disguise itself around it. The item tooltips
-(#14, PR 3) will need another source - the per-profession recipe-item listings
-(/forever/items=9.<subclass>, a dozen pages) are the candidate.
+Which ITEM teaches a recipe (for the recipe-item tooltips, #14):
+  * The exact link is only on each spell's own page (/forever/spell=<id>), and
+    fetching those one by one - about 2000 pages - got the generator a 403 from
+    Wowhead after roughly 110 of them on 2026-09-29. A block is an answer: this
+    tool does not retry, rotate or disguise itself around it.
+  * So it reads the nine per-profession recipe-item listings instead
+    (/forever/items=9.<subclass>, which redirects to /items/recipes/<slug>) and
+    matches each item to a recipe of THAT profession by name: "Recipe: Elixir
+    of Lesser Agility" -> "Elixir of Lesser Agility", compared without case or
+    punctuation. The item's own `skill` is not the recipe's requirement
+    (usually 5 lower), so it does not take part. Measured on Alchemy: 126 of
+    139 items match exactly one recipe; the rest are items for recipes Forever
+    does not have (TBC leftovers, "UNUSED") or two recipes of one name. An item
+    that matches none or several gets NO link - a wrong "Known by" on a recipe
+    someone is about to buy is worse than none.
 
 Wowhead source codes seen on these pages (kept as numbers; the plugin labels the
 ones it knows and shows anything else as "other"):
@@ -83,6 +91,14 @@ PROFESSIONS = [
 
 
 PROFESSION_NAMES = {line: path.split("/")[1].replace("-", " ").title() for path, line in PROFESSIONS}
+
+# Recipe items (item class 9) by subclass, and the skill line each belongs to.
+# Mining, Herbalism and Skinning have no recipe items.
+RECIPE_ITEM_PAGES = [
+    (1, 165), (2, 197), (3, 202), (4, 164), (5, 185), (6, 171), (7, 129), (8, 333), (9, 356),
+]
+RECIPE_CLASS = 9
+_ITEM_PREFIX = re.compile(r"^(recipe|pattern|plans|schematic|formula|manual|design|blueprint)\s*:\s*", re.I)
 SOURCE_LABELS = {1: "crafted", 2: "drop", 3: "pvp", 4: "quest", 5: "vendor", 6: "trainer",
                  7: "discovery", 16: "fished", 21: "pickpocketed"}
 
@@ -236,6 +252,51 @@ def recipe_from_record(rec):
     return out
 
 
+def match_name(name):
+    """A recipe's or recipe item's name, comparable: no "Recipe:"-style prefix,
+    no case, no punctuation. "Transmute: Iron to Gold" and "Recipe: Transmute
+    Iron to Gold" meet here."""
+    n = _ITEM_PREFIX.sub("", name or "")
+    return re.sub(r"[^a-z0-9]+", " ", n.lower()).strip()
+
+
+def check_item_page(records, subclass, path):
+    """A recipe-item listing must be recipe items of the expected profession."""
+    if not records:
+        raise DataError("%s: no rows" % path)
+    if len(records) >= LISTVIEW_CAP:
+        raise DataError("%s: %d rows - Wowhead's cap" % (path, len(records)))
+    foreign = [r.get("id") for r in records
+               if r.get("classs") != RECIPE_CLASS or r.get("subclass") != subclass]
+    if len(foreign) > max(2, len(records) // 20):
+        raise DataError("%s: %d of %d rows are not class 9.%d - wrong page?"
+                        % (path, len(foreign), len(records), subclass))
+
+
+def link_items(recipes, names, items, skill_line):
+    """Attach each recipe item of one profession to the one recipe of that
+    profession it names. Returns (linked, unmatched, ambiguous). An item that
+    matches none or several is left out: no link beats a wrong one."""
+    by_name = {}
+    for sid, r in recipes.items():
+        if skill_line in r["skill"] and names.get(sid):
+            by_name.setdefault(match_name(names[sid]), []).append(sid)
+    linked = unmatched = ambiguous = 0
+    for it in items:
+        if it.get("classs") != RECIPE_CLASS:
+            continue
+        cands = by_name.get(match_name(it.get("name")), [])
+        if len(cands) == 1:
+            r = recipes[cands[0]]
+            r["items"] = sorted(set(r.get("items", [])) | {int(it["id"])})
+            linked += 1
+        elif cands:
+            ambiguous += 1
+        else:
+            unmatched += 1
+    return linked, unmatched, ambiguous
+
+
 def check_page(records, skill_line, path):
     if not records:
         raise DataError("%s: no rows" % path)
@@ -275,7 +336,8 @@ def render_lua(recipes, source):
         "-- recipes[spellID] = { skill = {skill lines}, learn = required skill or nil (unknown),",
         "--                      colors = {orange, yellow, green, grey} or nil,",
         "--                      makes = crafted item or nil (enchants make none),",
-        "--                      src = Wowhead source codes or nil (unknown) }",
+        "--                      src = Wowhead source codes or nil (unknown),",
+        "--                      items = recipe items that teach it, or nil (matched by name) }",
         "-- Source codes: 1 crafted 2 drop 3 pvp 4 quest 5 vendor 6 trainer 7 discovery",
         "--               16 fished 21 pickpocketed; anything else is shown as \"other\".",
         "AltStableRecipeData = {",
@@ -293,6 +355,8 @@ def render_lua(recipes, source):
             fields.append("makes=%d" % r["makes"])
         if "src" in r:
             fields.append("src=%s" % _lua_list(r["src"]))
+        if r.get("items"):
+            fields.append("items=%s" % _lua_list(r["items"]))
         lines.append("[%d]={%s}," % (spell_id, ",".join(fields)))
     lines += ["},", "}", ""]
     return "\n".join(lines)
@@ -330,13 +394,14 @@ def reference_rows(recipes, meta):
             "learn": str(r["learn"]) if "learn" in r else "?",
             "colors": "/".join(str(c) for c in r.get("colors", [])),
             "makes": str(r.get("makes", "")), "source": _sources(r), "status": m.get("status", ""),
+            "items": ",".join(str(i) for i in r.get("items", [])),
         })
     rows.sort(key=lambda x: (x["profession"], int(x["learn"]) if x["learn"] != "?" else 99999,
                              x["name"], x["id"]))
     return rows
 
 
-REFERENCE_COLUMNS = ["id", "profession", "learn", "colors", "makes", "source", "status", "name"]
+REFERENCE_COLUMNS = ["id", "profession", "learn", "colors", "makes", "source", "status", "items", "name"]
 
 
 def render_reference_tsv(rows):
@@ -425,9 +490,10 @@ def fetch(url, refresh, parse):
 
 
 def build(refresh, log, meta=None):
-    """All recipes, merged across pages. `meta`, when given, collects each kept
-    recipe's name, profession and Wowhead change status for the reference."""
-    recipes = {}
+    """All recipes, merged across pages, with the recipe items that teach them.
+    `meta`, when given, collects each kept recipe's name, profession and Wowhead
+    change status for the reference."""
+    recipes, names = {}, {}
     for path, skill_line in PROFESSIONS:
         url = "%s/spells/%s" % (BASE, path)
         records = fetch(url, refresh, lambda h: parse_listview_var(h, "listviewspells"))
@@ -438,6 +504,7 @@ def build(refresh, log, meta=None):
             if recipe is not None:
                 merge(recipes, int(rec["id"]), recipe, path)
                 kept += 1
+                names.setdefault(int(rec["id"]), rec.get("name") or "")
                 if meta is not None:
                     meta.setdefault(int(rec["id"]), {
                         "name": rec.get("name") or "",
@@ -449,6 +516,14 @@ def build(refresh, log, meta=None):
                     })
         log("%-30s %4d rows, %4d recipes" % (path, len(records), kept))
 
+    for subclass, skill_line in RECIPE_ITEM_PAGES:
+        url = "%s/items=9.%d" % (BASE, subclass)
+        items = fetch(url, refresh, lambda h: parse_listview_var(h, "listviewitems"))
+        check_item_page(items, subclass, "items=9.%d" % subclass)
+        linked, unmatched, ambiguous = link_items(recipes, names, items, skill_line)
+        log("%-30s %4d items, %4d linked, %3d unmatched, %2d ambiguous"
+            % ("items=9.%d (%s)" % (subclass, PROFESSION_NAMES[skill_line]), len(items),
+               linked, unmatched, ambiguous))
     return recipes
 
 
