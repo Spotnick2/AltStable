@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **A Professions tab: which alt knows which recipe.** Open a profession's
+  window on each alt once, and the tab shows every recipe of that profession
+  with who knows it, the skill it needs, and where it comes from (trainer, drop,
+  vendor, quest). Filters for known, missing and nobody, a "not from a trainer"
+  shopping list, and a search that spans every profession. Click an alt's card
+  to see the list through their eyes: their difficulty colours, what they are
+  missing. Alts from your other account arrive with sync. It only claims what it
+  has seen: an alt whose window was never opened says "not scanned", and
+  "nobody knows" becomes "nobody recorded" until every owner has been scanned.
+  "Meets the skill requirement" is exactly that - specialisations and
+  reputation are not checked. Craft cooldowns now show in the grid's profession
+  tooltips. The recipe list comes from Wowhead's Forever database
+  ([#14](https://github.com/Spotnick2/AltStable/issues/14)).
+- **New saved data: `AltStableProfessionsDB`,** created by the new plugin.
+  Nothing existing changed shape.
 - **Other addons can read your characters.** A small read-only API -
   `AltStable.GetCharacters()`, `AltStable.GetTotals()`, `AltStable.ToggleSheet()`
   and a `CharactersChanged` callback - so an info bar can show your total gold

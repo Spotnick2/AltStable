@@ -913,10 +913,10 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line1 = col.label
                 tip.line2 = max and ("Max: "..max) or nil
                 tip.line3 = nil
-                -- Append any craft cooldowns for this profession. Cooldowns are
-                -- captured generically by the Professions plugin as dynamic
-                -- cd_<prof>@<label> fields on the record, so we match this
-                -- column's profession and list whatever it holds — no allowlist.
+                -- Append any craft cooldowns for this profession. The Professions
+                -- plugin writes them as cd_<Profession>@<recipe name> on the
+                -- record, so we match this column's profession and list whatever
+                -- it holds - no allowlist.
                 tip.cdLines = nil
                 if col.label and skill and skill > 0 then
                     local prefix = "cd_" .. col.label .. "@"

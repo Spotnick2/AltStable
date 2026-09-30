@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: AltStable Professions
+## Notes: Which alt knows which recipe, across every account AltStable syncs
+## IconTexture: 8197123
+## Author: Spotnick
+## Version: @project-version@
+## Dependencies: AltStable
+## LoadOnDemand: 1
+## SavedVariables: AltStableProfessionsDB
+
+RecipeData.lua
+AltStableProfessions.lua
