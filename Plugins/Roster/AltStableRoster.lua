@@ -206,6 +206,34 @@ local function CutoutFor(char)
     return entry
 end
 
+-- The texture a character is DRAWN with (AltStableCompanion#17, "Enhanced
+-- textures" in docs/PORTRAIT-CONTRACT.md): the entry's `enhanced` descriptor
+-- when it has a usable one, else the plain portrait. Every drawing path - scene,
+-- grid, detail - draws, fits and crops from what this returns: aspect and UVs
+-- belong to the picture actually shown, while height still comes from the race.
+--
+-- "Usable" is checked on its SHAPE only: a non-empty file and four positive
+-- numbers. Whether the file LOADS is not checked here, on purpose. A texture
+-- cannot be asked whether a file id resolved (measured), and whether a path can
+-- is not measured (forever-api-notes.md, "A file id cannot be validated") - a
+-- check that may never fire would only claim the case is handled. The guarantee
+-- is the writer's: the contract's attachment rule lists `enhanced` only when the
+-- file is on disk and its hash matches the sidecar's.
+local function UsableDescriptor(d)
+    if type(d) ~= "table" or type(d.file) ~= "string" or d.file == "" then return false end
+    for _, k in ipairs({ "w", "h", "texw", "texh" }) do
+        local v = d[k]
+        if type(v) ~= "number" or v ~= v or v <= 0 or v == math.huge then return false end
+    end
+    return true
+end
+
+local function EffectiveTexture(entry)
+    if type(entry) ~= "table" then return nil end
+    if UsableDescriptor(entry.enhanced) then return entry.enhanced end
+    return entry
+end
+
 -- The image sits in the TOP-LEFT of a power-of-two canvas, so the rest of the
 -- texture is empty padding that must be cropped off rather than drawn.
 local function TexCoordsFor(entry)
@@ -807,7 +835,7 @@ local function RenderCard(card, char, cardW, cardH)
         or (char.name or "?"))
     card.sub:SetText(("level %d"):format(char.level or 0))
 
-    local entry = CutoutFor(char)
+    local entry = EffectiveTexture(CutoutFor(char))
     if entry then
         local w, h = FigureSize(entry, figureH)
         -- A wide capture (a gnome, or a drawn bow) must not spill into its
@@ -947,7 +975,7 @@ end
 local function MeasureCast(cast, cutoutFor, spots, tallest, figureH)
     local sizes = {}
     for i, char in ipairs(cast) do
-        local cut = cutoutFor(char)
+        local cut = EffectiveTexture(cutoutFor(char))
         local spot = spots[i]
         if cut and spot then
             local w, h = RelativeFigureSize(cut, RaceHeight(char), tallest, figureH)
@@ -1051,7 +1079,7 @@ local function RenderScene(chars)
 
     for i, card in ipairs(Roster.cards) do
         local char = cast[i]
-        local cut = char and CutoutFor(char)
+        local cut = char and EffectiveTexture(CutoutFor(char))
         local spot = spots[i]
         if char and cut and spot then
             withArt = withArt + 1
@@ -1709,7 +1737,7 @@ local function RenderDetail(char)
     -- The figure: the cutout, or the class plate when there is not one. Same
     -- fallback the grid uses, so a character without a portrait looks the same
     -- here as it does there rather than looking broken.
-    local entry = CutoutFor(char)
+    local entry = EffectiveTexture(CutoutFor(char))
     -- The figure is sized to leave ROOM for the weapons row beneath it.
     --
     -- It used to take the whole panel height and the weapons were placed at a
@@ -2500,6 +2528,7 @@ function Roster._Bootstrap()
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
+            EffectiveTexture = EffectiveTexture, FigureSize = FigureSize,
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             AllCharacters = AllCharacters, CharactersFor = CharactersFor,

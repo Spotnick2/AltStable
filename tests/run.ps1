@@ -38,6 +38,14 @@ try {
         if ($LASTEXITCODE -ne 0) { $failed++ }
         Write-Host ""
     }
+    # The manifest writer's enhanced-texture attachment rule
+    # (PORTRAIT-CONTRACT.md section 3). Pure PowerShell on temp files: no
+    # Python, no client.
+    Write-Host "── Update-Cutouts.ps1 -SelfTest ──────────────" -ForegroundColor Cyan
+    & pwsh -NoProfile -File (Join-Path $RepoRoot "Tools/RenderCutout/Update-Cutouts.ps1") -SelfTest
+    if ($LASTEXITCODE -ne 0) { $failed++ }
+    Write-Host ""
+
     # Same reasoning as the tests' own Pillow check: the Python suites cover an
     # optional local tool, so a machine without Python should skip them, not
     # fail the addon's tests. This runner was Lua-only until now and nobody

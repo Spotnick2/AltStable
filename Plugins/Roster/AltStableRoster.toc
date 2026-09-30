@@ -6,5 +6,6 @@
 ## Version: @project-version@
 ## Dependencies: AltStable
 ## LoadOnDemand: 1
+## X-AltStable-Enhanced: 1
 
 AltStableRoster.lua

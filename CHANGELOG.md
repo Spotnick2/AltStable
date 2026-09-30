@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The Roster can show an enhanced portrait.** When the companion app has
+  made one (optional, its own feature), the scene, grid and detail views draw
+  it in place of the plain capture; anything malformed falls back to the plain
+  portrait. The contract for it is in `docs/PORTRAIT-CONTRACT.md`
+  ([AltStableCompanion#17](https://github.com/Spotnick2/AltStableCompanion/issues/17)).
 - **A Professions tab: which alt knows which recipe.** Open a profession's
   window on each alt once, and the tab shows every recipe of that profession
   with who knows it, the skill it needs, and where it comes from (trainer, drop,
