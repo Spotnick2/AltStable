@@ -1320,16 +1320,27 @@ end
 -- has gone through without that answer, and a sync the player typed gets one
 -- line of ours - naming the faction when we know theirs from the database.
 local UNREACHABLE_ECHO = 10       -- seconds after our last whisper to them
+-- unreachableAt and unreachableToldAt are CLEARED when the player starts a
+-- sync, so "set" means "since this sync began" - no clock comparison (an echo
+-- of an earlier request landing in the same second read as this one's), and
+-- one line per /alts sync rather than per minute (a repeat inside the minute
+-- went silent after announcing it was sending).
 local unreachableAt = {}          -- AuthKey -> when the server said "no player named"
 local manualSyncAt = {}           -- AuthKey -> when the player typed /alts sync <them>
-local unreachableToldAt = {}      -- AuthKey -> when we last said so
+local unreachableToldAt = {}      -- AuthKey -> when we said so for this sync
 
+-- Built once from the client's format string: this runs for every system
+-- message, in every chat frame's filter.
+local notFoundPattern, notFoundFormat
 local function NotFoundName(text)
     local fmt = ERR_CHAT_PLAYER_NOT_FOUND_S
     if type(fmt) ~= "string" or type(text) ~= "string" then return nil end
-    local pattern = fmt:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0")
-    pattern = pattern:gsub("%%s", "(.+)", 1)
-    return text:match("^" .. pattern .. "$")
+    if fmt ~= notFoundFormat then
+        local pattern = fmt:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0")
+        notFoundPattern = "^" .. pattern:gsub("%%s", "(.+)", 1) .. "$"
+        notFoundFormat = fmt
+    end
+    return text:match(notFoundPattern)
 end
 
 -- The echo of our own addon traffic, or someone else's business?
@@ -1347,19 +1358,23 @@ local function KnownFaction(key)
     end
 end
 
+-- "This sync cannot go through" rather than "nothing more was sent": the echo
+-- can come from a push already under way (they logged off during it), whose
+-- queued remainder still drains - hidden, but sent.
 local function SayUnreachable(name, key)
-    local now = time()
-    if unreachableToldAt[key] and (now - unreachableToldAt[key]) < 60 then return end
-    unreachableToldAt[key] = now
+    if unreachableToldAt[key] then return end
+    unreachableToldAt[key] = time()
     local mine = UnitFactionGroup and UnitFactionGroup("player")
     local theirs = KnownFaction(key)
     if mine and theirs and theirs ~= mine then
         Print("|cffff8800" .. name .. " is " .. theirs .. " and you are " .. mine .. "|r - addon "
-            .. "messages do not cross factions, so this character cannot sync with them. "
-            .. "Nothing more was sent.")
+            .. "messages do not cross factions, so this sync cannot go through.")
+    elseif mine and theirs then
+        Print("|cffff8800" .. name .. " cannot be reached|r - they are offline, so this sync "
+            .. "cannot go through.")
     else
         Print("|cffff8800" .. name .. " cannot be reached|r - offline, or on the other faction "
-            .. "(addon messages do not cross factions). Nothing more was sent.")
+            .. "(addon messages do not cross factions), so this sync cannot go through.")
     end
 end
 
@@ -1713,8 +1728,8 @@ function RequestCharacters(channel, target, force)
 
     if target then
         -- Never a request to a peer refused for good: whoever calls - a login
-        -- broadcast, the came-online notice, the follow-up to /alts sync after
-        -- its three seconds - the answer is read when the request goes out.
+        -- broadcast, the came-online notice, /alts sync - the answer is read
+        -- when the request goes out.
         if SyncAuthFor(target) == AUTH_NEVER then return false end
         local now = time()
         if not force then
@@ -1730,10 +1745,12 @@ function RequestCharacters(channel, target, force)
     -- changed since we last heard from them. A peer on older code ignores the
     -- extra payload and replies with a full DB (correct, just unoptimized).
     local wm = target and GetPeerWatermark(target) or 0
-    -- Through ChatThrottleLib, not raw. `/alts sync <target>` fires this three
-    -- seconds after starting a push, while CTL may still be draining BULK
-    -- chunks; a raw send then lands with the outbound budget already spent and
-    -- risks a silent server-side drop - the push arrives, the pull never does.
+    -- Through ChatThrottleLib at ALERT, not raw: a request can go out while
+    -- CTL is still draining BULK chunks (a reply, a broadcast), and a raw send
+    -- then lands with the outbound budget already spent and risks a silent
+    -- server-side drop. ALERT also puts it ahead of that queue - which
+    -- /alts sync relies on, since its request is the reachability check that
+    -- decides whether the push goes out at all.
     QueueWire(MSG_REQUEST_V .. "|" .. wm, channel, target, "ALERT")
     WatchSyncPeer(target)
     -- We asked, so their answer may come in (#61) - if it starts in time.
@@ -3014,6 +3031,10 @@ SlashCmdList["ALTSTABLE"] = function(args)
             end
             return
         end
+        if not AltStable.PeerKey(target) then
+            Print("|cffff8800Not a name I can use:|r " .. tostring(target))
+            return
+        end
         -- Never to a peer refused for good (#61) - the push used to go out
         -- regardless of the answer.
         if AltStable.SyncAuthFor(target) == AltStable.AUTH_NEVER then
@@ -3026,8 +3047,8 @@ SlashCmdList["ALTSTABLE"] = function(args)
         -- Nothing is stored.
         AltStable.GrantSyncConsent(target, true, true)
         local key = AltStable.PeerKey(target)
-        local asked = time()
-        manualSyncAt[key] = asked
+        manualSyncAt[key] = time()
+        unreachableAt[key], unreachableToldAt[key] = nil, nil   -- "since this sync began"
         Print("Requesting " .. target .. "'s data and sending yours...")
         -- The request FIRST: one small whisper, which tells us whether they can
         -- be reached at all. The push - dozens of whispers - follows only if the
@@ -3036,7 +3057,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
         -- target.
         RequestCharacters("WHISPER", target, true)
         C_Timer.After(3, function()
-            if (unreachableAt[key] or 0) >= asked then return end   -- already said
+            if unreachableAt[key] then return end   -- already said
             -- Only while the exchange the player started is still on: a deny,
             -- or a deny and then a forget, in these three seconds ends it.
             if not AltStable.MayServeSyncPeer(target) then return end

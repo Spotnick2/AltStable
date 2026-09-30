@@ -3018,21 +3018,48 @@ do
     eq(said, 1, "  and we say so once, not once per line")
     check(chatHas("other faction"), "  naming the faction as a possible reason")
 
-    -- Known to be on the other faction: say exactly that.
+    -- A second /alts sync to the same target is told again, not left silent
+    -- after "Requesting...".
+    WoW.chatOut = {}
+    slash("sync Gone Surname")
+    notFound("Gone Surname")
+    flushAll()
+    check(chatHas("cannot be reached"), "a repeated /alts sync is told again")
+    eq(chunksTo("Gone Surname"), 0, "  and still pushes nothing")
+
+    -- Known to be on the other faction: say exactly that. The PLAYER is the
+    -- Alliance side here, so the line is read from UnitFactionGroup - the
+    -- stub's default is Horde and would pass a hard-coded answer.
     freshAuth()
-    WoW.faction = "Horde"
+    WoW.faction = "Alliance"
     AltStableDB = {
         ["Player-Mine-4"] = { guid = "Player-Mine-4", name = "Mine", class = "MAGE",
                               level = 60, lastUpdate = 1000, scannedHere = true },
-        ["Player-Ally-1"] = { guid = "Player-Ally-1", name = "Memphisto Mortalis", class = "MAGE",
-                              level = 60, lastUpdate = 1000, faction = "Alliance" },
+        ["Player-Horde-1"] = { guid = "Player-Horde-1", name = "Memphisto Mortalis", class = "MAGE",
+                               level = 60, lastUpdate = 1000, faction = "Horde" },
     }
+    slash("sync Memphisto Mortalis")
+    local mm = notFound("Memphisto Mortalis")
+    flushAll()
+    check(chatHas("Memphisto Mortalis is Horde and you are Alliance"),
+          "a target we know is on the other faction is named as such")
+    eq(chunksTo("Memphisto Mortalis"), 0, "  and is not pushed the database")
+    check(WoW.chatFiltered("CHAT_MSG_SYSTEM", mm), "  and the server's line is hidden")
+
+    -- Same faction, known: offline is the only explanation left.
+    AltStableDB["Player-Horde-1"].faction = "Alliance"
+    WoW.chatOut = {}
     slash("sync Memphisto Mortalis")
     notFound("Memphisto Mortalis")
     flushAll()
-    check(chatHas("Memphisto Mortalis is Alliance and you are Horde"),
-          "a target we know is on the other faction is named as such")
+    check(chatHas("they are offline"), "a same-faction target is said to be offline")
+    check(not chatHas("other faction"), "  without suggesting the other faction")
     WoW.faction = "Horde"
+
+    -- A name that is not one: said, not "set to never".
+    freshAuth()
+    slash("sync -Realm")
+    check(chatHas("Not a name I can use"), "/alts sync with no name part says so")
 
     -- Reachable: no answer from the server, so the push follows.
     freshAuth()
