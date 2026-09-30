@@ -25,6 +25,10 @@
 .PARAMETER AddOnsPath
     Where to file the finished TGA. Defaults to the standard beta install.
 
+.PARAMETER SelfTest
+    Check the enhanced-texture attachment rule against files it makes in a temp
+    folder, and exit. Needs neither Python nor a client (tests/run.ps1 runs it).
+
 .EXAMPLE
     pwsh Tools/RenderCutout/Update-Cutouts.ps1
     pwsh Tools/RenderCutout/Update-Cutouts.ps1 -Watch
@@ -32,6 +36,7 @@
 [CmdletBinding()]
 param(
     [switch] $Watch,
+    [switch] $SelfTest,
     [string] $Shots = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Screenshots",
     [string] $AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns"
 )
@@ -51,10 +56,14 @@ $outDir = Join-Path $here 'out'
 #
 # A separate folder is loaded by the client on its own, survives every deploy,
 # and can be deleted wholesale to start over.
-$cutoutAddon = Join-Path $AddOnsPath 'AltStableCutouts'
-$mediaDir = Join-Path $cutoutAddon 'Cutouts'
-$manifest = Join-Path $cutoutAddon 'CutoutManifest.lua'
-$cutoutToc = Join-Path $cutoutAddon 'AltStableCutouts.toc'
+#
+# [IO.Path]::Combine, not Join-Path: Join-Path resolves the drive, and on a
+# machine without the default install's (the Linux CI runner has no C:) it
+# threw here, before -SelfTest - which needs none of these - could run.
+$cutoutAddon = [IO.Path]::Combine($AddOnsPath, 'AltStableCutouts')
+$mediaDir = [IO.Path]::Combine($cutoutAddon, 'Cutouts')
+$manifest = [IO.Path]::Combine($cutoutAddon, 'CutoutManifest.lua')
+$cutoutToc = [IO.Path]::Combine($cutoutAddon, 'AltStableCutouts.toc')
 
 function Test-Prereqs {
     $python = Get-Command python -ErrorAction SilentlyContinue
@@ -127,6 +136,48 @@ CutoutManifest.lua
     }
 }
 
+# The enhanced texture for one primary, as a manifest fragment - or "" when the
+# contract's attachment rule says no (docs/PORTRAIT-CONTRACT.md, "Enhanced
+# textures"). All of it or nothing: the primary has a known guid equal to the
+# enhanced sidecar's, the primary's bytes hash to its enhancement.sourceHash, the
+# enhanced TGA exists and hashes to its enhancement.outputHash, and its sizes are
+# positive numbers. (Both hashes live INSIDE `enhancement`: the companion writes
+# enhanced and primary sidecars with one serializer.)
+# A name-only (guid-less) primary never attaches. Nothing is written, moved or
+# deleted here - the companion owns Enhanced\.
+function Get-EnhancedField([string] $primaryPath, [string] $guid, [string] $cutoutsDir) {
+    if (-not $guid) { return "" }
+    $base = [IO.Path]::GetFileNameWithoutExtension($primaryPath)
+    $enhDir = Join-Path $cutoutsDir 'Enhanced'
+    $tga = Join-Path $enhDir "$base.tga"
+    $side = Join-Path $enhDir "$base.json"
+    if (-not (Test-Path -LiteralPath $tga) -or -not (Test-Path -LiteralPath $side)) { return "" }
+    # Everything below reads files the COMPANION owns and may be writing or
+    # replacing right now. Any failure means "no enhanced picture this time":
+    # under ErrorActionPreference Stop it used to abort the whole manifest -
+    # every character's plain portrait with it - and end the -Watch loop.
+    try {
+        $m = Get-Content -LiteralPath $side -Raw | ConvertFrom-Json
+        # -cne: the contract says EQUAL and lower-case hex. PowerShell's -ne
+        # ignores case, and attaching what the companion's exact comparison
+        # refuses would make the picture depend on which writer ran last.
+        if ([string]$m.guid -cne $guid) { return "" }
+        $e = $m.enhancement
+        if (-not $e) { return "" }
+        $src = (Get-FileHash -LiteralPath $primaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ([string]$e.sourceHash -cne $src) { return "" }
+        $out = (Get-FileHash -LiteralPath $tga -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ([string]$e.outputHash -cne $out) { return "" }
+    } catch {
+        return ""
+    }
+    foreach ($k in 'w', 'h', 'texw', 'texh') {
+        $v = $m.$k
+        if (-not ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) -or $v -le 0) { return "" }
+    }
+    return ", enhanced = { file = [[Interface\AddOns\AltStableCutouts\Cutouts\Enhanced\$base.tga]], w = $($m.w), h = $($m.h), texw = $($m.texw), texh = $($m.texh) }"
+}
+
 # The manifest is regenerated wholesale from what is on disk, so deleting a TGA
 # is all it takes to retire a character - no second place to edit.
 function Write-Manifest {
@@ -138,7 +189,9 @@ function Write-Manifest {
     & python $converter --renormalise $outDir
     & python $converter --renormalise $mediaDir
 
-    $entries = foreach ($tga in (Get-ChildItem $mediaDir -Filter *.tga -ErrorAction SilentlyContinue | Sort-Object Name)) {
+    # NOT recursive, and it must stay that way: Cutouts\Enhanced\ holds the
+    # companion's enhanced pictures, which are never primary portraits.
+    $entries = foreach ($tga in (Get-ChildItem $mediaDir -Filter *.tga -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
         $slug = [IO.Path]::GetFileNameWithoutExtension($tga.Name)
         $side = [IO.Path]::ChangeExtension($tga.FullName, ".json")
 
@@ -195,7 +248,8 @@ print(bbox[2]-bbox[0], bbox[3]-bbox[1], im.size[0], im.size[1])
         if ((Test-Path $side) -and ($m.epoch -is [int] -or $m.epoch -is [long] -or $m.epoch -is [double])) {
             $who += "epoch = $([long]$m.epoch), "
         }
-        "    ['$key'] = { $($who)file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native },"
+        $enh = Get-EnhancedField $tga.FullName $guid $mediaDir
+        "    ['$key'] = { $($who)file = [[Interface\AddOns\AltStableCutouts\Cutouts\$($tga.Name)]], w = $w, h = $h, texw = $tw, texh = $th$native$enh },"
     }
 
     $lua = @"
@@ -218,6 +272,83 @@ $($entries -join "`n")
 "@
     Set-Content -Path $manifest -Value $lua -Encoding UTF8
     Write-Host ("  manifest -> {0}" -f $manifest) -ForegroundColor Green
+}
+
+# -SelfTest: the attachment rule against files made here, and nothing else.
+if ($SelfTest) {
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ("cutouts-selftest-" + [guid]::NewGuid())
+    $enh = Join-Path $dir 'Enhanced'
+    New-Item -ItemType Directory -Force -Path $enh | Out-Null
+    $script:fails = 0; $script:passes = 0
+    function Check([string] $name, [bool] $ok) {
+        if ($ok) { $script:passes++ } else { $script:fails++; Write-Host "  FAIL: $name" -ForegroundColor Red }
+    }
+    function Hash([string] $p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $primary = Join-Path $dir 'karuzo-elegia.tga'
+    [IO.File]::WriteAllBytes($primary, [byte[]](1, 2, 3, 4))
+    $etga = Join-Path $enh 'karuzo-elegia.tga'
+    [IO.File]::WriteAllBytes($etga, [byte[]](9, 9, 9))
+    $guid = 'Player-4395-0A1B2C3D'
+    # The companion's shape (CutoutFolder.Sidecar): the hashes inside `enhancement`.
+    # An override for sourceHash/outputHash goes there; any other key at the top.
+    function Sidecar($over, [switch] $flat) {
+        $e = [ordered]@{ sourceHash = (Hash $primary); outputHash = (Hash $etga); style = 'wow-like'
+                         model = 'gpt-6-astra'; effort = 'low'; prompt = 1; signature = 'x'
+                         generated = '2026-09-30T21:04:11Z' }
+        $s = [ordered]@{ w = 188; h = 512; texw = 256; texh = 512; guid = $guid; enhancement = $e }
+        foreach ($k in $over.Keys) {
+            if ($k -in 'sourceHash', 'outputHash') { $e[$k] = $over[$k] } else { $s[$k] = $over[$k] }
+        }
+        if ($flat) {
+            # The hashes at the top level, the shape this PR first documented by mistake.
+            $s.Remove('enhancement'); $s.sourceHash = $e.sourceHash; $s.outputHash = $e.outputHash
+        }
+        ($s | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $enh 'karuzo-elegia.json') -Encoding UTF8
+    }
+
+    Sidecar @{}
+    $f = Get-EnhancedField $primary $guid $dir
+    Check "a matching enhanced texture attaches" ($f -like '*enhanced = { file = *Cutouts\Enhanced\karuzo-elegia.tga*, w = 188, h = 512, texw = 256, texh = 512 }')
+    Check "a name-only (guid-less) primary never attaches" ((Get-EnhancedField $primary '' $dir) -eq '')
+    Sidecar @{ guid = $null }
+    Check "  not even to a sidecar that has no guid either" ((Get-EnhancedField $primary '' $dir) -eq '')
+    Sidecar @{ guid = 'Player-other' }
+    Check "a sidecar for another guid does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{} -flat
+    Check "hashes at the top level instead of in `enhancement` do not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ sourceHash = ('0' * 64) }
+    Check "a primary that changed since (sourceHash) does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ outputHash = ('0' * 64) }
+    Check "an enhanced TGA that is not the one recorded (outputHash) does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ w = 'wide' }
+    Check "a non-number size does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ texh = 0 }
+    Check "a zero size does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{}
+    Set-Content -LiteralPath (Join-Path $enh 'karuzo-elegia.json') -Value '{ not json' -Encoding UTF8
+    Check "an unreadable sidecar does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ sourceHash = (Hash $primary).ToUpperInvariant() }
+    Check "an upper-case hash does not attach (the contract says lower-case, exactly)" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{ guid = $guid.ToLowerInvariant() }
+    Check "a guid differing only in case does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{}
+    $lock = [IO.File]::Open($etga, 'Open', 'Read', 'None')
+    try {
+        $locked = $null; $threw = $false
+        try { $locked = Get-EnhancedField $primary $guid $dir } catch { $threw = $true }
+        Check "a file the companion holds open is 'not this time', never an error" ((-not $threw) -and $locked -eq '')
+    } finally { $lock.Dispose() }
+    Sidecar @{}
+    Remove-Item -LiteralPath $etga
+    Check "a missing enhanced TGA does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    [IO.File]::WriteAllBytes($etga, [byte[]](9, 9, 9))
+    Check "  and nothing was written into Enhanced\ by the check" (@(Get-ChildItem $enh).Count -eq 2)
+    $listed = @(Get-ChildItem $dir -Filter *.tga -File | ForEach-Object Name)
+    Check "the primary listing does not reach into Enhanced\" ($listed.Count -eq 1 -and $listed[0] -eq 'karuzo-elegia.tga')
+
+    Remove-Item -Recurse -Force -LiteralPath $dir
+    Write-Host ("Update-Cutouts self-test: {0} passed, {1} failed" -f $script:passes, $script:fails)
+    exit ([int]($script:fails -gt 0))
 }
 
 Test-Prereqs

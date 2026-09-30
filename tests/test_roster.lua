@@ -2935,5 +2935,114 @@ do
     AltStableCutoutManifest = saved
 end
 
+------------------------------------------------------------
+-- Enhanced textures (AltStableCompanion#17; PORTRAIT-CONTRACT.md section 3)
+------------------------------------------------------------
+
+do
+    local ET = T.EffectiveTexture
+    local PLAIN = [[Interface\AddOns\AltStableCutouts\Cutouts\enh-anced.tga]]
+    local ENH = [[Interface\AddOns\AltStableCutouts\Cutouts\Enhanced\enh-anced.tga]]
+    local function plainEntry(enhanced)
+        return { guid = "Player-9-ENH", file = PLAIN, w = 146, h = 512, texw = 256, texh = 512,
+                 enhanced = enhanced }
+    end
+    local function enhanced(over)
+        local d = { file = ENH, w = 188, h = 400, texw = 256, texh = 512 }
+        for k, v in pairs(over or {}) do d[k] = v end
+        return d
+    end
+
+    local plain = plainEntry()
+    check("an entry without `enhanced` draws itself", ET(plain) == plain)
+    check("no entry, nothing to draw", ET(nil) == nil)
+    local both = plainEntry(enhanced())
+    check("a well-formed `enhanced` is what is drawn", ET(both) == both.enhanced)
+
+    -- Malformed: the plain portrait, never a broken figure.
+    local bad = {
+        { "an empty file", enhanced({ file = "" }) },
+        { "a file that is not a string", enhanced({ file = 123 }) },
+        { "a missing texh", enhanced({ texh = false }) },
+        { "a width given as a string", enhanced({ w = "188" }) },
+        { "a zero height", enhanced({ h = 0 }) },
+        { "a negative width", enhanced({ w = -1 }) },
+        { "a NaN", enhanced({ texw = 0 / 0 }) },
+        { "an infinite size", enhanced({ texh = math.huge }) },
+    }
+    for _, case in ipairs(bad) do
+        if case[2].texh == false then case[2].texh = nil end
+        local e = plainEntry(case[2])
+        check("`enhanced` with " .. case[1] .. " falls back to the plain portrait", ET(e) == e)
+    end
+    local notTable = plainEntry("Enhanced\\x.tga")
+    check("`enhanced` that is not a table falls back to the plain portrait", ET(notTable) == notTable)
+
+    -- UVs and aspect from the descriptor DRAWN (different aspect, POT padding).
+    local _, pr, _, pb = T.TexCoordsFor(ET(plain))
+    local _, er, _, eb = T.TexCoordsFor(ET(both))
+    check("the plain portrait crops its own padding", math.abs(pr - 146 / 256) < 1e-9 and pb == 1)
+    check("the enhanced one crops ITS padding", math.abs(er - 188 / 256) < 1e-9 and math.abs(eb - 400 / 512) < 1e-9,
+          ("%s,%s"):format(er, eb))
+    local gw = T.FigureSize(ET(both), 200)
+    check("the grid fits the enhanced picture's aspect", math.abs(gw - 200 * 188 / 400) < 1e-9, tostring(gw))
+    local sw, sh = T.RelativeFigureSize(ET(both), 1.0, 1.0, 300)
+    local _, ph = T.RelativeFigureSize(ET(plain), 1.0, 1.0, 300)
+    check("the scene keeps the race's height for the enhanced picture", sh == ph and sh == 300)
+    check("  and takes its width from the enhanced aspect", math.abs(sw - 300 * 188 / 400) < 1e-9, tostring(sw))
+
+    -- Every drawing path draws it: grid, scene, detail.
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    local guid = "Player-9-ENH"
+    AltStableDB = { [guid] = { guid = guid, name = "Enh Anced", class = "MAGE", level = 60, race = "Human" } }
+    AltStableCutoutManifest = { [guid] = plainEntry(enhanced()) }
+
+    local card = T.BuildCard(WoW.makeFrame(), 1)
+    T.RenderCard(card, AltStableDB[guid], 100, 140)
+    eq("the grid card draws the enhanced picture", card.figure:GetTexture(), ENH)
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    local drawn, fw, fh
+    for _, c in ipairs(T.Cards()) do
+        if c.char and c.char.guid == guid then
+            drawn, fw, fh = c.figure:GetTexture(), c.figure:GetWidth(), c.figure:GetHeight()
+        end
+    end
+    eq("the scene draws the enhanced picture", drawn, ENH)
+    check("  at the enhanced picture's proportions", fw and fh and fh > 0 and math.abs(fw / fh - 188 / 400) < 1e-6,
+          ("%s x %s"):format(tostring(fw), tostring(fh)))
+
+    check("the character opens in detail", T.DrillDown(guid))
+    eq("the detail view draws the enhanced picture", T.DetailFrame().figure:GetTexture(), ENH)
+    T.Back()
+
+    AltStableCutoutManifest = { [guid] = plainEntry(enhanced({ w = "wide" })) }
+    T.RenderCard(card, AltStableDB[guid], 100, 140)
+    eq("a malformed `enhanced` draws the plain portrait in the grid", card.figure:GetTexture(), PLAIN)
+    T.Refresh()
+    drawn = nil
+    for _, c in ipairs(T.Cards()) do
+        if c.char and c.char.guid == guid then drawn = c.figure:GetTexture() end
+    end
+    eq("  and in the scene", drawn, PLAIN)
+
+    AltStableConfig.rosterView = nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
+-- The capability marker the companion reads before it spends a generation.
+do
+    local f = io.open("Plugins/Roster/AltStableRoster.toc", "rb")
+    local toc = f and f:read("*a") or ""
+    if f then f:close() end
+    check("the Roster's TOC declares enhanced-texture support",
+          toc:find("\n## X%-AltStable%-Enhanced: 1\r?\n") ~= nil)
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

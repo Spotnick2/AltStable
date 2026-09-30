@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The Roster can show an enhanced portrait.** When the companion app has
+  made one (optional, its own feature), the scene, grid and detail views draw
+  it in place of the plain capture; anything malformed falls back to the plain
+  portrait. The contract for it is in `docs/PORTRAIT-CONTRACT.md`
+  ([AltStableCompanion#17](https://github.com/Spotnick2/AltStableCompanion/issues/17)).
 - **The capture button tells you when a portrait is due.** It glows when the
   character you are playing has no portrait yet, or when the gear a portrait
   shows changed since the last capture - not rings, trinkets, the neck or the

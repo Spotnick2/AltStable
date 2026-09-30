@@ -200,3 +200,108 @@ capture record had one; a converter that wrote the second shot's instead still
 reads as converted (the addon compares with `>`), never as waiting forever. An
 entry without it is read the old way: only a capture taken in the current
 session counts as waiting. Additive: no `version` bump.
+
+---
+
+## 3. Enhanced textures (companion → Roster, optional)
+
+The companion can make a second picture of a character from its portrait
+(Spotnick2/AltStableCompanion#17). Everything here is additive: `AltStablePortraits`
+stays at `version = 1`, and a reader that knows none of it draws the plain
+portrait.
+
+**Files.** `Cutouts\Enhanced\<base>.tga`, `<base>.json` (its sidecar) and
+`<base>.attempts.json` (the companion's own history), where `<base>` is the
+primary portrait's file name without `.tga`. A **subfolder**, because every
+reader of `Cutouts\` lists it non-recursively: nothing in `Enhanced\` can be
+taken for a primary portrait. The companion owns the folder. A file whose primary
+is gone is an orphan and stays; nothing else writes, moves or deletes there.
+
+**The sidecar** (`<base>.json`) - the primary sidecar's shape (the companion writes both
+with one serializer), plus an `enhancement` object:
+
+| field | type | |
+|---|---|---|
+| `guid` | string | the character; must equal the primary's |
+| `epoch` | number, optional | the primary sidecar's `epoch`, when it had one - provenance only |
+| `w`, `h`, `texw`, `texh` | numbers | content size and power-of-two canvas, as for a primary |
+| `enhancement.sourceHash` | string | SHA-256, lower-case hex, of the primary TGA's bytes it was made from |
+| `enhancement.outputHash` | string | SHA-256, lower-case hex, of this TGA's bytes |
+| `enhancement.style`, `.model`, `.effort` | strings | how it was made |
+| `enhancement.prompt` | integer | the prompt's version |
+| `enhancement.signature` | string | the companion's key for "this combination was attempted" |
+| `enhancement.generated` | string | UTC, ISO 8601 |
+
+```json
+{ "w": 188, "h": 512, "texw": 256, "texh": 512,
+  "guid": "Player-4395-0A1B2C3D", "epoch": 1790740285,
+  "enhancement": { "sourceHash": "9f86d0...", "outputHash": "2c26b4...",
+                   "style": "wow-like", "model": "gpt-6-astra", "effort": "low",
+                   "prompt": 1, "signature": "5e8848...", "generated": "2026-09-30T21:04:11Z" } }
+```
+
+**The manifest entry** may carry a whole texture descriptor:
+
+```lua
+    ["Player-4395-0A1B2C3D"] = {
+        guid = "Player-4395-0A1B2C3D",
+        file = [[Interface\AddOns\AltStableCutouts\Cutouts\karuzo-elegia.tga]],
+        w = 146, h = 512, texw = 256, texh = 512,
+        enhanced = { file = [[Interface\AddOns\AltStableCutouts\Cutouts\Enhanced\karuzo-elegia.tga]],
+                     w = 188, h = 512, texw = 256, texh = 512 },
+    },
+```
+
+A whole descriptor, because the Roster uses `w`/`h` for aspect and fitting and
+`w/texw`, `h/texh` for UVs, and the enhanced picture's differ from the plain one's.
+`nativeW`/`nativeH` stay the capture's; heights come from race and gender as today.
+
+**The attachment rule** - one rule for every manifest writer (the companion,
+`Tools/RenderCutout/Update-Cutouts.ps1`). An entry gets `enhanced` when **all** of:
+
+- the primary it resolved to has a known `guid` (from its own sidecar), equal to
+  the enhanced sidecar's `guid`;
+- the primary file's current SHA-256 equals `enhancement.sourceHash`;
+- `Enhanced\<base>.tga` exists and its SHA-256 equals `enhancement.outputHash`;
+- the sidecar's `w`, `h`, `texw`, `texh` are positive numbers.
+
+`epoch` is provenance, not a key: an undated primary (made by the Python script)
+attaches by hash alone. A **name-only legacy primary** (no guid) never attaches.
+Anything else: the plain portrait, and the files are left alone.
+
+**What the Roster does.** It draws `enhanced` when the descriptor is well formed
+(a non-empty `file`, four positive numbers) and the plain portrait otherwise -
+in the scene, the grid and the detail alike. It does **not** check that the
+file loads: a texture cannot be asked whether a file id resolved (measured), and
+whether a path can is unmeasured (`docs/forever-api-notes.md`, "A file id cannot
+be validated"). The attachment rule is what guarantees the file is there.
+
+**The capability marker.** `Interface\AddOns\AltStableRoster\AltStableRoster.toc`
+carries `## X-AltStable-Enhanced: 1`. The companion reads that file and that
+line before it spends a generation. It means "support is installed", not "the
+plugin is loaded" - the Roster is load-on-demand and may be switched off.
+
+**What the companion also reads** for enhancement (never for conversion), from
+the same `AltStable.lua`:
+
+| input | type | missing or malformed |
+|---|---|---|
+| `AltStableDB[guid].name` | string | not eligible |
+| `AltStableDB[guid].class` | string (token, e.g. `"PRIEST"`) | not eligible |
+| `AltStableDB[guid].race` | string (file name, e.g. `"Scourge"`) | not eligible |
+| `AltStableDB[guid].gender` | string (`"Male"` / `"Female"`) | not eligible |
+| `AltStableDB[guid].level` | number | not eligible |
+| `AltStableDB[guid].lastUpdate` | number (epoch seconds) | the record counts as oldest |
+| `AltStableConfig.hiddenCharacters` | table, guid → true | nobody is hidden |
+
+A roster table that is missing or malformed makes characters ineligible for
+enhancement; it never affects conversion.
+
+**Compatibility.**
+
+| | |
+|---|---|
+| an old Roster | ignores `enhanced`, draws the plain portrait |
+| an old companion | never looks in `Enhanced\` |
+| an old companion, or the old script, rebuilds the manifest | writes it **without** `enhanced`; the files stay, and the next enhancement-aware rebuild restores the field |
+| two manifest writers at once | unsupported, as before |

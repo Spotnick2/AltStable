@@ -53,6 +53,12 @@ jobs:
       - name: Recipe data generator tests
         run: python3 tests/test_recipedata.py
 
+      # The cutout manifest writer's enhanced-texture attachment rule, on temp
+      # files (no Python, no client).
+      - name: Update-Cutouts attachment rule
+        shell: pwsh
+        run: ./Tools/RenderCutout/Update-Cutouts.ps1 -SelfTest
+
       # Pinned to a SHA, not the moving v2 tag: v2 has already moved once during
       # this port (it now carries Forever support, commit 7391c8de).
       - name: Package (dry run)
