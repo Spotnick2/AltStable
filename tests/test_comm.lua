@@ -2696,6 +2696,7 @@ do
     AltStableDB = mine
     -- Side A: /alts sync B. Capture the push.
     slash("sync Bravo Surname")
+    flushAll()                                   -- the push follows the request
     local pushAtoB = WoW.sentMessages()
     -- Side B is simulated by running B's receive on a fresh state: B has never
     -- heard of A, so A's push is refused and A's request (the follow-up) is a
@@ -2721,7 +2722,8 @@ do
     flushAll()
     check(#WoW.sentMessages() > 1, "  Allow serves A")
     eq(requestsTo("Alpha Surname"), 1, "  and asks A back, so data flows both ways")
-    deliver(pushAtoB, "Alpha Surname")
+    -- A answers B's ask-back with a NEW stream (the refused one stays refused).
+    deliver(streamOf("Player-A-", 2), "Alpha Surname")
     check(holds("Player-A-"), "  and A's data is taken from then on")
 end
 
@@ -2973,6 +2975,172 @@ do
     receiveUnapproved("CHAR|" .. T.SerializeChar({ guid = "Player-LegacyNever-1", name = "Old",
         class = "MAGE", level = 60, lastUpdate = 1000 }), "Legacy Never")
     check(AltStableDB["Player-LegacyNever-1"] == nil, "a legacy CHAR from a never is refused, asked or not")
+end
+
+------------------------------------------------------------
+-- Unreachable whisper targets
+------------------------------------------------------------
+-- Measured on 70124: /alts sync to a character online on the OTHER faction
+-- filled the chat with "No player named 'X' is currently playing." - one per
+-- chunk. Addon whispers do not cross factions and the server says only "no
+-- player named", so: ask first, push only if the ask got through, hide the
+-- server's echo of our own traffic, and say it once, naming the faction when
+-- we know it.
+do
+    local function notFound(name)
+        local text = ERR_CHAT_PLAYER_NOT_FOUND_S:format(name)
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", text)
+        return text
+    end
+    local function chunksTo(target)
+        local n = 0
+        for _, m in ipairs(WoW.sent) do
+            if m.target == target and m.text:sub(1, #T.MSG_CHUNK_V) == T.MSG_CHUNK_V then n = n + 1 end
+        end
+        return n
+    end
+
+    -- Unreachable: the request goes, the push does not, one line is said.
+    freshAuth()
+    AltStableDB = { ["Player-Mine-3"] = { guid = "Player-Mine-3", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Gone Surname")
+    eq(requestsTo("Gone Surname"), 1, "/alts sync asks first")
+    eq(chunksTo("Gone Surname"), 0, "  and pushes nothing yet")
+    local line = notFound("Gone Surname")
+    notFound("Gone Surname")
+    notFound("Gone Surname")
+    flushAll()
+    eq(chunksTo("Gone Surname"), 0, "an unreachable target is not pushed the database")
+    check(WoW.chatFiltered("CHAT_MSG_SYSTEM", line), "  the server's 'no player named' is hidden")
+    local said = 0
+    for _, l in ipairs(WoW.chatOut) do if l:find("cannot be reached", 1, true) then said = said + 1 end end
+    eq(said, 1, "  and we say so once, not once per line")
+    check(chatHas("other faction"), "  naming the faction as a possible reason")
+
+    -- A second /alts sync to the same target is told again, not left silent
+    -- after "Requesting...".
+    WoW.chatOut = {}
+    slash("sync Gone Surname")
+    notFound("Gone Surname")
+    flushAll()
+    check(chatHas("cannot be reached"), "a repeated /alts sync is told again")
+    eq(chunksTo("Gone Surname"), 0, "  and still pushes nothing")
+
+    -- Known to be on the other faction: say exactly that. The PLAYER is the
+    -- Alliance side here, so the line is read from UnitFactionGroup - the
+    -- stub's default is Horde and would pass a hard-coded answer.
+    freshAuth()
+    WoW.faction = "Alliance"
+    AltStableDB = {
+        ["Player-Mine-4"] = { guid = "Player-Mine-4", name = "Mine", class = "MAGE",
+                              level = 60, lastUpdate = 1000, scannedHere = true },
+        ["Player-Horde-1"] = { guid = "Player-Horde-1", name = "Memphisto Mortalis", class = "MAGE",
+                               level = 60, lastUpdate = 1000, faction = "Horde" },
+    }
+    slash("sync Memphisto Mortalis")
+    local mm = notFound("Memphisto Mortalis")
+    flushAll()
+    check(chatHas("Memphisto Mortalis is Horde and you are Alliance"),
+          "a target we know is on the other faction is named as such")
+    eq(chunksTo("Memphisto Mortalis"), 0, "  and is not pushed the database")
+    check(WoW.chatFiltered("CHAT_MSG_SYSTEM", mm), "  and the server's line is hidden")
+
+    -- Same faction, known: offline is the only explanation left.
+    AltStableDB["Player-Horde-1"].faction = "Alliance"
+    WoW.chatOut = {}
+    slash("sync Memphisto Mortalis")
+    notFound("Memphisto Mortalis")
+    flushAll()
+    check(chatHas("they are offline"), "a same-faction target is said to be offline")
+    check(not chatHas("other faction"), "  without suggesting the other faction")
+    WoW.faction = "Horde"
+
+    -- The wait starts when the request LEAVES. ChatThrottleLib holding the
+    -- request (bandwidth, start-up throttle) must not let the push be queued
+    -- before the server has had anything to refuse.
+    local function donesTo(target)
+        local n = 0
+        for _, m in ipairs(WoW.sent) do
+            if m.target == target and m.text:sub(1, #T.MSG_DONE_V) == T.MSG_DONE_V then n = n + 1 end
+        end
+        return n
+    end
+    freshAuth()
+    AltStableDB = { ["Player-Mine-6"] = { guid = "Player-Mine-6", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    WoW.ctlDefer = true
+    slash("sync Held Surname")
+    flushAll()                               -- three seconds and more pass
+    eq(#WoW.ctlQueue, 1, "a request CTL is still holding: only the request is queued")
+    WoW.ctlDrain()                           -- it leaves now
+    notFound("Held Surname")                 -- and is refused
+    flushAll()
+    WoW.ctlDrain()
+    eq(chunksTo("Held Surname"), 0, "  so a refused request never had the database queued behind it")
+    WoW.ctlDefer = false
+
+    freshAuth()
+    AltStableDB = { ["Player-Mine-7"] = { guid = "Player-Mine-7", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    WoW.ctlDefer = true
+    slash("sync Late Surname")
+    flushAll()
+    WoW.ctlDrain()                           -- the request leaves late, and nobody refuses it
+    WoW.ctlDefer = false
+    flushAll()
+    eq(donesTo("Late Surname"), 1, "  and a late request that goes through is still followed by the push")
+
+    -- Each /alts sync is its own attempt. A retry does not erase the first
+    -- attempt's failure, and the two do not both push.
+    freshAuth()
+    AltStableDB = { ["Player-Mine-8"] = { guid = "Player-Mine-8", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Twice Surname")
+    notFound("Twice Surname")                -- the first attempt is refused
+    slash("sync Twice Surname")              -- retried before its timer fires
+    flushAll()
+    eq(donesTo("Twice Surname"), 1, "a retry pushes once, and the refused first attempt not at all")
+
+    freshAuth()
+    AltStableDB = { ["Player-Mine-9"] = { guid = "Player-Mine-9", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Double Surname")
+    slash("sync Double Surname")
+    flushAll()
+    eq(donesTo("Double Surname"), 1, "two quick /alts sync to a reachable peer push one database")
+
+    -- A name that is not one: said, not "set to never".
+    freshAuth()
+    slash("sync -Realm")
+    check(chatHas("Not a name I can use"), "/alts sync with no name part says so")
+
+    -- Reachable: no answer from the server, so the push follows.
+    freshAuth()
+    AltStableDB = { ["Player-Mine-5"] = { guid = "Player-Mine-5", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Here Surname")
+    flushAll()
+    check(chunksTo("Here Surname") > 0, "a reachable target is pushed the database after the request")
+
+    -- Not ours: someone we never whispered, or long after we did.
+    freshAuth()
+    local other = ERR_CHAT_PLAYER_NOT_FOUND_S:format("Random Person")
+    check(not WoW.chatFiltered("CHAT_MSG_SYSTEM", other),
+          "'no player named' for someone we never messaged is left alone")
+    T.RequestCharacters("WHISPER", "Old Surname", true)
+    WoW.now = WoW.now + 11
+    check(not WoW.chatFiltered("CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("Old Surname")),
+          "  and so is one long after our last message to them")
+
+    -- Automatic traffic (a login request to an offline peer): hidden, and no
+    -- line of ours either - nobody asked.
+    freshAuth({ whitelist = { "Asleep Surname" } })
+    T.RequestCharacters("WHISPER", "Asleep Surname", true)
+    WoW.chatOut = {}
+    local auto = notFound("Asleep Surname")
+    check(WoW.chatFiltered("CHAT_MSG_SYSTEM", auto), "a login request's 'no player named' is hidden")
+    check(not chatHas("cannot be reached"), "  and not replaced by a line of ours")
 end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))

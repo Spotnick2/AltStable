@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`/alts sync` to someone unreachable no longer floods the chat.** A
+  character offline, or online on the other faction (addon messages do not
+  cross factions), used to produce one "No player named..." line per piece of
+  the database. Now AltStable asks first, sends nothing more if they cannot be
+  reached, and says so once - "X is Alliance and you are Horde" when it knows.
+  The server's echo of AltStable's own messages is hidden, including the one a
+  login request to an offline peer used to leave.
 - **Sync asks before it shares, and before it takes.** Someone you have not
   allowed who asks for your characters gets a prompt on your side - Allow, Not
   now, Never; Escape is Not now - and Options has a *Requests and answers* list

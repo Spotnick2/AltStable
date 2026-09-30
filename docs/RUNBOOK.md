@@ -130,6 +130,16 @@ that started in time finishes however long it takes.
 own request back, are accepted for ten minutes without a prompt; nothing is
 stored. It refuses a peer set to never, and says so.
 
+**It asks first, and pushes only if the ask got through.** A whisper to someone
+offline - or on the **other faction**, since addon messages do not cross
+factions - comes back from the server as `No player named 'X' is currently
+playing.`, and pushing the database meant one of those per chunk. Now the one
+request goes first; if the server answers that, nothing is pushed and one line
+says so, naming the faction when the database knows theirs ("X is Alliance and
+you are Horde"). The server's own copies of that line are hidden for a few
+seconds after our addon traffic to that character - including after an
+automatic request to an offline peer at login.
+
 **An answer is always a whisper to the character that asked.** A request
 arriving on the guild channel used to be answered on the guild channel, so
 approving one peer broadcast the database to every member. Nothing is sent to a
