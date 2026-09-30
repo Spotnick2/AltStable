@@ -90,7 +90,10 @@ local function receive(message, sender)
     -- Lower-cased, like Core keys it. WoW whisper targets are case-insensitive
     -- and the rest of the addon folds case everywhere; the first version of the
     -- gate did not, which made /alts deny silently no-op on a capitalisation.
-    AltStableConfig.syncAuth[(who:match("^([^%-]+)") or who):lower()] = "auto"
+    -- Under the key Core itself uses (AltStable.PeerKey): lower-cased, our own
+    -- realm dropped, any other realm kept. A realm-stripped key approved
+    -- someone else's name and never the sender's (#61 follow-up).
+    AltStableConfig.syncAuth[AltStable.PeerKey(who)] = "auto"
     onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, message, "WHISPER", who)
 end
 
@@ -1822,11 +1825,9 @@ do
     eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_AUTO,
        "a peer we whitelisted is one we already chose to sync with")
 
-    -- THE REALM IS PART OF WHO THEY ARE. Stripping it meant a whitelist entry
-    -- for a character on another realm silently authorized the LOCAL character
-    -- of the same name, who could then ask and be served without a prompt.
-    eq(AltStable.SyncAuthFor("Mine"), AltStable.AUTH_ASK,
-       "  and the local character of the same name is somebody else")
+    -- One name is one character across the region, whatever the suffix.
+    eq(AltStable.SyncAuthFor("Mine"), AltStable.AUTH_AUTO,
+       "  and without the realm suffix it is the same character")
 
     AltStable.DenySyncPeer("Mine-Realm")
     eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_NEVER,
@@ -2167,10 +2168,10 @@ do
     eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_AUTO,
        "a whitelist entry matches the character whatever the case")
     eq(AltStable.SyncAuthFor("KARUZO"), AltStable.AUTH_AUTO, "  including shouting")
-    -- An unqualified entry means the local character, so a qualified name is a
-    -- different person - not the same one written out more fully.
-    eq(AltStable.SyncAuthFor("Karuzo-OtherRealm"), AltStable.AUTH_ASK,
-       "  but somebody on another realm is not that character")
+    -- Names are unique across the region on Forever: a realm suffix is where
+    -- they are, not who.
+    eq(AltStable.SyncAuthFor("Karuzo-OtherRealm"), AltStable.AUTH_AUTO,
+       "  and with a realm suffix it is still that character")
 
     eq(AltStable.SyncAuthFor(""), AltStable.AUTH_NEVER, "a nameless sender is refused outright")
     eq(AltStable.SyncAuthFor(nil), AltStable.AUTH_NEVER, "so is no sender at all")
@@ -2263,11 +2264,9 @@ end
 ------------------------------------------------------------
 
 do
-    -- THROUGH THE HANDLER, with a realm in play. Whitelisting a character on
-    -- another realm used to authorize the LOCAL character of the same name,
-    -- who could then whisper a request and be served without a prompt. The
-    -- handler strips the realm for routing and buffer keys; the consent
-    -- decision has to see the full identity.
+    -- THROUGH THE HANDLER, with a realm in play. The consent decision is by
+    -- name (unique across the region), and the reply goes to the sender
+    -- exactly as it arrived - the realm is routing, not identity.
     WoW.reset()
     AltStableConfig = { whitelist = { "Trusted Name-OtherRealm" }, peerWatermarks = {},
                         syncAuth = {} }
@@ -2278,20 +2277,19 @@ do
     }
 
     onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
-            "Trusted Name")
+            "Trusted Name-OtherRealm")
     flushAll()
-    eq(#WoW.sentMessages(), 0,
-       "the local character sharing a whitelisted name is not served")
+    check(#WoW.sentMessages() > 0, "the whitelisted character is served")
+    for _, m in ipairs(WoW.sent) do
+        eq(m.target, "Trusted Name-OtherRealm",
+           "  and the reply is addressed to the sender as it arrived, realm and all")
+    end
 
     WoW.sent = {}
     onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
-            "Trusted Name-OtherRealm")
+            "Stranger Name-OtherRealm")
     flushAll()
-    check(#WoW.sentMessages() > 0, "  while the one actually whitelisted is")
-    for _, m in ipairs(WoW.sent) do
-        eq(m.target, "Trusted Name-OtherRealm",
-           "  and the reply is addressed across the realm, not to the local namesake")
-    end
+    eq(#WoW.sentMessages(), 0, "  while a different name on that realm is not")
 end
 
 do
@@ -2433,8 +2431,8 @@ do
     AltStable.AllowSyncPeer(suggested)
     eq(AltStable.SyncAuthFor("Faraway Name-OtherRealm"), AltStable.AUTH_AUTO,
        "following the prompt authorizes the requester")
-    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_ASK,
-       "  and not the local namesake")
+    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_AUTO,
+       "  under their name, whatever realm suffix they next arrive with")
 end
 
 ------------------------------------------------------------
@@ -2492,6 +2490,489 @@ do
     local reply = decodeReply(WoW.sentMessages())
     check(reply["Player-Other-1"] ~= nil,
           "so re-approving still recovers the newly eligible record")
+end
+
+------------------------------------------------------------
+-- #61, finished: what we TAKE, and what we send unasked
+------------------------------------------------------------
+-- The request gate above decides who gets OUR data. Until now nothing decided
+-- whose data we took: any character could whisper a stream and it was merged -
+-- new characters added, newer copies of ours overwritten, and chunks buffered
+-- for anyone. The rules now:
+--   * never wins, over everything;
+--   * a stream is taken from an approved peer, or from one WE asked in the last
+--     ten minutes - and once taken, it runs to the end;
+--   * /alts sync <name> is our consent for that one exchange, both ways;
+--   * nothing we send - push, request, retry - goes to a never.
+
+-- A real stream, made by our own sender, so the receiver judges it exactly as
+-- it would a peer's.
+local function streamOf(guidPrefix, n)
+    local saved = AltStableDB
+    seedBig(guidPrefix, n)
+    WoW.sent = {}
+    T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "x")
+    flushAll()
+    local wire = WoW.sentMessages()
+    AltStableDB = saved
+    WoW.sent = {}
+    return wire
+end
+local function deliver(wire, sender)
+    for _, m in ipairs(wire) do receiveUnapproved(m, sender) end
+    flushAll()
+end
+local function holds(prefix)
+    for g in pairs(AltStableDB) do
+        if g:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+local function requestsTo(target)
+    local n = 0
+    for _, m in ipairs(WoW.sent) do
+        if m.target == target and isReq(m.text) then n = n + 1 end
+    end
+    return n
+end
+local function slash(line)
+    WoW.chatOut = {}
+    SlashCmdList["ALTSTABLE"](line)
+end
+local function freshAuth(cfg)
+    WoW.reset()
+    AltStableConfig = cfg or { peerWatermarks = {} }
+    AltStableConfig.peerWatermarks = AltStableConfig.peerWatermarks or {}
+    AltStableDB = {}
+end
+
+do
+    -- A stranger's stream: nothing merged, nothing kept, one line said.
+    freshAuth()
+    local wire = streamOf("Player-Push-", 3)
+    check(#wire >= 3, "the pushed stream spans several packets")
+    WoW.chatOut = {}
+    deliver(wire, "Pusher Surname")
+    check(not holds("Player-Push-"), "a stream nobody asked for is not merged")
+    eq(T.BufferedStreams(), 0, "  nor kept in a buffer")
+    check(chatHas("did not ask for"), "  and the player is told once")
+    local lines = #WoW.chatOut
+    deliver(streamOf("Player-Push-", 3), "Pusher Surname")
+    eq(#WoW.chatOut, lines, "  once per session, not once per push")
+
+    -- An approved peer's stream is taken as before.
+    freshAuth({ whitelist = { "Friend Surname" } })
+    deliver(streamOf("Player-Fr-", 3), "Friend Surname")
+    check(holds("Player-Fr-"), "a whitelisted peer's stream is merged")
+end
+
+do
+    -- Our own request opens the door for their answer - for ten minutes.
+    freshAuth()
+    T.RequestCharacters("WHISPER", "Asked Surname", true)
+    deliver(streamOf("Player-Ask-", 3), "Asked Surname")
+    check(holds("Player-Ask-"), "the answer to a request we sent is merged")
+
+    freshAuth()
+    T.RequestCharacters("WHISPER", "Late Surname", true)
+    WoW.now = WoW.now + 601
+    deliver(streamOf("Player-Late-", 3), "Late Surname")
+    check(not holds("Player-Late-"), "  but not when it first arrives after ten minutes")
+
+    -- The window bounds the START. A stream admitted in time finishes, however
+    -- slow the rest of it is.
+    freshAuth()
+    T.RequestCharacters("WHISPER", "Slow Surname", true)
+    local wire = streamOf("Player-Slow-", 3)
+    receiveUnapproved(wire[1], "Slow Surname")
+    WoW.now = WoW.now + 601
+    for i = 2, #wire do receiveUnapproved(wire[i], "Slow Surname") end
+    flushAll()
+    check(holds("Player-Slow-"), "a stream admitted in time finishes after the window closes")
+
+    -- Whichever packet arrives first is judged as the first.
+    freshAuth()
+    local chunks, done = splitWire(streamOf("Player-Rev-", 3))
+    for i = #chunks, 1, -1 do receiveUnapproved(chunks[i], "Stranger Two") end
+    receiveUnapproved(done, "Stranger Two"); flushAll()
+    check(not holds("Player-Rev-"), "a stranger's stream is refused in any packet order")
+    eq(T.BufferedStreams(), 0, "  and nothing of it is kept")
+end
+
+do
+    -- Never wins: over the whitelist, over our own request, mid-stream.
+    freshAuth({ whitelist = { "Turncoat Surname" } })
+    AltStable.DenySyncPeer("Turncoat Surname")
+    T.RequestCharacters("WHISPER", "Turncoat Surname", true)
+    eq(requestsTo("Turncoat Surname"), 0, "we send no request to a peer set to never")
+    deliver(streamOf("Player-Turn-", 3), "Turncoat Surname")
+    check(not holds("Player-Turn-"), "  and take nothing from them, whitelist or not")
+
+    -- Denied after the chunks, before the DONE.
+    freshAuth({ whitelist = { "Mid Surname" } })
+    local chunks, done = splitWire(streamOf("Player-Mid-", 3))
+    for _, m in ipairs(chunks) do receiveUnapproved(m, "Mid Surname") end
+    AltStable.DenySyncPeer("Mid Surname")
+    eq(T.BufferedStreams(), 0, "denying drops what they had in flight")
+    receiveUnapproved(done, "Mid Surname"); flushAll()
+    check(not holds("Player-Mid-"), "  and their DONE merges nothing")
+
+    -- Denied during the DONE's grace window: the deferred completion must look
+    -- again, not merge and not ask for a resync.
+    freshAuth({ whitelist = { "Grace Surname" } })
+    chunks, done = splitWire(streamOf("Player-Grace-", 3))
+    for i = 1, #chunks - 1 do receiveUnapproved(chunks[i], "Grace Surname") end
+    receiveUnapproved(done, "Grace Surname")          -- a chunk still missing: grace timer
+    receiveUnapproved(chunks[#chunks], "Grace Surname")
+    AltStable.DenySyncPeer("Grace Surname")
+    WoW.sent = {}
+    flushAll()
+    check(not holds("Player-Grace-"), "a deny during the grace window merges nothing")
+    eq(requestsTo("Grace Surname"), 0, "  and asks them for nothing")
+
+    -- Chunks after the deny are not buffered.
+    receiveUnapproved(chunks[1], "Grace Surname")
+    eq(T.BufferedStreams(), 0, "packets from a never are not kept")
+end
+
+do
+    -- The legacy one-packet CHAR follows the same rule.
+    freshAuth()
+    local c = T.SerializeChar({ guid = "Player-Legacy-1", name = "Old", class = "MAGE",
+                                level = 60, lastUpdate = 1000 })
+    receiveUnapproved("CHAR|" .. c, "Legacy Surname")
+    check(AltStableDB["Player-Legacy-1"] == nil, "an unasked legacy CHAR is refused")
+    AltStable.AllowSyncPeer("Legacy Surname")
+    receiveUnapproved("CHAR|" .. c, "Legacy Surname")
+    check(AltStableDB["Player-Legacy-1"] ~= nil, "  and taken once they are allowed")
+end
+
+do
+    -- /alts sync <name>: typing the name is consent for this exchange, both
+    -- ways - and never overrides it.
+    freshAuth()
+    AltStableDB = { ["Player-Mine-1"] = { guid = "Player-Mine-1", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Partner Surname")
+    check(#WoW.sentMessages() > 0, "/alts sync pushes to a peer we have not answered")
+    -- Their request back is served without a prompt: we named them.
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Partner Surname"); flushAll()
+    check(#WoW.sentMessages() > 0, "  and their request back is served")
+    eq(#AltStable.PendingSyncRequests(), 0, "  without being filed as a question")
+    deliver(streamOf("Player-Partner-", 3), "Partner Surname")
+    check(holds("Player-Partner-"), "  and their answer is merged")
+    eq(AltStable.SyncAuthFor("Partner Surname"), AltStable.AUTH_ASK,
+       "  and nothing was stored: it was consent for this exchange only")
+
+    -- Consent is not permanent.
+    WoW.now = WoW.now + 601
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Partner Surname"); flushAll()
+    eq(#WoW.sentMessages(), 0, "ten minutes on, their request is a question again")
+
+    freshAuth()
+    AltStable.DenySyncPeer("Blocked Surname")
+    slash("sync Blocked Surname")
+    eq(#WoW.sentMessages(), 0, "/alts sync sends nothing to a never")
+    check(chatHas("set to never"), "  and says why")
+
+    -- Denied in the three seconds before the follow-up request fires.
+    freshAuth()
+    slash("sync Changed Surname")
+    AltStable.DenySyncPeer("Changed Surname")
+    WoW.sent = {}
+    flushAll()
+    eq(requestsTo("Changed Surname"), 0, "a deny before the follow-up request cancels it")
+end
+
+do
+    -- The clean pair, end to end: neither side approved the other. A types the
+    -- name; B is asked and allows; both end up with the other's characters, and
+    -- A was never asked anything.
+    freshAuth()
+    local mine = { ["Player-A-1"] = { guid = "Player-A-1", name = "Alpha", class = "MAGE",
+                                      level = 60, lastUpdate = 1000, scannedHere = true } }
+    AltStableDB = mine
+    -- Side A: /alts sync B. Capture the push.
+    slash("sync Bravo Surname")
+    local pushAtoB = WoW.sentMessages()
+    -- Side B is simulated by running B's receive on a fresh state: B has never
+    -- heard of A, so A's push is refused and A's request (the follow-up) is a
+    -- question. That is B's half; on A's side what matters is what B then does.
+    -- B presses Allow, which serves A and asks A back. A receives both:
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Bravo Surname")   -- B's request back
+    flushAll()
+    check(#WoW.sentMessages() > 0, "clean pair: A serves B's request - A named B")
+    deliver(streamOf("Player-B-", 3), "Bravo Surname")             -- B's answer
+    check(holds("Player-B-"), "  and A takes B's characters")
+    eq(#AltStable.PendingSyncRequests(), 0, "  and A was never asked anything")
+    check(#pushAtoB > 0, "  (A's own push went out)")
+
+    -- B's half, on a state that knows nothing of A.
+    freshAuth()
+    deliver(pushAtoB, "Alpha Surname")
+    check(not holds("Player-A-"), "clean pair: B refuses A's unasked push")
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Alpha Surname")
+    eq(#AltStable.PendingSyncRequests(), 1, "  and files A's request as a question")
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Alpha Surname")
+    flushAll()
+    check(#WoW.sentMessages() > 1, "  Allow serves A")
+    eq(requestsTo("Alpha Surname"), 1, "  and asks A back, so data flows both ways")
+    deliver(pushAtoB, "Alpha Surname")
+    check(holds("Player-A-"), "  and A's data is taken from then on")
+end
+
+do
+    -- An expired request: Allow stores the answer and sends nothing.
+    freshAuth()
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Sleepy Surname")
+    WoW.now = WoW.now + 301
+    WoW.sent = {}
+    AltStable.AllowSyncPeer("Sleepy Surname")
+    flushAll()
+    eq(#WoW.sentMessages(), 0, "allowing an expired request sends nothing")
+    eq(AltStable.SyncAuthFor("Sleepy Surname"), AltStable.AUTH_AUTO, "  but keeps the answer")
+end
+
+do
+    -- A never-set whitelisted peer coming online is not asked.
+    freshAuth({ whitelist = { "Bob" } })
+    AltStable.DenySyncPeer("Bob")
+    WoW.sent = {}
+    onEvent(T.frame, "CHAT_MSG_SYSTEM", "Bob has come online. |Hplayer:Bob|h[Bob]|h")
+    flushAll()
+    eq(requestsTo("Bob"), 0, "a peer set to never coming online is not sent a request")
+
+    -- Nor retried.
+    WoW.sent = {}
+    T.RequestResync("Bob", "test.")
+    flushAll()
+    eq(requestsTo("Bob"), 0, "  nor a resync")
+end
+
+------------------------------------------------------------
+-- One peer, one key: the name
+------------------------------------------------------------
+-- Character names are unique across the region on Forever (the realms are four
+-- rulesets over one region), so every realm form of a name is one peer. Keys
+-- that kept the realm made one person several answers - and folding "our"
+-- realm in made the account-wide config depend on the realm being played.
+do
+    freshAuth()
+    AltStable.DenySyncPeer("Twin Surname-ClassicBetaPvE")
+    eq(AltStable.SyncAuthFor("Twin Surname"), AltStable.AUTH_NEVER,
+       "a name with a realm and the bare name are one peer")
+    eq(AltStable.SyncAuthFor("Twin Surname-Classic Beta PvE"), AltStable.AUTH_NEVER,
+       "  in any realm form")
+    eq(AltStable.SyncAuthFor("Twin Surname-OtherRealm"), AltStable.AUTH_NEVER,
+       "  on any realm: the name is the character")
+
+    -- The answer does not depend on the realm being played: it lives in the
+    -- account-wide config and means the same character everywhere.
+    AltStable.AllowSyncPeer("Friend Surname")
+    local realm, norm = WoW.player.realm, WoW.player.normalizedRealm
+    WoW.player.realm, WoW.player.normalizedRealm = "Hardcore", "Hardcore"
+    eq(AltStable.SyncAuthFor("Friend Surname"), AltStable.AUTH_AUTO,
+       "  and an answer given on one ruleset holds on another")
+    WoW.player.realm, WoW.player.normalizedRealm = realm, norm
+
+    -- Stored before the keys were names: fold, and never wins a clash.
+    freshAuth()
+    AltStableConfig.syncAuth = {
+        ["dup surname"] = "auto",
+        ["dup surname-classicbetapve"] = "never",
+        ["solo surname-otherrealm"] = "auto",
+    }
+    AltStable.MigrateSyncAuthKeys()
+    eq(AltStableConfig.syncAuth["dup surname"], "never", "migration: never wins a clash")
+    eq(AltStableConfig.syncAuth["dup surname-classicbetapve"], nil, "  and the realm form is gone")
+    eq(AltStableConfig.syncAuth["solo surname"], "auto", "  a lone realm-form key is folded")
+end
+
+do
+    -- Our own echo: our name, with any realm suffix, is us.
+    freshAuth()
+    deliver(streamOf("Player-Echo-", 2), WoW.player.name .. "-OtherRealm")
+    check(not holds("Player-Echo-"), "our name with any realm suffix is our own echo")
+    check(not chatHas("did not ask for"), "  and is dropped silently, as ours")
+end
+
+do
+    -- An Allow clicked while an unasked push is still arriving must not start
+    -- a buffer from the middle of it: that stream stays refused to its end.
+    freshAuth()
+    local chunks, done = splitWire(streamOf("Player-Half-", 3))
+    local half = math.floor(#chunks / 2)
+    for i = 1, half do receiveUnapproved(chunks[i], "Half Surname") end
+    AltStable.AllowSyncPeer("Half Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = half + 1, #chunks do receiveUnapproved(chunks[i], "Half Surname") end
+    receiveUnapproved(done, "Half Surname")
+    flushAll()
+    check(not holds("Player-Half-"), "the rest of a refused stream is refused, Allow or not")
+    eq(T.BufferedStreams(), 0, "  and none of it is buffered")
+    check(not chatHas("incomplete"), "  so no 'chunks missing' for a stream we never took")
+    eq(requestsTo("Half Surname"), 0, "  and no resync asked for")
+    -- Their next stream is a new one, and allowed.
+    deliver(streamOf("Player-Half-", 3), "Half Surname")
+    check(holds("Player-Half-"), "  their next stream is taken")
+
+    -- Refused, then denied, then allowed while it is still arriving: denying
+    -- must not forget that the stream was refused.
+    freshAuth()
+    chunks, done = splitWire(streamOf("Player-Flip-", 3))
+    receiveUnapproved(chunks[1], "Flip Surname")
+    AltStable.DenySyncPeer("Flip Surname")
+    AltStable.AllowSyncPeer("Flip Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "Flip Surname") end
+    receiveUnapproved(done, "Flip Surname")
+    flushAll()
+    eq(T.BufferedStreams(), 0, "refused, denied, re-allowed: the rest of that stream is still refused")
+    check(not chatHas("incomplete"), "  with no 'chunks missing'")
+    eq(requestsTo("Flip Surname"), 0, "  and no resync")
+
+    -- Never BEFORE the stream starts, then allowed while it is still arriving:
+    -- no buffer ever existed for the deny to mark, so the refusal of that
+    -- first packet has to be recorded by itself.
+    freshAuth()
+    chunks, done = splitWire(streamOf("Player-Pre-", 3))
+    AltStable.DenySyncPeer("Pre Surname")
+    receiveUnapproved(chunks[1], "Pre Surname")
+    AltStable.AllowSyncPeer("Pre Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "Pre Surname") end
+    receiveUnapproved(done, "Pre Surname")
+    flushAll()
+    eq(T.BufferedStreams(), 0, "never, first packet, re-allowed: the rest of that stream is still refused")
+    check(not chatHas("incomplete"), "  with no 'chunks missing'")
+    eq(requestsTo("Pre Surname"), 0, "  and no resync")
+
+    -- Admitted, then denied, then allowed while it is still arriving: the
+    -- stream the deny dropped stays dropped.
+    freshAuth({ whitelist = { "Swing Surname" } })
+    chunks, done = splitWire(streamOf("Player-Swing-", 3))
+    receiveUnapproved(chunks[1], "Swing Surname")
+    AltStable.DenySyncPeer("Swing Surname")
+    AltStable.AllowSyncPeer("Swing Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "Swing Surname") end
+    receiveUnapproved(done, "Swing Surname")
+    flushAll()
+    eq(T.BufferedStreams(), 0, "admitted, denied, re-allowed: the dropped stream stays dropped")
+    check(not chatHas("incomplete"), "  with no 'chunks missing'")
+    eq(requestsTo("Swing Surname"), 0, "  and no resync")
+
+    -- Refusing by the stored, lower-cased key drops what arrived under the
+    -- sender's own capitalisation.
+    freshAuth({ whitelist = { "Mid Surname" } })
+    chunks = splitWire(streamOf("Player-Case-", 3))
+    receiveUnapproved(chunks[1], "Mid Surname")
+    check(T.BufferedStreams() == 1, "a whitelisted peer's stream is buffered")
+    AltStable.DenySyncPeer("mid surname")
+    eq(T.BufferedStreams(), 0, "  and denying them in lower case drops it")
+end
+
+do
+    -- Never is a STORED answer, and it wins however it was stored - not only
+    -- when /alts deny ran (which also clears consent and buffers on its own).
+    -- storeNever writes it the way any other route would: straight to config.
+    local function storeNever(name)
+        local copy = {}
+        for k, v in pairs(AltStableConfig.syncAuth or {}) do copy[k] = v end
+        copy[AltStable.PeerKey(name)] = AltStable.AUTH_NEVER
+        AltStable.SetConfigValue("syncAuth", copy)
+    end
+
+    -- Over a live receive window, and over a typed /alts sync.
+    freshAuth()
+    slash("sync Window Surname")
+    storeNever("Window Surname")
+    deliver(streamOf("Player-Win-", 3), "Window Surname")
+    check(not holds("Player-Win-"), "never beats a live receive window")
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Window Surname"); flushAll()
+    eq(#WoW.sentMessages(), 0, "  and a typed /alts sync's consent to serve them")
+
+    -- Mid-stream: the next packet drops what was in flight.
+    freshAuth({ whitelist = { "Stored Surname" } })
+    local chunks, done = splitWire(streamOf("Player-Stored-", 3))
+    receiveUnapproved(chunks[1], "Stored Surname")
+    storeNever("Stored Surname")
+    receiveUnapproved(chunks[2], "Stored Surname")
+    eq(T.BufferedStreams(), 0, "a never stored mid-stream drops the stream at the next packet")
+
+    -- During the DONE's grace window: the deferred completion looks again.
+    freshAuth({ whitelist = { "Late Never" } })
+    chunks, done = splitWire(streamOf("Player-LateNever-", 3))
+    for i = 1, #chunks - 1 do receiveUnapproved(chunks[i], "Late Never") end
+    receiveUnapproved(done, "Late Never")
+    receiveUnapproved(chunks[#chunks], "Late Never")
+    storeNever("Late Never")
+    WoW.sent = {}
+    flushAll()
+    check(not holds("Player-LateNever-"), "a never stored in the grace window merges nothing")
+    eq(requestsTo("Late Never"), 0, "  and asks for no resync")
+
+    -- A resync already scheduled is not sent once they are never.
+    freshAuth({ whitelist = { "Retry Surname" } })
+    WoW.sent = {}
+    T.RequestResync("Retry Surname", "test.")
+    storeNever("Retry Surname")
+    flushAll()
+    eq(requestsTo("Retry Surname"), 0, "a scheduled resync to a peer now never is not sent")
+
+    -- And one asked for a never is not even announced.
+    WoW.chatOut = {}
+    T.RequestResync("Retry Surname", "test.")
+    check(not chatHas("Auto-requesting"), "  nor is a resync for a never announced")
+
+    -- Deny, then forget: the consent from /alts sync does not come back.
+    freshAuth()
+    slash("sync Undo Surname")
+    AltStable.DenySyncPeer("Undo Surname")
+    AltStable.ForgetSyncPeer("Undo Surname")
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Undo Surname"); flushAll()
+    eq(#WoW.sentMessages(), 0, "deny then forget leaves no leftover consent to serve them")
+    deliver(streamOf("Player-Undo-", 2), "Undo Surname")
+    check(not holds("Player-Undo-"), "  or to take from them")
+end
+
+do
+    -- Never stored between their request and our staggered reply, while the
+    -- consent from a typed /alts sync is still live: the reply is not sent.
+    local function storeNever(name)
+        local copy = {}
+        for k, v in pairs(AltStableConfig.syncAuth or {}) do copy[k] = v end
+        copy[AltStable.PeerKey(name)] = AltStable.AUTH_NEVER
+        AltStable.SetConfigValue("syncAuth", copy)
+    end
+    freshAuth()
+    AltStableDB = { ["Player-Mine-2"] = { guid = "Player-Mine-2", name = "Mine", class = "MAGE",
+                                         level = 60, lastUpdate = 1000, scannedHere = true } }
+    slash("sync Reply Surname")
+    flushAll()
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Reply Surname")   -- reply scheduled
+    storeNever("Reply Surname")
+    flushAll()
+    eq(#WoW.sentMessages(), 0, "a never stored before the staggered reply cancels it, consent or not")
+
+    -- The legacy CHAR, from a peer we asked and have since refused.
+    freshAuth()
+    T.RequestCharacters("WHISPER", "Legacy Never", true)
+    storeNever("Legacy Never")
+    receiveUnapproved("CHAR|" .. T.SerializeChar({ guid = "Player-LegacyNever-1", name = "Old",
+        class = "MAGE", level = 60, lastUpdate = 1000 }), "Legacy Never")
+    check(AltStableDB["Player-LegacyNever-1"] == nil, "a legacy CHAR from a never is refused, asked or not")
 end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))

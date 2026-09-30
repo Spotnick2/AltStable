@@ -2320,5 +2320,238 @@ do
     end
 end
 
+------------------------------------------------------------
+-- "<name> asks to sync with you" (#61)
+------------------------------------------------------------
+do
+    local POP = AltStable._test.SyncAskPopup
+    local core = AltStable._test.CoreFrame
+    local onCoreEvent = core:GetScript("OnEvent")
+    local function ask(who)
+        onCoreEvent(core, "CHAT_MSG_ADDON", AltStable._test.PREFIX,
+                    AltStable._test.MSG_REQUEST_V .. "|0", "WHISPER", who)
+    end
+    local function flush()
+        for _ = 1, 10 do if #WoW.timers == 0 then break end WoW.flushTimers() end
+    end
+    local function asks()
+        local out = {}
+        for _, p in ipairs(WoW.popups) do
+            if p.which == POP and p.dialog:IsShown() then out[#out + 1] = p end
+        end
+        return out
+    end
+    -- The client's order: the button's handler, then the dialog hides. Escape
+    -- is OnCancel (hideOnEscape), exactly like the middle button.
+    local function press(p, handler)
+        local def = StaticPopupDialogs[POP]
+        if def[handler] then def[handler](p.dialog, p.data, "clicked") end
+        StaticPopup_Hide(POP)
+        flush()
+    end
+    local function fresh()
+        WoW.reset(); AltStable._test.ResetSyncState(); AltStable._test.ResetSyncPrompts()
+        AltStableConfig = { peerWatermarks = {} }
+        AltStable.EnsureSheetVisible()
+    end
+
+    fresh()
+    ask("Asker Surname")
+    local shown = asks()
+    eq("a stranger asking raises the prompt", #shown, 1)
+    local p = shown[1]
+    if p then
+        eq("  naming them", p.arg1, "Asker Surname")
+        eq("  with three answers", StaticPopupDialogs[POP].button3, "Never")
+        ask("Asker Surname")
+        eq("  and asking again does not raise a second one", #asks(), 1)
+
+        -- Escape is "Not now": nothing refused, still waiting.
+        press(p, "OnCancel")
+        eq("Escape (or Not now) refuses nobody",
+           AltStable.SyncAuthFor("Asker Surname"), AltStable.AUTH_ASK)
+        eq("  the request is still waiting", #AltStable.PendingSyncRequests(), 1)
+        ask("Asker Surname")
+        eq("  and they are not prompted again this session", #asks(), 0)
+    end
+
+    -- Never, from the third button.
+    fresh()
+    ask("Rude Surname")
+    p = asks()[1]
+    if p then
+        press(p, "OnAlt")
+        eq("Never refuses them for good", AltStable.SyncAuthFor("Rude Surname"), AltStable.AUTH_NEVER)
+    end
+
+    -- Allow serves them.
+    fresh()
+    ask("Kind Surname")
+    p = asks()[1]
+    if p then
+        WoW.sent = {}
+        press(p, "OnAccept")
+        eq("Allow approves them", AltStable.SyncAuthFor("Kind Surname"), AltStable.AUTH_AUTO)
+        -- DATA, not just traffic: the request Allow sends back is traffic too.
+        local chunks = 0
+        for _, m in ipairs(WoW.sent) do
+            if m.target == "Kind Surname"
+                and m.text:sub(1, #AltStable._test.MSG_CHUNK_V) == AltStable._test.MSG_CHUNK_V then
+                chunks = chunks + 1
+            end
+        end
+        check("  and serves what they asked", chunks > 0)
+    end
+
+    -- One at a time, the next after the first is answered.
+    fresh()
+    ask("First Surname")
+    WoW.now = WoW.now + 1
+    ask("Second Surname")
+    eq("two askers: one prompt at a time", #asks(), 1)
+    p = asks()[1]
+    eq("  the first to ask first", p and p.arg1, "First Surname")
+    if p then
+        press(p, "OnCancel")
+        local nxt = asks()[1]
+        eq("  then the next", nxt and nxt.arg1, "Second Surname")
+    end
+
+    -- Answered elsewhere while the prompt is up: the stale question goes.
+    fresh()
+    ask("Slash Surname")
+    check("a prompt is up", #asks() == 1)
+    AltStable.AllowSyncPeer("Slash Surname")
+    flush()
+    eq("  answering by /alts allow takes it down", #asks(), 0)
+
+    -- With the game UI hidden, putting the dialog back under UIParent runs its
+    -- OnHide in the middle of the button's handler (the client's re-entrant
+    -- hide, modelled as in the DropPopup test). The answer's announcement must
+    -- not open the next asker's prompt inside the click, where the click's
+    -- own closing hide dismisses it and that asker is never asked.
+    for _, handler in ipairs({ "OnAccept", "OnAlt" }) do
+        fresh()
+        local realHidden = AltStable.IsGameUIHidden
+        AltStable.IsGameUIHidden = function() return true end
+        UIParent:Hide()
+        ask("Front Surname")
+        WoW.now = WoW.now + 1
+        ask("Queued Surname")
+        p = asks()[1]
+        if p then
+            local d = p.dialog
+            local realSetParent = d.SetParent
+            d.SetParent = function(self, parent)
+                local r = realSetParent(self, parent)
+                if parent == UIParent then StaticPopupDialogs[POP].OnHide(self) end
+                return r
+            end
+            press(p, handler)
+            d.SetParent = realSetParent
+            local nxt = asks()[1]
+            eq(handler .. " with the UI hidden: the next asker is still asked",
+               nxt and nxt.arg1, "Queued Surname")
+        end
+        UIParent:Show()
+        AltStable.IsGameUIHidden = realHidden
+    end
+
+    -- Pressed away while hidden: the client hides a dialog that is not
+    -- visible without running OnHide. The slot must still come free.
+    fresh()
+    ask("Hidden Surname")
+    p = asks()[1]
+    if p then
+        StaticPopupDialogs[POP].OnCancel(p.dialog, p.data, "clicked")
+        p.dialog:Hide()                      -- no OnHide, as on the client
+        flush()
+        ask("After Surname")
+        local nxt = asks()[1]
+        eq("a prompt dismissed without OnHide still frees the slot", nxt and nxt.arg1, "After Surname")
+    end
+
+    -- A waiting request expiring as the next one arrives shows ONE prompt.
+    fresh()
+    ask("Expiring Surname")
+    p = asks()[1]
+    if p then press(p, "OnCancel") end
+    WoW.now = WoW.now + 301
+    ask("Fresh Surname")
+    eq("an expiry while choosing the next asker shows one prompt, not two", #asks(), 1)
+
+    -- Served through /alts sync consent while the prompt is up: the question
+    -- is answered, so it goes.
+    fresh()
+    ask("Consent Surname")
+    check("a prompt is up for them", #asks() == 1)
+    SlashCmdList["ALTSTABLE"]("sync Consent Surname")
+    ask("Consent Surname")                    -- served now: we named them
+    flush()
+    eq("  serving them through /alts sync takes the stale prompt down", #asks(), 0)
+
+    -- Not in combat; after it.
+    fresh()
+    WoW.inCombat = true
+    ask("Combat Surname")
+    eq("no prompt in combat", #asks(), 0)
+    WoW.inCombat = false
+    local regen = AltStable._test.SyncAskRegenFrame
+    regen:GetScript("OnEvent")(regen, "PLAYER_REGEN_ENABLED")
+    eq("  it comes when combat ends", #asks(), 1)
+
+    -- A refused show is not counted as asked.
+    fresh()
+    WoW.popupRefused = true
+    ask("Unlucky Surname")
+    eq("the client refusing the dialog shows nothing", #asks(), 0)
+    eq("  and refuses nobody", AltStable.SyncAuthFor("Unlucky Surname"), AltStable.AUTH_ASK)
+    WoW.popupRefused = nil
+    AltStable.OnSyncAuthChanged()
+    eq("  so the next chance still asks", #asks(), 1)
+
+    ------------------------------------------------------------
+    -- Options: requests and answers
+    ------------------------------------------------------------
+    fresh()
+    -- Open, so the list redraws itself on each change as it would on screen:
+    -- the point is that a request arriving with Options open shows up.
+    local panel = AltStable._test.optionsPanel
+    panel:Show()
+    AltStable.DenySyncPeer("Foe Surname")
+    AltStable.AllowSyncPeer("Pal Surname")
+    ask("Waiter Surname")
+    local rows = AltStable._test.SyncAuthRows
+    check("Options has the requests-and-answers rows", type(rows) == "table")
+    if rows then
+        local function rowFor(name)
+            for _, r in ipairs(rows) do
+                if (r.label:GetText() or ""):find(name, 1, true) then return r end
+            end
+        end
+        local foe, pal, waiter = rowFor("foe surname"), rowFor("pal surname"), rowFor("Waiter Surname")
+        check("  a refused peer is listed", foe and foe.label:GetText():find("never", 1, true))
+        check("  an allowed peer is listed", pal and pal.label:GetText():find("allowed", 1, true))
+        check("  a waiting request is listed, without a restart",
+              waiter and waiter.label:GetText():find("waiting", 1, true))
+        if waiter then
+            eq("  waiting: Allow / Never", waiter.first.label:GetText() .. "/"
+               .. waiter.second.label:GetText(), "Allow/Never")
+            waiter.second:GetScript("OnClick")()
+            eq("  Never from the list refuses them",
+               AltStable.SyncAuthFor("Waiter Surname"), AltStable.AUTH_NEVER)
+        end
+        if pal then
+            eq("  allowed: Never / Forget", pal.first.label:GetText() .. "/"
+               .. pal.second.label:GetText(), "Never/Forget")
+            pal.second:GetScript("OnClick")()
+            eq("  Forget from the list clears the answer",
+               AltStable.SyncAuthFor("Pal Surname"), AltStable.AUTH_ASK)
+            check("  and the list redraws without it", rowFor("pal surname") == nil)
+        end
+    end
+    panel:Hide()
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

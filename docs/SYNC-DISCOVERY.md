@@ -106,52 +106,35 @@ Two framings that sound right and are not:
 
 ## What the code does today
 
-| Fact | Where |
+Authorization is done (#61: the request gate in PR #77, the rest after it). The rules, all in
+`Core.lua`:
+
+| Rule | Where |
 |---|---|
-| A request is answered **to whoever asked**, with no authorization check of any kind | `Core.lua:1362-1377` |
-| The whitelist gates **outbound initiation only**: whom *we* choose to whisper first | `Core.lua:289`, `GetSyncTargets` |
-| Inbound data is likewise ungated — a payload from an unknown sender is merged, subject only to field validation | the `CHAT_MSG_ADDON` branch, `Core.lua:1358` onward |
-| The reply target is the sender with **any realm suffix stripped** | `Core.lua:1343` feeding `Core.lua:1363` |
-| Guild broadcast exists in the routing but is switched off deliberately — *"alt tracker, not guild tracker"* | `Core.lua:287` |
-| We already react to "X has come online" and fire a request at whitelisted peers | `Core.lua:1719` |
+| A request is served only to a peer answered **auto** (allowed, or on the whitelist), or one we named ourselves in `/alts sync <name>` in the last ten minutes. Anyone else is filed as a question: a chat line and a prompt | `MayServe`, the `REQ` branch, `RememberPendingRequest` |
+| A stream is taken only from an auto peer, or one **we asked** in the last ten minutes. The window bounds the start; an admitted stream runs to the end | `MayAdmit`, the `CHUNK` and `CHAR` branches |
+| **Never wins** everywhere: no *new* request, push, reply or resync goes to a never, and nothing is taken from one, even mid-stream or in the DONE grace window. A reply already in ChatThrottleLib's queue is not recalled | `CompleteStream`, `RequestCharacters`, `RequestResync`, `/alts sync` |
+| A stream refused at its first packet stays refused to its end, even if the peer is allowed half way | `refusedStreams`, the `CHUNK` branch |
+| One key per peer: the **name**, lower-cased, realm suffix dropped - names are unique across the region (below) | `AuthKey` (`AltStable.PeerKey`) |
+| The reply is always a whisper to the character that asked | `ServeSyncRequest` |
+| The whitelist is who *we* ask; allowing someone does not add them to it | `GetSyncTargets` |
 
-### This is a data-disclosure path, today
+Before #61 any player who whispered `REQ8|0` got the whole database back, and any stream from
+anyone was merged. On a default install that was not even limited to one account: the account
+filter only runs once `accountNumber` is set, and it defaults to `""`. That is still true of the
+**scope** of a reply, but it is now a reply to someone the player approved.
 
-Say it plainly, because "inbound is ungated" undersells it. Any player who whispers our addon
-prefix with a valid same-version request gets **the whole character database sent back**:
+A one-sided whitelist still works, which is why the gate is not simply "on the whitelist": A
+types `/alts sync B`, B is asked once and presses Allow, and B's Allow also asks A back. A is
+never prompted, because typing the name was A's consent.
 
-```
-                         ->  REQ8|0        (from anyone, no whitelist entry needed)
-SendFullDatabase(...)    <-  every character record: names, realms, guilds, levels,
-                             item levels, gold, mail, lockouts, reputations
-```
-
-`Core.lua:1362-1377` goes straight from "the protocol version matches" to scheduling
-`SendFullDatabase`. There is no check that the requester is anyone we know. The prefix is public
-(the addon ships on CurseForge), so this needs no discovery on the asker's part.
-
-**On a default install the reply is not even limited to this account.** Two conditions have to
-line up for the narrowing to happen, and out of the box the second one does not:
-
-- `accountOnly = not AltStableConfig.sendAllAccounts` (`Core.lua:797`), so leaving
-  `sendAllAccounts` false — the default — *asks* for account-only.
-- but the filter only runs `if accountOnly and myAccount and myAccount ~= ""`
-  (`Core.lua:556`), and `accountNumber` defaults to `""` (`Config.lua:81`).
-
-So until someone runs `/alts account <n>`, every record in the database is serialized into the
-reply, including characters synced in from the *other* account. And either way it is a scope
-limit, never an authorization check.
-
-**So authorizing requests is a prerequisite of #58, not a nice-to-have alongside it.** A channel
-password protects a channel; it does nothing for the whisper request handler that already exists.
-Whatever transport wins, the rule has to be: *do not send records to a requester we have not
-authorized.*
-
-The reason it is ungated is not an oversight to patch blindly — it is what makes a **one-sided**
-whitelist work. A whitelists B, A asks, B answers without ever having heard of A. Gate that on the
-whitelist as it stands and sync stops working for the very setup it was built for. The fix is
-Altoholic's three modes (auto / ask / never) with *ask* as the default, so the first request from
-an unknown peer becomes a prompt instead of a silent transfer. Tracked in #61.
+**Names are unique across the region.** On Forever the realms are four rulesets (PvP, PvE, RP,
+Hardcore) - servers underneath, but one namespace: character names, and guild names, are unique
+across the whole region. So the realm suffix on a sender says where a character is, never who,
+and keying by the name alone is correct - for the authorization answers, the echo check, and the
+watermarks, `peerScopeGeneration` and stall watch that were always keyed by `PeerShort`. An
+earlier cut of #61 kept the realm as identity; it made one person several keys, and folding our
+own realm in made the account-wide config depend on the realm being played (review of #136).
 
 So the thing missing for *discovery* is still a name that is online — but it is not the only
 prerequisite.
@@ -171,7 +154,10 @@ Worth knowing because it is a long-lived retail addon with the same problem — 
 - **Account-to-account sharing is fully manual** (`Altoholic/Services/AccountSharing.lua`): name a
   target character, press Send Request, and the other side auto-accepts, asks, or refuses. A
   one-shot pull driven by a table of contents — not continuous sync. Its "automatic" is a
-  permission setting, not discovery.
+  permission setting, not discovery. The mode gates what it **sends**; what arrives in reply is
+  not checked against it (its `authorizedRecipient` test is on the send side) - ours checks both.
+  Its `Comm.lua` also runs every sender through `Ambiguate(sender, "none")`; we key on our own
+  realm-folding instead, because what `Ambiguate` returns on this client is unmeasured.
 - Chunking is AceComm-compatible control bytes (`\001` first, `\002` next, `\003` last) over
   ChatThrottleLib — functionally what our `CHUNK`/`DONE` protocol does.
 
@@ -240,20 +226,11 @@ needs a name). After that seed:
    `lastUpdate` per character; the one played most recently is the likeliest to be logged in. One
    burst per login, never per sync tick.
 
-**Our own code blocks this today**, whatever the client sends. `Core.lua:1343` strips any realm
-suffix off the sender into `senderName`, and that one value is then used for two different jobs,
-both of which it gets wrong cross-realm:
-
-- **As a routing target** (`Core.lua:1363`): a cross-realm request is answered to a bare name on
-  *our* realm — the wrong player, or nobody.
-- **As an identity check** (`Core.lua:1344`, `senderName == PLAYER_NAME`): a character on another
-  realm with the same full name as ours has its legitimate traffic discarded as our own echo,
-  before a reply is even considered. Names are unique per realm, not globally, so this is a real
-  collision rather than a theoretical one.
-
-So the identity comparison has to become realm-aware too, and the **raw** sender has to be
-preserved for routing. Three needs, one variable: that split comes before any cross-realm flow can
-work.
+**What our own code does with cross-realm senders.** Identity is the name (unique across the
+region, see "What the code does today"), so the name-only echo check and keys are right.
+Routing is the other job: requests are answered to the **raw** sender, realm and all, so a
+cross-ruleset whisper goes where it came from. What remains is measuring whether cross-ruleset
+whispers route at all.
 
 Automatic after the first seed, and self-correcting when you switch characters.
 
@@ -308,7 +285,8 @@ the model.
 
 - **#56** — whisper targets need the full name including the surname. Adoption also removes the
   main source of whitelist typos, since names arrive over the wire rather than from the keyboard.
-- **#61** — authorizing requests before sending records. A prerequisite, not a parallel task.
+- **#61** — authorizing requests before sending records. Done: see "What the code does
+  today".
 - **#20** — the inherited sync-engine bugs. More peers means more concurrent streams, and a channel
   broadcast reaches every keyholder at once, which the per-peer watermarks and the `"<peer>#<sid>"`
   chunk buffers have never had to handle.

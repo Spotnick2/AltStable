@@ -80,6 +80,7 @@ end
 local function EnsureDefaults()
     AltStableConfig.syncMode      = AltStableConfig.syncMode      or "whisper"
     AltStableConfig.whitelist     = AltStableConfig.whitelist     or {}
+    AltStableConfig.syncAuth      = AltStableConfig.syncAuth      or {}   -- #61: answers, by peer key
     AltStableConfig.accountNumber = AltStableConfig.accountNumber or ""
     if AltStableConfig.sendAllAccounts == nil then
         AltStableConfig.sendAllAccounts = false

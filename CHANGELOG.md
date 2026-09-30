@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Sync asks before it shares, and before it takes.** Someone you have not
+  allowed who asks for your characters gets a prompt on your side - Allow, Not
+  now, Never; Escape is Not now - and Options has a *Requests and answers* list
+  to change any answer later. Characters sent to you are taken only from people
+  you allowed, or asked yourself in the last ten minutes; anything else is
+  dropped with one line. `/alts sync <name>` counts as your consent for that
+  exchange and refuses anyone set to never. An answer is by name: it covers
+  the character whatever realm suffix they arrive with, on every ruleset you
+  play ([#61](https://github.com/Spotnick2/AltStable/issues/61)).
 - **The Roster can show an enhanced portrait.** When the companion app has
   made one (optional, its own feature), the scene, grid and detail views draw
   it in place of the plain capture; anything malformed falls back to the plain
