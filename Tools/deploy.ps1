@@ -31,8 +31,11 @@ $excludeDirs = @(
     (Join-Path $RepoRoot "Tools"),
     (Join-Path $RepoRoot "tests"),
     (Join-Path $RepoRoot "docs"),
-    (Join-Path $RepoRoot ".git"),
-    (Join-Path $RepoRoot ".github"),
+    # Every dot-entry, by name: .git, .github, .claude, .vscode, .idea - and the
+    # ones nobody listed. A worktree's .git is a FILE, and tool scratch folders
+    # (.playwright-mcp, .skill-staging) appear and vanish; listing them one by
+    # one is how all three ended up in the deployed folder.
+    ".*",
     # Mirror .gitignore: these are local-only and have no business in the
     # deployed tree. dist/ in particular can be tens of MB and makes it
     # misleading to diagnose what the client actually loaded.
@@ -55,7 +58,7 @@ $excludeDirs = @(
     (Join-Path $RepoRoot "Plugins")
 )
 # *.png is source art only - WoW loads TGA/BLP, never PNG.
-$excludeFiles = @("*.log", "*.zip", "*.md", "*.png", ".gitignore")
+$excludeFiles = @("*.log", "*.zip", "*.md", "*.png", ".*")
 
 $roboArgs = @($RepoRoot, $dest, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
               "/XD") + $excludeDirs + @("/XF") + $excludeFiles
@@ -64,6 +67,18 @@ $deployedTocs = @((Join-Path $dest "AltStable.toc"))
 if ($LASTEXITCODE -ge 8) {
     throw "robocopy failed (code $LASTEXITCODE)"
 }
+
+# /E never purges, so what an older deploy copied stays. A dot-entry at the top
+# of a deployed addon folder is never something we ship (.pkgmeta, a worktree's
+# .git file, tool scratch folders): remove those, and only those, and say so.
+function Remove-DevLeftovers([string]$folder) {
+    if (-not (Test-Path $folder)) { return }
+    foreach ($item in Get-ChildItem -LiteralPath $folder -Force -Filter ".*") {
+        Remove-Item -LiteralPath $item.FullName -Recurse -Force
+        Write-Host "  removed leftover $($item.Name) from $(Split-Path $folder -Leaf)" -ForegroundColor DarkYellow
+    }
+}
+Remove-DevLeftovers $dest
 
 # Plugins: each folder under Plugins\ becomes its own top-level addon folder,
 # named after the .toc inside it (WoW requires folder name == toc name).
@@ -78,9 +93,10 @@ if (Test-Path $pluginRoot) {
         $name = [IO.Path]::GetFileNameWithoutExtension($toc.Name)
         $pluginDest = Join-Path $AddOnsPath $name
         $pluginArgs = @($dir.FullName, $pluginDest, "/E", "/NFL", "/NDL", "/NJH",
-                        "/NJS", "/NP", "/XF") + $excludeFiles
+                        "/NJS", "/NP", "/XD", ".*", "/XF") + $excludeFiles
         robocopy @pluginArgs | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
+        Remove-DevLeftovers $pluginDest
         $deployedTocs += (Join-Path $pluginDest $toc.Name)
         Write-Host "  plugin -> $name" -ForegroundColor DarkGray
     }
