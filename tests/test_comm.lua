@@ -2821,6 +2821,38 @@ do
     deliver(streamOf("Player-Half-", 3), "Half Surname")
     check(holds("Player-Half-"), "  their next stream is taken")
 
+    -- Refused, then denied, then allowed while it is still arriving: denying
+    -- must not forget that the stream was refused.
+    freshAuth()
+    chunks, done = splitWire(streamOf("Player-Flip-", 3))
+    receiveUnapproved(chunks[1], "Flip Surname")
+    AltStable.DenySyncPeer("Flip Surname")
+    AltStable.AllowSyncPeer("Flip Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "Flip Surname") end
+    receiveUnapproved(done, "Flip Surname")
+    flushAll()
+    eq(T.BufferedStreams(), 0, "refused, denied, re-allowed: the rest of that stream is still refused")
+    check(not chatHas("incomplete"), "  with no 'chunks missing'")
+    eq(requestsTo("Flip Surname"), 0, "  and no resync")
+
+    -- Admitted, then denied, then allowed while it is still arriving: the
+    -- stream the deny dropped stays dropped.
+    freshAuth({ whitelist = { "Swing Surname" } })
+    chunks, done = splitWire(streamOf("Player-Swing-", 3))
+    receiveUnapproved(chunks[1], "Swing Surname")
+    AltStable.DenySyncPeer("Swing Surname")
+    AltStable.AllowSyncPeer("Swing Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "Swing Surname") end
+    receiveUnapproved(done, "Swing Surname")
+    flushAll()
+    eq(T.BufferedStreams(), 0, "admitted, denied, re-allowed: the dropped stream stays dropped")
+    check(not chatHas("incomplete"), "  with no 'chunks missing'")
+    eq(requestsTo("Swing Surname"), 0, "  and no resync")
+
     -- Refusing by the stored, lower-cased key drops what arrived under the
     -- sender's own capitalisation.
     freshAuth({ whitelist = { "Mid Surname" } })

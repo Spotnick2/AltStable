@@ -1749,11 +1749,17 @@ function DropPeerStreams(peer)
     local key = AuthKey(peer)
     if not key then return end
     local function same(name) return name and AuthKey(name) == key end
+    -- A dropped stream is REFUSED, not forgotten: if the peer is allowed again
+    -- while it is still arriving, its remaining packets must not start a
+    -- buffer from the middle - "1/2 chunks missing" and a resync. And the
+    -- streams already refused stay refused, for the same reason (Codex, review
+    -- of #136). The sweep clears both markers once the stream has gone quiet.
+    local now = time()
     for bkey in pairs(incomingBuffers) do
-        if same(bkey:match("^(.*)#%d+$")) then incomingBuffers[bkey] = nil end
-    end
-    for bkey in pairs(refusedStreams) do
-        if same(bkey:match("^(.*)#%d+$")) then refusedStreams[bkey] = nil end
+        if same(bkey:match("^(.*)#%d+$")) then
+            incomingBuffers[bkey] = nil
+            refusedStreams[bkey] = now
+        end
     end
     for short, w in pairs(syncWatch) do
         if same(w.name or short) then syncWatch[short] = nil end

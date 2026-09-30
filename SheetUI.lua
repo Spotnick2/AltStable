@@ -4439,11 +4439,15 @@ if type(StaticPopupDialogs) == "table" then
         button1 = "Allow",
         button2 = "Not now",
         button3 = "Never",
-        -- The answer first, with the slot still held, so its announcement does
-        -- not open the next prompt on top of this one.
+        -- The answer FIRST, then DropPopup. With the game UI hidden, DropPopup
+        -- puts the dialog back under the hidden UIParent, which runs OnHide
+        -- there and then - freeing the slot. Answering after that let the
+        -- answer's announcement open the next asker's prompt inside this
+        -- click, and the click's own closing hide dismissed it: that asker was
+        -- marked prompted and never asked (Codex, review of #136).
         OnAccept = function(self, data)
-            DropPopup(self)
             if type(data) == "table" then AltStable.AllowSyncPeer(data.name) end
+            DropPopup(self)
             EndSyncAsk()
         end,
         -- "Not now", and ALSO what Escape does (hideOnEscape runs OnCancel), so
@@ -4458,8 +4462,8 @@ if type(StaticPopupDialogs) == "table" then
             EndSyncAsk()
         end,
         OnAlt = function(self, data)
-            DropPopup(self)
             if type(data) == "table" then AltStable.DenySyncPeer(data.name) end
+            DropPopup(self)
             EndSyncAsk()
         end,
         -- Every route out ends here. The next asker is shown on the next frame,

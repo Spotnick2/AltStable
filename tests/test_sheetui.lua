@@ -2425,6 +2425,38 @@ do
     flush()
     eq("  answering by /alts allow takes it down", #asks(), 0)
 
+    -- With the game UI hidden, putting the dialog back under UIParent runs its
+    -- OnHide in the middle of the button's handler (the client's re-entrant
+    -- hide, modelled as in the DropPopup test). The answer's announcement must
+    -- not open the next asker's prompt inside the click, where the click's
+    -- own closing hide dismisses it and that asker is never asked.
+    for _, handler in ipairs({ "OnAccept", "OnAlt" }) do
+        fresh()
+        local realHidden = AltStable.IsGameUIHidden
+        AltStable.IsGameUIHidden = function() return true end
+        UIParent:Hide()
+        ask("Front Surname")
+        WoW.now = WoW.now + 1
+        ask("Queued Surname")
+        p = asks()[1]
+        if p then
+            local d = p.dialog
+            local realSetParent = d.SetParent
+            d.SetParent = function(self, parent)
+                local r = realSetParent(self, parent)
+                if parent == UIParent then StaticPopupDialogs[POP].OnHide(self) end
+                return r
+            end
+            press(p, handler)
+            d.SetParent = realSetParent
+            local nxt = asks()[1]
+            eq(handler .. " with the UI hidden: the next asker is still asked",
+               nxt and nxt.arg1, "Queued Surname")
+        end
+        UIParent:Show()
+        AltStable.IsGameUIHidden = realHidden
+    end
+
     -- Pressed away while hidden: the client hides a dialog that is not
     -- visible without running OnHide. The slot must still come free.
     fresh()
