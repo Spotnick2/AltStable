@@ -2265,11 +2265,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
             -- whatever order the packets come - starts only if we approved
             -- the peer or asked it ourselves; once admitted, only a NEVER ends
             -- it.
+            local bkey = peer .. "#" .. sidStr
             if SyncAuthFor(peer) == AUTH_NEVER then
                 DropPeerStreams(peer)
+                -- THIS stream too, which may have no buffer for the drop to
+                -- mark: refused at its first packet by a never, it must stay
+                -- refused if the peer is allowed while it is still arriving
+                -- (Codex, review of #136).
+                refusedStreams[bkey] = time()
                 return
             end
-            local bkey = peer .. "#" .. sidStr
             local buf = incomingBuffers[bkey]
             if not buf and (refusedStreams[bkey] or not MayAdmit(peer)) then
                 refusedStreams[bkey] = time()

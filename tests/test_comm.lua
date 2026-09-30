@@ -2837,6 +2837,23 @@ do
     check(not chatHas("incomplete"), "  with no 'chunks missing'")
     eq(requestsTo("Flip Surname"), 0, "  and no resync")
 
+    -- Never BEFORE the stream starts, then allowed while it is still arriving:
+    -- no buffer ever existed for the deny to mark, so the refusal of that
+    -- first packet has to be recorded by itself.
+    freshAuth()
+    chunks, done = splitWire(streamOf("Player-Pre-", 3))
+    AltStable.DenySyncPeer("Pre Surname")
+    receiveUnapproved(chunks[1], "Pre Surname")
+    AltStable.AllowSyncPeer("Pre Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "Pre Surname") end
+    receiveUnapproved(done, "Pre Surname")
+    flushAll()
+    eq(T.BufferedStreams(), 0, "never, first packet, re-allowed: the rest of that stream is still refused")
+    check(not chatHas("incomplete"), "  with no 'chunks missing'")
+    eq(requestsTo("Pre Surname"), 0, "  and no resync")
+
     -- Admitted, then denied, then allowed while it is still arriving: the
     -- stream the deny dropped stays dropped.
     freshAuth({ whitelist = { "Swing Surname" } })
