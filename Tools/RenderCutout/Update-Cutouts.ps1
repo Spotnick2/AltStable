@@ -135,8 +135,10 @@ CutoutManifest.lua
 # The enhanced texture for one primary, as a manifest fragment - or "" when the
 # contract's attachment rule says no (docs/PORTRAIT-CONTRACT.md, "Enhanced
 # textures"). All of it or nothing: the primary has a known guid equal to the
-# enhanced sidecar's, the primary's bytes hash to its sourceHash, the enhanced
-# TGA exists and hashes to its outputHash, and its sizes are positive numbers.
+# enhanced sidecar's, the primary's bytes hash to its enhancement.sourceHash, the
+# enhanced TGA exists and hashes to its enhancement.outputHash, and its sizes are
+# positive numbers. (Both hashes live INSIDE `enhancement`: the companion writes
+# enhanced and primary sidecars with one serializer.)
 # A name-only (guid-less) primary never attaches. Nothing is written, moved or
 # deleted here - the companion owns Enhanced\.
 function Get-EnhancedField([string] $primaryPath, [string] $guid, [string] $cutoutsDir) {
@@ -148,10 +150,12 @@ function Get-EnhancedField([string] $primaryPath, [string] $guid, [string] $cuto
     if (-not (Test-Path -LiteralPath $tga) -or -not (Test-Path -LiteralPath $side)) { return "" }
     try { $m = Get-Content -LiteralPath $side -Raw | ConvertFrom-Json } catch { return "" }
     if ([string]$m.guid -ne $guid) { return "" }
+    $e = $m.enhancement
+    if (-not $e) { return "" }
     $src = (Get-FileHash -LiteralPath $primaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ([string]$m.sourceHash -ne $src) { return "" }
+    if ([string]$e.sourceHash -ne $src) { return "" }
     $out = (Get-FileHash -LiteralPath $tga -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ([string]$m.outputHash -ne $out) { return "" }
+    if ([string]$e.outputHash -ne $out) { return "" }
     foreach ($k in 'w', 'h', 'texw', 'texh') {
         $v = $m.$k
         if (-not ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) -or $v -le 0) { return "" }
@@ -265,11 +269,21 @@ if ($SelfTest) {
     $etga = Join-Path $enh 'karuzo-elegia.tga'
     [IO.File]::WriteAllBytes($etga, [byte[]](9, 9, 9))
     $guid = 'Player-4395-0A1B2C3D'
-    function Sidecar($over) {
-        $s = [ordered]@{ guid = $guid; sourceHash = (Hash $primary); outputHash = (Hash $etga)
-                         w = 188; h = 512; texw = 256; texh = 512 }
-        foreach ($k in $over.Keys) { $s[$k] = $over[$k] }
-        ($s | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $enh 'karuzo-elegia.json') -Encoding UTF8
+    # The companion's shape (CutoutFolder.Sidecar): the hashes inside `enhancement`.
+    # An override for sourceHash/outputHash goes there; any other key at the top.
+    function Sidecar($over, [switch] $flat) {
+        $e = [ordered]@{ sourceHash = (Hash $primary); outputHash = (Hash $etga); style = 'wow-like'
+                         model = 'gpt-6-astra'; effort = 'low'; prompt = 1; signature = 'x'
+                         generated = '2026-09-30T21:04:11Z' }
+        $s = [ordered]@{ w = 188; h = 512; texw = 256; texh = 512; guid = $guid; enhancement = $e }
+        foreach ($k in $over.Keys) {
+            if ($k -in 'sourceHash', 'outputHash') { $e[$k] = $over[$k] } else { $s[$k] = $over[$k] }
+        }
+        if ($flat) {
+            # The hashes at the top level, the shape this PR first documented by mistake.
+            $s.Remove('enhancement'); $s.sourceHash = $e.sourceHash; $s.outputHash = $e.outputHash
+        }
+        ($s | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $enh 'karuzo-elegia.json') -Encoding UTF8
     }
 
     Sidecar @{}
@@ -280,6 +294,8 @@ if ($SelfTest) {
     Check "  not even to a sidecar that has no guid either" ((Get-EnhancedField $primary '' $dir) -eq '')
     Sidecar @{ guid = 'Player-other' }
     Check "a sidecar for another guid does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
+    Sidecar @{} -flat
+    Check "hashes at the top level instead of in `enhancement` do not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
     Sidecar @{ sourceHash = ('0' * 64) }
     Check "a primary that changed since (sourceHash) does not attach" ((Get-EnhancedField $primary $guid $dir) -eq '')
     Sidecar @{ outputHash = ('0' * 64) }

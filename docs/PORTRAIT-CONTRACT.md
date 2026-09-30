@@ -199,16 +199,28 @@ reader of `Cutouts\` lists it non-recursively: nothing in `Enhanced\` can be
 taken for a primary portrait. The companion owns the folder. A file whose primary
 is gone is an orphan and stays; nothing else writes, moves or deletes there.
 
-**The sidecar** (`<base>.json`):
+**The sidecar** (`<base>.json`) - the primary sidecar's shape (the companion writes both
+with one serializer), plus an `enhancement` object:
 
 | field | type | |
 |---|---|---|
 | `guid` | string | the character; must equal the primary's |
-| `sourceHash` | string | SHA-256, lower-case hex, of the primary TGA's bytes it was made from |
 | `epoch` | number, optional | the primary sidecar's `epoch`, when it had one - provenance only |
 | `w`, `h`, `texw`, `texh` | numbers | content size and power-of-two canvas, as for a primary |
-| `outputHash` | string | SHA-256, lower-case hex, of this TGA's bytes |
-| `enhancement` | object | `{ style, model, effort, prompt, signature, generated }` - `prompt` an integer version, `generated` UTC ISO 8601 |
+| `enhancement.sourceHash` | string | SHA-256, lower-case hex, of the primary TGA's bytes it was made from |
+| `enhancement.outputHash` | string | SHA-256, lower-case hex, of this TGA's bytes |
+| `enhancement.style`, `.model`, `.effort` | strings | how it was made |
+| `enhancement.prompt` | integer | the prompt's version |
+| `enhancement.signature` | string | the companion's key for "this combination was attempted" |
+| `enhancement.generated` | string | UTC, ISO 8601 |
+
+```json
+{ "w": 188, "h": 512, "texw": 256, "texh": 512,
+  "guid": "Player-4395-0A1B2C3D", "epoch": 1790740285,
+  "enhancement": { "sourceHash": "9f86d0...", "outputHash": "2c26b4...",
+                   "style": "wow-like", "model": "gpt-6-astra", "effort": "low",
+                   "prompt": 1, "signature": "5e8848...", "generated": "2026-09-30T21:04:11Z" } }
+```
 
 **The manifest entry** may carry a whole texture descriptor:
 
@@ -231,8 +243,8 @@ A whole descriptor, because the Roster uses `w`/`h` for aspect and fitting and
 
 - the primary it resolved to has a known `guid` (from its own sidecar), equal to
   the enhanced sidecar's `guid`;
-- the primary file's current SHA-256 equals `sourceHash`;
-- `Enhanced\<base>.tga` exists and its SHA-256 equals `outputHash`;
+- the primary file's current SHA-256 equals `enhancement.sourceHash`;
+- `Enhanced\<base>.tga` exists and its SHA-256 equals `enhancement.outputHash`;
 - the sidecar's `w`, `h`, `texw`, `texh` are positive numbers.
 
 `epoch` is provenance, not a key: an undated primary (made by the Python script)
