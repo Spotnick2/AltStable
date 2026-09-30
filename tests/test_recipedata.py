@@ -75,11 +75,20 @@ check("an unbalanced array is an error", raises(lambda: gen.extract_array("x = [
 
 check("the Apprentice rank spell (learnedat 9999) is dropped", gen.recipe_from_record(recs[0]) is None)
 
-# A specialisation spell, as served on the Leatherworking page: 9999, and no
-# `rank` field - only the 9999 rule catches it.
+# A specialisation spell, as served on the Leatherworking page: 9999, no `rank`.
 dragonscale = {"cat": 11, "id": 10656, "learnedat": 9999, "name": "Dragonscale Leatherworking",
                "skill": [165], "specialization": 10656, "quality": -1}
 check("a specialisation spell (9999, no rank) is dropped", gen.recipe_from_record(dragonscale) is None)
+find_herbs = {"id": 2383, "learnedat": 9999, "name": "Find Herbs", "skill": [182]}
+check("a profession ability (Find Herbs) is dropped", gen.recipe_from_record(find_herbs) is None)
+
+# ...but 9999 is Wowhead's "unknown", not "rank" (Codex review of #130): 28 new
+# Forever recipes carry it WITH reagents. As served on the Leatherworking page:
+adaptive = {"cat": 11, "id": 1252982, "learnedat": 9999, "name": "Beastculler's Adaptive Vest",
+            "reagents": [[251651, 6], [8170, 32], [7082, 2]], "skill": [165]}
+a = gen.recipe_from_record(adaptive)
+check("a 9999 recipe with reagents is kept", a is not None, repr(a))
+check("...with its requirement left unknown, not 9999 and not 0", a is not None and "learn" not in a, repr(a))
 
 # The higher ranks, as served on the Alchemy page (review of #130: only 9999 was
 # filtered, and 30 of these shipped as trainer recipes).
@@ -101,9 +110,10 @@ e = gen.recipe_from_record(enchant)
 check("an itemless enchant has no `makes` and is still a recipe", e is not None and "makes" not in e, repr(e))
 smelt = {"id": 3308, "skill": [186], "learnedat": 155, "creates": [3577, 1, 1], "source": [6]}
 check("smelting is a recipe that makes a bar", gen.recipe_from_record(smelt)["makes"] == 3577)
-nosrc = {"id": 1, "skill": [165], "learnedat": 10}
+nosrc = {"id": 1, "skill": [165], "learnedat": 10, "reagents": [[2318, 1]]}
 check("an unknown source is left out, not invented", "src" not in gen.recipe_from_record(nosrc))
-check("a record with no skill line is an error", raises(lambda: gen.recipe_from_record({"id": 5, "learnedat": 1})))
+check("a record with no skill line is an error",
+      raises(lambda: gen.recipe_from_record({"id": 5, "learnedat": 1, "reagents": [[2318, 1]]})))
 
 # ---------------------------------------------------------------------------
 # Page checks and merging
@@ -136,6 +146,7 @@ recipes = {
     2333: {"skill": [171], "learn": 140, "colors": [140, 165, 185, 205], "makes": 3390, "src": [2, 16]},
     13648: {"skill": [333], "learn": 170, "src": [5]},
     3308: {"skill": [186], "learn": 155, "makes": 3577, "src": [6]},
+    1252982: {"skill": [165]},
 }
 text = gen.render_lua(recipes, "wowhead forever 2026-09-30")
 check("rows are sorted by spell ID", text.index("[2333]") < text.index("[3308]") < text.index("[13648]"))
@@ -143,7 +154,8 @@ check("the same data renders the same bytes", text == gen.render_lua(dict(revers
 check("an itemless enchant has no makes=", "[13648]={skill={333},learn=170,src={5}}," in text, text)
 check("the source line reads back", gen.source_line(text) == "wowhead forever 2026-09-30")
 rows = gen.recipes_in_lua(text)
-check("the rows read back", sorted(rows) == [2333, 3308, 13648], repr(sorted(rows)))
+check("the rows read back", sorted(rows) == [2333, 3308, 13648, 1252982], repr(sorted(rows)))
+check("an unknown requirement renders without learn=", "[1252982]={skill={165}}," in text, text)
 
 # The file must be valid Lua: luac -p when it is on PATH (CI has luac5.1).
 import shutil
