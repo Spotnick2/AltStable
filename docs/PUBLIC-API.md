@@ -82,7 +82,8 @@ the same answer that makes the sheet's capture button glow.
 | `reason` | `"missing"` (no portrait, nothing captured), `"changed"` (the gear the portrait shows changed since the last capture), `"pending"` (captured, not yet turned into a portrait - **not** due) or `"none"` |
 | `changedSlots` | for `"changed"`, the slot names that differ: `"Chest"`, `"Main Hand"`, ... |
 
-Only the slots a portrait shows count (not rings, trinkets or the neck). A capture taken
+Only the slots a portrait shows count - not rings, trinkets, the neck or the ranged slot (a relic as
+often as a weapon) - and showing or hiding the helm or cloak counts as a change. A capture taken
 before AltStable recorded looks never reads as `"changed"`. The action is
 `AltStable.CapturePortrait()`, which refuses on its own in combat, in a dungeon, dead or
 moving. Each call returns a new table.

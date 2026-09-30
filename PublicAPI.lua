@@ -94,7 +94,8 @@ end
 
 -- Whether a new portrait capture is worth taking for the character being
 -- played (#128), as a copy:
---   due          true when the capture button glows
+--   due          true when a capture is worth taking (the button's glow can
+--                still be off: in combat, or switched off by the player)
 --   reason       "missing" (no portrait, nothing captured), "changed" (the
 --                gear shown in the portrait changed since the last capture),
 --                "pending" (captured, not yet converted - not due) or "none"
@@ -135,7 +136,7 @@ end
 -- Every burst collapses into one callback on the next frame.
 local callbacks = {}          -- event -> { fn = true }
 local pending = {}            -- event -> true while its callback is scheduled
-local firing = false
+local firing = {}             -- event -> true while its listeners run
 
 local function Listeners(event)
     local list = {}
@@ -156,11 +157,11 @@ local function Fire(event)
     -- its callback would ADD a key mid-traversal, which is undefined in Lua 5.1's
     -- pairs(). The new one is heard from the next change on.
     local listeners = Listeners(event)
-    firing = true
+    firing[event] = true
     for _, fn in ipairs(listeners) do
         xpcall(function() return fn(event) end, Report)
     end
-    firing = false
+    firing[event] = nil
 end
 
 local function Changed(event)
@@ -170,8 +171,10 @@ local function Changed(event)
     if not next(callbacks[event] or {}) then return end
     -- A refresh made FROM INSIDE a callback is the consumer syncing the sheet to
     -- what it was just told, not a new change. Notifying it again would call the
-    -- consumer again, which refreshes again - every frame, for ever.
-    if firing or pending[event] then return end
+    -- consumer again, which refreshes again - every frame, for ever. Per event:
+    -- a portrait status that changes inside a CharactersChanged callback is
+    -- still news (review of #134).
+    if firing[event] or pending[event] then return end
     pending[event] = true
     local function run() pending[event] = nil; Fire(event) end
     if C_Timer and C_Timer.After then C_Timer.After(0, run) else run() end

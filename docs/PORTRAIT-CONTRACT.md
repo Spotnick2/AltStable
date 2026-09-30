@@ -101,7 +101,8 @@ shortly, do not treat it as data.
 - `renders` is append-only. Older captures stay in it.
 
 **`look`** (optional, since #128) is `slot:itemID` for the slots a portrait shows,
-separated by `;` (not `,`), `0` for an empty slot. It is how the addon tells that the
+separated by `;` (not `,`), `0` for an empty slot and `h` for a helm or cloak that is
+equipped but hidden. It is how the addon tells that the
 gear changed since the last capture. **Converters do not read it** and must not require
 it: records written before it existed have none. Adding it did not bump `version`, and
 a field like it - one no converter needs - never will.

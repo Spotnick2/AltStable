@@ -3025,6 +3025,52 @@ local function ResetSyncState()
     syncWatch       = {}
 end
 
+------------------------------------------------------------
+-- Which cutout belongs to which character (#89), for everything that asks:
+-- the Roster draws them, the capture button's "due" check looks them up
+-- (#128). One copy, here, rather than one per file that can drift.
+------------------------------------------------------------
+
+-- The converter names each file after the character it photographed, lowercased
+-- with every run of non-alphanumerics collapsed to a dash. This has to agree
+-- with Tools/RenderCutout/make-cutout.py EXACTLY or every portrait silently
+-- falls back to a card, so it is one function with one test.
+function AltStable.CutoutSlug(name)
+    if type(name) ~= "string" then return nil end
+    local s = name:lower():gsub("[^a-z0-9]+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
+    return (s ~= "") and s or nil
+end
+
+-- An entry only counts when it can actually be DRAWN. The renderer requires
+-- entry.file, so a counter asking a weaker question would hide the "N of M have
+-- a portrait" hint at exactly the moment every card is a fallback.
+function AltStable.CutoutDrawable(entry)
+    return type(entry) == "table" and type(entry.file) == "string" and entry.file ~= ""
+end
+
+-- By GUID first, then by name.
+--
+-- A name is not an identity: two characters on different realms or accounts
+-- can share one, and punctuation or accents can fold two different names into
+-- one slug. A manifest keyed by name alone would hang one character's portrait
+-- on both. So an entry is looked up by the character's GUID, and the name key
+-- is the legacy fallback for manifests written before entries carried one - and
+-- even then an entry that NAMES a different GUID is refused rather than shown
+-- on the wrong character.
+function AltStable.CutoutFor(char)
+    local manifest = AltStableCutoutManifest
+    if type(manifest) ~= "table" or type(char) ~= "table" then return nil end
+    local drawable = AltStable.CutoutDrawable
+    if type(char.guid) == "string" and drawable(manifest[char.guid]) then
+        return manifest[char.guid]
+    end
+    local slug = AltStable.CutoutSlug(char.name)
+    local entry = slug and manifest[slug] or nil
+    if not drawable(entry) then return nil end
+    if entry.guid ~= nil and entry.guid ~= char.guid then return nil end
+    return entry
+end
+
 local _seam = {
     ReplyDelay          = ReplyDelay,
     ComputeChecksum     = ComputeChecksum,

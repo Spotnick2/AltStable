@@ -2296,6 +2296,20 @@ do
         AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
         check("no glow in combat", btn._glowing == false and not glow:IsShown())
         WoW.inCombat = false
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} }, true)
+        check("no glow when the caller says combat, before the lockdown has begun",
+              btn._glowing == false and not glow:IsShown())
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} }, false)
+        check("  and glowing again when it says combat is over", btn._glowing == true)
+
+        -- The tooltip grows with its text: a long slot list is not cut off.
+        local tip = AltStable._test.refTip
+        local realH = txt.GetStringHeight
+        txt.GetStringHeight = function() return 140 end
+        AltStable.UpdateCaptureGlow({ due = true, reason = "changed",
+            changedSlots = { "Head", "Shoulder", "Chest", "Waist", "Legs", "Feet", "Wrist", "Hands" } })
+        check("the tooltip is as tall as its text", tip:GetHeight() >= 140, tostring(tip:GetHeight()))
+        txt.GetStringHeight = realH
 
         AltStableConfig.portraitGlow = false
         AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })

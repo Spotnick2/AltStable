@@ -4,7 +4,8 @@
 
 - **The capture button tells you when a portrait is due.** It glows when the
   character you are playing has no portrait yet, or when the gear a portrait
-  shows (not rings, trinkets or the neck) changed since the last capture; its
+  shows changed since the last capture - not rings, trinkets, the neck or the
+  ranged slot, but showing or hiding the helm or cloak does count; its
   tooltip says which. A capture waiting for the converter does not glow. Never
   in combat; `/alts portrait glow off` turns it off. Other addons can ask too:
   `AltStable.GetPortraitStatus()` and a `PortraitStatusChanged` callback

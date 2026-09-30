@@ -2455,9 +2455,10 @@ local function CreateFrameIfNeeded()
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
-    refTipText:SetText("|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for about " ..
+    local REF_TIP_BASE = "|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for about " ..
         "three seconds and takes two screenshots for the Roster lineup. You will be " ..
-        "offered a reload afterwards, so the capture is saved.|r")
+        "offered a reload afterwards, so the capture is saved.|r"
+    refTipText:SetText(REF_TIP_BASE)
     refTip:Hide()
 
     -- The "a new capture is due" glow (#128): a soft pulse behind the icon, off
@@ -2475,26 +2476,32 @@ local function CreateFrameIfNeeded()
     fade:SetFromAlpha(0.25)
     fade:SetToAlpha(1)
     fade:SetDuration(0.9)
-    local REF_TIP_BASE = "|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for about " ..
-        "three seconds and takes two screenshots for the Roster lineup. You will be " ..
-        "offered a reload afterwards, so the capture is saved.|r"
     local STATUS_LINE = {
         missing = "|cffffd100No portrait for this character yet.|r",
         pending = "|cff88cc88Captured - waiting for the companion to turn it into a portrait.|r",
     }
-    function AltStable.UpdateCaptureGlow(status)
+    -- inCombat: said by the caller when it knows (Capture's combat events: at
+    -- PLAYER_REGEN_DISABLED the lockdown has not started yet), asked otherwise.
+    function AltStable.UpdateCaptureGlow(status, inCombat)
         status = status or (AltStable.CurrentPortraitStatus and AltStable.CurrentPortraitStatus())
         if not status then return end
+        if inCombat == nil then
+            inCombat = (InCombatLockdown and InCombatLockdown())
+                or (UnitAffectingCombat and UnitAffectingCombat("player")) or false
+        end
         local line = STATUS_LINE[status.reason]
         if status.reason == "changed" then
             line = "|cffffd100Your gear changed since the last portrait (" ..
                 table.concat(status.changedSlots, ", ") .. ").|r"
         end
         refTipText:SetText(line and (REF_TIP_BASE .. "\n\n" .. line) or REF_TIP_BASE)
-        refTip:SetHeight(line and 92 or 62)
+        -- As tall as the text: a "changed" line lists any number of slots, and
+        -- a fixed height cut off the reason the tooltip is there to give.
+        local textH = refTipText.GetStringHeight and tonumber(refTipText:GetStringHeight())
+        refTip:SetHeight(textH and textH > 0 and (textH + 18) or (line and 92 or 62))
         local on = status.due
             and not (AltStableConfig and AltStableConfig.portraitGlow == false)
-            and not (InCombatLockdown and InCombatLockdown())
+            and not inCombat
         refBtn._glowing = on and true or false
         if on then refGlow:Show(); pulse:Play() else pulse:Stop(); refGlow:Hide() end
     end

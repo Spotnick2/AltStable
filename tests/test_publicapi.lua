@@ -336,6 +336,18 @@ AltStable.RefreshPortraitStatus()
 WoW.flushTimers()
 eq("  once per change, next frame", portraitCalls, 2)
 eq("  and the new answer is readable", AltStable.GetPortraitStatus().reason, "pending")
+-- A portrait change raised INSIDE a CharactersChanged callback is still news.
+local charListener = function()
+    AltStablePortraits = nil
+    AltStable.RefreshPortraitStatus()
+end
+AltStable.RegisterCallback("CharactersChanged", charListener)
+local beforeInside = portraitCalls
+AltStable.RefreshSheet()
+WoW.flushTimers()
+WoW.flushTimers()
+eq("a portrait change inside a CharactersChanged callback is still heard", portraitCalls, beforeInside + 1)
+AltStable.UnregisterCallback("CharactersChanged", charListener)
 AltStable.UnregisterCallback("PortraitStatusChanged", portraitListener)
 
 print(("test_publicapi: %d passed, %d failed"):format(passed, failed))
