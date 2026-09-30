@@ -63,5 +63,30 @@ local allSent = true
 for _, c in ipairs(called) do if not c.sent then allSent = false end end
 check("  each reporting it was sent", allSent)
 
+-- A second batch reuses the recycled pipe - which needs table.wipe, as the
+-- client has it; a stub without it crashed here.
+WoW.sent = {}
+WoW.sendResults = { 3 }
+for i = 6, 8 do
+    CTL:SendAddonMessage("BULK", "ALTSTABLE", "CHUNK|" .. i, "WHISPER", "Peer Surname")
+end
+pump(10)
+texts = {}
+for _, m in ipairs(WoW.sent) do texts[#texts + 1] = m.text end
+eq("a second batch, through a reused pipe, is delivered too", table.concat(texts, ","),
+   "CHUNK|6,CHUNK|7,CHUNK|8")
+
+-- A refusal that is NOT the throttle is not retried: the callback says so,
+-- with the result, which is what QueueWire acts on.
+WoW.sent = {}
+WoW.sendResults = { 12 }
+local report
+CTL:SendAddonMessage("ALERT", "ALTSTABLE", "REQ8|0", "WHISPER", "Gone Surname", nil,
+    function(_, didSend, result) report = { sent = didSend, result = result } end)
+pump(2)
+eq("a TargetOffline refusal is not delivered", #WoW.sent, 0)
+check("  and the callback reports it: not sent, TargetOffline",
+      report and report.sent == false and report.result == 12)
+
 print(("test_ctl: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -86,7 +86,8 @@ function WoW.reset()
     if UIParent then UIParent._children = {} end
     WoW.popups = {}
     WoW.popupRefused = nil
-    WoW.ctlDefer, WoW.ctlQueue = false, {}
+    WoW.sendResults, WoW.reportedErrors = {}, {}
+    WoW.ctlDefer, WoW.ctlQueue, WoW.ctlHeld = false, {}, {}
     WoW.reloaded = 0
     WoW.sounds = {}
     WoW.cvars = {}
@@ -1287,8 +1288,9 @@ C_AddOns = {
     GetAddOnMetadata = function(_, field) return field == "Version" and "dev" or nil end,
 }
 
-WoW.ctlDefer, WoW.ctlQueue = false, {}
+WoW.ctlDefer, WoW.ctlQueue, WoW.ctlHeld = false, {}, {}
 function WoW.ctlDrain(n)
+    WoW.ctlHeld = {}                     -- the blocked queues come back
     for _ = 1, n or #WoW.ctlQueue do
         local send = table.remove(WoW.ctlQueue, 1)
         if not send then return end
@@ -1311,7 +1313,8 @@ C_ChatInfo = {
         -- prio is set only when the send came through ChatThrottleLib, so a
         -- raw send is distinguishable from a paced one.
         table.insert(WoW.sent, { prefix = prefix, text = text, channel = channel,
-                                 target = target, prio = WoW.pendingPrio })
+                                 target = target, prio = WoW.pendingPrio,
+                                 queue = WoW.pendingQueue })
         return 0
     end,
     -- Present on the client; ChatThrottleLib hooks both.
@@ -1322,7 +1325,14 @@ C_BattleNet = C_BattleNet or {}
 C_BattleNet.SendGameData = C_BattleNet.SendGameData or function() return 0 end
 
 -- What ChatThrottleLib v32 calls besides the chat API, as the client has them.
-function securecallfunction(fn, ...) return fn(...) end
+-- The client's securecallfunction hands an error in fn to the error handler
+-- and carries on; it does not unwind through the caller (a CTL callback
+-- erroring must not abort - or, through QueueWire's pcall, duplicate - a send).
+function securecallfunction(fn, ...)
+    local r = { pcall(fn, ...) }
+    if not r[1] then geterrorhandler()(r[2]); return end
+    return unpack(r, 2, table.maxn(r))
+end
 -- WoW's xpcall passes its extra arguments to the function - Blizzard's own
 -- code relies on it (FunctionUtil: xpcall(script, CallErrorHandler, frame, ...))
 -- and so does ChatThrottleLib v32. Stock Lua 5.1 drops them, and the send it
@@ -1336,7 +1346,17 @@ do
 end
 -- The global form survives only as a deprecated alias (Blizzard_DeprecatedChatInfo).
 SendChatMessage = function(...) return C_ChatInfo.SendChatMessage(...) end
-function geterrorhandler() return function(e) error(e, 2) end end
+-- The client's handler REPORTS and returns; it does not raise. Raising from a
+-- handler turns a real error into "error in error handling" under xpcall and
+-- loses it. Reports land in WoW.reportedErrors.
+WoW.reportedErrors = {}
+function geterrorhandler()
+    return function(e) table.insert(WoW.reportedErrors, e) end
+end
+-- The client's table.wipe (and the wipe alias). CTL v32 binds it at load and
+-- calls it when it reuses a pipe.
+function table.wipe(t) for k in pairs(t) do t[k] = nil end return t end
+wipe = table.wipe
 function GetFramerate() return 60 end
 
 ------------------------------------------------------------
@@ -1424,7 +1444,7 @@ ChatThrottleLib = {
     -- its start-up throttle, when even an ALERT waits. Otherwise it sends at
     -- once and calls back at once.
     SendAddonMessage = function(self, prio, prefix, text, channel, target, q, callbackFn, callbackArg)
-        if WoW.ctlDefer then
+        if WoW.ctlDefer or (q and WoW.ctlHeld[q]) then
             table.insert(WoW.ctlQueue, function()
                 WoW.ctlDefer = false
                 local ok, err = pcall(self.SendAddonMessage, self, prio, prefix, text, channel,
@@ -1440,12 +1460,24 @@ ChatThrottleLib = {
         if #tostring(text) > 255 then
             error("ChatThrottleLib:SendAddonMessage(): message length cannot exceed 255 bytes", 2)
         end
-        WoW.pendingPrio = prio
-        local ok, r = pcall(C_ChatInfo.SendAddonMessage, prefix, text, channel, target)
-        WoW.pendingPrio = nil
-        if not ok then error(r, 2) end
-        if callbackFn then callbackFn(callbackArg, true, 0) end
-        return r
+        -- As v32: the send's result decides. AddonMessageThrottle is retried
+        -- (held in WoW.ctlQueue until WoW.ctlDrain(), as v32 holds a blocked
+        -- queue); an error inside the send is reported and becomes
+        -- GeneralError, never raised; the callback gets (arg, didSend, result).
+        local function attempt()
+            WoW.pendingPrio, WoW.pendingQueue = prio, q
+            local ok, r = pcall(C_ChatInfo.SendAddonMessage, prefix, text, channel, target)
+            WoW.pendingPrio, WoW.pendingQueue = nil, nil
+            if not ok then geterrorhandler()(r); r = 9 end
+            if r == true or r == nil then r = 0 end
+            if r == 3 then
+                if q then WoW.ctlHeld[q] = true end
+                table.insert(WoW.ctlQueue, attempt)
+                return
+            end
+            if callbackFn then securecallfunction(callbackFn, callbackArg, r == 0, r) end
+        end
+        attempt()
     end,
 }
 function GetGuildInfo() return nil end

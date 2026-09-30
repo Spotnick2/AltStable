@@ -96,8 +96,8 @@ local LibDeflate = LibStub and LibStub:GetLibrary("LibDeflate", true)
 --   so a naive 23-byte assumption underestimates it. Reserve a generous 35
 --   bytes (covers e.g. "CHUNK5|99999999|99999/99999|" = 28) so header+body can
 --   never exceed 255. That matters because ChatThrottleLib *errors* on an
---   oversize message (the old C_ChatInfo path only returned false), which would
---   abort the whole send. 255 - 35 = 220.
+--   oversize message (C_ChatInfo.SendAddonMessage returns a result code
+--   instead), which would abort the whole send. 255 - 35 = 220.
 local MAX_CHUNK = 220
 
 -- Monotonic per-session stream id, one per ChunkAndSendPayload call.
@@ -1271,10 +1271,18 @@ end
 
 -- Send one wire message, paced by ChatThrottleLib when present (it queues +
 -- rate-limits), falling back to a direct send if CTL somehow isn't loaded.
--- CTL raises a Lua error on an oversize (>255) message, so the call is wrapped:
--- a pathological over-budget packet degrades to a direct send (which merely
--- returns false) instead of aborting the whole ChunkAndSendPayload loop. With
--- MAX_CHUNK=220 this is belt-and-suspenders — it should never fire.
+-- CTL (v32) raises only on its argument checks - an unknown priority, or an
+-- oversize (>255) message - so the call is wrapped: a pathological over-budget
+-- packet degrades to a direct send (which returns a refusal code) instead of
+-- aborting the whole ChunkAndSendPayload loop. With MAX_CHUNK=220 this is
+-- belt-and-suspenders - it should never fire. An error INSIDE the send, v32
+-- catches and reports as GeneralError; it never reaches this pcall.
+--
+-- One CTL queue per destination (queueName). v32's default is one per PREFIX,
+-- so a full push to one peer made every other peer's reply wait behind it, and
+-- a throttle on one blocked both; v24 queued per destination and round-robined
+-- between them, which is what this keeps (review of #138). Order within a
+-- destination is still FIFO, so a DONE still follows its chunks.
 -- `prio` defaults to BULK, which is right for chunks. A REQ goes at ALERT:
 -- it is one small message that must not queue behind - or be sent raw on top
 -- of - a large outgoing burst.
@@ -1286,25 +1294,47 @@ end
 local lastWhisperAt = {}          -- AuthKey -> when addon traffic last went to them
 local function StampWhisper(key) lastWhisperAt[key] = time() end
 
+-- The server's answer to a send, when it has one: C_ChatInfo.SendAddonMessage
+-- returns an Enum.SendAddonMessageResult on this client. CTL v32 retries only
+-- AddonMessageThrottle and reports the rest through the callback as
+-- (arg, didSend, result). TargetOffline says, at send time, what the chat line
+-- "No player named X" says later: they cannot be reached. Whether this client
+-- actually returns it for an offline or other-faction whisper is unmeasured
+-- (forever-api-notes); acting on it costs nothing if it never comes.
+local SEND_OK = 0
+local SEND_TARGET_OFFLINE = (Enum and Enum.SendAddonMessageResult
+    and Enum.SendAddonMessageResult.TargetOffline) or 12
+local NoteUnreachable            -- defined with the unreachable-target handling below
+
+local function SendSucceeded(result)
+    return result == nil or result == true or result == SEND_OK
+end
+
 -- onSent(didSend), optional, runs when the message actually leaves - which
 -- under ChatThrottleLib can be well after this call returns.
 local function QueueWire(msg, channel, target, prio, onSent)
     local key = channel == "WHISPER" and AuthKey(target) or nil
-    local function sent(_, didSend)
-        if key then StampWhisper(key) end
+    local function sent(_, didSend, result)
+        -- Only a message that went out is stamped: a refused one draws no
+        -- "No player named" echo to recognize.
+        if didSend ~= false and key then StampWhisper(key) end
+        if key and result == SEND_TARGET_OFFLINE and NoteUnreachable then
+            NoteUnreachable(target, key)
+        end
         if onSent then onSent(didSend ~= false) end
+    end
+    local function raw()
+        local result = C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
+        sent(key, SendSucceeded(result), result)
     end
     if ChatThrottleLib then
         -- Stamped by CTL's callback, when the message actually leaves.
         local ok = pcall(ChatThrottleLib.SendAddonMessage, ChatThrottleLib, prio or "BULK", PREFIX, msg,
-                         channel, target, nil, (key or onSent) and sent or nil, key)
-        if not ok then
-            C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
-            sent(key, true)
-        end
+                         channel, target, PREFIX .. channel .. (target or ""),
+                         (key or onSent) and sent or nil, key)
+        if not ok then raw() end
     else
-        C_ChatInfo.SendAddonMessage(PREFIX, msg, channel, target)
-        sent(key, true)
+        raw()
     end
 end
 
@@ -1382,6 +1412,16 @@ local function SayUnreachable(name, key)
     else
         Print("|cffff8800" .. name .. " cannot be reached|r - offline, or on the other faction "
             .. "(addon messages do not cross factions), so this sync cannot go through.")
+    end
+end
+
+-- Unreachable, from either signal - the chat line or TargetOffline at send
+-- time: the current manual attempt must not push, and a sync the player typed
+-- is told once.
+function NoteUnreachable(name, key)
+    if syncAttempt[key] then syncAttempt[key].unreachable = true end
+    if manualSyncAt[key] and (time() - manualSyncAt[key]) <= 30 then
+        SayUnreachable(name, key)
     end
 end
 
@@ -2618,10 +2658,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- has hidden the server's own copies.
         local lostName, lostKey = OurEcho(text)
         if lostName then
-            if syncAttempt[lostKey] then syncAttempt[lostKey].unreachable = true end
-            if manualSyncAt[lostKey] and (time() - manualSyncAt[lostKey]) <= 30 then
-                SayUnreachable(lostName, lostKey)
-            end
+            NoteUnreachable(lostName, lostKey)
             return
         end
 
@@ -3071,7 +3108,15 @@ SlashCmdList["ALTSTABLE"] = function(args)
         -- close before the server had anything to refuse - queueing the whole
         -- database behind a request that then fails (Codex, review of #137).
         RequestCharacters("WHISPER", target, true, function(didSend)
-            if not didSend then return end
+            if not didSend then
+                -- Refused at send (TargetOffline has said why already):
+                -- the push is not queued behind a request that never went.
+                if not attempt.unreachable then
+                    Print("|cffff8800The request to " .. target .. " could not be sent|r - "
+                        .. "nothing was pushed. Try again in a moment.")
+                end
+                return
+            end
             C_Timer.After(3, function()
                 -- A newer /alts sync to them owns the push now.
                 if syncAttempt[key] ~= attempt or attempt.unreachable then return end
