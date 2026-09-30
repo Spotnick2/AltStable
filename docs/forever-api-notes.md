@@ -395,6 +395,55 @@ The low IDs are the familiar Vanilla skill lines (164 Blacksmithing, 165 Leather
 171 Alchemy, 182 Herbalism, 186 Mining, 197 Tailoring, 202 Engineering, 333 Enchanting,
 393 Skinning). The `29xx` block is Retail-era.
 
+### Measured with professions — 1.60.1.70124, 2026-09-29 (`/asprof`, `Tools/AltStableProbe/Professions.lua`)
+
+Two characters: Tailoring 60 / Enchanting 75 / First Aid / Fishing / Cooking, and Leatherworking 33
+/ Skinning 82 / First Aid / Fishing / Cooking. Snapshots taken one second after each trade-skill
+event; the raw log is `AltStableProbeDB.prof` / `.profEvents`.
+
+- **`GetProfessions()` works** on a character that has some: spellbook indices, and
+  `GetProfessionInfo(i)` returns the base skill line in position 7 (197, 333, 129, 356, 185, 165,
+  393). The earlier `nil × 7` was a character with none.
+- **`GetAllProfessionTradeSkillLines()` is NOT the character's professions.** It returns the same
+  20 lines (including two `Test Profession [DNT]`) on both characters, every one at `0/0`. Never
+  read ownership from it.
+- **Nothing is readable with the window closed.** `GetAllRecipeIDs()` returns an empty table and
+  `GetBaseProfessionInfo()` a zeroed struct (`professionID = 0`) until a profession window opens.
+- **After closing, the last source is RETAINED.** One second after `TRADE_SKILL_CLOSE` the recipe
+  list and `GetBaseProfessionInfo()` still describe the profession just closed. A scan must be
+  bounded by SHOW … CLOSE; a read after CLOSE would file the old list under whatever is asked.
+- **Recipe IDs are spell IDs, and they are Wowhead's.** 2149 Handstitched Leather Boots, 2881 Light
+  Leather, 2538 Charred Wolf Meat; `GetProfessionInfoByRecipeID(2329)` answers "Alchemy" on a
+  character without Alchemy.
+- **`GetProfessionInfoByRecipeID` names the CHILD line.** For 2329 it returns `professionID = 2937`
+  with `parentProfessionID = 171`. `GetBaseProfessionInfo()` in an open window returns the base
+  line (165, 185, 393). Resolve a recipe to its profession through `parentProfessionID`.
+- **`GetAllRecipeIDs()` includes unlearned recipes**, and far more than Vanilla had: 592 for
+  Leatherworking (12 learned), 132 for Cooking (7), 3 for Skinning (1). `GetFilteredRecipeIDs()`
+  follows the window's filters (12 / 7 / 1 here, i.e. learned-only) and is not a completeness
+  source. `GetRecipeInfo` returned no nil for any of the 727 IDs.
+- **`GetRecipeInfo` fields**: `recipeID, name, learned, icon, hyperlink` (the product),
+  `categoryID, skillLineAbilityID, relativeDifficulty, maxTrivialLevel, numSkillUps, craftable,
+  disabled, favorite, isEnchantingRecipe, isGatheringRecipe, isDummyRecipe, isRecraft,
+  isSalvageRecipe, supportsQualities, itemLevel, canSkillUp, firstCraft, hasSingleItemOutput,
+  alwaysUsesLowestQuality, canCreateMultiple, supportsCraftingStats`.
+- **Gathering professions have recipes on Forever.** Skinning: *Camp Chair* (1229517). Cooking:
+  *Basic Campfire* (1229737), *Iron Oven* (1263067, unlearned). New Forever camp crafting.
+- `GetRecipeSourceText(1263067)` returned nil.
+- **Event order on opening a window**, all within about 60 ms: `TRADE_SKILL_SHOW`,
+  `DATA_SOURCE_CHANGING`, `LIST_UPDATE`, `DATA_SOURCE_CHANGED`, `LIST_UPDATE` ×2. The list is
+  complete by the time the snapshot one second later runs. Switching to another profession
+  repeats the whole sequence. `TRADE_SKILL_CLOSE` fires **twice** per close, and also fired without a SHOW
+  on the first character. Suspected cause, not yet measured: Forever has a **Professions overview
+  window** (hammer icon, one tab per profession down its right edge, every profession with a
+  "Camping" category - even Fishing and First Aid), and opening or closing that overview is not a
+  trade-skill window of its own.
+- `TRADE_SKILL_DETAILS_UPDATE`, `NEW_RECIPE_LEARNED` and `SKILL_LINES_CHANGED` registered without
+  error. `SKILL_LINES_CHANGED` fired at each login.
+
+Not yet measured: `NEW_RECIPE_LEARNED` (no recipe was learned while the probe listened),
+`GetRecipeCooldown` (no cooldown recipe known).
+
 ---
 
 ## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 still broken (fixed two builds later, in 70009)
