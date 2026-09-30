@@ -113,8 +113,9 @@ Authorization is done (#61: the request gate in PR #77, the rest after it). The 
 |---|---|
 | A request is served only to a peer answered **auto** (allowed, or on the whitelist), or one we named ourselves in `/alts sync <name>` in the last ten minutes. Anyone else is filed as a question: a chat line and a prompt | `MayServe`, the `REQ` branch, `RememberPendingRequest` |
 | A stream is taken only from an auto peer, or one **we asked** in the last ten minutes. The window bounds the start; an admitted stream runs to the end | `MayAdmit`, the `CHUNK` and `CHAR` branches |
-| **Never wins** everywhere: no request, push, reply or resync goes to a never, and nothing is taken from one, even mid-stream or in the DONE grace window | `CompleteStream`, `RequestCharacters`, `RequestResync`, `/alts sync` |
-| One key per peer: lower-cased, **our** realm dropped, any other realm kept. The echo check uses the same key, so our name on another realm is somebody else | `AuthKey` (`AltStable.PeerKey`) |
+| **Never wins** everywhere: no *new* request, push, reply or resync goes to a never, and nothing is taken from one, even mid-stream or in the DONE grace window. A reply already in ChatThrottleLib's queue is not recalled | `CompleteStream`, `RequestCharacters`, `RequestResync`, `/alts sync` |
+| A stream refused at its first packet stays refused to its end, even if the peer is allowed half way | `refusedStreams`, the `CHUNK` branch |
+| One key per peer: the **name**, lower-cased, realm suffix dropped - names are unique across the region (below) | `AuthKey` (`AltStable.PeerKey`) |
 | The reply is always a whisper to the character that asked | `ServeSyncRequest` |
 | The whitelist is who *we* ask; allowing someone does not add them to it | `GetSyncTargets` |
 
@@ -127,10 +128,13 @@ A one-sided whitelist still works, which is why the gate is not simply "on the w
 types `/alts sync B`, B is asked once and presses Allow, and B's Allow also asks A back. A is
 never prompted, because typing the name was A's consent.
 
-**Still keyed by the short name, deliberately:** watermarks, `peerScopeGeneration` and the stall
-watch use `PeerShort`, so two same-named characters on different realms share those entries.
-Harmless until cross-realm peers are real, and it needs this issue's cross-realm measurement
-first.
+**Names are unique across the region.** On Forever the realms are four rulesets (PvP, PvE, RP,
+Hardcore) - servers underneath, but one namespace: character names, and guild names, are unique
+across the whole region. So the realm suffix on a sender says where a character is, never who,
+and keying by the name alone is correct - for the authorization answers, the echo check, and the
+watermarks, `peerScopeGeneration` and stall watch that were always keyed by `PeerShort`. An
+earlier cut of #61 kept the realm as identity; it made one person several keys, and folding our
+own realm in made the account-wide config depend on the realm being played (review of #136).
 
 So the thing missing for *discovery* is still a name that is online — but it is not the only
 prerequisite.
@@ -222,14 +226,11 @@ needs a name). After that seed:
    `lastUpdate` per character; the one played most recently is the likeliest to be logged in. One
    burst per login, never per sync tick.
 
-**What our own code did about cross-realm senders**, and what #61 changed. The sender used to be
-stripped of its realm into one value doing two jobs, both wrong cross-realm: the identity check
-(`senderName == PLAYER_NAME`) dropped a same-named character on another realm as our own echo,
-and the routing answered a bare name on *our* realm. #61 fixed the identity half: the echo check
-and every authorization key now go through `AuthKey`, which drops only **our** realm. Requests
-are answered to the **raw** sender, so the routing half is right as far as the whisper goes. What
-remains is the watermark and stall-watch keys, still `PeerShort` (see "What the code does
-today") - and the cross-realm measurement itself.
+**What our own code does with cross-realm senders.** Identity is the name (unique across the
+region, see "What the code does today"), so the name-only echo check and keys are right.
+Routing is the other job: requests are answered to the **raw** sender, realm and all, so a
+cross-ruleset whisper goes where it came from. What remains is measuring whether cross-ruleset
+whispers route at all.
 
 Automatic after the first seed, and self-correcting when you switch characters.
 

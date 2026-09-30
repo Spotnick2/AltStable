@@ -1825,11 +1825,9 @@ do
     eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_AUTO,
        "a peer we whitelisted is one we already chose to sync with")
 
-    -- THE REALM IS PART OF WHO THEY ARE. Stripping it meant a whitelist entry
-    -- for a character on another realm silently authorized the LOCAL character
-    -- of the same name, who could then ask and be served without a prompt.
-    eq(AltStable.SyncAuthFor("Mine"), AltStable.AUTH_ASK,
-       "  and the local character of the same name is somebody else")
+    -- One name is one character across the region, whatever the suffix.
+    eq(AltStable.SyncAuthFor("Mine"), AltStable.AUTH_AUTO,
+       "  and without the realm suffix it is the same character")
 
     AltStable.DenySyncPeer("Mine-Realm")
     eq(AltStable.SyncAuthFor("Mine-Realm"), AltStable.AUTH_NEVER,
@@ -2170,10 +2168,10 @@ do
     eq(AltStable.SyncAuthFor("Karuzo"), AltStable.AUTH_AUTO,
        "a whitelist entry matches the character whatever the case")
     eq(AltStable.SyncAuthFor("KARUZO"), AltStable.AUTH_AUTO, "  including shouting")
-    -- An unqualified entry means the local character, so a qualified name is a
-    -- different person - not the same one written out more fully.
-    eq(AltStable.SyncAuthFor("Karuzo-OtherRealm"), AltStable.AUTH_ASK,
-       "  but somebody on another realm is not that character")
+    -- Names are unique across the region on Forever: a realm suffix is where
+    -- they are, not who.
+    eq(AltStable.SyncAuthFor("Karuzo-OtherRealm"), AltStable.AUTH_AUTO,
+       "  and with a realm suffix it is still that character")
 
     eq(AltStable.SyncAuthFor(""), AltStable.AUTH_NEVER, "a nameless sender is refused outright")
     eq(AltStable.SyncAuthFor(nil), AltStable.AUTH_NEVER, "so is no sender at all")
@@ -2266,11 +2264,9 @@ end
 ------------------------------------------------------------
 
 do
-    -- THROUGH THE HANDLER, with a realm in play. Whitelisting a character on
-    -- another realm used to authorize the LOCAL character of the same name,
-    -- who could then whisper a request and be served without a prompt. The
-    -- handler strips the realm for routing and buffer keys; the consent
-    -- decision has to see the full identity.
+    -- THROUGH THE HANDLER, with a realm in play. The consent decision is by
+    -- name (unique across the region), and the reply goes to the sender
+    -- exactly as it arrived - the realm is routing, not identity.
     WoW.reset()
     AltStableConfig = { whitelist = { "Trusted Name-OtherRealm" }, peerWatermarks = {},
                         syncAuth = {} }
@@ -2281,20 +2277,19 @@ do
     }
 
     onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
-            "Trusted Name")
+            "Trusted Name-OtherRealm")
     flushAll()
-    eq(#WoW.sentMessages(), 0,
-       "the local character sharing a whitelisted name is not served")
+    check(#WoW.sentMessages() > 0, "the whitelisted character is served")
+    for _, m in ipairs(WoW.sent) do
+        eq(m.target, "Trusted Name-OtherRealm",
+           "  and the reply is addressed to the sender as it arrived, realm and all")
+    end
 
     WoW.sent = {}
     onEvent(T.frame, "CHAT_MSG_ADDON", PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER",
-            "Trusted Name-OtherRealm")
+            "Stranger Name-OtherRealm")
     flushAll()
-    check(#WoW.sentMessages() > 0, "  while the one actually whitelisted is")
-    for _, m in ipairs(WoW.sent) do
-        eq(m.target, "Trusted Name-OtherRealm",
-           "  and the reply is addressed across the realm, not to the local namesake")
-    end
+    eq(#WoW.sentMessages(), 0, "  while a different name on that realm is not")
 end
 
 do
@@ -2436,8 +2431,8 @@ do
     AltStable.AllowSyncPeer(suggested)
     eq(AltStable.SyncAuthFor("Faraway Name-OtherRealm"), AltStable.AUTH_AUTO,
        "following the prompt authorizes the requester")
-    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_ASK,
-       "  and not the local namesake")
+    eq(AltStable.SyncAuthFor("Faraway Name"), AltStable.AUTH_AUTO,
+       "  under their name, whatever realm suffix they next arrive with")
 end
 
 ------------------------------------------------------------
@@ -2759,47 +2754,81 @@ do
 end
 
 ------------------------------------------------------------
--- One peer, one key
+-- One peer, one key: the name
 ------------------------------------------------------------
--- "Name" and "Name-OurRealm" are the same character; the client may hand us
--- either. Two keys meant two answers - "never" under one, "auto" under the
--- other.
+-- Character names are unique across the region on Forever (the realms are four
+-- rulesets over one region), so every realm form of a name is one peer. Keys
+-- that kept the realm made one person several answers - and folding "our"
+-- realm in made the account-wide config depend on the realm being played.
 do
     freshAuth()
-    local own = WoW.player.normalizedRealm
-    AltStable.DenySyncPeer("Twin Surname-" .. own)
+    AltStable.DenySyncPeer("Twin Surname-ClassicBetaPvE")
     eq(AltStable.SyncAuthFor("Twin Surname"), AltStable.AUTH_NEVER,
-       "a name with our realm and the bare name are one peer")
-    eq(AltStable.SyncAuthFor("Twin Surname-" .. WoW.player.realm), AltStable.AUTH_NEVER,
-       "  in the realm's display form too")
-    eq(AltStable.SyncAuthFor("Twin Surname-OtherRealm"), AltStable.AUTH_ASK,
-       "  but the same name on another realm is somebody else")
+       "a name with a realm and the bare name are one peer")
+    eq(AltStable.SyncAuthFor("Twin Surname-Classic Beta PvE"), AltStable.AUTH_NEVER,
+       "  in any realm form")
+    eq(AltStable.SyncAuthFor("Twin Surname-OtherRealm"), AltStable.AUTH_NEVER,
+       "  on any realm: the name is the character")
 
-    -- Stored before the keys were canonical: fold, and never wins a clash.
+    -- The answer does not depend on the realm being played: it lives in the
+    -- account-wide config and means the same character everywhere.
+    AltStable.AllowSyncPeer("Friend Surname")
+    local realm, norm = WoW.player.realm, WoW.player.normalizedRealm
+    WoW.player.realm, WoW.player.normalizedRealm = "Hardcore", "Hardcore"
+    eq(AltStable.SyncAuthFor("Friend Surname"), AltStable.AUTH_AUTO,
+       "  and an answer given on one ruleset holds on another")
+    WoW.player.realm, WoW.player.normalizedRealm = realm, norm
+
+    -- Stored before the keys were names: fold, and never wins a clash.
     freshAuth()
     AltStableConfig.syncAuth = {
         ["dup surname"] = "auto",
-        ["dup surname-" .. own:lower()] = "never",
-        ["solo surname-" .. own:lower()] = "auto",
-        ["far surname-otherrealm"] = "auto",
+        ["dup surname-classicbetapve"] = "never",
+        ["solo surname-otherrealm"] = "auto",
     }
     AltStable.MigrateSyncAuthKeys()
     eq(AltStableConfig.syncAuth["dup surname"], "never", "migration: never wins a clash")
-    eq(AltStableConfig.syncAuth["dup surname-" .. own:lower()], nil, "  and the realm form is gone")
+    eq(AltStableConfig.syncAuth["dup surname-classicbetapve"], nil, "  and the realm form is gone")
     eq(AltStableConfig.syncAuth["solo surname"], "auto", "  a lone realm-form key is folded")
-    eq(AltStableConfig.syncAuth["far surname-otherrealm"], "auto", "  another realm is left alone")
 end
 
 do
-    -- Our own echo is our name with no realm or with ours - not our name on
-    -- another realm, which is somebody else and was dropped as us.
-    freshAuth({ whitelist = { WoW.player.name .. "-OtherRealm" } })
-    deliver(streamOf("Player-Namesake-", 2), WoW.player.name .. "-OtherRealm")
-    check(holds("Player-Namesake-"), "our name on another realm is not our echo")
+    -- Our own echo: our name, with any realm suffix, is us.
     freshAuth()
-    deliver(streamOf("Player-Echo-", 2), WoW.player.name .. "-" .. WoW.player.normalizedRealm)
-    check(not holds("Player-Echo-"), "  our name on our realm still is")
+    deliver(streamOf("Player-Echo-", 2), WoW.player.name .. "-OtherRealm")
+    check(not holds("Player-Echo-"), "our name with any realm suffix is our own echo")
     check(not chatHas("did not ask for"), "  and is dropped silently, as ours")
+end
+
+do
+    -- An Allow clicked while an unasked push is still arriving must not start
+    -- a buffer from the middle of it: that stream stays refused to its end.
+    freshAuth()
+    local chunks, done = splitWire(streamOf("Player-Half-", 3))
+    local half = math.floor(#chunks / 2)
+    for i = 1, half do receiveUnapproved(chunks[i], "Half Surname") end
+    AltStable.AllowSyncPeer("Half Surname")
+    WoW.sent = {}
+    WoW.chatOut = {}
+    for i = half + 1, #chunks do receiveUnapproved(chunks[i], "Half Surname") end
+    receiveUnapproved(done, "Half Surname")
+    flushAll()
+    check(not holds("Player-Half-"), "the rest of a refused stream is refused, Allow or not")
+    eq(T.BufferedStreams(), 0, "  and none of it is buffered")
+    check(not chatHas("incomplete"), "  so no 'chunks missing' for a stream we never took")
+    eq(requestsTo("Half Surname"), 0, "  and no resync asked for")
+    -- Their next stream is a new one, and allowed.
+    deliver(streamOf("Player-Half-", 3), "Half Surname")
+    check(holds("Player-Half-"), "  their next stream is taken")
+
+    -- Refusing by the stored, lower-cased key drops what arrived under the
+    -- sender's own capitalisation.
+    freshAuth({ whitelist = { "Mid Surname" } })
+    chunks = splitWire(streamOf("Player-Case-", 3))
+    receiveUnapproved(chunks[1], "Mid Surname")
+    check(T.BufferedStreams() == 1, "a whitelisted peer's stream is buffered")
+    AltStable.DenySyncPeer("mid surname")
+    eq(T.BufferedStreams(), 0, "  and denying them in lower case drops it")
 end
 
 do

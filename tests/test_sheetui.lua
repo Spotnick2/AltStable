@@ -2392,7 +2392,15 @@ do
         WoW.sent = {}
         press(p, "OnAccept")
         eq("Allow approves them", AltStable.SyncAuthFor("Kind Surname"), AltStable.AUTH_AUTO)
-        check("  and serves what they asked", #WoW.sent > 0)
+        -- DATA, not just traffic: the request Allow sends back is traffic too.
+        local chunks = 0
+        for _, m in ipairs(WoW.sent) do
+            if m.target == "Kind Surname"
+                and m.text:sub(1, #AltStable._test.MSG_CHUNK_V) == AltStable._test.MSG_CHUNK_V then
+                chunks = chunks + 1
+            end
+        end
+        check("  and serves what they asked", chunks > 0)
     end
 
     -- One at a time, the next after the first is answered.
@@ -2416,6 +2424,39 @@ do
     AltStable.AllowSyncPeer("Slash Surname")
     flush()
     eq("  answering by /alts allow takes it down", #asks(), 0)
+
+    -- Pressed away while hidden: the client hides a dialog that is not
+    -- visible without running OnHide. The slot must still come free.
+    fresh()
+    ask("Hidden Surname")
+    p = asks()[1]
+    if p then
+        StaticPopupDialogs[POP].OnCancel(p.dialog, p.data, "clicked")
+        p.dialog:Hide()                      -- no OnHide, as on the client
+        flush()
+        ask("After Surname")
+        local nxt = asks()[1]
+        eq("a prompt dismissed without OnHide still frees the slot", nxt and nxt.arg1, "After Surname")
+    end
+
+    -- A waiting request expiring as the next one arrives shows ONE prompt.
+    fresh()
+    ask("Expiring Surname")
+    p = asks()[1]
+    if p then press(p, "OnCancel") end
+    WoW.now = WoW.now + 301
+    ask("Fresh Surname")
+    eq("an expiry while choosing the next asker shows one prompt, not two", #asks(), 1)
+
+    -- Served through /alts sync consent while the prompt is up: the question
+    -- is answered, so it goes.
+    fresh()
+    ask("Consent Surname")
+    check("a prompt is up for them", #asks() == 1)
+    SlashCmdList["ALTSTABLE"]("sync Consent Surname")
+    ask("Consent Surname")                    -- served now: we named them
+    flush()
+    eq("  serving them through /alts sync takes the stale prompt down", #asks(), 0)
 
     -- Not in combat; after it.
     fresh()
@@ -2443,7 +2484,7 @@ do
     fresh()
     -- Open, so the list redraws itself on each change as it would on screen:
     -- the point is that a request arriving with Options open shows up.
-    local panel = AltStable._test.OptionsPanel
+    local panel = AltStable._test.optionsPanel
     panel:Show()
     AltStable.DenySyncPeer("Foe Surname")
     AltStable.AllowSyncPeer("Pal Surname")

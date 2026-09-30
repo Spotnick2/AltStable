@@ -3542,7 +3542,6 @@ local function CreateFrameIfNeeded()
         if optionsFrame:IsVisible() then OptRefreshSyncAuth() end
     end
     AltStable._test.SyncAuthRows = optAuthRows
-    AltStable._test.OptionsPanel = optionsPanel
 
     -- ── Toasts section ────────────────────────────────────
     local optToastHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -4404,13 +4403,15 @@ local function NextSyncAsk()
 end
 
 local function ShowNextSyncAsk()
-    if syncPromptKey then return end    -- one at a time
     -- Not in the middle of a fight: PLAYER_REGEN_ENABLED tries again.
     if InCombatLockdown and InCombatLockdown() then return end
     if type(StaticPopupDialogs) ~= "table" or not StaticPopup_Show then return end
     if not AltStable.PendingSyncRequests then return end
     local e = NextSyncAsk()
-    if not e then return end
+    -- One at a time. Checked AFTER NextSyncAsk, not before: it reads the
+    -- pending list, which announces an expired entry it drops - and that
+    -- announcement can show a prompt from in here (review of #136).
+    if not e or syncPromptKey then return end
     local key = e.key or AltStable.PeerKey(e.name)
     local dialog = StaticPopup_Show(SYNC_ASK_POPUP, e.name, nil, { name = e.name, key = key })
     -- No frame (every dialog slot busy, or the client refused): not counted as
@@ -4421,6 +4422,16 @@ local function ShowNextSyncAsk()
     LiftPopup(dialog)
 end
 
+-- The prompt is over: free the one-at-a-time slot and look for the next asker
+-- on the next frame. Run from EVERY way out - the three buttons as well as
+-- OnHide - because a dialog hidden while it is not visible (under a UIParent
+-- the camera showcase hid) never gets OnHide, and a slot freed only there
+-- stayed taken for the session: nobody was prompted again (review of #136).
+local function EndSyncAsk()
+    syncPromptKey = nil
+    if C_Timer and C_Timer.After then C_Timer.After(0, ShowNextSyncAsk) end
+end
+
 if type(StaticPopupDialogs) == "table" then
     StaticPopupDialogs[SYNC_ASK_POPUP] = {
         text = "|cffffffff%s|r asks to sync with you.\n\nThey would receive every character "
@@ -4428,24 +4439,35 @@ if type(StaticPopupDialogs) == "table" then
         button1 = "Allow",
         button2 = "Not now",
         button3 = "Never",
+        -- The answer first, with the slot still held, so its announcement does
+        -- not open the next prompt on top of this one.
         OnAccept = function(self, data)
             DropPopup(self)
             if type(data) == "table" then AltStable.AllowSyncPeer(data.name) end
+            EndSyncAsk()
         end,
         -- "Not now", and ALSO what Escape does (hideOnEscape runs OnCancel), so
         -- this must never refuse anyone: the request stays waiting.
-        OnCancel = function(self) DropPopup(self) end,
+        --
+        -- With no dialog it is the client telling us the show FAILED (it calls
+        -- OnCancel(nil, data) before returning nil): nothing was on screen, so
+        -- nothing ends - and retrying on the next frame would retry every frame.
+        OnCancel = function(self)
+            if not self then return end
+            DropPopup(self)
+            EndSyncAsk()
+        end,
         OnAlt = function(self, data)
             DropPopup(self)
             if type(data) == "table" then AltStable.DenySyncPeer(data.name) end
+            EndSyncAsk()
         end,
         -- Every route out ends here. The next asker is shown on the next frame,
         -- not from inside this one: the dialog is still being torn down, and
         -- DropPopup documents how its hide can re-enter.
         OnHide = function(self)
             DropPopup(self)
-            syncPromptKey = nil
-            if C_Timer and C_Timer.After then C_Timer.After(0, ShowNextSyncAsk) end
+            EndSyncAsk()
         end,
         timeout = 0,
         whileDead = true,
@@ -4456,13 +4478,18 @@ end
 -- Core calls this whenever an answer or a pending request changes.
 function AltStable.OnSyncAuthChanged()
     if AltStable.RefreshSyncAnswers then AltStable.RefreshSyncAnswers() end
-    -- Answered some other way while the prompt was up: take the stale question
-    -- down, on the next frame so a button's own handler finishes first.
+    -- No longer a question while the prompt was up - answered some other way,
+    -- served through /alts sync consent, or expired: take it down, on the next
+    -- frame so a button's own handler finishes first.
     local shown = syncPromptKey
     if shown and C_Timer and C_Timer.After then
         C_Timer.After(0, function()
-            if syncPromptKey == shown and StaticPopup_Hide
-                and AltStable.SyncAuthFor(shown) ~= AltStable.AUTH_ASK then
+            if syncPromptKey ~= shown or not StaticPopup_Hide then return end
+            local waiting = false
+            for _, e in ipairs(AltStable.PendingSyncRequests()) do
+                if (e.key or AltStable.PeerKey(e.name)) == shown then waiting = true end
+            end
+            if not waiting or AltStable.SyncAuthFor(shown) ~= AltStable.AUTH_ASK then
                 StaticPopup_Hide(SYNC_ASK_POPUP)
             end
         end)

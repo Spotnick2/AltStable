@@ -135,9 +135,16 @@ arriving on the guild channel used to be answered on the guild channel, so
 approving one peer broadcast the database to every member. Nothing is sent to a
 room. (`BroadcastDB` is a separate, deliberate act.)
 
-**The realm is part of who they are.** `Trusted-OtherRealm` and `Trusted` are
-two different people, and approving one does not approve the other. Case is
-folded, because WoW whisper targets are case-insensitive; the realm is not.
+**An answer is by name.** On Forever the realms are four rulesets (PvP, PvE, RP,
+Hardcore) over one region, and character names are unique across the region, so
+`Trusted-OtherRealm` and `Trusted` are the same character: one answer covers
+every form, and holds whichever ruleset you are playing. Case is folded too,
+because WoW whisper targets are case-insensitive. The reply still goes to the
+name exactly as it arrived, realm and all.
+
+**Never means nothing new.** A refused peer gets no new request, push, reply or
+retry. A reply already handed to the send queue before you refused them is not
+recalled - it finishes.
 
 **Your whitelist counts as consent.** Peers you listed there are served without
 a prompt, because you already named them as your own — so an existing setup sees

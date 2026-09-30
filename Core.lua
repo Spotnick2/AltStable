@@ -115,6 +115,10 @@ local CHUNK_DONE_GRACE      = 2     -- seconds
 -- buffer because chunks can arrive out of order on the addon channel
 -- and silent reordering was producing checksum mismatches.
 local incomingBuffers = {}
+-- Streams refused at their first packet, by buffer key (#61): the rest of the
+-- stream stays refused even if consent arrives half way - an Allow clicked
+-- while a push is still arriving must not start a buffer from its middle.
+local refusedStreams = {}
 
 -- Which protocol a command string belongs to, and whether we can speak it.
 --
@@ -199,6 +203,9 @@ C_Timer.NewTicker(60, function()
         if buf.lastTouched and (now - buf.lastTouched) > 120 then
             incomingBuffers[key] = nil
         end
+    end
+    for key, at in pairs(refusedStreams) do
+        if (now - at) > 120 then refusedStreams[key] = nil end
     end
 end)
 
@@ -474,61 +481,27 @@ AltStable.AUTH_AUTO, AltStable.AUTH_ASK, AltStable.AUTH_NEVER = AUTH_AUTO, AUTH_
 -- named as their own, and prompting for characters you configured yourself
 -- would be a prompt with one sensible answer. It also means an existing install
 -- sees no new prompts for the peers it already syncs with.
--- One key for a peer, case-folded.
+-- One key for a peer: the character NAME, case-folded, with any realm suffix
+-- dropped.
 --
--- WoW whisper targets are case-insensitive and the rest of the addon knows it:
--- IsWhitelisted, RemoveFromWhitelist and IsPeerOnline all compare with :lower().
--- This did not, which broke it in both directions. A whitelist entry typed
--- "karuzo" stopped matching the character Karuzo, so an upgrade would start
--- prompting for peers already configured - the one thing the whitelist-as-
--- consent rule exists to avoid. Worse, `/alts deny karuzo` stored an answer
--- under a key the handler never looked up: it printed "refusing karuzo" and
--- went on serving them. A security control that silently no-ops on a
--- capitalisation is worse than none, because it reports success.
--- REALM INCLUDED. "Trusted-OtherRealm" and "Trusted" are two people.
+-- Case: WoW whisper targets are case-insensitive, and the rest of the addon
+-- (IsWhitelisted, RemoveFromWhitelist, IsPeerOnline) compares with :lower().
+-- A gate that did not once stored `/alts deny karuzo` under a key the handler
+-- never read: it printed "refusing" and went on serving them.
 --
--- Stripping the realm meant a whitelist entry for a character on another realm
--- silently authorized the local character of the same name, who could then
--- whisper a request and be served without ever being asked about. Folding case
--- is right - WoW whisper targets are case-insensitive - but folding away the
--- realm is not; it is the only thing distinguishing two players who chose the
--- same name.
---
--- A sender with no realm suffix IS the local realm, and a whitelist entry with
--- no suffix means the same, so those two match each other and neither matches a
--- qualified name.
---
--- And a name carrying OUR realm is the same character as the bare name: the
--- client may hand us either ("Name" for a same-realm sender, and a typed
--- "Name-OurRealm" is the same person), so the suffix is dropped for our realm
--- and kept for any other. Without that, one answer could be stored twice under
--- two keys - "never" under one while the other still said "auto" (review of the
--- #61 plan). The realm forms are read at call time: the realm is only known
--- once the game is up.
-local function OwnRealmSuffixes()
-    local out = {}
-    local normalized = GetNormalizedRealmName and GetNormalizedRealmName()
-    if type(normalized) == "string" and normalized ~= "" then out[#out + 1] = normalized:lower() end
-    local realm = GetRealmName and GetRealmName()
-    if type(realm) == "string" and realm ~= "" then
-        out[#out + 1] = realm:lower()
-        out[#out + 1] = (realm:gsub("%s+", "")):lower()
-    end
-    return out
-end
-
+-- Realm: on Forever the realms are four rulesets (PvP, PvE, RP, Hardcore) over
+-- one region, and character names - guild names too - are unique across the
+-- whole region. A realm suffix says where a character is, never who; "Bob" and
+-- "Bob-OtherRealm" cannot be two people. An earlier version kept the realm as
+-- part of the identity, which made one person several keys, and folding "our"
+-- realm back in made the account-wide AltStableConfig depend on which realm
+-- was being played (review of #136). The raw sender is still what we whisper.
 local function AuthKey(peer)
-    if type(peer) ~= "string" or peer == "" then return nil end
-    local trimmed = peer:match("^%s*(.-)%s*$")
-    if trimmed == "" then return nil end
-    local key = trimmed:lower()
-    local name, realm = key:match("^(.-)%-([^%-]+)$")
-    if name and name ~= "" then
-        for _, own in ipairs(OwnRealmSuffixes()) do
-            if realm == own then return name end
-        end
-    end
-    return key
+    if type(peer) ~= "string" then return nil end
+    local name = peer:match("^%s*([^%-]*)")
+    name = name and name:match("^(.-)%s*$"):lower()
+    if not name or name == "" then return nil end
+    return name
 end
 
 local function SyncAuthFor(peer)
@@ -562,13 +535,14 @@ local function SetSyncAuth(peer, mode)
     for k, v in pairs(current) do copy[k] = v end
     copy[key] = mode          -- nil clears it, back to whitelist-or-ask
     AltStable.SetConfigValue("syncAuth", copy)
-    SyncAuthChanged()
+    -- Not announced here: the callers (allow, deny, forget) announce once,
+    -- when everything that goes with the answer is done.
     return true
 end
 
--- Answers stored before keys dropped our realm ("name-ourrealm") are folded into
--- the bare key once the realm is known. Where both forms exist and disagree,
--- NEVER wins: a refusal must not be undone by a tidy-up.
+-- Answers stored under a realm-qualified key ("name-realm") are folded into the
+-- name. Where two forms land on one key and disagree, NEVER wins: a refusal
+-- must not be undone by a tidy-up.
 local function MigrateSyncAuthKeys()
     AltStableConfig = AltStableConfig or {}
     local current = AltStableConfig.syncAuth
@@ -655,8 +629,8 @@ AltStable.GrantSyncConsent = GrantConsent
 function AltStable.SyncAuthList()
     AltStableConfig = AltStableConfig or {}
     local out = {}
-    for name, mode in pairs(AltStableConfig.syncAuth or {}) do
-        out[#out + 1] = { name = name, mode = mode }
+    for key, mode in pairs(AltStableConfig.syncAuth or {}) do
+        out[#out + 1] = { name = key, key = key, mode = mode }
     end
     table.sort(out, function(a, b) return a.name < b.name end)
     return out
@@ -1407,7 +1381,13 @@ local function DefineSyncServing()
         -- persisted under them; only the authorization side is case-folded.
         local owedShort = PeerShort(peer)
 
-        pendingAuth[AuthKey(peer) or owedShort] = nil
+        -- Served a peer who was waiting (through /alts sync consent, say):
+        -- the prompt and the Options list must stop showing the question.
+        local pk = AuthKey(peer) or owedShort
+        if pendingAuth[pk] then
+            pendingAuth[pk] = nil
+            SyncAuthChanged()
+        end
 
         -- ALWAYS a whisper, to the character that asked.
         --
@@ -1495,14 +1475,15 @@ function AltStable.AllowSyncPeer(peer)
     -- Serve what they already asked for, if it is still their question. Beyond
     -- the TTL, wait for them to ask again rather than replying to something
     -- from another session.
+    -- Cleared before serving, so the serve does not announce a half-done
+    -- answer; announced once below.
+    pendingAuth[key] = nil
     if req and (time() - (req.at or 0)) <= PENDING_TTL then
         ServeSyncRequest(req.name or key, req.since or 0, req.channel)
         -- And ask them back, so the exchange goes both ways: they asked
         -- because they want ours; we were never sent theirs (or refused it,
         -- unasked). Only when they are there to ask - a pending request says so.
         RequestCharacters("WHISPER", req.name or key, true)
-    else
-        pendingAuth[key] = nil
     end
     refusedNotified[key] = nil
     SyncAuthChanged()
@@ -1532,6 +1513,7 @@ end
 function AltStable.ForgetSyncPeer(peer)
     if not SetSyncAuth(peer, nil) then return false end
     ClearConsent(peer)
+    SyncAuthChanged()
     local shown = PeerShort(peer) or AuthKey(peer)
     if SyncAuthFor(peer) == AUTH_AUTO then
         Print("Forgotten |cffffff00" .. shown .. "|r - but they are on your whitelist, "
@@ -1757,14 +1739,28 @@ end
 
 -- Everything in flight from one peer: its buffers, its watch, its retries.
 -- Called when a peer is refused mid-stream.
+--
+-- Matched by KEY, not by the text: the Options list passes the stored,
+-- lower-cased key, and a player may type any case or form, while the buffers,
+-- the watch and the retries are filed under the sender exactly as it arrived.
+-- A text match left all three behind for "mid surname" vs "Mid Surname"
+-- (review of #136).
 function DropPeerStreams(peer)
-    if not peer then return end
-    local prefix = "^" .. peer:gsub("(%W)", "%%%1") .. "#"
+    local key = AuthKey(peer)
+    if not key then return end
+    local function same(name) return name and AuthKey(name) == key end
     for bkey in pairs(incomingBuffers) do
-        if bkey:find(prefix) then incomingBuffers[bkey] = nil end
+        if same(bkey:match("^(.*)#%d+$")) then incomingBuffers[bkey] = nil end
     end
-    ClearSyncWatch(peer)
-    if autoRetryCounts then autoRetryCounts[peer] = nil end
+    for bkey in pairs(refusedStreams) do
+        if same(bkey:match("^(.*)#%d+$")) then refusedStreams[bkey] = nil end
+    end
+    for short, w in pairs(syncWatch) do
+        if same(w.name or short) then syncWatch[short] = nil end
+    end
+    for name in pairs(autoRetryCounts or {}) do
+        if same(name) then autoRetryCounts[name] = nil end
+    end
 end
 
 -- A stream we did not ask for, from someone we have not approved: said once
@@ -1774,8 +1770,10 @@ function NoteRefusedStream(peer)
     local key = AuthKey(peer)
     if not key or refusedNotified[key] then return end
     refusedNotified[key] = true
+    -- Allowing does not fetch what was refused - say how to get it.
     Print("|cffff8800" .. peer .. " sent character data you did not ask for|r - nothing was "
-        .. "taken. |cffffff00/alts allow " .. peer .. "|r to accept it.")
+        .. "taken. |cffffff00/alts allow " .. peer .. "|r to accept theirs from now on, then "
+        .. "|cffffff00/alts sync " .. peer .. "|r to exchange.")
 end
 
 local function RequestResync(peer, reason)
@@ -2140,12 +2138,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- PLAYER_NAME has to carry the surname for this to match - while it
         -- did not, we accepted and processed our own broadcasts.
         --
-        -- Realm-aware (#61): our own name WITHOUT a realm, or with OURS, is our
-        -- echo; the same name on another realm is somebody else, and dropping
-        -- them as ourselves lost their traffic. AuthKey drops our realm's
-        -- suffix and keeps any other, so comparing the keys says exactly that.
+        -- Names are unique across the region on Forever, so our name with any
+        -- realm suffix is us.
         local senderName = sender and sender:match("^([^%-]+)") or ""
-        if sender and PLAYER_NAME and AuthKey(sender) == AuthKey(PLAYER_NAME) then
+        if senderName == PLAYER_NAME then
             return
         end
         -- The name as it arrived, realm and all. senderName is the realm-less
@@ -2269,7 +2265,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
             local bkey = peer .. "#" .. sidStr
             local buf = incomingBuffers[bkey]
-            if not buf and not MayAdmit(peer) then
+            if not buf and (refusedStreams[bkey] or not MayAdmit(peer)) then
+                refusedStreams[bkey] = time()
                 NoteRefusedStream(peer)
                 return
             end
@@ -2305,9 +2302,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local buf = incomingBuffers[bkey]
 
             if not buf then
-                -- No chunks buffered for this stream (never arrived, or it was
-                -- already finalized). Clear any leftover retry budget.
+                -- No chunks buffered for this stream (never arrived, it was
+                -- already finalized, or it was refused). Clear any leftover
+                -- retry budget; a refused stream is over.
                 if autoRetryCounts then autoRetryCounts[peer] = nil end
+                refusedStreams[bkey] = nil
                 return
             end
 
@@ -3239,6 +3238,7 @@ end
 -- earlier one and failed far from the cause. Harmless in game: nothing calls it.
 local function ResetSyncState()
     pendingAuth = {}
+    refusedStreams = {}
     consent = {}
     refusedNotified = {}
     streamCounter   = 0
