@@ -100,22 +100,34 @@ end
 
 local function Data() return (AltStableRecipeData and AltStableRecipeData.recipes) or {} end
 
--- Per-line lists of recipes with a known requirement, built once: the tab asks
--- for a line's catalogue on every redraw, and walking 2500 recipes each time
--- (twelve times over while searching) is the one cost here that adds up.
-local lineIndex
-local function LineRecipes(line)
-    if not lineIndex then
-        lineIndex = {}
-        for id, r in pairs(Data()) do
-            if r.learn then
-                for _, s in ipairs(r.skill or {}) do
-                    lineIndex[s] = lineIndex[s] or {}
-                    table.insert(lineIndex[s], id)
-                end
+-- The indexes over RecipeData, built together in one walk the first time any
+-- is asked for: per-line recipes with a known requirement (the tab asks for a
+-- line's catalogue on every redraw), recipe item -> recipes, crafted item ->
+-- recipes (the tooltips).
+local lineIndex, byTeach, byOutput
+local function BuildIndexes()
+    if lineIndex then return end
+    lineIndex, byTeach, byOutput = {}, {}, {}
+    for id, r in pairs(Data()) do
+        if r.learn then
+            for _, s in ipairs(r.skill or {}) do
+                lineIndex[s] = lineIndex[s] or {}
+                table.insert(lineIndex[s], id)
             end
         end
+        for _, item in ipairs(r.items or {}) do
+            byTeach[item] = byTeach[item] or {}
+            table.insert(byTeach[item], id)
+        end
+        if r.makes then
+            byOutput[r.makes] = byOutput[r.makes] or {}
+            table.insert(byOutput[r.makes], id)
+        end
     end
+end
+
+local function LineRecipes(line)
+    BuildIndexes()
     return lineIndex[line] or {}
 end
 
@@ -624,12 +636,51 @@ local function HasNonTrainerSource(r)
     return false
 end
 
--- Meets the SKILL requirement - only that: specialisations, reputation and
--- quests are not in the data, and the tooltip says so. Offered only for an alt
--- with a complete scan, or "doesn't know it" is not something we know.
-local function MeetsSkill(o, id)
+-- What can be said about one owner and one recipe - the ONE rule the tab and
+-- the item tooltips share (they had a copy each, and the copies drifted;
+-- review of #133):
+--   "known"     the owner knows it
+--   "unscanned" no complete scan: nothing negative can be said
+--   "unknown"   complete scan, not known, and Wowhead does not know the requirement
+--   "meets"     complete scan, not known, meets the SKILL requirement - only that:
+--               specialisations, reputation and quests are not in the data
+--   "low"       complete scan, not known, under the requirement
+local function Verdict(o, id)
+    if o.known[id] then return "known" end
+    if o.state ~= "full" then return "unscanned" end
     local r = Data()[id]
-    return o.state == "full" and not o.known[id] and r and r.learn and o.rank >= r.learn or false
+    if not (r and r.learn) then return "unknown" end
+    return o.rank >= r.learn and "meets" or "low"
+end
+
+local function MeetsSkill(o, id)
+    return Verdict(o, id) == "meets"
+end
+
+-- What "nobody" may honestly be called for a line's owners: "Nobody knows" only
+-- when every owner - hidden ones too, who are not in the list and may know it -
+-- has a complete scan.
+local function NobodyText(owners, hidden)
+    local all = #owners > 0 and (hidden or 0) == 0
+    for _, o in ipairs(owners) do if o.state ~= "full" then all = false end end
+    return all and "Nobody knows" or "Nobody recorded"
+end
+
+-- A class-coloured name, and a list of them capped at four and "+N": a line on
+-- a tooltip does not wrap, and ten alts with First Aid would run off the screen.
+local function ColorName(o)
+    local esc = AltStable.ClassColor and AltStable.ClassColor(o.class) or ""
+    return (esc ~= "" and esc or "|cffe6e6e6") .. (o.name or "?") .. "|r"
+end
+
+local NAMES_SHOWN = 4
+local function NameList(list, fmt)
+    local parts = {}
+    for i, o in ipairs(list) do
+        if i > NAMES_SHOWN then parts[#parts + 1] = "+" .. (#list - NAMES_SHOWN); break end
+        parts[#parts + 1] = ColorName(o) .. (fmt and fmt(o) or "")
+    end
+    return table.concat(parts, ", ")
 end
 
 -- The same colours the game uses, for the focused alt's skill.
@@ -673,10 +724,7 @@ local function BuildRows(state)
         local owners = entry.list
         local focus
         for _, o in ipairs(owners) do if o.guid == state.focus then focus = o end end
-        -- "Nobody knows" needs every owner scanned in full - hidden ones too,
-        -- which are not in the list: one of them may know it.
-        local allComplete = #owners > 0 and entry.hidden == 0
-        for _, o in ipairs(owners) do if o.state ~= "full" then allComplete = false end end
+        local nobodyText = NobodyText(owners, entry.hidden)
         for id in pairs(Catalogue(line, owners)) do
             local r = Data()[id]
             local name = RecipeName(id)
@@ -705,7 +753,7 @@ local function BuildRows(state)
                 if keep then
                     rows[#rows + 1] = { id = id, line = line, name = name, recipe = r, knownBy = knownBy,
                                         owners = owners, focus = focus,
-                                        nobody = #knownBy == 0 and (allComplete and "Nobody knows" or "Nobody recorded") or nil }
+                                        nobody = #knownBy == 0 and nobodyText or nil }
                 end
             end
         end
@@ -744,6 +792,123 @@ local function Cards(line, owners)
 end
 
 ------------------------------------------------------------
+-- Item tooltips: who wants this recipe, who can craft this
+--
+-- On a recipe item (RecipeData's `items`, matched by name - an item that
+-- matched no recipe or several has no line at all):
+--   Known by       alts that know it
+--   Meets skill    complete scan, the skill, not known - skill ONLY
+--   Skill too low  complete scan, not known, under the requirement
+--   Not scanned    owners of the profession we cannot speak for
+-- On a crafted item: Crafted by, across every recipe that makes it.
+-- Hidden characters are left out, as everywhere in the tab.
+------------------------------------------------------------
+
+-- How good a verdict is, for an owner of a recipe on several lines: judged by
+-- the best of them - knowing it through Tailoring is knowing it, whatever the
+-- Leatherworking skill (review of #133).
+local VERDICT_RANK = { known = 5, meets = 4, low = 3, unknown = 2, unscanned = 1 }
+
+-- The lines for one item, as { { label, text }, ... }. Pure, so tests read it.
+local function TooltipLines(itemID)
+    itemID = tonumber(itemID)
+    if not itemID then return {} end
+    BuildIndexes()
+    -- Owners once per line for this whole tooltip, however many recipes ask.
+    local ownersCache = {}
+    local function OwnersOf(line)
+        if not ownersCache[line] then
+            local list, hidden = Owners(line)
+            ownersCache[line] = { list = list, hidden = hidden }
+        end
+        return ownersCache[line]
+    end
+
+    local out = {}
+    for _, id in ipairs(byTeach[itemID] or {}) do
+        local r = Data()[id]
+        local best, order, hidden = {}, {}, 0
+        for _, line in ipairs(r.skill or {}) do
+            if BY_LINE[line] then
+                local o = OwnersOf(line)
+                hidden = hidden + o.hidden
+                for _, owner in ipairs(o.list) do
+                    local v = Verdict(owner, id)
+                    local held = best[owner.guid]
+                    if not held then order[#order + 1] = owner.guid end
+                    if not held or VERDICT_RANK[v] > VERDICT_RANK[held.v] then
+                        best[owner.guid] = { v = v, o = owner }
+                    end
+                end
+            end
+        end
+        local groups = { known = {}, meets = {}, low = {}, unknown = {}, unscanned = {} }
+        for _, guid in ipairs(order) do
+            local b = best[guid]
+            table.insert(groups[b.v], b.o)
+        end
+        if #order == 0 and hidden == 0 then
+            -- Only when nobody at all has it: a hidden alt may.
+            local names = {}
+            for _, line in ipairs(r.skill or {}) do if BY_LINE[line] then names[#names + 1] = BY_LINE[line].label end end
+            out[#out + 1] = { "|cff888888AltStable|r", "|cff888888No alt has " ..
+                (#names > 0 and table.concat(names, " or ") or "this profession") .. "|r" }
+        end
+        if #groups.known > 0 then out[#out + 1] = { "Known by", NameList(groups.known) } end
+        if #groups.meets > 0 then
+            out[#out + 1] = { "Meets skill", NameList(groups.meets, function(o) return " (" .. o.rank .. ")" end) }
+        end
+        if #groups.low > 0 then
+            out[#out + 1] = { "Skill too low", NameList(groups.low, function(o)
+                return " (" .. o.rank .. ", needs " .. r.learn .. ")" end) }
+        end
+        if #groups.unknown > 0 then out[#out + 1] = { "Requirement unknown", NameList(groups.unknown) } end
+        if #groups.unscanned > 0 then out[#out + 1] = { "Not scanned", NameList(groups.unscanned) } end
+    end
+
+    local crafters, seen = {}, {}
+    for _, id in ipairs(byOutput[itemID] or {}) do
+        local r = Data()[id]
+        for _, line in ipairs(r.skill or {}) do
+            if BY_LINE[line] then
+                for _, o in ipairs(OwnersOf(line).list) do
+                    if Verdict(o, id) == "known" and not seen[o.guid] then
+                        seen[o.guid] = true
+                        crafters[#crafters + 1] = o
+                    end
+                end
+            end
+        end
+    end
+    if #crafters > 0 then out[#out + 1] = { "Crafted by", NameList(crafters) } end
+    return out
+end
+
+local function TooltipsOn()
+    return not (AltStableConfig and AltStableConfig.professionsTooltips == false)
+end
+
+-- Installed at bootstrap, so it works before the tab is ever opened. A post-call
+-- re-fires on every render of the tooltip (an async item load re-renders it
+-- from scratch), so lines are added once per render, never twice.
+-- OnTooltipSetItem throws on Forever; TooltipDataProcessor is the replacement
+-- (Warband, #10).
+local ttHooked = false
+local function EnsureTooltipHook()
+    if ttHooked or not AltStable.HookItemTooltip then return end
+    ttHooked = AltStable.HookItemTooltip(function(tt, id)
+        if not TooltipsOn() then return end
+        local lines = TooltipLines(id)
+        if #lines == 0 then return end
+        tt:AddLine(" ")
+        for _, l in ipairs(lines) do
+            tt:AddDoubleLine(l[1], l[2], 1, 0.82, 0, 1, 1, 1)
+        end
+        if tt.Show then tt:Show() end
+    end)
+end
+
+------------------------------------------------------------
 -- The panel
 ------------------------------------------------------------
 
@@ -762,11 +927,6 @@ local function C(key, fallback) return (AltStable.C and AltStable.C[key]) or fal
 local function ClassRGB(class)
     if AltStable.GetClassRGB then return AltStable.GetClassRGB(class) end
     return 0.9, 0.9, 0.9
-end
-
-local function ColorName(o)
-    local esc = AltStable.ClassColor and AltStable.ClassColor(o.class) or ""
-    return (esc ~= "" and esc or "|cffe6e6e6") .. (o.name or "?") .. "|r"
 end
 
 local function KnownByText(row)
@@ -820,7 +980,7 @@ local function RowOnEnter(self)
         GameTooltip:AddLine("Specialisation, reputation and quest requirements are not checked.", 0.6, 0.6, 0.6, true)
     end
     local unknown = {}
-    for _, o in ipairs(row.owners) do if o.state ~= "full" and not o.known[row.id] then unknown[#unknown + 1] = o.name end end
+    for _, o in ipairs(row.owners) do if Verdict(o, row.id) == "unscanned" then unknown[#unknown + 1] = o.name end end
     if #unknown > 0 then
         GameTooltip:AddLine("Not scanned yet: " .. table.concat(unknown, ", "), 0.6, 0.6, 0.6, true)
     end
@@ -1130,6 +1290,20 @@ local function BuildPanel(mainFrame)
     dropsLbl:SetText("Not from a trainer")
     dropsLbl:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
 
+    -- The item-tooltip lines, on by default; the one setting this plugin has,
+    -- kept in its panel as Warband keeps its own.
+    local tips = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    tips:SetSize(18, 18)
+    tips:SetPoint("LEFT", dropsLbl, "RIGHT", 16, 0)
+    tips:SetChecked(TooltipsOn())
+    tips:SetScript("OnClick", function(self)
+        AltStable.SetConfigValue("professionsTooltips", self:GetChecked() and true or false)
+    end)
+    local tipsLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tipsLbl:SetPoint("LEFT", tips, "RIGHT", 2, 0)
+    tipsLbl:SetText("On item tooltips")
+    tipsLbl:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
+
     statusFS = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     statusFS:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -TOP_FILTER - 3)
 
@@ -1234,12 +1408,15 @@ local function BootstrapPlugin()
             Owners = Owners, AllOwners = AllOwners, Catalogue = Catalogue, BuildRows = BuildRows, Cards = Cards,
             MeetsSkill = MeetsSkill, DifficultyColor = DifficultyColor, HasNonTrainerSource = HasNonTrainerSource,
             RecipeName = RecipeName, OnSpellData = OnSpellData,
+            TooltipLines = TooltipLines, EnsureTooltipHook = EnsureTooltipHook,
             PruneOrphans = PruneOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
             PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
-            ResetState = function() pendingLoss = nil; lineIndex = nil end,
+            ResetState = function() pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil end,
+            Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
         },
     })
 
+    EnsureTooltipHook()
     PruneOrphans()
     -- A full pull from every peer when there is nothing to build on. Switching
     -- the plugin on from Options is covered by the core (SetPluginEnabled resets

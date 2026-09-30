@@ -23,6 +23,13 @@
   reputation are not checked. Craft cooldowns now show in the grid's profession
   tooltips. The recipe list comes from Wowhead's Forever database
   ([#14](https://github.com/Spotnick2/AltStable/issues/14)).
+- **Recipes on item tooltips.** Hover a recipe item (at a vendor, in the
+  auction house, in your bags) to see which alts already know it, which meet the
+  skill for it, whose skill is still too low and by how much, and whom it cannot
+  speak for yet. Crafted items say who can make them. Switch it off in the
+  Professions tab. An item is only linked to a recipe when its name matches
+  exactly one recipe of that profession; the few that do not get no line rather
+  than a guess ([#14](https://github.com/Spotnick2/AltStable/issues/14)).
 - **New saved data: `AltStableProfessionsDB`,** created by the new plugin.
   Nothing existing changed shape.
 - **Other addons can read your characters.** A small read-only API -

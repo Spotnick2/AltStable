@@ -116,6 +116,80 @@ check("a record with no skill line is an error",
       raises(lambda: gen.recipe_from_record({"id": 5, "learnedat": 1, "reagents": [[2318, 1]]})))
 
 # ---------------------------------------------------------------------------
+# Recipe items -> recipes, by name within a profession
+# ---------------------------------------------------------------------------
+
+check("the item prefix goes", gen.match_name("Recipe: Elixir of Lesser Agility") == "elixir of lesser agility")
+check("every profession's prefix goes",
+      all(gen.match_name(p + ": Thing") == "thing"
+          for p in ("Pattern", "Plans", "Schematic", "Formula", "Manual", "Design", "Blueprint")))
+check("punctuation does not count: a transmute's colon",
+      gen.match_name("Recipe: Transmute Iron to Gold") == gen.match_name("Transmute: Iron to Gold"))
+check("nor a hyphen or doubled spaces",
+      gen.match_name("Formula: Enchant Bracer - Deflection") == gen.match_name("Enchant Bracer -  Deflection"))
+check("nor an apostrophe",
+      gen.match_name("Recipe: Elixir of Ogre's Strength") == gen.match_name("Elixir of Ogres Strength")
+      and "'" not in gen.match_name("Pattern: Enchanter's Cowl"))
+
+rec = {
+    2335: {"skill": [171], "learn": 60},
+    3230: {"skill": [171], "learn": 1},
+    11479: {"skill": [171], "learn": 225},
+    500: {"skill": [171], "learn": 100},      # two Alchemy recipes of one name ...
+    501: {"skill": [171], "learn": 200},
+    9000: {"skill": [197], "learn": 1},       # ... and a Tailoring one that shares a name with an Alchemy item
+}
+names = {2335: "Swiftness Potion", 3230: "Elixir of Minor Agility", 11479: "Transmute: Iron to Gold",
+         500: "Twin", 501: "Twin", 9000: "Elixir of Giants"}
+items = [
+    {"id": 2555, "classs": 9, "subclass": 6, "name": "Recipe: Swiftness Potion", "skill": 55},
+    {"id": 2553, "classs": 9, "subclass": 6, "name": "Recipe: Elixir of Minor Agility", "skill": 1},
+    {"id": 9303, "classs": 9, "subclass": 6, "name": "Recipe: Transmute Iron to Gold", "skill": 225},
+    {"id": 7000, "classs": 9, "subclass": 6, "name": "Recipe: Twin", "skill": 100},
+    {"id": 9224, "classs": 9, "subclass": 6, "name": "Recipe: Elixir of Giants", "skill": 245},
+    {"id": 4444, "classs": 0, "subclass": 6, "name": "Swiftness Potion"},
+]
+linked, unmatched, ambiguous = gen.link_items(rec, names, items, 171)
+check("an item links to the one recipe it names", rec[2335].get("items") == [2555], repr(rec[2335]))
+check("a transmute links across the colon", rec[11479].get("items") == [9303], repr(rec[11479]))
+check("an item naming two recipes links to neither", "items" not in rec[500] and "items" not in rec[501])
+check("a recipe of another profession is never linked", "items" not in rec[9000])
+check("a non-recipe item is ignored", all(4444 not in r.get("items", []) for r in rec.values()))
+check("the counts add up", (linked, unmatched, ambiguous) == (3, 1, 1), repr((linked, unmatched, ambiguous)))
+
+# Another profession's item on this listing does not link to a same-named recipe here.
+rec2 = {3230: {"skill": [171], "learn": 1}}
+stray = [{"id": 8888, "classs": 9, "subclass": 2, "name": "Recipe: Elixir of Minor Agility"}]
+gen.link_items(rec2, {3230: "Elixir of Minor Agility"}, stray, 171, subclass=6)
+check("an item of another profession's subclass is never linked", "items" not in rec2[3230], repr(rec2))
+
+# Overrides: applied first, and an override that points at nothing is an error.
+rec3 = {3188: {"skill": [171], "learn": 175}}
+ogre = [{"id": 6211, "classs": 9, "subclass": 6, "name": "Recipe: Elixir of Ogre's Strength"}]
+gen.link_items(rec3, {3188: "Elixir of Ogre Strength"}, ogre, 171, subclass=6, overrides={6211: 3188})
+check("an override links a recipe whose name differs", rec3[3188].get("items") == [6211], repr(rec3))
+check("an override to a recipe that is not there is an error",
+      raises(lambda: gen.link_items({}, {}, ogre, 171, subclass=6, overrides={6211: 3188})))
+check("every shipped override names a different item",
+      len(set(gen.ITEM_OVERRIDES)) == len(gen.ITEM_OVERRIDES))
+
+good = [{"id": i, "classs": 9, "subclass": 6} for i in range(40)]
+check("a listing of the profession's recipe items passes",
+      not raises(lambda: gen.check_item_page(good, 6, "p")))
+check("an empty listing is refused", raises(lambda: gen.check_item_page([], 6, "p")))
+check("another profession's listing is refused",
+      raises(lambda: gen.check_item_page([{"id": i, "classs": 9, "subclass": 2} for i in range(40)], 6, "p")))
+check("a tiny listing that is half another profession's is refused (2 of 3)",
+      raises(lambda: gen.check_item_page([{"id": 1, "classs": 9, "subclass": 9},
+                                          {"id": 2, "classs": 9, "subclass": 2},
+                                          {"id": 3, "classs": 9, "subclass": 2}], 9, "p")))
+check("a listing that is not recipe items is refused",
+      raises(lambda: gen.check_item_page([{"id": i, "classs": 4, "subclass": 6} for i in range(40)], 6, "p")))
+
+linked_text = gen.render_lua({2335: {"skill": [171], "learn": 60, "items": [2555]}}, "x")
+check("linked items are written", "[2335]={skill={171},learn=60,items={2555}}," in linked_text, linked_text)
+
+# ---------------------------------------------------------------------------
 # Page checks and merging
 # ---------------------------------------------------------------------------
 

@@ -48,6 +48,11 @@ local T = plugin._test
 -- Captured now: WoW.reset() between sections clears the registry, and the hook
 -- is installed once at bootstrap.
 local ttCalls = WoW.tooltipPostCalls[Enum.TooltipDataType.Item]
+-- Once, however often it is asked: a second post-call would print every
+-- item's counts twice (the hook is the core's now, AltStable.HookItemTooltip).
+T.EnsureTooltipHook()
+check("the tooltip hook is installed once, however often it is asked", ttCalls ~= nil and #ttCalls == 1,
+      tostring(ttCalls and #ttCalls))
 
 ------------------------------------------------------------
 -- Which containers get read

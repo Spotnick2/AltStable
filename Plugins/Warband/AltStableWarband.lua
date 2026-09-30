@@ -544,17 +544,10 @@ end
 -- TooltipDataProcessor (CellOnEnter appends the breakdown itself then).
 local function EnsureTooltipHook()
     if AT_WB._ttHooked then return end
-    if not (TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall
-            and Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item) then
-        return   -- no tooltip enrichment on a client without it; the panel still works
-    end
-    AT_WB._ttHooked = true
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data)
-        local id = data and data.id
-        if not id and tt.GetItem then
-            local _, link = tt:GetItem()
-            id = link and tonumber(link:match("item:(%d+)"))
-        end
+    -- The post-call and the item lookup are the core's (Core.lua), shared with
+    -- the Professions plugin. Without TooltipDataProcessor nothing is hooked;
+    -- the panel still works.
+    local hooked = AltStable.HookItemTooltip and AltStable.HookItemTooltip(function(tt, id)
         -- Our own panel cell, and only for the item it holds: comparison
         -- tooltips (Shift, or alwaysCompareItems) render the EQUIPPED items
         -- through this same post-call, and would otherwise be labelled with the
@@ -570,6 +563,7 @@ local function EnsureTooltipHook()
             if total > 0 then AppendBreakdown(tt, total, holders) end
         end
     end)
+    if hooked then AT_WB._ttHooked = true end
 end
 
 local function CellOnEnter(self)

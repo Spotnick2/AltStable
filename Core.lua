@@ -3071,6 +3071,36 @@ function AltStable.CutoutFor(char)
     return entry
 end
 
+------------------------------------------------------------
+-- Item tooltips, for every plugin that adds lines to them (Warband's counts,
+-- Professions' recipes). GameTooltip:HookScript("OnTooltipSetItem") THROWS on
+-- Forever (#10); TooltipDataProcessor is the replacement, and the item arrives
+-- in the data payload rather than through tt:GetItem().
+------------------------------------------------------------
+
+-- The item a tooltip is showing: the payload's id, or the link's as a fallback.
+function AltStable.TooltipItemID(tt, data)
+    local id = data and data.id
+    if not id and tt and tt.GetItem then
+        local _, link = tt:GetItem()
+        id = link and tonumber(link:match("item:(%d+)"))
+    end
+    return tonumber(id)
+end
+
+-- Registers fn(tooltip, itemID) as an item post-call. False when this client
+-- has no TooltipDataProcessor - the caller's panel still works without it.
+function AltStable.HookItemTooltip(fn)
+    if not (TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall
+            and Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item) then
+        return false
+    end
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tt, data)
+        fn(tt, AltStable.TooltipItemID(tt, data))
+    end)
+    return true
+end
+
 local _seam = {
     ReplyDelay          = ReplyDelay,
     ComputeChecksum     = ComputeChecksum,
