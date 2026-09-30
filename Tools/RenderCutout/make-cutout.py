@@ -559,7 +559,7 @@ def pot(n):
     return p
 
 
-def convert(black, white, base, target_height, keep_png, out_dir=OUT, guid=None):
+def convert(black, white, base, target_height, keep_png, out_dir=OUT, guid=None, epoch=None):
     """One pair -> one cutout on disk. Returns the manifest numbers."""
     cut = matte(black, white)
     native = cut.size
@@ -641,6 +641,10 @@ def convert(black, white, base, target_height, keep_png, out_dir=OUT, guid=None)
     # characters sharing a name never show each other's (docs/PORTRAIT-CONTRACT.md).
     if guid:
         meta["guid"] = guid
+    # WHICH capture it was made from (its first shot's epoch), so the addon can
+    # tell a newer capture still waiting for conversion from this portrait.
+    if epoch is not None:
+        meta["epoch"] = int(epoch)
     with open(os.path.join(out_dir, base + ".json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
 
@@ -741,7 +745,7 @@ def run_all(args):
         print("")
 
     done, missing, collided, freed = 0, [], [], 0
-    for name, first, second, screen_h, guid, _epoch in caps:
+    for name, first, second, screen_h, guid, epoch in caps:
         # Both shots recorded at the same second means one filename, and the
         # client overwrote the first with the second. There is no pair to find
         # and "no screenshots for X" is a misleading way to say so - the file is
@@ -756,7 +760,7 @@ def run_all(args):
             continue
         try:
             convert(black, white, output_base(name, guid), args.target_height,
-                    args.keep_png, guid=guid)
+                    args.keep_png, guid=guid, epoch=epoch)
         except NotAPair as err:
             # Leave the screenshots alone: the capture can be salvaged, and a
             # bad cutout filed under a character's name is worse than none.

@@ -45,6 +45,8 @@ AltStable.ShowSheet = function()                                -- the sheet's o
     local s = _G.AltStableSheet
     if s:IsShown() then s:Hide() else s:Show() end
 end
+-- Capture.lua before PublicAPI, as in the TOC: PublicAPI wraps its status hook.
+dofile("Capture.lua")
 dofile("PublicAPI.lua")
 
 local ME = UnitGUID("player")
@@ -300,6 +302,53 @@ local beforeWrap = heard
 AltStable.RefreshSheet()
 WoW.flushTimers()
 eq("a refresh through a plugin's wrapper still notifies", heard, beforeWrap + 1)
+
+------------------------------------------------------------
+-- The portrait status (#128)
+------------------------------------------------------------
+
+AltStablePortraits, AltStableCutoutManifest = nil, nil
+AltStable._test.portrait.ResetStatus()
+local ps = AltStable.GetPortraitStatus()
+eq("with no portrait and no capture, a capture is due", ps.due, true)
+eq("  because it is missing", ps.reason, "missing")
+ps.due, ps.reason = false, "tampered"
+ps.changedSlots[1] = "Chest"
+local again = AltStable.GetPortraitStatus()
+check("the status is a copy: changing it changes nothing",
+      again.due == true and again.reason == "missing" and again.changedSlots[1] == nil)
+check("  each call hands out its own table", again ~= ps and again.changedSlots ~= ps.changedSlots)
+
+local portraitCalls = 0
+local portraitListener = function(event) if event == "PortraitStatusChanged" then portraitCalls = portraitCalls + 1 end end
+AltStable.RegisterCallback("PortraitStatusChanged", portraitListener)
+WoW.timers = {}
+AltStable.RefreshPortraitStatus()
+WoW.flushTimers()
+eq("PortraitStatusChanged fires when the answer changes", portraitCalls, 1)
+AltStable.RefreshPortraitStatus()
+WoW.flushTimers()
+eq("  and not when it does not", portraitCalls, 1)
+AltStablePortraits = { version = 1, renders = {
+    { guid = ME, shot = 1, epoch = 1 }, { guid = ME, shot = 2, epoch = 2 } } }
+AltStable.RefreshPortraitStatus()
+AltStable.RefreshPortraitStatus()
+WoW.flushTimers()
+eq("  once per change, next frame", portraitCalls, 2)
+eq("  and the new answer is readable", AltStable.GetPortraitStatus().reason, "pending")
+-- A portrait change raised INSIDE a CharactersChanged callback is still news.
+local charListener = function()
+    AltStablePortraits = nil
+    AltStable.RefreshPortraitStatus()
+end
+AltStable.RegisterCallback("CharactersChanged", charListener)
+local beforeInside = portraitCalls
+AltStable.RefreshSheet()
+WoW.flushTimers()
+WoW.flushTimers()
+eq("a portrait change inside a CharactersChanged callback is still heard", portraitCalls, beforeInside + 1)
+AltStable.UnregisterCallback("CharactersChanged", charListener)
+AltStable.UnregisterCallback("PortraitStatusChanged", portraitListener)
 
 print(("test_publicapi: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

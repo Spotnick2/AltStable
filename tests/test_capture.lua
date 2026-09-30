@@ -736,5 +736,215 @@ do
     check("physical and UI screen widths differ in the stubs", pw ~= GetScreenWidth())
 end
 
+------------------------------------------------------------
+-- Is a new capture due? (#128)
+------------------------------------------------------------
+
+local GUID = WoW.player.guid
+local function wear(slots)
+    WoW.equipped = {}
+    for slot, id in pairs(slots) do WoW.equipped[slot] = "|Hitem:" .. id .. "::|h[x]|h" end
+end
+local function pair(look, guid)
+    AltStablePortraits = { version = 1, renders = {
+        { guid = guid or GUID, shot = 1, epoch = 100, look = look },
+        { guid = guid or GUID, shot = 2, epoch = 101, look = look },
+    } }
+end
+
+resetCapture()
+AltStableCutoutManifest = nil
+T.ResetStatus()
+wear({ [5] = 100, [7] = 200, [2] = 300 })
+local look = T.CurrentLook()
+check("the look covers the shown slots", look and look:find("5:100", 1, true) and look:find("7:200", 1, true), look)
+check("  and not the neck (invisible in a portrait)", look and not look:find("2:300", 1, true), look)
+check("  an empty slot reads as 0", look and look:find("1:0", 1, true), look)
+check("  and never a comma - the converter's reader stops at one", look and not look:find(",", 1, true))
+wear({ [5] = 100, [7] = 200, [2] = 999, [11] = 5, [18] = 77 })
+eq("a new ring, neck or ranged-slot relic does not change the look", T.CurrentLook(), look)
+wear({})
+eq("nothing readable at all (inventory not loaded yet) is 'cannot tell', not 'naked'", T.CurrentLook(), nil)
+wear({ [1] = 10, [5] = 100 })
+local realShowingHelm = ShowingHelm
+ShowingHelm = function() return false end
+check("a hidden helm is marked hidden, not its item", (T.CurrentLook() or ""):find("1:h", 1, true), T.CurrentLook())
+ShowingHelm = realShowingHelm
+local realInv = GetInventoryItemID
+GetInventoryItemID = function() error("boom") end
+eq("a failing inventory read is 'cannot tell', never an error", T.CurrentLook(), nil)
+GetInventoryItemID = realInv
+wear({ [5] = 100, [7] = 200, [2] = 300 })
+
+local st = T.PortraitStatus()
+eq("no portrait and no capture: missing", st.reason, "missing")
+eq("  which is due", st.due, true)
+
+pair(look)
+st = T.PortraitStatus()
+eq("captured, not converted: pending", st.reason, "pending")
+eq("  which is NOT due - it is done, and waits for the converter", st.due, false)
+
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
+st = T.PortraitStatus()
+eq("a portrait and the same gear: nothing to do", st.reason, "none")
+eq("  not due", st.due, false)
+
+wear({ [5] = 101, [7] = 200 })
+st = T.PortraitStatus()
+eq("the chest changed since the capture: changed", st.reason, "changed")
+eq("  due", st.due, true)
+eq("  naming the slot", table.concat(st.changedSlots, ","), "Chest")
+
+-- A capture from before looks were recorded never reads as changed.
+pair(nil)
+st = T.PortraitStatus()
+eq("a capture with no look is never 'changed'", st.reason, "none")
+
+-- "Changed" is a SLOT that differs, not two strings: a look stored by another
+-- version of this code (a different slot list) is not a change in itself.
+pair("1:0;3:0;4:0;5:101;6:0;7:200;8:0;9:0;10:0;15:0;16:0;17:0;18:555;19:0")
+eq("a stored look with an extra slot, same gear, is not 'changed'", T.PortraitStatus().reason, "none")
+
+-- Showing or hiding the helm is a change the portrait would show.
+wear({ [1] = 10, [5] = 101, [7] = 200 })
+pair(T.CurrentLook())
+ShowingHelm = function() return false end
+st = T.PortraitStatus()
+eq("hiding the helm since the capture: changed", st.reason, "changed")
+eq("  on the Head", table.concat(st.changedSlots, ","), "Head")
+wear({ [1] = 11, [5] = 101, [7] = 200 })
+pair(T.CurrentLook())
+wear({ [1] = 12, [5] = 101, [7] = 200 })
+eq("swapping a helm that stays hidden is not a change", T.PortraitStatus().reason, "none")
+ShowingHelm = realShowingHelm
+
+-- Inventory not readable yet: no verdict about the look.
+wear({})
+eq("with the look unreadable, an existing capture is not 'changed'", T.PortraitStatus().reason, "none")
+wear({ [5] = 101, [7] = 200 })
+
+-- A capture taken THIS session cannot be in the manifest loaded at startup,
+-- whatever older portrait the character has.
+T.SetSessionStart(50)
+AltStablePortraits = { version = 1, renders = {
+    { guid = GUID, shot = 1, epoch = 100, look = T.CurrentLook() },
+    { guid = GUID, shot = 2, epoch = 101, look = T.CurrentLook() } } }
+eq("a fresh capture with an older portrait on file is pending", T.PortraitStatus().reason, "pending")
+
+-- Across the reload the capture asks for (Codex review of #134): the capture
+-- is no longer "this session", and the old portrait is still in the manifest.
+-- The entry says which capture it was made from, so it stays pending...
+T.SetSessionStart(200)
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1, epoch = 40 } }
+eq("after a reload, a replacement not yet converted is still pending", T.PortraitStatus().reason, "pending")
+-- ...until the converter's entry names this capture (its first shot).
+AltStableCutoutManifest[GUID].epoch = 100
+eq("once converted from this capture, nothing is pending", T.PortraitStatus().reason, "none")
+AltStableCutoutManifest[GUID].epoch = 101
+eq("  also when a converter recorded the second shot's epoch", T.PortraitStatus().reason, "none")
+-- An entry from before `epoch` can only be judged by the session, as before.
+AltStableCutoutManifest[GUID].epoch = nil
+eq("an entry without an epoch, after a reload: the old reading (none)", T.PortraitStatus().reason, "none")
+T.SetSessionStart(50)
+eq("  and within the session: pending", T.PortraitStatus().reason, "pending")
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
+T.SetSessionStart(1700000000)
+
+-- An abandoned half says nothing: only a complete pair counts.
+AltStableCutoutManifest = nil
+AltStablePortraits = { version = 1, renders = { { guid = GUID, shot = 1, epoch = 5, look = "x" } } }
+eq("a lone first shot is not a capture", T.PortraitStatus().reason, "missing")
+AltStablePortraits = { version = 1, renders = {
+    { guid = GUID, shot = 1, epoch = 5, look = "x" }, { guid = GUID, shot = 1, epoch = 9, look = "x" } } }
+eq("  nor are two first shots in a row (two abandoned captures)", T.PortraitStatus().reason, "missing")
+-- Someone else's capture is not ours.
+pair(look, "Player-other")
+eq("another character's capture does not count", T.PortraitStatus().reason, "missing")
+
+-- The Roster's identity rules (Core's CutoutFor): GUID first, then the name,
+-- refused when the name's entry names another GUID.
+local slugged = AltStable.CutoutSlug("Example Surname")
+AltStablePortraits = nil
+AltStableCutoutManifest = { [slugged] = { file = "x.tga" } }
+eq("a legacy name-keyed portrait counts", T.PortraitStatus().reason, "none")
+AltStableCutoutManifest = { [slugged] = { file = "x.tga", guid = "Player-someone-else" } }
+eq("  unless it names another character", T.PortraitStatus().reason, "missing")
+AltStableCutoutManifest = { [GUID] = { file = "" } }
+eq("an entry with no file is no portrait", T.PortraitStatus().reason, "missing")
+
+
+-- Notified on a change, once.
+AltStableCutoutManifest = nil
+AltStablePortraits = nil
+T.ResetStatus()
+local seen = {}
+local realUpdated = AltStable.PortraitStatusUpdated
+AltStable.PortraitStatusUpdated = function(s) seen[#seen + 1] = s.reason end
+AltStable.RefreshPortraitStatus()
+AltStable.RefreshPortraitStatus()
+eq("a refresh with nothing new notifies once", table.concat(seen, ","), "missing")
+pair(T.CurrentLook())
+AltStable.RefreshPortraitStatus()
+eq("  and again when the answer changes", table.concat(seen, ","), "missing,pending")
+AltStable.PortraitStatusUpdated = realUpdated
+
+-- Gear changes are coalesced, then re-evaluated.
+seen = {}
+AltStable.PortraitStatusUpdated = function(s) seen[#seen + 1] = s.reason end
+T.ResetStatus()
+WoW.timers = {}
+local onEvent = T.events:GetScript("OnEvent")
+onEvent(T.events, "PLAYER_EQUIPMENT_CHANGED")
+onEvent(T.events, "PLAYER_EQUIPMENT_CHANGED")
+eq("a burst of gear changes schedules one look", #WoW.timers, 1)
+WoW.flushTimers()
+eq("  which re-evaluates", #seen, 1)
+AltStable.PortraitStatusUpdated = realUpdated
+
+-- A real capture records the look it photographed.
+resetCapture()
+wear({ [5] = 4242 })
+AltStable.RefreshPortraitStatus = function() end   -- Finish calls it; not under test here
+T.Capture()
+runChain()
+local newest = renders()[#renders()]
+check("a capture records the look it photographed", newest and newest.look and newest.look:find("5:4242", 1, true),
+      newest and tostring(newest.look))
+
+-- Capture's helpers are locals: a missing forward declaration would either
+-- throw (a nil global at the call) or leak a global. Neither may happen.
+check("Capture leaks no global PortraitStatus or GlowForCombat",
+      rawget(_G, "PortraitStatus") == nil and rawget(_G, "GlowForCombat") == nil)
+
+-- The combat events, with the sheet's glow in place: they must run (an
+-- undeclared helper threw at every pull), and must SAY combat rather than ask -
+-- InCombatLockdown() is still false at PLAYER_REGEN_DISABLED.
+local glowCalls = {}
+local realGlow = AltStable.UpdateCaptureGlow
+AltStable.UpdateCaptureGlow = function(status, inCombat) glowCalls[#glowCalls + 1] = { status = status, inCombat = inCombat } end
+WoW.inCombat = false
+local okDis, errDis = pcall(onEvent, T.events, "PLAYER_REGEN_DISABLED")
+check("combat starting with the glow in place raises nothing", okDis, tostring(errDis))
+eq("  and tells the glow it is combat, though the lockdown has not begun", glowCalls[1] and glowCalls[1].inCombat, true)
+local okEn, errEn = pcall(onEvent, T.events, "PLAYER_REGEN_ENABLED")
+check("combat ending raises nothing", okEn, tostring(errEn))
+eq("  and tells the glow combat is over", glowCalls[2] and glowCalls[2].inCombat, false)
+AltStable.UpdateCaptureGlow = realGlow
+
+-- One pending look per loading screen burst, not one per zone.
+WoW.timers = {}
+onEvent(T.events, "PLAYER_ENTERING_WORLD")
+onEvent(T.events, "PLAYER_ENTERING_WORLD")
+eq("two loading screens schedule one look", #WoW.timers, 1)
+WoW.timers = {}
+
+-- /alts portrait glow off|on
+AltStable.SetConfigValue = AltStable.SetConfigValue or function(k, v) AltStableConfig[k] = v end
+AltStable.PortraitCommand("glow off")
+eq("/alts portrait glow off turns it off", AltStableConfig.portraitGlow, false)
+AltStable.PortraitCommand("glow on")
+eq("  and on", AltStableConfig.portraitGlow, true)
+
 print(("test_capture: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -2267,5 +2267,58 @@ do
     AltStableConfig.enableWorldCameraPresentation = nil
 end
 
+------------------------------------------------------------
+-- The capture button glows when a new portrait is due (#128)
+------------------------------------------------------------
+
+do
+    local btn, glow, txt = AltStable._test.refBtn, AltStable._test.refGlow, AltStable._test.refTipText
+    check("the capture button and its glow exist", btn ~= nil and glow ~= nil and AltStable.UpdateCaptureGlow ~= nil)
+    if btn and glow and AltStable.UpdateCaptureGlow then
+        local function tipText() return txt and txt:GetText() or "" end
+        WoW.inCombat = false
+        AltStableConfig.portraitGlow = nil
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
+        check("a due capture makes the button glow", btn._glowing == true and glow:IsShown())
+        check("  and the tooltip says why", tipText():find("No portrait", 1, true), tipText())
+
+        AltStable.UpdateCaptureGlow({ due = true, reason = "changed", changedSlots = { "Chest", "Legs" } })
+        check("changed gear names the slots in the tooltip", tipText():find("Chest, Legs", 1, true), tipText())
+
+        AltStable.UpdateCaptureGlow({ due = false, reason = "pending", changedSlots = {} })
+        check("a capture waiting for the converter does not glow", btn._glowing == false and not glow:IsShown())
+        check("  but the tooltip says it is waiting", tipText():find("waiting for the companion", 1, true), tipText())
+
+        AltStable.UpdateCaptureGlow({ due = false, reason = "none", changedSlots = {} })
+        check("with nothing to say, the tooltip is the plain one", not tipText():find("\n\n", 1, true))
+
+        WoW.inCombat = true
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
+        check("no glow in combat", btn._glowing == false and not glow:IsShown())
+        WoW.inCombat = false
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} }, true)
+        check("no glow when the caller says combat, before the lockdown has begun",
+              btn._glowing == false and not glow:IsShown())
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} }, false)
+        check("  and glowing again when it says combat is over", btn._glowing == true)
+
+        -- The tooltip grows with its text: a long slot list is not cut off.
+        local tip = AltStable._test.refTip
+        local realH = txt.GetStringHeight
+        txt.GetStringHeight = function() return 140 end
+        AltStable.UpdateCaptureGlow({ due = true, reason = "changed",
+            changedSlots = { "Head", "Shoulder", "Chest", "Waist", "Legs", "Feet", "Wrist", "Hands" } })
+        check("the tooltip is as tall as its text", tip:GetHeight() >= 140, tostring(tip:GetHeight()))
+        txt.GetStringHeight = realH
+
+        AltStableConfig.portraitGlow = false
+        AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
+        check("no glow when switched off", btn._glowing == false and not glow:IsShown())
+        check("  the tooltip still says a capture is due", tipText():find("No portrait", 1, true))
+        AltStableConfig.portraitGlow = nil
+        AltStable.UpdateCaptureGlow({ due = false, reason = "none", changedSlots = {} })
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

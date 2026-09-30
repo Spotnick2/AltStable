@@ -57,6 +57,7 @@ AltStablePortraits = {
             ["screenW"] = 3840,                -- GetPhysicalScreenSize: PHYSICAL pixels
             ["screenH"] = 2160,
             ["uiScale"] = 0.7111111283302307,
+            ["look"] = "1:0;3:12345;4:0;5:67890;...",  -- optional, see below
         }, -- [1]
         -- ... one record per screenshot, appended in order
     },
@@ -98,6 +99,13 @@ shortly, do not treat it as data.
 - Newest capture per character wins, ordered by **`epoch`**. `stamp` is local time
   and repeats an hour when the clocks go back; do not order by it.
 - `renders` is append-only. Older captures stay in it.
+
+**`look`** (optional, since #128) is `slot:itemID` for the slots a portrait shows,
+separated by `;` (not `,`), `0` for an empty slot and `h` for a helm or cloak that is
+equipped but hidden. It is how the addon tells that the
+gear changed since the last capture. **Converters do not read it** and must not require
+it: records written before it existed have none. Adding it did not bump `version`, and
+a field like it - one no converter needs - never will.
 
 **Matching records to screenshots.** The client names each screenshot
 `Screenshots\WoWScrnShot_MMDDYY_HHMMSS.tga` in the same local time as `stamp`.
@@ -159,6 +167,7 @@ AltStableCutoutManifest = {
         w = 146, h = 512,          -- content size in pixels
         texw = 256, texh = 512,    -- the power-of-two canvas it sits in, top-left
         nativeW = 0.08333, nativeH = 0.58333,  -- optional: fraction of screen height
+        epoch = 1790740285,        -- optional (#128): the capture it was made from
     },
     -- legacy entries, keyed by name slug (written before entries carried a guid):
     ['karuzo-elegia'] = { file = [[...]], w = 146, h = 512, texw = 256, texh = 512 },
@@ -182,6 +191,15 @@ already known to load. The Roster reads only `file`, `w`, `h`, `texw`, `texh`;
 it computes figure heights from race, not from the image.
 
 An entry counts only when `file` is a non-empty string.
+
+**`epoch`** (optional, since #128) names the capture the portrait was made from:
+the `epoch` of that capture's **first** shot record. The addon compares it with
+the newest capture it holds for the character - a newer capture is "waiting for
+the converter" until an entry names it, across reloads. Write it whenever the
+capture record had one; a converter that wrote the second shot's instead still
+reads as converted (the addon compares with `>`), never as waiting forever. An
+entry without it is read the old way: only a capture taken in the current
+session counts as waiting. Additive: no `version` bump.
 
 ---
 
