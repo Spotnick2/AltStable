@@ -1232,12 +1232,13 @@ local function PlacePet(f)
         PetX(want.ownerX, want.ownerW, frameW, want.side, want.panelW, want.reach), want.y - (frameH - h) / 2)
     pcall(f.actor.SetYaw, f.actor, yaw)
     if box then
-        -- The field of view spans the frame's WIDTH (measured: taken as the
-        -- height, a cat in a wide frame came out three times too big and
-        -- cropped; a portrait-shaped probe pane hid it). So the height the
-        -- camera sees is the width's share of it.
-        local viewW = 2 * PET_CAMERA * math.tan(PET_FOV / 2)
-        local viewH = viewW * frameH / frameW
+        -- The field of view spans the frame's LARGER side (measured: taken as
+        -- the height, a cat in a wide frame came out three times too big; then
+        -- taken as the width, an imp in a tall frame clipped top and bottom,
+        -- while the portrait probe pane had fitted as height). So the height
+        -- the camera sees is the full span, or the width's share of it.
+        local span = 2 * PET_CAMERA * math.tan(PET_FOV / 2)
+        local viewH = (frameW >= frameH) and (span * frameH / frameW) or span
         pcall(f.actor.SetScale, f.actor, viewH / (box.h * PET_MARGIN))
         f:Show()
     end

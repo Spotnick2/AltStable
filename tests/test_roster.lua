@@ -3158,11 +3158,17 @@ do
         -- Framed from its own box: the model's height fills the frame. The
         -- field of view spans the WIDTH (measured), so a wide frame sees less
         -- height than its width.
-        local viewW = 2 * 40 * math.tan(0.075)
-        local viewH = viewW * cat.pet:GetHeight() / cat.pet:GetWidth()
+        local span = 2 * 40 * math.tan(0.075)
+        check("the cat's frame is wide", cat.pet:GetWidth() > cat.pet:GetHeight())
+        local viewH = span * cat.pet:GetHeight() / cat.pet:GetWidth()
         check("the model is scaled from its box",
               math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.3)) < 1e-6,
               tostring(cat.pet.actor._scale))
+        -- A TALL frame sees the full span as its height (an imp clipped top
+        -- and bottom when the span was taken as its width).
+        check("the voidwalker's frame is tall", void.pet:GetHeight() > void.pet:GetWidth())
+        check("a tall frame's model is scaled to the full span",
+              math.abs(void.pet.actor._scale - span / (3 * 1.3)) < 1e-6, tostring(void.pet.actor._scale))
 
         -- Room to spare across: a frame cut to the model's width clipped it.
         local box = { l = 1.0157 + 3.686, w = 1.3213 + 1.6145, h = 1.6881 + 0.0317 }
