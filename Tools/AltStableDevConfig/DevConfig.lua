@@ -57,15 +57,24 @@ local function Seed()
     -- Names are the full "First Last" form: Forever gives every character a
     -- surname, and CHAT_MSG_ADDON reports the sender that way, so the
     -- whitelist has to match it exactly.
-    local me = (UnitName and UnitName("player")) or ""
+    -- The FULL name: UnitName returns the first name only on this client
+    -- (surnames come back as a second return), which never matched a PEERS
+    -- entry - so the player was whitelisted against themselves.
+    local me = (AltStable and AltStable.API and AltStable.API.PlayerFullName
+                and AltStable.API.PlayerFullName())
+        or (UnitName and UnitName("player")) or ""
 
-    -- Stand aside when a whitelist arrived from disk. Since 1.60.1.70009 that
-    -- is the normal case; before it, never. This ASSIGNS rather than merges, so
-    -- seeding over a loaded whitelist would silently discard every peer the
-    -- user added, at every login, and look exactly like persistence being
-    -- broken.
+    -- Seed ONCE per account, ever (devSeeded is saved with the config). This
+    -- used to re-seed whenever the whitelist was EMPTY - so removing every name
+    -- put them all back at the next login, and the player could not get rid of
+    -- them (2026-10-01). An empty list from disk is the player's choice.
+    -- Since #58 your own accounts need no whitelist at all.
+    if not seededByUs and AltStableConfig.devSeeded then
+        return me, #(AltStableConfig.whitelist or {}), true
+    end
     if not seededByUs and type(AltStableConfig.whitelist) == "table"
        and #AltStableConfig.whitelist > 0 then
+        AltStableConfig.devSeeded = true
         return me, #AltStableConfig.whitelist, true
     end
 
@@ -74,6 +83,7 @@ local function Seed()
         if name ~= me then list[#list + 1] = name end
     end
     AltStableConfig.whitelist = list
+    AltStableConfig.devSeeded = true
     seededByUs = true
 
     if ACCOUNT_NUMBER ~= "" then
