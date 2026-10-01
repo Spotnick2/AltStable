@@ -422,6 +422,13 @@ eq(AltStableDB["Player-W-3"] and AltStableDB["Player-W-3"].name, "Char3", "a spe
 -- 8. Out-of-order chunk delivery still reassembles
 ------------------------------------------------------------
 
+-- A FRESH stream: the one above is finished, and a late copy of a finished
+-- stream is ignored (#58) - which is what a replay of the same wire would be.
+seedBig("Player-W-", 6)
+WoW.sent = {}
+T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "Wire")
+WoW.flushTimers()
+chunks, done = splitWire(WoW.sentMessages())
 AltStableDB = {}
 WoW.chatOut = {}
 for i = #chunks, 1, -1 do receive(chunks[i], "Wire-Realm") end  -- reversed
@@ -2513,7 +2520,10 @@ local function streamOf(guidPrefix, n)
     WoW.sent = {}
     T.ChunkAndSendPayload(T.SerializeFullDB(false), "WHISPER", "x")
     flushAll()
-    local wire = WoW.sentMessages()
+    -- Only this stream: timers flushed here may send other things (a
+    -- discovery request's retry, #58), which are not part of it.
+    local wire = {}
+    for _, m in ipairs(WoW.sent) do if m.target == "x" then wire[#wire + 1] = m.text end end
     AltStableDB = saved
     WoW.sent = {}
     return wire
@@ -2621,10 +2631,12 @@ do
     -- again, not merge and not ask for a resync.
     freshAuth({ whitelist = { "Grace Surname" } })
     chunks, done = splitWire(streamOf("Player-Grace-", 3))
+    -- The deny lands while a chunk is still missing: the last chunk arriving
+    -- completes a stream at once now, so the window is BEFORE it.
     for i = 1, #chunks - 1 do receiveUnapproved(chunks[i], "Grace Surname") end
-    receiveUnapproved(done, "Grace Surname")          -- a chunk still missing: grace timer
-    receiveUnapproved(chunks[#chunks], "Grace Surname")
+    receiveUnapproved(done, "Grace Surname")          -- a chunk still missing: settle timer
     AltStable.DenySyncPeer("Grace Surname")
+    receiveUnapproved(chunks[#chunks], "Grace Surname")
     WoW.sent = {}
     flushAll()
     check(not holds("Player-Grace-"), "a deny during the grace window merges nothing")
@@ -2872,6 +2884,16 @@ do
     check(not chatHas("incomplete"), "  with no 'chunks missing'")
     eq(requestsTo("Swing Surname"), 0, "  and no resync")
 
+    -- Denying one peer drops THEIR streams only.
+    freshAuth({ whitelist = { "Keep Surname", "Drop Surname" } })
+    local keepChunks = splitWire(streamOf("Player-K1-", 3))
+    local dropChunks = splitWire(streamOf("Player-D1-", 3))
+    receiveUnapproved(keepChunks[1], "Keep Surname")
+    receiveUnapproved(dropChunks[1], "Drop Surname")
+    eq(T.BufferedStreams(), 2, "two peers, a stream each in flight")
+    AltStable.DenySyncPeer("Drop Surname")
+    eq(T.BufferedStreams(), 1, "  denying one leaves the other's stream alone")
+
     -- Refusing by the stored, lower-cased key drops what arrived under the
     -- sender's own capitalisation.
     freshAuth({ whitelist = { "Mid Surname" } })
@@ -2916,8 +2938,7 @@ do
     chunks, done = splitWire(streamOf("Player-LateNever-", 3))
     for i = 1, #chunks - 1 do receiveUnapproved(chunks[i], "Late Never") end
     receiveUnapproved(done, "Late Never")
-    receiveUnapproved(chunks[#chunks], "Late Never")
-    storeNever("Late Never")
+    storeNever("Late Never")                          -- the last chunk never comes
     WoW.sent = {}
     flushAll()
     check(not holds("Player-LateNever-"), "a never stored in the grace window merges nothing")
@@ -3208,6 +3229,296 @@ do
     local auto = notFound("Asleep Surname")
     check(WoW.chatFiltered("CHAT_MSG_SYSTEM", auto), "a login request's 'no player named' is hidden")
     check(not chatHas("cannot be reached"), "  and not replaced by a line of ours")
+end
+
+------------------------------------------------------------
+-- #58: your own other accounts, through Battle.net
+------------------------------------------------------------
+-- Measured on 70124: Battle.net game data between the owner's own two
+-- accounts crosses rulesets and factions; ids are client-local handles; a
+-- friend is a different bnetAccountID. The stubs model exactly that
+-- (WoW.bn): our own game account is WoW.bn.myId, our Battle.net account
+-- WoW.bn.me.
+do
+    local function own(id, name, extra)
+        local a = { characterName = name, playerGuid = "Player-4613-" .. id, isOnline = true,
+                    clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true,
+                    factionName = "Alliance", realmName = "ClassicBetaPvP2",
+                    realmDisplayName = "Classic Beta PvP2", bnetAccountID = WoW.bn.me }
+        for k, v in pairs(extra or {}) do a[k] = v end
+        WoW.bn.accounts[id] = a
+        return a
+    end
+    local function names()
+        local out = {}
+        for _, p in ipairs(AltStable.OwnBNetPeers()) do out[#out + 1] = p.name .. "@" .. p.id end
+        return table.concat(out, ",")
+    end
+    local function bnTo(id, pred)
+        local n = 0
+        for _, m in ipairs(WoW.sent) do
+            if m.channel == "BNET" and m.target == id and (not pred or pred(m.text)) then n = n + 1 end
+        end
+        return n
+    end
+    local function chunk(text) return text:sub(1, #T.MSG_CHUNK_V) == T.MSG_CHUNK_V end
+    local function bn(text, id)
+        onEvent(T.frame, "BN_CHAT_MSG_ADDON", PREFIX, text, "WHISPER", id)
+    end
+    local function deliverBN(wire, id) for _, m in ipairs(wire) do bn(m, id) end; flushAll() end
+    local function scan() AltStable.RescanOwnAccounts() end
+    local function mine()
+        AltStableDB = { ["Player-Mine-58"] = { guid = "Player-Mine-58", name = "Mine", class = "MAGE",
+                                              level = 60, lastUpdate = 1000, scannedHere = true } }
+    end
+
+    -- Eligibility: only our own other account, online, this game, this region.
+    freshAuth()
+    own(8, "Karuzo Test")
+    own(9, "Friend Person", { bnetAccountID = 5 })               -- a Battle.net friend
+    own(10, "Other Game", { wowProjectID = 1 })                  -- another WoW project
+    own(11, "Gone Away", { isOnline = false })
+    own(12, "Far Away", { isInCurrentRegion = false })
+    own(13, "Not A Game", { clientProgram = "BSAp" })
+    own(14, "Ourselves Again", { playerGuid = WoW.player.guid }) -- our own GUID, another id
+    own(15, "No Account", { bnetAccountID = false })             -- account lookup has no id
+    WoW.bn.accounts[15].bnetAccountID = nil
+    scan()
+    eq(names(), "Karuzo Test@8", "the scan keeps only our own other account")
+    local stray = 0
+    for _, m in ipairs(WoW.sent) do if m.channel == "BNET" and m.target ~= 8 then stray = stray + 1 end end
+    eq(stray, 0, "  and nothing is sent to any of the others - not even to find out")
+    check(not chatHas("Gone Away") and not chatHas("Friend Person"),
+          "  and none of them is announced as found")
+
+    -- A failed lookup of OUR account never matches a failed lookup of theirs.
+    freshAuth()
+    own(8, "Karuzo Test", { bnetAccountID = nil })
+    WoW.bn.accounts[8].bnetAccountID = nil
+    WoW.bn.me = nil
+    scan()
+    eq(names(), "", "two failed account lookups are not 'the same account'")
+
+    -- Found: asked once, forced past a throttle a failed whisper set, said once.
+    freshAuth()
+    mine()
+    T.RequestCharacters("WHISPER", "Karuzo Test")            -- a whisper, before Battle.net knew
+    own(8, "Karuzo Test")
+    WoW.sent, WoW.chatOut = {}, {}
+    scan()
+    eq(bnTo(8, isReq), 1, "a newly found account is asked at once, over Battle.net")
+    check(chatHas("Found your other account"), "  and the player is told")
+    scan()
+    eq(bnTo(8, isReq), 1, "  a rescan does not ask again")
+    local said = 0
+    for _, l in ipairs(WoW.chatOut) do if l:find("Found your other account", 1, true) then said = said + 1 end end
+    eq(said, 1, "  nor say it again")
+
+    -- Unanswered, it is asked again - twice - and no more.
+    flushAll()
+    eq(bnTo(8, isReq), 3, "an unanswered request is retried twice")
+
+    -- Answered, the retries stop.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    local wireKT = streamOf("Player-KT-", 2)     -- made BEFORE the scan: its flush
+    scan()                                        -- must not fire the retries early
+    WoW.sent = {}
+    deliverBN(wireKT, 8)                         -- its flush is where a retry would fire
+    check(holds("Player-KT-"), "our other account's stream is merged - not whitelisted, no prompt")
+    eq(#AltStable.PendingSyncRequests(), 0, "  and nobody was asked about")
+    flushAll()
+    eq(bnTo(8, isReq), 0, "  and an answered request is not retried")
+
+    -- Reciprocity: their request before our scan still makes us ask them.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    bn(T.MSG_REQUEST_V .. "|0", 8)
+    -- At once, before any timer: a periodic rescan would ask them too, and
+    -- must not be what makes this pass.
+    eq(bnTo(8, isReq), 1, "their request makes us ask them back, though our own scan has not run")
+    flushAll()
+    check(bnTo(8, chunk) > 0, "  and their request is served over Battle.net")
+    eq(#WoW.sentMessages() - bnTo(8), 0, "  nothing went out as a whisper")
+
+    -- Bare /alts sync, with no whitelist, reaches the account found.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    WoW.sent = {}
+    slash("sync")
+    eq(bnTo(8, isReq), 1, "bare /alts sync reaches our other account with no whitelist")
+
+    -- A friend's game data is ignored entirely.
+    freshAuth()
+    mine()
+    own(9, "Friend Person", { bnetAccountID = 5 })
+    WoW.sent, WoW.chatOut = {}, {}
+    bn(T.MSG_REQUEST_V .. "|0", 9)
+    deliverBN(streamOf("Player-FR-", 2), 9)
+    eq(#WoW.sent, 0, "a friend's Battle.net request is not answered")
+    check(not holds("Player-FR-"), "  their data is not taken")
+    eq(#AltStable.PendingSyncRequests(), 0, "  and they are not even asked about")
+
+    -- Never on an own-account character wins.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    AltStable.DenySyncPeer("Karuzo Test")
+    WoW.sent = {}
+    scan()
+    bn(T.MSG_REQUEST_V .. "|0", 8)
+    deliverBN(streamOf("Player-NV-", 2), 8)
+    eq(#WoW.sent, 0, "never on our own other character: nothing asked, nothing served")
+    check(not holds("Player-NV-"), "  nothing taken")
+
+    -- TargetOffline: the binding goes, no push, a Battle.net-worded line.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    WoW.sent, WoW.chatOut = {}, {}
+    WoW.sendResults = { 12 }
+    slash("sync Karuzo Test")
+    eq(names(), "", "an offline result for the request drops the binding at once")
+    WoW.bn.accounts[8].isOnline = false          -- as the server just said
+    flushAll()
+    eq(bnTo(8, chunk), 0, "  and nothing is pushed")
+    check(chatHas("through Battle.net"), "  and the line names Battle.net")
+    check(not chatHas("do not cross factions"), "  not factions")
+
+    -- A late callback for an OLD binding does not remove the new one.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    WoW.ctlDefer = true
+    T.RequestCharacters("WHISPER", "Karuzo Test", true)       -- queued for id 8
+    WoW.bn.accounts[8] = nil
+    own(16, "Karuzo Test")                                      -- they came back as 16
+    scan()
+    WoW.sendResults = { 12 }
+    WoW.ctlDrain()                                              -- the old send fails late
+    WoW.ctlDefer = false
+    eq(names(), "Karuzo Test@16", "a late failure for the old id leaves the new binding alone")
+
+    -- A player's own failed whisper during a Battle.net sync is not swallowed.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    T.RequestCharacters("WHISPER", "Karuzo Test", true)
+    check(not WoW.chatFiltered("CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("Karuzo Test")),
+          "a Battle.net send does not hide the player's own 'no player named'")
+
+    -- Unordered delivery: DONE first, chunks reversed - merged, no resync.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    local chunks, done = splitWire(streamOf("Player-UO-", 4))
+    WoW.sent, WoW.chatOut = {}, {}
+    bn(done, 8)
+    for i = #chunks, 1, -1 do bn(chunks[i], 8) end
+    flushAll()
+    check(holds("Player-UO-"), "DONE first, chunks reversed: merged")
+    check(not chatHas("incomplete"), "  with no resync")
+
+    -- The settle waits while chunks keep coming: a DONE, then a chunk, then
+    -- the settle's first check - which must see the activity and wait again.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    flushAll()
+    chunks, done = splitWire(streamOf("Player-SL-", 4))
+    WoW.chatOut = {}
+    bn(done, 8)
+    bn(chunks[1], 8)
+    WoW.flushTimers()                                          -- the settle's first check
+    for i = 2, #chunks do bn(chunks[i], 8) end
+    flushAll()
+    check(holds("Player-SL-"), "chunks still arriving after the DONE: the settle waits for them")
+    check(not chatHas("incomplete"), "  with no false 'missing'")
+
+    -- A silent own account is reported by the stall watch: it is online.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    WoW.chatOut = {}
+    WoW.now = WoW.now + 60
+    flushAll()
+    check(chatHas("No sync response from Karuzo Test"), "a found account that never answers is reported")
+
+    -- DONE and nothing else: one bounded resync, over Battle.net.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    flushAll()                                                  -- discovery's own asks
+    chunks, done = splitWire(streamOf("Player-ND-", 2))
+    WoW.sent, WoW.chatOut = {}, {}
+    bn(done, 8)
+    flushAll()
+    check(chatHas("no data arrived"), "a DONE with no chunk ever: said so")
+    eq(bnTo(8, isReq), 1, "  and one resync asked, over Battle.net")
+
+    -- A late DONE for a finished stream is ignored.
+    deliverBN(splitWire(streamOf("Player-LD-", 2)), 8)
+    WoW.chatOut = {}
+    bn(done, 8)
+    flushAll()
+    check(not chatHas("no data arrived"), "a DONE for a stream already over is ignored")
+
+    -- Concurrent streams from the same peer do not mix.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    local c1, d1 = splitWire(streamOf("Player-S1-", 2))
+    local c2, d2 = splitWire(streamOf("Player-S2-", 2))
+    for i = 1, math.max(#c1, #c2) do
+        if c1[i] then bn(c1[i], 8) end
+        if c2[i] then bn(c2[i], 8) end
+    end
+    bn(d2, 8); bn(d1, 8)
+    flushAll()
+    check(holds("Player-S1-") and holds("Player-S2-"), "two interleaved streams both merge")
+
+    -- One peer, one buffer: a whisper sender with and without its realm, in
+    -- different case, is one stream.
+    freshAuth({ whitelist = { "Mixed Case" } })
+    chunks, done = splitWire(streamOf("Player-MC-", 3))
+    receiveUnapproved(chunks[1], "Mixed Case")
+    for i = 2, #chunks do receiveUnapproved(chunks[i], "mixed case-OtherRealm") end
+    receiveUnapproved(done, "MIXED CASE")
+    flushAll()
+    check(holds("Player-MC-"), "Name, name-Realm and NAME are one stream")
+    eq(T.BufferedStreams(), 0, "  in one buffer, now finished")
+
+    -- The off switch: no scan, no send, no receive, no trust.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    AltStableConfig.bnetSync = false
+    scan()
+    WoW.sent = {}
+    bn(T.MSG_REQUEST_V .. "|0", 8)
+    flushAll()
+    eq(names(), "", "switched off: nothing found")
+    eq(#WoW.sent, 0, "  and their request is not answered")
+    eq(AltStable.SyncAuthFor("Karuzo Test"), AltStable.AUTH_ASK, "  and they are not trusted")
+    AltStableConfig.bnetSync = true
+    scan()
+    eq(names(), "Karuzo Test@8", "switched back on: found again")
+
+    -- Battle.net going away clears what was found.
+    onEvent(T.frame, "BN_DISCONNECTED")
+    eq(names(), "", "Battle.net disconnecting clears the peers")
 end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))

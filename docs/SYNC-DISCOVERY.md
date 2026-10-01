@@ -1,12 +1,41 @@
 # Sync discovery — how two accounts find each other
 
-Design research for [#58](https://github.com/Spotnick2/AltStable/issues/58). **Parked** until the
-port is finished; picked up again with in-game testing, because the decisive questions are
-measurements, not opinions.
+Design research for [#58](https://github.com/Spotnick2/AltStable/issues/58) - **shipped** for the
+owner's own accounts (below); the rest of this file is the research that led there, kept because
+its closed routes stay closed.
 
 This file exists so that work does not start from zero: what the code does today, what a shipped
 retail addon does, which routes are already closed and why, and the exact list of things to measure
 first.
+
+---
+
+## #58, shipped: your own accounts, through Battle.net
+
+Measured on 70124 (the probe rounds of 2026-09-30, `Tools/AltStableProbe/BNet.lua`): Battle.net
+game data between two WoW accounts on the **same Battle.net account** is delivered - across
+rulesets and across factions, both directions - where whispers and channels stop at both. So:
+
+- **Discovery** (`ScanOwnAccounts`): walk the client-local game account ids 1-128 (plus a GUID
+  lookup for database characters beyond that) and keep those whose `GetAccountInfoByGUID` names
+  OUR `bnetAccountID` - online, this game (`wowProjectID`), this region, not us. At login +5 s,
+  every 60 s, on Battle.net presence events; the map is rebuilt each time and is session-only (ids
+  are handles, never stored or sent).
+- **Transport**: `QueueWire` sends a WHISPER to such a character as `BNSendGameData` through
+  ChatThrottleLib (255 bytes, our chunks unchanged - **no protocol change**). `BN_CHAT_MSG_ADDON`
+  from one feeds the same handler, under the character name Blizzard gives for the `senderID`; a
+  friend's game data fails the ownership test and is dropped unread.
+- **Trust**: such a character is `auto` after any stored answer - `never` still wins.
+- **New peer**: asked at once (forced past the request throttle), twice more 30 s apart until a
+  stream arrives; their request to us counts as finding them too, so both directions sync.
+- **Unordered delivery**: a DONE may arrive first and now starts the stream; a stream completes on
+  its last packet, or settles when nothing has arrived for 6 s (2 s for whispers); a late packet of
+  a finished stream is ignored; stream ids are clock-seeded so a `/reload` cannot reuse them.
+- **Off switch**: Options, or `AltStableConfig.bnetSync = false`.
+
+Plan reviewed adversarially (Codex gpt-6-astra, high: "ship with changes", all taken but two
+bounded - the 1-128 walk stays a heuristic with the GUID fallback, and queued-destination reuse is
+re-checked before queueing, not recalled).
 
 ---
 

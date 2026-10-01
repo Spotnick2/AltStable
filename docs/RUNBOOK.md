@@ -163,6 +163,27 @@ no new prompts. An explicit `deny` still beats the whitelist.
 The notice repeats at most once a minute per peer, because a client that retries
 on every login must not turn one unanswered question into a wall of chat.
 
+### Your other accounts (Battle.net)
+
+Since #58, two of your WoW accounts on the **same Battle.net account** find each
+other and sync with no whitelist and nothing typed - **any ruleset, any
+faction**. Log in on both; within a few seconds each says:
+
+```
+Found your other account: Karuzo Test (Alliance, Classic Beta PvP2) - syncing.
+```
+
+- `/alts auth` lists them as "your account (Battle.net)".
+- They are trusted like a whitelist entry, so no prompt - but `/alts deny <name>`
+  still refuses that character for good.
+- Only your own Battle.net account counts: a Battle.net friend's game data is
+  ignored, and friends keep the whisper path and the #61 prompt.
+- Off: Options -> "Sync with your other accounts through Battle.net".
+
+Both accounts must be online at the same time, as with any sync. A Battle.net
+message that cannot be delivered (the other account logged off) says so once
+for a `/alts sync` you typed.
+
 ### What deploy does
 
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,

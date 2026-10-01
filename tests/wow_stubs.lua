@@ -87,6 +87,7 @@ function WoW.reset()
     WoW.popups = {}
     WoW.popupRefused = nil
     WoW.sendResults, WoW.reportedErrors = {}, {}
+    WoW.bn = { me = 1, myId = 2, project = 18, connected = true, accounts = {} }
     WoW.ctlDefer, WoW.ctlQueue, WoW.ctlHeld = false, {}, {}
     WoW.reloaded = 0
     WoW.sounds = {}
@@ -1321,8 +1322,66 @@ C_ChatInfo = {
     SendAddonMessageLogged = function() return 0 end,
     SendChatMessage = function() end,
 }
+-- Battle.net, as measured on 70124 (#58, docs/SYNC-DISCOVERY.md):
+--   * game account ids are small handles LOCAL to this client (WoW.bn.myId is
+--     ours); an id this client does not know is TargetRequired;
+--   * GetAccountInfoByGUID(guid).bnetAccountID says whose Battle.net account a
+--     character is on - WoW.bn.me is ours; a friend's account has another;
+--   * BN_CHAT_MSG_ADDON delivers (prefix, text, "WHISPER", senderID).
+-- A test declares the other side with WoW.bn.accounts[id] = { characterName,
+-- playerGuid, isOnline, clientProgram, wowProjectID, isInCurrentRegion,
+-- factionName, realmName, bnetAccountID }.
+WoW.bn = { me = 1, myId = 2, project = 18, connected = true, accounts = {} }
+local function bnSelf()
+    return { gameAccountID = WoW.bn.myId, characterName = WoW.player.name,
+             playerGuid = WoW.player.guid, isOnline = true, clientProgram = "WoW",
+             wowProjectID = WoW.bn.project, isInCurrentRegion = true,
+             factionName = WoW.faction or "Horde", realmName = WoW.player.normalizedRealm }
+end
+local function bnCopy(t, id)
+    if not t then return nil end
+    local c = {}
+    for k, v in pairs(t) do if k ~= "bnetAccountID" then c[k] = v end end
+    c.gameAccountID = id
+    return c
+end
 C_BattleNet = C_BattleNet or {}
-C_BattleNet.SendGameData = C_BattleNet.SendGameData or function() return 0 end
+function C_BattleNet.GetGameAccountInfoByID(id)
+    if id == WoW.bn.myId then return bnSelf() end
+    return bnCopy(WoW.bn.accounts[id], id)
+end
+function C_BattleNet.GetGameAccountInfoByGUID(guid)
+    if guid == WoW.player.guid then return bnSelf() end
+    for id, a in pairs(WoW.bn.accounts) do
+        if a.playerGuid == guid then return bnCopy(a, id) end
+    end
+end
+function C_BattleNet.GetAccountInfoByGUID(guid)
+    if guid == WoW.player.guid then
+        if WoW.bn.me == nil then return nil end
+        return { bnetAccountID = WoW.bn.me, battleTag = "Owner#1", gameAccountInfo = bnSelf() }
+    end
+    for id, a in pairs(WoW.bn.accounts) do
+        if a.playerGuid == guid then
+            return { bnetAccountID = a.bnetAccountID, gameAccountInfo = bnCopy(a, id) }
+        end
+    end
+end
+-- Recorded in WoW.sent with channel "BNET" and the id as target. A result
+-- queued in WoW.sendResults decides first (shared with addon sends); then an
+-- id this client does not know, or one gone offline, is refused as measured.
+function C_BattleNet.SendGameData(id, prefix, text)
+    local result = table.remove(WoW.sendResults, 1)
+    if result == nil then
+        local a = (id == WoW.bn.myId) and bnSelf() or WoW.bn.accounts[id]
+        result = (a == nil) and 6 or (a.isOnline and 0 or 12)
+    end
+    if result ~= 0 then return result end
+    table.insert(WoW.sent, { prefix = prefix, text = text, channel = "BNET", target = id,
+                             prio = WoW.pendingPrio, queue = WoW.pendingQueue })
+    return 0
+end
+function BNFeaturesEnabledAndConnected() return WoW.bn.connected ~= false end
 
 -- What ChatThrottleLib v32 calls besides the chat API, as the client has them.
 -- The client's securecallfunction hands an error in fn to the error handler
@@ -1444,10 +1503,22 @@ ChatThrottleLib = {
     -- its start-up throttle, when even an ALERT waits. Otherwise it sends at
     -- once and calls back at once.
     SendAddonMessage = function(self, prio, prefix, text, channel, target, q, callbackFn, callbackArg)
+        return self._send(self, "SendAddonMessage", function()
+            return C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
+        end, prio, prefix, text, channel, target, q, callbackFn, callbackArg)
+    end,
+    -- v32's BNSendGameData: same pacing, same 255-byte cap, same callback; the
+    -- "target" is the game account id and the chat type must be WHISPER.
+    BNSendGameData = function(self, prio, prefix, text, chattype, gameAccountID, q, callbackFn, callbackArg)
+        return self._send(self, "BNSendGameData", function()
+            return C_BattleNet.SendGameData(gameAccountID, prefix, text)
+        end, prio, prefix, text, chattype, gameAccountID, q, callbackFn, callbackArg)
+    end,
+    _send = function(self, method, sendFn, prio, prefix, text, channel, target, q, callbackFn, callbackArg)
         if WoW.ctlDefer or (q and WoW.ctlHeld[q]) then
             table.insert(WoW.ctlQueue, function()
                 WoW.ctlDefer = false
-                local ok, err = pcall(self.SendAddonMessage, self, prio, prefix, text, channel,
+                local ok, err = pcall(self[method], self, prio, prefix, text, channel,
                                       target, q, callbackFn, callbackArg)
                 WoW.ctlDefer = true
                 if not ok then error(err, 0) end
@@ -1466,7 +1537,7 @@ ChatThrottleLib = {
         -- GeneralError, never raised; the callback gets (arg, didSend, result).
         local function attempt()
             WoW.pendingPrio, WoW.pendingQueue = prio, q
-            local ok, r = pcall(C_ChatInfo.SendAddonMessage, prefix, text, channel, target)
+            local ok, r = pcall(sendFn)
             WoW.pendingPrio, WoW.pendingQueue = nil, nil
             if not ok then geterrorhandler()(r); r = 9 end
             if r == true or r == nil then r = 0 end
