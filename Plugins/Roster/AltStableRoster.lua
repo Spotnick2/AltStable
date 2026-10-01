@@ -85,7 +85,14 @@ local SCENE_DEPTH    = 0.14   -- how much smaller the far side of it is
 -- and it reads as a scene; thirteen in a row reads as a police line-up, which
 -- is what the first version looked like. The grid remains the place to see
 -- everyone.
+--
+-- Four when pets are shown (#75): a fifth figure takes the room a hunter's
+-- beast or a warlock's demon stands in, and with five they stood behind the
+-- next character instead of beside their own (owner, in game). Five without.
+-- By the OPTION, not by who has a pet, so a pet arriving by sync does not
+-- reshuffle the line.
 local SCENE_CAST = 5
+local SCENE_CAST_WITH_PETS = 4
 local MAX_CARD_W    = 170
 local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
 
@@ -1066,7 +1073,12 @@ local PET_FOV, PET_CAMERA = 0.6, 10   -- camera on +X, looking back at the model
 local PET_YAW = 0.6                   -- turned toward the fire, as a figure would
 local PET_MARGIN = 1.04               -- frame height per model height
 local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the ground
-local PET_OFFSET = 0.35               -- of the owner's width, toward the fire
+-- The slot is shared: an owner with a pet steps away from it by OWNER_SHIFT of
+-- the slot, the pet stands PET_SHIFT the other way, and is never wider than
+-- PET_ROOM of the slot, so it cannot reach the next character's.
+-- One table: Lua 5.1 allows a function 60 upvalues, and the test exports
+-- are one function already near it.
+local PET_LAYOUT = { ownerShift = 0.15, petShift = 0.25, room = 0.6 }
 
 local function PetsEnabled()
     return AltStableConfig and AltStableConfig.rosterPets == true
@@ -1082,10 +1094,24 @@ local function PetUnits(char, boxH)
     return math.max(PET_MIN, math.min(PET_MAX, units))
 end
 
--- Which side of the owner it stands on: toward the fire, so it never stands
--- in the next character's slot. +1 is screen right.
-local function PetSide(ownerX, fireX)
-    return (ownerX <= fireX) and 1 or -1
+-- Which side of its owner a pet stands on, by place in the line (left to
+-- right): left, right, left, right. Each pair's pets then take the outside of
+-- the pair, never the same gap - the owner's layout, after toward-the-fire put
+-- two pets into one space and left the scene's edges empty. +1 is screen right.
+local function PetSide(i)
+    return (i % 2 == 1) and -1 or 1
+end
+
+local function HasPet(char)
+    local display = char and tonumber(char.pet_display)
+    return PetsEnabled() and display ~= nil and display > 0
+end
+
+-- Where an owner stands in its slot: off-centre, away from its pet, when it
+-- has one to make room for.
+local function OwnerX(i, char, spot, slot)
+    if not HasPet(char) then return spot.x end
+    return spot.x - PetSide(i) * slot * PET_LAYOUT.ownerShift
 end
 
 -- Width per height of the model as the camera sees it. The box's X is the
@@ -1150,17 +1176,16 @@ local function PlacePet(f)
     local want = f._want
     if not want then return end
     local box = f._box
-    local yaw = want.side * PET_YAW
-    local h = math.min(PetUnits(want.char, box and box.h) * want.unitPx, want.maxH)
+    local yaw = want.face * PET_YAW
+    local aspect = PetAspect(box, yaw)
+    local h = math.min(PetUnits(want.char, box and box.h) * want.unitPx, want.maxH,
+                       want.maxW / (aspect * PET_MARGIN))
     local frameH = h * PET_MARGIN
-    local frameW = h * PetAspect(box, yaw) * PET_MARGIN
+    local frameW = h * aspect * PET_MARGIN
     f:SetSize(frameW, frameH)
     f:SetFrameLevel(want.level)
     f:ClearAllPoints()
-    -- Centred just inside the owner's shoulder, by the OWNER's width only. Its
-    -- own width pushed it out too (measured: a voidwalker's arms carried it
-    -- into the next character's place).
-    f:SetPoint("BOTTOM", panel, "BOTTOMLEFT", want.x + want.side * want.ownerW * PET_OFFSET, want.y)
+    f:SetPoint("BOTTOM", panel, "BOTTOMLEFT", want.x, want.y)
     pcall(f.actor.SetYaw, f.actor, yaw)
     if box then
         -- The field of view spans the frame's WIDTH (measured: taken as the
@@ -1181,13 +1206,9 @@ local function MeasurePet(f, token, tries)
     local box = ReadBox(f.actor)
     if box then
         f._box = box
-        -- Held on its idle pose at speed 0, as Capture freezes a character: a
-        -- breathing cat among the still portraits reads as wrong (owner, in
-        -- game). Once loaded, because loading starts the model's own idle.
-        pcall(f.actor.SetAnimation, f.actor, 0, nil, 0)
-        -- And the scene itself, for whatever else still moves - but only for
-        -- this scene: false keeps the client's global pause out of it.
-        pcall(f.SetPaused, f, true, false)
+        -- It keeps its idle animation: a breathing cat among still portraits
+        -- reads as alive, not wrong, once its particles are gone (owner, in
+        -- game, after trying it frozen - "the sweet spot").
         PlacePet(f)
     elseif tries > 0 and C_Timer and C_Timer.After then
         C_Timer.After(0.1, function() MeasurePet(f, token, tries - 1) end)
@@ -1202,7 +1223,7 @@ end
 
 -- One pet per seated owner that has one, after the cast is drawn. Refresh
 -- has hidden them all first, so a pet not placed here stays hidden.
-local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, panelH)
+local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, panelH, slot)
     if not PetsEnabled() then HidePets(); return 0 end
     local drawn = 0
     for i = 1, #(Roster.cards or {}) do
@@ -1211,11 +1232,14 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, pane
         local f = (display and display > 0 and spot and sizes[i] and sizes[i].cut) and PetFrame(i)
         if f then
             f._want = {
-                char = char, side = PetSide(spot.x, fireX),
-                x = spot.x, y = spot.y + panelH * PET_LIFT,
-                ownerW = sizes[i][1] * fit,
+                char = char,
+                -- Turned toward the fire, whichever side of its owner it is.
+                face = (spot.x <= fireX) and 1 or -1,
+                x = spot.x + PetSide(i) * slot * PET_LAYOUT.petShift,
+                y = spot.y + panelH * PET_LIFT,
                 unitPx = figureH / tallest * spot.scale * fit,
                 maxH = figureH * spot.scale * fit,
+                maxW = slot * PET_LAYOUT.room,
                 -- Under EVERY character, not just its owner: the pet stands
                 -- behind, as on the warband screen. Just under its owner, the
                 -- one nearest the camera put a voidwalker over the next figure
@@ -1247,7 +1271,8 @@ local function RenderScene(chars)
 
     if sceneLabel then sceneLabel:SetText(entry.label) end
 
-    local cast = SceneCast(chars, CutoutFor, SCENE_CAST)
+    local petsOn = AltStableConfig and AltStableConfig.rosterPets == true
+    local cast = SceneCast(chars, CutoutFor, petsOn and SCENE_CAST_WITH_PETS or SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestRace(cast)
 
@@ -1268,7 +1293,7 @@ local function RenderScene(chars)
             card._spotLevel = spot.level
 
             card:ClearAllPoints()
-            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", spot.x, spot.y - NAME_H - 4)
+            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", OwnerX(i, char, spot, slot), spot.y - NAME_H - 4)
             card:SetSize(math.max(slot, w), h + NAME_H + 4)
 
             card.plate:Hide()
@@ -1301,7 +1326,8 @@ local function RenderScene(chars)
         end
     end
 
-    RenderPets(cast, spots, sizes, fit, figureH, tallest, (FireAnchor(pw, ph, entry)), ph)
+    Roster.sceneSlot = slot
+    RenderPets(cast, spots, sizes, fit, figureH, tallest, (FireAnchor(pw, ph, entry)), ph, slot)
 
     -- The third value is how many of the SEATED characters were chosen rather
     -- than guessed, which is the only honest basis for the hint below.
@@ -2763,6 +2789,8 @@ function Roster._Bootstrap()
             SCENE_CAST = SCENE_CAST,
             PetUnits = PetUnits, PetSide = PetSide, PetAspect = PetAspect, ReadBox = ReadBox,
             PET_HEIGHT = PET_HEIGHT, Pets = function() return Roster.pets or {} end,
+            SceneSlot = function() return Roster.sceneSlot end,
+            PET_LAYOUT = PET_LAYOUT, SCENE_CAST_WITH_PETS = SCENE_CAST_WITH_PETS,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         }, { __index = DETAIL_TEST }),

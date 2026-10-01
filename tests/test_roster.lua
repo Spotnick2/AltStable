@@ -3082,6 +3082,11 @@ do
     AltStableConfig.rosterPets = nil     -- never set: off, not "not false"
     T.Refresh()
     check("pets are off by default: none drawn", next(pets()) == nil)
+    -- Where everyone stands with no pets, to see them make room for one.
+    local offX = {}
+    for _, card in ipairs(T.Cards()) do
+        if card:IsShown() and card.char then offX[card.char.guid] = x(card) end
+    end
 
     AltStableConfig.rosterPets = true
     T.Refresh()
@@ -3115,20 +3120,35 @@ do
             end
         end
 
-        -- Its offset is the owner's width, never its own: wide arms must not
-        -- carry it into the next character's place.
-        local catOff = math.abs(x(cat.pet) - x(cat.card))
-        check("the pet stays at its owner's shoulder",
-              catOff <= cat.card.figure:GetWidth() * 0.5, tostring(catOff))
 
-        -- Toward the fire: each pet is on the side facing the other owner.
+
+        -- Alternating by place in the line: the first owner's pet on its left,
+        -- the second's on its right - each pair's pets take the outside.
         local cx, vx = x(cat.card), x(void.card)
-        check("the hunter's pet stands toward the fire",
-              (x(cat.pet) - cx) * (vx - cx) > 0, x(cat.pet) .. " vs " .. cx)
-        check("the demon stands toward the fire",
-              (x(void.pet) - vx) * (cx - vx) > 0, x(void.pet) .. " vs " .. vx)
-        check("  and turned that way",
-              (cat.pet.actor._yaw or 0) * (x(cat.pet) - cx) > 0)
+        local first, second = cat, void
+        if vx < cx then first, second = void, cat end
+        check("the first owner's pet stands on its left", x(first.pet) < x(first.card),
+              x(first.pet) .. " vs " .. x(first.card))
+        check("the second owner's pet stands on its right", x(second.pet) > x(second.card),
+              x(second.pet) .. " vs " .. x(second.card))
+        -- Turned toward the fire, whichever side it stands: here, the other owner.
+        check("a pet turns toward the fire",
+              (cat.pet.actor._yaw or 0) * (vx - cx) > 0)
+
+        -- The slot is shared, not overrun: the owner steps aside, the pet keeps
+        -- inside the room left to it.
+        local slot = T.SceneSlot()
+        for who, d in pairs(drawn) do
+            check(who .. ": the pet is no wider than its room",
+                  d.pet:GetWidth() <= slot * T.PET_LAYOUT.room + 1e-6, d.pet:GetWidth() .. " > " .. slot * T.PET_LAYOUT.room)
+            check(who .. ": and stands its share of the slot from its owner",
+                  math.abs(math.abs(x(d.pet) - x(d.card))
+                      - slot * (T.PET_LAYOUT.ownerShift + T.PET_LAYOUT.petShift)) < 1e-6)
+            local moved = x(d.card) - (offX[who] or x(d.card))
+            check(who .. ": the owner stepped away from it by its share of the slot",
+                  math.abs(math.abs(moved) - slot * T.PET_LAYOUT.ownerShift) < 1e-6
+                  and moved * (x(d.pet) - x(d.card)) < 0, tostring(moved))
+        end
 
         -- In the cast's units: the cat 0.55 (box 1.72 x 0.32) against a 1.10
         -- night elf; the voidwalker 1.00 against a 0.60 gnome.
@@ -3149,16 +3169,27 @@ do
               math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.04)) < 1e-6,
               tostring(cat.pet.actor._scale))
 
-        -- Still, like the portraits around it.
-        eq("the pet is held on its idle pose", cat.pet.actor._anim, 0)
-        eq("  at speed 0", cat.pet.actor._animSpeed, 0)
-        eq("  with no particles (an imp's fire swelled its box)", cat.pet.actor._particles, 0)
-        eq("  and its scene paused", cat.pet._paused, true)
-        eq("  without pausing the client's world", cat.pet._globalPause, false)
+        -- Alive, but with no particles: an imp's fire burned past its frame and
+        -- swelled its box. The idle animation stays (owner's call).
+        eq("the pet has no particles", cat.pet.actor._particles, 0)
+        check("  and is not frozen", cat.pet.actor._animSpeed ~= 0 and not cat.pet._paused)
 
         -- Clicks belong to the cards.
         check("a pet does not take the mouse", not cat.pet:IsMouseEnabled())
     end
+
+    -- A long beast is held to its room, not let into the next slot.
+    WoW.modelBoxes[2000] = { -30, -1, 0, 30, 1, 3 }
+    AltStableDB["pet-hunter"].pet_display = 2000
+    T.Refresh()
+    local long = pets()["pet-hunter"]
+    check("a long pet is drawn", long ~= nil)
+    if long then
+        check("  no wider than its room",
+              math.abs(long.pet:GetWidth() - T.SceneSlot() * T.PET_LAYOUT.room) < 1e-6,
+              long.pet:GetWidth() .. " vs " .. T.SceneSlot() * T.PET_LAYOUT.room)
+    end
+    AltStableDB["pet-hunter"].pet_display = CAT
 
     -- A pet whose model has not loaded waits, then appears.
     WoW.modelBoxes[VOID] = nil
@@ -3186,6 +3217,36 @@ do
     AltStableConfig.rosterView = nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
     WoW.modelBoxes = {}
+end
+
+-- Five round the fire without pets, four with: the fifth figure's room is
+-- where the pets stand. By the option, so a synced pet does not reshuffle.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 6 do
+        local guid = ("cast-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Cast %d"):format(i), level = 10 + i, class = "MAGE" }
+        AltStableCutoutManifest[guid] = { file = "c.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView = "scene"
+    local function seated()
+        local n = 0
+        for _, card in ipairs(T.Cards()) do if card:IsShown() then n = n + 1 end end
+        return n
+    end
+    AltStableConfig.rosterPets = nil
+    T.Refresh()
+    eq("without pets, five stand at the fire", seated(), 5)
+    AltStableConfig.rosterPets = true
+    T.Refresh()
+    eq("with pets, four do - nobody here even has one", seated(), 4)
+    AltStableConfig.rosterPets, AltStableConfig.rosterView = nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
 -- The capability marker the companion reads before it spends a generation.
