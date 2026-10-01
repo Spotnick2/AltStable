@@ -1073,8 +1073,12 @@ local PET_MIN, PET_MAX = 0.35, 1.10
 -- and wide, the parts of a model nearest the camera grew past its frame and
 -- were cut off (an imp's, in game). Same framing, nearly no perspective.
 local PET_FOV, PET_CAMERA = 0.15, 40
-local PET_SPARE_W = 1.2               -- frame width per model width: room to spare
-local PET_MARGIN = 1.04               -- frame height per model height
+-- The frame is bigger than the model, both ways: the box is measured in ONE
+-- pose, and the idle animation reaches past it - an imp's horns, feet, and a
+-- step to the left were cut off at 4% (in game). The frame is lowered by the
+-- spare below the model, so the feet stay on the ground.
+local PET_SPARE_W = 1.4               -- frame width per model width
+local PET_MARGIN = 1.3                -- frame height per model height
 local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the ground
 -- One table: Lua 5.1 allows a function 60 upvalues, and the test exports are
 -- one function already near it.
@@ -1087,7 +1091,10 @@ local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the
 -- NO width cap: capping a pet to its slot shrank a cat - long in 3/4 view - to
 -- a kitten by the fire (owner, in game). It keeps its true size and is only
 -- kept inside the panel.
-local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.2 }
+--   outer       a pet on the OUTSIDE has room to spare there (owner, in game):
+--               further out, a step further back (higher), and smaller for it
+local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.2,
+                     outer = { reach = 0.45, lift = 0.05, size = 0.92 } }
 
 local function PetsEnabled()
     return AltStableConfig and AltStableConfig.rosterPets == true
@@ -1121,7 +1128,7 @@ local function PetSides(spots, fireX)
         if rank % 2 == 0 then
             out[i] = { side = toFire, yaw = toFire * PET_LAYOUT.turn }
         else
-            out[i] = { side = -toFire, yaw = 0 }
+            out[i] = { side = -toFire, yaw = 0, outer = true }
         end
     end
     return out
@@ -1130,8 +1137,8 @@ end
 -- Where a pet's frame is centred: out from its owner by part of the owner's
 -- width, mostly behind them - then kept inside the panel, so a pet at the
 -- scene's edge never spills over the sidebar.
-local function PetX(ownerX, ownerW, frameW, side, panelW)
-    local x = ownerX + side * ownerW * PET_LAYOUT.reach
+local function PetX(ownerX, ownerW, frameW, side, panelW, reach)
+    local x = ownerX + side * ownerW * (reach or PET_LAYOUT.reach)
     local half = frameW / 2
     if panelW and panelW > frameW then
         x = math.max(half, math.min(panelW - half, x))
@@ -1222,7 +1229,7 @@ local function PlacePet(f)
     f:SetFrameLevel(want.level)
     f:ClearAllPoints()
     f:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
-        PetX(want.ownerX, want.ownerW, frameW, want.side, want.panelW), want.y)
+        PetX(want.ownerX, want.ownerW, frameW, want.side, want.panelW, want.reach), want.y - (frameH - h) / 2)
     pcall(f.actor.SetYaw, f.actor, yaw)
     if box then
         -- The field of view spans the frame's WIDTH (measured: taken as the
@@ -1269,12 +1276,14 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, p
         local f = (display and display > 0 and spot and sizes[i] and sizes[i].cut) and PetFrame(i)
         if f then
             local ps = petSides[i]
+            local outer = ps.outer and PET_LAYOUT.outer
             f._want = {
                 char = char, side = ps.side, yaw = ps.yaw,
                 ownerX = OwnerX(char, spot, slot, ps), ownerW = sizes[i][1] * fit,
                 panelW = panelW,
-                y = spot.y + panelH * PET_LIFT,
-                unitPx = figureH / tallest * spot.scale * fit,
+                reach = outer and outer.reach or PET_LAYOUT.reach,
+                y = spot.y + panelH * (outer and outer.lift or PET_LIFT),
+                unitPx = figureH / tallest * spot.scale * fit * (outer and outer.size or 1),
                 maxH = figureH * spot.scale * fit,
                 -- Under EVERY character, not just its owner: the pet stands
                 -- behind, as on the warband screen. Just under its owner, the

@@ -3150,9 +3150,9 @@ do
         local catRatio = cat.pet:GetHeight() / cat.card.figure:GetHeight()
         local voidRatio = void.pet:GetHeight() / void.card.figure:GetHeight()
         check("the cat stands about half its owner's height",
-              math.abs(catRatio - (1.6881 + 0.0317) * 0.32 * 1.04 / 1.10) < 0.01, tostring(catRatio))
+              math.abs(catRatio - (1.6881 + 0.0317) * 0.32 * 1.3 / 1.10) < 0.01, tostring(catRatio))
         check("the voidwalker towers over its gnome",
-              math.abs(voidRatio - 1.00 * 1.04 / 0.60) < 0.01, tostring(voidRatio))
+              math.abs(voidRatio - 1.00 * 1.3 / 0.60) < 0.01, tostring(voidRatio))
         eq("an imp stands a little under its gnome", T.PetUnits({ pet_npc = 416 }, 9), 0.45)
 
         -- Framed from its own box: the model's height fills the frame. The
@@ -3161,15 +3161,26 @@ do
         local viewW = 2 * 40 * math.tan(0.075)
         local viewH = viewW * cat.pet:GetHeight() / cat.pet:GetWidth()
         check("the model is scaled from its box",
-              math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.04)) < 1e-6,
+              math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.3)) < 1e-6,
               tostring(cat.pet.actor._scale))
 
         -- Room to spare across: a frame cut to the model's width clipped it.
         local box = { l = 1.0157 + 3.686, w = 1.3213 + 1.6145, h = 1.6881 + 0.0317 }
-        local shape = T.PetAspect(box, cat.pet.actor._yaw or 0) * 1.2 / 1.04
-        check("the frame is 20% wider than the model",
+        local shape = T.PetAspect(box, cat.pet.actor._yaw or 0) * 1.4 / 1.3
+        check("the frame has room to spare across",
               math.abs(cat.pet:GetWidth() / cat.pet:GetHeight() - shape) < 1e-6,
               cat.pet:GetWidth() / cat.pet:GetHeight() .. " vs " .. shape)
+
+        -- And above and below, with the feet still on the ground: the frame
+        -- drops by the spare under the model. Feet = the owner's ground (card
+        -- bottom + name block) plus the step back.
+        for who, d in pairs(drawn) do
+            local frameH = d.pet:GetHeight()
+            local feet = select(5, d.pet:GetPoint()) + (frameH - frameH / 1.3) / 2
+            local ground = select(5, d.card:GetPoint()) + 28 + 4 + T.Panel():GetHeight() * 0.03
+            check(who .. ": the pet's feet are on the ground", math.abs(feet - ground) < 1e-6,
+                  feet .. " vs " .. ground)
+        end
 
         -- Alive, but with no particles: an imp's fire burned past its frame and
         -- swelled its box. The idle animation stays (owner's call).
@@ -3216,6 +3227,7 @@ do
     for i, p in ipairs(four) do sides[i], yaws[i] = p.side, p.yaw end
     eq("four: pets left, right, left, right", table.concat(sides, " "), "-1 1 -1 1")
     eq("  the outer two face the viewer", yaws[1] == 0 and yaws[4] == 0, true)
+    eq("  and are marked outer", (four[1].outer and four[4].outer and not four[2].outer and not four[3].outer) and true, true)
     check("  the inner two turn 20 degrees to the fire",
           math.abs(yaws[2] - t) < 1e-9 and math.abs(yaws[3] + t) < 1e-9)
     local two = T.PetSides({ { x = 300 }, { x = 700 } }, 500)
@@ -3229,6 +3241,73 @@ do
     eq("  past the right edge too", T.PetX(950, 100, 200, 1, 1000), 900)
     eq("  and left alone inside", T.PetX(500, 100, 200, 1, 1000),
        500 + 100 * T.PET_LAYOUT.reach)
+    eq("  an outer pet reaches further", T.PetX(500, 100, 200, 1, 1000, T.PET_LAYOUT.outer.reach),
+       500 + 100 * T.PET_LAYOUT.outer.reach)
+end
+
+-- Four at the fire: the outermost owners' pets stand OUTSIDE, further out, a
+-- step further back and a touch smaller (owner, in game: "there's room").
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 4 do
+        local guid = ("four-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Four %d"):format(i), level = 10 + i,
+            class = "HUNTER", race = "Human", gender = "Male", pet_display = 3000 + i, pet_npc = 1860 }
+        AltStableCutoutManifest[guid] = { file = "f.tga", w = 100, h = 512, texw = 128, texh = 512 }
+        WoW.modelBoxes[3000 + i] = { -1, -1, 0, 1, 1, 3 }
+    end
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = "scene", true
+    T.Refresh()
+    local rows = {}
+    for i, card in ipairs(T.Cards()) do
+        local f = T.Pets()[i]
+        if card:IsShown() and f and f:IsShown() then
+            rows[#rows + 1] = { card = card, pet = f, x = select(4, card:GetPoint()) }
+        end
+    end
+    eq("four owners, four pets", #rows, 4)
+    table.sort(rows, function(a, b) return a.x < b.x end)
+    local function feetAbove(r)
+        local frameH = r.pet:GetHeight()
+        local feet = select(5, r.pet:GetPoint()) + (frameH - frameH / 1.3) / 2
+        return feet - (select(5, r.card:GetPoint()) + 32)
+    end
+    local ph = T.Panel():GetHeight()
+    if #rows == 4 then
+        for _, k in ipairs({ 1, 4 }) do
+            local r = rows[k]
+            check(("outer pet %d stands a step further back"):format(k),
+                  math.abs(feetAbove(r) - ph * T.PET_LAYOUT.outer.lift) < 1e-6, tostring(feetAbove(r)))
+        end
+        for _, k in ipairs({ 2, 3 }) do
+            check(("inner pet %d stands at the usual step"):format(k),
+                  math.abs(feetAbove(rows[k]) - ph * 0.03) < 1e-6, tostring(feetAbove(rows[k])))
+        end
+        -- Same demon, same race: only the outer size factor tells them apart
+        -- (spot scale aside, so compare per spot through the owner's figure).
+        local function ratio(r) return r.pet:GetHeight() / r.card.figure:GetHeight() end
+        check("an outer pet is drawn a touch smaller",
+              math.abs(ratio(rows[1]) / ratio(rows[2]) - T.PET_LAYOUT.outer.size) < 1e-6,
+              tostring(ratio(rows[1]) / ratio(rows[2])))
+        -- Reach is a share of the OWNER's width: compare shares, not pixels -
+        -- the outer owners stand nearer the camera and are drawn bigger.
+        local function share(r)
+            return math.abs(select(4, r.pet:GetPoint()) - r.x) / r.card.figure:GetWidth()
+        end
+        check("an inner pet reaches the usual share",
+              math.abs(share(rows[2]) - T.PET_LAYOUT.reach) < 1e-6, tostring(share(rows[2])))
+        -- The right-hand outer pet: the panel's right edge is far from it here.
+        check("an outer pet reaches further out",
+              math.abs(share(rows[4]) - T.PET_LAYOUT.outer.reach) < 1e-6, tostring(share(rows[4])))
+    end
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+    WoW.modelBoxes = {}
 end
 
 -- Five round the fire without pets, four with: the fifth figure's room is
