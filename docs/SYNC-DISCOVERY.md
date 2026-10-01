@@ -24,6 +24,10 @@ rulesets and across factions, both directions - where whispers and channels stop
 - **Discovery waits for presences**: right after a login our own Battle.net presence can be blank
   (measured) - the scan then looks again every 10 s for up to 5 min, and ownership is also matched
   by BattleTag (`BNGetInfo`), which does not wait. `/alts bnet` shows each step.
+- **A `/reload` can leave the game presence blank for good** (measured 2026-10-01: blank for 16+
+  minutes on both sides - our own record and the other client's view of us), while `BNGetInfo`
+  still answers. A real logout and login fills it again. First in-game success right after one:
+  Karuzo Mortalis (PvE) found Karuzo Test (PvP2) and synced both ways, nothing whitelisted.
 - **Capability**: ordinary traffic moves to Battle.net only once that peer has been HEARD over it;
   until then only discovery requests (channel `BNET`) use it - a peer with the switch off, or a
   pre-#58 AltStable, keeps its whisper sync.

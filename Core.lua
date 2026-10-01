@@ -2094,9 +2094,15 @@ local inboundChecked = {}  -- senderID -> { g, at }: a received packet's check, 
 function AltStable.IsOwnBNetPeer(name) return OwnBNetPeer(name) ~= nil end
 
 -- One record shape for a found peer, wherever it was found.
+-- The realm NAME is not always there: the record for a message's sender came
+-- with only a numeric realmID (measured, 70124 - "Alliance, ?"). The database
+-- knows that character's realm when it has synced it before.
 local function PeerRecord(id, g)
+    local c = (AltStableDB or {})[g.playerGuid]
+    local realm = g.realmDisplayName or g.realmName
+        or (type(c) == "table" and c.realm) or nil
     return { id = id, name = g.characterName, guid = g.playerGuid,
-             faction = g.factionName, realm = g.realmDisplayName or g.realmName }
+             faction = g.factionName, realm = realm }
 end
 
 local function NoteBNetPeer(g, id)
@@ -3752,7 +3758,9 @@ SlashCmdList["ALTSTABLE"] = function(args)
             tostring(myGame.gameAccountID), tostring(myGame.wowProjectID)))
         local okI, _, tag = pcall(BNGetInfo or function() end)
         Print(("  BattleTag %s%s"):format(tostring(okI and tag),
-            (okMe and type(me) == "table") and "" or " - our own presence is not ready yet; it retries every 10 s"))
+            (okMe and type(me) == "table") and ""
+                or " - our own presence is not ready yet; it retries every 10 s. A /reload can "
+                .. "leave it blank: log out and back in (measured)"))
         local known = 0
         for id = 1, 128 do
             local okG, g = pcall(BN.GetGameAccountInfoByID or function() end, id)

@@ -3656,6 +3656,16 @@ do
     for _, l in ipairs(WoW.chatOut) do if l:find("Sync with Old Client complete", 1, true) then completes = completes + 1 end end
     eq(completes, 2, "a whisper stream id seen again is taken as a new stream")
 
+    -- A sender's record may carry no realm name (measured): the database's.
+    freshAuth()
+    own(8, "Karuzo Test", { realmName = false, realmDisplayName = false })
+    WoW.bn.accounts[8].realmName, WoW.bn.accounts[8].realmDisplayName = nil, nil
+    AltStableDB = { [WoW.bn.accounts[8].playerGuid] = { guid = WoW.bn.accounts[8].playerGuid,
+        name = "Karuzo Test", class = "MAGE", level = 1, lastUpdate = 1000, realm = "Classic Beta PvP2" } }
+    WoW.chatOut = {}
+    bn(T.MSG_REQUEST_V .. "|0", 8)
+    check(chatHas("(Alliance, Classic Beta PvP2)"), "a record without a realm name takes the database's")
+
     -- /alts bnet explains: kept, and why the others were not.
     freshAuth()
     own(8, "Karuzo Test")
