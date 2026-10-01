@@ -267,6 +267,21 @@ session, with two clients running:
    Everything in the cross-realm half rests on this, and both the client format and our own
    realm-stripping are unverified.
 
+**Measured on 70124 (first round, one character):**
+
+- **1 - delivers.** `SendAddonMessage(prefix, msg, "CHANNEL", localId)` returns `0 (Success)` and
+  arrives; the local id works as a number and as its string.
+- **A channel message comes back to its own sender.** Every send was received by the character that
+  sent it, `sender` = its own name. The design must drop its own echoes.
+- **5 - nine arguments:** `prefix, text, "CHANNEL", sender, "6. ASPtest7", 0, 6, "ASPtest7", 0` -
+  sender is the bare full name (no realm), then the display target, zone channel id, **local id**,
+  **channel name**, instance id. A reply can go back on the local id or by name.
+- **3 (half) - no chat window lists a joined temporary channel.** `JoinTemporaryChannel`,
+  `JoinChannelByName` and `JoinPermanentChannel` all exist; `JoinTemporaryChannel(name, pw)`
+  returned `0`, and the server's notice arrives as `CHAT_MSG_CHANNEL_NOTICE` (18 arguments).
+- **Still open:** a second character hearing it (same faction, then another ruleset, then the
+  other faction), relog survival, the channel cap.
+
 **The probe:** `/asprobe channel …` in `Tools/AltStableProbe/Channel.lua` (deploy with
 `pwsh Tools/deploy-probe.ps1`), everything to the wire log for `/asprobe copy`:
 
@@ -278,6 +293,7 @@ session, with two clients running:
 | `status [name]`, and 8 s after login | 3: still joined after a relog |
 | `cap` | 4: joins `ASPCap1..15` until refused, logs the notices, leaves them all |
 | `leave <name>` | |
+| `log`, `clear` | the channel results (the wire log, kept across relogs) in the copy window; empty it |
 
 ---
 

@@ -107,8 +107,8 @@ local function Send(name, kind)
     local id = LocalId(name)
     if not id then Log(("send: not in channel %s - /asprobe channel join %s first"):format(name, name)); return end
     local msg = (kind or "CPING") .. "|" .. Where() .. "|" .. time()
-    -- The documented target is a cstring; try the number and its string form.
-    for _, target in ipairs({ id, tostring(id) }) do
+    -- Number and string targets both deliver (measured, 70124): send once.
+    for _, target in ipairs({ id }) do
         local ok, r = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "CHANNEL", target)
         Log(("send %s on %s (target %s %s) -> %s"):format(kind or "CPING", name, type(target),
             tostring(target), ok and ResultStr(r) or ("ERROR " .. tostring(r))))
@@ -153,14 +153,26 @@ function AltStableProbe.Channel(arg)
     sub = (sub or ""):lower()
     local name, password = rest:match("^(%S+)%s*(%S*)$")
     if password == "" then password = nil end
-    Log(("|cffffd100== channel %s ==|r  %s"):format(sub, Where()))
+    if sub ~= "log" and sub ~= "clear" then
+        Log(("|cffffd100== channel %s ==|r  %s"):format(sub, Where()))
+    end
     if sub == "join" and name then Join(name, password)
     elseif sub == "send" and name then Send(name)
     elseif sub == "leave" and name then Leave(name)
     elseif sub == "status" then Status(name or AltStableProbeDB.channelName)
     elseif sub == "cap" then Cap()
+    elseif sub == "log" then
+        -- The wire log, which survives /reload and relogs - /asprobe copy shows
+        -- the last SWEEP instead, which is how a first round came back empty.
+        local w = AltStableProbeDB.wireLog or {}
+        local out = { "AltStableProbe channel log  " .. Where() }
+        for i = math.max(1, #w - 400), #w do out[#out + 1] = w[i] end
+        ShowCopy(out)
+    elseif sub == "clear" then
+        AltStableProbeDB.wireLog = {}
+        DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[probe]|r channel log cleared")
     else
-        Log("usage: /asprobe channel join <name> [password] | send <name> | status [name] | leave <name> | cap")
+        Log("usage: /asprobe channel join <name> [password] | send <name> | status [name] | leave <name> | cap | log | clear")
     end
 end
 
@@ -196,6 +208,12 @@ f:SetScript("OnEvent", function(_, event, ...)
     if prefix ~= PREFIX then return end
     local kind = tostring(text):match("^(%u+)|")
     if kind ~= "CPING" and kind ~= "CPONG" and kind ~= "WPONG" then return end
+    -- A channel message comes back to its own sender (measured, 70124).
+    -- Logged, never answered: answering ourselves proved nothing last round.
+    if sender == Me() then
+        Log(("RECV %s from OURSELVES (own channel echo) - ignored"):format(kind))
+        return
+    end
     Log(("|cff55ff55RECV %s|r %s"):format(kind, Args(...)))
     if kind == "CPING" then
         -- Reply on the channel (1, 2), and by whisper to `sender` exactly as it
