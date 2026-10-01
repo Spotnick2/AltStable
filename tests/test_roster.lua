@@ -3079,7 +3079,7 @@ do
     end
     local function x(region) return select(4, region:GetPoint()) end
 
-    AltStableConfig.rosterPets = false
+    AltStableConfig.rosterPets = nil     -- never set: off, not "not false"
     T.Refresh()
     check("pets are off by default: none drawn", next(pets()) == nil)
 

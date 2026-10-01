@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Pets in the Roster scene** (#75): a hunter's beast or a warlock's demon stands at its owner's
+  shoulder, as on the retail warband screen. Off by default: Options > Presentation. Drawn as a
+  live model from the pet's saved display id, so it needs no portrait capture; a character's pet
+  is the last one they had out. New saved fields, flat and synced: `pet_display`, `pet_npc`,
+  `pet_name`.
+
 ## v0.4.0-beta
 
 Your accounts sync through Battle.net, sync asks before it shares, a Professions

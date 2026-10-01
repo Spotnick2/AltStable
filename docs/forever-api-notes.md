@@ -1068,6 +1068,33 @@ even though the frame walk reports success.
 
 ---
 
+## Pets — a creature renders textured offline (measured, 1.60.1.70124, #75)
+
+`Tools/AltStableProbe/Pets.lua` (`/asprobe pet`), on a hunter and a warlock:
+
+- **A creature display id renders fully textured from the saved number alone**, nobody logged in.
+  Its texture is baked into the model, unlike a player's composite (see below).
+- **Pet GUIDs** are `Pet-0-<server>-<instance>-<zone>-<npc>-<tail>` for both classes. A hunter
+  pet's npc is the generic **165189** for every beast; a demon's is real (voidwalker 1860).
+- **A hunter pet's look is in the stable**: `C_StableInfo.GetStablePetInfo(slot)` (slots 1-5,
+  readable anywhere, not only at a stable master) gives `displayID`, `creatureID`, `petNumber`.
+  `SetCreature(creatureID)` is **not** equivalent: it picks a random skin of that creature (a blue
+  cat came out red).
+- **Which slot is out**: the GUID tail's **last six hex digits are the petNumber**
+  (`...1E2A26` = 1976870), and `C_Spell.IsCurrentSpell(Call Pet N)` (883, 83242-83245) is true for
+  the summoned slot. **Not the name**: two pets can share one. `tonumber` of the whole tail
+  saturates at 4294967295 here.
+- **A demon's display**: `PlayerModel:SetCreature(npc)` then `GetDisplayInfo()` answers at once
+  (1860 -> 1132). `GetDisplayInfo()` after `SetUnit("pet")` reads **0**: useless.
+- **Framing**: `PlayerModel`'s camera is per model (a bear came out head-only, `RefreshCamera` on
+  load does not fix it). The stable's ModelScene preset **718 has no `"pet"` actor** on Forever.
+  A plain `ModelScene` + `CreateActor()` + `SetModelByCreatureDisplayID` frames every pet the same
+  way once the actor is scaled from its box.
+- **`GetActiveBoundingBox()` returns SIX NUMBERS** (minX, minY, minZ, maxX, maxY, maxZ), not the
+  two `Vector3D` the Retail docs describe. Boxes are **not in world scale**: a night elf female
+  measured 2.09, a gnome 1.53, the cat 1.72 (in game it is half the elf). Use them to frame, not
+  to size.
+
 ## Model widgets — present, including TryOn
 
 ```

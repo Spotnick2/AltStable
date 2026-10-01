@@ -1183,7 +1183,8 @@ local function HidePets()
     end
 end
 
--- One pet per seated owner that has one, after the cast is drawn.
+-- One pet per seated owner that has one, after the cast is drawn. Refresh
+-- has hidden them all first, so a pet not placed here stays hidden.
 local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, panelH)
     if not PetsEnabled() then HidePets(); return 0 end
     local drawn = 0
@@ -1211,9 +1212,6 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, pane
                 PlacePet(f)
             end
             drawn = drawn + 1
-        else
-            local stale = Roster.pets and Roster.pets[i]
-            if stale then stale._want = nil; stale:Hide() end
         end
     end
     return drawn
