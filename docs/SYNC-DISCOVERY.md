@@ -190,6 +190,22 @@ technique only - All Rights Reserved) bridges Horde and Alliance this way throug
 FRIENDS, whose clients relay. `/asprobe bnet me` / `send <id>` measure the own-account case. If it
 delivers, it crosses rulesets AND factions, which nothing else here does.
 
+**MEASURED, 2026-09-30 23:39 (70124): it delivers - across rulesets.** Karuzo Test (account #1,
+ClassicBetaPvP2) looked up Karuzo Mortalis (#12, ClassicBetaPvE) with
+`C_BattleNet.GetGameAccountInfoByGUID(guid)`: online, `gameAccountID=3`, and
+`GetAccountInfoByGUID` showed OUR OWN Battle.net account (same `bnetAccountID`, same BattleTag).
+`SendGameData(3, ...)` returned `0 (Success)`; Mortalis got it as `BN_CHAT_MSG_ADDON`
+(`prefix, text, "WHISPER", senderID=8`) and answered `SendGameData(8, ...)`, which arrived.
+
+- **Game account ids are local handles.** The same character was 7 on its own client and 3 on the
+  other; `SendGameData(7)` typed on the other side returned `6 (TargetRequired)`. Never store or
+  exchange an id; look it up on the sending client, or reply to `senderID`.
+- **The GUID lookup needs the GUID and the character online.** Mortalis's own scan found nothing:
+  its database had never seen Karuzo Test. `/asprobe bnet ids` measures discovery with no GUID
+  (walk the small local ids, keep our own `bnetAccountID`).
+- **Across factions:** not measured yet, expected to hold (Overlord's use is exactly that).
+- **Also measured:** a `/reload` keeps channel membership; a logout drops it.
+
 Overlord also answers two practical questions for the channel half: it joins with
 `JoinChannelByName(name, nil, 0, 0)` - frame id 0, so no chat window lists it - through
 `securecall`, to keep the chat system untainted; and it waits until the client's General channel

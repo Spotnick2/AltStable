@@ -105,13 +105,50 @@ local function Scan()
     end
 end
 
+-- Discovery with no GUID known in advance. Game account ids are small local
+-- handles (measured: 3, 7, 8), so walk 1..MAX_ID and keep the ones on OUR OWN
+-- Battle.net account - same bnetAccountID or BattleTag as ours - never a
+-- friend's. Each one found online is pinged.
+local MAX_ID = 100
+local function Ids()
+    Log("|cffffd100== bnet ids ==|r  " .. Where())
+    local BN = C_BattleNet or {}
+    local okMe, me = pcall(BN.GetAccountInfoByGUID or function() end, UnitGUID("player"))
+    me = okMe and type(me) == "table" and me or {}
+    local myGame = type(me.gameAccountInfo) == "table" and me.gameAccountInfo.gameAccountID
+    Log(("  me: bnetAccountID=%s battleTag=%s gameAccountID=%s"):format(tostring(me.bnetAccountID),
+        tostring(me.battleTag), tostring(myGame)))
+    local seen, own = 0, 0
+    for id = 1, MAX_ID do
+        local ok, game = pcall(BN.GetGameAccountInfoByID or function() end, id)
+        if ok and type(game) == "table" then
+            seen = seen + 1
+            local okA, acct = pcall(BN.GetAccountInfoByGUID or function() end, game.playerGuid)
+            acct = okA and type(acct) == "table" and acct or {}
+            local mine = (me.bnetAccountID and acct.bnetAccountID == me.bnetAccountID)
+                or (me.battleTag and acct.battleTag == me.battleTag)
+            Log(("  id %d: %s  %s / %s / %s  online=%s  program=%s  project=%s  %s"):format(id,
+                tostring(game.characterName), tostring(game.factionName), tostring(game.realmName),
+                tostring(game.playerGuid), tostring(game.isOnline), tostring(game.clientProgram),
+                tostring(game.wowProjectID), mine and "|cff55ff55OUR ACCOUNT|r" or "(someone else)"))
+            if mine and id ~= myGame and game.isOnline and BN.SendGameData then
+                own = own + 1
+                local okS, r = pcall(BN.SendGameData, id, PREFIX, "BPING|" .. Where() .. "|" .. time())
+                Log(("    SendGameData(%d, BPING) -> %s"):format(id, okS and ResultStr(r) or ("ERROR " .. tostring(r))))
+            end
+        end
+    end
+    Log(("  ids 1-%d: %d known to this client, %d of them our own other online account(s)"):format(MAX_ID, seen, own))
+end
+
 function AltStableProbe.BNet(arg)
     local sub, rest = (arg or ""):match("^(%S*)%s*(.*)$")
     sub = (sub or ""):lower()
     if sub == "me" then Me()
     elseif sub == "send" then Send(rest)
     elseif sub == "scan" then Scan()
-    else Log("usage: /asprobe bnet me | scan | send <gameAccountID>") end
+    elseif sub == "ids" then Ids()
+    else Log("usage: /asprobe bnet me | scan | ids | send <gameAccountID>") end
 end
 
 local f = CreateFrame("Frame")
