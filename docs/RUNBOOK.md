@@ -180,10 +180,12 @@ Found your other account: Karuzo Test (Alliance, Classic Beta PvP2) - syncing.
   ignored, and friends keep the whisper path and the #61 prompt.
 - Off: Options -> "Sync with your other accounts through Battle.net".
 
-Both accounts must be online at the same time, as with any sync. **After a
-`/reload` an account may not be found** - the client can leave its Battle.net
-presence blank (measured); log out and back in. `/alts bnet` shows what each
-side sees and why an account was not kept. A Battle.net
+Both accounts must be online at the same time, as with any sync. The client can
+leave an account's Battle.net presence blank (measured, after a `/reload` and
+even a relog); AltStable then recognises your account by elimination and the
+two say hello to tell each other who is on. That needs Battle.net to have been
+up for about a minute. `/alts bnet` shows what each side sees and why an
+account was or was not kept. A Battle.net
 message that cannot be delivered (the other account logged off) says so once
 for a `/alts sync` you typed.
 

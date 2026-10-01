@@ -87,7 +87,7 @@ function WoW.reset()
     WoW.popups = {}
     WoW.popupRefused = nil
     WoW.sendResults, WoW.reportedErrors = {}, {}
-    WoW.bn = { me = 1, myId = 2, project = 18, tag = "Owner#1", connected = true, accounts = {} }
+    WoW.bn = { me = 1, myId = 2, project = 18, tag = "Owner#1", connected = true, accounts = {}, friends = {} }
     WoW.ctlDefer, WoW.ctlQueue, WoW.ctlHeld = false, {}, {}
     WoW.reloaded = 0
     WoW.sounds = {}
@@ -1333,7 +1333,8 @@ C_ChatInfo = {
 -- factionName, realmName, bnetAccountID }.
 -- WoW.bn.blank = true models our own presence right after a login/reload
 -- (measured): no account record, our own game account with no character.
-WoW.bn = { me = 1, myId = 2, project = 18, tag = "Owner#1", connected = true, accounts = {} }
+-- WoW.bn.friends = { { 9, 10 }, ... }: each friend's online game account ids.
+WoW.bn = { me = 1, myId = 2, project = 18, tag = "Owner#1", connected = true, accounts = {}, friends = {} }
 local function bnSelf()
     if WoW.bn.blank then
         return { gameAccountID = WoW.bn.myId, isOnline = true, clientProgram = "WoW",
@@ -1357,7 +1358,11 @@ function C_BattleNet.GetGameAccountInfoByID(id)
     return bnCopy(WoW.bn.accounts[id], id)
 end
 function C_BattleNet.GetGameAccountInfoByGUID(guid)
-    if guid == WoW.player.guid then return bnSelf() end
+    -- Blank, our own GUID finds nothing either (measured: "game account nil").
+    if guid == WoW.player.guid then
+        if WoW.bn.blank then return nil end
+        return bnSelf()
+    end
     for id, a in pairs(WoW.bn.accounts) do
         if a.playerGuid == guid then return bnCopy(a, id) end
     end
@@ -1393,6 +1398,15 @@ function C_BattleNet.SendGameData(id, prefix, text)
     return 0
 end
 function BNFeaturesEnabledAndConnected() return WoW.bn.connected ~= false end
+function BNGetNumFriends() return #WoW.bn.friends, #WoW.bn.friends end
+function C_BattleNet.GetFriendNumGameAccounts(i) return #(WoW.bn.friends[i] or {}) end
+-- WoW.bn.friendInfoNil: the API answers nil for a friend's game account, as
+-- its declaration allows (Nilable) - a gap the elimination must not trust.
+function C_BattleNet.GetFriendGameAccountInfo(i, j)
+    local id = (WoW.bn.friends[i] or {})[j]
+    if not id or WoW.bn.friendInfoNil then return nil end
+    return C_BattleNet.GetGameAccountInfoByID(id) or { gameAccountID = id }
+end
 -- presenceID, battleTag, ... - available even while our presence is blank.
 function BNGetInfo() return WoW.bn.me, WoW.bn.tag end
 

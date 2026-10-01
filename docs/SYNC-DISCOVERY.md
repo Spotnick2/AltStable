@@ -24,10 +24,24 @@ rulesets and across factions, both directions - where whispers and channels stop
 - **Discovery waits for presences**: right after a login our own Battle.net presence can be blank
   (measured) - the scan then looks again every 10 s for up to 5 min, and ownership is also matched
   by BattleTag (`BNGetInfo`), which does not wait. `/alts bnet` shows each step.
-- **A `/reload` can leave the game presence blank for good** (measured 2026-10-01: blank for 16+
-  minutes on both sides - our own record and the other client's view of us), while `BNGetInfo`
-  still answers. A real logout and login fills it again. First in-game success right after one:
-  Karuzo Mortalis (PvE) found Karuzo Test (PvP2) and synced both ways, nothing whitelisted.
+- **A presence can stay blank** (measured 2026-10-01: 16+ minutes after a `/reload`, and again
+  after a relog; blank on both sides - our own record and the other client's view of us), while
+  `BNGetInfo` still answers. So nothing depends on it:
+  - **our presence blank**: the project check is skipped; ownership by our BattleTag still holds;
+  - **theirs blank** (no name AND no GUID): ours **by elimination** - this client only knows game
+    accounts that are ours or a friend's, so an id in no friend's list is ours. Fail closed: any gap
+    in the friends list means "unknown", and elimination waits until Battle.net has been up for a
+    minute (a list still loading reads as empty - a practical guard, not proof of completeness);
+  - **who is on it**: a Battle.net-only hello, `HI8|name|guid|faction|realm`, sent on first contact,
+    to blank own ids, and in answer to a hello (at most once a minute per id); forgotten when that id
+    goes offline, its binding drops, or Battle.net contradicts it.
+- **Transport of origin**: a request is answered the way it came (Battle.net, or a plain whisper -
+  `WHISPER_DIRECT`), a resync goes the way the failed stream came, and a whitelisted own account not
+  yet heard over Battle.net keeps its whisper. Capability is forgotten with its binding.
+- First in-game successes: Karuzo Mortalis (PvE) <-> Karuzo Test (PvP2), and Memphisto Mortalis
+  (Horde) <-> Karuzo Mortalis (Alliance), both ways, nothing whitelisted. Reviewed by Codex twice
+  more (gpt-6-astra, high): the two P2s on #142, then the blank-presence design (one P1 - a gap in
+  the friends list granting ownership - reproduced and fixed).
 - **Capability**: ordinary traffic moves to Battle.net only once that peer has been HEARD over it;
   until then only discovery requests (channel `BNET`) use it - a peer with the switch off, or a
   pre-#58 AltStable, keeps its whisper sync.
