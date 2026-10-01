@@ -11,6 +11,7 @@
 --   /asprobe pet            capture the summoned pet (if any), open the viewer
 --   /asprobe pet capture    record the pet: GUID, npc id, display id, family
 --   /asprobe pet stable     the hunter's 5 active slots, read anywhere?
+--   /asprobe pet me         your own character's box, same units as a pet's
 --   /asprobe pet list       what has been recorded
 --   /asprobe pet wipe       forget the records
 --
@@ -214,10 +215,18 @@ local viewer, panes, index = nil, nil, 1
 local FOV = 0.6
 local DIST = 10
 local function Fit(scene, actor, tries)
-    local okB, bottom, top = pcall(actor.GetActiveBoundingBox, actor)
-    if not okB or not bottom or not top then
-        Out("fit: GetActiveBoundingBox failed " .. tostring(bottom)); return
+    -- MEASURED on 70124: six plain numbers (minX, minY, minZ, maxX, maxY,
+    -- maxZ), NOT the two Vector3D the Retail docs promise. Accept both.
+    local r = { pcall(actor.GetActiveBoundingBox, actor) }
+    if not r[1] then Out("fit: GetActiveBoundingBox failed " .. tostring(r[2])); return end
+    local x0, y0, z0, x1, y1, z1
+    if type(r[2]) == "table" then
+        x0, y0, z0, x1, y1, z1 = r[2].x, r[2].y, r[2].z, r[3].x, r[3].y, r[3].z
+    else
+        x0, y0, z0, x1, y1, z1 = r[2], r[3], r[4], r[5], r[6], r[7]
     end
+    if not z1 then Out("fit: unreadable box"); return end
+    local top, bottom = { x = x1, y = y1, z = z1 }, { x = x0, y = y0, z = z0 }
     local h = top.z - bottom.z
     local w = math.max(top.x - bottom.x, top.y - bottom.y)
     if h <= 0.001 and tries > 0 then
@@ -363,6 +372,19 @@ function AltStableProbe.Pet(arg)
     arg = (arg or ""):lower()
     if arg == "capture" then Capture(); return end
     if arg == "stable" then StableSlots(); return end
+    if arg == "me" then
+        local f = Build()
+        if not f:IsShown() then f:Show(); Render() end
+        local scene = panes[#panes].model
+        if not scene.fitActor then FitInto(scene, 1132) end   -- builds the actor and camera
+        local actor = scene.fitActor
+        actor:SetScale(1)
+        local ok, err = Call(actor, "SetModelByUnit", "player", true, true, false)
+        Out("SetModelByUnit(player)=" .. (ok and "ok" or tostring(err))
+            .. "  (" .. tostring(UnitRace("player")) .. ", sex " .. tostring(UnitSex("player")) .. ")")
+        C_Timer.After(0.25, function() Fit(scene, actor, 8) end)
+        return
+    end
     if arg == "list" then
         local list = List()
         if #list == 0 then Out("nothing recorded - summon a pet, /asprobe pet capture") end
@@ -370,7 +392,7 @@ function AltStableProbe.Pet(arg)
         return
     end
     if arg == "wipe" then Store(); AltStableProbeDB.pets = {}; Out("records cleared"); return end
-    if arg ~= "" then Out("usage: /asprobe pet [capture | stable | list | wipe]"); return end
+    if arg ~= "" then Out("usage: /asprobe pet [capture | stable | me | list | wipe]"); return end
     local f = Build()
     if f:IsShown() then f:Hide(); return end
     f:Show()
