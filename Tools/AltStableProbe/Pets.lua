@@ -242,6 +242,7 @@ local function Build()
         Capture()
         C_Timer.After(1.2, function() index = #List(); Render() end)
     end)
+    viewer:Hide()  -- a new frame starts shown; the toggle below must see it closed
     return viewer
 end
 
