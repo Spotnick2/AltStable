@@ -27,7 +27,9 @@ if (-not (Test-Path $AddOnsPath)) {
 # /MIR: we own these folders wholesale, so stale files get purged.
 # SavedVariables live in WTF\, not here, so purging is safe.
 # robocopy exit codes 0-7 are success; 8+ is an error.
-foreach ($name in @("AltStableProbe", "AltStableDevConfig", "ForeverAPIDump")) {
+# (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
+# settings from loading, and after the fix only overwrote the player's own.)
+foreach ($name in @("AltStableProbe", "ForeverAPIDump")) {
     $from = Join-Path $RepoRoot "Tools\$name"
     if (-not (Test-Path $from)) { continue }
     $to = Join-Path $AddOnsPath $name
@@ -35,6 +37,17 @@ foreach ($name in @("AltStableProbe", "AltStableDevConfig", "ForeverAPIDump")) {
     robocopy $from $to /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
     $dest = $to
+}
+
+# Retired tools: remove what an older run installed, or it keeps loading - the
+# retired AltStableDevConfig re-seeded a whitelist the player had emptied
+# (review of #141). Only these exact folders, and it says so.
+foreach ($retired in @("AltStableDevConfig")) {
+    $old = Join-Path $AddOnsPath $retired
+    if (Test-Path -LiteralPath $old) {
+        Remove-Item -LiteralPath $old -Recurse -Force
+        Write-Host "Removed retired $retired from AddOns" -ForegroundColor DarkYellow
+    }
 }
 
 Write-Host "Done -> $dest" -ForegroundColor Green

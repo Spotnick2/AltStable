@@ -685,11 +685,19 @@ local wire = CreateFrame("Frame")
 -- minutes after the sweep that prompted it.
 local function WireRecord(s)
     AltStableProbeDB.wireLog = AltStableProbeDB.wireLog or {}
-    local entry = date("%H:%M:%S") .. "  " .. s
+    -- Who wrote it, on every line: two characters of one account share this
+    -- file, and the log is read straight from WTF\...\AltStableProbe.lua by
+    -- Tools/AltStableProbe/read-wirelog.py rather than copied out of the game.
+    local who = (AltStable and AltStable.API and AltStable.API.PlayerFullName
+        and AltStable.API.PlayerFullName()) or (UnitName and UnitName("player")) or "?"
+    local entry = date("%Y-%m-%d %H:%M:%S") .. "  [" .. who .. "]  " .. s
     AltStableProbeDB.wireLog[#AltStableProbeDB.wireLog + 1] = entry
     lines[#lines + 1] = entry
     Out(s)
 end
+AltStableProbe = AltStableProbe or {}
+AltStableProbe.WireRecord = WireRecord     -- Channel.lua logs through it
+AltStableProbe.ValStr = ValStr             -- and BNet.lua describes structs with it
 
 -- Send the same ping to every plausible spelling of the target, each tagged
 -- with the form that produced it. Whichever tags come back as PONG are the
@@ -708,16 +716,43 @@ local function SendPing(target)
         end
     end
     add("as-typed", target)
-    add("space",      (target:gsub("%-", " ")))
-    add("hyphen",     (target:gsub(" ", "-")))
     add("first-only", target:match("^(%S+)"))
+    -- Across rulesets the bare name does not route (measured, 70124: "No player
+    -- named" both ways, both online). In other versions "Name-Server" does, so
+    -- try the name with every server suffix the client knows: the auto-complete
+    -- list (logged - is it the rulesets?), our own, and the two measured ones.
+    -- The old "hyphen" form turned "First Surname" into "First-Surname": with
+    -- surnames that is a different, wrong name, so it is gone.
+    if not target:find("-", 1, true) then
+        local realms, seenRealm = {}, {}
+        local function addRealm(r)
+            if type(r) == "string" and r ~= "" and not seenRealm[r] then
+                seenRealm[r] = true
+                realms[#realms + 1] = r
+            end
+        end
+        local auto = C_AutoComplete and C_AutoComplete.GetAutoCompleteRealms
+            and { pcall(C_AutoComplete.GetAutoCompleteRealms) }
+        if auto then
+            WireRecord("  GetAutoCompleteRealms -> " .. ValStr(auto[2], 2))
+            if auto[1] and type(auto[2]) == "table" then
+                for _, r in ipairs(auto[2]) do addRealm(r) end
+            end
+        else
+            WireRecord("  C_AutoComplete.GetAutoCompleteRealms absent")
+        end
+        addRealm(GetNormalizedRealmName and GetNormalizedRealmName())
+        addRealm("ClassicBetaPvE")
+        addRealm("ClassicBetaPvP2")
+        for _, r in ipairs(realms) do add("+" .. r, target .. "-" .. r) end
+    end
 
     WireRecord(("whisper test -> %d target form(s), 0.4s apart"):format(#variants))
     for idx, v in ipairs(variants) do
         local function fire()
             local ok, err = pcall(C_ChatInfo.SendAddonMessage, WPREFIX,
                 "PING|" .. v.label .. "|" .. tostring(me), "WHISPER", v.target)
-            WireRecord(("  [%-10s] %-28s %s"):format(v.label, v.target,
+            WireRecord(("  [%-16s] %-40s %s"):format(v.label, v.target,
                 ok and "sent" or ("ERROR: " .. tostring(err))))
         end
         if C_Timer and C_Timer.After and idx > 1 then
@@ -752,6 +787,10 @@ wire:SetScript("OnEvent", function(_, event, prefix, text, channel, sender)
     end
     if event ~= "CHAT_MSG_ADDON" then return end
     if prefix ~= WPREFIX then return end
+    -- Only the whisper test's own kinds: Channel.lua shares the prefix and logs
+    -- its pings itself (review of #141 - every channel echo was logged twice).
+    local kindOnly = tostring(text):match("^(%u+)|")
+    if kindOnly ~= "PING" and kindOnly ~= "PONG" then return end
     -- `sender` verbatim is the whole point of this test.
     WireRecord(("|cff55ff55RECV|r prefix=%s channel=%s sender=%s text=%s"):format(
         tostring(prefix), tostring(channel), ValStr(sender, 1), ValStr(text, 1)))
@@ -776,6 +815,14 @@ SlashCmdList["ASPROBE"] = function(msg)
     msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
     local cmd, arg = msg:match("^(%S+)%s*(.*)$")
     cmd = (cmd or ""):lower()
+    if cmd == "channel" then
+        AltStableProbe.Channel(arg)
+        return
+    end
+    if cmd == "bnet" then
+        AltStableProbe.BNet(arg)
+        return
+    end
     if cmd == "whisper" then
         if arg == "" then
             Out("usage: /asprobe whisper <CharacterName>   (log the other account in first)")
@@ -805,7 +852,7 @@ SlashCmdList["ASPROBE"] = function(msg)
         return
     end
     if msg ~= "" and not P[msg] then
-        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper copy dump")
+        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper channel copy dump")
         return
     end
     Run(msg ~= "" and msg or nil)
