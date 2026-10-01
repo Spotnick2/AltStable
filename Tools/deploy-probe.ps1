@@ -39,6 +39,17 @@ foreach ($name in @("AltStableProbe", "ForeverAPIDump")) {
     $dest = $to
 }
 
+# Retired tools: remove what an older run installed, or it keeps loading - the
+# retired AltStableDevConfig re-seeded a whitelist the player had emptied
+# (review of #141). Only these exact folders, and it says so.
+foreach ($retired in @("AltStableDevConfig")) {
+    $old = Join-Path $AddOnsPath $retired
+    if (Test-Path -LiteralPath $old) {
+        Remove-Item -LiteralPath $old -Recurse -Force
+        Write-Host "Removed retired $retired from AddOns" -ForegroundColor DarkYellow
+    }
+}
+
 Write-Host "Done -> $dest" -ForegroundColor Green
 Write-Host ""
 Write-Host "In-game:" -ForegroundColor Yellow

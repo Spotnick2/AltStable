@@ -23,7 +23,9 @@ AltStableProbe = AltStableProbe or {}
 
 local PREFIX = "ASPROBE"
 local CAP_PREFIX = "ASPCap"
-local CAP_TRIES = 15
+-- The client keeps 5 channels of its own; 20 tries goes past the measured cap
+-- of 20, so the refusal is actually reached (review of #141).
+local CAP_TRIES = 20
 
 local function Log(s)
     if AltStableProbe.WireRecord then AltStableProbe.WireRecord(s)
@@ -93,7 +95,9 @@ local function Join(name, password)
     if not fn then Log("  |cffff5555no join function|r"); return end
     local r = { pcall(_G[fn], name, password) }
     Log(("  %s -> %s"):format(fn, Args(unpack(r, 1, table.maxn(r)))))
-    AltStableProbeDB.channelName = name
+    -- Per CHARACTER: the relog check must ask the one that joined, not any
+    -- character of the account (review of #141).
+    AltStableProbeCharDB.channelName = name
     -- The server confirms asynchronously; look again in a moment.
     C_Timer.After(1.5, function() Log("after join:"); Status(name) end)
 end
@@ -107,19 +111,16 @@ local function Send(name, kind)
     local id = LocalId(name)
     if not id then Log(("send: not in channel %s - /asprobe channel join %s first"):format(name, name)); return end
     local msg = (kind or "CPING") .. "|" .. Where() .. "|" .. time()
-    -- Number and string targets both deliver (measured, 70124): send once.
-    for _, target in ipairs({ id }) do
-        local ok, r = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "CHANNEL", target)
-        Log(("send %s on %s (target %s %s) -> %s"):format(kind or "CPING", name, type(target),
-            tostring(target), ok and ResultStr(r) or ("ERROR " .. tostring(r))))
-        if kind then break end        -- replies once
-    end
+    -- The local id as a number; the string form also delivers (measured, 70124).
+    local ok, r = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "CHANNEL", id)
+    Log(("send %s on %s (local id %d) -> %s"):format(kind or "CPING", name, id,
+        ok and ResultStr(r) or ("ERROR " .. tostring(r))))
 end
 
 local function Leave(name)
     if not Exists("LeaveChannelByName") then Log("LeaveChannelByName absent"); return end
     Log(("leave %s -> %s"):format(name, Args(pcall(LeaveChannelByName, name))))
-    if AltStableProbeDB.channelName == name then AltStableProbeDB.channelName = nil end
+    if AltStableProbeCharDB.channelName == name then AltStableProbeCharDB.channelName = nil end
 end
 
 -- (4) Join throwaway channels until the client refuses, then leave them all.
@@ -162,7 +163,7 @@ function AltStableProbe.Channel(arg)
     if sub == "join" and name then Join(name, password)
     elseif sub == "send" and name then Send(name)
     elseif sub == "leave" and name then Leave(name)
-    elseif sub == "status" then Status(name or AltStableProbeDB.channelName)
+    elseif sub == "status" then Status(name or AltStableProbeCharDB.channelName)
     elseif sub == "cap" then Cap()
     elseif sub == "log" then
         -- The wire log, which survives /reload and relogs - /asprobe copy shows
@@ -170,7 +171,7 @@ function AltStableProbe.Channel(arg)
         local w = AltStableProbeDB.wireLog or {}
         local out = { "AltStableProbe channel log  " .. Where() }
         for i = math.max(1, #w - 400), #w do out[#out + 1] = w[i] end
-        ShowCopy(out)
+        AltStableProbe.ShowCopy(out)   -- the export: ShowCopy itself is local to Probe.lua
     elseif sub == "clear" then
         AltStableProbeDB.wireLog = {}
         DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[probe]|r channel log cleared")
@@ -190,7 +191,7 @@ f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
         -- (3) survives a relog? Look once the client has settled.
-        local name = AltStableProbeDB and AltStableProbeDB.channelName
+        local name = AltStableProbeCharDB and AltStableProbeCharDB.channelName
         if name then
             C_Timer.After(8, function()
                 Log(("|cffffd100after login|r: still in %s?"):format(name))
@@ -203,7 +204,8 @@ f:SetScript("OnEvent", function(_, event, ...)
         local notice, _, _, _, _, _, _, _, channelName = ...
         local ours = capActive or (type(channelName) == "string"
             and (channelName:find(CAP_PREFIX, 1, true)
-                 or (AltStableProbeDB.channelName and channelName:lower():find(AltStableProbeDB.channelName:lower(), 1, true))))
+                 or (AltStableProbeCharDB.channelName
+                     and channelName:lower():find(AltStableProbeCharDB.channelName:lower(), 1, true))))
         if ours then Log(("  %s %s"):format(event, Args(...))) end
         return
     end
@@ -221,8 +223,10 @@ f:SetScript("OnEvent", function(_, event, ...)
     if kind == "CPING" then
         -- Reply on the channel (1, 2), and by whisper to `sender` exactly as it
         -- arrived (7): a cross-ruleset sender's form is the thing measured.
-        local name = AltStableProbeDB.channelName
-        if name then Send(name, "CPONG") end
+        -- On the channel the ping came IN on (CHAT_MSG_ADDON's 8th argument),
+        -- not the last one this account joined (review of #141).
+        local channelName = select(8, ...)
+        if type(channelName) == "string" and channelName ~= "" then Send(channelName, "CPONG") end
         local ok, r = pcall(C_ChatInfo.SendAddonMessage, PREFIX, "WPONG|" .. Where() .. "|" .. time(),
             "WHISPER", sender)
         Log(("  whisper WPONG to sender %q -> %s"):format(tostring(sender),

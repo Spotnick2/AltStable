@@ -37,7 +37,8 @@ def wire_lines(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--wtf", default=DEFAULT_WTF)
-    ap.add_argument("--since", help="only lines whose time is at or after this (HH:MM or HH:MM:SS)")
+    ap.add_argument("--since", help="only lines at or after this: 'HH:MM[:SS]' (today) or "
+                                    "'YYYY-MM-DD HH:MM[:SS]'")
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(args.wtf, "Account", "*", "SavedVariables", "AltStableProbe.lua")))
@@ -48,11 +49,25 @@ def main():
         account = os.path.basename(os.path.dirname(os.path.dirname(path)))
         lines = wire_lines(path)
         if args.since:
-            # Entries start "HH:MM:SS" (older) or "YYYY-MM-DD HH:MM:SS" (newer).
-            def clock(l):
-                m = re.match(r"(?:\d{4}-\d\d-\d\d )?(\d\d:\d\d:\d\d)", l)
-                return m.group(1) if m else ""
-            lines = [l for l in lines if clock(l) >= args.since]
+            # Entries start "YYYY-MM-DD HH:MM:SS" (dated) or "HH:MM:SS" (older,
+            # undated). A dated entry is compared with the full date and time -
+            # a log spanning days must not mix rounds (review of #141); an
+            # undated one only has its time to offer.
+            import datetime
+            since = args.since.strip()
+            if re.match(r"^\d\d:\d\d", since):
+                since_full = datetime.date.today().isoformat() + " " + since
+                since_time = since
+            else:
+                since_full = since
+                since_time = since[11:]
+            def keep(l):
+                m = re.match(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", l)
+                if m:
+                    return m.group(1) >= since_full
+                m = re.match(r"(\d\d:\d\d:\d\d)", l)
+                return bool(m) and m.group(1) >= since_time
+            lines = [l for l in lines if keep(l)]
         print("#### %s  (%d lines, file written %s)" % (
             account, len(lines), __import__("time").strftime("%Y-%m-%d %H:%M:%S",
                 __import__("time").localtime(os.path.getmtime(path)))))

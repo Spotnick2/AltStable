@@ -27,6 +27,13 @@ local function Val(v) return AltStableProbe.ValStr and AltStableProbe.ValStr(v, 
 
 local PREFIX = "ASPROBE"
 
+-- One BPING/BPONG send and its log line (review of #141: it was copied 4 times).
+local function Ping(id, kind, indent)
+    local ok, r = pcall(C_BattleNet.SendGameData, id, PREFIX, kind .. "|" .. Where() .. "|" .. time())
+    Log(("%sSendGameData(%s, %s) -> %s"):format(indent or "  ", tostring(id), kind,
+        ok and ResultStr(r) or ("ERROR " .. tostring(r))))
+end
+
 local function Call(label, fn, ...)
     if type(fn) ~= "function" then Log(("  %s: absent"):format(label)); return end
     local r = { pcall(fn, ...) }
@@ -64,8 +71,7 @@ local function Send(id)
     if not id then Log("usage: /asprobe bnet send <gameAccountID>  (from /asprobe bnet me on the other account)"); return end
     Call("C_BattleNet.GetGameAccountInfoByID(target)", C_BattleNet and C_BattleNet.GetGameAccountInfoByID, id)
     if not (C_BattleNet and C_BattleNet.SendGameData) then Log("  SendGameData absent"); return end
-    local ok, r = pcall(C_BattleNet.SendGameData, id, PREFIX, "BPING|" .. Where() .. "|" .. time())
-    Log(("  SendGameData(%d, BPING) -> %s"):format(id, ok and ResultStr(r) or ("ERROR " .. tostring(r))))
+    Ping(id, "BPING")
     Log("  >> a BPONG line on this character, or a RECV BPING on the other, is the proof it arrived")
 end
 
@@ -93,9 +99,7 @@ local function Scan()
                 Log(("    account %s"):format(okA and Val(acct) or "ERROR"))
             end
             if id and BN.SendGameData then
-                local ok, r = pcall(BN.SendGameData, id, PREFIX, "BPING|" .. Where() .. "|" .. time())
-                Log(("    SendGameData(%s, BPING) -> %s"):format(tostring(id),
-                    ok and ResultStr(r) or ("ERROR " .. tostring(r))))
+                Ping(id, "BPING", "    ")
             end
         end
     end
@@ -133,8 +137,7 @@ local function Ids()
                 tostring(game.wowProjectID), mine and "|cff55ff55OUR ACCOUNT|r" or "(someone else)"))
             if mine and id ~= myGame and game.isOnline and BN.SendGameData then
                 own = own + 1
-                local okS, r = pcall(BN.SendGameData, id, PREFIX, "BPING|" .. Where() .. "|" .. time())
-                Log(("    SendGameData(%d, BPING) -> %s"):format(id, okS and ResultStr(r) or ("ERROR " .. tostring(r))))
+                Ping(id, "BPING", "    ")
             end
         end
     end
@@ -160,8 +163,7 @@ f:SetScript("OnEvent", function(_, _, ...)
     Log(("|cff55ff55RECV BN %s|r %s"):format(tostring(kind), Args(...)))
     Call("  GetGameAccountInfoByID(sender)", C_BattleNet and C_BattleNet.GetGameAccountInfoByID, senderID)
     if kind == "BPING" then
-        local ok, r = pcall(C_BattleNet.SendGameData, senderID, PREFIX, "BPONG|" .. Where() .. "|" .. time())
-        Log(("  BPONG back to %s -> %s"):format(tostring(senderID), ok and ResultStr(r) or ("ERROR " .. tostring(r))))
+        Ping(senderID, "BPONG")
     elseif kind == "BPONG" then
         Log("  |cff55ff55BNET ROUND-TRIP OK|r - our own other account answered over Battle.net")
     end

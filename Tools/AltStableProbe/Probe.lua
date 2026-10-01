@@ -787,6 +787,10 @@ wire:SetScript("OnEvent", function(_, event, prefix, text, channel, sender)
     end
     if event ~= "CHAT_MSG_ADDON" then return end
     if prefix ~= WPREFIX then return end
+    -- Only the whisper test's own kinds: Channel.lua shares the prefix and logs
+    -- its pings itself (review of #141 - every channel echo was logged twice).
+    local kindOnly = tostring(text):match("^(%u+)|")
+    if kindOnly ~= "PING" and kindOnly ~= "PONG" then return end
     -- `sender` verbatim is the whole point of this test.
     WireRecord(("|cff55ff55RECV|r prefix=%s channel=%s sender=%s text=%s"):format(
         tostring(prefix), tostring(channel), ValStr(sender, 1), ValStr(text, 1)))

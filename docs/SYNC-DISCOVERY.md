@@ -345,10 +345,10 @@ two rulesets cannot sync directly at all.
 | command | answers |
 |---|---|
 | `join <name> [password]` | 3: which join functions exist, what they return, whether a chat window lists it |
-| `send <name>` | 1: the `SendAddonMessageResult` for a channel send, number and string target |
+| `send <name>` | 1: the `SendAddonMessageResult` for a channel send, on the channel's local id (the string form also delivers, measured) |
 | (receiving a `CPING`) | 5: every `CHAT_MSG_ADDON` argument; replies `CPONG` on the channel (1, 2) and `WPONG` by whisper to `sender` verbatim (7) |
 | `status [name]`, and 8 s after login | 3: still joined after a relog |
-| `cap` | 4: joins `ASPCap1..15` until refused, logs the notices, leaves them all |
+| `cap` | 4: joins `ASPCap1..20` - past the cap of 20, with the client's own 5 - logs each result and the notices, leaves them all |
 | `leave <name>` | |
 | `log`, `clear` | the channel results (the wire log, kept across relogs) in the copy window; empty it |
 
