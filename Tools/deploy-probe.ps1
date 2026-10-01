@@ -27,7 +27,9 @@ if (-not (Test-Path $AddOnsPath)) {
 # /MIR: we own these folders wholesale, so stale files get purged.
 # SavedVariables live in WTF\, not here, so purging is safe.
 # robocopy exit codes 0-7 are success; 8+ is an error.
-foreach ($name in @("AltStableProbe", "AltStableDevConfig", "ForeverAPIDump")) {
+# (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
+# settings from loading, and after the fix only overwrote the player's own.)
+foreach ($name in @("AltStableProbe", "ForeverAPIDump")) {
     $from = Join-Path $RepoRoot "Tools\$name"
     if (-not (Test-Path $from)) { continue }
     $to = Join-Path $AddOnsPath $name

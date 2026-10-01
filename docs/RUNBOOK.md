@@ -217,7 +217,7 @@ and the probe reports it only for completeness.
 To check persistence on a new build:
 
 ```
-pwsh Tools/deploy-probe.ps1     # deploys AltStableProbe, AltStableDevConfig, ForeverAPIDump
+pwsh Tools/deploy-probe.ps1     # deploys AltStableProbe, ForeverAPIDump
 ```
 
 The probe keeps a counter in each store and reports at `PLAYER_LOGIN` what it found there.
@@ -479,5 +479,7 @@ if you see a stall with no reason, the stream really was lost.
 - **Deleting SavedVariables by hand:** close the client first (it rewrites them on exit), then
   delete `WTF\Account\<id>\SavedVariables\AltStable*.lua`. Back them up if there is any chance the
   contents matter — they contain real character names and realms.
-- **Removing the dev tools** from the client: delete the `AltStableProbe`, `AltStableDevConfig` and
-  `ForeverAPIDump` folders from `Interface\AddOns`. They are never packaged.
+- **Removing the dev tools** from the client: delete the `AltStableProbe` and `ForeverAPIDump`
+  folders from `Interface\AddOns`. They are never packaged. (`AltStableDevConfig`, retired
+  2026-10-01, seeded a whitelist from code while #23 kept settings from loading; with #23 fixed it
+  only fought the player's own settings - delete its folder if an old install still has one.)

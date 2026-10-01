@@ -216,7 +216,6 @@ local ICON_FILES = {
     "Plugins/Roster/AltStableRoster.toc",
     "Plugins/Professions/AltStableProfessions.toc",
     "Tools/AltStableProbe/AltStableProbe.toc",
-    "Tools/AltStableDevConfig/AltStableDevConfig.toc",
     -- Not a TOC: the generator that WRITES one.
     "Tools/RenderCutout/Update-Cutouts.ps1",
 }
