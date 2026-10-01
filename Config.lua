@@ -65,7 +65,7 @@ function AltStable.SetConfigValue(key, value)
     AltStableConfig[key] = value
     AltStable.OnConfigChanged(key)
     -- tostring: accountNumber is a number from the Options box and /alts account
-    -- but a string from EnsureDefaults and DevConfig, so re-entering the same
+    -- but a string from EnsureDefaults (and older saved configs), so re-entering the same
     -- "1" must not count as a change.
     if SYNC_SCOPE_KEYS[key] and tostring(previous) ~= tostring(value)
        and AltStable.OnSyncScopeChanged then

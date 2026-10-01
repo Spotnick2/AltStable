@@ -252,16 +252,44 @@ name, exactly as we do.
 **Battle.net game data.** `C_BattleNet.SendGameData(gameAccountID, prefix, data)` exists on 70009
 and is cross-realm *and* cross-faction — the ideal transport, except it needs a **Battle.net
 friend's** game account id. Our two WoW accounts live under one Battle.net account
-(`50284074#1` and `50284074#12`), and an account cannot friend itself. ~~Closed.~~ **Reopened and
-shipped as #58:** our own other game accounts are addressable too, without friending (measured,
-70124). Separate Battle.net accounts that are friends: #143, deferred until there is a tester.
+(`50284074#1` and `50284074#12`), and an account cannot friend itself. ~~Closed.~~ **Reopened, to
+measure (2026-09-30):** "cannot friend itself" was never the question - the question is whether
+the server delivers game data to your OWN other game account, by id, with both online. Nothing
+measured says no. Overlord Forever 1.3.2 (`C:\Projects\References\Overlord-1.3.2`, read for
+technique only - All Rights Reserved) bridges Horde and Alliance this way through Battle.net
+FRIENDS, whose clients relay. `/asprobe bnet me` / `send <id>` measure the own-account case. If it
+delivers, it crosses rulesets AND factions, which nothing else here does.
+
+**MEASURED, 2026-09-30 23:39 (70124): it delivers - across rulesets.** Karuzo Test (account #1,
+ClassicBetaPvP2) looked up Karuzo Mortalis (#12, ClassicBetaPvE) with
+`C_BattleNet.GetGameAccountInfoByGUID(guid)`: online, `gameAccountID=3`, and
+`GetAccountInfoByGUID` showed OUR OWN Battle.net account (same `bnetAccountID`, same BattleTag).
+`SendGameData(3, ...)` returned `0 (Success)`; Mortalis got it as `BN_CHAT_MSG_ADDON`
+(`prefix, text, "WHISPER", senderID=8`) and answered `SendGameData(8, ...)`, which arrived.
+
+- **Game account ids are local handles.** The same character was 7 on its own client and 3 on the
+  other; `SendGameData(7)` typed on the other side returned `6 (TargetRequired)`. Never store or
+  exchange an id; look it up on the sending client, or reply to `senderID`.
+- **The GUID lookup needs the GUID and the character online.** Mortalis's own scan found nothing:
+  its database had never seen Karuzo Test. `/asprobe bnet ids` measures discovery with no GUID
+  (walk the small local ids, keep our own `bnetAccountID`).
+- **Across factions:** measured since, in game with #58: Horde <-> Alliance syncs both ways.
+- **Also measured:** a `/reload` keeps channel membership; a logout drops it.
+
+Overlord also answers two practical questions for the channel half: it joins with
+`JoinChannelByName(name, nil, 0, 0)` - frame id 0, so no chat window lists it - through
+`securecall`, to keep the chat system untainted; and it waits until the client's General channel
+holds slot /1 before joining (up to ~30 s), because joining first moved General to /2 every session
+and players reported it. Both apply to us as they stand.
+
+**Shipped as #58** (PR #142): our own other game accounts, found by walking the local ids and synced with no whitelist across rulesets and factions. Separate Battle.net accounts that are friends: #143, deferred until there is a tester.
 
 **Across factions, nothing.** Measured on 70124: an addon whisper to a character online on the
 other faction comes back as `No player named 'X' is currently playing.` - the same line as for
 someone offline. The server delivers no whisper across factions, addon messages included, and
 says nothing about why (mail is told "wrong faction"; whispers are not). So a Horde alt and an
-Alliance alt cannot sync directly by any route we have; each syncs with the same-faction
-characters of the other account. Any discovery design has to be per faction.
+Alliance alt cannot sync by WHISPER; each whispers only the same-faction
+characters of the other account. Battle.net game data does cross (above, #58).
 
 **Guild.** Only reaches alts guilded with you. Closed for the general case; still the cheapest path
 for anyone whose alts *are* guilded together, so the login-announce handshake stays worth copying
@@ -322,21 +350,83 @@ session, with two clients running:
 
 1. Does `C_ChatInfo.SendAddonMessage(prefix, msg, "CHANNEL", index)` actually deliver? What does
    `SendAddonMessageResult` report when it does not?
-2. **Are custom channels visible cross-realm?** This single answer decides whether the key is the
-   whole design or half of it.
+2. **Are custom channels shared across rulesets?** Forever's "realms" are four rulesets (PvP, PvE,
+   RP, Hardcore) over one region, with region-wide names. This single answer decides whether the
+   key is the whole design or half of it. And across factions: whispers are not (measured, 70124).
 3. Does `JoinTemporaryChannel` stay out of the chat frame, and does it survive a relog?
 4. What happens at the channel-count cap (historically 10)? Joining must fail loudly, not eat sync
    silently.
 5. What trailing args does `CHAT_MSG_ADDON` carry for a channel message? `Core.lua:1389` currently
    routes every non-whisper reply to `GUILD`, so a channel branch is needed before anything works.
-6. Does whispering an offline character produce a visible error line? That decides how aggressive
-   the probing in step 3 above can be.
+6. ~~Does whispering an offline character produce a visible error line?~~ **Yes** (measured, 70124):
+   `No player named 'X' is currently playing.`, the same for a character online on the other
+   faction. `/alts sync` now hides the echo of our own traffic (#137), so probing costs no chat
+   spam - but each probe of an offline name is still one server round trip.
 7. **A cross-realm request/reply round trip, end to end.** What exactly does `CHAT_MSG_ADDON`
    put in `sender` for a cross-realm whisper — and does a reply addressed to that value arrive?
    Everything in the cross-realm half rests on this, and both the client format and our own
    realm-stripping are unverified.
 
-A probe for 1–5 belongs in `Tools/AltStableProbe`, not in the addon.
+**Measured on 70124** (2026-09-30; Malas Belgarden on account #1 and Karuzo Mortalis on #12, both
+Alliance on ClassicBetaPvE; Karuzo Test, Alliance on ClassicBetaPvP2; Memphisto Mortalis, Horde on
+ClassicBetaPvE - read from both accounts' `AltStableProbe.lua`):
+
+- **2 - same faction, same ruleset, across accounts: YES.** Karuzo's ping reached Malas; Malas
+  answered on the channel AND by whisper to the `sender` string, and both reached Karuzo (7, same
+  ruleset).
+- **2 - across rulesets, and across factions: NOT YET TESTED.** Karuzo Test (PvP2, 23:15) and
+  Memphisto Mortalis (Horde, 23:16) each heard only their own ping - but no other character was in
+  the channel to hear them (the owner confirmed Karuzo Mortalis was offline by then). Silence with
+  no listener proves nothing; rerun with one online.
+- **7 - a whisper by BARE NAME does not cross rulesets.** Karuzo Test (PvP2) and Karuzo Mortalis
+  (PvE), both online, whispered each other's full name, and the first name: "No player named" every
+  time, no PING received either way (23:28-23:29). `Name Surname-Server` is the next form to try -
+  it is how every other WoW version routes across realms; the probe now sends it for every server
+  in `C_AutoComplete.GetAutoCompleteRealms()` plus the two measured ones.
+- **3 - a relog drops the channel.** At the next login the character was no longer in it: the addon
+  rejoins at every login.
+- **4 - the cap is 20 channels, and the 21st join fails SILENTLY:** no notice, `GetChannelName` 0,
+  and `JoinTemporaryChannel` returns nothing (a success returns `0`). Five are the client's own
+  (General, Trade, LocalDefense, Services, TradeLocal), so a player has 15 to spare. Check
+  `GetChannelName` after joining; never assume.
+- **Ownership:** the first member owns the channel; when the owner leaves it passes on
+  (`CHAT_MSG_CHANNEL_NOTICE_USER` `OWNER_CHANGED`, `SET_MODERATOR`). The join notice is
+  `YOU_CHANGED`, not `YOU_JOINED`.
+
+**What it means for #58, so far:** a household channel reaches the same faction on the same
+ruleset, rejoined at every login. Across rulesets nothing reaches yet: not the bare-name whisper,
+and the channel is untested. If neither the channel nor `Name-Server` crosses, same-faction alts on
+two rulesets cannot sync directly at all.
+
+**Earlier (first character alone):**
+
+- **1 - delivers.** `SendAddonMessage(prefix, msg, "CHANNEL", localId)` returns `0 (Success)` and
+  arrives; the local id works as a number and as its string.
+- **A channel message comes back to its own sender.** Every send was received by the character that
+  sent it, `sender` = its own name. The design must drop its own echoes.
+- **5 - nine arguments:** `prefix, text, "CHANNEL", sender, "6. ASPtest7", 0, 6, "ASPtest7", 0` -
+  sender is the bare full name (no realm), then the display target, zone channel id, **local id**,
+  **channel name**, instance id. A reply can go back on the local id or by name.
+- **3 (half) - no chat window lists a joined temporary channel.** `JoinTemporaryChannel`,
+  `JoinChannelByName` and `JoinPermanentChannel` all exist; `JoinTemporaryChannel(name, pw)`
+  returned `0`, and the server's notice arrives as `CHAT_MSG_CHANNEL_NOTICE` (18 arguments).
+
+**The probe:** `/asprobe channel …` in `Tools/AltStableProbe/Channel.lua` (deploy with
+`pwsh Tools/deploy-probe.ps1`), everything to the wire log for `/asprobe copy`:
+
+| command | answers |
+|---|---|
+| `join <name> [password]` | 3: which join functions exist, what they return, whether a chat window lists it |
+| `send <name>` | 1: the `SendAddonMessageResult` for a channel send, on the channel's local id (the string form also delivers, measured) |
+| (receiving a `CPING`) | 5: every `CHAT_MSG_ADDON` argument; replies `CPONG` on the channel (1, 2) and `WPONG` by whisper to `sender` verbatim (7) |
+| `status [name]`, and 8 s after login | 3: still joined after a relog |
+| `cap` | 4: joins `ASPCap1..20` - past the cap of 20, with the client's own 5 - logs each result and the notices, leaves them all |
+| `leave <name>` | |
+| `log`, `clear` | the channel results (the wire log, kept across relogs) in the copy window; empty it |
+
+**Reading the results:** `python Tools/AltStableProbe/read-wirelog.py [--since HH:MM]` prints the
+wire log from every account's `WTF\Account\<id>\SavedVariables\AltStableProbe.lua` - written on
+`/reload` and logout, so `/reload` each character after a round. No copying out of the game.
 
 ---
 
