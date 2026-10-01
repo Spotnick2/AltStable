@@ -70,7 +70,7 @@ local function Describe(rec)
         tostring(rec.name), tostring(rec.owner), tostring(rec.family or rec.ctype),
         tostring(rec.ownerClass), tostring(rec.kind), tostring(rec.npcID),
         tostring(rec.creatureID), tostring(rec.displayID), tostring(rec.modelDisplayID),
-        tostring(rec.stableSlot))
+        tostring(rec.stableSlot) .. " by " .. tostring(rec.stableMatch))
 end
 
 -- The hunter's active slots: is C_StableInfo readable away from a stable
@@ -87,14 +87,48 @@ local function StableSlots()
             Out("stable slot " .. slot .. ": error " .. tostring(info))
         elseif info then
             out[#out + 1] = info
-            Out(string.format("stable slot %d: %s (%s) displayID=%s creatureID=%s petNumber=%s",
-                slot, tostring(info.name), tostring(info.familyName), tostring(info.displayID),
-                tostring(info.creatureID), tostring(info.petNumber)))
+            Out(string.format("stable slot %d: %s (%s) slotID=%s displayID=%s creatureID=%s petNumber=%s",
+                slot, tostring(info.name), tostring(info.familyName), tostring(info.slotID),
+                tostring(info.displayID), tostring(info.creatureID), tostring(info.petNumber)))
         else
             Out("stable slot " .. slot .. ": empty")
         end
     end
     return out
+end
+
+-- Which active slot is the summoned pet? Every way is tried and logged, so
+-- one run says which of them this client supports.
+local CALL_PET = { 883, 83242, 83243, 83244, 83245 }   -- Blizzard_StableUI's list
+local function SummonedSlot(slots, guid, name)
+    local tail = type(guid) == "string" and guid:match("%-(%x+)$")
+    local full = tail and tonumber(tail, 16)
+    Out(string.format("guid tail %s = %s, low 24 bits = %s, low 32 bits = %s", tostring(tail),
+        tostring(full), tostring(full and full % 2^24), tostring(full and full % 2^32)))
+    local byNumber, bySpell, byName, names = nil, nil, nil, 0
+    for _, info in ipairs(slots) do
+        local n = info.petNumber
+        if n and full and (n == full or n == full % 2^24 or n == full % 2^32) then byNumber = info end
+        if info.name == name then names = names + 1; byName = info end
+    end
+    if C_Spell and C_Spell.IsCurrentSpell then
+        for i, spell in ipairs(CALL_PET) do
+            local ok, cur = pcall(C_Spell.IsCurrentSpell, spell)
+            if ok and cur then
+                Out("Call Pet " .. i .. " (" .. spell .. ") is the current spell")
+                for _, info in ipairs(slots) do
+                    if info.slotID == i then bySpell = info end
+                end
+            end
+        end
+    end
+    Out(string.format("summoned slot by petNumber=%s by Call Pet spell=%s by name=%s (%d named %s)",
+        tostring(byNumber and byNumber.slotID), tostring(bySpell and bySpell.slotID),
+        tostring(byName and byName.slotID), names, tostring(name)))
+    if byNumber then return byNumber, "petNumber" end
+    if bySpell then return bySpell, "spell" end
+    if names == 1 then return byName, "name" end
+    return nil, "none"
 end
 
 -- The display id only exists on a model frame, so render the pet once on an
@@ -125,12 +159,14 @@ local function Capture(quiet)
     reader:Show()
     local okU, errU = Call(reader, "SetUnit", "pet")
     rec.setUnit = okU and "ok" or errU
-    -- A demon has no stable; a hunter's summoned pet is the slot with its name.
-    for _, info in ipairs(StableSlots()) do
-        if info.name == rec.name then
-            rec.stableSlot, rec.stableDisplayID, rec.stableCreatureID =
-                info.slotID, info.displayID, info.creatureID
-        end
+    -- A demon has no stable. A hunter's summoned pet is one of the slots, but
+    -- NOT by name: two pets can share one (measured - the owner's cat and bear
+    -- are both Tarthosuk, and the name picked the bear).
+    local info, how = SummonedSlot(StableSlots(), guid, rec.name)
+    rec.stableMatch = how
+    if info then
+        rec.stableSlot, rec.stableDisplayID, rec.stableCreatureID =
+            info.slotID, info.displayID, info.creatureID
     end
     C_Timer.After(1, function()
         rec.modelDisplayID = select(2, Call(reader, "GetDisplayInfo"))
