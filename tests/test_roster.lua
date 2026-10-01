@@ -3138,9 +3138,9 @@ do
             check(who .. ": the owner stepped away from it by its share of the slot",
                   math.abs(math.abs(moved) - slot * T.PET_LAYOUT.ownerShift) < 1e-6
                   and moved * (x(d.pet) - x(d.card)) < 0, tostring(moved))
-            -- Out by part of the owner's width and part of its own: half behind.
-            local want = d.card.figure:GetWidth() * T.PET_LAYOUT.reach + d.pet:GetWidth() * T.PET_LAYOUT.spread
-            check(who .. ": the pet stands half behind its owner",
+            -- Out by part of the OWNER's width only: mostly behind them.
+            local want = d.card.figure:GetWidth() * T.PET_LAYOUT.reach
+            check(who .. ": the pet stands mostly behind its owner",
                   math.abs(math.abs(x(d.pet) - x(d.card)) - want) < 1e-6,
                   math.abs(x(d.pet) - x(d.card)) .. " vs " .. want)
         end
@@ -3158,11 +3158,18 @@ do
         -- Framed from its own box: the model's height fills the frame. The
         -- field of view spans the WIDTH (measured), so a wide frame sees less
         -- height than its width.
-        local viewW = 2 * 10 * math.tan(0.3)
+        local viewW = 2 * 40 * math.tan(0.075)
         local viewH = viewW * cat.pet:GetHeight() / cat.pet:GetWidth()
         check("the model is scaled from its box",
               math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.04)) < 1e-6,
               tostring(cat.pet.actor._scale))
+
+        -- Room to spare across: a frame cut to the model's width clipped it.
+        local box = { l = 1.0157 + 3.686, w = 1.3213 + 1.6145, h = 1.6881 + 0.0317 }
+        local shape = T.PetAspect(box, cat.pet.actor._yaw or 0) * 1.2 / 1.04
+        check("the frame is 20% wider than the model",
+              math.abs(cat.pet:GetWidth() / cat.pet:GetHeight() - shape) < 1e-6,
+              cat.pet:GetWidth() / cat.pet:GetHeight() .. " vs " .. shape)
 
         -- Alive, but with no particles: an imp's fire burned past its frame and
         -- swelled its box. The idle animation stays (owner's call).
@@ -3221,7 +3228,7 @@ do
     eq("a pet past the left edge is brought inside", T.PetX(50, 100, 200, -1, 1000), 100)
     eq("  past the right edge too", T.PetX(950, 100, 200, 1, 1000), 900)
     eq("  and left alone inside", T.PetX(500, 100, 200, 1, 1000),
-       500 + 100 * T.PET_LAYOUT.reach + 200 * T.PET_LAYOUT.spread)
+       500 + 100 * T.PET_LAYOUT.reach)
 end
 
 -- Five round the fire without pets, four with: the fifth figure's room is

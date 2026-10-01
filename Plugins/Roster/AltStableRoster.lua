@@ -1069,7 +1069,11 @@ local BEAST_UNITS_PER_BOX = 0.32   -- cat: box 1.72 -> 0.55, half of a 1.10 nigh
 local BEAST_DEFAULT = 0.55         -- until the box has loaded
 local PET_MIN, PET_MAX = 0.35, 1.10
 
-local PET_FOV, PET_CAMERA = 0.6, 10   -- camera on +X, looking back at the model
+-- Camera on +X, looking back at the model, from FAR with a NARROW lens: close
+-- and wide, the parts of a model nearest the camera grew past its frame and
+-- were cut off (an imp's, in game). Same framing, nearly no perspective.
+local PET_FOV, PET_CAMERA = 0.15, 40
+local PET_SPARE_W = 1.2               -- frame width per model width: room to spare
 local PET_MARGIN = 1.04               -- frame height per model height
 local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the ground
 -- One table: Lua 5.1 allows a function 60 upvalues, and the test exports are
@@ -1077,12 +1081,13 @@ local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the
 --   turn        a pet on the fire side turns this far toward it (owner: 20 deg);
 --               one on the outside faces the viewer
 --   ownerShift  an owner with a pet steps this share of the slot away from it
---   reach       the pet's centre: this share of the owner's width out...
---   spread      ...plus this share of its own, so it stands half behind them
+--   reach       the pet's centre: this share of the owner's width out, so it
+--               stands mostly BEHIND them (owner). Its own width is left out:
+--               a frame is wider than the animal, and it pushed a cat clear
 -- NO width cap: capping a pet to its slot shrank a cat - long in 3/4 view - to
 -- a kitten by the fire (owner, in game). It keeps its true size and is only
 -- kept inside the panel.
-local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.25, spread = 0.3 }
+local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.2 }
 
 local function PetsEnabled()
     return AltStableConfig and AltStableConfig.rosterPets == true
@@ -1123,10 +1128,10 @@ local function PetSides(spots, fireX)
 end
 
 -- Where a pet's frame is centred: out from its owner by part of the owner's
--- width and part of its own, so it stands half behind them - then kept inside
--- the panel, so a pet at the scene's edge never spills over the sidebar.
+-- width, mostly behind them - then kept inside the panel, so a pet at the
+-- scene's edge never spills over the sidebar.
 local function PetX(ownerX, ownerW, frameW, side, panelW)
-    local x = ownerX + side * (ownerW * PET_LAYOUT.reach + frameW * PET_LAYOUT.spread)
+    local x = ownerX + side * ownerW * PET_LAYOUT.reach
     local half = frameW / 2
     if panelW and panelW > frameW then
         x = math.max(half, math.min(panelW - half, x))
@@ -1212,7 +1217,7 @@ local function PlacePet(f)
     local aspect = PetAspect(box, yaw)
     local h = math.min(PetUnits(want.char, box and box.h) * want.unitPx, want.maxH)
     local frameH = h * PET_MARGIN
-    local frameW = h * aspect * PET_MARGIN
+    local frameW = h * aspect * PET_SPARE_W
     f:SetSize(frameW, frameH)
     f:SetFrameLevel(want.level)
     f:ClearAllPoints()
