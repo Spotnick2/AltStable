@@ -3094,13 +3094,32 @@ do
         eq("the pet shows its saved display", cat.pet.actor._display, CAT)
         eq("  the demon too", void.pet.actor._display, VOID)
 
-        -- One level under its owner, and the owners on even levels.
-        local base = T.Panel():GetFrameLevel()
+        -- Behind the whole cast, not just its owner: a big demon beside the
+        -- figure nearest the camera covered its neighbour (measured).
         for who, d in pairs(drawn) do
-            eq(who .. ": the pet sits just under its owner",
-               d.pet:GetFrameLevel(), d.card:GetFrameLevel() - 1)
-            eq(who .. ": owners are on even levels", (d.card:GetFrameLevel() - base) % 2, 0)
+            for _, card in ipairs(T.Cards()) do
+                if card:IsShown() then
+                    check(who .. ": the pet is behind " .. tostring(card.char and card.char.name),
+                          d.pet:GetFrameLevel() < card:GetFrameLevel())
+                end
+            end
+            check(who .. ": and above the backdrop", d.pet:GetFrameLevel() > T.Panel():GetFrameLevel())
         end
+        -- +1 is the pets' level for ANY spot: the ring's deepest figure (level 0,
+        -- at the fire) must not tie with them, which two figures here never reach.
+        local base = T.Panel():GetFrameLevel()
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() then
+                check("a character's level clears the pets' even at the fire",
+                      card:GetFrameLevel() - base - (card._spotLevel or 0) >= 2)
+            end
+        end
+
+        -- Its offset is the owner's width, never its own: wide arms must not
+        -- carry it into the next character's place.
+        local catOff = math.abs(x(cat.pet) - x(cat.card))
+        check("the pet stays at its owner's shoulder",
+              catOff <= cat.card.figure:GetWidth() * 0.5, tostring(catOff))
 
         -- Toward the fire: each pet is on the side facing the other owner.
         local cx, vx = x(cat.card), x(void.card)
@@ -3120,8 +3139,11 @@ do
         check("the voidwalker towers over its gnome",
               math.abs(voidRatio - 1.00 * 1.04 / 0.60) < 0.01, tostring(voidRatio))
 
-        -- Framed from its own box: the model's height fills the frame.
-        local viewH = 2 * 10 * math.tan(0.3)
+        -- Framed from its own box: the model's height fills the frame. The
+        -- field of view spans the WIDTH (measured), so a wide frame sees less
+        -- height than its width.
+        local viewW = 2 * 10 * math.tan(0.3)
+        local viewH = viewW * cat.pet:GetHeight() / cat.pet:GetWidth()
         check("the model is scaled from its box",
               math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.04)) < 1e-6,
               tostring(cat.pet.actor._scale))

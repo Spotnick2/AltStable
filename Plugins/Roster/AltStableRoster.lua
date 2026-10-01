@@ -1065,7 +1065,7 @@ local PET_MIN, PET_MAX = 0.35, 1.10
 local PET_FOV, PET_CAMERA = 0.6, 10   -- camera on +X, looking back at the model
 local PET_YAW = 0.6                   -- turned toward the fire, as a figure would
 local PET_MARGIN = 1.04               -- frame height per model height
-local PET_LIFT = 0.02                 -- one step BEHIND the owner: a touch higher
+local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the ground
 local PET_OFFSET = 0.35               -- of the owner's width, toward the fire
 
 local function PetsEnabled()
@@ -1152,13 +1152,18 @@ local function PlacePet(f)
     f:SetSize(frameW, frameH)
     f:SetFrameLevel(want.level)
     f:ClearAllPoints()
-    -- Centred a third of its own width past the owner's edge: close enough to
-    -- overlap, as the panther at the warband screen does, not on top of them.
-    f:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
-        want.x + want.side * (want.ownerW * PET_OFFSET + frameW * 0.2), want.y)
+    -- Centred just inside the owner's shoulder, by the OWNER's width only. Its
+    -- own width pushed it out too (measured: a voidwalker's arms carried it
+    -- into the next character's place).
+    f:SetPoint("BOTTOM", panel, "BOTTOMLEFT", want.x + want.side * want.ownerW * PET_OFFSET, want.y)
     pcall(f.actor.SetYaw, f.actor, yaw)
     if box then
-        local viewH = 2 * PET_CAMERA * math.tan(PET_FOV / 2)
+        -- The field of view spans the frame's WIDTH (measured: taken as the
+        -- height, a cat in a wide frame came out three times too big and
+        -- cropped; a portrait-shaped probe pane hid it). So the height the
+        -- camera sees is the width's share of it.
+        local viewW = 2 * PET_CAMERA * math.tan(PET_FOV / 2)
+        local viewH = viewW * frameH / frameW
         pcall(f.actor.SetScale, f.actor, viewH / (box.h * PET_MARGIN))
         f:Show()
     end
@@ -1193,14 +1198,17 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, pane
         local display = char and tonumber(char.pet_display)
         local f = (display and display > 0 and spot and sizes[i] and sizes[i].cut) and PetFrame(i)
         if f then
-            local ownerLevel = panel:GetFrameLevel() + 2 + 2 * spot.level
             f._want = {
                 char = char, side = PetSide(spot.x, fireX),
                 x = spot.x, y = spot.y + panelH * PET_LIFT,
                 ownerW = sizes[i][1] * fit,
                 unitPx = figureH / tallest * spot.scale * fit,
                 maxH = figureH * spot.scale * fit,
-                level = ownerLevel - 1,
+                -- Under EVERY character, not just its owner: the pet stands
+                -- behind, as on the warband screen. Just under its owner, the
+                -- one nearest the camera put a voidwalker over the next figure
+                -- (measured), because the owner outranks the whole ring.
+                level = panel:GetFrameLevel() + 1,
             }
             if f._display ~= display then
                 f._display, f._box = display, nil
@@ -1243,8 +1251,9 @@ local function RenderScene(chars)
             withArt = withArt + 1
             local w, h = sizes[i][1] * fit, sizes[i][2] * fit
 
-            -- Even levels, so a pet (#75) fits on the odd one just under its owner.
-            card:SetFrameLevel(panel:GetFrameLevel() + 2 + 2 * spot.level)
+            -- From +2: +1 is the pets' (#75), behind the whole cast.
+            card:SetFrameLevel(panel:GetFrameLevel() + 2 + spot.level)
+            card._spotLevel = spot.level
 
             card:ClearAllPoints()
             card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", spot.x, spot.y - NAME_H - 4)
