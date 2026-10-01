@@ -715,16 +715,43 @@ local function SendPing(target)
         end
     end
     add("as-typed", target)
-    add("space",      (target:gsub("%-", " ")))
-    add("hyphen",     (target:gsub(" ", "-")))
     add("first-only", target:match("^(%S+)"))
+    -- Across rulesets the bare name does not route (measured, 70124: "No player
+    -- named" both ways, both online). In other versions "Name-Server" does, so
+    -- try the name with every server suffix the client knows: the auto-complete
+    -- list (logged - is it the rulesets?), our own, and the two measured ones.
+    -- The old "hyphen" form turned "First Surname" into "First-Surname": with
+    -- surnames that is a different, wrong name, so it is gone.
+    if not target:find("-", 1, true) then
+        local realms, seenRealm = {}, {}
+        local function addRealm(r)
+            if type(r) == "string" and r ~= "" and not seenRealm[r] then
+                seenRealm[r] = true
+                realms[#realms + 1] = r
+            end
+        end
+        local auto = C_AutoComplete and C_AutoComplete.GetAutoCompleteRealms
+            and { pcall(C_AutoComplete.GetAutoCompleteRealms) }
+        if auto then
+            WireRecord("  GetAutoCompleteRealms -> " .. ValStr(auto[2], 2))
+            if auto[1] and type(auto[2]) == "table" then
+                for _, r in ipairs(auto[2]) do addRealm(r) end
+            end
+        else
+            WireRecord("  C_AutoComplete.GetAutoCompleteRealms absent")
+        end
+        addRealm(GetNormalizedRealmName and GetNormalizedRealmName())
+        addRealm("ClassicBetaPvE")
+        addRealm("ClassicBetaPvP2")
+        for _, r in ipairs(realms) do add("+" .. r, target .. "-" .. r) end
+    end
 
     WireRecord(("whisper test -> %d target form(s), 0.4s apart"):format(#variants))
     for idx, v in ipairs(variants) do
         local function fire()
             local ok, err = pcall(C_ChatInfo.SendAddonMessage, WPREFIX,
                 "PING|" .. v.label .. "|" .. tostring(me), "WHISPER", v.target)
-            WireRecord(("  [%-10s] %-28s %s"):format(v.label, v.target,
+            WireRecord(("  [%-16s] %-40s %s"):format(v.label, v.target,
                 ok and "sent" or ("ERROR: " .. tostring(err))))
         end
         if C_Timer and C_Timer.After and idx > 1 then

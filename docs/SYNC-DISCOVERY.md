@@ -274,9 +274,15 @@ ClassicBetaPvE - read from both accounts' `AltStableProbe.lua`):
 - **2 - same faction, same ruleset, across accounts: YES.** Karuzo's ping reached Malas; Malas
   answered on the channel AND by whisper to the `sender` string, and both reached Karuzo (7, same
   ruleset).
-- **2 - across rulesets: NO** (to be confirmed: it rests on Karuzo Mortalis, PvE, still being in the
-  channel when Karuzo Test, PvP2, pinged it at 23:15 - its log is silent from 23:13 on).
-- **Across factions: NO.** Memphisto Mortalis (Horde) heard only its own ping.
+- **2 - across rulesets, and across factions: NOT YET TESTED.** Karuzo Test (PvP2, 23:15) and
+  Memphisto Mortalis (Horde, 23:16) each heard only their own ping - but no other character was in
+  the channel to hear them (the owner confirmed Karuzo Mortalis was offline by then). Silence with
+  no listener proves nothing; rerun with one online.
+- **7 - a whisper by BARE NAME does not cross rulesets.** Karuzo Test (PvP2) and Karuzo Mortalis
+  (PvE), both online, whispered each other's full name, and the first name: "No player named" every
+  time, no PING received either way (23:28-23:29). `Name Surname-Server` is the next form to try -
+  it is how every other WoW version routes across realms; the probe now sends it for every server
+  in `C_AutoComplete.GetAutoCompleteRealms()` plus the two measured ones.
 - **3 - a relog drops the channel.** At the next login the character was no longer in it: the addon
   rejoins at every login.
 - **4 - the cap is 20 channels, and the 21st join fails SILENTLY:** no notice, `GetChannelName` 0,
@@ -287,10 +293,10 @@ ClassicBetaPvE - read from both accounts' `AltStableProbe.lua`):
   (`CHAT_MSG_CHANNEL_NOTICE_USER` `OWNER_CHANGED`, `SET_MODERATOR`). The join notice is
   `YOU_CHANGED`, not `YOU_JOINED`.
 
-**What it means for #58:** a household channel reaches exactly one **faction on one ruleset** - so
-it is one channel per (ruleset, faction) the household plays, each rejoined at login. Whether a
-**whisper** crosses rulesets (7, cross-ruleset) is the last open question: it decides whether
-same-faction alts on two rulesets can sync at all.
+**What it means for #58, so far:** a household channel reaches the same faction on the same
+ruleset, rejoined at every login. Across rulesets nothing reaches yet: not the bare-name whisper,
+and the channel is untested. If neither the channel nor `Name-Server` crosses, same-faction alts on
+two rulesets cannot sync directly at all.
 
 **Earlier (first character alone):**
 
