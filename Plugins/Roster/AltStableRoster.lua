@@ -1257,6 +1257,10 @@ local function MeasurePet(f, token, tries)
         PlacePet(f)
     elseif tries > 0 and C_Timer and C_Timer.After then
         C_Timer.After(0.1, function() MeasurePet(f, token, tries - 1) end)
+    else
+        -- Gave up: forget the display, so the next Refresh loads it afresh
+        -- rather than re-placing a pet that has no box and never shows (Codex).
+        f._display = nil
     end
 end
 
@@ -1278,14 +1282,20 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, p
         if f then
             local ps = petSides[i]
             local outer = ps.outer and PET_LAYOUT.outer
+            local y = spot.y + panelH * (outer and outer.lift or PET_LIFT)
             f._want = {
                 char = char, side = ps.side, yaw = ps.yaw,
                 ownerX = OwnerX(char, spot, slot, ps), ownerW = sizes[i][1] * fit,
                 panelW = panelW,
                 reach = outer and outer.reach or PET_LAYOUT.reach,
-                y = spot.y + panelH * (outer and outer.lift or PET_LIFT),
+                y = y,
                 unitPx = figureH / tallest * spot.scale * fit * (outer and outer.size or 1),
-                maxH = figureH * spot.scale * fit,
+                -- Capped by the panel's TOP only: a voidwalker may tower over a
+                -- gnome. Capped at the tallest character's height, it shrank to
+                -- its gnome in a cast of gnomes (Codex). The MODEL's top, not the
+                -- frame's - the frame's headroom is empty, and counting it
+                -- shrank demons the cast had room for.
+                maxH = math.max(0, panelH - y),
                 -- Under EVERY character, not just its owner: the pet stands
                 -- behind, as on the warband screen. Just under its owner, the
                 -- one nearest the camera put a voidwalker over the next figure
@@ -1297,7 +1307,7 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, p
                 f._token = (f._token or 0) + 1
                 f:Hide()
                 local ok = pcall(f.actor.SetModelByCreatureDisplayID, f.actor, display)
-                if ok then MeasurePet(f, f._token, 30) end
+                if ok then MeasurePet(f, f._token, 30) else f._display = nil end
             else
                 PlacePet(f)
             end

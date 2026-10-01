@@ -3197,6 +3197,19 @@ do
         check("a pet does not take the mouse", not cat.pet:IsMouseEnabled())
     end
 
+    -- A model that never loaded is tried again by the next Refresh, not left
+    -- re-placed without a box forever (Codex).
+    AltStableDB["pet-lock"].pet_display = 1134
+    T.Refresh()
+    for _ = 1, 40 do WoW.flushTimers() end
+    check("a model that never loads is not drawn", pets()["pet-lock"] == nil)
+    WoW.modelBoxes[1134] = { -1, -1, 0, 1, 1, 3 }
+    T.Refresh()
+    check("  and the next Refresh tries it again", pets()["pet-lock"] ~= nil)
+    WoW.modelBoxes[VOID] = { -1, -1, 0, 1, 1, 3 }
+    AltStableDB["pet-lock"].pet_display = VOID
+    T.Refresh()
+
     -- A pet whose model has not loaded waits, then appears.
     WoW.modelBoxes[VOID] = nil
     AltStableDB["pet-lock"].pet_display = 1133
@@ -3259,7 +3272,7 @@ do
     for i = 1, 4 do
         local guid = ("four-%d"):format(i)
         AltStableDB[guid] = { guid = guid, name = ("Four %d"):format(i), level = 10 + i,
-            class = "HUNTER", race = "Human", gender = "Male", pet_display = 3000 + i, pet_npc = 1860 }
+            class = "HUNTER", race = "Human", gender = "Male", pet_display = 3000 + i, pet_npc = 416 }
         AltStableCutoutManifest[guid] = { file = "f.tga", w = 100, h = 512, texw = 128, texh = 512 }
         WoW.modelBoxes[3000 + i] = { -1, -1, 0, 1, 1, 3 }
     end
@@ -3310,6 +3323,38 @@ do
         -- The right-hand outer pet: the panel's right edge is far from it here.
         check("an outer pet reaches further out",
               math.abs(share(rows[4]) - T.PET_LAYOUT.outer.reach) < 1e-6, tostring(share(rows[4])))
+    end
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+    WoW.modelBoxes = {}
+end
+
+-- True scale even where the pet outgrows the cast: a lone gnome's voidwalker
+-- stands 1.0/0.6 of him, not his height - capped only by the panel's top.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = { ["g"] = { guid = "g", name = "Lone Gnome", class = "WARLOCK", level = 10,
+        race = "Gnome", gender = "Male", pet_display = 1132, pet_npc = 1860 } }
+    AltStableCutoutManifest = { ["lone-gnome"] = { file = "g.tga", w = 100, h = 512, texw = 128, texh = 512 } }
+    WoW.modelBoxes = { [1132] = { -1, -1, 0, 1, 1, 3 } }
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = "scene", true
+    T.Refresh()
+    local card, pet = T.Cards()[1], T.Pets()[1]
+    check("the lone gnome's demon is drawn", pet and pet:IsShown())
+    if pet and pet:IsShown() then
+        local modelH = pet:GetHeight() / 1.3
+        local ratio = modelH / card.figure:GetHeight()
+        local ph = T.Panel():GetHeight()
+        local feet = select(5, pet:GetPoint()) + (pet:GetHeight() - modelH) / 2
+        local top = feet + modelH
+        if top < ph - 1e-6 then
+            check("  at 1.0/0.6 of its gnome, not his height", math.abs(ratio - 1 / 0.6) < 1e-6, tostring(ratio))
+        end
+        check("  and never past the panel's top", top <= ph + 1e-6, top .. " > " .. ph)
     end
     AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
