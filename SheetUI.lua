@@ -3342,6 +3342,16 @@ local function CreateFrameIfNeeded()
         "Share all known accounts (uncheck to share only this account's data)", Y)
     Y = Y - 24
 
+    -- #58: your own other accounts, found and synced through Battle.net -
+    -- any ruleset, any faction, nothing to type. Off clears what was found.
+    local optBnetCheck = MakeOptCheckRow("bnetSync",
+        "Sync with your other accounts through Battle.net (any ruleset, any faction)", Y,
+        function(checked)
+            AltStable.SetConfigValue("bnetSync", checked)
+            if AltStable.RescanOwnAccounts then AltStable.RescanOwnAccounts() end
+        end)
+    Y = Y - 24
+
     -- ── Whitelist (sync peers) ────────────────────────────
     local optWlHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optWlHdr:SetPoint("TOPLEFT", P, Y)
@@ -3744,6 +3754,7 @@ local function CreateFrameIfNeeded()
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
+        optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)
         optToastsCheck:SetChecked(AltStableConfig.toastsEnabled ~= false)
         optMailAlertsCheck:SetChecked(AltStableConfig.mailAlertsEnabled ~= false)
         AltStableConfig.toastProfessions = AltStableConfig.toastProfessions or {}

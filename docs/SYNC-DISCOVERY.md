@@ -1,12 +1,82 @@
 # Sync discovery — how two accounts find each other
 
-Design research for [#58](https://github.com/Spotnick2/AltStable/issues/58). **Parked** until the
-port is finished; picked up again with in-game testing, because the decisive questions are
-measurements, not opinions.
+Design research for [#58](https://github.com/Spotnick2/AltStable/issues/58) - **shipped** for the
+owner's own accounts (below); the rest of this file is the research that led there, kept because
+its closed routes stay closed.
 
 This file exists so that work does not start from zero: what the code does today, what a shipped
 retail addon does, which routes are already closed and why, and the exact list of things to measure
 first.
+
+---
+
+## #58, shipped: your own accounts, through Battle.net
+
+Measured on 70124 (the probe rounds of 2026-09-30, `Tools/AltStableProbe/BNet.lua`): Battle.net
+game data between two WoW accounts on the **same Battle.net account** is delivered - across
+rulesets and across factions, both directions - where whispers and channels stop at both. So:
+
+- **Discovery** (`ScanOwnAccounts`): walk the client-local game account ids 1-128 (plus a GUID
+  lookup for database characters beyond that) and keep those whose `GetAccountInfoByGUID` names
+  OUR `bnetAccountID` - online, this game (`wowProjectID`), this region, not us. At login +5 s,
+  every 60 s, on Battle.net presence events; the map is rebuilt each time and is session-only (ids
+  are handles, never stored or sent).
+- **Discovery waits for presences**: right after a login our own Battle.net presence can be blank
+  (measured) - the scan then looks again every 10 s for up to 5 min, and ownership is also matched
+  by BattleTag (`BNGetInfo`), which does not wait. `/alts bnet` shows each step.
+- **A presence can stay blank** (measured 2026-10-01: 16+ minutes after a `/reload`, and again
+  after a relog; blank on both sides - our own record and the other client's view of us), while
+  `BNGetInfo` still answers. So nothing depends on it:
+  - **our presence blank**: ownership by our BattleTag (`BNGetInfo`) still holds; our game and
+    region come from the last time they were known (saved), and with nothing ever known we fail
+    closed. **Same game AND same region, always** - a live realm, a PTR or TBC Anniversary on the
+    same Battle.net account never syncs with this one (owner, 2026-10-01). Forever beta measured as
+    `wowProjectID` 18, `regionID` 90; a live Forever is expected to differ in region (unmeasured);
+  - **theirs blank** (no name AND no GUID): elimination - an id in no friend's list - is only a HINT
+    of where to say hello. It cannot prove ownership: a friends list answering "zero" while still
+    loading looks complete (Codex round 2 reproduced a friend being sent a chunk). **Proof is the
+    household key**: each account has a random key, sent only to an account Battle.net verifies as
+    ours and remembered when received from one; a blank presence is believed only when its hello
+    carries a trusted key. Two accounts must have seen each other's full presence once, ever;
+  - **both blank** (Codex round 3): neither side may send its key, so each PROVES it holds a trusted
+    one. Every hello carries a nonce (fixed per id for the session) and answers the other side's
+    latest nonce with `HMAC-SHA-256(own key, "AltStable#58|" nonce "|" name)`, truncated to 32 hex;
+    the receiver checks it against the keys it trusts. A friend sees nonces and proofs only, each
+    good for one id's nonce and one name. A new nonce is answered at once, but only to an id that is
+    ours by elimination (or verified), so proofs go only where hellos go. SHA-256 is pure Lua in
+    `Core.lua` (the client exposes no hash; LibDeflate's checksums are linear and forgeable),
+    checked against the FIPS 180-2 and RFC 4231 vectors. Limit, accepted: a friend whose list we
+    misread as ours could relay one side's proof to the other - it needs a broken friends list AND
+    a purpose-built relay;
+  - **who is on it**: a Battle.net-only hello, `HI8|name|guid|faction|realm|key|nonce|proof`, sent
+    on first contact, to blank ids by hint (without the key), and in answer to a hello (at most once
+    a minute per id, at once for a new nonce); forgotten when that id goes offline, its binding
+    drops, or Battle.net contradicts it. Older clients read the first six fields and ignore the rest.
+- **Transport of origin**: a request is answered the way it came (Battle.net, or a plain whisper -
+  `WHISPER_DIRECT`), a resync goes the way the failed stream came, and a whitelisted own account not
+  yet heard over Battle.net keeps its whisper. Capability is forgotten with its binding.
+- First in-game successes: Karuzo Mortalis (PvE) <-> Karuzo Test (PvP2), and Memphisto Mortalis
+  (Horde) <-> Karuzo Mortalis (Alliance), both ways, nothing whitelisted. Reviewed by Codex twice
+  more (gpt-6-astra, high): the two P2s on #142, then the blank-presence design (one P1 - a gap in
+  the friends list granting ownership - reproduced and fixed).
+- **Capability**: ordinary traffic moves to Battle.net only once that peer has been HEARD over it;
+  until then only discovery requests (channel `BNET`) use it - a peer with the switch off, or a
+  pre-#58 AltStable, keeps its whisper sync.
+- **Transport**: `QueueWire` sends a WHISPER to such a character as `BNSendGameData` through
+  ChatThrottleLib (255 bytes, our chunks unchanged - **no protocol change**). `BN_CHAT_MSG_ADDON`
+  from one feeds the same handler, under the character name Blizzard gives for the `senderID`; a
+  friend's game data fails the ownership test and is dropped unread.
+- **Trust**: such a character is `auto` after any stored answer - `never` still wins.
+- **New peer**: asked at once (forced past the request throttle), twice more 30 s apart until a
+  stream arrives; their request to us counts as finding them too, so both directions sync.
+- **Unordered delivery**: a DONE may arrive first and now starts the stream; a stream completes on
+  its last packet, or settles when nothing has arrived for 6 s (2 s for whispers); a late packet of
+  a finished stream is ignored; stream ids are clock-seeded so a `/reload` cannot reuse them.
+- **Off switch**: Options, or `AltStableConfig.bnetSync = false`.
+
+Plan reviewed adversarially (Codex gpt-6-astra, high: "ship with changes", all taken but two
+bounded - the 1-128 walk stays a heuristic with the GUID fallback, and queued-destination reuse is
+re-checked before queueing, not recalled).
 
 ---
 
@@ -203,7 +273,7 @@ ClassicBetaPvP2) looked up Karuzo Mortalis (#12, ClassicBetaPvE) with
 - **The GUID lookup needs the GUID and the character online.** Mortalis's own scan found nothing:
   its database had never seen Karuzo Test. `/asprobe bnet ids` measures discovery with no GUID
   (walk the small local ids, keep our own `bnetAccountID`).
-- **Across factions:** not measured yet, expected to hold (Overlord's use is exactly that).
+- **Across factions:** measured since, in game with #58: Horde <-> Alliance syncs both ways.
 - **Also measured:** a `/reload` keeps channel membership; a logout drops it.
 
 Overlord also answers two practical questions for the channel half: it joins with
@@ -212,12 +282,14 @@ Overlord also answers two practical questions for the channel half: it joins wit
 holds slot /1 before joining (up to ~30 s), because joining first moved General to /2 every session
 and players reported it. Both apply to us as they stand.
 
+**Shipped as #58** (PR #142): our own other game accounts, found by walking the local ids and synced with no whitelist across rulesets and factions. Separate Battle.net accounts that are friends: #143, deferred until there is a tester.
+
 **Across factions, nothing.** Measured on 70124: an addon whisper to a character online on the
 other faction comes back as `No player named 'X' is currently playing.` - the same line as for
 someone offline. The server delivers no whisper across factions, addon messages included, and
 says nothing about why (mail is told "wrong faction"; whispers are not). So a Horde alt and an
-Alliance alt cannot sync directly by any route we have; each syncs with the same-faction
-characters of the other account. Any discovery design has to be per faction.
+Alliance alt cannot sync by WHISPER; each whispers only the same-faction
+characters of the other account. Battle.net game data does cross (above, #58).
 
 **Guild.** Only reaches alts guilded with you. Closed for the general case; still the cheapest path
 for anyone whose alts *are* guilded together, so the login-announce handshake stays worth copying

@@ -80,6 +80,8 @@ end
 local function EnsureDefaults()
     AltStableConfig.syncMode      = AltStableConfig.syncMode      or "whisper"
     AltStableConfig.whitelist     = AltStableConfig.whitelist     or {}
+    -- #58: your other accounts sync through Battle.net unless switched off.
+    if AltStableConfig.bnetSync == nil then AltStableConfig.bnetSync = true end
     AltStableConfig.syncAuth      = AltStableConfig.syncAuth      or {}   -- #61: answers, by peer key
     AltStableConfig.accountNumber = AltStableConfig.accountNumber or ""
     if AltStableConfig.sendAllAccounts == nil then

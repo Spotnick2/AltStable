@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Your other accounts sync by themselves - any ruleset, any faction.** Two of
+  your WoW accounts on the same Battle.net account now find each other through
+  Battle.net and sync with no whitelist and nothing to type, including a Horde
+  account with an Alliance one and across rulesets, which whispers cannot do.
+  "Found your other account: ..." says when it happens; Options has an off
+  switch. Once two accounts have met, they keep finding each other even when
+  Battle.net is slow to show who is playing on either. Battle.net friends are never included
+  ([#58](https://github.com/Spotnick2/AltStable/issues/58)).
+- **Sync is sturdier when pieces arrive out of order.** A finishing message that
+  overtakes the data no longer loses the sync, a stream completes the moment its
+  last piece arrives, and a character seen with and without its realm is one
+  peer.
 - **Sync no longer loses pieces to the server's message throttle.** The bundled
   ChatThrottleLib is updated from v24 to v32: on this client the server can
   refuse an addon message it considers too fast, and v24 treated the refused
