@@ -29,6 +29,13 @@
 -- GetDisplayInfo() on a SetUnit("pet") model reads 0. The stable UI draws
 -- stabled pets (not units) from C_StableInfo.GetStablePetInfo(slot).displayID,
 -- so the hunter's display id and real creature id are read from there.
+-- MEASURED, second run: the summoned slot is found by the Call Pet spell
+-- (C_Spell.IsCurrentSpell), NOT by name and NOT by petNumber-vs-GUID. With the
+-- right slot, Live / Creature / Display are the same model; a demon's GUID npc
+-- (voidwalker 1860) renders identically through SetCreature. Offline renders
+-- are textured. Open: PlayerModel framing varies per model (the bear came out
+-- head-only), so a 4th pane draws it the stable's way - ModelScene 718, actor
+-- "pet", SetModelByCreatureDisplayID - which frames every pet consistently.
 ----------------------------------------------------------------------------
 
 AltStableProbe = AltStableProbe or {}
@@ -205,6 +212,16 @@ local MODES = {
     { "Display (saved id)", function(m, rec)
         if not rec or not rec.displayID then return "SetDisplayInfo", false, "no display id" end
         return "SetDisplayInfo(" .. rec.displayID .. ")", Call(m, "SetDisplayInfo", rec.displayID) end },
+    { "Scene 718 (stable's way)", function(scene, rec, resolved)
+        local id = rec and (rec.displayID or resolved)
+        if not id then return "scene", false, "no display id" end
+        local okT, errT = Call(scene, "TransitionToModelSceneID", 718,
+            CAMERA_TRANSITION_TYPE_IMMEDIATE, CAMERA_MODIFICATION_TYPE_DISCARD, true)
+        if not okT then return "TransitionToModelSceneID(718)", false, errT end
+        local actor = select(2, Call(scene, "GetActorByTag", "pet"))
+        if not actor then return "GetActorByTag(pet)", false, "no actor" end
+        return "actor:SetModelByCreatureDisplayID(" .. id .. ")",
+            Call(actor, "SetModelByCreatureDisplayID", id) end, scene = true },
 }
 
 local function Render()
@@ -212,15 +229,22 @@ local function Render()
     if index > #list then index = 1 elseif index < 1 then index = #list end
     local rec = list[index]
     viewer.title:SetText(rec and (index .. "/" .. #list .. "  " .. Describe(rec)) or "nothing recorded yet")
+    local resolved
     for i, pane in ipairs(panes) do
         local m = pane.model
-        Call(m, "ClearModel")
-        local what, ok, err = MODES[i][2](m, rec)
-        Call(m, "SetPortraitZoom", 0)
-        Call(m, "SetFacing", 0.5)
-        Call(m, "RefreshCamera")
+        local what, ok, err
+        if MODES[i].scene then
+            what, ok, err = MODES[i][2](m, rec, resolved)
+        else
+            Call(m, "ClearModel")
+            what, ok, err = MODES[i][2](m, rec)
+            Call(m, "SetPortraitZoom", 0)
+            Call(m, "SetFacing", 0.5)
+            Call(m, "RefreshCamera")
+        end
         local shown = select(2, Call(m, "GetDisplayInfo"))
         local file = select(2, Call(m, "GetModelFileID"))
+        if i == 2 and (shown or 0) > 0 then resolved = shown end
         local line = string.format("%s=%s\n-> display=%s fileID=%s", what,
             ok and "ok" or tostring(err), tostring(shown), tostring(file))
         pane.status:SetText(line)
@@ -231,7 +255,7 @@ end
 local function Build()
     if viewer then return viewer end
     viewer = CreateFrame("Frame", "AltStablePetProbe", UIParent, "BasicFrameTemplateWithInset")
-    viewer:SetSize(740, 420)
+    viewer:SetSize(980, 420)
     viewer:SetPoint("CENTER")
     viewer:SetMovable(true); viewer:EnableMouse(true)
     viewer:RegisterForDrag("LeftButton")
@@ -252,7 +276,15 @@ local function Build()
         pane:SetPoint("TOPLEFT", 14 + (i - 1) * 240, -64)
         local bg = pane:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints(); bg:SetColorTexture(0.12, 0.12, 0.14, 1)
-        pane.model = NewModel(pane)
+        if spec.scene then
+            local ok, scene = pcall(CreateFrame, "ModelScene", nil, pane, "NonInteractableModelSceneMixinTemplate")
+            pane.model = ok and scene or NewModel(pane)
+            if not ok then Out("ModelScene template failed: " .. tostring(scene)) end
+        else
+            pane.model = NewModel(pane)
+            -- Does re-fitting the camera once the model has loaded fix framing?
+            pane.model:SetScript("OnModelLoaded", function(self) self:RefreshCamera() end)
+        end
         pane.model:SetAllPoints()
         local label = pane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         label:SetPoint("BOTTOM", pane, "TOP", 0, 2)
