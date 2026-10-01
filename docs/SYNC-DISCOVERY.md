@@ -21,6 +21,12 @@ rulesets and across factions, both directions - where whispers and channels stop
   OUR `bnetAccountID` - online, this game (`wowProjectID`), this region, not us. At login +5 s,
   every 60 s, on Battle.net presence events; the map is rebuilt each time and is session-only (ids
   are handles, never stored or sent).
+- **Discovery waits for presences**: right after a login our own Battle.net presence can be blank
+  (measured) - the scan then looks again every 10 s for up to 5 min, and ownership is also matched
+  by BattleTag (`BNGetInfo`), which does not wait. `/alts bnet` shows each step.
+- **Capability**: ordinary traffic moves to Battle.net only once that peer has been HEARD over it;
+  until then only discovery requests (channel `BNET`) use it - a peer with the switch off, or a
+  pre-#58 AltStable, keeps its whisper sync.
 - **Transport**: `QueueWire` sends a WHISPER to such a character as `BNSendGameData` through
   ChatThrottleLib (255 bytes, our chunks unchanged - **no protocol change**). `BN_CHAT_MSG_ADDON`
   from one feeds the same handler, under the character name Blizzard gives for the `senderID`; a

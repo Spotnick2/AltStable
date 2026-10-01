@@ -540,6 +540,13 @@ end
 --
 -- Session state only: nothing here is written to SavedVariables.
 local bnetPeers = {}      -- AuthKey(name) -> { id, name, guid, faction, realm }
+-- Heard FROM over Battle.net this session (review of #142): only then does
+-- ordinary traffic to a peer move to Battle.net. A peer with the switch off, or
+-- an AltStable from before #58, never speaks it - and must keep its whisper
+-- sync instead of being sent replies it drops unread. Discovery requests go
+-- over Battle.net regardless (channel "BNET"): that is how a peer gets heard.
+local bnetCapable = {}    -- AuthKey -> true
+local bnetSeen = {}       -- AuthKey -> true: known this session as our own account
 
 local function BNetEnabled()
     AltStableConfig = AltStableConfig or {}
@@ -551,34 +558,79 @@ local function BNetEnabled()
     return true
 end
 
--- Our own Battle.net account, game account and game project, on this client.
+-- Who we are on Battle.net: { account, tag, game, project }, or nil.
+--
+-- Right after a login or /reload our OWN presence can still be blank (measured,
+-- 70124: GetAccountInfoByGUID(our GUID) nil, our own game account with no
+-- character - and the other client saw us the same way). So the BattleTag also
+-- comes from BNGetInfo(), which does not wait for the presence; and the game
+-- project, which only the presence carries, is reported missing rather than
+-- guessed - the scan waits for it (ScanOwnAccounts).
 local function SelfBNet()
+    local s = {}
     local ok, me = pcall(C_BattleNet.GetAccountInfoByGUID, UnitGUID("player"))
-    if not ok or type(me) ~= "table" or me.bnetAccountID == nil then return nil end
-    local g = type(me.gameAccountInfo) == "table" and me.gameAccountInfo or {}
-    return me.bnetAccountID, g.gameAccountID, g.wowProjectID
+    if ok and type(me) == "table" then
+        s.account, s.tag = me.bnetAccountID, me.battleTag
+        local g = type(me.gameAccountInfo) == "table" and me.gameAccountInfo or {}
+        s.game, s.project = g.gameAccountID, g.wowProjectID
+    end
+    if (s.tag == nil or s.account == nil) and BNGetInfo then
+        local okI, presenceID, battleTag = pcall(BNGetInfo)
+        if okI then
+            s.account = s.account or presenceID
+            s.tag = s.tag or battleTag
+        end
+    end
+    if s.project == nil and C_BattleNet.GetGameAccountInfoByGUID then
+        local okG, g = pcall(C_BattleNet.GetGameAccountInfoByGUID, UnitGUID("player"))
+        if okG and type(g) == "table" then
+            s.project = g.wowProjectID
+            s.game = s.game or g.gameAccountID
+        end
+    end
+    if s.account == nil and s.tag == nil then return nil end
+    return s
+end
+
+-- Is this Battle.net account record ours? By account id or by BattleTag, and
+-- never by two missing values.
+local function IsOurAccount(acct, me)
+    if type(acct) ~= "table" or not me then return false end
+    if me.account ~= nil and acct.bnetAccountID == me.account then return true end
+    if me.tag ~= nil and acct.battleTag == me.tag then return true end
+    return false
 end
 
 -- The one eligibility test (#58, Codex): the game account behind `id`, when it
 -- is a character of THIS game, online, in this region, on OUR OWN Battle.net
 -- account - and not us. Anything failing any part is nil: a friend, another
 -- game, a failed lookup (two nils must never compare equal).
-local function OwnAccountGame(id)
-    if type(id) ~= "number" or not BNetEnabled() then return nil end
+--
+-- The second return says WHY not, for /alts bnet - the only way to see this
+-- work in game, where script errors are off by default.
+local function OwnAccountGame(id, me)
+    if type(id) ~= "number" then return nil, "no id" end
+    if not BNetEnabled() then return nil, "Battle.net sync off or not connected" end
     local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-    if not ok or type(g) ~= "table" or not g.isOnline then return nil end
-    if g.clientProgram ~= "WoW" or g.isInCurrentRegion == false then return nil end
-    if type(g.characterName) ~= "string" or g.characterName == "" then return nil end
-    if type(g.playerGuid) ~= "string" or g.playerGuid == "" then return nil end
-    if g.playerGuid == UnitGUID("player") then return nil end
-    -- Ourselves are excluded by GUID above - the one test that holds for every
-    -- id our own game account could be handed.
-    -- SelfBNet answers all or nothing: past the project check, `mine` is known
-    -- non-nil - so a missing account id below never compares equal to it.
-    local mine, _, myProject = SelfBNet()
-    if myProject == nil or g.wowProjectID ~= myProject then return nil end
+    if not ok or type(g) ~= "table" then return nil, "unknown id" end
+    if not g.isOnline then return nil, "offline" end
+    if g.clientProgram ~= "WoW" then return nil, "not WoW (" .. tostring(g.clientProgram) .. ")" end
+    if g.isInCurrentRegion == false then return nil, "another region" end
+    if type(g.characterName) ~= "string" or g.characterName == "" then return nil, "no character name" end
+    if type(g.playerGuid) ~= "string" or g.playerGuid == "" then return nil, "no character GUID" end
+    -- Ourselves are excluded by GUID - the one test that holds for every id
+    -- our own game account could be handed.
+    if g.playerGuid == UnitGUID("player") then return nil, "this character" end
+    me = me or SelfBNet()     -- a scan passes it in: one lookup per scan, not per id
+    if not me then return nil, "our Battle.net identity is not known yet" end
+    if me.project == nil then return nil, "our own Battle.net presence is not ready yet" end
+    if g.wowProjectID ~= me.project then
+        return nil, ("another game (project %s, ours %s)"):format(tostring(g.wowProjectID), tostring(me.project))
+    end
     local okA, acct = pcall(C_BattleNet.GetAccountInfoByGUID, g.playerGuid)
-    if not okA or type(acct) ~= "table" or acct.bnetAccountID ~= mine then return nil end
+    if not okA or not IsOurAccount(acct, me) then
+        return nil, "someone else's Battle.net account"
+    end
     return g
 end
 
@@ -758,25 +810,24 @@ local function GetSyncTargets()
     -- Your own other accounts found through Battle.net (#58) count too, so the
     -- login sync, a bare /alts sync and /alts cleanup reach them with no
     -- whitelist. One entry per peer: whitelisted AND found is one target.
+    -- A peer not yet heard over Battle.net is reached by an explicit "BNET"
+    -- request; a peer heard is "WHISPER", which QueueWire routes over it.
     if BNetEnabled() then
         for key, p in pairs(bnetPeers) do
             if SyncAuthFor(p.name) ~= AUTH_NEVER then
                 seen[key] = true
-                table.insert(targets, { channel = "WHISPER", target = p.name })
+                table.insert(targets, { channel = bnetCapable[key] and "WHISPER" or "BNET",
+                                        target = p.name })
             end
         end
     end
+    -- "Refuse them for good" has to mean both directions. Gating only the
+    -- inbound request left a denied peer on the whitelist, so every login
+    -- still whispered them a REQ and /alts cleanup still pushed them the
+    -- whole database - which is the thing the player just refused.
     for _, name in ipairs(whitelist) do
-        if seen[AuthKey(name) or ""] then
-            -- already a Battle.net peer
-        else
-        -- "Refuse them for good" has to mean both directions. Gating only the
-        -- inbound request left a denied peer on the whitelist, so every login
-        -- still whispered them a REQ and /alts cleanup still pushed them the
-        -- whole database - which is the thing the player just refused.
-        if SyncAuthFor(name) ~= AUTH_NEVER then
+        if not seen[AuthKey(name) or ""] and SyncAuthFor(name) ~= AUTH_NEVER then
             table.insert(targets, { channel = "WHISPER", target = name })
-        end
         end
     end
 
@@ -1419,16 +1470,24 @@ end
 
 -- The route to `target` over Battle.net, re-checked right before use: the id
 -- must still be our own other account AND still that character.
+--
+-- Re-checked at most every 2 s per binding: a 100-chunk reply used to make
+-- three Battle.net API calls per chunk, all in the frame that queued them.
+local routeCheckedAt = {}  -- id -> { key, at }
 local function BNetRoute(target)
     local p = OwnBNetPeer(target)
     if not p then return nil end
     local key = AuthKey(target)
+    local checked = routeCheckedAt[p.id]
+    if checked and checked.key == key and (time() - checked.at) <= 2 then return p end
     local g = OwnAccountGame(p.id)
     if not g or AuthKey(g.characterName) ~= key then
+        routeCheckedAt[p.id] = nil
         DropBNetBinding(key, p.id)
         if RequestBNetScan then RequestBNetScan() end
         return nil
     end
+    routeCheckedAt[p.id] = { key = key, at = time() }
     return p
 end
 
@@ -1461,8 +1520,16 @@ end
 -- under ChatThrottleLib can be well after this call returns.
 local function QueueWire(msg, channel, target, prio, onSent)
     -- Your own other account goes over Battle.net (#58): every whisper path -
-    -- a reply, a request, a resync, /alts sync - without touching each one.
-    if channel == "WHISPER" then
+    -- a reply, a request, a resync - once it has been HEARD over Battle.net.
+    -- "BNET" is the explicit form (discovery, /alts sync to a found account):
+    -- Battle.net or nothing, never a whisper that cannot cross.
+    if channel == "BNET" then
+        local route = BNetRoute(target)
+        if route then return QueueBNet(msg, target, route, prio, onSent) end
+        if onSent then onSent(false) end
+        return
+    end
+    if channel == "WHISPER" and bnetCapable[AuthKey(target) or ""] then
         local route = BNetRoute(target)
         if route then return QueueBNet(msg, target, route, prio, onSent) end
     end
@@ -1554,8 +1621,10 @@ end
 local function SayUnreachable(name, key, transport)
     if unreachableToldAt[key] then return end
     unreachableToldAt[key] = time()
-    -- Over Battle.net, faction is no obstacle: say what IS known.
-    if transport == "BNET" then
+    -- Over Battle.net, faction is no obstacle: say what IS known. That holds for
+    -- a character known as our own this session even when this attempt fell
+    -- back to a whisper (its binding just went): it logged off or switched.
+    if transport == "BNET" or bnetSeen[key] then
         Print("|cffff8800" .. name .. " cannot be reached through Battle.net|r - they logged "
             .. "off or switched character, so this sync cannot go through.")
         return
@@ -1820,7 +1889,15 @@ function AltStable.ForgetSyncPeer(peer)
     ClearConsent(peer)
     SyncAuthChanged()
     local shown = PeerShort(peer) or AuthKey(peer)
-    if SyncAuthFor(peer) == AUTH_AUTO then
+    local whitelisted = false
+    for _, w in ipairs((AltStableConfig or {}).whitelist or {}) do
+        if AuthKey(w) == AuthKey(peer) then whitelisted = true end
+    end
+    if SyncAuthFor(peer) == AUTH_AUTO and not whitelisted then
+        Print("Forgotten |cffffff00" .. shown .. "|r - but they are your own account on "
+            .. "Battle.net, so they are served again. Switch off \"Sync with your other "
+            .. "accounts through Battle.net\" in Options to stop that too.")
+    elseif SyncAuthFor(peer) == AUTH_AUTO then
         Print("Forgotten |cffffff00" .. shown .. "|r - but they are on your whitelist, "
             .. "so they are served again. |cffffff00/alts whitelist remove " .. shown
             .. "|r to stop that too.")
@@ -2012,12 +2089,32 @@ local BNET_RETRY_EVERY, BNET_RETRIES = 30, 2
 local presence = {}        -- AuthKey -> { id, guid, tries, requestedAt } for this session
 local bnetAnnounced = {}   -- AuthKey -> true: "found your other account" said once
 local lastStreamFrom = {}  -- AuthKey -> when a stream from them last completed
+local inboundChecked = {}  -- senderID -> { g, at }: a received packet's check, cached 2 s
+
+function AltStable.IsOwnBNetPeer(name) return OwnBNetPeer(name) ~= nil end
+
+-- One record shape for a found peer, wherever it was found.
+local function PeerRecord(id, g)
+    return { id = id, name = g.characterName, guid = g.playerGuid,
+             faction = g.factionName, realm = g.realmDisplayName or g.realmName }
+end
 
 local function NoteBNetPeer(g, id)
-    local p = { id = id, name = g.characterName, guid = g.playerGuid,
-                faction = g.factionName, realm = g.realmDisplayName or g.realmName }
-    bnetPeers[AuthKey(g.characterName)] = p
+    local key = AuthKey(g.characterName)
+    local cur = bnetPeers[key]
+    if cur and cur.id == id and cur.guid == g.playerGuid then return cur end
+    local p = PeerRecord(id, g)
+    bnetPeers[key] = p
+    bnetSeen[key] = true
     return p
+end
+
+-- A stream from them still arriving?
+local function StreamFromInProgress(key)
+    for bkey in pairs(incomingBuffers) do
+        if bkey:match("^(.*)#%d+$") == key then return true end
+    end
+    return false
 end
 
 -- The one action for a peer seen this session, from the scan OR from a message
@@ -2031,6 +2128,8 @@ local function OnNewPresence(p)
     if cur and cur.id == p.id and cur.guid == p.guid then return end
     local entry = { id = p.id, guid = p.guid, tries = 0 }
     presence[key] = entry
+    -- Refused for good: noticed, but neither announced nor asked.
+    if SyncAuthFor(p.name) == AUTH_NEVER then return end
     if not bnetAnnounced[key] then
         bnetAnnounced[key] = true
         Print("Found your other account: |cff88ff88" .. p.name .. "|r ("
@@ -2039,28 +2138,72 @@ local function OnNewPresence(p)
     local function ask()
         if presence[key] ~= entry or not OwnBNetPeer(p.name) then return end
         if entry.requestedAt and (lastStreamFrom[key] or 0) >= entry.requestedAt then return end
+        -- Their answer still arriving (a first sync can take longer than the
+        -- retry): wait, don't ask for a second copy (review of #142).
+        if StreamFromInProgress(key) then
+            C_Timer.After(BNET_RETRY_EVERY, ask)
+            return
+        end
         entry.tries = entry.tries + 1
         entry.requestedAt = time()
-        RequestCharacters("WHISPER", p.name, true)
+        RequestCharacters("BNET", p.name, true)
         if entry.tries <= BNET_RETRIES then C_Timer.After(BNET_RETRY_EVERY, ask) end
     end
-    ask()
+    -- Asked moments ago already (the login whisper to a whitelisted peer): give
+    -- that answer the first retry's time, rather than two full replies.
+    local last = lastRequestedAt[key]
+    if last and (time() - last) < 10 then
+        entry.requestedAt = last
+        C_Timer.After(BNET_RETRY_EVERY, ask)
+    else
+        ask()
+    end
 end
 
-local function ScanOwnAccounts()
+local BNET_SETTLING_EVERY, BNET_SETTLING_TRIES = 10, 30   -- up to 5 minutes
+local bnetSettlingPending, bnetSettlingTries = false, 0
+local ScanOwnAccounts
+
+-- A presence still blank - ours, or a WoW account with no character yet - is
+-- "not yet", not "no": look again in 10 s instead of the next minute.
+local function ScanAgainSoon()
+    if bnetSettlingPending or bnetSettlingTries >= BNET_SETTLING_TRIES then return end
+    bnetSettlingPending = true
+    bnetSettlingTries = bnetSettlingTries + 1
+    C_Timer.After(BNET_SETTLING_EVERY, function()
+        bnetSettlingPending = false
+        ScanOwnAccounts()
+    end)
+end
+
+function ScanOwnAccounts()
+    AltStable._bnetLastScan = time()
     if not BNetEnabled() then
         bnetPeers, presence = {}, {}
         return
     end
+    local me = SelfBNet()
+    local settling = not me or me.project == nil
     local fresh = {}
     local function add(id, g)
-        fresh[AuthKey(g.characterName)] = { id = id, name = g.characterName, guid = g.playerGuid,
-            faction = g.factionName, realm = g.realmDisplayName or g.realmName }
+        local key = AuthKey(g.characterName)
+        fresh[key] = PeerRecord(id, g)
+        bnetSeen[key] = true
     end
     for id = 1, BNET_MAX_ID do
-        local g = OwnAccountGame(id)
-        if g then add(id, g) end
+        local g = OwnAccountGame(id, me)
+        if g then
+            add(id, g)
+        elseif not settling then
+            -- A WoW account here with no character yet is still logging in.
+            local ok, raw = pcall(C_BattleNet.GetGameAccountInfoByID, id)
+            if ok and type(raw) == "table" and raw.clientProgram == "WoW" and raw.isOnline ~= false
+                and (type(raw.characterName) ~= "string" or raw.characterName == "") then
+                settling = true
+            end
+        end
     end
+    if settling then ScanAgainSoon() else bnetSettlingTries = 0 end
     -- Beyond the walk: our other account's characters we already know by GUID.
     if C_BattleNet.GetGameAccountInfoByGUID then
         for guid, c in pairs(AltStableDB or {}) do
@@ -2069,10 +2212,18 @@ local function ScanOwnAccounts()
                 local ok, info = pcall(C_BattleNet.GetGameAccountInfoByGUID, guid)
                 local id = ok and type(info) == "table" and info.gameAccountID
                 if type(id) == "number" and id > BNET_MAX_ID then
-                    local g = OwnAccountGame(id)
+                    local g = OwnAccountGame(id, me)
                     if g then add(id, g) end
                 end
             end
+        end
+    end
+    -- A peer learned from its own message (an id beyond the walk, a character
+    -- not in the database) stays while it still checks out (review of #142).
+    for key, p in pairs(bnetPeers) do
+        if not fresh[key] then
+            local g = OwnAccountGame(p.id, me)
+            if g and AuthKey(g.characterName) == key then fresh[key] = p end
         end
     end
     bnetPeers = fresh
@@ -2237,9 +2388,13 @@ local function CompleteStream(peer, bkey)
     local buf = incomingBuffers[bkey]
     if not buf then return end
     -- Over, whichever way this ends: late packets of it are ignored.
+    -- Only Battle.net streams are remembered: delivery there is unordered, so
+    -- stragglers are real; a whisper stream is ordered - and a client from
+    -- before #58 restarts its stream ids on /reload, so remembering ITS ids
+    -- would drop a new stream as a "late" one (review of #142).
     local function finish()
         incomingBuffers[bkey] = nil
-        finishedStreams[bkey] = time()
+        if buf.transport == "BNET" then finishedStreams[bkey] = time() end
     end
 
     -- No never check here (#58): every way in has just made one - the last
@@ -2569,8 +2724,9 @@ frame:RegisterEvent("CHAT_MSG_SYSTEM")    -- detect peer "X has come online" not
 -- Battle.net: game data from our own other account, and presence changes that
 -- may mean it came or went (#58). Registered through pcall: an event this
 -- client does not know must not stop the addon loading.
-for _, ev in ipairs({ "BN_CHAT_MSG_ADDON", "BN_CONNECTED", "BN_DISCONNECTED",
-                      "BN_FRIEND_INFO_CHANGED", "BN_INFO_CHANGED" }) do
+-- (Not BN_FRIEND_INFO_CHANGED: every friend's status change fires it, and none
+-- of them changes which of OUR accounts are online.)
+for _, ev in ipairs({ "BN_CHAT_MSG_ADDON", "BN_CONNECTED", "BN_DISCONNECTED", "BN_INFO_CHANGED" }) do
     pcall(frame.RegisterEvent, frame, ev)
 end
 
@@ -2881,7 +3037,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
     end
 
     if event == "CHAT_MSG_ADDON" then
-        HandleAddonMessage(...)
+        -- Not (...): the event's 5th argument is the recipient's name, which
+        -- would land in `transport` (review of #142).
+        local prefix, message, channel, sender = ...
+        HandleAddonMessage(prefix, message, channel, sender, "WHISPER")
         return
     end
 
@@ -2891,17 +3050,24 @@ frame:SetScript("OnEvent", function(self, event, ...)
     if event == "BN_CHAT_MSG_ADDON" then
         local prefix, text, _, senderID = ...
         if prefix ~= PREFIX or not BNetEnabled() then return end
-        local g = OwnAccountGame(senderID)
-        if not g then return end
+        -- The check is cached per sender for 2 s: a stream is many packets.
+        local hit = inboundChecked[senderID]
+        local g = hit and (time() - hit.at) <= 2 and hit.g
+        if not g then
+            g = OwnAccountGame(senderID)
+            if not g then return end
+            inboundChecked[senderID] = { g = g, at = time() }
+        end
+        bnetCapable[AuthKey(g.characterName)] = true      -- heard over Battle.net
         OnNewPresence(NoteBNetPeer(g, senderID))
         HandleAddonMessage(prefix, text, "WHISPER", g.characterName, "BNET")
         return
     end
     if event == "BN_DISCONNECTED" then
-        bnetPeers, presence = {}, {}
+        bnetPeers, presence, bnetCapable = {}, {}, {}
         return
     end
-    if event == "BN_CONNECTED" or event == "BN_FRIEND_INFO_CHANGED" or event == "BN_INFO_CHANGED" then
+    if event == "BN_CONNECTED" or event == "BN_INFO_CHANGED" then
         RequestBNetScan()
         return
     end
@@ -3434,7 +3600,8 @@ SlashCmdList["ALTSTABLE"] = function(args)
         if not target or target == "" then
             local pinged, skipped = BroadcastRequest(true)
             if #pinged == 0 and #skipped == 0 then
-                Print("No whitelisted peers configured. Add some with /alts whitelist <name>.")
+                Print("Nobody to sync with: no other account of yours is online on Battle.net, "
+                    .. "and nobody is whitelisted (|cffffff00/alts whitelist <name>|r for someone else).")
             elseif #pinged == 0 then
                 Print("No requests sent (all whitelisted peers throttled).")
             else
@@ -3474,7 +3641,10 @@ SlashCmdList["ALTSTABLE"] = function(args)
         -- or zoning throttle), and a window counted from the queueing could
         -- close before the server had anything to refuse - queueing the whole
         -- database behind a request that then fails (Codex, review of #137).
-        RequestCharacters("WHISPER", target, true, function(didSend)
+        -- A character found as our own account goes over Battle.net - the
+        -- only way across factions and rulesets.
+        local via = (AltStable.IsOwnBNetPeer and AltStable.IsOwnBNetPeer(target)) and "BNET" or "WHISPER"
+        RequestCharacters(via, target, true, function(didSend)
             if not didSend then
                 -- Refused at send (TargetOffline has said why already):
                 -- the push is not queued behind a request that never went.
@@ -3491,7 +3661,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
                 -- Only while the exchange the player started is still on: a
                 -- deny, or a deny and then a forget, in these seconds ends it.
                 if not AltStable.MayServeSyncPeer(target) then return end
-                SendFullDatabase("WHISPER", target)
+                SendFullDatabase(via, target)
             end)
         end)
         return
@@ -3565,10 +3735,51 @@ SlashCmdList["ALTSTABLE"] = function(args)
         return
     end
 
+    -- What Battle.net discovery sees, step by step (#58). Script errors are
+    -- off by default on this client, so this is how "nothing was found" gets
+    -- explained in game.
+    if cmd == "bnet" then
+        local BN = C_BattleNet or {}
+        Print(("Battle.net sync: setting %s, C_BattleNet %s, connected %s"):format(
+            AltStableConfig.bnetSync == false and "OFF" or "on",
+            BN.GetGameAccountInfoByID and "present" or "MISSING",
+            tostring(BNFeaturesEnabledAndConnected and BNFeaturesEnabledAndConnected())))
+        local okMe, me = pcall(BN.GetAccountInfoByGUID or function() end, UnitGUID("player"))
+        local myGame = okMe and type(me) == "table" and type(me.gameAccountInfo) == "table"
+            and me.gameAccountInfo or {}
+        Print(("  us: bnetAccountID %s, game account %s, project %s"):format(
+            tostring(okMe and type(me) == "table" and me.bnetAccountID),
+            tostring(myGame.gameAccountID), tostring(myGame.wowProjectID)))
+        local okI, _, tag = pcall(BNGetInfo or function() end)
+        Print(("  BattleTag %s%s"):format(tostring(okI and tag),
+            (okMe and type(me) == "table") and "" or " - our own presence is not ready yet; it retries every 10 s"))
+        local known = 0
+        for id = 1, 128 do
+            local okG, g = pcall(BN.GetGameAccountInfoByID or function() end, id)
+            if okG and type(g) == "table" then
+                known = known + 1
+                local own, why = OwnAccountGame(id)
+                Print(("  id %d: %s (%s, %s) - %s"):format(id, tostring(g.characterName),
+                    tostring(g.factionName), tostring(g.realmName or g.realmDisplayName),
+                    own and "|cff88ff88our other account|r" or tostring(why)))
+            end
+        end
+        local peers = AltStable.OwnBNetPeers()
+        local names = {}
+        for _, p in ipairs(peers) do names[#names + 1] = p.name end
+        Print(("  %d game account(s) known; found: %s; last scan: %s"):format(known,
+            #names > 0 and table.concat(names, ", ") or "none",
+            AltStable._bnetLastScan and (time() - AltStable._bnetLastScan) .. " s ago" or "never"))
+        return
+    end
+
     if cmd == "auth" then
         local list = AltStable.SyncAuthList()
         local waiting = AltStable.PendingSyncRequests()
-        local own = AltStable.OwnBNetPeers()
+        local own = {}
+        for _, p in ipairs(AltStable.OwnBNetPeers()) do
+            if AltStable.SyncAuthFor(p.name) ~= AltStable.AUTH_NEVER then own[#own + 1] = p end
+        end
         for _, p in ipairs(own) do
             Print(("  %s  |cff88ff88your account (Battle.net)|r - %s, %s"):format(p.name,
                 tostring(p.faction or "?"), tostring(p.realm or "?")))
@@ -3810,7 +4021,8 @@ end
 local function ResetSyncState()
     pendingAuth = {}
     bnetPeers, presence, bnetAnnounced, lastStreamFrom = {}, {}, {}, {}
-    bnetScanPending = false
+    bnetCapable, bnetSeen, routeCheckedAt, inboundChecked = {}, {}, {}, {}
+    bnetScanPending, bnetSettlingPending, bnetSettlingTries = false, false, 0
     finishedStreams = {}
     lastWhisperAt, syncAttempt, manualSyncAt, unreachableToldAt = {}, {}, {}, {}
     refusedStreams = {}

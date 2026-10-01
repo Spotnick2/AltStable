@@ -3267,6 +3267,9 @@ do
     end
     local function deliverBN(wire, id) for _, m in ipairs(wire) do bn(m, id) end; flushAll() end
     local function scan() AltStable.RescanOwnAccounts() end
+    -- The 60 s rescan ticker, registered by an earlier section's login, runs on
+    -- every timer flush here and would do the very scanning these tests watch.
+    if AltStable._bnetTicker then AltStable._bnetTicker:Cancel() end
     local function mine()
         AltStableDB = { ["Player-Mine-58"] = { guid = "Player-Mine-58", name = "Mine", class = "MAGE",
                                               level = 60, lastUpdate = 1000, scannedHere = true } }
@@ -3306,8 +3309,12 @@ do
     own(8, "Karuzo Test")
     WoW.sent, WoW.chatOut = {}, {}
     scan()
-    eq(bnTo(8, isReq), 1, "a newly found account is asked at once, over Battle.net")
-    check(chatHas("Found your other account"), "  and the player is told")
+    -- That whisper went out moments ago: its answer gets the first retry's time
+    -- rather than a second full reply being asked for at once (review of #142).
+    eq(bnTo(8, isReq), 0, "asked by whisper moments ago: no second request at once")
+    check(chatHas("Found your other account"), "  but the player is told")
+    WoW.flushTimers()                             -- the first retry's time
+    eq(bnTo(8, isReq), 1, "  and then asked over Battle.net, past the throttle the whisper set")
     scan()
     eq(bnTo(8, isReq), 1, "  a rescan does not ask again")
     local said = 0
@@ -3396,7 +3403,7 @@ do
     own(8, "Karuzo Test")
     scan()
     WoW.ctlDefer = true
-    T.RequestCharacters("WHISPER", "Karuzo Test", true)       -- queued for id 8
+    T.RequestCharacters("BNET", "Karuzo Test", true)          -- queued for id 8
     WoW.bn.accounts[8] = nil
     own(16, "Karuzo Test")                                      -- they came back as 16
     scan()
@@ -3410,7 +3417,7 @@ do
     mine()
     own(8, "Karuzo Test")
     scan()
-    T.RequestCharacters("WHISPER", "Karuzo Test", true)
+    T.RequestCharacters("BNET", "Karuzo Test", true)
     check(not WoW.chatFiltered("CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("Karuzo Test")),
           "a Battle.net send does not hide the player's own 'no player named'")
 
@@ -3515,6 +3522,152 @@ do
     AltStableConfig.bnetSync = true
     scan()
     eq(names(), "Karuzo Test@8", "switched back on: found again")
+
+    -- Right after a login our own presence can be blank (measured): that is
+    -- "not yet", not "nobody" - the scan looks again in 10 s and finds them.
+    freshAuth()
+    own(8, "Karuzo Test")
+    WoW.bn.blank = true
+    scan()
+    eq(names(), "", "our own presence still blank: nothing found yet")
+    WoW.chatOut = {}
+    slash("bnet")
+    check(chatHas("id 8: Karuzo Test") and chatHas("our own Battle.net presence is not ready yet"),
+          "  and /alts bnet says why, on the account's own line")
+    WoW.bn.blank = false
+    WoW.flushTimers()                                          -- the 10 s look-again
+    eq(names(), "Karuzo Test@8", "  once it fills in, the next quick scan finds them")
+
+    -- The other account still logging in (no character yet) is looked at again too.
+    freshAuth()
+    own(8, "Karuzo Test")
+    WoW.bn.accounts[8].characterName = nil
+    scan()
+    eq(names(), "", "their account with no character yet: not found")
+    WoW.bn.accounts[8].characterName = "Karuzo Test"
+    WoW.flushTimers()
+    eq(names(), "Karuzo Test@8", "  and found on the quick look-again")
+
+    -- Ownership by BattleTag when the account id is missing on their record.
+    freshAuth()
+    own(8, "Karuzo Test", { battleTag = "Owner#1" })
+    WoW.bn.accounts[8].bnetAccountID = nil
+    scan()
+    eq(names(), "Karuzo Test@8", "our BattleTag on their record is enough")
+    freshAuth()
+    own(9, "Friend Person", { battleTag = "Friend#9" })
+    WoW.bn.accounts[9].bnetAccountID = nil
+    scan()
+    eq(names(), "", "  a different BattleTag is not")
+
+    -- An own account NOT heard over Battle.net (its switch off, or an older
+    -- AltStable) keeps the whisper sync: our reply to its whisper is a whisper.
+    freshAuth({ whitelist = { "Karuzo Test" } })
+    mine()
+    own(8, "Karuzo Test")
+    scan()
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Karuzo Test")
+    flushAll()
+    local whisperChunks, bnetChunks = 0, 0
+    for _, m in ipairs(WoW.sent) do
+        if chunk(m.text) then
+            if m.channel == "BNET" then bnetChunks = bnetChunks + 1 else whisperChunks = whisperChunks + 1 end
+        end
+    end
+    check(whisperChunks > 0 and bnetChunks == 0,
+          "a found account not yet heard over Battle.net is answered by whisper")
+    bn(T.MSG_REQUEST_V .. "|0", 8)                -- now it is heard over Battle.net
+    WoW.sent = {}
+    receiveUnapproved(T.MSG_REQUEST_V .. "|0", "Karuzo Test")
+    flushAll()
+    check(bnTo(8, chunk) > 0, "  and over Battle.net once it has spoken it")
+
+    -- An explicit Battle.net request with no route sends nothing at all.
+    freshAuth()
+    WoW.sent = {}
+    T.RequestCharacters("BNET", "Nobody Here", true)
+    eq(#WoW.sent, 0, "a Battle.net request with no route never falls back to a whisper")
+
+    -- No retry while their answer is still arriving.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    local slow = splitWire(streamOf("Player-SLOW-", 4))
+    scan()
+    bn(slow[1], 8)                                -- their stream has begun
+    WoW.sent = {}
+    WoW.flushTimers()                             -- the retry's time
+    eq(bnTo(8, isReq), 0, "a retry waits while their answer is still arriving")
+
+    -- A refused own account is neither announced nor asked.
+    freshAuth()
+    mine()
+    own(8, "Karuzo Test")
+    AltStable.DenySyncPeer("Karuzo Test")
+    WoW.chatOut = {}
+    scan()
+    check(not chatHas("Found your other account"), "a refused own account is not announced")
+
+    -- A peer learned from its message, beyond the id walk and not in the
+    -- database, survives the next scan.
+    freshAuth()
+    own(140, "Far Id")
+    bn(T.MSG_REQUEST_V .. "|0", 140)
+    scan()
+    eq(names(), "Far Id@140", "a peer learned from its own message survives the next scan")
+
+    -- A character known as our own this session, its binding just lost, is
+    -- not told "factions" when a whisper fallback echoes.
+    freshAuth()
+    WoW.faction = "Alliance"
+    AltStableDB = { ["Player-KH-1"] = { guid = "Player-KH-1", name = "Karuzo Test", class = "MAGE",
+                                        level = 60, lastUpdate = 1000, faction = "Horde" } }
+    own(8, "Karuzo Test")
+    scan()
+    WoW.bn.accounts[8] = nil                      -- they switched character
+    scan()
+    WoW.chatOut = {}
+    slash("sync Karuzo Test")
+    onEvent(T.frame, "CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("Karuzo Test"))
+    flushAll()
+    check(chatHas("through Battle.net") and not chatHas("do not cross factions"),
+          "an own account that just left is not explained as 'factions'")
+    WoW.faction = "Horde"
+
+    -- Forgetting an own account says what really keeps it trusted.
+    freshAuth()
+    own(8, "Karuzo Test")
+    scan()
+    AltStable.DenySyncPeer("Karuzo Test")
+    WoW.chatOut = {}
+    AltStable.ForgetSyncPeer("Karuzo Test")
+    check(chatHas("your own account on") and not chatHas("on your whitelist"),
+          "forgetting an own account names Battle.net, not the whitelist")
+
+    -- A whisper stream id seen again (a client from before #58 restarts its ids
+    -- on /reload) is a new stream, not a late one.
+    freshAuth({ whitelist = { "Old Client" } })
+    local again = streamOf("Player-OC-", 2)
+    WoW.chatOut = {}
+    deliver(again, "Old Client")
+    deliver(again, "Old Client")
+    local completes = 0
+    for _, l in ipairs(WoW.chatOut) do if l:find("Sync with Old Client complete", 1, true) then completes = completes + 1 end end
+    eq(completes, 2, "a whisper stream id seen again is taken as a new stream")
+
+    -- /alts bnet explains: kept, and why the others were not.
+    freshAuth()
+    own(8, "Karuzo Test")
+    own(9, "Friend Person", { bnetAccountID = 5 })
+    scan()
+    WoW.chatOut = {}
+    slash("bnet")
+    check(chatHas("id 8: Karuzo Test") and chatHas("our other account"), "/alts bnet shows the account it keeps")
+    check(chatHas("id 9: Friend Person") and chatHas("someone else's Battle.net account"),
+          "  and why a friend is not")
+    check(chatHas("found: Karuzo Test"), "  and what was found")
+    scan()
 
     -- Battle.net going away clears what was found.
     onEvent(T.frame, "BN_DISCONNECTED")

@@ -87,7 +87,7 @@ function WoW.reset()
     WoW.popups = {}
     WoW.popupRefused = nil
     WoW.sendResults, WoW.reportedErrors = {}, {}
-    WoW.bn = { me = 1, myId = 2, project = 18, connected = true, accounts = {} }
+    WoW.bn = { me = 1, myId = 2, project = 18, tag = "Owner#1", connected = true, accounts = {} }
     WoW.ctlDefer, WoW.ctlQueue, WoW.ctlHeld = false, {}, {}
     WoW.reloaded = 0
     WoW.sounds = {}
@@ -1331,8 +1331,14 @@ C_ChatInfo = {
 -- A test declares the other side with WoW.bn.accounts[id] = { characterName,
 -- playerGuid, isOnline, clientProgram, wowProjectID, isInCurrentRegion,
 -- factionName, realmName, bnetAccountID }.
-WoW.bn = { me = 1, myId = 2, project = 18, connected = true, accounts = {} }
+-- WoW.bn.blank = true models our own presence right after a login/reload
+-- (measured): no account record, our own game account with no character.
+WoW.bn = { me = 1, myId = 2, project = 18, tag = "Owner#1", connected = true, accounts = {} }
 local function bnSelf()
+    if WoW.bn.blank then
+        return { gameAccountID = WoW.bn.myId, isOnline = true, clientProgram = "WoW",
+                 isInCurrentRegion = true }
+    end
     return { gameAccountID = WoW.bn.myId, characterName = WoW.player.name,
              playerGuid = WoW.player.guid, isOnline = true, clientProgram = "WoW",
              wowProjectID = WoW.bn.project, isInCurrentRegion = true,
@@ -1358,12 +1364,17 @@ function C_BattleNet.GetGameAccountInfoByGUID(guid)
 end
 function C_BattleNet.GetAccountInfoByGUID(guid)
     if guid == WoW.player.guid then
-        if WoW.bn.me == nil then return nil end
-        return { bnetAccountID = WoW.bn.me, battleTag = "Owner#1", gameAccountInfo = bnSelf() }
+        if WoW.bn.me == nil or WoW.bn.blank then return nil end
+        return { bnetAccountID = WoW.bn.me, battleTag = WoW.bn.tag, gameAccountInfo = bnSelf() }
     end
     for id, a in pairs(WoW.bn.accounts) do
         if a.playerGuid == guid then
-            return { bnetAccountID = a.bnetAccountID, gameAccountInfo = bnCopy(a, id) }
+            -- Our own accounts carry our BattleTag; a friend's, theirs.
+            local tag = a.battleTag
+            if tag == nil and a.bnetAccountID ~= nil then
+                tag = (a.bnetAccountID == WoW.bn.me) and WoW.bn.tag or ("Other#" .. a.bnetAccountID)
+            end
+            return { bnetAccountID = a.bnetAccountID, battleTag = tag, gameAccountInfo = bnCopy(a, id) }
         end
     end
 end
@@ -1382,6 +1393,8 @@ function C_BattleNet.SendGameData(id, prefix, text)
     return 0
 end
 function BNFeaturesEnabledAndConnected() return WoW.bn.connected ~= false end
+-- presenceID, battleTag, ... - available even while our presence is blank.
+function BNGetInfo() return WoW.bn.me, WoW.bn.tag end
 
 -- What ChatThrottleLib v32 calls besides the chat API, as the client has them.
 -- The client's securecallfunction hands an error in fn to the error handler
@@ -1510,6 +1523,10 @@ ChatThrottleLib = {
     -- v32's BNSendGameData: same pacing, same 255-byte cap, same callback; the
     -- "target" is the game account id and the chat type must be WHISPER.
     BNSendGameData = function(self, prio, prefix, text, chattype, gameAccountID, q, callbackFn, callbackArg)
+        -- v32's own preconditions: a game account id, and chat type WHISPER.
+        if not gameAccountID or chattype ~= "WHISPER" then
+            error('Usage: ChatThrottleLib:BNSendGameData("{BULK||NORMAL||ALERT}", "prefix", "text", "chattype", gameAccountID)', 2)
+        end
         return self._send(self, "BNSendGameData", function()
             return C_BattleNet.SendGameData(gameAccountID, prefix, text)
         end, prio, prefix, text, chattype, gameAccountID, q, callbackFn, callbackArg)
