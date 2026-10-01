@@ -267,7 +267,32 @@ session, with two clients running:
    Everything in the cross-realm half rests on this, and both the client format and our own
    realm-stripping are unverified.
 
-**Measured on 70124 (first round, one character):**
+**Measured on 70124** (2026-09-30; Malas Belgarden on account #1 and Karuzo Mortalis on #12, both
+Alliance on ClassicBetaPvE; Karuzo Test, Alliance on ClassicBetaPvP2; Memphisto Mortalis, Horde on
+ClassicBetaPvE - read from both accounts' `AltStableProbe.lua`):
+
+- **2 - same faction, same ruleset, across accounts: YES.** Karuzo's ping reached Malas; Malas
+  answered on the channel AND by whisper to the `sender` string, and both reached Karuzo (7, same
+  ruleset).
+- **2 - across rulesets: NO** (to be confirmed: it rests on Karuzo Mortalis, PvE, still being in the
+  channel when Karuzo Test, PvP2, pinged it at 23:15 - its log is silent from 23:13 on).
+- **Across factions: NO.** Memphisto Mortalis (Horde) heard only its own ping.
+- **3 - a relog drops the channel.** At the next login the character was no longer in it: the addon
+  rejoins at every login.
+- **4 - the cap is 20 channels, and the 21st join fails SILENTLY:** no notice, `GetChannelName` 0,
+  and `JoinTemporaryChannel` returns nothing (a success returns `0`). Five are the client's own
+  (General, Trade, LocalDefense, Services, TradeLocal), so a player has 15 to spare. Check
+  `GetChannelName` after joining; never assume.
+- **Ownership:** the first member owns the channel; when the owner leaves it passes on
+  (`CHAT_MSG_CHANNEL_NOTICE_USER` `OWNER_CHANGED`, `SET_MODERATOR`). The join notice is
+  `YOU_CHANGED`, not `YOU_JOINED`.
+
+**What it means for #58:** a household channel reaches exactly one **faction on one ruleset** - so
+it is one channel per (ruleset, faction) the household plays, each rejoined at login. Whether a
+**whisper** crosses rulesets (7, cross-ruleset) is the last open question: it decides whether
+same-faction alts on two rulesets can sync at all.
+
+**Earlier (first character alone):**
 
 - **1 - delivers.** `SendAddonMessage(prefix, msg, "CHANNEL", localId)` returns `0 (Success)` and
   arrives; the local id works as a number and as its string.
@@ -279,8 +304,6 @@ session, with two clients running:
 - **3 (half) - no chat window lists a joined temporary channel.** `JoinTemporaryChannel`,
   `JoinChannelByName` and `JoinPermanentChannel` all exist; `JoinTemporaryChannel(name, pw)`
   returned `0`, and the server's notice arrives as `CHAT_MSG_CHANNEL_NOTICE` (18 arguments).
-- **Still open:** a second character hearing it (same faction, then another ruleset, then the
-  other faction), relog survival, the channel cap.
 
 **The probe:** `/asprobe channel …` in `Tools/AltStableProbe/Channel.lua` (deploy with
 `pwsh Tools/deploy-probe.ps1`), everything to the wire log for `/asprobe copy`:
@@ -294,6 +317,10 @@ session, with two clients running:
 | `cap` | 4: joins `ASPCap1..15` until refused, logs the notices, leaves them all |
 | `leave <name>` | |
 | `log`, `clear` | the channel results (the wire log, kept across relogs) in the copy window; empty it |
+
+**Reading the results:** `python Tools/AltStableProbe/read-wirelog.py [--since HH:MM]` prints the
+wire log from every account's `WTF\Account\<id>\SavedVariables\AltStableProbe.lua` - written on
+`/reload` and logout, so `/reload` each character after a round. No copying out of the game.
 
 ---
 

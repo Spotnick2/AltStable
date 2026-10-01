@@ -685,7 +685,12 @@ local wire = CreateFrame("Frame")
 -- minutes after the sweep that prompted it.
 local function WireRecord(s)
     AltStableProbeDB.wireLog = AltStableProbeDB.wireLog or {}
-    local entry = date("%H:%M:%S") .. "  " .. s
+    -- Who wrote it, on every line: two characters of one account share this
+    -- file, and the log is read straight from WTF\...\AltStableProbe.lua by
+    -- Tools/AltStableProbe/read-wirelog.py rather than copied out of the game.
+    local who = (AltStable and AltStable.API and AltStable.API.PlayerFullName
+        and AltStable.API.PlayerFullName()) or (UnitName and UnitName("player")) or "?"
+    local entry = date("%Y-%m-%d %H:%M:%S") .. "  [" .. who .. "]  " .. s
     AltStableProbeDB.wireLog[#AltStableProbeDB.wireLog + 1] = entry
     lines[#lines + 1] = entry
     Out(s)
