@@ -572,7 +572,7 @@ local function SelfBNet()
     if ok and type(me) == "table" then
         s.account, s.tag = me.bnetAccountID, me.battleTag
         local g = type(me.gameAccountInfo) == "table" and me.gameAccountInfo or {}
-        s.game, s.project = g.gameAccountID, g.wowProjectID
+        s.game, s.project, s.region = g.gameAccountID, g.wowProjectID, g.regionID
     end
     if (s.tag == nil or s.account == nil) and BNGetInfo then
         local okI, presenceID, battleTag = pcall(BNGetInfo)
@@ -585,8 +585,25 @@ local function SelfBNet()
         local okG, g = pcall(C_BattleNet.GetGameAccountInfoByGUID, UnitGUID("player"))
         if okG and type(g) == "table" then
             s.project = g.wowProjectID
+            s.region = s.region or g.regionID
             s.game = s.game or g.gameAccountID
         end
+    end
+    -- WHICH GAME we are (owner, 2026-10-01: a beta, a live realm, a PTR or TBC
+    -- Anniversary on the same Battle.net account must never sync with us).
+    -- Known only from our own presence, which can stay blank - so it is
+    -- remembered from any time it WAS known, and with nothing known the caller
+    -- fails closed. wowProjectID was 18 and regionID 90 on the Forever beta
+    -- (measured); a live Forever is expected to differ in region (unmeasured).
+    AltStableConfig = AltStableConfig or {}
+    if s.project ~= nil and s.region ~= nil then
+        if AltStableConfig.bnetSelfProject ~= s.project or AltStableConfig.bnetSelfRegion ~= s.region then
+            AltStable.SetConfigValue("bnetSelfProject", s.project)
+            AltStable.SetConfigValue("bnetSelfRegion", s.region)
+        end
+    else
+        s.project = s.project or AltStableConfig.bnetSelfProject
+        s.region = s.region or AltStableConfig.bnetSelfRegion
     end
     if s.account == nil and s.tag == nil then return nil end
     return s
@@ -623,12 +640,16 @@ local function OwnAccountGame(id, me)
     if g.playerGuid == UnitGUID("player") then return nil, "this character" end
     me = me or SelfBNet()     -- a scan passes it in: one lookup per scan, not per id
     if not me then return nil, "our Battle.net identity is not known yet" end
-    -- Our own project comes only with our presence, which can stay blank for
-    -- good (measured). Then the check is skipped: ownership below still needs
-    -- our account or BattleTag, and the worst case is a request to another WoW
-    -- flavour on our own account, which ignores it.
-    if me.project ~= nil and g.wowProjectID ~= me.project then
+    -- The same GAME and the same REGION as us, or nothing - never skipped: a
+    -- live realm, a PTR or TBC Anniversary on our own Battle.net account must
+    -- not sync with this one (owner, 2026-10-01). Not known (our presence blank
+    -- and never seen): fail closed.
+    if me.project == nil then return nil, "our own game is not known yet (our presence is blank)" end
+    if g.wowProjectID ~= me.project then
         return nil, ("another game (project %s, ours %s)"):format(tostring(g.wowProjectID), tostring(me.project))
+    end
+    if me.region ~= nil and g.regionID ~= nil and g.regionID ~= me.region then
+        return nil, ("another region (%s, ours %s)"):format(tostring(g.regionID), tostring(me.region))
     end
     local okA, acct = pcall(C_BattleNet.GetAccountInfoByGUID, g.playerGuid)
     if not okA or not IsOurAccount(acct, me) then
@@ -706,6 +727,47 @@ end
 
 -- The game record for an id: Battle.net's own, or - presence blank - what its
 -- hello told us, while the id still checks out as ours by elimination.
+-- THE HOUSEHOLD KEY (Codex, #142 round 2). Elimination cannot PROVE
+-- ownership: a friends list that answers "zero" while still loading looks
+-- complete, and a friend's blank account would be taken for ours - reproduced:
+-- a friend was sent a chunk. So elimination is only a hint for where to say
+-- hello; TRUST for a blank presence needs proof:
+--
+--   * every account has a random key (AltStableConfig.bnetKey);
+--   * it is sent ONLY to an account Battle.net itself verified as ours (full
+--     presence, our account id or BattleTag) - a friend never receives it;
+--   * received FROM such a verified account, it is remembered as trusted
+--     (AltStableConfig.bnetTrusted);
+--   * a blank presence is believed only when its hello carries a trusted key.
+--
+-- So two accounts must have seen each other's full presence once, ever; after
+-- that a blank presence on either side no longer stops them.
+local function OwnKey()
+    AltStableConfig = AltStableConfig or {}
+    local k = AltStableConfig.bnetKey
+    if type(k) ~= "string" or #k < 16 then
+        local parts = {}
+        for i = 1, 5 do parts[i] = ("%04x"):format(math.random(0, 65535)) end
+        k = table.concat(parts)
+        AltStable.SetConfigValue("bnetKey", k)
+    end
+    return k
+end
+local function KeyTrusted(k)
+    return type(k) == "string" and #k >= 16 and type(AltStableConfig.bnetTrusted) == "table"
+        and AltStableConfig.bnetTrusted[k] == true
+end
+local function TrustKey(k)
+    if type(k) ~= "string" or #k < 16 or KeyTrusted(k) then return end
+    local copy = {}
+    for key, v in pairs(AltStableConfig.bnetTrusted or {}) do copy[key] = v end
+    copy[k] = true
+    AltStable.SetConfigValue("bnetTrusted", copy)
+end
+
+-- The game record for an id: Battle.net's own; or - presence blank - what a
+-- hello carrying a trusted key told us, while that id is still online and
+-- still blank.
 local function GameFor(id, me, friends)
     local g = OwnAccountGame(id, me)
     if g then
@@ -714,10 +776,15 @@ local function GameFor(id, me, friends)
         return g
     end
     local l = learnedNames[id]
-    if l and OwnByElimination(id, me, friends) then
-        return { characterName = l.name, playerGuid = l.guid, factionName = l.faction,
-                 realmName = l.realm }
+    if not l then return nil end
+    local ok, raw = pcall(C_BattleNet.GetGameAccountInfoByID, id)
+    if not ok or type(raw) ~= "table" or raw.isOnline == false
+        or (type(raw.characterName) == "string" and raw.characterName ~= "") then
+        learnedNames[id] = nil      -- gone, or no longer blank: Battle.net decides now
+        return nil
     end
+    return { characterName = l.name, playerGuid = l.guid, factionName = l.faction,
+             realmName = l.realm }
 end
 
 -- Tell an own account who we are. Over Battle.net only, ALERT priority.
@@ -728,9 +795,11 @@ local HELLO_EVERY = 60
 local helloSent = {}      -- game account id -> when our hello last went to it
 local function SendHello(id)
     if helloSent[id] and (time() - helloSent[id]) < HELLO_EVERY then return end
+    -- The household key goes only to an account Battle.net verifies as ours.
+    local key = OwnAccountGame(id) and OwnKey() or ""
     local msg = table.concat({ MSG_HELLO, PLAYER_NAME or "", UnitGUID("player") or "",
         (UnitFactionGroup and UnitFactionGroup("player")) or "",
-        (GetRealmName and GetRealmName()) or "" }, "|")
+        (GetRealmName and GetRealmName()) or "", key }, "|")
     local function sent(_, didSend) if didSend ~= false then helloSent[id] = time() end end
     local ok = ChatThrottleLib and ChatThrottleLib.BNSendGameData
         and pcall(ChatThrottleLib.BNSendGameData, ChatThrottleLib, "ALERT", PREFIX, msg, "WHISPER", id,
@@ -3220,13 +3289,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if prefix ~= PREFIX or not BNetEnabled() then return end
         -- A hello: who is on that game account, in its own words (see MSG_HELLO).
         if type(text) == "string" and text:sub(1, #MSG_HELLO + 1) == MSG_HELLO .. "|" then
-            local _, name, guid, faction, realm = strsplit("|", text)
+            local _, name, guid, faction, realm, key = strsplit("|", text)
             if not name or name == "" or AuthKey(name) == AuthKey(PLAYER_NAME) then return end
             local g = OwnAccountGame(senderID)
             if g then
-                -- Battle.net knows them: the hello must agree with it.
+                -- Battle.net knows them: the hello must agree with it - and a
+                -- key from an account Battle.net verifies is ours to trust.
                 if AuthKey(g.characterName) ~= AuthKey(name) then return end
-            elseif OwnByElimination(senderID) then
+                TrustKey(key)
+            elseif KeyTrusted(key) then
+                -- Presence blank: believed only on a trusted household key.
                 learnedNames[senderID] = { name = name, guid = guid ~= "" and guid or nil,
                     faction = faction ~= "" and faction or nil, realm = realm ~= "" and realm or nil }
                 g = GameFor(senderID)
@@ -3959,7 +4031,8 @@ SlashCmdList["ALTSTABLE"] = function(args)
                         own, why = learned, nil
                         g = learned
                     elseif OwnByElimination(id) then
-                        why = "our other account (presence blank, not a friend's) - waiting for its hello"
+                        why = "probably our other account (presence blank, not a friend's) - "
+                        .. "waiting for a hello with a household key"
                     end
                 end
                 Print(("  id %d: %s (%s, %s) - %s"):format(id, tostring(g.characterName),

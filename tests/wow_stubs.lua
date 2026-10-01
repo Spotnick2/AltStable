@@ -1331,6 +1331,7 @@ C_ChatInfo = {
 -- A test declares the other side with WoW.bn.accounts[id] = { characterName,
 -- playerGuid, isOnline, clientProgram, wowProjectID, isInCurrentRegion,
 -- factionName, realmName, bnetAccountID }.
+-- regionID: 90 on the Forever beta (measured).
 -- WoW.bn.blank = true models our own presence right after a login/reload
 -- (measured): no account record, our own game account with no character.
 -- WoW.bn.friends = { { 9, 10 }, ... }: each friend's online game account ids.
@@ -1342,7 +1343,7 @@ local function bnSelf()
     end
     return { gameAccountID = WoW.bn.myId, characterName = WoW.player.name,
              playerGuid = WoW.player.guid, isOnline = true, clientProgram = "WoW",
-             wowProjectID = WoW.bn.project, isInCurrentRegion = true,
+             wowProjectID = WoW.bn.project, isInCurrentRegion = true, regionID = 90,
              factionName = WoW.faction or "Horde", realmName = WoW.player.normalizedRealm }
 end
 local function bnCopy(t, id)

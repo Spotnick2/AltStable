@@ -3242,7 +3242,7 @@ end
 do
     local function own(id, name, extra)
         local a = { characterName = name, playerGuid = "Player-4613-" .. id, isOnline = true,
-                    clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true,
+                    clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true, regionID = 90,
                     factionName = "Alliance", realmName = "ClassicBetaPvP2",
                     realmDisplayName = "Classic Beta PvP2", bnetAccountID = WoW.bn.me }
         for k, v in pairs(extra or {}) do a[k] = v end
@@ -3528,9 +3528,17 @@ do
     freshAuth()
     own(8, "Karuzo Test")
     WoW.bn.blank = true
+    -- Never seen our own game (first time, presence blank): fail closed - a
+    -- live realm or TBC Anniversary on our account must not pass (owner).
     scan()
-    -- It can stay blank for good (measured): our BattleTag, which BNGetInfo
-    -- gives regardless, is enough to know the other account is ours.
+    eq(names(), "", "our presence blank and our game never known: nothing trusted")
+    WoW.chatOut = {}
+    slash("bnet")
+    check(chatHas("our own game is not known yet"), "  and /alts bnet says so")
+    -- Remembered from an earlier session: our BattleTag (BNGetInfo answers
+    -- regardless) and that game are enough.
+    AltStableConfig.bnetSelfProject, AltStableConfig.bnetSelfRegion = 18, 90
+    scan()
     eq(names(), "Karuzo Test@8", "our own presence blank: the other account is still found, by BattleTag")
     local hellos = 0
     for _, m in ipairs(WoW.sent) do
@@ -3744,9 +3752,13 @@ do
     -- name, no GUID. Ours by elimination - not ours, not a friend's - and its
     -- hello says who it is.
     local function blank(id) WoW.bn.accounts[id] = { isOnline = true, clientProgram = "WoW" } end
-    local function hello(id, name, guid)
-        bn(table.concat({ "HI" .. T.PROTOCOL_VERSION, name, guid or "", "Alliance", "Classic Beta PvE" }, "|"), id)
+    local TESTKEY = "abcdef0123456789abcd"
+    local function hello(id, name, guid, key)
+        bn(table.concat({ "HI" .. T.PROTOCOL_VERSION, name, guid or "", "Alliance", "Classic Beta PvE",
+                          key or TESTKEY }, "|"), id)
     end
+    -- The household key swapped in an earlier session, when both presences showed.
+    local function trusted() AltStableConfig.bnetTrusted = { [TESTKEY] = true } end
     freshAuth()
     mine()
     blank(3)
@@ -3757,8 +3769,11 @@ do
     scan()
     eq(bnTo(3, function(t) return t:find("^HI") ~= nil end), 1, "  and not said hello to again within the minute")
     WoW.sent, WoW.chatOut = {}, {}
+    hello(3, "Karuzo Mortalis", "Player-4618-006C88FB", "not-our-key-at-all-xx")
+    eq(names(), "", "a blank account's hello without a trusted key is not believed")
+    trusted()
     hello(3, "Karuzo Mortalis", "Player-4618-006C88FB")
-    eq(names(), "Karuzo Mortalis@3", "its hello says who it is")
+    eq(names(), "Karuzo Mortalis@3", "its hello, with our household key, says who it is")
     check(chatHas("Found your other account: |cff88ff88Karuzo Mortalis"), "  and it is announced")
     eq(bnTo(3, isReq), 1, "  and asked, over Battle.net")
     bn(T.MSG_REQUEST_V .. "|0", 3)
@@ -3834,6 +3849,7 @@ do
     freshAuth()
     mine()
     blank(3)
+    trusted()
     scan()
     hello(3, "Karuzo Mortalis", "Player-4618-006C88FB")
     WoW.now = WoW.now + 61
@@ -3853,6 +3869,7 @@ do
     -- A learned name does not outlive the account it came from.
     freshAuth()
     blank(3)
+    trusted()
     hello(3, "Old Surname")
     eq(names(), "Old Surname@3", "learned from its hello")
     WoW.bn.accounts[3].isOnline = false
@@ -3860,6 +3877,30 @@ do
     WoW.bn.accounts[3].isOnline = true
     scan()
     eq(names(), "", "  gone offline and back: no longer assumed to be the same character")
+
+    -- Coming back, it is said hello to at once - not a minute later.
+    freshAuth()
+    blank(3)
+    trusted()
+    scan()                                       -- our hello to it
+    hello(3, "Old Surname")
+    WoW.bn.accounts[3].isOnline = false
+    scan()
+    WoW.bn.accounts[3].isOnline = true
+    WoW.sent = {}
+    scan()
+    eq(hellosTo(3), 1, "an account back online is said hello to at once")
+
+    -- A learned name gives way when the presence fills in as someone else's.
+    freshAuth()
+    blank(3)
+    trusted()
+    hello(3, "Old Surname")
+    WoW.bn.accounts[3] = { isOnline = true, clientProgram = "WoW", characterName = "Friend Person",
+                           playerGuid = "Player-F-3", wowProjectID = 18, regionID = 90,
+                           isInCurrentRegion = true, bnetAccountID = 5 }
+    scan()
+    eq(names(), "", "a learned name does not survive the presence filling in as someone else")
 
     -- /alts allow's request back goes the way their request came (by whisper),
     -- even after they were heard over Battle.net in between.
@@ -3892,9 +3933,62 @@ do
     T.QueueWire(T.MSG_REQUEST_V .. "|0", "WHISPER", "Karuzo Test", "ALERT")
     eq(bnTo(8), 0, "switched off and on: capability is forgotten")
 
+    -- The household key: learned only from an account Battle.net verifies,
+    -- sent only to one.
+    freshAuth()
+    own(8, "Karuzo Test")
+    hello(8, "Karuzo Test", nil, "verifiedkey0123456789")
+    check(AltStableConfig.bnetTrusted and AltStableConfig.bnetTrusted["verifiedkey0123456789"],
+          "a verified own account's key is remembered as trusted")
+    freshAuth()
+    own(8, "Karuzo Test")
+    WoW.sent = {}
+    scan()
+    local keyed, keyless = 0, 0
+    for _, m in ipairs(WoW.sent) do
+        if m.channel == "BNET" and m.target == 8 and m.text:find("^HI") then
+            if AltStableConfig.bnetKey and m.text:find(AltStableConfig.bnetKey, 1, true) then
+                keyed = keyed + 1 else keyless = keyless + 1 end
+        end
+    end
+    eq(keyed .. "/" .. keyless, "1/0", "our key goes to an account Battle.net verifies as ours")
+    freshAuth()
+    blank(3)
+    WoW.sent = {}
+    scan()
+    keyed, keyless = 0, 0
+    for _, m in ipairs(WoW.sent) do
+        if m.channel == "BNET" and m.target == 3 and m.text:find("^HI") then
+            if m.text:sub(-1) == "|" then keyless = keyless + 1 else keyed = keyed + 1 end
+        end
+    end
+    eq(keyed .. "/" .. keyless, "0/1", "  and never to a blank one (could be a friend): its hello has no key")
+
+    -- Codex's case: a friends list that answers ZERO while still loading. The
+    -- friend's blank account looks ours by elimination - but without our key
+    -- its hello is not believed and it gets nothing.
+    freshAuth()
+    mine()
+    blank(9)
+    WoW.bn.friends = {}                          -- "zero friends", successfully
+    WoW.sent = {}
+    scan()
+    hello(9, "Claimed Owner", nil, "friendsguessedkey0000")
+    bn(T.MSG_REQUEST_V .. "|0", 9)
+    flushAll()
+    eq(names(), "", "a zero-count friends list grants no trust")
+    eq(bnTo(9, chunk), 0, "  and the friend is sent no data")
+
+    -- Same game but another region (a live realm vs the beta): not ours to sync.
+    freshAuth()
+    own(8, "Karuzo Live", { regionID = 1 })
+    scan()
+    eq(names(), "", "another region on our own Battle.net account is not synced")
+
     -- A hello carrying our own name (our own blank id) is ignored.
     freshAuth()
     blank(7)
+    trusted()                                    -- even with our key: it is our own name
     hello(7, WoW.player.name)
     eq(names(), "", "a hello with our own name is our own echo")
 

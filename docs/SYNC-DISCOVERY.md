@@ -27,14 +27,20 @@ rulesets and across factions, both directions - where whispers and channels stop
 - **A presence can stay blank** (measured 2026-10-01: 16+ minutes after a `/reload`, and again
   after a relog; blank on both sides - our own record and the other client's view of us), while
   `BNGetInfo` still answers. So nothing depends on it:
-  - **our presence blank**: the project check is skipped; ownership by our BattleTag still holds;
-  - **theirs blank** (no name AND no GUID): ours **by elimination** - this client only knows game
-    accounts that are ours or a friend's, so an id in no friend's list is ours. Fail closed: any gap
-    in the friends list means "unknown", and elimination waits until Battle.net has been up for a
-    minute (a list still loading reads as empty - a practical guard, not proof of completeness);
-  - **who is on it**: a Battle.net-only hello, `HI8|name|guid|faction|realm`, sent on first contact,
-    to blank own ids, and in answer to a hello (at most once a minute per id); forgotten when that id
-    goes offline, its binding drops, or Battle.net contradicts it.
+  - **our presence blank**: ownership by our BattleTag (`BNGetInfo`) still holds; our game and
+    region come from the last time they were known (saved), and with nothing ever known we fail
+    closed. **Same game AND same region, always** - a live realm, a PTR or TBC Anniversary on the
+    same Battle.net account never syncs with this one (owner, 2026-10-01). Forever beta measured as
+    `wowProjectID` 18, `regionID` 90; a live Forever is expected to differ in region (unmeasured);
+  - **theirs blank** (no name AND no GUID): elimination - an id in no friend's list - is only a HINT
+    of where to say hello. It cannot prove ownership: a friends list answering "zero" while still
+    loading looks complete (Codex round 2 reproduced a friend being sent a chunk). **Proof is the
+    household key**: each account has a random key, sent only to an account Battle.net verifies as
+    ours and remembered when received from one; a blank presence is believed only when its hello
+    carries a trusted key. Two accounts must have seen each other's full presence once, ever;
+  - **who is on it**: a Battle.net-only hello, `HI8|name|guid|faction|realm|key`, sent on first
+    contact, to blank ids by hint (without the key), and in answer to a hello (at most once a minute
+    per id); forgotten when that id goes offline, its binding drops, or Battle.net contradicts it.
 - **Transport of origin**: a request is answered the way it came (Battle.net, or a plain whisper -
   `WHISPER_DIRECT`), a resync goes the way the failed stream came, and a whitelisted own account not
   yet heard over Battle.net keeps its whisper. Capability is forgotten with its binding.
