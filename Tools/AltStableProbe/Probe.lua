@@ -697,6 +697,7 @@ local function WireRecord(s)
 end
 AltStableProbe = AltStableProbe or {}
 AltStableProbe.WireRecord = WireRecord     -- Channel.lua logs through it
+AltStableProbe.ValStr = ValStr             -- and BNet.lua describes structs with it
 
 -- Send the same ping to every plausible spelling of the target, each tagged
 -- with the form that produced it. Whichever tags come back as PONG are the
@@ -812,6 +813,10 @@ SlashCmdList["ASPROBE"] = function(msg)
     cmd = (cmd or ""):lower()
     if cmd == "channel" then
         AltStableProbe.Channel(arg)
+        return
+    end
+    if cmd == "bnet" then
+        AltStableProbe.BNet(arg)
         return
     end
     if cmd == "whisper" then

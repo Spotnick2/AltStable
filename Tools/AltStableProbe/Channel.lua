@@ -148,6 +148,9 @@ local function Cap()
     end)
 end
 
+-- Shared with BNet.lua.
+AltStableProbe.util = { Log = Log, Args = Args, ResultStr = ResultStr, Where = Where }
+
 function AltStableProbe.Channel(arg)
     local sub, rest = (arg or ""):match("^(%S*)%s*(.*)$")
     sub = (sub or ""):lower()

@@ -182,7 +182,19 @@ name, exactly as we do.
 **Battle.net game data.** `C_BattleNet.SendGameData(gameAccountID, prefix, data)` exists on 70009
 and is cross-realm *and* cross-faction — the ideal transport, except it needs a **Battle.net
 friend's** game account id. Our two WoW accounts live under one Battle.net account
-(`50284074#1` and `50284074#12`), and an account cannot friend itself. Closed.
+(`50284074#1` and `50284074#12`), and an account cannot friend itself. ~~Closed.~~ **Reopened, to
+measure (2026-09-30):** "cannot friend itself" was never the question - the question is whether
+the server delivers game data to your OWN other game account, by id, with both online. Nothing
+measured says no. Overlord Forever 1.3.2 (`C:\Projects\References\Overlord-1.3.2`, read for
+technique only - All Rights Reserved) bridges Horde and Alliance this way through Battle.net
+FRIENDS, whose clients relay. `/asprobe bnet me` / `send <id>` measure the own-account case. If it
+delivers, it crosses rulesets AND factions, which nothing else here does.
+
+Overlord also answers two practical questions for the channel half: it joins with
+`JoinChannelByName(name, nil, 0, 0)` - frame id 0, so no chat window lists it - through
+`securecall`, to keep the chat system untainted; and it waits until the client's General channel
+holds slot /1 before joining (up to ~30 s), because joining first moved General to /2 every session
+and players reported it. Both apply to us as they stand.
 
 **Across factions, nothing.** Measured on 70124: an addon whisper to a character online on the
 other faction comes back as `No player named 'X' is currently playing.` - the same line as for

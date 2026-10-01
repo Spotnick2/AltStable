@@ -11,6 +11,7 @@
 
 Probe.lua
 Channel.lua
+BNet.lua
 Models.lua
 Scene.lua
 WhatIcon.lua
