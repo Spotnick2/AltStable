@@ -69,12 +69,49 @@ local function Send(id)
     Log("  >> a BPONG line on this character, or a RECV BPING on the other, is the proof it arrived")
 end
 
+-- A game account id is a handle LOCAL to the client that hands it out: "7" on
+-- one account's client is not the other account's name for it (measured: the
+-- own id came back as 7). So the other account cannot be typed in; it has to
+-- be looked up on THIS client, by the character's GUID - which AltStable's
+-- database already holds for the other account's characters.
+local function Scan()
+    Log("|cffffd100== bnet scan ==|r  " .. Where())
+    local BN = C_BattleNet or {}
+    local mine = UnitGUID("player")
+    local looked, found = 0, 0
+    for guid, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and type(guid) == "string" and guid:find("^Player%-") and guid ~= mine then
+            looked = looked + 1
+            local okG, game = pcall(BN.GetGameAccountInfoByGUID or function() end, guid)
+            local okA, acct = pcall(BN.GetAccountInfoByGUID or function() end, guid)
+            local id = (okG and type(game) == "table" and game.gameAccountID)
+                or (okA and type(acct) == "table" and type(acct.gameAccountInfo) == "table"
+                    and acct.gameAccountInfo.gameAccountID)
+            if id or (okG and game) or (okA and acct) then
+                found = found + 1
+                Log(("  %s (%s): game %s"):format(tostring(c.name), guid, okG and Val(game) or "ERROR"))
+                Log(("    account %s"):format(okA and Val(acct) or "ERROR"))
+            end
+            if id and BN.SendGameData then
+                local ok, r = pcall(BN.SendGameData, id, PREFIX, "BPING|" .. Where() .. "|" .. time())
+                Log(("    SendGameData(%s, BPING) -> %s"):format(tostring(id),
+                    ok and ResultStr(r) or ("ERROR " .. tostring(r))))
+            end
+        end
+    end
+    Log(("  looked up %d character(s) from the database; Battle.net knew %d"):format(looked, found))
+    if found == 0 then
+        Log("  >> nothing known: this client cannot see the other account's characters through Battle.net")
+    end
+end
+
 function AltStableProbe.BNet(arg)
     local sub, rest = (arg or ""):match("^(%S*)%s*(.*)$")
     sub = (sub or ""):lower()
     if sub == "me" then Me()
     elseif sub == "send" then Send(rest)
-    else Log("usage: /asprobe bnet me | send <gameAccountID>") end
+    elseif sub == "scan" then Scan()
+    else Log("usage: /asprobe bnet me | scan | send <gameAccountID>") end
 end
 
 local f = CreateFrame("Frame")
