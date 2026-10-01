@@ -1857,6 +1857,7 @@ function CreateFrame(kind, name, parent, ...)
         f.ClearModel = function(self) self._display = nil; return self end
         f.GetDisplayInfo = function(self) return self._display or 0 end
     elseif kind == "ModelScene" then
+        f.SetPaused = function(self, paused, global) self._paused, self._globalPause = paused, global end
         f.CreateActor = function(self)
             local a = WoW.makeFrame()
             a._scale = 1
@@ -1870,6 +1871,7 @@ function CreateFrame(kind, name, parent, ...)
             a.SetScale = function(s, v) s._scale = v; return s end
             a.GetScale = function(s) return s._scale end
             a.SetYaw = function(s, v) s._yaw = v; return s end
+            a.SetParticleOverrideScale = function(s, v) s._particles = v end
             a.SetAnimation = function(s, anim, variation, speed)
                 s._anim, s._animSpeed = anim, (speed == nil) and 1 or speed
             end

@@ -1053,7 +1053,7 @@ end
 ------------------------------------------------------------
 
 local PET_HEIGHT = {          -- demons, by npc id
-    [416]  = 0.50,            -- imp
+    [416]  = 0.45,            -- imp: a little under its gnome's height (in game)
     [1860] = 1.00,            -- voidwalker: ~1.7 gnomes beside its gnome (measured)
     [1863] = 1.00,            -- succubus
     [417]  = 0.62,            -- felhunter
@@ -1133,6 +1133,11 @@ local function PetFrame(i)
     pcall(scene.SetCameraOrientationByYawPitchRoll, scene, math.pi, 0, 0)
     pcall(actor.SetUseCenterForOrigin, actor, true, true, true)
     pcall(actor.SetPosition, actor, 0, 0, 0)
+    -- No particles. An imp's fel fire kept burning on a frozen pose, ran past
+    -- the frame as a green rectangle, and swelled the box the imp is fitted
+    -- by until the imp itself was a speck (measured, 70124). The portraits
+    -- around it carry no effects either.
+    pcall(actor.SetParticleOverrideScale, actor, 0)
     scene:EnableMouse(false)          -- clicks belong to the cards
     scene.actor = actor
     scene:Hide()
@@ -1180,6 +1185,9 @@ local function MeasurePet(f, token, tries)
         -- breathing cat among the still portraits reads as wrong (owner, in
         -- game). Once loaded, because loading starts the model's own idle.
         pcall(f.actor.SetAnimation, f.actor, 0, nil, 0)
+        -- And the scene itself, for whatever else still moves - but only for
+        -- this scene: false keeps the client's global pause out of it.
+        pcall(f.SetPaused, f, true, false)
         PlacePet(f)
     elseif tries > 0 and C_Timer and C_Timer.After then
         C_Timer.After(0.1, function() MeasurePet(f, token, tries - 1) end)

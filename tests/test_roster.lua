@@ -3138,6 +3138,7 @@ do
               math.abs(catRatio - (1.6881 + 0.0317) * 0.32 * 1.04 / 1.10) < 0.01, tostring(catRatio))
         check("the voidwalker towers over its gnome",
               math.abs(voidRatio - 1.00 * 1.04 / 0.60) < 0.01, tostring(voidRatio))
+        eq("an imp stands a little under its gnome", T.PetUnits({ pet_npc = 416 }, 9), 0.45)
 
         -- Framed from its own box: the model's height fills the frame. The
         -- field of view spans the WIDTH (measured), so a wide frame sees less
@@ -3151,6 +3152,9 @@ do
         -- Still, like the portraits around it.
         eq("the pet is held on its idle pose", cat.pet.actor._anim, 0)
         eq("  at speed 0", cat.pet.actor._animSpeed, 0)
+        eq("  with no particles (an imp's fire swelled its box)", cat.pet.actor._particles, 0)
+        eq("  and its scene paused", cat.pet._paused, true)
+        eq("  without pausing the client's world", cat.pet._globalPause, false)
 
         -- Clicks belong to the cards.
         check("a pet does not take the mouse", not cat.pet:IsMouseEnabled())

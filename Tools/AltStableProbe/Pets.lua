@@ -238,6 +238,10 @@ local function Fit(scene, actor, tries)
     actor:SetScale(s)
     Out(string.format("fit: box h=%.2f w=%.2f (x %.2f y %.2f) -> scale %.3f",
         h, w, top.x - bottom.x, top.y - bottom.y, s))
+    local m = { pcall(actor.GetMaxBoundingBox, actor) }
+    if m[1] and type(m[2]) == "number" and m[7] then
+        Out(string.format("     max box h=%.2f (x %.2f y %.2f)", m[7] - m[4], m[5] - m[2], m[6] - m[3]))
+    end
 end
 
 FitInto = function(scene, displayID)
@@ -253,6 +257,9 @@ FitInto = function(scene, displayID)
     end
     local actor = scene.fitActor
     actor:SetScale(1)
+    -- Particles off, as the Roster draws pets: does the imp's fel fire leave
+    -- its box when it is not drawn? (Fit logs the box.)
+    Call(actor, "SetParticleOverrideScale", 0)
     Call(actor, "SetUseCenterForOrigin", true, true, true)
     actor:SetPosition(0, 0, 0)
     actor:SetYaw(0.5)
