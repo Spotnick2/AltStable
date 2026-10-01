@@ -229,6 +229,13 @@ sides are powers of two, bottom-left origin (descriptor `0x08`) like the files
 already known to load. The Roster reads only `file`, `w`, `h`, `texw`, `texh`;
 it computes figure heights from race, not from the image.
 
+**A cutout with no sidecar** (a `.tga` with no `.json` beside it - placed by hand,
+or from another tool) is assumed to have its content top-left like ours: its
+`w`/`h` are the size of its non-transparent box, and the box's origin is not
+recorded. A figure that starts away from the corner is drawn cut off on the right
+and bottom. Everything a converter writes starts at `(0, 0)`, so this only bites a
+foreign file - give such a file its content top-left, or a sidecar (#131).
+
 An entry counts only when `file` is a non-empty string.
 
 **`epoch`** (optional, since #128) names the capture the portrait was made from:
