@@ -1183,5 +1183,74 @@ do
     WoW.critChance, WoW.hitModifier = 12.5, 3
 end
 
+------------------------------------------------------------
+-- The pet (#75), in the shapes measured on 70124
+------------------------------------------------------------
+do
+    local guid = UnitGUID("player")
+    local function scanAs(class)
+        WoW.player.class = class
+        pcall(AltStable.ScanCharacter)
+        return AltStableDB[guid]
+    end
+    local CAT  = { slotID = 2, name = "Tarthosuk", familyName = "Cat",  displayID = 143626,
+                   creatureID = 251245, petNumber = 1976870 }
+    local BEAR = { slotID = 1, name = "Tarthosuk", familyName = "Bear", displayID = 136605,
+                   creatureID = 250927, petNumber = 1806743 }
+    local savedClass = WoW.player.class
+
+    -- The owner's two pets SHARE A NAME. The cat is out, in slot 2; its GUID's
+    -- last six hex digits are its petNumber (0x1E2A26 = 1976870).
+    WoW.reset()
+    AltStableDB = {}
+    WoW.stable = { BEAR, CAT }
+    WoW.pet = { guid = "Pet-0-4615-1-86241-165189-02001E2A26", name = "Tarthosuk" }
+    local c = scanAs("HUNTER")
+    eq("a hunter's pet is found by its petNumber", c.pet_display, 143626)
+    eq("  its creature", c.pet_npc, 251245)
+    eq("  its name", c.pet_name, "Tarthosuk")
+
+    -- No petNumber match: the current Call Pet spell is the second witness.
+    WoW.pet = { guid = "Pet-0-4615-1-86241-165189-zz", name = "Tarthosuk" }
+    WoW.currentSpells = { [83242] = true }          -- Call Pet 2
+    AltStableDB = {}
+    c = scanAs("HUNTER")
+    eq("without a petNumber, the Call Pet spell picks the slot", c.pet_display, 143626)
+
+    -- Neither: NOT the name, which would pick whichever Tarthosuk came first.
+    WoW.currentSpells = {}
+    AltStableDB = {}
+    c = scanAs("HUNTER")
+    eq("with neither witness nothing is recorded, not a namesake", c.pet_display, nil)
+
+    -- A demon: the GUID's npc, resolved to its display id.
+    WoW.reset()
+    AltStableDB = {}
+    WoW.pet = { guid = "Pet-0-4621-0-208652-1860-010023C79D", name = "Hathnos" }
+    WoW.creatureDisplays = { [1860] = 1132 }
+    c = scanAs("WARLOCK")
+    eq("a warlock's demon is its npc's display", c.pet_display, 1132)
+    eq("  and its npc", c.pet_npc, 1860)
+
+    -- Dismissed: the last pet seen stays. Everyone the Roster draws is logged
+    -- out, often with the pet put away.
+    WoW.pet = nil
+    c = scanAs("WARLOCK")
+    eq("a dismissed pet is remembered", c.pet_display, 1132)
+
+    -- Another class with a pet out (a priest's mind control, say) records none.
+    WoW.reset()
+    AltStableDB = {}
+    WoW.pet = { guid = "Creature-0-1-0-1-1860-0", name = "Thrall" }
+    WoW.creatureDisplays = { [1860] = 1132 }
+    c = scanAs("PRIEST")
+    eq("only hunters and warlocks have a pet", c.pet_display, nil)
+
+    WoW.player.class = savedClass
+    WoW.reset()
+    AltStableDB = {}
+end
+
+
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

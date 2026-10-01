@@ -498,7 +498,7 @@ local function ReadPet(classFile)
         if not display or display <= 0 then return nil end
         return display, tonumber(info.creatureID), name
     end
-    local npc = tonumber(select(6, strsplit("-", guid)))
+    local npc = tonumber((select(6, strsplit("-", guid))))   -- one value: a second would be read as the base
     local display = npc and DemonDisplayID(npc)
     if not display then return nil end
     return display, npc, name
