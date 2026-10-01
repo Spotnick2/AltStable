@@ -36,6 +36,11 @@
 -- are textured. Open: PlayerModel framing varies per model (the bear came out
 -- head-only), so a 4th pane draws it the stable's way - ModelScene 718, actor
 -- "pet", SetModelByCreatureDisplayID - which frames every pet consistently.
+-- MEASURED, third run: scene 718 has no "pet" actor on Forever. SetCreature
+-- picks a RANDOM skin of the creature (251245 drew display 143625, red, not
+-- the cat's 143626), so a hunter pet must be drawn by display id. The bear
+-- stays head-only even with RefreshCamera on load. So pane 4 is now built by
+-- hand: our own actor, its bounding box read once loaded, scaled to fit.
 ----------------------------------------------------------------------------
 
 AltStableProbe = AltStableProbe or {}
@@ -200,7 +205,53 @@ end
 -- The viewer
 ----------------------------------------------------------------------------
 
+local FitInto
 local viewer, panes, index = nil, nil, 1
+
+-- A plain ModelScene, camera on +X looking back at the origin, the model
+-- centred there and scaled from its own bounding box to fill 85% of the
+-- height (or width). Every pet frames the same way whatever its scale.
+local FOV = 0.6
+local DIST = 10
+local function Fit(scene, actor, tries)
+    local okB, bottom, top = pcall(actor.GetActiveBoundingBox, actor)
+    if not okB or not bottom or not top then
+        Out("fit: GetActiveBoundingBox failed " .. tostring(bottom)); return
+    end
+    local h = top.z - bottom.z
+    local w = math.max(top.x - bottom.x, top.y - bottom.y)
+    if h <= 0.001 and tries > 0 then
+        C_Timer.After(0.25, function() Fit(scene, actor, tries - 1) end); return
+    end
+    local viewH = 2 * DIST * math.tan(FOV / 2)
+    local aspect = scene:GetWidth() / math.max(scene:GetHeight(), 1)
+    local s = math.min(0.85 * viewH / math.max(h, 0.01), 0.85 * viewH * aspect / math.max(w, 0.01))
+    actor:SetScale(s)
+    Out(string.format("fit: box h=%.2f w=%.2f (x %.2f y %.2f) -> scale %.3f",
+        h, w, top.x - bottom.x, top.y - bottom.y, s))
+end
+
+FitInto = function(scene, displayID)
+    if not scene.fitActor then
+        local ok, actor = pcall(scene.CreateActor, scene)
+        if not ok or not actor then return false, "CreateActor " .. tostring(actor) end
+        scene.fitActor = actor
+        scene:SetCameraFieldOfView(FOV)
+        scene:SetCameraNearClip(0.1)
+        scene:SetCameraFarClip(100)
+        scene:SetCameraPosition(DIST, 0, 0)
+        scene:SetCameraOrientationByYawPitchRoll(math.pi, 0, 0)
+    end
+    local actor = scene.fitActor
+    actor:SetScale(1)
+    Call(actor, "SetUseCenterForOrigin", true, true, true)
+    actor:SetPosition(0, 0, 0)
+    actor:SetYaw(0.5)
+    local ok, err = Call(actor, "SetModelByCreatureDisplayID", displayID)
+    if not ok then return false, err end
+    C_Timer.After(0.25, function() Fit(scene, actor, 8) end)
+    return true
+end
 
 local MODES = {
     { "Live (pet out)", function(m, rec)
@@ -212,16 +263,10 @@ local MODES = {
     { "Display (saved id)", function(m, rec)
         if not rec or not rec.displayID then return "SetDisplayInfo", false, "no display id" end
         return "SetDisplayInfo(" .. rec.displayID .. ")", Call(m, "SetDisplayInfo", rec.displayID) end },
-    { "Scene 718 (stable's way)", function(scene, rec, resolved)
+    { "Fitted (own scene)", function(scene, rec, resolved)
         local id = rec and (rec.displayID or resolved)
-        if not id then return "scene", false, "no display id" end
-        local okT, errT = Call(scene, "TransitionToModelSceneID", 718,
-            CAMERA_TRANSITION_TYPE_IMMEDIATE, CAMERA_MODIFICATION_TYPE_DISCARD, true)
-        if not okT then return "TransitionToModelSceneID(718)", false, errT end
-        local actor = select(2, Call(scene, "GetActorByTag", "pet"))
-        if not actor then return "GetActorByTag(pet)", false, "no actor" end
-        return "actor:SetModelByCreatureDisplayID(" .. id .. ")",
-            Call(actor, "SetModelByCreatureDisplayID", id) end, scene = true },
+        if not id then return "fit", false, "no display id" end
+        return "actor:SetModelByCreatureDisplayID(" .. id .. ")", FitInto(scene, id) end, scene = true },
 }
 
 local function Render()
@@ -277,9 +322,9 @@ local function Build()
         local bg = pane:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints(); bg:SetColorTexture(0.12, 0.12, 0.14, 1)
         if spec.scene then
-            local ok, scene = pcall(CreateFrame, "ModelScene", nil, pane, "NonInteractableModelSceneMixinTemplate")
+            local ok, scene = pcall(CreateFrame, "ModelScene", nil, pane)
             pane.model = ok and scene or NewModel(pane)
-            if not ok then Out("ModelScene template failed: " .. tostring(scene)) end
+            if not ok then Out("ModelScene failed: " .. tostring(scene)) end
         else
             pane.model = NewModel(pane)
             -- Does re-fitting the camera once the model has loaded fix framing?
