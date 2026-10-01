@@ -13,6 +13,7 @@ Probe.lua
 Channel.lua
 BNet.lua
 Models.lua
+Pets.lua
 Scene.lua
 WhatIcon.lua
 Professions.lua
