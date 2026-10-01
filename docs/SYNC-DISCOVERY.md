@@ -252,7 +252,9 @@ name, exactly as we do.
 **Battle.net game data.** `C_BattleNet.SendGameData(gameAccountID, prefix, data)` exists on 70009
 and is cross-realm *and* cross-faction — the ideal transport, except it needs a **Battle.net
 friend's** game account id. Our two WoW accounts live under one Battle.net account
-(`50284074#1` and `50284074#12`), and an account cannot friend itself. Closed.
+(`50284074#1` and `50284074#12`), and an account cannot friend itself. ~~Closed.~~ **Reopened and
+shipped as #58:** our own other game accounts are addressable too, without friending (measured,
+70124). Separate Battle.net accounts that are friends: #143, deferred until there is a tester.
 
 **Across factions, nothing.** Measured on 70124: an addon whisper to a character online on the
 other faction comes back as `No player named 'X' is currently playing.` - the same line as for
