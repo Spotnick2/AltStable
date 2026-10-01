@@ -367,9 +367,10 @@ CurseForge builds releases from the tag webhook, reading `.pkgmeta`. Nothing her
 
 What to look for in the zip (re-verified on `v0.2.0-beta`):
 
-- **four** sibling folders: `AltStable`, `AltStableWarband`, `AltStableInstances`,
-  `AltStableRoster` — the Roster shipped in v0.2.0-beta, and the count was three
-  before it;
+- **five** sibling folders: `AltStable`, `AltStableWarband`, `AltStableInstances`,
+  `AltStableRoster`, `AltStableProfessions` — Professions ships from v0.4.0-beta
+  (four before it; the Roster made it four in v0.2.0-beta);
+- `AltStableProfessions` carries `RecipeData.lua`, not just its `.toc` and code;
 - the tag's version in **every** `.toc`, not the raw `@project-version@` keyword;
 - no `Tools/`, `tests/`, `docs/`, `.github/` or agent files;
 - the libraries, the icons and the raid art present;
