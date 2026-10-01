@@ -26,9 +26,14 @@ def wire_lines(path):
     start = text.find('["wireLog"] = {')
     if start < 0:
         return []
-    end = text.find("\n}", start)
+    # The table ends at its own closing brace: the first line after its opening
+    # that is not one of its string entries. Searching for the file's "\n}"
+    # could take in whatever table followed it (review of #141).
     out = []
-    for m in re.finditer(r'^\s*"(.*)",\s*(?:--.*)?$', text[start:end], re.M):
+    for raw in text[start:].splitlines()[1:]:
+        m = re.match(r'^\s*"(.*)",\s*(?:--.*)?$', raw)
+        if not m:
+            break
         line = m.group(1).replace('\\"', '"').replace("\\\\", "\\")
         out.append(re.sub(r"\|c[0-9a-fA-F]{8}|\|r", "", line))
     return out

@@ -54,8 +54,11 @@ local function Me()
     local id = type(info) == "table" and type(info.gameAccountInfo) == "table"
         and info.gameAccountInfo.gameAccountID
     if id then
-        Log(("  |cff55ff55this game account id: %s|r - on the other account: /asprobe bnet send %s"):format(
-            tostring(id), tostring(id)))
+        -- LOCAL to this client (measured: 7 here was 3 on the other side, and
+        -- a copied 7 gave TargetRequired) - never a target for the other
+        -- account. It finds this one with scan or ids (review of #141).
+        Log(("  |cff55ff55this game account id here: %s|r - local to this client; on the other "
+            .. "account use /asprobe bnet scan or /asprobe bnet ids"):format(tostring(id)))
         Call("C_BattleNet.GetGameAccountInfoByID(own id)", BN.GetGameAccountInfoByID, id)
     else
         Log("  |cffff5555no game account id found for this character|r")
@@ -68,7 +71,11 @@ end
 local function Send(id)
     id = tonumber(id)
     Log("|cffffd100== bnet send ==|r  " .. Where())
-    if not id then Log("usage: /asprobe bnet send <gameAccountID>  (from /asprobe bnet me on the other account)"); return end
+    if not id then
+        Log("usage: /asprobe bnet send <gameAccountID>  - an id as THIS client knows it "
+            .. "(from /asprobe bnet ids here); ids from another client do not carry over")
+        return
+    end
     Call("C_BattleNet.GetGameAccountInfoByID(target)", C_BattleNet and C_BattleNet.GetGameAccountInfoByID, id)
     if not (C_BattleNet and C_BattleNet.SendGameData) then Log("  SendGameData absent"); return end
     Ping(id, "BPING")
