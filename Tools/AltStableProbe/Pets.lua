@@ -10,6 +10,7 @@
 --
 --   /asprobe pet            capture the summoned pet (if any), open the viewer
 --   /asprobe pet capture    record the pet: GUID, npc id, display id, family
+--   /asprobe pet stable     the hunter's 5 active slots, read anywhere?
 --   /asprobe pet list       what has been recorded
 --   /asprobe pet wipe       forget the records
 --
@@ -21,6 +22,13 @@
 -- then judge Creature and Display. Textured = no capture pipeline needed.
 -- A tamed pet may share its npc id with the wild beast but not its skin, so
 -- Creature and Display can legitimately differ; Display is the exact one.
+--
+-- MEASURED on 70124, first run: a hunter pet's GUID is
+-- "Pet-0-6783-1-164450-165189-..." - npc 165189 is the generic "Hunter Pet",
+-- the same for every beast, so SetCreature(npc) is useless for hunters. And
+-- GetDisplayInfo() on a SetUnit("pet") model reads 0. The stable UI draws
+-- stabled pets (not units) from C_StableInfo.GetStablePetInfo(slot).displayID,
+-- so the hunter's display id and real creature id are read from there.
 ----------------------------------------------------------------------------
 
 AltStableProbe = AltStableProbe or {}
@@ -58,10 +66,35 @@ local function ParseGUID(guid)
 end
 
 local function Describe(rec)
-    return string.format("%s (%s's %s, %s)  kind=%s npc=%s display=%s",
+    return string.format("%s (%s's %s, %s)  kind=%s npc=%s creature=%s display=%s (model said %s, slot %s)",
         tostring(rec.name), tostring(rec.owner), tostring(rec.family or rec.ctype),
         tostring(rec.ownerClass), tostring(rec.kind), tostring(rec.npcID),
-        tostring(rec.displayID))
+        tostring(rec.creatureID), tostring(rec.displayID), tostring(rec.modelDisplayID),
+        tostring(rec.stableSlot))
+end
+
+-- The hunter's active slots: is C_StableInfo readable away from a stable
+-- master, and which slot is the summoned pet? Logged whole, once per capture.
+local function StableSlots()
+    local out = {}
+    if not (C_StableInfo and C_StableInfo.GetStablePetInfo) then
+        Out("C_StableInfo.GetStablePetInfo missing")
+        return out
+    end
+    for slot = 1, 5 do
+        local ok, info = pcall(C_StableInfo.GetStablePetInfo, slot)
+        if not ok then
+            Out("stable slot " .. slot .. ": error " .. tostring(info))
+        elseif info then
+            out[#out + 1] = info
+            Out(string.format("stable slot %d: %s (%s) displayID=%s creatureID=%s petNumber=%s",
+                slot, tostring(info.name), tostring(info.familyName), tostring(info.displayID),
+                tostring(info.creatureID), tostring(info.petNumber)))
+        else
+            Out("stable slot " .. slot .. ": empty")
+        end
+    end
+    return out
 end
 
 -- The display id only exists on a model frame, so render the pet once on an
@@ -92,8 +125,19 @@ local function Capture(quiet)
     reader:Show()
     local okU, errU = Call(reader, "SetUnit", "pet")
     rec.setUnit = okU and "ok" or errU
+    -- A demon has no stable; a hunter's summoned pet is the slot with its name.
+    for _, info in ipairs(StableSlots()) do
+        if info.name == rec.name then
+            rec.stableSlot, rec.stableDisplayID, rec.stableCreatureID =
+                info.slotID, info.displayID, info.creatureID
+        end
+    end
     C_Timer.After(1, function()
-        rec.displayID = select(2, Call(reader, "GetDisplayInfo"))
+        rec.modelDisplayID = select(2, Call(reader, "GetDisplayInfo"))
+        -- The model's own reading is 0 on 70124; the stable's is the real one.
+        rec.displayID = rec.stableDisplayID
+            or ((rec.modelDisplayID or 0) > 0 and rec.modelDisplayID or nil)
+        rec.creatureID = rec.stableCreatureID or rec.npcID
         rec.modelFileID = select(2, Call(reader, "GetModelFileID"))
         local key = tostring(rec.owner) .. "/" .. tostring(rec.npcID) .. "/" .. tostring(rec.displayID)
         Store()[key] = rec
@@ -118,9 +162,10 @@ local viewer, panes, index = nil, nil, 1
 local MODES = {
     { "Live (pet out)", function(m, rec)
         return "SetUnit(pet)", Call(m, "SetUnit", "pet") end },
-    { "Creature (npc id)", function(m, rec)
-        if not rec or not rec.npcID then return "SetCreature", false, "no npc id" end
-        return "SetCreature(" .. rec.npcID .. ")", Call(m, "SetCreature", rec.npcID) end },
+    { "Creature (saved id)", function(m, rec)
+        local id = rec and (rec.creatureID or rec.npcID)
+        if not id then return "SetCreature", false, "no creature id" end
+        return "SetCreature(" .. id .. ")", Call(m, "SetCreature", id) end },
     { "Display (saved id)", function(m, rec)
         if not rec or not rec.displayID then return "SetDisplayInfo", false, "no display id" end
         return "SetDisplayInfo(" .. rec.displayID .. ")", Call(m, "SetDisplayInfo", rec.displayID) end },
@@ -203,6 +248,7 @@ end
 function AltStableProbe.Pet(arg)
     arg = (arg or ""):lower()
     if arg == "capture" then Capture(); return end
+    if arg == "stable" then StableSlots(); return end
     if arg == "list" then
         local list = List()
         if #list == 0 then Out("nothing recorded - summon a pet, /asprobe pet capture") end
@@ -210,7 +256,7 @@ function AltStableProbe.Pet(arg)
         return
     end
     if arg == "wipe" then Store(); AltStableProbeDB.pets = {}; Out("records cleared"); return end
-    if arg ~= "" then Out("usage: /asprobe pet [capture | list | wipe]"); return end
+    if arg ~= "" then Out("usage: /asprobe pet [capture | stable | list | wipe]"); return end
     local f = Build()
     if f:IsShown() then f:Hide(); return end
     f:Show()
