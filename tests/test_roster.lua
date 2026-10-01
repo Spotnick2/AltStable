@@ -3122,32 +3122,27 @@ do
 
 
 
-        -- Alternating by place in the line: the first owner's pet on its left,
-        -- the second's on its right - each pair's pets take the outside.
+        -- One owner each side of the fire: each is nearest it on its side, so
+        -- each pet stands on the fire side, turned 20 degrees toward it.
         local cx, vx = x(cat.card), x(void.card)
-        local first, second = cat, void
-        if vx < cx then first, second = void, cat end
-        check("the first owner's pet stands on its left", x(first.pet) < x(first.card),
-              x(first.pet) .. " vs " .. x(first.card))
-        check("the second owner's pet stands on its right", x(second.pet) > x(second.card),
-              x(second.pet) .. " vs " .. x(second.card))
-        -- Turned toward the fire, whichever side it stands: here, the other owner.
-        check("a pet turns toward the fire",
-              (cat.pet.actor._yaw or 0) * (vx - cx) > 0)
+        check("the hunter's pet stands toward the fire", (x(cat.pet) - cx) * (vx - cx) > 0)
+        check("the demon stands toward the fire", (x(void.pet) - vx) * (cx - vx) > 0)
+        local turn = math.rad(20)
+        check("  turned 20 degrees toward it",
+              math.abs((cat.pet.actor._yaw or 0) - turn * ((vx > cx) and 1 or -1)) < 1e-9)
 
-        -- The slot is shared, not overrun: the owner steps aside, the pet keeps
-        -- inside the room left to it.
+        -- The owner steps aside in its slot, away from its pet.
         local slot = T.SceneSlot()
         for who, d in pairs(drawn) do
-            check(who .. ": the pet is no wider than its room",
-                  d.pet:GetWidth() <= slot * T.PET_LAYOUT.room + 1e-6, d.pet:GetWidth() .. " > " .. slot * T.PET_LAYOUT.room)
-            check(who .. ": and stands its share of the slot from its owner",
-                  math.abs(math.abs(x(d.pet) - x(d.card))
-                      - slot * (T.PET_LAYOUT.ownerShift + T.PET_LAYOUT.petShift)) < 1e-6)
             local moved = x(d.card) - (offX[who] or x(d.card))
             check(who .. ": the owner stepped away from it by its share of the slot",
                   math.abs(math.abs(moved) - slot * T.PET_LAYOUT.ownerShift) < 1e-6
                   and moved * (x(d.pet) - x(d.card)) < 0, tostring(moved))
+            -- Out by part of the owner's width and part of its own: half behind.
+            local want = d.card.figure:GetWidth() * T.PET_LAYOUT.reach + d.pet:GetWidth() * T.PET_LAYOUT.spread
+            check(who .. ": the pet stands half behind its owner",
+                  math.abs(math.abs(x(d.pet) - x(d.card)) - want) < 1e-6,
+                  math.abs(x(d.pet) - x(d.card)) .. " vs " .. want)
         end
 
         -- In the cast's units: the cat 0.55 (box 1.72 x 0.32) against a 1.10
@@ -3178,19 +3173,6 @@ do
         check("a pet does not take the mouse", not cat.pet:IsMouseEnabled())
     end
 
-    -- A long beast is held to its room, not let into the next slot.
-    WoW.modelBoxes[2000] = { -30, -1, 0, 30, 1, 3 }
-    AltStableDB["pet-hunter"].pet_display = 2000
-    T.Refresh()
-    local long = pets()["pet-hunter"]
-    check("a long pet is drawn", long ~= nil)
-    if long then
-        check("  no wider than its room",
-              math.abs(long.pet:GetWidth() - T.SceneSlot() * T.PET_LAYOUT.room) < 1e-6,
-              long.pet:GetWidth() .. " vs " .. T.SceneSlot() * T.PET_LAYOUT.room)
-    end
-    AltStableDB["pet-hunter"].pet_display = CAT
-
     -- A pet whose model has not loaded waits, then appears.
     WoW.modelBoxes[VOID] = nil
     AltStableDB["pet-lock"].pet_display = 1133
@@ -3217,6 +3199,29 @@ do
     AltStableConfig.rosterView = nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
     WoW.modelBoxes = {}
+end
+
+-- Which side and which way, counted out from the fire (owner's layout).
+do
+    local t = math.rad(20)
+    local four = T.PetSides({ { x = 100 }, { x = 300 }, { x = 700 }, { x = 900 } }, 500)
+    local sides, yaws = {}, {}
+    for i, p in ipairs(four) do sides[i], yaws[i] = p.side, p.yaw end
+    eq("four: pets left, right, left, right", table.concat(sides, " "), "-1 1 -1 1")
+    eq("  the outer two face the viewer", yaws[1] == 0 and yaws[4] == 0, true)
+    check("  the inner two turn 20 degrees to the fire",
+          math.abs(yaws[2] - t) < 1e-9 and math.abs(yaws[3] + t) < 1e-9)
+    local two = T.PetSides({ { x = 300 }, { x = 700 } }, 500)
+    eq("two: each pet on its fire side", two[1].side .. " " .. two[2].side, "1 -1")
+    local lopsided = T.PetSides({ { x = 100 }, { x = 200 }, { x = 300 } }, 500)
+    eq("three on one side: alternating out from the fire",
+       lopsided[1].side .. " " .. lopsided[2].side .. " " .. lopsided[3].side, "1 -1 1")
+
+    -- Kept inside the panel: a pet at the scene's edge never spills over.
+    eq("a pet past the left edge is brought inside", T.PetX(50, 100, 200, -1, 1000), 100)
+    eq("  past the right edge too", T.PetX(950, 100, 200, 1, 1000), 900)
+    eq("  and left alone inside", T.PetX(500, 100, 200, 1, 1000),
+       500 + 100 * T.PET_LAYOUT.reach + 200 * T.PET_LAYOUT.spread)
 end
 
 -- Five round the fire without pets, four with: the fifth figure's room is
