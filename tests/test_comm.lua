@@ -3985,6 +3985,95 @@ do
     scan()
     eq(names(), "", "another region on our own Battle.net account is not synced")
 
+    -- The hash under the handshake, against the published vectors (FIPS 180-2,
+    -- RFC 4231) - a wrong rotation still "works" between two copies of itself.
+    eq(T.SHA256(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 of ''")
+    eq(T.SHA256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 of 'abc'")
+    eq(T.SHA256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+       "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", "SHA-256 across two blocks")
+    eq(T.HMAC256("Jefe", "what do ya want for nothing?"),
+       "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843", "HMAC-SHA-256, RFC 4231 case 2")
+    eq(T.HMAC256(string.rep(string.char(170), 131), "Test Using Larger Than Block-Size Key - Hash Key First"),
+       "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54", "HMAC-SHA-256, a key over one block")
+
+    -- BOTH presences blank (Codex, #142 round 3): neither side can verify the
+    -- other, so no key may be sent - each proves it holds a trusted one. The
+    -- test plays the other account, honestly: it reads the hellos we actually
+    -- emit and checks our proofs with its own HMAC.
+    local OURKEY, THEIRKEY = "0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"
+    local function fieldsOfLastHello(id)
+        for i = #WoW.sent, 1, -1 do
+            local m = WoW.sent[i]
+            if m.channel == "BNET" and m.target == id and m.text:find("^HI") then
+                local f = {}
+                for x in (m.text .. "|"):gmatch("([^|]*)|") do f[#f + 1] = x end
+                return f
+            end
+        end
+    end
+    local function proofOf(key, nonce, name)
+        return T.HMAC256(key, "AltStable#58|" .. nonce .. "|" .. name:lower()):sub(1, 32)
+    end
+    local function helloFull(id, name, nonce, proof, key)
+        bn(table.concat({ "HI" .. T.PROTOCOL_VERSION, name, "", "Alliance", "Classic Beta PvE",
+                          key or "", nonce or "", proof or "" }, "|"), id)
+    end
+    local function bothBlank()
+        onEvent(T.frame, "BN_DISCONNECTED")         -- a new session: nothing learned, no nonces
+        freshAuth({ peerWatermarks = {}, bnetKey = OURKEY, bnetTrusted = { [THEIRKEY] = true },
+                    bnetSelfProject = 18, bnetSelfRegion = 90 })
+        mine()
+        WoW.bn.blank = true
+        blank(3)
+        WoW.sent, WoW.chatOut = {}, {}
+    end
+    bothBlank()
+    scan()
+    local ours = fieldsOfLastHello(3)
+    check(ours ~= nil, "both blank: we say hello to the account that is ours by elimination")
+    eq(ours[6], "", "  without our key - Battle.net cannot vouch for that id")
+    eq(#ours[7], 16, "  with a nonce")
+    eq(ours[8], "", "  and no proof yet: they have sent us no nonce")
+    local NA = ours[7]
+    -- They answer: their own nonce, and proof of THEIR key over ours.
+    local NB = "b0b0b0b0b0b0b0b0"
+    helloFull(3, "Karuzo Mortalis", NB, proofOf(THEIRKEY, NA, "Karuzo Mortalis"))
+    eq(names(), "Karuzo Mortalis@3", "their proof over our nonce, by a key we trust, says who they are")
+    local back = fieldsOfLastHello(3)
+    eq(hellosTo(3), 2, "  and we answer at once, inside the minute - their nonce is new")
+    eq(back[6], "", "  still without our key")
+    eq(back[7], NA, "  with the same nonce for that id")
+    eq(back[8], proofOf(OURKEY, NB, WoW.player.name), "  and OUR proof over THEIR nonce - what they check")
+    eq(bnTo(3, isReq), 1, "  and they are asked, over Battle.net")
+    -- Their next hello, same nonce: no answer forced, so two hellos cannot ping-pong.
+    helloFull(3, "Karuzo Mortalis", NB, proofOf(THEIRKEY, NA, "Karuzo Mortalis"))
+    eq(hellosTo(3), 2, "  their nonce again forces no second answer")
+
+    -- Proofs that are not good enough.
+    bothBlank()
+    scan()
+    NA = fieldsOfLastHello(3)[7]
+    helloFull(3, "Karuzo Mortalis", NB, proofOf("an-untrusted-key-0123456789abcd", NA, "Karuzo Mortalis"))
+    eq(names(), "", "a proof by a key we do not trust is not believed")
+    eq(hellosTo(3), 2, "  but a blank id that is ours by elimination gets our proof for its nonce")
+    helloFull(3, "Karuzo Mortalis", "c0c0c0c0c0c0c0c0", proofOf(THEIRKEY, "c0c0c0c0c0c0c0c0", "Karuzo Mortalis"))
+    eq(names(), "", "a proof over a nonce that is not ours is not believed")
+    helloFull(3, "Someone Else", "d0d0d0d0d0d0d0d0", proofOf(THEIRKEY, NA, "Karuzo Mortalis"))
+    eq(names(), "", "a proof made for another name is not believed")
+    -- A replay to another id: our nonce differs per id.
+    blank(4)
+    scan()
+    helloFull(4, "Karuzo Mortalis", NB, proofOf(THEIRKEY, NA, "Karuzo Mortalis"))
+    eq(names(), "", "a proof replayed from another id is not believed")
+    -- A friend's blank account gets no proof of ours, whatever it sends.
+    bothBlank()
+    blank(9)
+    WoW.bn.friends = { { 9 } }
+    helloFull(9, "Friend Person", "e0e0e0e0e0e0e0e0")
+    eq(hellosTo(9), 0, "a friend's fresh nonce is not answered: our proofs go only to our own")
+    WoW.bn.friends = {}
+    WoW.bn.blank = false
+
     -- A hello carrying our own name (our own blank id) is ignored.
     freshAuth()
     blank(7)

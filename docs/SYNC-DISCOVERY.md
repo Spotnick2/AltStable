@@ -38,9 +38,20 @@ rulesets and across factions, both directions - where whispers and channels stop
     household key**: each account has a random key, sent only to an account Battle.net verifies as
     ours and remembered when received from one; a blank presence is believed only when its hello
     carries a trusted key. Two accounts must have seen each other's full presence once, ever;
-  - **who is on it**: a Battle.net-only hello, `HI8|name|guid|faction|realm|key`, sent on first
-    contact, to blank ids by hint (without the key), and in answer to a hello (at most once a minute
-    per id); forgotten when that id goes offline, its binding drops, or Battle.net contradicts it.
+  - **both blank** (Codex round 3): neither side may send its key, so each PROVES it holds a trusted
+    one. Every hello carries a nonce (fixed per id for the session) and answers the other side's
+    latest nonce with `HMAC-SHA-256(own key, "AltStable#58|" nonce "|" name)`, truncated to 32 hex;
+    the receiver checks it against the keys it trusts. A friend sees nonces and proofs only, each
+    good for one id's nonce and one name. A new nonce is answered at once, but only to an id that is
+    ours by elimination (or verified), so proofs go only where hellos go. SHA-256 is pure Lua in
+    `Core.lua` (the client exposes no hash; LibDeflate's checksums are linear and forgeable),
+    checked against the FIPS 180-2 and RFC 4231 vectors. Limit, accepted: a friend whose list we
+    misread as ours could relay one side's proof to the other - it needs a broken friends list AND
+    a purpose-built relay;
+  - **who is on it**: a Battle.net-only hello, `HI8|name|guid|faction|realm|key|nonce|proof`, sent
+    on first contact, to blank ids by hint (without the key), and in answer to a hello (at most once
+    a minute per id, at once for a new nonce); forgotten when that id goes offline, its binding
+    drops, or Battle.net contradicts it. Older clients read the first six fields and ignore the rest.
 - **Transport of origin**: a request is answered the way it came (Battle.net, or a plain whisper -
   `WHISPER_DIRECT`), a resync goes the way the failed stream came, and a whitelisted own account not
   yet heard over Battle.net keeps its whisper. Capability is forgotten with its binding.

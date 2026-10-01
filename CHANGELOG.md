@@ -7,7 +7,8 @@
   Battle.net and sync with no whitelist and nothing to type, including a Horde
   account with an Alliance one and across rulesets, which whispers cannot do.
   "Found your other account: ..." says when it happens; Options has an off
-  switch. Battle.net friends are never included
+  switch. Once two accounts have met, they keep finding each other even when
+  Battle.net is slow to show who is playing on either. Battle.net friends are never included
   ([#58](https://github.com/Spotnick2/AltStable/issues/58)).
 - **Sync is sturdier when pieces arrive out of order.** A finishing message that
   overtakes the data no longer loses the sync, a stream completes the moment its

@@ -725,8 +725,129 @@ local function OwnByElimination(id, me, friends)
     return true
 end
 
--- The game record for an id: Battle.net's own, or - presence blank - what its
--- hello told us, while the id still checks out as ours by elimination.
+------------------------------------------------------------
+-- SHA-256 and HMAC-SHA-256, pure Lua 5.1 (#58)
+------------------------------------------------------------
+-- For the household-key handshake below: a peer proves it holds a key we
+-- trust WITHOUT sending it - HMAC(key, our nonce | its name). The client offers
+-- no hash to addons, and LibDeflate's checksums (Adler-32, CRC-32) are linear:
+-- one observed proof would let anyone compute the next. Arithmetic only, no
+-- `bit` library, so the game and the tests run the same code; the inputs are
+-- a few dozen bytes a few times a session. Checked against the FIPS 180-2 and
+-- RFC 4231 vectors in tests/test_comm.lua.
+local SHA256, HMAC256
+do
+    local TWO32 = 4294967296
+    local XOR4, AND4 = {}, {}
+    for x = 0, 15 do
+        XOR4[x], AND4[x] = {}, {}
+        for y = 0, 15 do
+            local rx, ra, bv, xx, yy = 0, 0, 1, x, y
+            for _ = 1, 4 do
+                local xb, yb = xx % 2, yy % 2
+                if xb ~= yb then rx = rx + bv end
+                if xb == 1 and yb == 1 then ra = ra + bv end
+                xx, yy, bv = (xx - xb) / 2, (yy - yb) / 2, bv * 2
+            end
+            XOR4[x][y], AND4[x][y] = rx, ra
+        end
+    end
+    local function nib(op, a, b)
+        local r, m = 0, 1
+        for _ = 1, 8 do
+            local na, nb = a % 16, b % 16
+            r = r + op[na][nb] * m
+            a, b, m = (a - na) / 16, (b - nb) / 16, m * 16
+        end
+        return r
+    end
+    local function bxor(a, b) return nib(XOR4, a, b) end
+    local function band(a, b) return nib(AND4, a, b) end
+    local function bnot(a) return 4294967295 - a end
+    local function shr(a, n) return math.floor(a / 2 ^ n) end
+    local function ror(a, n)
+        local lo = a % 2 ^ n
+        return (a - lo) / 2 ^ n + lo * 2 ^ (32 - n)
+    end
+
+    local K = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    }
+
+    -- The raw 32-byte digest of a byte string.
+    local function digest(msg)
+        local len = #msg
+        msg = msg .. "\128" .. string.rep("\0", (55 - len) % 64)
+        local bits = len * 8
+        local tail = {}
+        for i = 8, 1, -1 do
+            tail[i] = string.char(bits % 256)
+            bits = math.floor(bits / 256)
+        end
+        msg = msg .. table.concat(tail)
+        local H = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 }
+        local w = {}
+        for chunk = 1, #msg, 64 do
+            for i = 0, 15 do
+                local b1, b2, b3, b4 = msg:byte(chunk + i * 4, chunk + i * 4 + 3)
+                w[i] = ((b1 * 256 + b2) * 256 + b3) * 256 + b4
+            end
+            for i = 16, 63 do
+                local x, y = w[i - 15], w[i - 2]
+                local s0 = bxor(bxor(ror(x, 7), ror(x, 18)), shr(x, 3))
+                local s1 = bxor(bxor(ror(y, 17), ror(y, 19)), shr(y, 10))
+                w[i] = (w[i - 16] + s0 + w[i - 7] + s1) % TWO32
+            end
+            local a, b, c, d, e, f, g, h = H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]
+            for i = 0, 63 do
+                local S1 = bxor(bxor(ror(e, 6), ror(e, 11)), ror(e, 25))
+                local ch = bxor(band(e, f), band(bnot(e), g))
+                local t1 = (h + S1 + ch + K[i + 1] + w[i]) % TWO32
+                local S0 = bxor(bxor(ror(a, 2), ror(a, 13)), ror(a, 22))
+                local maj = bxor(bxor(band(a, b), band(a, c)), band(b, c))
+                local t2 = (S0 + maj) % TWO32
+                h, g, f, e = g, f, e, (d + t1) % TWO32
+                d, c, b, a = c, b, a, (t1 + t2) % TWO32
+            end
+            H[1], H[2], H[3], H[4] = (H[1] + a) % TWO32, (H[2] + b) % TWO32, (H[3] + c) % TWO32, (H[4] + d) % TWO32
+            H[5], H[6], H[7], H[8] = (H[5] + e) % TWO32, (H[6] + f) % TWO32, (H[7] + g) % TWO32, (H[8] + h) % TWO32
+        end
+        local out = {}
+        for i = 1, 8 do
+            local v = H[i]
+            out[i] = string.char(math.floor(v / 16777216) % 256, math.floor(v / 65536) % 256,
+                                 math.floor(v / 256) % 256, v % 256)
+        end
+        return table.concat(out)
+    end
+
+    local function hex(s)
+        return (s:gsub(".", function(ch) return ("%02x"):format(ch:byte()) end))
+    end
+
+    function SHA256(msg) return hex(digest(msg)) end
+
+    function HMAC256(key, msg)
+        if #key > 64 then key = digest(key) end
+        key = key .. string.rep("\0", 64 - #key)
+        local ipad, opad = {}, {}
+        for i = 1, 64 do
+            local k = key:byte(i)
+            ipad[i] = string.char(bxor(k, 0x36))
+            opad[i] = string.char(bxor(k, 0x5c))
+        end
+        return hex(digest(table.concat(opad) .. digest(table.concat(ipad) .. msg)))
+    end
+end
+
 -- THE HOUSEHOLD KEY (Codex, #142 round 2). Elimination cannot PROVE
 -- ownership: a friends list that answers "zero" while still loading looks
 -- complete, and a friend's blank account would be taken for ours - reproduced:
@@ -742,13 +863,31 @@ end
 --
 -- So two accounts must have seen each other's full presence once, ever; after
 -- that a blank presence on either side no longer stops them.
+--
+-- BOTH presences blank (Codex, #142 round 3): neither side can verify the
+-- other, so neither may send its key. Instead each proves it HOLDS a trusted
+-- key: every hello carries a nonce, fixed per id, and answers the other side's
+-- latest nonce with HMAC(own key, nonce | own name). The receiver checks that
+-- against the keys it trusts. A friend sees nonces and proofs only - no key, and
+-- a proof is good for one id's nonce and one name. Proofs go only where hellos
+-- go: ids Battle.net verifies, or that are ours by elimination.
+
+-- Unpredictable bytes: math.random may start from the same seed every launch,
+-- so the clocks and who we are are mixed in.
+local entropyCount = 0
+local function Entropy(extra)
+    entropyCount = entropyCount + 1
+    return SHA256(table.concat({ tostring(extra or ""), entropyCount, time(),
+        tostring(GetTime and GetTime() or 0), tostring(debugprofilestop and debugprofilestop() or 0),
+        tostring(UnitGUID and UnitGUID("player") or ""), math.random(0, 65535),
+        math.random(0, 65535), tostring({}) }, "|"))
+end
+
 local function OwnKey()
     AltStableConfig = AltStableConfig or {}
     local k = AltStableConfig.bnetKey
     if type(k) ~= "string" or #k < 16 then
-        local parts = {}
-        for i = 1, 5 do parts[i] = ("%04x"):format(math.random(0, 65535)) end
-        k = table.concat(parts)
+        k = Entropy("key"):sub(1, 32)
         AltStable.SetConfigValue("bnetKey", k)
     end
     return k
@@ -763,6 +902,25 @@ local function TrustKey(k)
     for key, v in pairs(AltStableConfig.bnetTrusted or {}) do copy[key] = v end
     copy[k] = true
     AltStable.SetConfigValue("bnetTrusted", copy)
+end
+
+local myNonce, theirNonce = {}, {}   -- game account id -> the nonce we send it / it sent us
+local function NonceFor(id)
+    myNonce[id] = myNonce[id] or Entropy(OwnKey() .. id):sub(1, 16)
+    return myNonce[id]
+end
+local function HelloProof(key, nonce, name)
+    return HMAC256(key, "AltStable#58|" .. nonce .. "|" .. (AuthKey(name) or "")):sub(1, 32)
+end
+-- Does `proof` answer OUR nonce for this id, by a key we trust, for this name?
+local function ProofTrusted(proof, id, name)
+    local nonce = myNonce[id]
+    if not nonce or type(proof) ~= "string" or #proof ~= 32
+        or type(AltStableConfig.bnetTrusted) ~= "table" then return false end
+    for k, v in pairs(AltStableConfig.bnetTrusted) do
+        if v == true and HelloProof(k, nonce, name) == proof then return true end
+    end
+    return false
 end
 
 -- The game record for an id: Battle.net's own; or - presence blank - what a
@@ -793,13 +951,15 @@ end
 -- hello must get ours back. Counted only once it has actually gone out.
 local HELLO_EVERY = 60
 local helloSent = {}      -- game account id -> when our hello last went to it
-local function SendHello(id)
-    if helloSent[id] and (time() - helloSent[id]) < HELLO_EVERY then return end
+local function SendHello(id, force)
+    if not force and helloSent[id] and (time() - helloSent[id]) < HELLO_EVERY then return end
     -- The household key goes only to an account Battle.net verifies as ours.
     local key = OwnAccountGame(id) and OwnKey() or ""
+    -- Our proof answers THEIR latest nonce (see the household key).
+    local proof = theirNonce[id] and HelloProof(OwnKey(), theirNonce[id], PLAYER_NAME) or ""
     local msg = table.concat({ MSG_HELLO, PLAYER_NAME or "", UnitGUID("player") or "",
         (UnitFactionGroup and UnitFactionGroup("player")) or "",
-        (GetRealmName and GetRealmName()) or "", key }, "|")
+        (GetRealmName and GetRealmName()) or "", key, NonceFor(id), proof }, "|")
     local function sent(_, didSend) if didSend ~= false then helloSent[id] = time() end end
     local ok = ChatThrottleLib and ChatThrottleLib.BNSendGameData
         and pcall(ChatThrottleLib.BNSendGameData, ChatThrottleLib, "ALERT", PREFIX, msg, "WHISPER", id,
@@ -815,6 +975,7 @@ end
 local function ForgetLearned(id)
     learnedNames[id] = nil
     helloSent[id] = nil
+    myNonce[id], theirNonce[id] = nil, nil   -- whoever comes back proves itself afresh
 end
 
 local function SyncAuthFor(peer)
@@ -2399,6 +2560,7 @@ function ScanOwnAccounts()
     AltStable._bnetLastScan = time()
     if not BNetEnabled() then
         bnetPeers, presence, bnetCapable, learnedNames, helloSent = {}, {}, {}, {}, {}
+        myNonce, theirNonce = {}, {}
         return
     end
     -- A learned id that went offline or away is forgotten: whoever comes back
@@ -3289,26 +3451,37 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if prefix ~= PREFIX or not BNetEnabled() then return end
         -- A hello: who is on that game account, in its own words (see MSG_HELLO).
         if type(text) == "string" and text:sub(1, #MSG_HELLO + 1) == MSG_HELLO .. "|" then
-            local _, name, guid, faction, realm, key = strsplit("|", text)
+            local _, name, guid, faction, realm, key, nonce, proof = strsplit("|", text)
             if not name or name == "" or AuthKey(name) == AuthKey(PLAYER_NAME) then return end
+            -- A new nonce wants an answer now, past the once-a-minute limit; our
+            -- own stays the same per id, so two answers cannot ping-pong.
+            local fresh = type(nonce) == "string" and #nonce >= 16 and #nonce <= 32
+                and nonce ~= theirNonce[senderID]
+            if fresh then theirNonce[senderID] = nonce end
             local g = OwnAccountGame(senderID)
             if g then
                 -- Battle.net knows them: the hello must agree with it - and a
                 -- key from an account Battle.net verifies is ours to trust.
                 if AuthKey(g.characterName) ~= AuthKey(name) then return end
                 TrustKey(key)
-            elseif KeyTrusted(key) then
-                -- Presence blank: believed only on a trusted household key.
+            elseif KeyTrusted(key) or ProofTrusted(proof, senderID, name) then
+                -- Presence blank: believed only on a trusted household key, or
+                -- proof of holding one.
                 learnedNames[senderID] = { name = name, guid = guid ~= "" and guid or nil,
                     faction = faction ~= "" and faction or nil, realm = realm ~= "" and realm or nil }
                 g = GameFor(senderID)
             end
-            if not g then return end
+            if not g then
+                -- Not proven yet. Ours by elimination: answer its nonce - our
+                -- proof is what lets it believe us, and its next hello answers ours.
+                if fresh and OwnByElimination(senderID) then SendHello(senderID, true) end
+                return
+            end
             inboundChecked[senderID] = nil
             bnetCapable[AuthKey(g.characterName)] = true
             -- Answered, even for a peer we already know: it may have reloaded
-            -- and forgotten us (rate-limited, so two hellos cannot ping-pong).
-            SendHello(senderID)
+            -- and forgotten us. Rate-limited, except for a new nonce.
+            SendHello(senderID, fresh)
             OnNewPresence(NoteBNetPeer(g, senderID))
             return
         end
@@ -3327,6 +3500,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     end
     if event == "BN_DISCONNECTED" then
         bnetPeers, presence, bnetCapable, learnedNames, helloSent = {}, {}, {}, {}, {}
+        myNonce, theirNonce = {}, {}
         return
     end
     if event == "BN_CONNECTED" then bnetUpSince = time() end
@@ -4299,6 +4473,7 @@ local function ResetSyncState()
     bnetPeers, presence, bnetAnnounced, lastStreamFrom = {}, {}, {}, {}
     bnetCapable, bnetSeen, routeCheckedAt, inboundChecked = {}, {}, {}, {}
     learnedNames, helloSent = {}, {}
+    myNonce, theirNonce = {}, {}
     bnetUpSince = 0
     bnetScanPending, bnetSettlingPending, bnetSettlingTries = false, false, 0
     finishedStreams = {}
@@ -4422,6 +4597,8 @@ local _seam = {
     CHAR_SEP            = CHAR_SEP,
     MAX_CHUNK           = MAX_CHUNK,
     PROTOCOL_VERSION    = PROTOCOL_VERSION,
+    SHA256              = SHA256,
+    HMAC256             = HMAC256,
     PREFIX             = PREFIX,
     MSG_CHUNK_V        = MSG_CHUNK_V,
     MSG_DONE_V         = MSG_DONE_V,
