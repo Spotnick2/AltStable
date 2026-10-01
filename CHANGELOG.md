@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.4.0-beta
+
+Your accounts sync through Battle.net, sync asks before it shares, a Professions
+tab, and portrait capture in the addon. Measured on client 1.60.1.70124. The
+sync wire is unchanged, so a peer on v0.3.x still syncs by whisper; syncing
+through Battle.net needs both accounts on v0.4.0. New saved data is listed below;
+nothing existing changed shape.
+
 - **Your other accounts sync by themselves - any ruleset, any faction.** Two of
   your WoW accounts on the same Battle.net account now find each other through
   Battle.net and sync with no whitelist and nothing to type, including a Horde
@@ -87,8 +95,9 @@
   because the record of whose screenshots these are is only saved on a reload
   or logout. `/alts portrait preview` shows the framing first, and
   `/alts portrait facing <degrees>` turns the character. Turning captures into
-  portraits still happens outside the game, with the converter on the project
-  page; a companion app is next
+  portraits happens outside the game, with the free
+  [AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases/latest)
+  app for Windows
   ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
 - **New saved data: `AltStablePortraits`.** It holds the capture records and is
   only created the first time you capture. Nothing existing changed shape.
