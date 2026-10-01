@@ -1030,6 +1030,195 @@ local function FavouritesAmong(chars)
 end
 
 -- One backdrop, everyone standing on it.
+------------------------------------------------------------
+-- Pets in the scene (#75), as the retail warband screen does it: a hunter's
+-- beast or a warlock's demon standing at its owner's shoulder. An Options
+-- toggle, off by default.
+--
+-- A LIVE MODEL, unlike the cast. Measured on 1.60.1.70124: a creature's
+-- texture is baked into its model, so the display id the scanner saved renders
+-- the pet fully textured with nobody logged in - the thing a player's display
+-- id cannot do (see the header). No capture, no converter.
+--
+-- Framed BY HAND. PlayerModel's own camera is per model - the owner's bear came
+-- out head-only where the cat came out whole - and the stable's ModelScene
+-- preset (718) has no actor on Forever. So each pet gets a plain ModelScene
+-- with a fixed camera, and its actor is scaled from its own bounding box.
+--
+-- SIZED in the cast's units (RACE_HEIGHT: a human male is 1.0), not from the
+-- box: boxes are not in world scale (a night elf measured 2.09 and a gnome
+-- 1.53, nothing like their real ratio). Demons by creature, from in-game
+-- screenshots; beasts from the box with one calibration factor, the owner's
+-- cat being half a night elf.
+------------------------------------------------------------
+
+local PET_HEIGHT = {          -- demons, by npc id
+    [416]  = 0.50,            -- imp
+    [1860] = 1.00,            -- voidwalker: ~1.7 gnomes beside its gnome (measured)
+    [1863] = 1.00,            -- succubus
+    [417]  = 0.62,            -- felhunter
+}
+local BEAST_UNITS_PER_BOX = 0.32   -- cat: box 1.72 -> 0.55, half of a 1.10 night elf (measured)
+local BEAST_DEFAULT = 0.55         -- until the box has loaded
+local PET_MIN, PET_MAX = 0.35, 1.10
+
+local PET_FOV, PET_CAMERA = 0.6, 10   -- camera on +X, looking back at the model
+local PET_YAW = 0.6                   -- turned toward the fire, as a figure would
+local PET_MARGIN = 1.04               -- frame height per model height
+local PET_LIFT = 0.02                 -- one step BEHIND the owner: a touch higher
+local PET_OFFSET = 0.35               -- of the owner's width, toward the fire
+
+local function PetsEnabled()
+    return AltStableConfig and AltStableConfig.rosterPets == true
+end
+
+-- How tall a pet stands, in RACE_HEIGHT units.
+local function PetUnits(char, boxH)
+    local units = PET_HEIGHT[tonumber(char and char.pet_npc) or 0]
+    if not units then
+        boxH = tonumber(boxH) or 0
+        units = (boxH > 0) and (boxH * BEAST_UNITS_PER_BOX) or BEAST_DEFAULT
+    end
+    return math.max(PET_MIN, math.min(PET_MAX, units))
+end
+
+-- Which side of the owner it stands on: toward the fire, so it never stands
+-- in the next character's slot. +1 is screen right.
+local function PetSide(ownerX, fireX)
+    return (ownerX <= fireX) and 1 or -1
+end
+
+-- Width per height of the model as the camera sees it. The box's X is the
+-- model's length (it faces +X), and the screen's horizontal is world Y; turned
+-- by yaw, length and width each show a part.
+local function PetAspect(box, yaw)
+    if not box or (box.h or 0) <= 0 then return 2 end
+    local seen = math.abs(box.l * math.sin(yaw)) + math.abs(box.w * math.cos(yaw))
+    return math.max(0.5, seen / box.h)
+end
+
+-- The box as Forever returns it: six numbers (measured), or Retail's two
+-- vectors should a later build switch. nil until the model has loaded.
+local function ReadBox(actor)
+    local r = { pcall(actor.GetActiveBoundingBox, actor) }
+    if not r[1] then return nil end
+    local x0, y0, z0, x1, y1, z1
+    if type(r[2]) == "table" and type(r[3]) == "table" then
+        x0, y0, z0, x1, y1, z1 = r[2].x, r[2].y, r[2].z, r[3].x, r[3].y, r[3].z
+    else
+        x0, y0, z0, x1, y1, z1 = r[2], r[3], r[4], r[5], r[6], r[7]
+    end
+    x0, y0, z0 = tonumber(x0), tonumber(y0), tonumber(z0)
+    x1, y1, z1 = tonumber(x1), tonumber(y1), tonumber(z1)
+    if not (x0 and y0 and z0 and x1 and y1 and z1) then return nil end
+    local h = z1 - z0
+    if h <= 0.001 then return nil end
+    return { l = x1 - x0, w = y1 - y0, h = h }
+end
+
+local function PetFrame(i)
+    Roster.pets = Roster.pets or {}
+    if Roster.pets[i] ~= nil then return Roster.pets[i] or nil end
+    local ok, scene = pcall(CreateFrame, "ModelScene", nil, panel)
+    local okA, actor
+    if ok and scene then okA, actor = pcall(scene.CreateActor, scene) end
+    if not (okA and actor) then
+        Roster.pets[i] = false        -- this client has no ModelScene: never retry
+        return nil
+    end
+    pcall(scene.SetCameraFieldOfView, scene, PET_FOV)
+    pcall(scene.SetCameraNearClip, scene, 0.1)
+    pcall(scene.SetCameraFarClip, scene, 100)
+    pcall(scene.SetCameraPosition, scene, PET_CAMERA, 0, 0)
+    pcall(scene.SetCameraOrientationByYawPitchRoll, scene, math.pi, 0, 0)
+    pcall(actor.SetUseCenterForOrigin, actor, true, true, true)
+    pcall(actor.SetPosition, actor, 0, 0, 0)
+    scene:EnableMouse(false)          -- clicks belong to the cards
+    scene.actor = actor
+    scene:Hide()
+    Roster.pets[i] = scene
+    return scene
+end
+
+-- Size and place one pet from what it wants and what its model measured.
+local function PlacePet(f)
+    local want = f._want
+    if not want then return end
+    local box = f._box
+    local yaw = want.side * PET_YAW
+    local h = math.min(PetUnits(want.char, box and box.h) * want.unitPx, want.maxH)
+    local frameH = h * PET_MARGIN
+    local frameW = h * PetAspect(box, yaw) * PET_MARGIN
+    f:SetSize(frameW, frameH)
+    f:SetFrameLevel(want.level)
+    f:ClearAllPoints()
+    -- Centred a third of its own width past the owner's edge: close enough to
+    -- overlap, as the panther at the warband screen does, not on top of them.
+    f:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
+        want.x + want.side * (want.ownerW * PET_OFFSET + frameW * 0.2), want.y)
+    pcall(f.actor.SetYaw, f.actor, yaw)
+    if box then
+        local viewH = 2 * PET_CAMERA * math.tan(PET_FOV / 2)
+        pcall(f.actor.SetScale, f.actor, viewH / (box.h * PET_MARGIN))
+        f:Show()
+    end
+end
+
+-- The box exists once the model has streamed in; poll briefly for it. The
+-- token drops an answer that arrives after the pet was changed or hidden.
+local function MeasurePet(f, token, tries)
+    if f._token ~= token then return end
+    local box = ReadBox(f.actor)
+    if box then
+        f._box = box
+        PlacePet(f)
+    elseif tries > 0 and C_Timer and C_Timer.After then
+        C_Timer.After(0.1, function() MeasurePet(f, token, tries - 1) end)
+    end
+end
+
+local function HidePets()
+    for _, f in pairs(Roster.pets or {}) do
+        if f then f._want = nil; f:Hide() end
+    end
+end
+
+-- One pet per seated owner that has one, after the cast is drawn.
+local function RenderPets(cast, spots, sizes, fit, figureH, tallest, fireX, panelH)
+    if not PetsEnabled() then HidePets(); return 0 end
+    local drawn = 0
+    for i = 1, #(Roster.cards or {}) do
+        local char, spot = cast[i], spots[i]
+        local display = char and tonumber(char.pet_display)
+        local f = (display and display > 0 and spot and sizes[i] and sizes[i].cut) and PetFrame(i)
+        if f then
+            local ownerLevel = panel:GetFrameLevel() + 2 + 2 * spot.level
+            f._want = {
+                char = char, side = PetSide(spot.x, fireX),
+                x = spot.x, y = spot.y + panelH * PET_LIFT,
+                ownerW = sizes[i][1] * fit,
+                unitPx = figureH / tallest * spot.scale * fit,
+                maxH = figureH * spot.scale * fit,
+                level = ownerLevel - 1,
+            }
+            if f._display ~= display then
+                f._display, f._box = display, nil
+                f._token = (f._token or 0) + 1
+                f:Hide()
+                local ok = pcall(f.actor.SetModelByCreatureDisplayID, f.actor, display)
+                if ok then MeasurePet(f, f._token, 30) end
+            else
+                PlacePet(f)
+            end
+            drawn = drawn + 1
+        else
+            local stale = Roster.pets and Roster.pets[i]
+            if stale then stale._want = nil; stale:Hide() end
+        end
+    end
+    return drawn
+end
+
 local function RenderScene(chars)
     local entry = CurrentScene()
     local pw, ph = panel:GetWidth(), panel:GetHeight()
@@ -1056,7 +1245,8 @@ local function RenderScene(chars)
             withArt = withArt + 1
             local w, h = sizes[i][1] * fit, sizes[i][2] * fit
 
-            card:SetFrameLevel(panel:GetFrameLevel() + 1 + spot.level)
+            -- Even levels, so a pet (#75) fits on the odd one just under its owner.
+            card:SetFrameLevel(panel:GetFrameLevel() + 2 + 2 * spot.level)
 
             card:ClearAllPoints()
             card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", spot.x, spot.y - NAME_H - 4)
@@ -1091,6 +1281,8 @@ local function RenderScene(chars)
             card:Hide()
         end
     end
+
+    RenderPets(cast, spots, sizes, fit, figureH, tallest, (FireAnchor(pw, ph, entry)), ph)
 
     -- The third value is how many of the SEATED characters were chosen rather
     -- than guessed, which is the only honest basis for the hint below.
@@ -2120,6 +2312,8 @@ end
 
 function Roster.Refresh()
     if not panel then return end
+    -- Pets belong to the scene alone; RenderScene puts back the ones it wants.
+    HidePets()
 
     -- Drilled into a character: that replaces the view entirely.
     --
@@ -2548,6 +2742,8 @@ function Roster._Bootstrap()
             SCENE_BAR_W = SCENE_BAR_W, VIEW_BTN_W = VIEW_BTN_W,
             BAR_TOP = BAR_TOP, BAR_H = BAR_H, PAD_X = PAD_X,
             SCENE_CAST = SCENE_CAST,
+            PetUnits = PetUnits, PetSide = PetSide, PetAspect = PetAspect, ReadBox = ReadBox,
+            PET_HEIGHT = PET_HEIGHT, Pets = function() return Roster.pets or {} end,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
         }, { __index = DETAIL_TEST }),

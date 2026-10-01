@@ -3213,6 +3213,17 @@ local function CreateFrameIfNeeded()
         "Play fade-in animation when AltStable opens", Y)
     Y = Y - 22
 
+    -- Off unless asked for (#75), so the getter is "== true", not the helper's
+    -- "~= false".
+    local optPetsCheck = MakeOptCheckRow("rosterPets",
+        "Show hunter pets and warlock demons in the Roster scene", Y,
+        function(checked)
+            AltStable.SetConfigValue("rosterPets", checked)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end,
+        function() return AltStableConfig and AltStableConfig.rosterPets == true end)
+    Y = Y - 22
+
     local optMinimapCheck = MakeOptCheckRow(nil,
         "Show minimap button (left-click toggle, right-click options, drag to move)", Y,
         function(checked)
@@ -3750,6 +3761,7 @@ local function CreateFrameIfNeeded()
         optOrbitCheck:SetChecked(optOrbitCheck._getter())
         optSaluteCheck:SetChecked(optSaluteCheck._getter())
         optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
+        optPetsCheck:SetChecked(optPetsCheck._getter())
         optMinimapCheck:SetChecked(optMinimapCheck._getter())
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))

@@ -1798,5 +1798,87 @@ C_Spell = {
     RequestLoadSpellData = function(id) table.insert(WoW.spellRequests, id) end,
 }
 
+------------------------------------------------------------
+-- Pets (#75), in the shape MEASURED on 1.60.1.70124 (Tools/AltStableProbe/Pets.lua)
+------------------------------------------------------------
+-- WoW.pet = { guid = "Pet-0-4615-1-86241-165189-02001E2A26", name = "Tarthosuk" }
+--   A hunter pet's GUID carries the generic npc 165189 for every beast, and
+--   its last six hex digits are the stable's petNumber. A demon's GUID is
+--   "Pet-..." too, but carries its real npc (voidwalker 1860).
+-- WoW.stable[slot] = the C_StableInfo PetInfo struct for an active slot.
+-- WoW.currentSpells[spellID] = true: C_Spell.IsCurrentSpell (Call Pet N).
+-- WoW.creatureDisplays[npc] = the display id SetCreature resolves to.
+-- WoW.modelBoxes[display] = { minX, minY, minZ, maxX, maxY, maxZ }: the SIX
+--   NUMBERS GetActiveBoundingBox returns here, not Retail's two vectors.
+local function PetReset()
+    WoW.pet = nil
+    WoW.stable = {}
+    WoW.currentSpells = {}
+    WoW.creatureDisplays = {}
+    WoW.modelBoxes = {}
+    WoW.actors = {}
+end
+PetReset()
+local resetBeforePets = WoW.reset
+function WoW.reset()
+    resetBeforePets()
+    PetReset()
+end
+
+function UnitExists(unit)
+    if unit == "pet" then return WoW.pet ~= nil end
+    return unit == "player"
+end
+local unitGUIDBeforePets = UnitGUID
+function UnitGUID(unit)
+    if unit == "pet" then return WoW.pet and WoW.pet.guid end
+    return unitGUIDBeforePets(unit)
+end
+local unitNameBeforePets = UnitName
+function UnitName(unit)
+    if unit == "pet" then return WoW.pet and WoW.pet.name end
+    return unitNameBeforePets(unit)
+end
+
+C_StableInfo = {
+    GetStablePetInfo = function(slot) return WoW.stable[slot] end,
+}
+C_Spell.IsCurrentSpell = function(id) return WoW.currentSpells[id] == true end
+
+-- Model frames: a PlayerModel resolves a creature to its display id at once
+-- (measured: GetDisplayInfo right after SetCreature read 1132 for 1860), and a
+-- ModelScene hands out actors whose box is the six-number form.
+local createFrameBeforePets = CreateFrame
+function CreateFrame(kind, name, parent, ...)
+    local f = createFrameBeforePets(kind, name, parent, ...)
+    if kind == "PlayerModel" or kind == "DressUpModel" then
+        f.SetCreature = function(self, npc) self._display = WoW.creatureDisplays[npc] or 0; return self end
+        f.SetDisplayInfo = function(self, id) self._display = id; return self end
+        f.ClearModel = function(self) self._display = nil; return self end
+        f.GetDisplayInfo = function(self) return self._display or 0 end
+    elseif kind == "ModelScene" then
+        f.CreateActor = function(self)
+            local a = WoW.makeFrame()
+            a._scale = 1
+            a.SetModelByCreatureDisplayID = function(s, id) s._display = id; return true end
+            a.ClearModel = function(s) s._display = nil end
+            a.GetActiveBoundingBox = function(s)
+                local b = s._display and WoW.modelBoxes[s._display]
+                if not b then return 0, 0, 0, 0, 0, 0 end
+                return b[1], b[2], b[3], b[4], b[5], b[6]
+            end
+            a.SetScale = function(s, v) s._scale = v; return s end
+            a.GetScale = function(s) return s._scale end
+            a.SetYaw = function(s, v) s._yaw = v; return s end
+            a.GetYaw = function(s) return s._yaw end
+            self._actors = self._actors or {}
+            self._actors[#self._actors + 1] = a
+            WoW.actors[#WoW.actors + 1] = a
+            return a
+        end
+    end
+    return f
+end
+
 _G.WoW = WoW
 return WoW
