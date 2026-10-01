@@ -1176,6 +1176,10 @@ local function MeasurePet(f, token, tries)
     local box = ReadBox(f.actor)
     if box then
         f._box = box
+        -- Held on its idle pose at speed 0, as Capture freezes a character: a
+        -- breathing cat among the still portraits reads as wrong (owner, in
+        -- game). Once loaded, because loading starts the model's own idle.
+        pcall(f.actor.SetAnimation, f.actor, 0, nil, 0)
         PlacePet(f)
     elseif tries > 0 and C_Timer and C_Timer.After then
         C_Timer.After(0.1, function() MeasurePet(f, token, tries - 1) end)

@@ -1870,6 +1870,9 @@ function CreateFrame(kind, name, parent, ...)
             a.SetScale = function(s, v) s._scale = v; return s end
             a.GetScale = function(s) return s._scale end
             a.SetYaw = function(s, v) s._yaw = v; return s end
+            a.SetAnimation = function(s, anim, variation, speed)
+                s._anim, s._animSpeed = anim, (speed == nil) and 1 or speed
+            end
             a.GetYaw = function(s) return s._yaw end
             self._actors = self._actors or {}
             self._actors[#self._actors + 1] = a

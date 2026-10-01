@@ -3148,6 +3148,10 @@ do
               math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.04)) < 1e-6,
               tostring(cat.pet.actor._scale))
 
+        -- Still, like the portraits around it.
+        eq("the pet is held on its idle pose", cat.pet.actor._anim, 0)
+        eq("  at speed 0", cat.pet.actor._animSpeed, 0)
+
         -- Clicks belong to the cards.
         check("a pet does not take the mouse", not cat.pet:IsMouseEnabled())
     end
