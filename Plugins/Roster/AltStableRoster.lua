@@ -1094,9 +1094,14 @@ local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the
 --   outer       a pet on the OUTSIDE has room to spare there (owner, in game):
 --               BESIDE its owner by both widths (reach of the half-widths, so
 --               they overlap a little), a step further back (higher), smaller,
---               and stopped by the panel's edge - so a wide one hugs the edge
+--               and stopped by the panel's edge - so a wide one hugs the edge.
+--               It reads as FURTHER AWAY (a quarter smaller, well up the
+--               ground), never reaches past its owner's inner shoulder, and is
+--               drawn behind the fire-side pets: a voidwalker right behind its
+--               gnome covered the next character, and the cat's tail went
+--               behind it (owner, in game)
 local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.2,
-                     outer = { reach = 0.8, lift = 0.05, size = 0.92 }, edgePad = 4 }
+                     outer = { reach = 0.8, lift = 0.10, size = 0.75 }, edgePad = 4 }
 
 local function PetsEnabled()
     return AltStableConfig and AltStableConfig.rosterPets == true
@@ -1154,6 +1159,13 @@ local function PetX(ownerX, ownerW, modelW, side, panelW, outer)
         x = math.max(half, math.min(panelW - half, x))
     end
     return x
+end
+
+-- How wide an outside pet may be: from the panel's edge to its owner's INNER
+-- shoulder, so it never covers the next character.
+local function OuterRoom(ownerX, ownerW, side, panelW)
+    if side < 0 then return ownerX + ownerW / 2 - PET_LAYOUT.edgePad end
+    return (panelW or 0) - PET_LAYOUT.edgePad - (ownerX - ownerW / 2)
 end
 
 local function HasPet(char)
@@ -1233,6 +1245,10 @@ local function PlacePet(f)
     local yaw = want.yaw
     local aspect = PetAspect(box, yaw)
     local h = math.min(PetUnits(want.char, box and box.h) * want.unitPx, want.maxH)
+    if want.outer then
+        local room = OuterRoom(want.ownerX, want.ownerW, want.side, want.panelW)
+        if room > 0 and h * aspect > room then h = room / aspect end
+    end
     local frameH = h * PET_MARGIN
     local frameW = h * aspect * PET_SPARE_W
     f:SetSize(frameW, frameH)
@@ -1310,7 +1326,9 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, p
                 -- behind, as on the warband screen. Just under its owner, the
                 -- one nearest the camera put a voidwalker over the next figure
                 -- (measured), because the owner outranks the whole ring.
-                level = panel:GetFrameLevel() + 1,
+                -- Outside pets furthest back, then the fire-side ones; the
+                -- cast from +3.
+                level = panel:GetFrameLevel() + (ps.outer and 1 or 2),
             }
             if f._display ~= display then
                 f._display, f._box = display, nil
@@ -1329,7 +1347,7 @@ end
 
 -- The pets' test seam, apart from the plugin's: see its __index.
 local PET_TEST = {
-    PetUnits = PetUnits, PetSides = PetSides, PetX = PetX, PetAspect = PetAspect,
+    PetUnits = PetUnits, PetSides = PetSides, PetX = PetX, PetAspect = PetAspect, OuterRoom = OuterRoom,
     ReadBox = ReadBox, PET_HEIGHT = PET_HEIGHT, PET_LAYOUT = PET_LAYOUT,
     SCENE_CAST_WITH_PETS = SCENE_CAST_WITH_PETS,
     Pets = function() return Roster.pets or {} end,
@@ -1365,7 +1383,7 @@ local function RenderScene(chars)
             local w, h = sizes[i][1] * fit, sizes[i][2] * fit
 
             -- From +2: +1 is the pets' (#75), behind the whole cast.
-            card:SetFrameLevel(panel:GetFrameLevel() + 2 + spot.level)
+            card:SetFrameLevel(panel:GetFrameLevel() + 3 + spot.level)
             card._spotLevel = spot.level
 
             card:ClearAllPoints()

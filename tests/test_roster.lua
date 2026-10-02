@@ -3116,7 +3116,7 @@ do
         for _, card in ipairs(T.Cards()) do
             if card:IsShown() then
                 check("a character's level clears the pets' even at the fire",
-                      card:GetFrameLevel() - base - (card._spotLevel or 0) >= 2)
+                      card:GetFrameLevel() - base - (card._spotLevel or 0) >= 3)
             end
         end
 
@@ -3265,6 +3265,8 @@ do
     eq("  an outer pet stands beside its owner by both widths",
        T.PetX(500, 100, 200, 1, 1000, true), 500 + (100 + 200) / 2 * T.PET_LAYOUT.outer.reach)
     eq("  and a wide one hugs the edge", T.PetX(200, 100, 300, -1, 1000, true), 150 + pad)
+    eq("an outer pet's room on the left: edge to the owner's inner shoulder", T.OuterRoom(200, 100, -1, 1000), 250 - pad)
+    eq("  and on the right", T.OuterRoom(800, 100, 1, 1000), 1000 - pad - 750)
 end
 
 -- Four at the fire: the outermost owners' pets stand OUTSIDE, further out, a
@@ -3313,7 +3315,12 @@ do
         -- Same demon, same race: only the outer size factor tells them apart
         -- (spot scale aside, so compare per spot through the owner's figure).
         local function ratio(r) return r.pet:GetHeight() / r.card.figure:GetHeight() end
-        check("an outer pet is drawn a touch smaller",
+        check("an outer pet is drawn further back: behind the fire-side pets",
+              rows[1].pet:GetFrameLevel() < rows[2].pet:GetFrameLevel()
+              and rows[4].pet:GetFrameLevel() < rows[3].pet:GetFrameLevel())
+        check("  and the fire-side pets behind every character",
+              rows[2].pet:GetFrameLevel() < rows[1].card:GetFrameLevel())
+        check("an outer pet is drawn smaller, as further away",
               math.abs(ratio(rows[1]) / ratio(rows[2]) - T.PET_LAYOUT.outer.size) < 1e-6,
               tostring(ratio(rows[1]) / ratio(rows[2])))
         -- Reach is a share of the OWNER's width: compare shares, not pixels -
@@ -3335,6 +3342,25 @@ do
                   math.abs(off - want) < 1e-6 or math.abs(select(4, r.pet:GetPoint()) - edge) < 1e-6,
                   off .. " vs " .. want)
         end
+    end
+    -- A demon too wide for its corner is shrunk to it, never let over the
+    -- next character: no wider than the edge to its owner's inner shoulder.
+    for i = 1, 4 do WoW.modelBoxes[3000 + i] = nil; WoW.modelBoxes[4000 + i] = { -1, -20, 0, 1, 20, 3 } end
+    for i = 1, 4 do AltStableDB[("four-%d"):format(i)].pet_display = 4000 + i end
+    T.Refresh()
+    local leftmost
+    for i, card in ipairs(T.Cards()) do
+        local f = T.Pets()[i]
+        if card:IsShown() and f and f:IsShown() then
+            local cx = select(4, card:GetPoint())
+            if not leftmost or cx < leftmost.x then leftmost = { card = card, pet = f, x = cx } end
+        end
+    end
+    check("the wide outer demon is drawn", leftmost ~= nil)
+    if leftmost then
+        local modelW = leftmost.pet:GetWidth() / 1.4
+        local room = T.OuterRoom(leftmost.x, leftmost.card.figure:GetWidth(), -1, T.Panel():GetWidth())
+        check("  no wider than its corner", modelW <= room + 1e-6, modelW .. " > " .. room)
     end
     AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
