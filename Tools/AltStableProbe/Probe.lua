@@ -823,6 +823,10 @@ SlashCmdList["ASPROBE"] = function(msg)
         AltStableProbe.BNet(arg)
         return
     end
+    if cmd == "pet" then
+        AltStableProbe.Pet(arg)
+        return
+    end
     if cmd == "whisper" then
         if arg == "" then
             Out("usage: /asprobe whisper <CharacterName>   (log the other account in first)")
@@ -852,7 +856,7 @@ SlashCmdList["ASPROBE"] = function(msg)
         return
     end
     if msg ~= "" and not P[msg] then
-        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper channel copy dump")
+        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper channel bnet pet copy dump")
         return
     end
     Run(msg ~= "" and msg or nil)

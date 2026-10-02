@@ -87,6 +87,10 @@ local function EnsureDefaults()
     if AltStableConfig.sendAllAccounts == nil then
         AltStableConfig.sendAllAccounts = false
     end
+    -- Pets in the Roster scene (#75): an option, off unless asked for.
+    if AltStableConfig.rosterPets == nil then
+        AltStableConfig.rosterPets = false
+    end
     if AltStableConfig.toastsEnabled == nil then
         AltStableConfig.toastsEnabled = true
     end

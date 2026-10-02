@@ -353,6 +353,43 @@ T.DeserializeFullDB(T.SerializeChar({
 eq(AltStableDB["Player-4-0004"].hidehelm, nil,
    "a peer that predates the field clears the stale toggle instead of leaving it set")
 
+-- The pet (#75): flat fields, because SerializeChar drops tables. Numbers come
+-- back as numbers, and a peer whose record has no pet clears a stale one.
+local petWire = T.SerializeChar({
+    guid = "Player-4-0005", name = "Kaleid Sumner", class = "HUNTER", level = 16, lastUpdate = 1,
+    pet_display = 143626, pet_npc = 251245, pet_name = "Tarthosuk",
+})
+check(petWire:find("pet_display:143626", 1, true) ~= nil, "the pet's display id rides the wire")
+local dp = T.DeserializeChar(petWire)
+eq(dp.pet_display, 143626, "pet_display round-trips as a number")
+eq(dp.pet_npc, 251245, "pet_npc round-trips as a number")
+eq(dp.pet_name, "Tarthosuk", "pet_name round-trips")
+
+AltStableDB = {}
+T.DeserializeFullDB(petWire .. "\n" .. T.CHAR_SEP, "NewPeer")
+eq(AltStableDB["Player-4-0005"].pet_display, 143626, "a pet arrives from a current peer")
+T.DeserializeFullDB(T.SerializeChar({
+    guid = "Player-4-0005", name = "Kaleid Sumner", class = "HUNTER", level = 16,
+    lastUpdate = 2000,          -- newer, and no pet
+}) .. "\n" .. T.CHAR_SEP, "OldPeer")
+eq(AltStableDB["Player-4-0005"].pet_display, nil, "a newer record with no pet clears the old one")
+eq(AltStableDB["Player-4-0005"].pet_name, nil, "  and its name")
+
+-- A pet coming out rescans, like a gear change; someone else's pet does not.
+do
+    local before = AltStable.ScanCharacter
+    local scans = 0
+    AltStable.ScanCharacter = function() scans = scans + 1 end
+    WoW.timers = {}
+    onEvent(T.frame, "UNIT_PET", "party1")
+    WoW.flushTimers()
+    eq(scans, 0, "another unit's pet does not rescan")
+    onEvent(T.frame, "UNIT_PET", "player")
+    WoW.flushTimers()
+    eq(scans, 1, "our pet coming out rescans")
+    AltStable.ScanCharacter = before
+end
+
 ------------------------------------------------------------
 -- 4. Full-DB serialize / deserialize round-trip
 ------------------------------------------------------------

@@ -85,7 +85,14 @@ local SCENE_DEPTH    = 0.14   -- how much smaller the far side of it is
 -- and it reads as a scene; thirteen in a row reads as a police line-up, which
 -- is what the first version looked like. The grid remains the place to see
 -- everyone.
+--
+-- Four when pets are shown (#75): a fifth figure takes the room a hunter's
+-- beast or a warlock's demon stands in, and with five they stood behind the
+-- next character instead of beside their own (owner, in game). Five without.
+-- By the OPTION, not by who has a pet, so a pet arriving by sync does not
+-- reshuffle the line.
 local SCENE_CAST = 5
+local SCENE_CAST_WITH_PETS = 4
 local MAX_CARD_W    = 170
 local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
 
@@ -1030,6 +1037,323 @@ local function FavouritesAmong(chars)
 end
 
 -- One backdrop, everyone standing on it.
+------------------------------------------------------------
+-- Pets in the scene (#75), as the retail warband screen does it: a hunter's
+-- beast or a warlock's demon standing at its owner's shoulder. An Options
+-- toggle, off by default.
+--
+-- A LIVE MODEL, unlike the cast. Measured on 1.60.1.70124: a creature's
+-- texture is baked into its model, so the display id the scanner saved renders
+-- the pet fully textured with nobody logged in - the thing a player's display
+-- id cannot do (see the header). No capture, no converter.
+--
+-- Framed BY HAND. PlayerModel's own camera is per model - the owner's bear came
+-- out head-only where the cat came out whole - and the stable's ModelScene
+-- preset (718) has no actor on Forever. So each pet gets a plain ModelScene
+-- with a fixed camera, and its actor is scaled from its own bounding box.
+--
+-- SIZED in the cast's units (RACE_HEIGHT: a human male is 1.0), not from the
+-- box: boxes are not in world scale (a night elf measured 2.09 and a gnome
+-- 1.53, nothing like their real ratio). Demons by creature, from in-game
+-- screenshots; beasts from the box with one calibration factor, the owner's
+-- cat being half a night elf.
+------------------------------------------------------------
+
+local PET_HEIGHT = {          -- demons, by npc id
+    [416]  = 0.45,            -- imp: a little under its gnome's height (in game)
+    [1860] = 1.00,            -- voidwalker: ~1.7 gnomes beside its gnome (measured)
+    [1863] = 1.00,            -- succubus
+    [417]  = 0.62,            -- felhunter
+}
+local BEAST_UNITS_PER_BOX = 0.32   -- cat: box 1.72 -> 0.55, half of a 1.10 night elf (measured)
+local BEAST_DEFAULT = 0.55         -- until the box has loaded
+local PET_MIN, PET_MAX = 0.35, 1.10
+
+-- Camera on +X, looking back at the model, from FAR with a NARROW lens: close
+-- and wide, the parts of a model nearest the camera grew past its frame and
+-- were cut off (an imp's, in game). Same framing, nearly no perspective.
+local PET_FOV, PET_CAMERA = 0.15, 40
+-- The frame is bigger than the model, both ways: the box is measured in ONE
+-- pose, and the idle animation reaches past it - an imp's horns, feet, and a
+-- step to the left were cut off at 4% (in game). The frame is lowered by the
+-- spare below the model, so the feet stay on the ground.
+local PET_SPARE_W = 1.4               -- frame width per model width
+local PET_MARGIN = 1.3                -- frame height per model height
+local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the ground
+-- One table: Lua 5.1 allows a function 60 upvalues, and the test exports are
+-- one function already near it.
+--   turn        a pet on the fire side turns this far toward it (owner: 20 deg);
+--               one on the outside faces the viewer
+--   ownerShift  an owner with a pet steps this share of the slot away from it
+--   reach       the pet's centre: this share of the owner's width out, so it
+--               stands mostly BEHIND them (owner). Its own width is left out:
+--               a frame is wider than the animal, and it pushed a cat clear
+-- NO width cap: capping a pet to its slot shrank a cat - long in 3/4 view - to
+-- a kitten by the fire (owner, in game). It keeps its true size and is only
+-- kept inside the panel.
+--   outer       a pet on the OUTSIDE has room to spare there (owner, in game):
+--               BESIDE its owner by both widths (reach of the half-widths, so
+--               they overlap a little), a step further back (higher), smaller,
+--               and stopped by the panel's edge - so a wide one hugs the edge.
+--               It reads as FURTHER AWAY (a quarter smaller, well up the
+--               ground), never reaches past its owner's inner shoulder, and is
+--               drawn behind the fire-side pets: a voidwalker right behind its
+--               gnome covered the next character, and the cat's tail went
+--               behind it (owner, in game)
+local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.2,
+                     outer = { reach = 0.8, lift = 0.10, size = 0.75 }, edgePad = 4 }
+
+local function PetsEnabled()
+    return AltStableConfig and AltStableConfig.rosterPets == true
+end
+
+-- How tall a pet stands, in RACE_HEIGHT units.
+local function PetUnits(char, boxH)
+    local units = PET_HEIGHT[tonumber(char and char.pet_npc) or 0]
+    if not units then
+        boxH = tonumber(boxH) or 0
+        units = (boxH > 0) and (boxH * BEAST_UNITS_PER_BOX) or BEAST_DEFAULT
+    end
+    return math.max(PET_MIN, math.min(PET_MAX, units))
+end
+
+-- Which side of its owner each pet stands on, and how it is turned - the
+-- owner's layout. Counted out from the fire on each side: the nearest owner's
+-- pet stands on the fire side, turned 20 degrees toward it; the next one out
+-- stands on the outside, facing the viewer; and so on. With four that is left,
+-- right, left, right, turned 0, +20, -20, 0, and each pair's pets take the
+-- outside of the pair, never one gap. +1 is screen right; spots are in x order.
+local function PetSides(spots, fireX)
+    local out, nLeft = {}, 0
+    for _, s in ipairs(spots) do
+        if s.x <= fireX then nLeft = nLeft + 1 end
+    end
+    for i, s in ipairs(spots) do
+        local left = s.x <= fireX
+        local rank = left and (nLeft - i) or (i - nLeft - 1)   -- 0 = nearest the fire
+        local toFire = left and 1 or -1
+        if rank % 2 == 0 then
+            out[i] = { side = toFire, yaw = toFire * PET_LAYOUT.turn }
+        else
+            out[i] = { side = -toFire, yaw = 0, outer = true }
+        end
+    end
+    return out
+end
+
+-- Where a pet is centred. On the fire side, out by part of the owner's width
+-- only, mostly behind them (a frame is wider than its animal, and counting it
+-- pushed a cat clear). On the outside, beside the owner by both widths. Then
+-- the MODEL is kept inside the panel - not its frame, whose spare width is
+-- empty: clamping the frame pushed a wide voidwalker in behind the next
+-- character instead of to the edge (owner, in game).
+local function PetX(ownerX, ownerW, modelW, side, panelW, outer)
+    local x
+    if outer then
+        x = ownerX + side * (ownerW + modelW) / 2 * PET_LAYOUT.outer.reach
+    else
+        x = ownerX + side * ownerW * PET_LAYOUT.reach
+    end
+    local half = modelW / 2 + PET_LAYOUT.edgePad
+    if panelW and panelW > 2 * half then
+        x = math.max(half, math.min(panelW - half, x))
+    end
+    return x
+end
+
+-- How wide an outside pet may be: from the panel's edge to its owner's INNER
+-- shoulder, so it never covers the next character.
+local function OuterRoom(ownerX, ownerW, side, panelW)
+    if side < 0 then return ownerX + ownerW / 2 - PET_LAYOUT.edgePad end
+    return (panelW or 0) - PET_LAYOUT.edgePad - (ownerX - ownerW / 2)
+end
+
+local function HasPet(char)
+    local display = char and tonumber(char.pet_display)
+    return PetsEnabled() and display ~= nil and display > 0
+end
+
+-- Where an owner stands in its slot: off-centre, away from its pet, when it
+-- has one to make room for.
+local function OwnerX(char, spot, slot, petSide)
+    if not HasPet(char) or not petSide then return spot.x end
+    return spot.x - petSide.side * slot * PET_LAYOUT.ownerShift
+end
+
+-- Width per height of the model as the camera sees it. The box's X is the
+-- model's length (it faces +X), and the screen's horizontal is world Y; turned
+-- by yaw, length and width each show a part.
+local function PetAspect(box, yaw)
+    if not box or (box.h or 0) <= 0 then return 2 end
+    local seen = math.abs(box.l * math.sin(yaw)) + math.abs(box.w * math.cos(yaw))
+    return math.max(0.5, seen / box.h)
+end
+
+-- The box as Forever returns it: six numbers (measured), or Retail's two
+-- vectors should a later build switch. nil until the model has loaded.
+local function ReadBox(actor)
+    local r = { pcall(actor.GetActiveBoundingBox, actor) }
+    if not r[1] then return nil end
+    local x0, y0, z0, x1, y1, z1
+    if type(r[2]) == "table" and type(r[3]) == "table" then
+        x0, y0, z0, x1, y1, z1 = r[2].x, r[2].y, r[2].z, r[3].x, r[3].y, r[3].z
+    else
+        x0, y0, z0, x1, y1, z1 = r[2], r[3], r[4], r[5], r[6], r[7]
+    end
+    x0, y0, z0 = tonumber(x0), tonumber(y0), tonumber(z0)
+    x1, y1, z1 = tonumber(x1), tonumber(y1), tonumber(z1)
+    if not (x0 and y0 and z0 and x1 and y1 and z1) then return nil end
+    local h = z1 - z0
+    if h <= 0.001 then return nil end
+    return { l = x1 - x0, w = y1 - y0, h = h }
+end
+
+local function PetFrame(i)
+    Roster.pets = Roster.pets or {}
+    if Roster.pets[i] ~= nil then return Roster.pets[i] or nil end
+    local ok, scene = pcall(CreateFrame, "ModelScene", nil, panel)
+    local okA, actor
+    if ok and scene then okA, actor = pcall(scene.CreateActor, scene) end
+    if not (okA and actor) then
+        Roster.pets[i] = false        -- this client has no ModelScene: never retry
+        return nil
+    end
+    pcall(scene.SetCameraFieldOfView, scene, PET_FOV)
+    pcall(scene.SetCameraNearClip, scene, 0.1)
+    pcall(scene.SetCameraFarClip, scene, 100)
+    pcall(scene.SetCameraPosition, scene, PET_CAMERA, 0, 0)
+    pcall(scene.SetCameraOrientationByYawPitchRoll, scene, math.pi, 0, 0)
+    pcall(actor.SetUseCenterForOrigin, actor, true, true, true)
+    pcall(actor.SetPosition, actor, 0, 0, 0)
+    -- No particles. An imp's fel fire kept burning on a frozen pose, ran past
+    -- the frame as a green rectangle, and swelled the box the imp is fitted
+    -- by until the imp itself was a speck (measured, 70124). The portraits
+    -- around it carry no effects either.
+    pcall(actor.SetParticleOverrideScale, actor, 0)
+    scene:EnableMouse(false)          -- clicks belong to the cards
+    scene.actor = actor
+    scene:Hide()
+    Roster.pets[i] = scene
+    return scene
+end
+
+-- Size and place one pet from what it wants and what its model measured.
+local function PlacePet(f)
+    local want = f._want
+    if not want then return end
+    local box = f._box
+    local yaw = want.yaw
+    local aspect = PetAspect(box, yaw)
+    local h = math.min(PetUnits(want.char, box and box.h) * want.unitPx, want.maxH)
+    if want.outer then
+        local room = OuterRoom(want.ownerX, want.ownerW, want.side, want.panelW)
+        if room > 0 and h * aspect > room then h = room / aspect end
+    end
+    local frameH = h * PET_MARGIN
+    local frameW = h * aspect * PET_SPARE_W
+    f:SetSize(frameW, frameH)
+    f:SetFrameLevel(want.level)
+    f:ClearAllPoints()
+    f:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
+        PetX(want.ownerX, want.ownerW, h * aspect, want.side, want.panelW, want.outer), want.y - (frameH - h) / 2)
+    pcall(f.actor.SetYaw, f.actor, yaw)
+    if box then
+        -- The field of view spans the frame's LARGER side (measured: taken as
+        -- the height, a cat in a wide frame came out three times too big; then
+        -- taken as the width, an imp in a tall frame clipped top and bottom,
+        -- while the portrait probe pane had fitted as height). So the height
+        -- the camera sees is the full span, or the width's share of it.
+        local span = 2 * PET_CAMERA * math.tan(PET_FOV / 2)
+        local viewH = (frameW >= frameH) and (span * frameH / frameW) or span
+        pcall(f.actor.SetScale, f.actor, viewH / (box.h * PET_MARGIN))
+        f:Show()
+    end
+end
+
+-- The box exists once the model has streamed in; poll briefly for it. The
+-- token drops an answer that arrives after the pet was changed or hidden.
+local function MeasurePet(f, token, tries)
+    if f._token ~= token then return end
+    local box = ReadBox(f.actor)
+    if box then
+        f._box = box
+        -- It keeps its idle animation: a breathing cat among still portraits
+        -- reads as alive, not wrong, once its particles are gone (owner, in
+        -- game, after trying it frozen - "the sweet spot").
+        PlacePet(f)
+    elseif tries > 0 and C_Timer and C_Timer.After then
+        C_Timer.After(0.1, function() MeasurePet(f, token, tries - 1) end)
+    else
+        -- Gave up: forget the display, so the next Refresh loads it afresh
+        -- rather than re-placing a pet that has no box and never shows (Codex).
+        f._display = nil
+    end
+end
+
+local function HidePets()
+    for _, f in pairs(Roster.pets or {}) do
+        if f then f._want = nil; f:Hide() end
+    end
+end
+
+-- One pet per seated owner that has one, after the cast is drawn. Refresh
+-- has hidden them all first, so a pet not placed here stays hidden.
+local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, panelW, panelH, slot)
+    if not PetsEnabled() then HidePets(); return 0 end
+    local drawn = 0
+    for i = 1, #(Roster.cards or {}) do
+        local char, spot = cast[i], spots[i]
+        local display = char and tonumber(char.pet_display)
+        local f = (display and display > 0 and spot and sizes[i] and sizes[i].cut) and PetFrame(i)
+        if f then
+            local ps = petSides[i]
+            local outer = ps.outer and PET_LAYOUT.outer
+            local y = spot.y + panelH * (outer and outer.lift or PET_LIFT)
+            f._want = {
+                char = char, side = ps.side, yaw = ps.yaw,
+                ownerX = OwnerX(char, spot, slot, ps), ownerW = sizes[i][1] * fit,
+                panelW = panelW,
+                outer = ps.outer,
+                y = y,
+                unitPx = figureH / tallest * spot.scale * fit * (outer and outer.size or 1),
+                -- Capped by the panel's TOP only: a voidwalker may tower over a
+                -- gnome. Capped at the tallest character's height, it shrank to
+                -- its gnome in a cast of gnomes (Codex). The MODEL's top, not the
+                -- frame's - the frame's headroom is empty, and counting it
+                -- shrank demons the cast had room for.
+                maxH = math.max(0, panelH - y),
+                -- Under EVERY character, not just its owner: the pet stands
+                -- behind, as on the warband screen. Just under its owner, the
+                -- one nearest the camera put a voidwalker over the next figure
+                -- (measured), because the owner outranks the whole ring.
+                -- Outside pets furthest back, then the fire-side ones; the
+                -- cast from +3.
+                level = panel:GetFrameLevel() + (ps.outer and 1 or 2),
+            }
+            if f._display ~= display then
+                f._display, f._box = display, nil
+                f._token = (f._token or 0) + 1
+                f:Hide()
+                local ok = pcall(f.actor.SetModelByCreatureDisplayID, f.actor, display)
+                if ok then MeasurePet(f, f._token, 30) else f._display = nil end
+            else
+                PlacePet(f)
+            end
+            drawn = drawn + 1
+        end
+    end
+    return drawn
+end
+
+-- The pets' test seam, apart from the plugin's: see its __index.
+local PET_TEST = {
+    PetUnits = PetUnits, PetSides = PetSides, PetX = PetX, PetAspect = PetAspect, OuterRoom = OuterRoom,
+    ReadBox = ReadBox, PET_HEIGHT = PET_HEIGHT, PET_LAYOUT = PET_LAYOUT,
+    SCENE_CAST_WITH_PETS = SCENE_CAST_WITH_PETS,
+    Pets = function() return Roster.pets or {} end,
+    SceneSlot = function() return Roster.sceneSlot end,
+}
+
 local function RenderScene(chars)
     local entry = CurrentScene()
     local pw, ph = panel:GetWidth(), panel:GetHeight()
@@ -1040,12 +1364,14 @@ local function RenderScene(chars)
 
     if sceneLabel then sceneLabel:SetText(entry.label) end
 
-    local cast = SceneCast(chars, CutoutFor, SCENE_CAST)
+    local petsOn = AltStableConfig and AltStableConfig.rosterPets == true
+    local cast = SceneCast(chars, CutoutFor, petsOn and SCENE_CAST_WITH_PETS or SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestRace(cast)
 
     local sizes = MeasureCast(cast, CutoutFor, spots, tallest, figureH)
     local fit = FitScale(sizes, slot)
+    local petSides = PetSides(spots, (FireAnchor(pw, ph, entry)))
     local withArt = 0
 
     for i, card in ipairs(Roster.cards) do
@@ -1056,10 +1382,12 @@ local function RenderScene(chars)
             withArt = withArt + 1
             local w, h = sizes[i][1] * fit, sizes[i][2] * fit
 
-            card:SetFrameLevel(panel:GetFrameLevel() + 1 + spot.level)
+            -- From +2: +1 is the pets' (#75), behind the whole cast.
+            card:SetFrameLevel(panel:GetFrameLevel() + 3 + spot.level)
+            card._spotLevel = spot.level
 
             card:ClearAllPoints()
-            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", spot.x, spot.y - NAME_H - 4)
+            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", OwnerX(char, spot, slot, petSides[i]), spot.y - NAME_H - 4)
             card:SetSize(math.max(slot, w), h + NAME_H + 4)
 
             card.plate:Hide()
@@ -1091,6 +1419,9 @@ local function RenderScene(chars)
             card:Hide()
         end
     end
+
+    Roster.sceneSlot = slot
+    RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, pw, ph, slot)
 
     -- The third value is how many of the SEATED characters were chosen rather
     -- than guessed, which is the only honest basis for the hint below.
@@ -2120,6 +2451,8 @@ end
 
 function Roster.Refresh()
     if not panel then return end
+    -- Pets belong to the scene alone; RenderScene puts back the ones it wants.
+    HidePets()
 
     -- Drilled into a character: that replaces the view entirely.
     --
@@ -2550,7 +2883,13 @@ function Roster._Bootstrap()
             SCENE_CAST = SCENE_CAST,
             View = View, CurrentScene = CurrentScene,
             MIN_CARD_W = MIN_CARD_W, MAX_CARD_W = MAX_CARD_W,
-        }, { __index = DETAIL_TEST }),
+        }, { __index = function(_, k)
+            -- Two side tables, because this one function sits at Lua 5.1's
+            -- 60-upvalue limit (#75 crossed it).
+            local v = PET_TEST[k]
+            if v ~= nil then return v end
+            return DETAIL_TEST[k]
+        end }),
     })
 end
 

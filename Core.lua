@@ -1638,7 +1638,8 @@ local function ClearSyncedStateFields(t)
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
         or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
         or k:find("^stat_")                      -- the stat snapshot: a stat that went unreadable must not linger
-        or k:find("^rep_") then                  -- reputations: a standing dropped at the source goes here too
+        or k:find("^rep_")                       -- reputations: a standing dropped at the source goes here too
+        or k:find("^pet_") then                  -- the pet (#75): the owner's scan keeps the last one seen, so absent means none
             t[k] = nil
         end
     end
@@ -3113,6 +3114,7 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+frame:RegisterEvent("UNIT_PET")               -- a pet came out: record it for the Roster scene (#75)
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("PLAYER_MONEY")
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
@@ -3757,7 +3759,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
     -- Rescan + resend when gear changes in-session
     --------------------------------------------------------
 
-    if event == "PLAYER_EQUIPMENT_CHANGED" then
+    -- UNIT_PET fires for every pet owner nearby; only our own matters.
+    if event == "UNIT_PET" and (...) ~= "player" then return end
+
+    -- A summoned pet (#75) rides the same debounced rescan as gear: the scan
+    -- records it and stamps lastUpdate, so the next sync carries it. Dismissal
+    -- fires this too and simply changes nothing - the last pet seen stays.
+    if event == "PLAYER_EQUIPMENT_CHANGED" or event == "UNIT_PET" then
         -- Debounce: PLAYER_EQUIPMENT_CHANGED fires once per slot changed.
         -- Swapping weapons can fire it multiple times in quick succession.
         -- Cancel any pending scan/broadcast and restart the timer.

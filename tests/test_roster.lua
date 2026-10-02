@@ -3035,6 +3035,400 @@ do
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
+------------------------------------------------------------
+-- Pets in the scene (#75)
+------------------------------------------------------------
+-- A hunter (night elf, cat) and a warlock (gnome, voidwalker): one either side
+-- of the fire. Boxes are the six numbers Forever returns; the cat's is the
+-- measured one.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    local CAT, VOID = 143626, 1132
+    AltStableDB = {
+        ["pet-hunter"] = { guid = "pet-hunter", name = "Kaleid Sumner", class = "HUNTER",
+            level = 20, race = "NightElf", gender = "Female", sexID = 1,
+            pet_display = CAT, pet_npc = 251245, pet_name = "Tarthosuk" },
+        ["pet-lock"] = { guid = "pet-lock", name = "Morphisto Ruskador", class = "WARLOCK",
+            level = 18, race = "Gnome", gender = "Male", sexID = 0,
+            pet_display = VOID, pet_npc = 1860, pet_name = "Hathnos" },
+    }
+    AltStableCutoutManifest = {
+        ["kaleid-sumner"]      = { file = "k.tga", w = 100, h = 512, texw = 128, texh = 512 },
+        ["morphisto-ruskador"] = { file = "m.tga", w = 100, h = 512, texw = 128, texh = 512 },
+    }
+    WoW.modelBoxes = {
+        [CAT]  = { -3.686, -1.6145, -0.0317, 1.0157, 1.3213, 1.6881 },
+        [VOID] = { -1, -1, 0, 1, 1, 3 },
+    }
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView = "scene"
+
+    local function pets()
+        local out = {}
+        for i, card in ipairs(T.Cards()) do
+            local f = T.Pets()[i]
+            if card:IsShown() and card.char and f and f:IsShown() then
+                out[card.char.guid] = { pet = f, card = card }
+            end
+        end
+        return out
+    end
+    local function x(region) return select(4, region:GetPoint()) end
+
+    AltStableConfig.rosterPets = nil     -- never set: off, not "not false"
+    T.Refresh()
+    check("pets are off by default: none drawn", next(pets()) == nil)
+    -- Where everyone stands with no pets, to see them make room for one.
+    local offX = {}
+    for _, card in ipairs(T.Cards()) do
+        if card:IsShown() and card.char then offX[card.char.guid] = x(card) end
+    end
+
+    AltStableConfig.rosterPets = true
+    T.Refresh()
+    local drawn = pets()
+    local cat, void = drawn["pet-hunter"], drawn["pet-lock"]
+    check("with the option on, the hunter's pet is drawn", cat ~= nil)
+    check("  and the warlock's demon", void ~= nil)
+
+    if cat and void then
+        eq("the pet shows its saved display", cat.pet.actor._display, CAT)
+        eq("  the demon too", void.pet.actor._display, VOID)
+
+        -- Behind the whole cast, not just its owner: a big demon beside the
+        -- figure nearest the camera covered its neighbour (measured).
+        for who, d in pairs(drawn) do
+            for _, card in ipairs(T.Cards()) do
+                if card:IsShown() then
+                    check(who .. ": the pet is behind " .. tostring(card.char and card.char.name),
+                          d.pet:GetFrameLevel() < card:GetFrameLevel())
+                end
+            end
+            check(who .. ": and above the backdrop", d.pet:GetFrameLevel() > T.Panel():GetFrameLevel())
+        end
+        -- +1 is the pets' level for ANY spot: the ring's deepest figure (level 0,
+        -- at the fire) must not tie with them, which two figures here never reach.
+        local base = T.Panel():GetFrameLevel()
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() then
+                check("a character's level clears the pets' even at the fire",
+                      card:GetFrameLevel() - base - (card._spotLevel or 0) >= 3)
+            end
+        end
+
+
+
+        -- One owner each side of the fire: each is nearest it on its side, so
+        -- each pet stands on the fire side, turned 20 degrees toward it.
+        local cx, vx = x(cat.card), x(void.card)
+        check("the hunter's pet stands toward the fire", (x(cat.pet) - cx) * (vx - cx) > 0)
+        check("the demon stands toward the fire", (x(void.pet) - vx) * (cx - vx) > 0)
+        local turn = math.rad(20)
+        check("  turned 20 degrees toward it",
+              math.abs((cat.pet.actor._yaw or 0) - turn * ((vx > cx) and 1 or -1)) < 1e-9)
+
+        -- The owner steps aside in its slot, away from its pet.
+        local slot = T.SceneSlot()
+        for who, d in pairs(drawn) do
+            local moved = x(d.card) - (offX[who] or x(d.card))
+            check(who .. ": the owner stepped away from it by its share of the slot",
+                  math.abs(math.abs(moved) - slot * T.PET_LAYOUT.ownerShift) < 1e-6
+                  and moved * (x(d.pet) - x(d.card)) < 0, tostring(moved))
+            -- Out by part of the OWNER's width only: mostly behind them.
+            local want = d.card.figure:GetWidth() * T.PET_LAYOUT.reach
+            check(who .. ": the pet stands mostly behind its owner",
+                  math.abs(math.abs(x(d.pet) - x(d.card)) - want) < 1e-6,
+                  math.abs(x(d.pet) - x(d.card)) .. " vs " .. want)
+        end
+
+        -- In the cast's units: the cat 0.55 (box 1.72 x 0.32) against a 1.10
+        -- night elf; the voidwalker 1.00 against a 0.60 gnome.
+        local catRatio = cat.pet:GetHeight() / cat.card.figure:GetHeight()
+        local voidRatio = void.pet:GetHeight() / void.card.figure:GetHeight()
+        check("the cat stands about half its owner's height",
+              math.abs(catRatio - (1.6881 + 0.0317) * 0.32 * 1.3 / 1.10) < 0.01, tostring(catRatio))
+        check("the voidwalker towers over its gnome",
+              math.abs(voidRatio - 1.00 * 1.3 / 0.60) < 0.01, tostring(voidRatio))
+        eq("an imp stands a little under its gnome", T.PetUnits({ pet_npc = 416 }, 9), 0.45)
+
+        -- Framed from its own box: the model's height fills the frame. The
+        -- field of view spans the WIDTH (measured), so a wide frame sees less
+        -- height than its width.
+        local span = 2 * 40 * math.tan(0.075)
+        check("the cat's frame is wide", cat.pet:GetWidth() > cat.pet:GetHeight())
+        local viewH = span * cat.pet:GetHeight() / cat.pet:GetWidth()
+        check("the model is scaled from its box",
+              math.abs(cat.pet.actor._scale - viewH / ((1.6881 + 0.0317) * 1.3)) < 1e-6,
+              tostring(cat.pet.actor._scale))
+        -- A TALL frame sees the full span as its height (an imp clipped top
+        -- and bottom when the span was taken as its width).
+        check("the voidwalker's frame is tall", void.pet:GetHeight() > void.pet:GetWidth())
+        check("a tall frame's model is scaled to the full span",
+              math.abs(void.pet.actor._scale - span / (3 * 1.3)) < 1e-6, tostring(void.pet.actor._scale))
+
+        -- Room to spare across: a frame cut to the model's width clipped it.
+        local box = { l = 1.0157 + 3.686, w = 1.3213 + 1.6145, h = 1.6881 + 0.0317 }
+        local shape = T.PetAspect(box, cat.pet.actor._yaw or 0) * 1.4 / 1.3
+        check("the frame has room to spare across",
+              math.abs(cat.pet:GetWidth() / cat.pet:GetHeight() - shape) < 1e-6,
+              cat.pet:GetWidth() / cat.pet:GetHeight() .. " vs " .. shape)
+
+        -- And above and below, with the feet still on the ground: the frame
+        -- drops by the spare under the model. Feet = the owner's ground (card
+        -- bottom + name block) plus the step back.
+        for who, d in pairs(drawn) do
+            local frameH = d.pet:GetHeight()
+            local feet = select(5, d.pet:GetPoint()) + (frameH - frameH / 1.3) / 2
+            local ground = select(5, d.card:GetPoint()) + 28 + 4 + T.Panel():GetHeight() * 0.03
+            check(who .. ": the pet's feet are on the ground", math.abs(feet - ground) < 1e-6,
+                  feet .. " vs " .. ground)
+        end
+
+        -- Alive, but with no particles: an imp's fire burned past its frame and
+        -- swelled its box. The idle animation stays (owner's call).
+        eq("the pet has no particles", cat.pet.actor._particles, 0)
+        check("  and is not frozen", cat.pet.actor._animSpeed ~= 0 and not cat.pet._paused)
+
+        -- Clicks belong to the cards.
+        check("a pet does not take the mouse", not cat.pet:IsMouseEnabled())
+    end
+
+    -- A model that never loaded is tried again by the next Refresh, not left
+    -- re-placed without a box forever (Codex).
+    AltStableDB["pet-lock"].pet_display = 1134
+    T.Refresh()
+    for _ = 1, 40 do WoW.flushTimers() end
+    check("a model that never loads is not drawn", pets()["pet-lock"] == nil)
+    WoW.modelBoxes[1134] = { -1, -1, 0, 1, 1, 3 }
+    T.Refresh()
+    check("  and the next Refresh tries it again", pets()["pet-lock"] ~= nil)
+    WoW.modelBoxes[VOID] = { -1, -1, 0, 1, 1, 3 }
+    AltStableDB["pet-lock"].pet_display = VOID
+    T.Refresh()
+
+    -- A pet whose model has not loaded waits, then appears.
+    WoW.modelBoxes[VOID] = nil
+    AltStableDB["pet-lock"].pet_display = 1133
+    T.Refresh()
+    check("a pet with no box yet is not drawn", pets()["pet-lock"] == nil)
+    WoW.modelBoxes[1133] = { -1, -1, 0, 1, 1, 3 }
+    WoW.flushTimers()
+    check("  and appears once its model has loaded", pets()["pet-lock"] ~= nil)
+
+    -- No pet recorded: nothing beside them.
+    AltStableDB["pet-lock"].pet_display = nil
+    T.Refresh()
+    check("a character with no pet has none drawn", pets()["pet-lock"] == nil)
+    check("  while the other's stays", pets()["pet-hunter"] ~= nil)
+
+    -- The grid is cards, not a camp.
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    local any = false
+    for _, f in pairs(T.Pets()) do if f and f:IsShown() then any = true end end
+    check("the grid draws no pets", not any)
+
+    AltStableConfig.rosterPets = nil
+    AltStableConfig.rosterView = nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+    WoW.modelBoxes = {}
+end
+
+-- Which side and which way, counted out from the fire (owner's layout).
+do
+    local t = math.rad(20)
+    local four = T.PetSides({ { x = 100 }, { x = 300 }, { x = 700 }, { x = 900 } }, 500)
+    local sides, yaws = {}, {}
+    for i, p in ipairs(four) do sides[i], yaws[i] = p.side, p.yaw end
+    eq("four: pets left, right, left, right", table.concat(sides, " "), "-1 1 -1 1")
+    eq("  the outer two face the viewer", yaws[1] == 0 and yaws[4] == 0, true)
+    eq("  and are marked outer", (four[1].outer and four[4].outer and not four[2].outer and not four[3].outer) and true, true)
+    check("  the inner two turn 20 degrees to the fire",
+          math.abs(yaws[2] - t) < 1e-9 and math.abs(yaws[3] + t) < 1e-9)
+    local two = T.PetSides({ { x = 300 }, { x = 700 } }, 500)
+    eq("two: each pet on its fire side", two[1].side .. " " .. two[2].side, "1 -1")
+    local lopsided = T.PetSides({ { x = 100 }, { x = 200 }, { x = 300 } }, 500)
+    eq("three on one side: alternating out from the fire",
+       lopsided[1].side .. " " .. lopsided[2].side .. " " .. lopsided[3].side, "1 -1 1")
+
+    -- Kept inside the panel: a pet at the scene's edge never spills over.
+    -- Kept inside the panel by its MODEL's width (the frame's spare is empty).
+    local pad = T.PET_LAYOUT.edgePad
+    eq("a pet past the left edge is brought inside", T.PetX(50, 100, 200, -1, 1000), 100 + pad)
+    eq("  past the right edge too", T.PetX(950, 100, 200, 1, 1000), 900 - pad)
+    eq("  and left alone inside", T.PetX(500, 100, 200, 1, 1000),
+       500 + 100 * T.PET_LAYOUT.reach)
+    eq("  an outer pet stands beside its owner by both widths",
+       T.PetX(500, 100, 200, 1, 1000, true), 500 + (100 + 200) / 2 * T.PET_LAYOUT.outer.reach)
+    eq("  and a wide one hugs the edge", T.PetX(200, 100, 300, -1, 1000, true), 150 + pad)
+    eq("an outer pet's room on the left: edge to the owner's inner shoulder", T.OuterRoom(200, 100, -1, 1000), 250 - pad)
+    eq("  and on the right", T.OuterRoom(800, 100, 1, 1000), 1000 - pad - 750)
+end
+
+-- Four at the fire: the outermost owners' pets stand OUTSIDE, further out, a
+-- step further back and a touch smaller (owner, in game: "there's room").
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 4 do
+        local guid = ("four-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Four %d"):format(i), level = 10 + i,
+            class = "HUNTER", race = "Human", gender = "Male", pet_display = 3000 + i, pet_npc = 416 }
+        AltStableCutoutManifest[guid] = { file = "f.tga", w = 100, h = 512, texw = 128, texh = 512 }
+        WoW.modelBoxes[3000 + i] = { -1, -1, 0, 1, 1, 3 }
+    end
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = "scene", true
+    T.Refresh()
+    local rows = {}
+    for i, card in ipairs(T.Cards()) do
+        local f = T.Pets()[i]
+        if card:IsShown() and f and f:IsShown() then
+            rows[#rows + 1] = { card = card, pet = f, x = select(4, card:GetPoint()) }
+        end
+    end
+    eq("four owners, four pets", #rows, 4)
+    table.sort(rows, function(a, b) return a.x < b.x end)
+    local function feetAbove(r)
+        local frameH = r.pet:GetHeight()
+        local feet = select(5, r.pet:GetPoint()) + (frameH - frameH / 1.3) / 2
+        return feet - (select(5, r.card:GetPoint()) + 32)
+    end
+    local ph = T.Panel():GetHeight()
+    if #rows == 4 then
+        for _, k in ipairs({ 1, 4 }) do
+            local r = rows[k]
+            check(("outer pet %d stands a step further back"):format(k),
+                  math.abs(feetAbove(r) - ph * T.PET_LAYOUT.outer.lift) < 1e-6, tostring(feetAbove(r)))
+        end
+        for _, k in ipairs({ 2, 3 }) do
+            check(("inner pet %d stands at the usual step"):format(k),
+                  math.abs(feetAbove(rows[k]) - ph * 0.03) < 1e-6, tostring(feetAbove(rows[k])))
+        end
+        -- Same demon, same race: only the outer size factor tells them apart
+        -- (spot scale aside, so compare per spot through the owner's figure).
+        local function ratio(r) return r.pet:GetHeight() / r.card.figure:GetHeight() end
+        check("an outer pet is drawn further back: behind the fire-side pets",
+              rows[1].pet:GetFrameLevel() < rows[2].pet:GetFrameLevel()
+              and rows[4].pet:GetFrameLevel() < rows[3].pet:GetFrameLevel())
+        check("  and the fire-side pets behind every character",
+              rows[2].pet:GetFrameLevel() < rows[1].card:GetFrameLevel())
+        check("an outer pet is drawn smaller, as further away",
+              math.abs(ratio(rows[1]) / ratio(rows[2]) - T.PET_LAYOUT.outer.size) < 1e-6,
+              tostring(ratio(rows[1]) / ratio(rows[2])))
+        -- Reach is a share of the OWNER's width: compare shares, not pixels -
+        -- the outer owners stand nearer the camera and are drawn bigger.
+        local function share(r)
+            return math.abs(select(4, r.pet:GetPoint()) - r.x) / r.card.figure:GetWidth()
+        end
+        check("an inner pet reaches the usual share",
+              math.abs(share(rows[2]) - T.PET_LAYOUT.reach) < 1e-6, tostring(share(rows[2])))
+        -- The right-hand outer pet: beside its owner by both widths (the model's
+        -- width is its frame's less the 40% spare), unless the edge stops it.
+        do
+            local r = rows[4]
+            local off = math.abs(select(4, r.pet:GetPoint()) - r.x)
+            local modelW = r.pet:GetWidth() / 1.4
+            local want = (r.card.figure:GetWidth() + modelW) / 2 * T.PET_LAYOUT.outer.reach
+            local edge = T.Panel():GetWidth() - modelW / 2 - T.PET_LAYOUT.edgePad
+            check("an outer pet stands beside its owner by both widths (or at the edge)",
+                  math.abs(off - want) < 1e-6 or math.abs(select(4, r.pet:GetPoint()) - edge) < 1e-6,
+                  off .. " vs " .. want)
+        end
+    end
+    -- A demon too wide for its corner is shrunk to it, never let over the
+    -- next character: no wider than the edge to its owner's inner shoulder.
+    for i = 1, 4 do WoW.modelBoxes[3000 + i] = nil; WoW.modelBoxes[4000 + i] = { -1, -20, 0, 1, 20, 3 } end
+    for i = 1, 4 do AltStableDB[("four-%d"):format(i)].pet_display = 4000 + i end
+    T.Refresh()
+    local leftmost
+    for i, card in ipairs(T.Cards()) do
+        local f = T.Pets()[i]
+        if card:IsShown() and f and f:IsShown() then
+            local cx = select(4, card:GetPoint())
+            if not leftmost or cx < leftmost.x then leftmost = { card = card, pet = f, x = cx } end
+        end
+    end
+    check("the wide outer demon is drawn", leftmost ~= nil)
+    if leftmost then
+        local modelW = leftmost.pet:GetWidth() / 1.4
+        local room = T.OuterRoom(leftmost.x, leftmost.card.figure:GetWidth(), -1, T.Panel():GetWidth())
+        check("  no wider than its corner", modelW <= room + 1e-6, modelW .. " > " .. room)
+    end
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+    WoW.modelBoxes = {}
+end
+
+-- True scale even where the pet outgrows the cast: a lone gnome's voidwalker
+-- stands 1.0/0.6 of him, not his height - capped only by the panel's top.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = { ["g"] = { guid = "g", name = "Lone Gnome", class = "WARLOCK", level = 10,
+        race = "Gnome", gender = "Male", pet_display = 1132, pet_npc = 1860 } }
+    AltStableCutoutManifest = { ["lone-gnome"] = { file = "g.tga", w = 100, h = 512, texw = 128, texh = 512 } }
+    WoW.modelBoxes = { [1132] = { -1, -1, 0, 1, 1, 3 } }
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = "scene", true
+    T.Refresh()
+    local card, pet = T.Cards()[1], T.Pets()[1]
+    check("the lone gnome's demon is drawn", pet and pet:IsShown())
+    if pet and pet:IsShown() then
+        local modelH = pet:GetHeight() / 1.3
+        local ratio = modelH / card.figure:GetHeight()
+        local ph = T.Panel():GetHeight()
+        local feet = select(5, pet:GetPoint()) + (pet:GetHeight() - modelH) / 2
+        local top = feet + modelH
+        if top < ph - 1e-6 then
+            check("  at 1.0/0.6 of its gnome, not his height", math.abs(ratio - 1 / 0.6) < 1e-6, tostring(ratio))
+        end
+        check("  and never past the panel's top", top <= ph + 1e-6, top .. " > " .. ph)
+    end
+    AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+    WoW.modelBoxes = {}
+end
+
+-- Five round the fire without pets, four with: the fifth figure's room is
+-- where the pets stand. By the option, so a synced pet does not reshuffle.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 6 do
+        local guid = ("cast-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Cast %d"):format(i), level = 10 + i, class = "MAGE" }
+        AltStableCutoutManifest[guid] = { file = "c.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterView = "scene"
+    local function seated()
+        local n = 0
+        for _, card in ipairs(T.Cards()) do if card:IsShown() then n = n + 1 end end
+        return n
+    end
+    AltStableConfig.rosterPets = nil
+    T.Refresh()
+    eq("without pets, five stand at the fire", seated(), 5)
+    AltStableConfig.rosterPets = true
+    T.Refresh()
+    eq("with pets, four do - nobody here even has one", seated(), 4)
+    AltStableConfig.rosterPets, AltStableConfig.rosterView = nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
 -- The capability marker the companion reads before it spends a generation.
 do
     local f = io.open("Plugins/Roster/AltStableRoster.toc", "rb")

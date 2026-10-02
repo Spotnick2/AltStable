@@ -424,6 +424,87 @@ function AltStable.ScanSkills(char)
     end
 end
 
+------------------------------------------------------------
+-- The pet (#75): enough to draw a hunter's beast or a warlock's demon in the
+-- Roster scene with nobody logged in.
+--
+-- MEASURED on 1.60.1.70124 (Tools/AltStableProbe/Pets.lua):
+--   * A creature's texture is baked into its model, so a saved DISPLAY ID
+--     renders the pet fully textured offline - unlike a player's (#15).
+--   * A hunter pet's GUID carries the generic npc 165189 for EVERY beast; the
+--     real look is the stable's: C_StableInfo.GetStablePetInfo(slot).displayID.
+--     SetCreature(creatureID) is NOT a substitute - it picks a random skin of
+--     the creature (251245 drew a red cat for a blue one).
+--   * Which active slot is out: the GUID's last six hex digits are the slot's
+--     petNumber; the current Call Pet spell is the second witness. NOT the
+--     name - two pets may share one (the owner's cat and bear do).
+--   * A demon's GUID carries its real npc (voidwalker 1860), and a PlayerModel
+--     resolves that to its single display id on the spot (1860 -> 1132).
+------------------------------------------------------------
+
+local PET_CLASSES = { HUNTER = true, WARLOCK = true }
+local CALL_PET = { 883, 83242, 83243, 83244, 83245 }   -- Call Pet 1..5, as Blizzard_StableUI lists them
+
+local function StableSlot(slot)
+    if not (C_StableInfo and type(C_StableInfo.GetStablePetInfo) == "function") then return nil end
+    local ok, info = pcall(C_StableInfo.GetStablePetInfo, slot)
+    if ok and type(info) == "table" then return info end
+end
+
+local function HunterPet(guid)
+    local tail = guid:match("%-(%x+)$")
+    local number = tail and #tail >= 6 and tonumber(tail:sub(-6), 16)
+    if number then
+        for slot = 1, #CALL_PET do
+            local info = StableSlot(slot)
+            if info and info.petNumber == number then return info end
+        end
+    end
+    if C_Spell and type(C_Spell.IsCurrentSpell) == "function" then
+        for slot, spell in ipairs(CALL_PET) do
+            local ok, current = pcall(C_Spell.IsCurrentSpell, spell)
+            if ok and current then return StableSlot(slot) end
+        end
+    end
+end
+
+local demonModel
+local function DemonDisplayID(npc)
+    if type(CreateFrame) ~= "function" then return nil end
+    if not demonModel then
+        local ok, f = pcall(CreateFrame, "PlayerModel", nil, UIParent)
+        if not ok or not f then return nil end
+        f:SetSize(1, 1)
+        f:Hide()
+        demonModel = f
+    end
+    local ok = pcall(demonModel.SetCreature, demonModel, npc)
+    if not ok then return nil end
+    local okD, id = pcall(demonModel.GetDisplayInfo, demonModel)
+    id = okD and tonumber(id)
+    pcall(demonModel.ClearModel, demonModel)
+    return (id and id > 0) and id or nil
+end
+
+-- display id, npc, name of the pet that is out now - or nil.
+local function ReadPet(classFile)
+    if not PET_CLASSES[classFile] or not UnitExists or not UnitExists("pet") then return nil end
+    local guid = UnitGUID("pet")
+    if type(guid) ~= "string" then return nil end
+    local name = UnitName("pet")
+    if classFile == "HUNTER" then
+        local info = HunterPet(guid)
+        local display = info and tonumber(info.displayID)
+        if not display or display <= 0 then return nil end
+        return display, tonumber(info.creatureID), name
+    end
+    local npc = tonumber((select(6, strsplit("-", guid))))   -- one value: a second would be read as the base
+    local display = npc and DemonDisplayID(npc)
+    if not display then return nil end
+    return display, npc, name
+end
+AltStable.ReadPet = ReadPet
+
 function AltStable.ScanCharacter()
 
     AltStableDB = AltStableDB or {}
@@ -743,6 +824,17 @@ function AltStable.ScanCharacter()
     -- Guarded: these are TBC-era APIs, and a missing global must not abort the whole scan.
     char.hidehelm  = (ShowingHelm  and not ShowingHelm())  and 1 or 0
     char.hidecloak = (ShowingCloak and not ShowingCloak()) and 1 or 0
+
+    -- The pet (#75). The LAST one seen out, not only one out right now: every
+    -- character the Roster shows is logged out, and one who logged out with the
+    -- pet dismissed, dead or not yet resummoned would otherwise lose it. A new
+    -- summon overwrites it. Flat fields, because the serializer drops tables.
+    local petDisplay, petNpc, petName = ReadPet(classFile)
+    if petDisplay then
+        char.pet_display = petDisplay
+        char.pet_npc     = petNpc
+        char.pet_name    = petName
+    end
 
     -- Only stamp lastUpdate when we have complete data.
     -- If any items are pending cache we deliberately leave the timestamp
