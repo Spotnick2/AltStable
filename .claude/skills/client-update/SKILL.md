@@ -1,6 +1,6 @@
 ---
 name: client-update
-description: Handle a new WoW Forever client build for AltStable - convert the owner's /apidump into C:\Projects\References, diff it against the previous build, verify behaviour and SavedVariables persistence, and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
+description: Handle a new WoW Forever client build for AltStable - convert the owner's /apidump into C:\Projects\References, diff it against the previous build, verify behaviour, and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
 version: 1.0.0
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
@@ -19,7 +19,7 @@ already caught a session. If the two ever disagree, fix the RUNBOOK and this fil
 | 1. Convert | you | `pwsh Tools/ForeverAPIDump/Convert-Dump.ps1` |
 | 2. Diff | you | `pwsh Tools/ForeverAPIDump/Compare-Dumps.ps1` |
 | 3. Behaviour | **owner** pastes one `/run` line; you judge it | expected values below |
-| 4. Persistence | **owner** does a full exit + relaunch; you verify | the probe counters |
+| 4. Persistence | **only if saved data looks lost** - no longer per build | the probe counters |
 | 5. Bump PR | you | four edits, tests, branch, PR (commit/push only when asked) |
 
 ## 1. Convert
@@ -61,7 +61,13 @@ faction count, `table`. Anything else: stop and investigate before bumping.
 chat - add a slash command to `Tools/AltStableProbe` and have the owner run
 `pwsh Tools/deploy-probe.ps1` instead.
 
-## 4. Persistence - read it from disk, and read the TIMESTAMPS
+## 4. Persistence - only when something looks lost
+
+**Not a per-build step any more** (owner, 2026-10-01): #23 was fixed in 70009 and held on 70124
+and 70170. Run this only if saved data looks lost after an update. When you do, the method below
+still holds - and if the owner has already restarted the client, the files may already prove it
+without asking (70170 was proven that way: process start time vs. the `.bak` -> file counters).
+
 
 The owner runs the probe (deployed by `pwsh Tools/deploy-probe.ps1`). You verify from the files:
 
@@ -97,7 +103,7 @@ for the process to go, relaunch). Lines tagged `[Probe]` with a capital P and "l
 
 ## 5. The bump PR
 
-Only after 3 and 4 pass on the new build. Skipped builds need nothing special: bump straight to
+Only after 3 passes on the new build (and 4, if it was run). Skipped builds need nothing special: bump straight to
 the newest measured one and record the intermediate ones as "not measured" if they were never
 dumped.
 
@@ -109,7 +115,7 @@ Edits (branch `build-<build>` from `main`):
 4. `docs/forever-api-notes.md` - a `## Build <version>.<build> (<date>) - <one-line verdict>` section
    next to the other build sections (see `## Build 1.60.1.70009` for the shape): what the diff
    showed (quote Compare-Dumps' summary), the behaviour line as pasted, and the persistence
-   evidence (store, `.bak` → file counters, timestamps, that it was a full exit).
+   evidence if step 4 was run.
 
 Then: `luac -p` on the touched `.lua`, `pwsh tests/run.ps1` green, `pwsh Tools/deploy.ps1`
 (pre-approved), and tell the owner it needs a `/reload` (no new files) to drop the warning. Commit,

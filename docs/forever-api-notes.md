@@ -570,6 +570,29 @@ re-measured here.
 
 ---
 
+## Build 1.60.1.70170 (2026-10-01) — four small API changes, none we use; persistence holds
+
+Dumped (`forever-api-1.60.1.70170.md`) and compared with `Compare-Dumps.ps1` against 70124:
+
+```
+Documented functions  +3 -1   + C_Spell.GetItemCooldown(itemID) -> SpellCooldownInfo
+                              + UnitUsesAmmo(unit) -> bool
+                              ~ C_PlayerInfo.GetName -> name is no longer optional
+Documented events     +1      + PLAYER_PVP_FLAG_CHANGED -> isPvpFlagged
+Documented tables     no change (797)
+Widget methods        no change (7530)
+Namespace functions   +1 -1   + C_Spell.GetItemCooldown, - GameEvent.HandleShardTransferImminentEvent
+```
+
+Nothing AltStable calls is among them (`C_PlayerInfo.GetName` appears only in the probe).
+
+**Behaviour**, the RUNBOOK step-3 line: `60 19400 13684 -1 7 table`, all as expected.
+
+**Persistence on 70170**, from disk and the process: `WowB.exe` started at 20:24:55, after the
+client update. AltStableProbe's account `loadCount` went 413 (`.bak`) -> 414 within that process; a
+store not read back at its first login would have restarted at 1. AltStable's own config came back
+too (`rosterPets = true`).
+
 ## Builds 1.60.1.70058 (2026-09-25) and 70124 (2026-09-29) — API unchanged, persistence holds
 
 Both were dumped (`forever-api-1.60.1.70058.md`, `forever-api-1.60.1.70124.md`) and compared with
