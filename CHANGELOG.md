@@ -2,11 +2,38 @@
 
 ## Unreleased
 
-- **Pets in the Roster scene** (#75): a hunter's beast or a warlock's demon stands at its owner's
-  shoulder, as on the retail warband screen. Off by default: Options > Presentation. Drawn as a
-  live model from the pet's saved display id, so it needs no portrait capture; a character's pet
-  is the last one they had out. New saved fields, flat and synced: `pet_display`, `pet_npc`,
-  `pet_name`.
+## v0.5.0-beta
+
+Hunter pets and warlock demons in the Roster's campfire scene. Measured on client 1.60.1.70170.
+The sync wire is unchanged; the pet travels as three new fields that a v0.4.x peer stores and passes
+on without reading.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+
+### New
+
+- **Pets in the Roster scene** ([#75](https://github.com/Spotnick2/AltStable/issues/75)): a hunter's
+  beast or a warlock's demon stands with its owner, as on the retail warband screen. Off by
+  default: **Options > Presentation > "Show hunter pets and warlock demons in the Roster scene"**.
+  - Drawn live from the pet's saved look, so it needs no portrait capture, and it keeps its idle
+    animation (its particle effects, like an imp's fel fire, are left out).
+  - A character's pet is the **last one they had out**; summon a different one and the scene
+    follows. An alt's pet arrives with sync like the rest of its record.
+  - Pets keep their true size against their owners: a cat comes to a night elf's hip, a voidwalker
+    towers over a gnome.
+  - With pets shown, **four** stand at the fire instead of five, to leave them room. Pets beside the
+    fire turn toward it; the outermost stand at the scene's edges, a little further back.
+  - New saved fields, flat and synced: `pet_display`, `pet_npc`, `pet_name`.
+
+### Under the hood
+
+- Measured on client **1.60.1.70170**: the login warning about a different build is gone on it.
+  The API changes in this build touch nothing AltStable uses.
 
 ## v0.4.0-beta
 
@@ -102,7 +129,7 @@ nothing existing changed shape.
   or logout. `/alts portrait preview` shows the framing first, and
   `/alts portrait facing <degrees>` turns the character. Turning captures into
   portraits happens outside the game, with the free
-  [AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases/latest)
+  [AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases)
   app for Windows
   ([#89](https://github.com/Spotnick2/AltStable/issues/89)).
 - **New saved data: `AltStablePortraits`.** It holds the capture records and is
