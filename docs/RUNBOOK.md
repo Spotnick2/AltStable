@@ -289,13 +289,16 @@ authoritatively as a current one.
    ```
    /run print(GetMaxPlayerLevel(), UnitXPMax("player"), GetXPExhaustion(), Enum.BagIndex.Keyring, C_Reputation.GetNumFactions(), type(TooltipDataProcessor))
    ```
-   Expected on 70124: `60`, a positive number, a number while rested (`nil` when not), `-1`,
+   Expected on 70170: `60`, a positive number, a number while rested (`nil` when not), `-1`,
    your faction count, `table`. Update this line with the build when you bump
    `MEASURED_ON_BUILD` below — an expectation pinned to an older build is the staleness this
    checklist exists to prevent.
-4. **Check persistence** with the probe, above — it is fixed, and a regression would be silent.
-5. **Bump `MEASURED_ON_BUILD`** and the test stub's `GetBuildInfo`, and record what was compared in
+4. **Bump `MEASURED_ON_BUILD`** and the test stub's `GetBuildInfo`, and record what was compared in
    `docs/forever-api-notes.md`. Old dump files are kept, not deleted — deleting is a human call.
+
+Persistence is no longer re-checked every build: #23 was fixed in 70009 and held on 70124 and
+70170 (owner, 2026-10-01). If saved data ever looks lost, the probe check above still applies -
+judge it by the game process's start time, never by a `/reload`.
 
 ---
 
