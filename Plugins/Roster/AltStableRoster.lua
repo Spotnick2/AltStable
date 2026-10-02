@@ -1092,9 +1092,11 @@ local PET_LIFT = 0.03                 -- BEHIND the owner: a touch higher up the
 -- a kitten by the fire (owner, in game). It keeps its true size and is only
 -- kept inside the panel.
 --   outer       a pet on the OUTSIDE has room to spare there (owner, in game):
---               further out, a step further back (higher), and smaller for it
+--               BESIDE its owner by both widths (reach of the half-widths, so
+--               they overlap a little), a step further back (higher), smaller,
+--               and stopped by the panel's edge - so a wide one hugs the edge
 local PET_LAYOUT = { turn = math.rad(20), ownerShift = 0.15, reach = 0.2,
-                     outer = { reach = 0.45, lift = 0.05, size = 0.92 } }
+                     outer = { reach = 0.8, lift = 0.05, size = 0.92 }, edgePad = 4 }
 
 local function PetsEnabled()
     return AltStableConfig and AltStableConfig.rosterPets == true
@@ -1134,13 +1136,21 @@ local function PetSides(spots, fireX)
     return out
 end
 
--- Where a pet's frame is centred: out from its owner by part of the owner's
--- width, mostly behind them - then kept inside the panel, so a pet at the
--- scene's edge never spills over the sidebar.
-local function PetX(ownerX, ownerW, frameW, side, panelW, reach)
-    local x = ownerX + side * ownerW * (reach or PET_LAYOUT.reach)
-    local half = frameW / 2
-    if panelW and panelW > frameW then
+-- Where a pet is centred. On the fire side, out by part of the owner's width
+-- only, mostly behind them (a frame is wider than its animal, and counting it
+-- pushed a cat clear). On the outside, beside the owner by both widths. Then
+-- the MODEL is kept inside the panel - not its frame, whose spare width is
+-- empty: clamping the frame pushed a wide voidwalker in behind the next
+-- character instead of to the edge (owner, in game).
+local function PetX(ownerX, ownerW, modelW, side, panelW, outer)
+    local x
+    if outer then
+        x = ownerX + side * (ownerW + modelW) / 2 * PET_LAYOUT.outer.reach
+    else
+        x = ownerX + side * ownerW * PET_LAYOUT.reach
+    end
+    local half = modelW / 2 + PET_LAYOUT.edgePad
+    if panelW and panelW > 2 * half then
         x = math.max(half, math.min(panelW - half, x))
     end
     return x
@@ -1229,7 +1239,7 @@ local function PlacePet(f)
     f:SetFrameLevel(want.level)
     f:ClearAllPoints()
     f:SetPoint("BOTTOM", panel, "BOTTOMLEFT",
-        PetX(want.ownerX, want.ownerW, frameW, want.side, want.panelW, want.reach), want.y - (frameH - h) / 2)
+        PetX(want.ownerX, want.ownerW, h * aspect, want.side, want.panelW, want.outer), want.y - (frameH - h) / 2)
     pcall(f.actor.SetYaw, f.actor, yaw)
     if box then
         -- The field of view spans the frame's LARGER side (measured: taken as
@@ -1287,7 +1297,7 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, p
                 char = char, side = ps.side, yaw = ps.yaw,
                 ownerX = OwnerX(char, spot, slot, ps), ownerW = sizes[i][1] * fit,
                 panelW = panelW,
-                reach = outer and outer.reach or PET_LAYOUT.reach,
+                outer = ps.outer,
                 y = y,
                 unitPx = figureH / tallest * spot.scale * fit * (outer and outer.size or 1),
                 -- Capped by the panel's TOP only: a voidwalker may tower over a

@@ -3256,12 +3256,15 @@ do
        lopsided[1].side .. " " .. lopsided[2].side .. " " .. lopsided[3].side, "1 -1 1")
 
     -- Kept inside the panel: a pet at the scene's edge never spills over.
-    eq("a pet past the left edge is brought inside", T.PetX(50, 100, 200, -1, 1000), 100)
-    eq("  past the right edge too", T.PetX(950, 100, 200, 1, 1000), 900)
+    -- Kept inside the panel by its MODEL's width (the frame's spare is empty).
+    local pad = T.PET_LAYOUT.edgePad
+    eq("a pet past the left edge is brought inside", T.PetX(50, 100, 200, -1, 1000), 100 + pad)
+    eq("  past the right edge too", T.PetX(950, 100, 200, 1, 1000), 900 - pad)
     eq("  and left alone inside", T.PetX(500, 100, 200, 1, 1000),
        500 + 100 * T.PET_LAYOUT.reach)
-    eq("  an outer pet reaches further", T.PetX(500, 100, 200, 1, 1000, T.PET_LAYOUT.outer.reach),
-       500 + 100 * T.PET_LAYOUT.outer.reach)
+    eq("  an outer pet stands beside its owner by both widths",
+       T.PetX(500, 100, 200, 1, 1000, true), 500 + (100 + 200) / 2 * T.PET_LAYOUT.outer.reach)
+    eq("  and a wide one hugs the edge", T.PetX(200, 100, 300, -1, 1000, true), 150 + pad)
 end
 
 -- Four at the fire: the outermost owners' pets stand OUTSIDE, further out, a
@@ -3320,9 +3323,18 @@ do
         end
         check("an inner pet reaches the usual share",
               math.abs(share(rows[2]) - T.PET_LAYOUT.reach) < 1e-6, tostring(share(rows[2])))
-        -- The right-hand outer pet: the panel's right edge is far from it here.
-        check("an outer pet reaches further out",
-              math.abs(share(rows[4]) - T.PET_LAYOUT.outer.reach) < 1e-6, tostring(share(rows[4])))
+        -- The right-hand outer pet: beside its owner by both widths (the model's
+        -- width is its frame's less the 40% spare), unless the edge stops it.
+        do
+            local r = rows[4]
+            local off = math.abs(select(4, r.pet:GetPoint()) - r.x)
+            local modelW = r.pet:GetWidth() / 1.4
+            local want = (r.card.figure:GetWidth() + modelW) / 2 * T.PET_LAYOUT.outer.reach
+            local edge = T.Panel():GetWidth() - modelW / 2 - T.PET_LAYOUT.edgePad
+            check("an outer pet stands beside its owner by both widths (or at the edge)",
+                  math.abs(off - want) < 1e-6 or math.abs(select(4, r.pet:GetPoint()) - edge) < 1e-6,
+                  off .. " vs " .. want)
+        end
     end
     AltStableConfig.rosterView, AltStableConfig.rosterPets = nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
