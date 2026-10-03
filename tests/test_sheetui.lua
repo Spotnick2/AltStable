@@ -3358,7 +3358,6 @@ do
     check("  a reused icon button shows no icon as a text header", not sum[5].iconTex:IsShown())
     check("  its label is back", sum[5].label:IsShown())
     eq("  and reads its new column", sum[5].label:GetText(), "Guild")
-    eq("the class header reads its letter", sum[1].label:GetText(), "C")
     for i = #sumCols + 1, #pool do
         if pool[i]:IsShown() then check("a header past the section's columns is hidden", false) end
     end
@@ -3404,30 +3403,274 @@ do
     check("  and its tint", not SameColour(ar, ag, ab, name.label:GetTextColor()))
     check("  and puts it on that column", lvl.arrow:IsShown())
 
-    -- An icon header has no arrow; the tint is the only sign it is sorted by,
-    -- so leaving it must not take the tint away. An unsorted one loses it.
+    local function ButtonFor(cols, hdrs, field)
+        for i, c in ipairs(cols) do if c.field == field then return hdrs[i] end end
+    end
+    local function Tip() return table.concat(WoW.tooltipLines, " / ") end
+
+    -- First clicks: text A to Z, numbers highest first. A second click flips.
+    name:GetScript("OnClick")(name)
+    local f, asc = T.SortState()
+    check("a first click on Name sorts A to Z", f == "name" and asc == true)
+    local gold = ButtonFor(sumCols, sum, "money")
+    gold:GetScript("OnClick")(gold)
+    f, asc = T.SortState()
+    check("a first click on Gold sorts highest first", f == "money" and asc == false)
+    gold:GetScript("OnClick")(gold)
+    f, asc = T.SortState()
+    check("  a second click flips it", f == "money" and asc == true)
+
+    -- Sorted: a faint fill, an underline and the arrow. Nowhere else.
+    check("the sorted header shows its fill", gold.sortFill:IsShown())
+    check("  its underline", gold.underline:IsShown())
+    check("  and the arrow", gold.arrow:IsShown())
+    check("an unsorted header shows none of them",
+          not lvl.sortFill:IsShown() and not lvl.underline:IsShown() and not lvl.arrow:IsShown())
+    local p, rel = gold.arrow:GetPoint(1)
+    check("a right-aligned label's arrow sits at the header's right edge", p == "RIGHT" and rel == gold)
+    name:GetScript("OnClick")(name)
+    p = name.arrow:GetPoint(1)
+    eq("a left-aligned label's arrow follows the text", p, "LEFT")
+
+    -- The tooltip says the order, and what the next click does.
+    name:GetScript("OnEnter")(name)
+    check("a sorted header's tooltip says the order", Tip():find("A to Z", 1, true) ~= nil, Tip())
+    check("  and what a click does", Tip():find("Click to sort Z to A", 1, true) ~= nil, Tip())
+    name:GetScript("OnClick")(name)
+    check("  and is redrawn by a click under the mouse", Tip():find("Click to sort A to Z", 1, true) ~= nil, Tip())
+    name:GetScript("OnLeave")(name)
+    lvl:GetScript("OnEnter")(lvl)
+    check("an unsorted number column offers highest first",
+          Tip():find("Click to sort highest first", 1, true) ~= nil, Tip())
+
+    -- Hover is a neutral fill, apart from the sorted look.
+    check("hovering a sortable header shows the hover fill", lvl.hoverFill:IsShown())
+    check("  not the sorted look", not lvl.sortFill:IsShown())
+    lvl:GetScript("OnLeave")(lvl)
+    check("  leaving takes it away", not lvl.hoverFill:IsShown())
+    check("  and the tooltip", not GameTooltip:IsOwned(lvl))
+
+    -- Class and Race headers are the addon's own glyphs, drawn whole - not the
+    -- logged-in character's icons, which read as one more row.
+    local class, race = sum[1], sum[2]
+    check("the Class header is an icon", class.iconTex:IsShown() and not class.label:IsShown())
+    eq("  the class glyph", class.iconTex:GetTexture(), "Interface\\AddOns\\AltStable\\Media\\Icons\\header-class.tga")
+    eq("the Race header is the race glyph", race.iconTex:GetTexture(), "Interface\\AddOns\\AltStable\\Media\\Icons\\header-race.tga")
+    -- GetTexCoord gives the corners: upper-left x,y, lower-left, upper-right...
+    local ulx, uly, _, lly, urx = class.iconTex:GetTexCoord()
+    check("  drawn whole, not cropped like a game icon", ulx == 0 and uly == 0 and lly == 1 and urx == 1,
+          table.concat({ tostring(ulx), tostring(uly), tostring(lly), tostring(urx) }, ","))
+    check("the glyphs ship with the addon",
+          io.open("Media/Icons/header-class.tga", "rb") ~= nil and io.open("Media/Icons/header-race.tga", "rb") ~= nil)
+    class:GetScript("OnClick")(class)
+    f, asc = T.SortState()
+    check("Class sorts, A to Z first", f == "class" and asc == true)
+    eq("  an icon header's arrow sits in its corner", (class.arrow:GetPoint(1)), "BOTTOMRIGHT")
+
+    -- The Skills tab's profession icons match the Class and Race icons beside
+    -- them, though their columns are wider.
+    Open("skills")
+    local skillCols, skills = Headers()
+    local classW = skills[1].iconTex:GetWidth()
+    local profBtn
+    for i, c in ipairs(skillCols) do if c.profIcon then profBtn = skills[i]; break end end
+    check("the Skills tab has a profession header", profBtn ~= nil)
+    eq("  its icon is the Class icon's size", profBtn.iconTex:GetWidth(), classW)
+    eq("  and square", profBtn.iconTex:GetHeight(), classW)
     Open("gear")
-    local _, gear = Headers()
-    local head, neck = gear[5], gear[6]
+    local gearSizeCols, gearSize = Headers()
+    local slotBtn
+    for i, c in ipairs(gearSizeCols) do if c.slotSlug then slotBtn = gearSize[i]; break end end
+    check("the Gear tab has a slot header", slotBtn ~= nil)
+    eq("  its icon is the Class icon's size too", slotBtn.iconTex:GetWidth(), gearSize[1].iconTex:GetWidth())
+
+    -- Gear slots do not sort: no click, no hover, no order in the tooltip.
+    Open("gear")
+    local gearCols2, gear = Headers()
+    local head = gear[5]
+    eq("Gear's fifth column is Head", gearCols2[5].field, "gear_head")
+    local before, beforeAsc = T.SortState()
     head:GetScript("OnClick")(head)
-    head:GetScript("OnEnter")(head); head:GetScript("OnLeave")(head)
-    check("an icon header keeps the sort tint when the cursor leaves",
-          SameColour(ar, ag, ab, head.iconTex:GetVertexColor()))
-    neck:GetScript("OnEnter")(neck)
-    check("hovering an unsorted icon header tints it", SameColour(ar, ag, ab, neck.iconTex:GetVertexColor()))
-    check("  and shows its tooltip", GameTooltip:IsOwned(neck))
-    neck:GetScript("OnLeave")(neck)
-    check("  leaving it takes the tint off", SameColour(1, 1, 1, neck.iconTex:GetVertexColor()))
-    check("  and the tooltip", not GameTooltip:IsOwned(neck))
+    local after, afterAsc = T.SortState()
+    check("clicking a gear slot changes nothing", before == after and beforeAsc == afterAsc)
+    check("  and shows no sorted look", not head.sortFill:IsShown() and not head.arrow:IsShown())
+    head:GetScript("OnEnter")(head)
+    check("  hovering one shows no fill", not head.hoverFill:IsShown())
+    check("  its tooltip names it", Tip():find("Head", 1, true) ~= nil, Tip())
+    check("  and offers no sort", Tip():lower():find("sort", 1, true) == nil, Tip())
+    check("an icon header is never tinted", SameColour(1, 1, 1, head.iconTex:GetVertexColor()))
 
     -- A header rebuilt under the mouse never gets its OnLeave: the rebuild
     -- itself must take down a tooltip it owned.
-    neck:GetScript("OnEnter")(neck)
     Open("summary")
-    check("a header's tooltip goes when the headers are rebuilt", not GameTooltip:IsOwned(neck))
+    check("a header's tooltip goes when the headers are rebuilt", not GameTooltip:IsOwned(head))
+end
 
-    -- Back to the default sort for anything that follows.
-    lvl:GetScript("OnClick")(lvl)
+------------------------------------------------------------
+-- Sorting: the comparator (#160)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local function Sorted(chars, field, asc)
+        local list = {}
+        for i, c in ipairs(chars) do list[i] = c end
+        table.sort(list, T.SortComparator(list, field, asc))
+        local out = {}
+        for i, c in ipairs(list) do out[i] = c.id end
+        return table.concat(out, ",")
+    end
+    local chars = {
+        { id = "a", name = "Alpha One",   money = 500, level = 10, ilvl = 5 },
+        { id = "b", name = "beta Two",    money = nil, level = 10, ilvl = 9 },
+        { id = "c", name = "Gamma Three", money = 900, level = 10, ilvl = 7 },
+    }
+    eq("gold, highest first, unknown last", Sorted(chars, "money", false), "c,a,b")
+    eq("gold, lowest first, unknown STILL last", Sorted(chars, "money", true), "a,c,b")
+    -- Byte order would put "Gamma" before "beta".
+    eq("names, A to Z, ignoring case", Sorted(chars, "name", true), "a,b,c")
+    -- The three-way compare is turned into a boolean: returned as is, 0 and -1
+    -- are both true and the order comes out scrambled.
+    eq("names, Z to A", Sorted(chars, "name", false), "c,b,a")
+    eq("equal values fall to item level, highest first", Sorted(chars, "level", false), "b,c,a")
+    -- A number stored as text is still a number: as text, "10" < "9".
+    eq("numbers compare as numbers whatever they are stored as",
+       Sorted({ { id = "x", money = "10" }, { id = "y", money = 9 } }, "money", false), "x,y")
+    eq("level counts the progress into it",
+       Sorted({ { id = "x", level = 5, xpPercent = 10 }, { id = "y", level = 5, xpPercent = 60 } }, "level", false),
+       "y,x")
+    eq("rested XP at the level cap is a dash, so last",
+       Sorted({ { id = "cap", level = AltStable.API.LevelCap(), restPercent = 150 },
+                { id = "low", level = 5, restPercent = 10, lastUpdate = time() } }, "restPercent", false),
+       "low,cap")
+    eq("  in both directions",
+       Sorted({ { id = "cap", level = AltStable.API.LevelCap(), restPercent = 150 },
+                { id = "low", level = 5, restPercent = 10, lastUpdate = time() } }, "restPercent", true),
+       "low,cap")
+    -- What the cell shows: 10% stored 64 hours ago in the open world is 20%
+    -- now, above a fresh 12%. By the stored number it would be the other way.
+    eq("rested XP sorts by the live estimate the cell shows, not the stored snapshot",
+       Sorted({ { id = "fresh", level = 5, restPercent = 12, restTimestamp = time() },
+                { id = "old",   level = 5, restPercent = 10, restTimestamp = time() - 64 * 3600 } },
+              "restPercent", false),
+       "old,fresh")
+
+    -- Many rows with gaps, both ways: table.sort raises "invalid order
+    -- function" on a comparator that is not a strict weak order.
+    local many = {}
+    for i = 1, 60 do
+        many[i] = { id = tostring(i), name = (i % 3 == 0) and nil or ("N" .. (i % 7)),
+                    money = (i % 4 == 0) and nil or (i % 5) * 100, ilvl = i % 3 }
+    end
+    for _, field in ipairs({ "money", "name" }) do
+        for _, asc in ipairs({ true, false }) do
+            local ok, err = pcall(Sorted, many, field, asc)
+            check(("%s %s sorts without error"):format(field, asc and "asc" or "desc"), ok, tostring(err))
+        end
+    end
+end
+
+------------------------------------------------------------
+-- Sorting: per tab, remembered, and the rows follow (#160)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    AltStable.EnsureSheetVisible()
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do
+        if b.sectionId then btnFor[b.sectionId] = b end
+    end
+    local function Open(id) btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local function Click(field)
+        if field == "name" then local n = T.NameHeader(); n:GetScript("OnClick")(n); return end
+        local cols, hdrs = T.ColumnLayout()
+        for i, c in ipairs(cols) do
+            if c.field == field then hdrs[i]:GetScript("OnClick")(hdrs[i]); return end
+        end
+        check("a header for " .. field .. " to click", false)
+    end
+    local function Order()
+        local out = {}
+        for _, it in ipairs(T.DisplayList()) do
+            if it.kind == "char" then out[#out + 1] = it.data.guid end
+        end
+        return table.concat(out, ",")
+    end
+
+    local repField = AltStable.RepField(AltStable.REPUTATIONS[1].id)
+    local savedDB = AltStableDB
+    AltStableDB = {
+        a = { guid = "a", name = "Alpha One",   realm = "R", level = 10, money = 500, [repField] = 5 },
+        b = { guid = "b", name = "beta Two",    realm = "R", level = 20 },
+        c = { guid = "c", name = "Gamma Three", realm = "R", level = 5,  money = 900 },
+    }
+    AltStableConfig.rememberSortOrder, AltStableConfig.sheetSort = true, nil
+    T.ForgetSessionSorts()
+
+    Open("summary")
+    eq("a tab with no sort of its own starts on level, highest first", Order(), "b,a,c")
+    Click("money")
+    eq("the rows follow a click: gold, highest first, unknown last", Order(), "c,a,b")
+    Click("name")
+    eq("names A to Z, case ignored", Order(), "a,b,c")
+    Click("money")
+
+    -- Each tab its own.
+    Open("gear")
+    local f, asc = T.SortState()
+    check("another tab keeps its own sort (level, highest first)", f == "level" and asc == false)
+    Open("summary")
+    f, asc = T.SortState()
+    check("coming back restores this tab's", f == "money" and asc == false)
+
+    -- Remembered across a login.
+    local saved = AltStableConfig.sheetSort and AltStableConfig.sheetSort.summary
+    check("the tab's sort is saved", saved and saved.field == "money" and saved.asc == false)
+    T.ForgetSessionSorts()
+    Open("gear"); Open("summary")
+    f, asc = T.SortState()
+    check("after a login the saved sort comes back", f == "money" and asc == false)
+    -- A saved sort naming a column the tab does not have falls back.
+    AltStableConfig.sheetSort = { summary = { field = "gear_head", asc = true } }
+    T.ForgetSessionSorts()
+    Open("gear"); Open("summary")
+    f = T.SortState()
+    eq("a saved sort on a column the tab lacks falls back to level", f, "level")
+
+    -- Off: the saved sorts are forgotten, nothing new is saved, and a saved
+    -- one is ignored at login.
+    local cb = T.OptRememberSort
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    eq("turning Remember off forgets the saved sorts", AltStableConfig.sheetSort, nil)
+    Click("name")
+    eq("  and a sort made while off is not saved", AltStableConfig.sheetSort, nil)
+    Open("gear"); Open("summary")
+    f = T.SortState()
+    eq("  but the tab still keeps it for the session", f, "name")
+    AltStableConfig.sheetSort = { summary = { field = "money", asc = true } }
+    T.ForgetSessionSorts()
+    Open("gear"); Open("summary")
+    f = T.SortState()
+    eq("  and a saved one is ignored at login", f, "level")
+    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+    check("turning it back on is saved as on", AltStableConfig.rememberSortOrder == true)
+
+    -- A faction column that goes away while it is the sort: back to level.
+    Open("rep")
+    Click(repField)
+    f = T.SortState()
+    eq("a faction column sorts", f, repField)
+    AltStableDB.a[repField] = nil
+    AltStable.RefreshSheet()
+    f = T.SortState()
+    eq("its column gone, the sort falls back to level", f, "level")
+
+    AltStableDB = savedDB
+    AltStableConfig.sheetSort = nil
+    T.ForgetSessionSorts()
+    Open("summary")
+    AltStable.RefreshSheet()
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))

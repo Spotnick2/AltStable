@@ -1337,6 +1337,154 @@ end
 AltStable._test = AltStable._test or {}
 AltStable._test.CollectAccounts = CollectAccounts
 
+------------------------------------------------------------
+-- Sorting (#160)
+------------------------------------------------------------
+
+local DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC = "level", false
+
+local columnByField
+local function ColumnFor(field)
+    columnByField = columnByField or BuildFieldLookup()
+    return columnByField[field]
+end
+
+-- What a character is sorted by, for a column - or nil, which always sorts
+-- LAST, in both directions: unreadable gold, an unmet faction, no guild. A
+-- number column reads a number and a text column a non-empty string, decided
+-- per COLUMN: choosing per pair (the old tostring fallback) can form a cycle -
+-- 2 < 10 as numbers, "10" < "11" < "2" as text - and table.sort then misorders
+-- or raises "invalid order function".
+local function SortValue(char, col)
+    local v
+    if col.field == "level" then
+        -- Fractional, so 61.78 sorts above 61.50: what the tooltip shows.
+        local lvl = tonumber(char.level)
+        if not lvl then return nil end
+        return lvl + (tonumber(char.xpPercent) or 0) / 100
+    elseif col.field == "restPercent" then
+        -- What the cell SHOWS: the live estimate, not the stored snapshot. At
+        -- the level cap the cell is a dash - not a value, so last.
+        if (tonumber(char.level) or 0) >= AltStable.API.LevelCap() then return nil end
+        v = (AltStable.ComputeLiveRestedPercent(char))
+    else
+        v = char[col.field]
+    end
+    if col.sortText then
+        if type(v) == "number" then v = tostring(v) end
+        if type(v) ~= "string" or v == "" then return nil end
+        return v
+    end
+    return tonumber(v)
+end
+
+-- Case-insensitive, three-way: <0, 0, >0. The client's own (SortUtil, Mainline
+-- FrameXML) compares UTF-8 by locale; the fallback is for a client without it.
+local function CompareText(x, y)
+    if SortUtil and SortUtil.CompareUtf8i then return SortUtil.CompareUtf8i(x, y) end
+    x, y = x:lower(), y:lower()
+    if x < y then return -1 elseif x > y then return 1 end
+    return 0
+end
+
+-- The order of the rows. Values are read ONCE, up front - the rested estimate
+-- reads the clock, and a value that moved during the sort would break it.
+-- A three-way result is turned into a boolean explicitly: 0 and -1 are both
+-- TRUE in Lua, so returning one would make every pair "less". Equal values go
+-- to the old tiebreak: item level, highest first, then name.
+local function SortComparator(chars, field, asc)
+    local col = ColumnFor(field)
+    local key = {}
+    if col then
+        for _, c in ipairs(chars) do key[c] = SortValue(c, col) end
+    end
+    local text = col and col.sortText
+    return function(a, b)
+        local va, vb = key[a], key[b]
+        if va ~= nil and vb ~= nil then
+            local d
+            if text then d = CompareText(va, vb)
+            elseif va < vb then d = -1
+            elseif va > vb then d = 1
+            else d = 0 end
+            if d ~= 0 then
+                if asc then return d < 0 end
+                return d > 0
+            end
+        elseif va ~= nil then
+            return true
+        elseif vb ~= nil then
+            return false
+        end
+        local i1, i2 = tonumber(a.ilvl) or 0, tonumber(b.ilvl) or 0
+        if i1 ~= i2 then return i1 > i2 end
+        return (a.name or "") < (b.name or "")
+    end
+end
+AltStable._test.SortComparator = SortComparator
+
+-- Each tab keeps its own sort. For this session always; across sessions while
+-- "Remember sort order" is on (default), in AltStableConfig.sheetSort:
+--   { [sectionId] = { field = "money", asc = false } }
+local sectionSorts = {}
+
+local function RememberSortOrder()
+    return not (AltStableConfig and AltStableConfig.rememberSortOrder == false)
+end
+
+local function StoredSort(sectionId)
+    if not RememberSortOrder() then return nil end
+    local all = AltStableConfig and AltStableConfig.sheetSort
+    local s = type(all) == "table" and all[sectionId]
+    if type(s) == "table" and type(s.field) == "string" and type(s.asc) == "boolean" then
+        return s
+    end
+end
+
+-- The current sort, as the tab's own. Not for a plugin: it has no columns.
+local function SaveSort(section)
+    if not section or section._isPlugin then return end
+    sectionSorts[section.id] = { field = sortColumn, asc = sortAsc }
+    if not RememberSortOrder() then return end
+    local copy = {}
+    if type(AltStableConfig) == "table" and type(AltStableConfig.sheetSort) == "table" then
+        for k, v in pairs(AltStableConfig.sheetSort) do copy[k] = v end
+    end
+    copy[section.id] = { field = sortColumn, asc = sortAsc }
+    AltStable.SetConfigValue("sheetSort", copy)
+end
+
+-- Whether `field` can order the active tab's rows: Name always, otherwise a
+-- sortable column the tab is showing. A faction no character has any more is
+-- not one, and neither is a column of another tab.
+local function SortFieldValid(field)
+    if type(field) ~= "string" then return false end
+    if field == AltStable.Columns[1].field then return true end
+    for _, col in ipairs(scrollableCols) do
+        if col.field == field then return col.sortable ~= false end
+    end
+    return false
+end
+
+local function ResetSortIfInvalid()
+    if not SortFieldValid(sortColumn) then
+        sortColumn, sortAsc = DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC
+    end
+end
+
+-- The tab's sort on arrival: this session's, else the saved one, else level,
+-- highest first - whichever still names a column it has.
+local function LoadSortFor(section)
+    local s = sectionSorts[section.id] or StoredSort(section.id)
+    if s then sortColumn, sortAsc = s.field, s.asc
+    else sortColumn, sortAsc = DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC end
+    ResetSortIfInvalid()
+end
+AltStable._test.SortState = function() return sortColumn, sortAsc end
+-- A new login, as far as sorting goes: this session's per-tab sorts forgotten.
+AltStable._test.ForgetSessionSorts = function() wipe(sectionSorts) end
+AltStable._test.DisplayList = function() return displayList end
+
 local function BuildDisplayList()
     wipe(displayList)
     totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0; hiddenCount=0
@@ -1372,26 +1520,7 @@ local function BuildDisplayList()
             table.insert(allChars, char)
         end
     end
-    table.sort(allChars, function(a,b)
-        local v1, v2
-        -- Special-case the "level" sort: use a fractional effective level
-        -- so that 61.78 sorts above 61.50, above 61.30 — matching what
-        -- users see in the tooltip progress indicator.
-        if sortColumn == "level" then
-            v1 = (a.level or 0) + ((a.xpPercent or 0) / 100)
-            v2 = (b.level or 0) + ((b.xpPercent or 0) / 100)
-        else
-            v1 = a[sortColumn]; if v1==nil then v1="" end
-            v2 = b[sortColumn]; if v2==nil then v2="" end
-        end
-        if v1==v2 then
-            local i1=a.ilvl or 0; local i2=b.ilvl or 0
-            if i1~=i2 then return i1>i2 end
-            return (a.name or "")<(b.name or "")
-        end
-        if type(v1)~=type(v2) then v1=tostring(v1); v2=tostring(v2) end
-        if sortAsc then return v1<v2 else return v1>v2 end
-    end)
+    table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc))
     local realmOrder, realmChars = {}, {}
     for _, char in ipairs(allChars) do
         local realm = char.realm or "Unknown"
@@ -1835,13 +1964,15 @@ end
 -- Column headers (#160)
 --
 -- One builder for every header, the frozen Name one included. Each header is
--- one of four KINDS, which decide only how it looks:
---   text    - a label, and the arrow when sorted (Name, Lvl, Guild, Gold...)
---   icon    - a gear, profession or faction icon, tinted when sorted
+-- one of three KINDS, which decide only how it looks:
+--   text    - a label (Name, Lvl, Guild, Gold...)
+--   icon    - a gear, profession or faction icon, or the Class/Race glyph
 --   stacked - a faction with no icon: its short name, one letter per line
---   short   - one letter ("C", "R") for the class and race columns
--- How a header BEHAVES - click to sort, hover tint, tooltip - is wired once,
--- in WireHeader, and reads the column it was last given.
+-- Every kind shows the same states: hover is a neutral fill; sorted is a faint
+-- accent fill, an accent underline and an arrow for the direction. A header
+-- that does not sort (gear slots) has neither, only its tooltip.
+-- How a header BEHAVES - click to sort, hover, tooltip - is wired once, in
+-- WireHeader, and reads the column it was last given.
 --
 -- The buttons are REUSED by slot, like the rows: a section switch used to make
 -- a fresh button per column and only hide the old ones, so they piled up for
@@ -1849,37 +1980,73 @@ end
 -- reset by ConfigureHeader, so reuse cannot carry one kind's look into another.
 ------------------------------------------------------------
 
-local SHORT_HEADER = { classIcon = "C", raceIcon = "R" }
+-- Class and Race: neutral glyphs that name the COLUMN - crossed weapons, two
+-- profiles - shipped in Media\Icons. Not the logged-in character's own class
+-- and race icons: those looked like one more row, and changed with the alt.
+local MEDIA = AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\"
+local HEADER_GLYPH = {
+    classIcon = MEDIA .. "Icons\\header-class.tga",
+    raceIcon  = MEDIA .. "Icons\\header-race.tga",
+}
+
+-- The icon a header shows, and whether it is one of our glyphs (drawn whole)
+-- or a game icon (its pixel border cropped). nil: no icon.
+local function HeaderIcon(col)
+    if HEADER_GLYPH[col.type] then return HEADER_GLYPH[col.type], true end
+    -- slotSlug: the faction-aware gear icon, resolved at header-build time.
+    return (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
+        or col.profIcon or col.slotIcon or col.repIcon, false
+end
 
 local function HeaderKind(col)
     if col.vertical and not col.repIcon then return "stacked" end
-    if col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then return "icon" end
-    if SHORT_HEADER[col.type] then return "short" end
+    if HeaderIcon(col) then return "icon" end
     return "text"
 end
 
--- The accent on the header's label or icon: on while hovered or sorted by.
-local function HeaderTint(btn, on)
-    if btn.kind == "icon" then
-        if on then btn.iconTex:SetVertexColor(AltStable.GetAccentRGB())
-        else btn.iconTex:SetVertexColor(1, 1, 1) end
+-- What an order is called, for a column: "highest first", "A to Z".
+local function OrderWords(col, asc)
+    if col.sortText then return asc and "A to Z" or "Z to A" end
+    if col.field == "lastUpdate" then return asc and "oldest first" or "most recent first" end
+    return asc and "lowest first" or "highest first"
+end
+
+-- Where the arrow goes. Beside the label on a text header; in the bottom-right
+-- corner, just above the underline, on every other kind - a 22px reputation
+-- column has no room for an icon and an arrow side by side.
+local function PlaceArrow(btn)
+    local arrow = btn.arrow
+    arrow:ClearAllPoints()
+    if btn.kind ~= "text" then
+        arrow:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 3)
+    elseif (btn.col.align or "LEFT") == "LEFT" then
+        local w = btn.label:GetStringWidth()
+        arrow:SetPoint("LEFT", btn, "LEFT", 2 + (type(w) == "number" and w or 0) + 3, 0)
     else
-        if on then btn.label:SetTextColor(AltStable.GetAccentRGB())
-        else btn.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+        -- A right-aligned label ends 10px from the edge: the arrow sits in that gap.
+        arrow:SetPoint("RIGHT", btn, "RIGHT", -1, 0)
     end
 end
 
--- The sorted-by state on one header: the arrow (text headers only, for now)
--- and the tint.
+-- The sorted state on one header: a faint accent fill, a full-strength accent
+-- underline, the label in the accent, and the arrow for the direction. Hover
+-- is a separate, neutral fill (WireHeader), so the two never look alike.
 local function PaintSortState(btn)
-    local sorted = btn.field == sortColumn
-    if sorted and btn.showsArrow then
-        btn.arrow:Show()
+    local sorted = btn.sortable and btn.field == sortColumn
+    btn.sortFill:SetShown(sorted)
+    btn.underline:SetShown(sorted)
+    btn.arrow:SetShown(sorted)
+    if sorted then
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        btn.sortFill:SetColorTexture(ar, ag, ab, 0.18)
+        btn.underline:SetColorTexture(ar, ag, ab, 1)
+        -- The arrow file points up: as is for ascending, flipped for descending.
         btn.arrow:SetTexCoord(0, 1, sortAsc and 0 or 1, sortAsc and 1 or 0)
+        PlaceArrow(btn)
+        btn.label:SetTextColor(ar, ag, ab)
     else
-        btn.arrow:Hide()
+        btn.label:SetTextColor(unpack(AltStable.C.TEXT_NORM))
     end
-    HeaderTint(btn, sorted)
 end
 
 local function UpdateSortArrows()
@@ -1887,56 +2054,72 @@ local function UpdateSortArrows()
     for _, btn in ipairs(headerButtons) do PaintSortState(btn) end
 end
 
-local function SortByHeader(field)
-    if sortColumn==field then sortAsc=not sortAsc
-    else sortColumn=field; sortAsc=false end
-    UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-end
-
--- A text header has a tooltip only when COL_TOOLTIPS names it (Lvl, iLvl):
--- Name, Guild, Gold and the rest say what they are already.
+-- The tooltip: what the column is and, on a sortable one, the order it is in
+-- and what the next click does.
 local function ShowHeaderTooltip(btn)
-    local col, kind = btn.col, btn.kind
-    local title, sortBy
-    if kind == "icon" then
-        title, sortBy = COL_TOOLTIPS[col.field] or col.label, col.label
-    elseif kind == "text" then
-        title = COL_TOOLTIPS[col.field]; sortBy = title
-    else
-        title, sortBy = col.label, col.label
-    end
-    if not title then return end
+    local col = btn.col
     GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
-    GameTooltip:AddLine(title, 1, 1, 1)
-    GameTooltip:AddLine("Sort by " .. sortBy, 0.7, 0.7, 0.7)
+    GameTooltip:AddLine(COL_TOOLTIPS[col.field] or col.label, 1, 1, 1)
+    if btn.sortable then
+        if btn.field == sortColumn then
+            local now = OrderWords(col, sortAsc)
+            GameTooltip:AddLine(now:sub(1, 1):upper() .. now:sub(2), 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Click to sort " .. OrderWords(col, not sortAsc), 0.7, 0.7, 0.7)
+        else
+            GameTooltip:AddLine("Click to sort " .. OrderWords(col, col.sortText == true), 0.7, 0.7, 0.7)
+        end
+    end
     -- The standing key lives in the faction headers, so the footer keeps the
     -- normal char/level/gold totals like every other tab.
     if col.type == "rep" then AddRepStandingLegend(GameTooltip) end
     GameTooltip:Show()
 end
 
+-- A click on a sortable header: this column, in its first-click direction (text
+-- A to Z, numbers highest first), or the other way if it already is. Kept per
+-- tab, and saved while "Remember sort order" is on.
+local function SortByHeader(btn)
+    if not btn.sortable then return end
+    local field = btn.field
+    if sortColumn == field then sortAsc = not sortAsc
+    else sortColumn = field; sortAsc = btn.col.sortText == true end
+    SaveSort(activeSection)
+    UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
+    -- The tooltip under the mouse described the order before the click.
+    if GameTooltip:IsOwned(btn) then ShowHeaderTooltip(btn) end
+end
+
 local function WireHeader(btn)
-    btn:SetScript("OnClick", function(self) SortByHeader(self.field) end)
+    btn:SetScript("OnClick", function(self) SortByHeader(self) end)
     btn:SetScript("OnEnter", function(self)
-        HeaderTint(self, true)
+        -- A header that does not sort does not look like a button.
+        if self.sortable then self.hoverFill:Show() end
         ShowHeaderTooltip(self)
     end)
     btn:SetScript("OnLeave", function(self)
-        -- Keep the tint on the column the rows are sorted by: an icon header
-        -- has no arrow, so the tint is the only sign of it.
-        if self.field ~= sortColumn then HeaderTint(self, false) end
+        self.hoverFill:Hide()
         if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
     end)
 end
 
 local function NewHeaderButton(parent)
     local btn = CreateFrame("Button", nil, parent)
+    -- The fills sit under everything else on the button, hover below sorted.
+    btn.hoverFill = btn:CreateTexture(nil, "BACKGROUND", nil, 1)
+    btn.hoverFill:SetAllPoints(); btn.hoverFill:SetColorTexture(1, 1, 1, 0.06); btn.hoverFill:Hide()
+    btn.sortFill = btn:CreateTexture(nil, "BACKGROUND", nil, 2)
+    btn.sortFill:SetAllPoints(); btn.sortFill:Hide()
+    -- Pinned to the button's bottom edge, so it follows a spread column.
+    btn.underline = btn:CreateTexture(nil, "ARTWORK")
+    btn.underline:SetHeight(2)
+    btn.underline:SetPoint("BOTTOMLEFT"); btn.underline:SetPoint("BOTTOMRIGHT")
+    btn.underline:Hide()
     btn.label   = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     btn.iconTex = btn:CreateTexture(nil, "OVERLAY")
-    -- Made after the icon, so it draws over one.
-    local arrow = btn:CreateTexture(nil, "OVERLAY")
+    -- A sublevel above the icon, so the corner arrow is never under it.
+    local arrow = btn:CreateTexture(nil, "OVERLAY", nil, 2)
     arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
-    arrow:SetSize(8, 8); arrow:SetPoint("RIGHT", btn, "RIGHT", -1, 0); arrow:Hide()
+    arrow:SetSize(8, 8); arrow:Hide()
     btn.arrow = arrow
     WireHeader(btn)
     return btn
@@ -1947,8 +2130,9 @@ end
 local function ConfigureHeader(btn, col)
     local kind = HeaderKind(col)
     btn.col, btn.field, btn.kind = col, col.field, kind
-    btn.showsArrow = (kind == "text")
+    btn.sortable = col.sortable ~= false
     btn:SetSize(col.width, currentHeaderHeight)
+    btn.hoverFill:Hide()
 
     local lbl, tex = btn.label, btn.iconTex
     lbl:ClearAllPoints(); lbl:SetWidth(0)
@@ -1956,13 +2140,16 @@ local function ConfigureHeader(btn, col)
     tex:ClearAllPoints()
 
     if kind == "icon" then
-        -- slotSlug: the faction-aware gear icon, resolved at header-build time.
-        local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
-            or col.profIcon or col.slotIcon or col.repIcon
-        local sz = math.min(currentHeaderHeight - 4, col.width - 2)
-        tex:SetSize(sz, sz); tex:SetPoint("CENTER", btn, "CENTER", 0, 0); tex:SetTexture(iconPath)
-        -- Crop the pixel border of the built-in round WoW icons.
-        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        local icon, isGlyph = HeaderIcon(col)
+        local sz = math.min(currentHeaderHeight - 4, col.width - 2, col.headerIconSize or math.huge)
+        tex:SetSize(sz, sz); tex:SetPoint("CENTER", btn, "CENTER", 0, 0)
+        tex:SetTexture(icon)
+        if isGlyph then
+            tex:SetTexCoord(0, 1, 0, 1)
+        else
+            -- Crop the pixel border of the built-in round WoW icons.
+            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
         tex:Show()
         lbl:SetText(""); lbl:Hide()
         return
@@ -1975,10 +2162,6 @@ local function ConfigureHeader(btn, col)
         lbl:SetWidth(col.width); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("TOP")
         lbl:SetNonSpaceWrap(true)
         lbl:SetText(StackChars(col.verticalLabel or col.label))
-    elseif kind == "short" then
-        lbl:SetFontObject(GameFontHighlightSmall)
-        lbl:SetAllPoints(); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("MIDDLE")
-        lbl:SetText(SHORT_HEADER[col.type])
     else
         lbl:SetFontObject(GameFontHighlight)
         lbl:SetPoint("LEFT", 2, 0); lbl:SetPoint("RIGHT", -10, 0)
@@ -2596,6 +2779,8 @@ local function SwitchSection(section)
     end
 
     BuildScrollableColsForSection(section)
+    -- This tab's own sort (#160), checked against the columns it now has.
+    if not section._isPlugin then LoadSortFor(section) end
     AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, section.headerHeight or HEADER_HEIGHT))
     BuildHeaders()
     UpdateScroll()
@@ -3919,6 +4104,17 @@ local function CreateFrameIfNeeded()
     optResetPosition:SetScript("OnLeave", function()
         optResetPosition:SetBackdropColor(0.12, 0.12, 0.12, 1)
     end)
+    Y = Y - 22
+
+    -- Each tab's sort, kept across logouts (#160). Turning it off forgets the
+    -- saved sorts; the tabs keep theirs for the rest of the session.
+    local optRememberSortCheck = MakeOptCheckRow("rememberSortOrder",
+        "Remember each tab's sort order", Y,
+        function(checked)
+            AltStable.SetConfigValue("rememberSortOrder", checked)
+            if not checked then AltStable.SetConfigValue("sheetSort", nil) end
+        end)
+    AltStable._test.OptRememberSort = optRememberSortCheck
     Y = Y - 30
 
     -- ── Account & Sync section ────────────────────────────
@@ -4514,6 +4710,7 @@ local function CreateFrameIfNeeded()
         optFacingUpdating = false
         optMinimapCheck:SetChecked(optMinimapCheck._getter())
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
+        optRememberSortCheck:SetChecked(optRememberSortCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
         optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)
@@ -4867,6 +5064,8 @@ local function RebuildDataDrivenColumns()
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
     if ColumnSignature() ~= before then
+        -- The faction the rows were sorted by may be the column that went.
+        ResetSortIfInvalid()
         AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, activeSection.headerHeight or HEADER_HEIGHT))
         BuildHeaders()
     end

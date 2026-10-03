@@ -297,6 +297,12 @@ local function EnsureDefaults()
     if AltStableConfig.rememberWindowPosition == nil then
         AltStableConfig.rememberWindowPosition = true
     end
+    -- Each sheet tab's sort survives a logout (#160), in sheetSort. Off: every
+    -- tab starts on level, highest first, at login, and keeps its own sort only
+    -- for the session.
+    if AltStableConfig.rememberSortOrder == nil then
+        AltStableConfig.rememberSortOrder = true
+    end
     if AltStableConfig.sidebarCompact == nil then
         AltStableConfig.sidebarCompact = false
     end
