@@ -381,11 +381,28 @@ local function PruneOrphans()
     end
 end
 
-local function gather()
+-- filter (optional, #153):
+--   only       = guid    one character (Personal), hidden or not
+--   ruleset    = "PvP"   characters whose realm is on that ruleset
+--   skipHidden = true    leave hidden characters out, as the sheet's totals do
+-- No filter is every character - the tooltips' and the tests' view.
+local function Included(guid, c, filter)
+    if not filter then return true end
+    if filter.only then return guid == filter.only end
+    if filter.skipHidden and AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) then
+        return false
+    end
+    if filter.ruleset and AltStableWarbandModel.RulesetOf(c.realm) ~= filter.ruleset then
+        return false
+    end
+    return true
+end
+
+local function gather(filter)
     AltStableDB = AltStableDB or {}
     local agg = {}
     for guid, c in pairs(AltStableDB) do
-        if type(c) == "table" and c.name then
+        if type(c) == "table" and c.name and Included(guid, c, filter) then
             local wb = AltStableWarbandDB[guid]
             if type(wb) == "table" then
                 local per = {}
@@ -414,27 +431,35 @@ local function gather()
 end
 
 ------------------------------------------------------------
--- Display — a scrollable grid grouped by item type. Icon + total count per
--- unique item; hover lists which alt holds how many; search dims non-matches
--- in place (stable layout, so it's a cheap per-cell alpha/desaturate pass).
+-- Display (#153) - a retail Warband Bank, read-only. User tabs on a rail at
+-- the right; one tab at a time (Single) or three side by side (Combined); the
+-- logged-in character (Personal) or everyone on a ruleset (Warband). The model
+-- - categories, rulesets, which tabs claim what, which are on screen - is in
+-- WarbandTabs.lua; this is frames.
+--
+-- Cells stay DIRECT children of the panel and scrolling stays virtual: a real
+-- ScrollFrame swallowed the cells' hover. Combined shares one row offset over
+-- its columns, ranged by the longest.
 ------------------------------------------------------------
 
+local M = AltStableWarbandModel
+
 local PAD       = 12
-local TITLE_H   = 26
-local ICON      = 32
-local STRIDE    = 42     -- icon + gutter
+local ICON      = 34
+local STRIDE    = 40     -- icon + gutter
+local HEAD_H    = 70     -- title row + the controls row
+local TABTITLE_H = 28    -- a tab's name above its grid
+local FOOT_H    = 34     -- Personal / Warband and the status line
+local RAIL_W    = 58     -- the tab bar at the right
+local RAIL_BTN  = 40
+local SCROLL_W  = 14
+local COL_GAP   = 18     -- between Combined's columns
+local ROW_TOP   = HEAD_H + TABTITLE_H   -- first grid row, from the panel's top
+local EMPTY_SLOT = "Interface\\PaperDoll\\UI-Backpack-EmptySlot"
 
--- Item classID -> section label, in display order. Unknown classes fall into "Other".
-local CLASS_LABEL = {
-    [7] = "Trade Goods", [0] = "Consumables", [3] = "Gems", [2] = "Weapons",
-    [4] = "Armor", [9] = "Recipes", [5] = "Reagents", [6] = "Projectiles",
-    [11] = "Quivers", [1] = "Containers", [12] = "Quest", [13] = "Keys",
-    [15] = "Miscellaneous",
-}
-local GROUP_ORDER = { 7, 0, 3, 2, 4, 9, 5, 6, 11, 1, 12, 13, 15 }
-
-local panel, titleFS, emptyFS, searchBox
+local panel, titleFS, emptyFS, searchBox, statusFS
 AT_WB.scrollRow = 0
+AT_WB.tabBtns, AT_WB.colHeads = {}, {}
 
 local function fmtCount(n)
     if n >= 1000 then return string.format("%.1fk", n / 1000) end
@@ -472,6 +497,8 @@ end
 
 -- Sum one itemID across every tracked character's bags+bank (for the global
 -- item-tooltip hook). Returns total + a holders list shaped like gather()'s.
+-- Unfiltered on purpose: a tooltip on an item anywhere in the game answers
+-- "who has this", whatever the Warband tab happens to be showing.
 local function CountItem(itemID)
     local total, holders = 0, {}
     for guid, c in pairs(AltStableDB or {}) do
@@ -568,7 +595,7 @@ end
 
 local function CellOnEnter(self)
     local e = self.entry
-    if not e then return end
+    if not e then return end      -- an empty slot
     AT_WB.hoverEntry = e
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     -- SetHyperlink drives the item tooltip; OnTooltipSetItem then appends the
@@ -597,6 +624,15 @@ local function CellOnLeave()
     GameTooltip:Hide()
 end
 
+-- A refresh re-points cells at other items under a resting mouse: drop the
+-- hover, so the tooltip never describes what the cell no longer holds.
+local function ClearHover()
+    if AT_WB.hoverEntry then
+        AT_WB.hoverEntry = nil
+        if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end
+    end
+end
+
 -- Shown only when there is something to scroll to, and kept in step with the
 -- wheel. _syncing stops the value we set here from re-entering Layout.
 function AT_WB.UpdateScrollBar(maxStart, start)
@@ -614,35 +650,19 @@ local function hideFrom(pool, from)
     for k = from, #pool do if pool[k] then pool[k]:Hide() end end
 end
 
--- Cells and headers are DIRECT children of the panel (like the Raids plugin) —
--- not buried in a ScrollFrame, which was swallowing the hover events. Scrolling
--- is virtual: we lay out only the visible window of rows and shift it on the
--- mouse wheel.
-local ROW_TOP = TITLE_H + 32   -- first row Y (below the title + tooltip-toggle strip)
-
 -- How much of the grid fits, and where the window starts. Whole rows only:
 -- cells are laid out on a fixed stride, so a partial row at the bottom would be
--- a clipped row rather than a scrolled one. Returns visible rows, the highest
+-- a clipped row rather than a scrolled one. The grid sits between the tab
+-- titles and the Personal/Warband bar. Returns visible rows, the highest
 -- first-row index, and the requested start clamped into range.
 local function ScrollBounds(rowCount, panelHeight, requested)
     local ph = (panelHeight and panelHeight >= 50) and panelHeight or 400
-    local visible = math.max(1, math.floor((ph - ROW_TOP - PAD) / STRIDE))
+    local visible = math.max(1, math.floor((ph - ROW_TOP - FOOT_H - PAD) / STRIDE))
     local maxStart = math.max(0, (rowCount or 0) - visible)
     local start = math.max(0, math.min(requested or 0, maxStart))
     return visible, maxStart, start
 end
 AT_WB.ScrollBounds = ScrollBounds
-
-local function getHeader(i)
-    local fs = AT_WB.headers[i]
-    if not fs then
-        fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        fs:SetJustifyH("LEFT")
-        fs:SetTextColor(unpack((AltStable.C and AltStable.C.TEXT_BRIGHT) or { 1, 1, 1 }))
-        AT_WB.headers[i] = fs
-    end
-    return fs
-end
 
 local function getCell(i)
     local cell = AT_WB.cells[i]
@@ -664,10 +684,69 @@ local function getCell(i)
     return cell
 end
 
--- Resolve metadata, bucket by item type, sort each bucket by quality then name.
--- Returns an ordered list of { label, items = { entry, ... } }.
-local function buildBuckets(agg)
-    local buckets = {}
+-- One cell, holding an item or (entry nil) an empty slot. An empty slot clears
+-- everything an item left on it: the hover, the count and the search name.
+local function FillCell(cell, e)
+    cell.entry = e
+    if e then
+        cell.icon:SetTexture(e.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+        cell.icon:SetDesaturated(false)
+        cell.count:SetText(e.total > 1 and fmtCount(e.total) or "")
+        local qc = e.quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[e.quality]
+        if qc then cell:SetBackdropBorderColor(qc.r, qc.g, qc.b, 1)
+        else cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 1) end
+        cell.itemName = e.name
+        cell:SetAlpha(1)
+    else
+        cell.icon:SetTexture(EMPTY_SLOT)
+        cell.count:SetText("")
+        cell:SetBackdropBorderColor(0.18, 0.18, 0.2, 1)
+        cell.itemName = nil
+        cell:SetAlpha(0.55)
+    end
+end
+
+------------------------------------------------------------
+-- The read model, filtered
+------------------------------------------------------------
+
+local function Cfg(key, default)
+    local v = AltStableConfig and AltStableConfig[key]
+    if v == nil then return default end
+    return v
+end
+
+-- Tabs from config, seeded with the defaults the first time - for an existing
+-- profile as well as a new one - and never overwritten once there.
+local function Tabs()
+    local tabs = AltStableConfig and AltStableConfig.warbandTabs
+    if type(tabs) ~= "table" or #tabs == 0 then
+        tabs = M.DefaultTabs()
+        AltStable.SetConfigValue("warbandTabs", tabs)
+    end
+    return tabs
+end
+
+local function Scope() return Cfg("warbandScope", "warband") end
+local function View() return Cfg("warbandView", "single") end
+
+-- Who the grid is about: Personal is the logged-in character alone, ruleset
+-- ignored, hidden or not; Warband is every character not hidden (the sheet's
+-- totals leave hidden ones out too) on the chosen ruleset.
+local function CurrentFilter()
+    if Scope() == "personal" then
+        return { only = UnitGUID and UnitGUID("player") }
+    end
+    return {
+        ruleset = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName()),
+        skipHidden = true,
+    }
+end
+
+-- Every unique item, resolved to what the view needs. An item whose metadata
+-- has not arrived sits in misc until GET_ITEM_INFO_RECEIVED refreshes it.
+local function BuildEntries(agg)
+    local list = {}
     for id, a in pairs(agg) do
         local icon, classID
         if GetItemInfoInstant then
@@ -678,37 +757,534 @@ local function buildBuckets(agg)
         if GetItemInfo then name, _, quality = GetItemInfo(id) end
         if not name then RequestMeta(id) end
         if not icon and GetItemIconByID then icon = GetItemIconByID(id) end
-
-        local key = CLASS_LABEL[classID or -1] and classID or "other"
-        buckets[key] = buckets[key] or {}
-        table.insert(buckets[key], {
-            id = id, total = a.total, holders = a.holders,
-            icon = icon, name = name, quality = quality,
-        })
+        list[#list + 1] = {
+            id = id, total = a.total, holders = a.holders, icon = icon, name = name,
+            quality = quality, classID = classID, cat = M.CategoryOf(classID),
+        }
     end
-
-    local groups = {}
-    local function pushGroup(key, label)
-        local list = buckets[key]
-        if list and #list > 0 then
-            table.sort(list, function(x, y)
-                local qx, qy = x.quality or -1, y.quality or -1
-                if qx ~= qy then return qx > qy end
-                return (x.name or ("zzz" .. x.id)) < (y.name or ("zzz" .. y.id))
-            end)
-            groups[#groups + 1] = { label = label, items = list }
-        end
-    end
-    for _, cid in ipairs(GROUP_ORDER) do pushGroup(cid, CLASS_LABEL[cid]) end
-    pushGroup("other", "Other")
-    return groups
+    -- Grouped by kind inside a tab, then best first, then by name.
+    table.sort(list, function(x, y)
+        local cx, cy = x.classID or 99, y.classID or 99
+        if cx ~= cy then return cx < cy end
+        local qx, qy = x.quality or -1, y.quality or -1
+        if qx ~= qy then return qx > qy end
+        return (x.name or ("zzz" .. x.id)) < (y.name or ("zzz" .. y.id))
+    end)
+    return list
 end
 
+local RULESET_LABEL = {
+    current = "Current ruleset", all = "All rulesets",
+    Normal = "Normal", PvP = "PvP", RP = "RP", Hardcore = "Hardcore",
+}
+
+local function RulesetText()
+    local setting = Cfg("warbandRuleset", "current")
+    if setting == "current" then
+        return "Current ruleset (" .. M.RulesetOf(GetRealmName and GetRealmName()) .. ")"
+    end
+    return RULESET_LABEL[setting] or tostring(setting)
+end
+
+------------------------------------------------------------
+-- Small glass widgets
+------------------------------------------------------------
+
+local function Accent()
+    if AltStable.GetAccentRGB then return AltStable.GetAccentRGB() end
+    return 1, 0.82, 0
+end
+
+local function StyleButton(btn, active)
+    local r, g, b = Accent()
+    if active then
+        btn:SetBackdropColor(r, g, b, 0.18)
+        btn:SetBackdropBorderColor(r, g, b, 1)
+        if btn.label then btn.label:SetTextColor(r, g, b) end
+    else
+        btn:SetBackdropColor(1, 1, 1, btn._hover and 0.10 or 0.04)
+        btn:SetBackdropBorderColor(1, 1, 1, 0.18)
+        if btn.label then btn.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+    end
+end
+
+local function MakeButton(parent, w, h, text, onClick)
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    btn:SetSize(w, h)
+    btn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    btn.label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    btn.label:SetPoint("CENTER")
+    btn.label:SetText(text or "")
+    if AltStable.SkinText then AltStable.SkinText(btn.label) end
+    btn:SetScript("OnEnter", function(self) self._hover = true; StyleButton(self, self._active) end)
+    btn:SetScript("OnLeave", function(self) self._hover = false; StyleButton(self, self._active) end)
+    if onClick then btn:SetScript("OnClick", onClick) end
+    StyleButton(btn, false)
+    return btn
+end
+
+local function SetActive(btn, on)
+    btn._active = on and true or false
+    StyleButton(btn, btn._active)
+end
+
+-- Closes on a click anywhere else in the panel, and on Escape.
+local function MakeCatcher(owner, onClose)
+    local c = CreateFrame("Button", nil, panel)
+    c:SetAllPoints(panel)
+    c:SetFrameStrata("FULLSCREEN_DIALOG")
+    c:RegisterForClicks("AnyUp")
+    c:SetScript("OnClick", onClose)
+    c:Hide()
+    return c
+end
+
+-- Escape closes it and is swallowed; every other key goes on to the game, so
+-- an open menu never eats movement.
+local function CloseOnEscape(f, onClose)
+    f:EnableKeyboard(true)
+    f:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then
+            if self.SetPropagateKeyboardInput then self:SetPropagateKeyboardInput(false) end
+            onClose()
+        elseif self.SetPropagateKeyboardInput then
+            self:SetPropagateKeyboardInput(true)
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- The ruleset menu
+------------------------------------------------------------
+
+local rulesetBtn, rulesetMenu, rulesetCatcher
+
+local function CloseRulesetMenu()
+    if rulesetMenu then rulesetMenu:Hide() end
+    if rulesetCatcher then rulesetCatcher:Hide() end
+end
+
+local function OpenRulesetMenu()
+    if Scope() == "personal" then return end
+    if not rulesetMenu then
+        rulesetCatcher = MakeCatcher(panel, CloseRulesetMenu)
+        rulesetMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        rulesetMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+        rulesetMenu:SetFrameLevel(rulesetCatcher:GetFrameLevel() + 5)
+        if not (AltStable.SkinWindow and AltStable.SkinWindow(rulesetMenu, "small")) then
+            AltStable.ApplyBackdrop(rulesetMenu, 0.08, 0.08, 0.1, 0.97)
+        end
+        CloseOnEscape(rulesetMenu, CloseRulesetMenu)
+        rulesetMenu.rows = {}
+        local keys = { "current", "all", "Normal", "PvP", "RP", "Hardcore" }
+        for i, key in ipairs(keys) do
+            local row = MakeButton(rulesetMenu, 180, 22, "", function()
+                CloseRulesetMenu()
+                AltStable.SetConfigValue("warbandRuleset", key)
+                AT_WB.scrollRow = 0
+                AT_WB.Refresh()
+            end)
+            row:SetPoint("TOPLEFT", rulesetMenu, "TOPLEFT", 8, -8 - (i - 1) * 24)
+            row.key = key
+            rulesetMenu.rows[i] = row
+        end
+        rulesetMenu:SetSize(196, 16 + #keys * 24)
+    end
+    local current = Cfg("warbandRuleset", "current")
+    for _, row in ipairs(rulesetMenu.rows) do
+        row.label:SetText(row.key == "current"
+            and ("Current ruleset (" .. M.RulesetOf(GetRealmName and GetRealmName()) .. ")")
+            or RULESET_LABEL[row.key])
+        SetActive(row, row.key == current)
+    end
+    rulesetMenu:ClearAllPoints()
+    rulesetMenu:SetPoint("TOPLEFT", rulesetBtn, "BOTTOMLEFT", 0, -2)
+    rulesetCatcher:Show()
+    rulesetMenu:Show()
+end
+
+------------------------------------------------------------
+-- Configure Tab
+------------------------------------------------------------
+
+local dialog, dialogCatcher
+local ICON_COLS, ICON_ROWS, ICON_SIZE = 10, 4, 34
+local iconList                       -- deduplicated, built once on first open
+
+-- The client's icon lists can run to thousands of entries: read once, kept,
+-- and only ICON_COLS x ICON_ROWS cells ever exist.
+local function IconList()
+    if iconList then return iconList end
+    iconList = {}
+    local seen = {}
+    local function add(v)
+        if v and not seen[v] then seen[v] = true; iconList[#iconList + 1] = v end
+    end
+    for _, t in ipairs(M.DefaultTabs()) do add(t.icon) end
+    for _, fn in ipairs({ GetMacroItemIcons, GetMacroIcons }) do
+        if type(fn) == "function" then
+            local out = {}
+            local ok, r = pcall(fn, out)
+            local src = (ok and type(r) == "table") and r or out
+            for _, v in ipairs(src) do add(v) end
+        end
+    end
+    return iconList
+end
+AT_WB.IconList = IconList
+
+local function CloseDialog()
+    if dialog then dialog:Hide(); dialog.draft = nil end
+    if dialogCatcher then dialogCatcher:Hide() end
+end
+
+local function RenderIconGrid()
+    local list = IconList()
+    local total = math.ceil(#list / ICON_COLS)
+    local maxStart = math.max(0, total - ICON_ROWS)
+    dialog.iconRow = math.max(0, math.min(dialog.iconRow or 0, maxStart))
+    for r = 0, ICON_ROWS - 1 do
+        for c = 1, ICON_COLS do
+            local cell = dialog.iconCells[r * ICON_COLS + c]
+            local v = list[(dialog.iconRow + r) * ICON_COLS + c]
+            cell.value = v
+            if v then
+                cell.icon:SetTexture(v)
+                local picked = dialog.draft and dialog.draft.icon == v
+                local ar, ag, ab = Accent()
+                if picked then cell:SetBackdropBorderColor(ar, ag, ab, 1)
+                else cell:SetBackdropBorderColor(0.25, 0.25, 0.28, 1) end
+                cell:Show()
+            else
+                cell:Hide()
+            end
+        end
+    end
+end
+
+local function SaveDialog()
+    local d = dialog.draft
+    if not d then return end
+    local name = (dialog.nameBox:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local tabs = M.CopyTabs(Tabs())
+    local index = dialog.index
+    if name == "" then name = "Tab " .. (index or (#tabs + 1)) end
+    d.name = name
+    if index then
+        tabs[index] = d
+    else
+        -- The cap is enforced where a new tab is started (OpenDialog).
+        tabs[#tabs + 1] = d
+        index = #tabs
+    end
+    AltStable.SetConfigValue("warbandTabs", tabs)
+    AltStable.SetConfigValue("warbandTab", index)
+    CloseDialog()
+    AT_WB.scrollRow = 0
+    AT_WB.Refresh()        -- SetConfigValue does not refresh anything itself
+end
+
+local function DeleteFromDialog()
+    local index = dialog.index
+    local tabs = M.CopyTabs(Tabs())
+    if not index or #tabs <= 1 then return end
+    table.remove(tabs, index)
+    AltStable.SetConfigValue("warbandTabs", tabs)
+    AltStable.SetConfigValue("warbandTab", M.AfterDelete(Cfg("warbandTab", 1), index, #tabs) or 1)
+    CloseDialog()
+    AT_WB.scrollRow = 0
+    AT_WB.Refresh()
+end
+
+local function BuildDialog()
+    dialogCatcher = MakeCatcher(panel, CloseDialog)
+    dialog = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+    dialog:SetFrameLevel(dialogCatcher:GetFrameLevel() + 5)
+    dialog:SetSize(ICON_COLS * (ICON_SIZE + 4) + 40, 420)
+    dialog:SetPoint("CENTER", panel, "CENTER", -RAIL_W / 2, 0)
+    dialog:EnableMouse(true)
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(dialog, "small")) then
+        AltStable.ApplyBackdrop(dialog, 0.08, 0.08, 0.1, 0.98)
+    end
+    CloseOnEscape(dialog, CloseDialog)
+
+    local title = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 18, -14)
+    title:SetText("Configure Tab")
+
+    dialog.preview = dialog:CreateTexture(nil, "ARTWORK")
+    dialog.preview:SetSize(44, 44)
+    dialog.preview:SetPoint("TOPLEFT", 18, -44)
+    dialog.preview:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+
+    local nameLbl = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    nameLbl:SetPoint("TOPLEFT", dialog.preview, "TOPRIGHT", 12, 0)
+    nameLbl:SetText("Tab Name")
+    local box = CreateFrame("EditBox", nil, dialog, "InputBoxTemplate")
+    box:SetSize(230, 22)
+    box:SetPoint("TOPLEFT", nameLbl, "BOTTOMLEFT", 4, -4)
+    box:SetAutoFocus(false)
+    box:SetMaxLetters(32)
+    box:SetScript("OnEscapePressed", function() CloseDialog() end)
+    box:SetScript("OnEnterPressed", function() SaveDialog() end)
+    dialog.nameBox = box
+    local note = dialog:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", -4, -2)
+    note:SetText("Display filters only - nothing is moved.")
+
+    local catLbl = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    catLbl:SetPoint("TOPLEFT", 18, -108)
+    catLbl:SetText("Item Categories")
+    dialog.checks = {}
+    for i, cat in ipairs(M.CATEGORIES) do
+        local cb = CreateFrame("CheckButton", nil, dialog, "UICheckButtonTemplate")
+        cb:SetSize(20, 20)
+        local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+        cb:SetPoint("TOPLEFT", 16 + col * 180, -126 - row * 24)
+        local lbl = dialog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+        lbl:SetText(M.CATEGORY_LABEL[cat])
+        cb:SetScript("OnClick", function(self)
+            if dialog.draft then dialog.draft.cats[cat] = self:GetChecked() and true or nil end
+        end)
+        cb.cat = cat
+        dialog.checks[i] = cb
+    end
+
+    local iconLbl = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    iconLbl:SetPoint("TOPLEFT", 18, -206)
+    iconLbl:SetText("Choose an Icon")
+    dialog.iconCells = {}
+    for r = 0, ICON_ROWS - 1 do
+        for c = 1, ICON_COLS do
+            local cell = CreateFrame("Button", nil, dialog, "BackdropTemplate")
+            cell:SetSize(ICON_SIZE, ICON_SIZE)
+            cell:SetPoint("TOPLEFT", 18 + (c - 1) * (ICON_SIZE + 4), -224 - r * (ICON_SIZE + 4))
+            cell:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+            cell.icon = cell:CreateTexture(nil, "ARTWORK")
+            cell.icon:SetPoint("TOPLEFT", 1, -1)
+            cell.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+            cell.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+            cell:SetScript("OnClick", function(self)
+                if dialog.draft and self.value then
+                    dialog.draft.icon = self.value
+                    dialog.preview:SetTexture(self.value)
+                    RenderIconGrid()
+                end
+            end)
+            dialog.iconCells[r * ICON_COLS + c] = cell
+        end
+    end
+    dialog:EnableMouseWheel(true)
+    dialog:SetScript("OnMouseWheel", function(_, delta)
+        dialog.iconRow = (dialog.iconRow or 0) - delta * 2
+        RenderIconGrid()
+    end)
+
+    dialog.save = MakeButton(dialog, 90, 24, "Save", SaveDialog)
+    dialog.save:SetPoint("BOTTOMRIGHT", -16, 14)
+    dialog.cancel = MakeButton(dialog, 90, 24, "Cancel", CloseDialog)
+    dialog.cancel:SetPoint("RIGHT", dialog.save, "LEFT", -8, 0)
+    dialog.delete = MakeButton(dialog, 90, 24, "Delete", DeleteFromDialog)
+    dialog.delete:SetPoint("BOTTOMLEFT", 16, 14)
+    dialog:Hide()
+end
+
+-- index nil = a new tab: nothing is inserted until Save.
+local function OpenDialog(index)
+    if not dialog then BuildDialog() end
+    CloseRulesetMenu()
+    local tabs = Tabs()
+    if not index and #tabs >= M.MAX_TABS then return end
+    dialog.index = index
+    dialog.draft = index and M.CopyTab(tabs[index])
+        or { name = "", icon = M.DefaultTabs()[1].icon, cats = {} }
+    dialog.nameBox:SetText(dialog.draft.name or "")
+    dialog.preview:SetTexture(dialog.draft.icon)
+    for _, cb in ipairs(dialog.checks) do cb:SetChecked(dialog.draft.cats[cb.cat] and true or false) end
+    dialog.iconRow = 0
+    RenderIconGrid()
+    -- Delete exists for a saved tab, and never for the last one.
+    dialog.delete:SetShown(index ~= nil)
+    dialog.delete:SetEnabled(index ~= nil and #tabs > 1)
+    dialog.delete:SetAlpha((index ~= nil and #tabs > 1) and 1 or 0.4)
+    dialogCatcher:Show()
+    dialog:Show()
+end
+AT_WB.OpenDialog = OpenDialog
+AT_WB.SaveDialog = function() return SaveDialog() end
+AT_WB.CloseDialog = CloseDialog
+AT_WB.DeleteFromDialog = function() return DeleteFromDialog() end
+AT_WB.Dialog = function() return dialog end
+
+------------------------------------------------------------
+-- Tab rail and column heads
+------------------------------------------------------------
+
+local function TabMeta(key, tabs)
+    if key == "other" then return "Other", M.OTHER_ICON end
+    local t = tabs[key]
+    return (t and t.name) or ("Tab " .. tostring(key)), (t and t.icon) or M.OTHER_ICON
+end
+
+local function Select(key)
+    AltStable.SetConfigValue("warbandTab", key)
+    AT_WB.scrollRow = 0
+    AT_WB.Refresh()
+end
+
+local function getTabBtn(i)
+    local b = AT_WB.tabBtns[i]
+    if b then return b end
+    b = CreateFrame("Button", nil, panel, "BackdropTemplate")
+    b:SetSize(RAIL_BTN, RAIL_BTN)
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetPoint("TOPLEFT", 3, -3)
+    b.icon:SetPoint("BOTTOMRIGHT", -3, 3)
+    b.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    b.plus = b:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    b.plus:SetPoint("CENTER", 0, 1)
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b:SetScript("OnClick", function(self, button)
+        if self.isAdd then OpenDialog(nil); return end
+        if button == "RightButton" then
+            if type(self.key) == "number" then OpenDialog(self.key) end
+            return
+        end
+        Select(self.key)
+    end)
+    b:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:AddLine(self.tip or "")
+        if type(self.key) == "number" then GameTooltip:AddLine("Right-click to configure", .7, .7, .7) end
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AT_WB.tabBtns[i] = b
+    return b
+end
+
+local function getColHead(i)
+    local h = AT_WB.colHeads[i]
+    if h then return h end
+    h = CreateFrame("Frame", nil, panel)
+    h:SetHeight(TABTITLE_H - 4)
+    h.icon = h:CreateTexture(nil, "ARTWORK")
+    h.icon:SetSize(20, 20)
+    h.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    h.name = h:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    if AltStable.SkinText then AltStable.SkinText(h.name) end
+    h.gear = CreateFrame("Button", nil, h)
+    h.gear:SetSize(18, 18)
+    h.gear.tex = h.gear:CreateTexture(nil, "ARTWORK")
+    h.gear.tex:SetAllPoints()
+    h.gear.tex:SetTexture("Interface\\Buttons\\UI-OptionsButton")
+    h.gear:SetScript("OnClick", function(self) if type(self.key) == "number" then OpenDialog(self.key) end end)
+    AT_WB.colHeads[i] = h
+    return h
+end
+
+------------------------------------------------------------
+-- Layout
+------------------------------------------------------------
+
+-- The grid area: everything between the header, the bar, the rail and the
+-- scrollbar.
+local function GridBox()
+    local pw = panel:GetWidth()
+    if not pw or pw < 200 then pw = 700 end
+    local left = PAD
+    local right = pw - RAIL_W - SCROLL_W - PAD
+    return left, math.max(STRIDE, right - left)
+end
+
+-- Lay out only the visible window of rows, for one column (Single) or several
+-- (Combined), offset by AT_WB.scrollRow.
+function AT_WB.Layout()
+    if not panel or not panel:IsShown() then return end
+    ClearHover()
+    local cols = AT_WB._cols or {}
+    if #cols == 0 then
+        hideFrom(AT_WB.cells, 1)
+        hideFrom(AT_WB.colHeads, 1)
+        AT_WB.UpdateScrollBar(0, 0)   -- nothing to scroll: no bar
+        return
+    end
+
+    local left, width = GridBox()
+    local n = #cols
+    local colW = (width - (n - 1) * COL_GAP) / n
+    local perRow = math.max(1, math.floor((colW + (STRIDE - ICON)) / STRIDE))
+    local visible = ScrollBounds(0, panel:GetHeight(), 0)
+
+    -- Rows: enough for the longest column, and never fewer than fill the view,
+    -- so a tab reads as a bank with empty slots rather than a short list.
+    local longest = 0
+    for _, col in ipairs(cols) do
+        col.rows = math.ceil(#col.entries / perRow)
+        if col.rows > longest then longest = col.rows end
+    end
+    local rowCount = math.max(longest, visible)
+    local _, maxStart, start = ScrollBounds(rowCount, panel:GetHeight(), AT_WB.scrollRow)
+    AT_WB.scrollRow = start
+    AT_WB.UpdateScrollBar(maxStart, start)
+
+    local ci = 0
+    for c, col in ipairs(cols) do
+        local x0 = left + (c - 1) * (colW + COL_GAP)
+        local gridW = perRow * STRIDE - (STRIDE - ICON)
+        local gx = x0 + math.floor((colW - gridW) / 2)
+
+        local head = getColHead(c)
+        head:ClearAllPoints()
+        head:SetPoint("TOPLEFT", panel, "TOPLEFT", x0, -HEAD_H)
+        head:SetWidth(colW)
+        head.name:SetText(col.title)
+        head.icon:SetTexture(col.icon)
+        head.icon:SetShown(n > 1)
+        head.icon:ClearAllPoints()
+        head.name:ClearAllPoints()
+        if n > 1 then
+            head.icon:SetPoint("LEFT", head, "LEFT", 0, 0)
+            head.name:SetPoint("LEFT", head.icon, "RIGHT", 6, 0)
+        else
+            head.name:SetPoint("CENTER", head, "CENTER", 0, 0)
+        end
+        head.gear.key = col.key
+        head.gear:ClearAllPoints()
+        if n > 1 then head.gear:SetPoint("RIGHT", head, "RIGHT", 0, 0)
+        else head.gear:SetPoint("LEFT", head.name, "RIGHT", 8, 0) end
+        head.gear:SetShown(type(col.key) == "number")
+        head:Show()
+
+        for slot = 0, visible - 1 do
+            local r = start + slot
+            if r >= rowCount then break end
+            for k = 1, perRow do
+                local e = col.entries[r * perRow + k]
+                ci = ci + 1
+                local cell = getCell(ci)
+                cell:ClearAllPoints()
+                cell:SetPoint("TOPLEFT", panel, "TOPLEFT", gx + (k - 1) * STRIDE, -(ROW_TOP + slot * STRIDE))
+                FillCell(cell, e)
+                cell:Show()
+            end
+        end
+    end
+    hideFrom(AT_WB.cells, ci + 1)
+    hideFrom(AT_WB.colHeads, n + 1)
+    AT_WB.ApplySearchDim()
+end
+
+-- Search dims what is on screen, in every column; it does not decide what is
+-- shown, and a match in a tab that is off screen stays off screen.
 local function ApplySearchDim()
     local q = AT_WB.search or ""
     for i = 1, #AT_WB.cells do
         local cell = AT_WB.cells[i]
-        if cell:IsShown() then
+        if cell:IsShown() and cell.entry then
             local match = (q == "")
             if not match then
                 local nm = cell.itemName
@@ -721,94 +1297,145 @@ local function ApplySearchDim()
 end
 AT_WB.ApplySearchDim = ApplySearchDim
 
--- Lay out only the visible window of rows (headers + wrapped item rows) as
--- direct panel children, offset by AT_WB.scrollRow.
-function AT_WB.Layout()
-    if not panel or not panel:IsShown() then return end
-    local rows = AT_WB._rows or {}
-    if #rows == 0 then
-        hideFrom(AT_WB.cells, 1)
-        hideFrom(AT_WB.headers, 1)
-        AT_WB.UpdateScrollBar(0, 0)   -- nothing to scroll: no bar
-        return
+local function LayoutRail(pages, shown, tabs)
+    local pw = panel:GetWidth()
+    if not pw or pw < 200 then pw = 700 end
+    local x = pw - RAIL_W + (RAIL_W - RAIL_BTN) / 2 - 4
+    local ar, ag, ab = Accent()
+    local i = 0
+    for _, key in ipairs(pages) do
+        i = i + 1
+        local b = getTabBtn(i)
+        b.isAdd, b.key = false, key
+        local name, icon = TabMeta(key, tabs)
+        b.tip = name
+        b.icon:SetTexture(icon)
+        b.icon:Show()
+        b.plus:SetText("")
+        b:SetBackdropColor(0, 0, 0, 0.35)
+        if shown[key] then b:SetBackdropBorderColor(ar, ag, ab, 1)
+        else b:SetBackdropBorderColor(1, 1, 1, 0.15) end
+        b:SetAlpha(1)
+        b:ClearAllPoints()
+        b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -(HEAD_H + (i - 1) * (RAIL_BTN + 8)))
+        b:Show()
     end
-
-    local visible, maxStart, start = ScrollBounds(#rows, panel:GetHeight(), AT_WB.scrollRow)
-    AT_WB.scrollRow = start
-    AT_WB.UpdateScrollBar(maxStart, start)
-
-    local ci, hi = 0, 0
-    for slot = 0, visible - 1 do
-        local row = rows[start + slot + 1]
-        if not row then break end
-        local y = ROW_TOP + slot * STRIDE
-        if row.header then
-            hi = hi + 1
-            local hdr = getHeader(hi)
-            hdr:ClearAllPoints()
-            hdr:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(y + 4))
-            hdr:SetText(row.header .. "  |cff888888(" .. row.count .. ")|r")
-            hdr:Show()
-        else
-            local col = 0
-            for _, e in ipairs(row.items) do
-                ci = ci + 1
-                local cell = getCell(ci)
-                cell:ClearAllPoints()
-                cell:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD + col * STRIDE, -y)
-                cell.icon:SetTexture(e.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-                cell.count:SetText(e.total > 1 and fmtCount(e.total) or "")
-                local qc = e.quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[e.quality]
-                if qc then cell:SetBackdropBorderColor(qc.r, qc.g, qc.b, 1)
-                else cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 1) end
-                cell.entry = e
-                cell.itemName = e.name
-                cell:Show()
-                col = col + 1
-            end
-        end
-    end
-    hideFrom(AT_WB.cells, ci + 1)
-    hideFrom(AT_WB.headers, hi + 1)
-    ApplySearchDim()
+    -- "+", disabled at the cap.
+    i = i + 1
+    local add = getTabBtn(i)
+    add.isAdd, add.key = true, nil
+    add.tip = (#tabs >= M.MAX_TABS) and ("At most " .. M.MAX_TABS .. " tabs") or "Add a tab"
+    add.icon:Hide()
+    add.plus:SetText("+")
+    add.plus:SetTextColor(ar, ag, ab)
+    add:SetBackdropColor(0, 0, 0, 0.35)
+    add:SetBackdropBorderColor(1, 1, 1, 0.15)
+    add:SetEnabled(#tabs < M.MAX_TABS)
+    add:SetAlpha(#tabs < M.MAX_TABS and 1 or 0.35)
+    add:ClearAllPoints()
+    add:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -(HEAD_H + (i - 1) * (RAIL_BTN + 8)))
+    add:Show()
+    hideFrom(AT_WB.tabBtns, i + 1)
 end
 
--- Recompute the flat row model from current data, then lay out.
+------------------------------------------------------------
+-- Refresh
+------------------------------------------------------------
+
+local scopeBtns, viewBtns = {}, {}
+local prevBtn, nextBtn
+
+local function UpdateControls()
+    SetActive(viewBtns.single, View() ~= "combined")
+    SetActive(viewBtns.combined, View() == "combined")
+    SetActive(scopeBtns.personal, Scope() == "personal")
+    SetActive(scopeBtns.warband, Scope() ~= "personal")
+    local personal = Scope() == "personal"
+    rulesetBtn.label:SetText(personal and "This character" or (RulesetText() .. "  v"))
+    rulesetBtn:SetEnabled(not personal)
+    rulesetBtn:SetAlpha(personal and 0.5 or 1)
+end
+
+local function StatusText()
+    if Scope() == "personal" then
+        local me = AltStableDB and UnitGUID and AltStableDB[UnitGUID("player")]
+        return ((me and me.name) or "This character") .. "  ·  Bags + bank  ·  Read-only"
+    end
+    local r = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName())
+    return "Bags + banks  ·  " .. (r or "All rulesets") .. "  ·  Read-only"
+end
+
+-- Recompute what is shown from current data, then lay out.
 function AT_WB.Refresh()
     if not panel or not panel:IsShown() then return end
-    local agg = gather()
+    UpdateControls()
+    statusFS:SetText(StatusText())
+
+    local filter = CurrentFilter()
+    local agg = gather(filter)
+    local tabs = Tabs()
     if not next(agg) then
-        AT_WB._rows = {}
+        AT_WB._cols = {}
         hideFrom(AT_WB.cells, 1)
-        hideFrom(AT_WB.headers, 1)
+        hideFrom(AT_WB.colHeads, 1)
         AT_WB.UpdateScrollBar(0, 0)   -- nothing left to scroll
+        LayoutRail(M.Pages(#tabs, false), {}, tabs)
+        prevBtn:Hide(); nextBtn:Hide()
+        local me = UnitGUID and UnitGUID("player")
+        emptyFS:SetText((Scope() == "personal" and not (AltStableDB and AltStableDB[me]))
+            and "This character has not been scanned yet - open your bags, or your bank."
+            or "Nothing here yet. Log in on your alts (and open a bank) to fill it.")
         emptyFS:Show()
         return
     end
     emptyFS:Hide()
 
-    local groups = buildBuckets(agg)
-    local width = panel:GetWidth()
-    if not width or width < 100 then width = 500 end
-    local cols = math.max(1, math.floor((width - 2 * PAD) / STRIDE))
+    local perTab, other = M.Distribute(BuildEntries(agg), tabs)
+    local pages = M.Pages(#tabs, #other > 0)
+    local sel = M.RepairSelection(Cfg("warbandTab", 1), pages)
+    if sel ~= Cfg("warbandTab", 1) then AltStable.SetConfigValue("warbandTab", sel) end
 
-    -- Flatten into uniform-height visual rows: one header row per group, then
-    -- item rows of up to `cols` cells each.
-    local rows = {}
-    for _, g in ipairs(groups) do
-        rows[#rows + 1] = { header = g.label, count = #g.items }
-        for i = 1, #g.items, cols do
-            local its = {}
-            for j = i, math.min(i + cols - 1, #g.items) do its[#its + 1] = g.items[j] end
-            rows[#rows + 1] = { items = its }
-        end
+    local keys
+    if View() == "combined" then
+        local first, width = M.CombinedWindow(pages, sel)
+        keys = {}
+        for i = first, first + width - 1 do keys[#keys + 1] = pages[i] end
+        prevBtn:SetShown(#pages > M.COMBINED)
+        nextBtn:SetShown(#pages > M.COMBINED)
+        prevBtn:SetEnabled(first > 1)
+        nextBtn:SetEnabled(first + width - 1 < #pages)
+        AT_WB._window = { first = first, width = width, pages = pages }
+    else
+        keys = { sel }
+        prevBtn:Hide(); nextBtn:Hide()
+        AT_WB._window = nil
     end
-    AT_WB._rows = rows
+
+    local cols, shown = {}, {}
+    for _, key in ipairs(keys) do
+        local title, icon = TabMeta(key, tabs)
+        cols[#cols + 1] = {
+            key = key, title = title, icon = icon,
+            entries = (key == "other") and other or (perTab[key] or {}),
+        }
+        shown[key] = true
+    end
+    AT_WB._cols = cols
+    LayoutRail(pages, shown, tabs)
     AT_WB.Layout()
 end
 
+-- Combined's arrows: move the window by one page, keeping the selection on the
+-- page that enters.
+local function StepWindow(delta)
+    local w = AT_WB._window
+    if not w then return end
+    local target = delta < 0 and w.pages[w.first - 1] or w.pages[w.first + w.width]
+    if target then Select(target) end
+end
+
 ------------------------------------------------------------
--- Panel + activation (mirrors the Instances plugin lifecycle)
+-- Panel + activation
 ------------------------------------------------------------
 
 local function BuildPanel(mainFrame)
@@ -827,25 +1454,43 @@ local function BuildPanel(mainFrame)
         AltStable.ApplyBGOnly(panel, AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2], AltStable.C.BG_MAIN[3], AltStable.C.BG_MAIN[4])
     end
     panel:Hide()
+    -- Anything open goes with the panel: a menu or dialog left up over another
+    -- tab would act on a view that is not there.
+    panel:SetScript("OnHide", function()
+        CloseRulesetMenu()
+        CloseDialog()
+        ClearHover()
+    end)
 
-    titleFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     titleFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -PAD + 2)
     titleFS:SetText("Warband Inventory")
     titleFS:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
 
     searchBox = CreateFrame("EditBox", nil, panel, "SearchBoxTemplate")
-    searchBox:SetSize(190, 20)
-    searchBox:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -PAD + 4)
+    searchBox:SetSize(200, 20)
+    searchBox:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -PAD + 2)
     searchBox:HookScript("OnTextChanged", function(self)
         AT_WB.search = (self:GetText() or ""):lower()
         ApplySearchDim()
     end)
 
+    -- The controls row: Single | Combined, the tooltip opt-in, the ruleset.
+    local rowY = -(PAD + 30)
+    viewBtns.single = MakeButton(panel, 76, 22, "Single", function()
+        AltStable.SetConfigValue("warbandView", "single"); AT_WB.scrollRow = 0; AT_WB.Refresh()
+    end)
+    viewBtns.single:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, rowY)
+    viewBtns.combined = MakeButton(panel, 86, 22, "Combined", function()
+        AltStable.SetConfigValue("warbandView", "combined"); AT_WB.scrollRow = 0; AT_WB.Refresh()
+    end)
+    viewBtns.combined:SetPoint("LEFT", viewBtns.single, "RIGHT", 2, 0)
+
     -- Opt-in toggle for the global item-tooltip enrichment (off by default so it
     -- doesn't double up with Bagnon). Lives here rather than in SheetUI's Options.
     local tipCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     tipCheck:SetSize(18, 18)
-    tipCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(PAD + TITLE_H - 6))
+    tipCheck:SetPoint("LEFT", viewBtns.combined, "RIGHT", 16, 0)
     tipCheck:SetChecked(AltStableConfig and AltStableConfig.warbandItemTooltips and true or false)
     tipCheck:SetScript("OnClick", function(self)
         -- Through the config seam (Config.lua), like every other setting write.
@@ -856,6 +1501,30 @@ local function BuildPanel(mainFrame)
     tipLbl:SetText("Show alt counts on all item tooltips")
     tipLbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
 
+    rulesetBtn = MakeButton(panel, 200, 22, "", OpenRulesetMenu)
+    rulesetBtn:SetPoint("LEFT", tipLbl, "RIGHT", 16, 0)
+
+    -- Combined's paging arrows, either side of the column titles.
+    prevBtn = MakeButton(panel, 22, 22, "<", function() StepWindow(-1) end)
+    prevBtn:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -HEAD_H + 1)
+    nextBtn = MakeButton(panel, 22, 22, ">", function() StepWindow(1) end)
+    nextBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -(RAIL_W + SCROLL_W), -HEAD_H + 1)
+    prevBtn:Hide(); nextBtn:Hide()
+
+    -- The bottom bar: Personal Bank / Warband, and what is being shown.
+    scopeBtns.personal = MakeButton(panel, 110, 24, "Personal Bank", function()
+        CloseRulesetMenu()
+        AltStable.SetConfigValue("warbandScope", "personal"); AT_WB.scrollRow = 0; AT_WB.Refresh()
+    end)
+    scopeBtns.personal:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", PAD, 6)
+    scopeBtns.warband = MakeButton(panel, 110, 24, "Warband", function()
+        AltStable.SetConfigValue("warbandScope", "warband"); AT_WB.scrollRow = 0; AT_WB.Refresh()
+    end)
+    scopeBtns.warband:SetPoint("LEFT", scopeBtns.personal, "RIGHT", 4, 0)
+    statusFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    statusFS:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD, 12)
+    statusFS:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+
     -- Virtual scroll: the wheel shifts which rows are laid out (cells are direct
     -- panel children, so hover works — a real ScrollFrame ate the mouse events).
     panel:EnableMouseWheel(true)
@@ -865,8 +1534,7 @@ local function BuildPanel(mainFrame)
     end)
 
     emptyFS = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    emptyFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(TITLE_H + 34))
-    emptyFS:SetText("No inventory captured yet. Log in on your alts (and open a bank) to populate this.")
+    emptyFS:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(ROW_TOP + 6))
     emptyFS:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     emptyFS:Hide()
 
@@ -885,8 +1553,8 @@ local function BuildPanel(mainFrame)
     local scrollBar = CreateFrame("Slider", nil, panel)
     AT_WB.scrollBar = scrollBar
     scrollBar:SetWidth(10)
-    scrollBar:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -4, -ROW_TOP)
-    scrollBar:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -4, PAD)
+    scrollBar:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -(RAIL_W + 2), -ROW_TOP)
+    scrollBar:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -(RAIL_W + 2), FOOT_H + PAD)
     scrollBar:SetOrientation("VERTICAL")
     scrollBar:SetValueStep(1)
     scrollBar:SetObeyStepOnDrag(true)
@@ -936,6 +1604,9 @@ end
 function AT_WB.Deactivate(mainFrame)
     AT_WB.isActive = false
     if panel then panel:Hide() end
+    CloseRulesetMenu()
+    CloseDialog()
+    ClearHover()
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Show()   end
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Show() end
     if mainFrame.headerScroll then mainFrame.headerScroll:Show() end

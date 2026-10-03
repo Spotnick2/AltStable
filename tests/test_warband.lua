@@ -28,11 +28,17 @@ AltStable = {}
 AltStableDB = {}
 AltStableConfig = {}
 dofile("Compat.lua")
+-- The material and the skin seam, in .toc order: the revamped panel (#153) is
+-- built in these tests, and it is painted through them.
+assert(loadfile("Glass.lua"))("AltStable")
+dofile("Theme.lua")
+dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
 
 -- The plugin bootstraps itself a second after load (IsLoggedIn is true under
 -- the stubs), which is what registers it with the core.
+dofile("Plugins/Warband/WarbandTabs.lua")
 dofile("Plugins/Warband/AltStableWarband.lua")
 WoW.flushTimers()
 
@@ -459,6 +465,284 @@ do
     local refresh = sheet:match("function AT_WB.Refresh%(%)(.-)\nend")
     check("a refresh with no inventory hides it too",
           refresh ~= nil and refresh:find("UpdateScrollBar(0, 0)", 1, true) ~= nil)
+end
+
+------------------------------------------------------------
+-- The revamp's model (#153): categories, rulesets, tabs, what is on screen
+------------------------------------------------------------
+do
+    local M = AltStableWarbandModel
+    check("the model loads before the plugin", type(M) == "table")
+
+    -- Categories, as the dialog lists them.
+    eq("weapons are equipment", M.CategoryOf(2), "equipment")
+    eq("armour is equipment", M.CategoryOf(4), "equipment")
+    eq("consumables", M.CategoryOf(0), "consumables")
+    eq("ammunition sits with consumables", M.CategoryOf(6), "consumables")
+    eq("trade goods", M.CategoryOf(7), "tradegoods")
+    eq("gems sit with trade goods", M.CategoryOf(3), "tradegoods")
+    eq("reagents", M.CategoryOf(5), "reagents")
+    eq("recipes", M.CategoryOf(9), "recipes")
+    eq("quest items are misc", M.CategoryOf(12), "misc")
+    eq("an unknown class is misc", M.CategoryOf(nil), "misc")
+
+    -- Rulesets from realm names: words, not substrings; unreadable is Unknown.
+    eq("PvE is Normal", M.RulesetOf("Classic Beta PvE"), "Normal")
+    eq("PvP", M.RulesetOf("Classic Beta PvP"), "PvP")
+    eq("PvP 2 is the same ruleset", M.RulesetOf("Classic Beta PvP 2"), "PvP")
+    eq("case does not matter", M.RulesetOf("CLASSIC BETA PVP"), "PvP")
+    eq("an RP realm", M.RulesetOf("Forever RP"), "RP")
+    eq("a Hardcore realm", M.RulesetOf("Forever Hardcore"), "Hardcore")
+    eq("'rp' inside a word is not RP", M.RulesetOf("Carp Lake"), "Normal")
+    eq("no realm is Unknown, never Normal", M.RulesetOf(nil), "Unknown")
+    eq("  nor a blank one", M.RulesetOf("  "), "Unknown")
+    eq("'current' resolves against where you are", M.ResolveRuleset("current", "Classic Beta PvP 2"), "PvP")
+    eq("  and so does an unset setting", M.ResolveRuleset(nil, "Classic Beta PvE"), "Normal")
+    eq("'all' is no filter", M.ResolveRuleset("all", "Classic Beta PvP"), nil)
+    eq("a named ruleset is itself", M.ResolveRuleset("RP", "Classic Beta PvP"), "RP")
+
+    -- Tabs claim by category; two claims show twice; the rest is Other.
+    local tabs = { { cats = { tradegoods = true } }, { cats = { tradegoods = true, recipes = true } } }
+    local per, other = M.Distribute({ { id = 1, cat = "tradegoods" }, { id = 2, cat = "recipes" },
+                                      { id = 3, cat = "misc" } }, tabs)
+    eq("a tab gets what it claims", #per[1], 1)
+    eq("  an item claimed twice shows in both", #per[2], 2)
+    eq("  and what nobody claims is Other", #other, 1)
+    eq("  - just that", other[1].id, 3)
+
+    -- Pages and selection.
+    eq("Other is a page only while it has something", #M.Pages(3, false), 3)
+    eq("  and the last page when it does", M.Pages(3, true)[4], "other")
+    eq("a selection that exists is kept", M.RepairSelection(2, { 1, 2, 3 }), 2)
+    eq("Other vanishing falls back to the last tab", M.RepairSelection("other", { 1, 2, 3 }), 3)
+    eq("an index past the end falls back to the last tab", M.RepairSelection(7, { 1, 2, 3, "other" }), 3)
+    eq("no pages, no selection", M.RepairSelection(1, {}), nil)
+
+    -- Combined: three on screen, always holding the selection, clamped back.
+    local f, w = M.CombinedWindow({ 1, 2, 3, 4 }, 4)
+    check("choosing the last tab shows the three before it, no blanks", f == 2 and w == 3, f .. "," .. w)
+    f, w = M.CombinedWindow({ 1, 2, 3, 4 }, 1)
+    check("choosing the first starts there", f == 1 and w == 3)
+    f, w = M.CombinedWindow({ 1, 2 }, 2)
+    check("with two tabs, two columns", f == 1 and w == 2)
+    f, w = M.CombinedWindow({ 1, 2, 3, 4, "other" }, "other")
+    check("Other is reachable at the end", f == 3 and w == 3)
+
+    -- Deleting.
+    eq("deleting leaves Other selected", M.AfterDelete("other", 2, 3), "other")
+    eq("a later tab shifts down", M.AfterDelete(3, 2, 3), 2)
+    eq("the deleted tab hands over to its neighbour", M.AfterDelete(2, 2, 3), 2)
+    eq("  or the new last tab", M.AfterDelete(3, 3, 2), 2)
+    eq("an earlier tab is untouched", M.AfterDelete(1, 2, 3), 1)
+    eq("nothing left, nothing selected", M.AfterDelete(1, 1, 0), nil)
+
+    -- The dialog's draft is a real copy: Cancel must not have edited the tab.
+    local saved = { name = "A", icon = "x", cats = { tradegoods = true } }
+    local draft = M.CopyTab(saved)
+    draft.cats.recipes = true
+    draft.name = "B"
+    check("editing a copy leaves the saved tab alone", saved.cats.recipes == nil and saved.name == "A")
+end
+
+------------------------------------------------------------
+-- The revamped view (#153), driven through the real panel
+------------------------------------------------------------
+do
+    local wb = plugin._wb
+    WoW.reset()
+    local ME, PVE, HID = "Player-1-AAAA", "Player-1-BBBB", "Player-1-CCCC"
+    WoW.player.guid = ME
+    WoW.player.realm = "Classic Beta PvP"
+    AltStableDB = {
+        [ME]  = { name = "Kaleid", class = "HUNTER", realm = "Classic Beta PvP" },
+        [PVE] = { name = "Morph",  class = "WARLOCK", realm = "Classic Beta PvE" },
+        [HID] = { name = "Hidden", class = "MAGE", realm = "Classic Beta PvP 2" },
+    }
+    AltStableWarbandDB = {
+        [ME]  = { bags = { [101] = 2, [201] = 1 } },
+        [PVE] = { bags = { [102] = 5, [301] = 1 } },
+        [HID] = { bags = { [103] = 1 } },
+    }
+    WoW.items = {
+        [101] = { name = "Linen", classID = 7, quality = 1, icon = 1 },
+        [102] = { name = "Wool", classID = 7, quality = 1, icon = 2 },
+        [103] = { name = "Silk", classID = 7, quality = 1, icon = 3 },
+        [201] = { name = "Potion", classID = 0, quality = 1, icon = 4 },
+        [301] = { name = "Quest Thing", classID = 12, quality = 1, icon = 5 },
+    }
+    AltStableConfig = { hiddenCharacters = { [HID] = true } }
+
+    -- Every setting write goes through the seam.
+    local writes = {}
+    local realSet = AltStable.SetConfigValue
+    AltStable.SetConfigValue = function(k, v) writes[#writes + 1] = k; return realSet(k, v) end
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1200 end
+    main.GetHeight = function() return 800 end
+    wb.Activate(main)
+    -- Activating rescans our own (stubbed, empty) bags; put Kaleid's back.
+    AltStableWarbandDB[ME] = { bags = { [101] = 2, [201] = 1 } }
+    wb.Refresh()
+
+    local function shownIDs()
+        local out = {}
+        for _, cell in ipairs(wb.cells) do
+            if cell:IsShown() and cell.entry then out[#out + 1] = cell.entry.id end
+        end
+        table.sort(out)
+        return table.concat(out, ",")
+    end
+    local function colKeys()
+        local out = {}
+        for _, c in ipairs(wb._cols or {}) do out[#out + 1] = tostring(c.key) end
+        return table.concat(out, ",")
+    end
+
+    -- First draw: the four default tabs are seeded, through the seam.
+    eq("the default tabs are seeded", #(AltStableConfig.warbandTabs or {}), 4)
+    local seeded = false
+    for _, k in ipairs(writes) do if k == "warbandTabs" then seeded = true end end
+    check("  through SetConfigValue", seeded)
+
+    -- Warband, current ruleset (PvP): Kaleid only - Morph is PvE, Hidden is hidden.
+    eq("single view shows the selected tab", colKeys(), "1")
+    eq("  holding this ruleset's trade goods, hidden characters left out", shownIDs(), "101")
+
+    -- Empty slots fill the view and carry nothing.
+    local empty
+    for _, cell in ipairs(wb.cells) do if cell:IsShown() and not cell.entry then empty = cell end end
+    check("the grid is padded with empty slots", empty ~= nil)
+    -- Padded to the whole view, not just the row the items end on.
+    local shownCount, firstY, perRow = 0, nil, 0
+    for _, cell in ipairs(wb.cells) do
+        if cell:IsShown() then
+            shownCount = shownCount + 1
+            local y = select(5, cell:GetPoint())
+            firstY = firstY or y
+            if y == firstY then perRow = perRow + 1 end
+        end
+    end
+    check("  more than one row of them", shownCount >= 2 * perRow and perRow > 0,
+          shownCount .. " cells, " .. perRow .. " per row")
+    if empty then
+        check("  an empty slot holds no count and no search name",
+              empty.count:GetText() == "" and empty.itemName == nil)
+    end
+
+    -- A slot that held an item and is now empty forgets it.
+    local first = wb.cells[1]
+    eq("the first cell holds the linen", first.itemName, "Linen")
+    AltStable.SetConfigValue("warbandTab", 4); wb.Refresh()      -- Recipes: nothing
+    check("  and once empty, holds no name for search to find", first.entry == nil and first.itemName == nil)
+    AltStable.SetConfigValue("warbandTab", 1); wb.Refresh()
+
+    -- All rulesets: Morph's wool and his quest item come in; the quest item is Other's.
+    AltStable.SetConfigValue("warbandRuleset", "all"); wb.Refresh()
+    eq("all rulesets: every visible character", shownIDs(), "101,102")
+    AltStable.SetConfigValue("warbandTab", "other"); wb.Refresh()
+    eq("an item no tab claims is in Other", shownIDs(), "301")
+
+    -- Back to this ruleset: Other empties, so the selection falls to the last tab.
+    AltStable.SetConfigValue("warbandRuleset", "current"); wb.Refresh()
+    eq("Other disappearing moves the selection to the last tab", AltStableConfig.warbandTab, 4)
+
+    -- Combined: three at once, the window holding the selection, clamped back.
+    AltStable.SetConfigValue("warbandView", "combined"); wb.Refresh()
+    eq("combined shows three tabs ending at the selection", colKeys(), "2,3,4")
+    AltStable.SetConfigValue("warbandTab", 1); wb.Refresh()
+    eq("  or starting at it", colKeys(), "1,2,3")
+    eq("  with the potion in Consumables, its own column", (function()
+        for _, c in ipairs(wb._cols) do if c.key == 2 then return #c.entries end end
+    end)(), 1)
+    AltStable.SetConfigValue("warbandView", "single"); wb.Refresh()
+
+    -- Personal: this character alone, whatever the ruleset says.
+    AltStable.SetConfigValue("warbandScope", "personal")
+    AltStable.SetConfigValue("warbandRuleset", "Normal"); wb.Refresh()
+    eq("personal is this character, ruleset ignored", shownIDs(), "101")
+    AltStable.SetConfigValue("warbandScope", "warband"); wb.Refresh()
+    eq("warband on Normal is the PvE character", shownIDs(), "102")
+    AltStable.SetConfigValue("warbandRuleset", "current")
+
+    -- Personal for a character never scanned: says so, never shows everyone.
+    WoW.player.guid = "Player-1-NEW"
+    AltStable.SetConfigValue("warbandScope", "personal"); wb.Refresh()
+    eq("an unscanned character shows nothing", shownIDs(), "")
+    WoW.player.guid = ME
+    AltStable.SetConfigValue("warbandScope", "warband"); wb.Refresh()
+
+    -- Search dims items, never the empty slots.
+    wb.search = "nothing matches this"
+    wb.ApplySearchDim()
+    local dimmed, slotAlpha
+    for _, cell in ipairs(wb.cells) do
+        if cell:IsShown() and cell.entry then dimmed = cell:GetAlpha() end
+        if cell:IsShown() and not cell.entry then slotAlpha = cell:GetAlpha() end
+    end
+    eq("search dims a non-match", dimmed, 0.25)
+    eq("  and leaves empty slots as they were", slotAlpha, 0.55)
+    wb.search = ""
+
+    -- A refresh drops a stale hover.
+    wb.hoverEntry = { id = 999 }
+    wb.Layout()
+    eq("laying out clears the hover", wb.hoverEntry, nil)
+
+    -- Configure: Cancel discards, even a nested category change.
+    wb.OpenDialog(1)
+    local dlg = wb.Dialog()
+    check("the dialog opens on a tab", dlg and dlg.draft ~= nil)
+    dlg.draft.cats.recipes = true
+    dlg.nameBox:SetText("Renamed")
+    wb.CloseDialog()
+    check("Cancel leaves the tab exactly as it was",
+          AltStableConfig.warbandTabs[1].name == "Trade Goods" and not AltStableConfig.warbandTabs[1].cats.recipes)
+
+    -- "+" inserts nothing until Save; Save adds and selects it.
+    wb.OpenDialog(nil)
+    eq("opening a new tab adds nothing yet", #AltStableConfig.warbandTabs, 4)
+    dlg.nameBox:SetText("Quest")
+    dlg.draft.cats.misc = true
+    wb.SaveDialog()
+    eq("Save adds the tab", #AltStableConfig.warbandTabs, 5)
+    eq("  named", AltStableConfig.warbandTabs[5].name, "Quest")
+    eq("  and selects it", AltStableConfig.warbandTab, 5)
+    -- A blank name gets one.
+    wb.OpenDialog(nil); dlg.nameBox:SetText("   "); wb.SaveDialog()
+    eq("a blank name becomes 'Tab N'", AltStableConfig.warbandTabs[6].name, "Tab 6")
+
+    -- The cap: eight user tabs, then "+" does nothing.
+    wb.OpenDialog(nil); wb.SaveDialog()
+    wb.OpenDialog(nil); wb.SaveDialog()
+    eq("up to eight tabs", #AltStableConfig.warbandTabs, 8)
+    wb.OpenDialog(nil)
+    check("a ninth cannot be started", not (dlg:IsShown() and dlg.draft and not dlg.index))
+    wb.CloseDialog()
+
+    -- Delete: the selection follows the tab it was on.
+    AltStable.SetConfigValue("warbandTab", 5); wb.Refresh()
+    wb.OpenDialog(3); wb.DeleteFromDialog()
+    eq("delete removes the tab", #AltStableConfig.warbandTabs, 7)
+    eq("  and a later selection shifts down with its tab", AltStableConfig.warbandTab, 4)
+    -- Never the last one.
+    AltStableConfig.warbandTabs = { AltStableConfig.warbandTabs[1] }
+    wb.OpenDialog(1); wb.DeleteFromDialog()
+    eq("the last tab cannot be deleted", #AltStableConfig.warbandTabs, 1)
+    wb.CloseDialog()
+
+    -- Existing custom tabs are never re-seeded.
+    AltStableConfig.warbandTabs = { { name = "Mine", icon = "x", cats = { misc = true } } }
+    wb.Refresh()
+    eq("a customized profile keeps its tabs", AltStableConfig.warbandTabs[1].name, "Mine")
+
+    -- Leaving the tab closes anything open.
+    wb.OpenDialog(1)
+    wb.Deactivate(main)
+    check("switching away closes the dialog", dlg.draft == nil)
+
+    AltStable.SetConfigValue = realSet
+    WoW.reset()
 end
 
 print(("test_warband: %d passed, %d failed"):format(passed, failed))
