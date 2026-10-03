@@ -1181,6 +1181,15 @@ do
         AltStable.EnsureWindowMinSize(951, 501)
         check("  and leaves a larger one alone",
               f:GetWidth() == 1200 and f:GetHeight() == 700, f:GetWidth() .. "x" .. f:GetHeight())
+        -- A plugin that sizes the frame DIRECTLY (Raids does) leaves the
+        -- remembered request behind: Warband -> Raids -> Warband must still
+        -- grow it, from the size the window actually has.
+        AltStable.EnsureWindowMinSize(951, 501)
+        f:SetSize(595, 430)                 -- Raids, around ResizeFrame
+        AltStable.EnsureWindowMinSize(951, 501)
+        check("  and grows one a plugin shrank directly",
+              f:GetWidth() == 951 and f:GetHeight() == 501,
+              f:GetWidth() .. "x" .. f:GetHeight())
         T.ResizeFrame(820, 600)
 
         -- SCALING is a third way to stop fitting, and it goes through neither

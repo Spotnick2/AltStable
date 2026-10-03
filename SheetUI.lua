@@ -1968,9 +1968,13 @@ AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 -- left (#150), so a tab that needs room - a toolbar, a dialog - says how much,
 -- and the window GROWS to it, through the same clamp. Never shrinks: the user's
 -- larger window stays theirs.
+--
+-- Decided on the ACTUAL size, not the remembered request: the Raids plugin
+-- sizes the frame directly, so the request can say 951 while the window is 595
+-- (Warband -> Raids -> Warband, Codex review of #154).
 function AltStable.EnsureWindowMinSize(w, h)
     if not frame then return end
-    local cw, ch = wantW or frame:GetWidth() or 0, wantH or frame:GetHeight() or 0
+    local cw, ch = frame:GetWidth() or 0, frame:GetHeight() or 0
     if cw >= w and ch >= h then return end
     ResizeFrame(math.max(cw, w), math.max(ch, h))
 end
