@@ -3066,8 +3066,12 @@ do
     tick(0.3)
     AltStable.SetWindowMaximized(false)
     tick(0.05)                                   -- mid-way back
+    local midW = f:GetWidth()
     sheetBtn:GetScript("OnClick")(sheetBtn)      -- switch, mid-trip
-    check("switching tab ends the trip at once", runner:GetScript("OnUpdate") == nil)
+    -- Since #159 a tab switch glides too: the old trip is settled and a new
+    -- one starts from where the window IS, heading for the new tab's size.
+    check("switching tab mid-trip travels on", runner:GetScript("OnUpdate") ~= nil)
+    eq("  from where the window is", f:GetWidth(), midW)
     tick(0.3)
     eq("  and the new tab's size stands", f:GetWidth(), sheetW)
     local sp, _, _, sx = f:GetPoint(1)
@@ -3083,8 +3087,11 @@ do
     -- Switching TO a plugin tab mid-trip ends it too.
     AltStable.SetSidebarCompact(true)
     tick(0.05)
+    local compactW = f:GetWidth()
     pbtn:GetScript("OnClick")(pbtn)
-    check("switching to a plugin tab ends the trip", runner:GetScript("OnUpdate") == nil)
+    check("switching to a plugin tab mid-trip travels on from where it is",
+          runner:GetScript("OnUpdate") ~= nil and f:GetWidth() == compactW)
+    tick(0.3)
     -- And data arriving mid-trip on a sheet tab: its re-sizing ends it.
     sheetBtn:GetScript("OnClick")(sheetBtn)
     AltStable.SetSidebarCompact(false)
@@ -3696,6 +3703,142 @@ do
     T.ForgetSessionSorts()
     Open("summary")
     AltStable.RefreshSheet()
+end
+
+------------------------------------------------------------
+-- A tab switch glides to the new tab's size (#159)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    AltStable.EnsureSheetVisible()
+    local f = T.frame
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do
+        if b.sectionId then btnFor[b.sectionId] = b end
+    end
+    local function Open(id) btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local runner
+    local function Running() runner = T.WindowAnimRunner(); return runner ~= nil and runner:GetScript("OnUpdate") ~= nil end
+    local function Tick(dt) local fn = runner and runner:GetScript("OnUpdate"); if fn then fn(runner, dt) end end
+
+    AltStableConfig.enableOpenAnimation = false
+    local offRefreshes, offReal = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function(...) offRefreshes = offRefreshes + 1; return offReal(...) end
+    Open("gear"); local gearW = f:GetWidth()
+    AltStable.RefreshSheet = offReal
+    eq("with the animation off a switch is laid out once too", offRefreshes, 0)
+    Open("summary"); local sumW = f:GetWidth()
+    check("Summary and Gear are different widths (the case this is about)", gearW ~= sumW,
+          tostring(sumW) .. " vs " .. tostring(gearW))
+    check("with the animation off a switch makes no trip", not Running())
+
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+    AltStableConfig.enableOpenAnimation = true
+    -- The tab is built once, by the switch: not laid out again for the trip.
+    local refreshes, realRefresh = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function(...) refreshes = refreshes + 1; return realRefresh(...) end
+    Open("gear")
+    AltStable.RefreshSheet = realRefresh
+    check("switching to a wider tab glides", Running())
+    eq("  starting from the old width", f:GetWidth(), sumW)
+    eq("  the tab laid out once, by the switch", refreshes, 0)
+    Tick(0.1)
+    check("  half way, between the two", f:GetWidth() > math.min(sumW, gearW) and f:GetWidth() < math.max(sumW, gearW),
+          tostring(f:GetWidth()))
+    Tick(0.2)
+    check("  then it stops", not Running())
+    eq("  at the new tab's width", f:GetWidth(), gearW)
+    local p, _, _, x, y = f:GetPoint(1)
+    check("  anchored where the window really is", p == "TOPLEFT" and x == 50 and y == -60, tostring(p))
+
+    -- A plugin that keeps the window's size: nothing to travel, and laid out
+    -- once - by its own OnActivate - not again through OnResize (#164 review:
+    -- the Roster rebuilt its scene twice per click).
+    local kept = { activated = 0, resized = 0 }
+    local keeps = { id = "test159keeps", label = "Keeps", _isPlugin = true,
+                    OnActivate = function() kept.activated = kept.activated + 1 end,
+                    OnResize = function() kept.resized = kept.resized + 1 end,
+                    OnDeactivate = function() end }
+    AltStable.RegisterPlugin(keeps)
+    local keepBtn = T.sidebarBtns[#T.sidebarBtns]
+    keepBtn:GetScript("OnClick")(keepBtn)
+    check("a plugin that keeps the size makes no trip", not Running())
+    eq("  it is laid out once, by its OnActivate", kept.activated, 1)
+    eq("  and not again through OnResize", kept.resized, 0)
+    keepBtn:GetScript("OnClick")(keepBtn)
+    check("  nor does clicking it again", not Running())
+    eq("  which lays it out no second time either", kept.resized, 0)
+
+    -- A plugin that GROWS the window as it opens (Warband's floor): it glides,
+    -- and is laid out once, by OnActivate, at the size it ends at.
+    Open("summary"); Tick(1)
+    local grew = { resized = 0 }
+    local grows = { id = "test159grows", label = "Grows", _isPlugin = true,
+                    OnActivate = function() AltStable.EnsureWindowMinSize(f:GetWidth() + 200, f:GetHeight()) end,
+                    OnResize = function() grew.resized = grew.resized + 1 end,
+                    OnDeactivate = function() end }
+    AltStable.RegisterPlugin(grows)
+    local growBtn = T.sidebarBtns[#T.sidebarBtns]
+    local beforeW = f:GetWidth()
+    growBtn:GetScript("OnClick")(growBtn)
+    check("a plugin that grows the window glides", Running())
+    Tick(1)
+    eq("  to the size it asked for", f:GetWidth(), beforeW + 200)
+    eq("  laid out once, not again at the end", grew.resized, 0)
+
+    -- Switching away mid-glide: the trip's deferred layout was for the tab
+    -- that is leaving, so it is dropped, not run.
+    AltStable.SetSidebarCompact(true)           -- its space grows: layout deferred to the end
+    check("a growing trip on the plugin", Running())
+    Tick(0.05)
+    grew.resized = 0
+    Open("summary")
+    eq("switching away mid-glide does not lay out the leaving plugin", grew.resized, 0)
+    Tick(1)
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetSidebarCompact(false)
+    AltStableConfig.enableOpenAnimation = true
+
+    -- A tab click during the open fade finishes the fade first: the trip is
+    -- measured at the window's settled scale, not one still moving.
+    AltStable._PlayOpenAnimation(f)
+    Open("gear")
+    check("a tab click during the open fade finishes the fade", not AltStable.FinishOpenAnimation())
+    Tick(1)
+
+    -- /alts config and the minimap right-click open Options through its button.
+    local ok, err = pcall(AltStable.OpenConfig)
+    check("opening Options from outside the sidebar raises nothing", ok, tostring(err))
+    Tick(1)
+    check("  the Options page is shown", T.optionsPanel:IsShown())
+    check("  and the grid is not", not f.bodyScroll:IsShown())
+    Open("gear"); Tick(1)
+
+    -- A plugin that sizes the window when it opens glides there, laid out once.
+    local sizer = { resized = 0 }
+    local sizes = { id = "test159sizes", label = "Sizes", _isPlugin = true, sizesWindow = true,
+                    OnActivate = function() AltStable.RequestWindowSize(700, 520) end,
+                    OnResize = function() sizer.resized = sizer.resized + 1 end,
+                    OnDeactivate = function() end }
+    AltStable.RegisterPlugin(sizes)
+    local sizeBtn = T.sidebarBtns[#T.sidebarBtns]
+    sizeBtn:GetScript("OnClick")(sizeBtn)
+    check("a plugin that sizes the window glides there", Running())
+    eq("  from the old width", f:GetWidth(), gearW)
+    eq("  not laid out a second time for the trip", sizer.resized, 0)
+    Tick(0.3)
+    eq("  and ends at the size it asked for", f:GetWidth(), 700)
+
+    -- Maximized, every tab is the whole display: no trip.
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetWindowMaximized(true)
+    AltStableConfig.enableOpenAnimation = true
+    Open("summary")
+    check("a switch while maximized makes no trip", not Running())
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetWindowMaximized(false)
+    Open("summary")
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
