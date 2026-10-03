@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.7.1-beta
+
+A one-fix release on top of v0.7.0-beta. Measured on client 1.60.1.70205. Nothing changes on the
+sync wire or in saved data.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
 
 ### Fixed
 
