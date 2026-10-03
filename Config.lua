@@ -727,15 +727,22 @@ local MEASURED_ON_BUILD = "70205"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
 -- A development copy, not a release: deploy.ps1 stamps "dev-<sha>" (or "dev"),
--- a checkout run as-is still carries the packager's "@project-version@", and
--- an unreadable version is treated as dev. A packaged release carries its tag
+-- a checkout run as-is still carries the packager's version keyword, and an
+-- unreadable version is treated as dev. A packaged release carries its tag
 -- ("v0.7.0-beta"). What the build check below is for is a chore for whoever
 -- measures the client - a player can do nothing with it.
+--
+-- The keyword is ASSEMBLED, never written out: the packager replaces it in
+-- every file it ships, not only the .toc. Written literally, v0.7.0-beta
+-- shipped `v == "v0.7.0-beta"` here - the release counted itself as a dev copy
+-- (tests/test_packaging.lua now fails on a literal keyword in shipped Lua).
+local VERSION_KEYWORD = "@" .. "project-version" .. "@"
+
 function AltStable.IsDevBuild()
     local get = AltStable.API and AltStable.API.GetAddOnMetadata
     local ok, v = pcall(function() return get and get("AltStable", "Version") end)
     if not ok or type(v) ~= "string" or v == "" then return true end
-    return v == "dev" or v:sub(1, 4) == "dev-" or v == "@project-version@"
+    return v == "dev" or v:sub(1, 4) == "dev-" or v == VERSION_KEYWORD
 end
 
 local function CheckClientBuild()

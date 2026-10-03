@@ -67,6 +67,33 @@ for _, t in ipairs(TOCS) do
     end
 end
 
+-- No packager keyword in shipped Lua. The packager substitutes them in EVERY
+-- file it ships, not only the .toc: v0.7.0-beta's Config.lua compared the
+-- version against "@project-version@" written out, shipped comparing it
+-- against "v0.7.0-beta", and the release counted itself as a dev copy. Code
+-- that needs a keyword assembles it at runtime. Read from the TOCs, so this is
+-- exactly the Lua that ships.
+do
+    local KEYWORDS = { "@project%-[%w%-]+@", "@file%-[%w%-]+@", "@build%-time@",
+                       "%-%-@[%w%-]+@", "%-%-%[%[@[%w%-]+@" }
+    local found
+    for _, t in ipairs(TOCS) do
+        local src = read(t.toc) or ""
+        for line in (src .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
+            local file = line:match("^%s*([%w_%-%./\\]+%.lua)%s*$")
+            if file then
+                local path = t.dir .. file:gsub("\\", "/")
+                local code = read(path) or ""
+                for _, pat in ipairs(KEYWORDS) do
+                    local hit = code:match(pat)
+                    if hit and not found then found = path .. ": " .. hit end
+                end
+            end
+        end
+    end
+    check("no shipped Lua file contains a packager keyword (it would be substituted)", found == nil, found)
+end
+
 -- Every shipped Lua file at the root is listed in the main TOC: a file added to
 -- the repo but not the TOC simply never loads in game, silently.
 do

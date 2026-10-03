@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The developer message at login could come back after the next client update.** v0.7.0-beta
+  meant to show it only on development copies, but the release counted itself as one. It now
+  recognises a release correctly.
+
 ## v0.7.0-beta
 
 Sorting that makes sense, a window that moves smoothly, and a bigger, tidier sheet. Measured on
