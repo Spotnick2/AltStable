@@ -2590,12 +2590,51 @@ do
         reset:GetScript("OnClick")(reset)
         eq("Reset goes back to straight on", AltStable.GetPortraitFacing(), 0)
         AltStable.SetPortraitFacing(25)              -- as /alts portrait facing 25 does
+        -- A slider that behaves like the client's: SetValue fires OnValueChanged.
         local shownValue
         local realSet = slider.SetValue
-        slider.SetValue = function(self, v) shownValue = v; return self end   -- the stub keeps no value
+        slider.SetValue = function(self, v)
+            shownValue = v
+            self:GetScript("OnValueChanged")(self, v)
+            return self
+        end
         local optPanel = AltStable._test.optionsPanel
         optPanel:GetScript("OnShow")(optPanel)
         eq("opening Options shows the saved angle", shownValue, 25)
+
+        -- Opening Options writes nothing: no store appears for an account that
+        -- never captured.
+        AltStablePortraits = nil
+        optPanel:GetScript("OnShow")(optPanel)
+        eq("opening Options creates no portrait store", AltStablePortraits, nil)
+        -- Nor rounds an angle the command set between steps.
+        AltStablePortraits = { version = 1, renders = {}, facing = 12 }
+        optPanel:GetScript("OnShow")(optPanel)
+        eq("  nor rewrites an off-step angle", AltStablePortraits.facing, 12)
+
+        -- A drag writes only when the rounded angle changes.
+        local writes = 0
+        local realSetF = AltStable.SetPortraitFacing
+        AltStable.SetPortraitFacing = function(...) writes = writes + 1; return realSetF(...) end
+        slider:GetScript("OnValueChanged")(slider, 10.2)
+        slider:GetScript("OnValueChanged")(slider, 11.4)
+        slider:GetScript("OnValueChanged")(slider, 9.1)
+        eq("a drag inside one step writes once", writes, 1)
+        AltStable.SetPortraitFacing = realSetF
+
+        -- Refused (a newer AltStable's store): the slider shows what is stored.
+        AltStablePortraits = { version = 99, renders = {}, facing = 5 }
+        shownValue = nil
+        slider:GetScript("OnValueChanged")(slider, 30)
+        eq("a refused write snaps the slider back", shownValue, 5)
+        eq("  and the store is untouched", AltStablePortraits.facing, 5)
+
+        -- The command, with Options open, moves the slider.
+        AltStablePortraits = nil
+        optPanel:Show()
+        shownValue = nil
+        AltStable.SetPortraitFacing(15)
+        eq("the slider follows the command while Options is open", shownValue, 15)
         slider.SetValue = realSet
         AltStablePortraits = savedP
     end

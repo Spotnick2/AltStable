@@ -3240,7 +3240,7 @@ local function CreateFrameIfNeeded()
     Y = Y - 22
 
     -- The portrait capture angle (#149): what `/alts portrait facing` sets, as
-    -- a slider. 0 faces you; the default 20 reads better in a lineup.
+    -- a slider. 0, the default, faces you straight on.
     local optFacingLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     optFacingLabel:SetPoint("TOPLEFT", P, Y - 6)
     optFacingLabel:SetText("Portrait angle")
@@ -3266,13 +3266,30 @@ local function CreateFrameIfNeeded()
     optFacingSlider:SetScript("OnEnter", FacingTip)
     optFacingSlider:SetScript("OnLeave", function() GameTooltip:Hide() end)
     local optFacingUpdating = false
+    local function ShowFacing(deg)
+        optFacingUpdating = true
+        optFacingSlider:SetValue(deg)
+        optFacingUpdating = false
+    end
     optFacingSlider:SetScript("OnValueChanged", function(self, value)
         if optFacingUpdating then return end
-        local deg = math.floor(value / 5 + 0.5) * 5
-        deg = math.max(-45, math.min(45, deg))
-        if AltStable.SetPortraitFacing then AltStable.SetPortraitFacing(deg) end
+        local deg = math.floor(value / 5 + 0.5) * 5     -- the setter holds it to +-45
+        -- A drag fires this on every pixel: write (and re-pose a preview) only
+        -- when the rounded angle actually changes.
+        if AltStable.GetPortraitFacing and deg == AltStable.GetPortraitFacing() then return end
+        if AltStable.SetPortraitFacing and not AltStable.SetPortraitFacing(deg) then
+            -- Refused (a newer AltStable's store): say so, as the command does,
+            -- and show what is really stored rather than a value never saved.
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ccffAltStable|r a newer AltStable wrote the portrait store - not changing it")
+            ShowFacing(AltStable.GetPortraitFacing())
+            return
+        end
         if GameTooltip:IsOwned(self) then FacingTip(self) end
     end)
+    -- The command changing it while Options is open moves the slider too.
+    AltStable.OnPortraitFacingChanged = function(deg)
+        if optionsPanel and optionsPanel:IsShown() then ShowFacing(deg) end
+    end
     local optFacingReset = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
     optFacingReset:SetSize(58, 20)
     optFacingReset:SetPoint("LEFT", optFacingSlider, "RIGHT", 16, 0)
