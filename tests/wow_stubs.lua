@@ -278,6 +278,21 @@ local function makeFrame()
         if not c then return 1, 1, 1, 1 end
         return c[1], c[2], c[3], c[4] or 1
     end
+    -- Texture coordinates, as the client has them: set with four numbers
+    -- (left, right, top, bottom), read back as EIGHT - the corners, upper-left,
+    -- lower-left, upper-right, lower-right, each x then y. Unset: the whole.
+    -- (The eight-number form of SetTexCoord is not modelled; nothing uses it.)
+    f.SetTexCoord = function(self, l, r, t, b) self._texCoord = { l, r, t, b }; return self end
+    f.GetTexCoord = function(self)
+        local c = self._texCoord or { 0, 1, 0, 1 }
+        local l, r, t, b = c[1], c[2], c[3], c[4]
+        return l, t, l, b, r, t, r, b
+    end
+    -- A check button's state, as the client has it. The chaining default
+    -- answered GetChecked with the frame itself - always truthy - so an Options
+    -- handler reading it could never see "unchecked".
+    f.SetChecked = function(self, v) self._checked = v and true or false end
+    f.GetChecked = function(self) return self._checked == true end
     -- A texture's vertex TINT, as the client has it: Set records, Get reads it
     -- back, white until set. Separate from SetColorTexture, which the client
     -- does not report through GetVertexColor (see below). An icon header's
@@ -1544,6 +1559,23 @@ function GetNormalizedRealmName() return WoW.player.normalizedRealm end
 function UnitClass(unit) if unit == "player" then return WoW.player.classLocalized, WoW.player.class end end
 function UnitRace(unit) if unit == "player" then return "Undead", WoW.player.race end end
 function UnitSex() return 3 end
+
+-- Mainline FrameXML's text compare (Blizzard_SharedXML/SortUtil.lua, build
+-- 70170; SortUtil is in the 70205 API dump). THREE-WAY, as the client's is:
+-- Sign(strcmputf8i(a, b)), so -1, 0 or 1 - never a boolean. A stub that
+-- returned `a < b` would let a comparator that returns its result directly
+-- (0 and -1 are both true in Lua) pass here and misorder in game.
+function strcmputf8i(a, b)
+    a, b = a:lower(), b:lower()
+    if a < b then return -1 elseif a > b then return 1 end
+    return 0
+end
+SortUtil = {
+    CompareUtf8i = function(a, b)
+        local d = strcmputf8i(a, b)
+        return (d > 0 and 1) or (d < 0 and -1) or 0
+    end,
+}
 -- Tag first, localized name second. Driven by WoW.faction so a test can put a
 -- Skyborne on either side - the case a race-to-faction table gets wrong.
 function UnitFactionGroup() return WoW.faction or "Horde", WoW.faction or "Horde" end
