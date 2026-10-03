@@ -702,6 +702,36 @@ function AltStable.CreateRow(parent, height, columns)
     return row
 end
 
+-- Re-place a row's cells, hover buttons and dividers for the widths the grid
+-- is laid out at (#150): wider than the columns' own when the window has room
+-- to spare. Same walk as CreateRow - x from 10, 6 between columns, a divider
+-- in the middle of each gap - with `widths[i]` in place of `col.width`.
+-- Remembers what it last applied, so a row already at these widths costs
+-- nothing.
+function AltStable.LayoutRowCells(row, columns, widths, key)
+    if key and row._widthsKey == key then return end
+    local x, padding = 10, 6
+    local divs = row.dividers or {}
+    for i, col in ipairs(columns) do
+        local w = widths[i] or col.width
+        local cell = row.cells[i]
+        if cell then
+            cell:ClearAllPoints(); cell:SetPoint("LEFT", x, 0); cell:SetWidth(w)
+        end
+        for _, tips in ipairs({ row.cellTips, row.repTips, row.gearTips }) do
+            local tip = tips[i]
+            if tip then
+                tip:ClearAllPoints(); tip:SetPoint("LEFT", x, 0); tip:SetWidth(w)
+            end
+        end
+        if divs[i] then
+            divs[i]:ClearAllPoints(); divs[i]:SetPoint("LEFT", x + w + math.floor(padding / 2), 0)
+        end
+        x = x + w + padding
+    end
+    row._widthsKey = key
+end
+
 -- For a scrollable group row: colour the background AND render the
 -- "(Account: <name>)" label that visually continues from the realm name in
 -- the frozen panel. The frozen scroll frame clips children at FROZEN_WIDTH,

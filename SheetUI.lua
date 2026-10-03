@@ -1243,6 +1243,9 @@ local function GetCharacterStore()
     return AltStableDB
 end
 
+-- The laid-out column widths (#150); see SpreadColumns.
+local colWidths, colWidthsKey = {}, ""
+
 local function GetScrollableWidth()
     local padding=6; local total=10
     for _, col in ipairs(scrollableCols) do total=total+col.width+padding end
@@ -1434,6 +1437,9 @@ local function EnsureRows(needed)
     if #pool.rows < needed then
         for i=#pool.rows+1, needed do
             local row = AltStable.CreateRow(bodyContent, ROW_HEIGHT, scrollableCols)
+            if #colWidths == #scrollableCols then
+                AltStable.LayoutRowCells(row, scrollableCols, colWidths, colWidthsKey)
+            end
             pool.rows[i]=row
             row:SetPoint("TOPLEFT",bodyContent,"TOPLEFT",0,-((i-1)*ROW_HEIGHT))
             row:SetPoint("RIGHT",bodyContent,"RIGHT",0,0)
@@ -1655,6 +1661,70 @@ local function ApplyContentAnchors(needsH, needsV)
     end
 end
 
+-- The columns as LAID OUT (#150), which is not always their own widths.
+--
+-- A sheet tab sizes its window to its columns, so normally the two agree. When
+-- the window is wider than that - maximized, or a plugin tab's size kept after
+-- the sidebar collapsed - the grid used to stop where its columns did and
+-- leave the rest of the window empty. The spare width is now shared out
+-- across the columns in proportion to their own widths, so the table fills
+-- the window; when the window fits them again they go back to their own.
+--
+-- Only ever WIDER: a window narrower than its columns scrolls, as before. And
+-- the window is still sized from the columns' own widths (GetScrollableWidth),
+-- never these, or every resize would grow it by what the last one spread.
+local STRETCH_MIN = 8      -- a sliver of spare width is not worth re-placing every cell for
+
+local function SpreadColumns(viewportW)
+    local natural = GetScrollableWidth()
+    local extra = (viewportW or 0) - natural
+    if extra < STRETCH_MIN then extra = 0 end
+    local sum = 0
+    for _, col in ipairs(scrollableCols) do sum = sum + col.width end
+    local given = 0
+    for i, col in ipairs(scrollableCols) do
+        local add = 0
+        if extra > 0 and sum > 0 then
+            -- The last column takes what rounding left, so the total is exact.
+            add = (i == #scrollableCols) and (extra - given) or math.floor(extra * col.width / sum)
+            given = given + add
+        end
+        colWidths[i] = col.width + add
+    end
+    for i = #colWidths, #scrollableCols + 1, -1 do colWidths[i] = nil end
+    colWidthsKey = table.concat(colWidths, ",")
+    return natural + extra
+end
+AltStable._test.ColumnWidths = function() return colWidths end
+
+local headerDividers = {}   -- textures created per BuildHeaders call, tracked for cleanup
+
+-- Headers and every pooled row of this tab, at the laid-out widths.
+local function LayoutColumns()
+    local x, padding = 10, 6
+    for i, btn in ipairs(headerButtons) do
+        local col = scrollableCols[i]
+        local w = colWidths[i] or (col and col.width) or btn:GetWidth()
+        btn:ClearAllPoints(); btn:SetPoint("LEFT", x, 0); btn:SetWidth(w)
+        if col and col.vertical and not col.repIcon and btn.label then btn.label:SetWidth(w) end
+        if headerDividers[i] then
+            headerDividers[i]:ClearAllPoints()
+            headerDividers[i]:SetPoint("LEFT", x + w + math.floor(padding / 2), 0)
+        end
+        x = x + w + padding
+    end
+    local pool = AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)
+    for _, row in ipairs(pool.rows) do
+        AltStable.LayoutRowCells(row, scrollableCols, colWidths, colWidthsKey)
+    end
+end
+-- What was laid out, so a test can measure the headers and cells themselves.
+AltStable._test.ColumnLayout = function()
+    return scrollableCols, headerButtons, headerDividers,
+           AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols).rows,
+           bodyContent, headerContent
+end
+
 local function UpdateScroll()
     local totalH   = #displayList * ROW_HEIGHT
     local contentW = GetScrollableWidth()
@@ -1686,6 +1756,10 @@ local function UpdateScroll()
     if vbar then
         if needsV then vbar:Show() else vbar:Hide() end
     end
+
+    -- Spare width goes to the columns. A grid that scrolls has none.
+    contentW = SpreadColumns(bodyScroll:GetWidth())
+    LayoutColumns()
 
     -- Sync content sizes
     bodyContent:SetSize(contentW,            math.max(totalH, bodyScroll:GetHeight()))
@@ -1765,8 +1839,6 @@ local function AddRepStandingLegend(tt)
         tt:AddLine("|cff" .. s[2] .. s[1] .. "|r  |cffcccccc" .. s[3] .. "|r", 1, 1, 1)
     end
 end
-
-local headerDividers = {}   -- textures created per BuildHeaders call, tracked for cleanup
 
 local function ClearHeaders()
     wipe(headerButtons)

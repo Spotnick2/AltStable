@@ -2810,6 +2810,74 @@ do
     AltStable.SetScale(1.0)
     AltStable.SetWindowMaximized(false)
 
+    -- THE GRID FILLS A WIDER WINDOW: spare width is shared out across the
+    -- columns, in proportion to their own widths. The stub's viewport does not
+    -- follow anchors, so it is set to the width the window would give it.
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    local cols, hdrs, hdrDivs, rows = T.ColumnLayout()
+    local own, ownSum = {}, 0
+    for i, c in ipairs(cols) do own[i] = c.width; ownSum = ownSum + c.width end
+    local natural = 10 + ownSum + 6 * #cols
+    local body = f.bodyScroll
+    local realBodyW = body.GetWidth
+    body.GetWidth = function() return natural + 300 end
+    AltStable.RefreshSheet()
+    local widths = T.ColumnWidths()
+    local spread = 0
+    for i = 1, #cols do spread = spread + widths[i] - own[i] end
+    eq("a wider window's spare width all goes to the columns", spread, 300)
+    check("  shared in proportion: the widest column gains the most", (function()
+        local wi, ni = 1, 1
+        for i = 1, #cols do
+            if own[i] > own[wi] then wi = i end
+            if own[i] < own[ni] then ni = i end
+        end
+        return widths[wi] - own[wi] > widths[ni] - own[ni]
+    end)())
+    check("  never narrower than its own", (function()
+        for i = 1, #cols do if widths[i] < own[i] then return false end end
+        return true end)())
+    -- The headers and the cells are where those widths put them.
+    local x2 = 10 + widths[1] + 6
+    local _, _, _, hx = hdrs[2]:GetPoint(1)
+    eq("the second header starts after the first's spread width", hx, x2)
+    eq("  and is as wide as its column now is", hdrs[2]:GetWidth(), widths[2])
+    local _, _, _, dx = hdrDivs[1]:GetPoint(1)
+    eq("  with the divider in the gap", dx, 10 + widths[1] + 3)
+    check("there are rows to measure", rows[1] ~= nil)
+    local _, _, _, cx = rows[1].cells[2]:GetPoint(1)
+    eq("a row's second cell lines up with its header", cx, x2)
+    eq("  as wide", rows[1].cells[2]:GetWidth(), widths[2])
+    local _, _, _, rdx = rows[1].dividers[1]:GetPoint(1)
+    eq("  and its divider with the header's", rdx, 10 + widths[1] + 3)
+    local _, _, _, _, bodyC, hdrC = T.ColumnLayout()
+    eq("the rows' surface spans the spread columns", bodyC:GetWidth(), natural + 300)
+    eq("  as does the header's", hdrC:GetWidth(), natural + 300)
+    -- A row already at these widths is left alone: a refresh with nothing
+    -- changed re-places nothing.
+    local placed = 0
+    local cell = rows[1].cells[2]
+    local realClear = cell.ClearAllPoints
+    cell.ClearAllPoints = function(self) placed = placed + 1; return realClear(self) end
+    AltStable.RefreshSheet()
+    eq("an unchanged layout re-places no cell", placed, 0)
+    cell.ClearAllPoints = realClear
+    -- When the window fits the columns again, they go back to their own.
+    body.GetWidth = function() return natural + 2 end
+    AltStable.RefreshSheet()
+    widths = T.ColumnWidths()
+    check("a window that fits its columns lays them at their own widths", (function()
+        for i = 1, #cols do if widths[i] ~= own[i] then return false end end
+        return true end)())
+    local _, _, _, cx2 = rows[1].cells[2]:GetPoint(1)
+    eq("  cells too", cx2, 10 + own[1] + 6)
+    -- And a grid that scrolls is never stretched.
+    body.GetWidth = function() return natural - 100 end
+    AltStable.RefreshSheet()
+    eq("a scrolling grid keeps its own widths", T.ColumnWidths()[1], own[1])
+    body.GetWidth = realBodyW
+    AltStable.RefreshSheet()
+
     -- ANIMATED: the change lands at once (state, setting, layout), the
     -- window travels there, and settles exactly on the end state.
     AltStableConfig.enableOpenAnimation = true
