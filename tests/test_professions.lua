@@ -771,9 +771,16 @@ T.ResetState()
 -- The panel builds and fills, and the wheel goes where the pointer is
 ------------------------------------------------------------
 
+-- Anchored beside the sidebar's edge through the sheet's helper (#150), so
+-- it follows a collapse. Declining here keeps the fixed-offset fallback.
+local besideSidebar
+AltStable.AnchorBesideSidebar = function(region) besideSidebar = region; return false end
 readModelState()
 local main = CreateFrame("Frame", nil, UIParent)
 local ok, err = pcall(function() plugin.OnActivate(main) end)
+check("the panel anchors beside the sidebar's edge (#150)", besideSidebar ~= nil)
+check("  and re-lays out when the window changes size", type(plugin.OnResize) == "function")
+AltStable.AnchorBesideSidebar = nil
 check("the tab activates without an error", ok, tostring(err))
 check("  and shows rows", AT.rows and #AT.rows > 0)
 AT.cardData = {}

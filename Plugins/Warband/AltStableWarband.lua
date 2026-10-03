@@ -1622,7 +1622,10 @@ local function BuildPanel(mainFrame)
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
 
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
-    panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    -- Beside the sidebar's edge, so it follows when the sidebar collapses (#150).
+    if not (AltStable.AnchorBesideSidebar and AltStable.AnchorBesideSidebar(panel, mainFrame)) then
+        panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    end
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     -- Reaches BOTTOMRIGHT (0, 1), so under glass this panel owns the window's
     -- bottom-right corner and its fill has to be clipped to the window outline.
@@ -1826,6 +1829,8 @@ local function BootstrapPlugin()
                         .. "Icons\\warband.tga",
         _isPlugin     = true,
         OnActivate    = function(mf) AT_WB.Activate(mf) end,
+        -- The window changed size under us: maximize, restore, the sidebar (#150).
+        OnResize      = function() if AT_WB.isActive then AT_WB.Refresh() end end,
         OnDeactivate  = function(mf) AT_WB.Deactivate(mf) end,
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,

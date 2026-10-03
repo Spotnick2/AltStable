@@ -1023,6 +1023,23 @@ do
     end
 end
 GameTooltip.IsShown = function() return WoW.tooltipShown == true end
+-- The OWNER is real state too, as on the client: SetOwner records it, hiding
+-- clears it, and IsOwned compares. The chaining default answered "yes, yours"
+-- to every frame, so a hover that never raised the tooltip, or a leave that
+-- never hid it, passed.
+do
+    local baseSetOwner, hide = GameTooltip.SetOwner, GameTooltip.Hide
+    GameTooltip.SetOwner = function(self, owner, ...)
+        WoW.tooltipOwner = owner
+        if baseSetOwner then return baseSetOwner(self, owner, ...) end
+    end
+    GameTooltip.Hide = function(self, ...)
+        WoW.tooltipOwner = nil
+        return hide(self, ...)
+    end
+    GameTooltip.GetOwner = function() return WoW.tooltipOwner end
+    GameTooltip.IsOwned = function(_, f) return f ~= nil and WoW.tooltipOwner == f end
+end
 -- The border an 11.x client keeps in a NineSlice child. Modelled because the
 -- addon hides it while a tooltip is ours and has to put it back afterwards -
 -- and "did it put it back" is the whole risk of touching a frame every other

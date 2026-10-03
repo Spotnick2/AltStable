@@ -4,8 +4,15 @@
 
 - **Portrait angle is a setting** ([#149](https://github.com/Spotnick2/AltStable/issues/149)):
   Options > Presentation > **Portrait angle**, -45 to 45 degrees (the same value
-  `/alts portrait facing` sets). Captures now face **straight on** by default (it was 20 degrees);
-  if you captured with the old default and want new captures to match, set 20 there.
+  `/alts portrait facing` sets). The default is now **straight on** (it was 20 degrees). An
+  account that already has captures keeps 20, so new captures match the old ones; set 0 there
+  to switch.
+- **Collapse the menu to icons** ([#150](https://github.com/Spotnick2/AltStable/issues/150)):
+  the **«** at the bottom of the left menu shrinks it to its icons (hover one for its name) and
+  gives the room to the tab; **»** brings the labels back. Remembered per account.
+- **Maximize** ([#150](https://github.com/Spotnick2/AltStable/issues/150)): the new button
+  beside close fills the screen, and stays maximized as you switch tabs; click it again to go
+  back to the size and place the window had.
 
 
 ## v0.6.0-beta

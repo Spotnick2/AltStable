@@ -8,7 +8,13 @@ AltStable = AltStable or {}
 
 local ROW_HEIGHT    = 22
 local HEADER_HEIGHT = 28     -- compact; gear/skills/rep icon sections override to 32
-local SIDEBAR_WIDTH = 230
+-- The sidebar's width: full (icon + label) or compact (icon only, #150). A
+-- variable, not a constant: everything beside the sidebar is anchored to its
+-- right EDGE, or re-anchored from this on every layout pass, so collapsing it
+-- moves the content with it. LAYOUT.SIDEBAR_WIDTH follows it for the plugins.
+local SIDEBAR_FULL_W    = 230
+local SIDEBAR_COMPACT_W = 56     -- the 36px icon at x=10, and the same on its right
+local SIDEBAR_WIDTH = SIDEBAR_FULL_W
 local FRAME_W       = 1150   -- default; sections override via preferW
 local FRAME_H       = 460    -- default; sections override via preferH
 local currentHeaderHeight = HEADER_HEIGHT
@@ -1908,13 +1914,20 @@ end
 -- directly is wrong by exactly the ratio nobody notices at scale 1.0.
 local SCREEN_MARGIN = 40
 
-local function FitToScreen(w, h)
-    if not (frame and UIParent) then return w, h end
+-- The display's size in the frame's coordinate space, less the margin. Nil
+-- when there is nothing to measure against.
+local function ScreenLimit()
+    if not (frame and UIParent) then return nil end
     local fs = frame:GetEffectiveScale() or 1
     local us = UIParent:GetEffectiveScale() or 1
-    if fs <= 0 then return w, h end
-    local maxW = (UIParent:GetWidth()  * us) / fs - SCREEN_MARGIN
-    local maxH = (UIParent:GetHeight() * us) / fs - SCREEN_MARGIN
+    if fs <= 0 then return nil end
+    return (UIParent:GetWidth()  * us) / fs - SCREEN_MARGIN,
+           (UIParent:GetHeight() * us) / fs - SCREEN_MARGIN
+end
+
+local function FitToScreen(w, h)
+    local maxW, maxH = ScreenLimit()
+    if not maxW then return w, h end
 
     -- The floor is the SIDEBAR's own requirement, not an arbitrary 200.
     --
@@ -1950,10 +1963,34 @@ end
 -- clamps, scaling back down restores.
 local wantW, wantH
 
+-- Maximized (#150): the window fills the display, less the margin, centred -
+-- and STAYS so across tab switches until restored. Every sizing path below
+-- still records what it asked for in wantW/wantH; while maximized that request
+-- is simply not applied, so Restore lands on the size the current tab wants,
+-- at the place the window was before. Not saved: a /reload opens it normally.
+-- One table, so the sizing functions gain a single upvalue between them.
+local maxState = { on = false }
+
+local function MaximizedSize()
+    local maxW, maxH = ScreenLimit()
+    if not maxW then return frame:GetWidth(), frame:GetHeight() end
+    -- The sidebar floor still wins over the display, as in FitToScreen.
+    local floorH = TITLE_H + (AltStable.GetSidebarRequiredHeight
+                              and AltStable.GetSidebarRequiredHeight() or 0)
+    return maxW, math.max(maxH, floorH)
+end
+
+-- The size the window gets for a request: the request through the screen
+-- limit, or the whole screen while maximized.
+local function SizeFor(w, h)
+    if maxState.on then return MaximizedSize() end
+    return FitToScreen(w, h)
+end
+
 local function ResizeFrame(w, h)
     if not frame then return end
     wantW, wantH = w, h
-    frame:SetSize(FitToScreen(w, h))
+    frame:SetSize(SizeFor(w, h))
 end
 
 -- The helper AND the two paths that are supposed to use it. Three times this
@@ -1975,8 +2012,19 @@ AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 function AltStable.EnsureWindowMinSize(w, h)
     if not frame then return end
     local cw, ch = frame:GetWidth() or 0, frame:GetHeight() or 0
+    -- Maximized, the actual size is the screen's, and growing the request to
+    -- it would make Restore restore to full screen. The request is what Restore
+    -- will apply, so the floor goes on that.
+    if maxState.on then cw, ch = wantW or cw, wantH or ch end
     if cw >= w and ch >= h then return end
     ResizeFrame(math.max(cw, w), math.max(ch, h))
+end
+
+-- A plugin that sizes the window to its own content (Raids) asks here rather
+-- than calling SetSize: the request is remembered, clamped to the display, and
+-- not applied while the window is maximized.
+function AltStable.RequestWindowSize(w, h)
+    ResizeFrame(w, h)
 end
 -- Forward-declared, because the hook below is registered before the function is
 -- defined and a closure written above the `local` would capture a nil GLOBAL of
@@ -1995,7 +2043,64 @@ AltStable._test.ResizeFrameToContent = function() return ResizeFrameToContent() 
 function AltStable.RefitWindow()
     if not frame then return end
     -- The remembered request, not the current size. See wantW/wantH above.
-    frame:SetSize(FitToScreen(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
+    frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
+end
+
+-- Lay the current tab out again after the window's geometry changed under it -
+-- maximize, restore, or the sidebar collapsing. A sheet section re-sizes to its
+-- content; a plugin re-lays itself out in the space it now has.
+local function RelayoutWindow()
+    if not frame then return end
+    if activeSection and activeSection._isPlugin then
+        if activeSection.OnResize then activeSection.OnResize(frame) end
+    elseif AltStable.RefreshSheet then
+        AltStable.RefreshSheet()
+    end
+end
+
+function AltStable.IsWindowMaximized() return maxState.on end
+
+function AltStable.SetWindowMaximized(on)
+    if not frame then return end
+    on = on and true or false
+    if on == maxState.on then return end
+    if on then
+        -- Where it was, to go back to. Only the first anchor: the window has
+        -- one (ApplyWindowPosition, or wherever a drag left it).
+        local point, rel, relPoint, x, y = frame:GetPoint(1)
+        maxState.point = point and { point, rel, relPoint, x, y } or nil
+        wantW = wantW or frame:GetWidth()
+        wantH = wantH or frame:GetHeight()
+        maxState.on = true
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    else
+        maxState.on = false
+        frame:ClearAllPoints()
+        local p = maxState.point
+        if p then
+            frame:SetPoint(p[1], p[2] or UIParent, p[3] or p[1], p[4] or 0, p[5] or 0)
+        else
+            frame:SetPoint("CENTER")
+        end
+        maxState.point = nil
+    end
+    frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
+    if AltStable.OnWindowMaximizedChanged then AltStable.OnWindowMaximizedChanged(on) end
+    RelayoutWindow()
+end
+
+-- Anchor a panel's top-left beside the sidebar: where every plugin panel and
+-- the Options panel starts, 1px past the divider, under the title bar. To the
+-- sidebar's EDGE rather than a fixed offset from the window, so the panel
+-- follows when the sidebar collapses (#150). Its other anchors stay the
+-- caller's. Returns false with nothing to anchor to - a test's bare frame -
+-- and the caller falls back to the fixed offset.
+function AltStable.AnchorBesideSidebar(region, mainFrame)
+    local sb = (mainFrame and mainFrame.sidebar) or (frame and frame.sidebar)
+    if not sb then return false end
+    region:SetPoint("TOPLEFT", sb, "TOPRIGHT", 1, 0)
+    return true
 end
 
 local function SaveWindowPosition()
@@ -2113,7 +2218,8 @@ function ResizeFrameToContent()
     wantW, wantH = w, h
     -- Through the same clamp: a roster long enough to want more height than the
     -- display has is just as reachable as the Options tab asking for a fixed 760.
-    frame:SetSize(FitToScreen(w, h))
+    -- Or the whole screen, while maximized.
+    frame:SetSize(SizeFor(w, h))
     -- ComputeContentSize decides scrollbar visibility from row count and column
     -- width against the size it ASKED for.
     --
@@ -2366,9 +2472,15 @@ local function CreateFrameIfNeeded()
     titleBar:SetHeight(TITLE_H)
     titleBar:EnableMouse(true)
     titleBar:RegisterForDrag("LeftButton")
-    titleBar:SetScript("OnDragStart", function() frame:StartMoving() end)
+    -- A maximized window stays put, and its centred position is not the one to
+    -- remember: Restore goes back to where it was.
+    titleBar:SetScript("OnDragStart", function()
+        if maxState.on then return end
+        frame:StartMoving()
+    end)
     titleBar:SetScript("OnDragStop",  function()
         frame:StopMovingOrSizing()
+        if maxState.on then return end
         SaveWindowPosition()
     end)
 
@@ -2434,9 +2546,63 @@ local function CreateFrameIfNeeded()
         if AltStable.CapturePortrait then AltStable.CapturePortrait() end
     end
 
+    -- Maximize / restore (#150). The glyph is drawn, not typed: one outlined
+    -- box to maximize, two overlapping ones to restore, as every OS shows it.
+    local maxBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
+    maxBtn:SetSize(18, 18)
+    maxBtn:SetPoint("RIGHT", close, "LEFT", -6, 0)
+    maxBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
+    AltStable.ApplyBackdrop(maxBtn, 0.12, 0.12, 0.12, 1)
+    local function Box(w, h, x, y)
+        local box = {}
+        local function Edge(p1, p2, ew, eh)
+            local t = maxBtn:CreateTexture(nil, "OVERLAY")
+            t:SetColorTexture(0.87, 0.87, 0.87, 1)
+            if ew then t:SetWidth(ew) else t:SetHeight(eh) end
+            t:SetPoint(p1[1], maxBtn, "CENTER", x + p1[2], y + p1[3])
+            t:SetPoint(p2[1], maxBtn, "CENTER", x + p2[2], y + p2[3])
+            box[#box + 1] = t
+        end
+        local hw, hh = w / 2, h / 2
+        Edge({ "TOPLEFT", -hw, hh },     { "TOPRIGHT", hw, hh },       nil, 2)  -- the title edge
+        Edge({ "BOTTOMLEFT", -hw, -hh }, { "BOTTOMRIGHT", hw, -hh },   nil, 1)
+        Edge({ "TOPLEFT", -hw, hh },     { "BOTTOMLEFT", -hw, -hh },   1)
+        Edge({ "TOPRIGHT", hw, hh },     { "BOTTOMRIGHT", hw, -hh },   1)
+        return box
+    end
+    local glyphMax     = Box(10, 8, 0, 0)
+    local glyphRestore = Box(7, 6, 1.5, 1.5)
+    for _, t in ipairs(Box(7, 6, -1.5, -1.5)) do glyphRestore[#glyphRestore + 1] = t end
+    local function ShowGlyph()
+        local on = maxState.on
+        for _, t in ipairs(glyphMax)     do if on then t:Hide() else t:Show() end end
+        for _, t in ipairs(glyphRestore) do if on then t:Show() else t:Hide() end end
+    end
+    ShowGlyph()
+    local function MaxTip()
+        GameTooltip:SetOwner(maxBtn, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:SetText(maxState.on and "Restore size" or "Maximize")
+        GameTooltip:Show()
+    end
+    maxBtn:SetScript("OnClick", function()
+        AltStable.SetWindowMaximized(not maxState.on)
+        if GameTooltip:IsOwned(maxBtn) then MaxTip() end
+    end)
+    maxBtn:SetScript("OnEnter", function()
+        maxBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
+        MaxTip()
+    end)
+    maxBtn:SetScript("OnLeave", function()
+        maxBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
+        if GameTooltip:IsOwned(maxBtn) then GameTooltip:Hide() end
+    end)
+    AltStable.OnWindowMaximizedChanged = function() ShowGlyph() end
+    AltStable._test.maxBtn = maxBtn
+    AltStable._test.MaxGlyphs = function() return glyphMax, glyphRestore end
+
     local refBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
     refBtn:SetSize(18, 18)
-    refBtn:SetPoint("RIGHT", close, "LEFT", -6, 0)
+    refBtn:SetPoint("RIGHT", maxBtn, "LEFT", -6, 0)
     refBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
     AltStable.ApplyBackdrop(refBtn, 0.12, 0.12, 0.12, 1)
     local refIcon = refBtn:CreateTexture(nil, "OVERLAY")
@@ -2559,6 +2725,9 @@ local function CreateFrameIfNeeded()
     -- the grid's left edge — visible as a vertical strip of empty dark
     -- space in screenshots.
     sidebar:SetWidth(SIDEBAR_WIDTH-1)
+    -- What sits beside the sidebar anchors to its right edge, so it follows
+    -- when the sidebar collapses (#150). See AltStable.AnchorBesideSidebar.
+    frame.sidebar = sidebar
     -- Under glass the sidebar shows the material through instead of covering it
     -- with a panel of its own: it is a region OF the window rather than a card
     -- sitting on one, and its fill is what squares off both left corners.
@@ -2581,6 +2750,17 @@ local function CreateFrameIfNeeded()
     sbDivider:SetPoint("TOPLEFT",sidebar,"TOPLEFT",0,-4)
     sbDivider:SetPoint("TOPRIGHT",sidebar,"TOPRIGHT",0,-4)
     sbDivider:SetColorTexture(unpack(AltStable.C.SEP))
+
+    -- Compact (#150): the label is the button's tooltip instead.
+    local function NavTip(btn, label)
+        if not (AltStableConfig and AltStableConfig.sidebarCompact) then return end
+        GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+        GameTooltip:SetText(label or "")
+        GameTooltip:Show()
+    end
+    local function NavTipHide(btn)
+        if GameTooltip:IsOwned(btn) then GameTooltip:Hide() end
+    end
 
     -- Section buttons start just below the top divider
     local SIDEBAR_BUTTON_H = 52
@@ -2625,6 +2805,7 @@ local function CreateFrameIfNeeded()
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
             end
+            NavTip(btn, section.label)
         end)
         btn:SetScript("OnLeave",function()
             if activeSection.id~=section.id then
@@ -2632,6 +2813,7 @@ local function CreateFrameIfNeeded()
                 lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
             end
+            NavTipHide(btn)
         end)
 
         table.insert(sidebarBtns,btn)
@@ -2662,7 +2844,7 @@ local function CreateFrameIfNeeded()
     -- controls any more, so nothing is reserved below the last button beyond
     -- 8px of breathing space.
     local SIDEBAR_TOP_INSET     = 8
-    local SIDEBAR_BOTTOM_FOOTER = 0
+    local SIDEBAR_BOTTOM_FOOTER = 26     -- the collapse chevron (#150)
     local SIDEBAR_BOTTOM_BREATH = 8
     AltStable.GetSidebarRequiredHeight = function()
         if not sidebar or not sidebar._pluginBtnY then return 0 end
@@ -2725,6 +2907,7 @@ local function CreateFrameIfNeeded()
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
             end
+            NavTip(pbtn, plugin.label)
         end)
         pbtn:SetScript("OnLeave",function()
             if activeSection.id~=plugin.id then
@@ -2732,7 +2915,10 @@ local function CreateFrameIfNeeded()
                 lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
             end
+            NavTipHide(pbtn)
         end)
+        -- A plugin registering late joins a sidebar that may already be compact.
+        if AltStableConfig and AltStableConfig.sidebarCompact then lbl:Hide() end
 
         table.insert(sidebarBtns,pbtn)
         sidebar._pluginBtnY = sidebar._pluginBtnY - SIDEBAR_BUTTON_STEP
@@ -2745,6 +2931,57 @@ local function CreateFrameIfNeeded()
 
     -- Expose so late-registering plugins (loaded after SheetUI) get a button
     AltStable.AddPluginButton = MakePluginButton
+
+    -- Collapse / expand the sidebar (#150): a chevron pinned to its bottom.
+    -- Collapsed, only the icons show and each label is its tooltip. Saved per
+    -- account. A sheet tab re-sizes to its content, so its window narrows; a
+    -- plugin tab keeps the window and gets the width.
+    local chevron = CreateFrame("Button", nil, sidebar)
+    chevron:SetHeight(22)
+    chevron:SetPoint("BOTTOMLEFT",  sidebar, "BOTTOMLEFT",  0, 4)
+    chevron:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 4)
+    local chevronText = chevron:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    chevronText:SetAllPoints()
+    chevronText:SetJustifyH("CENTER")
+    AltStable.SkinText(chevronText)
+    local function ChevronTip()
+        GameTooltip:SetOwner(chevron, "ANCHOR_RIGHT")
+        GameTooltip:SetText(AltStableConfig.sidebarCompact and "Expand menu" or "Collapse menu")
+        GameTooltip:Show()
+    end
+    local function ApplySidebarMode()
+        local compact = AltStableConfig.sidebarCompact and true or false
+        SIDEBAR_WIDTH = compact and SIDEBAR_COMPACT_W or SIDEBAR_FULL_W
+        AltStable.LAYOUT.SIDEBAR_WIDTH = SIDEBAR_WIDTH
+        sidebar:SetWidth(SIDEBAR_WIDTH - 1)
+        for _, b in ipairs(sidebarBtns) do
+            if b.lbl then if compact then b.lbl:Hide() else b.lbl:Show() end end
+        end
+        -- \194\171 and \194\187: the guillemets, pointing the way it will go.
+        chevronText:SetText(compact and "\194\187" or "\194\171")
+        chevronText:SetTextColor(AltStable.SkinNavDim())
+    end
+    ApplySidebarMode()
+    function AltStable.SetSidebarCompact(on)
+        on = on and true or false
+        if on == (AltStableConfig.sidebarCompact and true or false) then return end
+        AltStable.SetConfigValue("sidebarCompact", on)
+        ApplySidebarMode()
+        RelayoutWindow()
+    end
+    chevron:SetScript("OnClick", function()
+        AltStable.SetSidebarCompact(not AltStableConfig.sidebarCompact)
+        if GameTooltip:IsOwned(chevron) then ChevronTip() end
+    end)
+    chevron:SetScript("OnEnter", function()
+        chevronText:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
+        ChevronTip()
+    end)
+    chevron:SetScript("OnLeave", function()
+        chevronText:SetTextColor(AltStable.SkinNavDim())
+        if GameTooltip:IsOwned(chevron) then GameTooltip:Hide() end
+    end)
+    AltStable._test.chevron, AltStable._test.chevronText = chevron, chevronText
 
     --------------------------------------------------------
     -- Built-in Options section
@@ -2762,7 +2999,7 @@ local function CreateFrameIfNeeded()
     -- Peers, Toast, Mail) are simply unreachable — there is no way to scroll to them
     -- and the window cannot be made tall enough.
     local optionsPanel = CreateFrame("Frame", nil, frame)
-    optionsPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDEBAR_WIDTH + 1, -TITLE_H)
+    AltStable.AnchorBesideSidebar(optionsPanel, frame)
     optionsPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 1)
     optionsPanel:Hide()
 
@@ -3912,7 +4149,7 @@ local function CreateFrameIfNeeded()
     totalsBar=CreateFrame("Frame",nil,frame,"BackdropTemplate")
     -- CORNER-SAFE. This reaches the bottom-right corner, so under glass its
     -- fill is clipped to the window's outline. See AltStable.SkinPanelFill.
-    totalsBar:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",SIDEBAR_WIDTH,1)
+    totalsBar:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMRIGHT",0,0)
     totalsBar:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-1,1)
     totalsBar:SetHeight(22)
     if not AltStable.SkinPanelFill(totalsBar, frame, AltStable.C.BG_FOOTER) then
@@ -3984,7 +4221,7 @@ local function CreateFrameIfNeeded()
     --------------------------------------------------------
 
     frozenHeader=CreateFrame("Frame",nil,frame)
-    frozenHeader:SetPoint("TOPLEFT",frame,"TOPLEFT",SIDEBAR_WIDTH,-HEADER_TOP_Y)
+    frozenHeader:SetPoint("TOPLEFT",sidebar,"TOPRIGHT",0,TITLE_H-HEADER_TOP_Y)
     frozenHeader:SetSize(FROZEN_WIDTH,HEADER_HEIGHT)
     local fhBg=frozenHeader:CreateTexture(nil,"BACKGROUND")
     fhBg:SetAllPoints()
@@ -4048,8 +4285,8 @@ local function CreateFrameIfNeeded()
 
     -- Sidebar right border (1px full-height, starts below title bar)
     local sbBorder=frame:CreateTexture(nil,"OVERLAY"); sbBorder:SetWidth(1)
-    sbBorder:SetPoint("TOPLEFT",frame,"TOPLEFT",SIDEBAR_WIDTH,-TITLE_H)
-    sbBorder:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",SIDEBAR_WIDTH,0)
+    sbBorder:SetPoint("TOPLEFT",sidebar,"TOPRIGHT",0,0)
+    sbBorder:SetPoint("BOTTOMLEFT",sidebar,"BOTTOMRIGHT",0,-1)
     sbBorder:SetColorTexture(0, 0, 0, 1)
 
     --------------------------------------------------------

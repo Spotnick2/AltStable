@@ -297,6 +297,9 @@ local function EnsureDefaults()
     if AltStableConfig.rememberWindowPosition == nil then
         AltStableConfig.rememberWindowPosition = true
     end
+    if AltStableConfig.sidebarCompact == nil then
+        AltStableConfig.sidebarCompact = false
+    end
 
     -- Minimap button (LibDBIcon-free; angle-around-minimap persistence)
     AltStableConfig.minimapButton = AltStableConfig.minimapButton or {}
