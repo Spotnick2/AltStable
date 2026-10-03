@@ -3311,5 +3311,124 @@ do
         AltStable.HiddenCharacterList = saved[1], saved[2], saved[3], saved[4]
 end
 
+------------------------------------------------------------
+-- Column headers: one builder, reused buttons (#160)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    AltStable.EnsureSheetVisible()
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do
+        if b.sectionId then btnFor[b.sectionId] = b end
+    end
+    local function Open(id) btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local function Headers()
+        local cols, hdrs = T.ColumnLayout()
+        local copy = {}                     -- the seam returns LIVE tables
+        for i = 1, #hdrs do copy[i] = hdrs[i] end
+        return cols, copy
+    end
+    local function SameColour(r1, g1, b1, r2, g2, b2)
+        return math.abs(r1 - r2) < 1e-6 and math.abs(g1 - g2) < 1e-6 and math.abs(b1 - b2) < 1e-6
+    end
+    local ar, ag, ab = AltStable.GetAccentRGB()
+
+    -- Reuse. Summary has 8 columns and Gear 21; a round trip and a second one
+    -- must use the very same buttons, not make new ones each switch.
+    Open("summary"); Open("gear")
+    local _, gearFirst = Headers()
+    Open("summary"); Open("gear")
+    local gearCols, gearAgain = Headers()
+    local same = #gearFirst == #gearAgain and #gearAgain == #gearCols
+    for i = 1, #gearAgain do if gearAgain[i] ~= gearFirst[i] then same = false end end
+    check("a section switch reuses the header buttons, not makes new ones", same)
+    local pool, divs = T.HeaderPools()
+    -- At least: the pool never shrinks, and an earlier test may have opened a
+    -- wider tab. Unused slots are checked hidden below.
+    check("  the pool holds at least this section's worth", #pool >= #gearCols)
+    check("  and its dividers too", #divs >= #gearCols - 1)
+
+    -- A reused button takes its new column's look. Slot 5 is an icon in Gear
+    -- (Head) and a text header in Summary (Guild).
+    check("Gear's fifth header is an icon", gearAgain[5].iconTex:IsShown())
+    Open("summary")
+    local sumCols, sum = Headers()
+    eq("Summary's fifth column is Guild", sumCols[5].field, "guild")
+    check("  a reused icon button shows no icon as a text header", not sum[5].iconTex:IsShown())
+    check("  its label is back", sum[5].label:IsShown())
+    eq("  and reads its new column", sum[5].label:GetText(), "Guild")
+    eq("the class header reads its letter", sum[1].label:GetText(), "C")
+    for i = #sumCols + 1, #pool do
+        if pool[i]:IsShown() then check("a header past the section's columns is hidden", false) end
+    end
+
+    -- A stacked faction header (no icon: its short name, a letter per line)
+    -- reused for a text column. High Order has no icon; on Reputations it is
+    -- the fourth column, and Summary's fourth is iLvl.
+    local savedDB = AltStableDB
+    local stackedField = AltStable.RepField(2779)
+    AltStableDB = { s = { guid = "s", name = "Stack Test", realm = "R", level = 10, [stackedField] = 5 } }
+    Open("rep")
+    local repCols, rep = Headers()
+    eq("Reputations' fourth column is the faction with no icon", repCols[4].field, stackedField)
+    check("  its header is stacked letters", rep[4].label:CanNonSpaceWrap())
+    eq("  a taller header strip for them", select(6, T.ColumnLayout()):GetHeight(), 64)
+    eq("the Name header fills the taller strip", T.NameHeader():GetHeight(), 64)
+    Open("summary")
+    local _, sum2 = Headers()
+    eq("  the same slot is reused for iLvl", sum2[4], rep[4])
+    check("  which no longer breaks its word letter by letter", not sum2[4].label:CanNonSpaceWrap())
+    eq("  nor keeps the stacked label's fixed width", sum2[4].label:GetWidth(), 0)
+    eq("  and reads its own label", sum2[4].label:GetText(), "iLvl")
+    eq("the Name header shrinks back with the strip", T.NameHeader():GetHeight(),
+       select(6, T.ColumnLayout()):GetHeight())
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
+
+    -- The Name header shows that the rows are sorted by it. It used to fall out
+    -- of the sort painter on the first build and never show anything.
+    local name = T.NameHeader()
+    check("the frozen Name header exists", name ~= nil)
+    name:GetScript("OnClick")(name)
+    check("sorting by Name shows its arrow", name.arrow:IsShown())
+    -- The path, exactly: with single backslashes Lua 5.1 reads it as
+    -- "InterfaceButtonsUI-SortArrow" without a word, and the arrow is shown
+    -- and draws nothing. That shipped to a test build of #160.
+    eq("  drawn from the sort-arrow file", name.arrow:GetTexture(), "Interface\\Buttons\\UI-SortArrow")
+    check("  and tints its label", SameColour(ar, ag, ab, name.label:GetTextColor()))
+    local lvl
+    for i, c in ipairs(sumCols) do if c.field == "level" then lvl = sum[i] end end
+    lvl:GetScript("OnClick")(lvl)
+    check("sorting by another column takes the arrow off Name", not name.arrow:IsShown())
+    check("  and its tint", not SameColour(ar, ag, ab, name.label:GetTextColor()))
+    check("  and puts it on that column", lvl.arrow:IsShown())
+
+    -- An icon header has no arrow; the tint is the only sign it is sorted by,
+    -- so leaving it must not take the tint away. An unsorted one loses it.
+    Open("gear")
+    local _, gear = Headers()
+    local head, neck = gear[5], gear[6]
+    head:GetScript("OnClick")(head)
+    head:GetScript("OnEnter")(head); head:GetScript("OnLeave")(head)
+    check("an icon header keeps the sort tint when the cursor leaves",
+          SameColour(ar, ag, ab, head.iconTex:GetVertexColor()))
+    neck:GetScript("OnEnter")(neck)
+    check("hovering an unsorted icon header tints it", SameColour(ar, ag, ab, neck.iconTex:GetVertexColor()))
+    check("  and shows its tooltip", GameTooltip:IsOwned(neck))
+    neck:GetScript("OnLeave")(neck)
+    check("  leaving it takes the tint off", SameColour(1, 1, 1, neck.iconTex:GetVertexColor()))
+    check("  and the tooltip", not GameTooltip:IsOwned(neck))
+
+    -- A header rebuilt under the mouse never gets its OnLeave: the rebuild
+    -- itself must take down a tooltip it owned.
+    neck:GetScript("OnEnter")(neck)
+    Open("summary")
+    check("a header's tooltip goes when the headers are rebuilt", not GameTooltip:IsOwned(neck))
+
+    -- Back to the default sort for anything that follows.
+    lvl:GetScript("OnClick")(lvl)
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
