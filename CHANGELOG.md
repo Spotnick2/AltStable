@@ -13,6 +13,8 @@
 - **Maximize** ([#150](https://github.com/Spotnick2/AltStable/issues/150)): the new button
   beside close fills the screen, and stays maximized as you switch tabs; click it again to go
   back to the size and place the window had.
+- Both **animate**: the menu slides and the window grows or shrinks into place, in a fifth of a
+  second. Turning off the open animation in Options turns these off too.
 
 
 ## v0.6.0-beta
