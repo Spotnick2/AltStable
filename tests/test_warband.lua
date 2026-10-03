@@ -655,7 +655,28 @@ do
     eq("  with the potion in Consumables, its own column", (function()
         for _, c in ipairs(wb._cols) do if c.key == 2 then return #c.entries end end
     end)(), 1)
+    -- More tabs than fit: the arrows get their own margin, and the status line
+    -- says which tabs are on screen. All rulesets brings Other in: five pages.
+    AltStable.SetConfigValue("warbandRuleset", "all"); wb.Refresh()
+    local head = wb.colHeads[1]
+    local headX = head and select(4, head:GetPoint())
+    check("the first column starts clear of the left arrow", headX and headX >= 12 + 26, tostring(headX))
+    local statusText = wb.StatusText and wb.StatusText()
+    check("the status line says which tabs are shown",
+          statusText and statusText:find("Tabs 1-3 of 5", 1, true) ~= nil, tostring(statusText))
+    -- The rail says what a gold outline means.
+    local railShown, railHidden
+    for _, b in ipairs(wb.tabBtns) do
+        if b:IsShown() and not b.isAdd then
+            if b.shown then railShown = b else railHidden = b end
+        end
+    end
+    check("a tab on screen is marked shown", railShown ~= nil)
+    check("  and one off screen is not", railHidden ~= nil)
+    AltStable.SetConfigValue("warbandRuleset", "current")
     AltStable.SetConfigValue("warbandView", "single"); wb.Refresh()
+    local singleX = wb.colHeads[1] and select(4, wb.colHeads[1]:GetPoint())
+    eq("single view has no arrow margin", singleX, 12)
 
     -- Personal: this character alone, whatever the ruleset says.
     AltStable.SetConfigValue("warbandScope", "personal")
@@ -681,7 +702,7 @@ do
         if cell:IsShown() and not cell.entry then slotAlpha = cell:GetAlpha() end
     end
     eq("search dims a non-match", dimmed, 0.25)
-    eq("  and leaves empty slots as they were", slotAlpha, 0.55)
+    eq("  and leaves empty slots as they were", slotAlpha, 1)
     wb.search = ""
 
     -- A refresh drops a stale hover.

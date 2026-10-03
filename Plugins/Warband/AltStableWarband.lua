@@ -455,7 +455,8 @@ local RAIL_BTN  = 40
 local SCROLL_W  = 14
 local COL_GAP   = 18     -- between Combined's columns
 local ROW_TOP   = HEAD_H + TABTITLE_H   -- first grid row, from the panel's top
-local EMPTY_SLOT = "Interface\\PaperDoll\\UI-Backpack-EmptySlot"
+local EMPTY_ALPHA = 1   -- an empty slot is drawn faint in itself; see FillCell
+local ARROW_W   = 26    -- Combined's paging arrows get their own margin
 
 local panel, titleFS, emptyFS, searchBox, statusFS
 AT_WB.scrollRow = 0
@@ -698,11 +699,13 @@ local function FillCell(cell, e)
         cell.itemName = e.name
         cell:SetAlpha(1)
     else
-        cell.icon:SetTexture(EMPTY_SLOT)
+        -- A quiet box, not slot art: these are filters, not storage, and the
+        -- textured slots outweighed the items (review, 2026-10-03).
+        cell.icon:SetTexture(nil)
         cell.count:SetText("")
-        cell:SetBackdropBorderColor(0.18, 0.18, 0.2, 1)
+        cell:SetBackdropBorderColor(1, 1, 1, 0.07)
         cell.itemName = nil
-        cell:SetAlpha(0.55)
+        cell:SetAlpha(EMPTY_ALPHA)
     end
 end
 
@@ -829,12 +832,19 @@ local function SetActive(btn, on)
 end
 
 -- Closes on a click anywhere else in the panel, and on Escape.
-local function MakeCatcher(owner, onClose)
+local function MakeCatcher(owner, onClose, dim)
     local c = CreateFrame("Button", nil, panel)
     c:SetAllPoints(panel)
     c:SetFrameStrata("FULLSCREEN_DIALOG")
     c:RegisterForClicks("AnyUp")
     c:SetScript("OnClick", onClose)
+    if dim then
+        -- The bank behind a dialog is dimmed, so it stops competing with it.
+        local t = c:CreateTexture(nil, "BACKGROUND")
+        t:SetAllPoints()
+        t:SetColorTexture(0, 0, 0, dim)
+        c.dim = t
+    end
     c:Hide()
     return c
 end
@@ -943,6 +953,14 @@ local function RenderIconGrid()
     local total = math.ceil(#list / ICON_COLS)
     local maxStart = math.max(0, total - ICON_ROWS)
     dialog.iconRow = math.max(0, math.min(dialog.iconRow or 0, maxStart))
+    if dialog.iconBar then
+        dialog.iconBar._syncing = true
+        dialog.iconBar:SetMinMaxValues(0, maxStart)
+        dialog.iconBar:SetValue(dialog.iconRow)
+        dialog.iconBar._syncing = false
+        dialog.iconBar:SetShown(maxStart > 0)
+    end
+    if dialog.iconCount then dialog.iconCount:SetText(#list .. " icons - scroll for more") end
     for r = 0, ICON_ROWS - 1 do
         for c = 1, ICON_COLS do
             local cell = dialog.iconCells[r * ICON_COLS + c]
@@ -997,7 +1015,7 @@ local function DeleteFromDialog()
 end
 
 local function BuildDialog()
-    dialogCatcher = MakeCatcher(panel, CloseDialog)
+    dialogCatcher = MakeCatcher(panel, CloseDialog, 0.55)
     dialog = CreateFrame("Frame", nil, panel, "BackdropTemplate")
     dialog:SetFrameStrata("FULLSCREEN_DIALOG")
     dialog:SetFrameLevel(dialogCatcher:GetFrameLevel() + 5)
@@ -1007,7 +1025,17 @@ local function BuildDialog()
     if not (AltStable.SkinWindow and AltStable.SkinWindow(dialog, "small")) then
         AltStable.ApplyBackdrop(dialog, 0.08, 0.08, 0.1, 0.98)
     end
+    -- Glass around the edge, a dark near-opaque body: through the glass alone,
+    -- item icons and titles showed straight through the labels (review).
+    local body = dialog:CreateTexture(nil, "BACKGROUND", nil, 1)
+    body:SetPoint("TOPLEFT", 6, -6)
+    body:SetPoint("BOTTOMRIGHT", -6, 6)
+    body:SetColorTexture(0.06, 0.065, 0.08, 0.94)
     CloseOnEscape(dialog, CloseDialog)
+
+    -- An upper-right close, as well as Cancel and Escape.
+    local close = MakeButton(dialog, 22, 22, "x", CloseDialog)
+    close:SetPoint("TOPRIGHT", -12, -12)
 
     local title = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 18, -14)
@@ -1081,12 +1109,35 @@ local function BuildDialog()
         dialog.iconRow = (dialog.iconRow or 0) - delta * 2
         RenderIconGrid()
     end)
+    -- A scrollbar and a count: the lists run to thousands, and they are bare
+    -- file ids with no names, so there is nothing a search box could match.
+    local bar = CreateFrame("Slider", nil, dialog)
+    bar:SetWidth(8)
+    bar:SetPoint("TOPLEFT", dialog.iconCells[ICON_COLS], "TOPRIGHT", 6, 0)
+    bar:SetPoint("BOTTOMLEFT", dialog.iconCells[ICON_ROWS * ICON_COLS], "BOTTOMRIGHT", 6, 0)
+    bar:SetOrientation("VERTICAL")
+    bar:SetValueStep(1)
+    local track = bar:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints(); track:SetColorTexture(1, 1, 1, 0.06)
+    local thumb = bar:CreateTexture(nil, "OVERLAY")
+    thumb:SetColorTexture(1, 1, 1, 0.3); thumb:SetSize(8, 24)
+    bar:SetThumbTexture(thumb)
+    bar:SetScript("OnValueChanged", function(self, v)
+        if self._syncing then return end
+        dialog.iconRow = math.floor((v or 0) + 0.5)
+        RenderIconGrid()
+    end)
+    dialog.iconBar = bar
+    dialog.iconCount = dialog:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    dialog.iconCount:SetPoint("LEFT", iconLbl, "RIGHT", 10, 0)
 
     dialog.save = MakeButton(dialog, 90, 24, "Save", SaveDialog)
     dialog.save:SetPoint("BOTTOMRIGHT", -16, 14)
+    SetActive(dialog.save, true)             -- the primary action, in gold
+    dialog.save:SetScript("OnLeave", function(self) self._hover = false; StyleButton(self, true) end)
     dialog.cancel = MakeButton(dialog, 90, 24, "Cancel", CloseDialog)
     dialog.cancel:SetPoint("RIGHT", dialog.save, "LEFT", -8, 0)
-    dialog.delete = MakeButton(dialog, 90, 24, "Delete", DeleteFromDialog)
+    dialog.delete = MakeButton(dialog, 100, 24, "Delete Tab", DeleteFromDialog)
     dialog.delete:SetPoint("BOTTOMLEFT", 16, 14)
     dialog:Hide()
 end
@@ -1158,6 +1209,13 @@ local function getTabBtn(i)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine(self.tip or "")
+        if not self.isAdd then
+            if self.shown then
+                GameTooltip:AddLine(View() == "combined" and "Shown in the combined view" or "Shown", .6, .9, .6)
+            else
+                GameTooltip:AddLine("Click to show", .8, .8, .8)
+            end
+        end
         if type(self.key) == "number" then GameTooltip:AddLine("Right-click to configure", .7, .7, .7) end
         GameTooltip:Show()
     end)
@@ -1197,6 +1255,12 @@ local function GridBox()
     if not pw or pw < 200 then pw = 700 end
     local left = PAD
     local right = pw - RAIL_W - SCROLL_W - PAD
+    -- Combined's arrows have a margin of their own at each end; drawn over the
+    -- grid, they sat on the first tab's icon and the last one's gear (review).
+    if AT_WB._paging then
+        left = left + ARROW_W
+        right = right - ARROW_W
+    end
     return left, math.max(STRIDE, right - left)
 end
 
@@ -1313,6 +1377,7 @@ local function LayoutRail(pages, shown, tabs)
         b.icon:Show()
         b.plus:SetText("")
         b:SetBackdropColor(0, 0, 0, 0.35)
+        b.shown = shown[key] and true or false
         if shown[key] then b:SetBackdropBorderColor(ar, ag, ab, 1)
         else b:SetBackdropBorderColor(1, 1, 1, 0.15) end
         b:SetAlpha(1)
@@ -1351,25 +1416,30 @@ local function UpdateControls()
     SetActive(scopeBtns.personal, Scope() == "personal")
     SetActive(scopeBtns.warband, Scope() ~= "personal")
     local personal = Scope() == "personal"
-    rulesetBtn.label:SetText(personal and "This character" or (RulesetText() .. "  v"))
+    rulesetBtn.label:SetText(personal and "This character" or RulesetText())
+    rulesetBtn.chevron:SetShown(not personal)
     rulesetBtn:SetEnabled(not personal)
     rulesetBtn:SetAlpha(personal and 0.5 or 1)
 end
 
 local function StatusText()
+    local w = AT_WB._window
+    local paging = (w and #w.pages > M.COMBINED)
+        and ("Tabs " .. w.first .. "-" .. (w.first + w.width - 1) .. " of " .. #w.pages .. "  ·  ") or ""
     if Scope() == "personal" then
         local me = AltStableDB and UnitGUID and AltStableDB[UnitGUID("player")]
-        return ((me and me.name) or "This character") .. "  ·  Bags + bank  ·  Read-only"
+        return paging .. ((me and me.name) or "This character") .. "  ·  Bags + bank  ·  Read-only"
     end
     local r = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName())
-    return "Bags + banks  ·  " .. (r or "All rulesets") .. "  ·  Read-only"
+    return paging .. "Bags + banks  ·  " .. (r or "All rulesets") .. "  ·  Read-only"
 end
+
+AT_WB.StatusText = function() return StatusText() end
 
 -- Recompute what is shown from current data, then lay out.
 function AT_WB.Refresh()
     if not panel or not panel:IsShown() then return end
     UpdateControls()
-    statusFS:SetText(StatusText())
 
     local filter = CurrentFilter()
     local agg = gather(filter)
@@ -1379,6 +1449,8 @@ function AT_WB.Refresh()
         hideFrom(AT_WB.cells, 1)
         hideFrom(AT_WB.colHeads, 1)
         AT_WB.UpdateScrollBar(0, 0)   -- nothing left to scroll
+        AT_WB._window, AT_WB._paging = nil, false
+        statusFS:SetText(StatusText())
         LayoutRail(M.Pages(#tabs, false), {}, tabs)
         prevBtn:Hide(); nextBtn:Hide()
         local me = UnitGUID and UnitGUID("player")
@@ -1400,14 +1472,16 @@ function AT_WB.Refresh()
         local first, width = M.CombinedWindow(pages, sel)
         keys = {}
         for i = first, first + width - 1 do keys[#keys + 1] = pages[i] end
-        prevBtn:SetShown(#pages > M.COMBINED)
-        nextBtn:SetShown(#pages > M.COMBINED)
+        AT_WB._paging = #pages > M.COMBINED
+        prevBtn:SetShown(AT_WB._paging)
+        nextBtn:SetShown(AT_WB._paging)
         prevBtn:SetEnabled(first > 1)
         nextBtn:SetEnabled(first + width - 1 < #pages)
         AT_WB._window = { first = first, width = width, pages = pages }
     else
         keys = { sel }
         prevBtn:Hide(); nextBtn:Hide()
+        AT_WB._paging = false
         AT_WB._window = nil
     end
 
@@ -1421,6 +1495,7 @@ function AT_WB.Refresh()
         shown[key] = true
     end
     AT_WB._cols = cols
+    statusFS:SetText(StatusText())
     LayoutRail(pages, shown, tabs)
     AT_WB.Layout()
 end
@@ -1498,17 +1573,29 @@ local function BuildPanel(mainFrame)
     end)
     local tipLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     tipLbl:SetPoint("LEFT", tipCheck, "RIGHT", 2, 0)
-    tipLbl:SetText("Show alt counts on all item tooltips")
-    tipLbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    tipLbl:SetText("Show character counts in tooltips")
+    tipLbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    tipCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Show character counts in tooltips")
+        GameTooltip:AddLine("Adds who holds how many to item tooltips everywhere - bags, "
+            .. "merchants, links - not only in AltStable.", .8, .8, .8, true)
+        GameTooltip:Show()
+    end)
+    tipCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     rulesetBtn = MakeButton(panel, 200, 22, "", OpenRulesetMenu)
     rulesetBtn:SetPoint("LEFT", tipLbl, "RIGHT", 16, 0)
+    rulesetBtn.chevron = rulesetBtn:CreateTexture(nil, "OVERLAY")
+    rulesetBtn.chevron:SetSize(12, 12)
+    rulesetBtn.chevron:SetPoint("RIGHT", -8, 0)
+    rulesetBtn.chevron:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up")
 
     -- Combined's paging arrows, either side of the column titles.
     prevBtn = MakeButton(panel, 22, 22, "<", function() StepWindow(-1) end)
-    prevBtn:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -HEAD_H + 1)
+    prevBtn:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -HEAD_H + 1)
     nextBtn = MakeButton(panel, 22, 22, ">", function() StepWindow(1) end)
-    nextBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -(RAIL_W + SCROLL_W), -HEAD_H + 1)
+    nextBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -(RAIL_W + SCROLL_W + PAD), -HEAD_H + 1)
     prevBtn:Hide(); nextBtn:Hide()
 
     -- The bottom bar: Personal Bank / Warband, and what is being shown.
