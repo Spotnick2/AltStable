@@ -887,7 +887,7 @@ function AT_SI.Refresh()
     -- the frozen columns + the (capped) character viewport; extra alts scroll.
     local f = _G["AltStableSheet"]
     if f and AT_SI._sidebarW then
-        local leftBase = AT_SI._sidebarW + 1 + PAD_X
+        local leftBase = ((AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or AT_SI._sidebarW) + 1 + PAD_X
         local wGrid    = leftBase + (NAME_COL_W + RESET_COL_W + viewportW) + 12
         local wFooter  = leftBase + (statsFS:GetStringWidth() or 0) + PAD_X + 6
         local w = math.max(wGrid, wFooter, 560)
@@ -897,7 +897,9 @@ function AT_SI.Refresh()
                 + (AltStable.GetSidebarRequiredHeight and AltStable.GetSidebarRequiredHeight() or 0)
         if h < sidebarMin then h = sidebarMin end
         if h > MAX_FRAME_H then h = MAX_FRAME_H end
-        f:SetSize(w, h)
+        -- Through the sheet's request (#150), which remembers it, clamps it to
+        -- the display, and leaves a maximized window maximized.
+        if AltStable.RequestWindowSize then AltStable.RequestWindowSize(w, h) else f:SetSize(w, h) end
     end
 end
 
@@ -945,7 +947,10 @@ local function BuildPanel(mainFrame)
     AT_SI._titleH   = titleH
 
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
-    panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    -- Beside the sidebar's edge, so it follows when the sidebar collapses (#150).
+    if not (AltStable.AnchorBesideSidebar and AltStable.AnchorBesideSidebar(panel, mainFrame)) then
+        panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    end
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     AT_SI._headerSep = headerSep
     panel:Hide()
@@ -1082,6 +1087,11 @@ function AT_SI._Bootstrap()
         icon         = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\raid.tga",
         _isPlugin    = true,
         OnActivate   = function(mainFrame) AT_SI.Activate(mainFrame) end,
+        -- The window changed size under us: maximize, restore, the sidebar (#150).
+        OnResize     = function() if AT_SI.isActive then AT_SI.Refresh() end end,
+        -- Refresh sizes the window to the grid, so a geometry animation lays
+        -- this tab out before measuring where it ends, as for a sheet tab.
+        sizesWindow  = true,
         OnDeactivate = function(mainFrame) AT_SI.Deactivate(mainFrame) end,
         _test        = {
             parseLockout = parseLockout, gather = gather, shortName = shortName,

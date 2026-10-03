@@ -523,6 +523,24 @@ function AltStable.RowPoolFor(pools, sectionId, columns)
     return pool
 end
 
+-- THE column walk, for the header and every row alike: the first column at
+-- x=10, 6px between columns, a divider in the middle of each gap. One copy,
+-- so a header and the cells under it cannot be placed by two sums that drift.
+-- `widths[i]` when given (the grid spread to fill a wider window, #150),
+-- otherwise the column's own width.
+AltStable.COLUMN_START, AltStable.COLUMN_GAP = 10, 6
+function AltStable.WalkColumns(columns, widths, fn)
+    local x, gap = AltStable.COLUMN_START, AltStable.COLUMN_GAP
+    for i, col in ipairs(columns) do
+        local w = (widths and widths[i]) or col.width
+        fn(i, x, w, x + w + math.floor(gap / 2))
+        x = x + w + gap
+    end
+end
+
+-- A row's hover buttons, by kind; each is placed over its cell.
+local TIP_SETS = { "cellTips", "repTips", "gearTips" }
+
 function AltStable.CreateRow(parent, height, columns)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(height)
@@ -569,21 +587,18 @@ function AltStable.CreateRow(parent, height, columns)
     row.mark:Hide()
     markRows[row] = true
 
-    local x=10; local padding=6
+    -- Created here, PLACED by LayoutRowCells at the end: one walk for every
+    -- position, shared with the header (AltStable.WalkColumns).
     for i, col in ipairs(columns) do
         local cell
 
         if col.type == "classIcon" or col.type == "raceIcon" then
             cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            cell:SetPoint("LEFT", x, 0)
-            cell:SetWidth(col.width)
             cell:SetJustifyH("CENTER")
             cell:SetWordWrap(false)
             row.cells[i] = cell
         else
             cell = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-            cell:SetPoint("LEFT",x,0)
-            cell:SetWidth(col.width)
             cell:SetJustifyH(col.align or "LEFT")
             cell:SetWordWrap(false)
             row.cells[i] = cell
@@ -594,7 +609,6 @@ function AltStable.CreateRow(parent, height, columns)
         or col.field=="level" or col.type=="restXP"
         or col.field=="restPercent" or col.type=="profSkill" then
             local tip = CreateFrame("Button", nil, row)
-            tip:SetPoint("LEFT", x, 0)
             tip:SetSize(col.width, height)
             tip:SetScript("OnEnter", function()
                 GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
@@ -617,7 +631,6 @@ function AltStable.CreateRow(parent, height, columns)
         -- Invisible hover button for rep cells
         if col.type == "rep" then
             local tip = CreateFrame("Button", nil, row)
-            tip:SetPoint("LEFT", x, 0)
             tip:SetSize(col.width, height)
             tip:SetScript("OnEnter", function()
                 if tip.standing then
@@ -637,7 +650,6 @@ function AltStable.CreateRow(parent, height, columns)
         -- Invisible hover button for gear slots
         if col.type == "gearSlot" then
             local tip = CreateFrame("Button", nil, row)
-            tip:SetPoint("LEFT", x, 0)
             tip:SetSize(col.width, height)
 
             -- Hover highlight background
@@ -692,14 +704,39 @@ function AltStable.CreateRow(parent, height, columns)
         if i<#columns then
             local div = row:CreateTexture(nil,"ARTWORK")
             div:SetSize(1,height)
-            div:SetPoint("LEFT",x+col.width+math.floor(padding/2),0)
             div:SetColorTexture(unpack(DIVIDER_COLOR))
             row.dividers = row.dividers or {}
             table.insert(row.dividers, div)
         end
-        x=x+col.width+padding
     end
+    AltStable.LayoutRowCells(row, columns)
     return row
+end
+
+-- Re-place a row's cells, hover buttons and dividers for the widths the grid
+-- is laid out at (#150): wider than the columns' own when the window has room
+-- to spare. By AltStable.WalkColumns, the walk the header uses too; CreateRow
+-- places a new row through here. Remembers what it last applied, so a row already at these widths costs
+-- nothing.
+function AltStable.LayoutRowCells(row, columns, widths, key)
+    if key and row._widthsKey == key then return end
+    local divs = row.dividers or {}
+    AltStable.WalkColumns(columns, widths, function(i, x, w, divX)
+        local cell = row.cells[i]
+        if cell then
+            cell:ClearAllPoints(); cell:SetPoint("LEFT", x, 0); cell:SetWidth(w)
+        end
+        for _, set in ipairs(TIP_SETS) do
+            local tip = row[set] and row[set][i]
+            if tip then
+                tip:ClearAllPoints(); tip:SetPoint("LEFT", x, 0); tip:SetWidth(w)
+            end
+        end
+        if divs[i] then
+            divs[i]:ClearAllPoints(); divs[i]:SetPoint("LEFT", divX, 0)
+        end
+    end)
+    row._widthsKey = key
 end
 
 -- For a scrollable group row: colour the background AND render the

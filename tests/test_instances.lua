@@ -364,8 +364,15 @@ do
         main[key] = CreateFrame("Frame", nil, main)
     end
 
+    -- Anchored beside the sidebar's edge through the sheet's helper (#150), so
+    -- it follows a collapse. Declining here keeps the fixed-offset fallback.
+    local besideSidebar
+    AltStable.AnchorBesideSidebar = function(region) besideSidebar = region; return false end
     local ok, err = pcall(plugin.OnActivate, main)
     check("the Raids panel builds", ok, tostring(err))
+    check("the panel anchors beside the sidebar's edge (#150)", besideSidebar ~= nil)
+    check("  and re-lays out when the window changes size", type(plugin.OnResize) == "function")
+    AltStable.AnchorBesideSidebar = nil
     if ok then
         local hdr = T.HeaderBG and T.HeaderBG()
         check("  and has a column header", hdr ~= nil)
@@ -416,6 +423,25 @@ do
             end
         end
         check("at least the header was painted", hdr ~= nil)
+
+        -- Sized through the sheet's request (#150), so a maximized window
+        -- stays maximized; and measured from the sidebar as it is now, so a
+        -- collapsed one asks for less.
+        local asked
+        local realReq = AltStable.RequestWindowSize
+        AltStable.RequestWindowSize = function(w, h) asked = { w, h } end
+        plugin.OnResize()
+        check("the Raids tab sizes the window through the request", asked ~= nil)
+        check("  and says so, so a geometry animation lays it out before measuring",
+              plugin.sizesWindow == true)
+        local fullW = asked and asked[1]
+        AltStable.LAYOUT.SIDEBAR_WIDTH = 56
+        plugin.OnResize()
+        eq("  narrower by what a collapsed sidebar gives back, down to its floor",
+           asked and asked[1], fullW and math.max(fullW - 174, 560))
+        check("  and narrower at all", asked and fullW and asked[1] < fullW)
+        AltStable.LAYOUT.SIDEBAR_WIDTH = 230
+        AltStable.RequestWindowSize = realReq
     end
 end
 

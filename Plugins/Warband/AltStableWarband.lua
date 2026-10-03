@@ -1622,7 +1622,10 @@ local function BuildPanel(mainFrame)
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
 
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
-    panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    -- Beside the sidebar's edge, so it follows when the sidebar collapses (#150).
+    if not (AltStable.AnchorBesideSidebar and AltStable.AnchorBesideSidebar(panel, mainFrame)) then
+        panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    end
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     -- Reaches BOTTOMRIGHT (0, 1), so under glass this panel owns the window's
     -- bottom-right corner and its fill has to be clipped to the window outline.
@@ -1772,15 +1775,21 @@ local function HookRefresh()
     AT_WB._refreshHooked = true
 end
 
+-- The panel's floor, as a window size: on activation, and again whenever the
+-- window changes under the tab - expanding the sidebar narrows the panel by
+-- 174px while the window keeps its width (#157 review).
+function AT_WB.HoldMinSize()
+    if not AltStable.EnsureWindowMinSize then return end
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+    AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + 1 + MIN_PANEL_H)
+end
+
 function AT_WB.Activate(mainFrame)
     BuildPanel(mainFrame)
     HookRefresh()
     AT_WB.isActive = true
-    if AltStable.EnsureWindowMinSize then
-        local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
-        local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
-        AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + 1 + MIN_PANEL_H)
-    end
+    AT_WB.HoldMinSize()
 
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Hide()   end
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Hide() end
@@ -1826,6 +1835,12 @@ local function BootstrapPlugin()
                         .. "Icons\\warband.tga",
         _isPlugin     = true,
         OnActivate    = function(mf) AT_WB.Activate(mf) end,
+        -- The window changed size under us: maximize, restore, the sidebar (#150).
+        OnResize      = function()
+            if not AT_WB.isActive then return end
+            AT_WB.HoldMinSize()
+            AT_WB.Refresh()
+        end,
         OnDeactivate  = function(mf) AT_WB.Deactivate(mf) end,
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,

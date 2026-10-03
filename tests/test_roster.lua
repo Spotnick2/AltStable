@@ -1095,10 +1095,17 @@ do
             { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
     end
 
+    -- Anchored beside the sidebar's edge through the sheet's helper (#150), so
+    -- it follows a collapse. Declining here keeps the fixed-offset fallback.
+    local besideSidebar
+    AltStable.AnchorBesideSidebar = function(region) besideSidebar = region; return false end
     local main = CreateFrame("Frame")
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
+    check("the panel anchors beside the sidebar's edge (#150)", besideSidebar ~= nil)
+    check("  and re-lays out when the window changes size", type(registered.OnResize) == "function")
+    AltStable.AnchorBesideSidebar = nil
 
     AltStableConfig.favouriteCharacters = nil
     AltStableConfig.rosterView = "scene"

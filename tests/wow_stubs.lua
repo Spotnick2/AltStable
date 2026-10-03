@@ -643,6 +643,10 @@ local function makeFrame()
     f.SetWidth  = function(self, w) self._GetWidth = w; return self end
     f.SetHeight = function(self, h) self._GetHeight = h; return self end
     f.SetSize   = function(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
+    -- Clipping is state, as on the client: the chaining default answered
+    -- DoesClipChildren with the frame itself, which reads as "yes" to everything.
+    f.SetClipsChildren = function(self, v) self._clipsChildren = v and true or false; return self end
+    f.DoesClipChildren = function(self) return self._clipsChildren == true end
 
     -- Regions a TEMPLATE would have created (OptionsSliderTemplate gives a
     -- slider .Low/.High/.Text, a scroll frame gets .ScrollBar, and so on). The
@@ -1023,6 +1027,23 @@ do
     end
 end
 GameTooltip.IsShown = function() return WoW.tooltipShown == true end
+-- The OWNER is real state too, as on the client: SetOwner records it, hiding
+-- clears it, and IsOwned compares. The chaining default answered "yes, yours"
+-- to every frame, so a hover that never raised the tooltip, or a leave that
+-- never hid it, passed.
+do
+    local baseSetOwner, hide = GameTooltip.SetOwner, GameTooltip.Hide
+    GameTooltip.SetOwner = function(self, owner, ...)
+        WoW.tooltipOwner = owner
+        if baseSetOwner then return baseSetOwner(self, owner, ...) end
+    end
+    GameTooltip.Hide = function(self, ...)
+        WoW.tooltipOwner = nil
+        return hide(self, ...)
+    end
+    GameTooltip.GetOwner = function() return WoW.tooltipOwner end
+    GameTooltip.IsOwned = function(_, f) return f ~= nil and WoW.tooltipOwner == f end
+end
 -- The border an 11.x client keeps in a NineSlice child. Modelled because the
 -- addon hides it while a tooltip is ours and has to put it back afterwards -
 -- and "did it put it back" is the whole risk of touching a frame every other

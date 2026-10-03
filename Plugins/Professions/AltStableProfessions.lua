@@ -1213,7 +1213,10 @@ local function BuildPanel(mainFrame)
     local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
-    panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    -- Beside the sidebar's edge, so it follows when the sidebar collapses (#150).
+    if not (AltStable.AnchorBesideSidebar and AltStable.AnchorBesideSidebar(panel, mainFrame)) then
+        panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    end
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     local bg = C("BG_MAIN", { 0.05, 0.05, 0.05, 0.95 })
     if not (AltStable.SkinPanelFill and AltStable.SkinPanelFill(panel, mainFrame, bg)) and AltStable.ApplyBGOnly then
@@ -1393,6 +1396,8 @@ local function BootstrapPlugin()
         -- when it keeps its own copy of the character record.
         independentStamp = true,
         OnActivate    = function(mf) AT.Activate(mf) end,
+        -- The window changed size under us: maximize, restore, the sidebar (#150).
+        OnResize      = function() if AT.isActive then AT.Refresh() end end,
         OnDeactivate  = function(mf) AT.Deactivate(mf) end,
         OnSerialize   = function(g) return SerializePlayer(g) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,

@@ -577,10 +577,17 @@ do
     local realSet = AltStable.SetConfigValue
     AltStable.SetConfigValue = function(k, v) writes[#writes + 1] = k; return realSet(k, v) end
 
+    -- Anchored beside the sidebar's edge through the sheet's helper (#150), so
+    -- it follows a collapse. Declining here keeps the fixed-offset fallback.
+    local besideSidebar
+    AltStable.AnchorBesideSidebar = function(region) besideSidebar = region; return false end
     local main = CreateFrame("Frame")
     main.GetWidth = function() return 1200 end
     main.GetHeight = function() return 800 end
     wb.Activate(main)
+    check("the panel anchors beside the sidebar's edge (#150)", besideSidebar ~= nil)
+    check("  and re-lays out when the window changes size", type(plugin.OnResize) == "function")
+    AltStable.AnchorBesideSidebar = nil
     -- Activating rescans our own (stubbed, empty) bags; put Kaleid's back.
     AltStableWarbandDB[ME] = { bags = { [101] = 2, [201] = 1 } }
     wb.Refresh()
@@ -871,6 +878,17 @@ do
         eq("  tall enough for the Configure dialog", asked[2], titleH + 1 + wb.MIN_PANEL_H)
         check("  which is at least the dialog's full height", wb.MIN_PANEL_H >= 420 + 8)
         check("  and the toolbar's width", wb.MIN_PANEL_W >= 640 + 58)
+        -- And again when the window changes under the tab (#157 review):
+        -- expanding the sidebar narrows the panel while the window keeps its
+        -- width, so the floor is asked for from the sidebar as it is NOW.
+        asked = nil
+        local savedSW = AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH
+        AltStable.LAYOUT = AltStable.LAYOUT or {}
+        AltStable.LAYOUT.SIDEBAR_WIDTH = 56
+        plugin.OnResize()
+        eq("a resize asks for the floor again, from the sidebar as it is now",
+           asked and asked[1], 56 + 1 + wb.MIN_PANEL_W)
+        AltStable.LAYOUT.SIDEBAR_WIDTH = savedSW
     end
     AltStable.EnsureWindowMinSize = realMin
 

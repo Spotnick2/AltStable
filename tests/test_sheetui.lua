@@ -2640,5 +2640,478 @@ do
     end
 end
 
+------------------------------------------------------------
+-- Compact sidebar and maximize (#150)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local f = T.frame
+    if not AltStableSheet:IsShown() then AltStable.ShowSheet() end
+    -- The opening fade owns the scale for its length; measure at the real one.
+    AltStable.FinishOpenAnimation()
+    local sidebar = f.sidebar
+    check("the sidebar is reachable from the window", sidebar ~= nil)
+
+    -- A plugin tab that counts its re-layouts.
+    local resized, activated = 0, 0
+    AltStable.RegisterPlugin({
+        id = "test150", label = "Test 150", _isPlugin = true,
+        OnActivate = function() activated = activated + 1 end,
+        OnResize = function() resized = resized + 1 end,
+    })
+    local pbtn, sheetBtn
+    for _, b in ipairs(T.sidebarBtns) do
+        if b.sectionId == "test150" then pbtn = b end
+        if not sheetBtn and b.sectionId ~= "options" and b.sectionId ~= "test150" then sheetBtn = b end
+    end
+    check("the test plugin got a sidebar button", pbtn ~= nil)
+
+    -- Instant first: the animation has its own block at the end.
+    local savedAnim = AltStableConfig.enableOpenAnimation
+    AltStableConfig.enableOpenAnimation = false
+
+    -- Starts full, from the default.
+    AltStableConfig.sidebarCompact = false
+    eq("the sidebar starts full width", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
+    -- Set at build from the saved setting, not only on a click.
+    eq("  with the chevron showing collapse, >>", T.chevronText:GetText(), "\194\187")
+
+    -- What sits beside the sidebar is anchored to its edge, not the window.
+    local probe = CreateFrame("Frame", nil, f)
+    check("a panel can anchor beside the sidebar", AltStable.AnchorBesideSidebar(probe, f))
+    local pt, rel, relPt, x, y = probe:GetPoint(1)
+    check("  to the sidebar's top-right, 1px past it",
+          pt == "TOPLEFT" and rel == sidebar and relPt == "TOPRIGHT" and x == 1 and y == 0,
+          table.concat({ tostring(pt), tostring(relPt), tostring(x), tostring(y) }, " "))
+    local optPt, optRel = T.optionsPanel:GetPoint(1)
+    check("the Options panel follows the sidebar", optRel == sidebar, tostring(optPt))
+    local _, totRel = f.totalsBar:GetPoint(1)
+    check("so does the totals bar", totRel == sidebar)
+    local _, fhRel, _, _, fhY = f.frozenHeader:GetPoint(1)
+    check("and the Name column header, at the same height as before",
+          fhRel == sidebar and fhY == -4, tostring(fhY))
+
+    -- Collapse, from a sheet tab: the labels go, the window narrows by the
+    -- width given back, and the setting is saved.
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    local fullW = f:GetWidth()
+    T.chevron:GetScript("OnClick")(T.chevron)
+    eq("the chevron collapses the sidebar", AltStableConfig.sidebarCompact, true)
+    eq("  to icons only", AltStable.LAYOUT.SIDEBAR_WIDTH, 56)
+    eq("  the frame itself", sidebar:GetWidth(), 55)
+    check("  with every label hidden", (function()
+        for _, b in ipairs(T.sidebarBtns) do if b.lbl:IsShown() then return false end end
+        return true end)())
+    eq("a sheet tab's window narrows by what the sidebar gave back", f:GetWidth(), fullW - 174)
+    -- The grid hangs off the sidebar's edge, so it slides while the sidebar animates.
+    local _, bodyRel = f.bodyScroll:GetPoint(1)
+    check("the grid is anchored to the sidebar's edge", bodyRel == sidebar)
+    local _, hdrRel = f.headerScroll:GetPoint(1)
+    check("  and so are its column headers", hdrRel == sidebar)
+    eq("a compact sidebar's chevron shows expand, <<", T.chevronText:GetText(), "\194\171")
+
+    -- Compact, each label is its button's tooltip.
+    sheetBtn:GetScript("OnEnter")(sheetBtn)
+    check("a compact button's label shows as its tooltip", GameTooltip:IsOwned(sheetBtn))
+    sheetBtn:GetScript("OnLeave")(sheetBtn)
+    check("  and goes with the mouse", not GameTooltip:IsOwned(sheetBtn))
+
+    -- A plugin arriving late joins a compact sidebar compact.
+    AltStable.RegisterPlugin({ id = "test150late", label = "Late", _isPlugin = true,
+                               OnActivate = function() end })
+    local late = T.sidebarBtns[#T.sidebarBtns]
+    check("a late plugin's label is hidden in a compact sidebar", not late.lbl:IsShown())
+
+    -- On a plugin tab the window keeps its size and the plugin re-lays out.
+    pbtn:GetScript("OnClick")(pbtn)
+    local plugW = f:GetWidth()
+    resized = 0
+    AltStable.SetSidebarCompact(false)
+    eq("expanding re-lays out the plugin tab", resized, 1)
+    eq("  in a window that kept its size", f:GetWidth(), plugW)
+    check("  with the labels back", pbtn.lbl:IsShown())
+    AltStable.SetSidebarCompact(false)
+    eq("setting what is already set does nothing", resized, 1)
+    sheetBtn:GetScript("OnEnter")(sheetBtn)
+    check("a full sidebar shows no tooltip - the label is right there",
+          not GameTooltip:IsOwned(sheetBtn))
+    sheetBtn:GetScript("OnLeave")(sheetBtn)
+
+    -- MAXIMIZE. The whole display less the margin, centred.
+    local limW = (UIParent:GetWidth() * UIParent:GetEffectiveScale()) / f:GetEffectiveScale() - T.SCREEN_MARGIN
+    local limH = (UIParent:GetHeight() * UIParent:GetEffectiveScale()) / f:GetEffectiveScale() - T.SCREEN_MARGIN
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+    local beforeW, beforeH = f:GetWidth(), f:GetHeight()
+    local glyphMax, glyphRestore = T.MaxGlyphs()
+    check("the button shows maximize", glyphMax[1]:IsShown() and not glyphRestore[1]:IsShown())
+    T.maxBtn:GetScript("OnClick")(T.maxBtn)
+    check("the button maximizes", AltStable.IsWindowMaximized())
+    eq("  to the display's width", f:GetWidth(), limW)
+    eq("  and height", f:GetHeight(), limH)
+    local mp, mrel, mrp, mx, my = f:GetPoint(1)
+    check("  centred", mp == "CENTER" and mrp == "CENTER" and mx == 0 and my == 0)
+    check("  and the button now shows restore", glyphRestore[1]:IsShown() and not glyphMax[1]:IsShown())
+
+    -- Sticky: switching tabs keeps it maximized, sheet or plugin.
+    pbtn:GetScript("OnClick")(pbtn)
+    eq("a plugin tab stays maximized", f:GetWidth(), limW)
+    T.ResizeFrame(820, 760)                      -- what Options asks for
+    eq("  a fixed request does not un-maximize it", f:GetHeight(), limH)
+    AltStable.RequestWindowSize(600, 400)        -- what Raids asks for
+    eq("  nor does a plugin sizing to its content", f:GetWidth(), limW)
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    eq("a sheet tab stays maximized", f:GetHeight(), limH)
+    -- Collapsing the sidebar while maximized keeps it maximized.
+    AltStable.SetSidebarCompact(true)
+    eq("  through a collapse", f:GetWidth(), limW)
+    AltStable.SetSidebarCompact(false)
+
+    -- Not draggable while maximized: the position Restore goes back to is the
+    -- one it had, and a drag would save the centred one over it.
+    local moved = false
+    local realMove = f.StartMoving
+    f.StartMoving = function() moved = true end
+    local savedPos = AltStableConfig.windowPosition
+    T.titleBar:GetScript("OnDragStart")(T.titleBar)
+    T.titleBar:GetScript("OnDragStop")(T.titleBar)
+    check("a maximized window does not drag", not moved)
+    eq("  nor saves its centred position", AltStableConfig.windowPosition, savedPos)
+    f.StartMoving = realMove
+
+    -- RESTORE: the size the current tab wants, where it was.
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.RequestWindowSize(600, 400)
+    -- A floor asked for while maximized goes on the REQUEST, or Restore would
+    -- restore to full screen.
+    AltStable.EnsureWindowMinSize(700, 450)
+    eq("a floor while maximized leaves it maximized", f:GetWidth(), limW)
+    resized = 0
+    T.maxBtn:GetScript("OnClick")(T.maxBtn)
+    check("the button restores", not AltStable.IsWindowMaximized())
+    eq("  re-laying out the plugin tab", resized, 1)
+    local rp, rrel, rrp, rx, ry = f:GetPoint(1)
+    check("  back where it was", rp == "TOPLEFT" and rx == 50 and ry == -60,
+          tostring(rp) .. " " .. tostring(rx) .. " " .. tostring(ry))
+    check("  at the size last asked for, raised to the floor, not the screen's",
+          f:GetWidth() == 700 and f:GetHeight() == 450, f:GetWidth() .. "x" .. f:GetHeight())
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    eq("a sheet tab is back to its own width", f:GetWidth(), beforeW)
+    eq("  and height", f:GetHeight(), beforeH)
+    AltStable.SetWindowMaximized(false)
+    check("restoring a restored window changes nothing", f:GetPoint(1) == "TOPLEFT")
+
+    -- Scale while maximized re-maximizes in the new units.
+    AltStable.SetWindowMaximized(true)
+    AltStable.SetScale(1.25)
+    local limW2 = (UIParent:GetWidth() * UIParent:GetEffectiveScale()) / f:GetEffectiveScale() - T.SCREEN_MARGIN
+    eq("scaling a maximized window keeps it filling the display", f:GetWidth(), limW2)
+    AltStable.SetScale(1.0)
+    AltStable.SetWindowMaximized(false)
+
+    -- ...and re-lays the tab out in its new size (#157 review): a plugin tab.
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.SetWindowMaximized(true)
+    resized = 0
+    AltStable.SetScale(1.25)
+    eq("a scale change while maximized re-lays out the tab", resized, 1)
+    AltStable.SetScale(1.0)
+    AltStable.SetWindowMaximized(false)
+    resized = 0
+    AltStable.SetScale(1.25)
+    eq("  but not when the window is not maximized", resized, 0)
+    AltStable.SetScale(1.0)
+
+    -- The maximized position is never saved, and a reset while maximized is
+    -- where Restore goes (#157 review).
+    AltStableConfig.rememberWindowPosition = true
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+    AltStable.SetConfigValue("windowPosition", { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 50, y = -60 })
+    AltStable.SetWindowMaximized(true)
+    T.titleBar:GetScript("OnDragStop")(T.titleBar)
+    eq("a maximized window does not save its centred position", AltStableConfig.windowPosition.x, 50)
+    AltStable.ResetWindowPosition()
+    eq("  a reset while maximized clears the saved one", AltStableConfig.windowPosition, nil)
+    eq("  and leaves the window maximized and centred", (f:GetPoint(1)), "CENTER")
+    AltStable.SetWindowMaximized(false)
+    eq("  so Restore goes to the reset position, centred", (f:GetPoint(1)), "CENTER")
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+
+    -- Measured at the scale the window settles at, not the open fade's 96%:
+    -- reopening a maximized window used to come out 4% larger than the screen.
+    AltStable.SetWindowMaximized(true)
+    local settledW = f:GetWidth()
+    AltStableConfig.enableOpenAnimation = true
+    AltStable._PlayOpenAnimation(f)
+    AltStable.RefitWindow()
+    eq("a maximized window refitted during the open fade keeps the settled size", f:GetWidth(), settledW)
+    AltStable.FinishOpenAnimation()
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetWindowMaximized(false)
+
+    -- A plugin that sizes the window in its re-layout: that size is the one
+    -- the window ends at, animated or not, and laid out before the trip.
+    local sizer = { asked = nil }
+    local sizerPlugin = {
+        id = "test150sizer", label = "Sizer", _isPlugin = true, sizesWindow = true,
+        OnActivate = function() end,
+        OnResize = function()
+            sizer.calls = (sizer.calls or 0) + 1
+            AltStable.RequestWindowSize(sizer.w, 500)
+        end,
+    }
+    AltStable.RegisterPlugin(sizerPlugin)
+    local sizerBtn = T.sidebarBtns[#T.sidebarBtns]
+    sizerBtn:GetScript("OnClick")(sizerBtn)
+    sizer.w = 640
+    AltStable.SetSidebarCompact(true)
+    sizer.calls = 0
+    AltStableConfig.enableOpenAnimation = true
+    AltStable.SetSidebarCompact(false)          -- its space shrinks: the plugin asks for more
+    local r = T.WindowAnimRunner()
+    eq("a self-sizing plugin is laid out before the trip", sizer.calls, 1)
+    sizer.w = 820
+    AltStable.SetSidebarCompact(true)           -- grows: laid out first all the same
+    eq("  whichever way it goes", sizer.calls, 2)
+    local fn = r:GetScript("OnUpdate"); if fn then fn(r, 0.3) end
+    eq("  and the window ends at the size it asked for", f:GetWidth(), 820)
+    -- A plugin that only HOLDS a floor (Warband) is laid out before a trip
+    -- that shrinks its space, and the window ends at what that asked for.
+    sizerPlugin.sizesWindow = nil
+    sizer.w = 900
+    AltStable.SetSidebarCompact(false)          -- shrinks its space: laid out first
+    fn = r:GetScript("OnUpdate"); if fn then fn(r, 0.3) end
+    eq("a floor asked for before a shrinking trip is where it ends", f:GetWidth(), 900)
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetSidebarCompact(false)
+
+    -- THE GRID FILLS A WIDER WINDOW: spare width is shared out across the
+    -- columns, in proportion to their own widths. The stub's viewport does not
+    -- follow anchors, so it is set to the width the window would give it.
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    local cols, hdrs, hdrDivs, rows = T.ColumnLayout()
+    local own, ownSum = {}, 0
+    for i, c in ipairs(cols) do own[i] = c.width; ownSum = ownSum + c.width end
+    local natural = 10 + ownSum + 6 * #cols
+    local body = f.bodyScroll
+    local realBodyW = body.GetWidth
+    body.GetWidth = function() return natural + 300 end
+    AltStable.RefreshSheet()
+    local widths = T.ColumnWidths()
+    local spread = 0
+    for i = 1, #cols do spread = spread + widths[i] - own[i] end
+    eq("a wider window's spare width all goes to the columns", spread, 300)
+    check("  shared in proportion: the widest column gains the most", (function()
+        local wi, ni = 1, 1
+        for i = 1, #cols do
+            if own[i] > own[wi] then wi = i end
+            if own[i] < own[ni] then ni = i end
+        end
+        return widths[wi] - own[wi] > widths[ni] - own[ni]
+    end)())
+    check("  never narrower than its own", (function()
+        for i = 1, #cols do if widths[i] < own[i] then return false end end
+        return true end)())
+    -- The headers and the cells are where those widths put them.
+    local x2 = 10 + widths[1] + 6
+    local _, _, _, hx = hdrs[2]:GetPoint(1)
+    eq("the second header starts after the first's spread width", hx, x2)
+    eq("  and is as wide as its column now is", hdrs[2]:GetWidth(), widths[2])
+    local _, _, _, dx = hdrDivs[1]:GetPoint(1)
+    eq("  with the divider in the gap", dx, 10 + widths[1] + 3)
+    check("there are rows to measure", rows[1] ~= nil)
+    local _, _, _, cx = rows[1].cells[2]:GetPoint(1)
+    eq("a row's second cell lines up with its header", cx, x2)
+    eq("  as wide", rows[1].cells[2]:GetWidth(), widths[2])
+    local _, _, _, rdx = rows[1].dividers[1]:GetPoint(1)
+    eq("  and its divider with the header's", rdx, 10 + widths[1] + 3)
+    local _, _, _, _, bodyC, hdrC = T.ColumnLayout()
+    eq("the rows' surface spans the spread columns", bodyC:GetWidth(), natural + 300)
+    eq("  as does the header's", hdrC:GetWidth(), natural + 300)
+    -- A row already at these widths is left alone: a refresh with nothing
+    -- changed re-places nothing.
+    local placed = 0
+    local cell = rows[1].cells[2]
+    local realClear = cell.ClearAllPoints
+    cell.ClearAllPoints = function(self) placed = placed + 1; return realClear(self) end
+    AltStable.RefreshSheet()
+    eq("an unchanged layout re-places no cell", placed, 0)
+    cell.ClearAllPoints = realClear
+    -- Whole pixels, the rounding shared a pixel at a time (#157 review).
+    body.GetWidth = function() return natural + 300.5 end
+    AltStable.RefreshSheet()
+    widths = T.ColumnWidths()
+    local total, whole, fair = 0, true, true
+    for i = 1, #cols do
+        local add = widths[i] - own[i]
+        total = total + add
+        if add ~= math.floor(add) then whole = false end
+        local share = math.floor(300 * own[i] / ownSum)
+        if add < share or add > share + 1 then fair = false end
+    end
+    eq("a fractional viewport spreads whole pixels only", total, 300)
+    local _, _, _, _, bodyF = T.ColumnLayout()
+    eq("  and the grid's width is whole too", bodyF:GetWidth(), natural + 300)
+    -- A new row places its own cells, at the columns' own widths.
+    local fresh = AltStable.CreateRow(CreateFrame("Frame"), 22, cols)
+    local _, _, _, fx = fresh.cells[2]:GetPoint(1)
+    eq("a new row places its own cells", fx, 10 + own[1] + 6)
+    check("  each column a whole number", whole)
+    check("  and no column more than a pixel over its share", fair)
+    -- When the window fits the columns again, they go back to their own.
+    body.GetWidth = function() return natural + 2 end
+    AltStable.RefreshSheet()
+    widths = T.ColumnWidths()
+    check("a window that fits its columns lays them at their own widths", (function()
+        for i = 1, #cols do if widths[i] ~= own[i] then return false end end
+        return true end)())
+    local _, _, _, cx2 = rows[1].cells[2]:GetPoint(1)
+    eq("  cells too", cx2, 10 + own[1] + 6)
+    -- And a grid that scrolls is never stretched.
+    body.GetWidth = function() return natural - 100 end
+    AltStable.RefreshSheet()
+    eq("a scrolling grid keeps its own widths", T.ColumnWidths()[1], own[1])
+    body.GetWidth = realBodyW
+    AltStable.RefreshSheet()
+
+    -- ANIMATED: the change lands at once (state, setting, layout), the
+    -- window travels there, and settles exactly on the end state.
+    AltStableConfig.enableOpenAnimation = true
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+    local startW = f:GetWidth()
+    AltStable.SetSidebarCompact(true)
+    local runner = T.WindowAnimRunner()
+    local tick = function(dt) local fn = runner:GetScript("OnUpdate"); if fn then fn(runner, dt) end end
+    check("collapsing animates", runner and runner:GetScript("OnUpdate") ~= nil)
+    eq("  the setting is saved at once", AltStableConfig.sidebarCompact, true)
+    eq("  and the sidebar starts from where it was", sidebar:GetWidth(), 229)
+    eq("  as does the window", f:GetWidth(), startW)
+    check("  without clipping its children", not f:DoesClipChildren())
+    tick(0.1)
+    check("half way, the sidebar is between", sidebar:GetWidth() < 229 and sidebar:GetWidth() > 55,
+          tostring(sidebar:GetWidth()))
+    check("  and so is the window", f:GetWidth() < startW and f:GetWidth() > startW - 174,
+          tostring(f:GetWidth()))
+    check("  the labels fading", sheetBtn.lbl:IsShown() and sheetBtn.lbl:GetAlpha() < 1,
+          tostring(sheetBtn.lbl:GetAlpha()))
+    tick(0.2)
+    check("then it stops", runner:GetScript("OnUpdate") == nil)
+    eq("  on the compact sidebar", sidebar:GetWidth(), 55)
+    eq("  in the narrowed window", f:GetWidth(), startW - 174)
+    check("  with the labels gone, at full alpha for next time",
+          not sheetBtn.lbl:IsShown() and sheetBtn.lbl:GetAlpha() == 1)
+    local ep, _, _, ex, ey = f:GetPoint(1)
+    check("  anchored where it really is, not at the travelling anchor",
+          ep == "TOPLEFT" and ex == 50 and ey == -60, tostring(ep))
+    check("  and never clips its children: the client clips against a stale rect mid-resize", not f:DoesClipChildren())
+
+    -- Clicked again half way: it goes back from where it is.
+    AltStable.SetSidebarCompact(false)
+    tick(0.05)
+    AltStable.SetSidebarCompact(true)
+    check("a reversal travels from mid-way", sidebar:GetWidth() > 55 and sidebar:GetWidth() < 229,
+          tostring(sidebar:GetWidth()))
+    tick(0.3)
+    eq("  and lands on the latest choice", sidebar:GetWidth(), 55)
+    eq("  in the window that choice wants", f:GetWidth(), startW - 174)
+
+    -- Maximize travels too, and lands maximized, centred.
+    AltStable.SetWindowMaximized(true)
+    check("maximizing animates", runner:GetScript("OnUpdate") ~= nil)
+    check("  from the window's size", f:GetWidth() == startW - 174)
+    tick(0.3)
+    eq("  to the display's", f:GetWidth(), limW)
+    local cp = f:GetPoint(1)
+    eq("  centred", cp, "CENTER")
+    AltStable.SetWindowMaximized(false)
+    tick(0.3)
+    local bp, _, _, bx = f:GetPoint(1)
+    check("and restoring lands back where it was", bp == "TOPLEFT" and bx == 50)
+
+    -- A PLUGIN tab is laid out once, at the moment its layout fits inside
+    -- the travelling window: at the end when its space grows, at the start
+    -- when it shrinks. Nothing clips it in between.
+    pbtn:GetScript("OnClick")(pbtn)
+    resized = 0
+    AltStable.SetWindowMaximized(true)
+    eq("growing: the plugin keeps its old layout on the way", resized, 0)
+    tick(0.1)
+    eq("  still", resized, 0)
+    tick(0.2)
+    eq("  and lays out once it has arrived", resized, 1)
+    resized = 0
+    AltStable.SetWindowMaximized(false)
+    eq("shrinking: the plugin lays out before the trip", resized, 1)
+    tick(0.3)
+    eq("  and not again at the end", resized, 1)
+    -- Interrupted while growing: the deferred layout still happens, once.
+    resized = 0
+    AltStable.SetWindowMaximized(true)
+    tick(0.05)
+    AltStable.SetWindowMaximized(false)
+    tick(0.3)
+    eq("an interrupted grow still lays out, and the shrink once more", resized, 2)
+    check("the window never clipped through any of it", not f:DoesClipChildren())
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+
+    -- THE REPORTED CASE: restore, then switch tab inside the trip. The tab's
+    -- own size must win - the trip used to settle on the size and anchors it
+    -- measured before the switch, over the top of it.
+    local sheetW = f:GetWidth()
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.RequestWindowSize(640, 480)        -- a plugin's own size
+    AltStable.SetWindowMaximized(true)
+    tick(0.3)
+    AltStable.SetWindowMaximized(false)
+    tick(0.05)                                   -- mid-way back
+    sheetBtn:GetScript("OnClick")(sheetBtn)      -- switch, mid-trip
+    check("switching tab ends the trip at once", runner:GetScript("OnUpdate") == nil)
+    tick(0.3)
+    eq("  and the new tab's size stands", f:GetWidth(), sheetW)
+    local sp, _, _, sx = f:GetPoint(1)
+    check("  where the window really is", sp == "TOPLEFT" and sx == 50, tostring(sp))
+    -- And a tab sizing itself mid-trip ends it the same way.
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.SetSidebarCompact(false)
+    tick(0.05)
+    AltStable.RequestWindowSize(700, 500)
+    check("a tab sizing itself ends the trip", runner:GetScript("OnUpdate") == nil)
+    tick(0.3)
+    eq("  and its size stands", f:GetWidth(), 700)
+    -- Switching TO a plugin tab mid-trip ends it too.
+    AltStable.SetSidebarCompact(true)
+    tick(0.05)
+    pbtn:GetScript("OnClick")(pbtn)
+    check("switching to a plugin tab ends the trip", runner:GetScript("OnUpdate") == nil)
+    -- And data arriving mid-trip on a sheet tab: its re-sizing ends it.
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    AltStable.SetSidebarCompact(false)
+    tick(0.05)
+    AltStable.RefreshSheet()
+    check("a refresh mid-trip ends it", runner:GetScript("OnUpdate") == nil)
+    AltStable.SetSidebarCompact(true)
+    tick(0.3)
+    -- Starts where it was, not already at the end.
+    local beforeTrip = f:GetWidth()
+    AltStable.SetWindowMaximized(true)
+    eq("a trip starts from the window as it was", f:GetWidth(), beforeTrip)
+    tick(0.3)
+    AltStable.SetWindowMaximized(false)
+    tick(0.3)
+
+    -- Turned off mid-way: the next change settles the running one and is instant.
+    AltStable.SetSidebarCompact(false)
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetSidebarCompact(true)
+    eq("with animation off, a change is instant", sidebar:GetWidth(), 55)
+    check("  and nothing is left running", runner:GetScript("OnUpdate") == nil)
+
+    AltStableConfig.enableOpenAnimation = savedAnim
+    AltStable.SetSidebarCompact(false)
+    AltStableConfig.sidebarCompact = false
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

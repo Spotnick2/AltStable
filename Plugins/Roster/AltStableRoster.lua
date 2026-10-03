@@ -881,7 +881,10 @@ local function BuildPanel(mainFrame)
     -- Hiding is unconfirmed now, so "the way back is visible" is load-bearing
     -- rather than a nicety.
     local footerH = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
-    panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    -- Beside the sidebar's edge, so it follows when the sidebar collapses (#150).
+    if not (AltStable.AnchorBesideSidebar and AltStable.AnchorBesideSidebar(panel, mainFrame)) then
+        panel:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", sidebarW + 1, -titleH)
+    end
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, footerH + 2)
     panel:Hide()
 
@@ -2829,6 +2832,8 @@ function Roster._Bootstrap()
                        .. "Icons\\roster.tga",
         _isPlugin    = true,
         OnActivate   = function(mainFrame) Roster.Activate(mainFrame) end,
+        -- The window changed size under us: maximize, restore, the sidebar (#150).
+        OnResize     = function() if Roster.isActive then Roster.Refresh() end end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
