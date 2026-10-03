@@ -128,6 +128,15 @@ local function BuildFieldLookup()
     return t
 end
 
+-- field -> column definition. Built once: AltStable.Columns is complete when
+-- this file loads (Columns.lua appends the factions at load, earlier in the
+-- .toc) and nothing changes it afterwards.
+local columnByField
+local function ColumnFor(field)
+    columnByField = columnByField or BuildFieldLookup()
+    return columnByField[field]
+end
+
 ------------------------------------------------------------
 -- State
 ------------------------------------------------------------
@@ -1258,7 +1267,6 @@ end
 
 local function BuildScrollableColsForSection(section)
     wipe(scrollableCols)
-    local lookup = BuildFieldLookup()
     local fields = section.fields
     if section.repFields then
         fields = {}
@@ -1266,9 +1274,8 @@ local function BuildScrollableColsForSection(section)
         for _, f in ipairs(AltStable.RepFieldsInUse(GetCharacterStore())) do fields[#fields+1] = f end
     end
     for _, field in ipairs(fields) do
-        if lookup[field] then
-            scrollableCols[#scrollableCols+1] = lookup[field]
-        end
+        local col = ColumnFor(field)
+        if col then scrollableCols[#scrollableCols+1] = col end
     end
 end
 
@@ -1343,11 +1350,6 @@ AltStable._test.CollectAccounts = CollectAccounts
 
 local DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC = "level", false
 
-local columnByField
-local function ColumnFor(field)
-    columnByField = columnByField or BuildFieldLookup()
-    return columnByField[field]
-end
 
 -- What a character is sorted by, for a column - or nil, which always sorts
 -- LAST, in both directions: unreadable gold, an unmet faction, no guild. A
@@ -1356,20 +1358,10 @@ end
 -- 2 < 10 as numbers, "10" < "11" < "2" as text - and table.sort then misorders
 -- or raises "invalid order function".
 local function SortValue(char, col)
+    -- The column's own sortValue when it has one (level, rested XP, class and
+    -- race: see Columns.lua), else the stored field.
     local v
-    if col.field == "level" then
-        -- Fractional, so 61.78 sorts above 61.50: what the tooltip shows.
-        local lvl = tonumber(char.level)
-        if not lvl then return nil end
-        return lvl + (tonumber(char.xpPercent) or 0) / 100
-    elseif col.field == "restPercent" then
-        -- What the cell SHOWS: the live estimate, not the stored snapshot. At
-        -- the level cap the cell is a dash - not a value, so last.
-        if (tonumber(char.level) or 0) >= AltStable.API.LevelCap() then return nil end
-        v = (AltStable.ComputeLiveRestedPercent(char))
-    else
-        v = char[col.field]
-    end
+    if col.sortValue then v = col.sortValue(char) else v = char[col.field] end
     if col.sortText then
         if type(v) == "number" then v = tostring(v) end
         if type(v) ~= "string" or v == "" then return nil end
@@ -1451,6 +1443,13 @@ local function SaveSort(section)
         for k, v in pairs(AltStableConfig.sheetSort) do copy[k] = v end
     end
     copy[section.id] = { field = sortColumn, asc = sortAsc }
+    AltStable.SetConfigValue("sheetSort", copy)
+end
+
+-- Every tab's sort this session, saved: for "Remember" being switched on.
+local function SaveSessionSorts()
+    local copy = {}
+    for id, s in pairs(sectionSorts) do copy[id] = { field = s.field, asc = s.asc } end
     AltStable.SetConfigValue("sheetSort", copy)
 end
 
@@ -1998,16 +1997,18 @@ local function HeaderIcon(col)
         or col.profIcon or col.slotIcon or col.repIcon, false
 end
 
+-- The kind, and for an icon header its icon (resolved once, here).
 local function HeaderKind(col)
     if col.vertical and not col.repIcon then return "stacked" end
-    if HeaderIcon(col) then return "icon" end
+    local icon, isGlyph = HeaderIcon(col)
+    if icon then return "icon", icon, isGlyph end
     return "text"
 end
 
 -- What an order is called, for a column: "highest first", "A to Z".
 local function OrderWords(col, asc)
     if col.sortText then return asc and "A to Z" or "Z to A" end
-    if col.field == "lastUpdate" then return asc and "oldest first" or "most recent first" end
+    if col.orderWords then return col.orderWords[asc and 1 or 2] end
     return asc and "lowest first" or "highest first"
 end
 
@@ -2128,7 +2129,7 @@ end
 -- Give a (new or reused) header button its column. Sets EVERYTHING a kind
 -- uses, and hides what it does not.
 local function ConfigureHeader(btn, col)
-    local kind = HeaderKind(col)
+    local kind, icon, isGlyph = HeaderKind(col)
     btn.col, btn.field, btn.kind = col, col.field, kind
     btn.sortable = col.sortable ~= false
     btn:SetSize(col.width, currentHeaderHeight)
@@ -2140,7 +2141,6 @@ local function ConfigureHeader(btn, col)
     tex:ClearAllPoints()
 
     if kind == "icon" then
-        local icon, isGlyph = HeaderIcon(col)
         local sz = math.min(currentHeaderHeight - 4, col.width - 2, col.headerIconSize or math.huge)
         tex:SetSize(sz, sz); tex:SetPoint("CENTER", btn, "CENTER", 0, 0)
         tex:SetTexture(icon)
@@ -4112,7 +4112,13 @@ local function CreateFrameIfNeeded()
         "Remember each tab's sort order", Y,
         function(checked)
             AltStable.SetConfigValue("rememberSortOrder", checked)
-            if not checked then AltStable.SetConfigValue("sheetSort", nil) end
+            if checked then
+                -- The sorts the tabs hold right now are saved at once, like the
+                -- window position above: not only from the next click on.
+                SaveSessionSorts()
+            else
+                AltStable.SetConfigValue("sheetSort", nil)
+            end
         end)
     AltStable._test.OptRememberSort = optRememberSortCheck
     Y = Y - 30

@@ -115,6 +115,21 @@ local RACE_DISPLAY = {
     Scourge="Undead", BloodElf="Blood Elf", Goblin="Goblin",
 }
 
+-- The class and race a character's cell tooltip names, and the Class and Race
+-- columns sort by (#160): the stored tokens sort wrong - Undead is "Scourge".
+function AltStable.ClassDisplayName(char)
+    return CLASS_DISPLAY[char.class] or char.class
+end
+
+-- Stored localized name first: Skyborne renders as either "High Order
+-- Skyborne" or "Windshaper Skyborne" depending on faction, and both share the
+-- key "Skyborne".
+function AltStable.RaceDisplayName(char)
+    return (char.raceName ~= "" and char.raceName)
+        or (char.race and RACE_DISPLAY[char.race])
+        or char.race
+end
+
 
 ------------------------------------------------------------
 -- Race display — atlas-based icons (raceicon-name-gender)
@@ -820,7 +835,7 @@ function AltStable.RenderRow(row, char, index, columns)
         if col.type=="classIcon" then
             value = ClassIconText(char.class)
             if tip then
-                tip.line1 = CLASS_DISPLAY[char.class] or char.class
+                tip.line1 = AltStable.ClassDisplayName(char)
                 tip.line2 = char.gender
                 tip.line3 = nil
             end
@@ -828,12 +843,7 @@ function AltStable.RenderRow(row, char, index, columns)
         elseif col.type=="raceIcon" then
             value = RaceIconText(char.race, char.gender)
             if tip then
-                -- Stored localized name first: Skyborne renders as either
-                -- "High Order Skyborne" or "Windshaper Skyborne" depending on
-                -- faction, and both share the key "Skyborne".
-                tip.line1 = (char.raceName ~= "" and char.raceName)
-                    or (char.race and RACE_DISPLAY[char.race])
-                    or char.race
+                tip.line1 = AltStable.RaceDisplayName(char)
                 tip.line2 = char.gender
                 tip.line3 = nil
             end

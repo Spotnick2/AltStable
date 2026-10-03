@@ -3442,6 +3442,12 @@ do
     lvl:GetScript("OnEnter")(lvl)
     check("an unsorted number column offers highest first",
           Tip():find("Click to sort highest first", 1, true) ~= nil, Tip())
+    local last = ButtonFor(sumCols, sum, "lastUpdate")
+    last:GetScript("OnEnter")(last)
+    check("Last Online speaks in time, not size",
+          Tip():find("Click to sort most recent first", 1, true) ~= nil, Tip())
+    last:GetScript("OnLeave")(last)
+    lvl:GetScript("OnEnter")(lvl)
 
     -- Hover is a neutral fill, apart from the sorted look.
     check("hovering a sortable header shows the hover fill", lvl.hoverFill:IsShown())
@@ -3536,6 +3542,11 @@ do
     -- A number stored as text is still a number: as text, "10" < "9".
     eq("numbers compare as numbers whatever they are stored as",
        Sorted({ { id = "x", money = "10" }, { id = "y", money = 9 } }, "money", false), "x,y")
+    -- By the name the tooltip shows: Undead is stored as "Scourge", which as
+    -- a token sorts between Orc and Tauren.
+    eq("race sorts by its shown name, A to Z",
+       Sorted({ { id = "u", race = "Scourge" }, { id = "o", race = "Orc" }, { id = "t", race = "Tauren" } },
+              "race", true), "o,t,u")
     eq("level counts the progress into it",
        Sorted({ { id = "x", level = 5, xpPercent = 10 }, { id = "y", level = 5, xpPercent = 60 } }, "level", false),
        "y,x")
@@ -3653,8 +3664,12 @@ do
     Open("gear"); Open("summary")
     f = T.SortState()
     eq("  and a saved one is ignored at login", f, "level")
+    Click("name")                       -- a sort made this session, while off
     cb:SetChecked(true); cb:GetScript("OnClick")(cb)
     check("turning it back on is saved as on", AltStableConfig.rememberSortOrder == true)
+    local back = AltStableConfig.sheetSort and AltStableConfig.sheetSort.summary
+    check("  and saves the tabs' current sorts at once, not from the next click",
+          back and back.field == "name" and back.asc == true)
 
     -- A faction column that goes away while it is the sort: back to level.
     Open("rep")

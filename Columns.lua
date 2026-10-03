@@ -33,14 +33,37 @@ end
 --                   click. Every other column is a number, highest first.
 --   sortable=false  the header does not sort. The gear slots: an item level per
 --                   slot is not an order anyone reads the list in.
+--   sortValue(char) what the column sorts by, when it is not the stored field:
+--                   what the cell SHOWS. nil sorts last, in both directions.
+--   orderWords      { ascending, descending } for the header tooltip, when
+--                   "lowest first" / "highest first" would read wrong.
+
+-- Fractional, so 61.78 sorts above 61.50: what the level tooltip shows.
+local function LevelSortValue(char)
+    local lvl = tonumber(char.level)
+    if not lvl then return nil end
+    return lvl + (tonumber(char.xpPercent) or 0) / 100
+end
+
+-- The live estimate the cell shows, not the stored snapshot. At the level cap
+-- the cell is a dash - not a value, so nil.
+local function RestedSortValue(char)
+    if (tonumber(char.level) or 0) >= AltStable.API.LevelCap() then return nil end
+    return (AltStable.ComputeLiveRestedPercent(char))
+end
+
 AltStable.Columns = {
     -- Frozen (col 1 = Name)
     { label="Name",  field="name",  width=140, align="LEFT", type="name", group="always", sortText=true },
 
-    -- Always-visible identity
-    { label="Class", field="class", width=22, align="CENTER", type="classIcon", group="always", sortText=true },
-    { label="Race",  field="race",  width=22, align="CENTER", type="raceIcon",  group="always", sortText=true },
-    { label="Lvl",   field="level", width=35, align="RIGHT",  type="number",    group="always" },
+    -- Always-visible identity. Sorted by the names their tooltips show: the
+    -- stored tokens sort wrong ("Scourge" is Undead).
+    { label="Class", field="class", width=22, align="CENTER", type="classIcon", group="always", sortText=true,
+      sortValue=function(c) return AltStable.ClassDisplayName(c) end },
+    { label="Race",  field="race",  width=22, align="CENTER", type="raceIcon",  group="always", sortText=true,
+      sortValue=function(c) return AltStable.RaceDisplayName(c) end },
+    { label="Lvl",   field="level", width=35, align="RIGHT",  type="number",    group="always",
+      sortValue=LevelSortValue },
     { label="iLvl",  field="ilvl",  width=45, align="RIGHT",  type="number",    group="always" },
 
     -- Gear slots — slotSlug drives icon resolution via AltStable.GetGearIconPath()
@@ -66,9 +89,11 @@ AltStable.Columns = {
 
     -- Info (always visible — shown in name tooltip but kept as columns too)
     { label="Guild",       field="guild",       width=110, align="LEFT",  type="text",       group="always", sortText=true },
-    { label="Rested XP",   field="restPercent", width=70,  align="RIGHT", type="restXP",     group="always" },
+    { label="Rested XP",   field="restPercent", width=70,  align="RIGHT", type="restXP",     group="always",
+      sortValue=RestedSortValue },
     { label="Gold",        field="money",       width=150, align="RIGHT", type="money",      group="always" },
-    { label="Last Online", field="lastUpdate",  width=85,  align="RIGHT", type="lastOnline", group="always" },
+    { label="Last Online", field="lastUpdate",  width=85,  align="RIGHT", type="lastOnline", group="always",
+      orderWords={ "oldest first", "most recent first" } },
 
     -- Professions
     prof("Alchemy",       "prof_Alchemy",        "profmax_Alchemy",        "Interface\\Icons\\Trade_Alchemy"),

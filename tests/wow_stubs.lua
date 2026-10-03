@@ -384,16 +384,7 @@ local function makeFrame()
     -- docs/forever-api-notes.md. Modelled the optimistic way so the behaviour
     -- is expressible, and driven by WoW.textures, which is the one table that
     -- already decides whether a path exists (GetFileIDFromPath reads it too).
-    -- An ATLAS is real state too (the race icons are atlases): SetAtlas records
-    -- the name and replaces any file, and a file replaces the atlas, as on the
-    -- client. Returns true, the client's "it resolved".
-    f.SetAtlas = function(self, name)
-        self._atlas, self._texture = name, nil
-        return true
-    end
-    f.GetAtlas = function(self) return self._atlas end
     f.SetTexture = function(self, v)
-        self._atlas = nil
         if type(v) == "number" then
             self._texture, self._fileID = v, v     -- echoed, whatever it is
         elseif type(v) == "string" then
