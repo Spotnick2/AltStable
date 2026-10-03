@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **The Warband tab is a warband bank** ([#153](https://github.com/Spotnick2/AltStable/issues/153)),
+  laid out like retail's, read-only:
+  - **Your own tabs** sort items by category (Equipment, Consumables, Trade Goods, Reagents,
+    Recipes, Miscellaneous). Add one with **+**; right-click a tab, or the gear by its title, to
+    rename it, pick its icon and choose what it shows. An item in no tab appears under **Other**.
+  - **Single** shows one tab, **Combined** three side by side.
+  - **Personal Bank** shows the character you're on; **Warband** shows every character, filtered
+    by **ruleset** (your current one by default, or All, Normal, PvP, RP, Hardcore). Hidden
+    characters are left out, as from the sheet's totals.
+  - Tabs are settings on this account; nothing about them is synced, and no item moves.
+
 ## v0.5.0-beta
 
 Hunter pets and warlock demons in the Roster's campfire scene. Measured on client 1.60.1.70170.
