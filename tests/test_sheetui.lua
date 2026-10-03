@@ -3642,6 +3642,16 @@ do
     Open("gear"); Open("summary")
     f, asc = T.SortState()
     check("after a login the saved sort comes back", f == "money" and asc == false)
+    -- Restored, then Remember switched off before any click: the tab keeps it
+    -- for the session (Codex review of #162). Back on, so the tests below
+    -- start from the default.
+    local cbr = T.OptRememberSort
+    cbr:SetChecked(false); cbr:GetScript("OnClick")(cbr)
+    Open("gear"); Open("summary")
+    f, asc = T.SortState()
+    check("a restored sort survives Remember being switched off", f == "money" and asc == false)
+    cbr:SetChecked(true); cbr:GetScript("OnClick")(cbr)
+    AltStableConfig.sheetSort = { summary = { field = "money", asc = false } }
     -- A saved sort naming a column the tab does not have falls back.
     AltStableConfig.sheetSort = { summary = { field = "gear_head", asc = true } }
     T.ForgetSessionSorts()

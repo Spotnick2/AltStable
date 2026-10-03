@@ -1474,7 +1474,14 @@ end
 -- The tab's sort on arrival: this session's, else the saved one, else level,
 -- highest first - whichever still names a column it has.
 local function LoadSortFor(section)
-    local s = sectionSorts[section.id] or StoredSort(section.id)
+    local s = sectionSorts[section.id]
+    if not s then
+        s = StoredSort(section.id)
+        -- A sort restored at login is this tab's for the session from here on,
+        -- as one made by a click is: turning "Remember" off clears the saved
+        -- ones, and the tab must keep it all the same (#162 review).
+        if s then sectionSorts[section.id] = { field = s.field, asc = s.asc } end
+    end
     if s then sortColumn, sortAsc = s.field, s.asc
     else sortColumn, sortAsc = DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC end
     ResetSortIfInvalid()
