@@ -467,7 +467,7 @@ overwrite it on the next deploy anyway. Delete the whole folder to start over.
 |---|---|
 | `/alts portrait` | Capture now (the title-bar button does the same) |
 | `/alts portrait preview` | Show the stage without shooting, to judge the framing; click to close |
-| `/alts portrait facing <deg>` | Turn the character; 0 faces you straight on (default 20) |
+| `/alts portrait facing <deg>` | Turn the character, -45 to 45; 0 faces you straight on (the default since v0.7; also Options > Presentation > Portrait angle) |
 | `/alts portrait cancel` | Stop a capture in flight |
 | `/alts portrait glow on\|off` | Whether the capture button glows when a new portrait is due (#128; on by default) |
 

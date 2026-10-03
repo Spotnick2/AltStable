@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Portrait angle is a setting** ([#149](https://github.com/Spotnick2/AltStable/issues/149)):
+  Options > Presentation > **Portrait angle**, -45 to 45 degrees (the same value
+  `/alts portrait facing` sets). Captures now face **straight on** by default (it was 20 degrees);
+  if you captured with the old default and want new captures to match, set 20 there.
+
+
 ## v0.6.0-beta
 
 The Warband tab becomes a warband bank, laid out like retail's. Measured on client 1.60.1.70170.

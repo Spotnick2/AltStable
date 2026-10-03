@@ -946,5 +946,57 @@ eq("/alts portrait glow off turns it off", AltStableConfig.portraitGlow, false)
 AltStable.PortraitCommand("glow on")
 eq("  and on", AltStableConfig.portraitGlow, true)
 
+-- The angle as a setting (#149): one setter behind the slider and the command,
+-- straight on by default, and never written into a newer AltStable's store.
+do
+    AltStablePortraits = nil
+    eq("captures face straight on by default", AltStable.GetPortraitFacing(), 0)
+    check("the setting is accepted", AltStable.SetPortraitFacing(-15))
+    eq("  and is what the capture uses", AltStable.GetPortraitFacing(), -15)
+    eq("  stored in the contract's field", AltStablePortraits.facing, -15)
+    -- What the stage actually turns the model by - in radians.
+    T.Build()
+    local turned
+    local m = T.model()
+    local realFacing = m.SetFacing
+    m.SetFacing = function(_, r) turned = r end
+    T.Preview()
+    check("  which the stage turns the model by, in radians",
+          turned ~= nil and math.abs(turned - math.rad(-15)) < 1e-9, tostring(turned))
+    m.SetFacing = realFacing
+    if T.previewing() then T.Preview() end          -- toggles it closed
+    check("nonsense is refused", not AltStable.SetPortraitFacing("left"))
+    eq("  and changes nothing", AltStablePortraits.facing, -15)
+    AltStablePortraits = { version = 99, renders = {} }
+    check("a newer store is not written by the setting", not AltStable.SetPortraitFacing(10))
+    eq("  its facing untouched", AltStablePortraits.facing, nil)
+    T.MigrateFacing()
+    eq("  not even by the migration", AltStablePortraits.facing, nil)
+
+    -- The range is the setter's, so the command and the slider agree.
+    AltStablePortraits = nil
+    AltStable.SetPortraitFacing(90)
+    eq("the angle is held to 45", AltStable.GetPortraitFacing(), 45)
+    AltStable.SetPortraitFacing(-90)
+    eq("  either way", AltStable.GetPortraitFacing(), -45)
+
+    -- A store from before #149: captures, no angle - they were shot at 20, and
+    -- it says so once, so the next capture matches them.
+    AltStablePortraits = { version = 1, renders = { { guid = "g", shot = 1 } } }
+    eq("an older store's captures keep their 20", AltStable.GetPortraitFacing(), 20)
+    eq("  written into it", AltStablePortraits.facing, 20)
+    -- A store this version creates records its angle at once, so its first
+    -- capture is not later mistaken for a pre-#149 one.
+    AltStablePortraits = nil
+    T.Store()
+    eq("a new store records its angle", AltStablePortraits.facing, 0)
+    table.insert(AltStablePortraits.renders, { guid = "g", shot = 1 })
+    eq("  and its first capture keeps it", AltStable.GetPortraitFacing(), 0)
+    AltStablePortraits = { version = 1, renders = {} }
+    eq("one with no captures takes the new default", AltStable.GetPortraitFacing(), 0)
+    eq("  written too, so absent never means two things", AltStablePortraits.facing, 0)
+    AltStablePortraits = nil
+end
+
 print(("test_capture: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

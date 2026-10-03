@@ -41,7 +41,11 @@ newer than any record should say "reload in game", not "no capture".
 ```lua
 AltStablePortraits = {
     ["version"] = 1,
-    ["facing"] = 20,            -- optional; degrees, only present once changed
+    ["facing"] = 20,            -- degrees, -45..45; 0 is straight on (#149).
+                                --   Written by every AltStable from v0.7 (a new
+                                --   store records it; an older one with captures
+                                --   gets the 20 it was shot at). Absent only in a
+                                --   store from before v0.7: read it as 20.
     ["renders"] = {
         {
             ["name"] = "Karuzo Elegia",       -- full name, surname included
