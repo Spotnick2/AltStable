@@ -177,6 +177,7 @@ local function makeFrame()
             self._regions = self._regions or {}
             self._regions[#self._regions + 1] = t
             t._regionOwner = self
+            t._parent = t._parent or self      -- a region's GetParent is its frame
         end
         WoW.textureSeq = (WoW.textureSeq or 0) + 1
         t._created = WoW.textureSeq
@@ -220,8 +221,19 @@ local function makeFrame()
         m._maskOwner = self
         return m
     end
-    f.CreateFontString = function()
+    f.CreateFontString = function(self)
         local fs = makeFrame()
+        -- A font string IS a region, as on the client: GetRegions returns it
+        -- with the textures. Left out, anything that walks a frame's regions
+        -- - the Options page moving what sits below its lists (#151) - was
+        -- tested on textures only, and every label it moves went unseen.
+        if type(self) == "table" then
+            self._regions = self._regions or {}
+            self._regions[#self._regions + 1] = fs
+            fs._regionOwner = self
+            fs._parent = fs._parent or self    -- likewise
+            fs._isFontString = true
+        end
         fs.GetHeight = function(self)
             if self._GetHeight then return self._GetHeight end
             local t = self._text
@@ -552,6 +564,12 @@ local function makeFrame()
         else
             rel, relPoint, x, y = a, b, c, d  -- SetPoint(point, rel, relPoint, x, y)
         end
+        -- What the client hands back from GetPoint: an anchor given without a
+        -- frame is to the PARENT, and without a relative point is to the same
+        -- point. Recorded as nil, the page-anchored branch a layout takes in
+        -- game (`rel == optionsFrame`, #158 review) was never the one tested.
+        if rel == nil and self.GetParent then rel = self:GetParent() end
+        if relPoint == nil then relPoint = point end
         -- REPLACES the anchor for a point already set, which is what the
         -- client does. Appending instead meant a frame re-anchored on every
         -- open - which every pooled menu entry is - accumulated stale anchors,

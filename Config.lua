@@ -328,6 +328,8 @@ local function AddToWhitelist(name)
     if name == "" or IsWhitelisted(name) then return false end
     table.insert(AltStableConfig.whitelist, name)
     AltStable.OnConfigChanged("whitelist")
+    -- Options may be open: `/alts whitelist` adds through here too (#158 review).
+    if AltStable.RefreshOptionsWhitelist then AltStable.RefreshOptionsWhitelist() end
     return true
 end
 
@@ -336,6 +338,7 @@ local function RemoveFromWhitelist(name)
         if n:lower() == name:lower() then
             table.remove(AltStableConfig.whitelist, i)
             AltStable.OnConfigChanged("whitelist")
+            if AltStable.RefreshOptionsWhitelist then AltStable.RefreshOptionsWhitelist() end
             return true
         end
     end

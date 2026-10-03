@@ -3294,6 +3294,18 @@ local function CreateFrameIfNeeded()
     local P = 18   -- left/right padding inside the options panel
     local Y = -12  -- current Y cursor (negative = down from top)
 
+    -- EVERY anchor to this page is measured from its TOP (#151, #158 review):
+    -- its height changes as the lists below grow and shrink, so an anchor to
+    -- its middle or bottom would move on its own. A control that needs the
+    -- page's right edge at a row's centre line anchors to an OptRail instead.
+    local function OptRail(topY, h)
+        local rail = CreateFrame("Frame", nil, optionsFrame)
+        rail:SetPoint("TOPLEFT", P, topY)
+        rail:SetPoint("TOPRIGHT", -P, topY)
+        rail:SetHeight(h)
+        return rail
+    end
+
     local function MakeLabel(text, fontObj, yExtra)
         local fs = optionsFrame:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
         fs:SetPoint("TOPLEFT", P, Y + (yExtra or 0))
@@ -3488,7 +3500,7 @@ local function CreateFrameIfNeeded()
     -- Theme hint text (to right of buttons)
     local optThemeHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optThemeHint:SetPoint("LEFT", optClassBtn, "RIGHT", 14, 0)
-    optThemeHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optThemeHint:SetPoint("RIGHT", OptRail(BTNY, BTN_H), "RIGHT", 0, 0)
     optThemeHint:SetJustifyH("LEFT"); optThemeHint:SetWordWrap(true)
     optThemeHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     optThemeHint:SetText("The highlight colour - the gold in the title, the "
@@ -3524,7 +3536,23 @@ local function CreateFrameIfNeeded()
         AltStable.ApplyTheme()
     end)
 
+    -- 34, not 30: the hint beside the buttons is centred on them and wraps to
+    -- three lines in a narrow window, reaching about 28 below the row.
     Y = Y - 34
+
+    -- The distinction the row's own hint has no room for: the accent is one
+    -- colour for the UI, not what colours the character rows. It used to sit
+    -- at the very bottom of the page, a long scroll away from the row it
+    -- explains (#151).
+    local optHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optHint:SetPoint("TOPLEFT", P + 60, Y)
+    optHint:SetPoint("TOPRIGHT", -P, Y)
+    optHint:SetJustifyH("LEFT"); optHint:SetWordWrap(true)
+    optHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optHint:SetText("Character names and rows always use each character's own class "
+        .. "colour, whichever accent is chosen.")
+    AltStable._test.OptAccentFootnote = optHint
+    Y = Y - 30
 
     -- ── Scale row ─────────────────────────────────────────
     -- Layout target:
@@ -3627,7 +3655,7 @@ local function CreateFrameIfNeeded()
 
         local optModelDebugHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         optModelDebugHint:SetPoint("TOPLEFT", P, Y - 16)
-        optModelDebugHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+        optModelDebugHint:SetPoint("TOPRIGHT", -P, Y - 16)
         optModelDebugHint:SetJustifyH("LEFT")
         optModelDebugHint:SetWordWrap(true)
         optModelDebugHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
@@ -3693,7 +3721,7 @@ local function CreateFrameIfNeeded()
 
         local optPluginsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         optPluginsHint:SetPoint("TOPLEFT", P, Y - 2)
-        optPluginsHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+        optPluginsHint:SetPoint("TOPRIGHT", -P, Y - 2)
         optPluginsHint:SetJustifyH("LEFT")
         optPluginsHint:SetWordWrap(true)
         optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
@@ -3927,7 +3955,7 @@ local function CreateFrameIfNeeded()
 
     local optAcctHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optAcctHint:SetPoint("LEFT", optAcctBox, "RIGHT", 12, 0)
-    optAcctHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optAcctHint:SetPoint("RIGHT", OptRail(Y + 4, 22), "RIGHT", 0, 0)
     optAcctHint:SetJustifyH("LEFT")
     optAcctHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     optAcctHint:SetText("Tags this client's data on next scan/sync.")
@@ -3947,6 +3975,82 @@ local function CreateFrameIfNeeded()
         end)
     Y = Y - 24
 
+    -- ── Lists that take only the room they use (#151) ─────
+    --
+    -- The three lists below - sync peers, requests and answers, hidden
+    -- characters - each reserve a fixed number of rows, and everything under
+    -- them is laid out by the cursor, at a fixed height, once. An empty list
+    -- left its whole reserve as a blank gap, and the page read as broken.
+    --
+    -- So each list notes what exists when it ends (Mark); at the end of the
+    -- layout everything created AFTER a list is recorded with its anchors
+    -- (Finish); and whenever a list refreshes it says how many rows it is
+    -- really using (Use), and everything below moves up by the rest. Only
+    -- anchors to the page itself move, and only their TOP edges: what is
+    -- anchored to a sibling follows it. Rather than re-anchoring two dozen
+    -- controls by hand, which is what the alternative was.
+    -- `skip`: what anchors itself again on every refresh, so must not be put
+    -- back where it was at Finish.
+    local optFlow = { lists = {}, items = nil, height = nil, skip = {} }
+    function optFlow.Mark(reserved, rowH)
+        local seen = {}
+        for _, o in ipairs({ optionsFrame:GetChildren() }) do seen[o] = true end
+        for _, o in ipairs({ optionsFrame:GetRegions() }) do seen[o] = true end
+        local list = { seen = seen, reserved = reserved, used = reserved, rowH = rowH or 18, gap = 0 }
+        optFlow.lists[#optFlow.lists + 1] = list
+        return list
+    end
+    function optFlow.Finish(height)
+        optFlow.height = height
+        optFlow.items = {}
+        local all = { optionsFrame:GetChildren() }
+        for _, o in ipairs({ optionsFrame:GetRegions() }) do all[#all + 1] = o end
+        for _, o in ipairs(all) do
+            local below = {}
+            for _, list in ipairs(optFlow.lists) do
+                if not list.seen[o] then below[#below + 1] = list end
+            end
+            if #below > 0 and not optFlow.skip[o] then
+                local points = {}
+                for i = 1, (o:GetNumPoints() or 0) do points[i] = { o:GetPoint(i) } end
+                optFlow.items[#optFlow.items + 1] = { o = o, below = below, points = points, applied = 0 }
+            end
+        end
+        optFlow.Apply()
+    end
+    -- Page anchors are moved by where they are measured FROM - the relative
+    -- point - which is always the page's top edge here (see OptRail).
+    function optFlow.Apply()
+        if not optFlow.items then return end      -- still being laid out
+        for _, it in ipairs(optFlow.items) do
+            local shift = 0
+            for _, list in ipairs(it.below) do shift = shift + list.gap end
+            -- Only what actually moves: one list changing leaves everything
+            -- above it, and everything whose total did not change, alone.
+            if shift ~= it.applied then
+                it.applied = shift
+                it.o:ClearAllPoints()
+                for _, p in ipairs(it.points) do
+                    local point, rel, relPoint, x, y = p[1], p[2], p[3], p[4], p[5]
+                    if rel == optionsFrame then y = (y or 0) + shift end
+                    it.o:SetPoint(point, rel, relPoint, x or 0, y or 0)
+                end
+            end
+        end
+        local unused = 0
+        for _, list in ipairs(optFlow.lists) do unused = unused + list.gap end
+        optionsFrame:SetHeight(optFlow.height - unused)
+    end
+    -- How many rows a list is showing - at least one, for its "none" line.
+    function optFlow.Use(list, rows)
+        rows = math.max(1, math.min(rows, list.reserved))
+        if list.used == rows then return end
+        list.used = rows
+        list.gap = (list.reserved - rows) * list.rowH
+        optFlow.Apply()
+    end
+    AltStable._test.OptFlow = optFlow
+
     -- ── Whitelist (sync peers) ────────────────────────────
     local optWlHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optWlHdr:SetPoint("TOPLEFT", P, Y)
@@ -3956,7 +4060,7 @@ local function CreateFrameIfNeeded()
 
     local optWlHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optWlHint:SetPoint("TOPLEFT", P, Y)
-    optWlHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optWlHint:SetPoint("TOPRIGHT", -P, Y)
     optWlHint:SetJustifyH("LEFT"); optWlHint:SetWordWrap(true)
     optWlHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     optWlHint:SetText("Whisper sync targets. Add character names (with realm if needed: Name-Realm).")
@@ -4001,12 +4105,28 @@ local function CreateFrameIfNeeded()
         row:Hide()
         optWlRows[i] = row
     end
+    local optWlNone = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optWlNone:SetPoint("TOPLEFT", P + 4, Y)
+    optWlNone:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optWlNone:SetText("No sync peers yet.")
+    AltStable._test.OptWlNone = optWlNone
     Y = Y - (OPT_WL_ROWS * 18) - 6
+    local optWlFlow = optFlow.Mark(OPT_WL_ROWS, 18)
+    -- Past the reserve, say so: a list sized to its content otherwise looks
+    -- complete. On the last row's own line, so it takes no extra room.
+    local optWlMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optWlMore:SetPoint("LEFT", optWlRows[OPT_WL_ROWS].removeBtn, "RIGHT", 12, 0)
+    optWlMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    AltStable._test.OptWlMore = optWlMore
 
     local function OptRefreshWhitelist()
         AltStableConfig = AltStableConfig or {}
         AltStableConfig.whitelist = AltStableConfig.whitelist or {}
         local wl = AltStableConfig.whitelist
+        if #wl == 0 then optWlNone:Show() else optWlNone:Hide() end
+        optFlow.Use(optWlFlow, #wl)
+        optWlMore:SetText(#wl > OPT_WL_ROWS
+            and ("+" .. (#wl - OPT_WL_ROWS) .. " more - |cffffff00/alts whitelist|r") or "")
         for i, row in ipairs(optWlRows) do
             local name = wl[i]
             if name then
@@ -4022,6 +4142,11 @@ local function CreateFrameIfNeeded()
                 row:Hide()
             end
         end
+    end
+
+    -- `/alts whitelist` changes the list too, with Options possibly open.
+    AltStable.RefreshOptionsWhitelist = function()
+        if optionsFrame:IsVisible() then OptRefreshWhitelist() end
     end
 
     optWlAddBtn:SetScript("OnClick", function()
@@ -4047,7 +4172,7 @@ local function CreateFrameIfNeeded()
 
     local optAuthHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optAuthHint:SetPoint("TOPLEFT", P, Y)
-    optAuthHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optAuthHint:SetPoint("TOPRIGHT", -P, Y)
     optAuthHint:SetJustifyH("LEFT"); optAuthHint:SetWordWrap(true)
     optAuthHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     optAuthHint:SetText("Who may sync with you. Forget goes back to the whitelist, or to asking. "
@@ -4080,7 +4205,13 @@ local function CreateFrameIfNeeded()
         row:Hide()
         optAuthRows[i] = row
     end
+    local optAuthNone = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optAuthNone:SetPoint("TOPLEFT", P + 4, Y)
+    optAuthNone:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAuthNone:SetText("No requests or answers yet.")
+    AltStable._test.OptAuthNone = optAuthNone
     Y = Y - (OPT_AUTH_ROWS * 18)
+    local optAuthFlow = optFlow.Mark(OPT_AUTH_ROWS, 18)
     local optAuthMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optAuthMore:SetPoint("TOPLEFT", P + 4, Y)
     optAuthMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
@@ -4121,6 +4252,8 @@ local function CreateFrameIfNeeded()
 
     local function OptRefreshSyncAuth()
         local entries = OptSyncAuthEntries()
+        if #entries == 0 then optAuthNone:Show() else optAuthNone:Hide() end
+        optFlow.Use(optAuthFlow, #entries)
         for i, row in ipairs(optAuthRows) do
             local e = entries[i]
             if e then
@@ -4203,7 +4336,7 @@ local function CreateFrameIfNeeded()
 
     local optHideHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optHideHint:SetPoint("TOPLEFT", P, Y)
-    optHideHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
+    optHideHint:SetPoint("TOPRIGHT", -P, Y)
     optHideHint:SetJustifyH("LEFT"); optHideHint:SetWordWrap(true)
     optHideHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     optHideHint:SetText("Right-click a name on the sheet to hide it. Hidden characters keep "
@@ -4214,7 +4347,6 @@ local function CreateFrameIfNeeded()
     -- and not synced, so it stays short in practice.
     local OPT_HIDDEN_ROWS = 6
     local optHiddenRows = {}
-    local optHiddenListY = Y
     for i = 1, OPT_HIDDEN_ROWS do
         local row = CreateFrame("Frame", nil, optionsFrame)
         row:SetSize(360, 18)
@@ -4237,14 +4369,19 @@ local function CreateFrameIfNeeded()
     end
 
     local optHiddenNote = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY)
+    optHiddenNote:SetPoint("TOPLEFT", optHiddenRows[1], "TOPLEFT", 0, 0)
     optHiddenNote:SetJustifyH("LEFT")
+    -- Anchored to the list's own rows, which move with the lists above it;
+    -- re-anchored on every refresh, so the flow leaves it alone.
+    optFlow.skip[optHiddenNote] = true
     optHiddenNote:SetTextColor(unpack(AltStable.C.TEXT_DIM))
 
     Y = Y - (OPT_HIDDEN_ROWS * 18) - 6
+    local optHiddenFlow = optFlow.Mark(OPT_HIDDEN_ROWS, 18)
 
     local function OptRefreshHidden()
         local list = AltStable.HiddenCharacterList and AltStable.HiddenCharacterList() or {}
+        optFlow.Use(optHiddenFlow, #list)
         for i, row in ipairs(optHiddenRows) do
             local entry = list[i]
             if entry then
@@ -4270,12 +4407,12 @@ local function CreateFrameIfNeeded()
         -- the list is complete.
         if #list == 0 then
             optHiddenNote:SetText("Nothing is hidden.")
-            optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY)
+            optHiddenNote:SetPoint("TOPLEFT", optHiddenRows[1], "TOPLEFT", 0, 0)
             optHiddenNote:Show()
         elseif #list > OPT_HIDDEN_ROWS then
             optHiddenNote:SetText(("... and %d more (unhide one to see the next)")
                 :format(#list - OPT_HIDDEN_ROWS))
-            optHiddenNote:SetPoint("TOPLEFT", P + 4, optHiddenListY - (OPT_HIDDEN_ROWS * 18))
+            optHiddenNote:SetPoint("TOPLEFT", optHiddenRows[OPT_HIDDEN_ROWS], "BOTTOMLEFT", 0, 0)
             optHiddenNote:Show()
         else
             -- Cleared, not just hidden: the same stale-text trap as the row
@@ -4301,25 +4438,9 @@ local function CreateFrameIfNeeded()
         return names, optHiddenNote:GetText()
     end
 
-    Y = Y - 12
-
-    -- ── Helper text ───────────────────────────────────────
-    local optHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optHint:SetPoint("TOPLEFT", P, Y)
-    optHint:SetPoint("RIGHT", optionsFrame, "RIGHT", -P, 0)
-    optHint:SetJustifyH("LEFT"); optHint:SetWordWrap(true)
-    optHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    -- The row above is "Accent" now, so a footnote about a "Class theme" is a
-    -- setting the player cannot find. What is worth keeping is the DISTINCTION
-    -- it draws, which the row's own hint has no room for: the accent is one
-    -- colour for the UI, and it is not what colours the character rows.
-    optHint:SetText("The accent is the UI's highlight colour. Character names "
-        .."and rows always use each character's own class colour, whichever "
-        .."accent is chosen.")
-
     -- Content height is known once the layout cursor has run; the scroll range
-    -- derives from it. Extra padding covers the wrapped hint text below.
-    optionsFrame:SetHeight(math.abs(Y) + 60)
+    -- derives from it, less whatever the lists are not using (OptFlow).
+    optFlow.Finish(math.abs(Y) + 24)
 
     -- OnShow: safely refresh all controls from saved config.
     -- Bound to the panel, not the content: the scroll child is always shown, so an

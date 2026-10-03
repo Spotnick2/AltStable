@@ -13,11 +13,15 @@
 - **Maximize** ([#150](https://github.com/Spotnick2/AltStable/issues/150)): the new button
   beside close fills the screen, and stays maximized as you switch tabs; click it again to go
   back to the size and place the window had.
+- Collapsing and maximizing **animate**: the menu slides and the window grows or shrinks into
+  place, in a fifth of a second. Turning off the open animation in Options turns these off too.
 - **The grid fills a wider window**: when the window has more room than the columns need
   (maximized, or a collapsed menu), the spare width is shared out across the columns instead of
   leaving empty space beside the table.
-- Both **animate**: the menu slides and the window grows or shrinks into place, in a fifth of a
-  second. Turning off the open animation in Options turns these off too.
+- **Options reads better** ([#151](https://github.com/Spotnick2/AltStable/issues/151)): the
+  sync peer, request and hidden-character lists take only the room they use (an empty one says
+  so in a line), so there are no more large blank gaps; and the note about class colours now
+  sits under the **Accent** row it explains instead of at the bottom of the page.
 
 
 ## v0.6.0-beta
