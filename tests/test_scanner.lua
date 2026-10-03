@@ -1033,6 +1033,30 @@ WoW.chatOut = {}
 AltStable.CheckClientBuild()
 check("  and keeps saying so on the next login", #WoW.chatOut > 0)
 
+-- Only on a development copy. A released addon carries its tag as its version,
+-- and a player has nothing to do with "re-run /apidump".
+local realMeta = AltStable.API.GetAddOnMetadata
+for _, case in ipairs({
+    { "v0.7.0-beta",        false, "a release" },
+    { "dev-9ea1f00",        true,  "a deploy.ps1 copy" },
+    { "dev",                true,  "a copy deployed outside git" },
+    { "@project-version@",  true,  "a checkout run as-is" },
+}) do
+    AltStable.API.GetAddOnMetadata = function(_, field) return field == "Version" and case[1] or nil end
+    WoW.chatOut = {}
+    AltStable.CheckClientBuild()
+    if case[2] then
+        check("a different build is announced on " .. case[3], #WoW.chatOut > 0, case[1])
+    else
+        check("a different build is NOT announced on " .. case[3], #WoW.chatOut == 0, WoW.chatOut[1] or "")
+    end
+end
+AltStable.API.GetAddOnMetadata = function() error("no metadata") end
+WoW.chatOut = {}
+AltStable.CheckClientBuild()
+check("an unreadable version counts as a development copy", #WoW.chatOut > 0)
+AltStable.API.GetAddOnMetadata = realMeta
+
 GetBuildInfo = function() return nil end
 WoW.chatOut = {}
 AltStable.CheckClientBuild()
