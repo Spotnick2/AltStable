@@ -3172,7 +3172,7 @@ do
     -- Below BOTH sync lists (Toasts, Mail, Hidden): up by both gaps.
     local deepest
     for _, it in ipairs(flow.items) do
-        if #it.below == 2 and it.points[1] and it.points[1][2] == nil then deepest = it; break end
+        if #it.below == 2 and it.points[1] and it.points[1][2] == it.o:GetParent() then deepest = it; break end
     end
     check("there is something below both sync lists", deepest ~= nil)
     if deepest then
@@ -3204,10 +3204,69 @@ do
     check("a top anchor to a sibling is not moved by the flow", fRel == sib and fy == -4, tostring(fy))
     flow.items[#flow.items] = nil
 
-    -- More than the list holds: no more than its reserve.
+    -- More than the list holds: no more than its reserve, and it says so.
     AltStableConfig.whitelist = { "A", "B", "C", "D", "E", "F", "G" }
     optPanel:GetScript("OnShow")(optPanel)
     eq("a full list uses its whole reserve, never more", wl.used, 5)
+    check("  and says what it is not showing", (T.OptWlMore:GetText() or ""):find("+2 more") ~= nil,
+          tostring(T.OptWlMore:GetText()))
+    AltStableConfig.whitelist = { "A" }
+    optPanel:GetScript("OnShow")(optPanel)
+    eq("  and stops saying it when everything fits", T.OptWlMore:GetText(), "")
+
+    -- `/alts whitelist` with Options open moves the page too (#158 review).
+    AltStableConfig.whitelist = {}
+    optPanel:GetScript("OnShow")(optPanel)
+    optPanel:Show()
+    AltStable.AddToWhitelist("Zed")
+    eq("a peer added by command shows at once", wl.used, 1)
+    check("  the none line goes", not T.OptWlNone:IsShown())
+    AltStable.AddToWhitelist("Ann"); AltStable.AddToWhitelist("Bo")
+    eq("  and the list grows with it", wl.used, 3)
+    AltStable.RemoveFromWhitelist("Ann")
+    eq("removing by command shrinks it", wl.used, 2)
+    check("  with everything below where it should be", AllWhereExpected())
+
+    -- Only what moves is re-anchored: a hidden-list change leaves what sits
+    -- above that list alone.
+    local above
+    for _, it in ipairs(flow.items) do
+        local underHidden = false
+        for _, l in ipairs(it.below) do if l == hd then underHidden = true end end
+        if not underHidden then above = it; break end
+    end
+    check("there is something between the sync lists and the hidden one", above ~= nil)
+    if above then
+        local moved = 0
+        local realClear = above.o.ClearAllPoints
+        above.o.ClearAllPoints = function(self) moved = moved + 1; return realClear(self) end
+        hidden[1] = { guid = "h1", name = "Hid", class = "MAGE" }
+        hidden[2] = { guid = "h2", name = "Den", class = "MAGE" }
+        AltStable.RefreshOptionsHiddenList()
+        eq("  the hidden list changing does not re-anchor it", moved, 0)
+        eq("  while the hidden list did change", hd.used, 2)
+        above.o.ClearAllPoints = realClear
+        hidden[1], hidden[2] = nil, nil
+        AltStable.RefreshOptionsHiddenList()
+    end
+
+    -- THE RULE the flow rests on: every anchor to the page is measured from
+    -- its TOP edge. Its height moves; an anchor to its middle or bottom would
+    -- move on its own (#158 review).
+    local page = child
+    local all = { page:GetChildren() }
+    for _, r in ipairs({ page:GetRegions() }) do all[#all + 1] = r end
+    local offenders = {}
+    for _, o in ipairs(all) do
+        for i = 1, (o:GetNumPoints() or 0) do
+            local point, rel, relPoint = o:GetPoint(i)
+            if rel == page and not tostring(relPoint):find("^TOP") then
+                offenders[#offenders + 1] = point .. "->" .. tostring(relPoint)
+            end
+        end
+    end
+    eq("every anchor to the Options page is measured from its top", #offenders, 0)
+    if #offenders > 0 then print("    " .. table.concat(offenders, ", ")) end
 
     -- Answers arriving while Options is open move the page too.
     auth[1] = { name = "Friend", mode = AltStable.AUTH_AUTO }
@@ -3238,7 +3297,7 @@ do
     local highest = -math.huge
     for _, it in ipairs(flow.items) do
         local y = it.points[1] and it.points[1][5]
-        if y and it.points[1][2] == nil and y > highest then highest = y end
+        if y and it.points[1][2] == it.o:GetParent() and y > highest then highest = y end
     end
     check("the accent footnote is above every list, not at the bottom of the page", ny > highest,
           tostring(ny) .. " vs " .. tostring(highest))
