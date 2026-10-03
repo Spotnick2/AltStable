@@ -2886,12 +2886,12 @@ do
     local startW = f:GetWidth()
     AltStable.SetSidebarCompact(true)
     local runner = T.WindowAnimRunner()
-    local tick = function(dt) runner:GetScript("OnUpdate")(runner, dt) end
+    local tick = function(dt) local fn = runner:GetScript("OnUpdate"); if fn then fn(runner, dt) end end
     check("collapsing animates", runner and runner:GetScript("OnUpdate") ~= nil)
     eq("  the setting is saved at once", AltStableConfig.sidebarCompact, true)
     eq("  and the sidebar starts from where it was", sidebar:GetWidth(), 229)
     eq("  as does the window", f:GetWidth(), startW)
-    check("  which clips what it carries", f:DoesClipChildren())
+    check("  without clipping its children", not f:DoesClipChildren())
     tick(0.1)
     check("half way, the sidebar is between", sidebar:GetWidth() < 229 and sidebar:GetWidth() > 55,
           tostring(sidebar:GetWidth()))
@@ -2908,7 +2908,7 @@ do
     local ep, _, _, ex, ey = f:GetPoint(1)
     check("  anchored where it really is, not at the travelling anchor",
           ep == "TOPLEFT" and ex == 50 and ey == -60, tostring(ep))
-    check("  and no longer clipping", not (f.DoesClipChildren and f:DoesClipChildren()))
+    check("  and never clips its children: the client clips against a stale rect mid-resize", not f:DoesClipChildren())
 
     -- Clicked again half way: it goes back from where it is.
     AltStable.SetSidebarCompact(false)
@@ -2932,6 +2932,77 @@ do
     tick(0.3)
     local bp, _, _, bx = f:GetPoint(1)
     check("and restoring lands back where it was", bp == "TOPLEFT" and bx == 50)
+
+    -- A PLUGIN tab is laid out once, at the moment its layout fits inside
+    -- the travelling window: at the end when its space grows, at the start
+    -- when it shrinks. Nothing clips it in between.
+    pbtn:GetScript("OnClick")(pbtn)
+    resized = 0
+    AltStable.SetWindowMaximized(true)
+    eq("growing: the plugin keeps its old layout on the way", resized, 0)
+    tick(0.1)
+    eq("  still", resized, 0)
+    tick(0.2)
+    eq("  and lays out once it has arrived", resized, 1)
+    resized = 0
+    AltStable.SetWindowMaximized(false)
+    eq("shrinking: the plugin lays out before the trip", resized, 1)
+    tick(0.3)
+    eq("  and not again at the end", resized, 1)
+    -- Interrupted while growing: the deferred layout still happens, once.
+    resized = 0
+    AltStable.SetWindowMaximized(true)
+    tick(0.05)
+    AltStable.SetWindowMaximized(false)
+    tick(0.3)
+    eq("an interrupted grow still lays out, and the shrink once more", resized, 2)
+    check("the window never clipped through any of it", not f:DoesClipChildren())
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+
+    -- THE REPORTED CASE: restore, then switch tab inside the trip. The tab's
+    -- own size must win - the trip used to settle on the size and anchors it
+    -- measured before the switch, over the top of it.
+    local sheetW = f:GetWidth()
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.RequestWindowSize(640, 480)        -- a plugin's own size
+    AltStable.SetWindowMaximized(true)
+    tick(0.3)
+    AltStable.SetWindowMaximized(false)
+    tick(0.05)                                   -- mid-way back
+    sheetBtn:GetScript("OnClick")(sheetBtn)      -- switch, mid-trip
+    check("switching tab ends the trip at once", runner:GetScript("OnUpdate") == nil)
+    tick(0.3)
+    eq("  and the new tab's size stands", f:GetWidth(), sheetW)
+    local sp, _, _, sx = f:GetPoint(1)
+    check("  where the window really is", sp == "TOPLEFT" and sx == 50, tostring(sp))
+    -- And a tab sizing itself mid-trip ends it the same way.
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.SetSidebarCompact(false)
+    tick(0.05)
+    AltStable.RequestWindowSize(700, 500)
+    check("a tab sizing itself ends the trip", runner:GetScript("OnUpdate") == nil)
+    tick(0.3)
+    eq("  and its size stands", f:GetWidth(), 700)
+    -- Switching TO a plugin tab mid-trip ends it too.
+    AltStable.SetSidebarCompact(true)
+    tick(0.05)
+    pbtn:GetScript("OnClick")(pbtn)
+    check("switching to a plugin tab ends the trip", runner:GetScript("OnUpdate") == nil)
+    -- And data arriving mid-trip on a sheet tab: its re-sizing ends it.
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    AltStable.SetSidebarCompact(false)
+    tick(0.05)
+    AltStable.RefreshSheet()
+    check("a refresh mid-trip ends it", runner:GetScript("OnUpdate") == nil)
+    AltStable.SetSidebarCompact(true)
+    tick(0.3)
+    -- Starts where it was, not already at the end.
+    local beforeTrip = f:GetWidth()
+    AltStable.SetWindowMaximized(true)
+    eq("a trip starts from the window as it was", f:GetWidth(), beforeTrip)
+    tick(0.3)
+    AltStable.SetWindowMaximized(false)
+    tick(0.3)
 
     -- Turned off mid-way: the next change settles the running one and is instant.
     AltStable.SetSidebarCompact(false)

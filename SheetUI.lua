@@ -2061,6 +2061,25 @@ local wantW, wantH
 -- One table, so the sizing functions gain a single upvalue between them.
 local maxState = { on = false }
 
+-- The geometry animation's state (see AnimateWindowChange), declared here so
+-- every sizing path below can end it first.
+local windowAnim = {}
+
+-- Snap a running geometry animation to its end, now. Anything else that sizes
+-- or re-lays out the window - a tab switch, a tab sizing itself, a scale
+-- change - goes through this first: otherwise the trip keeps placing the
+-- window frame after frame and then settles it on the size and anchors it
+-- measured BEFORE that change, over the top of it (#150: restore, then switch
+-- tab inside the fifth of a second, and the window came out the wrong size).
+local function FinishWindowAnimation()
+    local runner = windowAnim.runner
+    if not (runner and runner:GetScript("OnUpdate")) then return false end
+    runner:SetScript("OnUpdate", nil)
+    windowAnim.settle()
+    return true
+end
+AltStable.FinishWindowAnimation = FinishWindowAnimation
+
 local function MaximizedSize()
     local maxW, maxH = ScreenLimit()
     if not maxW then return frame:GetWidth(), frame:GetHeight() end
@@ -2079,6 +2098,7 @@ end
 
 local function ResizeFrame(w, h)
     if not frame then return end
+    FinishWindowAnimation()
     wantW, wantH = w, h
     frame:SetSize(SizeFor(w, h))
 end
@@ -2132,6 +2152,7 @@ AltStable._test.ResizeFrameToContent = function() return ResizeFrameToContent() 
 -- going through either resize path.
 function AltStable.RefitWindow()
     if not frame then return end
+    FinishWindowAnimation()
     -- The remembered request, not the current size. See wantW/wantH above.
     frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
 end
@@ -2155,12 +2176,21 @@ function AltStable.IsWindowMaximized() return maxState.on end
 --
 -- The animation system moves, scales and fades; it cannot change a size. So
 -- this is an OnUpdate tween, and it tweens only GEOMETRY - the window's rect
--- and the sidebar's width. The change itself is applied first and in full,
--- re-layout included, exactly as without animation; its end state is
--- measured, the window is put back where it started, and then it travels.
--- Re-laying out a tab every frame is out of the question - the Roster scene
--- rebuilds its models - so the content is already in its final layout and the
--- window clips it while the edges catch up.
+-- and the sidebar's width. The change is applied first, its end state
+-- measured, the window put back where it started, and then it travels.
+--
+-- The tab is laid out ONCE, never per frame - the Roster scene rebuilds its
+-- models - and WHEN is what keeps it inside the window without clipping:
+--   * a sheet tab, first: its layout decides the window's size, and its grid
+--     sits in scroll frames that clip themselves;
+--   * a plugin tab whose space SHRINKS, first: the smaller layout fits inside
+--     the window all the way down;
+--   * a plugin tab whose space GROWS, at the end: the old layout fits inside
+--     the window all the way up.
+-- Clipping the window instead was tried and dropped: the client clipped the
+-- children against a stale rect while the frame was being resized, and an
+-- interrupted trip could leave it on - the title bar and the sidebar icons
+-- came out cut (#150).
 --
 -- Interrupted - clicked again mid-way - it reverses from where it IS: the
 -- running one is settled to its own end state first, so the new change starts
@@ -2169,7 +2199,6 @@ function AltStable.IsWindowMaximized() return maxState.on end
 -- Off with the open animation (Options), and whenever the window is not on
 -- screen to watch.
 local WINDOW_ANIM_TIME = 0.2
-local windowAnim = {}
 
 local function WindowAnimEnabled()
     return AltStableConfig and AltStableConfig.enableOpenAnimation
@@ -2177,12 +2206,11 @@ local function WindowAnimEnabled()
         and frame.sidebar ~= nil and UIParent ~= nil
 end
 
-local function AnimateWindowChange(applyFinal, labels)
-    local runner = windowAnim.runner
-    local running = runner and runner:GetScript("OnUpdate") ~= nil
+local function AnimateWindowChange(applyGeometry, labels)
     if not WindowAnimEnabled() then
-        if running then runner:SetScript("OnUpdate", nil); windowAnim.settle() end
-        applyFinal()
+        FinishWindowAnimation()
+        applyGeometry()
+        RelayoutWindow()
         if labels then labels(1, true) end
         return
     end
@@ -2190,9 +2218,11 @@ local function AnimateWindowChange(applyFinal, labels)
     -- Where it is on screen now, mid-journey or not.
     local l0, b0 = frame:GetLeft(), frame:GetBottom()
     local w0, h0, s0 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
-    if running then runner:SetScript("OnUpdate", nil); windowAnim.settle() end
+    FinishWindowAnimation()
 
-    applyFinal()
+    applyGeometry()
+    local isPlugin = activeSection and activeSection._isPlugin
+    if not isPlugin then RelayoutWindow() end
 
     -- The end state, measured and remembered: settling restores these exactly
     -- rather than re-running the change.
@@ -2202,7 +2232,11 @@ local function AnimateWindowChange(applyFinal, labels)
     end
     local l1, b1 = frame:GetLeft(), frame:GetBottom()
     local w1, h1, s1 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
-    local clipped = frame.DoesClipChildren and frame:DoesClipChildren()
+    local relayoutAtEnd = false
+    if isPlugin then
+        local grows = (w1 - s1 >= w0 - s0) and (h1 >= h0)
+        if grows then relayoutAtEnd = true else RelayoutWindow() end
+    end
 
     local function Place(e)
         frame:ClearAllPoints()
@@ -2218,15 +2252,11 @@ local function AnimateWindowChange(applyFinal, labels)
         frame:SetSize(w1, h1)
         sb:SetWidth(s1)
         if labels then labels(1, true) end
-        if frame.SetClipsChildren then frame:SetClipsChildren(clipped and true or false) end
+        if relayoutAtEnd then RelayoutWindow() end
     end
 
-    -- Content laid out for the end state is wider or taller than the window
-    -- on the way, and nothing else clips it: the Roster's figures would draw
-    -- over the game world for the length of the trip.
-    if frame.SetClipsChildren then frame:SetClipsChildren(true) end
     Place(0)
-    runner = runner or CreateFrame("Frame")
+    local runner = windowAnim.runner or CreateFrame("Frame")
     windowAnim.runner = runner
     local elapsed = 0
     runner:SetScript("OnUpdate", function(self, dt)
@@ -2272,7 +2302,6 @@ function AltStable.SetWindowMaximized(on)
     end
     frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
     if AltStable.OnWindowMaximizedChanged then AltStable.OnWindowMaximizedChanged(on) end
-    RelayoutWindow()
     end)
 end
 
@@ -2398,6 +2427,7 @@ end
 
 function ResizeFrameToContent()
     if not frame then return end
+    FinishWindowAnimation()
     -- Plugins (Recipes, Options) manage their own sizing — don't fight them.
     if activeSection and activeSection._isPlugin then return end
     local w, h, needsH, needsV = ComputeContentSize()
@@ -3080,6 +3110,7 @@ local function CreateFrameIfNeeded()
             AltStable.SkinStripe(stripe, true, ar, ag, ab)
             lbl:SetTextColor(ar, ag, ab)
             icon:SetAlpha(1.0)
+            FinishWindowAnimation()
             if activeSection._isPlugin and activeSection.OnDeactivate then
                 activeSection.OnDeactivate(frame)
             end
@@ -3170,10 +3201,7 @@ local function CreateFrameIfNeeded()
                 end
             end
         end
-        AnimateWindowChange(function()
-            ApplySidebarMode()
-            RelayoutWindow()
-        end, FadeLabels)
+        AnimateWindowChange(ApplySidebarMode, FadeLabels)
     end
     chevron:SetScript("OnClick", function()
         AltStable.SetSidebarCompact(not AltStableConfig.sidebarCompact)
