@@ -1437,9 +1437,6 @@ local function EnsureRows(needed)
     if #pool.rows < needed then
         for i=#pool.rows+1, needed do
             local row = AltStable.CreateRow(bodyContent, ROW_HEIGHT, scrollableCols)
-            if #colWidths == #scrollableCols then
-                AltStable.LayoutRowCells(row, scrollableCols, colWidths, colWidthsKey)
-            end
             pool.rows[i]=row
             row:SetPoint("TOPLEFT",bodyContent,"TOPLEFT",0,-((i-1)*ROW_HEIGHT))
             row:SetPoint("RIGHT",bodyContent,"RIGHT",0,0)
@@ -1677,19 +1674,23 @@ local STRETCH_MIN = 8      -- a sliver of spare width is not worth re-placing ev
 
 local function SpreadColumns(viewportW)
     local natural = GetScrollableWidth()
-    local extra = (viewportW or 0) - natural
+    -- Whole pixels: a fractional viewport (any scale but 1) would otherwise put
+    -- every cell and divider on a sub-pixel x and blur the 1px lines.
+    local extra = math.floor(viewportW or 0) - natural
     if extra < STRETCH_MIN then extra = 0 end
     local sum = 0
     for _, col in ipairs(scrollableCols) do sum = sum + col.width end
     local given = 0
     for i, col in ipairs(scrollableCols) do
         local add = 0
-        if extra > 0 and sum > 0 then
-            -- The last column takes what rounding left, so the total is exact.
-            add = (i == #scrollableCols) and (extra - given) or math.floor(extra * col.width / sum)
-            given = given + add
-        end
+        if extra > 0 and sum > 0 then add = math.floor(extra * col.width / sum) end
+        given = given + add
         colWidths[i] = col.width + add
+    end
+    -- What flooring left - under a pixel per column - goes a pixel at a time
+    -- to the first columns, rather than all of it to the last one.
+    for i = 1, math.min(extra - given, #scrollableCols) do
+        colWidths[i] = colWidths[i] + 1
     end
     for i = #colWidths, #scrollableCols + 1, -1 do colWidths[i] = nil end
     colWidthsKey = table.concat(colWidths, ",")
@@ -1700,19 +1701,22 @@ AltStable._test.ColumnWidths = function() return colWidths end
 local headerDividers = {}   -- textures created per BuildHeaders call, tracked for cleanup
 
 -- Headers and every pooled row of this tab, at the laid-out widths.
-local function LayoutColumns()
-    local x, padding = 10, 6
-    for i, btn in ipairs(headerButtons) do
-        local col = scrollableCols[i]
-        local w = colWidths[i] or (col and col.width) or btn:GetWidth()
+-- The header at `widths` (nil: the columns' own), by the same walk as the rows.
+local function LayoutHeaders(widths)
+    AltStable.WalkColumns(scrollableCols, widths, function(i, x, w, divX)
+        local btn, col = headerButtons[i], scrollableCols[i]
+        if not btn then return end
         btn:ClearAllPoints(); btn:SetPoint("LEFT", x, 0); btn:SetWidth(w)
-        if col and col.vertical and not col.repIcon and btn.label then btn.label:SetWidth(w) end
+        if col.vertical and not col.repIcon and btn.label then btn.label:SetWidth(w) end
         if headerDividers[i] then
             headerDividers[i]:ClearAllPoints()
-            headerDividers[i]:SetPoint("LEFT", x + w + math.floor(padding / 2), 0)
+            headerDividers[i]:SetPoint("LEFT", divX, 0)
         end
-        x = x + w + padding
-    end
+    end)
+end
+
+local function LayoutColumns()
+    LayoutHeaders(colWidths)
     local pool = AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)
     for _, row in ipairs(pool.rows) do
         AltStable.LayoutRowCells(row, scrollableCols, colWidths, colWidthsKey)
@@ -1853,10 +1857,10 @@ local function BuildHeaders()
     -- Re-add the frozen Name button (always present, created in CreateFrameIfNeeded)
     -- It's in frozenHeader, not headerContent, so nothing to do here
 
-    local padding=6; local x=10
+    -- Created here, placed by LayoutHeaders: the rows' walk.
     for i, col in ipairs(scrollableCols) do
         local btn=CreateFrame("Button",nil,headerContent)
-        btn:SetPoint("LEFT",x,0); btn:SetSize(col.width,currentHeaderHeight); btn.field=col.field
+        btn:SetSize(col.width,currentHeaderHeight); btn.field=col.field
 
         if col.vertical and not col.repIcon then
             local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
@@ -1973,12 +1977,12 @@ local function BuildHeaders()
         table.insert(headerButtons,btn)
         if i<#scrollableCols then
             local div=headerContent:CreateTexture(nil,"OVERLAY")
-            div:SetSize(1,currentHeaderHeight); div:SetPoint("LEFT",x+col.width+math.floor(padding/2),0)
+            div:SetSize(1,currentHeaderHeight)
             div:SetColorTexture(unpack(AltStable.C.GRIDLINE))
             table.insert(headerDividers, div)
         end
-        x=x+col.width+padding
     end
+    -- Placed by UpdateScroll, which always follows (LayoutColumns).
     UpdateSortArrows()
 end
 
@@ -2009,6 +2013,15 @@ local SCREEN_MARGIN = 40
 local function ScreenLimit()
     if not (frame and UIParent) then return nil end
     local fs = frame:GetEffectiveScale() or 1
+    -- The opening fade runs the window at 96% of its scale for a fifth of a
+    -- second, and reopening resizes it inside that: measured then, a
+    -- maximized window came out 4% larger than the screen once the fade
+    -- ended (#157 review). Measure at the scale it is fading TO.
+    local fade = OpenAnimRunner
+    if fade and fade.target == frame and fade.finalScale then
+        local cur = frame:GetScale() or 0
+        if cur > 0 then fs = fs * fade.finalScale / cur end
+    end
     local us = UIParent:GetEffectiveScale() or 1
     if fs <= 0 then return nil end
     return (UIParent:GetWidth()  * us) / fs - SCREEN_MARGIN,
@@ -2150,12 +2163,6 @@ AltStable._test.ResizeFrameToContent = function() return ResizeFrameToContent() 
 -- Re-apply the screen limit to the size the window already has. Called after a
 -- scale change, which alters how much display the same numbers occupy without
 -- going through either resize path.
-function AltStable.RefitWindow()
-    if not frame then return end
-    FinishWindowAnimation()
-    -- The remembered request, not the current size. See wantW/wantH above.
-    frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
-end
 
 -- Lay the current tab out again after the window's geometry changed under it -
 -- maximize, restore, or the sidebar collapsing. A sheet section re-sizes to its
@@ -2167,6 +2174,20 @@ local function RelayoutWindow()
     elseif AltStable.RefreshSheet then
         AltStable.RefreshSheet()
     end
+end
+
+-- Re-apply the screen limit to the size the window already has. Called after a
+-- scale change, which alters how much display the same numbers occupy without
+-- going through either resize path.
+function AltStable.RefitWindow()
+    if not frame then return end
+    FinishWindowAnimation()
+    -- The remembered request, not the current size. See wantW/wantH above.
+    frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
+    -- Maximized, the window's size in its own units just changed with the
+    -- scale, and the tab - spread columns, a plugin's layout - is still laid
+    -- out for the old one.
+    if maxState.on then RelayoutWindow() end
 end
 
 function AltStable.IsWindowMaximized() return maxState.on end
@@ -2221,8 +2242,18 @@ local function AnimateWindowChange(applyGeometry, labels)
     FinishWindowAnimation()
 
     applyGeometry()
+    -- A layout that runs before the trip may size the window itself - a sheet
+    -- tab always does, Raids sizes to its grid, Warband holds its floor - so
+    -- the end state is measured only AFTER it. A tab that sizes the window to
+    -- its content is laid out first whichever way it goes, as a sheet tab is.
     local isPlugin = activeSection and activeSection._isPlugin
-    if not isPlugin then RelayoutWindow() end
+    local relayoutAtEnd = false
+    if not isPlugin or activeSection.sizesWindow then
+        RelayoutWindow()
+    else
+        local grows = (frame:GetWidth() - sb:GetWidth() >= w0 - s0) and (frame:GetHeight() >= h0)
+        if grows then relayoutAtEnd = true else RelayoutWindow() end
+    end
 
     -- The end state, measured and remembered: settling restores these exactly
     -- rather than re-running the change.
@@ -2232,11 +2263,6 @@ local function AnimateWindowChange(applyGeometry, labels)
     end
     local l1, b1 = frame:GetLeft(), frame:GetBottom()
     local w1, h1, s1 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
-    local relayoutAtEnd = false
-    if isPlugin then
-        local grows = (w1 - s1 >= w0 - s0) and (h1 >= h0)
-        if grows then relayoutAtEnd = true else RelayoutWindow() end
-    end
 
     local function Place(e)
         frame:ClearAllPoints()
@@ -2322,6 +2348,9 @@ local function SaveWindowPosition()
     if not (frame and AltStableConfig and AltStableConfig.rememberWindowPosition) then
         return
     end
+    -- Maximized, the window is centred by the maximize, not placed by the
+    -- user: the position to remember is the one Restore will go back to.
+    if maxState.on then return end
     local point, _, relativePoint, xOfs, yOfs = frame:GetPoint(1)
     AltStable.SetConfigValue("windowPosition", {
         point = point or "CENTER",
@@ -2345,6 +2374,8 @@ end
 local function ResetWindowPosition()
     AltStableConfig = AltStableConfig or {}
     AltStable.SetConfigValue("windowPosition", nil)
+    -- Maximized, the reset is where Restore goes: centred, not the old spot.
+    if maxState.on then maxState.point = nil; return end
     if frame then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER")
@@ -2406,9 +2437,9 @@ local function ComputeContentSize()
 
     -- Sidebar height floor.
     --
-    -- The sidebar holds N navigation buttons and nothing beneath them any
-    -- more - the Filter row and Hide-below checkbox are gone with the
-    -- always-on filter, and SIDEBAR_BOTTOM_FOOTER is 0. Plugins can register
+    -- The sidebar holds N navigation buttons and, pinned beneath them, the
+    -- collapse chevron (#150) - SIDEBAR_BOTTOM_FOOTER reserves its room; the
+    -- Filter row and Hide-below checkbox are long gone. Plugins can register
     -- more buttons at runtime, so the required height is queried live, not
     -- hardcoded.
     --
@@ -2688,15 +2719,14 @@ local function CreateFrameIfNeeded()
     titleBar:SetHeight(TITLE_H)
     titleBar:EnableMouse(true)
     titleBar:RegisterForDrag("LeftButton")
-    -- A maximized window stays put, and its centred position is not the one to
-    -- remember: Restore goes back to where it was.
+    -- A maximized window stays put (and SaveWindowPosition will not record its
+    -- centred position: Restore goes back to where it was).
     titleBar:SetScript("OnDragStart", function()
         if maxState.on then return end
         frame:StartMoving()
     end)
     titleBar:SetScript("OnDragStop",  function()
         frame:StopMovingOrSizing()
-        if maxState.on then return end
         SaveWindowPosition()
     end)
 
@@ -3055,10 +3085,9 @@ local function CreateFrameIfNeeded()
     -- it's called, so plugin-added buttons that grow the sidebar make the
     -- minimum frame height grow automatically.
     --
-    -- Math: btnY starts at -8 (top inset) and decrements by 27 per button.
-    -- _pluginBtnY is the next-empty-Y after all buttons. There are no bottom
-    -- controls any more, so nothing is reserved below the last button beyond
-    -- 8px of breathing space.
+    -- Math: btnY starts at -8 (top inset) and decrements by one step per
+    -- button. _pluginBtnY is the next-empty-Y after all buttons. Below the
+    -- last one: the collapse chevron (#150) and 8px of breathing space.
     local SIDEBAR_TOP_INSET     = 8
     local SIDEBAR_BOTTOM_FOOTER = 26     -- the collapse chevron (#150)
     local SIDEBAR_BOTTOM_BREATH = 8

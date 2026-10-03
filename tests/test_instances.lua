@@ -432,6 +432,8 @@ do
         AltStable.RequestWindowSize = function(w, h) asked = { w, h } end
         plugin.OnResize()
         check("the Raids tab sizes the window through the request", asked ~= nil)
+        check("  and says so, so a geometry animation lays it out before measuring",
+              plugin.sizesWindow == true)
         local fullW = asked and asked[1]
         AltStable.LAYOUT.SIDEBAR_WIDTH = 56
         plugin.OnResize()

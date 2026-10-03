@@ -1089,6 +1089,9 @@ function AT_SI._Bootstrap()
         OnActivate   = function(mainFrame) AT_SI.Activate(mainFrame) end,
         -- The window changed size under us: maximize, restore, the sidebar (#150).
         OnResize     = function() if AT_SI.isActive then AT_SI.Refresh() end end,
+        -- Refresh sizes the window to the grid, so a geometry animation lays
+        -- this tab out before measuring where it ends, as for a sheet tab.
+        sizesWindow  = true,
         OnDeactivate = function(mainFrame) AT_SI.Deactivate(mainFrame) end,
         _test        = {
             parseLockout = parseLockout, gather = gather, shortName = shortName,

@@ -2810,6 +2810,82 @@ do
     AltStable.SetScale(1.0)
     AltStable.SetWindowMaximized(false)
 
+    -- ...and re-lays the tab out in its new size (#157 review): a plugin tab.
+    pbtn:GetScript("OnClick")(pbtn)
+    AltStable.SetWindowMaximized(true)
+    resized = 0
+    AltStable.SetScale(1.25)
+    eq("a scale change while maximized re-lays out the tab", resized, 1)
+    AltStable.SetScale(1.0)
+    AltStable.SetWindowMaximized(false)
+    resized = 0
+    AltStable.SetScale(1.25)
+    eq("  but not when the window is not maximized", resized, 0)
+    AltStable.SetScale(1.0)
+
+    -- The maximized position is never saved, and a reset while maximized is
+    -- where Restore goes (#157 review).
+    AltStableConfig.rememberWindowPosition = true
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+    AltStable.SetConfigValue("windowPosition", { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 50, y = -60 })
+    AltStable.SetWindowMaximized(true)
+    T.titleBar:GetScript("OnDragStop")(T.titleBar)
+    eq("a maximized window does not save its centred position", AltStableConfig.windowPosition.x, 50)
+    AltStable.ResetWindowPosition()
+    eq("  a reset while maximized clears the saved one", AltStableConfig.windowPosition, nil)
+    eq("  and leaves the window maximized and centred", (f:GetPoint(1)), "CENTER")
+    AltStable.SetWindowMaximized(false)
+    eq("  so Restore goes to the reset position, centred", (f:GetPoint(1)), "CENTER")
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+
+    -- Measured at the scale the window settles at, not the open fade's 96%:
+    -- reopening a maximized window used to come out 4% larger than the screen.
+    AltStable.SetWindowMaximized(true)
+    local settledW = f:GetWidth()
+    AltStableConfig.enableOpenAnimation = true
+    AltStable._PlayOpenAnimation(f)
+    AltStable.RefitWindow()
+    eq("a maximized window refitted during the open fade keeps the settled size", f:GetWidth(), settledW)
+    AltStable.FinishOpenAnimation()
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetWindowMaximized(false)
+
+    -- A plugin that sizes the window in its re-layout: that size is the one
+    -- the window ends at, animated or not, and laid out before the trip.
+    local sizer = { asked = nil }
+    local sizerPlugin = {
+        id = "test150sizer", label = "Sizer", _isPlugin = true, sizesWindow = true,
+        OnActivate = function() end,
+        OnResize = function()
+            sizer.calls = (sizer.calls or 0) + 1
+            AltStable.RequestWindowSize(sizer.w, 500)
+        end,
+    }
+    AltStable.RegisterPlugin(sizerPlugin)
+    local sizerBtn = T.sidebarBtns[#T.sidebarBtns]
+    sizerBtn:GetScript("OnClick")(sizerBtn)
+    sizer.w = 640
+    AltStable.SetSidebarCompact(true)
+    sizer.calls = 0
+    AltStableConfig.enableOpenAnimation = true
+    AltStable.SetSidebarCompact(false)          -- its space shrinks: the plugin asks for more
+    local r = T.WindowAnimRunner()
+    eq("a self-sizing plugin is laid out before the trip", sizer.calls, 1)
+    sizer.w = 820
+    AltStable.SetSidebarCompact(true)           -- grows: laid out first all the same
+    eq("  whichever way it goes", sizer.calls, 2)
+    local fn = r:GetScript("OnUpdate"); if fn then fn(r, 0.3) end
+    eq("  and the window ends at the size it asked for", f:GetWidth(), 820)
+    -- A plugin that only HOLDS a floor (Warband) is laid out before a trip
+    -- that shrinks its space, and the window ends at what that asked for.
+    sizerPlugin.sizesWindow = nil
+    sizer.w = 900
+    AltStable.SetSidebarCompact(false)          -- shrinks its space: laid out first
+    fn = r:GetScript("OnUpdate"); if fn then fn(r, 0.3) end
+    eq("a floor asked for before a shrinking trip is where it ends", f:GetWidth(), 900)
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetSidebarCompact(false)
+
     -- THE GRID FILLS A WIDER WINDOW: spare width is shared out across the
     -- columns, in proportion to their own widths. The stub's viewport does not
     -- follow anchors, so it is set to the width the window would give it.
@@ -2862,6 +2938,27 @@ do
     AltStable.RefreshSheet()
     eq("an unchanged layout re-places no cell", placed, 0)
     cell.ClearAllPoints = realClear
+    -- Whole pixels, the rounding shared a pixel at a time (#157 review).
+    body.GetWidth = function() return natural + 300.5 end
+    AltStable.RefreshSheet()
+    widths = T.ColumnWidths()
+    local total, whole, fair = 0, true, true
+    for i = 1, #cols do
+        local add = widths[i] - own[i]
+        total = total + add
+        if add ~= math.floor(add) then whole = false end
+        local share = math.floor(300 * own[i] / ownSum)
+        if add < share or add > share + 1 then fair = false end
+    end
+    eq("a fractional viewport spreads whole pixels only", total, 300)
+    local _, _, _, _, bodyF = T.ColumnLayout()
+    eq("  and the grid's width is whole too", bodyF:GetWidth(), natural + 300)
+    -- A new row places its own cells, at the columns' own widths.
+    local fresh = AltStable.CreateRow(CreateFrame("Frame"), 22, cols)
+    local _, _, _, fx = fresh.cells[2]:GetPoint(1)
+    eq("a new row places its own cells", fx, 10 + own[1] + 6)
+    check("  each column a whole number", whole)
+    check("  and no column more than a pixel over its share", fair)
     -- When the window fits the columns again, they go back to their own.
     body.GetWidth = function() return natural + 2 end
     AltStable.RefreshSheet()
