@@ -87,6 +87,12 @@ local function EnsureDefaults()
     if AltStableConfig.sendAllAccounts == nil then
         AltStableConfig.sendAllAccounts = false
     end
+    -- The Warband tab's view (#153). Its tabs (warbandTabs) are seeded by the
+    -- plugin, which owns their defaults, the first time it draws.
+    if AltStableConfig.warbandView == nil then AltStableConfig.warbandView = "single" end
+    if AltStableConfig.warbandScope == nil then AltStableConfig.warbandScope = "warband" end
+    if AltStableConfig.warbandRuleset == nil then AltStableConfig.warbandRuleset = "current" end
+    if AltStableConfig.warbandTab == nil then AltStableConfig.warbandTab = 1 end
     -- Pets in the Roster scene (#75): an option, off unless asked for.
     if AltStableConfig.rosterPets == nil then
         AltStableConfig.rosterPets = false
