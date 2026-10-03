@@ -2312,11 +2312,13 @@ local windowAnim = {}
 -- window frame after frame and then settles it on the size and anchors it
 -- measured BEFORE that change, over the top of it (#150: restore, then switch
 -- tab inside the fifth of a second, and the window came out the wrong size).
-local function FinishWindowAnimation()
+-- `skipRelayout`: the tab is about to be switched (#159), so a layout the trip
+-- deferred to its end would be for a tab that is leaving - skip it.
+local function FinishWindowAnimation(skipRelayout)
     local runner = windowAnim.runner
     if not (runner and runner:GetScript("OnUpdate")) then return false end
     runner:SetScript("OnUpdate", nil)
-    windowAnim.settle()
+    windowAnim.settle(skipRelayout)
     return true
 end
 AltStable.FinishWindowAnimation = FinishWindowAnimation
@@ -2455,23 +2457,27 @@ local function WindowAnimEnabled()
         and frame.sidebar ~= nil and UIParent ~= nil
 end
 
--- `laidOut`: applyGeometry lays the tab out itself - a tab switch (#159), which
--- builds the new tab at its own size - so it is not laid out a second time
--- before the trip. A plugin whose space grows is still laid out again at the
--- end, as for maximize.
+-- `laidOut`: applyGeometry lays the tab out itself - a tab switch (#159): the
+-- new tab sizes the window, then lays itself out at that size. It is not laid
+-- out again, before the trip or after it, and a running trip is settled
+-- without the layout it deferred - that was for the tab that is leaving.
 local function AnimateWindowChange(applyGeometry, labels, laidOut)
     if not WindowAnimEnabled() then
-        FinishWindowAnimation()
+        FinishWindowAnimation(laidOut)
         applyGeometry()
         if not laidOut then RelayoutWindow() end
         if labels then labels(1, true) end
         return
     end
+    -- The open fade scales the window. Measured mid-fade, the rect below would
+    -- be applied at a scale that is still moving, and the window drifted (#164
+    -- review). The fade finishes first, as anything borrowing it does.
+    if AltStable.FinishOpenAnimation then AltStable.FinishOpenAnimation() end
     local sb = frame.sidebar
     -- Where it is on screen now, mid-journey or not.
     local l0, b0 = frame:GetLeft(), frame:GetBottom()
     local w0, h0, s0 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
-    FinishWindowAnimation()
+    FinishWindowAnimation(laidOut)
 
     applyGeometry()
     -- A layout that runs before the trip may size the window itself - a sheet
@@ -2480,11 +2486,13 @@ local function AnimateWindowChange(applyGeometry, labels, laidOut)
     -- its content is laid out first whichever way it goes, as a sheet tab is.
     local isPlugin = activeSection and activeSection._isPlugin
     local relayoutAtEnd = false
-    if not isPlugin or activeSection.sizesWindow then
-        if not laidOut then RelayoutWindow() end
+    if laidOut then
+        -- Laid out by the switch, at the size it ends at.
+    elseif not isPlugin or activeSection.sizesWindow then
+        RelayoutWindow()
     else
         local grows = (frame:GetWidth() - sb:GetWidth() >= w0 - s0) and (frame:GetHeight() >= h0)
-        if grows then relayoutAtEnd = true elseif not laidOut then RelayoutWindow() end
+        if grows then relayoutAtEnd = true else RelayoutWindow() end
     end
 
     -- The end state, measured and remembered: settling restores these exactly
@@ -2512,13 +2520,13 @@ local function AnimateWindowChange(applyGeometry, labels, laidOut)
         sb:SetWidth(s0 + (s1 - s0) * e)
         if labels then labels(e) end
     end
-    windowAnim.settle = function()
+    windowAnim.settle = function(skipRelayout)
         frame:ClearAllPoints()
         for _, p in ipairs(points) do frame:SetPoint(unpack(p, 1, p.n)) end
         frame:SetSize(w1, h1)
         sb:SetWidth(s1)
         if labels then labels(1, true) end
-        if relayoutAtEnd then RelayoutWindow() end
+        if relayoutAtEnd and not skipRelayout then RelayoutWindow() end
     end
 
     Place(0)
@@ -3425,6 +3433,7 @@ local function CreateFrameIfNeeded()
 
         table.insert(sidebarBtns,pbtn)
         sidebar._pluginBtnY = sidebar._pluginBtnY - SIDEBAR_BUTTON_STEP
+        return pbtn
     end
 
     -- Render any plugins already registered before the frame was built
@@ -4770,7 +4779,7 @@ local function CreateFrameIfNeeded()
     end)
 
     -- Add the Options sidebar button
-    local optSect
+    local optSect, optBtn
     do
         optSect = {
             id = "options",
@@ -4792,13 +4801,18 @@ local function CreateFrameIfNeeded()
                 f.totalsBar:Show()
             end,
         }
-        MakePluginButton(optSect)
+        optBtn = MakePluginButton(optSect)
     end
     -- Stored on AltStable so AltStable.OpenConfig() (and the minimap
     -- right-click) can switch to the Options section without re-introducing
     -- the standalone config popup.
+    --
+    -- Through the Options BUTTON, as a click would: Options is a plugin tab,
+    -- and SwitchSection is the sheet tabs' path - handed Options it read the
+    -- sheet columns of a section that has none and raised, leaving the tab
+    -- half switched (#164 review).
     AltStable._SwitchToOptions = function()
-        if optSect then SwitchSection(optSect) end
+        if optBtn then optBtn:GetScript("OnClick")(optBtn) end
     end
 
     --------------------------------------------------------
@@ -5029,8 +5043,11 @@ local function CreateFrameIfNeeded()
         end
     end)
 
-    -- Activate the first section: it builds the headers (SwitchSection).
-    SwitchSection(SECTIONS[1])
+    -- Activate the first section: it builds the headers. Not animated: the
+    -- window is still shown here (it is hidden at the end of the build), so an
+    -- animated switch would start a trip on a window nobody sees and leave it
+    -- on a temporary anchor while it ran (#164 review).
+    SwitchSectionNow(SECTIONS[1])
 
     -- THE TOOLTIP HOOKS GO IN LAST, with the window already built.
     --
@@ -5573,6 +5590,9 @@ AltStable._test.FooterText = function()
         .. " || " .. (totalsBar.mid and totalsBar.mid:GetText() or "")
         .. " || " .. (totalsBar.right and totalsBar.right:GetText() or "")
 end
+
+-- Building alone, without opening: what the first build leaves behind.
+AltStable._test.BuildSheet = function() CreateFrameIfNeeded() end
 
 function AltStable.EnsureSheetVisible()
     CreateFrameIfNeeded()

@@ -3752,15 +3752,67 @@ do
     local p, _, _, x, y = f:GetPoint(1)
     check("  anchored where the window really is", p == "TOPLEFT" and x == 50 and y == -60, tostring(p))
 
-    -- A plugin that keeps the window's size: nothing to travel.
+    -- A plugin that keeps the window's size: nothing to travel, and laid out
+    -- once - by its own OnActivate - not again through OnResize (#164 review:
+    -- the Roster rebuilt its scene twice per click).
+    local kept = { activated = 0, resized = 0 }
     local keeps = { id = "test159keeps", label = "Keeps", _isPlugin = true,
-                    OnActivate = function() end, OnDeactivate = function() end }
+                    OnActivate = function() kept.activated = kept.activated + 1 end,
+                    OnResize = function() kept.resized = kept.resized + 1 end,
+                    OnDeactivate = function() end }
     AltStable.RegisterPlugin(keeps)
     local keepBtn = T.sidebarBtns[#T.sidebarBtns]
     keepBtn:GetScript("OnClick")(keepBtn)
     check("a plugin that keeps the size makes no trip", not Running())
+    eq("  it is laid out once, by its OnActivate", kept.activated, 1)
+    eq("  and not again through OnResize", kept.resized, 0)
     keepBtn:GetScript("OnClick")(keepBtn)
     check("  nor does clicking it again", not Running())
+    eq("  which lays it out no second time either", kept.resized, 0)
+
+    -- A plugin that GROWS the window as it opens (Warband's floor): it glides,
+    -- and is laid out once, by OnActivate, at the size it ends at.
+    Open("summary"); Tick(1)
+    local grew = { resized = 0 }
+    local grows = { id = "test159grows", label = "Grows", _isPlugin = true,
+                    OnActivate = function() AltStable.EnsureWindowMinSize(f:GetWidth() + 200, f:GetHeight()) end,
+                    OnResize = function() grew.resized = grew.resized + 1 end,
+                    OnDeactivate = function() end }
+    AltStable.RegisterPlugin(grows)
+    local growBtn = T.sidebarBtns[#T.sidebarBtns]
+    local beforeW = f:GetWidth()
+    growBtn:GetScript("OnClick")(growBtn)
+    check("a plugin that grows the window glides", Running())
+    Tick(1)
+    eq("  to the size it asked for", f:GetWidth(), beforeW + 200)
+    eq("  laid out once, not again at the end", grew.resized, 0)
+
+    -- Switching away mid-glide: the trip's deferred layout was for the tab
+    -- that is leaving, so it is dropped, not run.
+    AltStable.SetSidebarCompact(true)           -- its space grows: layout deferred to the end
+    check("a growing trip on the plugin", Running())
+    Tick(0.05)
+    grew.resized = 0
+    Open("summary")
+    eq("switching away mid-glide does not lay out the leaving plugin", grew.resized, 0)
+    Tick(1)
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetSidebarCompact(false)
+    AltStableConfig.enableOpenAnimation = true
+
+    -- A tab click during the open fade finishes the fade first: the trip is
+    -- measured at the window's settled scale, not one still moving.
+    AltStable._PlayOpenAnimation(f)
+    Open("gear")
+    check("a tab click during the open fade finishes the fade", not AltStable.FinishOpenAnimation())
+    Tick(1)
+
+    -- /alts config and the minimap right-click open Options through its button.
+    local ok, err = pcall(AltStable.OpenConfig)
+    check("opening Options from outside the sidebar raises nothing", ok, tostring(err))
+    Tick(1)
+    check("  the Options page is shown", T.optionsPanel:IsShown())
+    check("  and the grid is not", not f.bodyScroll:IsShown())
     Open("gear"); Tick(1)
 
     -- A plugin that sizes the window when it opens glides there, laid out once.
