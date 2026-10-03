@@ -1,7 +1,41 @@
 # Changelog
 
-## Unreleased
+## v0.7.0-beta
 
+Sorting that makes sense, a window that moves smoothly, and a bigger, tidier sheet. Measured on
+client 1.60.1.70205. Nothing changes on the sync wire. The new settings below are this account's
+own and are not synced.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+
+### New
+
+- **Sorting, reworked** ([#160](https://github.com/Spotnick2/AltStable/issues/160)):
+  - **Each tab keeps its own sort.** Sort Summary by Gold, switch to Gear, and Gear has its own;
+    come back and Summary is still by Gold.
+  - **Remembered across logouts**, with a new option, **Options > "Remember each tab's sort
+    order"** (on by default). Turned off, each tab keeps its sort until you log out.
+  - **The first click goes the natural way:** names, guilds, classes and races A to Z; numbers
+    highest first; Last Online most recent first. Click again to reverse.
+  - **Characters with no value sort last**, whichever way you sort: unreadable gold, a faction
+    they haven't met, no guild.
+  - **Gear slot columns no longer sort.**
+- **Clearer column headers:**
+  - The column you sort by has a soft accent fill, an accent underline and an **arrow** for the
+    direction, on every kind of header, icons included.
+  - Hovering a header shows a plain grey highlight, so it never looks sorted.
+  - Each header's tooltip says the current order and what the next click does.
+  - The Class and Race headers have their own icons instead of the letters C and R, and every
+    header icon is the same size.
+- **Switching tabs animates** ([#159](https://github.com/Spotnick2/AltStable/issues/159)): the
+  window glides to the new tab's size instead of jumping. Tabs that keep the size don't move.
+  Turning off the open animation in Options turns this off too.
+- **The Roster's menu icon is the AltStable logo.**
 - **Portrait angle is a setting** ([#149](https://github.com/Spotnick2/AltStable/issues/149)):
   Options > Presentation > **Portrait angle**, -45 to 45 degrees (the same value
   `/alts portrait facing` sets). The default is now **straight on** (it was 20 degrees). An
@@ -22,6 +56,15 @@
   sync peer, request and hidden-character lists take only the room they use (an empty one says
   so in a line), so there are no more large blank gaps; and the note about class colours now
   sits under the **Accent** row it explains instead of at the bottom of the page.
+
+### Fixed
+
+- **`/alts config` and right-clicking the minimap button** opened Options half way and raised an
+  error. They open it properly now.
+- **Sorting by Name** never showed which column was sorted.
+- **Rested XP** sorted by the stored value rather than the one shown in the cell.
+- **Race** sorted by the game's internal names, so Undead ("Scourge") landed between Orc and
+  Tauren. Class and Race now sort by the names their tooltips show.
 
 
 ## v0.6.0-beta

@@ -723,7 +723,7 @@ end
 -- someone would have noticed.
 ------------------------------------------------------------
 
-local MEASURED_ON_BUILD = "70170"
+local MEASURED_ON_BUILD = "70205"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
 local function CheckClientBuild()

@@ -570,6 +570,29 @@ re-measured here.
 
 ---
 
+## Build 1.60.1.70205 (2026-10-03) — API unchanged
+
+Dumped (`forever-api-1.60.1.70205.md`, client built Oct 2 2026) and compared with
+`Compare-Dumps.ps1` against 70170:
+
+```
+Documented functions - no change (6598)
+Documented events - no change (1806)
+Documented tables - no change (797)
+Widget methods - no change (7530)
+Namespace functions - no change (5417)
+Documented surface identical.
+```
+
+The `_G`-walk sections moved only by other addons' globals (+1 -6 global functions, +229 -137
+namespace candidates), as on every build.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 16000 24000 -1 9 table`, all as expected.
+
+**Persistence** was not re-run: it is no longer a per-build step (#23 fixed in 70009, held on 70124
+and 70170), and nothing looked lost on 70205. The v0.7.0-beta work was tested in game on this build,
+across full client restarts.
+
 ## Build 1.60.1.70170 (2026-10-01) — four small API changes, none we use; persistence holds
 
 Dumped (`forever-api-1.60.1.70170.md`) and compared with `Compare-Dumps.ps1` against 70124:
