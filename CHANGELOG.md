@@ -59,6 +59,9 @@ Without it, the scene has no one to show. Get it from
 
 ### Fixed
 
+- **No more developer message at login.** After a client update, AltStable told every player to
+  "re-run /apidump" and edit its source. That note is for whoever tests the addon, and now only
+  shows on a development copy.
 - **`/alts config` and right-clicking the minimap button** opened Options half way and raised an
   error. They open it properly now.
 - **Sorting by Name** never showed which column was sorted.

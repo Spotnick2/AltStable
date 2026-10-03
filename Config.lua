@@ -726,7 +726,22 @@ end
 local MEASURED_ON_BUILD = "70205"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
+-- A development copy, not a release: deploy.ps1 stamps "dev-<sha>" (or "dev"),
+-- a checkout run as-is still carries the packager's "@project-version@", and
+-- an unreadable version is treated as dev. A packaged release carries its tag
+-- ("v0.7.0-beta"). What the build check below is for is a chore for whoever
+-- measures the client - a player can do nothing with it.
+function AltStable.IsDevBuild()
+    local get = AltStable.API and AltStable.API.GetAddOnMetadata
+    local ok, v = pcall(function() return get and get("AltStable", "Version") end)
+    if not ok or type(v) ~= "string" or v == "" then return true end
+    return v == "dev" or v:sub(1, 4) == "dev-" or v == "@project-version@"
+end
+
 local function CheckClientBuild()
+    -- Development copies only: on a release, every player on a newer build
+    -- was told to run /apidump and bump a constant in the source.
+    if not AltStable.IsDevBuild() then return end
     local build = CurrentBuild()
     -- An unreadable build is not evidence of a new one; stay quiet.
     if not build or build == MEASURED_ON_BUILD then return end
