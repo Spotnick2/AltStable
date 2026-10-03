@@ -3239,6 +3239,58 @@ local function CreateFrameIfNeeded()
         function() return AltStableConfig and AltStableConfig.rosterPets == true end)
     Y = Y - 22
 
+    -- The portrait capture angle (#149): what `/alts portrait facing` sets, as
+    -- a slider. 0 faces you; the default 20 reads better in a lineup.
+    local optFacingLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optFacingLabel:SetPoint("TOPLEFT", P, Y - 6)
+    optFacingLabel:SetText("Portrait angle")
+    optFacingLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    local optFacingSlider = CreateFrame("Slider", nil, optionsFrame, "OptionsSliderTemplate")
+    optFacingSlider:SetPoint("TOPLEFT", P + 120, Y - 2)
+    optFacingSlider:SetWidth(220); optFacingSlider:SetHeight(16)
+    optFacingSlider:SetMinMaxValues(-45, 45)
+    optFacingSlider:SetValueStep(5)
+    if optFacingSlider.Low  then optFacingSlider.Low:SetText("-45\194\176")  end
+    if optFacingSlider.High then optFacingSlider.High:SetText("45\194\176") end
+    local optFacingMid = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optFacingMid:SetPoint("TOP", optFacingSlider, "BOTTOM", 0, 2)
+    optFacingMid:SetText("0\194\176")
+    optFacingMid:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    local function FacingTip(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(("Portrait angle: %d\194\176"):format(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0), 1, 1, 1)
+        GameTooltip:AddLine("Which way characters turn in /alts portrait captures; 0 faces you. "
+            .. "Re-capture your other characters too, so the lineup matches.", .8, .8, .8, true)
+        GameTooltip:Show()
+    end
+    optFacingSlider:SetScript("OnEnter", FacingTip)
+    optFacingSlider:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    local optFacingUpdating = false
+    optFacingSlider:SetScript("OnValueChanged", function(self, value)
+        if optFacingUpdating then return end
+        local deg = math.floor(value / 5 + 0.5) * 5
+        deg = math.max(-45, math.min(45, deg))
+        if AltStable.SetPortraitFacing then AltStable.SetPortraitFacing(deg) end
+        if GameTooltip:IsOwned(self) then FacingTip(self) end
+    end)
+    local optFacingReset = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+    optFacingReset:SetSize(58, 20)
+    optFacingReset:SetPoint("LEFT", optFacingSlider, "RIGHT", 16, 0)
+    AltStable.ApplyBackdrop(optFacingReset, 0.12, 0.12, 0.12, 1)
+    local optFacingResetLbl = optFacingReset:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optFacingResetLbl:SetAllPoints(); optFacingResetLbl:SetJustifyH("CENTER"); optFacingResetLbl:SetText("Reset")
+    optFacingReset:SetScript("OnClick", function()
+        local d = AltStable.DEFAULT_PORTRAIT_FACING or 0
+        if AltStable.SetPortraitFacing then AltStable.SetPortraitFacing(d) end
+        optFacingUpdating = true
+        optFacingSlider:SetValue(d)
+        optFacingUpdating = false
+    end)
+    AltStable._test = AltStable._test or {}
+    AltStable._test.FacingSlider = optFacingSlider
+    AltStable._test.FacingReset = optFacingReset
+    Y = Y - 44
+
     local optMinimapCheck = MakeOptCheckRow(nil,
         "Show minimap button (left-click toggle, right-click options, drag to move)", Y,
         function(checked)
@@ -3777,6 +3829,9 @@ local function CreateFrameIfNeeded()
         optSaluteCheck:SetChecked(optSaluteCheck._getter())
         optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
         optPetsCheck:SetChecked(optPetsCheck._getter())
+        optFacingUpdating = true
+        optFacingSlider:SetValue(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0)
+        optFacingUpdating = false
         optMinimapCheck:SetChecked(optMinimapCheck._getter())
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))

@@ -2575,5 +2575,31 @@ do
     panel:Hide()
 end
 
+-- The Portrait angle slider (#149): 5-degree steps, through the shared setter,
+-- Reset to the default, and Options shows what is saved.
+do
+    local slider, reset = AltStable._test.FacingSlider, AltStable._test.FacingReset
+    check("Options has the Portrait angle slider", slider ~= nil and reset ~= nil)
+    if slider and reset then
+        local savedP = AltStablePortraits
+        AltStablePortraits = nil
+        slider:GetScript("OnValueChanged")(slider, 12.4)
+        eq("the slider stores the angle, to 5 degrees", AltStable.GetPortraitFacing(), 10)
+        slider:GetScript("OnValueChanged")(slider, -80)
+        eq("  within -45..45", AltStable.GetPortraitFacing(), -45)
+        reset:GetScript("OnClick")(reset)
+        eq("Reset goes back to straight on", AltStable.GetPortraitFacing(), 0)
+        AltStable.SetPortraitFacing(25)              -- as /alts portrait facing 25 does
+        local shownValue
+        local realSet = slider.SetValue
+        slider.SetValue = function(self, v) shownValue = v; return self end   -- the stub keeps no value
+        local optPanel = AltStable._test.optionsPanel
+        optPanel:GetScript("OnShow")(optPanel)
+        eq("opening Options shows the saved angle", shownValue, 25)
+        slider.SetValue = realSet
+        AltStablePortraits = savedP
+    end
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

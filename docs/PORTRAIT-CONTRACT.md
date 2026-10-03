@@ -41,7 +41,10 @@ newer than any record should say "reload in game", not "no capture".
 ```lua
 AltStablePortraits = {
     ["version"] = 1,
-    ["facing"] = 20,            -- optional; degrees, only present once changed
+    ["facing"] = 20,            -- optional; degrees, only present once changed.
+                                --   Absent means the default: 0 (straight on) from
+                                --   v0.7, 20 before (#149). Set from Options or
+                                --   /alts portrait facing; -45..45 from the slider
     ["renders"] = {
         {
             ["name"] = "Karuzo Elegia",       -- full name, surname included

@@ -946,5 +946,23 @@ eq("/alts portrait glow off turns it off", AltStableConfig.portraitGlow, false)
 AltStable.PortraitCommand("glow on")
 eq("  and on", AltStableConfig.portraitGlow, true)
 
+-- The angle as a setting (#149): one setter behind the slider and the command,
+-- straight on by default, and never written into a newer AltStable's store.
+do
+    AltStablePortraits = nil
+    eq("captures face straight on by default", AltStable.GetPortraitFacing(), 0)
+    check("the setting is accepted", AltStable.SetPortraitFacing(-15))
+    eq("  and is what the capture uses", AltStable.GetPortraitFacing(), -15)
+    eq("  stored in the contract's field", AltStablePortraits.facing, -15)
+    check("  which the stage turns by", math.abs(select(1, (function()
+        local deg = AltStable.GetPortraitFacing(); return math.rad(deg) end)()) - math.rad(-15)) < 1e-9)
+    check("nonsense is refused", not AltStable.SetPortraitFacing("left"))
+    eq("  and changes nothing", AltStablePortraits.facing, -15)
+    AltStablePortraits = { version = 99, renders = {} }
+    check("a newer store is not written by the setting", not AltStable.SetPortraitFacing(10))
+    eq("  its facing untouched", AltStablePortraits.facing, nil)
+    AltStablePortraits = nil
+end
+
 print(("test_capture: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

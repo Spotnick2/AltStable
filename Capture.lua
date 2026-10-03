@@ -75,10 +75,13 @@ local STORE_VERSION = 1
 -- it as a nil GLOBAL and every pull threw (review of #134).
 local PortraitStatus, GlowForCombat
 
--- Which way the character is turned, in degrees. 0 is dead-on; a slight turn
--- reads better in a lineup than a passport photo, and the same value is used
--- for every capture so a row of alts is consistent.
-local DEFAULT_FACING = 20
+-- Which way the character is turned, in degrees. 0 is dead-on, the default
+-- since #149: straight on looks right everywhere - the scene, the grid, the
+-- detail pane - where a turn only suits one side of the fire. Facing the fire
+-- is #152's (mirror one turned capture per side of the scene, rather than
+-- capture per seat). The same value is used for every capture so a row of alts
+-- is consistent; Options > Presentation > Portrait angle changes it.
+local DEFAULT_FACING = 0
 
 -- The capture records. Created on first use, so an install that never
 -- captures never writes the table at all.
@@ -104,6 +107,19 @@ local function Facing()
     if not deg then deg = DEFAULT_FACING end
     return math.rad(deg), deg
 end
+
+-- The angle as a setting (#149), shared by the Options slider and
+-- `/alts portrait facing`. It writes the field the portrait contract already
+-- documents (AltStablePortraits.facing, docs/PORTRAIT-CONTRACT.md), so the
+-- Companion reads the same number the capture used. Refused, rather than
+-- written, into a store a newer AltStable wrote: that version is not ours to
+-- edit.
+function AltStable.GetPortraitFacing()
+    local _, deg = Facing()
+    return deg
+end
+
+AltStable.DEFAULT_PORTRAIT_FACING = DEFAULT_FACING
 
 local function Out(s)
     if AltStable.Print then
@@ -931,6 +947,14 @@ function GlowForCombat(inCombat)
     end
 end
 
+function AltStable.SetPortraitFacing(deg)
+    deg = tonumber(deg)
+    if not deg or StoreTooNew() then return false end
+    Store().facing = deg
+    if previewing then Preview() end
+    return true
+end
+
 local USAGE = "usage: |cffffff00/alts portrait|r [preview | facing <degrees> | cancel | glow on|off]"
 
 -- /alts portrait [preview | facing <deg> | cancel]. `args` is what Core's
@@ -971,9 +995,11 @@ function AltStable.PortraitCommand(args)
     end
     local deg = msg:match("^facing%s+(%-?%d+%.?%d*)$")
     if deg then
-        Store().facing = tonumber(deg)
-        Out(("facing set to %s\194\176 - every capture from now on uses it"):format(deg))
-        if previewing then Preview() end
+        if AltStable.SetPortraitFacing(deg) then
+            Out(("facing set to %s\194\176 - every capture from now on uses it"):format(deg))
+        else
+            Out("a newer AltStable wrote the portrait store - not changing it")
+        end
         return
     end
     Out(USAGE)
