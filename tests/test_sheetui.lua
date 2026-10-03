@@ -2675,7 +2675,7 @@ do
     AltStableConfig.sidebarCompact = false
     eq("the sidebar starts full width", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
     -- Set at build from the saved setting, not only on a click.
-    eq("  with the chevron pointing to collapse", T.chevronText:GetText(), "\194\171")
+    eq("  with the chevron showing collapse, >>", T.chevronText:GetText(), "\194\187")
 
     -- What sits beside the sidebar is anchored to its edge, not the window.
     local probe = CreateFrame("Frame", nil, f)
@@ -2709,7 +2709,7 @@ do
     check("the grid is anchored to the sidebar's edge", bodyRel == sidebar)
     local _, hdrRel = f.headerScroll:GetPoint(1)
     check("  and so are its column headers", hdrRel == sidebar)
-    eq("the chevron points the way it will go", T.chevronText:GetText(), "\194\187")
+    eq("a compact sidebar's chevron shows expand, <<", T.chevronText:GetText(), "\194\171")
 
     -- Compact, each label is its button's tooltip.
     sheetBtn:GetScript("OnEnter")(sheetBtn)

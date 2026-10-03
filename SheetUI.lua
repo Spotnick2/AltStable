@@ -3181,8 +3181,8 @@ local function CreateFrameIfNeeded()
         AltStable.LAYOUT.SIDEBAR_WIDTH = SIDEBAR_WIDTH
         sidebar:SetWidth(SIDEBAR_WIDTH - 1)
         SettleLabels(compact)
-        -- \194\171 and \194\187: the guillemets, pointing the way it will go.
-        chevronText:SetText(compact and "\194\187" or "\194\171")
+        -- The guillemets: \194\187 (>>) collapses, \194\171 (<<) expands.
+        chevronText:SetText(compact and "\194\171" or "\194\187")
         chevronText:SetTextColor(AltStable.SkinNavDim())
     end
     ApplySidebarMode()
