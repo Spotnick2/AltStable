@@ -3113,5 +3113,144 @@ do
     AltStableConfig.sidebarCompact = false
 end
 
+------------------------------------------------------------
+-- Options: the lists take only the room they use (#151)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local flow = T.OptFlow
+    local optPanel = T.optionsPanel
+    check("the Options page records what sits below its lists", flow.items and #flow.items > 0)
+    eq("three lists flow: peers, requests, hidden", #flow.lists, 3)
+
+    local saved = { AltStableConfig.whitelist, AltStable.SyncAuthList,
+                    AltStable.PendingSyncRequests, AltStable.HiddenCharacterList }
+    local auth, hidden = {}, {}
+    AltStable.SyncAuthList = function() return auth end
+    AltStable.PendingSyncRequests = function() return {} end
+    AltStable.HiddenCharacterList = function() return hidden end
+
+    -- Where an item is now, against where the layout put it.
+    local function ShiftOf(it)
+        local _, _, _, _, y = it.o:GetPoint(1)
+        return (y or 0) - (it.points[1][5] or 0)
+    end
+    local function Expected(it)
+        local s = 0
+        for _, list in ipairs(it.below) do s = s + (list.reserved - list.used) * 18 end
+        return s
+    end
+    -- Every recorded anchor: a TOP edge on the page itself moves by the gaps
+    -- above it; any other edge, or an anchor to a sibling, stays exactly as
+    -- laid out (the sibling moves, and it follows).
+    local function AllWhereExpected()
+        for _, it in ipairs(flow.items) do
+            for i, p in ipairs(it.points) do
+                local point, rel, _, _, y0 = p[1], p[2], p[3], p[4], p[5]
+                local _, nowRel, _, _, y = it.o:GetPoint(i)
+                local onPage = (rel == nil or rel == it.o:GetParent())
+                local want = (y0 or 0) + ((onPage and point:find("^TOP")) and Expected(it) or 0)
+                if (y or 0) ~= want then
+                    return false, ("%s %s: %s vs %s"):format(point, tostring(onPage), tostring(y), tostring(want))
+                end
+                if not onPage and nowRel ~= rel then return false, "sibling anchor changed" end
+            end
+        end
+        return true
+    end
+
+    -- Everything empty: each list keeps one row, for its "none" line.
+    AltStableConfig.whitelist = {}
+    optPanel:GetScript("OnShow")(optPanel)
+    local wl, au, hd = flow.lists[1], flow.lists[2], flow.lists[3]
+    eq("an empty peer list uses one row", wl.used, 1)
+    eq("  and so do the answers", au.used, 1)
+    eq("  and the hidden list", hd.used, 1)
+    check("  each saying so", T.OptWlNone:IsShown() and T.OptAuthNone:IsShown())
+    check("everything below moved up by the rows not used", AllWhereExpected())
+    -- Below BOTH sync lists (Toasts, Mail, Hidden): up by both gaps.
+    local deepest
+    for _, it in ipairs(flow.items) do
+        if #it.below == 2 and it.points[1] and it.points[1][2] == nil then deepest = it; break end
+    end
+    check("there is something below both sync lists", deepest ~= nil)
+    if deepest then
+        eq("  and it moved up by both gaps", ShiftOf(deepest), (4 + 5) * 18)
+    end
+    local fullH = flow.height
+    local shown = (fullH - (4 + 5 + 5) * 18)
+    -- The page's own height follows: read it from the scroll child.
+    local child = flow.items[1].o:GetParent()
+    eq("  the page height drops by the rows not used", child:GetHeight(), shown)
+
+    -- Three peers: three rows, the note goes, and the rest moves back down.
+    AltStableConfig.whitelist = { "A", "B", "C" }
+    optPanel:GetScript("OnShow")(optPanel)
+    eq("three peers use three rows", wl.used, 3)
+    check("  the none line goes", not T.OptWlNone:IsShown())
+    check("  and what is below sits where that leaves it", AllWhereExpected())
+    eq("  the page grows back by two rows", child:GetHeight(), shown + 2 * 18)
+
+    -- A TOP anchor to a SIBLING is left alone: the sibling moves, and it follows.
+    -- (Nothing below the lists is built that way today; the rule is pinned so
+    -- the first thing that is does not move twice.)
+    local sib = CreateFrame("Frame", nil, child)
+    local follower = CreateFrame("Frame", nil, child)
+    follower:SetPoint("TOPLEFT", sib, "BOTTOMLEFT", 0, -4)
+    flow.items[#flow.items + 1] = { o = follower, below = { wl }, points = { { follower:GetPoint(1) } } }
+    flow.Apply()
+    local _, fRel, _, _, fy = follower:GetPoint(1)
+    check("a top anchor to a sibling is not moved by the flow", fRel == sib and fy == -4, tostring(fy))
+    flow.items[#flow.items] = nil
+
+    -- More than the list holds: no more than its reserve.
+    AltStableConfig.whitelist = { "A", "B", "C", "D", "E", "F", "G" }
+    optPanel:GetScript("OnShow")(optPanel)
+    eq("a full list uses its whole reserve, never more", wl.used, 5)
+
+    -- Answers arriving while Options is open move the page too.
+    auth[1] = { name = "Friend", mode = AltStable.AUTH_AUTO }
+    auth[2] = { name = "Other", mode = AltStable.AUTH_NEVER }
+    AltStable.RefreshSyncAnswers()
+    eq("answers arriving reflow the page", au.used, 2)
+    check("  the none line goes", not T.OptAuthNone:IsShown())
+    check("  and everything below follows", AllWhereExpected())
+
+    -- The hidden list's note rides on its own rows, which move with the lists,
+    -- and the flow leaves it to that rather than putting it back.
+    hidden[1] = nil
+    AltStable.RefreshOptionsHiddenList()
+    local skipped = 0
+    for o in pairs(flow.skip) do
+        skipped = skipped + 1
+        local _, rel = o:GetPoint(1)
+        check("the hidden list's note is anchored to the list's own rows", rel ~= nil and rel ~= child)
+        for _, it in ipairs(flow.items) do
+            if it.o == o then check("  and the flow does not re-anchor it", false) end
+        end
+    end
+    eq("one note is left to its own anchoring", skipped, 1)
+
+    -- The accent footnote sits under the Accent row, above every list.
+    local note = T.OptAccentFootnote
+    local _, _, _, nx, ny = note:GetPoint(1)
+    local highest = -math.huge
+    for _, it in ipairs(flow.items) do
+        local y = it.points[1] and it.points[1][5]
+        if y and it.points[1][2] == nil and y > highest then highest = y end
+    end
+    check("the accent footnote is above every list, not at the bottom of the page", ny > highest,
+          tostring(ny) .. " vs " .. tostring(highest))
+    for _, it in ipairs(flow.items) do
+        if it.o == note then check("  and does not move with them", false) end
+    end
+    check("  and explains the class colours, not the accent's own job",
+          note:GetText():find("class colour") ~= nil)
+
+    AltStableConfig.whitelist, AltStable.SyncAuthList, AltStable.PendingSyncRequests,
+        AltStable.HiddenCharacterList = saved[1], saved[2], saved[3], saved[4]
+end
+
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

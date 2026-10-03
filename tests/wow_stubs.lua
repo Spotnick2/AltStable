@@ -220,8 +220,18 @@ local function makeFrame()
         m._maskOwner = self
         return m
     end
-    f.CreateFontString = function()
+    f.CreateFontString = function(self)
         local fs = makeFrame()
+        -- A font string IS a region, as on the client: GetRegions returns it
+        -- with the textures. Left out, anything that walks a frame's regions
+        -- - the Options page moving what sits below its lists (#151) - was
+        -- tested on textures only, and every label it moves went unseen.
+        if type(self) == "table" then
+            self._regions = self._regions or {}
+            self._regions[#self._regions + 1] = fs
+            fs._regionOwner = self
+            fs._isFontString = true
+        end
         fs.GetHeight = function(self)
             if self._GetHeight then return self._GetHeight end
             local t = self._text
