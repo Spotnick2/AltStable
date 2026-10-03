@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.6.0-beta
+
+The Warband tab becomes a warband bank, laid out like retail's. Measured on client 1.60.1.70170.
+Nothing changes on the sync wire, and no saved data changes shape: the new settings are this
+account's own.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+
+### New
+
 - **The Warband tab is a warband bank** ([#153](https://github.com/Spotnick2/AltStable/issues/153)),
   laid out like retail's, read-only:
   - **Your own tabs** sort items by category (Equipment, Consumables, Trade Goods, Reagents,
@@ -12,6 +27,7 @@
     by **ruleset** (your current one by default, or All, Normal, PvP, RP, Hardcore). Hidden
     characters are left out, as from the sheet's totals.
   - Tabs are settings on this account; nothing about them is synced, and no item moves.
+  - The window grows to fit the tab when you open it, whichever tab you came from.
 
 ## v0.5.0-beta
 
