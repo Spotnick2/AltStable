@@ -1698,16 +1698,24 @@ local function SpreadColumns(viewportW)
 end
 AltStable._test.ColumnWidths = function() return colWidths end
 
-local headerDividers = {}   -- textures created per BuildHeaders call, tracked for cleanup
+-- The scrolling headers in column order (headerButtons, in the state block) and
+-- the dividers between them: the ones in use, index for index with
+-- scrollableCols. The pools hold every one ever made, reused by slot.
+local headerDividers = {}
+local headerPool, dividerPool = {}, {}
+-- The frozen Name header. Kept OUT of headerButtons: that list must match
+-- scrollableCols index for index, and it is wiped on every rebuild - which is
+-- how the Name header, once in it, lost its sort indication for good.
+local nameHeader
 
 -- Headers and every pooled row of this tab, at the laid-out widths.
 -- The header at `widths` (nil: the columns' own), by the same walk as the rows.
 local function LayoutHeaders(widths)
     AltStable.WalkColumns(scrollableCols, widths, function(i, x, w, divX)
-        local btn, col = headerButtons[i], scrollableCols[i]
+        local btn = headerButtons[i]
         if not btn then return end
         btn:ClearAllPoints(); btn:SetPoint("LEFT", x, 0); btn:SetWidth(w)
-        if col.vertical and not col.repIcon and btn.label then btn.label:SetWidth(w) end
+        if btn.kind == "stacked" then btn.label:SetWidth(w) end
         if headerDividers[i] then
             headerDividers[i]:ClearAllPoints()
             headerDividers[i]:SetPoint("LEFT", divX, 0)
@@ -1789,27 +1797,6 @@ local function UpdateScroll()
 end
 
 ------------------------------------------------------------
--- Sort arrows
-------------------------------------------------------------
-
-local function UpdateSortArrows()
-    local ar, ag, ab = AltStable.GetAccentRGB()
-    for _, btn in ipairs(headerButtons) do
-        if btn.field==sortColumn then
-            if btn.arrow then btn.arrow:Show()
-                btn.arrow:SetTexCoord(0,1, sortAsc and 0 or 1, sortAsc and 1 or 0)
-            end
-            if btn.iconTex then btn.iconTex:SetVertexColor(ar, ag, ab)
-            else btn.label:SetTextColor(ar, ag, ab) end
-        else
-            if btn.arrow then btn.arrow:Hide() end
-            if btn.iconTex then btn.iconTex:SetVertexColor(1,1,1)
-            else btn.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
-        end
-    end
-end
-
-------------------------------------------------------------
 -- Header construction
 ------------------------------------------------------------
 
@@ -1844,147 +1831,196 @@ local function AddRepStandingLegend(tt)
     end
 end
 
+------------------------------------------------------------
+-- Column headers (#160)
+--
+-- One builder for every header, the frozen Name one included. Each header is
+-- one of four KINDS, which decide only how it looks:
+--   text    - a label, and the arrow when sorted (Name, Lvl, Guild, Gold...)
+--   icon    - a gear, profession or faction icon, tinted when sorted
+--   stacked - a faction with no icon: its short name, one letter per line
+--   short   - one letter ("C", "R") for the class and race columns
+-- How a header BEHAVES - click to sort, hover tint, tooltip - is wired once,
+-- in WireHeader, and reads the column it was last given.
+--
+-- The buttons are REUSED by slot, like the rows: a section switch used to make
+-- a fresh button per column and only hide the old ones, so they piled up for
+-- as long as the UI lived. Every region a kind uses is made once per button and
+-- reset by ConfigureHeader, so reuse cannot carry one kind's look into another.
+------------------------------------------------------------
+
+local SHORT_HEADER = { classIcon = "C", raceIcon = "R" }
+
+local function HeaderKind(col)
+    if col.vertical and not col.repIcon then return "stacked" end
+    if col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then return "icon" end
+    if SHORT_HEADER[col.type] then return "short" end
+    return "text"
+end
+
+-- The accent on the header's label or icon: on while hovered or sorted by.
+local function HeaderTint(btn, on)
+    if btn.kind == "icon" then
+        if on then btn.iconTex:SetVertexColor(AltStable.GetAccentRGB())
+        else btn.iconTex:SetVertexColor(1, 1, 1) end
+    else
+        if on then btn.label:SetTextColor(AltStable.GetAccentRGB())
+        else btn.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+    end
+end
+
+-- The sorted-by state on one header: the arrow (text headers only, for now)
+-- and the tint.
+local function PaintSortState(btn)
+    local sorted = btn.field == sortColumn
+    if sorted and btn.showsArrow then
+        btn.arrow:Show()
+        btn.arrow:SetTexCoord(0, 1, sortAsc and 0 or 1, sortAsc and 1 or 0)
+    else
+        btn.arrow:Hide()
+    end
+    HeaderTint(btn, sorted)
+end
+
+local function UpdateSortArrows()
+    if nameHeader then PaintSortState(nameHeader) end
+    for _, btn in ipairs(headerButtons) do PaintSortState(btn) end
+end
+
+local function SortByHeader(field)
+    if sortColumn==field then sortAsc=not sortAsc
+    else sortColumn=field; sortAsc=false end
+    UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
+end
+
+-- A text header has a tooltip only when COL_TOOLTIPS names it (Lvl, iLvl):
+-- Name, Guild, Gold and the rest say what they are already.
+local function ShowHeaderTooltip(btn)
+    local col, kind = btn.col, btn.kind
+    local title, sortBy
+    if kind == "icon" then
+        title, sortBy = COL_TOOLTIPS[col.field] or col.label, col.label
+    elseif kind == "text" then
+        title = COL_TOOLTIPS[col.field]; sortBy = title
+    else
+        title, sortBy = col.label, col.label
+    end
+    if not title then return end
+    GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
+    GameTooltip:AddLine(title, 1, 1, 1)
+    GameTooltip:AddLine("Sort by " .. sortBy, 0.7, 0.7, 0.7)
+    -- The standing key lives in the faction headers, so the footer keeps the
+    -- normal char/level/gold totals like every other tab.
+    if col.type == "rep" then AddRepStandingLegend(GameTooltip) end
+    GameTooltip:Show()
+end
+
+local function WireHeader(btn)
+    btn:SetScript("OnClick", function(self) SortByHeader(self.field) end)
+    btn:SetScript("OnEnter", function(self)
+        HeaderTint(self, true)
+        ShowHeaderTooltip(self)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        -- Keep the tint on the column the rows are sorted by: an icon header
+        -- has no arrow, so the tint is the only sign of it.
+        if self.field ~= sortColumn then HeaderTint(self, false) end
+        if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+    end)
+end
+
+local function NewHeaderButton(parent)
+    local btn = CreateFrame("Button", nil, parent)
+    btn.label   = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    btn.iconTex = btn:CreateTexture(nil, "OVERLAY")
+    -- Made after the icon, so it draws over one.
+    local arrow = btn:CreateTexture(nil, "OVERLAY")
+    arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+    arrow:SetSize(8, 8); arrow:SetPoint("RIGHT", btn, "RIGHT", -1, 0); arrow:Hide()
+    btn.arrow = arrow
+    WireHeader(btn)
+    return btn
+end
+
+-- Give a (new or reused) header button its column. Sets EVERYTHING a kind
+-- uses, and hides what it does not.
+local function ConfigureHeader(btn, col)
+    local kind = HeaderKind(col)
+    btn.col, btn.field, btn.kind = col, col.field, kind
+    btn.showsArrow = (kind == "text")
+    btn:SetSize(col.width, currentHeaderHeight)
+
+    local lbl, tex = btn.label, btn.iconTex
+    lbl:ClearAllPoints(); lbl:SetWidth(0)
+    lbl:SetWordWrap(true); lbl:SetNonSpaceWrap(false)
+    tex:ClearAllPoints()
+
+    if kind == "icon" then
+        -- slotSlug: the faction-aware gear icon, resolved at header-build time.
+        local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
+            or col.profIcon or col.slotIcon or col.repIcon
+        local sz = math.min(currentHeaderHeight - 4, col.width - 2)
+        tex:SetSize(sz, sz); tex:SetPoint("CENTER", btn, "CENTER", 0, 0); tex:SetTexture(iconPath)
+        -- Crop the pixel border of the built-in round WoW icons.
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        tex:Show()
+        lbl:SetText(""); lbl:Hide()
+        return
+    end
+
+    tex:Hide(); lbl:Show()
+    if kind == "stacked" then
+        lbl:SetFontObject(GameFontHighlightSmall)
+        lbl:SetPoint("TOP", btn, "TOP", 0, -2); lbl:SetPoint("BOTTOM", btn, "BOTTOM", 0, 2)
+        lbl:SetWidth(col.width); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("TOP")
+        lbl:SetNonSpaceWrap(true)
+        lbl:SetText(StackChars(col.verticalLabel or col.label))
+    elseif kind == "short" then
+        lbl:SetFontObject(GameFontHighlightSmall)
+        lbl:SetAllPoints(); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("MIDDLE")
+        lbl:SetText(SHORT_HEADER[col.type])
+    else
+        lbl:SetFontObject(GameFontHighlight)
+        lbl:SetPoint("LEFT", 2, 0); lbl:SetPoint("RIGHT", -10, 0)
+        lbl:SetJustifyH(col.align or "LEFT"); lbl:SetJustifyV("MIDDLE")
+        lbl:SetText(col.label)
+    end
+end
+
 local function ClearHeaders()
     wipe(headerButtons)
-    for _, child in ipairs({headerContent:GetChildren()}) do child:Hide() end
-    for _, div in ipairs(headerDividers) do div:Hide() end
     wipe(headerDividers)
+    for _, btn in ipairs(headerPool) do
+        -- A header rebuilt under the mouse never gets its OnLeave.
+        if GameTooltip:IsOwned(btn) then GameTooltip:Hide() end
+        btn:Hide()
+    end
+    for _, div in ipairs(dividerPool) do div:Hide() end
 end
 
 local function BuildHeaders()
     ClearHeaders()
-
-    -- Re-add the frozen Name button (always present, created in CreateFrameIfNeeded)
-    -- It's in frozenHeader, not headerContent, so nothing to do here
-
-    -- Created here, placed by LayoutHeaders: the rows' walk.
+    -- Created or reused here, placed by LayoutHeaders: the rows' walk.
     for i, col in ipairs(scrollableCols) do
-        local btn=CreateFrame("Button",nil,headerContent)
-        btn:SetSize(col.width,currentHeaderHeight); btn.field=col.field
-
-        if col.vertical and not col.repIcon then
-            local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-            lbl:SetPoint("TOP",btn,"TOP",0,-2); lbl:SetPoint("BOTTOM",btn,"BOTTOM",0,2)
-            lbl:SetWidth(col.width); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("TOP")
-            lbl:SetWordWrap(true); lbl:SetNonSpaceWrap(true)
-            lbl:SetText(StackChars(col.verticalLabel or col.label))
-            btn.label=lbl
-            btn:SetScript("OnClick",function()
-                if sortColumn==col.field then sortAsc=not sortAsc
-                else sortColumn=col.field; sortAsc=false end
-                UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-            end)
-            btn:SetScript("OnEnter",function()
-                local ar,ag,ab = AltStable.GetAccentRGB()
-                lbl:SetTextColor(ar,ag,ab)
-                GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
-                GameTooltip:AddLine(col.label,1,1,1)
-                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7)
-                -- The standing key lives in the faction headers, so the footer
-                -- keeps the normal char/level/gold totals like every other tab.
-                if col.type=="rep" then AddRepStandingLegend(GameTooltip) end
-                GameTooltip:Show()
-            end)
-            btn:SetScript("OnLeave",function()
-                if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
-                GameTooltip:Hide()
-            end)
-        elseif col.slotSlug or col.profIcon or col.slotIcon or col.repIcon then
-            -- slotSlug: faction-aware gear icon resolved at header-build time
-            local iconPath = (col.slotSlug and AltStable.GetGearIconPath and AltStable.GetGearIconPath(col.slotSlug))
-                or col.profIcon or col.slotIcon or col.repIcon
-            local sz=math.min(currentHeaderHeight-4,col.width-2)
-            local tex=btn:CreateTexture(nil,"OVERLAY")
-            tex:SetSize(sz,sz); tex:SetPoint("CENTER",btn,"CENTER",0,0); tex:SetTexture(iconPath)
-            -- Crop the pixel border of the built-in round WoW icons.
-            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            btn.label=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); btn.label:SetText("")
-            btn.iconTex=tex
-            btn:SetScript("OnClick",function()
-                if sortColumn==col.field then sortAsc=not sortAsc
-                else sortColumn=col.field; sortAsc=false end
-                UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-            end)
-            btn:SetScript("OnEnter",function()
-                local ar,ag,ab = AltStable.GetAccentRGB()
-                tex:SetVertexColor(ar,ag,ab)
-                GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
-                local tipText = COL_TOOLTIPS[col.field] or col.label
-                GameTooltip:AddLine(tipText,1,1,1)
-                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7)
-                if col.type=="rep" then AddRepStandingLegend(GameTooltip) end
-                GameTooltip:Show()
-            end)
-            btn:SetScript("OnLeave",function()
-                -- Keep the accent tint on the column the rows are sorted by: an
-                -- icon header has no arrow and no label, so the tint is the only
-                -- sign of it (same rule as the text headers below).
-                if sortColumn~=col.field then tex:SetVertexColor(1,1,1) end
-                GameTooltip:Hide()
-            end)
-        elseif col.type=="classIcon" or col.type=="raceIcon" then
-            -- Small centered header label for icon columns
-            local SHORT = {classIcon="C", raceIcon="R"}
-            local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-            lbl:SetAllPoints(); lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("MIDDLE")
-            lbl:SetText(SHORT[col.type] or "")
-            btn.label=lbl
-            btn:SetScript("OnClick",function()
-                if sortColumn==col.field then sortAsc=not sortAsc
-                else sortColumn=col.field; sortAsc=false end
-                UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-            end)
-            btn:SetScript("OnEnter",function()
-                local ar,ag,ab = AltStable.GetAccentRGB()
-                lbl:SetTextColor(ar,ag,ab)
-                GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
-                GameTooltip:AddLine(col.label,1,1,1)
-                GameTooltip:AddLine("Sort by "..col.label,0.7,0.7,0.7); GameTooltip:Show()
-            end)
-            btn:SetScript("OnLeave",function()
-                if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
-                GameTooltip:Hide()
-            end)
-        else
-            local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlight")
-            lbl:SetPoint("LEFT",2,0); lbl:SetPoint("RIGHT",-10,0)
-            lbl:SetJustifyH(col.align or "LEFT"); lbl:SetJustifyV("MIDDLE"); lbl:SetText(col.label)
-            btn.label=lbl
-            local arrow=btn:CreateTexture(nil,"OVERLAY")
-            arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
-            arrow:SetSize(8,8); arrow:SetPoint("RIGHT",btn,"RIGHT",-1,0); arrow:Hide()
-            btn.arrow=arrow
-            btn:SetScript("OnClick",function()
-                if sortColumn==col.field then sortAsc=not sortAsc
-                else sortColumn=col.field; sortAsc=false end
-                UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-            end)
-            btn:SetScript("OnEnter",function()
-                local ar,ag,ab = AltStable.GetAccentRGB()
-                lbl:SetTextColor(ar,ag,ab)
-                local tip=COL_TOOLTIPS[col.field]
-                if tip then
-                    GameTooltip:SetOwner(btn,"ANCHOR_BOTTOM"); GameTooltip:ClearLines()
-                    GameTooltip:AddLine(tip,1,1,1); GameTooltip:AddLine("Sort by "..tip,0.7,0.7,0.7); GameTooltip:Show()
-                end
-            end)
-            btn:SetScript("OnLeave",function()
-                if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
-                GameTooltip:Hide()
-            end)
-        end
-
-        table.insert(headerButtons,btn)
-        if i<#scrollableCols then
-            local div=headerContent:CreateTexture(nil,"OVERLAY")
-            div:SetSize(1,currentHeaderHeight)
+        local btn = headerPool[i]
+        if not btn then btn = NewHeaderButton(headerContent); headerPool[i] = btn end
+        ConfigureHeader(btn, col)
+        btn:Show()
+        headerButtons[i] = btn
+        if i < #scrollableCols then
+            local div = dividerPool[i]
+            if not div then div = headerContent:CreateTexture(nil, "OVERLAY"); dividerPool[i] = div end
+            div:SetSize(1, currentHeaderHeight)
             div:SetColorTexture(unpack(AltStable.C.GRIDLINE))
-            table.insert(headerDividers, div)
+            div:Show()
+            headerDividers[i] = div
         end
     end
     -- Placed by UpdateScroll, which always follows (LayoutColumns).
     UpdateSortArrows()
 end
+AltStable._test.HeaderPools = function() return headerPool, dividerPool end
+AltStable._test.NameHeader  = function() return nameHeader end
 
 ------------------------------------------------------------
 -- Per-section window resize.
@@ -4615,31 +4651,11 @@ local function CreateFrameIfNeeded()
     fhLine:SetHeight(1); fhLine:SetPoint("BOTTOMLEFT"); fhLine:SetPoint("BOTTOMRIGHT")
     fhLine:SetColorTexture(unpack(AltStable.C.SEP))
 
-    -- Name header button (persistent)
-    do
-        local col=AltStable.Columns[1]
-        local btn=CreateFrame("Button",nil,frozenHeader)
-        btn:SetPoint("LEFT",10,0); btn:SetSize(col.width,currentHeaderHeight); btn.field=col.field
-        local lbl=btn:CreateFontString(nil,"OVERLAY","GameFontHighlight")
-        lbl:SetPoint("LEFT",2,0); lbl:SetPoint("RIGHT",-10,0)
-        lbl:SetJustifyH("LEFT"); lbl:SetJustifyV("MIDDLE"); lbl:SetText(col.label); btn.label=lbl
-        local arrow=btn:CreateTexture(nil,"OVERLAY")
-        arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
-        arrow:SetSize(8,8); arrow:SetPoint("RIGHT",btn,"RIGHT",-1,0); arrow:Hide(); btn.arrow=arrow
-        btn:SetScript("OnClick",function()
-            if sortColumn==col.field then sortAsc=not sortAsc
-            else sortColumn=col.field; sortAsc=false end
-            UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
-        end)
-        btn:SetScript("OnEnter",function()
-            local ar,ag,ab = AltStable.GetAccentRGB()
-            lbl:SetTextColor(ar,ag,ab)
-        end)
-        btn:SetScript("OnLeave",function()
-            if sortColumn~=col.field then lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
-        end)
-        table.insert(headerButtons,btn)
-    end
+    -- Name header button (persistent): the same builder as the scrolling ones,
+    -- parented to the frozen strip and never reused for another column.
+    nameHeader = NewHeaderButton(frozenHeader)
+    nameHeader:SetPoint("LEFT", 10, 0)
+    ConfigureHeader(nameHeader, AltStable.Columns[1])
 
     --------------------------------------------------------
     -- Scrollable header
@@ -4774,8 +4790,7 @@ local function CreateFrameIfNeeded()
         end
     end)
 
-    -- Build initial headers and activate first section
-    BuildHeaders()
+    -- Activate the first section: it builds the headers (SwitchSection).
     SwitchSection(SECTIONS[1])
 
     -- THE TOOLTIP HOOKS GO IN LAST, with the window already built.

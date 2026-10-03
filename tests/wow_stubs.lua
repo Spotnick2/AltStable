@@ -278,6 +278,18 @@ local function makeFrame()
         if not c then return 1, 1, 1, 1 end
         return c[1], c[2], c[3], c[4] or 1
     end
+    -- A texture's vertex TINT, as the client has it: Set records, Get reads it
+    -- back, white until set. Separate from SetColorTexture, which the client
+    -- does not report through GetVertexColor (see below). An icon header's
+    -- tint is the only sign that the rows are sorted by it.
+    f.SetVertexColor = function(self, r, g, b, a)
+        self._vertexColor = { r, g, b, a }; return self
+    end
+    f.GetVertexColor = function(self)
+        local c = self._vertexColor
+        if not c then return 1, 1, 1, 1 end
+        return c[1], c[2], c[3], c[4] or 1
+    end
 
     -- A tooltip's OWNER and anchor point are real state. "Where does this
     -- tooltip open" is a question the addon answers differently per call site,
