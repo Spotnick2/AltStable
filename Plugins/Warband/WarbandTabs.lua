@@ -142,25 +142,27 @@ end
 function M.RepairSelection(sel, pages)
     if #pages == 0 then return nil end
     if IndexOf(pages, sel) then return sel end
-    if type(sel) == "number" then
-        local last
-        for _, k in ipairs(pages) do if type(k) == "number" then last = k end end
-        if last then return math.min(math.max(1, sel), last) end
-    end
     local lastTab
     for _, k in ipairs(pages) do if type(k) == "number" then lastTab = k end end
+    if type(sel) == "number" and lastTab then return math.min(math.max(1, sel), lastTab) end
     return lastTab or pages[1]
 end
 
 -- Combined: which pages are on screen. The window always holds the selected
 -- page, and is clamped BACKWARD at the end so it never shows blanks: with
--- tabs 1..4, choosing 4 shows 2, 3, 4. Returns the first index and the count.
-function M.CombinedWindow(pages, sel)
+-- tabs 1..4, choosing 4 shows 2, 3, 4. It is STICKY: given where it was, it
+-- only moves when the selection leaves it, and then by just enough - clicking a
+-- tab already on screen must not scroll it away, and the arrows step one page
+-- (review of #154). Returns the first index and the count.
+function M.CombinedWindow(pages, sel, prevFirst)
     local n = #pages
     if n == 0 then return 1, 0 end
     local width = math.min(M.COMBINED, n)
     local at = IndexOf(pages, sel) or 1
-    local first = math.max(1, math.min(at, n - width + 1))
+    local first = prevFirst or at
+    if at < first then first = at end
+    if at > first + width - 1 then first = at - width + 1 end
+    first = math.max(1, math.min(first, n - width + 1))
     return first, width
 end
 

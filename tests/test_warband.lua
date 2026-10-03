@@ -652,6 +652,10 @@ do
     eq("combined shows three tabs ending at the selection", colKeys(), "2,3,4")
     AltStable.SetConfigValue("warbandTab", 1); wb.Refresh()
     eq("  or starting at it", colKeys(), "1,2,3")
+    -- Clicking a tab already on screen keeps the window where it is.
+    AltStable.SetConfigValue("warbandTab", 2); wb.Refresh()
+    eq("  and a click on a shown tab does not scroll it", colKeys(), "1,2,3")
+    AltStable.SetConfigValue("warbandTab", 1); wb.Refresh()
     eq("  with the potion in Consumables, its own column", (function()
         for _, c in ipairs(wb._cols) do if c.key == 2 then return #c.entries end end
     end)(), 1)
@@ -763,6 +767,87 @@ do
     check("switching away closes the dialog", dlg.draft == nil)
 
     AltStable.SetConfigValue = realSet
+    WoW.reset()
+end
+
+------------------------------------------------------------
+-- Review of #154
+------------------------------------------------------------
+do
+    local M = AltStableWarbandModel
+    -- The combined window is sticky: a click on a tab already shown keeps it,
+    -- and stepping past either end moves by one page.
+    eq("a tab already on screen does not scroll the window", (M.CombinedWindow({ 1, 2, 3, 4 }, 2, 1)), 1)
+    eq("stepping right moves one page", (M.CombinedWindow({ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, 4, 1)), 2)
+    eq("stepping left moves one page", (M.CombinedWindow({ 1, 2, 3, 4, 5 }, 2, 3)), 2)
+    eq("  and a far jump still lands with the selection on screen", (M.CombinedWindow({ 1, 2, 3, 4, 5, 6 }, 6, 1)), 4)
+
+    -- The rail fits the panel.
+    local wb = plugin._wb
+    local step = wb.RailStep(10, 430)
+    check("ten rail buttons fit a short panel", step * 10 <= 430 - 70 - 34 - 12, tostring(step))
+    eq("  and a tall one keeps the full size", wb.RailStep(5, 900), 48)
+
+    -- Personal with no GUID yet shows nobody, never everybody.
+    WoW.reset()
+    AltStableDB = { ["Player-1-X"] = { name = "Someone", class = "MAGE", realm = "Classic Beta PvP" } }
+    AltStableWarbandDB = { ["Player-1-X"] = { bags = { [101] = 1 } } }
+    WoW.items = { [101] = { name = "Linen", classID = 7, quality = 1, icon = 1 } }
+    AltStableConfig = { warbandScope = "personal" }
+    local realGUID = UnitGUID
+    UnitGUID = function() return nil end
+    local main = CreateFrame("Frame")
+    wb.Activate(main)
+    local any = false
+    for _, cell in ipairs(wb.cells) do if cell:IsShown() and cell.entry then any = true end end
+    check("Personal with no GUID yet shows nobody", not any)
+    UnitGUID = realGUID
+
+    -- Hover survives a refresh that leaves the same item under the mouse...
+    AltStableConfig = { warbandScope = "warband", warbandRuleset = "all" }
+    AltStableWarbandDB["Player-1-X"] = { bags = { [101] = 1 } }
+    wb.Refresh()
+    local cell
+    for _, c in ipairs(wb.cells) do if c:IsShown() and c.entry and c.entry.id == 101 then cell = c end end
+    check("the linen is on screen", cell ~= nil)
+    if cell then
+        cell:GetScript("OnEnter")(cell)
+        AltStableWarbandDB["Player-1-X"] = { bags = { [101] = 3 } }    -- a bag update
+        wb.Refresh()
+        check("a refresh keeps the tooltip on the same item", wb.hoverEntry ~= nil and wb.hoverEntry.id == 101)
+        eq("  with its refreshed count", wb.hoverEntry and wb.hoverEntry.total, 3)
+        -- ...and drops it when the item is gone.
+        AltStableWarbandDB["Player-1-X"] = { bags = { [102] = 1 } }
+        WoW.items[102] = { name = "Wool", classID = 7, quality = 1, icon = 2 }
+        wb.Refresh()
+        eq("  and drops it once the cell holds something else", wb.hoverEntry, nil)
+    end
+
+    -- The keyboard, as CharacterMenu does it.
+    local realCombat = InCombatLockdown
+    InCombatLockdown = function() return true end
+    wb.OpenDialog(1)
+    local dlg = wb.Dialog()
+    check("in combat the dialog does not take the keyboard", not dlg:IsKeyboardEnabled())
+    wb.CloseDialog()
+    InCombatLockdown = function() return false end
+    wb.OpenDialog(1)
+    check("out of combat it does", dlg:IsKeyboardEnabled())
+    check("the dialog listens for combat starting", dlg:IsEventRegistered("PLAYER_REGEN_DISABLED"))
+    dlg:GetScript("OnEvent")(dlg, "PLAYER_REGEN_DISABLED")
+    check("combat starting with it open releases the keyboard", not dlg:IsKeyboardEnabled())
+    wb.CloseDialog()
+    wb.OpenDialog(1)
+    local realProp = dlg.SetPropagateKeyboardInput
+    dlg.SetPropagateKeyboardInput = function() error("ADDON_ACTION_BLOCKED") end
+    local ok = pcall(dlg:GetScript("OnKeyDown"), dlg, "W")
+    check("a blocked propagation call does not throw", ok)
+    check("  and releases the keyboard, so W is not swallowed", not dlg:IsKeyboardEnabled())
+    dlg.SetPropagateKeyboardInput = realProp
+    wb.CloseDialog()
+    InCombatLockdown = realCombat
+
+    wb.Deactivate(main)
     WoW.reset()
 end
 

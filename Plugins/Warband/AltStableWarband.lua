@@ -78,7 +78,7 @@ local function IsBankContainer(bag)
     return false
 end
 
-local AT_WB = { cells = {}, headers = {}, isActive = false, search = "" }
+local AT_WB = { cells = {}, isActive = false, search = "" }
 
 -- Bank-session state for the transactional bank scan.
 local isBankOpen  = false
@@ -388,7 +388,7 @@ end
 -- No filter is every character - the tooltips' and the tests' view.
 local function Included(guid, c, filter)
     if not filter then return true end
-    if filter.only then return guid == filter.only end
+    if filter.personal or filter.only then return filter.only ~= nil and guid == filter.only end
     if filter.skipHidden and AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) then
         return false
     end
@@ -455,7 +455,6 @@ local RAIL_BTN  = 40
 local SCROLL_W  = 14
 local COL_GAP   = 18     -- between Combined's columns
 local ROW_TOP   = HEAD_H + TABTITLE_H   -- first grid row, from the panel's top
-local EMPTY_ALPHA = 1   -- an empty slot is drawn faint in itself; see FillCell
 local ARROW_W   = 26    -- Combined's paging arrows get their own margin
 
 local panel, titleFS, emptyFS, searchBox, statusFS
@@ -598,6 +597,7 @@ local function CellOnEnter(self)
     local e = self.entry
     if not e then return end      -- an empty slot
     AT_WB.hoverEntry = e
+    AT_WB.hoverCell = self
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     -- SetHyperlink drives the item tooltip; OnTooltipSetItem then appends the
     -- breakdown. Guard it so a finicky bare-item string never aborts the hover.
@@ -621,16 +621,30 @@ local function CellOnEnter(self)
 end
 
 local function CellOnLeave()
-    AT_WB.hoverEntry = nil
+    AT_WB.hoverEntry, AT_WB.hoverCell = nil, nil
     GameTooltip:Hide()
 end
 
--- A refresh re-points cells at other items under a resting mouse: drop the
--- hover, so the tooltip never describes what the cell no longer holds.
 local function ClearHover()
     if AT_WB.hoverEntry then
-        AT_WB.hoverEntry = nil
+        AT_WB.hoverEntry, AT_WB.hoverCell = nil, nil
         if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end
+    end
+end
+
+-- After a layout: the tooltip stays while the cell under the mouse still holds
+-- the same item (its entry refreshed), and goes the moment it holds another or
+-- nothing. Clearing unconditionally closed it under a resting mouse on every
+-- refresh - item info arriving 0.2 s after the hover, a bag update, a sync
+-- (review of #154).
+local function ReconcileHover()
+    local e, cell = AT_WB.hoverEntry, AT_WB.hoverCell
+    if not e then return end
+    local now = cell and cell:IsShown() and cell.entry
+    if now and now.id == e.id then
+        AT_WB.hoverEntry = now
+    else
+        ClearHover()
     end
 end
 
@@ -705,7 +719,7 @@ local function FillCell(cell, e)
         cell.count:SetText("")
         cell:SetBackdropBorderColor(1, 1, 1, 0.07)
         cell.itemName = nil
-        cell:SetAlpha(EMPTY_ALPHA)
+        cell:SetAlpha(1)        -- faint by its border, not its alpha
     end
 end
 
@@ -738,7 +752,9 @@ local function View() return Cfg("warbandView", "single") end
 -- totals leave hidden ones out too) on the chosen ruleset.
 local function CurrentFilter()
     if Scope() == "personal" then
-        return { only = UnitGUID and UnitGUID("player") }
+        -- `personal` is the flag, not the GUID: with no GUID yet this shows
+        -- nobody, never everybody (review of #154).
+        return { personal = true, only = UnitGUID and UnitGUID("player") }
     end
     return {
         ruleset = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName()),
@@ -781,8 +797,8 @@ local RULESET_LABEL = {
     Normal = "Normal", PvP = "PvP", RP = "RP", Hardcore = "Hardcore",
 }
 
-local function RulesetText()
-    local setting = Cfg("warbandRuleset", "current")
+local function RulesetText(setting)
+    setting = setting or Cfg("warbandRuleset", "current")
     if setting == "current" then
         return "Current ruleset (" .. M.RulesetOf(GetRealmName and GetRealmName()) .. ")"
     end
@@ -800,13 +816,21 @@ end
 
 local function StyleButton(btn, active)
     local r, g, b = Accent()
+    local glass = AltStable.SkinIsGlass and AltStable.SkinIsGlass()
     if active then
-        btn:SetBackdropColor(r, g, b, 0.18)
+        btn:SetBackdropColor(r, g, b, glass and 0.18 or 0.25)
         btn:SetBackdropBorderColor(r, g, b, 1)
         if btn.label then btn.label:SetTextColor(r, g, b) end
     else
-        btn:SetBackdropColor(1, 1, 1, btn._hover and 0.10 or 0.04)
-        btn:SetBackdropBorderColor(1, 1, 1, 0.18)
+        if glass then
+            btn:SetBackdropColor(1, 1, 1, btn._hover and 0.10 or 0.04)
+            btn:SetBackdropBorderColor(1, 1, 1, 0.18)
+        else
+            -- The flat skin's own button fills (Theme.lua), not glass tints.
+            local c = btn._hover and AltStable.C.BG_BTN_HOVER or AltStable.C.BG_BTN_ACTIVE
+            btn:SetBackdropColor(c[1], c[2], c[3], c[4])
+            btn:SetBackdropBorderColor(0, 0, 0, 1)
+        end
         if btn.label then btn.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
     end
 end
@@ -851,16 +875,43 @@ end
 
 -- Escape closes it and is swallowed; every other key goes on to the game, so
 -- an open menu never eats movement.
+--
+-- SetPropagateKeyboardInput is restricted in combat (HasRestrictions in the
+-- API docs), so this follows CharacterMenu.lua exactly (review of #154): the
+-- call is pcall'd and a failure RELEASES the keyboard - a caught error leaves
+-- propagation where the last Escape put it, false, and W would be swallowed;
+-- the keyboard is not grabbed in combat at all; and combat starting with the
+-- frame open releases it before the first key.
 local function CloseOnEscape(f, onClose)
-    f:EnableKeyboard(true)
     f:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then
-            if self.SetPropagateKeyboardInput then self:SetPropagateKeyboardInput(false) end
-            onClose()
-        elseif self.SetPropagateKeyboardInput then
-            self:SetPropagateKeyboardInput(true)
+        local stop = (key == "ESCAPE")
+        local handed = true
+        if type(self.SetPropagateKeyboardInput) == "function" then
+            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
         end
+        if not handed and type(self.EnableKeyboard) == "function" then
+            pcall(self.EnableKeyboard, self, false)
+        end
+        if stop then onClose() end
     end)
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:SetScript("OnEvent", function(self)
+        if type(self.EnableKeyboard) == "function" then pcall(self.EnableKeyboard, self, false) end
+    end)
+end
+
+-- On opening: take the keyboard only out of combat, and reset propagation, which
+-- outlives the frame and was left false by the last Escape.
+local function GrabKeyboard(f)
+    if type(f.EnableKeyboard) ~= "function" then return end
+    if InCombatLockdown and InCombatLockdown() then
+        pcall(f.EnableKeyboard, f, false)
+        return
+    end
+    f:EnableKeyboard(true)
+    if type(f.SetPropagateKeyboardInput) == "function" then
+        pcall(f.SetPropagateKeyboardInput, f, true)
+    end
 end
 
 ------------------------------------------------------------
@@ -902,15 +953,14 @@ local function OpenRulesetMenu()
     end
     local current = Cfg("warbandRuleset", "current")
     for _, row in ipairs(rulesetMenu.rows) do
-        row.label:SetText(row.key == "current"
-            and ("Current ruleset (" .. M.RulesetOf(GetRealmName and GetRealmName()) .. ")")
-            or RULESET_LABEL[row.key])
+        row.label:SetText(row.key == "current" and RulesetText("current") or RULESET_LABEL[row.key])
         SetActive(row, row.key == current)
     end
     rulesetMenu:ClearAllPoints()
     rulesetMenu:SetPoint("TOPLEFT", rulesetBtn, "BOTTOMLEFT", 0, -2)
     rulesetCatcher:Show()
     rulesetMenu:Show()
+    GrabKeyboard(rulesetMenu)
 end
 
 ------------------------------------------------------------
@@ -1161,7 +1211,11 @@ local function OpenDialog(index)
     dialog.delete:SetEnabled(index ~= nil and #tabs > 1)
     dialog.delete:SetAlpha((index ~= nil and #tabs > 1) and 1 or 0.4)
     dialogCatcher:Show()
+    -- Never taller than the panel it sits on.
+    local ph = panel:GetHeight()
+    if ph and ph > 100 then dialog:SetHeight(math.min(420, ph - 8)) end
     dialog:Show()
+    GrabKeyboard(dialog)
 end
 AT_WB.OpenDialog = OpenDialog
 AT_WB.SaveDialog = function() return SaveDialog() end
@@ -1268,9 +1322,9 @@ end
 -- (Combined), offset by AT_WB.scrollRow.
 function AT_WB.Layout()
     if not panel or not panel:IsShown() then return end
-    ClearHover()
     local cols = AT_WB._cols or {}
     if #cols == 0 then
+        ClearHover()
         hideFrom(AT_WB.cells, 1)
         hideFrom(AT_WB.colHeads, 1)
         AT_WB.UpdateScrollBar(0, 0)   -- nothing to scroll: no bar
@@ -1339,6 +1393,7 @@ function AT_WB.Layout()
     end
     hideFrom(AT_WB.cells, ci + 1)
     hideFrom(AT_WB.colHeads, n + 1)
+    ReconcileHover()
     AT_WB.ApplySearchDim()
 end
 
@@ -1361,10 +1416,22 @@ local function ApplySearchDim()
 end
 AT_WB.ApplySearchDim = ApplySearchDim
 
+-- The rail's step: as tall as the buttons want, shorter when the panel cannot
+-- fit them all - eight tabs, Other and "+" ran off a short window and over the
+-- status line (review of #154).
+local function RailStep(count, panelH)
+    local ph = (panelH and panelH >= 50) and panelH or 400
+    local room = ph - HEAD_H - FOOT_H - PAD
+    return math.max(24, math.min(RAIL_BTN + 8, math.floor(room / math.max(1, count))))
+end
+AT_WB.RailStep = RailStep
+
 local function LayoutRail(pages, shown, tabs)
     local pw = panel:GetWidth()
     if not pw or pw < 200 then pw = 700 end
-    local x = pw - RAIL_W + (RAIL_W - RAIL_BTN) / 2 - 4
+    local step = RailStep(#pages + 1, panel:GetHeight())
+    local size = math.min(RAIL_BTN, step - 6)
+    local x = pw - RAIL_W + (RAIL_W - size) / 2 - 4
     local ar, ag, ab = Accent()
     local i = 0
     for _, key in ipairs(pages) do
@@ -1382,7 +1449,8 @@ local function LayoutRail(pages, shown, tabs)
         else b:SetBackdropBorderColor(1, 1, 1, 0.15) end
         b:SetAlpha(1)
         b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -(HEAD_H + (i - 1) * (RAIL_BTN + 8)))
+        b:SetSize(size, size)
+        b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -(HEAD_H + (i - 1) * step))
         b:Show()
     end
     -- "+", disabled at the cap.
@@ -1398,7 +1466,8 @@ local function LayoutRail(pages, shown, tabs)
     add:SetEnabled(#tabs < M.MAX_TABS)
     add:SetAlpha(#tabs < M.MAX_TABS and 1 or 0.35)
     add:ClearAllPoints()
-    add:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -(HEAD_H + (i - 1) * (RAIL_BTN + 8)))
+    add:SetSize(size, size)
+    add:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -(HEAD_H + (i - 1) * step))
     add:Show()
     hideFrom(AT_WB.tabBtns, i + 1)
 end
@@ -1469,7 +1538,8 @@ function AT_WB.Refresh()
 
     local keys
     if View() == "combined" then
-        local first, width = M.CombinedWindow(pages, sel)
+        local first, width = M.CombinedWindow(pages, sel, AT_WB._first)
+        AT_WB._first = first
         keys = {}
         for i = first, first + width - 1 do keys[#keys + 1] = pages[i] end
         AT_WB._paging = #pages > M.COMBINED
