@@ -1963,6 +1963,17 @@ AltStable._test = AltStable._test or {}
 AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
 AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
 AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
+
+-- A plugin tab's floor (#154). Plugin tabs keep whatever size the last section
+-- left (#150), so a tab that needs room - a toolbar, a dialog - says how much,
+-- and the window GROWS to it, through the same clamp. Never shrinks: the user's
+-- larger window stays theirs.
+function AltStable.EnsureWindowMinSize(w, h)
+    if not frame then return end
+    local cw, ch = wantW or frame:GetWidth() or 0, wantH or frame:GetHeight() or 0
+    if cw >= w and ch >= h then return end
+    ResizeFrame(math.max(cw, w), math.max(ch, h))
+end
 -- Forward-declared, because the hook below is registered before the function is
 -- defined and a closure written above the `local` would capture a nil GLOBAL of
 -- the same name instead - silently, and only failing when something calls it.

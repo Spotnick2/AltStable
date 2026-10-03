@@ -851,5 +851,62 @@ do
     WoW.reset()
 end
 
+------------------------------------------------------------
+-- Codex review of #154: room on activation, and a dialog that fits its height
+------------------------------------------------------------
+do
+    local wb = plugin._wb
+    local asked
+    local realMin = AltStable.EnsureWindowMinSize
+    AltStable.EnsureWindowMinSize = function(w, h) asked = { w, h } end
+    local main = CreateFrame("Frame")
+    WoW.reset()
+    AltStableDB, AltStableWarbandDB, AltStableConfig = {}, {}, {}
+    wb.Activate(main)
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+    check("opening the tab asks the window for its room", asked ~= nil)
+    if asked then
+        eq("  wide enough for the toolbar and the rail", asked[1], sidebarW + 1 + wb.MIN_PANEL_W)
+        eq("  tall enough for the Configure dialog", asked[2], titleH + 1 + wb.MIN_PANEL_H)
+        check("  which is at least the dialog's full height", wb.MIN_PANEL_H >= 420 + 8)
+        check("  and the toolbar's width", wb.MIN_PANEL_W >= 640 + 58)
+    end
+    AltStable.EnsureWindowMinSize = realMin
+
+    -- A display too small even for that: the dialog shows fewer icon rows,
+    -- never rows past its own Save (the 333-px panel Codex measured).
+    wb.OpenDialog(1)
+    local dlg = wb.Dialog()
+    wb.CloseDialog()
+    local panel = dlg._parent
+    local realH = panel.GetHeight
+    panel.GetHeight = function() return 333 end
+    -- A client-sized icon list, so every row has icons to (wrongly) show.
+    local realIcons = GetMacroIcons
+    GetMacroIcons = function() local t = {}; for i = 1, 200 do t[i] = 100000 + i end; return t end
+    wb.ResetIconList()
+    wb.OpenDialog(1)
+    eq("the dialog uses the rows its height allows", dlg.visRows, wb.DialogIconRows(325))
+    local h = dlg:GetHeight()
+    eq("the dialog fits the short panel", h, 325)
+    local rows = wb.DialogIconRows(h)
+    check("  with fewer icon rows", rows < 4, tostring(rows))
+    check("  every shown row ends above the buttons", 224 + (rows - 1) * 38 + 34 <= h - 46)
+    local beyond = false
+    for i = rows * 10 + 1, 40 do
+        local c = dlg.iconCells[i]
+        if c and c:IsShown() then beyond = true end
+    end
+    check("  and no icon is drawn below them", not beyond)
+    eq("a full-height dialog keeps all four rows", wb.DialogIconRows(420), 4)
+    wb.CloseDialog()
+    GetMacroIcons = realIcons
+    wb.ResetIconList()
+    panel.GetHeight = realH
+    wb.Deactivate(main)
+    WoW.reset()
+end
+
 print(("test_warband: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

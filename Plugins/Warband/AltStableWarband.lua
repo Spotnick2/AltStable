@@ -456,6 +456,11 @@ local SCROLL_W  = 14
 local COL_GAP   = 18     -- between Combined's columns
 local ROW_TOP   = HEAD_H + TABTITLE_H   -- first grid row, from the panel's top
 local ARROW_W   = 26    -- Combined's paging arrows get their own margin
+-- The room the tab asks the window for: the toolbar's controls side by side
+-- (~640) plus the rail, and the Configure dialog's height. Inherited from a
+-- narrow or short section, the ruleset control ran off the window and the
+-- dialog's last icon rows past its own Save (Codex review of #154).
+local MIN_PANEL_W, MIN_PANEL_H = 720, 470
 
 local panel, titleFS, emptyFS, searchBox, statusFS
 AT_WB.scrollRow = 0
@@ -981,7 +986,10 @@ local function IconList()
         if v and not seen[v] then seen[v] = true; iconList[#iconList + 1] = v end
     end
     for _, t in ipairs(M.DefaultTabs()) do add(t.icon) end
-    for _, fn in ipairs({ GetMacroItemIcons, GetMacroIcons }) do
+    -- By name: `ipairs({ GetMacroItemIcons, GetMacroIcons })` stops at the first
+    -- nil, so a client without the first list would silently lose the second.
+    for _, fname in ipairs({ "GetMacroItemIcons", "GetMacroIcons" }) do
+        local fn = _G[fname]
         if type(fn) == "function" then
             local out = {}
             local ok, r = pcall(fn, out)
@@ -992,6 +1000,16 @@ local function IconList()
     return iconList
 end
 AT_WB.IconList = IconList
+AT_WB.ResetIconList = function() iconList = nil end   -- tests: a different client list
+
+-- Icon rows that fit a dialog of height h: the grid starts GRID_TOP down and
+-- must end above the buttons' strip.
+local GRID_TOP, BUTTON_STRIP = 224, 46
+local function DialogIconRows(h)
+    local rows = math.floor((h - BUTTON_STRIP - GRID_TOP - ICON_SIZE) / (ICON_SIZE + 4)) + 1
+    return math.max(1, math.min(ICON_ROWS, rows))
+end
+AT_WB.DialogIconRows = DialogIconRows
 
 local function CloseDialog()
     if dialog then dialog:Hide(); dialog.draft = nil end
@@ -1000,8 +1018,9 @@ end
 
 local function RenderIconGrid()
     local list = IconList()
+    local rows = dialog.visRows or ICON_ROWS
     local total = math.ceil(#list / ICON_COLS)
-    local maxStart = math.max(0, total - ICON_ROWS)
+    local maxStart = math.max(0, total - rows)
     dialog.iconRow = math.max(0, math.min(dialog.iconRow or 0, maxStart))
     if dialog.iconBar then
         dialog.iconBar._syncing = true
@@ -1011,10 +1030,15 @@ local function RenderIconGrid()
         dialog.iconBar:SetShown(maxStart > 0)
     end
     if dialog.iconCount then dialog.iconCount:SetText(#list .. " icons - scroll for more") end
+    if dialog.iconBar then
+        dialog.iconBar:ClearAllPoints()
+        dialog.iconBar:SetPoint("TOPLEFT", dialog.iconCells[ICON_COLS], "TOPRIGHT", 6, 0)
+        dialog.iconBar:SetPoint("BOTTOMLEFT", dialog.iconCells[rows * ICON_COLS], "BOTTOMRIGHT", 6, 0)
+    end
     for r = 0, ICON_ROWS - 1 do
         for c = 1, ICON_COLS do
             local cell = dialog.iconCells[r * ICON_COLS + c]
-            local v = list[(dialog.iconRow + r) * ICON_COLS + c]
+            local v = (r < rows) and list[(dialog.iconRow + r) * ICON_COLS + c] or nil
             cell.value = v
             if v then
                 cell.icon:SetTexture(v)
@@ -1138,7 +1162,7 @@ local function BuildDialog()
         for c = 1, ICON_COLS do
             local cell = CreateFrame("Button", nil, dialog, "BackdropTemplate")
             cell:SetSize(ICON_SIZE, ICON_SIZE)
-            cell:SetPoint("TOPLEFT", 18 + (c - 1) * (ICON_SIZE + 4), -224 - r * (ICON_SIZE + 4))
+            cell:SetPoint("TOPLEFT", 18 + (c - 1) * (ICON_SIZE + 4), -GRID_TOP - r * (ICON_SIZE + 4))
             cell:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
             cell.icon = cell:CreateTexture(nil, "ARTWORK")
             cell.icon:SetPoint("TOPLEFT", 1, -1)
@@ -1204,6 +1228,16 @@ local function OpenDialog(index)
     dialog.nameBox:SetText(dialog.draft.name or "")
     dialog.preview:SetTexture(dialog.draft.icon)
     for _, cb in ipairs(dialog.checks) do cb:SetChecked(dialog.draft.cats[cb.cat] and true or false) end
+    -- Never taller than the panel it sits on, and its content fits what it
+    -- gets: as many icon rows as clear the buttons (the window is asked for
+    -- room on activation; a display too small for that still must not put
+    -- icons under Save - Codex review of #154). Sized
+    -- BEFORE the grid is drawn, which reads visRows.
+    local ph = panel:GetHeight()
+    local h = 420
+    if ph and ph > 100 then h = math.min(420, ph - 8) end
+    dialog:SetHeight(h)
+    dialog.visRows = DialogIconRows(h)
     dialog.iconRow = 0
     RenderIconGrid()
     -- Delete exists for a saved tab, and never for the last one.
@@ -1211,9 +1245,6 @@ local function OpenDialog(index)
     dialog.delete:SetEnabled(index ~= nil and #tabs > 1)
     dialog.delete:SetAlpha((index ~= nil and #tabs > 1) and 1 or 0.4)
     dialogCatcher:Show()
-    -- Never taller than the panel it sits on.
-    local ph = panel:GetHeight()
-    if ph and ph > 100 then dialog:SetHeight(math.min(420, ph - 8)) end
     dialog:Show()
     GrabKeyboard(dialog)
 end
@@ -1222,6 +1253,7 @@ AT_WB.SaveDialog = function() return SaveDialog() end
 AT_WB.CloseDialog = CloseDialog
 AT_WB.DeleteFromDialog = function() return DeleteFromDialog() end
 AT_WB.Dialog = function() return dialog end
+AT_WB.MIN_PANEL_W, AT_WB.MIN_PANEL_H = MIN_PANEL_W, MIN_PANEL_H
 
 ------------------------------------------------------------
 -- Tab rail and column heads
@@ -1744,6 +1776,11 @@ function AT_WB.Activate(mainFrame)
     BuildPanel(mainFrame)
     HookRefresh()
     AT_WB.isActive = true
+    if AltStable.EnsureWindowMinSize then
+        local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+        local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+        AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + 1 + MIN_PANEL_H)
+    end
 
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Hide()   end
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Hide() end
