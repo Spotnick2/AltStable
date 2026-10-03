@@ -1591,8 +1591,26 @@ local function ApplyContentAnchors(needsH, needsV)
     local bodyBot    = footerTop + (needsH and HSCROLL_GUTTER_H or 0)
     local rightInset = needsV and SCROLLBAR_GUTTER_W or 2
 
+    -- The left edges hang off the SIDEBAR's edge rather than a fixed offset
+    -- from the window (#150), so the grid follows the sidebar while it
+    -- animates between full and compact. The sidebar's top-right is the
+    -- window's (SIDEBAR_WIDTH, -TITLE_H) and its bottom-right (SIDEBAR_WIDTH,
+    -- 1); a frame with no sidebar yet uses those numbers directly.
+    local sb = frame.sidebar
+    local function Left(region, point, x, yFromTop, yFromBottom)
+        if sb then
+            if yFromTop then
+                region:SetPoint(point, sb, "TOPRIGHT", x, yFromTop + TITLE_H)
+            else
+                region:SetPoint(point, sb, "BOTTOMRIGHT", x, yFromBottom - 1)
+            end
+        else
+            region:SetPoint(point, frame, point, SIDEBAR_WIDTH + x, yFromTop or yFromBottom)
+        end
+    end
+
     bodyScroll:ClearAllPoints()
-    bodyScroll:SetPoint("TOPLEFT",     frame, "TOPLEFT",     SIDEBAR_WIDTH + FROZEN_WIDTH, -BodyTopY())
+    Left(bodyScroll, "TOPLEFT", FROZEN_WIDTH, -BodyTopY())
     bodyScroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -rightInset, bodyBot)
 
     -- The reading surface spans the two viewports, so it is anchored WITH
@@ -1605,13 +1623,13 @@ local function ApplyContentAnchors(needsH, needsV)
     -- and the taller ones poked the surface up into the header.
     if AltStable._dataBG then
         AltStable._dataBG:ClearAllPoints()
-        AltStable._dataBG:SetPoint("TOPLEFT",     frame, "TOPLEFT",     SIDEBAR_WIDTH, -BodyTopY())
+        Left(AltStable._dataBG, "TOPLEFT", 0, -BodyTopY())
         AltStable._dataBG:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -rightInset, bodyBot)
     end
 
     frozenScroll:ClearAllPoints()
-    frozenScroll:SetPoint("TOPLEFT",    frame, "TOPLEFT",    SIDEBAR_WIDTH, -BodyTopY())
-    frozenScroll:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", SIDEBAR_WIDTH, bodyBot)
+    Left(frozenScroll, "TOPLEFT", 0, -BodyTopY())
+    Left(frozenScroll, "BOTTOMLEFT", 0, nil, bodyBot)
     frozenScroll:SetWidth(FROZEN_WIDTH)
 
     -- Header right edge MUST equal body right edge — same rightInset.
@@ -1619,7 +1637,7 @@ local function ApplyContentAnchors(needsH, needsV)
     -- overflows past the v-scrollbar (with v-scroll).
     if headerScroll then
         headerScroll:ClearAllPoints()
-        headerScroll:SetPoint("TOPLEFT",  frame, "TOPLEFT",  SIDEBAR_WIDTH + FROZEN_WIDTH, -HEADER_TOP_Y)
+        Left(headerScroll, "TOPLEFT", FROZEN_WIDTH, -HEADER_TOP_Y)
         headerScroll:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -rightInset, -HEADER_TOP_Y)
         headerScroll:SetHeight(currentHeaderHeight)
     end
@@ -1632,7 +1650,7 @@ local function ApplyContentAnchors(needsH, needsV)
     -- still sits inside HSCROLL_GUTTER_H without intruding on body rows.
     if hScrollBar then
         hScrollBar:ClearAllPoints()
-        hScrollBar:SetPoint("BOTTOMLEFT",  frame, "BOTTOMLEFT",  SIDEBAR_WIDTH + 4, footerTop + 1)
+        Left(hScrollBar, "BOTTOMLEFT", 4, nil, footerTop + 1)
         hScrollBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -rightInset,       footerTop + 1)
     end
 end
@@ -2060,10 +2078,105 @@ end
 
 function AltStable.IsWindowMaximized() return maxState.on end
 
+-- ANIMATING a change of the window's geometry (#150): maximize, restore, and
+-- the sidebar collapsing or expanding.
+--
+-- The animation system moves, scales and fades; it cannot change a size. So
+-- this is an OnUpdate tween, and it tweens only GEOMETRY - the window's rect
+-- and the sidebar's width. The change itself is applied first and in full,
+-- re-layout included, exactly as without animation; its end state is
+-- measured, the window is put back where it started, and then it travels.
+-- Re-laying out a tab every frame is out of the question - the Roster scene
+-- rebuilds its models - so the content is already in its final layout and the
+-- window clips it while the edges catch up.
+--
+-- Interrupted - clicked again mid-way - it reverses from where it IS: the
+-- running one is settled to its own end state first, so the new change starts
+-- from a real anchor, while the new journey starts from the rect on screen.
+--
+-- Off with the open animation (Options), and whenever the window is not on
+-- screen to watch.
+local WINDOW_ANIM_TIME = 0.2
+local windowAnim = {}
+
+local function WindowAnimEnabled()
+    return AltStableConfig and AltStableConfig.enableOpenAnimation
+        and frame and frame:IsVisible() and frame:GetLeft() ~= nil
+        and frame.sidebar ~= nil and UIParent ~= nil
+end
+
+local function AnimateWindowChange(applyFinal, labels)
+    local runner = windowAnim.runner
+    local running = runner and runner:GetScript("OnUpdate") ~= nil
+    if not WindowAnimEnabled() then
+        if running then runner:SetScript("OnUpdate", nil); windowAnim.settle() end
+        applyFinal()
+        if labels then labels(1, true) end
+        return
+    end
+    local sb = frame.sidebar
+    -- Where it is on screen now, mid-journey or not.
+    local l0, b0 = frame:GetLeft(), frame:GetBottom()
+    local w0, h0, s0 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
+    if running then runner:SetScript("OnUpdate", nil); windowAnim.settle() end
+
+    applyFinal()
+
+    -- The end state, measured and remembered: settling restores these exactly
+    -- rather than re-running the change.
+    local points = {}
+    for i = 1, (frame:GetNumPoints() or 0) do
+        points[i] = { n = 5, frame:GetPoint(i) }
+    end
+    local l1, b1 = frame:GetLeft(), frame:GetBottom()
+    local w1, h1, s1 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
+    local clipped = frame.DoesClipChildren and frame:DoesClipChildren()
+
+    local function Place(e)
+        frame:ClearAllPoints()
+        -- GetLeft and SetPoint offsets are both in the window's own scale.
+        frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", l0 + (l1 - l0) * e, b0 + (b1 - b0) * e)
+        frame:SetSize(w0 + (w1 - w0) * e, h0 + (h1 - h0) * e)
+        sb:SetWidth(s0 + (s1 - s0) * e)
+        if labels then labels(e) end
+    end
+    windowAnim.settle = function()
+        frame:ClearAllPoints()
+        for _, p in ipairs(points) do frame:SetPoint(unpack(p, 1, p.n)) end
+        frame:SetSize(w1, h1)
+        sb:SetWidth(s1)
+        if labels then labels(1, true) end
+        if frame.SetClipsChildren then frame:SetClipsChildren(clipped and true or false) end
+    end
+
+    -- Content laid out for the end state is wider or taller than the window
+    -- on the way, and nothing else clips it: the Roster's figures would draw
+    -- over the game world for the length of the trip.
+    if frame.SetClipsChildren then frame:SetClipsChildren(true) end
+    Place(0)
+    runner = runner or CreateFrame("Frame")
+    windowAnim.runner = runner
+    local elapsed = 0
+    runner:SetScript("OnUpdate", function(self, dt)
+        elapsed = elapsed + (dt or 0)
+        local p = math.min(1, elapsed / WINDOW_ANIM_TIME)
+        if p >= 1 then
+            self:SetScript("OnUpdate", nil)
+            windowAnim.settle()
+            return
+        end
+        Place(p * p * (3 - 2 * p))          -- smoothstep, as the open fade
+    end)
+    runner:Show()
+end
+AltStable._test.AnimateWindowChange = AnimateWindowChange
+AltStable._test.WindowAnimRunner = function() return windowAnim.runner end
+
 function AltStable.SetWindowMaximized(on)
     if not frame then return end
     on = on and true or false
     if on == maxState.on then return end
+    AnimateWindowChange(function()
     if on then
         -- Where it was, to go back to. Only the first anchor: the window has
         -- one (ApplyWindowPosition, or wherever a drag left it).
@@ -2088,6 +2201,7 @@ function AltStable.SetWindowMaximized(on)
     frame:SetSize(SizeFor(wantW or frame:GetWidth(), wantH or frame:GetHeight()))
     if AltStable.OnWindowMaximizedChanged then AltStable.OnWindowMaximizedChanged(on) end
     RelayoutWindow()
+    end)
 end
 
 -- Anchor a panel's top-left beside the sidebar: where every plugin panel and
@@ -2949,14 +3063,21 @@ local function CreateFrameIfNeeded()
         GameTooltip:SetText(AltStableConfig.sidebarCompact and "Expand menu" or "Collapse menu")
         GameTooltip:Show()
     end
+    -- The labels as the mode wants them, settled: shown at full alpha, or gone.
+    local function SettleLabels(compact)
+        for _, b in ipairs(sidebarBtns) do
+            if b.lbl then
+                b.lbl:SetAlpha(1)
+                if compact then b.lbl:Hide() else b.lbl:Show() end
+            end
+        end
+    end
     local function ApplySidebarMode()
         local compact = AltStableConfig.sidebarCompact and true or false
         SIDEBAR_WIDTH = compact and SIDEBAR_COMPACT_W or SIDEBAR_FULL_W
         AltStable.LAYOUT.SIDEBAR_WIDTH = SIDEBAR_WIDTH
         sidebar:SetWidth(SIDEBAR_WIDTH - 1)
-        for _, b in ipairs(sidebarBtns) do
-            if b.lbl then if compact then b.lbl:Hide() else b.lbl:Show() end end
-        end
+        SettleLabels(compact)
         -- \194\171 and \194\187: the guillemets, pointing the way it will go.
         chevronText:SetText(compact and "\194\187" or "\194\171")
         chevronText:SetTextColor(AltStable.SkinNavDim())
@@ -2966,8 +3087,21 @@ local function CreateFrameIfNeeded()
         on = on and true or false
         if on == (AltStableConfig.sidebarCompact and true or false) then return end
         AltStable.SetConfigValue("sidebarCompact", on)
-        ApplySidebarMode()
-        RelayoutWindow()
+        -- The labels fade with the travel: out in the first half of a
+        -- collapse, in over the second half of an expand, once there is room.
+        local function FadeLabels(e, done)
+            if done then SettleLabels(on); return end
+            for _, b in ipairs(sidebarBtns) do
+                if b.lbl then
+                    b.lbl:Show()
+                    b.lbl:SetAlpha(on and math.max(0, 1 - e * 2) or math.max(0, e * 2 - 1))
+                end
+            end
+        end
+        AnimateWindowChange(function()
+            ApplySidebarMode()
+            RelayoutWindow()
+        end, FadeLabels)
     end
     chevron:SetScript("OnClick", function()
         AltStable.SetSidebarCompact(not AltStableConfig.sidebarCompact)

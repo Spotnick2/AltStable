@@ -643,6 +643,10 @@ local function makeFrame()
     f.SetWidth  = function(self, w) self._GetWidth = w; return self end
     f.SetHeight = function(self, h) self._GetHeight = h; return self end
     f.SetSize   = function(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
+    -- Clipping is state, as on the client: the chaining default answered
+    -- DoesClipChildren with the frame itself, which reads as "yes" to everything.
+    f.SetClipsChildren = function(self, v) self._clipsChildren = v and true or false; return self end
+    f.DoesClipChildren = function(self) return self._clipsChildren == true end
 
     -- Regions a TEMPLATE would have created (OptionsSliderTemplate gives a
     -- slider .Low/.High/.Text, a scroll frame gets .ScrollBar, and so on). The

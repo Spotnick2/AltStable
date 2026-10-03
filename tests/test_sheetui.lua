@@ -2648,6 +2648,8 @@ do
     local T = AltStable._test
     local f = T.frame
     if not AltStableSheet:IsShown() then AltStable.ShowSheet() end
+    -- The opening fade owns the scale for its length; measure at the real one.
+    AltStable.FinishOpenAnimation()
     local sidebar = f.sidebar
     check("the sidebar is reachable from the window", sidebar ~= nil)
 
@@ -2664,6 +2666,10 @@ do
         if not sheetBtn and b.sectionId ~= "options" and b.sectionId ~= "test150" then sheetBtn = b end
     end
     check("the test plugin got a sidebar button", pbtn ~= nil)
+
+    -- Instant first: the animation has its own block at the end.
+    local savedAnim = AltStableConfig.enableOpenAnimation
+    AltStableConfig.enableOpenAnimation = false
 
     -- Starts full, from the default.
     AltStableConfig.sidebarCompact = false
@@ -2698,6 +2704,11 @@ do
         for _, b in ipairs(T.sidebarBtns) do if b.lbl:IsShown() then return false end end
         return true end)())
     eq("a sheet tab's window narrows by what the sidebar gave back", f:GetWidth(), fullW - 174)
+    -- The grid hangs off the sidebar's edge, so it slides while the sidebar animates.
+    local _, bodyRel = f.bodyScroll:GetPoint(1)
+    check("the grid is anchored to the sidebar's edge", bodyRel == sidebar)
+    local _, hdrRel = f.headerScroll:GetPoint(1)
+    check("  and so are its column headers", hdrRel == sidebar)
     eq("the chevron points the way it will go", T.chevronText:GetText(), "\194\187")
 
     -- Compact, each label is its button's tooltip.
@@ -2798,6 +2809,71 @@ do
     eq("scaling a maximized window keeps it filling the display", f:GetWidth(), limW2)
     AltStable.SetScale(1.0)
     AltStable.SetWindowMaximized(false)
+
+    -- ANIMATED: the change lands at once (state, setting, layout), the
+    -- window travels there, and settles exactly on the end state.
+    AltStableConfig.enableOpenAnimation = true
+    sheetBtn:GetScript("OnClick")(sheetBtn)
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 50, -60)
+    local startW = f:GetWidth()
+    AltStable.SetSidebarCompact(true)
+    local runner = T.WindowAnimRunner()
+    local tick = function(dt) runner:GetScript("OnUpdate")(runner, dt) end
+    check("collapsing animates", runner and runner:GetScript("OnUpdate") ~= nil)
+    eq("  the setting is saved at once", AltStableConfig.sidebarCompact, true)
+    eq("  and the sidebar starts from where it was", sidebar:GetWidth(), 229)
+    eq("  as does the window", f:GetWidth(), startW)
+    check("  which clips what it carries", f:DoesClipChildren())
+    tick(0.1)
+    check("half way, the sidebar is between", sidebar:GetWidth() < 229 and sidebar:GetWidth() > 55,
+          tostring(sidebar:GetWidth()))
+    check("  and so is the window", f:GetWidth() < startW and f:GetWidth() > startW - 174,
+          tostring(f:GetWidth()))
+    check("  the labels fading", sheetBtn.lbl:IsShown() and sheetBtn.lbl:GetAlpha() < 1,
+          tostring(sheetBtn.lbl:GetAlpha()))
+    tick(0.2)
+    check("then it stops", runner:GetScript("OnUpdate") == nil)
+    eq("  on the compact sidebar", sidebar:GetWidth(), 55)
+    eq("  in the narrowed window", f:GetWidth(), startW - 174)
+    check("  with the labels gone, at full alpha for next time",
+          not sheetBtn.lbl:IsShown() and sheetBtn.lbl:GetAlpha() == 1)
+    local ep, _, _, ex, ey = f:GetPoint(1)
+    check("  anchored where it really is, not at the travelling anchor",
+          ep == "TOPLEFT" and ex == 50 and ey == -60, tostring(ep))
+    check("  and no longer clipping", not (f.DoesClipChildren and f:DoesClipChildren()))
+
+    -- Clicked again half way: it goes back from where it is.
+    AltStable.SetSidebarCompact(false)
+    tick(0.05)
+    AltStable.SetSidebarCompact(true)
+    check("a reversal travels from mid-way", sidebar:GetWidth() > 55 and sidebar:GetWidth() < 229,
+          tostring(sidebar:GetWidth()))
+    tick(0.3)
+    eq("  and lands on the latest choice", sidebar:GetWidth(), 55)
+    eq("  in the window that choice wants", f:GetWidth(), startW - 174)
+
+    -- Maximize travels too, and lands maximized, centred.
+    AltStable.SetWindowMaximized(true)
+    check("maximizing animates", runner:GetScript("OnUpdate") ~= nil)
+    check("  from the window's size", f:GetWidth() == startW - 174)
+    tick(0.3)
+    eq("  to the display's", f:GetWidth(), limW)
+    local cp = f:GetPoint(1)
+    eq("  centred", cp, "CENTER")
+    AltStable.SetWindowMaximized(false)
+    tick(0.3)
+    local bp, _, _, bx = f:GetPoint(1)
+    check("and restoring lands back where it was", bp == "TOPLEFT" and bx == 50)
+
+    -- Turned off mid-way: the next change settles the running one and is instant.
+    AltStable.SetSidebarCompact(false)
+    AltStableConfig.enableOpenAnimation = false
+    AltStable.SetSidebarCompact(true)
+    eq("with animation off, a change is instant", sidebar:GetWidth(), 55)
+    check("  and nothing is left running", runner:GetScript("OnUpdate") == nil)
+
+    AltStableConfig.enableOpenAnimation = savedAnim
+    AltStable.SetSidebarCompact(false)
     AltStableConfig.sidebarCompact = false
 end
 
