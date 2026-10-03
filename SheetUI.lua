@@ -1991,7 +1991,9 @@ local function ClearHeaders()
     wipe(headerButtons)
     wipe(headerDividers)
     for _, btn in ipairs(headerPool) do
-        -- A header rebuilt under the mouse never gets its OnLeave.
+        -- A header rebuilt under the mouse may not get its OnLeave, and whether
+        -- the client hides a tooltip whose owner is hidden is not measured
+        -- here. Closing our own costs nothing either way.
         if GameTooltip:IsOwned(btn) then GameTooltip:Hide() end
         btn:Hide()
     end
@@ -2526,6 +2528,10 @@ end
 local function AdjustHeaderHeight(h)
     currentHeaderHeight = h
     if frozenHeader then frozenHeader:SetHeight(h) end
+    -- The Name header fills its strip like every other header does its slot:
+    -- left at the height it was built with, it sat in the middle of a taller
+    -- strip, with dead space above and below it (#161 review).
+    if nameHeader then nameHeader:SetHeight(h) end
     if headerScroll then headerScroll:SetHeight(h) end
     if headerContent then headerContent:SetHeight(h) end
     -- Body scroll TOPLEFT anchors are handled by ApplyContentAnchors via

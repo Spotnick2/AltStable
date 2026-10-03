@@ -3344,8 +3344,10 @@ do
     for i = 1, #gearAgain do if gearAgain[i] ~= gearFirst[i] then same = false end end
     check("a section switch reuses the header buttons, not makes new ones", same)
     local pool, divs = T.HeaderPools()
-    eq("  the pool holds the widest section's worth", #pool, #gearCols)
-    eq("  and its dividers too", #divs, #gearCols - 1)
+    -- At least: the pool never shrinks, and an earlier test may have opened a
+    -- wider tab. Unused slots are checked hidden below.
+    check("  the pool holds at least this section's worth", #pool >= #gearCols)
+    check("  and its dividers too", #divs >= #gearCols - 1)
 
     -- A reused button takes its new column's look. Slot 5 is an icon in Gear
     -- (Head) and a text header in Summary (Guild).
@@ -3360,6 +3362,29 @@ do
     for i = #sumCols + 1, #pool do
         if pool[i]:IsShown() then check("a header past the section's columns is hidden", false) end
     end
+
+    -- A stacked faction header (no icon: its short name, a letter per line)
+    -- reused for a text column. High Order has no icon; on Reputations it is
+    -- the fourth column, and Summary's fourth is iLvl.
+    local savedDB = AltStableDB
+    local stackedField = AltStable.RepField(2779)
+    AltStableDB = { s = { guid = "s", name = "Stack Test", realm = "R", level = 10, [stackedField] = 5 } }
+    Open("rep")
+    local repCols, rep = Headers()
+    eq("Reputations' fourth column is the faction with no icon", repCols[4].field, stackedField)
+    check("  its header is stacked letters", rep[4].label:CanNonSpaceWrap())
+    eq("  a taller header strip for them", select(6, T.ColumnLayout()):GetHeight(), 64)
+    eq("the Name header fills the taller strip", T.NameHeader():GetHeight(), 64)
+    Open("summary")
+    local _, sum2 = Headers()
+    eq("  the same slot is reused for iLvl", sum2[4], rep[4])
+    check("  which no longer breaks its word letter by letter", not sum2[4].label:CanNonSpaceWrap())
+    eq("  nor keeps the stacked label's fixed width", sum2[4].label:GetWidth(), 0)
+    eq("  and reads its own label", sum2[4].label:GetText(), "iLvl")
+    eq("the Name header shrinks back with the strip", T.NameHeader():GetHeight(),
+       select(6, T.ColumnLayout()):GetHeight())
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
 
     -- The Name header shows that the rows are sorted by it. It used to fall out
     -- of the sort painter on the first build and never show anything.

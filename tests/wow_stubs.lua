@@ -547,6 +547,12 @@ local function makeFrame()
     -- nil rule as SetEnabled above.
     f.SetWordWrap = function(self, v) self._wrap = not not v; return self end
     f.GetWordWrap = function(self) return self._wrap ~= false end
+    -- Breaking a word with no spaces in it, letter by letter: the client's
+    -- SetNonSpaceWrap / CanNonSpaceWrap (SimpleFontStringAPI). Off by default.
+    -- A stacked faction header turns it on; a header slot reused for a text
+    -- column must turn it off again, or "Guild" wraps a letter per line.
+    f.SetNonSpaceWrap = function(self, v) self._nonSpaceWrap = not not v; return self end
+    f.CanNonSpaceWrap = function(self) return self._nonSpaceWrap == true end
     -- Visible means shown AND every ancestor shown - the distinction the whole
     -- hidden-UIParent problem turns on.
     f.IsVisible      = function(self)
