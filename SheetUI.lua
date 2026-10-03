@@ -2455,11 +2455,15 @@ local function WindowAnimEnabled()
         and frame.sidebar ~= nil and UIParent ~= nil
 end
 
-local function AnimateWindowChange(applyGeometry, labels)
+-- `laidOut`: applyGeometry lays the tab out itself - a tab switch (#159), which
+-- builds the new tab at its own size - so it is not laid out a second time
+-- before the trip. A plugin whose space grows is still laid out again at the
+-- end, as for maximize.
+local function AnimateWindowChange(applyGeometry, labels, laidOut)
     if not WindowAnimEnabled() then
         FinishWindowAnimation()
         applyGeometry()
-        RelayoutWindow()
+        if not laidOut then RelayoutWindow() end
         if labels then labels(1, true) end
         return
     end
@@ -2477,10 +2481,10 @@ local function AnimateWindowChange(applyGeometry, labels)
     local isPlugin = activeSection and activeSection._isPlugin
     local relayoutAtEnd = false
     if not isPlugin or activeSection.sizesWindow then
-        RelayoutWindow()
+        if not laidOut then RelayoutWindow() end
     else
         local grows = (frame:GetWidth() - sb:GetWidth() >= w0 - s0) and (frame:GetHeight() >= h0)
-        if grows then relayoutAtEnd = true else RelayoutWindow() end
+        if grows then relayoutAtEnd = true elseif not laidOut then RelayoutWindow() end
     end
 
     -- The end state, measured and remembered: settling restores these exactly
@@ -2491,6 +2495,14 @@ local function AnimateWindowChange(applyGeometry, labels)
     end
     local l1, b1 = frame:GetLeft(), frame:GetBottom()
     local w1, h1, s1 = frame:GetWidth(), frame:GetHeight(), sb:GetWidth()
+
+    -- Nothing moved - a tab switch between two tabs of one size, or any switch
+    -- while maximized: no trip. The window already stands where it ends.
+    if l1 == l0 and b1 == b0 and w1 == w0 and h1 == h0 and s1 == s0 then
+        if labels then labels(1, true) end
+        if relayoutAtEnd then RelayoutWindow() end
+        return
+    end
 
     local function Place(e)
         frame:ClearAllPoints()
@@ -2746,7 +2758,7 @@ local function ShowDataUnderlay(show)
     if AltStable._dataBG then AltStable._dataBG:SetShown(show) end
 end
 
-local function SwitchSection(section)
+local function SwitchSectionNow(section)
     -- If a plugin is currently active, deactivate it first
     if activeSection._isPlugin and activeSection.OnDeactivate then
         activeSection.OnDeactivate(frame)
@@ -2801,6 +2813,13 @@ local function SwitchSection(section)
     -- Plugins (and the built-in Options pseudo-section) manage their own
     -- size in OnActivate, so ResizeFrameToContent early-outs for them.
     ResizeFrameToContent()
+end
+
+-- A tab switch glides to the new tab's size, as maximize does (#159). The tab
+-- is built at once at its own size; only the window's rect travels, and the
+-- grid clips itself in its scroll frames on the way.
+local function SwitchSection(section)
+    AnimateWindowChange(function() SwitchSectionNow(section) end, nil, true)
 end
 
 ------------------------------------------------------------
@@ -3373,13 +3392,17 @@ local function CreateFrameIfNeeded()
             AltStable.SkinStripe(stripe, true, ar, ag, ab)
             lbl:SetTextColor(ar, ag, ab)
             icon:SetAlpha(1.0)
-            FinishWindowAnimation()
-            if activeSection._isPlugin and activeSection.OnDeactivate then
-                activeSection.OnDeactivate(frame)
-            end
-            activeSection = plugin
-            ShowDataUnderlay(false)
-            plugin.OnActivate(frame)
+            -- Animated like a sheet tab (#159): a plugin that sizes the window
+            -- in OnActivate (Raids, Options, Warband's floor) glides there; one
+            -- that keeps the size (Roster) makes no trip at all.
+            AnimateWindowChange(function()
+                if activeSection._isPlugin and activeSection.OnDeactivate then
+                    activeSection.OnDeactivate(frame)
+                end
+                activeSection = plugin
+                ShowDataUnderlay(false)
+                plugin.OnActivate(frame)
+            end, nil, true)
         end)
         pbtn:SetScript("OnEnter",function()
             if activeSection.id~=plugin.id then
