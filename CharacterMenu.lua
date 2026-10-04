@@ -53,6 +53,30 @@ function AltStable.CharacterMenuEntries(char)
         out[#out + 1] = { id = "favourite", text = "Favourite" }
     end
 
+    -- Roster camps (#152), only while the Roster plugin is loaded: the camps
+    -- are what its scene shows, and mean nothing without it. Ensured first, so
+    -- a camp chosen from the sheet before the Roster was ever opened does not
+    -- stop the first camp being seeded with the top characters.
+    if AltStable.EnsureRosterCamps and AltStable.GetCamps then
+        AltStable.EnsureRosterCamps()
+        local mine = AltStable.CampOf(guid)
+        if mine then
+            out[#out + 1] = { id = "camp:remove", text = "Remove from " .. (mine.name or "camp") }
+        end
+        for _, c in ipairs(AltStable.GetCamps()) do
+            if c ~= mine then
+                local verb = mine and "Move to " or "Add to "
+                if #(c.members or {}) >= (AltStable.CAMP_SIZE or 5) then
+                    out[#out + 1] = { id = "camp:add:" .. c.id, text = verb .. (c.name or "camp"),
+                                      disabled = true, why = "That camp is full." }
+                else
+                    out[#out + 1] = { id = "camp:add:" .. c.id, text = verb .. (c.name or "camp") }
+                end
+            end
+        end
+        out[#out + 1] = { id = "camp:new", text = mine and "Move to a new camp" or "Add to a new camp" }
+    end
+
     if AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) then
         out[#out + 1] = { id = "unhide", text = "Unhide" }
     else
@@ -111,6 +135,22 @@ function AltStable.CharacterMenuInvoke(id, char)
         if not AltStable.RequestForgetCharacter then return false end
         AltStable.RequestForgetCharacter(char)
         return true
+    end
+
+    -- Roster camps (#152). The scene shows the camp the character went to.
+    if type(id) == "string" and id:sub(1, 5) == "camp:" and AltStable.GetCamps then
+        local done = false
+        if id == "camp:remove" then
+            done = AltStable.RemoveFromCamp(guid)
+        elseif id == "camp:new" then
+            local newId = AltStable.CreateCamp(nil, { guid })
+            done = AltStable.SelectCamp(newId)
+        else
+            local campId = tonumber(id:match("^camp:add:(%d+)$"))
+            done = campId and AltStable.AddToCamp(guid, campId) and AltStable.SelectCamp(campId) or false
+        end
+        if done and AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        return done and true or false
     end
 
     return false

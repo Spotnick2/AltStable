@@ -340,7 +340,7 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts forget <name>` | Remove a character that no longer exists, for good |
 | `/alts unforget <name>` | Undo that — it returns on the next sync |
 | `/alts forgotten` | What has been forgotten on this account |
-| `/alts favourite <name>` | Pin to the top of the Roster, and into the scene |
+| `/alts favourite <name>` | Pin to the top of the Roster grid (the scene shows camps, #152) |
 | `/alts unfavourite <name>` | Unpin |
 | `/alts favourite` | List them |
 | `/alts auth` | Who may ask us for the database, and who is waiting |
