@@ -27,6 +27,22 @@ local PRIMARY_PROFESSIONS = {
     ["Tailoring"] = true,
 }
 
+-- Skill line ID -> the canonical name above (#177). The profession IDs are the
+-- Professions plugin's (AltStableProfessions.lua LINES), measured on the
+-- client; on this skill list Enchanting, Tailoring, Herbalism, Leatherworking,
+-- Skinning and the three secondaries were (forever-api-notes.md). Riding is
+-- 762 in every version, not measured here. ScanSkills falls back to the
+-- English name for an ID that is not in this table.
+local SKILL_BY_ID = {
+    [171] = "Alchemy",   [164] = "Blacksmithing",  [333] = "Enchanting",
+    [202] = "Engineering", [182] = "Herbalism",    [165] = "Leatherworking",
+    [186] = "Mining",    [393] = "Skinning",       [197] = "Tailoring",
+    [356] = "Fishing",   [185] = "Cooking",        [129] = "First Aid",
+    [762] = "Riding",
+}
+local KNOWN_SKILL = {}
+for _, name in pairs(SKILL_BY_ID) do KNOWN_SKILL[name] = true end
+
 -- All trackable professions for flat field reset
 local ALL_PROFESSIONS = {
     "Alchemy","Blacksmithing","Enchanting","Engineering",
@@ -370,6 +386,7 @@ end
 -- tuple-to-struct change actually bites.
 function AltStable.ScanSkills(char)
     local primaryCount = 0
+    local seen = {}
 
     for i = 1, GetNumSkillLines() do
 
@@ -382,6 +399,26 @@ function AltStable.ScanSkills(char)
         -- maxRank is dynamic for weapon and defense skills (5 x level), so it
         -- is read per line rather than assumed to be a cap.
         local maxRank   = info and info.maxRank
+
+        -- Matched by skill ID (#177), turned into the canonical English name
+        -- the saved fields, the sync and the export are keyed by. By name it
+        -- matched nothing on a French or German client - and on every client
+        -- it matched each profession TWICE: Forever lists a base line and a
+        -- 29xx line under one name (Enchanting 333 and 2940, in either order;
+        -- measured 70205, same rank and max on both), so prof1 and prof2 were
+        -- one profession and the second one was lost (Export reads those).
+        -- A base ID names the skill. A line whose ID is not in the table falls
+        -- back to its name when that is one of the English names - not every
+        -- ID was measured on this list (Alchemy, Blacksmithing, Engineering,
+        -- Mining, Riding), and an English client must not lose what the name
+        -- used to find. A 29xx twin can pass that way too, which is harmless:
+        -- same rank, and a name is never counted twice.
+        if info and not info.isHeader then
+            skillName = SKILL_BY_ID[info.skillID]
+                or (KNOWN_SKILL[skillName] and skillName) or nil
+            if skillName and seen[skillName] then skillName = nil end
+            if skillName then seen[skillName] = true end
+        end
 
         if info and not info.isHeader and skillName then
 
