@@ -4379,5 +4379,126 @@ do
     pcall(AltStable.RosterPlugin.Refresh)
 end
 
+------------------------------------------------------------
+-- The grid counts the whole roster, and says who it is not showing (#178)
+------------------------------------------------------------
+-- The grid draws at most MAX_CARDS (24), and fewer when the window is small.
+-- Its count used to be over the cards it DREW against the capped list, so a
+-- big roster read "missing portraits" that were there, and the rest of it
+-- vanished without a word.
+do
+    local savedDB, savedManifest, savedStore = AltStableDB, AltStableCutoutManifest, AltStablePortraits
+    local savedHidden = AltStableConfig.hiddenCharacters
+    AltStablePortraits = nil
+    AltStableDB = {}
+    -- Levels fall with i, so the grid's order is 1, 2, 3 ...
+    for i = 1, 30 do
+        local guid = ("big-%02d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Big %02d"):format(i),
+                              level = 100 - i, ilvl = i, class = "MAGE" }
+    end
+    local function portraits(list)
+        AltStableCutoutManifest = {}
+        for _, i in ipairs(list) do
+            AltStableCutoutManifest[("big-%02d"):format(i)] =
+                { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+        end
+    end
+    local function range(a, b) local t = {} for i = a, b do t[#t + 1] = i end return t end
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 2600 end
+    main.GetHeight = function() return 2000 end
+    T.Activate(main)
+    AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterView = "grid"
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 2400 end            -- room for every card there is
+    p.GetHeight = function() return 1900 end
+    -- The hint and the not-shown line under it, as the player reads them.
+    local function hint()
+        return (T.HintShown() and (T.HintText() or "") or "") .. " | " .. (T.MoreText() or "")
+    end
+
+    -- Everyone has a portrait: no portrait hint, but the six past the cap are
+    -- named, and that line is not the Companion link.
+    portraits(range(1, 30))
+    T.Refresh()
+    local h = hint()
+    check("all 30 with portraits: no portrait count", h:find("have a portrait", 1, true) == nil, h)
+    check("  but the six past the cap are named", h:find("+6 more not shown", 1, true) ~= nil, h)
+    check("  as the grid's limit", h:find("shows 24 at most", 1, true) ~= nil, h)
+    check("  and it is not a link", not T.HintLinkShown())
+
+    -- Portraits past the cap still count: 1-19 and 25-30 have one (25), so
+    -- the 24 drawn hold only 19. Counted over the drawn cards this read 19.
+    local list = range(1, 19)
+    for i = 25, 30 do list[#list + 1] = i end
+    portraits(list)
+    T.Refresh()
+    h = hint()
+    check("the count is over the whole roster", h:find("25 of 30 characters have a portrait", 1, true) ~= nil, h)
+    check("  the not-shown line comes with it", h:find("+6 more not shown", 1, true) ~= nil, h)
+    check("  and the portrait hint is the link", T.HintLinkShown() == true)
+    -- The link covers the hint's string whole: the not-shown line must be in
+    -- its own string, or it would open the Companion link (#180 review).
+    check("  which does not cover the not-shown line",
+          (T.HintText() or ""):find("more not shown", 1, true) == nil
+          and (T.MoreText() or ""):find("+6 more not shown", 1, true) ~= nil,
+          tostring(T.HintText()) .. " / " .. tostring(T.MoreText()))
+
+    -- A small window: the cap is not the reason, the window is.
+    portraits(range(1, 30))
+    p.GetWidth = function() return 400 end
+    p.GetHeight = function() return 300 end
+    T.Refresh()
+    local drawn = 0
+    for _, card in ipairs(T.Cards()) do if card:IsShown() then drawn = drawn + 1 end end
+    h = hint()
+    check("a small window draws fewer than 24", drawn > 0 and drawn < 24, tostring(drawn))
+    check("  and says how many it left out", h:find(("+%d more not shown"):format(30 - drawn), 1, true) ~= nil, h)
+    check("  and that a larger window fits more", h:find("larger window", 1, true) ~= nil, h)
+
+    -- Hidden characters are out of both counts, as they are out of the grid.
+    p.GetWidth = function() return 2400 end
+    p.GetHeight = function() return 1900 end
+    portraits(range(1, 20))
+    AltStable.SetCharacterHidden("big-30", true)
+    T.Refresh()
+    h = hint()
+    check("a hidden character is out of the count", h:find("20 of 29 characters", 1, true) ~= nil, h)
+    check("  and out of the not-shown count", h:find("+5 more not shown", 1, true) ~= nil, h)
+
+    -- Fitting everyone, until the tall hint costs a row - and the not-shown
+    -- line that THAT adds must be made room for too (#180 review): the cards
+    -- start below the hint AND the line under it.
+    AltStableConfig.hiddenCharacters = savedHidden
+    AltStableDB = {}
+    for i = 1, 24 do
+        local guid = ("fit-%02d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Fit %02d"):format(i),
+                              level = 100 - i, ilvl = i, class = "MAGE" }
+    end
+    AltStableCutoutManifest = nil                     -- nobody has art: the portrait hint shows
+    p.GetWidth = function() return 800 end
+    p.GetHeight = function() return 460 end
+    T.Refresh()
+    check("24 fit this panel under a one-line hint", T.MoreText() == nil, tostring(T.MoreText()))
+    T.Hint().GetStringHeight = function() return 36 end
+    T.More().GetStringHeight = function() return 12 end
+    T.Refresh()
+    local _, _, _, _, top = T.Cards()[1]:GetPoint(1)
+    check("a three-line hint costs a row, and says so", (T.MoreText() or ""):find("more not shown", 1, true) ~= nil,
+          tostring(T.MoreText()))
+    eq("  the cards start below the hint AND that line", top, -(14 + 36 + 2 + 12 + 6))
+    T.Hint().GetStringHeight, T.More().GetStringHeight = nil, nil
+
+    AltStableConfig.rosterView = nil
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableDB, AltStableCutoutManifest, AltStablePortraits = savedDB, savedManifest, savedStore
+    pcall(AltStable.RosterPlugin.Refresh)
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

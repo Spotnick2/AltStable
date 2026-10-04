@@ -149,7 +149,7 @@ local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
 AltStable.RosterPlugin = Roster
 
-local panel, backdropTex, hintText, hintLink, sceneBar, sceneLabel, viewBtn, campBar, campLabel
+local panel, backdropTex, hintText, moreText, hintLink, sceneBar, sceneLabel, viewBtn, campBar, campLabel
 
 -- Which view, and which backdrop, remembered per account. The grid is the
 -- default: it works for every character, whereas the scene needs a portrait and
@@ -924,6 +924,14 @@ local function BuildPanel(mainFrame)
     hintText:SetTextColor(0.6, 0.6, 0.6)
     hintText:SetJustifyH("CENTER")
 
+    -- The grid's "+N more not shown" line, under the hint and outside its link
+    -- (#178): it is not about the Companion.
+    moreText = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    moreText:SetPoint("TOP", hintText, "BOTTOM", 0, -2)
+    moreText:SetTextColor(0.6, 0.6, 0.6)
+    moreText:SetJustifyH("CENTER")
+    moreText:Hide()
+
     -- The portrait hint is a link (#176): a click over it opens the Companion's
     -- download link. Shown only with that hint - the camp hints are not links.
     hintLink = CreateFrame("Button", nil, panel)
@@ -1632,6 +1640,7 @@ local function ApplyHintLayout(panelW, sceneView, dx)
     hintText:ClearAllPoints()
     hintText:SetPoint("TOP", dx or 0, y)
     hintText:SetWidth(w)
+    if moreText then moreText:SetWidth(w) end
 end
 
 
@@ -2672,6 +2681,7 @@ function Roster.Refresh()
             if viewBtn then viewBtn:Hide() end
             if hintText then hintText:Hide() end
             if hintLink then hintLink:Hide() end
+            if moreText then moreText:Hide() end
             RenderDetail(char)
             detail:Show()
             return
@@ -2683,8 +2693,10 @@ function Roster.Refresh()
 
     if detail then detail:Hide() end
     if viewBtn then viewBtn:Show() end
-    -- Off unless a portrait hint below turns it on.
+    -- Off unless a portrait hint below turns it on; the not-shown line is the
+    -- grid's alone.
     if hintLink then hintLink:Hide() end
+    if moreText then moreText:Hide() end
 
     if sceneBar then sceneBar:SetShown(View() == "scene") end
     if campBar then campBar:SetShown(View() == "scene") end
@@ -2755,44 +2767,82 @@ function Roster.Refresh()
     end
 
     local chars = CharactersFor("grid")
+    -- Everyone the grid would show if it had room: the same list and the same
+    -- hidden-character rule, before the 24-card cap. The portrait count is
+    -- over THIS (#178) - counted over the cards drawn, a full roster whose
+    -- later characters did not fit read "1 of 30 have a portrait".
+    local everyone = AllCharacters(AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false)
+    local withArt = 0
+    for _, c in ipairs(everyone) do
+        if CutoutFor(c) then withArt = withArt + 1 end
+    end
     ApplyHintLayout(panel:GetWidth(), false)
     PaintBackdrop()
 
     -- The hint is worded BEFORE the cards are placed, so they start below it:
     -- naming the Companion (#176) and the restart line can take it to two or
     -- three lines, and the cards are frames - drawn over the panel's text, they
-    -- hid everything after the first line. Who has art is counted over the
-    -- cards that fit, as before; the second fit, if the hint is taller, can only
-    -- be smaller.
+    -- hid everything after the first line. A taller hint can only fit fewer
+    -- cards, so the second fit re-words the "not shown" count too.
     local panelW, panelH = panel:GetWidth(), panel:GetHeight()
     local function Fit(hintH)
         local cols, rows, cardW, cardH = GridFor(panelW, panelH, #chars, hintH)
-        local fits, withArt = cols * rows, 0
-        for i = 1, math.min(fits, #chars) do
-            if CutoutFor(chars[i]) then withArt = withArt + 1 end
-        end
-        return cols, rows, cardW, cardH, fits, withArt
+        local fits = cols * rows
+        return cols, rows, cardW, cardH, fits, math.min(fits, #chars)
     end
     local hintH = 18
-    local cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
+    local cols, rows, cardW, cardH, fits, shown = Fit(hintH)
 
-    -- Say where the pictures come from, but only while some are missing: a
-    -- permanent instruction on a finished lineup is clutter.
+    -- Two things the grid may need to say: where the pictures come from, but
+    -- only while some are missing (a permanent instruction on a finished
+    -- lineup is clutter), and that some characters are not drawn (#178) - by
+    -- the cap, or because the window is too small for the rest. Only the
+    -- first is a link.
     --
     -- PortraitSourceText is the same phrase the scene uses, so the two views
     -- cannot give different instructions (#89).
+    --
+    -- The link covers hintText whole, so the not-shown line must not be in it
+    -- while the link is on (#180 review): it goes in moreText, its own string
+    -- under the hint. With no portrait line there is no link, and it takes
+    -- hintText's place.
+    local missingArt = withArt < #everyone
     local function Word()
-        hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
-            :format(withArt, #chars, AltStable.PortraitSourceText())))
+        local more
+        local notShown = #everyone - shown
+        if notShown > 0 then
+            more = (shown < math.min(#everyone, MAX_CARDS))
+                and ("+%d more not shown - a larger window fits more"):format(notShown)
+                or ("+%d more not shown - the grid shows %d at most"):format(notShown, MAX_CARDS)
+        end
+        if missingArt then
+            hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
+                :format(withArt, #everyone, AltStable.PortraitSourceText())))
+            moreText:SetText(more or "")
+            moreText:SetShown(more ~= nil)
+        else
+            hintText:SetText(more or "")
+            moreText:Hide()
+        end
+        return missingArt or more ~= nil
     end
-    if withArt < #chars then
-        Word()
+    local function Tall()
+        local h = tonumber(hintText:GetStringHeight()) or 0
+        if moreText:IsShown() then h = h + 2 + (tonumber(moreText:GetStringHeight()) or 0) end
+        return math.ceil(h) + 6         -- one line: ~12 + 6 = the 18 it always had
+    end
+    if Word() then
         hintText:Show()
-        hintLink:Show()
-        local tall = math.ceil(tonumber(hintText:GetStringHeight()) or 0) + 6   -- one line: ~12 + 6 = the 18 it always had
-        if tall > hintH then
+        hintLink:SetShown(missingArt)
+        -- Until it settles: a refit can drop a row, and re-wording then ADDS
+        -- the not-shown line, taller again (#180 review). The height only
+        -- grows and the wording has two parts, so this ends in a few passes;
+        -- the bound is a guard, not a limit anyone should meet.
+        for _ = 1, 4 do
+            local tall = Tall()
+            if tall <= hintH then break end
             hintH = tall
-            cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
+            cols, rows, cardW, cardH, fits, shown = Fit(hintH)
             Word()
         end
     else
@@ -3161,9 +3211,11 @@ function Roster._Bootstrap()
             -- the only way to catch the renderer handing the count the wrong
             -- list: the composition is right either way.
             HintText = function() return hintText and hintText:GetText() end,
+            MoreText = function() return moreText and moreText:IsShown() and moreText:GetText() or nil end,
             HintShown = function() return hintText and hintText:IsShown() end,
             HintLinkShown = function() return hintLink and hintLink:IsShown() end,
             Hint = function() return hintText end,
+            More = function() return moreText end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
             Deactivate = function(main) return Roster.Deactivate(main) end,
