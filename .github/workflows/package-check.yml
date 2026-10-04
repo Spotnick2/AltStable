@@ -156,9 +156,11 @@ jobs:
           exit $fail
 
       # Under Libs/LibGlass-1.0, EXACTLY what the library ships (#184): its
-      # XML, every file the XML loads, LICENSE, Media/*.tga - nothing else (the
-      # library's tests/docs/Tools, or a new notes file, fail here instead of
-      # shipping: CurseForge's packager ignores an external's own ignores).
+      # XML, every file the XML loads, LICENSE, Media/*.tga - nothing else.
+      # This dry run is the BigWigs packager, which DOES honour the library's
+      # own .pkgmeta ignores; CurseForge's does not. So a missing
+      # Libs/LibGlass-1.0/... entry in OUR .pkgmeta cannot show here:
+      # tests/test_packaging.lua checks those entries against the library's list.
       - name: The package embeds exactly the library
         run: |
           lib=AltStable/Libs/LibGlass-1.0

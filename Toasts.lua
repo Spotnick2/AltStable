@@ -118,7 +118,7 @@ local function BuildToastFrame()
     -- thing fades together - nothing here opts out of parent alpha. There is no
     -- translation animation and no ADD-blended layer in Glass.Apply; the ADD
     -- highlights live in Glass.Bar and Glass.Sheen, which this addon does not
-    -- ship the art for.
+    -- call.
     if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
         f:SetBackdrop({
             bgFile   = "Interface/Tooltips/UI-Tooltip-Background",

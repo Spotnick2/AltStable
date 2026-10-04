@@ -27,10 +27,10 @@ end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
--- The addon NAME, the way the client passes it. Glass.lua derives its media
--- path from `...`; a bare dofile leaves that nil and every texture path comes
--- out as "Interface\\AddOns\\nil\\Media\\Glass\\...". Worth asserting below
--- rather than trusting, because a wrong path draws nothing and throws nothing.
+-- The library and Glass.lua loaded the way the client does, with the addon
+-- NAME: LibGlass derives its media path from the host addon's name, so a wrong
+-- one points every texture at a folder that is not there. Worth asserting
+-- below rather than trusting: a wrong path draws nothing and throws nothing.
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
@@ -616,12 +616,12 @@ end
 
 -- The preset tables are never handed to the material by reference.
 --
--- `st.tint = preset.tint` would make the material's process-global STYLE table
--- hold the preset ITSELF, so any in-place write - a debug command, an upstream
--- Glass change doing STYLE.tint[4] = x - would edit AltStable.SKINS
--- permanently, for every window, for the rest of the session. Glass.lua is a
--- copy meant to stay in step with upstream, which makes shared mutable state
--- exactly the wrong thing to hand it.
+-- `st.tint = preset.tint` would make the instance's STYLE table hold the
+-- preset ITSELF, so any in-place write - a debug command, a LibGlass release
+-- doing STYLE.tint[4] = x - would edit AltStable.SKINS permanently, for every
+-- window, for the rest of the session. The material is a library this addon
+-- does not own (#184), which makes shared mutable state exactly the wrong
+-- thing to hand it.
 do
     useSkin("clear")
     AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
@@ -809,6 +809,19 @@ do
               same({ unpack(AltStable.SkinDataColor()) }, AltStable.C.BG_ROW_ODD),
               table.concat(AltStable.SkinDataColor(), ","))
         check("  as its siblings already did", AltStable.SkinIsGlass() == false)
+
+        -- And how the material goes missing now (#185 review): no library
+        -- under Libs, as in a git clone or a source zip. Glass.lua must leave
+        -- AltStable.Glass nil for the path above, not throw at load.
+        local realLibStub = LibStub
+        LibStub = function(name, silent)
+            if silent then return nil end
+            error("Cannot find a library instance of " .. tostring(name))
+        end
+        local ok, err = pcall(assert(loadfile("Glass.lua")), "AltStable")
+        LibStub = realLibStub
+        check("no LibGlass under Libs: Glass.lua loads without an error", ok, tostring(err))
+        check("  and leaves the material nil, so the skin goes flat", AltStable.Glass == nil)
         AltStable.Glass = held
         dofile("Skin.lua")
         AltStable._ResetSkinCache()

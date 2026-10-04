@@ -12,6 +12,14 @@
 --
 -- rimAlpha = 1 keeps the rim as it has always drawn here; the library's own
 -- default is a softer 0.7 (LibGlass#3).
+--
+-- Looked up QUIETLY: Libs/LibGlass-1.0 is gitignored, so a copy installed from
+-- a git clone or GitHub's source zip has no library. Without one, Glass stays
+-- nil and Skin.SkinIsGlass sends every surface down the flat path, as it
+-- always did for a missing material - a flat window, not a load error. (A
+-- library that is there but half-loaded still errors in New, loudly: that is
+-- a broken copy to find, not an install to forgive.)
 
 AltStable = AltStable or {}
-AltStable.Glass = LibStub("LibGlass-1.0"):New({ style = { rimAlpha = 1 } })
+local lib = LibStub("LibGlass-1.0", true)
+AltStable.Glass = lib and lib:New({ style = { rimAlpha = 1 } }) or nil
