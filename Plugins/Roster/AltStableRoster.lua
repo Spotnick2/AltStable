@@ -564,6 +564,8 @@ local function AllCharacters(includeHidden)
     return out
 end
 
+Roster.AllCharacters = AllCharacters      -- for the camp list (CampList.lua, #152)
+
 -- The grid's page: as many as it has cards for.
 local function PickCharacters(limit, includeHidden)
     local out = AllCharacters(includeHidden)
@@ -891,6 +893,7 @@ local function BuildPanel(mainFrame)
     end
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, footerH + 2)
     panel:Hide()
+    Roster.panel = panel        -- for the camp list (CampList.lua, #152)
 
     backdropTex = panel:CreateTexture(nil, "BACKGROUND")
     backdropTex:SetAllPoints()
@@ -926,7 +929,7 @@ local function BuildPanel(mainFrame)
     campPrev:SetSize(22, 20); campPrev:SetText("<"); campPrev:SetPoint("LEFT", 0, 0)
     local campNext = CreateFrame("Button", nil, campBar, "UIPanelButtonTemplate")
     campNext:SetSize(22, 20); campNext:SetText(">"); campNext:SetPoint("RIGHT", 0, 0)
-    campLabel = campBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    campLabel = campBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     campLabel:SetPoint("LEFT", campPrev, "RIGHT", 6, 0)
     campLabel:SetPoint("RIGHT", campNext, "LEFT", -6, 0)
     campLabel:SetJustifyH("CENTER")
@@ -1449,9 +1452,18 @@ local PET_TEST = {
     SceneSlot = function() return Roster.sceneSlot end,
 }
 
+-- The width the camp list (CampList.lua, #152) takes off the right of the
+-- panel while it is open in the scene view. The scene - backdrop, figures,
+-- hint, buttons - lives in what is left.
+local function SceneInset()
+    local list = Roster.CampList
+    return (View() == "scene" and list and list.Inset and list.Inset()) or 0
+end
+Roster.SceneInset = SceneInset
+
 local function RenderScene(camp)
     local entry = CurrentScene()
-    local pw, ph = panel:GetWidth(), panel:GetHeight()
+    local pw, ph = panel:GetWidth() - SceneInset(), panel:GetHeight()
 
     backdropTex:SetTexture(entry.file)
     backdropTex:SetTexCoord(BackdropTexCoords(pw, ph, entry))
@@ -1543,11 +1555,11 @@ local function HintLayout(panelW, sceneView)
     return -8, w
 end
 
-local function ApplyHintLayout(panelW, sceneView)
+local function ApplyHintLayout(panelW, sceneView, dx)
     if not hintText then return end
     local y, w = HintLayout(panelW, sceneView)
     hintText:ClearAllPoints()
-    hintText:SetPoint("TOP", 0, y)
+    hintText:SetPoint("TOP", dx or 0, y)
     hintText:SetWidth(w)
 end
 
@@ -2565,11 +2577,16 @@ function Roster.Refresh()
             -- the figure box: the same pane that reads as glass over the world
             -- reads as a mess over a landscape. The drill-down is not the
             -- scene, so it gets the tab's own background whichever view it was
-            -- opened from.
+            -- opened from - over the WHOLE panel: the scene may have narrowed
+            -- it for the camp list (#169 review), and this returns before the
+            -- anchoring below.
+            backdropTex:ClearAllPoints()
+            backdropTex:SetAllPoints()
             PaintBackdrop()
             for _, card in ipairs(Roster.cards) do card:Hide() end
             if sceneBar then sceneBar:Hide() end
             if campBar then campBar:Hide() end
+            if Roster.CampList and Roster.CampList.Render then Roster.CampList.Render(false) end
             if viewBtn then viewBtn:Hide() end
             if hintText then hintText:Hide() end
             RenderDetail(char)
@@ -2588,8 +2605,23 @@ function Roster.Refresh()
     if campBar then campBar:SetShown(View() == "scene") end
     if viewBtn then viewBtn:SetText(View() == "scene" and "Grid" or "Scene") end
 
+    -- The camp list belongs to the scene view (#152); the scene is drawn in
+    -- the width it leaves. The first camp is seeded BEFORE the list is drawn,
+    -- or the first open lists no camp at all.
+    if View() == "scene" then EnsureCamps() end
+    if Roster.CampList and Roster.CampList.Render then Roster.CampList.Render(View() == "scene") end
+    local inset = SceneInset()
+    backdropTex:ClearAllPoints()
+    backdropTex:SetPoint("TOPLEFT")
+    backdropTex:SetPoint("BOTTOMRIGHT", -inset, 0)
+    if viewBtn then
+        viewBtn:ClearAllPoints()
+        viewBtn:SetPoint("TOPRIGHT", -8 - inset, -BAR_TOP)
+    end
+
     if View() == "scene" then
-        ApplyHintLayout(panel:GetWidth(), true)
+        -- Centred over the scene, not the whole panel.
+        ApplyHintLayout(panel:GetWidth() - inset, true, -inset / 2)
         EnsureCamps()
         local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
         local _, info = RenderScene(camp)
@@ -2609,11 +2641,15 @@ function Roster.Refresh()
                 .. ". The grid shows characters without one as cards.")
             hintText:Show()
         elseif not camp then
-            hintText:SetText("No camp - right-click a character in the grid and choose \"Add to a new camp\".")
+            -- With the camp list open, it is the way; without it, the grid.
+            hintText:SetText(inset > 0 and "No camp - make one with + in the list."
+                or "No camp - right-click a character in the grid and choose \"Add to a new camp\".")
             hintText:Show()
         elseif info.members == 0 then
-            hintText:SetText(("%s is empty - right-click a character in the grid and choose \"Add to %s\".")
-                :format(name, name))
+            hintText:SetText(inset > 0
+                and ("%s is empty - drag a character onto one of its seats in the list."):format(name)
+                or ("%s is empty - right-click a character in the grid and choose \"Add to %s\".")
+                    :format(name, name))
             hintText:Show()
         else
             -- Everyone in the camp who is not at the fire, and why.
@@ -2703,12 +2739,19 @@ end
 local MIN_PANEL_W = 8 + CAMP_BAR_W + 8 + SCENE_BAR_W + 8 + VIEW_BTN_W + 8
 local MIN_PANEL_H = 400
 Roster.MIN_PANEL_W, Roster.MIN_PANEL_H = MIN_PANEL_W, MIN_PANEL_H
+-- And room for the camp list beside a usable scene (CampList.lua), or the list
+-- would step aside on a window the Roster itself chose, toggle and all.
+function Roster.MinPanelW()
+    local list = Roster.CampList
+    if list and list.NeedsWidth then return math.max(MIN_PANEL_W, list.NeedsWidth()) end
+    return MIN_PANEL_W
+end
 function Roster.HoldMinSize()
     if not AltStable.EnsureWindowMinSize then return end
     local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
     local footerH  = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
-    AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + MIN_PANEL_H + footerH + 2)
+    AltStable.EnsureWindowMinSize(sidebarW + 1 + Roster.MinPanelW(), titleH + MIN_PANEL_H + footerH + 2)
 end
 
 function Roster.Activate(mainFrame)
