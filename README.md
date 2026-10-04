@@ -125,7 +125,7 @@ Open an issue on [GitHub](https://github.com/Spotnick2/AltStable/issues) and inc
   in it;
 - what you did, what you expected, and what happened instead;
 - for a portrait problem, the Companion's diagnostics too: **Help → Save diagnostics…** in the
-  Companion writes one text file to your Desktop to attach. It holds no account folder names
+  Companion writes one text file to your Downloads folder to attach. It holds no account folder names
   and nothing is sent anywhere. Companion 0.1.0-beta.2 and earlier don't have it yet; attach
   the log from **Help → Open log** instead.
 
