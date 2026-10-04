@@ -110,7 +110,10 @@ Open an issue on [GitHub](https://github.com/Spotnick2/AltStable/issues) and inc
 - the line from **`/alts status`**, which opens ready to copy and has no character names
   in it;
 - what you did, what you expected, and what happened instead;
-- for a portrait problem, the Companion's log too: **Help → Open log** in the Companion.
+- for a portrait problem, the Companion's diagnostics too: **Help → Save diagnostics…** in the
+  Companion writes one text file to your Desktop to attach. It holds no account folder names
+  and nothing is sent anywhere. Companion 0.1.0-beta.2 and earlier don't have it yet; attach
+  the log from **Help → Open log** instead.
 
 Lua errors are hidden by default on this client. If something seems broken, type
 `/console scriptErrors 1` and do it again; the error text is the most useful thing you
