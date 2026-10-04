@@ -16,7 +16,7 @@ their bags and banks. You can also stand them together as a roster.
 
 ## Install
 
-Install **AltStable** from CurseForge, either with the CurseForge app or by unzipping it
+Install **AltStable** from [CurseForge](https://www.curseforge.com/wow/addons/altstable), either with the CurseForge app or by unzipping it
 into the `Interface\AddOns` folder inside your Forever game folder. The download contains
 five folders (`AltStable` and its four tabs); keep all of them. Then start the game, or
 restart it if it was running.
