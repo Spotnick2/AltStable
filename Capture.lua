@@ -615,7 +615,7 @@ end
 -- AltStable.ShowReloadPrompt).
 local function ShowReloadPrompt()
     if AltStable.ShowReloadPrompt then
-        AltStable.ShowReloadPrompt("Portrait captured.\nReload now so it reaches the converter?")
+        AltStable.ShowReloadPrompt("Portrait captured.\nReload now so it reaches AltStable Companion?")
     end
 end
 
@@ -629,7 +629,7 @@ local function Finish()
     ShowUI()
     RestoreFormat()
 
-    Out("portrait captured - |cffffff00/reload|r so it reaches the converter "
+    Out("portrait captured - |cffffff00/reload|r so it reaches AltStable Companion "
         .. "(the record is only written on reload or logout)")
     ShowReloadPrompt()
     if AltStable.RefreshPortraitStatus then AltStable.RefreshPortraitStatus() end

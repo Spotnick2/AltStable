@@ -180,7 +180,7 @@ eq("  the UI scale", type(r1.uiScale), "number")
 
 -- The flush gap: SavedVariables reach disk on reload or logout only.
 eq("the capture offers a reload", #prompts, 1)
-check("  saying why", tostring(prompts[1]):find("converter", 1, true) ~= nil, tostring(prompts[1]))
+check("  saying why, naming the app (#176)", tostring(prompts[1]):find("AltStable Companion", 1, true) ~= nil, tostring(prompts[1]))
 local told = false
 for _, line in ipairs(WoW.chatOut) do
     if tostring(line):find("reload", 1, true) then told = true end

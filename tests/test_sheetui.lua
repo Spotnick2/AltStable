@@ -2309,7 +2309,7 @@ do
 
         AltStable.UpdateCaptureGlow({ due = false, reason = "pending", changedSlots = {} })
         check("a capture waiting for the converter does not glow", btn._glowing == false and not glow:IsShown())
-        check("  but the tooltip says it is waiting", tipText():find("waiting for the companion", 1, true), tipText())
+        check("  but the tooltip says it is waiting", tipText():find("waiting for AltStable Companion", 1, true), tipText())
 
         AltStable.UpdateCaptureGlow({ due = false, reason = "none", changedSlots = {} })
         check("with nothing to say, the tooltip is the plain one", not tipText():find("\n\n", 1, true))

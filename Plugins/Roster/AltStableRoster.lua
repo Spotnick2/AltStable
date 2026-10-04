@@ -5,9 +5,9 @@
 -- click to select, hover for detail. The TBC original drew PNG "cutouts"
 -- scraped from the Battle.net armory by a .NET tool. Forever has no armory, so
 -- the images now come from the client itself: /alts portrait (Capture.lua)
--- photographs the LIVE character on a flat stage, a converter outside the game
--- mattes the pair into a transparent TGA, and CutoutManifest.lua lists what
--- exists. The capture ships; the converter does not, yet (#89).
+-- photographs the LIVE character on a flat stage, AltStable Companion (a
+-- separate Windows app, Spotnick2/AltStableCompanion) mattes the pair into a
+-- transparent TGA, and CutoutManifest.lua lists what exists.
 --
 -- WHY NOT LIVE MODELS. Measured on 1.60.1.70009 (docs/forever-api-notes.md):
 -- a character who is not logged in renders as correct GEOMETRY with NO TEXTURE.
@@ -149,7 +149,7 @@ local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
 AltStable.RosterPlugin = Roster
 
-local panel, backdropTex, hintText, sceneBar, sceneLabel, viewBtn, campBar, campLabel
+local panel, backdropTex, hintText, hintLink, sceneBar, sceneLabel, viewBtn, campBar, campLabel
 
 -- Which view, and which backdrop, remembered per account. The grid is the
 -- default: it works for every character, whereas the scene needs a portrait and
@@ -504,8 +504,9 @@ end
 -- How many columns fit, how big each card is, and how many rows that needs.
 -- Pure arithmetic, so it is testable without a frame: the layout bug that put
 -- cards over the sidebar was invisible to every assertion until this existed.
-local function GridFor(panelW, panelH, count)
+local function GridFor(panelW, panelH, count, hintH)
     if count <= 0 then return 0, 0, 0, 0 end
+    hintH = hintH or 18
     panelW = math.max(panelW or 0, MIN_CARD_W + PAD_X * 2)
     panelH = math.max(panelH or 0, 120)
 
@@ -515,7 +516,7 @@ local function GridFor(panelW, panelH, count)
     local rows = math.ceil(count / cols)
 
     local cardW = math.min(MAX_CARD_W, (usableW - CARD_GAP * (cols - 1)) / cols)
-    local usableH = panelH - PAD_Y * 2 - 18          -- 18: the hint line
+    local usableH = panelH - PAD_Y * 2 - hintH       -- the hint, one line unless told
 
     -- Drop rows rather than squash cards. Clamping the height up to a minimum
     -- breaks the very division that made the rows fit, and the surplus draws
@@ -922,6 +923,27 @@ local function BuildPanel(mainFrame)
     hintText:SetPoint("TOP", 0, -8)
     hintText:SetTextColor(0.6, 0.6, 0.6)
     hintText:SetJustifyH("CENTER")
+
+    -- The portrait hint is a link (#176): a click over it opens the Companion's
+    -- download link. Shown only with that hint - the camp hints are not links.
+    hintLink = CreateFrame("Button", nil, panel)
+    hintLink:SetAllPoints(hintText)
+    -- Under the cards (panel + 1): where the two meet, a card's click wins.
+    hintLink:SetFrameLevel(panel:GetFrameLevel())
+    hintLink:SetScript("OnClick", function() AltStable.ShowCompanionLink() end)
+    hintLink:SetScript("OnEnter", function(self)
+        hintText:SetTextColor(0.9, 0.9, 0.9)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
+        GameTooltip:AddLine("AltStable Companion", 1, 1, 1)
+        GameTooltip:AddLine("Click for its download link.", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    hintLink:SetScript("OnLeave", function()
+        hintText:SetTextColor(0.6, 0.6, 0.6)
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+    hintLink:Hide()
 
     -- Grid <-> Scene, and the backdrop picker. The picker only appears in scene
     -- view, because fourteen arrows over an empty grid are just clutter.
@@ -1593,6 +1615,15 @@ local function HintLayout(panelW, sceneView)
         return -(BAR_TOP + BAR_H + 4), w    -- clear of the picker row
     end
     return -8, w
+end
+
+-- A portrait hint, with the restart line when it applies (#176): captures on
+-- record and the Companion's folder not loaded. Only ever with no portraits at
+-- all, since no manifest means no portrait.
+local function PortraitHint(text)
+    local restart = AltStable.PortraitRestartText and AltStable.PortraitRestartText()
+    if restart then return text .. "\n" .. restart end
+    return text
 end
 
 local function ApplyHintLayout(panelW, sceneView, dx)
@@ -2640,6 +2671,7 @@ function Roster.Refresh()
             if Roster.CampList and Roster.CampList.Render then Roster.CampList.Render(false) end
             if viewBtn then viewBtn:Hide() end
             if hintText then hintText:Hide() end
+            if hintLink then hintLink:Hide() end
             RenderDetail(char)
             detail:Show()
             return
@@ -2651,6 +2683,8 @@ function Roster.Refresh()
 
     if detail then detail:Hide() end
     if viewBtn then viewBtn:Show() end
+    -- Off unless a portrait hint below turns it on.
+    if hintLink then hintLink:Hide() end
 
     if sceneBar then sceneBar:SetShown(View() == "scene") end
     if campBar then campBar:SetShown(View() == "scene") end
@@ -2688,9 +2722,10 @@ function Roster.Refresh()
         if withArt == 0 and #sceneChars > 0 then
             -- Nobody has a portrait, so nobody stands at the fire, whatever
             -- the camp holds. Say what is actually going on.
-            hintText:SetText("No portraits yet - " .. AltStable.PortraitSourceText()
-                .. ". The grid shows characters without one as cards.")
+            hintText:SetText(PortraitHint("No portraits yet - " .. AltStable.PortraitSourceText()
+                .. ". The grid shows characters without one as cards."))
             hintText:Show()
+            hintLink:Show()
         elseif not camp then
             -- With the camp list open, it is the way; without it, the grid.
             hintText:SetText(inset > 0 and "No camp - make one with + in the list."
@@ -2723,10 +2758,47 @@ function Roster.Refresh()
     ApplyHintLayout(panel:GetWidth(), false)
     PaintBackdrop()
 
-    local cols, rows, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
-    local fits = cols * rows
+    -- The hint is worded BEFORE the cards are placed, so they start below it:
+    -- naming the Companion (#176) and the restart line can take it to two or
+    -- three lines, and the cards are frames - drawn over the panel's text, they
+    -- hid everything after the first line. Who has art is counted over the
+    -- cards that fit, as before; the second fit, if the hint is taller, can only
+    -- be smaller.
+    local panelW, panelH = panel:GetWidth(), panel:GetHeight()
+    local function Fit(hintH)
+        local cols, rows, cardW, cardH = GridFor(panelW, panelH, #chars, hintH)
+        local fits, withArt = cols * rows, 0
+        for i = 1, math.min(fits, #chars) do
+            if CutoutFor(chars[i]) then withArt = withArt + 1 end
+        end
+        return cols, rows, cardW, cardH, fits, withArt
+    end
+    local hintH = 18
+    local cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
 
-    local withArt = 0
+    -- Say where the pictures come from, but only while some are missing: a
+    -- permanent instruction on a finished lineup is clutter.
+    --
+    -- PortraitSourceText is the same phrase the scene uses, so the two views
+    -- cannot give different instructions (#89).
+    local function Word()
+        hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
+            :format(withArt, #chars, AltStable.PortraitSourceText())))
+    end
+    if withArt < #chars then
+        Word()
+        hintText:Show()
+        hintLink:Show()
+        local tall = math.ceil(tonumber(hintText:GetStringHeight()) or 0) + 6   -- one line: ~12 + 6 = the 18 it always had
+        if tall > hintH then
+            hintH = tall
+            cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
+            Word()
+        end
+    else
+        hintText:Hide()
+    end
+
     for i, card in ipairs(Roster.cards) do
         local char = chars[i]
         if char and cols > 0 and i <= fits then
@@ -2741,25 +2813,11 @@ function Roster.Refresh()
             card:ClearAllPoints()
             card:SetPoint("TOPLEFT", panel, "TOPLEFT",
                 PAD_X + col * (cardW + CARD_GAP),
-                -(PAD_Y + 18 + row * (cardH + CARD_GAP)))
+                -(PAD_Y + hintH + row * (cardH + CARD_GAP)))
             RenderCard(card, char, cardW, cardH)
-            if CutoutFor(char) then withArt = withArt + 1 end
         else
             card:Hide()
         end
-    end
-
-    -- Say where the pictures come from, but only while some are missing: a
-    -- permanent instruction on a finished lineup is clutter.
-    --
-    -- PortraitSourceText is the same phrase the scene uses, so the two views
-    -- cannot give different instructions (#89).
-    if withArt < #chars then
-        hintText:SetText(("%d of %d characters have a portrait - %s")
-            :format(withArt, #chars, AltStable.PortraitSourceText()))
-        hintText:Show()
-    else
-        hintText:Hide()
     end
 end
 
@@ -3104,6 +3162,8 @@ function Roster._Bootstrap()
             -- list: the composition is right either way.
             HintText = function() return hintText and hintText:GetText() end,
             HintShown = function() return hintText and hintText:IsShown() end,
+            HintLinkShown = function() return hintLink and hintLink:IsShown() end,
+            Hint = function() return hintText end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
             Deactivate = function(main) return Roster.Deactivate(main) end,

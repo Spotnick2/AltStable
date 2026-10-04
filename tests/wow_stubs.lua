@@ -1154,6 +1154,11 @@ function StaticPopup_Show(which, arg1, arg2, data)
     dialog._parent = UIParent
     dialog._strata = "DIALOG"
     dialog.which = which
+    dialog.data = data
+    -- GameDialogMixin:GetEditBox (Blizzard_StaticPopup_Game, 70170): every
+    -- dialog has one; hasEditBox decides whether it is shown.
+    dialog.EditBox = WoW.makeFrame()
+    dialog.GetEditBox = function(self) return self.EditBox end
     dialog:Show()
 
     table.insert(WoW.popups, {
@@ -1161,7 +1166,7 @@ function StaticPopup_Show(which, arg1, arg2, data)
     })
 
     if type(def.OnShow) == "function" and dialog:IsVisible() then
-        def.OnShow(dialog)
+        def.OnShow(dialog, data)       -- StaticPopup_OnShow passes dialog.data
     end
     return dialog
 end

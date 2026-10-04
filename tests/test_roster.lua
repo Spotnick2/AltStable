@@ -4250,5 +4250,134 @@ do
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
+------------------------------------------------------------
+-- The portrait hint names the Companion and links to it (#176)
+------------------------------------------------------------
+-- "The converter on the project page" sent players looking for a nameless
+-- tool. The hint now names AltStable Companion, a click on it hands over the
+-- download link, and with captures on record but the Companion's folder not
+-- loaded it says a first portrait needs one full restart - as a condition: the
+-- addon cannot know whether the Companion has run.
+do
+    local savedDB, savedManifest, savedStore = AltStableDB, AltStableCutoutManifest, AltStablePortraits
+    AltStableDB = {}
+    for i = 1, 3 do
+        local guid = ("link-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Link %d"):format(i),
+                              level = i * 10, ilvl = i, class = "MAGE" }
+    end
+    AltStableCutoutManifest, AltStablePortraits = nil, nil
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    -- Room for every card: the grid counts the cards it draws (#178).
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 1200 end
+    p.GetHeight = function() return 760 end
+    AltStableConfig.favouriteCharacters = nil
+    local RESTART = "restart the game once"
+
+    for _, view in ipairs({ "grid", "scene" }) do
+        AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil
+        AltStableConfig.rosterView = view
+        AltStablePortraits = nil
+        T.Refresh()
+        local hint = T.HintText() or ""
+        check(view .. ": the hint names AltStable Companion",
+              hint:find("AltStable Companion", 1, true) ~= nil, hint)
+        check(view .. ":   and no longer a nameless converter",
+              hint:find("converter", 1, true) == nil, hint)
+        check(view .. ":   and is a link", T.HintLinkShown() == true)
+        check(view .. ": no captures, no restart line", hint:find(RESTART, 1, true) == nil, hint)
+
+        AltStablePortraits = { version = 1, renders = { { guid = "link-1", shot = 1 } } }
+        T.Refresh()
+        hint = T.HintText() or ""
+        check(view .. ": captures and no Companion folder loaded: the restart line",
+              hint:find(RESTART, 1, true) ~= nil, hint)
+        check(view .. ":   worded as a condition, not as fact",
+              hint:find("If AltStable Companion has made a portrait", 1, true) ~= nil, hint)
+    end
+
+    -- A hint of several lines pushes the cards down (#179 review): the cards
+    -- are frames, drawn over the panel's text, so a fixed one-line gap hid the
+    -- second and third lines - the link wording and the restart line.
+    AltStableConfig.rosterView = "grid"
+    local function firstCardTop()
+        local card = T.Cards()[1]
+        local _, _, _, _, y = card:GetPoint(1)
+        return y
+    end
+    T.Refresh()
+    local oneLine = firstCardTop()
+    eq("a one-line hint keeps the cards where they always were", oneLine, -(14 + 18))
+    local hint = T.Hint()
+    hint.GetStringHeight = function() return 36 end      -- three lines
+    T.Refresh()
+    eq("a three-line hint starts the cards below it", firstCardTop(), -(14 + 36 + 6))
+    hint.GetStringHeight = nil
+    T.Refresh()
+
+    -- The link popup's letter limit: the client reuses its dialogs and sets a
+    -- limit only when the definition gives one, so a shorter dialog's limit
+    -- would otherwise cut the link (#179 review).
+    AltStable.ShowCompanionLink()
+    eq("the link popup sets no letter limit (0), whatever the last dialog had",
+       StaticPopupDialogs[WoW.popups[#WoW.popups].which].maxLetters, 0)
+    StaticPopup_Hide(WoW.popups[#WoW.popups].which)
+
+    -- The folder loaded (a manifest exists): no restart line, even with
+    -- captures and someone still without a portrait.
+    AltStableConfig.rosterView = "grid"
+    AltStableCutoutManifest = { ["link-3"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 } }
+    T.Refresh()
+    local partial = T.HintText() or ""
+    check("with the folder loaded the hint still counts", partial:find("1 of 3", 1, true) ~= nil, partial)
+    check("  without the restart line", partial:find(RESTART, 1, true) == nil, partial)
+    check("  and is still a link", T.HintLinkShown() == true)
+
+    -- Everyone has a portrait: no hint, so no link either.
+    -- A new table, as a load gives: the lookup is cached per manifest table.
+    AltStableCutoutManifest = {}
+    for i = 1, 3 do
+        AltStableCutoutManifest[("link-%d"):format(i)] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+    T.Refresh()
+    check("everyone with a portrait: no hint", not T.HintShown(), T.HintText())
+    check("  and no link", not T.HintLinkShown())
+
+    -- A camp hint is not a link: the scene with portraits and an empty camp.
+    AltStableConfig.rosterView = "scene"
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = {}, nil
+    AltStable.SelectCamp(AltStable.CreateCamp("Empty", {}))
+    T.Refresh()
+    check("an empty camp has its hint", T.HintShown() and (T.HintText() or ""):find("is empty", 1, true) ~= nil, T.HintText())
+    check("  which is not the portrait link", not T.HintLinkShown(), T.HintText())
+
+    -- The click hands over /releases - the Companion has only pre-releases,
+    -- and GitHub's /latest skips them - selected, ready to copy.
+    local before = #WoW.popups
+    local dialog = AltStable.ShowCompanionLink()
+    check("the link opens the client's copy popup", #WoW.popups == before + 1 and dialog ~= nil)
+    local box = dialog and dialog:GetEditBox()
+    eq("  holding the releases page", box and box:GetText(), "https://github.com/Spotnick2/AltStableCompanion/releases")
+    check("  not /latest", AltStable.COMPANION_URL:find("latest", 1, true) == nil)
+    local def = StaticPopupDialogs[WoW.popups[#WoW.popups].which]
+    if box then
+        box:SetText("typed over")
+        def.EditBoxOnTextChanged(box)
+        eq("  typing over it puts the link back", box:GetText(), AltStable.COMPANION_URL)
+    end
+    StaticPopup_Hide(WoW.popups[#WoW.popups].which)
+
+    AltStableConfig.rosterView, AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil, nil
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableDB, AltStableCutoutManifest, AltStablePortraits = savedDB, savedManifest, savedStore
+    pcall(AltStable.RosterPlugin.Refresh)
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
