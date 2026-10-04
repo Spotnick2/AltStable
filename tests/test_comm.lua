@@ -4146,6 +4146,13 @@ do
         scan()
         local function senderSide()
             mine()
+            -- Another account's characters: one in a camp, one not. Only this
+            -- account's are sent - except a camp member's record (#172 review).
+            AltStableDB["Player-4613-77"] = { guid = "Player-4613-77", name = "Campmate", class = "MAGE",
+                                              level = 60, account = 5, lastUpdate = 1000 }
+            AltStableDB["Player-4613-88"] = { guid = "Player-4613-88", name = "Bystander", class = "MAGE",
+                                              level = 60, account = 5, lastUpdate = 1000 }
+            AltStableConfig.accountNumber = 2
             AltStableConfig.rosterCamps = {
                 { id = 3, name = "Raid; night, 100%", backdrop = "Nagrand",
                   members = { "Player-Mine-58", "Player-4613-77" } },
@@ -4187,6 +4194,10 @@ do
            "  the campless order arrives too")
         eq(AltStableConfig.rosterListOrderStamp, 5100, "  with its stamp")
         check(AltStableDB["Player-Mine-58"] ~= nil, "  and the characters still merge")
+        check(AltStableDB["Player-4613-77"] ~= nil, "  a camp member from another account comes with it")
+        check(AltStableDB["Player-4613-88"] == nil, "  but not the rest of that account")
+        AltStable.PruneCamps(AltStableDB)
+        eq(#AltStable.GetCamps()[1].members, 2, "  so pruning keeps every member")
 
         -- Our own newer choice is not overwritten by an older one.
         wire = wireTo("Karuzo Test")
@@ -4209,6 +4220,7 @@ do
         flushAll()
         eq(AltStable.GetCamps()[1].name, "Camp 1", "camps are not sent to someone else's account")
         check(AltStableDB["Player-Mine-58"] ~= nil, "  though the characters are")
+        check(AltStableDB["Player-4613-77"] == nil, "  and no other account's camp member")
         -- ...and the receiver ignores them from anyone else.
         wire = wireTo("Karuzo Test")
         receiverSide({ rosterCamps = seeded, rosterCampsAuto = true })
@@ -4238,20 +4250,56 @@ do
         WoW.now = 7200
         AltStable.PruneCamps({})
         eq(AltStableConfig.rosterCampsStamp, 7100, "  but pruning gone characters is not")
+
+        -- A change that changes nothing is not stamped (#172 review).
+        WoW.now = 7300
+        AltStable.SetCampBackdrop(id, AltStable.GetCamp(id).backdrop)
+        AltStable.MoveCamp(id, 2)
+        eq(AltStableConfig.rosterCampsStamp, 7100, "a no-change Apply or move is not stamped")
+        AltStable.SetListOrder({ "Player-4613-77" })
+        eq(AltStableConfig.rosterListOrderStamp, 7100, "  nor the same order again")
+
+        -- A stamp adopted from a clock running ahead is never undercut (#172 review).
+        AltStableConfig.rosterCampsStamp = 9000
+        AltStable.RenameCamp(id, "After a fast clock")
+        eq(AltStableConfig.rosterCampsStamp, 9001, "an edit after a fast clock's stamp still beats it")
+
+        -- Renaming the automatic camp does not make it a choice (#172 review).
+        AltStableConfig = {}
+        local auto = AltStable.SeedCamp({ "Player-Mine-58" })
+        AltStable.RenameCamp(auto, "Still automatic")
+        eq(AltStableConfig.rosterCampsStamp, nil, "renaming the automatic camp is not stamped")
+        eq(#AltStable.CampSyncLines(), 0, "  so it is still not sent")
+
+        -- Camps chosen before stamps existed are the player's: sent, oldest.
+        AltStableConfig = { rosterCamps = { { id = 2, name = "Old", members = {} } } }
+        local lines = AltStable.CampSyncLines()
+        eq(lines[1], "==CAMPS1==:1;2,Old,", "camps chosen before stamps are sent as the oldest choice")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:2;3,Newer,"), "  and any stamped list beats them")
     end
 
     -- Garbage on the camp lines is refused or cleaned, never stored raw.
     do
         AltStableConfig = {}
-        check(not AltStable.ApplyCampSyncLine("==CAMPS==:abc;1,x"), "a camp line with no stamp is refused")
-        check(AltStable.ApplyCampSyncLine("==CAMPS==:10;0,zero;2,Ok,,bad guid!,Player-1,Player-1,"
+        check(not AltStable.ApplyCampSyncLine("==CAMPS1==:abc;1,x"), "a camp line with no stamp is refused")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:10;0,zero;2,Ok,,bad guid!,Player-1,Player-1,"
             .. "Player-2,Player-3,Player-4,Player-5;2,dupe"), "a camp line is read")
         local c = AltStable.GetCamps()
         eq(#c, 1, "  a zero id and a repeated id are dropped")
         eq(table.concat(c[1].members, ","), "Player-1,Player-2,Player-3,Player-4",
            "  members: no bad guid, no repeat, four at most")
-        check(AltStable.ApplyCampSyncLine("==CAMPS==:11;5," .. ("x"):rep(80)), "a long name is read")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:11;5," .. ("x"):rep(200)), "a long name is read")
         eq(AltStable.GetCamps()[1].name, "Camp 5", "  and replaced, not stored")
+        local accented = ("\195\169"):rep(30)          -- 30 letters, 60 bytes
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:12;5," .. accented), "a name of accented letters is read")
+        eq(AltStable.GetCamps()[1].name, accented, "  and kept: 32 letters is not 32 bytes")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:13;5,N,,Creature-0-1,123,Player-9"), "a line with odd guids")
+        eq(table.concat(AltStable.GetCamps()[1].members, ","), "Player-9", "  only a character's guid takes a seat")
+        AltStableConfig.rosterCamps[1].pets = "kept"
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:14;5,N2;6,Other"), "a newer list for the same camp")
+        eq(AltStable.GetCamps()[1].pets, "kept", "  keeps a field this build does not send")
+        eq(AltStable.GetCamps()[2].pets, nil, "  and does not invent it on another camp")
+        check(not AltStable.ApplyCampSyncLine("==CAMPS==:99;5,Unversioned"), "a line without its version is ignored")
     end
 
     -- Battle.net going away clears what was found.

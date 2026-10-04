@@ -1551,7 +1551,10 @@ end
 
 -- sinceTS > 0 => delta: send only characters changed since the requester last
 -- heard from us. sinceTS <= 0 => full DB (first sync / forced resync).
-local function SerializeFullDB(accountOnly, sinceTS)
+-- `also` (a set of guids) is sent whatever the account and the delta say:
+-- the members of the camps going to our own other account (#171), so it knows
+-- every one of them rather than pruning the ones it has no record of.
+local function SerializeFullDB(accountOnly, sinceTS, also)
 
     local entries = {}
     sinceTS = sinceTS or 0
@@ -1568,7 +1571,9 @@ local function SerializeFullDB(accountOnly, sinceTS)
         -- cost is re-sending characters that share the newest timestamp (usually
         -- just the currently-played one) — negligible under compression, and the
         -- merge is idempotent (last-write-wins accepts an equal timestamp).
-        if type(c) == "table" and c.guid
+        if type(c) == "table" and c.guid and also and also[c.guid] then
+            entries[#entries + 1] = SerializeChar(c, sinceTS)
+        elseif type(c) == "table" and c.guid
         and (sinceTS <= 0 or (c.lastUpdate or 0) >= sinceTS) then
             if accountOnly and myAccount and myAccount ~= "" then
                 local charAcct = c.account
@@ -2100,10 +2105,12 @@ local function SendFullDatabase(channel, target, sinceTS)
     AltStableConfig = AltStableConfig or {}
     local accountOnly = not AltStableConfig.sendAllAccounts
 
-    local payload = SerializeFullDB(accountOnly, sinceTS)
     -- The camps and the list order (#171), to the player's own other account
-    -- only - after the last record, where every parser reads past them.
-    if target and OwnBNetPeer(target) and AltStable.CampSyncLines then
+    -- only - after the last record, where every parser reads past them - with
+    -- the records of everyone in a camp.
+    local toOwn = target and OwnBNetPeer(target) and AltStable.CampSyncLines
+    local payload = SerializeFullDB(accountOnly, sinceTS, toOwn and AltStable.CampMemberGuids() or nil)
+    if toOwn then
         for _, line in ipairs(AltStable.CampSyncLines()) do
             payload = payload .. "\n" .. line
         end

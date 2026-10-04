@@ -587,7 +587,8 @@ end
 --                                      members = { guid, ... } }, ... }   -- in display order
 --   AltStableConfig.rosterCamp  = <id of the camp the scene shows>
 --
--- Local view preferences like favourites and hidden: per account, never synced.
+-- Synced to the player's own other accounts (#171, see "Syncing the camps"
+-- below): every change the player makes goes through SetCamps, which stamps it.
 -- Every write goes through SetCamps, a full copy (the config's copy-on-write
 -- rule). A character is in at most ONE camp: adding it elsewhere moves it.
 -- nil `rosterCamps` means "never set up"; the Roster seeds the first camp then.
@@ -623,6 +624,30 @@ local function CopyCamps(camps)
     return out
 end
 
+-- The camps as they travel in a sync (#171): `id,name,backdrop,guid,...` per
+-- camp, `;` between. Names and backdrops are %XX-escaped for the characters
+-- the format uses. Also how SetCamps tells a real change from a no-op.
+local function Esc(v)
+    return (tostring(v or ""):gsub("[%%;,%c]", function(ch) return ("%%%02X"):format(ch:byte()) end))
+end
+local function CampsWire(camps)
+    local parts = {}
+    for _, c in ipairs(camps or {}) do
+        local f = { tostring(c.id), Esc(c.name), Esc(c.backdrop) }
+        for _, g in ipairs(c.members or {}) do f[#f + 1] = g end
+        parts[#parts + 1] = table.concat(f, ",")
+    end
+    return table.concat(parts, ";")
+end
+
+-- A player's change is stamped with the clock - but never below the stamp it
+-- replaces. A list adopted from an account whose clock runs ahead carries ITS
+-- time; stamping the next local edit with ours would lose to it, and the edit
+-- would be reverted by the next sync (#172 review).
+local function NextStamp(current)
+    return math.max(time(), (tonumber(current) or 0) + 1)
+end
+
 -- Store `camps` (already a copy - every mutator below makes one). `how` says
 -- whose change it is (a no-change Apply in the backdrop picker had ended the
 -- top-ups, #170 review):
@@ -634,13 +659,18 @@ end
 -- A player's change is stamped and offered to the player's other accounts
 -- (#171); a system change is neither, so an automatic camp never overrides a
 -- chosen one on another account, and a synced list is not sent straight back.
+-- Nor is a change to a camp that is still the automatic one (a rename keeps
+-- the top-ups going, so it is still not the player's arrangement), nor a
+-- "change" that changes nothing (an Apply of the backdrop already there must
+-- not make an out-of-date list the newer one - #172 review).
 local function SetCamps(camps, how)
+    local before = CampsWire(AltStable.GetCamps())
     AltStable.SetConfigValue("rosterCamps", camps)
     if how == nil and AltStableConfig.rosterCampsAuto then
         AltStable.SetConfigValue("rosterCampsAuto", nil)
     end
-    if how ~= "system" then
-        AltStable.SetConfigValue("rosterCampsStamp", time())
+    if how ~= "system" and not AltStableConfig.rosterCampsAuto and CampsWire(camps) ~= before then
+        AltStable.SetConfigValue("rosterCampsStamp", NextStamp(AltStableConfig.rosterCampsStamp))
     end
 end
 
@@ -823,7 +853,7 @@ end
 
 -- The order of the characters in no camp, in the Roster's camp list: dragged
 -- up and down there, as on retail (#170). A full sequence of guids; anyone not
--- in it lists after, in the usual order. Local, never synced.
+-- in it lists after, in the usual order. Synced like the camps (#171).
 function AltStable.GetListOrder()
     local order = AltStableConfig and AltStableConfig.rosterListOrder
     return type(order) == "table" and order or {}
@@ -832,8 +862,11 @@ end
 function AltStable.SetListOrder(guids)
     local copy = {}
     for i, g in ipairs(guids or {}) do copy[i] = g end
+    local before = table.concat(AltStable.GetListOrder(), ",")
     AltStable.SetConfigValue("rosterListOrder", copy)
-    AltStable.SetConfigValue("rosterListOrderStamp", time())
+    if table.concat(copy, ",") ~= before then
+        AltStable.SetConfigValue("rosterListOrderStamp", NextStamp(AltStableConfig.rosterListOrderStamp))
+    end
 end
 
 ------------------------------------------------------------
@@ -845,42 +878,69 @@ end
 -- older client reads past them. Core sends them only to, and applies them
 -- only from, the player's own accounts - a friend's camps never replace yours.
 --
---   ==CAMPS==:<stamp>;<id>,<name>,<backdrop>,<guid>,<guid>...;<id>,...
---   ==ORDER==:<stamp>;<guid>,<guid>,...
+--   ==CAMPS1==:<stamp>;<id>,<name>,<backdrop>,<guid>,<guid>...;<id>,...
+--   ==ORDER1==:<stamp>;<guid>,<guid>,...
 --
 -- The stamp is when the player last changed them; the newer list wins whole.
--- Names and backdrops are %XX-escaped for the characters the format uses.
+--
+-- No PROTOCOL_VERSION bump: the rule is for a change "that would corrupt an
+-- older client's DB", and like ==NOW== these lines are additive - an older
+-- client reads past them. Bumping would have cut v0.7.x off from sync for
+-- nothing. The lines carry their OWN version instead (the 1), so a later
+-- change to their grammar is a new line an older parser ignores (#172 review).
 ------------------------------------------------------------
 
-AltStable.CAMPS_LINE, AltStable.ORDER_LINE = "==CAMPS==", "==ORDER=="
-local MAX_SYNCED_CAMPS, MAX_SYNCED_ORDER, MAX_NAME = 50, 500, 32
+AltStable.CAMPS_LINE, AltStable.ORDER_LINE = "==CAMPS1==", "==ORDER1=="
+-- MAX_NAME is BYTES: the rename box allows 32 letters, and a letter can be up
+-- to four bytes in UTF-8 (#172 review: "été" names were replaced).
+local MAX_SYNCED_CAMPS, MAX_SYNCED_ORDER, MAX_NAME = 50, 500, 128
 
-local function Esc(v)
-    return (tostring(v or ""):gsub("[%%;,%c]", function(ch) return ("%%%02X"):format(ch:byte()) end))
-end
 local function Unesc(v)
     return (tostring(v or ""):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
 end
+-- A character's guid, as Core checks one (Player-...): anything else in a
+-- seat would only take it until the next prune (#172 review).
 local function GoodGuid(g)
-    return type(g) == "string" and #g <= 64 and g:match("^[%w%-]+$") ~= nil
+    return type(g) == "string" and #g <= 64 and g:match("^Player%-[%w%-]+$") ~= nil
+end
+
+-- The stamps as they compare. Camps arranged before stamps existed (a dev
+-- build of #152) have none, but they ARE the player's: they count as the
+-- oldest possible choice - sent, and beaten by any real edit - rather than as
+-- the automatic camp, which is never sent (#172 review).
+local function CampsStamp()
+    local stamp = tonumber(AltStableConfig and AltStableConfig.rosterCampsStamp)
+    if stamp and stamp > 0 then return stamp end
+    if AltStable.CampsSetUp() and not AltStableConfig.rosterCampsAuto then return 1 end
+    return 0
+end
+local function OrderStamp()
+    local stamp = tonumber(AltStableConfig and AltStableConfig.rosterListOrderStamp)
+    if stamp and stamp > 0 then return stamp end
+    return #AltStable.GetListOrder() > 0 and 1 or 0
+end
+
+-- Every guid a camp holds, for Core: their records go with the camps, so the
+-- other account knows each member - one it had no record of would be pruned
+-- from its camp there, and that loss sent back here by its next edit (#172).
+function AltStable.CampMemberGuids()
+    local out = {}
+    for _, c in ipairs(AltStable.GetCamps()) do
+        for _, g in ipairs(c.members or {}) do out[g] = true end
+    end
+    return out
 end
 
 -- The lines to send: only what the player chose (a stamp), never an automatic
 -- first camp nobody touched.
 function AltStable.CampSyncLines()
     local out = {}
-    local stamp = tonumber(AltStableConfig and AltStableConfig.rosterCampsStamp)
-    if stamp and stamp > 0 then
-        local parts = { tostring(stamp) }
-        for _, c in ipairs(AltStable.GetCamps()) do
-            local f = { tostring(c.id), Esc(c.name), Esc(c.backdrop) }
-            for _, g in ipairs(c.members or {}) do f[#f + 1] = g end
-            parts[#parts + 1] = table.concat(f, ",")
-        end
-        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. table.concat(parts, ";")
+    local stamp = CampsStamp()
+    if stamp > 0 then
+        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";" .. CampsWire(AltStable.GetCamps())
     end
-    local ostamp = tonumber(AltStableConfig and AltStableConfig.rosterListOrderStamp)
-    if ostamp and ostamp > 0 then
+    local ostamp = OrderStamp()
+    if ostamp > 0 then
         out[#out + 1] = AltStable.ORDER_LINE .. ":" .. ostamp .. ";"
             .. table.concat(AltStable.GetListOrder(), ",")
     end
@@ -927,8 +987,17 @@ function AltStable.ApplyCampSyncLine(line)
     if body then
         local stamp, camps = ParseCamps(body)
         if not stamp then return false end
-        local mine = tonumber(AltStableConfig and AltStableConfig.rosterCampsStamp) or 0
-        if stamp <= mine then return false end
+        if stamp <= CampsStamp() then return false end
+        -- A field this build does not send (a later build's) survives on a camp
+        -- that is still there, as it does every local write (CopyCamps).
+        for _, c in ipairs(camps) do
+            local had = FindCamp(AltStable.GetCamps(), c.id)
+            if had then
+                for k, v in pairs(had) do
+                    if k ~= "id" and k ~= "name" and k ~= "backdrop" and k ~= "members" then c[k] = v end
+                end
+            end
+        end
         SetCamps(camps, "system")
         AltStable.SetConfigValue("rosterCampsStamp", stamp)
         AltStable.SetConfigValue("rosterCampsAuto", nil)
@@ -942,8 +1011,7 @@ function AltStable.ApplyCampSyncLine(line)
         local stampText, rest = body:match("^(%d+);?(.*)$")
         local stamp = tonumber(stampText)
         if not stamp or stamp <= 0 then return false end
-        local mine = tonumber(AltStableConfig and AltStableConfig.rosterListOrderStamp) or 0
-        if stamp <= mine then return false end
+        if stamp <= OrderStamp() then return false end
         local order, seen = {}, {}
         for g in (rest or ""):gmatch("[^,]+") do
             if #order >= MAX_SYNCED_ORDER then break end
