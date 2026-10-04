@@ -11,6 +11,9 @@
     characters (those with a portrait first).
   - Switch camps with the new **< camp name >** arrows at the top of the scene; the backdrop
     arrows now change the shown camp's backdrop.
+  - **Click the backdrop's name** for the backdrop picker, like retail's Campsites: every
+    backdrop as a thumbnail, six to a page. Pick one and **Apply** it to the camp you're looking
+    at, or tick **Apply for all camps**.
   - **The camp list**, beside the scene like retail's: a search box, **+** for a new camp, each
     camp with its five seats, then everyone in no camp. **Drag** a character onto a seat or a
     camp's name to put it there, onto someone in another camp to swap them, or anywhere else in

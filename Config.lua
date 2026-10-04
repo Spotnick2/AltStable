@@ -787,6 +787,15 @@ function AltStable.MoveCamp(id, pos)
     return true
 end
 
+-- Every camp's backdrop at once (the picker's "Apply for all camps"): one write.
+function AltStable.SetAllCampsBackdrop(backdrop)
+    local camps = CopyCamps(AltStable.GetCamps())
+    if #camps == 0 then return false end
+    for _, c in ipairs(camps) do c.backdrop = backdrop end
+    SetCamps(camps)
+    return true
+end
+
 function AltStable.SetCampBackdrop(id, backdrop)
     local camps = CopyCamps(AltStable.GetCamps())
     local c = FindCamp(camps, id)

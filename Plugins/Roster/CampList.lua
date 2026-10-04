@@ -209,16 +209,47 @@ end
 
 local function Trim(s) return ((s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
 
--- The keyboard goes back with the dialog: Escape leaves propagation off, and a
--- dialog closed still holding the keyboard would swallow keys the next time
--- round if propagation could not be set (#169 review; CharacterMenu.lua does
--- the same, and why).
-local function ReleaseKeyboard()
-    if dialog and type(dialog.EnableKeyboard) == "function" then pcall(dialog.EnableKeyboard, dialog, false) end
+-- A dialog's keyboard, for both dialogs here (the camp name, the backdrop
+-- picker). Escape leaves propagation off, and a dialog closed still holding the
+-- keyboard would swallow keys the next time round if propagation could not be
+-- set (#169 review; CharacterMenu.lua does the same, and why).
+local function KeysOff(f)
+    if f and type(f.EnableKeyboard) == "function" then pcall(f.EnableKeyboard, f, false) end
+end
+
+-- Taken out of combat only, with propagation reset first thing: it outlives
+-- the dialog, and the last opening's Escape left it off.
+local function KeysOn(f)
+    KeysOff(f)
+    if type(f.EnableKeyboard) == "function" and not (InCombatLockdown and InCombatLockdown()) then
+        f:EnableKeyboard(true)
+        if type(f.SetPropagateKeyboardInput) == "function"
+           and not pcall(f.SetPropagateKeyboardInput, f, true) then
+            KeysOff(f)
+        end
+    end
+end
+
+-- Escape closes and is swallowed; every other key goes on to the game. If
+-- handing a key on fails (a restricted call - unmeasured on Forever), the
+-- keyboard is released rather than left swallowing movement. Entering combat
+-- lets go of it, as the character menu does.
+local function EscapeCloses(f, close)
+    f:SetScript("OnKeyDown", function(self, key)
+        local stop = (key == "ESCAPE")
+        local handed = true
+        if type(self.SetPropagateKeyboardInput) == "function" then
+            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
+        end
+        if not handed then KeysOff(self) end
+        if stop then close() end
+    end)
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:SetScript("OnEvent", function(self) KeysOff(self) end)
 end
 
 function L.CloseDialog()
-    ReleaseKeyboard()
+    KeysOff(dialog)
     if dialog then dialog:Hide() end
     if dialogCatcher then dialogCatcher:Hide() end
 end
@@ -286,21 +317,7 @@ local function BuildDialog()
     body:SetColorTexture(0.06, 0.065, 0.08, 0.94)
     dialog:Hide()
 
-    -- Escape closes and is swallowed; every other key goes on to the game. If
-    -- handing a key on fails (a restricted call - unmeasured on Forever), the
-    -- keyboard is released rather than left swallowing movement.
-    dialog:SetScript("OnKeyDown", function(self, key)
-        local stop = (key == "ESCAPE")
-        local handed = true
-        if type(self.SetPropagateKeyboardInput) == "function" then
-            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
-        end
-        if not handed then ReleaseKeyboard() end
-        if stop then L.CloseDialog() end
-    end)
-    -- Entering combat lets go of the keyboard, as the character menu does.
-    dialog:RegisterEvent("PLAYER_REGEN_DISABLED")
-    dialog:SetScript("OnEvent", function() ReleaseKeyboard() end)
+    EscapeCloses(dialog, function() L.CloseDialog() end)
 
     -- Naming: the box, Accept and Cancel, and Delete for a camp that exists.
     local edit = CreateFrame("Frame", nil, dialog)
@@ -354,21 +371,189 @@ function L.OpenDialog(camp)
     ShowConfirm(false)
     dialogCatcher:Show()
     dialog:Show()
-    -- The keyboard is taken out of combat only, and propagation reset first
-    -- thing: it outlives the dialog, and the last opening's Escape left it off.
-    ReleaseKeyboard()
-    if type(dialog.EnableKeyboard) == "function" and not (InCombatLockdown and InCombatLockdown()) then
-        dialog:EnableKeyboard(true)
-        if type(dialog.SetPropagateKeyboardInput) == "function"
-           and not pcall(dialog.SetPropagateKeyboardInput, dialog, true) then
-            ReleaseKeyboard()
-        end
-    end
+    KeysOn(dialog)
     dialog.box:SetFocus()
     dialog.box:HighlightText()
 end
 
 function L.Dialog() return dialog end
+
+------------------------------------------------------------
+-- The backdrop picker (#152, part 3): retail's Campsites dialog
+--
+-- Every backdrop as a thumbnail, six to a page, the shown camp's own selected.
+-- Click one, then Apply: to the shown camp, or to every camp with "Apply for
+-- all camps" ticked. Opened from the backdrop's name in the scene's top bar.
+------------------------------------------------------------
+
+local PICK_COLS, PICK_ROWS = 3, 2
+local THUMB_W, THUMB_H, THUMB_GAP = 176, 99, 12
+local PICK_PAD = 18
+local picker, pickerCatcher
+L.pick = { page = 1, chosen = nil }
+
+local function Backdrops() return Roster.SCENE_BACKDROPS or {} end
+local function PerPage() return PICK_COLS * PICK_ROWS end
+local function Pages() return math.max(1, math.ceil(#Backdrops() / PerPage())) end
+
+function L.ClosePicker()
+    KeysOff(picker)
+    if picker then picker:Hide() end
+    if pickerCatcher then pickerCatcher:Hide() end
+end
+
+local function PaintPicker()
+    local list = Backdrops()
+    local first = (L.pick.page - 1) * PerPage()
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    for i, t in ipairs(picker.thumbs) do
+        local e = list[first + i]
+        t.entry = e
+        if e then
+            t.tex:SetTexture(e.file)
+            if Roster.BackdropTexCoords then t.tex:SetTexCoord(Roster.BackdropTexCoords(THUMB_W, THUMB_H, e)) end
+            t.name:SetText(e.label)
+            -- The chosen one framed in the accent, as retail frames it in gold.
+            local chosen = L.pick.chosen == e.id
+            if chosen then t.frame:SetColorTexture(ar, ag, ab, 1) else t.frame:SetColorTexture(0.2, 0.2, 0.22, 1) end
+            t.chosen = chosen
+            t:Show()
+        else
+            t:Hide()
+        end
+    end
+    picker.page:SetText(("Page %d/%d"):format(L.pick.page, Pages()))
+    picker.prev:SetEnabled(L.pick.page > 1)
+    picker.next:SetEnabled(L.pick.page < Pages())
+end
+
+function L.PickPage(delta)
+    L.pick.page = math.max(1, math.min(Pages(), L.pick.page + (delta or 0)))
+    if picker then PaintPicker() end
+end
+
+function L.ChooseBackdrop(id)
+    L.pick.chosen = id
+    if picker then PaintPicker() end
+end
+
+-- The chosen backdrop to the shown camp, or to every camp; with no camp at
+-- all, to the shared one the scene falls back to.
+function L.ApplyBackdrop()
+    local id = L.pick.chosen
+    if not id then return false end
+    local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
+    if picker and picker.all:GetChecked() and camp then
+        AltStable.SetAllCampsBackdrop(id)
+    elseif camp then
+        AltStable.SetCampBackdrop(camp.id, id)
+    else
+        AltStable.SetConfigValue("rosterScene", id)
+    end
+    L.ClosePicker()
+    if Roster.Refresh then Roster.Refresh() end
+    return true
+end
+
+local function BuildPicker()
+    if picker then return end
+    local panel = Roster.panel
+    pickerCatcher = CreateFrame("Button", nil, panel)
+    pickerCatcher:SetAllPoints(panel)
+    pickerCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
+    pickerCatcher:RegisterForClicks("AnyUp")
+    pickerCatcher:SetScript("OnClick", function() L.ClosePicker() end)
+    local dim = pickerCatcher:CreateTexture(nil, "BACKGROUND")
+    dim:SetAllPoints()
+    dim:SetColorTexture(0, 0, 0, 0.55)
+    pickerCatcher:Hide()
+
+    local gridW = PICK_COLS * THUMB_W + (PICK_COLS - 1) * THUMB_GAP
+    local gridH = PICK_ROWS * THUMB_H + (PICK_ROWS - 1) * THUMB_GAP
+    picker = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    picker:SetFrameStrata("FULLSCREEN_DIALOG")
+    picker:SetFrameLevel(pickerCatcher:GetFrameLevel() + 5)
+    picker:SetSize(gridW + 2 * PICK_PAD, gridH + 40 + 34 + 44)
+    picker:SetPoint("CENTER", panel, "CENTER")
+    picker:EnableMouse(true)
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(picker, "small")) then
+        if AltStable.ApplyBackdrop then AltStable.ApplyBackdrop(picker, 0.08, 0.08, 0.1, 0.98) end
+    end
+    local body = picker:CreateTexture(nil, "BACKGROUND", nil, 1)
+    body:SetPoint("TOPLEFT", 6, -6)
+    body:SetPoint("BOTTOMRIGHT", -6, 6)
+    body:SetColorTexture(0.06, 0.065, 0.08, 0.94)
+    picker:Hide()
+    EscapeCloses(picker, function() L.ClosePicker() end)
+
+    local title = picker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOP", 0, -14)
+    title:SetText("Backdrops")
+    picker.close = Button(picker, 22, "x", function() L.ClosePicker() end)
+    picker.close:SetPoint("TOPRIGHT", -10, -10)
+
+    picker.thumbs = {}
+    for i = 1, PerPage() do
+        local col, row = (i - 1) % PICK_COLS, math.floor((i - 1) / PICK_COLS)
+        local t = CreateFrame("Button", nil, picker)
+        t:SetSize(THUMB_W, THUMB_H)
+        t:SetPoint("TOPLEFT", PICK_PAD + col * (THUMB_W + THUMB_GAP), -(40 + row * (THUMB_H + THUMB_GAP)))
+        -- A 2px frame round the picture: grey, or the accent when chosen.
+        t.frame = t:CreateTexture(nil, "BACKGROUND")
+        t.frame:SetAllPoints()
+        t.tex = t:CreateTexture(nil, "ARTWORK")
+        t.tex:SetPoint("TOPLEFT", 2, -2)
+        t.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+        local strip = t:CreateTexture(nil, "OVERLAY")
+        strip:SetPoint("BOTTOMLEFT", 2, 2)
+        strip:SetPoint("BOTTOMRIGHT", -2, 2)
+        strip:SetHeight(18)
+        strip:SetColorTexture(0, 0, 0, 0.65)
+        t.name = t:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        t.name:SetPoint("BOTTOM", 0, 5)
+        local hl = t:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints(t.tex)
+        hl:SetColorTexture(1, 1, 1, 0.1)
+        t:SetScript("OnClick", function(self)
+            if self.entry then L.ChooseBackdrop(self.entry.id) end
+        end)
+        picker.thumbs[i] = t
+    end
+
+    local pagesY = -(40 + gridH + 10)
+    picker.page = picker:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    picker.page:SetPoint("TOP", 0, pagesY - 4)
+    picker.prev = Button(picker, 26, "<", function() L.PickPage(-1) end)
+    picker.prev:SetPoint("RIGHT", picker.page, "LEFT", -10, 0)
+    picker.next = Button(picker, 26, ">", function() L.PickPage(1) end)
+    picker.next:SetPoint("LEFT", picker.page, "RIGHT", 10, 0)
+
+    picker.apply = Button(picker, 100, "Apply", function() L.ApplyBackdrop() end)
+    picker.apply:SetPoint("BOTTOMRIGHT", -PICK_PAD, 14)
+    picker.all = CreateFrame("CheckButton", nil, picker, "UICheckButtonTemplate")
+    picker.all:SetSize(22, 22)
+    picker.all:SetPoint("RIGHT", picker.apply, "LEFT", -150, 0)
+    local allLbl = picker:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    allLbl:SetPoint("LEFT", picker.all, "RIGHT", 2, 0)
+    allLbl:SetText("Apply for all camps")
+end
+
+function L.OpenBackdrops()
+    if not Roster.panel then return end
+    BuildPicker()
+    local cur = Roster.CurrentScene and Roster.CurrentScene()
+    L.pick.chosen = cur and cur.id
+    local at = 1
+    for i, e in ipairs(Backdrops()) do if e.id == L.pick.chosen then at = i end end
+    L.pick.page = math.floor((at - 1) / PerPage()) + 1
+    picker.all:SetChecked(false)
+    pickerCatcher:Show()
+    picker:Show()
+    KeysOn(picker)
+    PaintPicker()
+end
+
+function L.Picker() return picker end
 
 ------------------------------------------------------------
 -- Building and drawing
@@ -558,6 +743,7 @@ function L.Render(sceneView)
     if not sceneView then
         list:Hide(); toggle:Hide()
         L.CloseDialog()
+        L.ClosePicker()
         return
     end
     -- Too narrow a panel for the list AND a scene worth looking at: the list

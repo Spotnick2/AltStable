@@ -3899,5 +3899,108 @@ do
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
+------------------------------------------------------------
+-- The backdrop picker (#152, part 3): retail's Campsites dialog
+------------------------------------------------------------
+
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 3 do
+        local guid = ("bd-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Bd %d"):format(i), level = i, class = "MAGE" }
+        AltStableCutoutManifest[guid] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+    local main = CreateFrame("Frame")
+    T.Activate(main)
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 1400 end
+    p.GetHeight = function() return 800 end
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+
+    local L = AltStable.RosterPlugin.CampList
+    local B = T.SCENE_BACKDROPS
+    local campA = AltStable.SelectedCamp().id
+    local campB = AltStable.CreateCamp("Second")
+    AltStable.SetCampBackdrop(campA, B[#B].id)        -- the last one: on the last page
+    AltStable.SetCampBackdrop(campB, B[1].id)
+    AltStable.SelectCamp(campA)
+    T.Refresh()
+
+    local pick = AltStable.RosterPlugin.backdropPick
+    pick:GetScript("OnClick")(pick)
+    local pk = L.Picker()
+    check("the backdrop's name opens the picker", pk and pk:IsShown())
+    eq("  with the shown camp's backdrop chosen", L.pick.chosen, B[#B].id)
+    local pages = math.ceil(#B / 6)
+    eq("  on the page it is on", L.pick.page, pages)
+    check("  framed as chosen", (function()
+        for _, t in ipairs(pk.thumbs) do if t:IsShown() and t.entry and t.entry.id == B[#B].id then return t.chosen end end
+    end)())
+    check("  'next' is off on the last page", not pk.next:IsEnabled())
+    pk.prev:GetScript("OnClick")(pk.prev)
+    eq("< goes back a page", L.pick.page, pages - 1)
+    L.PickPage(-99)
+    eq("paging stops at the first", L.pick.page, 1)
+    check("  where 'prev' is off", not pk.prev:IsEnabled())
+    local shown = 0
+    for _, t in ipairs(pk.thumbs) do if t:IsShown() then shown = shown + 1 end end
+    eq("six to a page", shown, math.min(6, #B))
+    eq("each named", pk.thumbs[1].name:GetText(), B[1].label)
+    eq("  and drawn from its own picture", pk.thumbs[1].tex:GetTexture(), B[1].file)
+
+    -- Choose, and Apply to the shown camp only.
+    pk.thumbs[2]:GetScript("OnClick")(pk.thumbs[2])
+    eq("clicking a thumbnail chooses it", L.pick.chosen, B[2].id)
+    pk.apply:GetScript("OnClick")(pk.apply)
+    check("Apply closes the picker", not pk:IsShown())
+    eq("  and gives the shown camp that backdrop", AltStable.GetCamp(campA).backdrop, B[2].id)
+    eq("  and no other camp", AltStable.GetCamp(campB).backdrop, B[1].id)
+    eq("  and the scene draws it", T.CurrentScene().id, B[2].id)
+
+    -- Closing without applying changes nothing.
+    L.OpenBackdrops()
+    L.ChooseBackdrop(B[3].id)
+    pk.close:GetScript("OnClick")(pk.close)
+    eq("closing without Apply changes nothing", AltStable.GetCamp(campA).backdrop, B[2].id)
+    L.OpenBackdrops()
+    check("the picker takes the keyboard", pk:IsKeyboardEnabled())
+    pk:GetScript("OnKeyDown")(pk, "ESCAPE")
+    check("Escape closes it", not pk:IsShown())
+    check("  and lets go of the keyboard", not pk:IsKeyboardEnabled())
+
+    -- Apply for all camps.
+    L.OpenBackdrops()
+    L.ChooseBackdrop(B[4].id)
+    pk.all:SetChecked(true)
+    L.ApplyBackdrop()
+    eq("Apply for all camps sets the shown camp", AltStable.GetCamp(campA).backdrop, B[4].id)
+    eq("  and every other", AltStable.GetCamp(campB).backdrop, B[4].id)
+    L.OpenBackdrops()
+    check("the tick does not stay ticked for next time", not pk.all:GetChecked())
+    L.ClosePicker()
+
+    -- With no camp at all, the shared backdrop the scene falls back to.
+    for _, c in ipairs(AltStable.GetCamps()) do AltStable.DeleteCamp(c.id) end
+    L.OpenBackdrops()
+    L.ChooseBackdrop(B[5].id)
+    L.ApplyBackdrop()
+    eq("with no camp, the shared backdrop is set", AltStableConfig.rosterScene, B[5].id)
+
+    -- Leaving the scene closes it.
+    L.OpenBackdrops()
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    check("switching to the grid closes the picker", not pk:IsShown())
+
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableConfig.rosterView, AltStableConfig.rosterScene = nil, nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

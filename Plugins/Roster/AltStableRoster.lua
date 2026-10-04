@@ -173,6 +173,8 @@ end
 local function CurrentScene()
     return SCENE_BACKDROPS[SceneIndex()]
 end
+-- For the backdrop picker (CampList.lua, #152).
+Roster.SCENE_BACKDROPS, Roster.CurrentScene = SCENE_BACKDROPS, CurrentScene
 
 ------------------------------------------------------------
 -- Which cutout belongs to which character
@@ -352,6 +354,8 @@ local function BackdropTexCoords(panelW, panelH, entry)
     -- is the part nobody misses.
     return uPad, 1 - uPad, vMax * (1 - vFrac), vMax
 end
+
+Roster.BackdropTexCoords = BackdropTexCoords   -- for the picker's thumbnails (#152)
 
 -- Where the fire ended up on screen once the backdrop was cover-cropped.
 --
@@ -962,6 +966,30 @@ local function BuildPanel(mainFrame)
     sceneLabel:SetPoint("LEFT", prev, "RIGHT", 6, 0)
     sceneLabel:SetPoint("RIGHT", next_, "LEFT", -6, 0)
     sceneLabel:SetJustifyH("CENTER")
+
+    -- The backdrop's name opens the picker (#152, part 3: retail's Campsites
+    -- dialog, thumbnails in pages). The arrows stay, for a quick step.
+    local pick = CreateFrame("Button", nil, sceneBar)
+    pick:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+    pick:SetPoint("RIGHT", next_, "LEFT", -4, 0)
+    pick:SetHeight(BAR_H)
+    local pickHL = pick:CreateTexture(nil, "HIGHLIGHT")
+    pickHL:SetAllPoints()
+    pickHL:SetColorTexture(1, 1, 1, 0.08)
+    pick:SetScript("OnClick", function()
+        if Roster.CampList and Roster.CampList.OpenBackdrops then Roster.CampList.OpenBackdrops() end
+    end)
+    pick:SetScript("OnEnter", function(self)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
+        GameTooltip:AddLine("Choose a backdrop", 1, 1, 1)
+        GameTooltip:AddLine("Every camp can have its own.", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    pick:SetScript("OnLeave", function(self)
+        if GameTooltip and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+    end)
+    Roster.backdropPick = pick
 
     local function Step(delta)
         local i = SceneIndex() + delta
