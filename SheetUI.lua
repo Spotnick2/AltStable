@@ -3166,7 +3166,7 @@ local function CreateFrameIfNeeded()
     fade:SetDuration(0.9)
     local STATUS_LINE = {
         missing = "|cffffd100No portrait for this character yet.|r",
-        pending = "|cff88cc88Captured - waiting for the companion to turn it into a portrait.|r",
+        pending = "|cff88cc88Captured - waiting for AltStable Companion to turn it into a portrait.|r",
     }
     -- inCombat: said by the caller when it knows (Capture's combat events: at
     -- PLAYER_REGEN_DISABLED the lockdown has not started yet), asked otherwise.

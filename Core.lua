@@ -3995,9 +3995,66 @@ end
 -- drifted (#89). The capture itself is Capture.lua; the matte that turns a
 -- capture into a portrait happens outside the game, because an addon can
 -- neither write an image nor read the Screenshots folder.
+--
+-- It names the app (#176): "the converter on the project page" sent players
+-- looking for something with no name. Every hint that uses it is clickable and
+-- opens ShowCompanionLink, hence the closing words.
 function AltStable.PortraitSourceText()
     return "capture one with |cffffff00/alts portrait|r while playing the character; "
-        .. "the converter on the project page turns captures into portraits"
+        .. "the free |cffffff00AltStable Companion|r app for Windows turns captures into portraits "
+        .. "(click for the link)"
+end
+
+-- /releases, not /releases/latest: the Companion has only pre-releases, and
+-- GitHub's "latest" skips those.
+AltStable.COMPANION_URL = "https://github.com/Spotnick2/AltStableCompanion/releases"
+
+-- The one thing the addon can tell about the Companion's folder (#176): its
+-- manifest is a global the AltStableCutouts addon defines when the client
+-- LOADED it. Captures on record with no manifest means either the Companion
+-- has not run yet or it has and WoW has not been restarted since - a new addon
+-- folder is only found at startup. The addon cannot tell which, so the line
+-- is a condition, never a statement that the Companion ran.
+function AltStable.PortraitRestartText()
+    if AltStableCutoutManifest ~= nil then return nil end
+    local renders = type(AltStablePortraits) == "table" and AltStablePortraits.renders
+    if type(renders) ~= "table" or #renders == 0 then return nil end
+    return "If AltStable Companion has made a portrait since your capture, quit and restart the game once: "
+        .. "WoW only finds the Companion's new folder at startup."
+end
+
+-- A copyable download link. Addons cannot open a browser; the client's own
+-- popup with an edit box, the text selected, is the usual way to hand one over.
+local COMPANION_POPUP = "ALTSTABLE_COMPANION_LINK"
+function AltStable.ShowCompanionLink()
+    if not StaticPopupDialogs[COMPANION_POPUP] then
+        StaticPopupDialogs[COMPANION_POPUP] = {
+            text = "AltStable Companion turns your portrait captures into the Roster's portraits. "
+                .. "Copy the link (Ctrl+C) and open it in your browser:",
+            button1 = CLOSE or "Close",
+            hasEditBox = 1,
+            editBoxWidth = 350,
+            OnShow = function(dialog, url)
+                local box = dialog:GetEditBox()
+                box:SetText(url or AltStable.COMPANION_URL)
+                box:SetFocus()
+                box:HighlightText()
+            end,
+            -- Typing over the link must not leave a wrong one to copy.
+            EditBoxOnTextChanged = function(box)
+                if box:GetText() ~= AltStable.COMPANION_URL then
+                    box:SetText(AltStable.COMPANION_URL)
+                    box:HighlightText()
+                end
+            end,
+            EditBoxOnEnterPressed = function(box) box:GetParent():Hide() end,
+            EditBoxOnEscapePressed = function(box) box:GetParent():Hide() end,
+            timeout = 0,
+            whileDead = 1,
+            hideOnEscape = 1,
+        }
+    end
+    return StaticPopup_Show(COMPANION_POPUP, nil, nil, AltStable.COMPANION_URL)
 end
 
 -- Split "<cmd> <target>" where the target may contain spaces.

@@ -5,9 +5,9 @@
 -- click to select, hover for detail. The TBC original drew PNG "cutouts"
 -- scraped from the Battle.net armory by a .NET tool. Forever has no armory, so
 -- the images now come from the client itself: /alts portrait (Capture.lua)
--- photographs the LIVE character on a flat stage, a converter outside the game
--- mattes the pair into a transparent TGA, and CutoutManifest.lua lists what
--- exists. The capture ships; the converter does not, yet (#89).
+-- photographs the LIVE character on a flat stage, AltStable Companion (a
+-- separate Windows app, Spotnick2/AltStableCompanion) mattes the pair into a
+-- transparent TGA, and CutoutManifest.lua lists what exists.
 --
 -- WHY NOT LIVE MODELS. Measured on 1.60.1.70009 (docs/forever-api-notes.md):
 -- a character who is not logged in renders as correct GEOMETRY with NO TEXTURE.
@@ -149,7 +149,7 @@ local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
 AltStable.RosterPlugin = Roster
 
-local panel, backdropTex, hintText, sceneBar, sceneLabel, viewBtn, campBar, campLabel
+local panel, backdropTex, hintText, hintLink, sceneBar, sceneLabel, viewBtn, campBar, campLabel
 
 -- Which view, and which backdrop, remembered per account. The grid is the
 -- default: it works for every character, whereas the scene needs a portrait and
@@ -923,6 +923,25 @@ local function BuildPanel(mainFrame)
     hintText:SetTextColor(0.6, 0.6, 0.6)
     hintText:SetJustifyH("CENTER")
 
+    -- The portrait hint is a link (#176): a click over it opens the Companion's
+    -- download link. Shown only with that hint - the camp hints are not links.
+    hintLink = CreateFrame("Button", nil, panel)
+    hintLink:SetAllPoints(hintText)
+    hintLink:SetScript("OnClick", function() AltStable.ShowCompanionLink() end)
+    hintLink:SetScript("OnEnter", function(self)
+        hintText:SetTextColor(0.9, 0.9, 0.9)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
+        GameTooltip:AddLine("AltStable Companion", 1, 1, 1)
+        GameTooltip:AddLine("Click for its download link.", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    hintLink:SetScript("OnLeave", function()
+        hintText:SetTextColor(0.6, 0.6, 0.6)
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+    hintLink:Hide()
+
     -- Grid <-> Scene, and the backdrop picker. The picker only appears in scene
     -- view, because fourteen arrows over an empty grid are just clutter.
     viewBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
@@ -1593,6 +1612,15 @@ local function HintLayout(panelW, sceneView)
         return -(BAR_TOP + BAR_H + 4), w    -- clear of the picker row
     end
     return -8, w
+end
+
+-- A portrait hint, with the restart line when it applies (#176): captures on
+-- record and the Companion's folder not loaded. Only ever with no portraits at
+-- all, since no manifest means no portrait.
+local function PortraitHint(text)
+    local restart = AltStable.PortraitRestartText and AltStable.PortraitRestartText()
+    if restart then return text .. "\n" .. restart end
+    return text
 end
 
 local function ApplyHintLayout(panelW, sceneView, dx)
@@ -2640,6 +2668,7 @@ function Roster.Refresh()
             if Roster.CampList and Roster.CampList.Render then Roster.CampList.Render(false) end
             if viewBtn then viewBtn:Hide() end
             if hintText then hintText:Hide() end
+            if hintLink then hintLink:Hide() end
             RenderDetail(char)
             detail:Show()
             return
@@ -2651,6 +2680,8 @@ function Roster.Refresh()
 
     if detail then detail:Hide() end
     if viewBtn then viewBtn:Show() end
+    -- Off unless a portrait hint below turns it on.
+    if hintLink then hintLink:Hide() end
 
     if sceneBar then sceneBar:SetShown(View() == "scene") end
     if campBar then campBar:SetShown(View() == "scene") end
@@ -2688,9 +2719,10 @@ function Roster.Refresh()
         if withArt == 0 and #sceneChars > 0 then
             -- Nobody has a portrait, so nobody stands at the fire, whatever
             -- the camp holds. Say what is actually going on.
-            hintText:SetText("No portraits yet - " .. AltStable.PortraitSourceText()
-                .. ". The grid shows characters without one as cards.")
+            hintText:SetText(PortraitHint("No portraits yet - " .. AltStable.PortraitSourceText()
+                .. ". The grid shows characters without one as cards."))
             hintText:Show()
+            hintLink:Show()
         elseif not camp then
             -- With the camp list open, it is the way; without it, the grid.
             hintText:SetText(inset > 0 and "No camp - make one with + in the list."
@@ -2755,9 +2787,10 @@ function Roster.Refresh()
     -- PortraitSourceText is the same phrase the scene uses, so the two views
     -- cannot give different instructions (#89).
     if withArt < #chars then
-        hintText:SetText(("%d of %d characters have a portrait - %s")
-            :format(withArt, #chars, AltStable.PortraitSourceText()))
+        hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
+            :format(withArt, #chars, AltStable.PortraitSourceText())))
         hintText:Show()
+        hintLink:Show()
     else
         hintText:Hide()
     end
@@ -3104,6 +3137,7 @@ function Roster._Bootstrap()
             -- list: the composition is right either way.
             HintText = function() return hintText and hintText:GetText() end,
             HintShown = function() return hintText and hintText:IsShown() end,
+            HintLinkShown = function() return hintLink and hintLink:IsShown() end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
             Deactivate = function(main) return Roster.Deactivate(main) end,
