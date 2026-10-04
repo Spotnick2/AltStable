@@ -567,7 +567,10 @@ AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 -- nil `rosterCamps` means "never set up"; the Roster seeds the first camp then.
 ------------------------------------------------------------
 
-local CAMP_SIZE = 5
+-- Four, pets or no pets (owner, in game, #170): a fifth seat appeared and
+-- vanished with the pets option, and with it a hint about a seat nobody could
+-- see. Retail's camps hold four as well.
+local CAMP_SIZE = 4
 AltStable.CAMP_SIZE = CAMP_SIZE
 
 function AltStable.GetCamps()
@@ -772,9 +775,26 @@ function AltStable.PruneCamps(store)
         for j = #c.members, 1, -1 do
             if type(store[c.members[j]]) ~= "table" then table.remove(c.members, j); changed = true end
         end
+        -- A camp made when camps held five keeps its first four; the fifth
+        -- goes back among the campless.
+        while #c.members > CAMP_SIZE do table.remove(c.members); changed = true end
     end
     if changed then SetCamps(camps, true) end
     return changed
+end
+
+-- The order of the characters in no camp, in the Roster's camp list: dragged
+-- up and down there, as on retail (#170). A full sequence of guids; anyone not
+-- in it lists after, in the usual order. Local, never synced.
+function AltStable.GetListOrder()
+    local order = AltStableConfig and AltStableConfig.rosterListOrder
+    return type(order) == "table" and order or {}
+end
+
+function AltStable.SetListOrder(guids)
+    local copy = {}
+    for i, g in ipairs(guids or {}) do copy[i] = g end
+    AltStable.SetConfigValue("rosterListOrder", copy)
 end
 
 -- A camp moved to place `pos` in the list.

@@ -45,7 +45,7 @@ local folded = {}         -- camp id -> true while its seats are folded away (th
 L.shown = 0               -- how many rows the last render used
 L.search = ""
 
-local function CampSize() return AltStable.CAMP_SIZE or 5 end
+local function CampSize() return AltStable.CAMP_SIZE or 4 end
 
 local function ListHidden()
     return AltStableConfig and AltStableConfig.rosterCampListHidden == true
@@ -91,12 +91,47 @@ function L.Items()
         end
     end
     items[#items + 1] = { kind = "sep" }
-    for _, char in ipairs(Roster.AllCharacters and Roster.AllCharacters(false) or {}) do
-        if not AltStable.CampOf(char.guid) and Matches(char) then
+    for _, char in ipairs(L.Campless()) do
+        if Matches(char) then
             items[#items + 1] = { kind = "char", guid = char.guid, char = char }
         end
     end
     return items
+end
+
+-- Everyone in no camp, in the order the player dragged them into (#170, as on
+-- retail); anyone the saved order does not name follows, in the usual order
+-- (favourites, then level).
+function L.Campless()
+    local out = {}
+    for _, char in ipairs(Roster.AllCharacters and Roster.AllCharacters(false) or {}) do
+        if not AltStable.CampOf(char.guid) then out[#out + 1] = char end
+    end
+    local rank = {}
+    for i, g in ipairs(AltStable.GetListOrder and AltStable.GetListOrder() or {}) do rank[g] = i end
+    local base = {}
+    for i, c in ipairs(out) do base[c.guid] = i end
+    table.sort(out, function(a, b)
+        local ra, rb = rank[a.guid], rank[b.guid]
+        if ra and rb then return ra < rb end
+        if ra or rb then return ra ~= nil end
+        return base[a.guid] < base[b.guid]
+    end)
+    return out
+end
+
+-- `guid` placed among the campless just before `before` (nil: at the end), and
+-- the whole order saved.
+local function PlaceInList(guid, before)
+    local seq = {}
+    for _, c in ipairs(L.Campless()) do
+        if c.guid ~= guid then seq[#seq + 1] = c.guid end
+    end
+    local at = #seq + 1
+    for i, g in ipairs(seq) do if g == before then at = i end end
+    table.insert(seq, at, guid)
+    AltStable.SetListOrder(seq)
+    return true
 end
 
 ------------------------------------------------------------
@@ -138,7 +173,20 @@ function L.Drop(drag, target)
             done = AltStable.AddToCamp(guid, target.camp.id)
             if done then AltStable.SelectCamp(target.camp.id) end
         elseif target.kind == "char" or target.kind == "sep" or target.kind == "out" then
-            if drag.fromCamp then done = AltStable.RemoveFromCamp(guid) end
+            -- Out of its camp if it was in one, and into the campless list at
+            -- the place dropped: before the character it lands on, at the top
+            -- on the divider, at the end in the empty space below (#170).
+            if drag.fromCamp then AltStable.RemoveFromCamp(guid) end
+            local before
+            if target.kind == "char" then
+                if target.guid == guid then return false end
+                before = target.guid
+            elseif target.kind == "sep" then
+                local first = L.Campless()[1]
+                before = first and first.guid
+                if before == guid then return false end
+            end
+            done = PlaceInList(guid, before)
         end
     end
     if done and Roster.Refresh then Roster.Refresh() end
@@ -722,6 +770,10 @@ local function Build()
     content = CreateFrame("Frame", nil, scroll)
     content:SetSize(ROW_W, 1)
     scroll:SetScrollChild(content)
+    -- And drawn again once the frame has its real size.
+    scroll:SetScript("OnSizeChanged", function()
+        if list:IsShown() then L.Render(true) end
+    end)
 
     -- Along the bottom, like retail's: it stays when the list is tucked away.
     toggle = CreateFrame("Frame", nil, panel)
@@ -787,6 +839,10 @@ function L.Render(sceneView)
     for i = #items + 1, #rows do rows[i]:Hide(); rows[i].item = nil end
     L.shown = #items
     content:SetHeight(math.max(1, y))
+    -- A scroll child laid out before its scroll frame has a size is not drawn
+    -- until something re-lays it out: the first open showed an empty list
+    -- until it was tucked away and back (owner, in game, #170).
+    if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
 end
 
 -- For tests: the frames.

@@ -87,12 +87,11 @@ local SCENE_DEPTH    = 0.14   -- how much smaller the far side of it is
 -- is what the first version looked like. The grid remains the place to see
 -- everyone.
 --
--- Four when pets are shown (#75): a fifth figure takes the room a hunter's
--- beast or a warlock's demon stands in, and with five they stood behind the
--- next character instead of beside their own (owner, in game). Five without.
--- By the OPTION, not by who has a pet, so a pet arriving by sync does not
--- reshuffle the line.
-local SCENE_CAST = 5
+-- Four (#170): a camp holds four (AltStable.CAMP_SIZE), with or without pets.
+-- Pets (#75) need the room four leave - with five they stood behind the next
+-- character instead of beside their own (owner, in game) - and a fifth seat
+-- that came and went with the pets option only confused.
+local SCENE_CAST = 4
 local SCENE_CAST_WITH_PETS = 4
 local MAX_CARD_W    = 170
 local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
@@ -1143,7 +1142,7 @@ AltStable.EnsureRosterCamps = EnsureCamps
 local function CampCast(camp, cutoutFor, limit)
     local store = CharacterStore()
     local cast = {}
-    local info = { members = 0, gone = 0, hidden = 0, noArt = 0, noSeat = 0 }
+    local info = { members = 0, gone = 0, hidden = 0, noArt = 0 }
     for _, guid in ipairs(camp and camp.members or {}) do
         info.members = info.members + 1
         local c = store[guid]
@@ -1154,7 +1153,8 @@ local function CampCast(camp, cutoutFor, limit)
         elseif not cutoutFor(c) then
             info.noArt = info.noArt + 1
         elseif #cast >= (limit or SCENE_CAST) then
-            info.noSeat = info.noSeat + 1
+            -- More members than seats: only a camp from before camps held four,
+            -- and PruneCamps trims those on the next refresh.
         else
             cast[#cast + 1] = c
         end
@@ -1500,9 +1500,9 @@ local function RenderScene(camp)
     if sceneLabel then sceneLabel:SetText(entry.label) end
     if campLabel then campLabel:SetText(camp and camp.name or "No camp") end
 
-    -- The shown camp's members, in their order (#152).
-    local petsOn = AltStableConfig and AltStableConfig.rosterPets == true
-    local cast, info = CampCast(camp, CutoutFor, petsOn and SCENE_CAST_WITH_PETS or SCENE_CAST)
+    -- The shown camp's members, in their order (#152), four seats with or
+    -- without pets (#170).
+    local cast, info = CampCast(camp, CutoutFor, AltStable.CAMP_SIZE or SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestRace(cast)
 
@@ -2684,9 +2684,8 @@ function Roster.Refresh()
             local why = {}
             if info.noArt > 0 then why[#why + 1] = ("%d without a portrait"):format(info.noArt) end
             if info.hidden > 0 then why[#why + 1] = ("%d hidden"):format(info.hidden) end
-            if info.noSeat > 0 then why[#why + 1] = ("%d without a seat while pets are shown"):format(info.noSeat) end
             if #why > 0 then
-                local seated = info.members - info.gone - info.noArt - info.hidden - info.noSeat
+                local seated = info.members - info.gone - info.noArt - info.hidden
                 hintText:SetText(("showing %d of %d in %s - %s"):format(
                     seated, info.members - info.gone, name, table.concat(why, ", ")))
                 hintText:Show()
