@@ -1221,8 +1221,10 @@ do
     local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
     check("opening the Roster asks for its minimum window", asked ~= nil)
     eq("  wide enough for the camp switcher, backdrop picker and view toggle",
-       asked and asked[1], sidebarW + 1 + AltStable.RosterPlugin.MIN_PANEL_W)
-    check("  which is all three side by side", AltStable.RosterPlugin.MIN_PANEL_W >= 200 + 240 + 64)
+       asked and asked[1], sidebarW + 1 + AltStable.RosterPlugin.MinPanelW())
+    check("  which is all three side by side", AltStable.RosterPlugin.MinPanelW() >= 200 + 240 + 64)
+    local CL = AltStable.RosterPlugin.CampList
+    check("  and the camp list beside a usable scene", AltStable.RosterPlugin.MinPanelW() >= CL.LIST_W + CL.MIN_SCENE_W)
     asked = nil
     registered.OnResize()
     check("and asks again when the window changes under it", asked ~= nil)
@@ -3719,6 +3721,8 @@ do
     check("  and closes the dialog", not d:IsShown())
     local raiders = AltStable.SelectedCamp()
     eq("  and shows it", raiders.name, "Raiders")
+    check("an empty camp's hint points at the list's seats",
+          (T.HintText() or ""):find("drag a character onto one of its seats", 1, true) ~= nil, T.HintText())
     eq("its seats are empty", kinds():match("header slot slot slot slot slot") ~= nil, true)
     check("a newcomer dropped on a camp's header joins it",
           L.Drop({ kind = "char", guid = "pool-7" }, item("header", nil, "Raiders")))

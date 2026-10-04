@@ -2637,11 +2637,15 @@ function Roster.Refresh()
                 .. ". The grid shows characters without one as cards.")
             hintText:Show()
         elseif not camp then
-            hintText:SetText("No camp - right-click a character in the grid and choose \"Add to a new camp\".")
+            -- With the camp list open, it is the way; without it, the grid.
+            hintText:SetText(inset > 0 and "No camp - make one with + in the list."
+                or "No camp - right-click a character in the grid and choose \"Add to a new camp\".")
             hintText:Show()
         elseif info.members == 0 then
-            hintText:SetText(("%s is empty - right-click a character in the grid and choose \"Add to %s\".")
-                :format(name, name))
+            hintText:SetText(inset > 0
+                and ("%s is empty - drag a character onto one of its seats in the list."):format(name)
+                or ("%s is empty - right-click a character in the grid and choose \"Add to %s\".")
+                    :format(name, name))
             hintText:Show()
         else
             -- Everyone in the camp who is not at the fire, and why.
@@ -2731,12 +2735,21 @@ end
 local MIN_PANEL_W = 8 + CAMP_BAR_W + 8 + SCENE_BAR_W + 8 + VIEW_BTN_W + 8
 local MIN_PANEL_H = 400
 Roster.MIN_PANEL_W, Roster.MIN_PANEL_H = MIN_PANEL_W, MIN_PANEL_H
+-- And room for the camp list beside a usable scene (CampList.lua), or the list
+-- would step aside on a window the Roster itself chose, toggle and all.
+function Roster.MinPanelW()
+    local list = Roster.CampList
+    if list and list.LIST_W and list.MIN_SCENE_W then
+        return math.max(MIN_PANEL_W, list.LIST_W + list.MIN_SCENE_W)
+    end
+    return MIN_PANEL_W
+end
 function Roster.HoldMinSize()
     if not AltStable.EnsureWindowMinSize then return end
     local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
     local footerH  = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
-    AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + MIN_PANEL_H + footerH + 2)
+    AltStable.EnsureWindowMinSize(sidebarW + 1 + Roster.MinPanelW(), titleH + MIN_PANEL_H + footerH + 2)
 end
 
 function Roster.Activate(mainFrame)
