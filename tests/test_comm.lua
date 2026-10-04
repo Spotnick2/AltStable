@@ -4413,10 +4413,27 @@ do
     check(said("client 1.60.1 (70205), enUS"), "  and the client build and locale")
     eq(#WoW.popups, before + 1, "  and opens the copy popup")
     local copy = WoW.popups[#WoW.popups].data or ""
-    check(copy:find("chars 3 | portraits 2 (enh 1) | captures 2 | cutouts loaded", 1, true) ~= nil,
+    check(copy:find("chars 3; portraits 2 (enh 1); captures 2; cutouts loaded", 1, true) ~= nil,
           "  with one line to copy: " .. copy)
     check(not copy:find("Alder", 1, true) and not copy:find("Player-1", 1, true),
           "  which names no character and no GUID")
+    check(not copy:find("|", 1, true), "  and holds no |, the escape character of WoW text")
+
+    -- A box that hands back other text than it was given (an escape it
+    -- rewrote) must not make the guard call itself forever.
+    local dialog = WoW.popups[#WoW.popups].dialog
+    local box = dialog:GetEditBox()
+    local def = StaticPopupDialogs[WoW.popups[#WoW.popups].which]
+    local calls = 0
+    box.SetText = function(self, t)
+        calls = calls + 1
+        if calls > 20 then error("the type-over guard loops") end
+        self._text = "rewritten"                          -- never what it was given
+        def.EditBoxOnTextChanged(self, copy)              -- the client fires it on every set
+    end
+    box._text = "typed over"
+    local ok = pcall(def.EditBoxOnTextChanged, box, copy)
+    check(ok and calls == 1, "  the type-over guard resets once, not forever (" .. calls .. " sets)")
     eq(#WoW.sent, 0, "  and pings no one")
 
     AltStableCutoutManifest = nil

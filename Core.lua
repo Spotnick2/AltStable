@@ -4047,10 +4047,16 @@ function AltStable.ShowCopyText(prompt, text)
                 box:HighlightText()
             end,
             -- Typing over it must not leave a wrong text to copy.
+            -- Once per change: should the box ever hand back other text than
+            -- it was given (its escape character is |), resetting it would
+            -- otherwise call this again, forever.
             EditBoxOnTextChanged = function(box, data)
+                if box._restoring then return end
                 if data and box:GetText() ~= data then
+                    box._restoring = true
                     box:SetText(data)
                     box:HighlightText()
+                    box._restoring = nil
                 end
             end,
             EditBoxOnEnterPressed = function(box) box:GetParent():Hide() end,
@@ -4102,7 +4108,8 @@ function AltStable.StatusLines()
             captures, cutouts and "is loaded" or "is not loaded"),
         ("sync protocol %s"):format(PROTOCOL_VERSION),
     }
-    local copy = ("AltStable %s | client %s.%s %s | chars %d | portraits %d (enh %d) | captures %d | cutouts %s | proto %s")
+    -- Semicolons, not "|": that is the escape character of WoW text.
+    local copy = ("AltStable %s; client %s.%s %s; chars %d; portraits %d (enh %d); captures %d; cutouts %s; proto %s")
         :format(version, tostring(clientVersion), tostring(build), locale, chars, withPortrait, enhanced,
                 captures, cutouts and "loaded" or "absent", PROTOCOL_VERSION)
     return lines, copy
