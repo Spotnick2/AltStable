@@ -35,6 +35,11 @@ terms and remains the work of its authors:
   Libs/LibDeflate          LibDeflate, copyright (c) 2018-2020 Haoqian He.
                            zlib License. See the header of LibDeflate.lua.
 
+  Libs/LibGlass-1.0        LibGlass-1.0, copyright (c) 2026 Spotnick2.
+                           MIT License; its own LICENSE ships beside it.
+                           Fetched at build time, not kept in this
+                           repository.
+
   Libs/ChatThrottleLib     ChatThrottleLib, by Mikk.
                            Carries no licence header. It is embedded in a
                            great many addons by long-standing convention
