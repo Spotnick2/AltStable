@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Camps in the Roster** ([#152](https://github.com/Spotnick2/AltStable/issues/152)), like
+  retail's warband camps: the scene now shows a **camp**, a named group of up to five characters
+  in the order they stand, each with its own backdrop.
+  - Your first camp is made for you the first time you open the scene, from your highest-level
+    characters (those with a portrait first).
+  - Switch camps with the new **< camp name >** arrows at the top of the scene; the backdrop
+    arrows now change the shown camp's backdrop.
+  - Right-click a character: **Add to** a camp, **Move to** another, **Add to a new camp**, or
+    **Remove from** its camp.
+  - **Favourites no longer pick who stands at the fire**; they still sort the grid first.
+
 ## v0.7.1-beta
 
 A one-fix release on top of v0.7.0-beta. Measured on client 1.60.1.70205. Nothing changes on the

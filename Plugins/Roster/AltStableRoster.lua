@@ -35,6 +35,7 @@ local PAD_X, PAD_Y  = 16, 14
 local BAR_TOP       = 4       -- from the panel's top edge
 local BAR_H         = 20
 local SCENE_BAR_W   = 240
+local CAMP_BAR_W    = 200     -- the camp switcher, left of the backdrop picker (#152)
 local VIEW_BTN_W    = 64
 local MAX_CARDS     = 24      -- laid out in rows, so this is a sanity cap
 
@@ -149,7 +150,7 @@ local Roster = { cards = {}, selected = nil }
 AltStable = AltStable or {}
 AltStable.RosterPlugin = Roster
 
-local panel, backdropTex, hintText, sceneBar, sceneLabel, viewBtn
+local panel, backdropTex, hintText, sceneBar, sceneLabel, viewBtn, campBar, campLabel
 
 -- Which view, and which backdrop, remembered per account. The grid is the
 -- default: it works for every character, whereas the scene needs a portrait and
@@ -158,8 +159,11 @@ local function View()
     return (AltStableConfig and AltStableConfig.rosterView == "scene") and "scene" or "grid"
 end
 
+-- The shown camp's own backdrop (#152); the old single choice, `rosterScene`,
+-- before any camp exists or for a camp that has none yet.
 local function SceneIndex()
-    local want = AltStableConfig and AltStableConfig.rosterScene
+    local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
+    local want = (camp and camp.backdrop) or (AltStableConfig and AltStableConfig.rosterScene)
     for i, b in ipairs(SCENE_BACKDROPS) do
         if b.id == want then return i end
     end
@@ -913,8 +917,36 @@ local function BuildPanel(mainFrame)
         Roster.Refresh()
     end)
 
+    -- The camp switcher (#152): which camp the scene shows, by name.
+    campBar = CreateFrame("Frame", nil, panel)
+    campBar:SetPoint("TOPLEFT", 8, -BAR_TOP)
+    campBar:SetSize(CAMP_BAR_W, BAR_H)
+    campBar:Hide()
+    local campPrev = CreateFrame("Button", nil, campBar, "UIPanelButtonTemplate")
+    campPrev:SetSize(22, 20); campPrev:SetText("<"); campPrev:SetPoint("LEFT", 0, 0)
+    local campNext = CreateFrame("Button", nil, campBar, "UIPanelButtonTemplate")
+    campNext:SetSize(22, 20); campNext:SetText(">"); campNext:SetPoint("RIGHT", 0, 0)
+    campLabel = campBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    campLabel:SetPoint("LEFT", campPrev, "RIGHT", 6, 0)
+    campLabel:SetPoint("RIGHT", campNext, "LEFT", -6, 0)
+    campLabel:SetJustifyH("CENTER")
+    local function StepCamp(delta)
+        local camps = AltStable.GetCamps and AltStable.GetCamps() or {}
+        if #camps == 0 then return end
+        local shown, at = AltStable.SelectedCamp(), 1
+        for i, c in ipairs(camps) do if c == shown then at = i end end
+        local i = at + delta
+        if i < 1 then i = #camps end
+        if i > #camps then i = 1 end
+        AltStable.SelectCamp(camps[i].id)
+        Roster.Refresh()
+    end
+    campPrev:SetScript("OnClick", function() StepCamp(-1) end)
+    campNext:SetScript("OnClick", function() StepCamp(1) end)
+    Roster.campButtons = { prev = campPrev, next = campNext }
+
     sceneBar = CreateFrame("Frame", nil, panel)
-    sceneBar:SetPoint("TOPLEFT", 8, -BAR_TOP)
+    sceneBar:SetPoint("TOPLEFT", 8 + CAMP_BAR_W + 8, -BAR_TOP)
     sceneBar:SetSize(SCENE_BAR_W, BAR_H)
     sceneBar:Hide()
 
@@ -932,7 +964,13 @@ local function BuildPanel(mainFrame)
         local i = SceneIndex() + delta
         if i < 1 then i = #SCENE_BACKDROPS end
         if i > #SCENE_BACKDROPS then i = 1 end
-        AltStable.SetConfigValue("rosterScene", SCENE_BACKDROPS[i].id)
+        -- The shown camp's backdrop (#152); the shared one only with no camp.
+        local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
+        if camp then
+            AltStable.SetCampBackdrop(camp.id, SCENE_BACKDROPS[i].id)
+        else
+            AltStable.SetConfigValue("rosterScene", SCENE_BACKDROPS[i].id)
+        end
         Roster.Refresh()
     end
     prev:SetScript("OnClick", function() Step(-1) end)
@@ -993,50 +1031,104 @@ local function FitScale(sizes, slot)
     return 1 / worst
 end
 
--- Who stands around the fire: favourites first (#66), then level, then item
--- level, capped.
--- Only characters with a portrait, because a class card pasted into a campsite
--- looks like a mistake rather than a placeholder.
+-- Seeding the first camp (#152) ranks characters with a portrait: a class card
+-- pasted into a campsite looks like a mistake rather than a placeholder.
+-- Highest level, then item level, then name.
+local function ByRank(a, b)
+    local la, lb = a.level or 0, b.level or 0
+    if la ~= lb then return la > lb end
+    local ia, ib = a.ilvl or 0, b.ilvl or 0
+    if ia ~= ib then return ia > ib end
+    return (a.name or "") < (b.name or "")
+end
+
+-- The characters with a portrait, ranked: what the FIRST camp is seeded from
+-- (#152). The scene itself draws a camp now, not this; favourites order the
+-- grid only.
 local function SceneCast(chars, cutoutFor, limit)
     local out = {}
     for _, c in ipairs(chars) do
         if cutoutFor(c) then out[#out + 1] = c end
     end
-
-    -- Favourites are the cast (#66). The five you want around the fire are the
-    -- five you play, which is what a favourite already means - so this needs no
-    -- second flag, and the hint stops apologising for guessing.
-    --
-    -- Top-by-level stays as the default, for a roster with no favourites yet,
-    -- and as the filler when there are fewer favourites than seats. Nobody
-    -- should have to mark five characters before the scene works at all.
-    local byRank = function(a, b)
-        local la, lb = a.level or 0, b.level or 0
-        if la ~= lb then return la > lb end
-        local ia, ib = a.ilvl or 0, b.ilvl or 0
-        if ia ~= ib then return ia > ib end
-        return (a.name or "") < (b.name or "")
-    end
-    table.sort(out, AltStable.FavouriteFirst and AltStable.FavouriteFirst(byRank) or byRank)
-
+    table.sort(out, ByRank)
     while #out > (limit or SCENE_CAST) do table.remove(out) end
     return out
 end
 
--- How many favourites are in a list.
+------------------------------------------------------------
+-- Camps (#152)
 --
--- Called on the CAST, never on the roster. Only characters with a portrait can
--- be seated, so a favourite without one is pinned and absent - and counting the
--- roster made the hint claim "your favourites first" while the scene was in
--- fact five pure level picks.
-local function FavouritesAmong(chars)
-    local n = 0
+-- The scene shows a CAMP: a named group of up to AltStable.CAMP_SIZE
+-- characters, in order, with its own backdrop - retail's warband camps. The
+-- data lives in Config.lua (the right-click menu needs it too); this file seeds
+-- the first one and draws them.
+------------------------------------------------------------
+
+-- The first camp's members: the top characters with a portrait, then, if there
+-- are fewer than a camp holds, the top ones without (they stand once captured).
+local function SeedMembers(chars, cutoutFor)
+    local size = AltStable.CAMP_SIZE or SCENE_CAST
+    local out, taken = {}, {}
+    for _, c in ipairs(SceneCast(chars, cutoutFor, size)) do
+        out[#out + 1] = c.guid; taken[c.guid] = true
+    end
+    local rest = {}
     for _, c in ipairs(chars) do
-        if AltStable.IsCharacterFavourite and AltStable.IsCharacterFavourite(c.guid) then
-            n = n + 1
+        if not taken[c.guid] then rest[#rest + 1] = c end
+    end
+    table.sort(rest, ByRank)
+    for _, c in ipairs(rest) do
+        if #out >= size then break end
+        out[#out + 1] = c.guid
+    end
+    return out
+end
+
+-- The camps, kept sound. The first time they are needed with a character
+-- known, the first camp is made: the top characters. Until the player changes
+-- any camp it stays "the top characters", topped up as more arrive - a fresh
+-- install knows only the character logged in. Seats whose record is gone are
+-- freed. After the player's first change, a camp is only what they made it -
+-- even an empty list, after they delete the last one.
+local function EnsureCamps()
+    if not (AltStable.CampsSetUp and AltStable.SeedCamp) then return end
+    local chars = AllCharacters(false)
+    if not AltStable.CampsSetUp() then
+        if #chars == 0 then return end
+        AltStable.SeedCamp(SeedMembers(chars, CutoutFor), AltStableConfig and AltStableConfig.rosterScene)
+        return
+    end
+    AltStable.PruneCamps(CharacterStore())
+    if AltStable.CampsAutoSeeded() then
+        AltStable.RefreshSeededCamp(SeedMembers(chars, CutoutFor))
+    end
+end
+-- For the right-click menu, which can be the first to need a camp.
+AltStable.EnsureRosterCamps = EnsureCamps
+
+-- Who in a camp stands at the fire: its members in order, skipping anyone
+-- forgotten, hidden (#21: hidden is hidden in every view) or without a
+-- portrait, up to `limit` seats. `info` counts each kind left out, for the hint.
+local function CampCast(camp, cutoutFor, limit)
+    local store = CharacterStore()
+    local cast = {}
+    local info = { members = 0, gone = 0, hidden = 0, noArt = 0, noSeat = 0 }
+    for _, guid in ipairs(camp and camp.members or {}) do
+        info.members = info.members + 1
+        local c = store[guid]
+        if type(c) ~= "table" or not c.name then
+            info.gone = info.gone + 1
+        elseif AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) then
+            info.hidden = info.hidden + 1
+        elseif not cutoutFor(c) then
+            info.noArt = info.noArt + 1
+        elseif #cast >= (limit or SCENE_CAST) then
+            info.noSeat = info.noSeat + 1
+        else
+            cast[#cast + 1] = c
         end
     end
-    return n
+    return cast, info
 end
 
 -- One backdrop, everyone standing on it.
@@ -1357,7 +1449,7 @@ local PET_TEST = {
     SceneSlot = function() return Roster.sceneSlot end,
 }
 
-local function RenderScene(chars)
+local function RenderScene(camp)
     local entry = CurrentScene()
     local pw, ph = panel:GetWidth(), panel:GetHeight()
 
@@ -1366,9 +1458,11 @@ local function RenderScene(chars)
     backdropTex:SetVertexColor(1, 1, 1, 1)
 
     if sceneLabel then sceneLabel:SetText(entry.label) end
+    if campLabel then campLabel:SetText(camp and camp.name or "No camp") end
 
+    -- The shown camp's members, in their order (#152).
     local petsOn = AltStableConfig and AltStableConfig.rosterPets == true
-    local cast = SceneCast(chars, CutoutFor, petsOn and SCENE_CAST_WITH_PETS or SCENE_CAST)
+    local cast, info = CampCast(camp, CutoutFor, petsOn and SCENE_CAST_WITH_PETS or SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestRace(cast)
 
@@ -1426,9 +1520,8 @@ local function RenderScene(chars)
     Roster.sceneSlot = slot
     RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, pw, ph, slot)
 
-    -- The third value is how many of the SEATED characters were chosen rather
-    -- than guessed, which is the only honest basis for the hint below.
-    return withArt, #chars, FavouritesAmong(cast)
+    -- How many stand at the fire, and who in the camp does not and why.
+    return withArt, info
 end
 
 -- Where the hint goes, and how wide it may be.
@@ -2476,6 +2569,7 @@ function Roster.Refresh()
             PaintBackdrop()
             for _, card in ipairs(Roster.cards) do card:Hide() end
             if sceneBar then sceneBar:Hide() end
+            if campBar then campBar:Hide() end
             if viewBtn then viewBtn:Hide() end
             if hintText then hintText:Hide() end
             RenderDetail(char)
@@ -2491,36 +2585,50 @@ function Roster.Refresh()
     if viewBtn then viewBtn:Show() end
 
     if sceneBar then sceneBar:SetShown(View() == "scene") end
+    if campBar then campBar:SetShown(View() == "scene") end
     if viewBtn then viewBtn:SetText(View() == "scene" and "Grid" or "Scene") end
 
     if View() == "scene" then
         ApplyHintLayout(panel:GetWidth(), true)
+        EnsureCamps()
+        local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
+        local _, info = RenderScene(camp)
+        -- Whether ANYONE has a portrait, counted over the roster rather than
+        -- taken from who was seated: nobody is seated while the panel has no
+        -- size yet, which would tell a player with portraits they have none.
         local sceneChars = CharactersFor("scene")
-        local shown, total, chosen = RenderScene(sceneChars)
-        -- Counted here rather than taken from `shown`: `shown` is how many
-        -- were SEATED, and nobody is seated while the panel has no size yet -
-        -- which would tell a player with portraits that they have none.
         local withArt = 0
         for _, c in ipairs(sceneChars) do
             if CutoutFor(c) then withArt = withArt + 1 end
         end
-        if withArt == 0 and total > 0 then
-            -- Nobody has a portrait, so nobody stands at the fire - and the
-            -- lines below would read as advice ("favourite the ones you want
-            -- here") that cannot help, because favouriting seats nobody who
-            -- has no picture. Say what is actually going on.
+        local name = camp and camp.name or ""
+        if withArt == 0 and #sceneChars > 0 then
+            -- Nobody has a portrait, so nobody stands at the fire, whatever
+            -- the camp holds. Say what is actually going on.
             hintText:SetText("No portraits yet - " .. AltStable.PortraitSourceText()
                 .. ". The grid shows characters without one as cards.")
             hintText:Show()
-        elseif shown < total then
-            hintText:SetText(chosen > 0
-                and ("showing %d of %d - your favourites first; the grid shows them all")
-                    :format(shown, total)
-                or ("showing %d of %d - highest level first; favourite the ones you want here")
-                    :format(shown, total))
+        elseif not camp then
+            hintText:SetText("No camp - right-click a character in the grid and choose \"Add to a new camp\".")
+            hintText:Show()
+        elseif info.members == 0 then
+            hintText:SetText(("%s is empty - right-click a character in the grid and choose \"Add to %s\".")
+                :format(name, name))
             hintText:Show()
         else
-            hintText:Hide()
+            -- Everyone in the camp who is not at the fire, and why.
+            local why = {}
+            if info.noArt > 0 then why[#why + 1] = ("%d without a portrait"):format(info.noArt) end
+            if info.hidden > 0 then why[#why + 1] = ("%d hidden"):format(info.hidden) end
+            if info.noSeat > 0 then why[#why + 1] = ("%d without a seat while pets are shown"):format(info.noSeat) end
+            if #why > 0 then
+                local seated = info.members - info.gone - info.noArt - info.hidden - info.noSeat
+                hintText:SetText(("showing %d of %d in %s - %s"):format(
+                    seated, info.members - info.gone, name, table.concat(why, ", ")))
+                hintText:Show()
+            else
+                hintText:Hide()
+            end
         end
         return
     end
@@ -2588,7 +2696,23 @@ local function HookRefresh()
     Roster._refreshHooked = true
 end
 
+-- The window this tab needs, as Warband holds its own: the top bar's camp
+-- switcher, backdrop picker and view toggle side by side (#152). Plugin tabs
+-- keep whatever size the last tab left, and a narrower panel ran the backdrop
+-- picker under the view toggle, so clicks landed on the wrong one.
+local MIN_PANEL_W = 8 + CAMP_BAR_W + 8 + SCENE_BAR_W + 8 + VIEW_BTN_W + 8
+local MIN_PANEL_H = 400
+Roster.MIN_PANEL_W, Roster.MIN_PANEL_H = MIN_PANEL_W, MIN_PANEL_H
+function Roster.HoldMinSize()
+    if not AltStable.EnsureWindowMinSize then return end
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+    local footerH  = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
+    AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + MIN_PANEL_H + footerH + 2)
+end
+
 function Roster.Activate(mainFrame)
+    Roster.HoldMinSize()
     BuildPanel(mainFrame)
     HookRefresh()
     Roster.isActive = true
@@ -2833,7 +2957,13 @@ function Roster._Bootstrap()
         _isPlugin    = true,
         OnActivate   = function(mainFrame) Roster.Activate(mainFrame) end,
         -- The window changed size under us: maximize, restore, the sidebar (#150).
-        OnResize     = function() if Roster.isActive then Roster.Refresh() end end,
+        OnResize     = function()
+            if not Roster.isActive then return end
+            -- Expanding the sidebar narrows the panel while the window keeps
+            -- its width: hold the floor again, as Warband does.
+            Roster.HoldMinSize()
+            Roster.Refresh()
+        end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
@@ -2841,7 +2971,9 @@ function Roster._Bootstrap()
             FigureSize = FigureSize, PickCharacters = PickCharacters,
             GridFor = GridFor, FigureHeightFor = FigureHeightFor, MAX_CARDS = MAX_CARDS,
             AllCharacters = AllCharacters, CharactersFor = CharactersFor,
-            FavouritesAmong = FavouritesAmong,
+            CampCast = CampCast, SeedMembers = SeedMembers, EnsureCamps = EnsureCamps,
+            CampLabel = function() return campLabel and campLabel:GetText() end,
+            CampBar = function() return campBar end,
             -- The card itself, so its right-click and its dimming can be
             -- driven rather than inferred from the functions behind them.
             BuildCard = BuildCard, RenderCard = RenderCard,
@@ -2871,6 +3003,7 @@ function Roster._Bootstrap()
             -- the only way to catch the renderer handing the count the wrong
             -- list: the composition is right either way.
             HintText = function() return hintText and hintText:GetText() end,
+            HintShown = function() return hintText and hintText:IsShown() end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
             Deactivate = function(main) return Roster.Deactivate(main) end,

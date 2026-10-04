@@ -559,6 +559,7 @@ end
 do
     AltStableConfig.rosterView = nil
     eq("the grid is the default view", T.View(), "grid")
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
     eq("  and the scene is remembered when chosen", T.View(), "scene")
     AltStableConfig.rosterView = "nonsense"
@@ -1032,52 +1033,36 @@ do
     local art = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
     local function cut() return art end
 
+    -- Since #152 the scene draws a CAMP, and favourites order the grid only:
+    -- the ranking the first camp is seeded from ignores them.
     AltStableConfig.favouriteCharacters = nil
     local byLevel = T.SceneCast(T.AllCharacters(), cut, 2)
-    eq("with no favourites the scene still fills itself by level", byLevel[1].name, "Alt 6")
-
+    eq("the seed ranking goes by level", byLevel[1].name, "Alt 6")
     AltStable.SetCharacterFavourite("fav-1", true)
     local cast = T.SceneCast(T.AllCharacters(), cut, 2)
-    eq("a favourite takes a seat at the fire", cast[1].name, "Alt 1")
-    eq("  and the rest of the seats go by level", cast[2].name, "Alt 6")
-
-    -- Fewer favourites than seats must not empty the camp.
-    eq("the cast is still full", #cast, 2)
-
-    -- The hint counts who is SEATED, not who is pinned. Only characters with a
-    -- portrait can be seated, so favouriting a portrait-less alt used to make
-    -- the hint claim "your favourites first" over a scene of pure level picks.
-    -- The first version of this test asserted the roster count and blessed it.
-    eq("the hint counts favourites actually seated", T.FavouritesAmong(cast), 1)
-
-    local function noArtForAlt1(c) return c.name ~= "Alt 1" and art or nil end
-    local castNoArt = T.SceneCast(T.AllCharacters(), noArtForAlt1, 2)
-    eq("a favourite with no portrait cannot be seated",
-       T.FavouritesAmong(castNoArt), 0)
-    check("  so the scene fills from level instead", castNoArt[1].name == "Alt 6")
-    check("  while the roster still counts it as pinned",
-          T.FavouritesAmong(T.AllCharacters()) == 1,
-          "the roster and the cast are different questions")
-
+    eq("a favourite no longer takes a seat by being one", cast[1].name, "Alt 6")
+    eq("  the seats go by level", cast[2].name, "Alt 5")
+    eq("  while the grid still lists favourites first", T.AllCharacters()[1].name, "Alt 1")
     AltStableConfig.favouriteCharacters = nil
-    eq("  and none are seated when none are pinned",
-       T.FavouritesAmong(T.SceneCast(T.AllCharacters(), cut, 2)), 0)
+
+    -- The first camp: the top characters WITH a portrait, then the top ones
+    -- without, up to a camp's size.
+    local function artFor(names) return function(c) return names[c.name] and art or nil end end
+    local seed = T.SeedMembers(T.AllCharacters(), artFor({ ["Alt 2"] = true, ["Alt 4"] = true }))
+    eq("a camp holds five", #seed, AltStable.CAMP_SIZE)
+    eq("  portraits first, by level", seed[1], "fav-4")
+    eq("  then the next portrait", seed[2], "fav-2")
+    eq("  then the highest without one", seed[3], "fav-6")
 
     AltStableDB = saved
     AltStableConfig.favouriteCharacters = nil
 end
 
 ------------------------------------------------------------
--- What the scene actually tells the player
+-- Camps (#152): the scene draws one, and says who in it is not at the fire
 ------------------------------------------------------------
--- The hint claims either "your favourites first" or "highest level first", and
--- which one is true depends on who got SEATED - not on who is pinned. Only
--- characters with a portrait can be seated, so favouriting a portrait-less alt
--- used to produce a scene of pure level picks under a hint claiming otherwise.
---
--- This drives the real panel, because the bug was the renderer handing the
--- count the wrong list. Every test that checks FavouritesAmong directly passes
--- whichever list it is given.
+-- Driven through the real panel: what the player SEES is the camp's name in
+-- the switcher and the hint, so those are what is asserted.
 
 do
     local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
@@ -1108,31 +1093,218 @@ do
     AltStable.AnchorBesideSidebar = nil
 
     AltStableConfig.favouriteCharacters = nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
-    T.Refresh()
-    local guessed = T.HintText() or ""
-    check("with nobody pinned the hint says it is guessing",
-          guessed:find("highest level first", 1, true) ~= nil, guessed)
+    local function hint() return T.HintShown() and (T.HintText() or "") or "" end
+    local function seated()
+        local n = 0
+        for _, card in ipairs(T.Cards()) do if card:IsShown() then n = n + 1 end end
+        return n
+    end
 
-    -- Pin the one character that CANNOT be seated.
-    AltStable.SetCharacterFavourite("wire-1", true)
+    -- The first camp is set up the first time the scene is shown.
+    check("no camp before the scene is first shown", not AltStable.CampsSetUp())
     T.Refresh()
-    local stillGuessing = T.HintText() or ""
-    check("pinning a character with no portrait does not make it a choice",
-          stillGuessing:find("highest level first", 1, true) ~= nil, stillGuessing)
-    check("  and the hint does not claim otherwise",
-          stillGuessing:find("favourites first", 1, true) == nil, stillGuessing)
-
-    -- Pin one that can.
-    AltStable.SetCharacterFavourite("wire-2", true)
+    local camps = AltStable.GetCamps()
+    eq("the first time, one camp is made", #camps, 1)
+    eq("  named Camp 1", camps[1].name, "Camp 1")
+    eq("  holding the top five with a portrait", table.concat(camps[1].members, ","),
+       "wire-6,wire-5,wire-4,wire-3,wire-2")
+    eq("the switcher names the camp shown", T.CampLabel(), "Camp 1")
+    check("  and shows in the scene view", T.CampBar():IsShown())
+    eq("all five stand at the fire", seated(), 5)
+    eq("  so the hint has nothing to explain", hint(), "")
+    -- Made for the player, so kept "the top characters" as they arrive (a
+    -- fresh install knows only the one logged in)...
+    local function firstMembers() return table.concat(AltStable.GetCamps()[1].members, ",") end
+    check("the first camp is marked as made for the player", AltStable.CampsAutoSeeded())
+    AltStableDB["wire-7"] = { guid = "wire-7", name = "Wire 7", level = 99, class = "MAGE" }
+    AltStableCutoutManifest["wire-7"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
     T.Refresh()
-    local chosen = T.HintText() or ""
-    check("pinning a character that can be seated does",
-          chosen:find("favourites first", 1, true) ~= nil, chosen)
+    eq("  it takes in a new top character", firstMembers(), "wire-7,wire-6,wire-5,wire-4,wire-3")
+    AltStableDB["wire-7"], AltStableCutoutManifest["wire-7"] = nil, nil
+    T.Refresh()
+    eq("  and lets one whose record went go", firstMembers(), "wire-6,wire-5,wire-4,wire-3,wire-2")
+    -- ...until the player changes a camp. Then it is only what they made it.
+    local id1 = camps[1].id
+    AltStable.RemoveFromCamp("wire-2")
+    check("the player's first change ends that", not AltStable.CampsAutoSeeded())
+    AltStableDB["wire-7"] = { guid = "wire-7", name = "Wire 7", level = 99, class = "MAGE" }
+    AltStableCutoutManifest["wire-7"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    T.Refresh()
+    eq("  no one joins by themselves after it", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
+    AltStableDB["wire-7"], AltStableCutoutManifest["wire-7"] = nil, nil
+    AltStable.AddToCamp("wire-2", id1)
 
-    AltStableConfig.favouriteCharacters = nil
+    -- A seat whose record is gone (/alts cleanup deletes records without
+    -- asking the camps) is freed, so the camp is not full of no one.
+    local heldRecord = AltStableDB["wire-2"]
+    AltStableDB["wire-2"] = nil
+    T.Refresh()
+    eq("a seat whose record is gone is freed", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
+    AltStableDB["wire-2"] = heldRecord
+    AltStable.AddToCamp("wire-2", id1)
+
+    -- Who is left out, and why.
+    check("a full camp refuses a sixth", not AltStable.AddToCamp("wire-1", id1))
+    AltStable.RemoveFromCamp("wire-2")
+    check("  with room, it takes one", AltStable.AddToCamp("wire-1", id1))
+    T.Refresh()
+    eq("a member with no portrait is left out", seated(), 4)
+    check("  and the hint says so", hint():find("showing 4 of 5 in Camp 1 - 1 without a portrait", 1, true) ~= nil, hint())
+    AltStable.SetCharacterHidden("wire-3", true)
+    T.Refresh()
+    check("a hidden member is left out and counted", hint():find("1 hidden", 1, true) ~= nil, hint())
+    AltStable.SetCharacterHidden("wire-3", false)
+    AltStable.RemoveFromCamp("wire-1"); AltStable.AddToCamp("wire-2", id1)
+    AltStableConfig.rosterPets = true
+    T.Refresh()
+    eq("with pets shown, four of five are seated", seated(), 4)
+    check("  and the fifth is explained", hint():find("1 without a seat while pets are shown", 1, true) ~= nil, hint())
+    AltStableConfig.rosterPets = nil
+
+    -- More camps, and the switcher.
+    local id2 = AltStable.CreateCamp("Raiders", { "wire-6" })
+    eq("making a camp with a member moves it out of its old one",
+       table.concat(AltStable.GetCamp(id1).members, ","), "wire-5,wire-4,wire-3,wire-2")
+    AltStable.RosterPlugin.campButtons.next:GetScript("OnClick")()
+    eq("the switcher's > shows the next camp", T.CampLabel(), "Raiders")
+    eq("  with only its own members", seated(), 1)
+    AltStable.RosterPlugin.campButtons.next:GetScript("OnClick")()
+    eq("  and wraps round", T.CampLabel(), "Camp 1")
+    AltStable.RosterPlugin.campButtons.prev:GetScript("OnClick")()
+    eq("< goes back", T.CampLabel(), "Raiders")
+
+    -- Each camp has its own backdrop.
+    AltStable.SelectCamp(id1)
+    AltStable.SetCampBackdrop(id1, T.SCENE_BACKDROPS[3].id)
+    AltStable.SetCampBackdrop(id2, T.SCENE_BACKDROPS[5].id)
+    eq("a camp draws its own backdrop", T.CurrentScene().id, T.SCENE_BACKDROPS[3].id)
+    AltStable.SelectCamp(id2)
+    eq("  and another camp its own", T.CurrentScene().id, T.SCENE_BACKDROPS[5].id)
+
+    -- An empty camp, and none at all.
+    local id3 = AltStable.CreateCamp("Empty")
+    AltStable.SelectCamp(id3)
+    T.Refresh()
+    check("an empty camp says how to fill it", hint():find("Empty is empty", 1, true) ~= nil, hint())
+    check("  and where: the scene has no one to right-click", hint():find("in the grid", 1, true) ~= nil, hint())
+
+    -- Drilled into a character, the camp switcher goes with the scene's bar.
+    AltStable.SelectCamp(id1)
+    T.Refresh()
+    check("the switcher shows over the scene", T.CampBar():IsShown())
+    AltStable.RosterPlugin.DrillDown("wire-6")
+    check("  and not over a character's detail", not T.CampBar():IsShown())
+    AltStable.RosterPlugin.Back()
+    AltStable.SelectCamp(id3)
+    for _, c in ipairs(AltStable.GetCamps()) do AltStable.DeleteCamp(c.id) end
+    T.Refresh()
+    check("with every camp deleted the scene says so", hint():find("No camp", 1, true) ~= nil, hint())
+    eq("  and does not make a new one by itself", #AltStable.GetCamps(), 0)
+    eq("  so nobody stands at the fire", seated(), 0)
+
     AltStableConfig.rosterView = nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
+-- The Roster holds the window it needs, as Warband does: the top bar's three
+-- controls side by side, on activation and when the window changes under it.
+do
+    local asked
+    local held = AltStable.EnsureWindowMinSize
+    AltStable.EnsureWindowMinSize = function(w, h) asked = { w, h } end
+    local main = CreateFrame("Frame")
+    T.Activate(main)
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    check("opening the Roster asks for its minimum window", asked ~= nil)
+    eq("  wide enough for the camp switcher, backdrop picker and view toggle",
+       asked and asked[1], sidebarW + 1 + AltStable.RosterPlugin.MIN_PANEL_W)
+    check("  which is all three side by side", AltStable.RosterPlugin.MIN_PANEL_W >= 200 + 240 + 64)
+    asked = nil
+    registered.OnResize()
+    check("and asks again when the window changes under it", asked ~= nil)
+    AltStable.EnsureWindowMinSize = held
+end
+
+-- The camp storage (Config.lua), and the right-click menu's camp entries.
+do
+    local savedDB = AltStableDB
+    AltStableDB = {}
+    for i = 1, 7 do
+        local guid = ("cm-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Cm %d"):format(i), level = i, class = "MAGE" }
+    end
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = {}, nil, nil
+
+    local a = AltStable.CreateCamp(nil, { "cm-1", "cm-2", "cm-3", "cm-1", "cm-4", "cm-5", "cm-6" })
+    eq("an unnamed camp gets a number", AltStable.GetCamp(a).name, "Camp 1")
+    eq("  duplicates are dropped and it stops at five",
+       table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-2,cm-3,cm-4,cm-5")
+    local b = AltStable.CreateCamp("B")
+    check("ids are distinct", a ~= b)
+    -- A deleted camp's id is never handed out again: a menu or drag still
+    -- holding it must not land in a newer camp.
+    AltStable.DeleteCamp(b)
+    local b2 = AltStable.CreateCamp("B")
+    check("a deleted camp's id is not reused", b2 ~= b, tostring(b2) .. " vs " .. tostring(b))
+    b = b2
+    -- A field this build does not know survives its writes.
+    AltStableConfig.rosterCamps[1].later = "kept"
+    AltStable.RenameCamp(a, "Camp 1")
+    eq("a camp field from a later version survives a write", AltStable.GetCamp(a).later, "kept")
+    check("a camp is not renamed to nothing", not AltStable.RenameCamp(b, ""))
+    check("  but to a name", AltStable.RenameCamp(b, "Bee") and AltStable.GetCamp(b).name == "Bee")
+
+    check("adding to another camp moves", AltStable.AddToCamp("cm-2", b))
+    eq("  out of the first", table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-3,cm-4,cm-5")
+    local camp, at = AltStable.CampOf("cm-2")
+    check("  and CampOf finds it", camp and camp.id == b and at == 1)
+    check("a move within a camp reorders it", AltStable.AddToCamp("cm-5", a, 1))
+    eq("  to the place asked", table.concat(AltStable.GetCamp(a).members, ","), "cm-5,cm-1,cm-3,cm-4")
+
+    check("camps reorder", AltStable.MoveCamp(b, 1))
+    eq("  b first", AltStable.GetCamps()[1].id, b)
+
+    -- Three, so the neighbour is not simply the first: b, a, c - delete a.
+    local c3 = AltStable.CreateCamp("C")
+    AltStable.SelectCamp(a)
+    AltStable.DeleteCamp(a)
+    eq("deleting the shown camp shows the one after it", AltStable.SelectedCamp().id, c3)
+    -- Restore a for the menu checks below.
+    a = AltStable.CreateCamp(nil, { "cm-1", "cm-3", "cm-4", "cm-5" })
+    AltStable.DeleteCamp(b); AltStable.DeleteCamp(c3)
+
+    -- The menu (the Roster plugin is loaded in this file).
+    local entries = AltStable.CharacterMenuEntries(AltStableDB["cm-1"])
+    local ids = {}
+    for _, e in ipairs(entries) do ids[#ids + 1] = e.id end
+    local list = table.concat(ids, " ")
+    check("a camp member's menu offers to remove it", list:find("camp:remove", 1, true) ~= nil, list)
+    check("  and a new camp", list:find("camp:new", 1, true) ~= nil, list)
+    local outsider = AltStable.CharacterMenuEntries(AltStableDB["cm-7"])
+    local addOne
+    for _, e in ipairs(outsider) do if e.id == "camp:add:" .. a then addOne = e end end
+    check("someone in no camp is offered each camp", addOne ~= nil)
+    check("  by name", addOne and addOne.text == "Add to " .. AltStable.GetCamp(a).name, addOne and addOne.text)
+    AltStable.AddToCamp("cm-2", a)
+    for _, e in ipairs(AltStable.CharacterMenuEntries(AltStableDB["cm-7"])) do
+        if e.id == "camp:add:" .. a then addOne = e end
+    end
+    check("a full camp is offered, disabled", addOne and addOne.disabled == true)
+    check("choosing Add to a new camp makes one and shows it",
+          AltStable.CharacterMenuInvoke("camp:new", AltStableDB["cm-7"])
+          and AltStable.SelectedCamp().members[1] == "cm-7")
+    check("Remove takes it out", AltStable.CharacterMenuInvoke("camp:remove", AltStableDB["cm-7"])
+          and not AltStable.CampOf("cm-7"))
+    check("a forgotten character leaves its camp", (function()
+        AltStable.ForgetCharacter("cm-3")
+        return not AltStable.CampOf("cm-3")
+    end)())
+
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil
+    AltStableDB = savedDB
 end
 
 ------------------------------------------------------------
@@ -1324,6 +1496,7 @@ do
     check("the grid put a character on the first card", first and first.char ~= nil)
     local inGrid = first and first.char and first.char.name
 
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
     T.Refresh()
     check("the scene put a character on the first card too",
@@ -1350,6 +1523,7 @@ do
           dimmed and dimmed:GetAlpha() == T.HIDDEN_CARD_ALPHA,
           tostring(dimmed and dimmed:GetAlpha()))
 
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
     T.Refresh()
     if dimmed and dimmed:IsShown() then
@@ -2779,6 +2953,7 @@ do
     -- that reads as glass over the world reads as a mess over a landscape.
     if bd then
         local savedView = AltStableConfig.rosterView
+        AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
         AltStableConfig.rosterView = "scene"
         pcall(AltStable.RosterPlugin.Refresh)
         check("the scene view puts art on the backdrop", bd._texture ~= nil,
@@ -2863,6 +3038,7 @@ do
         check("  and still counts the portraits" .. label,
               grid:find("0 of 3", 1, true) ~= nil, grid)
 
+        AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
         AltStableConfig.rosterView = "scene"
         T.Refresh()
         local scene = T.HintText() or ""
@@ -3012,6 +3188,7 @@ do
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
     T.Refresh()
     local drawn, fw, fh
@@ -3072,6 +3249,7 @@ do
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
 
     local function pets()
@@ -3292,6 +3470,7 @@ do
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView, AltStableConfig.rosterPets = "scene", true
     T.Refresh()
     local rows = {}
@@ -3386,6 +3565,7 @@ do
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView, AltStableConfig.rosterPets = "scene", true
     T.Refresh()
     local card, pet = T.Cards()[1], T.Pets()[1]
@@ -3420,6 +3600,7 @@ do
     main.GetWidth = function() return 1400 end
     main.GetHeight = function() return 800 end
     T.Activate(main)
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil   -- seed this block's own camp (#152)
     AltStableConfig.rosterView = "scene"
     local function seated()
         local n = 0

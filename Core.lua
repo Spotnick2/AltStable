@@ -1468,6 +1468,8 @@ function AltStable.ForgetCharacter(guid)
     -- good, and an unforget would silently bring the character back invisible.
     if AltStable.SetCharacterHidden then AltStable.SetCharacterHidden(guid, false) end
     if AltStable.SetCharacterFavourite then AltStable.SetCharacterFavourite(guid, false) end
+    -- And its seat in a Roster camp (#152): a forgotten character leaves it.
+    if AltStable.RemoveFromCamp then AltStable.RemoveFromCamp(guid) end
 
     -- The plugins hold their own per-character tables and would otherwise keep
     -- the inventory, recipes and lockouts of a character nothing shows.
@@ -4306,7 +4308,8 @@ SlashCmdList["ALTSTABLE"] = function(args)
         return
     end
 
-    -- Pin a character to the top of the Roster, and into the scene (#66).
+    -- Pin a character to the top of the Roster grid (#66). Since #152 the scene
+    -- shows camps, and favourites no longer seat it.
     if cmd == "favourite" or cmd == "favorite" or cmd == "unfavourite" or cmd == "unfavorite" then
         local on = (cmd == "favourite" or cmd == "favorite")
 
@@ -4331,7 +4334,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
             table.sort(named)
             if #named == 0 then
                 Print("No favourites. |cffffff00/alts favourite <character>|r pins one to the "
-                    .. "top of the Roster and puts it in the scene.")
+                    .. "top of the Roster grid.")
             else
                 Print("Favourites: |cff88ff88" .. table.concat(named, "|r, |cff88ff88") .. "|r")
             end
