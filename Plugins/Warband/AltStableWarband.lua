@@ -1791,16 +1791,18 @@ function AT_WB.RequestPreferredSize()
     AltStable.RequestPluginSize(AT_WB.PREFERRED_PANEL_W[View()] or MIN_PANEL_W)
 end
 
--- Single <-> Combined: the view, its size and the layout together, gliding
--- like a tab switch rather than jumping (#150).
+-- Single <-> Combined: the view and its size, gliding like a tab switch
+-- rather than jumping (#150). The LAYOUT is the animator's to place, through
+-- OnResize (the floor, then Refresh): at the end of a trip that grows, so
+-- Combined's columns never stand past a window still on its way there, and
+-- before one that shrinks. Refreshing here as well laid Combined out at its
+-- final width before the trip and gathered every bag twice (#191 review).
 function AT_WB.SetView(view)
     if View() == view then return end
     local function apply()
         AltStable.SetConfigValue("warbandView", view)
         AT_WB.scrollRow = 0
         AT_WB.RequestPreferredSize()
-        AT_WB.HoldMinSize()
-        AT_WB.Refresh()
     end
     if AltStable.AnimateWindowChange then AltStable.AnimateWindowChange(apply) else apply() end
 end

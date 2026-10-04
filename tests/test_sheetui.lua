@@ -1271,13 +1271,16 @@ do
             -- A screen too small for even the tab's floor (the Roster's 796
             -- panel): the floor runs while clamped, and must floor the REQUEST,
             -- not replace it with the clamped size (Codex, #150).
+            -- Through the client's own event, not RefitWindow by hand: nothing
+            -- listened for a display change before (#191 review).
+            local watch = AltStable._test.displayWatch
             UIParent:SetWidth(1000)
-            AltStable.RefitWindow()
+            watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
             check("a narrow screen clamps the window below the floor",
                   f:GetWidth() < sidebar + 1 + 796, tostring(f:GetWidth()))
             AltStable.EnsureWindowMinSize(sidebar + 1 + 796, 30 + 400 + 22 + 2)
             UIParent:SetWidth(1365)
-            AltStable.RefitWindow()
+            watch:GetScript("OnEvent")(watch, "UI_SCALE_CHANGED")
             eq("back on the full screen, the preferred size returns, floor and all",
                f:GetWidth() .. "x" .. f:GetHeight(), wantW .. "x" .. wantH)
 

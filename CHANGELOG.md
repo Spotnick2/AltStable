@@ -5,8 +5,9 @@
 ### Changed
 
 - **Roster, Warband and Professions open at their own size**
-  ([#150](https://github.com/Spotnick2/AltStable/issues/150)), whichever tab you came from and on
-  every account. They used to keep whatever size the previous tab left. Warband's Single and
+  ([#150](https://github.com/Spotnick2/AltStable/issues/150)), whichever tab you came from. They
+  used to keep whatever size the previous tab left. (A collapsed sidebar still makes the window
+  narrower by its width; the tab's own area is the same.) Warband's Single and
   Combined views each have their own width, and switching between them resizes the window.
   On a smaller screen or at a larger scale, the window still fits the screen as before.
 

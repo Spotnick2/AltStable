@@ -2354,10 +2354,10 @@ AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
 AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
 AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 
--- A plugin tab's floor (#154). Plugin tabs keep whatever size the last section
--- left (#150), so a tab that needs room - a toolbar, a dialog - says how much,
--- and the window GROWS to it, through the same clamp. Never shrinks: the user's
--- larger window stays theirs.
+-- A plugin tab's floor (#154). A tab that needs room - a toolbar, a dialog -
+-- says how much, and the window GROWS to it, through the same clamp. The floor
+-- never shrinks a window; a tab's preferred size (RequestPluginSize, #150) is
+-- what sets it on opening.
 --
 -- Decided on the ACTUAL size, not the remembered request (Warband -> Raids ->
 -- Warband, Codex review of #154) - but the floor is put on the REQUEST (#150).
@@ -2393,8 +2393,9 @@ end
 
 -- A plugin tab's PREFERRED size (#150), asked for when it opens, so it opens
 -- the same whichever tab came before it and whichever account this is. Given as
--- the content panel's width beside the sidebar as it is now; every plugin tab
--- shares one window height, so moving between them never changes it. 660 fits
+-- the content panel's width beside the sidebar as it is now. Roster, Warband
+-- and Professions share one window height, so moving between them never
+-- changes it (Raids and Options size themselves). 660 fits
 -- the owner's 3840x2160 with the UI scale off (1365 x 768 units, less the
 -- margin) at addon scale 1. Smaller screens and larger scales clamp through
 -- SizeFor as everything else does, and the tab's own floor still applies after.
@@ -2444,6 +2445,19 @@ function AltStable.RefitWindow()
 end
 
 function AltStable.IsWindowMaximized() return maxState.on end
+
+-- The CLIENT's scale and the display change the room too, and nothing refitted
+-- the window for them (#191 review): a window clamped at a high WoW UI scale
+-- stayed small after lowering it, and its remembered request then no longer
+-- explained it, so the next floor took the clamped size for the request.
+do
+    local watch = CreateFrame("Frame")
+    watch:RegisterEvent("UI_SCALE_CHANGED")
+    watch:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    watch:SetScript("OnEvent", function() AltStable.RefitWindow() end)
+    AltStable._test = AltStable._test or {}
+    AltStable._test.displayWatch = watch
+end
 
 -- ANIMATING a change of the window's geometry (#150): maximize, restore, and
 -- the sidebar collapsing or expanding.
@@ -3426,9 +3440,11 @@ local function CreateFrameIfNeeded()
             AltStable.SkinStripe(stripe, true, ar, ag, ab)
             lbl:SetTextColor(ar, ag, ab)
             icon:SetAlpha(1.0)
-            -- Animated like a sheet tab (#159): a plugin that sizes the window
-            -- in OnActivate (Raids, Options, Warband's floor) glides there; one
-            -- that keeps the size (Roster) makes no trip at all.
+            -- Animated like a sheet tab (#159): every plugin sizes the window in
+            -- OnActivate (Raids to its grid, Options, the others to their
+            -- preferred size, #150) and glides there. It is laid out at its end
+            -- size first, so a growing trip can show it past the window's edge
+            -- for the fifth of a second the trip lasts.
             AnimateWindowChange(function()
                 if activeSection._isPlugin and activeSection.OnDeactivate then
                     activeSection.OnDeactivate(frame)

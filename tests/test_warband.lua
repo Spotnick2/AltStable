@@ -910,6 +910,10 @@ do
         wb.SetView("combined")
         eq("switching to Combined asks for Combined's width",
            calls[1], "pref " .. wb.PREFERRED_PANEL_W.combined)
+        -- And nothing else: the layout is the animator's to place, through
+        -- OnResize (#191 review) - laid out here, Combined stood past a
+        -- window still growing toward it, and every bag was gathered twice.
+        eq("  and leaves the layout to the animator", #calls, 1)
         eq("  through the window animation", animated, 1)
         eq("  and the view is saved", AltStableConfig.warbandView, "combined")
         calls = {}
