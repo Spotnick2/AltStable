@@ -1363,7 +1363,27 @@ end
 
 local GRID_PARTS = { "bodyScroll", "frozenScroll", "headerScroll", "frozenHeader", "hScrollBar", "totalsBar" }
 
+-- The size the tab opens at, and the least it works in (#150). It had no floor
+-- at all, so it took whatever the tab before it left. The recipe row needs
+-- about 700 (name 210, skill, source, then the "known by" names from 400 on),
+-- and the toolbar - twelve profession buttons and the search box - about 570.
+-- Below the floor's height there is no room for rows under the cards.
+local PREFERRED_PANEL_W = 760
+local MIN_PANEL_W, MIN_PANEL_H = 600, 400
+AT.PREFERRED_PANEL_W, AT.MIN_PANEL_W, AT.MIN_PANEL_H = PREFERRED_PANEL_W, MIN_PANEL_W, MIN_PANEL_H
+
+-- The floor as a window size: the panel sits beside the sidebar, under the
+-- title, 1 above the window's bottom (BuildPanel).
+function AT.HoldMinSize()
+    if not AltStable.EnsureWindowMinSize then return end
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+    AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + 1 + MIN_PANEL_H)
+end
+
 function AT.Activate(mainFrame)
+    if AltStable.RequestPluginSize then AltStable.RequestPluginSize(PREFERRED_PANEL_W) end
+    AT.HoldMinSize()
     BuildPanel(mainFrame)
     HookRefresh()
     AT.isActive = true
@@ -1397,7 +1417,13 @@ local function BootstrapPlugin()
         independentStamp = true,
         OnActivate    = function(mf) AT.Activate(mf) end,
         -- The window changed size under us: maximize, restore, the sidebar (#150).
-        OnResize      = function() if AT.isActive then AT.Refresh() end end,
+        OnResize      = function()
+            if not AT.isActive then return end
+            -- Expanding the sidebar narrows the panel while the window keeps
+            -- its width (#157): the floor again, as Warband does.
+            AT.HoldMinSize()
+            AT.Refresh()
+        end,
         OnDeactivate  = function(mf) AT.Deactivate(mf) end,
         OnSerialize   = function(g) return SerializePlayer(g) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,

@@ -892,6 +892,35 @@ do
     end
     AltStable.EnsureWindowMinSize = realMin
 
+    -- Its PREFERRED size (#150), per view, asked for on opening - before the
+    -- floor, so the floor can only raise it - and on switching views, once.
+    do
+        local calls = {}
+        local realReq, realMin2, realAnim = AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize,
+                                            AltStable.AnimateWindowChange
+        AltStable.RequestPluginSize = function(w) calls[#calls + 1] = "pref " .. w end
+        AltStable.EnsureWindowMinSize = function() calls[#calls + 1] = "floor" end
+        local animated = 0
+        AltStable.AnimateWindowChange = function(fn) animated = animated + 1; fn() end
+        AltStableConfig.warbandView = "single"
+        wb.Activate(main)
+        eq("Single opens at its preferred width, then the floor",
+           table.concat(calls, ","), "pref " .. wb.PREFERRED_PANEL_W.single .. ",floor")
+        calls = {}
+        wb.SetView("combined")
+        eq("switching to Combined asks for Combined's width",
+           calls[1], "pref " .. wb.PREFERRED_PANEL_W.combined)
+        eq("  through the window animation", animated, 1)
+        eq("  and the view is saved", AltStableConfig.warbandView, "combined")
+        calls = {}
+        wb.SetView("combined")
+        eq("the view it already has changes nothing", #calls, 0)
+        check("Combined holds three tabs at seven icons", wb.PREFERRED_PANEL_W.combined >= 3 * 274 + 2 * 18 + 58 + 14 + 2 * 12 + 2 * 26)
+        AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize, AltStable.AnimateWindowChange =
+            realReq, realMin2, realAnim
+        AltStableConfig.warbandView = nil
+    end
+
     -- A display too small even for that: the dialog shows fewer icon rows,
     -- never rows past its own Save (the 333-px panel Codex measured).
     wb.OpenDialog(1)

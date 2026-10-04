@@ -2359,18 +2359,29 @@ AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 -- and the window GROWS to it, through the same clamp. Never shrinks: the user's
 -- larger window stays theirs.
 --
--- Decided on the ACTUAL size, not the remembered request: the Raids plugin
--- sizes the frame directly, so the request can say 951 while the window is 595
--- (Warband -> Raids -> Warband, Codex review of #154).
+-- Decided on the ACTUAL size, not the remembered request (Warband -> Raids ->
+-- Warband, Codex review of #154) - but the floor is put on the REQUEST (#150).
+-- Floored from the actual size, a window the screen had clamped below the
+-- minimum replaced the tab's preferred size with the clamped one, so lowering
+-- the scale afterwards could never bring the preferred size back.
 function AltStable.EnsureWindowMinSize(w, h)
     if not frame then return end
     local cw, ch = frame:GetWidth() or 0, frame:GetHeight() or 0
+    local rw, rh = wantW or cw, wantH or ch
     -- Maximized, the actual size is the screen's, and growing the request to
     -- it would make Restore restore to full screen. The request is what Restore
     -- will apply, so the floor goes on that.
-    if maxState.on then cw, ch = wantW or cw, wantH or ch end
+    if maxState.on then cw, ch = rw, rh end
     if cw >= w and ch >= h then return end
-    ResizeFrame(math.max(cw, w), math.max(ch, h))
+    -- The request is only trusted while it still explains the window: through
+    -- SizeFor it gives the size the window has (the screen clamped it). A
+    -- window that does NOT match was sized directly, and its request is stale
+    -- (the #154 case), so the floor starts from the actual size there.
+    local ew, eh = SizeFor(rw, rh)
+    local stale = math.abs((ew or 0) - cw) > 0.5 or math.abs((eh or 0) - ch) > 0.5
+    local bw, bh = rw, rh
+    if stale then bw, bh = cw, ch end
+    ResizeFrame(math.max(bw, w), math.max(bh, h))
 end
 
 -- A plugin that sizes the window to its own content (Raids) asks here rather
@@ -2378,6 +2389,18 @@ end
 -- not applied while the window is maximized.
 function AltStable.RequestWindowSize(w, h)
     ResizeFrame(w, h)
+end
+
+-- A plugin tab's PREFERRED size (#150), asked for when it opens, so it opens
+-- the same whichever tab came before it and whichever account this is. Given as
+-- the content panel's width beside the sidebar as it is now; every plugin tab
+-- shares one window height, so moving between them never changes it. 660 fits
+-- the owner's 3840x2160 with the UI scale off (1365 x 768 units, less the
+-- margin) at addon scale 1. Smaller screens and larger scales clamp through
+-- SizeFor as everything else does, and the tab's own floor still applies after.
+AltStable.PLUGIN_WINDOW_H = 660
+function AltStable.RequestPluginSize(panelW)
+    ResizeFrame(SIDEBAR_WIDTH + 1 + panelW, AltStable.PLUGIN_WINDOW_H)
 end
 -- Forward-declared, because the hook below is registered before the function is
 -- defined and a closure written above the `local` would capture a nil GLOBAL of
@@ -2546,6 +2569,9 @@ local function AnimateWindowChange(applyGeometry, labels, laidOut)
     runner:Show()
 end
 AltStable._test.AnimateWindowChange = AnimateWindowChange
+-- Public too (#150): Warband's Single/Combined switch resizes the window, and
+-- glides there like a tab switch rather than jumping.
+AltStable.AnimateWindowChange = AnimateWindowChange
 AltStable._test.WindowAnimRunner = function() return windowAnim.runner end
 
 function AltStable.SetWindowMaximized(on)

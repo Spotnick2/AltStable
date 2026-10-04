@@ -1234,6 +1234,58 @@ do
             UIParent:SetHeight(savedH)
         end
 
+        -- A plugin tab's PREFERRED size (#150): the same whichever tab came
+        -- before it, on the owner's screen (3840x2160, UI scale off: 1365 x 768
+        -- units), clamped on a smaller one - and the preference survives the
+        -- clamp AND the tab's floor, so scaling back down brings it back.
+        do
+            local savedW, savedH = UIParent:GetWidth(), UIParent:GetHeight()
+            local savedScale = f:GetScale()
+            UIParent:SetWidth(1365); UIParent:SetHeight(768)
+            AltStable.SetScale(1.0)
+            local sidebar = AltStable.LAYOUT.SIDEBAR_WIDTH
+            local wantW, wantH = sidebar + 1 + 1040, AltStable.PLUGIN_WINDOW_H
+
+            T.ResizeFrame(600, 400)                 -- a narrow sheet tab before it
+            AltStable.RequestPluginSize(1040)
+            local afterNarrow = f:GetWidth() .. "x" .. f:GetHeight()
+            T.ResizeFrame(1280, 700)                -- a wide one
+            AltStable.RequestPluginSize(1040)
+            eq("a plugin tab opens at the same size after a narrow tab and a wide one",
+               f:GetWidth() .. "x" .. f:GetHeight(), afterNarrow)
+            eq("  its preferred size, on the owner's screen",
+               afterNarrow, wantW .. "x" .. wantH)
+            check("  which fits that screen with the margin",
+                  wantW <= 1365 - T.SCREEN_MARGIN and wantH <= 768 - T.SCREEN_MARGIN)
+
+            -- A smaller screen in its own units: the addon scaled to 1.25.
+            AltStable.SetScale(1.25)
+            local limH = (768 * UIParent:GetEffectiveScale()) / (f:GetEffectiveScale() or 1)
+                         - T.SCREEN_MARGIN
+            check("scaled up, the preferred size is clamped to the screen",
+                  f:GetHeight() <= limH + 0.5, f:GetHeight() .. " vs " .. limH)
+            AltStable.SetScale(1.0)
+            eq("scaling back down restores it",
+               f:GetWidth() .. "x" .. f:GetHeight(), wantW .. "x" .. wantH)
+
+            -- A screen too small for even the tab's floor (the Roster's 796
+            -- panel): the floor runs while clamped, and must floor the REQUEST,
+            -- not replace it with the clamped size (Codex, #150).
+            UIParent:SetWidth(1000)
+            AltStable.RefitWindow()
+            check("a narrow screen clamps the window below the floor",
+                  f:GetWidth() < sidebar + 1 + 796, tostring(f:GetWidth()))
+            AltStable.EnsureWindowMinSize(sidebar + 1 + 796, 30 + 400 + 22 + 2)
+            UIParent:SetWidth(1365)
+            AltStable.RefitWindow()
+            eq("back on the full screen, the preferred size returns, floor and all",
+               f:GetWidth() .. "x" .. f:GetHeight(), wantW .. "x" .. wantH)
+
+            AltStable.SetScale(savedScale)
+            UIParent:SetWidth(savedW); UIParent:SetHeight(savedH)
+            T.ResizeFrame(820, 600)
+        end
+
         -- The OTHER path. ResizeFrameToContent sets the size directly rather
         -- than going through ResizeFrame, so it needed the clamp of its own.
         -- Exercised on WIDTH, because height has a floor it cannot go below -

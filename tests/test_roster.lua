@@ -1235,6 +1235,19 @@ do
     registered.OnResize()
     check("and asks again when the window changes under it", asked ~= nil)
     AltStable.EnsureWindowMinSize = held
+
+    -- Its PREFERRED size (#150), asked for on opening, before the floor - so
+    -- it opens the same whichever tab came before.
+    local calls = {}
+    local heldReq, heldMin = AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize
+    AltStable.RequestPluginSize = function(w) calls[#calls + 1] = "pref " .. w end
+    AltStable.EnsureWindowMinSize = function() calls[#calls + 1] = "floor" end
+    T.Activate(main)
+    eq("opening the Roster asks for its preferred width, then the floor",
+       table.concat(calls, ","):sub(1, #("pref 1040,floor")),
+       "pref " .. AltStable.RosterPlugin.PREFERRED_PANEL_W .. ",floor")
+    check("  which is more than the floor", AltStable.RosterPlugin.PREFERRED_PANEL_W > AltStable.RosterPlugin.MinPanelW())
+    AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin
 end
 
 -- The camp storage (Config.lua), and the right-click menu's camp entries.
