@@ -550,6 +550,185 @@ end
 
 AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 
+-- Roster camps (#152)
+--
+-- The Roster scene shows a CAMP: a named group of up to CAMP_SIZE characters
+-- in order (order is who stands where), with its own backdrop. Modelled on
+-- retail's warband camps. They replace favourites as the scene's cast;
+-- favourites order the grid only.
+--
+--   AltStableConfig.rosterCamps = { { id = 1, name = "Camp 1", backdrop = <scene id>,
+--                                      members = { guid, ... } }, ... }   -- in display order
+--   AltStableConfig.rosterCamp  = <id of the camp the scene shows>
+--
+-- Local view preferences like favourites and hidden: per account, never synced.
+-- Every write goes through SetCamps, a full copy (the config's copy-on-write
+-- rule). A character is in at most ONE camp: adding it elsewhere moves it.
+-- nil `rosterCamps` means "never set up"; the Roster seeds the first camp then.
+------------------------------------------------------------
+
+local CAMP_SIZE = 5
+AltStable.CAMP_SIZE = CAMP_SIZE
+
+function AltStable.GetCamps()
+    local camps = AltStableConfig and AltStableConfig.rosterCamps
+    return type(camps) == "table" and camps or {}
+end
+
+function AltStable.CampsSetUp()
+    return type(AltStableConfig and AltStableConfig.rosterCamps) == "table"
+end
+
+local function CopyCamps(camps)
+    local out = {}
+    for i, c in ipairs(camps) do
+        local members = {}
+        for j, g in ipairs(c.members or {}) do members[j] = g end
+        out[i] = { id = c.id, name = c.name, backdrop = c.backdrop, members = members }
+    end
+    return out
+end
+
+local function SetCamps(camps)
+    AltStableConfig = AltStableConfig or {}
+    AltStable.SetConfigValue("rosterCamps", CopyCamps(camps))
+end
+
+local function FindCamp(camps, id)
+    for i, c in ipairs(camps) do
+        if c.id == id then return c, i end
+    end
+end
+
+function AltStable.GetCamp(id)
+    return (FindCamp(AltStable.GetCamps(), id))
+end
+
+-- The camp the scene shows: the chosen one, else the first.
+function AltStable.SelectedCamp()
+    local camps = AltStable.GetCamps()
+    local want = AltStableConfig and AltStableConfig.rosterCamp
+    return (want and FindCamp(camps, want)) or camps[1]
+end
+
+function AltStable.SelectCamp(id)
+    if not AltStable.GetCamp(id) then return false end
+    AltStable.SetConfigValue("rosterCamp", id)
+    return true
+end
+
+-- The camp a character is in, and its place there.
+function AltStable.CampOf(guid)
+    if not guid then return nil end
+    for _, c in ipairs(AltStable.GetCamps()) do
+        for j, g in ipairs(c.members or {}) do
+            if g == guid then return c, j end
+        end
+    end
+end
+
+-- A new camp, last in the list. Returns its id. `members` beyond CAMP_SIZE are
+-- dropped, and anyone in another camp leaves it.
+function AltStable.CreateCamp(name, members, backdrop)
+    local camps = CopyCamps(AltStable.GetCamps())
+    local nextId = 0
+    for _, c in ipairs(camps) do if (tonumber(c.id) or 0) > nextId then nextId = c.id end end
+    nextId = nextId + 1
+    local keep, taken = {}, {}
+    for _, g in ipairs(members or {}) do
+        if #keep < CAMP_SIZE and not taken[g] then keep[#keep + 1] = g; taken[g] = true end
+    end
+    for _, c in ipairs(camps) do
+        for j = #c.members, 1, -1 do
+            if taken[c.members[j]] then table.remove(c.members, j) end
+        end
+    end
+    if not name or name == "" then name = "Camp " .. nextId end
+    camps[#camps + 1] = { id = nextId, name = name, backdrop = backdrop, members = keep }
+    SetCamps(camps)
+    return nextId
+end
+
+function AltStable.RenameCamp(id, name)
+    if not name or name == "" then return false end
+    local camps = CopyCamps(AltStable.GetCamps())
+    local c = FindCamp(camps, id)
+    if not c then return false end
+    c.name = name
+    SetCamps(camps)
+    return true
+end
+
+-- Deleting the shown camp shows its neighbour. The last camp can go too: the
+-- list is then empty, not "never set up", so it is not seeded again.
+function AltStable.DeleteCamp(id)
+    local camps = CopyCamps(AltStable.GetCamps())
+    local _, i = FindCamp(camps, id)
+    if not i then return false end
+    local shown = AltStable.SelectedCamp()
+    table.remove(camps, i)
+    SetCamps(camps)
+    if shown and shown.id == id then
+        local neighbour = camps[i] or camps[i - 1]
+        AltStable.SetConfigValue("rosterCamp", neighbour and neighbour.id or nil)
+    end
+    return true
+end
+
+-- Into camp `id`, at `pos` (default: the end). Out of any other camp first. A
+-- full camp refuses (false, "full"); a move WITHIN a camp is a reorder.
+function AltStable.AddToCamp(guid, id, pos)
+    if not guid then return false end
+    local camps = CopyCamps(AltStable.GetCamps())
+    local target = FindCamp(camps, id)
+    if not target then return false end
+    local from, at
+    for _, c in ipairs(camps) do
+        for j, g in ipairs(c.members) do
+            if g == guid then from, at = c, j end
+        end
+    end
+    if from ~= target and #target.members >= CAMP_SIZE then return false, "full" end
+    if from then table.remove(from.members, at) end
+    pos = math.max(1, math.min(tonumber(pos) or (#target.members + 1), #target.members + 1))
+    table.insert(target.members, pos, guid)
+    SetCamps(camps)
+    return true
+end
+
+function AltStable.RemoveFromCamp(guid)
+    if not AltStable.CampOf(guid) then return false end
+    local camps = CopyCamps(AltStable.GetCamps())
+    for _, c in ipairs(camps) do
+        for j = #c.members, 1, -1 do
+            if c.members[j] == guid then table.remove(c.members, j) end
+        end
+    end
+    SetCamps(camps)
+    return true
+end
+
+-- A camp moved to place `pos` in the list.
+function AltStable.MoveCamp(id, pos)
+    local camps = CopyCamps(AltStable.GetCamps())
+    local c, i = FindCamp(camps, id)
+    if not c then return false end
+    table.remove(camps, i)
+    pos = math.max(1, math.min(tonumber(pos) or 1, #camps + 1))
+    table.insert(camps, pos, c)
+    SetCamps(camps)
+    return true
+end
+
+function AltStable.SetCampBackdrop(id, backdrop)
+    local camps = CopyCamps(AltStable.GetCamps())
+    local c = FindCamp(camps, id)
+    if not c then return false end
+    c.backdrop = backdrop
+    SetCamps(camps)
+    return true
+end
+
 -- Favourite characters (#66)
 --
 -- Deliberately the same shape as hidden below, down to the copy-on-write and

@@ -1468,6 +1468,8 @@ function AltStable.ForgetCharacter(guid)
     -- good, and an unforget would silently bring the character back invisible.
     if AltStable.SetCharacterHidden then AltStable.SetCharacterHidden(guid, false) end
     if AltStable.SetCharacterFavourite then AltStable.SetCharacterFavourite(guid, false) end
+    -- And its seat in a Roster camp (#152): a forgotten character leaves it.
+    if AltStable.RemoveFromCamp then AltStable.RemoveFromCamp(guid) end
 
     -- The plugins hold their own per-character tables and would otherwise keep
     -- the inventory, recipes and lockouts of a character nothing shows.
