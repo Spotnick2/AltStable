@@ -4312,12 +4312,7 @@ do
         for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
         eq(AltStable.GetCamp(made).backdrop, "elwynn", "  it arrives with the sender's default, not ours")
         eq(AltStable.GetCamps()[2].backdrop, "nagrand", "  a camp's own backdrop still wins over the default")
-        AltStableConfig = {}
-        made = AltStable.CreateCamp("No default anywhere", {})
-        sent = AltStable.CampSyncLines()
-        AltStableConfig = {}
-        for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
-        eq(AltStable.GetCamp(made).backdrop, nil, "  with no default on either side, none is invented")
+        -- A sender with no default at all: test_roster, where the backdrops are.
     end
 
     -- Battle.net going away clears what was found.

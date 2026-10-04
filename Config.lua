@@ -628,8 +628,9 @@ end
 -- camp, `;` between. Names and backdrops are %XX-escaped for the characters
 -- the format uses. Also how SetCamps tells a real change from a no-op.
 -- `inherit` is the backdrop a camp with none of its own shows (the account's
--- rosterScene, which is not synced): sent in its place, so the other account
--- shows the same one rather than its own default (#172, Codex).
+-- default, which is not synced - see AltStable.DefaultCampBackdrop): sent in
+-- its place, so the other account shows the same one rather than its own
+-- default, chosen or built in (#172, Codex).
 local function Esc(v)
     return (tostring(v or ""):gsub("[%%;,%c]", function(ch) return ("%%%02X"):format(ch:byte()) end))
 end
@@ -940,7 +941,8 @@ function AltStable.CampSyncLines()
     local out = {}
     local stamp = CampsStamp()
     if stamp > 0 then
-        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";" .. CampsWire(AltStable.GetCamps(), AltStableConfig.rosterScene)
+        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";" .. CampsWire(AltStable.GetCamps(), AltStable.DefaultCampBackdrop
+            and AltStable.DefaultCampBackdrop() or AltStableConfig.rosterScene)
     end
     local ostamp = OrderStamp()
     if ostamp > 0 then
