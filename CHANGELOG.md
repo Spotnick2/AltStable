@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Under the hood
+
+- **The glass look now comes from LibGlass**, a small library shared by the Glass addons and
+  included in the download ([#184](https://github.com/Spotnick2/AltStable/issues/184)). Nothing
+  changes on screen.
+
 ## v0.8.0-beta
 
 Camps in the Roster, like retail's warband camps. Measured on client 1.60.1.70205.

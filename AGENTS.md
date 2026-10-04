@@ -51,7 +51,8 @@ AltStable-specific.
 Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order matters; a new
 `.lua` file must be added there in the right position):
 
-`Libs/` (LibStub, LibDeflate, ChatThrottleLib) → `Compat.lua` → `Theme.lua` → `Core.lua` →
+`Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
+`Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
 `RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `PublicAPI.lua` → `Export.lua`.
 
@@ -94,7 +95,9 @@ Lua is first on `PATH`).
 
 - **Run all tests:** `pwsh tests/run.ps1` (override the interpreter with `-Lua <path>`; it
   defaults to the path above). It runs every `tests/test_*.lua` from the repo root and exits
-  non-zero on failure. Lua only — no Python tests here, unlike upstream.
+  non-zero on failure. The tests need a **LibGlass checkout** (`$env:LIBGLASS`, else
+  `..\LibGlass`) and fail loudly without one; `run.ps1` warns when it is not at the `.pkgmeta`
+  pin. Lua only — no Python tests here, unlike upstream.
 - **How it works:** `tests/wow_stubs.lua` is a minimal WoW API mock driven via the exported
   `WoW` table (`WoW.reset()`, `WoW.flushTimers()`, `WoW.sentMessages()`, …). A test `dofile`s
   the stubs, sets up SavedVariable globals, `loadfile`s the module under test, and asserts.
@@ -200,6 +203,31 @@ client ignores it.
   `key:value` lines separated by `==END==`. Read `Core.lua` before touching it, and keep the
   corresponding tests green. A format change means a `PROTOCOL_VERSION` bump — old clients must
   cleanly ignore, not misparse.
+
+## The glass material
+
+The material is **LibGlass-1.0**, an embedded LibStub library (`..\LibGlass`,
+github.com/Spotnick2/LibGlass, public, MIT) that every glass addon embeds (#184). Its repo owns
+the code, the textures, the generator and the write-up (`docs/GLASS-MATERIAL.md`), and its
+`CLAUDE.md` holds the contract (the API, region fields and texture names only grow; instances;
+upgrade rules).
+
+- **Material changes are LibGlass PRs**, never edits here. A bug or a need found here goes on a
+  LibGlass issue; never edit `..\LibGlass` from this repo's session.
+- **How it's embedded:** `.pkgmeta` externals put it in `Libs\LibGlass-1.0\` (the only supported
+  path: `MEDIA` is derived from it), and the TOC loads its XML first. Only `Libs/LibGlass-1.0/`
+  is gitignored; the other libraries stay vendored. A dev copy comes from the LibGlass checkout
+  (`$env:LIBGLASS`, default `..\LibGlass`) through its own `Tools\deploy.ps1`, which
+  `Tools\deploy.ps1` here calls first. The tests load the same checkout (`tests/libglass.lua`).
+- **The pin:** `.pkgmeta` pins a tag (`tag: r1`), **never `tag: latest`**, and no comment on a
+  value line. Bump it only in a release made anyway: players get library fixes earlier through
+  whichever glass addon ships the newest copy. CI fetches the pin (`tests/fetch_libglass.sh`),
+  tests against it, and asserts the zip's `Libs/LibGlass-1.0/` is exactly that commit's shipped
+  files.
+- **`AltStable.Glass` is an instance**, built with `rimAlpha = 1` (the rim as it always drew
+  here). `Skin.lua` pushes the chosen preset into its `STYLE` before each `Apply`; that STYLE is
+  this addon's own. `Glass.MEDIA` is for the library's textures only; the addon's art keeps its
+  own paths (`AltStable.MEDIA_PATH`).
 
 ## Conventions
 

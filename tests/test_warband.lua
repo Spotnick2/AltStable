@@ -30,7 +30,7 @@ AltStableConfig = {}
 dofile("Compat.lua")
 -- The material and the skin seam, in .toc order: the revamped panel (#153) is
 -- built in these tests, and it is painted through them.
-assert(loadfile("Glass.lua"))("AltStable")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()

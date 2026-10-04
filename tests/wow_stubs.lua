@@ -1699,6 +1699,8 @@ function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 function GetBuildInfo() return "1.60.1", "70205", "Oct 2 2026", 16001 end
 -- GetLocale() -> localeName (forever-api-1.60.1.70205.md). WoW.locale to test another.
 function GetLocale() return WoW.locale or "enUS" end
+-- Client string alias (in the dump's _G walk); LibStub's version check uses it.
+strmatch = string.match
 
 -- Measured: nil when the character is not rested (docs/forever-api-notes.md).
 function GetXPExhaustion() return WoW.restXP end

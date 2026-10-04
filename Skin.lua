@@ -130,7 +130,8 @@ end
 --
 -- Everything that wants the material goes through HERE rather than calling
 -- Glass.Apply directly, because this is also what pushes the preset into the
--- material's shared STYLE table - and Glass reads that at Apply time. A toast
+-- material's STYLE table - this addon's LibGlass instance's own, read at Apply
+-- time (#184). A toast
 -- that appeared before the sheet was ever built would otherwise get the file's
 -- default look rather than the chosen one: clear glass in a smoked window.
 function AltStable.SkinWindow(frame, size)
@@ -139,13 +140,13 @@ function AltStable.SkinWindow(frame, size)
 
     -- Only the three body parameters: see the note above about the rim.
     --
-    -- COPIED, never aliased. `st.tint = preset.tint` would make the material's
-    -- process-global STYLE table hold the preset table ITSELF, so an in-place
-    -- write anywhere - a debug command, a future upstream Glass change doing
-    -- `STYLE.tint[4] = x` - would edit AltStable.SKINS permanently, for the
-    -- rest of the session, for every window. Glass.lua is a copy that is meant
-    -- to stay in step with upstream, which makes shared mutable state exactly
-    -- the wrong thing to hand it.
+    -- COPIED, never aliased. `st.tint = preset.tint` would make the instance's
+    -- STYLE table hold the preset table ITSELF, so an in-place write anywhere -
+    -- a debug command, a LibGlass release (its upgrades fill STYLE keys in
+    -- place) doing `STYLE.tint[4] = x` - would edit AltStable.SKINS
+    -- permanently, for the rest of the session, for every window. The
+    -- material is a library this addon does not own (#184), which makes
+    -- shared mutable state exactly the wrong thing to hand it.
     local body = (size == "small") and AltStable.SkinPopupTint() or preset.tint
     local st = Glass.STYLE
     st.grain, st.wash = preset.grain, preset.wash

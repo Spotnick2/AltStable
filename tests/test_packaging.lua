@@ -168,7 +168,47 @@ check("Professions moves to its own folder",
     check("  and is also ignored", ignore:find("CHANGELOG%.md") ~= nil)
 
     -- MIT: the notice travels with the distribution.
-    check("LICENSE is NOT ignored", ignore:find("LICENSE") == nil)
+    -- An ENTRY, not the word: the comments may say why it ships (#184), and
+    -- LibGlass's own LICENSE ships too.
+    local licenceIgnored = false
+    -- Every entry, the first one included: the captured block starts AT it,
+    -- and a pattern anchored on a newline slipped past it (#185 review).
+    for line in (ignore .. "\n"):gmatch("([^\n]*)\n") do
+        local entry = line:match("^%s*%-%s*(.*)$")
+        if entry and entry:find("LICENSE", 1, true) then licenceIgnored = true end
+    end
+    check("LICENSE is NOT ignored (ours or LibGlass's)", not licenceIgnored)
+
+    -- CurseForge's packager does NOT apply an external's own ignore list, so
+    -- each of LibGlass's non-dot ignores must be repeated here under
+    -- Libs/LibGlass-1.0/. CI cannot see a missing one: its BigWigs dry run DOES
+    -- honour the library's list, so the zip comes out clean either way and
+    -- only the published one would carry the library's tests/docs/Tools.
+    dofile("tests/libglass.lua")
+    local libPkg = read(LibGlassRoot() .. "/.pkgmeta") or ""
+    local libIgnore = libPkg:match("ignore:%s*\n(.*)$") or ""
+    -- Line by line: a pattern that eats the newline on both sides skips every
+    -- other entry.
+    local function entries(block)
+        local out = {}
+        for line in (block .. "\n"):gmatch("([^\n]*)\n") do
+            local e = line:gsub("\r", ""):match("^%s*%-%s*([^#]-)%s*$")
+            if e and e ~= "" then out[#out + 1] = e end
+        end
+        return out
+    end
+    local ours, theirs = {}, 0
+    for _, e in ipairs(entries(ignore)) do ours[e] = true end
+    local missing = {}
+    for _, entry in ipairs(entries(libIgnore)) do
+        if not entry:match("^%.") then
+            theirs = theirs + 1
+            if not ours["Libs/LibGlass-1.0/" .. entry] then missing[#missing + 1] = entry end
+        end
+    end
+    check("LibGlass's own ignore list was read", theirs >= 3, tostring(theirs))
+    check("each of LibGlass's non-dot ignores is repeated under Libs/LibGlass-1.0",
+          #missing == 0, table.concat(missing, ", "))
 end
 
 check("CHANGELOG.md exists", read("CHANGELOG.md") ~= nil)

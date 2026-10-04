@@ -6,6 +6,7 @@
 ## Version: @project-version@
 ## SavedVariables: AltStableDB AltStableConfig AltStablePortraits
 
+Libs\LibGlass-1.0\LibGlass-1.0.xml
 Libs\LibStub\LibStub.lua
 Libs\LibDeflate\LibDeflate.lua
 Libs\ChatThrottleLib\ChatThrottleLib.lua
