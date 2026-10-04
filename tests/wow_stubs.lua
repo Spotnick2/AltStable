@@ -288,6 +288,11 @@ local function makeFrame()
         local l, r, t, b = c[1], c[2], c[3], c[4]
         return l, t, l, b, r, t, r, b
     end
+    -- Whether the cursor is over a frame: real state, false unless a test puts
+    -- the mouse there (`frame._mouseOver = true`). The chaining default
+    -- answered every frame with itself - "yes" - so a drop would have landed
+    -- on whichever frame happened to be asked first.
+    f.IsMouseOver = function(self) return self._mouseOver == true end
     -- A check button's state, as the client has it. The chaining default
     -- answered GetChecked with the frame itself - always truthy - so an Options
     -- handler reading it could never see "unchecked".
