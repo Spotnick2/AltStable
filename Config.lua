@@ -579,19 +579,42 @@ function AltStable.CampsSetUp()
     return type(AltStableConfig and AltStableConfig.rosterCamps) == "table"
 end
 
+-- A copy to change: EVERY field of each camp kept, members copied deep. A
+-- field this build does not know (a later one's) survives its writes.
 local function CopyCamps(camps)
     local out = {}
     for i, c in ipairs(camps) do
+        local copy = {}
+        for k, v in pairs(c) do copy[k] = v end
         local members = {}
         for j, g in ipairs(c.members or {}) do members[j] = g end
-        out[i] = { id = c.id, name = c.name, backdrop = c.backdrop, members = members }
+        copy.members = members
+        out[i] = copy
     end
     return out
 end
 
-local function SetCamps(camps)
-    AltStableConfig = AltStableConfig or {}
-    AltStable.SetConfigValue("rosterCamps", CopyCamps(camps))
+-- Store `camps` (already a copy - every mutator below makes one). Any change
+-- is the PLAYER's unless `keepAuto` says otherwise, which ends the first
+-- camp's topping-up (see SeedCamp).
+local function SetCamps(camps, keepAuto)
+    AltStable.SetConfigValue("rosterCamps", camps)
+    if not keepAuto and AltStableConfig.rosterCampsAuto then
+        AltStable.SetConfigValue("rosterCampsAuto", nil)
+    end
+end
+
+-- A new camp id: from a counter that only goes up, so an id is never reused -
+-- a menu or a drag still holding a deleted camp's id must not land in a
+-- newer camp that happened to get the same number.
+local function NextCampId(camps)
+    local n = tonumber(AltStableConfig and AltStableConfig.rosterCampNextId) or 0
+    for _, c in ipairs(camps) do
+        if (tonumber(c.id) or 0) > n then n = c.id end
+    end
+    n = n + 1
+    AltStable.SetConfigValue("rosterCampNextId", n)
+    return n
 end
 
 local function FindCamp(camps, id)
@@ -631,9 +654,7 @@ end
 -- dropped, and anyone in another camp leaves it.
 function AltStable.CreateCamp(name, members, backdrop)
     local camps = CopyCamps(AltStable.GetCamps())
-    local nextId = 0
-    for _, c in ipairs(camps) do if (tonumber(c.id) or 0) > nextId then nextId = c.id end end
-    nextId = nextId + 1
+    local nextId = NextCampId(camps)
     local keep, taken = {}, {}
     for _, g in ipairs(members or {}) do
         if #keep < CAMP_SIZE and not taken[g] then keep[#keep + 1] = g; taken[g] = true end
@@ -697,15 +718,61 @@ function AltStable.AddToCamp(guid, id, pos)
 end
 
 function AltStable.RemoveFromCamp(guid)
-    if not AltStable.CampOf(guid) then return false end
-    local camps = CopyCamps(AltStable.GetCamps())
+    if not guid then return false end
+    local camps, found = CopyCamps(AltStable.GetCamps()), false
     for _, c in ipairs(camps) do
         for j = #c.members, 1, -1 do
-            if c.members[j] == guid then table.remove(c.members, j) end
+            if c.members[j] == guid then table.remove(c.members, j); found = true end
         end
     end
-    SetCamps(camps)
+    if found then SetCamps(camps) end
+    return found
+end
+
+-- The first camp, made for the player (#152): the top characters. Marked as
+-- made for them, and topped up as more characters arrive (RefreshSeededCamp)
+-- until the player changes any camp. A fresh install knows only the character
+-- logged in; without this, that one would have stood alone for good.
+function AltStable.SeedCamp(members, backdrop)
+    local id = AltStable.CreateCamp("Camp 1", members, backdrop)
+    AltStable.SetConfigValue("rosterCampsAuto", true)
+    AltStable.SelectCamp(id)
+    return id
+end
+
+function AltStable.CampsAutoSeeded()
+    return AltStableConfig and AltStableConfig.rosterCampsAuto == true or false
+end
+
+-- The made-for-you camp's members, while it still is one. Writes only on a
+-- change, since this runs on every refresh.
+function AltStable.RefreshSeededCamp(members)
+    if not AltStable.CampsAutoSeeded() then return false end
+    local camps = CopyCamps(AltStable.GetCamps())
+    local c = camps[1]
+    if not c then return false end
+    local want = {}
+    for i = 1, math.min(#(members or {}), CAMP_SIZE) do want[i] = members[i] end
+    if table.concat(want, ",") == table.concat(c.members, ",") then return false end
+    c.members = want
+    SetCamps(camps, true)
     return true
+end
+
+-- Seats whose character no longer has a record (`/alts cleanup` deletes them
+-- without asking the camps) are freed: otherwise the camp counts them as full
+-- while the scene shows no one. `store` is AltStableDB. Not the player's
+-- change, so a made-for-you camp stays one.
+function AltStable.PruneCamps(store)
+    if type(store) ~= "table" then return false end
+    local camps, changed = CopyCamps(AltStable.GetCamps()), false
+    for _, c in ipairs(camps) do
+        for j = #c.members, 1, -1 do
+            if type(store[c.members[j]]) ~= "table" then table.remove(c.members, j); changed = true end
+        end
+    end
+    if changed then SetCamps(camps, true) end
+    return changed
 end
 
 -- A camp moved to place `pos` in the list.

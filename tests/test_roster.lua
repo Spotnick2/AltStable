@@ -1114,16 +1114,38 @@ do
     check("  and shows in the scene view", T.CampBar():IsShown())
     eq("all five stand at the fire", seated(), 5)
     eq("  so the hint has nothing to explain", hint(), "")
-    -- Seeded ONCE: a later character does not join it by itself.
+    -- Made for the player, so kept "the top characters" as they arrive (a
+    -- fresh install knows only the one logged in)...
+    local function firstMembers() return table.concat(AltStable.GetCamps()[1].members, ",") end
+    check("the first camp is marked as made for the player", AltStable.CampsAutoSeeded())
     AltStableDB["wire-7"] = { guid = "wire-7", name = "Wire 7", level = 99, class = "MAGE" }
     AltStableCutoutManifest["wire-7"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
     T.Refresh()
-    eq("a camp is only what the player made it: no one joins by themselves",
-       #AltStable.GetCamps()[1].members, 5)
+    eq("  it takes in a new top character", firstMembers(), "wire-7,wire-6,wire-5,wire-4,wire-3")
     AltStableDB["wire-7"], AltStableCutoutManifest["wire-7"] = nil, nil
+    T.Refresh()
+    eq("  and lets one whose record went go", firstMembers(), "wire-6,wire-5,wire-4,wire-3,wire-2")
+    -- ...until the player changes a camp. Then it is only what they made it.
+    local id1 = camps[1].id
+    AltStable.RemoveFromCamp("wire-2")
+    check("the player's first change ends that", not AltStable.CampsAutoSeeded())
+    AltStableDB["wire-7"] = { guid = "wire-7", name = "Wire 7", level = 99, class = "MAGE" }
+    AltStableCutoutManifest["wire-7"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    T.Refresh()
+    eq("  no one joins by themselves after it", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
+    AltStableDB["wire-7"], AltStableCutoutManifest["wire-7"] = nil, nil
+    AltStable.AddToCamp("wire-2", id1)
+
+    -- A seat whose record is gone (/alts cleanup deletes records without
+    -- asking the camps) is freed, so the camp is not full of no one.
+    local heldRecord = AltStableDB["wire-2"]
+    AltStableDB["wire-2"] = nil
+    T.Refresh()
+    eq("a seat whose record is gone is freed", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
+    AltStableDB["wire-2"] = heldRecord
+    AltStable.AddToCamp("wire-2", id1)
 
     -- Who is left out, and why.
-    local id1 = camps[1].id
     check("a full camp refuses a sixth", not AltStable.AddToCamp("wire-1", id1))
     AltStable.RemoveFromCamp("wire-2")
     check("  with room, it takes one", AltStable.AddToCamp("wire-1", id1))
@@ -1166,6 +1188,16 @@ do
     AltStable.SelectCamp(id3)
     T.Refresh()
     check("an empty camp says how to fill it", hint():find("Empty is empty", 1, true) ~= nil, hint())
+    check("  and where: the scene has no one to right-click", hint():find("in the grid", 1, true) ~= nil, hint())
+
+    -- Drilled into a character, the camp switcher goes with the scene's bar.
+    AltStable.SelectCamp(id1)
+    T.Refresh()
+    check("the switcher shows over the scene", T.CampBar():IsShown())
+    AltStable.RosterPlugin.DrillDown("wire-6")
+    check("  and not over a character's detail", not T.CampBar():IsShown())
+    AltStable.RosterPlugin.Back()
+    AltStable.SelectCamp(id3)
     for _, c in ipairs(AltStable.GetCamps()) do AltStable.DeleteCamp(c.id) end
     T.Refresh()
     check("with every camp deleted the scene says so", hint():find("No camp", 1, true) ~= nil, hint())
@@ -1177,6 +1209,25 @@ do
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
+-- The Roster holds the window it needs, as Warband does: the top bar's three
+-- controls side by side, on activation and when the window changes under it.
+do
+    local asked
+    local held = AltStable.EnsureWindowMinSize
+    AltStable.EnsureWindowMinSize = function(w, h) asked = { w, h } end
+    local main = CreateFrame("Frame")
+    T.Activate(main)
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    check("opening the Roster asks for its minimum window", asked ~= nil)
+    eq("  wide enough for the camp switcher, backdrop picker and view toggle",
+       asked and asked[1], sidebarW + 1 + AltStable.RosterPlugin.MIN_PANEL_W)
+    check("  which is all three side by side", AltStable.RosterPlugin.MIN_PANEL_W >= 200 + 240 + 64)
+    asked = nil
+    registered.OnResize()
+    check("and asks again when the window changes under it", asked ~= nil)
+    AltStable.EnsureWindowMinSize = held
+end
+
 -- The camp storage (Config.lua), and the right-click menu's camp entries.
 do
     local savedDB = AltStableDB
@@ -1185,7 +1236,7 @@ do
         local guid = ("cm-%d"):format(i)
         AltStableDB[guid] = { guid = guid, name = ("Cm %d"):format(i), level = i, class = "MAGE" }
     end
-    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = {}, nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = {}, nil, nil
 
     local a = AltStable.CreateCamp(nil, { "cm-1", "cm-2", "cm-3", "cm-1", "cm-4", "cm-5", "cm-6" })
     eq("an unnamed camp gets a number", AltStable.GetCamp(a).name, "Camp 1")
@@ -1193,6 +1244,16 @@ do
        table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-2,cm-3,cm-4,cm-5")
     local b = AltStable.CreateCamp("B")
     check("ids are distinct", a ~= b)
+    -- A deleted camp's id is never handed out again: a menu or drag still
+    -- holding it must not land in a newer camp.
+    AltStable.DeleteCamp(b)
+    local b2 = AltStable.CreateCamp("B")
+    check("a deleted camp's id is not reused", b2 ~= b, tostring(b2) .. " vs " .. tostring(b))
+    b = b2
+    -- A field this build does not know survives its writes.
+    AltStableConfig.rosterCamps[1].later = "kept"
+    AltStable.RenameCamp(a, "Camp 1")
+    eq("a camp field from a later version survives a write", AltStable.GetCamp(a).later, "kept")
     check("a camp is not renamed to nothing", not AltStable.RenameCamp(b, ""))
     check("  but to a name", AltStable.RenameCamp(b, "Bee") and AltStable.GetCamp(b).name == "Bee")
 

@@ -1031,10 +1031,8 @@ local function FitScale(sizes, slot)
     return 1 / worst
 end
 
--- Who stands around the fire: favourites first (#66), then level, then item
--- level, capped.
--- Only characters with a portrait, because a class card pasted into a campsite
--- looks like a mistake rather than a placeholder.
+-- Seeding the first camp (#152) ranks characters with a portrait: a class card
+-- pasted into a campsite looks like a mistake rather than a placeholder.
 -- Highest level, then item level, then name.
 local function ByRank(a, b)
     local la, lb = a.level or 0, b.level or 0
@@ -1086,16 +1084,24 @@ local function SeedMembers(chars, cutoutFor)
     return out
 end
 
--- Set up the first camp, once: the first time the camps are needed with at
--- least one character known. After that a camp is only ever what the player
--- made it - even an empty list, after they delete the last one.
+-- The camps, kept sound. The first time they are needed with a character
+-- known, the first camp is made: the top characters. Until the player changes
+-- any camp it stays "the top characters", topped up as more arrive - a fresh
+-- install knows only the character logged in. Seats whose record is gone are
+-- freed. After the player's first change, a camp is only what they made it -
+-- even an empty list, after they delete the last one.
 local function EnsureCamps()
-    if not (AltStable.CampsSetUp and AltStable.CreateCamp) or AltStable.CampsSetUp() then return end
+    if not (AltStable.CampsSetUp and AltStable.SeedCamp) then return end
     local chars = AllCharacters(false)
-    if #chars == 0 then return end
-    local id = AltStable.CreateCamp("Camp 1", SeedMembers(chars, CutoutFor),
-                                    AltStableConfig and AltStableConfig.rosterScene)
-    AltStable.SelectCamp(id)
+    if not AltStable.CampsSetUp() then
+        if #chars == 0 then return end
+        AltStable.SeedCamp(SeedMembers(chars, CutoutFor), AltStableConfig and AltStableConfig.rosterScene)
+        return
+    end
+    AltStable.PruneCamps(CharacterStore())
+    if AltStable.CampsAutoSeeded() then
+        AltStable.RefreshSeededCamp(SeedMembers(chars, CutoutFor))
+    end
 end
 -- For the right-click menu, which can be the first to need a camp.
 AltStable.EnsureRosterCamps = EnsureCamps
@@ -2563,6 +2569,7 @@ function Roster.Refresh()
             PaintBackdrop()
             for _, card in ipairs(Roster.cards) do card:Hide() end
             if sceneBar then sceneBar:Hide() end
+            if campBar then campBar:Hide() end
             if viewBtn then viewBtn:Hide() end
             if hintText then hintText:Hide() end
             RenderDetail(char)
@@ -2602,10 +2609,10 @@ function Roster.Refresh()
                 .. ". The grid shows characters without one as cards.")
             hintText:Show()
         elseif not camp then
-            hintText:SetText("No camp - right-click a character and choose \"Add to a new camp\".")
+            hintText:SetText("No camp - right-click a character in the grid and choose \"Add to a new camp\".")
             hintText:Show()
         elseif info.members == 0 then
-            hintText:SetText(("%s is empty - right-click a character and choose \"Add to %s\".")
+            hintText:SetText(("%s is empty - right-click a character in the grid and choose \"Add to %s\".")
                 :format(name, name))
             hintText:Show()
         else
@@ -2689,7 +2696,23 @@ local function HookRefresh()
     Roster._refreshHooked = true
 end
 
+-- The window this tab needs, as Warband holds its own: the top bar's camp
+-- switcher, backdrop picker and view toggle side by side (#152). Plugin tabs
+-- keep whatever size the last tab left, and a narrower panel ran the backdrop
+-- picker under the view toggle, so clicks landed on the wrong one.
+local MIN_PANEL_W = 8 + CAMP_BAR_W + 8 + SCENE_BAR_W + 8 + VIEW_BTN_W + 8
+local MIN_PANEL_H = 400
+Roster.MIN_PANEL_W, Roster.MIN_PANEL_H = MIN_PANEL_W, MIN_PANEL_H
+function Roster.HoldMinSize()
+    if not AltStable.EnsureWindowMinSize then return end
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+    local footerH  = (AltStable.LAYOUT and AltStable.LAYOUT.FOOTER_HEIGHT) or 22
+    AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + MIN_PANEL_H + footerH + 2)
+end
+
 function Roster.Activate(mainFrame)
+    Roster.HoldMinSize()
     BuildPanel(mainFrame)
     HookRefresh()
     Roster.isActive = true
@@ -2934,7 +2957,13 @@ function Roster._Bootstrap()
         _isPlugin    = true,
         OnActivate   = function(mainFrame) Roster.Activate(mainFrame) end,
         -- The window changed size under us: maximize, restore, the sidebar (#150).
-        OnResize     = function() if Roster.isActive then Roster.Refresh() end end,
+        OnResize     = function()
+            if not Roster.isActive then return end
+            -- Expanding the sidebar narrows the panel while the window keeps
+            -- its width: hold the floor again, as Warband does.
+            Roster.HoldMinSize()
+            Roster.Refresh()
+        end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
