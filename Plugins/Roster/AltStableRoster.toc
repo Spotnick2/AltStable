@@ -9,3 +9,4 @@
 ## X-AltStable-Enhanced: 1
 
 AltStableRoster.lua
+CampList.lua
