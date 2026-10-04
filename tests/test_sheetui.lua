@@ -1271,16 +1271,13 @@ do
             -- A screen too small for even the tab's floor (the Roster's 796
             -- panel): the floor runs while clamped, and must floor the REQUEST,
             -- not replace it with the clamped size (Codex, #150).
-            -- Through the client's own event, not RefitWindow by hand: nothing
-            -- listened for a display change before (#191 review).
-            local watch = AltStable._test.displayWatch
             UIParent:SetWidth(1000)
-            watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
+            AltStable.RefitWindow()
             check("a narrow screen clamps the window below the floor",
                   f:GetWidth() < sidebar + 1 + 796, tostring(f:GetWidth()))
             AltStable.EnsureWindowMinSize(sidebar + 1 + 796, 30 + 400 + 22 + 2)
             UIParent:SetWidth(1365)
-            watch:GetScript("OnEvent")(watch, "UI_SCALE_CHANGED")
+            AltStable.RefitWindow()
             eq("back on the full screen, the preferred size returns, floor and all",
                f:GetWidth() .. "x" .. f:GetHeight(), wantW .. "x" .. wantH)
 
@@ -2724,6 +2721,36 @@ do
     -- Instant first: the animation has its own block at the end.
     local savedAnim = AltStableConfig.enableOpenAnimation
     AltStableConfig.enableOpenAnimation = false
+
+    -- A display change that resizes the window re-lays the open plugin tab out
+    -- (Codex, #191): it places its contents from the panel's size, and the
+    -- refit alone re-laid out only a maximized window.
+    do
+        pbtn:GetScript("OnClick")(pbtn)
+        AltStable.RequestPluginSize(1040)
+        local watch = AltStable._test.displayWatch
+        local savedW = UIParent:GetWidth()
+        UIParent:SetWidth(1365)
+        watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
+        local wide = f:GetWidth()
+        resized = 0
+        -- 700 wide: UIParent's effective scale is not 1 here, so the screen in
+        -- the window's own units is 700 x that, still too narrow for 1271.
+        UIParent:SetWidth(700)
+        watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
+        check("a smaller display narrows the window", f:GetWidth() < wide, f:GetWidth() .. " vs " .. wide)
+        eq("  and re-lays the open plugin tab out", resized, 1)
+        UIParent:SetWidth(1365)
+        watch:GetScript("OnEvent")(watch, "UI_SCALE_CHANGED")
+        eq("back to the larger one: the preferred size again", f:GetWidth(), wide)
+        eq("  laid out once more", resized, 2)
+        watch:GetScript("OnEvent")(watch, "UI_SCALE_CHANGED")
+        eq("an event that changes nothing re-lays nothing out", resized, 2)
+        UIParent:SetWidth(savedW)
+        watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        resized, activated = 0, 0
+    end
 
     -- Starts full, from the default.
     AltStableConfig.sidebarCompact = false

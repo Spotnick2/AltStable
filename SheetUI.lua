@@ -2454,7 +2454,18 @@ do
     local watch = CreateFrame("Frame")
     watch:RegisterEvent("UI_SCALE_CHANGED")
     watch:RegisterEvent("DISPLAY_SIZE_CHANGED")
-    watch:SetScript("OnEvent", function() AltStable.RefitWindow() end)
+    -- And the tab laid out again when that changed its size: RefitWindow
+    -- does that only while maximized, and a plugin places its contents from
+    -- the panel's size (Codex, #191) - Warband's columns and rail, the
+    -- Roster's cards and scene would stay where the old size put them.
+    watch:SetScript("OnEvent", function()
+        if not frame then return end
+        local w0, h0 = frame:GetWidth(), frame:GetHeight()
+        AltStable.RefitWindow()
+        if not maxState.on and (frame:GetWidth() ~= w0 or frame:GetHeight() ~= h0) then
+            RelayoutWindow()
+        end
+    end)
     AltStable._test = AltStable._test or {}
     AltStable._test.displayWatch = watch
 end
