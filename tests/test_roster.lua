@@ -3982,6 +3982,29 @@ do
     check("a size change mid-glide leaves the list shown", LT.List():IsShown())
     eq("  and the scene's room for it", AltStable.RosterPlugin.SceneInset(), L.LIST_W)
     check("  with its rows drawn", L.shown > 0 and LT.Rows()[1]:IsShown())
+    -- Nor does the search box (an edit box fires OnTextChanged when it is
+    -- first shown, which on a second account was mid-glide) or a fold: they
+    -- redraw rows, and the list was hidden again (owner, in game, #170).
+    local sb = LT.Search()
+    sb:SetText("")
+    sb:GetScript("OnTextChanged")(sb)
+    check("the search box changing mid-glide leaves the list shown", LT.List():IsShown())
+    eq("  and the scene's room for it", AltStable.RosterPlugin.SceneInset(), L.LIST_W)
+    local foldRow = LT.Rows()[1]
+    foldRow.fold:GetScript("OnClick")(foldRow.fold)
+    check("  as does a fold", LT.List():IsShown())
+    foldRow.fold:GetScript("OnClick")(foldRow.fold)
+    sb:SetText("pool 4")
+    sb:GetScript("OnTextChanged")(sb)
+    check("searching still filters the rows", L.shown > 0 and (function()
+        for i = 1, L.shown do
+            local it = LT.Rows()[i].item
+            if it and it.char and it.guid ~= "pool-4" then return false end
+        end
+        return true
+    end)())
+    sb:SetText("")
+    sb:GetScript("OnTextChanged")(sb)
     p.GetWidth = function() return 1400 end
 
     -- Too narrow, and the grid.

@@ -719,7 +719,7 @@ local function Row(i)
         local it = r.item
         if it and it.camp then
             folded[it.camp.id] = not folded[it.camp.id] or nil
-            L.Render(true)
+            L.PaintRows()
         end
     end)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -814,9 +814,14 @@ local function Build()
     search:SetSize(LIST_W - 2 * PAD - 34, SEARCH_H)
     search:SetPoint("TOPLEFT", PAD + 4, -PAD)
     search:SetAutoFocus(false)
+    -- The rows only. An edit box also fires this when it is first SHOWN, and
+    -- on a second account that was mid-glide (#159) at a width too narrow for
+    -- the list: re-deciding there hid it while the scene kept its room, until
+    -- the next full refresh (owner, in game, #170). Whether the list shows is
+    -- the Roster's refresh's call alone.
     search:HookScript("OnTextChanged", function(self)
         L.search = Trim(self:GetText() or ""):lower()
-        L.Render(true)
+        if list:IsShown() then L.PaintRows() end
     end)
 
     plusBtn = CreateFrame("Button", nil, list, "UIPanelButtonTemplate")
