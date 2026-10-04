@@ -1,6 +1,49 @@
 # Changelog
 
-## Unreleased
+## v0.9.0-beta
+
+Getting started without help: the Roster names the app that makes its portraits, `/alts status`
+gives a bug report what it needs, and professions are right on every client. Measured on client
+1.60.1.70205. Nothing changes on the sync wire or in saved data, so v0.9.0 syncs with v0.8.x.
+
+**Updating while the game is running?** Type `/reload` (or restart) afterwards. Until then a
+window can show bright green where the glass should be: the old code is still asking for
+textures the update moved.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+Its newest version adds **Help → Save diagnostics…**, one text file to attach to a bug report.
+
+### New
+
+- **The Roster names AltStable Companion, and links to it**
+  ([#176](https://github.com/Spotnick2/AltStable/issues/176)). The hint used to say "the
+  converter on the project page". Click it now for the download link, ready to copy. After
+  your first capture, it also reminds you that the very first portrait needs the game
+  restarted once, because WoW only finds the Companion's new folder at startup.
+- **`/alts status`** ([#175](https://github.com/Spotnick2/AltStable/issues/175)): your
+  version, client build and language, how many characters and portraits you have, and whether
+  the Companion's folder is loaded. It shows one line ready to copy into a bug report, with no
+  character names in it.
+- **`/alts help`** lists the commands. A word `/alts` doesn't know now says so, instead of
+  quietly opening the window and asking every other account for a sync.
+
+### Fixed
+
+- **A character's second profession was lost**
+  ([#177](https://github.com/Spotnick2/AltStable/issues/177)). Forever lists every profession
+  twice, so both profession slots held the first one, and the spreadsheet export dropped the
+  second. Professions are now read by their ID, so they are also right on French, German and
+  other non-English clients, where none were found before. The export reads each profession
+  on its own, so a character saved by an older version exports correctly straight away.
+- **The Roster grid said portraits were missing when they weren't**
+  ([#178](https://github.com/Spotnick2/AltStable/issues/178)). It only counted the cards it
+  could draw. It now counts everyone, and says "+N more not shown" when the window, or the
+  grid's limit of 24, leaves characters out.
 
 ### Under the hood
 
