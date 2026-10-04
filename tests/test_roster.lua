@@ -4070,6 +4070,48 @@ do
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
+-- Camp sync (#172, Codex): a camp with no backdrop of its own shows the
+-- account's default - chosen, or the built-in first when none ever was - and
+-- must show the same on the other account, whose default may differ.
+do
+    local R = AltStable.RosterPlugin
+    local first = R.SCENE_BACKDROPS[1].id
+    local other = R.SCENE_BACKDROPS[2].id
+    local function shown(id)
+        AltStable.SelectCamp(id)
+        return R.CurrentScene().id
+    end
+
+    -- The sender never chose a default: the built-in first.
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCampsStamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableConfig.rosterScene, AltStableConfig.rosterCampsAuto = nil, nil
+    local id = AltStable.CreateCamp("Made with +", {})
+    eq("a camp made with + shows the built-in default", shown(id), first)
+    local sent = AltStable.CampSyncLines()
+    -- The receiver chose another.
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCampsStamp = nil, nil
+    AltStableConfig.rosterScene = other
+    for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
+    eq("  and still shows it on an account whose default differs", shown(id), first)
+
+    -- The other way round: a chosen default, onto an account with none.
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCampsStamp = nil, nil
+    AltStableConfig.rosterScene = other
+    id = AltStable.CreateCamp("Made with + too", {})
+    sent = AltStable.CampSyncLines()
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCampsStamp, AltStableConfig.rosterScene = nil, nil, nil
+    for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
+    eq("a chosen default arrives on an account with none", shown(id), other)
+
+    -- A default naming a backdrop that is gone shows the first, so sends it.
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCampsStamp = nil, nil
+    AltStableConfig.rosterScene = "a-backdrop-since-removed"
+    eq("a default that is gone resolves to the first", AltStable.DefaultCampBackdrop(), first)
+
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCampsStamp, AltStableConfig.rosterScene = nil, nil, nil
+    AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil
+end
+
 ------------------------------------------------------------
 -- The backdrop picker (#152, part 3): retail's Campsites dialog
 ------------------------------------------------------------

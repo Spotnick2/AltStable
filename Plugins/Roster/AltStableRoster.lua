@@ -175,6 +175,18 @@ end
 -- For the backdrop picker (CampList.lua, #152).
 Roster.SCENE_BACKDROPS, Roster.CurrentScene = SCENE_BACKDROPS, CurrentScene
 
+-- The backdrop a camp with none of its own shows: the account's default, or
+-- - when none was ever chosen, or it names a backdrop that is gone - the
+-- built-in first. Camp sync sends it in place of an empty field (#172, Codex):
+-- the other account's own default may differ, chosen or built in.
+function AltStable.DefaultCampBackdrop()
+    local want = AltStableConfig and AltStableConfig.rosterScene
+    for _, b in ipairs(SCENE_BACKDROPS) do
+        if b.id == want then return b.id end
+    end
+    return SCENE_BACKDROPS[1].id
+end
+
 ------------------------------------------------------------
 -- Which cutout belongs to which character
 ------------------------------------------------------------

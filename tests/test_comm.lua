@@ -4137,6 +4137,224 @@ do
     check(chatHas("found: Karuzo Test"), "  and what was found")
     scan()
 
+    -- The Roster, which says what a camp with no backdrop of its own shows, is
+    -- not loaded in this file: a stand-in, as it would answer (chosen default,
+    -- else the built-in first). Taken away again below, to test without it.
+    AltStable.DefaultCampBackdrop = function()
+        return (AltStableConfig and AltStableConfig.rosterScene) or "felwood"
+    end
+
+    -- Camps and the list order ride to, and only from, our own other account
+    -- (#171): after the last record, through the real send and receive paths.
+    do
+        freshAuth()
+        own(8, "Karuzo Test")
+        own(9, "Friend Person", { bnetAccountID = 5 })
+        scan()
+        local function senderSide()
+            mine()
+            -- Another account's characters: one in a camp, one not. Only this
+            -- account's are sent - except a camp member's record (#172 review).
+            AltStableDB["Player-4613-77"] = { guid = "Player-4613-77", name = "Campmate", class = "MAGE",
+                                              level = 60, account = 5, lastUpdate = 1000 }
+            AltStableDB["Player-4613-88"] = { guid = "Player-4613-88", name = "Bystander", class = "MAGE",
+                                              level = 60, account = 5, lastUpdate = 1000 }
+            AltStableConfig.accountNumber = 2
+            AltStableConfig.rosterCamps = {
+                { id = 3, name = "Raid; night, 100%", backdrop = "Nagrand",
+                  members = { "Player-Mine-58", "Player-4613-77" } },
+                { id = 7, name = "Bank", members = {} },
+            }
+            AltStableConfig.rosterCampsStamp = 5000
+            AltStableConfig.rosterListOrder = { "Player-4613-90", "Player-4613-91" }
+            AltStableConfig.rosterListOrderStamp = 5100
+        end
+        local function wireTo(target)
+            senderSide()
+            WoW.sent = {}
+            T.SendFullDatabase("WHISPER", target); flushAll()
+            return WoW.sentMessages()
+        end
+        local function receiverSide(cfg)
+            AltStableConfig = cfg or {}
+            AltStableConfig.peerWatermarks = {}
+            AltStableDB = {}
+        end
+        local seeded = { { id = 1, name = "Camp 1", members = { "Player-Mine-58" } } }
+
+        -- Own account, our automatic first camp: theirs replaces it, whole.
+        local wire = wireTo("Karuzo Test")
+        receiverSide({ rosterCamps = seeded, rosterCampsAuto = true, rosterCamp = 1, rosterCampNextId = 1 })
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        local got = AltStable.GetCamps()
+        eq(#got, 2, "own account: its camps arrive")
+        eq(got[1].name, "Raid; night, 100%", "  a name with the format's own characters survives")
+        eq(got[1].backdrop, "Nagrand", "  with its backdrop")
+        eq(table.concat(got[1].members, ","), "Player-Mine-58,Player-4613-77", "  and its members, in order")
+        eq(got[2].id, 7, "  ids are kept")
+        eq(AltStableConfig.rosterCampsStamp, 5000, "  and the stamp")
+        eq(AltStableConfig.rosterCampsAuto, nil, "  the automatic first camp stops topping itself up")
+        eq(AltStableConfig.rosterCampNextId, 7, "  a new camp will not reuse a synced id")
+        eq(AltStable.SelectedCamp().id, 3, "  a shown camp that is gone falls back to the first")
+        eq(table.concat(AltStable.GetListOrder(), ","), "Player-4613-90,Player-4613-91",
+           "  the campless order arrives too")
+        eq(AltStableConfig.rosterListOrderStamp, 5100, "  with its stamp")
+        check(AltStableDB["Player-Mine-58"] ~= nil, "  and the characters still merge")
+        check(AltStableDB["Player-4613-77"] ~= nil, "  a camp member from another account comes with it")
+        check(AltStableDB["Player-4613-88"] == nil, "  but not the rest of that account")
+        AltStable.PruneCamps(AltStableDB)
+        eq(#AltStable.GetCamps()[1].members, 2, "  so pruning keeps every member")
+
+        -- Our own newer choice is not overwritten by an older one.
+        wire = wireTo("Karuzo Test")
+        local ours = { { id = 4, name = "Mine", members = {} } }
+        receiverSide({ rosterCamps = ours, rosterCampsStamp = 6000,
+                       rosterListOrder = { "Player-4613-99" }, rosterListOrderStamp = 6000 })
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(AltStable.GetCamps()[1].name, "Mine", "an older synced camp list loses to ours")
+        eq(table.concat(AltStable.GetListOrder(), ","), "Player-4613-99", "  and an older order")
+
+        -- Nothing to send while the camps are only the automatic first one.
+        receiverSide({ rosterCamps = seeded, rosterCampsAuto = true })
+        eq(#AltStable.CampSyncLines(), 0, "an automatic first camp nobody touched is not sent")
+
+        -- A friend's sync carries none: the sender leaves them out...
+        wire = wireTo("Friend Person")
+        receiverSide({ rosterCamps = seeded, rosterCampsAuto = true })
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(AltStable.GetCamps()[1].name, "Camp 1", "camps are not sent to someone else's account")
+        check(AltStableDB["Player-Mine-58"] ~= nil, "  though the characters are")
+        check(AltStableDB["Player-4613-77"] == nil, "  and no other account's camp member")
+        -- ...and the receiver ignores them from anyone else.
+        wire = wireTo("Karuzo Test")
+        receiverSide({ rosterCamps = seeded, rosterCampsAuto = true })
+        for _, m in ipairs(wire) do receive(m, "Friend Person") end
+        flushAll()
+        eq(AltStable.GetCamps()[1].name, "Camp 1", "camps from someone else's account are ignored")
+        eq(#AltStable.GetListOrder(), 0, "  and so is their order")
+        check(AltStableDB["Player-Mine-58"] ~= nil, "  though their characters merge")
+    end
+
+    -- A player's change is stamped; an automatic one is not (#171).
+    do
+        AltStableConfig = {}
+        AltStableDB = {}
+        WoW.now = 7000
+        AltStable.SeedCamp({ "Player-Mine-58" })
+        eq(AltStableConfig.rosterCampsStamp, nil, "the automatic first camp is not stamped")
+        AltStable.RefreshSeededCamp({ "Player-Mine-58", "Player-4613-77" })
+        eq(AltStableConfig.rosterCampsStamp, nil, "  nor its top-up")
+        local id = AltStable.CreateCamp("Two", {})
+        eq(AltStableConfig.rosterCampsStamp, 7000, "making a camp is stamped")
+        WoW.now = 7100
+        AltStable.RenameCamp(id, "Renamed")
+        eq(AltStableConfig.rosterCampsStamp, 7100, "  renaming one too")
+        AltStable.SetListOrder({ "Player-4613-77" })
+        eq(AltStableConfig.rosterListOrderStamp, 7100, "  and reordering the campless")
+        WoW.now = 7200
+        AltStable.PruneCamps({})
+        eq(AltStableConfig.rosterCampsStamp, 7100, "  but pruning gone characters is not")
+
+        -- A change that changes nothing is not stamped (#172 review).
+        WoW.now = 7300
+        AltStable.SetCampBackdrop(id, AltStable.GetCamp(id).backdrop)
+        AltStable.MoveCamp(id, 2)
+        eq(AltStableConfig.rosterCampsStamp, 7100, "a no-change Apply or move is not stamped")
+        AltStable.SetListOrder({ "Player-4613-77" })
+        eq(AltStableConfig.rosterListOrderStamp, 7100, "  nor the same order again")
+
+        -- A stamp adopted from a clock running ahead is never undercut (#172 review).
+        AltStableConfig.rosterCampsStamp = 9000
+        AltStable.RenameCamp(id, "After a fast clock")
+        eq(AltStableConfig.rosterCampsStamp, 9001, "an edit after a fast clock's stamp still beats it")
+
+        -- Renaming the automatic camp does not make it a choice (#172 review).
+        AltStableConfig = {}
+        local auto = AltStable.SeedCamp({ "Player-Mine-58" })
+        AltStable.RenameCamp(auto, "Still automatic")
+        eq(AltStableConfig.rosterCampsStamp, nil, "renaming the automatic camp is not stamped")
+        eq(#AltStable.CampSyncLines(), 0, "  so it is still not sent")
+
+        -- Camps chosen before stamps existed are the player's: sent, oldest.
+        AltStableConfig = { rosterCamps = { { id = 2, name = "Old", members = {} } } }
+        local lines = AltStable.CampSyncLines()
+        eq(lines[1], "==CAMPS1==:1;2,Old,felwood", "camps chosen before stamps are sent as the oldest choice")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:2;3,Newer,"), "  and any stamped list beats them")
+    end
+
+    -- Garbage on the camp lines is refused or cleaned, never stored raw.
+    do
+        AltStableConfig = {}
+        check(not AltStable.ApplyCampSyncLine("==CAMPS1==:abc;1,x"), "a camp line with no stamp is refused")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:10;0,zero;2,Ok,,bad guid!,Player-1,Player-1,"
+            .. "Player-2,Player-3,Player-4,Player-5;2,dupe"), "a camp line is read")
+        local c = AltStable.GetCamps()
+        eq(#c, 1, "  a zero id and a repeated id are dropped")
+        eq(table.concat(c[1].members, ","), "Player-1,Player-2,Player-3,Player-4",
+           "  members: no bad guid, no repeat, four at most")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:11;5," .. ("x"):rep(200)), "a long name is read")
+        eq(AltStable.GetCamps()[1].name, "Camp 5", "  and replaced, not stored")
+        local accented = ("\195\169"):rep(30)          -- 30 letters, 60 bytes
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:12;5," .. accented), "a name of accented letters is read")
+        eq(AltStable.GetCamps()[1].name, accented, "  and kept: 32 letters is not 32 bytes")
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:13;5,N,,Creature-0-1,123,Player-9"), "a line with odd guids")
+        eq(table.concat(AltStable.GetCamps()[1].members, ","), "Player-9", "  only a character's guid takes a seat")
+        AltStableConfig.rosterCamps[1].pets = "kept"
+        check(AltStable.ApplyCampSyncLine("==CAMPS1==:14;5,N2;6,Other"), "a newer list for the same camp")
+        eq(AltStable.GetCamps()[1].pets, "kept", "  keeps a field this build does not send")
+        eq(AltStable.GetCamps()[2].pets, nil, "  and does not invent it on another camp")
+        check(not AltStable.ApplyCampSyncLine("==CAMPS==:99;5,Unversioned"), "a line without its version is ignored")
+
+        -- A camp with no backdrop of its own shows the account's default, which
+        -- is not synced: it travels as the one it shows (#172, Codex).
+        AltStableConfig = { rosterScene = "elwynn" }
+        local made = AltStable.CreateCamp("Plus button", {})
+        AltStable.CreateCamp("Own backdrop", {}, "nagrand")
+        check(AltStable.GetCamp(made).backdrop == nil, "the setup: a camp made with + has no backdrop of its own")
+        local sent = AltStable.CampSyncLines()
+        AltStableConfig = { rosterScene = "felwood" }
+        for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
+        eq(AltStable.GetCamp(made).backdrop, "elwynn", "  it arrives with the sender's default, not ours")
+        eq(AltStable.GetCamps()[2].backdrop, "nagrand", "  a camp's own backdrop still wins over the default")
+        -- A sender with no default at all: test_roster, where the backdrops are.
+    end
+
+    -- The Roster switched off (#172, Codex): nothing can say what a camp with
+    -- no backdrop of its own shows, so the camps wait for a sync with it on.
+    -- Through the real send path, to our own account.
+    do
+        local resolver = AltStable.DefaultCampBackdrop
+        AltStable.DefaultCampBackdrop = nil
+        freshAuth()
+        own(8, "Karuzo Test")
+        scan()
+        mine()
+        AltStableConfig.rosterCamps = { { id = 1, name = "Saved camp", members = { "Player-Mine-58" } } }
+        AltStableConfig.rosterCampsStamp = 5000
+        AltStableConfig.rosterListOrder = { "Player-4613-90" }
+        AltStableConfig.rosterListOrderStamp = 5000
+        local lines = AltStable.CampSyncLines()
+        eq(#lines, 1, "Roster off: only one line is ready to send")
+        check(lines[1] and lines[1]:find(AltStable.ORDER_LINE, 1, true) == 1, "  the campless order, which has no backdrop")
+        WoW.sent = {}
+        T.SendFullDatabase("WHISPER", "Karuzo Test"); flushAll()
+        local wire = WoW.sentMessages()
+        AltStableConfig = { peerWatermarks = {}, rosterScene = "elwynn" }
+        AltStableDB = {}
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(#AltStable.GetCamps(), 0, "  no camp arrives with a backdrop nobody could resolve")
+        eq(table.concat(AltStable.GetListOrder(), ","), "Player-4613-90", "  the order does")
+        AltStable.DefaultCampBackdrop = resolver
+        AltStableConfig = { rosterCamps = { { id = 1, name = "Saved camp", members = {} } }, rosterCampsStamp = 5000 }
+        check(AltStable.CampSyncLines()[1]:find(AltStable.CAMPS_LINE, 1, true) == 1,
+              "  and the camps go with the next sync made with the Roster on")
+    end
+    AltStable.DefaultCampBackdrop = nil
+
     -- Battle.net going away clears what was found.
     onEvent(T.frame, "BN_DISCONNECTED")
     eq(names(), "", "Battle.net disconnecting clears the peers")

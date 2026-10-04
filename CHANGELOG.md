@@ -24,6 +24,11 @@
   - Right-click a character: **Add to** a camp, **Move to** another, **Add to a new camp**, or
     **Remove from** its camp.
   - **Favourites no longer pick who stands at the fire**; they still sort the grid first.
+  - **Camps sync between your own accounts** ([#171](https://github.com/Spotnick2/AltStable/issues/171)):
+    the camps and the order of the characters in no camp go with every sync to your other
+    account found through Battle.net, and the newer one wins. A friend's sync never changes
+    your camps. Which camp you're looking at, and whether the list is tucked away, stay per
+    account.
 
 ## v0.7.1-beta
 
