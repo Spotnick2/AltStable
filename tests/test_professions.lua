@@ -794,6 +794,28 @@ eq("the wheel elsewhere scrolls the list", AT.cardStart, 1)
 ok, err = pcall(function() plugin.OnDeactivate(main) end)
 check("  and deactivates", ok, tostring(err))
 
+-- Its size (#150): a preferred width asked for on opening, then a floor it
+-- never had - so it opens the same whichever tab came before - and the floor
+-- again when the window changes under it (the sidebar expanding).
+do
+    local calls = {}
+    local heldReq, heldMin = AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize
+    AltStable.RequestPluginSize = function(w) calls[#calls + 1] = "pref " .. w end
+    AltStable.EnsureWindowMinSize = function(w, h) calls[#calls + 1] = "floor " .. w .. "x" .. h end
+    local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
+    local titleH = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
+    plugin.OnActivate(main)
+    eq("opening asks for the preferred width, then the floor",
+       calls[1] .. "," .. tostring(calls[2]),
+       "pref " .. AT.PREFERRED_PANEL_W .. ",floor " .. (sidebarW + 1 + AT.MIN_PANEL_W) .. "x" .. (titleH + 1 + AT.MIN_PANEL_H))
+    check("  the preferred width holds a recipe row with its four names", AT.PREFERRED_PANEL_W >= 700)
+    calls = {}
+    plugin.OnResize()
+    eq("a resize asks for the floor again", calls[1] and calls[1]:sub(1, 5), "floor")
+    plugin.OnDeactivate(main)
+    AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin
+end
+
 ------------------------------------------------------------
 -- Forget / cleanup
 ------------------------------------------------------------

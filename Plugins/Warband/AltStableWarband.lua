@@ -1657,13 +1657,9 @@ local function BuildPanel(mainFrame)
 
     -- The controls row: Single | Combined, the tooltip opt-in, the ruleset.
     local rowY = -(PAD + 30)
-    viewBtns.single = MakeButton(panel, 76, 22, "Single", function()
-        AltStable.SetConfigValue("warbandView", "single"); AT_WB.scrollRow = 0; AT_WB.Refresh()
-    end)
+    viewBtns.single = MakeButton(panel, 76, 22, "Single", function() AT_WB.SetView("single") end)
     viewBtns.single:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, rowY)
-    viewBtns.combined = MakeButton(panel, 86, 22, "Combined", function()
-        AltStable.SetConfigValue("warbandView", "combined"); AT_WB.scrollRow = 0; AT_WB.Refresh()
-    end)
+    viewBtns.combined = MakeButton(panel, 86, 22, "Combined", function() AT_WB.SetView("combined") end)
     viewBtns.combined:SetPoint("LEFT", viewBtns.single, "RIGHT", 2, 0)
 
     -- Opt-in toggle for the global item-tooltip enrichment (off by default so it
@@ -1785,10 +1781,37 @@ function AT_WB.HoldMinSize()
     AltStable.EnsureWindowMinSize(sidebarW + 1 + MIN_PANEL_W, titleH + 1 + MIN_PANEL_H)
 end
 
+-- The size each view opens at (#150): Single is its floor, a retail-style
+-- 14-wide tab; Combined holds three tabs at seven icons each (3 x 274 + the
+-- gaps, the rail, the scroll bar and the paging arrows = 1006). The window
+-- height is the one every plugin tab shares.
+AT_WB.PREFERRED_PANEL_W = { single = MIN_PANEL_W, combined = 1010 }
+function AT_WB.RequestPreferredSize()
+    if not AltStable.RequestPluginSize then return end
+    AltStable.RequestPluginSize(AT_WB.PREFERRED_PANEL_W[View()] or MIN_PANEL_W)
+end
+
+-- Single <-> Combined: the view and its size, gliding like a tab switch
+-- rather than jumping (#150). The LAYOUT is the animator's to place, through
+-- OnResize (the floor, then Refresh): at the end of a trip that grows, so
+-- Combined's columns never stand past a window still on its way there, and
+-- before one that shrinks. Refreshing here as well laid Combined out at its
+-- final width before the trip and gathered every bag twice (#191 review).
+function AT_WB.SetView(view)
+    if View() == view then return end
+    local function apply()
+        AltStable.SetConfigValue("warbandView", view)
+        AT_WB.scrollRow = 0
+        AT_WB.RequestPreferredSize()
+    end
+    if AltStable.AnimateWindowChange then AltStable.AnimateWindowChange(apply) else apply() end
+end
+
 function AT_WB.Activate(mainFrame)
     BuildPanel(mainFrame)
     HookRefresh()
     AT_WB.isActive = true
+    AT_WB.RequestPreferredSize()
     AT_WB.HoldMinSize()
 
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Hide()   end

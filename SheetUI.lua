@@ -2354,23 +2354,34 @@ AltStable._test.FitToScreen = function(...) return FitToScreen(...) end
 AltStable._test.SCREEN_MARGIN = SCREEN_MARGIN
 AltStable._test.ResizeFrame = function(...) return ResizeFrame(...) end
 
--- A plugin tab's floor (#154). Plugin tabs keep whatever size the last section
--- left (#150), so a tab that needs room - a toolbar, a dialog - says how much,
--- and the window GROWS to it, through the same clamp. Never shrinks: the user's
--- larger window stays theirs.
+-- A plugin tab's floor (#154). A tab that needs room - a toolbar, a dialog -
+-- says how much, and the window GROWS to it, through the same clamp. The floor
+-- never shrinks a window; a tab's preferred size (RequestPluginSize, #150) is
+-- what sets it on opening.
 --
--- Decided on the ACTUAL size, not the remembered request: the Raids plugin
--- sizes the frame directly, so the request can say 951 while the window is 595
--- (Warband -> Raids -> Warband, Codex review of #154).
+-- Decided on the ACTUAL size, not the remembered request (Warband -> Raids ->
+-- Warband, Codex review of #154) - but the floor is put on the REQUEST (#150).
+-- Floored from the actual size, a window the screen had clamped below the
+-- minimum replaced the tab's preferred size with the clamped one, so lowering
+-- the scale afterwards could never bring the preferred size back.
 function AltStable.EnsureWindowMinSize(w, h)
     if not frame then return end
     local cw, ch = frame:GetWidth() or 0, frame:GetHeight() or 0
+    local rw, rh = wantW or cw, wantH or ch
     -- Maximized, the actual size is the screen's, and growing the request to
     -- it would make Restore restore to full screen. The request is what Restore
     -- will apply, so the floor goes on that.
-    if maxState.on then cw, ch = wantW or cw, wantH or ch end
+    if maxState.on then cw, ch = rw, rh end
     if cw >= w and ch >= h then return end
-    ResizeFrame(math.max(cw, w), math.max(ch, h))
+    -- The request is only trusted while it still explains the window: through
+    -- SizeFor it gives the size the window has (the screen clamped it). A
+    -- window that does NOT match was sized directly, and its request is stale
+    -- (the #154 case), so the floor starts from the actual size there.
+    local ew, eh = SizeFor(rw, rh)
+    local stale = math.abs((ew or 0) - cw) > 0.5 or math.abs((eh or 0) - ch) > 0.5
+    local bw, bh = rw, rh
+    if stale then bw, bh = cw, ch end
+    ResizeFrame(math.max(bw, w), math.max(bh, h))
 end
 
 -- A plugin that sizes the window to its own content (Raids) asks here rather
@@ -2378,6 +2389,19 @@ end
 -- not applied while the window is maximized.
 function AltStable.RequestWindowSize(w, h)
     ResizeFrame(w, h)
+end
+
+-- A plugin tab's PREFERRED size (#150), asked for when it opens, so it opens
+-- the same whichever tab came before it and whichever account this is. Given as
+-- the content panel's width beside the sidebar as it is now. Roster, Warband
+-- and Professions share one window height, so moving between them never
+-- changes it (Raids and Options size themselves). 660 fits
+-- the owner's 3840x2160 with the UI scale off (1365 x 768 units, less the
+-- margin) at addon scale 1. Smaller screens and larger scales clamp through
+-- SizeFor as everything else does, and the tab's own floor still applies after.
+AltStable.PLUGIN_WINDOW_H = 660
+function AltStable.RequestPluginSize(panelW)
+    ResizeFrame(SIDEBAR_WIDTH + 1 + panelW, AltStable.PLUGIN_WINDOW_H)
 end
 -- Forward-declared, because the hook below is registered before the function is
 -- defined and a closure written above the `local` would capture a nil GLOBAL of
@@ -2421,6 +2445,30 @@ function AltStable.RefitWindow()
 end
 
 function AltStable.IsWindowMaximized() return maxState.on end
+
+-- The CLIENT's scale and the display change the room too, and nothing refitted
+-- the window for them (#191 review): a window clamped at a high WoW UI scale
+-- stayed small after lowering it, and its remembered request then no longer
+-- explained it, so the next floor took the clamped size for the request.
+do
+    local watch = CreateFrame("Frame")
+    watch:RegisterEvent("UI_SCALE_CHANGED")
+    watch:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    -- And the tab laid out again when that changed its size: RefitWindow
+    -- does that only while maximized, and a plugin places its contents from
+    -- the panel's size (Codex, #191) - Warband's columns and rail, the
+    -- Roster's cards and scene would stay where the old size put them.
+    watch:SetScript("OnEvent", function()
+        if not frame then return end
+        local w0, h0 = frame:GetWidth(), frame:GetHeight()
+        AltStable.RefitWindow()
+        if not maxState.on and (frame:GetWidth() ~= w0 or frame:GetHeight() ~= h0) then
+            RelayoutWindow()
+        end
+    end)
+    AltStable._test = AltStable._test or {}
+    AltStable._test.displayWatch = watch
+end
 
 -- ANIMATING a change of the window's geometry (#150): maximize, restore, and
 -- the sidebar collapsing or expanding.
@@ -2546,6 +2594,9 @@ local function AnimateWindowChange(applyGeometry, labels, laidOut)
     runner:Show()
 end
 AltStable._test.AnimateWindowChange = AnimateWindowChange
+-- Public too (#150): Warband's Single/Combined switch resizes the window, and
+-- glides there like a tab switch rather than jumping.
+AltStable.AnimateWindowChange = AnimateWindowChange
 AltStable._test.WindowAnimRunner = function() return windowAnim.runner end
 
 function AltStable.SetWindowMaximized(on)
@@ -3400,9 +3451,11 @@ local function CreateFrameIfNeeded()
             AltStable.SkinStripe(stripe, true, ar, ag, ab)
             lbl:SetTextColor(ar, ag, ab)
             icon:SetAlpha(1.0)
-            -- Animated like a sheet tab (#159): a plugin that sizes the window
-            -- in OnActivate (Raids, Options, Warband's floor) glides there; one
-            -- that keeps the size (Roster) makes no trip at all.
+            -- Animated like a sheet tab (#159): every plugin sizes the window in
+            -- OnActivate (Raids to its grid, Options, the others to their
+            -- preferred size, #150) and glides there. It is laid out at its end
+            -- size first, so a growing trip can show it past the window's edge
+            -- for the fifth of a second the trip lasts.
             AnimateWindowChange(function()
                 if activeSection._isPlugin and activeSection.OnDeactivate then
                     activeSection.OnDeactivate(frame)

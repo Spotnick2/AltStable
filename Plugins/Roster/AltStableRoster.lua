@@ -2912,7 +2912,15 @@ function Roster.HoldMinSize()
     AltStable.EnsureWindowMinSize(sidebarW + 1 + Roster.MinPanelW(), titleH + MIN_PANEL_H + footerH + 2)
 end
 
+-- The size the tab opens at (#150): the camp list beside a scene with room for
+-- four figures, and the grid at eight cards a row. One size for both views, so
+-- switching between them never moves the window. The floor above still holds
+-- when the screen cannot give this much.
+local PREFERRED_PANEL_W = 1040
+Roster.PREFERRED_PANEL_W = PREFERRED_PANEL_W
+
 function Roster.Activate(mainFrame)
+    if AltStable.RequestPluginSize then AltStable.RequestPluginSize(PREFERRED_PANEL_W) end
     Roster.HoldMinSize()
     BuildPanel(mainFrame)
     HookRefresh()
