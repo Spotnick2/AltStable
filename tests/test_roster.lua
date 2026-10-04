@@ -3917,6 +3917,61 @@ do
     check("  and the detail gets it back full width", not still)
     AltStable.RosterPlugin.Back()
 
+    -- Each character row: its faction's crest and its ruleset's badge (#170).
+    AltStableDB["pool-1"].faction, AltStableDB["pool-1"].realm = "Horde", "Classic Beta PvP"
+    AltStableDB["pool-2"].faction, AltStableDB["pool-2"].realm = "Alliance", nil
+    local heldTex = C_Texture
+    C_Texture = { GetAtlasInfo = function(name)
+        return (name == "communities-icon-faction-horde" or name == "communities-icon-faction-alliance") and {} or nil
+    end }
+    eq("the crest is the first faction atlas this client has", L.FactionArt("Horde").atlas, "communities-icon-faction-horde")
+    C_Texture = nil
+    eq("  with none, the vanilla banner icon", L.FactionArt("Alliance").file, "Interface\\Icons\\INV_BannerPVP_02")
+    eq("  and the Horde's", L.FactionArt("Horde").file, "Interface\\Icons\\INV_BannerPVP_01")
+    check("  no crest for no faction", L.FactionArt(nil) == nil)
+    C_Texture = heldTex
+    check("a PvP realm's badge says PvP", L.RulesetBadge("Classic Beta PvP"):find("PvP", 1, true) ~= nil)
+    check("  a PvE realm's says PvE", L.RulesetBadge("Classic Beta PvE"):find("PvE", 1, true) ~= nil)
+    check("  Hardcore is HC", L.RulesetBadge("Forever Hardcore"):find("HC", 1, true) ~= nil)
+    check("  RP is RP", L.RulesetBadge("Forever RP"):find("RP", 1, true) ~= nil)
+    eq("  an unreadable realm has none", L.RulesetBadge(nil), "")
+    T.Refresh()
+    local r1, r2
+    for i = 1, L.shown do
+        local r = LT.Rows()[i]
+        if r.item and r.item.guid == "pool-1" then r1 = r end
+        if r.item and r.item.guid == "pool-2" then r2 = r end
+    end
+    check("a character row shows its crest", r1 and r1.faction:IsShown())
+    check("  and its ruleset badge", r1 and r1.ruleset:IsShown() and (r1.ruleset:GetText() or ""):find("PvP", 1, true) ~= nil)
+    check("a realm the addon cannot read shows no badge", r2 and not r2.ruleset:IsShown())
+    local headerRow = LT.Rows()[1]
+    check("a camp header shows neither", not headerRow.faction:IsShown() and not headerRow.ruleset:IsShown())
+    -- Rows are reused by position: a new camp turns rows that held characters
+    -- into a header and empty seats, which must drop the crest and badge.
+    local tmp = AltStable.CreateCamp("Tmp")
+    T.Refresh()
+    local stale = false
+    for i = 1, L.shown do
+        local r = LT.Rows()[i]
+        if r.item and not r.item.char and (r.faction:IsShown() or r.ruleset:IsShown()) then stale = true end
+    end
+    check("a row reused for a header or an empty seat drops the crest and badge", not stale)
+    AltStable.DeleteCamp(tmp)
+    AltStable.SelectCamp(camp1)
+    T.Refresh()
+
+    -- Refreshed the instant it is shown, before the client has sized the
+    -- panel: drawn again on the next frame, not left without its list until
+    -- some later refresh (#170: seconds, in game).
+    p.GetWidth = function() return 0 end
+    WoW.timers = {}
+    T.Refresh()
+    check("a refresh at no width asks to be run again next frame", #WoW.timers > 0)
+    p.GetWidth = function() return 1400 end
+    WoW.flushTimers()
+    check("  and then shows the list", LT.List():IsShown())
+
     -- A size change mid-glide (#159: opening the Roster grows the window to
     -- its minimum) repaints the rows and decides nothing: it once hid the list
     -- at a half-way width while the scene kept its room - an empty strip.

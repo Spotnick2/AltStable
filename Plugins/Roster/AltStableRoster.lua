@@ -2587,6 +2587,17 @@ end
 
 function Roster.Refresh()
     if not panel then return end
+    -- A panel just shown has no size until the client lays it out, on the
+    -- next frame: measured now, the camp list stepped aside as "too narrow"
+    -- and the scene seated no one, until some later refresh - the login scan
+    -- or a sync, seconds later (owner, in game, #170). Draw again then.
+    if (panel:GetWidth() or 0) <= 0 and not Roster._sizeWait and C_Timer and C_Timer.After then
+        Roster._sizeWait = true
+        C_Timer.After(0, function()
+            Roster._sizeWait = nil
+            if Roster.isActive and (panel:GetWidth() or 0) > 0 then Roster.Refresh() end
+        end)
+    end
     -- Pets belong to the scene alone; RenderScene puts back the ones it wants.
     HidePets()
 

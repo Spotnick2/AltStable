@@ -636,6 +636,54 @@ local function OnRowClick(self, button)
     end
 end
 
+------------------------------------------------------------
+-- Faction and ruleset on each character row (#170)
+------------------------------------------------------------
+
+-- Retail's character-list crest, then the in-game Communities one, then the
+-- generic symbol: the first atlas this client has. The login screen's art may
+-- not exist in the world, and an atlas cannot be loaded blind. Last of all a
+-- banner icon from the vanilla files, which every client has.
+local FACTION_ART = {
+    Alliance = { atlases = { "glues-characterSelect-icon-faction-alliance",
+                             "communities-icon-faction-alliance", "AllianceSymbol" },
+                 file = "Interface\\Icons\\INV_BannerPVP_02" },
+    Horde    = { atlases = { "glues-characterselect-icon-faction-horde",
+                             "communities-icon-faction-horde", "HordeSymbol" },
+                 file = "Interface\\Icons\\INV_BannerPVP_01" },
+}
+
+local function HasAtlas(name)
+    local get = C_Texture and C_Texture.GetAtlasInfo
+    if type(get) ~= "function" then return false end
+    local ok, info = pcall(get, name)
+    return ok and info ~= nil
+end
+
+-- The art for a faction: { atlas = name } or { file = path }, or nil.
+function L.FactionArt(faction)
+    local art = FACTION_ART[faction]
+    if not art then return nil end
+    for _, a in ipairs(art.atlases) do
+        if HasAtlas(a) then return { atlas = a } end
+    end
+    return { file = art.file }
+end
+
+-- No ruleset art exists in the client (its UI source has the words, not
+-- pictures), so a small coloured badge: what kind of realm the character is on.
+local RULESET_BADGE = {
+    Normal   = { "PvE", "|cff8fd18f" },
+    PvP      = { "PvP", "|cffff6b6b" },
+    RP       = { "RP",  "|cffc79bff" },
+    Hardcore = { "HC",  "|cffff9a3c" },
+}
+function L.RulesetBadge(realm)
+    local rs = AltStable.RulesetOf and AltStable.RulesetOf(realm)
+    local b = rs and RULESET_BADGE[rs]
+    return b and (b[2] .. b[1] .. "|r") or ""
+end
+
 local function Row(i)
     if rows[i] then return rows[i] end
     local r = CreateFrame("Button", nil, content)
@@ -652,6 +700,15 @@ local function Row(i)
     r.sub = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.sub:SetPoint("TOPLEFT", r.text, "BOTTOMLEFT", 0, -1)
     r.sub:SetJustifyH("LEFT")
+    -- The faction crest, grey as on retail, and the ruleset badge beside it.
+    r.faction = r:CreateTexture(nil, "ARTWORK")
+    r.faction:SetSize(22, 22)
+    r.faction:SetPoint("RIGHT", -6, 0)
+    r.faction:SetAlpha(0.7)
+    r.faction:Hide()
+    r.ruleset = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    r.ruleset:SetPoint("RIGHT", r.faction, "LEFT", -6, 0)
+    r.ruleset:Hide()
     -- Fold a camp's seats away: its own button, so clicking the name selects.
     r.fold = CreateFrame("Button", nil, r)
     r.fold:SetSize(20, 20)
@@ -677,6 +734,8 @@ end
 local function Paint(r, it, shownCamp)
     r.item = it
     r.fold:Hide()
+    r.faction:Hide()
+    r.ruleset:Hide()
     r.sub:SetText("")
     r.text:ClearAllPoints()
     r.text:SetPoint("RIGHT", -26, 0)
@@ -713,6 +772,17 @@ local function Paint(r, it, shownCamp)
         local hidden = AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(c.guid)
         r.sub:SetText(("Level %d %s%s"):format(c.level or 0, class or "", hidden and "  (hidden)" or ""))
         if hidden then r:SetAlpha(0.5) end
+        -- Room on the right for the crest and the badge.
+        r.text:SetPoint("RIGHT", -64, 0)
+        local art = L.FactionArt(c.faction)
+        if art then
+            if art.atlas then r.faction:SetAtlas(art.atlas) else r.faction:SetTexture(art.file) end
+            if r.faction.SetDesaturated then r.faction:SetDesaturated(true) end
+            r.faction:Show()
+        end
+        local badge = L.RulesetBadge(c.realm)
+        r.ruleset:SetText(badge)
+        r.ruleset:SetShown(badge ~= "")
     else
         -- An empty seat.
         r:SetHeight(CHAR_H)
