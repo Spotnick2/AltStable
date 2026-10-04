@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.8.0-beta
+
+Camps in the Roster, like retail's warband camps. Measured on client 1.60.1.70205.
+
+The camps travel with your sync to your own other account. They ride at the end of a sync, where
+an older AltStable reads past them, so v0.7.x and v0.8.0 still sync characters with each other.
+Both accounts need v0.8.0 to share camps.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
 
 ### New
 
