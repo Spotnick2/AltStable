@@ -394,6 +394,22 @@ So a profession/skill column must read `maxRank` per row rather than assuming a 
 TBC-era hardcoded `375` in `RowRenderer.lua:1053,1064` is wrong twice over (Vanilla caps at 300,
 and skill maxima are dynamic).
 
+**Every profession is listed TWICE** (measured 1.60.1.70205, owner, two characters, #177): a base
+line and a 29xx line under the same name, in either order, both with the same `rank` and `maxRank`
+(every one measured was at or below 75):
+
+```
+6 Enchanting 333 3 75      7 Enchanting 2940 3 75
+8 Tailoring 2948 32 75     9 Tailoring 197 32 75      (the 29xx line first here)
+Cooking 185/2939, First Aid 129/2942, Fishing 356/2943, Herbalism 182/2944
+Comprehension 3012 7 45    (a Forever skill, not a profession)
+```
+
+The base IDs are the Professions plugin's `LINES` (171, 164, 333, …). Matching by NAME counted each
+profession twice, so `prof1`/`prof2` held one profession and lost the other. It also matches nothing on
+a non-English client. `ScanSkills` keys on the base `skillID`. Riding (762) was not measured, because no
+character had it.
+
 ---
 
 ## Professions

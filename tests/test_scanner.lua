@@ -96,6 +96,72 @@ C_SkillInfo.GetSkillLineInfo = realGet
 dofile("Compat.lua"); dofile("Scanner.lua")
 
 ------------------------------------------------------------
+-- Skills by ID (#177): twin lines, other clients' names
+------------------------------------------------------------
+-- Measured on 1.60.1.70205 (owner, two characters): every profession is listed
+-- TWICE under one name - its base line and a 29xx line - in either order, with
+-- the same rank and max. By name, prof1 and prof2 were one profession and the
+-- second was lost; on a French client nothing matched at all.
+local function line(name, id, rank, max)
+    return { name = name, isHeader = false, rank = rank, maxRank = max, skillID = id }
+end
+local function header(name) return { name = name, isHeader = true, rank = 0, maxRank = 0 } end
+
+-- The first character, as measured.
+WoW.skillLines = {
+    header("Class Skills"), line("Discipline", 613, 1, 1),
+    header("Professions"),
+    line("Enchanting", 333, 3, 75), line("Enchanting", 2940, 3, 75),
+    line("Tailoring", 2948, 32, 75), line("Tailoring", 197, 32, 75),
+    header("Secondary Skills"),
+    line("Cooking", 2939, 3, 75), line("Cooking", 185, 3, 75),
+    line("First Aid", 129, 1, 75), line("First Aid", 2942, 1, 75),
+    line("Fishing", 356, 1, 75), line("Fishing", 2943, 1, 75),
+    header("Weapon Skills"), line("Defense", 95, 33, 45),
+}
+local twins = {}
+AltStable.ScanSkills(twins)
+eq("twin lines: the first profession", twins.prof1, "Enchanting")
+eq("  and the SECOND is the other one, not its twin", twins.prof2, "Tailoring")
+eq("  with its rank", twins.prof2Skill, 32)
+eq("  both flat fields", tostring(twins.prof_Enchanting) .. "/" .. tostring(twins.prof_Tailoring), "3/32")
+eq("  the secondaries", twins.cooking .. "/" .. twins.firstAid .. "/" .. twins.fishing, "3/1/1")
+
+-- A French client: the same IDs, other names - and the 29xx twin first, as on
+-- the second character. The fields stay keyed by the English names.
+WoW.skillLines = {
+    header("Métiers"),
+    line("Enchantement", 2940, 5, 75), line("Enchantement", 333, 5, 75),
+    line("Herboristerie", 182, 27, 75), line("Herboristerie", 2944, 27, 75),
+    line("Compréhension", 3012, 7, 45),
+    header("Compétences secondaires"),
+    line("Cuisine", 2939, 6, 75), line("Cuisine", 185, 6, 75),
+    line("Secourisme", 129, 1, 75), line("Pêche", 356, 1, 75),
+    line("Monte", 762, 75, 75),
+}
+local fr = {}
+AltStable.ScanSkills(fr)
+eq("frFR: professions by ID, under the English names", tostring(fr.prof1) .. "+" .. tostring(fr.prof2), "Enchanting+Herbalism")
+eq("  flat fields", tostring(fr.prof_Enchanting) .. "/" .. tostring(fr.prof_Herbalism), "5/27")
+eq("  secondaries and riding", tostring(fr.cooking) .. "/" .. tostring(fr.firstAid) .. "/"
+   .. tostring(fr.fishing) .. "/" .. tostring(fr.riding), "6/1/1/75")
+check("  a line that is no profession makes no field", fr["prof_Compréhension"] == nil and fr.prof_Comprehension == nil)
+
+-- English Riding with an ID other than the expected 762 (Riding is the one ID
+-- not measured): the name still finds it. And a line with no ID at all falls
+-- back to its name - once.
+WoW.skillLines = {
+    line("Riding", 9999, 75, 75),
+    { name = "Mining", isHeader = false, rank = 10, maxRank = 75 },
+    { name = "Mining", isHeader = false, rank = 10, maxRank = 75 },
+}
+local odd = {}
+AltStable.ScanSkills(odd)
+eq("Riding under an unexpected ID is still Riding", odd.riding, 75)
+eq("a line without an ID falls back to its name", odd.prof1, "Mining")
+eq("  and is not counted twice", odd.prof2, nil)
+
+------------------------------------------------------------
 -- Reputations (#8): keyed by faction ID, "met" = in the character's list
 ------------------------------------------------------------
 

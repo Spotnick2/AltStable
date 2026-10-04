@@ -27,6 +27,18 @@ local PRIMARY_PROFESSIONS = {
     ["Tailoring"] = true,
 }
 
+-- Skill line ID -> the canonical name above (#177). The profession IDs are the
+-- Professions plugin's (AltStableProfessions.lua LINES), measured on the
+-- client; Riding is 762 in every version and is the one not measured here
+-- (no character had it) - on an English client the name still finds it.
+local SKILL_BY_ID = {
+    [171] = "Alchemy",   [164] = "Blacksmithing",  [333] = "Enchanting",
+    [202] = "Engineering", [182] = "Herbalism",    [165] = "Leatherworking",
+    [186] = "Mining",    [393] = "Skinning",       [197] = "Tailoring",
+    [356] = "Fishing",   [185] = "Cooking",        [129] = "First Aid",
+    [762] = "Riding",
+}
+
 -- All trackable professions for flat field reset
 local ALL_PROFESSIONS = {
     "Alchemy","Blacksmithing","Enchanting","Engineering",
@@ -370,6 +382,7 @@ end
 -- tuple-to-struct change actually bites.
 function AltStable.ScanSkills(char)
     local primaryCount = 0
+    local seen = {}
 
     for i = 1, GetNumSkillLines() do
 
@@ -382,6 +395,24 @@ function AltStable.ScanSkills(char)
         -- maxRank is dynamic for weapon and defense skills (5 x level), so it
         -- is read per line rather than assumed to be a cap.
         local maxRank   = info and info.maxRank
+
+        -- Matched by skill ID (#177), turned into the canonical English name
+        -- the saved fields, the sync and the export are keyed by. By name it
+        -- matched nothing on a French or German client - and on every client
+        -- it matched each profession TWICE: Forever lists a base line and a
+        -- 29xx line under one name (Enchanting 333 and 2940, in either order;
+        -- measured 70205, same rank and max on both), so prof1 and prof2 were
+        -- one profession and the second one was lost (Export reads those).
+        -- Only the base IDs count. The name is the fallback for a line with no
+        -- ID at all, and a name is never counted twice.
+        if info and not info.isHeader and info.skillID ~= nil then
+            -- Riding's ID is the unmeasured one: should it not be 762 here,
+            -- its English name still finds it (it has no 29xx twin to trip).
+            skillName = SKILL_BY_ID[info.skillID]
+                or (skillName == "Riding" and "Riding" or nil)
+        end
+        if skillName and seen[skillName] then skillName = nil end
+        if skillName then seen[skillName] = true end
 
         if info and not info.isHeader and skillName then
 
