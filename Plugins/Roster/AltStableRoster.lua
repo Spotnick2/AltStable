@@ -2577,7 +2577,11 @@ function Roster.Refresh()
             -- the figure box: the same pane that reads as glass over the world
             -- reads as a mess over a landscape. The drill-down is not the
             -- scene, so it gets the tab's own background whichever view it was
-            -- opened from.
+            -- opened from - over the WHOLE panel: the scene may have narrowed
+            -- it for the camp list (#169 review), and this returns before the
+            -- anchoring below.
+            backdropTex:ClearAllPoints()
+            backdropTex:SetAllPoints()
             PaintBackdrop()
             for _, card in ipairs(Roster.cards) do card:Hide() end
             if sceneBar then sceneBar:Hide() end
@@ -2739,9 +2743,7 @@ Roster.MIN_PANEL_W, Roster.MIN_PANEL_H = MIN_PANEL_W, MIN_PANEL_H
 -- would step aside on a window the Roster itself chose, toggle and all.
 function Roster.MinPanelW()
     local list = Roster.CampList
-    if list and list.LIST_W and list.MIN_SCENE_W then
-        return math.max(MIN_PANEL_W, list.LIST_W + list.MIN_SCENE_W)
-    end
+    if list and list.NeedsWidth then return math.max(MIN_PANEL_W, list.NeedsWidth()) end
     return MIN_PANEL_W
 end
 function Roster.HoldMinSize()

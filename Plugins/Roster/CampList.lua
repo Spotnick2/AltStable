@@ -30,6 +30,14 @@ local SEARCH_H, TOGGLE_H = 22, 24
 L.LIST_W, L.TOGGLE_H = LIST_W, TOGGLE_H
 L.MIN_SCENE_W = 360       -- the scene keeps at least this much beside the list
 
+-- The panel width the list needs: itself, plus the scene's minimum or its top
+-- bar (camp switcher, backdrop picker, Grid button), whichever is wider. The
+-- bar is 536px; leaving the scene only 360 ran the Grid button into the
+-- backdrop picker and the picker's arrow under the list (#169 review).
+function L.NeedsWidth()
+    return LIST_W + math.max(L.MIN_SCENE_W, Roster.MIN_PANEL_W or 0)
+end
+
 local list, toggle, toggleBtn, search, plusBtn, scroll, content, ghost
 local dialog, dialogCatcher
 local rows = {}           -- pooled row buttons, reused by position
@@ -201,7 +209,16 @@ end
 
 local function Trim(s) return ((s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
 
+-- The keyboard goes back with the dialog: Escape leaves propagation off, and a
+-- dialog closed still holding the keyboard would swallow keys the next time
+-- round if propagation could not be set (#169 review; CharacterMenu.lua does
+-- the same, and why).
+local function ReleaseKeyboard()
+    if dialog and type(dialog.EnableKeyboard) == "function" then pcall(dialog.EnableKeyboard, dialog, false) end
+end
+
 function L.CloseDialog()
+    ReleaseKeyboard()
     if dialog then dialog:Hide() end
     if dialogCatcher then dialogCatcher:Hide() end
 end
@@ -269,14 +286,21 @@ local function BuildDialog()
     body:SetColorTexture(0.06, 0.065, 0.08, 0.94)
     dialog:Hide()
 
-    -- Escape closes and is swallowed; every other key goes on to the game.
+    -- Escape closes and is swallowed; every other key goes on to the game. If
+    -- handing a key on fails (a restricted call - unmeasured on Forever), the
+    -- keyboard is released rather than left swallowing movement.
     dialog:SetScript("OnKeyDown", function(self, key)
         local stop = (key == "ESCAPE")
+        local handed = true
         if type(self.SetPropagateKeyboardInput) == "function" then
-            pcall(self.SetPropagateKeyboardInput, self, not stop)
+            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
         end
+        if not handed then ReleaseKeyboard() end
         if stop then L.CloseDialog() end
     end)
+    -- Entering combat lets go of the keyboard, as the character menu does.
+    dialog:RegisterEvent("PLAYER_REGEN_DISABLED")
+    dialog:SetScript("OnEvent", function() ReleaseKeyboard() end)
 
     -- Naming: the box, Accept and Cancel, and Delete for a camp that exists.
     local edit = CreateFrame("Frame", nil, dialog)
@@ -330,10 +354,14 @@ function L.OpenDialog(camp)
     ShowConfirm(false)
     dialogCatcher:Show()
     dialog:Show()
+    -- The keyboard is taken out of combat only, and propagation reset first
+    -- thing: it outlives the dialog, and the last opening's Escape left it off.
+    ReleaseKeyboard()
     if type(dialog.EnableKeyboard) == "function" and not (InCombatLockdown and InCombatLockdown()) then
         dialog:EnableKeyboard(true)
-        if type(dialog.SetPropagateKeyboardInput) == "function" then
-            pcall(dialog.SetPropagateKeyboardInput, dialog, true)
+        if type(dialog.SetPropagateKeyboardInput) == "function"
+           and not pcall(dialog.SetPropagateKeyboardInput, dialog, true) then
+            ReleaseKeyboard()
         end
     end
     dialog.box:SetFocus()
@@ -534,7 +562,7 @@ function L.Render(sceneView)
     end
     -- Too narrow a panel for the list AND a scene worth looking at: the list
     -- steps aside, toggle and all, rather than squeezing the camp to nothing.
-    if (Roster.panel:GetWidth() or 0) < LIST_W + L.MIN_SCENE_W then
+    if (Roster.panel:GetWidth() or 0) < L.NeedsWidth() then
         list:Hide(); toggle:Hide()
         L.shown = 0
         return

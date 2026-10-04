@@ -3811,6 +3811,76 @@ do
     LT.ToggleButton():GetScript("OnClick")(LT.ToggleButton())
     check("and it comes back", LT.List():IsShown())
 
+    -- At the Roster's own minimum width the list fits beside the WHOLE top
+    -- bar: the Grid button (TOPRIGHT, left of the list) clears the backdrop
+    -- picker, which ends at 8 + 200 + 8 + 240 (#169 review).
+    local minW = AltStable.RosterPlugin.MinPanelW()
+    p.GetWidth = function() return minW end
+    T.Refresh()
+    check("at the minimum width the list is shown", LT.List():IsShown())
+    local gridLeft = minW - L.LIST_W - 8 - 64
+    check("  and the Grid button clears the backdrop picker", gridLeft >= 8 + 200 + 8 + 240,
+          gridLeft .. " < " .. (8 + 200 + 8 + 240))
+    p.GetWidth = function() return minW - 1 end
+    T.Refresh()
+    check("a pixel narrower, the list steps aside", not LT.List():IsShown())
+    p.GetWidth = function() return 1400 end
+    T.Refresh()
+
+    -- The dialog lets go of the keyboard: on close, in combat, and when
+    -- handing a key on fails (#169 review).
+    L.OpenDialog(nil)
+    check("the dialog takes the keyboard out of combat", d:IsKeyboardEnabled())
+    d:GetScript("OnKeyDown")(d, "ESCAPE")
+    check("  and gives it back when Escape closes it", not d:IsKeyboardEnabled())
+    WoW.inCombat = true
+    L.OpenDialog(AltStable.GetCamps()[1])
+    check("reopened in combat it does not take the keyboard", not d:IsKeyboardEnabled())
+    d.delete:GetScript("OnClick")(d.delete)
+    check("  even at the delete confirmation", not d:IsKeyboardEnabled())
+    WoW.inCombat = false
+    L.CloseDialog()
+    -- Reopened while still open (no close in between), now in combat: the
+    -- earlier grab is let go, not inherited.
+    L.OpenDialog(nil)
+    WoW.inCombat = true
+    L.OpenDialog(AltStable.GetCamps()[1])
+    check("reopened in combat while open, it lets go of the earlier grab", not d:IsKeyboardEnabled())
+    WoW.inCombat = false
+    L.CloseDialog()
+    L.OpenDialog(nil)
+    d:GetScript("OnEvent")(d, "PLAYER_REGEN_DISABLED")
+    check("entering combat while it is open lets go of the keyboard", not d:IsKeyboardEnabled())
+    L.CloseDialog()
+    local realProp = d.SetPropagateKeyboardInput
+    d.SetPropagateKeyboardInput = function() error("restricted") end
+    L.OpenDialog(nil)
+    check("if propagation cannot be set on opening, the keyboard is let go", not d:IsKeyboardEnabled())
+    d:EnableKeyboard(true)
+    d:GetScript("OnKeyDown")(d, "W")
+    check("  and if handing a key on fails, likewise", not d:IsKeyboardEnabled())
+    d.SetPropagateKeyboardInput = realProp
+    L.CloseDialog()
+
+    -- A character's detail, opened from the scene with the list open, has the
+    -- tab background over the whole panel, not the scene's narrowed one.
+    T.Refresh()
+    local bd = T.BackdropTex()
+    local narrowed = false
+    for i = 1, bd:GetNumPoints() do
+        local pt, _, _, x = bd:GetPoint(i)
+        if pt == "BOTTOMRIGHT" and x == -L.LIST_W then narrowed = true end
+    end
+    check("the scene narrows its backdrop for the list", narrowed)
+    AltStable.RosterPlugin.DrillDown("pool-8")
+    local still = false
+    for i = 1, bd:GetNumPoints() do
+        local _, _, _, x = bd:GetPoint(i)
+        if x and x ~= 0 then still = true end
+    end
+    check("  and the detail gets it back full width", not still)
+    AltStable.RosterPlugin.Back()
+
     -- Too narrow, and the grid.
     p.GetWidth = function() return 500 end
     T.Refresh()
