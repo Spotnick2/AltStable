@@ -58,6 +58,7 @@ dofile("CharacterMenu.lua")
 
 WoW.timers = {}
 dofile("Plugins/Roster/AltStableRoster.lua")
+dofile("Plugins/Roster/CampList.lua")      -- the camp list, after it, as the .toc loads them (#152)
 check("loading after login schedules its own bootstrap", #WoW.timers > 0,
       "no timer scheduled - the plugin is waiting for a PLAYER_LOGIN that already fired")
 WoW.flushTimers()
@@ -3624,6 +3625,204 @@ do
     if f then f:close() end
     check("the Roster's TOC declares enhanced-texture support",
           toc:find("\n## X%-AltStable%-Enhanced: 1\r?\n") ~= nil)
+end
+
+------------------------------------------------------------
+-- The camp list (#152, part 2): retail's warband list beside the scene
+------------------------------------------------------------
+
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 8 do
+        local guid = ("pool-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Pool %d"):format(i), level = 10 * i, class = "MAGE" }
+        AltStableCutoutManifest[guid] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 1400 end
+    p.GetHeight = function() return 800 end
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil
+    AltStableConfig.rosterCampListHidden = nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+
+    local L = AltStable.RosterPlugin.CampList
+    local LT = L._test
+    -- Read straight after the FIRST refresh: the list was once drawn before
+    -- the first camp was seeded, and only showed it on the next one.
+    eq("the very first open already lists the new camp", LT.Rows()[1] and LT.Rows()[1].text:GetText(), "Camp 1")
+    check("the camp list is open in the scene view", LT.List():IsShown())
+    eq("  taking its width off the scene", AltStable.RosterPlugin.SceneInset(), L.LIST_W)
+    check("  with the toggle along the bottom", LT.Toggle():IsShown())
+    local function Rightmost()
+        local x = 0
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() then x = math.max(x, (select(4, card:GetPoint()))) end
+        end
+        return x
+    end
+    local withList = Rightmost()
+    check("the figures stand left of the list", withList > 0 and withList < 1400 - L.LIST_W, tostring(withList))
+    -- The same camp with the list tucked away spreads over the whole panel.
+    LT.ToggleButton():GetScript("OnClick")(LT.ToggleButton())
+    local without = Rightmost()
+    LT.ToggleButton():GetScript("OnClick")(LT.ToggleButton())
+    check("  and spread wider once it is tucked away", without > withList, without .. " vs " .. withList)
+
+    local function kinds()
+        local out = {}
+        for _, it in ipairs(L.Items()) do
+            out[#out + 1] = it.kind .. (it.guid and (":" .. it.guid:sub(6)) or "")
+        end
+        return table.concat(out, " ")
+    end
+    eq("a header, its five seats, a divider, then everyone in no camp", kinds(),
+       "header slot:8 slot:7 slot:6 slot:5 slot:4 sep char:3 char:2 char:1")
+    local rows = LT.Rows()
+    eq("the header row names the camp", rows[1].text:GetText(), "Camp 1")
+    local camp1 = AltStable.GetCamps()[1].id
+
+    local function item(kind, guid, campName)
+        for _, it in ipairs(L.Items()) do
+            if it.kind == kind and (guid == nil or it.guid == guid)
+               and (campName == nil or (it.camp and it.camp.name == campName)) then return it end
+        end
+    end
+    local function members(id) return table.concat(AltStable.GetCamp(id).members, ","):gsub("pool%-", "") end
+
+    -- Dropping.
+    local outsider = { kind = "char", guid = "pool-3" }
+    check("a full camp's header refuses a newcomer", not L.Drop(outsider, item("header")))
+    local seat2 = item("slot", "pool-7")
+    check("onto a seat in a full camp, the newcomer takes it", L.Drop(outsider, seat2))
+    eq("  the one sitting there leaves", members(camp1), "8,3,6,5,4")
+    check("  and is back among the campless", item("char", "pool-7") ~= nil)
+    check("a seat dragged onto another seat reorders", L.Drop({ kind = "char", guid = "pool-8", fromCamp = camp1, fromPos = 1 }, item("slot", "pool-6")))
+    eq("  in that order", members(camp1), "3,6,8,5,4")
+
+    -- A new camp, through the dialog.
+    LT.Plus():GetScript("OnClick")(LT.Plus())
+    local d = L.Dialog()
+    check("+ opens the camp dialog", d and d:IsShown())
+    eq("  offering a numbered name", d.box:GetText(), "Camp 2")
+    check("  with no Delete for a camp that does not exist yet", not d.delete:IsShown())
+    d.box:SetText("   ")
+    check("a blank name is not accepted", not L.AcceptDialog())
+    d.box:SetText("Raiders")
+    check("Accept makes the camp", L.AcceptDialog())
+    check("  and closes the dialog", not d:IsShown())
+    local raiders = AltStable.SelectedCamp()
+    eq("  and shows it", raiders.name, "Raiders")
+    eq("its seats are empty", kinds():match("header slot slot slot slot slot") ~= nil, true)
+    check("a newcomer dropped on a camp's header joins it",
+          L.Drop({ kind = "char", guid = "pool-7" }, item("header", nil, "Raiders")))
+    eq("  at the end", members(raiders.id), "7")
+    AltStable.RemoveFromCamp("pool-7")
+
+    -- Between camps.
+    check("a member dropped on another camp's empty seat moves",
+          L.Drop({ kind = "char", guid = "pool-5", fromCamp = camp1, fromPos = 4 }, item("slot", nil, "Raiders")))
+    eq("  out of the first", members(camp1), "3,6,8,4")
+    eq("  into the second", members(raiders.id), "5")
+    check("onto someone in another camp, the two swap",
+          L.Drop({ kind = "char", guid = "pool-3", fromCamp = camp1, fromPos = 1 }, item("slot", "pool-5")))
+    eq("  one way", members(raiders.id), "3")
+    eq("  and the other", members(camp1), "5,6,8,4")
+    check("dragged out into the list, a member leaves its camp",
+          L.Drop({ kind = "char", guid = "pool-4", fromCamp = camp1, fromPos = 4 }, { kind = "out" }))
+    check("  and is campless", not AltStable.CampOf("pool-4"))
+    check("a header dropped on another reorders the camps",
+          L.Drop({ kind = "camp", id = raiders.id }, item("header", nil, "Camp 1")))
+    eq("  Raiders first", AltStable.GetCamps()[1].name, "Raiders")
+
+    -- The real gesture: drag a row, release over another.
+    T.Refresh()
+    local srcRow, dstRow
+    for i = 1, L.shown do
+        local r = rows[i]
+        if r.item and r.item.kind == "char" and r.item.guid == "pool-1" then srcRow = r end
+        if r.item and r.item.kind == "slot" and r.item.camp.name == "Camp 1" and not r.item.guid then dstRow = r end
+    end
+    check("there is a row to drag and an empty seat to drop on", srcRow and dstRow)
+    if srcRow and dstRow then
+        dstRow._mouseOver = true
+        srcRow:GetScript("OnDragStart")(srcRow)
+        check("dragging shows the name under the cursor", L.drag ~= nil and L.drag.guid == "pool-1")
+        srcRow:GetScript("OnDragStop")(srcRow)
+        dstRow._mouseOver = nil
+        check("releasing over a seat puts it there", (AltStable.CampOf("pool-1")) and AltStable.CampOf("pool-1").name == "Camp 1")
+        check("  and the drag is over", L.drag == nil)
+    end
+
+    -- Rename, then delete, from a right-click on the header.
+    T.Refresh()
+    local headerRow
+    for i = 1, L.shown do
+        if rows[i].item and rows[i].item.kind == "header" and rows[i].item.camp.name == "Raiders" then headerRow = rows[i] end
+    end
+    headerRow:GetScript("OnClick")(headerRow, "RightButton")
+    check("right-click on a header opens the dialog for it", d:IsShown() and d.camp and d.camp.name == "Raiders")
+    check("  with Delete", d.delete:IsShown())
+    d.box:SetText("Raid Team")
+    L.AcceptDialog()
+    eq("Accept renames", AltStable.GetCamp(raiders.id).name, "Raid Team")
+    L.OpenDialog(AltStable.GetCamp(raiders.id))
+    d.delete:GetScript("OnClick")(d.delete)
+    check("Delete asks first", d.confirm:IsShown() and not d.edit:IsShown())
+    check("  naming the camp", (d.question:GetText() or ""):find("Raid Team", 1, true) ~= nil)
+    d.no:GetScript("OnClick")(d.no)
+    check("No goes back", d.edit:IsShown() and AltStable.GetCamp(raiders.id) ~= nil)
+    d.delete:GetScript("OnClick")(d.delete)
+    d.yes:GetScript("OnClick")(d.yes)
+    check("Yes deletes it", AltStable.GetCamp(raiders.id) == nil and not d:IsShown())
+    L.OpenDialog(nil)
+    d:GetScript("OnKeyDown")(d, "ESCAPE")
+    check("Escape closes the dialog", not d:IsShown())
+
+    -- Folding, searching.
+    T.Refresh()
+    for i = 1, L.shown do
+        if rows[i].item and rows[i].item.kind == "header" then
+            rows[i].fold:GetScript("OnClick")(rows[i].fold); break
+        end
+    end
+    check("folding a camp hides its seats", not kinds():find("slot", 1, true), kinds())
+    for k in pairs(LT.Folded) do LT.Folded[k] = nil end
+    L.search = "pool 4"
+    eq("searching lists matches only, no empty seats", kinds(), "header sep char:4")
+    L.search = ""
+
+    -- The toggle along the bottom.
+    LT.ToggleButton():GetScript("OnClick")(LT.ToggleButton())
+    check("the toggle tucks the list away", not LT.List():IsShown())
+    eq("  giving the scene its width back", AltStable.RosterPlugin.SceneInset(), 0)
+    check("  remembered", AltStableConfig.rosterCampListHidden == true)
+    check("  and stays to bring it back", LT.Toggle():IsShown())
+    LT.ToggleButton():GetScript("OnClick")(LT.ToggleButton())
+    check("and it comes back", LT.List():IsShown())
+
+    -- Too narrow, and the grid.
+    p.GetWidth = function() return 500 end
+    T.Refresh()
+    check("too narrow a panel: the list steps aside", not LT.List():IsShown() and not LT.Toggle():IsShown())
+    eq("  and the scene keeps its width", AltStable.RosterPlugin.SceneInset(), 0)
+    p.GetWidth = function() return 1400 end
+    T.Refresh()
+    check("wide again, the list is back", LT.List():IsShown())
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    check("the grid has no camp list", not LT.List():IsShown() and not LT.Toggle():IsShown())
+
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableConfig.rosterView = nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampListHidden = nil, nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
 print(("test_roster: %d passed, %d failed"):format(passed, failed))
