@@ -108,12 +108,12 @@ local function CharToTSV(char)
 
     -- Primary professions: find which named column each maps to
     local profSkills = {}
-    -- primary profs
-    if char.prof1 and char.prof1 ~= "" then
-        profSkills[char.prof1] = char.prof1Skill or ""
-    end
-    if char.prof2 and char.prof2 ~= "" then
-        profSkills[char.prof2] = char.prof2Skill or ""
+    -- Primary profs, from each one's own field (#177): prof1/prof2 held ONE
+    -- profession twice for anyone scanned before the fix, or synced from a
+    -- peer still running it, and the second was lost. prof_<Name> was right.
+    for _, name in ipairs(PROF_COLS) do
+        local v = name ~= "" and char["prof_" .. name]
+        if type(v) == "number" and v > 0 then profSkills[name] = v end
     end
     -- secondary profs stored directly
     profSkills["Cooking"]   = (char.cooking   and char.cooking   > 0) and char.cooking   or ""

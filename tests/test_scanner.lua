@@ -98,26 +98,27 @@ dofile("Compat.lua"); dofile("Scanner.lua")
 ------------------------------------------------------------
 -- Skills by ID (#177): twin lines, other clients' names
 ------------------------------------------------------------
--- Measured on 1.60.1.70205 (owner, two characters): every profession is listed
+-- Measured on 1.60.1.70205 (owner, three characters): every profession is listed
 -- TWICE under one name - its base line and a 29xx line - in either order, with
 -- the same rank and max. By name, prof1 and prof2 were one profession and the
 -- second was lost; on a French client nothing matched at all.
 local function line(name, id, rank, max)
     return { name = name, isHeader = false, rank = rank, maxRank = max, skillID = id }
 end
-local function header(name) return { name = name, isHeader = true, rank = 0, maxRank = 0 } end
+-- Headers carry a skillID on Forever too (Class Skills is 7, measured above).
+local function header(name, id) return { name = name, isHeader = true, rank = 0, maxRank = 0, skillID = id } end
 
 -- The first character, as measured.
 WoW.skillLines = {
-    header("Class Skills"), line("Discipline", 613, 1, 1),
-    header("Professions"),
+    header("Class Skills", 7), line("Discipline", 613, 1, 1),
+    header("Professions", 11),
     line("Enchanting", 333, 3, 75), line("Enchanting", 2940, 3, 75),
     line("Tailoring", 2948, 32, 75), line("Tailoring", 197, 32, 75),
-    header("Secondary Skills"),
+    header("Secondary Skills", 9),
     line("Cooking", 2939, 3, 75), line("Cooking", 185, 3, 75),
     line("First Aid", 129, 1, 75), line("First Aid", 2942, 1, 75),
     line("Fishing", 356, 1, 75), line("Fishing", 2943, 1, 75),
-    header("Weapon Skills"), line("Defense", 95, 33, 45),
+    header("Weapon Skills", 6), line("Defense", 95, 33, 45),
 }
 local twins = {}
 AltStable.ScanSkills(twins)
@@ -130,11 +131,11 @@ eq("  the secondaries", twins.cooking .. "/" .. twins.firstAid .. "/" .. twins.f
 -- A French client: the same IDs, other names - and the 29xx twin first, as on
 -- the second character. The fields stay keyed by the English names.
 WoW.skillLines = {
-    header("Métiers"),
+    header("Métiers", 11),
     line("Enchantement", 2940, 5, 75), line("Enchantement", 333, 5, 75),
     line("Herboristerie", 182, 27, 75), line("Herboristerie", 2944, 27, 75),
     line("Compréhension", 3012, 7, 45),
-    header("Compétences secondaires"),
+    header("Compétences secondaires", 9),
     line("Cuisine", 2939, 6, 75), line("Cuisine", 185, 6, 75),
     line("Secourisme", 129, 1, 75), line("Pêche", 356, 1, 75),
     line("Monte", 762, 75, 75),
@@ -147,19 +148,22 @@ eq("  secondaries and riding", tostring(fr.cooking) .. "/" .. tostring(fr.firstA
    .. tostring(fr.fishing) .. "/" .. tostring(fr.riding), "6/1/1/75")
 check("  a line that is no profession makes no field", fr["prof_Compréhension"] == nil and fr.prof_Comprehension == nil)
 
--- English Riding with an ID other than the expected 762 (Riding is the one ID
--- not measured): the name still finds it. And a line with no ID at all falls
--- back to its name - once.
+-- Not every ID was measured on this list (Alchemy, Blacksmithing, Engineering,
+-- Mining, Riding). On an English client a line whose ID is not in the table
+-- still counts by its name, as it did before (#181 review), and its 29xx twin
+-- is not counted again. A header named like a skill marks nothing as seen.
 WoW.skillLines = {
+    header("Riding", 9),                                      -- a header, not the skill
     line("Riding", 9999, 75, 75),
-    { name = "Mining", isHeader = false, rank = 10, maxRank = 75 },
-    { name = "Mining", isHeader = false, rank = 10, maxRank = 75 },
+    line("Mining", 8888, 10, 75), line("Mining", 2950, 10, 75),
+    line("Alchemy", 7777, 20, 75),
 }
 local odd = {}
 AltStable.ScanSkills(odd)
-eq("Riding under an unexpected ID is still Riding", odd.riding, 75)
-eq("a line without an ID falls back to its name", odd.prof1, "Mining")
-eq("  and is not counted twice", odd.prof2, nil)
+eq("Riding under an unexpected ID is still Riding, past a header of that name", odd.riding, 75)
+eq("an English profession under an unexpected ID still counts", odd.prof1, "Mining")
+eq("  its twin is not counted again", odd.prof2, "Alchemy")
+eq("  and the next profession is the second", odd.prof_Alchemy, 20)
 
 ------------------------------------------------------------
 -- Reputations (#8): keyed by faction ID, "met" = in the character's list
@@ -625,6 +629,29 @@ do
     eq("  and an Alliance one as A - the same race key", ally[5], "A")
     local old = firstCols(row({ name = "C", realm = "R", class = "WARRIOR", race = "Orc", level = 60 }))
     eq("a record with no faction falls back to the race guess", old[5], "H")
+end
+-- A record scanned before #177, or synced from a peer still on that build,
+-- holds ONE profession in both prof1 and prof2. The export reads each
+-- profession's own field, so the second is not lost.
+do
+    local header, row = AltStable._test.ExportHeader, AltStable._test.ExportRow
+    local function cols(line)
+        local out = {}
+        for field in (line .. "\t"):gmatch("([^\t]*)\t") do out[#out + 1] = field end
+        return out
+    end
+    local names = cols(header())
+    local function at(label)
+        for i, n in ipairs(names) do if n == label then return i end end
+    end
+    local stale = cols(row({ name = "D", realm = "R", class = "MAGE", race = "Human", level = 20,
+        prof1 = "Enchanting", prof1Skill = 3, prof2 = "Enchanting", prof2Skill = 3,
+        prof_Enchanting = 3, prof_Tailoring = 32, cooking = 3 }))
+    check("the export has a Tailoring column", at("Tailoring") ~= nil)
+    eq("a stale prof1 = prof2 record still exports its second profession", stale[at("Tailoring") or 0], "32")
+    eq("  and the first", stale[at("Enchanting") or 0], "3")
+    eq("  a profession it does not have stays blank", stale[at("Alchemy") or 0], "")
+    eq("  secondaries as before", stale[at("Cooking") or 0], "3")
 end
 do
     local header, row = AltStable._test.ExportHeader, AltStable._test.ExportRow

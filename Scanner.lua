@@ -29,8 +29,10 @@ local PRIMARY_PROFESSIONS = {
 
 -- Skill line ID -> the canonical name above (#177). The profession IDs are the
 -- Professions plugin's (AltStableProfessions.lua LINES), measured on the
--- client; Riding is 762 in every version and is the one not measured here
--- (no character had it) - on an English client the name still finds it.
+-- client; on this skill list Enchanting, Tailoring, Herbalism, Leatherworking,
+-- Skinning and the three secondaries were (forever-api-notes.md). Riding is
+-- 762 in every version, not measured here. ScanSkills falls back to the
+-- English name for an ID that is not in this table.
 local SKILL_BY_ID = {
     [171] = "Alchemy",   [164] = "Blacksmithing",  [333] = "Enchanting",
     [202] = "Engineering", [182] = "Herbalism",    [165] = "Leatherworking",
@@ -38,6 +40,8 @@ local SKILL_BY_ID = {
     [356] = "Fishing",   [185] = "Cooking",        [129] = "First Aid",
     [762] = "Riding",
 }
+local KNOWN_SKILL = {}
+for _, name in pairs(SKILL_BY_ID) do KNOWN_SKILL[name] = true end
 
 -- All trackable professions for flat field reset
 local ALL_PROFESSIONS = {
@@ -403,16 +407,18 @@ function AltStable.ScanSkills(char)
         -- 29xx line under one name (Enchanting 333 and 2940, in either order;
         -- measured 70205, same rank and max on both), so prof1 and prof2 were
         -- one profession and the second one was lost (Export reads those).
-        -- Only the base IDs count. The name is the fallback for a line with no
-        -- ID at all, and a name is never counted twice.
-        if info and not info.isHeader and info.skillID ~= nil then
-            -- Riding's ID is the unmeasured one: should it not be 762 here,
-            -- its English name still finds it (it has no 29xx twin to trip).
+        -- A base ID names the skill. A line whose ID is not in the table falls
+        -- back to its name when that is one of the English names - not every
+        -- ID was measured on this list (Alchemy, Blacksmithing, Engineering,
+        -- Mining, Riding), and an English client must not lose what the name
+        -- used to find. A 29xx twin can pass that way too, which is harmless:
+        -- same rank, and a name is never counted twice.
+        if info and not info.isHeader then
             skillName = SKILL_BY_ID[info.skillID]
-                or (skillName == "Riding" and "Riding" or nil)
+                or (KNOWN_SKILL[skillName] and skillName) or nil
+            if skillName and seen[skillName] then skillName = nil end
+            if skillName then seen[skillName] = true end
         end
-        if skillName and seen[skillName] then skillName = nil end
-        if skillName then seen[skillName] = true end
 
         if info and not info.isHeader and skillName then
 
