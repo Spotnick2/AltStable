@@ -3917,6 +3917,18 @@ do
     check("  and the detail gets it back full width", not still)
     AltStable.RosterPlugin.Back()
 
+    -- A size change mid-glide (#159: opening the Roster grows the window to
+    -- its minimum) repaints the rows and decides nothing: it once hid the list
+    -- at a half-way width while the scene kept its room - an empty strip.
+    T.Refresh()
+    check("the list is open before the glide", LT.List():IsShown())
+    p.GetWidth = function() return 500 end
+    LT.Scroll():GetScript("OnSizeChanged")(LT.Scroll())
+    check("a size change mid-glide leaves the list shown", LT.List():IsShown())
+    eq("  and the scene's room for it", AltStable.RosterPlugin.SceneInset(), L.LIST_W)
+    check("  with its rows drawn", L.shown > 0 and LT.Rows()[1]:IsShown())
+    p.GetWidth = function() return 1400 end
+
     -- Too narrow, and the grid.
     p.GetWidth = function() return 500 end
     T.Refresh()

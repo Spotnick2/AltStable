@@ -771,8 +771,14 @@ local function Build()
     content:SetSize(ROW_W, 1)
     scroll:SetScrollChild(content)
     -- And drawn again once the frame has its real size.
+    --
+    -- The ROWS only, never Render's show-or-hide decision: a size change also
+    -- comes mid-glide (#159), when opening the Roster grows the window to its
+    -- minimum. Re-deciding there, at a half-way width, hid the list while the
+    -- scene kept the room it had left for it - an empty strip, no toggle, on a
+    -- second account's first open (owner, in game, #170).
     scroll:SetScript("OnSizeChanged", function()
-        if list:IsShown() then L.Render(true) end
+        if list:IsShown() then L.PaintRows() end
     end)
 
     -- Along the bottom, like retail's: it stays when the list is tucked away.
@@ -824,7 +830,13 @@ function L.Render(sceneView)
     end
     toggle:SetWidth(LIST_W)
     list:Show()
+    L.PaintRows()
+end
 
+-- The rows only: what the list holds, laid out top to bottom. Whether the list
+-- is shown at all is Render's call, made with the scene's own layout.
+function L.PaintRows()
+    if not (list and content) then return end
     local shownCamp = AltStable.SelectedCamp and AltStable.SelectedCamp()
     local items = L.Items()
     local y = 0
@@ -850,5 +862,6 @@ L._test = {
     List = function() return list end, Toggle = function() return toggle end,
     ToggleButton = function() return toggleBtn end, Search = function() return search end,
     Plus = function() return plusBtn end, Rows = function() return rows end,
+    Scroll = function() return scroll end,
     Folded = folded,
 }
