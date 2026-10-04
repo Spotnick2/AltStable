@@ -4137,6 +4137,13 @@ do
     check(chatHas("found: Karuzo Test"), "  and what was found")
     scan()
 
+    -- The Roster, which says what a camp with no backdrop of its own shows, is
+    -- not loaded in this file: a stand-in, as it would answer (chosen default,
+    -- else the built-in first). Taken away again below, to test without it.
+    AltStable.DefaultCampBackdrop = function()
+        return (AltStableConfig and AltStableConfig.rosterScene) or "felwood"
+    end
+
     -- Camps and the list order ride to, and only from, our own other account
     -- (#171): after the last record, through the real send and receive paths.
     do
@@ -4274,7 +4281,7 @@ do
         -- Camps chosen before stamps existed are the player's: sent, oldest.
         AltStableConfig = { rosterCamps = { { id = 2, name = "Old", members = {} } } }
         local lines = AltStable.CampSyncLines()
-        eq(lines[1], "==CAMPS1==:1;2,Old,", "camps chosen before stamps are sent as the oldest choice")
+        eq(lines[1], "==CAMPS1==:1;2,Old,felwood", "camps chosen before stamps are sent as the oldest choice")
         check(AltStable.ApplyCampSyncLine("==CAMPS1==:2;3,Newer,"), "  and any stamped list beats them")
     end
 
@@ -4314,6 +4321,39 @@ do
         eq(AltStable.GetCamps()[2].backdrop, "nagrand", "  a camp's own backdrop still wins over the default")
         -- A sender with no default at all: test_roster, where the backdrops are.
     end
+
+    -- The Roster switched off (#172, Codex): nothing can say what a camp with
+    -- no backdrop of its own shows, so the camps wait for a sync with it on.
+    -- Through the real send path, to our own account.
+    do
+        local resolver = AltStable.DefaultCampBackdrop
+        AltStable.DefaultCampBackdrop = nil
+        freshAuth()
+        own(8, "Karuzo Test")
+        scan()
+        mine()
+        AltStableConfig.rosterCamps = { { id = 1, name = "Saved camp", members = { "Player-Mine-58" } } }
+        AltStableConfig.rosterCampsStamp = 5000
+        AltStableConfig.rosterListOrder = { "Player-4613-90" }
+        AltStableConfig.rosterListOrderStamp = 5000
+        local lines = AltStable.CampSyncLines()
+        eq(#lines, 1, "Roster off: only one line is ready to send")
+        check(lines[1] and lines[1]:find(AltStable.ORDER_LINE, 1, true) == 1, "  the campless order, which has no backdrop")
+        WoW.sent = {}
+        T.SendFullDatabase("WHISPER", "Karuzo Test"); flushAll()
+        local wire = WoW.sentMessages()
+        AltStableConfig = { peerWatermarks = {}, rosterScene = "elwynn" }
+        AltStableDB = {}
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(#AltStable.GetCamps(), 0, "  no camp arrives with a backdrop nobody could resolve")
+        eq(table.concat(AltStable.GetListOrder(), ","), "Player-4613-90", "  the order does")
+        AltStable.DefaultCampBackdrop = resolver
+        AltStableConfig = { rosterCamps = { { id = 1, name = "Saved camp", members = {} } }, rosterCampsStamp = 5000 }
+        check(AltStable.CampSyncLines()[1]:find(AltStable.CAMPS_LINE, 1, true) == 1,
+              "  and the camps go with the next sync made with the Roster on")
+    end
+    AltStable.DefaultCampBackdrop = nil
 
     -- Battle.net going away clears what was found.
     onEvent(T.frame, "BN_DISCONNECTED")

@@ -628,7 +628,8 @@ end
 -- camp, `;` between. Names and backdrops are %XX-escaped for the characters
 -- the format uses. Also how SetCamps tells a real change from a no-op.
 -- `inherit` is the backdrop a camp with none of its own shows (the account's
--- default, which is not synced - see AltStable.DefaultCampBackdrop): sent in
+-- default, which is not synced - see AltStable.DefaultCampBackdrop, in the
+-- Roster): sent in
 -- its place, so the other account shows the same one rather than its own
 -- default, chosen or built in (#172, Codex).
 local function Esc(v)
@@ -937,12 +938,18 @@ end
 
 -- The lines to send: only what the player chose (a stamp), never an automatic
 -- first camp nobody touched.
+--
+-- The camps wait for the Roster (#172, Codex): it is a load-on-demand plugin,
+-- and only it can say which backdrop a camp with none of its own shows. With
+-- it switched off, a camp would go out with an empty field and show the other
+-- account's default; it goes with the next sync made with the Roster on. The
+-- campless order holds no backdrop, so it never waits.
 function AltStable.CampSyncLines()
     local out = {}
     local stamp = CampsStamp()
-    if stamp > 0 then
-        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";" .. CampsWire(AltStable.GetCamps(), AltStable.DefaultCampBackdrop
-            and AltStable.DefaultCampBackdrop() or AltStableConfig.rosterScene)
+    if stamp > 0 and AltStable.DefaultCampBackdrop then
+        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";"
+            .. CampsWire(AltStable.GetCamps(), AltStable.DefaultCampBackdrop())
     end
     local ostamp = OrderStamp()
     if ostamp > 0 then
