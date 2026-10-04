@@ -13,6 +13,10 @@ dist/
 AltStableProbeDB*.lua
 docs/captures/
 
+# The CurseForge description, kept locally: its images are CurseForge's own
+# uploads (media.forgecdn.net), so it differs from README.md and is pasted by hand.
+README.curseforge.md
+
 # Local scratch
 *.log
 *.zip

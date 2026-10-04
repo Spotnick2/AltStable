@@ -17,7 +17,7 @@ their bags and banks. You can also stand them together as a roster.
 ## Install
 
 Install **AltStable** from CurseForge, either with the CurseForge app or by unzipping it
-into `World of Warcraft\<your Forever folder>\Interface\AddOns`. The download contains
+into the `Interface\AddOns` folder inside your Forever game folder. The download contains
 five folders (`AltStable` and its four tabs); keep all of them. Then start the game, or
 restart it if it was running.
 
@@ -139,8 +139,8 @@ AltStable's own code is MIT — see [LICENSE](LICENSE).
 
 The libraries under `Libs/` are **not** covered by it. Each is redistributed
 under its own terms and stays the work of its authors: LibStub (public domain),
-LibDeflate (zlib), and ChatThrottleLib (no stated licence — embedded by
-convention). The same note travels in `LICENSE`, which ships inside the addon;
+LibDeflate (zlib), LibGlass-1.0 (MIT, fetched at build time), and ChatThrottleLib
+(no stated licence — embedded by convention). The same note travels in `LICENSE`, which ships inside the addon;
 this file does not.
 
 ---
