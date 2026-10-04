@@ -45,7 +45,7 @@ local folded = {}         -- camp id -> true while its seats are folded away (th
 L.shown = 0               -- how many rows the last render used
 L.search = ""
 
-local function CampSize() return AltStable.CAMP_SIZE or 5 end
+local function CampSize() return AltStable.CAMP_SIZE or 4 end
 
 local function ListHidden()
     return AltStableConfig and AltStableConfig.rosterCampListHidden == true
@@ -91,12 +91,47 @@ function L.Items()
         end
     end
     items[#items + 1] = { kind = "sep" }
-    for _, char in ipairs(Roster.AllCharacters and Roster.AllCharacters(false) or {}) do
-        if not AltStable.CampOf(char.guid) and Matches(char) then
+    for _, char in ipairs(L.Campless()) do
+        if Matches(char) then
             items[#items + 1] = { kind = "char", guid = char.guid, char = char }
         end
     end
     return items
+end
+
+-- Everyone in no camp, in the order the player dragged them into (#170, as on
+-- retail); anyone the saved order does not name follows, in the usual order
+-- (favourites, then level).
+function L.Campless()
+    local out = {}
+    for _, char in ipairs(Roster.AllCharacters and Roster.AllCharacters(false) or {}) do
+        if not AltStable.CampOf(char.guid) then out[#out + 1] = char end
+    end
+    local rank = {}
+    for i, g in ipairs(AltStable.GetListOrder and AltStable.GetListOrder() or {}) do rank[g] = i end
+    local base = {}
+    for i, c in ipairs(out) do base[c.guid] = i end
+    table.sort(out, function(a, b)
+        local ra, rb = rank[a.guid], rank[b.guid]
+        if ra and rb then return ra < rb end
+        if ra or rb then return ra ~= nil end
+        return base[a.guid] < base[b.guid]
+    end)
+    return out
+end
+
+-- `guid` placed among the campless just before `before` (nil: at the end), and
+-- the whole order saved.
+local function PlaceInList(guid, before)
+    local seq = {}
+    for _, c in ipairs(L.Campless()) do
+        if c.guid ~= guid then seq[#seq + 1] = c.guid end
+    end
+    local at = #seq + 1
+    for i, g in ipairs(seq) do if g == before then at = i end end
+    table.insert(seq, at, guid)
+    AltStable.SetListOrder(seq)
+    return true
 end
 
 ------------------------------------------------------------
@@ -138,7 +173,25 @@ function L.Drop(drag, target)
             done = AltStable.AddToCamp(guid, target.camp.id)
             if done then AltStable.SelectCamp(target.camp.id) end
         elseif target.kind == "char" or target.kind == "sep" or target.kind == "out" then
-            if drag.fromCamp then done = AltStable.RemoveFromCamp(guid) end
+            -- Out of its camp if it was in one, and into the campless list at
+            -- the place dropped: before the character it lands on, at the top
+            -- on the divider, at the end in the empty space below (#170).
+            -- A drop that took someone out of a camp is never a no-op, whatever
+            -- the order then says (#170 Codex review: a member that sorted first
+            -- among the campless was removed, then the early return skipped the
+            -- redraw). Only a campless character dropped on itself is.
+            local removed = drag.fromCamp and AltStable.RemoveFromCamp(guid) or false
+            local before
+            if target.kind == "char" then
+                if target.guid == guid and not removed then return false end
+                if target.guid ~= guid then before = target.guid end
+            elseif target.kind == "sep" then
+                -- The first campless character OTHER than the one dragged.
+                for _, c in ipairs(L.Campless()) do
+                    if c.guid ~= guid then before = c.guid; break end
+                end
+            end
+            done = PlaceInList(guid, before)
         end
     end
     if done and Roster.Refresh then Roster.Refresh() end
@@ -209,16 +262,47 @@ end
 
 local function Trim(s) return ((s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
 
--- The keyboard goes back with the dialog: Escape leaves propagation off, and a
--- dialog closed still holding the keyboard would swallow keys the next time
--- round if propagation could not be set (#169 review; CharacterMenu.lua does
--- the same, and why).
-local function ReleaseKeyboard()
-    if dialog and type(dialog.EnableKeyboard) == "function" then pcall(dialog.EnableKeyboard, dialog, false) end
+-- A dialog's keyboard, for both dialogs here (the camp name, the backdrop
+-- picker). Escape leaves propagation off, and a dialog closed still holding the
+-- keyboard would swallow keys the next time round if propagation could not be
+-- set (#169 review; CharacterMenu.lua does the same, and why).
+local function KeysOff(f)
+    if f and type(f.EnableKeyboard) == "function" then pcall(f.EnableKeyboard, f, false) end
+end
+
+-- Taken out of combat only, with propagation reset first thing: it outlives
+-- the dialog, and the last opening's Escape left it off.
+local function KeysOn(f)
+    KeysOff(f)
+    if type(f.EnableKeyboard) == "function" and not (InCombatLockdown and InCombatLockdown()) then
+        f:EnableKeyboard(true)
+        if type(f.SetPropagateKeyboardInput) == "function"
+           and not pcall(f.SetPropagateKeyboardInput, f, true) then
+            KeysOff(f)
+        end
+    end
+end
+
+-- Escape closes and is swallowed; every other key goes on to the game. If
+-- handing a key on fails (a restricted call - unmeasured on Forever), the
+-- keyboard is released rather than left swallowing movement. Entering combat
+-- lets go of it, as the character menu does.
+local function EscapeCloses(f, close)
+    f:SetScript("OnKeyDown", function(self, key)
+        local stop = (key == "ESCAPE")
+        local handed = true
+        if type(self.SetPropagateKeyboardInput) == "function" then
+            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
+        end
+        if not handed then KeysOff(self) end
+        if stop then close() end
+    end)
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:SetScript("OnEvent", function(self) KeysOff(self) end)
 end
 
 function L.CloseDialog()
-    ReleaseKeyboard()
+    KeysOff(dialog)
     if dialog then dialog:Hide() end
     if dialogCatcher then dialogCatcher:Hide() end
 end
@@ -286,21 +370,7 @@ local function BuildDialog()
     body:SetColorTexture(0.06, 0.065, 0.08, 0.94)
     dialog:Hide()
 
-    -- Escape closes and is swallowed; every other key goes on to the game. If
-    -- handing a key on fails (a restricted call - unmeasured on Forever), the
-    -- keyboard is released rather than left swallowing movement.
-    dialog:SetScript("OnKeyDown", function(self, key)
-        local stop = (key == "ESCAPE")
-        local handed = true
-        if type(self.SetPropagateKeyboardInput) == "function" then
-            handed = pcall(self.SetPropagateKeyboardInput, self, not stop)
-        end
-        if not handed then ReleaseKeyboard() end
-        if stop then L.CloseDialog() end
-    end)
-    -- Entering combat lets go of the keyboard, as the character menu does.
-    dialog:RegisterEvent("PLAYER_REGEN_DISABLED")
-    dialog:SetScript("OnEvent", function() ReleaseKeyboard() end)
+    EscapeCloses(dialog, function() L.CloseDialog() end)
 
     -- Naming: the box, Accept and Cancel, and Delete for a camp that exists.
     local edit = CreateFrame("Frame", nil, dialog)
@@ -354,21 +424,197 @@ function L.OpenDialog(camp)
     ShowConfirm(false)
     dialogCatcher:Show()
     dialog:Show()
-    -- The keyboard is taken out of combat only, and propagation reset first
-    -- thing: it outlives the dialog, and the last opening's Escape left it off.
-    ReleaseKeyboard()
-    if type(dialog.EnableKeyboard) == "function" and not (InCombatLockdown and InCombatLockdown()) then
-        dialog:EnableKeyboard(true)
-        if type(dialog.SetPropagateKeyboardInput) == "function"
-           and not pcall(dialog.SetPropagateKeyboardInput, dialog, true) then
-            ReleaseKeyboard()
-        end
-    end
+    KeysOn(dialog)
     dialog.box:SetFocus()
     dialog.box:HighlightText()
 end
 
 function L.Dialog() return dialog end
+
+------------------------------------------------------------
+-- The backdrop picker (#152, part 3): retail's Campsites dialog
+--
+-- Every backdrop as a thumbnail, six to a page, the shown camp's own selected.
+-- Click one, then Apply: to the shown camp, or to every camp with "Apply for
+-- all camps" ticked. Opened from the backdrop's name in the scene's top bar.
+------------------------------------------------------------
+
+local PICK_COLS, PICK_ROWS = 3, 2
+local PER_PAGE = PICK_COLS * PICK_ROWS
+local THUMB_W, THUMB_H, THUMB_GAP = 176, 99, 12
+local PICK_PAD = 18
+local picker, pickerCatcher
+L.pick = { page = 1, chosen = nil }
+
+local function Backdrops() return Roster.SCENE_BACKDROPS or {} end
+local function Pages() return math.max(1, math.ceil(#Backdrops() / PER_PAGE)) end
+
+function L.ClosePicker()
+    KeysOff(picker)
+    if picker then
+        picker:Hide()
+        -- Each thumbnail is a full-size scene picture: let them go with the
+        -- dialog rather than hold six of them for the rest of the session.
+        for _, t in ipairs(picker.thumbs) do t.tex:SetTexture(nil); t.entry = nil end
+    end
+    if pickerCatcher then pickerCatcher:Hide() end
+end
+
+local function PaintPicker()
+    local list = Backdrops()
+    local first = (L.pick.page - 1) * PER_PAGE
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    for i, t in ipairs(picker.thumbs) do
+        local e = list[first + i]
+        t.entry = e
+        if e then
+            t.tex:SetTexture(e.file)
+            -- Cropped for the picture's own size, inside its 2px frame.
+            if Roster.BackdropTexCoords then t.tex:SetTexCoord(Roster.BackdropTexCoords(THUMB_W - 4, THUMB_H - 4, e)) end
+            t.name:SetText(e.label)
+            -- The chosen one framed in the accent, as retail frames it in gold.
+            local chosen = L.pick.chosen == e.id
+            if chosen then t.frame:SetColorTexture(ar, ag, ab, 1) else t.frame:SetColorTexture(0.2, 0.2, 0.22, 1) end
+            t.chosen = chosen
+            t:Show()
+        else
+            t:Hide()
+        end
+    end
+    picker.page:SetText(("Page %d/%d"):format(L.pick.page, Pages()))
+    picker.prev:SetEnabled(L.pick.page > 1)
+    picker.next:SetEnabled(L.pick.page < Pages())
+end
+
+function L.PickPage(delta)
+    L.pick.page = math.max(1, math.min(Pages(), L.pick.page + (delta or 0)))
+    if picker then PaintPicker() end
+end
+
+function L.ChooseBackdrop(id)
+    L.pick.chosen = id
+    if picker then PaintPicker() end
+end
+
+-- The chosen backdrop to the shown camp, or to every camp; with no camp at
+-- all, to the shared one the scene falls back to.
+function L.ApplyBackdrop()
+    local id = L.pick.chosen
+    if not id then return false end
+    local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
+    if picker and picker.all:GetChecked() and camp then
+        AltStable.SetAllCampsBackdrop(id)
+        -- And the backdrop a camp made later starts with (#170 review).
+        AltStable.SetConfigValue("rosterScene", id)
+    elseif camp then
+        AltStable.SetCampBackdrop(camp.id, id)
+    else
+        AltStable.SetConfigValue("rosterScene", id)
+    end
+    L.ClosePicker()
+    if Roster.Refresh then Roster.Refresh() end
+    return true
+end
+
+local function BuildPicker()
+    if picker then return end
+    local panel = Roster.panel
+    pickerCatcher = CreateFrame("Button", nil, panel)
+    pickerCatcher:SetAllPoints(panel)
+    pickerCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
+    pickerCatcher:RegisterForClicks("AnyUp")
+    pickerCatcher:SetScript("OnClick", function() L.ClosePicker() end)
+    local dim = pickerCatcher:CreateTexture(nil, "BACKGROUND")
+    dim:SetAllPoints()
+    dim:SetColorTexture(0, 0, 0, 0.55)
+    pickerCatcher:Hide()
+
+    local gridW = PICK_COLS * THUMB_W + (PICK_COLS - 1) * THUMB_GAP
+    local gridH = PICK_ROWS * THUMB_H + (PICK_ROWS - 1) * THUMB_GAP
+    picker = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    picker:SetFrameStrata("FULLSCREEN_DIALOG")
+    picker:SetFrameLevel(pickerCatcher:GetFrameLevel() + 5)
+    picker:SetSize(gridW + 2 * PICK_PAD, gridH + 40 + 34 + 44)
+    picker:SetPoint("CENTER", panel, "CENTER")
+    picker:EnableMouse(true)
+    if not (AltStable.SkinWindow and AltStable.SkinWindow(picker, "small")) then
+        if AltStable.ApplyBackdrop then AltStable.ApplyBackdrop(picker, 0.08, 0.08, 0.1, 0.98) end
+    end
+    local body = picker:CreateTexture(nil, "BACKGROUND", nil, 1)
+    body:SetPoint("TOPLEFT", 6, -6)
+    body:SetPoint("BOTTOMRIGHT", -6, 6)
+    body:SetColorTexture(0.06, 0.065, 0.08, 0.94)
+    picker:Hide()
+    EscapeCloses(picker, function() L.ClosePicker() end)
+
+    local title = picker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOP", 0, -14)
+    title:SetText("Backdrops")
+    picker.close = Button(picker, 22, "x", function() L.ClosePicker() end)
+    picker.close:SetPoint("TOPRIGHT", -10, -10)
+
+    picker.thumbs = {}
+    for i = 1, PER_PAGE do
+        local col, row = (i - 1) % PICK_COLS, math.floor((i - 1) / PICK_COLS)
+        local t = CreateFrame("Button", nil, picker)
+        t:SetSize(THUMB_W, THUMB_H)
+        t:SetPoint("TOPLEFT", PICK_PAD + col * (THUMB_W + THUMB_GAP), -(40 + row * (THUMB_H + THUMB_GAP)))
+        -- A 2px frame round the picture: grey, or the accent when chosen.
+        t.frame = t:CreateTexture(nil, "BACKGROUND")
+        t.frame:SetAllPoints()
+        t.tex = t:CreateTexture(nil, "ARTWORK")
+        t.tex:SetPoint("TOPLEFT", 2, -2)
+        t.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+        local strip = t:CreateTexture(nil, "OVERLAY")
+        strip:SetPoint("BOTTOMLEFT", 2, 2)
+        strip:SetPoint("BOTTOMRIGHT", -2, 2)
+        strip:SetHeight(18)
+        strip:SetColorTexture(0, 0, 0, 0.65)
+        t.name = t:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        t.name:SetPoint("BOTTOM", 0, 5)
+        local hl = t:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints(t.tex)
+        hl:SetColorTexture(1, 1, 1, 0.1)
+        t:SetScript("OnClick", function(self)
+            if self.entry then L.ChooseBackdrop(self.entry.id) end
+        end)
+        picker.thumbs[i] = t
+    end
+
+    local pagesY = -(40 + gridH + 10)
+    picker.page = picker:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    picker.page:SetPoint("TOP", 0, pagesY - 4)
+    picker.prev = Button(picker, 26, "<", function() L.PickPage(-1) end)
+    picker.prev:SetPoint("RIGHT", picker.page, "LEFT", -10, 0)
+    picker.next = Button(picker, 26, ">", function() L.PickPage(1) end)
+    picker.next:SetPoint("LEFT", picker.page, "RIGHT", 10, 0)
+
+    picker.apply = Button(picker, 100, "Apply", function() L.ApplyBackdrop() end)
+    picker.apply:SetPoint("BOTTOMRIGHT", -PICK_PAD, 14)
+    picker.all = CreateFrame("CheckButton", nil, picker, "UICheckButtonTemplate")
+    picker.all:SetSize(22, 22)
+    picker.all:SetPoint("RIGHT", picker.apply, "LEFT", -150, 0)
+    local allLbl = picker:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    allLbl:SetPoint("LEFT", picker.all, "RIGHT", 2, 0)
+    allLbl:SetText("Apply for all camps")
+end
+
+function L.OpenBackdrops()
+    if not Roster.panel then return end
+    BuildPicker()
+    local cur = Roster.CurrentScene and Roster.CurrentScene()
+    L.pick.chosen = cur and cur.id
+    local at = 1
+    for i, e in ipairs(Backdrops()) do if e.id == L.pick.chosen then at = i end end
+    L.pick.page = math.floor((at - 1) / PER_PAGE) + 1
+    picker.all:SetChecked(false)
+    pickerCatcher:Show()
+    picker:Show()
+    KeysOn(picker)
+    PaintPicker()
+end
+
+function L.Picker() return picker end
 
 ------------------------------------------------------------
 -- Building and drawing
@@ -395,6 +641,54 @@ local function OnRowClick(self, button)
     end
 end
 
+------------------------------------------------------------
+-- Faction and ruleset on each character row (#170)
+------------------------------------------------------------
+
+-- Retail's character-list crest, then the in-game Communities one, then the
+-- generic symbol: the first atlas this client has. The login screen's art may
+-- not exist in the world, and an atlas cannot be loaded blind. Last of all a
+-- banner icon from the vanilla files, which every client has.
+local FACTION_ART = {
+    Alliance = { atlases = { "glues-characterSelect-icon-faction-alliance",
+                             "communities-icon-faction-alliance", "AllianceSymbol" },
+                 file = "Interface\\Icons\\INV_BannerPVP_02" },
+    Horde    = { atlases = { "glues-characterselect-icon-faction-horde",
+                             "communities-icon-faction-horde", "HordeSymbol" },
+                 file = "Interface\\Icons\\INV_BannerPVP_01" },
+}
+
+local function HasAtlas(name)
+    local get = C_Texture and C_Texture.GetAtlasInfo
+    if type(get) ~= "function" then return false end
+    local ok, info = pcall(get, name)
+    return ok and info ~= nil
+end
+
+-- The art for a faction: { atlas = name } or { file = path }, or nil.
+function L.FactionArt(faction)
+    local art = FACTION_ART[faction]
+    if not art then return nil end
+    for _, a in ipairs(art.atlases) do
+        if HasAtlas(a) then return { atlas = a } end
+    end
+    return { file = art.file }
+end
+
+-- No ruleset art exists in the client (its UI source has the words, not
+-- pictures), so a small coloured badge: what kind of realm the character is on.
+local RULESET_BADGE = {
+    Normal   = { "PvE", "|cff8fd18f" },
+    PvP      = { "PvP", "|cffff6b6b" },
+    RP       = { "RP",  "|cffc79bff" },
+    Hardcore = { "HC",  "|cffff9a3c" },
+}
+function L.RulesetBadge(realm)
+    local rs = AltStable.RulesetOf and AltStable.RulesetOf(realm)
+    local b = rs and RULESET_BADGE[rs]
+    return b and (b[2] .. b[1] .. "|r") or ""
+end
+
 local function Row(i)
     if rows[i] then return rows[i] end
     local r = CreateFrame("Button", nil, content)
@@ -411,6 +705,15 @@ local function Row(i)
     r.sub = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.sub:SetPoint("TOPLEFT", r.text, "BOTTOMLEFT", 0, -1)
     r.sub:SetJustifyH("LEFT")
+    -- The faction crest, grey as on retail, and the ruleset badge beside it.
+    r.faction = r:CreateTexture(nil, "ARTWORK")
+    r.faction:SetSize(22, 22)
+    r.faction:SetPoint("RIGHT", -6, 0)
+    r.faction:SetAlpha(0.7)
+    r.faction:Hide()
+    r.ruleset = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    r.ruleset:SetPoint("RIGHT", r.faction, "LEFT", -6, 0)
+    r.ruleset:Hide()
     -- Fold a camp's seats away: its own button, so clicking the name selects.
     r.fold = CreateFrame("Button", nil, r)
     r.fold:SetSize(20, 20)
@@ -421,7 +724,7 @@ local function Row(i)
         local it = r.item
         if it and it.camp then
             folded[it.camp.id] = not folded[it.camp.id] or nil
-            L.Render(true)
+            L.PaintRows()
         end
     end)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -436,6 +739,8 @@ end
 local function Paint(r, it, shownCamp)
     r.item = it
     r.fold:Hide()
+    r.faction:Hide()
+    r.ruleset:Hide()
     r.sub:SetText("")
     r.text:ClearAllPoints()
     r.text:SetPoint("RIGHT", -26, 0)
@@ -472,6 +777,17 @@ local function Paint(r, it, shownCamp)
         local hidden = AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(c.guid)
         r.sub:SetText(("Level %d %s%s"):format(c.level or 0, class or "", hidden and "  (hidden)" or ""))
         if hidden then r:SetAlpha(0.5) end
+        -- Room on the right for the crest and the badge.
+        r.text:SetPoint("RIGHT", -64, 0)
+        local art = L.FactionArt(c.faction)
+        if art then
+            if art.atlas then r.faction:SetAtlas(art.atlas) else r.faction:SetTexture(art.file) end
+            if r.faction.SetDesaturated then r.faction:SetDesaturated(true) end
+            r.faction:Show()
+        end
+        local badge = L.RulesetBadge(c.realm)
+        r.ruleset:SetText(badge)
+        r.ruleset:SetShown(badge ~= "")
     else
         -- An empty seat.
         r:SetHeight(CHAR_H)
@@ -503,9 +819,14 @@ local function Build()
     search:SetSize(LIST_W - 2 * PAD - 34, SEARCH_H)
     search:SetPoint("TOPLEFT", PAD + 4, -PAD)
     search:SetAutoFocus(false)
+    -- The rows only. An edit box also fires this when it is first SHOWN, and
+    -- on a second account that was mid-glide (#159) at a width too narrow for
+    -- the list: re-deciding there hid it while the scene kept its room, until
+    -- the next full refresh (owner, in game, #170). Whether the list shows is
+    -- the Roster's refresh's call alone.
     search:HookScript("OnTextChanged", function(self)
         L.search = Trim(self:GetText() or ""):lower()
-        L.Render(true)
+        if list:IsShown() then L.PaintRows() end
     end)
 
     plusBtn = CreateFrame("Button", nil, list, "UIPanelButtonTemplate")
@@ -529,6 +850,16 @@ local function Build()
     content = CreateFrame("Frame", nil, scroll)
     content:SetSize(ROW_W, 1)
     scroll:SetScrollChild(content)
+    -- And drawn again once the frame has its real size.
+    --
+    -- The ROWS only, never Render's show-or-hide decision: a size change also
+    -- comes mid-glide (#159), when opening the Roster grows the window to its
+    -- minimum. Re-deciding there, at a half-way width, hid the list while the
+    -- scene kept the room it had left for it - an empty strip, no toggle, on a
+    -- second account's first open (owner, in game, #170).
+    scroll:SetScript("OnSizeChanged", function()
+        if list:IsShown() then L.PaintRows() end
+    end)
 
     -- Along the bottom, like retail's: it stays when the list is tucked away.
     toggle = CreateFrame("Frame", nil, panel)
@@ -558,6 +889,7 @@ function L.Render(sceneView)
     if not sceneView then
         list:Hide(); toggle:Hide()
         L.CloseDialog()
+        L.ClosePicker()
         return
     end
     -- Too narrow a panel for the list AND a scene worth looking at: the list
@@ -578,7 +910,13 @@ function L.Render(sceneView)
     end
     toggle:SetWidth(LIST_W)
     list:Show()
+    L.PaintRows()
+end
 
+-- The rows only: what the list holds, laid out top to bottom. Whether the list
+-- is shown at all is Render's call, made with the scene's own layout.
+function L.PaintRows()
+    if not (list and content) then return end
     local shownCamp = AltStable.SelectedCamp and AltStable.SelectedCamp()
     local items = L.Items()
     local y = 0
@@ -593,6 +931,10 @@ function L.Render(sceneView)
     for i = #items + 1, #rows do rows[i]:Hide(); rows[i].item = nil end
     L.shown = #items
     content:SetHeight(math.max(1, y))
+    -- A scroll child laid out before its scroll frame has a size is not drawn
+    -- until something re-lays it out: the first open showed an empty list
+    -- until it was tucked away and back (owner, in game, #170).
+    if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
 end
 
 -- For tests: the frames.
@@ -600,5 +942,6 @@ L._test = {
     List = function() return list end, Toggle = function() return toggle end,
     ToggleButton = function() return toggleBtn end, Search = function() return search end,
     Plus = function() return plusBtn end, Rows = function() return rows end,
+    Scroll = function() return scroll end,
     Folded = folded,
 }

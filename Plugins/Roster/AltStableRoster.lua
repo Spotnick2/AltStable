@@ -87,12 +87,11 @@ local SCENE_DEPTH    = 0.14   -- how much smaller the far side of it is
 -- is what the first version looked like. The grid remains the place to see
 -- everyone.
 --
--- Four when pets are shown (#75): a fifth figure takes the room a hunter's
--- beast or a warlock's demon stands in, and with five they stood behind the
--- next character instead of beside their own (owner, in game). Five without.
--- By the OPTION, not by who has a pet, so a pet arriving by sync does not
--- reshuffle the line.
-local SCENE_CAST = 5
+-- Four (#170): a camp holds four (AltStable.CAMP_SIZE), with or without pets.
+-- Pets (#75) need the room four leave - with five they stood behind the next
+-- character instead of beside their own (owner, in game) - and a fifth seat
+-- that came and went with the pets option only confused.
+local SCENE_CAST = 4
 local SCENE_CAST_WITH_PETS = 4
 local MAX_CARD_W    = 170
 local FIGURE_RATIO  = 0.94    -- of the space left ABOVE the name block
@@ -173,6 +172,8 @@ end
 local function CurrentScene()
     return SCENE_BACKDROPS[SceneIndex()]
 end
+-- For the backdrop picker (CampList.lua, #152).
+Roster.SCENE_BACKDROPS, Roster.CurrentScene = SCENE_BACKDROPS, CurrentScene
 
 ------------------------------------------------------------
 -- Which cutout belongs to which character
@@ -352,6 +353,8 @@ local function BackdropTexCoords(panelW, panelH, entry)
     -- is the part nobody misses.
     return uPad, 1 - uPad, vMax * (1 - vFrac), vMax
 end
+
+Roster.BackdropTexCoords = BackdropTexCoords   -- for the picker's thumbnails (#152)
 
 -- Where the fire ended up on screen once the backdrop was cover-cropped.
 --
@@ -963,6 +966,30 @@ local function BuildPanel(mainFrame)
     sceneLabel:SetPoint("RIGHT", next_, "LEFT", -6, 0)
     sceneLabel:SetJustifyH("CENTER")
 
+    -- The backdrop's name opens the picker (#152, part 3: retail's Campsites
+    -- dialog, thumbnails in pages). The arrows stay, for a quick step.
+    local pick = CreateFrame("Button", nil, sceneBar)
+    pick:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+    pick:SetPoint("RIGHT", next_, "LEFT", -4, 0)
+    pick:SetHeight(BAR_H)
+    local pickHL = pick:CreateTexture(nil, "HIGHLIGHT")
+    pickHL:SetAllPoints()
+    pickHL:SetColorTexture(1, 1, 1, 0.08)
+    pick:SetScript("OnClick", function()
+        if Roster.CampList and Roster.CampList.OpenBackdrops then Roster.CampList.OpenBackdrops() end
+    end)
+    pick:SetScript("OnEnter", function(self)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
+        GameTooltip:AddLine("Choose a backdrop", 1, 1, 1)
+        GameTooltip:AddLine("Every camp can have its own.", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    pick:SetScript("OnLeave", function(self)
+        if GameTooltip and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+    end)
+    Roster.backdropPick = pick
+
     local function Step(delta)
         local i = SceneIndex() + delta
         if i < 1 then i = #SCENE_BACKDROPS end
@@ -1115,7 +1142,7 @@ AltStable.EnsureRosterCamps = EnsureCamps
 local function CampCast(camp, cutoutFor, limit)
     local store = CharacterStore()
     local cast = {}
-    local info = { members = 0, gone = 0, hidden = 0, noArt = 0, noSeat = 0 }
+    local info = { members = 0, gone = 0, hidden = 0, noArt = 0 }
     for _, guid in ipairs(camp and camp.members or {}) do
         info.members = info.members + 1
         local c = store[guid]
@@ -1126,7 +1153,8 @@ local function CampCast(camp, cutoutFor, limit)
         elseif not cutoutFor(c) then
             info.noArt = info.noArt + 1
         elseif #cast >= (limit or SCENE_CAST) then
-            info.noSeat = info.noSeat + 1
+            -- More members than seats: only a camp from before camps held four,
+            -- and PruneCamps trims those on the next refresh.
         else
             cast[#cast + 1] = c
         end
@@ -1472,9 +1500,9 @@ local function RenderScene(camp)
     if sceneLabel then sceneLabel:SetText(entry.label) end
     if campLabel then campLabel:SetText(camp and camp.name or "No camp") end
 
-    -- The shown camp's members, in their order (#152).
-    local petsOn = AltStableConfig and AltStableConfig.rosterPets == true
-    local cast, info = CampCast(camp, CutoutFor, petsOn and SCENE_CAST_WITH_PETS or SCENE_CAST)
+    -- The shown camp's members, in their order (#152), four seats with or
+    -- without pets (#170).
+    local cast, info = CampCast(camp, CutoutFor, AltStable.CAMP_SIZE or SCENE_CAST)
     local spots, figureH, slot = SceneLayout(pw, ph, #cast, entry)
     local tallest = TallestRace(cast)
 
@@ -2559,6 +2587,17 @@ end
 
 function Roster.Refresh()
     if not panel then return end
+    -- A panel just shown has no size until the client lays it out, on the
+    -- next frame: measured now, the camp list stepped aside as "too narrow"
+    -- and the scene seated no one, until some later refresh - the login scan
+    -- or a sync, seconds later (owner, in game, #170). Draw again then.
+    if (panel:GetWidth() or 0) <= 0 and not Roster._sizeWait and C_Timer and C_Timer.After then
+        Roster._sizeWait = true
+        C_Timer.After(0, function()
+            Roster._sizeWait = nil
+            if Roster.isActive and (panel:GetWidth() or 0) > 0 then Roster.Refresh() end
+        end)
+    end
     -- Pets belong to the scene alone; RenderScene puts back the ones it wants.
     HidePets()
 
@@ -2656,9 +2695,8 @@ function Roster.Refresh()
             local why = {}
             if info.noArt > 0 then why[#why + 1] = ("%d without a portrait"):format(info.noArt) end
             if info.hidden > 0 then why[#why + 1] = ("%d hidden"):format(info.hidden) end
-            if info.noSeat > 0 then why[#why + 1] = ("%d without a seat while pets are shown"):format(info.noSeat) end
             if #why > 0 then
-                local seated = info.members - info.gone - info.noArt - info.hidden - info.noSeat
+                local seated = info.members - info.gone - info.noArt - info.hidden
                 hintText:SetText(("showing %d of %d in %s - %s"):format(
                     seated, info.members - info.gone, name, table.concat(why, ", ")))
                 hintText:Show()
@@ -2773,6 +2811,13 @@ end
 
 function Roster.Deactivate(mainFrame)
     Roster.isActive = false
+    -- The camp list's dialogs go with the tab: their dimming covers only the
+    -- panel, so the sidebar stays clickable, and a dialog left open came back
+    -- open on the next visit (#170 review).
+    if Roster.CampList then
+        if Roster.CampList.CloseDialog then Roster.CampList.CloseDialog() end
+        if Roster.CampList.ClosePicker then Roster.CampList.ClosePicker() end
+    end
     -- The drill-down is a per-visit state, like the tab it opens on. Left set,
     -- switching to another sheet tab and coming back landed you straight in the
     -- detail pane with no grid and nothing to say why - and the only way out was

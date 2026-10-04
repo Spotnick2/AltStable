@@ -1109,11 +1109,11 @@ do
     local camps = AltStable.GetCamps()
     eq("the first time, one camp is made", #camps, 1)
     eq("  named Camp 1", camps[1].name, "Camp 1")
-    eq("  holding the top five with a portrait", table.concat(camps[1].members, ","),
-       "wire-6,wire-5,wire-4,wire-3,wire-2")
+    eq("  holding the top four with a portrait", table.concat(camps[1].members, ","),
+       "wire-6,wire-5,wire-4,wire-3")
     eq("the switcher names the camp shown", T.CampLabel(), "Camp 1")
     check("  and shows in the scene view", T.CampBar():IsShown())
-    eq("all five stand at the fire", seated(), 5)
+    eq("all four stand at the fire", seated(), 4)
     eq("  so the hint has nothing to explain", hint(), "")
     -- Made for the player, so kept "the top characters" as they arrive (a
     -- fresh install knows only the one logged in)...
@@ -1122,52 +1122,58 @@ do
     AltStableDB["wire-7"] = { guid = "wire-7", name = "Wire 7", level = 99, class = "MAGE" }
     AltStableCutoutManifest["wire-7"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
     T.Refresh()
-    eq("  it takes in a new top character", firstMembers(), "wire-7,wire-6,wire-5,wire-4,wire-3")
+    eq("  it takes in a new top character", firstMembers(), "wire-7,wire-6,wire-5,wire-4")
     AltStableDB["wire-7"], AltStableCutoutManifest["wire-7"] = nil, nil
     T.Refresh()
-    eq("  and lets one whose record went go", firstMembers(), "wire-6,wire-5,wire-4,wire-3,wire-2")
+    eq("  and lets one whose record went go", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
     -- ...until the player changes a camp. Then it is only what they made it.
     local id1 = camps[1].id
-    AltStable.RemoveFromCamp("wire-2")
+    AltStable.RemoveFromCamp("wire-3")
     check("the player's first change ends that", not AltStable.CampsAutoSeeded())
     AltStableDB["wire-7"] = { guid = "wire-7", name = "Wire 7", level = 99, class = "MAGE" }
     AltStableCutoutManifest["wire-7"] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
     T.Refresh()
-    eq("  no one joins by themselves after it", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
+    eq("  no one joins by themselves after it", firstMembers(), "wire-6,wire-5,wire-4")
     AltStableDB["wire-7"], AltStableCutoutManifest["wire-7"] = nil, nil
-    AltStable.AddToCamp("wire-2", id1)
+    AltStable.AddToCamp("wire-3", id1)
 
     -- A seat whose record is gone (/alts cleanup deletes records without
     -- asking the camps) is freed, so the camp is not full of no one.
-    local heldRecord = AltStableDB["wire-2"]
-    AltStableDB["wire-2"] = nil
+    local heldRecord = AltStableDB["wire-3"]
+    AltStableDB["wire-3"] = nil
     T.Refresh()
-    eq("a seat whose record is gone is freed", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
-    AltStableDB["wire-2"] = heldRecord
-    AltStable.AddToCamp("wire-2", id1)
+    eq("a seat whose record is gone is freed", firstMembers(), "wire-6,wire-5,wire-4")
+    AltStableDB["wire-3"] = heldRecord
+    AltStable.AddToCamp("wire-3", id1)
+
+    -- A camp from when camps held five keeps its first four.
+    AltStableConfig.rosterCamps[1].members[5] = "wire-2"
+    T.Refresh()
+    eq("a camp holding five is trimmed to its first four", firstMembers(), "wire-6,wire-5,wire-4,wire-3")
 
     -- Who is left out, and why.
-    check("a full camp refuses a sixth", not AltStable.AddToCamp("wire-1", id1))
-    AltStable.RemoveFromCamp("wire-2")
+    check("a full camp refuses a fifth", not AltStable.AddToCamp("wire-1", id1))
+    AltStable.RemoveFromCamp("wire-3")
     check("  with room, it takes one", AltStable.AddToCamp("wire-1", id1))
     T.Refresh()
-    eq("a member with no portrait is left out", seated(), 4)
-    check("  and the hint says so", hint():find("showing 4 of 5 in Camp 1 - 1 without a portrait", 1, true) ~= nil, hint())
-    AltStable.SetCharacterHidden("wire-3", true)
+    eq("a member with no portrait is left out", seated(), 3)
+    check("  and the hint says so", hint():find("showing 3 of 4 in Camp 1 - 1 without a portrait", 1, true) ~= nil, hint())
+    AltStable.SetCharacterHidden("wire-5", true)
     T.Refresh()
     check("a hidden member is left out and counted", hint():find("1 hidden", 1, true) ~= nil, hint())
-    AltStable.SetCharacterHidden("wire-3", false)
-    AltStable.RemoveFromCamp("wire-1"); AltStable.AddToCamp("wire-2", id1)
+    AltStable.SetCharacterHidden("wire-5", false)
+    AltStable.RemoveFromCamp("wire-1"); AltStable.AddToCamp("wire-3", id1)
+    -- Pets take no seat (#170): four stand with them as without.
     AltStableConfig.rosterPets = true
     T.Refresh()
-    eq("with pets shown, four of five are seated", seated(), 4)
-    check("  and the fifth is explained", hint():find("1 without a seat while pets are shown", 1, true) ~= nil, hint())
+    eq("with pets shown, all four are still seated", seated(), 4)
+    eq("  with nothing to explain", hint(), "")
     AltStableConfig.rosterPets = nil
 
     -- More camps, and the switcher.
     local id2 = AltStable.CreateCamp("Raiders", { "wire-6" })
     eq("making a camp with a member moves it out of its old one",
-       table.concat(AltStable.GetCamp(id1).members, ","), "wire-5,wire-4,wire-3,wire-2")
+       table.concat(AltStable.GetCamp(id1).members, ","), "wire-5,wire-4,wire-3")
     AltStable.RosterPlugin.campButtons.next:GetScript("OnClick")()
     eq("the switcher's > shows the next camp", T.CampLabel(), "Raiders")
     eq("  with only its own members", seated(), 1)
@@ -1243,8 +1249,8 @@ do
 
     local a = AltStable.CreateCamp(nil, { "cm-1", "cm-2", "cm-3", "cm-1", "cm-4", "cm-5", "cm-6" })
     eq("an unnamed camp gets a number", AltStable.GetCamp(a).name, "Camp 1")
-    eq("  duplicates are dropped and it stops at five",
-       table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-2,cm-3,cm-4,cm-5")
+    eq("  duplicates are dropped and it stops at four",
+       table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-2,cm-3,cm-4")
     local b = AltStable.CreateCamp("B")
     check("ids are distinct", a ~= b)
     -- A deleted camp's id is never handed out again: a menu or drag still
@@ -1261,7 +1267,7 @@ do
     check("  but to a name", AltStable.RenameCamp(b, "Bee") and AltStable.GetCamp(b).name == "Bee")
 
     check("adding to another camp moves", AltStable.AddToCamp("cm-2", b))
-    eq("  out of the first", table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-3,cm-4,cm-5")
+    eq("  out of the first", table.concat(AltStable.GetCamp(a).members, ","), "cm-1,cm-3,cm-4")
     local camp, at = AltStable.CampOf("cm-2")
     check("  and CampOf finds it", camp and camp.id == b and at == 1)
     check("a move within a camp reorders it", AltStable.AddToCamp("cm-5", a, 1))
@@ -3589,8 +3595,8 @@ do
     WoW.modelBoxes = {}
 end
 
--- Five round the fire without pets, four with: the fifth figure's room is
--- where the pets stand. By the option, so a synced pet does not reshuffle.
+-- Four round the fire, with pets or without (#170): a camp holds four, and a
+-- fifth seat that came and went with the pets option only confused.
 do
     local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
     AltStableDB, AltStableCutoutManifest = {}, {}
@@ -3612,10 +3618,10 @@ do
     end
     AltStableConfig.rosterPets = nil
     T.Refresh()
-    eq("without pets, five stand at the fire", seated(), 5)
+    eq("without pets, four stand at the fire", seated(), 4)
     AltStableConfig.rosterPets = true
     T.Refresh()
-    eq("with pets, four do - nobody here even has one", seated(), 4)
+    eq("with pets, the same four", seated(), 4)
     AltStableConfig.rosterPets, AltStableConfig.rosterView = nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
@@ -3684,8 +3690,8 @@ do
         end
         return table.concat(out, " ")
     end
-    eq("a header, its five seats, a divider, then everyone in no camp", kinds(),
-       "header slot:8 slot:7 slot:6 slot:5 slot:4 sep char:3 char:2 char:1")
+    eq("a header, its four seats, a divider, then everyone in no camp", kinds(),
+       "header slot:8 slot:7 slot:6 slot:5 sep char:4 char:3 char:2 char:1")
     local rows = LT.Rows()
     eq("the header row names the camp", rows[1].text:GetText(), "Camp 1")
     local camp1 = AltStable.GetCamps()[1].id
@@ -3703,10 +3709,10 @@ do
     check("a full camp's header refuses a newcomer", not L.Drop(outsider, item("header")))
     local seat2 = item("slot", "pool-7")
     check("onto a seat in a full camp, the newcomer takes it", L.Drop(outsider, seat2))
-    eq("  the one sitting there leaves", members(camp1), "8,3,6,5,4")
+    eq("  the one sitting there leaves", members(camp1), "8,3,6,5")
     check("  and is back among the campless", item("char", "pool-7") ~= nil)
     check("a seat dragged onto another seat reorders", L.Drop({ kind = "char", guid = "pool-8", fromCamp = camp1, fromPos = 1 }, item("slot", "pool-6")))
-    eq("  in that order", members(camp1), "3,6,8,5,4")
+    eq("  in that order", members(camp1), "3,6,8,5")
 
     -- A new camp, through the dialog.
     LT.Plus():GetScript("OnClick")(LT.Plus())
@@ -3723,7 +3729,7 @@ do
     eq("  and shows it", raiders.name, "Raiders")
     check("an empty camp's hint points at the list's seats",
           (T.HintText() or ""):find("drag a character onto one of its seats", 1, true) ~= nil, T.HintText())
-    eq("its seats are empty", kinds():match("header slot slot slot slot slot") ~= nil, true)
+    check("its four seats are empty", kinds():find("header slot slot slot slot sep", 1, true) ~= nil, kinds())
     check("a newcomer dropped on a camp's header joins it",
           L.Drop({ kind = "char", guid = "pool-7" }, item("header", nil, "Raiders")))
     eq("  at the end", members(raiders.id), "7")
@@ -3732,18 +3738,48 @@ do
     -- Between camps.
     check("a member dropped on another camp's empty seat moves",
           L.Drop({ kind = "char", guid = "pool-5", fromCamp = camp1, fromPos = 4 }, item("slot", nil, "Raiders")))
-    eq("  out of the first", members(camp1), "3,6,8,4")
+    eq("  out of the first", members(camp1), "3,6,8")
     eq("  into the second", members(raiders.id), "5")
     check("onto someone in another camp, the two swap",
           L.Drop({ kind = "char", guid = "pool-3", fromCamp = camp1, fromPos = 1 }, item("slot", "pool-5")))
     eq("  one way", members(raiders.id), "3")
-    eq("  and the other", members(camp1), "5,6,8,4")
+    eq("  and the other", members(camp1), "5,6,8")
     check("dragged out into the list, a member leaves its camp",
-          L.Drop({ kind = "char", guid = "pool-4", fromCamp = camp1, fromPos = 4 }, { kind = "out" }))
-    check("  and is campless", not AltStable.CampOf("pool-4"))
+          L.Drop({ kind = "char", guid = "pool-8", fromCamp = camp1, fromPos = 3 }, { kind = "out" }))
+    check("  and is campless", not AltStable.CampOf("pool-8"))
+    local function campless()
+        local out = {}
+        for _, c in ipairs(L.Campless()) do out[#out + 1] = c.guid:sub(6) end
+        return table.concat(out, ",")
+    end
+    eq("  landing at the end of the campless", campless():match("8$"), "8")
     check("a header dropped on another reorders the camps",
           L.Drop({ kind = "camp", id = raiders.id }, item("header", nil, "Camp 1")))
     eq("  Raiders first", AltStable.GetCamps()[1].name, "Raiders")
+
+    -- The characters in no camp are dragged up and down too, as on retail
+    -- (#170): onto another to go before it, onto the divider for the top,
+    -- into the empty space for the end.
+    local before = campless()
+    check("a campless character dropped on another moves before it",
+          L.Drop({ kind = "char", guid = "pool-1" }, item("char", "pool-4")))
+    check("  so it lists just above it", campless():find("1,4", 1, true) ~= nil, campless())
+    check("  and the order is saved", type(AltStableConfig.rosterListOrder) == "table"
+          and #AltStableConfig.rosterListOrder == #L.Campless())
+    L.Drop({ kind = "char", guid = "pool-2" }, item("sep"))
+    eq("dropped on the divider, it goes to the top", campless():match("^%d+"), "2")
+    L.Drop({ kind = "char", guid = "pool-2" }, { kind = "out" })
+    eq("into the empty space, to the end", campless():match("%d+$"), "2")
+    check("dropped on itself, nothing moves", not L.Drop({ kind = "char", guid = "pool-2" }, item("char", "pool-2")))
+    check("a camp member dropped among them leaves its camp and lands there",
+          L.Drop({ kind = "char", guid = "pool-6", fromCamp = camp1, fromPos = 2 }, item("char", "pool-4"))
+          and not AltStable.CampOf("pool-6") and campless():find("6,4", 1, true) ~= nil)
+    check("the list shows them in that order", (function()
+        local seen = {}
+        for _, it in ipairs(L.Items()) do if it.kind == "char" then seen[#seen + 1] = it.guid:sub(6) end end
+        return table.concat(seen, ",") == campless()
+    end)())
+    AltStable.AddToCamp("pool-6", camp1)
 
     -- The real gesture: drag a row, release over another.
     T.Refresh()
@@ -3881,6 +3917,96 @@ do
     check("  and the detail gets it back full width", not still)
     AltStable.RosterPlugin.Back()
 
+    -- Each character row: its faction's crest and its ruleset's badge (#170).
+    AltStableDB["pool-1"].faction, AltStableDB["pool-1"].realm = "Horde", "Classic Beta PvP"
+    AltStableDB["pool-2"].faction, AltStableDB["pool-2"].realm = "Alliance", nil
+    local heldTex = C_Texture
+    C_Texture = { GetAtlasInfo = function(name)
+        return (name == "communities-icon-faction-horde" or name == "communities-icon-faction-alliance") and {} or nil
+    end }
+    eq("the crest is the first faction atlas this client has", L.FactionArt("Horde").atlas, "communities-icon-faction-horde")
+    C_Texture = nil
+    eq("  with none, the vanilla banner icon", L.FactionArt("Alliance").file, "Interface\\Icons\\INV_BannerPVP_02")
+    eq("  and the Horde's", L.FactionArt("Horde").file, "Interface\\Icons\\INV_BannerPVP_01")
+    check("  no crest for no faction", L.FactionArt(nil) == nil)
+    C_Texture = heldTex
+    check("a PvP realm's badge says PvP", L.RulesetBadge("Classic Beta PvP"):find("PvP", 1, true) ~= nil)
+    check("  a PvE realm's says PvE", L.RulesetBadge("Classic Beta PvE"):find("PvE", 1, true) ~= nil)
+    check("  Hardcore is HC", L.RulesetBadge("Forever Hardcore"):find("HC", 1, true) ~= nil)
+    check("  RP is RP", L.RulesetBadge("Forever RP"):find("RP", 1, true) ~= nil)
+    eq("  an unreadable realm has none", L.RulesetBadge(nil), "")
+    T.Refresh()
+    local r1, r2
+    for i = 1, L.shown do
+        local r = LT.Rows()[i]
+        if r.item and r.item.guid == "pool-1" then r1 = r end
+        if r.item and r.item.guid == "pool-2" then r2 = r end
+    end
+    check("a character row shows its crest", r1 and r1.faction:IsShown())
+    check("  and its ruleset badge", r1 and r1.ruleset:IsShown() and (r1.ruleset:GetText() or ""):find("PvP", 1, true) ~= nil)
+    check("a realm the addon cannot read shows no badge", r2 and not r2.ruleset:IsShown())
+    local headerRow = LT.Rows()[1]
+    check("a camp header shows neither", not headerRow.faction:IsShown() and not headerRow.ruleset:IsShown())
+    -- Rows are reused by position: a new camp turns rows that held characters
+    -- into a header and empty seats, which must drop the crest and badge.
+    local tmp = AltStable.CreateCamp("Tmp")
+    T.Refresh()
+    local stale = false
+    for i = 1, L.shown do
+        local r = LT.Rows()[i]
+        if r.item and not r.item.char and (r.faction:IsShown() or r.ruleset:IsShown()) then stale = true end
+    end
+    check("a row reused for a header or an empty seat drops the crest and badge", not stale)
+    AltStable.DeleteCamp(tmp)
+    AltStable.SelectCamp(camp1)
+    T.Refresh()
+
+    -- Refreshed the instant it is shown, before the client has sized the
+    -- panel: drawn again on the next frame, not left without its list until
+    -- some later refresh (#170: seconds, in game).
+    p.GetWidth = function() return 0 end
+    WoW.timers = {}
+    T.Refresh()
+    check("a refresh at no width asks to be run again next frame", #WoW.timers > 0)
+    p.GetWidth = function() return 1400 end
+    WoW.flushTimers()
+    check("  and then shows the list", LT.List():IsShown())
+
+    -- A size change mid-glide (#159: opening the Roster grows the window to
+    -- its minimum) repaints the rows and decides nothing: it once hid the list
+    -- at a half-way width while the scene kept its room - an empty strip.
+    T.Refresh()
+    check("the list is open before the glide", LT.List():IsShown())
+    p.GetWidth = function() return 500 end
+    LT.Scroll():GetScript("OnSizeChanged")(LT.Scroll())
+    check("a size change mid-glide leaves the list shown", LT.List():IsShown())
+    eq("  and the scene's room for it", AltStable.RosterPlugin.SceneInset(), L.LIST_W)
+    check("  with its rows drawn", L.shown > 0 and LT.Rows()[1]:IsShown())
+    -- Nor does the search box (an edit box fires OnTextChanged when it is
+    -- first shown, which on a second account was mid-glide) or a fold: they
+    -- redraw rows, and the list was hidden again (owner, in game, #170).
+    local sb = LT.Search()
+    sb:SetText("")
+    sb:GetScript("OnTextChanged")(sb)
+    check("the search box changing mid-glide leaves the list shown", LT.List():IsShown())
+    eq("  and the scene's room for it", AltStable.RosterPlugin.SceneInset(), L.LIST_W)
+    local foldRow = LT.Rows()[1]
+    foldRow.fold:GetScript("OnClick")(foldRow.fold)
+    check("  as does a fold", LT.List():IsShown())
+    foldRow.fold:GetScript("OnClick")(foldRow.fold)
+    sb:SetText("pool 4")
+    sb:GetScript("OnTextChanged")(sb)
+    check("searching still filters the rows", L.shown > 0 and (function()
+        for i = 1, L.shown do
+            local it = LT.Rows()[i].item
+            if it and it.char and it.guid ~= "pool-4" then return false end
+        end
+        return true
+    end)())
+    sb:SetText("")
+    sb:GetScript("OnTextChanged")(sb)
+    p.GetWidth = function() return 1400 end
+
     -- Too narrow, and the grid.
     p.GetWidth = function() return 500 end
     T.Refresh()
@@ -3896,6 +4022,189 @@ do
     p.GetWidth, p.GetHeight = heldW, heldH
     AltStableConfig.rosterView = nil
     AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampListHidden = nil, nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
+-- A camp member dropped on the divider when it then sorts FIRST among the
+-- campless (a level 60 beside a campless level 10, no saved order): it leaves
+-- its camp, and the list and scene are redrawn (#170 Codex review: the
+-- "already first" check ran after the removal and skipped the redraw).
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = {
+        hi = { guid = "hi", name = "High One", level = 60, class = "MAGE" },
+        lo = { guid = "lo", name = "Low One", level = 10, class = "MAGE" },
+    }
+    AltStableCutoutManifest = {}
+    local main = CreateFrame("Frame")
+    T.Activate(main)
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 1400 end
+    p.GetHeight = function() return 800 end
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableConfig.rosterListOrder, AltStableConfig.rosterCampListHidden = nil, nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    local L = AltStable.RosterPlugin.CampList
+    local camp = AltStable.SelectedCamp()
+    AltStable.RemoveFromCamp("lo")
+    T.Refresh()
+    check("the setup: High in the camp, Low campless", AltStable.CampOf("hi") and not AltStable.CampOf("lo"))
+    local sep
+    for _, it in ipairs(L.Items()) do if it.kind == "sep" then sep = it end end
+    local moved = L.Drop({ kind = "char", guid = "hi", fromCamp = camp.id, fromPos = 1 }, sep)
+    check("a camp member dropped on the divider counts as a move", moved)
+    check("  it has left its camp", not AltStable.CampOf("hi"))
+    eq("  and lists first among the campless", L.Campless()[1].guid, "hi")
+    local drawn = false
+    for i = 1, L.shown do
+        local it = L._test.Rows()[i].item
+        if it and it.kind == "char" and it.guid == "hi" then drawn = true end
+    end
+    check("  and the list is redrawn with it there", drawn)
+
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableConfig.rosterView, AltStableConfig.rosterListOrder = nil, nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
+------------------------------------------------------------
+-- The backdrop picker (#152, part 3): retail's Campsites dialog
+------------------------------------------------------------
+
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB, AltStableCutoutManifest = {}, {}
+    for i = 1, 3 do
+        local guid = ("bd-%d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Bd %d"):format(i), level = i, class = "MAGE" }
+        AltStableCutoutManifest[guid] = { file = "x.tga", w = 100, h = 512, texw = 128, texh = 512 }
+    end
+    local main = CreateFrame("Frame")
+    T.Activate(main)
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 1400 end
+    p.GetHeight = function() return 800 end
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+
+    local L = AltStable.RosterPlugin.CampList
+    local B = T.SCENE_BACKDROPS
+    local campA = AltStable.SelectedCamp().id
+
+    -- The made-for-you first camp keeps topping up through a backdrop change,
+    -- a rename and a no-change Apply: none of them is about who is in it
+    -- (#170 review).
+    check("the first camp starts made for the player", AltStable.CampsAutoSeeded())
+    AltStable.SetCampBackdrop(campA, B[2].id)
+    check("  a backdrop change keeps it so", AltStable.CampsAutoSeeded())
+    AltStable.RenameCamp(campA, "Main")
+    check("  as does a rename", AltStable.CampsAutoSeeded())
+    L.OpenBackdrops()
+    L.ApplyBackdrop()
+    check("  and an Apply that changes nothing", AltStable.CampsAutoSeeded())
+
+    local campB = AltStable.CreateCamp("Second")
+    AltStable.SetCampBackdrop(campA, B[#B].id)        -- the last one: on the last page
+    AltStable.SetCampBackdrop(campB, B[1].id)
+    AltStable.SelectCamp(campA)
+    T.Refresh()
+
+    local pick = AltStable.RosterPlugin.backdropPick
+    pick:GetScript("OnClick")(pick)
+    local pk = L.Picker()
+    check("the backdrop's name opens the picker", pk and pk:IsShown())
+    eq("  with the shown camp's backdrop chosen", L.pick.chosen, B[#B].id)
+    local pages = math.ceil(#B / 6)
+    eq("  on the page it is on", L.pick.page, pages)
+    check("  framed as chosen", (function()
+        for _, t in ipairs(pk.thumbs) do if t:IsShown() and t.entry and t.entry.id == B[#B].id then return t.chosen end end
+    end)())
+    check("  'next' is off on the last page", not pk.next:IsEnabled())
+    pk.prev:GetScript("OnClick")(pk.prev)
+    eq("< goes back a page", L.pick.page, pages - 1)
+    L.PickPage(-99)
+    eq("paging stops at the first", L.pick.page, 1)
+    check("  where 'prev' is off", not pk.prev:IsEnabled())
+    local shown = 0
+    for _, t in ipairs(pk.thumbs) do if t:IsShown() then shown = shown + 1 end end
+    eq("six to a page", shown, math.min(6, #B))
+    eq("each named", pk.thumbs[1].name:GetText(), B[1].label)
+    eq("  and drawn from its own picture", pk.thumbs[1].tex:GetTexture(), B[1].file)
+    -- Cropped for the picture as drawn: inside a 2px frame, so 4px smaller.
+    local l, r, t = T.BackdropTexCoords(176 - 4, 99 - 4, B[1])
+    local ulx, uly, _, _, urx = pk.thumbs[1].tex:GetTexCoord()
+    check("  cropped for the picture inside its frame", ulx == l and urx == r and uly == t,
+          table.concat({ ulx, urx, uly }, ",") .. " vs " .. table.concat({ l, r, t }, ","))
+
+    -- Choose, and Apply to the shown camp only.
+    pk.thumbs[2]:GetScript("OnClick")(pk.thumbs[2])
+    eq("clicking a thumbnail chooses it", L.pick.chosen, B[2].id)
+    pk.apply:GetScript("OnClick")(pk.apply)
+    check("Apply closes the picker", not pk:IsShown())
+    eq("  and gives the shown camp that backdrop", AltStable.GetCamp(campA).backdrop, B[2].id)
+    eq("  and no other camp", AltStable.GetCamp(campB).backdrop, B[1].id)
+    eq("  and the scene draws it", T.CurrentScene().id, B[2].id)
+
+    -- Closing without applying changes nothing.
+    L.OpenBackdrops()
+    L.ChooseBackdrop(B[3].id)
+    pk.close:GetScript("OnClick")(pk.close)
+    eq("closing without Apply changes nothing", AltStable.GetCamp(campA).backdrop, B[2].id)
+    L.OpenBackdrops()
+    check("the picker takes the keyboard", pk:IsKeyboardEnabled())
+    pk:GetScript("OnKeyDown")(pk, "ESCAPE")
+    check("Escape closes it", not pk:IsShown())
+    check("  and lets go of the keyboard", not pk:IsKeyboardEnabled())
+
+    -- Apply for all camps.
+    L.OpenBackdrops()
+    L.ChooseBackdrop(B[4].id)
+    pk.all:SetChecked(true)
+    L.ApplyBackdrop()
+    eq("Apply for all camps sets the shown camp", AltStable.GetCamp(campA).backdrop, B[4].id)
+    eq("  and every other", AltStable.GetCamp(campB).backdrop, B[4].id)
+    local later = AltStable.CreateCamp("Later")
+    AltStable.SelectCamp(later)
+    eq("  and a camp made afterwards starts with it", T.CurrentScene().id, B[4].id)
+    AltStable.SelectCamp(campA)
+    L.OpenBackdrops()
+    check("the tick does not stay ticked for next time", not pk.all:GetChecked())
+    L.ClosePicker()
+    check("closing lets the thumbnails' pictures go", pk.thumbs[1].tex:GetTexture() == nil)
+
+    -- Leaving the tab closes both dialogs; they do not come back open. Their
+    -- dimming covers only the panel, so the sidebar stays clickable.
+    L.OpenBackdrops()
+    registered.OnDeactivate(main)
+    check("leaving the Roster tab closes the picker", not pk:IsShown())
+    T.Activate(main)
+    check("  which does not come back open", not pk:IsShown())
+    L.OpenDialog(nil)
+    registered.OnDeactivate(main)
+    check("  nor does the camp dialog", not L.Dialog():IsShown())
+    T.Activate(main)
+
+    -- With no camp at all, the shared backdrop the scene falls back to.
+    for _, c in ipairs(AltStable.GetCamps()) do AltStable.DeleteCamp(c.id) end
+    L.OpenBackdrops()
+    L.ChooseBackdrop(B[5].id)
+    L.ApplyBackdrop()
+    eq("with no camp, the shared backdrop is set", AltStableConfig.rosterScene, B[5].id)
+
+    -- Leaving the scene closes it.
+    L.OpenBackdrops()
+    AltStableConfig.rosterView = "grid"
+    T.Refresh()
+    check("switching to the grid closes the picker", not pk:IsShown())
+
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableConfig.rosterView, AltStableConfig.rosterScene = nil, nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 

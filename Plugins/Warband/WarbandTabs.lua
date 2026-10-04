@@ -75,22 +75,10 @@ end
 ------------------------------------------------------------
 -- Rulesets
 ------------------------------------------------------------
--- Forever's realms are its rulesets, and a ruleset can have more than one realm
--- ("Classic Beta PvP" and "Classic Beta PvP 2" are both PvP). The name is all
--- there is to go on. Words, not substrings, so an "rp" inside another word does
--- not make a realm RP. A realm we cannot read is Unknown - never Normal, which
--- would put a character on a ruleset it may not be on.
-M.RULESETS = { "Normal", "PvP", "RP", "Hardcore" }
-
-function M.RulesetOf(realm)
-    if type(realm) ~= "string" or not realm:find("%S") then return "Unknown" end
-    local words = " " .. (realm:lower():gsub("[^%w]", " ")) .. " "
-    if words:find(" hardcore ", 1, true) or words:find(" hc ", 1, true) then return "Hardcore" end
-    if words:find(" rp ", 1, true) or words:find(" roleplay ", 1, true)
-       or words:find(" rppvp ", 1, true) then return "RP" end
-    if words:find("pvp", 1, true) then return "PvP" end
-    return "Normal"
-end
+-- Forever's realms are its rulesets: the rule lives in the core now
+-- (AltStable.RulesetOf, Config.lua), shared with the Roster's camp list (#170).
+M.RULESETS = AltStable.RULESETS
+M.RulesetOf = AltStable.RulesetOf
 
 -- The setting is "current", "all" or a ruleset; "current" is resolved here, at
 -- use, against wherever the player is now - never saved resolved. nil means no

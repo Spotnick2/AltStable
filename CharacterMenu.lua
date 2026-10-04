@@ -66,7 +66,7 @@ function AltStable.CharacterMenuEntries(char)
         for _, c in ipairs(AltStable.GetCamps()) do
             if c ~= mine then
                 local verb = mine and "Move to " or "Add to "
-                if #(c.members or {}) >= (AltStable.CAMP_SIZE or 5) then
+                if #(c.members or {}) >= (AltStable.CAMP_SIZE or 4) then
                     out[#out + 1] = { id = "camp:add:" .. c.id, text = verb .. (c.name or "camp"),
                                       disabled = true, why = "That camp is full." }
                 else

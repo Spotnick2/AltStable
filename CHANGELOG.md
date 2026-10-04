@@ -5,16 +5,20 @@
 ### New
 
 - **Camps in the Roster** ([#152](https://github.com/Spotnick2/AltStable/issues/152)), like
-  retail's warband camps: the scene now shows a **camp**, a named group of up to five characters
+  retail's warband camps: the scene now shows a **camp**, a named group of up to four characters
   in the order they stand, each with its own backdrop.
   - Your first camp is made for you the first time you open the scene, from your highest-level
     characters (those with a portrait first).
   - Switch camps with the new **< camp name >** arrows at the top of the scene; the backdrop
     arrows now change the shown camp's backdrop.
+  - **Click the backdrop's name** for the backdrop picker, like retail's Campsites: every
+    backdrop as a thumbnail, six to a page. Pick one and **Apply** it to the camp you're looking
+    at, or tick **Apply for all camps**.
   - **The camp list**, beside the scene like retail's: a search box, **+** for a new camp, each
-    camp with its five seats, then everyone in no camp. **Drag** a character onto a seat or a
+    camp with its four seats, then everyone in no camp. **Drag** a character onto a seat or a
     camp's name to put it there, onto someone in another camp to swap them, or anywhere else in
-    the list to take it out; drag a camp's name onto another to reorder the camps. Click a camp's
+    the list to take it out; drag the characters in no camp up and down to order them, and a
+    camp's name onto another to reorder the camps. Click a camp's
     name to show it, **right-click** it to rename or delete it. The **CAMPS** toggle along the
     bottom tucks the list away.
   - Right-click a character: **Add to** a camp, **Move to** another, **Add to a new camp**, or

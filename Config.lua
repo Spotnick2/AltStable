@@ -550,6 +550,32 @@ end
 
 AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 
+-- Rulesets
+--
+-- Forever's realms are its rulesets, and a ruleset can have more than one realm
+-- ("Classic Beta PvP" and "Classic Beta PvP 2" are both PvP). The name is all
+-- there is to go on. Words, not substrings, so an "rp" inside another word does
+-- not make a realm RP. A realm we cannot read is Unknown - never Normal, which
+-- would put a character on a ruleset it may not be on.
+--
+-- In the core rather than a plugin: the Warband tab filters by it and the
+-- Roster's camp list marks each character with it (#170), and either can be
+-- loaded without the other.
+------------------------------------------------------------
+
+AltStable.RULESETS = { "Normal", "PvP", "RP", "Hardcore" }
+
+function AltStable.RulesetOf(realm)
+    if type(realm) ~= "string" or not realm:find("%S") then return "Unknown" end
+    local words = " " .. (realm:lower():gsub("[^%w]", " ")) .. " "
+    if words:find(" hardcore ", 1, true) or words:find(" hc ", 1, true) then return "Hardcore" end
+    if words:find(" rp ", 1, true) or words:find(" roleplay ", 1, true)
+       or words:find(" rppvp ", 1, true) then return "RP" end
+    if words:find("pvp", 1, true) then return "PvP" end
+    return "Normal"
+end
+
+------------------------------------------------------------
 -- Roster camps (#152)
 --
 -- The Roster scene shows a CAMP: a named group of up to CAMP_SIZE characters
@@ -567,7 +593,10 @@ AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 -- nil `rosterCamps` means "never set up"; the Roster seeds the first camp then.
 ------------------------------------------------------------
 
-local CAMP_SIZE = 5
+-- Four, pets or no pets (owner, in game, #170): a fifth seat appeared and
+-- vanished with the pets option, and with it a hint about a seat nobody could
+-- see. Retail's camps hold four as well.
+local CAMP_SIZE = 4
 AltStable.CAMP_SIZE = CAMP_SIZE
 
 function AltStable.GetCamps()
@@ -594,9 +623,11 @@ local function CopyCamps(camps)
     return out
 end
 
--- Store `camps` (already a copy - every mutator below makes one). Any change
--- is the PLAYER's unless `keepAuto` says otherwise, which ends the first
--- camp's topping-up (see SeedCamp).
+-- Store `camps` (already a copy - every mutator below makes one). A change to
+-- who is in which camp is the PLAYER's choice and ends the first camp's
+-- topping-up (see SeedCamp); `keepAuto` marks the changes that are not about
+-- members - a name, a backdrop, pruning a record that is gone (#170 review: a
+-- no-change Apply in the backdrop picker had ended it).
 local function SetCamps(camps, keepAuto)
     AltStable.SetConfigValue("rosterCamps", camps)
     if not keepAuto and AltStableConfig.rosterCampsAuto then
@@ -676,7 +707,7 @@ function AltStable.RenameCamp(id, name)
     local c = FindCamp(camps, id)
     if not c then return false end
     c.name = name
-    SetCamps(camps)
+    SetCamps(camps, true)     -- a name is not who is in it: the top-ups go on
     return true
 end
 
@@ -770,9 +801,26 @@ function AltStable.PruneCamps(store)
         for j = #c.members, 1, -1 do
             if type(store[c.members[j]]) ~= "table" then table.remove(c.members, j); changed = true end
         end
+        -- A camp made when camps held five keeps its first four; the fifth
+        -- goes back among the campless.
+        while #c.members > CAMP_SIZE do table.remove(c.members); changed = true end
     end
     if changed then SetCamps(camps, true) end
     return changed
+end
+
+-- The order of the characters in no camp, in the Roster's camp list: dragged
+-- up and down there, as on retail (#170). A full sequence of guids; anyone not
+-- in it lists after, in the usual order. Local, never synced.
+function AltStable.GetListOrder()
+    local order = AltStableConfig and AltStableConfig.rosterListOrder
+    return type(order) == "table" and order or {}
+end
+
+function AltStable.SetListOrder(guids)
+    local copy = {}
+    for i, g in ipairs(guids or {}) do copy[i] = g end
+    AltStable.SetConfigValue("rosterListOrder", copy)
 end
 
 -- A camp moved to place `pos` in the list.
@@ -787,12 +835,21 @@ function AltStable.MoveCamp(id, pos)
     return true
 end
 
+-- Every camp's backdrop at once (the picker's "Apply for all camps"): one write.
+function AltStable.SetAllCampsBackdrop(backdrop)
+    local camps = CopyCamps(AltStable.GetCamps())
+    if #camps == 0 then return false end
+    for _, c in ipairs(camps) do c.backdrop = backdrop end
+    SetCamps(camps, true)     -- nor is a backdrop
+    return true
+end
+
 function AltStable.SetCampBackdrop(id, backdrop)
     local camps = CopyCamps(AltStable.GetCamps())
     local c = FindCamp(camps, id)
     if not c then return false end
     c.backdrop = backdrop
-    SetCamps(camps)
+    SetCamps(camps, true)     -- nor is a backdrop
     return true
 end
 
