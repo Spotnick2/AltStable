@@ -1697,6 +1697,8 @@ function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 -- The third return is the CLIENT's build date, as the dump records it
 -- ("client built Sep 23 2026"), not the day it was measured here.
 function GetBuildInfo() return "1.60.1", "70205", "Oct 2 2026", 16001 end
+-- GetLocale() -> localeName (forever-api-1.60.1.70205.md). WoW.locale to test another.
+function GetLocale() return WoW.locale or "enUS" end
 
 -- Measured: nil when the character is not rested (docs/forever-api-notes.md).
 function GetXPExhaustion() return WoW.restXP end

@@ -332,6 +332,8 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | Command | What it does |
 |---|---|
 | `/alts` | Open the sheet and ping whitelisted peers (throttled) |
+| `/alts help` | The player commands. An unknown word prints them too, rather than opening the sheet (#175) |
+| `/alts status` | Version, client build and locale, counts, cutouts folder, sync protocol; one line to copy into a bug report |
 | `/alts sync` | Ping every whitelisted peer, ignoring the throttle |
 | `/alts sync <name>` | Send our database to that peer in full, then request a delta back |
 | `/alts whitelist` | List the whitelisted peers |
