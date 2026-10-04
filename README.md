@@ -81,6 +81,10 @@ Clicking the Roster's hint in the game shows its link.
 The spyglass button glows when the character you are on has no portrait yet, or its gear has
 changed since the last one.
 
+A portrait is the character exactly as the game draws it when you capture. With the client's
+SD (classic) character models switched on, your portraits will most likely come out in SD too.
+Switch HD models back on before `/alts portrait` if you want HD portraits.
+
 ## Your other accounts (sync)
 
 - **Your other WoW accounts on the same Battle.net account** find each other and sync
