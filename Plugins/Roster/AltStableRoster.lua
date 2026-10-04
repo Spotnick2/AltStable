@@ -2834,8 +2834,13 @@ function Roster.Refresh()
     if Word() then
         hintText:Show()
         hintLink:SetShown(missingArt)
-        local tall = Tall()
-        if tall > hintH then
+        -- Until it settles: a refit can drop a row, and re-wording then ADDS
+        -- the not-shown line, taller again (#180 review). The height only
+        -- grows and the wording has two parts, so this ends in a few passes;
+        -- the bound is a guard, not a limit anyone should meet.
+        for _ = 1, 4 do
+            local tall = Tall()
+            if tall <= hintH then break end
             hintH = tall
             cols, rows, cardW, cardH, fits, shown = Fit(hintH)
             Word()
@@ -3210,6 +3215,7 @@ function Roster._Bootstrap()
             HintShown = function() return hintText and hintText:IsShown() end,
             HintLinkShown = function() return hintLink and hintLink:IsShown() end,
             Hint = function() return hintText end,
+            More = function() return moreText end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
             Deactivate = function(main) return Roster.Deactivate(main) end,

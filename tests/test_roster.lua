@@ -4470,7 +4470,30 @@ do
     check("a hidden character is out of the count", h:find("20 of 29 characters", 1, true) ~= nil, h)
     check("  and out of the not-shown count", h:find("+5 more not shown", 1, true) ~= nil, h)
 
+    -- Fitting everyone, until the tall hint costs a row - and the not-shown
+    -- line that THAT adds must be made room for too (#180 review): the cards
+    -- start below the hint AND the line under it.
     AltStableConfig.hiddenCharacters = savedHidden
+    AltStableDB = {}
+    for i = 1, 24 do
+        local guid = ("fit-%02d"):format(i)
+        AltStableDB[guid] = { guid = guid, name = ("Fit %02d"):format(i),
+                              level = 100 - i, ilvl = i, class = "MAGE" }
+    end
+    AltStableCutoutManifest = nil                     -- nobody has art: the portrait hint shows
+    p.GetWidth = function() return 800 end
+    p.GetHeight = function() return 460 end
+    T.Refresh()
+    check("24 fit this panel under a one-line hint", T.MoreText() == nil, tostring(T.MoreText()))
+    T.Hint().GetStringHeight = function() return 36 end
+    T.More().GetStringHeight = function() return 12 end
+    T.Refresh()
+    local _, _, _, _, top = T.Cards()[1]:GetPoint(1)
+    check("a three-line hint costs a row, and says so", (T.MoreText() or ""):find("more not shown", 1, true) ~= nil,
+          tostring(T.MoreText()))
+    eq("  the cards start below the hint AND that line", top, -(14 + 36 + 2 + 12 + 6))
+    T.Hint().GetStringHeight, T.More().GetStringHeight = nil, nil
+
     AltStableConfig.rosterView = nil
     p.GetWidth, p.GetHeight = heldW, heldH
     AltStableDB, AltStableCutoutManifest, AltStablePortraits = savedDB, savedManifest, savedStore
