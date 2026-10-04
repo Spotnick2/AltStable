@@ -4,6 +4,8 @@ All your characters in one window, for **World of Warcraft: Forever**. You can s
 gear, professions and recipes, reputations, gold, rested XP, raid lockouts, and what's in
 their bags and banks. You can also stand them together as a roster.
 
+![The sheet: one row per character, grouped by realm, with level, item level, guild, rested XP, gold and when each was last played](docs/images/sheet.jpg)
+
 ## Three pieces, and only the first is required
 
 | Piece | What it is | Do you need it? |
@@ -50,6 +52,14 @@ WoW accounts arrives through sync (below).
 - **Roster** shows your characters as character cards, or standing together around a
   campfire in **camps** of four, each camp with its own backdrop. Click a character for its
   paper doll and stats.
+
+![A camp in the Roster: four characters around a campfire in Dalaran, from portraits made by AltStable Companion, with the camp list beside it](docs/images/roster.jpg)
+
+*Roster portraits from your own captures, made by the free AltStable Companion.*
+
+![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](docs/images/roster-enhanced.jpg)
+
+*Another camp, with the optional enhanced portraits (Codex CLI, uses your ChatGPT account's usage).*
 
 ## Your first portrait (optional)
 
