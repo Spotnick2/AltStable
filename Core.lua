@@ -1701,6 +1701,11 @@ local function DeserializeFullDB(payload, sender)
         local stamped = line:match("^" .. SEND_TIME .. ":(%d+)$")
         if stamped then
             peerNow = tonumber(stamped)
+        elseif AltStable.CAMPS_LINE and (line:find(AltStable.CAMPS_LINE, 1, true) == 1
+                or line:find(AltStable.ORDER_LINE, 1, true) == 1) then
+            -- Camps and the list order (#171), only from the player's own other
+            -- account: a friend's sync never rearranges your Roster.
+            if OwnBNetPeer(sender) then AltStable.ApplyCampSyncLine(line) end
         elseif line == CHAR_SEP then
             -- End of a character block — deserialize what we have.
             local msg = table.concat(current, "\n")
@@ -2096,6 +2101,13 @@ local function SendFullDatabase(channel, target, sinceTS)
     local accountOnly = not AltStableConfig.sendAllAccounts
 
     local payload = SerializeFullDB(accountOnly, sinceTS)
+    -- The camps and the list order (#171), to the player's own other account
+    -- only - after the last record, where every parser reads past them.
+    if target and OwnBNetPeer(target) and AltStable.CampSyncLines then
+        for _, line in ipairs(AltStable.CampSyncLines()) do
+            payload = payload .. "\n" .. line
+        end
+    end
     -- Our clock, so the requester can keep its watermark in OUR frame.
     payload = payload .. "\n" .. SEND_TIME .. ":" .. time()
     ChunkAndSendPayload(payload, channel, target)

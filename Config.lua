@@ -623,15 +623,24 @@ local function CopyCamps(camps)
     return out
 end
 
--- Store `camps` (already a copy - every mutator below makes one). A change to
--- who is in which camp is the PLAYER's choice and ends the first camp's
--- topping-up (see SeedCamp); `keepAuto` marks the changes that are not about
--- members - a name, a backdrop, pruning a record that is gone (#170 review: a
--- no-change Apply in the backdrop picker had ended it).
-local function SetCamps(camps, keepAuto)
+-- Store `camps` (already a copy - every mutator below makes one). `how` says
+-- whose change it is (a no-change Apply in the backdrop picker had ended the
+-- top-ups, #170 review):
+--   nil         the player's, about who is in which camp: ends the first camp's
+--               topping-up (SeedCamp)
+--   "keepAuto"  the player's, but not about members (a name, a backdrop)
+--   "system"    not the player's at all: a top-up, pruning a record that is
+--               gone, a synced list arriving
+-- A player's change is stamped and offered to the player's other accounts
+-- (#171); a system change is neither, so an automatic camp never overrides a
+-- chosen one on another account, and a synced list is not sent straight back.
+local function SetCamps(camps, how)
     AltStable.SetConfigValue("rosterCamps", camps)
-    if not keepAuto and AltStableConfig.rosterCampsAuto then
+    if how == nil and AltStableConfig.rosterCampsAuto then
         AltStable.SetConfigValue("rosterCampsAuto", nil)
+    end
+    if how ~= "system" then
+        AltStable.SetConfigValue("rosterCampsStamp", time())
     end
 end
 
@@ -707,7 +716,7 @@ function AltStable.RenameCamp(id, name)
     local c = FindCamp(camps, id)
     if not c then return false end
     c.name = name
-    SetCamps(camps, true)     -- a name is not who is in it: the top-ups go on
+    SetCamps(camps, "keepAuto")   -- a name is not who is in it: the top-ups go on
     return true
 end
 
@@ -767,6 +776,9 @@ end
 function AltStable.SeedCamp(members, backdrop)
     local id = AltStable.CreateCamp("Camp 1", members, backdrop)
     AltStable.SetConfigValue("rosterCampsAuto", true)
+    -- Not the player's choice, so not stamped: another account's chosen camps
+    -- replace this one, and this one never replaces them (#171).
+    AltStable.SetConfigValue("rosterCampsStamp", nil)
     AltStable.SelectCamp(id)
     return id
 end
@@ -786,7 +798,7 @@ function AltStable.RefreshSeededCamp(members)
     for i = 1, math.min(#(members or {}), CAMP_SIZE) do want[i] = members[i] end
     if table.concat(want, ",") == table.concat(c.members, ",") then return false end
     c.members = want
-    SetCamps(camps, true)
+    SetCamps(camps, "system")
     return true
 end
 
@@ -805,7 +817,7 @@ function AltStable.PruneCamps(store)
         -- goes back among the campless.
         while #c.members > CAMP_SIZE do table.remove(c.members); changed = true end
     end
-    if changed then SetCamps(camps, true) end
+    if changed then SetCamps(camps, "system") end
     return changed
 end
 
@@ -821,6 +833,127 @@ function AltStable.SetListOrder(guids)
     local copy = {}
     for i, g in ipairs(guids or {}) do copy[i] = g end
     AltStable.SetConfigValue("rosterListOrder", copy)
+    AltStable.SetConfigValue("rosterListOrderStamp", time())
+end
+
+------------------------------------------------------------
+-- Syncing the camps between the player's own accounts (#171)
+--
+-- Two lines at the END of a sync payload, after the last character record,
+-- like the sender's clock (Core.lua, SEND_TIME): every parser, older ones
+-- included, acts on a line only when it reaches a record separator, so an
+-- older client reads past them. Core sends them only to, and applies them
+-- only from, the player's own accounts - a friend's camps never replace yours.
+--
+--   ==CAMPS==:<stamp>;<id>,<name>,<backdrop>,<guid>,<guid>...;<id>,...
+--   ==ORDER==:<stamp>;<guid>,<guid>,...
+--
+-- The stamp is when the player last changed them; the newer list wins whole.
+-- Names and backdrops are %XX-escaped for the characters the format uses.
+------------------------------------------------------------
+
+AltStable.CAMPS_LINE, AltStable.ORDER_LINE = "==CAMPS==", "==ORDER=="
+local MAX_SYNCED_CAMPS, MAX_SYNCED_ORDER, MAX_NAME = 50, 500, 32
+
+local function Esc(v)
+    return (tostring(v or ""):gsub("[%%;,%c]", function(ch) return ("%%%02X"):format(ch:byte()) end))
+end
+local function Unesc(v)
+    return (tostring(v or ""):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+end
+local function GoodGuid(g)
+    return type(g) == "string" and #g <= 64 and g:match("^[%w%-]+$") ~= nil
+end
+
+-- The lines to send: only what the player chose (a stamp), never an automatic
+-- first camp nobody touched.
+function AltStable.CampSyncLines()
+    local out = {}
+    local stamp = tonumber(AltStableConfig and AltStableConfig.rosterCampsStamp)
+    if stamp and stamp > 0 then
+        local parts = { tostring(stamp) }
+        for _, c in ipairs(AltStable.GetCamps()) do
+            local f = { tostring(c.id), Esc(c.name), Esc(c.backdrop) }
+            for _, g in ipairs(c.members or {}) do f[#f + 1] = g end
+            parts[#parts + 1] = table.concat(f, ",")
+        end
+        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. table.concat(parts, ";")
+    end
+    local ostamp = tonumber(AltStableConfig and AltStableConfig.rosterListOrderStamp)
+    if ostamp and ostamp > 0 then
+        out[#out + 1] = AltStable.ORDER_LINE .. ":" .. ostamp .. ";"
+            .. table.concat(AltStable.GetListOrder(), ",")
+    end
+    return out
+end
+
+-- A received ==CAMPS== body: its stamp and the camps, checked - capped,
+-- deduplicated, every guid a guid - or nil for anything that does not read.
+local function ParseCamps(body)
+    local stampText, rest = body:match("^(%d+);?(.*)$")
+    local stamp = tonumber(stampText)
+    if not stamp or stamp <= 0 then return nil end
+    local camps, seenId, seenGuid = {}, {}, {}
+    for chunk in (rest or ""):gmatch("[^;]+") do
+        if #camps >= MAX_SYNCED_CAMPS then break end
+        local f = {}
+        for field in (chunk .. ","):gmatch("([^,]*),") do f[#f + 1] = field end
+        local id = tonumber(f[1])
+        if id and id > 0 and id == math.floor(id) and not seenId[id] then
+            seenId[id] = true
+            local name = Unesc(f[2]):gsub("%c", "")
+            if name == "" or #name > MAX_NAME then name = "Camp " .. id end
+            local backdrop = Unesc(f[3])
+            if backdrop == "" or #backdrop > 40 then backdrop = nil end
+            local members = {}
+            for i = 4, #f do
+                local g = f[i]
+                if #members < CAMP_SIZE and GoodGuid(g) and not seenGuid[g] then
+                    members[#members + 1] = g; seenGuid[g] = true
+                end
+            end
+            camps[#camps + 1] = { id = id, name = name, backdrop = backdrop, members = members }
+        end
+    end
+    return stamp, camps
+end
+
+-- Apply one synced line from the player's own account. Newer than ours wins;
+-- the shown camp stays shown if it is still there (else the first). Returns
+-- whether anything changed.
+function AltStable.ApplyCampSyncLine(line)
+    if type(line) ~= "string" then return false end
+    local body = line:match("^" .. AltStable.CAMPS_LINE .. ":(.*)$")
+    if body then
+        local stamp, camps = ParseCamps(body)
+        if not stamp then return false end
+        local mine = tonumber(AltStableConfig and AltStableConfig.rosterCampsStamp) or 0
+        if stamp <= mine then return false end
+        SetCamps(camps, "system")
+        AltStable.SetConfigValue("rosterCampsStamp", stamp)
+        AltStable.SetConfigValue("rosterCampsAuto", nil)
+        local top = tonumber(AltStableConfig.rosterCampNextId) or 0
+        for _, c in ipairs(camps) do if c.id > top then top = c.id end end
+        AltStable.SetConfigValue("rosterCampNextId", top)
+        return true
+    end
+    body = line:match("^" .. AltStable.ORDER_LINE .. ":(.*)$")
+    if body then
+        local stampText, rest = body:match("^(%d+);?(.*)$")
+        local stamp = tonumber(stampText)
+        if not stamp or stamp <= 0 then return false end
+        local mine = tonumber(AltStableConfig and AltStableConfig.rosterListOrderStamp) or 0
+        if stamp <= mine then return false end
+        local order, seen = {}, {}
+        for g in (rest or ""):gmatch("[^,]+") do
+            if #order >= MAX_SYNCED_ORDER then break end
+            if GoodGuid(g) and not seen[g] then order[#order + 1] = g; seen[g] = true end
+        end
+        AltStable.SetConfigValue("rosterListOrder", order)
+        AltStable.SetConfigValue("rosterListOrderStamp", stamp)
+        return true
+    end
+    return false
 end
 
 -- A camp moved to place `pos` in the list.
@@ -840,7 +973,7 @@ function AltStable.SetAllCampsBackdrop(backdrop)
     local camps = CopyCamps(AltStable.GetCamps())
     if #camps == 0 then return false end
     for _, c in ipairs(camps) do c.backdrop = backdrop end
-    SetCamps(camps, true)     -- nor is a backdrop
+    SetCamps(camps, "keepAuto")   -- nor is a backdrop
     return true
 end
 
@@ -849,7 +982,7 @@ function AltStable.SetCampBackdrop(id, backdrop)
     local c = FindCamp(camps, id)
     if not c then return false end
     c.backdrop = backdrop
-    SetCamps(camps, true)     -- nor is a backdrop
+    SetCamps(camps, "keepAuto")   -- nor is a backdrop
     return true
 end
 
