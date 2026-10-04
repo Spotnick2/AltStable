@@ -2755,44 +2755,63 @@ function Roster.Refresh()
     end
 
     local chars = CharactersFor("grid")
+    -- Everyone the grid would show if it had room: the same list and the same
+    -- hidden-character rule, before the 24-card cap. The portrait count is
+    -- over THIS (#178) - counted over the cards drawn, a full roster whose
+    -- later characters did not fit read "1 of 30 have a portrait".
+    local everyone = AllCharacters(AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false)
+    local withArt = 0
+    for _, c in ipairs(everyone) do
+        if CutoutFor(c) then withArt = withArt + 1 end
+    end
     ApplyHintLayout(panel:GetWidth(), false)
     PaintBackdrop()
 
     -- The hint is worded BEFORE the cards are placed, so they start below it:
     -- naming the Companion (#176) and the restart line can take it to two or
     -- three lines, and the cards are frames - drawn over the panel's text, they
-    -- hid everything after the first line. Who has art is counted over the
-    -- cards that fit, as before; the second fit, if the hint is taller, can only
-    -- be smaller.
+    -- hid everything after the first line. A taller hint can only fit fewer
+    -- cards, so the second fit re-words the "not shown" count too.
     local panelW, panelH = panel:GetWidth(), panel:GetHeight()
     local function Fit(hintH)
         local cols, rows, cardW, cardH = GridFor(panelW, panelH, #chars, hintH)
-        local fits, withArt = cols * rows, 0
-        for i = 1, math.min(fits, #chars) do
-            if CutoutFor(chars[i]) then withArt = withArt + 1 end
-        end
-        return cols, rows, cardW, cardH, fits, withArt
+        local fits = cols * rows
+        return cols, rows, cardW, cardH, fits, math.min(fits, #chars)
     end
     local hintH = 18
-    local cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
+    local cols, rows, cardW, cardH, fits, shown = Fit(hintH)
 
-    -- Say where the pictures come from, but only while some are missing: a
-    -- permanent instruction on a finished lineup is clutter.
+    -- Two things the grid may need to say: where the pictures come from, but
+    -- only while some are missing (a permanent instruction on a finished
+    -- lineup is clutter), and that some characters are not drawn (#178) - by
+    -- the cap, or because the window is too small for the rest. Only the
+    -- first is a link.
     --
     -- PortraitSourceText is the same phrase the scene uses, so the two views
     -- cannot give different instructions (#89).
+    local missingArt = withArt < #everyone
     local function Word()
-        hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
-            :format(withArt, #chars, AltStable.PortraitSourceText())))
+        local lines = {}
+        if missingArt then
+            lines[1] = PortraitHint(("%d of %d characters have a portrait - %s")
+                :format(withArt, #everyone, AltStable.PortraitSourceText()))
+        end
+        local notShown = #everyone - shown
+        if notShown > 0 then
+            lines[#lines + 1] = (shown < math.min(#everyone, MAX_CARDS))
+                and ("+%d more not shown - a larger window fits more"):format(notShown)
+                or ("+%d more not shown - the grid shows %d at most"):format(notShown, MAX_CARDS)
+        end
+        hintText:SetText(table.concat(lines, "\n"))
+        return #lines > 0
     end
-    if withArt < #chars then
-        Word()
+    if Word() then
         hintText:Show()
-        hintLink:Show()
+        hintLink:SetShown(missingArt)
         local tall = math.ceil(tonumber(hintText:GetStringHeight()) or 0) + 6   -- one line: ~12 + 6 = the 18 it always had
         if tall > hintH then
             hintH = tall
-            cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
+            cols, rows, cardW, cardH, fits, shown = Fit(hintH)
             Word()
         end
     else
