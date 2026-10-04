@@ -4033,6 +4033,11 @@ function AltStable.ShowCompanionLink()
                 .. "Copy the link (Ctrl+C) and open it in your browser:",
             button1 = CLOSE or "Close",
             hasEditBox = 1,
+            -- 0 = no limit. The client REUSES its dialogs and only sets the
+            -- limit when a definition gives one (GameDialog.lua SetupEditBox,
+            -- 70170): without this, the 24- or 31-letter limit of whatever
+            -- dialog used the frame last would cut the 54-letter link short.
+            maxLetters = 0,
             editBoxWidth = 350,
             OnShow = function(dialog, url)
                 local box = dialog:GetEditBox()

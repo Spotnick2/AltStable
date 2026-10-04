@@ -504,8 +504,9 @@ end
 -- How many columns fit, how big each card is, and how many rows that needs.
 -- Pure arithmetic, so it is testable without a frame: the layout bug that put
 -- cards over the sidebar was invisible to every assertion until this existed.
-local function GridFor(panelW, panelH, count)
+local function GridFor(panelW, panelH, count, hintH)
     if count <= 0 then return 0, 0, 0, 0 end
+    hintH = hintH or 18
     panelW = math.max(panelW or 0, MIN_CARD_W + PAD_X * 2)
     panelH = math.max(panelH or 0, 120)
 
@@ -515,7 +516,7 @@ local function GridFor(panelW, panelH, count)
     local rows = math.ceil(count / cols)
 
     local cardW = math.min(MAX_CARD_W, (usableW - CARD_GAP * (cols - 1)) / cols)
-    local usableH = panelH - PAD_Y * 2 - 18          -- 18: the hint line
+    local usableH = panelH - PAD_Y * 2 - hintH       -- the hint, one line unless told
 
     -- Drop rows rather than squash cards. Clamping the height up to a minimum
     -- breaks the very division that made the rows fit, and the surplus draws
@@ -927,6 +928,8 @@ local function BuildPanel(mainFrame)
     -- download link. Shown only with that hint - the camp hints are not links.
     hintLink = CreateFrame("Button", nil, panel)
     hintLink:SetAllPoints(hintText)
+    -- Under the cards (panel + 1): where the two meet, a card's click wins.
+    hintLink:SetFrameLevel(panel:GetFrameLevel())
     hintLink:SetScript("OnClick", function() AltStable.ShowCompanionLink() end)
     hintLink:SetScript("OnEnter", function(self)
         hintText:SetTextColor(0.9, 0.9, 0.9)
@@ -2755,10 +2758,47 @@ function Roster.Refresh()
     ApplyHintLayout(panel:GetWidth(), false)
     PaintBackdrop()
 
-    local cols, rows, cardW, cardH = GridFor(panel:GetWidth(), panel:GetHeight(), #chars)
-    local fits = cols * rows
+    -- The hint is worded BEFORE the cards are placed, so they start below it:
+    -- naming the Companion (#176) and the restart line can take it to two or
+    -- three lines, and the cards are frames - drawn over the panel's text, they
+    -- hid everything after the first line. Who has art is counted over the
+    -- cards that fit, as before; the second fit, if the hint is taller, can only
+    -- be smaller.
+    local panelW, panelH = panel:GetWidth(), panel:GetHeight()
+    local function Fit(hintH)
+        local cols, rows, cardW, cardH = GridFor(panelW, panelH, #chars, hintH)
+        local fits, withArt = cols * rows, 0
+        for i = 1, math.min(fits, #chars) do
+            if CutoutFor(chars[i]) then withArt = withArt + 1 end
+        end
+        return cols, rows, cardW, cardH, fits, withArt
+    end
+    local hintH = 18
+    local cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
 
-    local withArt = 0
+    -- Say where the pictures come from, but only while some are missing: a
+    -- permanent instruction on a finished lineup is clutter.
+    --
+    -- PortraitSourceText is the same phrase the scene uses, so the two views
+    -- cannot give different instructions (#89).
+    local function Word()
+        hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
+            :format(withArt, #chars, AltStable.PortraitSourceText())))
+    end
+    if withArt < #chars then
+        Word()
+        hintText:Show()
+        hintLink:Show()
+        local tall = math.ceil(tonumber(hintText:GetStringHeight()) or 0) + 6   -- one line: ~12 + 6 = the 18 it always had
+        if tall > hintH then
+            hintH = tall
+            cols, rows, cardW, cardH, fits, withArt = Fit(hintH)
+            Word()
+        end
+    else
+        hintText:Hide()
+    end
+
     for i, card in ipairs(Roster.cards) do
         local char = chars[i]
         if char and cols > 0 and i <= fits then
@@ -2773,26 +2813,11 @@ function Roster.Refresh()
             card:ClearAllPoints()
             card:SetPoint("TOPLEFT", panel, "TOPLEFT",
                 PAD_X + col * (cardW + CARD_GAP),
-                -(PAD_Y + 18 + row * (cardH + CARD_GAP)))
+                -(PAD_Y + hintH + row * (cardH + CARD_GAP)))
             RenderCard(card, char, cardW, cardH)
-            if CutoutFor(char) then withArt = withArt + 1 end
         else
             card:Hide()
         end
-    end
-
-    -- Say where the pictures come from, but only while some are missing: a
-    -- permanent instruction on a finished lineup is clutter.
-    --
-    -- PortraitSourceText is the same phrase the scene uses, so the two views
-    -- cannot give different instructions (#89).
-    if withArt < #chars then
-        hintText:SetText(PortraitHint(("%d of %d characters have a portrait - %s")
-            :format(withArt, #chars, AltStable.PortraitSourceText())))
-        hintText:Show()
-        hintLink:Show()
-    else
-        hintText:Hide()
     end
 end
 
@@ -3138,6 +3163,7 @@ function Roster._Bootstrap()
             HintText = function() return hintText and hintText:GetText() end,
             HintShown = function() return hintText and hintText:IsShown() end,
             HintLinkShown = function() return hintLink and hintLink:IsShown() end,
+            Hint = function() return hintText end,
             Refresh = function() return Roster.Refresh() end,
             Activate = function(main) return Roster.Activate(main) end,
             Deactivate = function(main) return Roster.Deactivate(main) end,

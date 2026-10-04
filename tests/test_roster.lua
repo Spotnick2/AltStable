@@ -4302,6 +4302,33 @@ do
               hint:find("If AltStable Companion has made a portrait", 1, true) ~= nil, hint)
     end
 
+    -- A hint of several lines pushes the cards down (#179 review): the cards
+    -- are frames, drawn over the panel's text, so a fixed one-line gap hid the
+    -- second and third lines - the link wording and the restart line.
+    AltStableConfig.rosterView = "grid"
+    local function firstCardTop()
+        local card = T.Cards()[1]
+        local _, _, _, _, y = card:GetPoint(1)
+        return y
+    end
+    T.Refresh()
+    local oneLine = firstCardTop()
+    eq("a one-line hint keeps the cards where they always were", oneLine, -(14 + 18))
+    local hint = T.Hint()
+    hint.GetStringHeight = function() return 36 end      -- three lines
+    T.Refresh()
+    eq("a three-line hint starts the cards below it", firstCardTop(), -(14 + 36 + 6))
+    hint.GetStringHeight = nil
+    T.Refresh()
+
+    -- The link popup's letter limit: the client reuses its dialogs and sets a
+    -- limit only when the definition gives one, so a shorter dialog's limit
+    -- would otherwise cut the link (#179 review).
+    AltStable.ShowCompanionLink()
+    eq("the link popup sets no letter limit (0), whatever the last dialog had",
+       StaticPopupDialogs[WoW.popups[#WoW.popups].which].maxLetters, 0)
+    StaticPopup_Hide(WoW.popups[#WoW.popups].which)
+
     -- The folder loaded (a manifest exists): no restart line, even with
     -- captures and someone still without a portrait.
     AltStableConfig.rosterView = "grid"
