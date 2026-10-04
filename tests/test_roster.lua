@@ -4416,7 +4416,10 @@ do
     local heldW, heldH = p.GetWidth, p.GetHeight
     p.GetWidth = function() return 2400 end            -- room for every card there is
     p.GetHeight = function() return 1900 end
-    local function hint() return T.HintShown() and (T.HintText() or "") or "" end
+    -- The hint and the not-shown line under it, as the player reads them.
+    local function hint()
+        return (T.HintShown() and (T.HintText() or "") or "") .. " | " .. (T.MoreText() or "")
+    end
 
     -- Everyone has a portrait: no portrait hint, but the six past the cap are
     -- named, and that line is not the Companion link.
@@ -4438,6 +4441,12 @@ do
     check("the count is over the whole roster", h:find("25 of 30 characters have a portrait", 1, true) ~= nil, h)
     check("  the not-shown line comes with it", h:find("+6 more not shown", 1, true) ~= nil, h)
     check("  and the portrait hint is the link", T.HintLinkShown() == true)
+    -- The link covers the hint's string whole: the not-shown line must be in
+    -- its own string, or it would open the Companion link (#180 review).
+    check("  which does not cover the not-shown line",
+          (T.HintText() or ""):find("more not shown", 1, true) == nil
+          and (T.MoreText() or ""):find("+6 more not shown", 1, true) ~= nil,
+          tostring(T.HintText()) .. " / " .. tostring(T.MoreText()))
 
     -- A small window: the cap is not the reason, the window is.
     portraits(range(1, 30))
