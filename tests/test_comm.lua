@@ -4300,6 +4300,24 @@ do
         eq(AltStable.GetCamps()[1].pets, "kept", "  keeps a field this build does not send")
         eq(AltStable.GetCamps()[2].pets, nil, "  and does not invent it on another camp")
         check(not AltStable.ApplyCampSyncLine("==CAMPS==:99;5,Unversioned"), "a line without its version is ignored")
+
+        -- A camp with no backdrop of its own shows the account's default, which
+        -- is not synced: it travels as the one it shows (#172, Codex).
+        AltStableConfig = { rosterScene = "elwynn" }
+        local made = AltStable.CreateCamp("Plus button", {})
+        AltStable.CreateCamp("Own backdrop", {}, "nagrand")
+        check(AltStable.GetCamp(made).backdrop == nil, "the setup: a camp made with + has no backdrop of its own")
+        local sent = AltStable.CampSyncLines()
+        AltStableConfig = { rosterScene = "felwood" }
+        for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
+        eq(AltStable.GetCamp(made).backdrop, "elwynn", "  it arrives with the sender's default, not ours")
+        eq(AltStable.GetCamps()[2].backdrop, "nagrand", "  a camp's own backdrop still wins over the default")
+        AltStableConfig = {}
+        made = AltStable.CreateCamp("No default anywhere", {})
+        sent = AltStable.CampSyncLines()
+        AltStableConfig = {}
+        for _, line in ipairs(sent) do AltStable.ApplyCampSyncLine(line) end
+        eq(AltStable.GetCamp(made).backdrop, nil, "  with no default on either side, none is invented")
     end
 
     -- Battle.net going away clears what was found.

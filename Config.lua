@@ -627,13 +627,16 @@ end
 -- The camps as they travel in a sync (#171): `id,name,backdrop,guid,...` per
 -- camp, `;` between. Names and backdrops are %XX-escaped for the characters
 -- the format uses. Also how SetCamps tells a real change from a no-op.
+-- `inherit` is the backdrop a camp with none of its own shows (the account's
+-- rosterScene, which is not synced): sent in its place, so the other account
+-- shows the same one rather than its own default (#172, Codex).
 local function Esc(v)
     return (tostring(v or ""):gsub("[%%;,%c]", function(ch) return ("%%%02X"):format(ch:byte()) end))
 end
-local function CampsWire(camps)
+local function CampsWire(camps, inherit)
     local parts = {}
     for _, c in ipairs(camps or {}) do
-        local f = { tostring(c.id), Esc(c.name), Esc(c.backdrop) }
+        local f = { tostring(c.id), Esc(c.name), Esc(c.backdrop or inherit) }
         for _, g in ipairs(c.members or {}) do f[#f + 1] = g end
         parts[#parts + 1] = table.concat(f, ",")
     end
@@ -937,7 +940,7 @@ function AltStable.CampSyncLines()
     local out = {}
     local stamp = CampsStamp()
     if stamp > 0 then
-        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";" .. CampsWire(AltStable.GetCamps())
+        out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";" .. CampsWire(AltStable.GetCamps(), AltStableConfig.rosterScene)
     end
     local ostamp = OrderStamp()
     if ostamp > 0 then
