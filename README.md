@@ -4,6 +4,8 @@ All your characters in one window, for **World of Warcraft: Forever**. You can s
 gear, professions and recipes, reputations, gold, rested XP, raid lockouts, and what's in
 their bags and banks. You can also stand them together as a roster.
 
+![The sheet: one row per character, grouped by realm, with level, item level, guild, rested XP, gold and when each was last played](docs/images/sheet.jpg)
+
 ## Three pieces, and only the first is required
 
 | Piece | What it is | Do you need it? |
@@ -51,6 +53,14 @@ WoW accounts arrives through sync (below).
   campfire in **camps** of four, each camp with its own backdrop. Click a character for its
   paper doll and stats.
 
+![A camp in the Roster: four characters around a campfire in Dalaran, from portraits made by AltStable Companion, with the camp list beside it](docs/images/roster.jpg)
+
+*Roster portraits from your own captures, made by the free AltStable Companion.*
+
+![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](docs/images/roster-enhanced.jpg)
+
+*Another camp, with the optional enhanced portraits (Codex CLI, uses your ChatGPT account's usage).*
+
 ## Your first portrait (optional)
 
 The Roster draws your characters from portraits you capture yourself. You need
@@ -70,6 +80,10 @@ Clicking the Roster's hint in the game shows its link.
 
 The spyglass button glows when the character you are on has no portrait yet, or its gear has
 changed since the last one.
+
+A portrait is the character exactly as the game draws it when you capture. With the client's
+SD (classic) character models switched on, your portraits will most likely come out in SD too.
+Switch HD models back on before `/alts portrait` if you want HD portraits.
 
 ## Your other accounts (sync)
 
