@@ -394,9 +394,10 @@ So a profession/skill column must read `maxRank` per row rather than assuming a 
 TBC-era hardcoded `375` in `RowRenderer.lua:1053,1064` is wrong twice over (Vanilla caps at 300,
 and skill maxima are dynamic).
 
-**Every profession is listed TWICE** (measured 1.60.1.70205, owner, two characters, #177): a base
-line and a 29xx line under the same name, in either order, both with the same `rank` and `maxRank`
-(every one measured was at or below 75):
+**Every profession is listed TWICE** (measured 1.60.1.70205, owner, three characters, #177): a base
+line and a 29xx line under the same name, in either order, both with the same `rank` and `maxRank`.
+The ranks stay equal past the first tier too: Skinning 393 and 2947 were both `82 150`. Leatherworking
+is 165/2945.
 
 ```
 6 Enchanting 333 3 75      7 Enchanting 2940 3 75
