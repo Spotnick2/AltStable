@@ -2801,6 +2801,13 @@ end
 
 function Roster.Deactivate(mainFrame)
     Roster.isActive = false
+    -- The camp list's dialogs go with the tab: their dimming covers only the
+    -- panel, so the sidebar stays clickable, and a dialog left open came back
+    -- open on the next visit (#170 review).
+    if Roster.CampList then
+        if Roster.CampList.CloseDialog then Roster.CampList.CloseDialog() end
+        if Roster.CampList.ClosePicker then Roster.CampList.ClosePicker() end
+    end
     -- The drill-down is a per-visit state, like the tab it opens on. Left set,
     -- switching to another sheet tab and coming back landed you straight in the
     -- detail pane with no grid and nothing to say why - and the only way out was

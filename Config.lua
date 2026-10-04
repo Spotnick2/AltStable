@@ -594,9 +594,11 @@ local function CopyCamps(camps)
     return out
 end
 
--- Store `camps` (already a copy - every mutator below makes one). Any change
--- is the PLAYER's unless `keepAuto` says otherwise, which ends the first
--- camp's topping-up (see SeedCamp).
+-- Store `camps` (already a copy - every mutator below makes one). A change to
+-- who is in which camp is the PLAYER's choice and ends the first camp's
+-- topping-up (see SeedCamp); `keepAuto` marks the changes that are not about
+-- members - a name, a backdrop, pruning a record that is gone (#170 review: a
+-- no-change Apply in the backdrop picker had ended it).
 local function SetCamps(camps, keepAuto)
     AltStable.SetConfigValue("rosterCamps", camps)
     if not keepAuto and AltStableConfig.rosterCampsAuto then
@@ -676,7 +678,7 @@ function AltStable.RenameCamp(id, name)
     local c = FindCamp(camps, id)
     if not c then return false end
     c.name = name
-    SetCamps(camps)
+    SetCamps(camps, true)     -- a name is not who is in it: the top-ups go on
     return true
 end
 
@@ -792,7 +794,7 @@ function AltStable.SetAllCampsBackdrop(backdrop)
     local camps = CopyCamps(AltStable.GetCamps())
     if #camps == 0 then return false end
     for _, c in ipairs(camps) do c.backdrop = backdrop end
-    SetCamps(camps)
+    SetCamps(camps, true)     -- nor is a backdrop
     return true
 end
 
@@ -801,7 +803,7 @@ function AltStable.SetCampBackdrop(id, backdrop)
     local c = FindCamp(camps, id)
     if not c then return false end
     c.backdrop = backdrop
-    SetCamps(camps)
+    SetCamps(camps, true)     -- nor is a backdrop
     return true
 end
 

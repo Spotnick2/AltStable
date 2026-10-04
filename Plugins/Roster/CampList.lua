@@ -387,31 +387,37 @@ function L.Dialog() return dialog end
 ------------------------------------------------------------
 
 local PICK_COLS, PICK_ROWS = 3, 2
+local PER_PAGE = PICK_COLS * PICK_ROWS
 local THUMB_W, THUMB_H, THUMB_GAP = 176, 99, 12
 local PICK_PAD = 18
 local picker, pickerCatcher
 L.pick = { page = 1, chosen = nil }
 
 local function Backdrops() return Roster.SCENE_BACKDROPS or {} end
-local function PerPage() return PICK_COLS * PICK_ROWS end
-local function Pages() return math.max(1, math.ceil(#Backdrops() / PerPage())) end
+local function Pages() return math.max(1, math.ceil(#Backdrops() / PER_PAGE)) end
 
 function L.ClosePicker()
     KeysOff(picker)
-    if picker then picker:Hide() end
+    if picker then
+        picker:Hide()
+        -- Each thumbnail is a full-size scene picture: let them go with the
+        -- dialog rather than hold six of them for the rest of the session.
+        for _, t in ipairs(picker.thumbs) do t.tex:SetTexture(nil); t.entry = nil end
+    end
     if pickerCatcher then pickerCatcher:Hide() end
 end
 
 local function PaintPicker()
     local list = Backdrops()
-    local first = (L.pick.page - 1) * PerPage()
+    local first = (L.pick.page - 1) * PER_PAGE
     local ar, ag, ab = AltStable.GetAccentRGB()
     for i, t in ipairs(picker.thumbs) do
         local e = list[first + i]
         t.entry = e
         if e then
             t.tex:SetTexture(e.file)
-            if Roster.BackdropTexCoords then t.tex:SetTexCoord(Roster.BackdropTexCoords(THUMB_W, THUMB_H, e)) end
+            -- Cropped for the picture's own size, inside its 2px frame.
+            if Roster.BackdropTexCoords then t.tex:SetTexCoord(Roster.BackdropTexCoords(THUMB_W - 4, THUMB_H - 4, e)) end
             t.name:SetText(e.label)
             -- The chosen one framed in the accent, as retail frames it in gold.
             local chosen = L.pick.chosen == e.id
@@ -445,6 +451,8 @@ function L.ApplyBackdrop()
     local camp = AltStable.SelectedCamp and AltStable.SelectedCamp()
     if picker and picker.all:GetChecked() and camp then
         AltStable.SetAllCampsBackdrop(id)
+        -- And the backdrop a camp made later starts with (#170 review).
+        AltStable.SetConfigValue("rosterScene", id)
     elseif camp then
         AltStable.SetCampBackdrop(camp.id, id)
     else
@@ -493,7 +501,7 @@ local function BuildPicker()
     picker.close:SetPoint("TOPRIGHT", -10, -10)
 
     picker.thumbs = {}
-    for i = 1, PerPage() do
+    for i = 1, PER_PAGE do
         local col, row = (i - 1) % PICK_COLS, math.floor((i - 1) / PICK_COLS)
         local t = CreateFrame("Button", nil, picker)
         t:SetSize(THUMB_W, THUMB_H)
@@ -545,7 +553,7 @@ function L.OpenBackdrops()
     L.pick.chosen = cur and cur.id
     local at = 1
     for i, e in ipairs(Backdrops()) do if e.id == L.pick.chosen then at = i end end
-    L.pick.page = math.floor((at - 1) / PerPage()) + 1
+    L.pick.page = math.floor((at - 1) / PER_PAGE) + 1
     picker.all:SetChecked(false)
     pickerCatcher:Show()
     picker:Show()

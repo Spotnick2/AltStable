@@ -3924,6 +3924,19 @@ do
     local L = AltStable.RosterPlugin.CampList
     local B = T.SCENE_BACKDROPS
     local campA = AltStable.SelectedCamp().id
+
+    -- The made-for-you first camp keeps topping up through a backdrop change,
+    -- a rename and a no-change Apply: none of them is about who is in it
+    -- (#170 review).
+    check("the first camp starts made for the player", AltStable.CampsAutoSeeded())
+    AltStable.SetCampBackdrop(campA, B[2].id)
+    check("  a backdrop change keeps it so", AltStable.CampsAutoSeeded())
+    AltStable.RenameCamp(campA, "Main")
+    check("  as does a rename", AltStable.CampsAutoSeeded())
+    L.OpenBackdrops()
+    L.ApplyBackdrop()
+    check("  and an Apply that changes nothing", AltStable.CampsAutoSeeded())
+
     local campB = AltStable.CreateCamp("Second")
     AltStable.SetCampBackdrop(campA, B[#B].id)        -- the last one: on the last page
     AltStable.SetCampBackdrop(campB, B[1].id)
@@ -3951,6 +3964,11 @@ do
     eq("six to a page", shown, math.min(6, #B))
     eq("each named", pk.thumbs[1].name:GetText(), B[1].label)
     eq("  and drawn from its own picture", pk.thumbs[1].tex:GetTexture(), B[1].file)
+    -- Cropped for the picture as drawn: inside a 2px frame, so 4px smaller.
+    local l, r, t = T.BackdropTexCoords(176 - 4, 99 - 4, B[1])
+    local ulx, uly, _, _, urx = pk.thumbs[1].tex:GetTexCoord()
+    check("  cropped for the picture inside its frame", ulx == l and urx == r and uly == t,
+          table.concat({ ulx, urx, uly }, ",") .. " vs " .. table.concat({ l, r, t }, ","))
 
     -- Choose, and Apply to the shown camp only.
     pk.thumbs[2]:GetScript("OnClick")(pk.thumbs[2])
@@ -3979,9 +3997,26 @@ do
     L.ApplyBackdrop()
     eq("Apply for all camps sets the shown camp", AltStable.GetCamp(campA).backdrop, B[4].id)
     eq("  and every other", AltStable.GetCamp(campB).backdrop, B[4].id)
+    local later = AltStable.CreateCamp("Later")
+    AltStable.SelectCamp(later)
+    eq("  and a camp made afterwards starts with it", T.CurrentScene().id, B[4].id)
+    AltStable.SelectCamp(campA)
     L.OpenBackdrops()
     check("the tick does not stay ticked for next time", not pk.all:GetChecked())
     L.ClosePicker()
+    check("closing lets the thumbnails' pictures go", pk.thumbs[1].tex:GetTexture() == nil)
+
+    -- Leaving the tab closes both dialogs; they do not come back open. Their
+    -- dimming covers only the panel, so the sidebar stays clickable.
+    L.OpenBackdrops()
+    registered.OnDeactivate(main)
+    check("leaving the Roster tab closes the picker", not pk:IsShown())
+    T.Activate(main)
+    check("  which does not come back open", not pk:IsShown())
+    L.OpenDialog(nil)
+    registered.OnDeactivate(main)
+    check("  nor does the camp dialog", not L.Dialog():IsShown())
+    T.Activate(main)
 
     -- With no camp at all, the shared backdrop the scene falls back to.
     for _, c in ipairs(AltStable.GetCamps()) do AltStable.DeleteCamp(c.id) end
