@@ -168,7 +168,13 @@ check("Professions moves to its own folder",
     check("  and is also ignored", ignore:find("CHANGELOG%.md") ~= nil)
 
     -- MIT: the notice travels with the distribution.
-    check("LICENSE is NOT ignored", ignore:find("LICENSE") == nil)
+    -- An ENTRY, not the word: the comments may say why it ships (#184), and
+    -- LibGlass's own LICENSE ships too.
+    local licenceIgnored = false
+    for entry in ignore:gmatch("\n%s*%-%s*([^\n]*)") do
+        if entry:find("LICENSE", 1, true) then licenceIgnored = true end
+    end
+    check("LICENSE is NOT ignored (ours or LibGlass's)", not licenceIgnored)
 end
 
 check("CHANGELOG.md exists", read("CHANGELOG.md") ~= nil)

@@ -29,7 +29,7 @@ dofile("Compat.lua")
 -- The material and the skin seam, in .toc order: CharacterMenu below asks the
 -- skin whether it is glass, so a harness without them is a load order that
 -- cannot happen in game.
-assert(loadfile("Glass.lua"))("AltStable")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()

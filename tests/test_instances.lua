@@ -32,7 +32,7 @@ dofile("Config.lua")
 -- Skin.lua, because this plugin's palette comes from it now - and Glass first,
 -- the way the .toc loads them, or SkinIsGlass is false and every colour here
 -- would be the flat one.
-assert(loadfile("Glass.lua"))("AltStable")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Skin.lua")
 dofile("Plugins/Instances/AltStableInstances.lua")
 WoW.flushTimers()

@@ -15,7 +15,7 @@ end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
-assert(loadfile("Glass.lua"))("AltStable")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()

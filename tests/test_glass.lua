@@ -31,7 +31,7 @@ dofile("Compat.lua")
 -- path from `...`; a bare dofile leaves that nil and every texture path comes
 -- out as "Interface\\AddOns\\nil\\Media\\Glass\\...". Worth asserting below
 -- rather than trusting, because a wrong path draws nothing and throws nothing.
-assert(loadfile("Glass.lua"))("AltStable")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 
@@ -54,8 +54,13 @@ end
 -- The media path, and the files actually being on disk
 ------------------------------------------------------------
 
-eq("the media path comes from the addon name",
-   Glass.MEDIA, "Interface\\AddOns\\AltStable\\Media\\Glass\\")
+-- The material is the embedded LibGlass-1.0 now (#184): its textures are the
+-- library's, under the addon's own Libs\LibGlass-1.0. Embedded anywhere else,
+-- MEDIA points at nothing and every texture draws blank with no error.
+eq("the media path is the embedded library's, under this addon",
+   Glass.MEDIA, "Interface\\AddOns\\AltStable\\Libs\\LibGlass-1.0\\Media\\")
+eq("the rim keeps the weight it always had here (LibGlass's default is 0.7)",
+   Glass.STYLE.rimAlpha, 1)
 
 -- Every texture the material names for BOTH sizes. A missing TGA is silent in
 -- game: SetTexture stores the path, the texture draws nothing, and the window
@@ -68,10 +73,10 @@ end
 wanted["grain"] = true
 local missing = {}
 for name in pairs(wanted) do
-    local f = io.open("Media/Glass/" .. name .. ".tga", "rb")
+    local f = io.open(LibGlassRoot() .. "/Media/" .. name .. ".tga", "rb")
     if f then f:close() else missing[#missing + 1] = name end
 end
-check("every texture the material names is on disk",
+check("every texture the material names is in the library",
       #missing == 0, table.concat(missing, ", "))
 
 -- And the .toc loads them in an order that works: Glass before Theme (Skin
@@ -89,6 +94,19 @@ do
     end
 end
 check("Glass.lua is in the .toc", toc["Glass.lua"] ~= nil)
+-- The library's XML is the TOC's FIRST file line: Glass.lua calls LibStub for it.
+do
+    local first
+    local fh = io.open("AltStable.toc", "r")
+    for line in fh:lines() do
+        line = line:gsub("\r", "")
+        if not line:match("^%s*$") and not line:match("^##") then first = line; break end
+    end
+    fh:close()
+    eq("the TOC loads LibGlass-1.0 first", first, LIBGLASS_XML)
+end
+check("no copied material textures are left in Media/Glass",
+      io.open("Media/Glass/rim5.tga", "rb") == nil)
 check("Skin.lua is in the .toc", toc["Skin.lua"] ~= nil)
 check("  the material loads before the palette",
       (toc["Glass.lua"] or 99) < (toc["Theme.lua"] or 0))

@@ -29,7 +29,7 @@ dofile("Compat.lua")
 -- Glass.lua is loaded with the addon NAME, the way the client passes it: it
 -- derives its media path from `...`, and a bare dofile leaves that nil so every
 -- texture path comes out as "Interface\AddOns\nil\...".
-assert(loadfile("Glass.lua"))("AltStable")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()

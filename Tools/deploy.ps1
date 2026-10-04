@@ -8,6 +8,12 @@
     Plugins fan out into sibling top-level folders: WoW only discovers addons
     as top-level folders under Interface\AddOns, so Plugins\Warband deploys to
     AddOns\AltStableWarband rather than inside AltStable.
+
+    The glass material is the embedded LibGlass-1.0 (#184). The packager
+    fetches it into Libs\LibGlass-1.0 (.pkgmeta externals); for a dev copy this
+    script hands that job to the LibGlass checkout's own deploy.ps1, FIRST,
+    which checks the checkout and may refuse. The checkout is $env:LIBGLASS,
+    else ..\LibGlass.
 #>
 
 param(
@@ -23,6 +29,35 @@ if (-not (Test-Path $AddOnsPath)) {
 }
 
 $dest = Join-Path $AddOnsPath "AltStable"
+
+$LibGlass = if ($env:LIBGLASS) { $env:LIBGLASS } else { Join-Path (Split-Path -Parent $RepoRoot) "LibGlass" }
+if (-not (Test-Path -LiteralPath (Join-Path $LibGlass "Tools\deploy.ps1"))) {
+    throw "LibGlass checkout not found at $LibGlass (clone github.com/Spotnick2/LibGlass there, or set `$env:LIBGLASS)"
+}
+
+# The commit or tag .pkgmeta pins is what the packager will ship. A checkout
+# elsewhere is legitimate (trying a library change before a pin bump), but an
+# in-game check then tests something the release won't carry: say so.
+$pin = (Get-Content -LiteralPath (Join-Path $RepoRoot ".pkgmeta")) |
+    Where-Object { $_ -match '^\s+(commit|tag):\s*(\S+)\s*$' } | ForEach-Object { $Matches[2] } | Select-Object -First 1
+if ($pin) {
+    $want = $null; $head = $null; $dirty = $null
+    try {
+        $want = (git -C $LibGlass rev-parse --verify --quiet "$pin^{commit}" 2>$null)
+        $head = (git -C $LibGlass rev-parse HEAD 2>$null)
+        $dirty = (git -C $LibGlass status --porcelain 2>$null)
+    } catch { }
+    if (-not $want -or $want -ne $head -or $dirty) {
+        Write-Host "  WARNING: the LibGlass checkout is not at the .pkgmeta pin ($pin)$(if ($dirty) { ', or has uncommitted changes' }):" -ForegroundColor Yellow
+        Write-Host "  this deploy tests a library the release won't ship." -ForegroundColor Yellow
+    }
+}
+
+# The library first: a refusal must leave the deployed addon as it was (a new
+# TOC naming a library that never arrived loads nothing at all).
+& pwsh -NoProfile -File (Join-Path $LibGlass "Tools\deploy.ps1") -Addon AltStable -AddOnsPath $AddOnsPath
+if ($LASTEXITCODE -ne 0) { throw "LibGlass deploy refused; AltStable was not touched" }
+
 Write-Host "Deploying AltStable ..." -ForegroundColor Cyan
 
 # /E copies without purging, so unrelated files already sitting in the target
@@ -54,6 +89,9 @@ $excludeDirs = @(
     (Join-Path $RepoRoot ".idea"),
     (Join-Path $RepoRoot "dist"),
     (Join-Path $RepoRoot "__pycache__"),
+    # Deployed from the LibGlass checkout above; a stray local copy must not
+    # overwrite it.
+    (Join-Path $RepoRoot "Libs\LibGlass-1.0"),
     # Plugins are separate addons; they are deployed below, not nested here.
     (Join-Path $RepoRoot "Plugins")
 )
@@ -79,6 +117,14 @@ function Remove-DevLeftovers([string]$folder) {
     }
 }
 Remove-DevLeftovers $dest
+
+# The material's textures ship inside Libs\LibGlass-1.0\Media now (#184); the
+# old copy an earlier deploy left is dead weight. /E never purges, so say so.
+$staleGlass = Join-Path $dest "Media\Glass"
+if (Test-Path -LiteralPath $staleGlass) {
+    Remove-Item -LiteralPath $staleGlass -Recurse -Force
+    Write-Host "  removed stale Media\Glass (textures now come from LibGlass)" -ForegroundColor DarkYellow
+}
 
 # Plugins: each folder under Plugins\ becomes its own top-level addon folder,
 # named after the .toc inside it (WoW requires folder name == toc name).

@@ -379,10 +379,12 @@ What to look for in the zip (re-verified on `v0.2.0-beta`):
 - the tag's version in **every** `.toc`, not the raw `@project-version@` keyword;
 - no `Tools/`, `tests/`, `docs/`, `.github/` or agent files;
 - the libraries, the icons and the raid art present;
-- **all nine `Media/Glass/*.tga`**. A missing one is silent in game: `SetTexture`
-  stores the path, the texture draws nothing, and the window comes up with no
-  body and no rim rather than with an error. `tests/test_glass.lua` checks them
-  against `Glass.SIZES` on disk; the zip is the only place to check they shipped.
+- **`AltStable/Libs/LibGlass-1.0/`** with its XML, `LibGlass.lua`, `LibStub/`,
+  `LICENSE` and **15 `Media/*.tga`** (#184). A missing texture is silent in
+  game: `SetTexture` stores the path, the texture draws nothing, and the window
+  comes up with no body and no rim rather than with an error. CI asserts the
+  dry-run zip holds exactly the pinned commit's files; the published zip is the
+  only place to check the real packager fetched it.
 
 **And read the release notes back as a player.** `Tools/` is excluded, so
 anything registered in there - `/asicon`, `/asprobe`, `/asmodel` - does not

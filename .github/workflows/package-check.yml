@@ -27,6 +27,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq lua5.1
 
+      # The embedded LibGlass-1.0 at the ref .pkgmeta pins (read from there,
+      # never written twice), checked to BE that commit (#184). The tests load
+      # it from $LIBGLASS; the packager fetches the same pin into
+      # Libs/LibGlass-1.0. Outside the checkout, so the syntax check below
+      # stays on our own files: the library is checked in its repo.
+      - name: Fetch LibGlass at the pinned ref
+        run: |
+          bash tests/fetch_libglass.sh "$RUNNER_TEMP/LibGlass"
+          echo "LIBGLASS=$RUNNER_TEMP/LibGlass" >> "$GITHUB_ENV"
+
       # WoW runs Lua 5.1, so the tests do too - not whatever newer Lua is first
       # on PATH. tests/run.ps1 is the Windows entry point for the same files.
       #
@@ -116,7 +126,7 @@ jobs:
           for pat in '^AltStable/tests/' '^AltStable/Tools/' '^AltStable/docs/' \
                      '^AltStable/\.github/' '^AltStable/\.claude/' \
                      'AGENTS\.md$' 'CLAUDE\.md$' 'CHANGELOG\.md$' \
-                     '^AltStable/Plugins/'; do
+                     '^AltStable/Plugins/' '^AltStable/Media/Glass/'; do
             if grep -qE "$pat" files.txt; then
               echo "SHOULD NOT be in the package ($pat):"
               grep -E "$pat" files.txt
@@ -144,6 +154,44 @@ jobs:
           done
 
           exit $fail
+
+      # Under Libs/LibGlass-1.0, EXACTLY what the library ships (#184): its
+      # XML, every file the XML loads, LICENSE, Media/*.tga - nothing else (the
+      # library's tests/docs/Tools, or a new notes file, fail here instead of
+      # shipping: CurseForge's packager ignores an external's own ignores).
+      - name: The package embeds exactly the library
+        run: |
+          lib=AltStable/Libs/LibGlass-1.0
+          {
+            echo "$lib/LibGlass-1.0.xml"
+            echo "$lib/LICENSE"
+            # Comments stripped non-greedily, as tests/libglass.lua does.
+            tr -d '\r' < "$LIBGLASS/LibGlass-1.0.xml" | perl -0pe 's/<!--.*?-->//gs' |
+              sed -n 's/.*<Script file="\([^"]*\)".*/\1/p' | tr '\\' '/' | sed "s|^|$lib/|"
+            (cd "$LIBGLASS" && ls Media/*.tga) | sed "s|^|$lib/|"
+          } | sort > expected.txt
+          grep "^$lib/" files.txt | sort > actual.txt
+          echo "library files expected: $(wc -l < expected.txt) ($(grep -c "^$lib/Media/" expected.txt) textures)"
+          if ! diff -u expected.txt actual.txt; then
+            echo "the embedded library differs from what it ships (- missing, + extra)"
+            exit 1
+          fi
+
+      # The packager fetched its own copy; prove it is the pinned commit's
+      # content (the files the tests ran against). Its text filter rewrites
+      # .lua/.xml with CRLF, so those compare with CRs stripped; textures and
+      # LICENSE byte for byte.
+      - name: The packaged library is the pinned commit
+        run: |
+          lib=unpacked/AltStable/Libs/LibGlass-1.0
+          bad=0
+          while read -r f; do
+            case "$f" in
+              *.lua|*.xml) cmp -s <(tr -d '\r' < "$lib/$f") <(tr -d '\r' < "$LIBGLASS/$f") ;;
+              *) cmp -s "$lib/$f" "$LIBGLASS/$f" ;;
+            esac || { echo "differs from the pinned checkout: $f"; bad=1; }
+          done < <(cd "$lib" && find . -type f | sed 's|^\./||')
+          test "$bad" -eq 0
 
       # .release is hidden, and upload-artifact@v4 skips hidden content unless
       # told otherwise - without this the upload silently finds nothing and the
