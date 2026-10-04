@@ -4025,6 +4025,51 @@ do
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
+-- A camp member dropped on the divider when it then sorts FIRST among the
+-- campless (a level 60 beside a campless level 10, no saved order): it leaves
+-- its camp, and the list and scene are redrawn (#170 Codex review: the
+-- "already first" check ran after the removal and skipped the redraw).
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = {
+        hi = { guid = "hi", name = "High One", level = 60, class = "MAGE" },
+        lo = { guid = "lo", name = "Low One", level = 10, class = "MAGE" },
+    }
+    AltStableCutoutManifest = {}
+    local main = CreateFrame("Frame")
+    T.Activate(main)
+    local p = T.Panel()
+    local heldW, heldH = p.GetWidth, p.GetHeight
+    p.GetWidth = function() return 1400 end
+    p.GetHeight = function() return 800 end
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableConfig.rosterListOrder, AltStableConfig.rosterCampListHidden = nil, nil
+    AltStableConfig.rosterView = "scene"
+    T.Refresh()
+    local L = AltStable.RosterPlugin.CampList
+    local camp = AltStable.SelectedCamp()
+    AltStable.RemoveFromCamp("lo")
+    T.Refresh()
+    check("the setup: High in the camp, Low campless", AltStable.CampOf("hi") and not AltStable.CampOf("lo"))
+    local sep
+    for _, it in ipairs(L.Items()) do if it.kind == "sep" then sep = it end end
+    local moved = L.Drop({ kind = "char", guid = "hi", fromCamp = camp.id, fromPos = 1 }, sep)
+    check("a camp member dropped on the divider counts as a move", moved)
+    check("  it has left its camp", not AltStable.CampOf("hi"))
+    eq("  and lists first among the campless", L.Campless()[1].guid, "hi")
+    local drawn = false
+    for i = 1, L.shown do
+        local it = L._test.Rows()[i].item
+        if it and it.kind == "char" and it.guid == "hi" then drawn = true end
+    end
+    check("  and the list is redrawn with it there", drawn)
+
+    p.GetWidth, p.GetHeight = heldW, heldH
+    AltStableConfig.rosterView, AltStableConfig.rosterListOrder = nil, nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp, AltStableConfig.rosterCampNextId = nil, nil, nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
 ------------------------------------------------------------
 -- The backdrop picker (#152, part 3): retail's Campsites dialog
 ------------------------------------------------------------

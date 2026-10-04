@@ -176,15 +176,20 @@ function L.Drop(drag, target)
             -- Out of its camp if it was in one, and into the campless list at
             -- the place dropped: before the character it lands on, at the top
             -- on the divider, at the end in the empty space below (#170).
-            if drag.fromCamp then AltStable.RemoveFromCamp(guid) end
+            -- A drop that took someone out of a camp is never a no-op, whatever
+            -- the order then says (#170 Codex review: a member that sorted first
+            -- among the campless was removed, then the early return skipped the
+            -- redraw). Only a campless character dropped on itself is.
+            local removed = drag.fromCamp and AltStable.RemoveFromCamp(guid) or false
             local before
             if target.kind == "char" then
-                if target.guid == guid then return false end
-                before = target.guid
+                if target.guid == guid and not removed then return false end
+                if target.guid ~= guid then before = target.guid end
             elseif target.kind == "sep" then
-                local first = L.Campless()[1]
-                before = first and first.guid
-                if before == guid then return false end
+                -- The first campless character OTHER than the one dragged.
+                for _, c in ipairs(L.Campless()) do
+                    if c.guid ~= guid then before = c.guid; break end
+                end
             end
             done = PlaceInList(guid, before)
         end
