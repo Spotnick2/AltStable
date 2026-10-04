@@ -4025,12 +4025,13 @@ end
 
 -- A copyable download link. Addons cannot open a browser; the client's own
 -- popup with an edit box, the text selected, is the usual way to hand one over.
-local COMPANION_POPUP = "ALTSTABLE_COMPANION_LINK"
-function AltStable.ShowCompanionLink()
-    if not StaticPopupDialogs[COMPANION_POPUP] then
-        StaticPopupDialogs[COMPANION_POPUP] = {
-            text = "AltStable Companion turns your portrait captures into the Roster's portraits. "
-                .. "Copy the link (Ctrl+C) and open it in your browser:",
+-- One line of text to copy, selected: the Companion's link (#176) and the
+-- /alts status line (#175). The prompt is the dialog's %s; the text is its data.
+local COPY_POPUP = "ALTSTABLE_COPY_TEXT"
+function AltStable.ShowCopyText(prompt, text)
+    if not StaticPopupDialogs[COPY_POPUP] then
+        StaticPopupDialogs[COPY_POPUP] = {
+            text = "%s",
             button1 = CLOSE or "Close",
             hasEditBox = 1,
             -- 0 = no limit. The client REUSES its dialogs and only sets the
@@ -4039,16 +4040,16 @@ function AltStable.ShowCompanionLink()
             -- dialog used the frame last would cut the 54-letter link short.
             maxLetters = 0,
             editBoxWidth = 350,
-            OnShow = function(dialog, url)
+            OnShow = function(dialog, data)
                 local box = dialog:GetEditBox()
-                box:SetText(url or AltStable.COMPANION_URL)
+                box:SetText(data or "")
                 box:SetFocus()
                 box:HighlightText()
             end,
-            -- Typing over the link must not leave a wrong one to copy.
-            EditBoxOnTextChanged = function(box)
-                if box:GetText() ~= AltStable.COMPANION_URL then
-                    box:SetText(AltStable.COMPANION_URL)
+            -- Typing over it must not leave a wrong text to copy.
+            EditBoxOnTextChanged = function(box, data)
+                if data and box:GetText() ~= data then
+                    box:SetText(data)
                     box:HighlightText()
                 end
             end,
@@ -4059,7 +4060,75 @@ function AltStable.ShowCompanionLink()
             hideOnEscape = 1,
         }
     end
-    return StaticPopup_Show(COMPANION_POPUP, nil, nil, AltStable.COMPANION_URL)
+    return StaticPopup_Show(COPY_POPUP, prompt, nil, text)
+end
+
+-- /alts status (#175): what a bug report needs, without asking. Read lines for
+-- the chat and one line to copy. No account names, no character names: the
+-- counts say enough, and the line ends up pasted in public.
+--
+-- "Portraits" are manifest entries for a tracked character, not verified
+-- pictures: whether a file loads is not something the addon checks (Roster).
+function AltStable.StatusLines()
+    local get = AltStable.API and AltStable.API.GetAddOnMetadata
+    local okV, version = pcall(function() return get and get("AltStable", "Version") end)
+    version = (okV and type(version) == "string" and version ~= "") and version or "?"
+    local clientVersion, build = "?", "?"
+    if GetBuildInfo then clientVersion, build = GetBuildInfo() end
+    local locale = GetLocale and GetLocale() or "?"
+
+    local chars, withPortrait, enhanced = 0, 0, 0
+    for _, c in pairs(type(AltStableDB) == "table" and AltStableDB or {}) do
+        if type(c) == "table" and c.name then
+            chars = chars + 1
+            local entry = AltStable.CutoutFor and AltStable.CutoutFor(c)
+            if entry then
+                withPortrait = withPortrait + 1
+                if type(entry.enhanced) == "table" then enhanced = enhanced + 1 end
+            end
+        end
+    end
+    local captures = 0
+    local renders = type(AltStablePortraits) == "table" and AltStablePortraits.renders
+    for _, r in ipairs(type(renders) == "table" and renders or {}) do
+        if type(r) == "table" and r.shot == 1 then captures = captures + 1 end
+    end
+    local cutouts = AltStableCutoutManifest ~= nil
+
+    local lines = {
+        ("AltStable %s, client %s (%s), %s"):format(version, tostring(clientVersion), tostring(build), locale),
+        ("%d characters tracked; %d with a portrait (%d enhanced)"):format(chars, withPortrait, enhanced),
+        ("%d portrait captures on record; AltStable Companion's folder %s"):format(
+            captures, cutouts and "is loaded" or "is not loaded"),
+        ("sync protocol %s"):format(PROTOCOL_VERSION),
+    }
+    local copy = ("AltStable %s | client %s.%s %s | chars %d | portraits %d (enh %d) | captures %d | cutouts %s | proto %s")
+        :format(version, tostring(clientVersion), tostring(build), locale, chars, withPortrait, enhanced,
+                captures, cutouts and "loaded" or "absent", PROTOCOL_VERSION)
+    return lines, copy
+end
+
+-- The player's commands, for /alts help and for anything /alts does not know.
+-- The developer-only ones (/asprobe, /apidump) are left out: they do not ship.
+AltStable.HELP_LINES = {
+    "|cffffff00/alts|r - open the sheet (and ask your other accounts for news)",
+    "|cffffff00/alts portrait|r - capture this character for the Roster's portraits",
+    "|cffffff00/alts status|r - versions and counts, to paste into a bug report",
+    "|cffffff00/alts sync|r [name] - sync now, with everyone or one character",
+    "|cffffff00/alts whitelist|r [remove] [name] - who you sync with",
+    "|cffffff00/alts auth|r, |cffffff00allow|r / |cffffff00deny|r <name> - who may ask for your data",
+    "|cffffff00/alts favourite|r / |cffffff00unfavourite|r <name> - pin to the top of the Roster grid",
+    "|cffffff00/alts forget|r / |cffffff00unforget|r <name>, |cffffff00/alts forgotten|r - characters that no longer exist",
+    "|cffffff00/alts account|r <n> - this account's number in the sheet",
+    "|cffffff00/alts export|r - every character as a spreadsheet",
+    "|cffffff00/alts config|r - options",
+}
+
+function AltStable.ShowCompanionLink()
+    return AltStable.ShowCopyText(
+        "AltStable Companion turns your portrait captures into the Roster's portraits. "
+            .. "Copy the link (Ctrl+C) and open it in your browser:",
+        AltStable.COMPANION_URL)
 end
 
 -- Split "<cmd> <target>" where the target may contain spaces.
@@ -4521,6 +4590,29 @@ SlashCmdList["ALTSTABLE"] = function(args)
     -- bare /alts below, which opens the sheet and pings every peer for a sync.
     if cmd == "update-reference" or cmd == "updateref" then
         Print("|cffffff00/alts update-reference|r is now |cffffff00/alts portrait|r.")
+        return
+    end
+
+    ----------------------------------------------------
+    -- /alts help, /alts status (#175)
+    --
+    -- An unknown word used to fall through to the bare /alts below: it
+    -- opened the sheet and pinged every peer, and never said the word meant
+    -- nothing. Now it says so and lists what does.
+    ----------------------------------------------------
+
+    if cmd == "status" then
+        local lines, copy = AltStable.StatusLines()
+        for _, l in ipairs(lines) do Print(l) end
+        AltStable.ShowCopyText("AltStable status - copy it (Ctrl+C) into your bug report:", copy)
+        return
+    end
+
+    if cmd ~= "" then
+        if cmd ~= "help" and cmd ~= "?" then
+            Print(("|cffffff00%s|r is not an AltStable command. These are:"):format(cmd))
+        end
+        for _, l in ipairs(AltStable.HELP_LINES) do Print(l) end
         return
     end
 

@@ -4368,7 +4368,7 @@ do
     local def = StaticPopupDialogs[WoW.popups[#WoW.popups].which]
     if box then
         box:SetText("typed over")
-        def.EditBoxOnTextChanged(box)
+        def.EditBoxOnTextChanged(box, dialog.data)   -- as SharedTemplates.lua passes it
         eq("  typing over it puts the link back", box:GetText(), AltStable.COMPANION_URL)
     end
     StaticPopup_Hide(WoW.popups[#WoW.popups].which)

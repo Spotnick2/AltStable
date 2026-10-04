@@ -4359,6 +4359,73 @@ do
     onEvent(T.frame, "BN_DISCONNECTED")
     eq(names(), "", "Battle.net disconnecting clears the peers")
 end
+
+------------------------------------------------------------
+-- /alts help and /alts status (#175)
+------------------------------------------------------------
+do
+    freshAuth()
+    local function said(text)
+        for _, m in ipairs(WoW.chatOut) do
+            if tostring(m):find(text, 1, true) then return true end
+        end
+        return false
+    end
+    local opened = 0
+    local heldEnsure = AltStable.EnsureSheetVisible
+    AltStable.EnsureSheetVisible = function() opened = opened + 1 end
+
+    -- An unknown word used to open the sheet and ping every peer, silently.
+    slash("frobnicate")
+    check(said("frobnicate|r is not an AltStable command"), "an unknown command says so")
+    check(said("/alts status"), "  and lists the commands")
+    eq(opened, 0, "  and does not open the sheet")
+    eq(#WoW.sent, 0, "  nor ping anyone")
+
+    slash("help")
+    check(said("/alts portrait") and not said("is not an AltStable command"), "/alts help lists them, no complaint")
+    check(not said("asprobe") and not said("apidump"), "  and never the developer-only commands")
+
+    slash("")
+    eq(opened, 1, "bare /alts still opens the sheet")
+
+    -- The status: versions and counts, in chat and as one line to copy.
+    AltStableDB = {
+        ["Player-1-A"] = { guid = "Player-1-A", name = "Alder Oak" },
+        ["Player-1-B"] = { guid = "Player-1-B", name = "Birch Ash" },
+        ["Player-1-C"] = { guid = "Player-1-C", name = "Cedar Elm" },
+    }
+    local heldManifest, heldStore = AltStableCutoutManifest, AltStablePortraits
+    AltStableCutoutManifest = {
+        ["Player-1-A"] = { file = "a.tga", w = 1, h = 1, texw = 1, texh = 1,
+                           enhanced = { file = "Enhanced/a.tga", w = 1, h = 1, texw = 1, texh = 1 } },
+        ["Player-1-B"] = { file = "b.tga", w = 1, h = 1, texw = 1, texh = 1 },
+    }
+    AltStablePortraits = { version = 1, renders = {
+        { guid = "Player-1-A", shot = 1 }, { guid = "Player-1-A", shot = 2 },
+        { guid = "Player-1-C", shot = 1 }, { guid = "Player-1-C", shot = 2 },
+    } }
+    local before = #WoW.popups
+    slash("status")
+    check(said("3 characters tracked; 2 with a portrait (1 enhanced)"), "status counts characters, portraits, enhanced")
+    check(said("2 portrait captures on record; AltStable Companion's folder is loaded"), "  captures (pairs, not shots) and the folder")
+    check(said("sync protocol " .. T.PROTOCOL_VERSION), "  and the sync protocol")
+    check(said("client 1.60.1 (70205), enUS"), "  and the client build and locale")
+    eq(#WoW.popups, before + 1, "  and opens the copy popup")
+    local copy = WoW.popups[#WoW.popups].data or ""
+    check(copy:find("chars 3 | portraits 2 (enh 1) | captures 2 | cutouts loaded", 1, true) ~= nil,
+          "  with one line to copy: " .. copy)
+    check(not copy:find("Alder", 1, true) and not copy:find("Player-1", 1, true),
+          "  which names no character and no GUID")
+    eq(#WoW.sent, 0, "  and pings no one")
+
+    AltStableCutoutManifest = nil
+    slash("status")
+    check(said("folder is not loaded"), "no manifest: the folder is not loaded")
+
+    AltStable.EnsureSheetVisible = heldEnsure
+    AltStableCutoutManifest, AltStablePortraits = heldManifest, heldStore
+end
 if failures == 0 then
     print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
 else
