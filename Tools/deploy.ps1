@@ -9,11 +9,12 @@
     as top-level folders under Interface\AddOns, so Plugins\Warband deploys to
     AddOns\AltStableWarband rather than inside AltStable.
 
-    The glass material is the embedded LibGlass-1.0 (#184). The packager
-    fetches it into Libs\LibGlass-1.0 (.pkgmeta externals); for a dev copy this
-    script hands that job to the LibGlass checkout's own deploy.ps1, FIRST,
-    which checks the checkout and may refuse. The checkout is $env:LIBGLASS,
-    else ..\LibGlass.
+    The glass material is the embedded LibGlass-1.0 (#184), and the camera
+    showcase the embedded LibShowcase-1.0. The packager fetches them into
+    Libs\ (.pkgmeta externals); for a dev copy this script hands that job to
+    each checkout's own deploy.ps1, FIRST, which checks the checkout and may
+    refuse. The checkouts are $env:LIBGLASS, else ..\LibGlass, and
+    $env:LIBSHOWCASE, else ..\LibShowcase.
 #>
 
 param(
@@ -30,33 +31,45 @@ if (-not (Test-Path $AddOnsPath)) {
 
 $dest = Join-Path $AddOnsPath "AltStable"
 
-$LibGlass = if ($env:LIBGLASS) { $env:LIBGLASS } else { Join-Path (Split-Path -Parent $RepoRoot) "LibGlass" }
-if (-not (Test-Path -LiteralPath (Join-Path $LibGlass "Tools\deploy.ps1"))) {
-    throw "LibGlass checkout not found at $LibGlass (clone github.com/Spotnick2/LibGlass there, or set `$env:LIBGLASS)"
-}
+$pkgmeta = Get-Content -LiteralPath (Join-Path $RepoRoot ".pkgmeta")
+$libs = @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS; EnvName = "LIBGLASS" },
+          @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE; EnvName = "LIBSHOWCASE" })
+foreach ($lib in $libs) {
+    $lib.Root = if ($lib.Env) { $lib.Env } else { Join-Path (Split-Path -Parent $RepoRoot) $lib.Name }
+    if (-not (Test-Path -LiteralPath (Join-Path $lib.Root "Tools\deploy.ps1"))) {
+        throw "$($lib.Name) checkout not found at $($lib.Root) (clone github.com/Spotnick2/$($lib.Name) there, or set `$env:$($lib.EnvName))"
+    }
 
-# The commit or tag .pkgmeta pins is what the packager will ship. A checkout
-# elsewhere is legitimate (trying a library change before a pin bump), but an
-# in-game check then tests something the release won't carry: say so.
-$pin = (Get-Content -LiteralPath (Join-Path $RepoRoot ".pkgmeta")) |
-    Where-Object { $_ -match '^\s+(commit|tag):\s*(\S+)\s*$' } | ForEach-Object { $Matches[2] } | Select-Object -First 1
-if ($pin) {
-    $want = $null; $head = $null; $dirty = $null
-    try {
-        $want = (git -C $LibGlass rev-parse --verify --quiet "$pin^{commit}" 2>$null)
-        $head = (git -C $LibGlass rev-parse HEAD 2>$null)
-        $dirty = (git -C $LibGlass status --porcelain 2>$null)
-    } catch { }
-    if (-not $want -or $want -ne $head -or $dirty) {
-        Write-Host "  WARNING: the LibGlass checkout is not at the .pkgmeta pin ($pin)$(if ($dirty) { ', or has uncommitted changes' }):" -ForegroundColor Yellow
-        Write-Host "  this deploy tests a library the release won't ship." -ForegroundColor Yellow
+    # The commit or tag .pkgmeta pins is what the packager will ship. A checkout
+    # elsewhere is legitimate (trying a library change before a pin bump), but an
+    # in-game check then tests something the release won't carry: say so. Each
+    # library's own external block, not the first pin in the file.
+    $pin = $null; $inBlock = $false
+    foreach ($line in $pkgmeta) {
+        if ($line -match '^  (\S+):\s*$') { $inBlock = ($Matches[1] -eq "Libs/$($lib.Major)"); continue }
+        if ($line -match '^\S') { $inBlock = $false }
+        if ($inBlock -and $line -match '^\s+(commit|tag):\s*(\S+)\s*$') { $pin = $Matches[2]; break }
+    }
+    if ($pin) {
+        $want = $null; $head = $null; $dirty = $null
+        try {
+            $want = (git -C $lib.Root rev-parse --verify --quiet "$pin^{commit}" 2>$null)
+            $head = (git -C $lib.Root rev-parse HEAD 2>$null)
+            $dirty = (git -C $lib.Root status --porcelain 2>$null)
+        } catch { }
+        if (-not $want -or $want -ne $head -or $dirty) {
+            Write-Host "  WARNING: the $($lib.Name) checkout is not at the .pkgmeta pin ($pin)$(if ($dirty) { ', or has uncommitted changes' }):" -ForegroundColor Yellow
+            Write-Host "  this deploy tests a library the release won't ship." -ForegroundColor Yellow
+        }
     }
 }
 
-# The library first: a refusal must leave the deployed addon as it was (a new
+# The libraries first: a refusal must leave the deployed addon as it was (a new
 # TOC naming a library that never arrived loads nothing at all).
-& pwsh -NoProfile -File (Join-Path $LibGlass "Tools\deploy.ps1") -Addon AltStable -AddOnsPath $AddOnsPath
-if ($LASTEXITCODE -ne 0) { throw "LibGlass deploy refused; AltStable was not touched" }
+foreach ($lib in $libs) {
+    & pwsh -NoProfile -File (Join-Path $lib.Root "Tools\deploy.ps1") -Addon AltStable -AddOnsPath $AddOnsPath
+    if ($LASTEXITCODE -ne 0) { throw "$($lib.Name) deploy refused; AltStable was not touched" }
+}
 
 Write-Host "Deploying AltStable ..." -ForegroundColor Cyan
 
@@ -89,9 +102,10 @@ $excludeDirs = @(
     (Join-Path $RepoRoot ".idea"),
     (Join-Path $RepoRoot "dist"),
     (Join-Path $RepoRoot "__pycache__"),
-    # Deployed from the LibGlass checkout above; a stray local copy must not
-    # overwrite it.
+    # Deployed from the library checkouts above; a stray local copy must not
+    # overwrite them.
     (Join-Path $RepoRoot "Libs\LibGlass-1.0"),
+    (Join-Path $RepoRoot "Libs\LibShowcase-1.0"),
     # Plugins are separate addons; they are deployed below, not nested here.
     (Join-Path $RepoRoot "Plugins")
 )

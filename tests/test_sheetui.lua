@@ -29,6 +29,8 @@ dofile("Compat.lua")
 -- The library and Glass.lua are loaded with the addon NAME, the way the client
 -- passes it: LibGlass derives its media path from the host addon's name.
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
+-- The camera showcase (LibShowcase-1.0), next in the TOC.
+dofile("tests/libshowcase.lua"); LoadShowcase("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
@@ -863,7 +865,7 @@ if Cam then
     WoW.cvars["test_cameraOverShoulder"] = "0"
     WoW.cvars["cameraDistanceMaxZoomFactor"] = "1.0"
 
-    Cam.active = false
+    pcall(Cam.ForceRestore, Cam, "test")   -- a clean slate (the fields are read-only now)
     local entered = pcall(Cam.Enter, Cam)
     check("entering does not error", entered)
 
@@ -889,7 +891,7 @@ if Cam then
     -- the wrong reason, proving nothing about the guard.
     WoW.cvars["CameraKeepCharacterCentered"] = nil
     WoW.cvars["CameraReduceUnexpectedMovement"] = nil
-    Cam.active = false
+    pcall(Cam.ForceRestore, Cam, "test")
     local ok2 = pcall(Cam.Enter, Cam)
     check("it still enters on a client without those CVars", ok2 and Cam.active == true)
     eq("  and does not create the one it lacks",
@@ -904,7 +906,7 @@ if Cam then
     -- character - the very bug this feature exists to prevent, arriving half a
     -- second late.
     WoW.cvars["CameraKeepCharacterCentered"] = "1"
-    Cam.active = false
+    pcall(Cam.ForceRestore, Cam, "test")
     pcall(Cam.Enter, Cam)
     eq("centring is off while shown", WoW.cvars["CameraKeepCharacterCentered"], "0")
     pcall(Cam.Exit, Cam, "test")
@@ -2175,7 +2177,7 @@ do
     Drop(dialog)
     eq("dropping puts it back under UIParent", dialog:GetParent(), UIParent)
     eq("  at the strata it had", dialog:GetFrameStrata(), "DIALOG")
-    eq("  with nothing left marked as lifted", dialog._altstableLifted, nil)
+    check("  with nothing left marked as lifted", not AltStable.Showcase:IsLifted(dialog))
 
     -- RE-ENTRANT: putting the dialog back under a hidden UIParent can fire its
     -- OnHide - another DropPopup - half way through the first. Modelled by
@@ -2282,7 +2284,7 @@ do
     local function openSheet()
         sheet:Hide()
         pcall(Cam.ForceRestore, Cam, "test")
-        Cam.active, Cam.mode = false, nil
+        check("  (the restore left nothing running)", not Cam.active)
         SetUIVisibility(true)
         AltStable.EnsureSheetVisible()
     end
@@ -2328,7 +2330,7 @@ do
     eq("closing it mid-capture still ends the showcase", Cam.mode, "exit")
     P.AbandonCapture(nil, true)
     pcall(Cam.ForceRestore, Cam, "test")
-    Cam.active, Cam.mode = false, nil
+    check("  (the restore left nothing running)", not Cam.active)
     enters = 0
     AltStable.EnsureSheetVisible()
     eq("  and the next open is a real one", enters, 1)

@@ -8,14 +8,21 @@ enable-nolib-creation: no
 # that moved under a release would be one more variable in a port whose whole
 # problem is "which build is this true for").
 #
-# LibGlass-1.0, the glass material shared by the Glass addons (#184), is the one
-# external: pinned to a TAG, bumped only in a release made anyway. Comments on
-# their own lines only - the packager's YAML reader keeps an inline "# ..." as
-# part of the value (measured in GlassUnitFrames' migration).
+# LibGlass-1.0, the glass material shared by the Glass addons (#184), and
+# LibShowcase-1.0, the camera showcase extracted from SheetUI.lua, are the
+# externals: each pinned to a TAG, bumped only in a release made anyway.
+# Comments on their own lines only - the packager's YAML reader keeps an inline
+# "# ..." as part of the value (measured in GlassUnitFrames' migration).
+#
+# LibShowcase is not published yet: its r1 tag does not exist until the
+# library's repo is on GitHub and tagged, so CI cannot fetch it before then.
 externals:
   Libs/LibGlass-1.0:
     url: https://github.com/Spotnick2/LibGlass
     tag: r2
+  Libs/LibShowcase-1.0:
+    url: https://github.com/Spotnick2/LibShowcase
+    tag: r1
 
 # One CurseForge project, four addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
@@ -74,3 +81,10 @@ ignore:
   - Libs/LibGlass-1.0/AGENTS.md
   - Libs/LibGlass-1.0/CLAUDE.md
   - Libs/LibGlass-1.0/README.md
+  # The same for LibShowcase-1.0 (its LICENSE ships too).
+  - Libs/LibShowcase-1.0/tests
+  - Libs/LibShowcase-1.0/docs
+  - Libs/LibShowcase-1.0/Tools
+  - Libs/LibShowcase-1.0/AGENTS.md
+  - Libs/LibShowcase-1.0/CLAUDE.md
+  - Libs/LibShowcase-1.0/README.md

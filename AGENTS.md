@@ -51,7 +51,8 @@ AltStable-specific.
 Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order matters; a new
 `.lua` file must be added there in the right position):
 
-`Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
+`Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs\LibShowcase-1.0\LibShowcase-1.0.xml` →
+`Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
 `RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `PublicAPI.lua` → `Export.lua`.
@@ -96,7 +97,8 @@ Lua is first on `PATH`).
 - **Run all tests:** `pwsh tests/run.ps1` (override the interpreter with `-Lua <path>`; it
   defaults to the path above). It runs every `tests/test_*.lua` from the repo root and exits
   non-zero on failure. The tests need a **LibGlass checkout** (`$env:LIBGLASS`, else
-  `..\LibGlass`) and fail loudly without one; `run.ps1` warns when it is not at the `.pkgmeta`
+  `..\LibGlass`) and a **LibShowcase checkout** (`$env:LIBSHOWCASE`, else `..\LibShowcase`),
+  and fail loudly without them; `run.ps1` warns when one is not at its `.pkgmeta`
   pin. Lua only — no Python tests here, unlike upstream.
 - **How it works:** `tests/wow_stubs.lua` is a minimal WoW API mock driven via the exported
   `WoW` table (`WoW.reset()`, `WoW.flushTimers()`, `WoW.sentMessages()`, …). A test `dofile`s
@@ -229,6 +231,27 @@ upgrade rules).
   here). `Skin.lua` pushes the chosen preset into its `STYLE` before each `Apply`; that STYLE is
   this addon's own. `Glass.MEDIA` is for the library's textures only; the addon's art keeps its
   own paths (`AltStable.MEDIA_PATH`).
+
+## The camera showcase
+
+The showcase (camera swing, shoulder offset, orbit, Alt+Z-style UI hide with the sheet lifted) is
+**LibShowcase-1.0** (`..\LibShowcase`, embedded exactly like LibGlass: `.pkgmeta` external
+`tag: r1`, its non-dot ignores repeated, `Libs/LibShowcase-1.0/` gitignored, its XML loaded right
+after LibGlass's, deployed through its own `Tools\deploy.ps1`, tests load it through
+`tests/libshowcase.lua`). It was extracted from this file's `AltStableCameraPresentation`; its
+`docs/DESIGN.md` holds the guarantees and its `CLAUDE.md` the contract.
+
+- **Camera behaviour changes are LibShowcase changes**, never edits here.
+- `SheetUI.lua` keeps a thin adapter with the old names: `AltStable.AltStableCameraPresentation`
+  (`Enter`/`Exit`/`ForceRestore`, and read-only `active`/`mode`/`capture`/`uiHidden`),
+  `AltStable.IsGameUIHidden`, `AltStable.LiftAboveHiddenUI`, `AltStable.SuppressExperimentalCVarPopup`,
+  `LiftPopup`/`DropPopup`. The options still live in `AltStableConfig` and are pushed into the
+  instance's `opts` at every open.
+- **One owner.** The camera is global, so the library refuses a second addon while one presents;
+  the sheet then opens without a showcase. The crash self-heal capture rides in
+  `AltStableConfig.LibShowcaseCapture` while a presentation is up.
+- **Not published yet**: the GitHub repo and the `r1` tag don't exist, so CI's fetch step fails
+  until they do.
 
 ## Conventions
 

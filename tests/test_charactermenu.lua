@@ -30,6 +30,8 @@ dofile("Compat.lua")
 -- it is glass, so a harness without them is not the addon: it is a load order
 -- that cannot happen in game.
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
+-- The camera showcase (LibShowcase-1.0), next in the TOC.
+dofile("tests/libshowcase.lua"); LoadShowcase("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
