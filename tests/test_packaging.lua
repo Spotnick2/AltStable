@@ -73,25 +73,35 @@ end
 -- against "v0.7.0-beta", and the release counted itself as a dev copy. Code
 -- that needs a keyword assembles it at runtime. Read from the TOCs, so this is
 -- exactly the Lua that ships.
+--
+-- Matched by SHAPE (#193, as Priestly does after its own #83): the packager has
+-- a family of keywords - @project-version@, @file-date-iso@, @debug@, @alpha@,
+-- @do-not-package@ ... - and a list of families let the bare ones through.
+-- XML too (only what is in the repo: LibGlass's is checked in its own repo and
+-- in CI's zip check), and the first hit is reported as file:line.
 do
-    local KEYWORDS = { "@project%-[%w%-]+@", "@file%-[%w%-]+@", "@build%-time@",
-                       "%-%-@[%w%-]+@", "%-%-%[%[@[%w%-]+@" }
-    local found
+    local found, scanned = nil, 0
     for _, t in ipairs(TOCS) do
         local src = read(t.toc) or ""
         for line in (src .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
-            local file = line:match("^%s*([%w_%-%./\\]+%.lua)%s*$")
-            if file then
-                local path = t.dir .. file:gsub("\\", "/")
-                local code = read(path) or ""
-                for _, pat in ipairs(KEYWORDS) do
-                    local hit = code:match(pat)
-                    if hit and not found then found = path .. ": " .. hit end
+            local file = line:match("^%s*([%w_%-%./\\]+%.[lx][um][al])%s*$")
+            local code = file and read(t.dir .. file:gsub("\\", "/"))
+            if code then
+                scanned = scanned + 1
+                local n = 0
+                for codeLine in (code .. "\n"):gmatch("([^\n]*)\n") do
+                    n = n + 1
+                    local keyword = codeLine:match("(@[%w%-]+@)")
+                    if keyword and not found then
+                        found = t.dir .. file:gsub("\\", "/") .. ":" .. n .. ": " .. keyword
+                    end
                 end
             end
         end
     end
-    check("no shipped Lua file contains a packager keyword (it would be substituted)", found == nil, found)
+    check("the keyword sweep read the shipped files", scanned >= 20, tostring(scanned))
+    check("no shipped Lua or XML file contains a packager keyword (it would be substituted)",
+          found == nil, found)
 end
 
 -- Every shipped Lua file at the root is listed in the main TOC: a file added to
