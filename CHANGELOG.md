@@ -1,15 +1,34 @@
 # Changelog
 
-## Unreleased
+## v0.10.0-beta
+
+The plugin tabs open at their own size, and the window keeps up with your screen. Measured on
+client 1.60.1.70205. Nothing changes on the sync wire or in saved data, so v0.10.0 syncs with
+v0.8.x and v0.9.0.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+Its newest version finds the game you play AltStable in by itself. It also says how many enhanced
+pictures it will make before it sends anything, and saves its diagnostics file to your Downloads
+folder.
 
 ### Changed
 
 - **Roster, Warband and Professions open at their own size**
   ([#150](https://github.com/Spotnick2/AltStable/issues/150)), whichever tab you came from. They
-  used to keep whatever size the previous tab left. (A collapsed sidebar still makes the window
-  narrower by its width; the tab's own area is the same.) Warband's Single and
-  Combined views each have their own width, and switching between them resizes the window.
-  On a smaller screen or at a larger scale, the window still fits the screen as before.
+  used to keep whatever size the previous tab left. Each now glides to its own size, as the
+  sheet's tabs already did. A collapsed sidebar still makes the window narrower by its width;
+  the tab's own area is the same.
+  - Warband's **Single** and **Combined** views each have their own width; switching between
+    them resizes the window.
+  - Professions now has a minimum size, so its toolbar and recipe list always have room.
+  - On a smaller screen or at a larger scale, the window still fits the screen as before.
+- **The window follows a change of WoW's UI scale or resolution**, and lays the open tab out
+  again for its new size. Before, it kept the size it had until you switched tabs.
 
 ## v0.9.0-beta
 
