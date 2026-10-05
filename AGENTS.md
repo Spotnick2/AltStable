@@ -144,10 +144,11 @@ One CurseForge project publishes all three folders. CurseForge's own packager bu
 from the tag webhook, reading `.pkgmeta`; nothing here uploads, and no API key lives in this repo.
 
 ```
-git tag v0.1.0-beta && git push origin v0.1.0-beta
+git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
 ```
 
-The tag name sets the release type, so `-beta` publishes as a beta. `CHANGELOG.md` is the release
+The tag name sets the release type: a bare `vX.Y.Z` publishes as a release, `-beta` as a beta.
+Releases are bare tags from v0.10.0 on (the addon is public; see RUNBOOK "Releasing"). `CHANGELOG.md` is the release
 notes (`manual-changelog`), and is itself ignored so it does not ship inside the addon.
 
 `.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on pull requests and on

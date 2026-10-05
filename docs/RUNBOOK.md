@@ -364,9 +364,12 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 CurseForge builds releases from the tag webhook, reading `.pkgmeta`. Nothing here uploads.
 
 1. Update `CHANGELOG.md` — it is the release notes.
-2. `git tag -a vX.Y.Z-beta -m "..."` and `git push origin vX.Y.Z-beta`, with a version that has
-   not been used before (`v0.1.0-beta` is taken; `git tag -l` lists them).
-3. The tag name sets the release type: `-beta` publishes as a beta, a bare `v0.1.0` as a release.
+2. `git tag -a vX.Y.Z -m "..."` and `git push origin vX.Y.Z`, with a version that has not been
+   used before (`git tag -l` lists them).
+3. The tag name sets the release type: a bare `vX.Y.Z` publishes as a **release**, `-beta` as a
+   beta. Releases are bare from v0.10.0 on (2026-10-04): the addon went public then, and the
+   owner set v0.10.0-beta to Release on CurseForge. Players on the default "release" channel only
+   get release-type files, so a `-beta` tag now reaches almost nobody.
 4. **Check the published zip by hand.** CI dry-runs the BigWigs packager; CurseForge runs its own,
    so the file players download is not the file CI inspected.
 
