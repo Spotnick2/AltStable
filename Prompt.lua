@@ -23,6 +23,7 @@ AltStable = AltStable or {}
 
 local WIDTH, PAD, BUTTON_H, GAP = 380, 16, 22, 8
 local prompts = {}   -- kind -> frame
+local order = {}     -- the kinds, in the order they were built
 
 -- Escape, the CharacterMenu way (CharacterMenu.lua has the whole argument).
 -- UISpecialFrames alone would close the sheet too: it is in that list, and
@@ -46,6 +47,32 @@ local function ReleaseKeyboard(self)
     if type(self.EnableKeyboard) == "function" then pcall(self.EnableKeyboard, self, false) end
 end
 
+-- Out of combat only: in it, a restricted propagation call could leave the
+-- movement keys swallowed with no way to hand them back.
+local function TakeKeyboard(self)
+    if InCombatLockdown and InCombatLockdown() then return end
+    if type(self.EnableKeyboard) ~= "function" then return end
+    pcall(self.EnableKeyboard, self, true)
+    -- Propagation outlives the showing, and the last key was usually Escape,
+    -- which turned it off: reset it, or the first key is eaten.
+    if type(self.SetPropagateKeyboardInput) == "function" then
+        pcall(self.SetPropagateKeyboardInput, self, true)
+    end
+end
+
+-- Combat starting with a prompt up: it stays (a StaticPopup did too, and the
+-- sync question closing here would have counted as asked), but the keyboard
+-- goes back before the lockdown can make that impossible; Escape still works
+-- through UISpecialFrames meanwhile. Combat ending with it still up: take the
+-- keyboard back, or Escape goes on closing the sheet along with the prompt.
+local function OnEvent(self, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        ReleaseKeyboard(self)
+    elseif self:IsShown() then
+        TakeKeyboard(self)
+    end
+end
+
 local function OnHide(self)
     ReleaseKeyboard(self)
     -- A focused box keeps the keyboard after its frame is gone: every key
@@ -62,16 +89,19 @@ local function Build(kind, count, withCopy)
     f:SetToplevel(true)
     f:SetClampedToScreen(true)
     f:SetWidth(WIDTH)
-    f:SetPoint("TOP", 0, -180)
     f:EnableMouse(true)
     if not (AltStable.SkinWindow and AltStable.SkinWindow(f, "small")) then
         if AltStable.ApplyBackdrop then AltStable.ApplyBackdrop(f, 0.05, 0.05, 0.05, 0.96) end
     end
     f:Hide()
 
+    -- An explicit width, not two anchors: the height is measured right after
+    -- SetText, before a frame built a moment ago has ever been laid out, and a
+    -- width that comes only from anchors may not have resolved yet - the text
+    -- would measure as one unwrapped line and run under the buttons.
     local text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    text:SetPoint("TOPLEFT", PAD, -PAD)
-    text:SetPoint("TOPRIGHT", -PAD, -PAD)
+    text:SetPoint("TOP", 0, -PAD)
+    text:SetWidth(WIDTH - 2 * PAD)
     text:SetJustifyH("CENTER")
     if AltStable.SkinText then AltStable.SkinText(text) end
     f.text = text
@@ -112,15 +142,13 @@ local function Build(kind, count, withCopy)
 
     f:SetScript("OnKeyDown", OnKeyDown)
     f:SetScript("OnHide", OnHide)
-    -- Combat starting with a prompt up: it stays (a StaticPopup did too, and
-    -- the sync question closing here would have counted as asked), but the
-    -- keyboard goes back before the lockdown can make that impossible. Escape
-    -- still works through UISpecialFrames.
     f:RegisterEvent("PLAYER_REGEN_DISABLED")
-    f:SetScript("OnEvent", ReleaseKeyboard)
+    f:RegisterEvent("PLAYER_REGEN_ENABLED")
+    f:SetScript("OnEvent", OnEvent)
     if type(UISpecialFrames) == "table" then tinsert(UISpecialFrames, f:GetName()) end
 
     prompts[kind] = f
+    order[#order + 1] = kind
     return f
 end
 
@@ -149,17 +177,20 @@ function AltStable.ShowPrompt(kind, opts)
         f.edit._restoring = nil
     end
 
+    -- Below any other prompt already up, never on top of it: a copy box
+    -- opening over a sync question would hide its three buttons.
+    local y = -180
+    for _, k in ipairs(order) do
+        local o = prompts[k]
+        if o ~= f and o:IsShown() then y = y - (tonumber(o:GetHeight()) or 0) - GAP end
+    end
+    f:ClearAllPoints()
+    f:SetPoint("TOP", 0, y)
+
     f._choice, f._onClose = nil, opts.onClose
     f:Show()
     f:Raise()
-    if not (InCombatLockdown and InCombatLockdown()) and type(f.EnableKeyboard) == "function" then
-        pcall(f.EnableKeyboard, f, true)
-        -- Propagation outlives the showing, and the last key was usually
-        -- Escape, which turned it off: reset it, or the first key is eaten.
-        if type(f.SetPropagateKeyboardInput) == "function" then
-            pcall(f.SetPropagateKeyboardInput, f, true)
-        end
-    end
+    TakeKeyboard(f)
     if f.edit then
         f.edit:SetFocus()
         f.edit:HighlightText()

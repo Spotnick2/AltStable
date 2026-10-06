@@ -2611,6 +2611,9 @@ do
         p.dialog:GetScript("OnEvent")(p.dialog, "PLAYER_REGEN_DISABLED")
         check("combat starting with it up: it stays", p.dialog:IsShown())
         check("  and lets go of the keyboard", not p.dialog:IsKeyboardEnabled())
+        p.dialog:GetScript("OnEvent")(p.dialog, "PLAYER_REGEN_ENABLED")
+        check("  and takes it back when combat ends, so Escape stops at it again",
+              p.dialog:IsKeyboardEnabled())
     end
 
     -- The consent lifecycle across prompts (#199): a sync question, then a
@@ -2626,6 +2629,12 @@ do
     local copyP, forgetP = AltStable._test.Prompt("Copy"), AltStable._test.Prompt("Forget")
     check("a copy box and a confirmation open beside the question",
           #asks() == 1 and copyP:IsShown() and forgetP:IsShown())
+    -- Beside, not on top: each opens below the ones already up.
+    local function top(f) local _, _, _, _, y = f:GetPoint(1); return y end
+    local askP = asks()[1].dialog
+    check("  each below the last, none covering another",
+          top(copyP) < top(askP) and top(forgetP) < top(copyP),
+          ("%s %s %s"):format(tostring(top(askP)), tostring(top(copyP)), tostring(top(forgetP))))
     eq("  the question is unchanged", asks()[1] and asks()[1].arg1, "Beside Surname")
     AltStable.AllowSyncPeer("Beside Surname")
     flush()

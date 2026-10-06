@@ -53,7 +53,7 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 
 `Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs\LibShowcase-1.0\LibShowcase-1.0.xml` →
 `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
-`Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Core.lua` →
+`Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
 `RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `PublicAPI.lua` → `Export.lua`.
 
