@@ -15,7 +15,7 @@ enable-nolib-creation: no
 externals:
   Libs/LibGlass-1.0:
     url: https://github.com/Spotnick2/LibGlass
-    tag: r1
+    tag: r2
 
 # One CurseForge project, four addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
