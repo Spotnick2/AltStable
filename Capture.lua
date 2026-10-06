@@ -176,7 +176,10 @@ local owedRestore     -- a protected restore we could not make during combat
 --
 -- Alpha, not Hide: hiding the sheet fires its OnHide, which tears the showcase
 -- down and restores the interface in the middle of the capture.
-local STRAY_FRAMES = { "AltStableSheet" }
+-- Our own prompts (Prompt.lua) are parented to nothing on purpose too, so a
+-- copy box or a sync question left open would be matted into the portrait.
+local STRAY_FRAMES = { "AltStableSheet", "AltStableCopyPrompt", "AltStableForgetPrompt",
+                       "AltStableSyncAskPrompt" }
 
 -- The character menu is CLOSED rather than dimmed. During the showcase it is
 -- lifted to its own parentless root, so the sheet's alpha does not reach it,

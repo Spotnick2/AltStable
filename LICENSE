@@ -40,6 +40,11 @@ terms and remains the work of its authors:
                            Fetched at build time, not kept in this
                            repository.
 
+  Libs/LibShowcase-1.0     LibShowcase-1.0, copyright (c) 2026 Spotnick2.
+                           MIT License; its own LICENSE ships beside it.
+                           Fetched at build time, not kept in this
+                           repository.
+
   Libs/ChatThrottleLib     ChatThrottleLib, by Mikk.
                            Carries no licence header. It is embedded in a
                            great many addons by long-standing convention

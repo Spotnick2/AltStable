@@ -195,8 +195,7 @@ check("Professions moves to its own folder",
     -- honour the library's list, so the zip comes out clean either way and
     -- only the published one would carry the library's tests/docs/Tools.
     dofile("tests/libglass.lua")
-    local libPkg = read(LibGlassRoot() .. "/.pkgmeta") or ""
-    local libIgnore = libPkg:match("ignore:%s*\n(.*)$") or ""
+    dofile("tests/libshowcase.lua")
     -- Line by line: a pattern that eats the newline on both sides skips every
     -- other entry.
     local function entries(block)
@@ -207,18 +206,47 @@ check("Professions moves to its own folder",
         end
         return out
     end
-    local ours, theirs = {}, 0
+    local ours = {}
     for _, e in ipairs(entries(ignore)) do ours[e] = true end
-    local missing = {}
-    for _, entry in ipairs(entries(libIgnore)) do
-        if not entry:match("^%.") then
-            theirs = theirs + 1
-            if not ours["Libs/LibGlass-1.0/" .. entry] then missing[#missing + 1] = entry end
+    -- Both embedded libraries, the same way. Each is also an external pinned
+    -- to a tag (never `latest`: the packager would pick by creation date).
+    for _, lib in ipairs({ { "LibGlass", "LibGlass-1.0", LibGlassRoot },
+                           { "LibShowcase", "LibShowcase-1.0", LibShowcaseRoot } }) do
+        local name, major, root = lib[1], lib[2], lib[3]
+        local libPkg = read(root() .. "/.pkgmeta") or ""
+        local libIgnore = libPkg:match("ignore:%s*\n(.*)$") or ""
+        local theirs, missing = 0, {}
+        for _, entry in ipairs(entries(libIgnore)) do
+            if not entry:match("^%.") then
+                theirs = theirs + 1
+                if not ours["Libs/" .. major .. "/" .. entry] then missing[#missing + 1] = entry end
+            end
         end
+        check(name .. "'s own ignore list was read", theirs >= 3, tostring(theirs))
+        check("each of " .. name .. "'s non-dot ignores is repeated under Libs/" .. major,
+              #missing == 0, table.concat(missing, ", "))
+        local plain = pkg:gsub("\r", "")
+        local at = plain:find("\n  Libs/" .. major .. ":\n", 1, true)
+        local url = at and plain:match("^\n  [^\n]*\n    url: ([^\n]*)", at)
+        local tag = at and plain:match("^\n  [^\n]*\n    url: [^\n]*\n    tag: ([^\n]*)", at)
+        eq(name .. " is an external from its repo", url, "https://github.com/Spotnick2/" .. name)
+        check("  pinned to a tag", tag ~= nil and tag:match("^r%d+$") ~= nil, tostring(tag))
     end
-    check("LibGlass's own ignore list was read", theirs >= 3, tostring(theirs))
-    check("each of LibGlass's non-dot ignores is repeated under Libs/LibGlass-1.0",
-          #missing == 0, table.concat(missing, ", "))
+end
+
+-- The embedded libraries load before any of the addon's own files: LibGlass,
+-- then LibShowcase (SheetUI.lua builds its showcase instance at load).
+do
+    local order, n = {}, 0
+    for line in ((read("AltStable.toc") or "") .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
+        if line:match("^[^#%s]") then n = n + 1; order[(line:gsub("%s+$", ""))] = n end
+    end
+    local glass = order[ [[Libs\LibGlass-1.0\LibGlass-1.0.xml]] ]
+    local showcase = order[ [[Libs\LibShowcase-1.0\LibShowcase-1.0.xml]] ]
+    check("the TOC loads LibShowcase's XML", showcase ~= nil)
+    check("  after LibGlass's", glass ~= nil and showcase ~= nil and glass < showcase)
+    check("  before the addon's own files", showcase ~= nil and order["Compat.lua"] ~= nil
+          and showcase < order["Compat.lua"] and showcase < order["SheetUI.lua"])
 end
 
 check("CHANGELOG.md exists", read("CHANGELOG.md") ~= nil)

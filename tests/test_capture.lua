@@ -551,6 +551,26 @@ do
 end
 
 ------------------------------------------------------------
+-- Our own prompts are out from under UIParent too (#199)
+------------------------------------------------------------
+-- A copy box or a sync question left open must not be matted into the shot,
+-- and must not be HIDDEN either: its OnHide answers the prompt.
+do
+    resetCapture()
+    for _, name in ipairs({ "AltStableCopyPrompt", "AltStableForgetPrompt", "AltStableSyncAskPrompt" }) do
+        local f = _G[name] or CreateFrame("Frame", name, nil)
+        f:Show()
+        f:SetAlpha(1)
+        T.HideUI()
+        eq(name .. " is blacked out for the shot", f:GetAlpha(), 0)
+        check("  without being hidden", f:IsShown())
+        T.ShowUI()
+        eq("  and comes back afterwards", f:GetAlpha(), 1)
+        f:Hide()
+    end
+end
+
+------------------------------------------------------------
 -- Dead, in a dungeon, or moving: refused from every entry point
 ------------------------------------------------------------
 

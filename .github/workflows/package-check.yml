@@ -37,6 +37,12 @@ jobs:
           bash tests/fetch_libglass.sh "$RUNNER_TEMP/LibGlass"
           echo "LIBGLASS=$RUNNER_TEMP/LibGlass" >> "$GITHUB_ENV"
 
+      # The embedded LibShowcase-1.0 (the camera showcase), the same way.
+      - name: Fetch LibShowcase at the pinned ref
+        run: |
+          bash tests/fetch_libshowcase.sh "$RUNNER_TEMP/LibShowcase"
+          echo "LIBSHOWCASE=$RUNNER_TEMP/LibShowcase" >> "$GITHUB_ENV"
+
       # WoW runs Lua 5.1, so the tests do too - not whatever newer Lua is first
       # on PATH. tests/run.ps1 is the Windows entry point for the same files.
       #
@@ -193,6 +199,31 @@ jobs:
               *) cmp -s "$lib/$f" "$LIBGLASS/$f" ;;
             esac || { echo "differs from the pinned checkout: $f"; bad=1; }
           done < <(cd "$lib" && find . -type f | sed 's|^\./||')
+          test "$bad" -eq 0
+
+      # LibShowcase-1.0: exactly its XML, every file the XML loads and LICENSE
+      # (it has no media), and each one the pinned commit's content.
+      - name: The package embeds exactly LibShowcase, at the pin
+        run: |
+          lib=AltStable/Libs/LibShowcase-1.0
+          {
+            echo "$lib/LibShowcase-1.0.xml"
+            echo "$lib/LICENSE"
+            tr -d '\r' < "$LIBSHOWCASE/LibShowcase-1.0.xml" | perl -0pe 's/<!--.*?-->//gs' |
+              sed -n 's/.*<Script file="\([^"]*\)".*/\1/p' | tr '\\' '/' | sed "s|^|$lib/|"
+          } | sort > expected-showcase.txt
+          grep "^$lib/" files.txt | sort > actual-showcase.txt
+          if ! diff -u expected-showcase.txt actual-showcase.txt; then
+            echo "the embedded LibShowcase differs from what it ships (- missing, + extra)"
+            exit 1
+          fi
+          bad=0
+          while read -r f; do
+            case "$f" in
+              *.lua|*.xml) cmp -s <(tr -d '\r' < "unpacked/$lib/$f") <(tr -d '\r' < "$LIBSHOWCASE/$f") ;;
+              *) cmp -s "unpacked/$lib/$f" "$LIBSHOWCASE/$f" ;;
+            esac || { echo "differs from the pinned checkout: $f"; bad=1; }
+          done < <(cd "unpacked/$lib" && find . -type f | sed 's|^\./||')
           test "$bad" -eq 0
 
       # .release is hidden, and upload-artifact@v4 skips hidden content unless

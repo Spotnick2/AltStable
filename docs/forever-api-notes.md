@@ -1548,7 +1548,11 @@ addon:
   `UIParent` (`AltStable.LiftAboveHiddenUI`), which needs a handle to the frame.
   A menu built by somebody else does not reliably hand one over. This already bit
   the hide confirmation once, where a `StaticPopup` is likewise a child of
-  `UIParent`.
+  `UIParent`. (Since #199 AltStable shows no `StaticPopup` at all. **MEASURED
+  1.60.1.70205** by LibShowcase: showing one from addon code, or reparenting,
+  raising or hooking one, taints the shared dialog pool, and the player's Quit
+  then fails with `ADDON_ACTION_FORBIDDEN ... ForceQuit()`. Our prompts are our
+  own frames, in `Prompt.lua`.)
 - *The addon has its own dark theme*, so a Blizzard-styled menu over it is the
   inconsistent choice rather than the consistent one.
 

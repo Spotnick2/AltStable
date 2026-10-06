@@ -4023,50 +4023,13 @@ function AltStable.PortraitRestartText()
         .. "WoW only finds the Companion's new folder at startup."
 end
 
--- A copyable download link. Addons cannot open a browser; the client's own
--- popup with an edit box, the text selected, is the usual way to hand one over.
--- One line of text to copy, selected: the Companion's link (#176) and the
--- /alts status line (#175). The prompt is the dialog's %s; the text is its data.
-local COPY_POPUP = "ALTSTABLE_COPY_TEXT"
+-- A copyable download link. Addons cannot open a browser; a box with the text
+-- selected is the usual way to hand one over. One line of text to copy: the
+-- Companion's link (#176) and the /alts status line (#175). Our own prompt
+-- (Prompt.lua), never the client's StaticPopup: showing one from addon code
+-- taints the shared dialog pool (#199).
 function AltStable.ShowCopyText(prompt, text)
-    if not StaticPopupDialogs[COPY_POPUP] then
-        StaticPopupDialogs[COPY_POPUP] = {
-            text = "%s",
-            button1 = CLOSE or "Close",
-            hasEditBox = 1,
-            -- 0 = no limit. The client REUSES its dialogs and only sets the
-            -- limit when a definition gives one (GameDialog.lua SetupEditBox,
-            -- 70170): without this, the 24- or 31-letter limit of whatever
-            -- dialog used the frame last would cut the 54-letter link short.
-            maxLetters = 0,
-            editBoxWidth = 350,
-            OnShow = function(dialog, data)
-                local box = dialog:GetEditBox()
-                box:SetText(data or "")
-                box:SetFocus()
-                box:HighlightText()
-            end,
-            -- Typing over it must not leave a wrong text to copy.
-            -- Once per change: should the box ever hand back other text than
-            -- it was given (its escape character is |), resetting it would
-            -- otherwise call this again, forever.
-            EditBoxOnTextChanged = function(box, data)
-                if box._restoring then return end
-                if data and box:GetText() ~= data then
-                    box._restoring = true
-                    box:SetText(data)
-                    box:HighlightText()
-                    box._restoring = nil
-                end
-            end,
-            EditBoxOnEnterPressed = function(box) box:GetParent():Hide() end,
-            EditBoxOnEscapePressed = function(box) box:GetParent():Hide() end,
-            timeout = 0,
-            whileDead = 1,
-            hideOnEscape = 1,
-        }
-    end
-    return StaticPopup_Show(COPY_POPUP, prompt, nil, text)
+    return AltStable.ShowPrompt("Copy", { text = prompt, copy = text or "" })
 end
 
 -- /alts status (#175): what a bug report needs, without asking. Read lines for

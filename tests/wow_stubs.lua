@@ -333,6 +333,16 @@ local function makeFrame()
     end
     f.SetText = function(self, text) self._text = text; return self end
     f.GetText = function(self) return self._text end
+    -- Keyboard focus is ONE global slot, as on the client: an edit box that
+    -- keeps it after its prompt closes goes on eating every key the player
+    -- presses. Chaining would have answered HasFocus with the frame (truthy)
+    -- whether or not anything ever cleared it.
+    f.SetFocus   = function(self) WoW.focus = self; return self end
+    f.ClearFocus = function(self) if WoW.focus == self then WoW.focus = nil end; return self end
+    f.HasFocus   = function(self) return WoW.focus == self end
+    f.HighlightText = function(self) self._highlighted = true; return self end
+    f.SetMaxLetters = function(self, n) self._maxLetters = n; return self end
+    f.GetMaxLetters = function(self) return self._maxLetters end
     -- Geometry getters return NUMBERS. The chaining default would hand back the
     -- frame itself, and layout code does arithmetic on these - so a stub that
     -- chains them turns every layout pass into "arithmetic on a table value".

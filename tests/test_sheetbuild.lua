@@ -16,8 +16,11 @@ end
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
+-- The camera showcase (LibShowcase-1.0), next in the TOC.
+dofile("tests/libshowcase.lua"); LoadShowcase("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
+dofile("Prompt.lua")   -- our prompts, before Core (TOC order)
 assert(loadfile("Core.lua"))()
 dofile("Scanner.lua")
 dofile("Reputations.lua")

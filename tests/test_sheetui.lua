@@ -29,8 +29,11 @@ dofile("Compat.lua")
 -- The library and Glass.lua are loaded with the addon NAME, the way the client
 -- passes it: LibGlass derives its media path from the host addon's name.
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
+-- The camera showcase (LibShowcase-1.0), next in the TOC.
+dofile("tests/libshowcase.lua"); LoadShowcase("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
+dofile("Prompt.lua")   -- our prompts, before Core (TOC order)
 assert(loadfile("Core.lua"))()
 dofile("Scanner.lua")
 dofile("Reputations.lua")
@@ -476,47 +479,34 @@ do
     WoW.popups = {}
     AltStable.ShowCharacterMenu(AltStableDB.gone)
     AltStable._test.MenuClick("forget")
-    eq("choosing Forget raises one confirmation", #WoW.popups, 1)
-    check("  and closes the menu first, so it cannot swallow the dialog's click",
+    local P = AltStable._test.Prompt("Forget")
+    check("choosing Forget raises one confirmation", P ~= nil and P:IsShown())
+    eq("  ours, never a StaticPopup: one taints the dialog pool (#199)", #WoW.popups, 0)
+    check("  and closes the menu first, so it cannot swallow the prompt's click",
           AltStable._test.MenuIsShown() == false)
 
-    local popup = WoW.popups[1]
-    if popup then
-        check("  naming the character", popup.arg1 == "Goner", tostring(popup.arg1))
+    if P then
+        local text = P.text:GetText() or ""
+        check("  naming the character", text:find("Goner", 1, true) ~= nil, text)
 
-        -- The sheet is DIALOG strata and toplevel, and a StaticPopup is DIALOG
-        -- too, so this confirmation opened BEHIND the window.
-        local dialog = popup.dialog
-        check("the popup hands back a frame", dialog ~= nil)
-        if dialog then
-            eq("it is raised above the sheet", dialog:GetFrameStrata(), "FULLSCREEN_DIALOG")
-            check("  and is actually visible", dialog:IsVisible() == true)
-            StaticPopup_Hide(popup.which)
-            eq("  strata is put back, since the frame is shared with every addon",
-               dialog:GetFrameStrata(), "DIALOG")
-        end
+        -- The sheet is DIALOG strata and toplevel: a confirmation at DIALOG
+        -- opened BEHIND the window.
+        eq("it is above the sheet", P:GetFrameStrata(), "FULLSCREEN_DIALOG")
+        check("  and is actually visible", P:IsVisible() == true)
+        P:Hide()
 
-        -- The case that was broken: the showcase has hidden the whole UI, and a
-        -- StaticPopup is a CHILD of UIParent. No strata makes the child of a
-        -- hidden parent draw.
+        -- The showcase has hidden the whole UI. Parented to nothing, the
+        -- prompt does not care: no lift, nothing to put back.
         local realHidden = AltStable.IsGameUIHidden
         AltStable.IsGameUIHidden = function() return true end
         UIParent:Hide()
 
-        WoW.popups = {}
         AltStable.ShowCharacterMenu(AltStableDB.gone)
         AltStable._test.MenuClick("forget")
-        local hiddenUIPopup = WoW.popups[#WoW.popups]
-        check("a confirmation is still raised with the UI hidden", hiddenUIPopup ~= nil)
-        if hiddenUIPopup and hiddenUIPopup.dialog then
-            local d = hiddenUIPopup.dialog
-            check("  it is lifted OUT from under the hidden UIParent",
-                  d:GetParent() ~= UIParent, tostring(d:GetParent()))
-            check("  so the player can actually see the question", d:IsVisible() == true)
-            StaticPopup_Hide(hiddenUIPopup.which)
-            eq("  and is parented back on close", d:GetParent(), UIParent)
-            eq("  with its strata restored", d:GetFrameStrata(), "DIALOG")
-        end
+        check("a confirmation is still raised with the UI hidden", P:IsShown())
+        eq("  parented to nothing", P:GetParent(), nil)
+        check("  so the player can actually see the question", P:IsVisible() == true)
+        P:Hide()
 
         -- The menu itself has to survive the same thing: it is a frame of ours,
         -- raised while UIParent is hidden.
@@ -532,38 +522,38 @@ do
         AltStable.IsGameUIHidden = realHidden
     end
 
-    -- Nothing happens until it is accepted.
-    WoW.popups = {}
+    -- Nothing happens until it is accepted: not by Escape, not by Cancel.
     AltStable.ShowCharacterMenu(AltStableDB.gone)
     AltStable._test.MenuClick("forget")
-    popup = WoW.popups[1]
-    check("the record survives an unanswered confirmation", AltStableDB.gone ~= nil)
+    P:GetScript("OnKeyDown")(P, "ESCAPE")
+    check("Escape closes the confirmation", not P:IsShown())
+    check("  and the record survives it", AltStableDB.gone ~= nil)
+    AltStable.ShowCharacterMenu(AltStableDB.gone)
+    AltStable._test.MenuClick("forget")
+    P.buttons[2]:GetScript("OnClick")(P.buttons[2])
+    check("the record survives Cancel", AltStableDB.gone ~= nil)
 
-    local dialog = StaticPopupDialogs[popup and popup.which]
-    check("the dialog is registered", dialog ~= nil)
-    if dialog then
-        eq("  its accept button is not a yes/no", dialog.button1, ACCEPT)
+    AltStable.ShowCharacterMenu(AltStableDB.gone)
+    AltStable._test.MenuClick("forget")
+    eq("  its accept button is not a yes/no", P.buttons[1]:GetText(), ACCEPT)
 
-        -- The text has to match what the addon can actually do. It used to say
-        -- "there is no undo" and that the character "will only reappear by
-        -- logging into it" - and BOTH were wrong: /alts unforget lifts the
-        -- tombstone, while logging in on another account does not clear THIS
-        -- account's, so a player following that sentence leaves the record
-        -- rejected for good. The slash command printed the right answer all
-        -- along, which is what makes this a contradiction rather than a gap.
-        check("  the recovery route it names really exists",
-              type(AltStable.UnforgetCharacter) == "function")
-        check("  and the dialog names it",
-              dialog.text:find("/alts unforget", 1, true) ~= nil, dialog.text)
-        check("  without claiming there is no undo",
-              dialog.text:find("no undo", 1, true) == nil, dialog.text)
-        check("  and without sending the player to log into it instead",
-              dialog.text:find("only reappear by logging", 1, true) == nil, dialog.text)
-        check("  while still saying it is not instant",
-              dialog.text:find("not instantly", 1, true) ~= nil, dialog.text)
+    -- The text has to match what the addon can actually do. It used to say
+    -- "there is no undo" and that the character "will only reappear by
+    -- logging into it" - and BOTH were wrong: /alts unforget lifts the
+    -- tombstone, while logging in on another account does not clear THIS
+    -- account's, so a player following that sentence leaves the record
+    -- rejected for good. The slash command printed the right answer all
+    -- along, which is what makes this a contradiction rather than a gap.
+    local text = P.text:GetText() or ""
+    check("  the recovery route it names really exists",
+          type(AltStable.UnforgetCharacter) == "function")
+    check("  and the prompt names it", text:find("/alts unforget", 1, true) ~= nil, text)
+    check("  without claiming there is no undo", text:find("no undo", 1, true) == nil, text)
+    check("  and without sending the player to log into it instead",
+          text:find("only reappear by logging", 1, true) == nil, text)
+    check("  while still saying it is not instant", text:find("not instantly", 1, true) ~= nil, text)
 
-        dialog.OnAccept(nil, popup.data)
-    end
+    P.buttons[1]:GetScript("OnClick")(P.buttons[1])
     eq("accepting forgets the character", AltStableDB.gone, nil)
     check("  and the grid drops the row",
           joined(AltStable._test.DisplayNames()):find("Goner") == nil,
@@ -863,7 +853,7 @@ if Cam then
     WoW.cvars["test_cameraOverShoulder"] = "0"
     WoW.cvars["cameraDistanceMaxZoomFactor"] = "1.0"
 
-    Cam.active = false
+    pcall(Cam.ForceRestore, Cam, "test")   -- a clean slate (the fields are read-only now)
     local entered = pcall(Cam.Enter, Cam)
     check("entering does not error", entered)
 
@@ -889,7 +879,7 @@ if Cam then
     -- the wrong reason, proving nothing about the guard.
     WoW.cvars["CameraKeepCharacterCentered"] = nil
     WoW.cvars["CameraReduceUnexpectedMovement"] = nil
-    Cam.active = false
+    pcall(Cam.ForceRestore, Cam, "test")
     local ok2 = pcall(Cam.Enter, Cam)
     check("it still enters on a client without those CVars", ok2 and Cam.active == true)
     eq("  and does not create the one it lacks",
@@ -904,7 +894,7 @@ if Cam then
     -- character - the very bug this feature exists to prevent, arriving half a
     -- second late.
     WoW.cvars["CameraKeepCharacterCentered"] = "1"
-    Cam.active = false
+    pcall(Cam.ForceRestore, Cam, "test")
     pcall(Cam.Enter, Cam)
     eq("centring is off while shown", WoW.cvars["CameraKeepCharacterCentered"], "0")
     pcall(Cam.Exit, Cam, "test")
@@ -2152,52 +2142,92 @@ do
 end
 
 ------------------------------------------------------------
--- A popup lifted out of a hidden interface, and put back cleanly (#89 review)
+-- Our own prompts (Prompt.lua, #199)
 ------------------------------------------------------------
--- A StaticPopup is a child of UIParent. With the interface hidden - by the
--- showcase, or by a player who pressed Alt+Z - a popup under it is shown and
--- invisible. LiftPopup takes it out; DropPopup puts it back when it closes.
--- Driven with the Forget confirmation, the popup that uses them.
+-- A StaticPopup from addon code taints Blizzard's dialog pool (measured on
+-- 70205: the player's Quit then failed). Ours are frames of our own: visible
+-- over a hidden interface, one exit for every way out, and the keyboard always
+-- given back.
 do
-    local which = "ALTSTABLE_CONFIRM_FORGET_CHARACTER"
-    local def = StaticPopupDialogs[which]
-    check("the forget confirmation is defined", def ~= nil)
-    local Lift, Drop = AltStable._test.LiftPopup, AltStable._test.DropPopup
-
-    -- Alt+Z, no showcase: the showcase does not own the hiding, and the lift
-    -- used to ask only the showcase.
-    WoW.popups = {}
-    SetUIVisibility(false)
-    local dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
-    check("with the interface hidden by Alt+Z a popup is lifted out of it",
-          dialog and dialog:GetParent() ~= UIParent)
-    check("  and can actually be seen", dialog and dialog:IsVisible())
-    Drop(dialog)
-    eq("dropping puts it back under UIParent", dialog:GetParent(), UIParent)
-    eq("  at the strata it had", dialog:GetFrameStrata(), "DIALOG")
-    eq("  with nothing left marked as lifted", dialog._altstableLifted, nil)
-
-    -- RE-ENTRANT: putting the dialog back under a hidden UIParent can fire its
-    -- OnHide - another DropPopup - half way through the first. Modelled by
-    -- having the reparent itself call DropPopup, as the client's hide would.
-    dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
-    local realSetParent = dialog.SetParent
-    dialog.SetParent = function(self, parent)
-        local r = realSetParent(self, parent)
-        if parent == UIParent then Drop(self) end
-        return r
+    local closes = {}
+    local function show(kind, opts)
+        opts.onClose = function(choice) closes[#closes + 1] = choice or "none" end
+        return AltStable.ShowPrompt(kind, opts)
     end
-    Drop(dialog)
-    dialog.SetParent = realSetParent
-    eq("a drop interrupted by its own OnHide still ends at the right strata",
-       dialog:GetFrameStrata(), "DIALOG")
-    eq("  and under UIParent", dialog:GetParent(), UIParent)
 
+    -- Alt+Z, no showcase: still seen. Nothing was lifted, so nothing to drop.
+    SetUIVisibility(false)
+    local P = show("Test", { text = "Sure?", buttons = { "Yes", "No" } })
+    check("with the interface hidden by Alt+Z a prompt is seen", P:IsVisible())
     SetUIVisibility(true)
-    dialog = Lift(StaticPopup_Show(which, "Someone", nil, { guid = "x" }))
-    eq("with the interface up nothing is lifted", dialog:GetParent(), UIParent)
-    Drop(dialog)
-    WoW.popups = {}
+
+    P.buttons[1]:GetScript("OnClick")(P.buttons[1])
+    eq("a button closes it with its index", closes[1], 1)
+    eq("  once", #closes, 1)
+    check("  and the keyboard is given back", not P:IsKeyboardEnabled())
+
+    -- Shown again while up: the first showing ends as a dismissal, before the
+    -- second one's handlers are installed.
+    closes = {}
+    show("Test", { text = "First?", buttons = { "Yes", "No" } })
+    show("Test", { text = "Second?", buttons = { "Yes", "No" } })
+    eq("a prompt replaced while up ends the first as a dismissal", closes[1], "none")
+    P:GetScript("OnKeyDown")(P, "ESCAPE")
+    eq("  and the second still answers, once", #closes, 2)
+
+    -- Any other key passes through: the player can still walk.
+    show("Test", { text = "Walk?", buttons = { "Yes", "No" } })
+    P:GetScript("OnKeyDown")(P, "W")
+    check("a movement key is handed on", P._propagate == true and P:IsShown())
+    -- A restricted propagation call (unmeasured in combat): the keyboard goes
+    -- back rather than staying grabbed.
+    P.SetPropagateKeyboardInput = function() error("restricted") end
+    P:GetScript("OnKeyDown")(P, "W")
+    check("  a failing propagation call releases the keyboard", not P:IsKeyboardEnabled())
+    P.SetPropagateKeyboardInput = nil
+    P:Hide()
+
+    -- In combat it does not take the keyboard at all.
+    WoW.inCombat = true
+    show("Test", { text = "Fight?", buttons = { "Yes", "No" } })
+    check("shown in combat it leaves the keyboard alone", not P:IsKeyboardEnabled())
+    P:Hide()
+    WoW.inCombat = false
+
+    -- The copy box: focused and selected; Enter and Escape close it, and the
+    -- focus goes with it.
+    local C = AltStable.ShowCopyText("Copy:", "abc")
+    check("the copy box is focused", C.edit:HasFocus())
+    C.edit:GetScript("OnEnterPressed")(C.edit)
+    check("  Enter closes it", not C:IsShown())
+    check("  and lets go of the focus", not C.edit:HasFocus())
+    C = AltStable.ShowCopyText("Copy:", "abc")
+    C.edit:GetScript("OnEscapePressed")(C.edit)
+    check("  so does Escape", not C:IsShown() and not C.edit:HasFocus())
+end
+
+------------------------------------------------------------
+-- The showcase's callbacks (LibShowcase r3)
+------------------------------------------------------------
+do
+    local opts = AltStable.Showcase and AltStable.Showcase.opts
+    check("the showcase instance exists against r3", opts ~= nil)
+    local sheet = AltStable.EnsureSheetVisible and AltStable.EnsureSheetVisible()
+    sheet = AltStable._test.CameraPresentation.sheetFrame or sheet
+    if opts and sheet then
+        -- Every forced exit closes the sheet: the library has already put the
+        -- camera and the UI back.
+        for _, reason in ipairs({ "ui-shown", "combat", "logout", "loading" }) do
+            sheet:Show()
+            opts.onForcedExit(reason)
+            check("a forced exit (" .. reason .. ") closes the sheet", not sheet:IsShown())
+        end
+        -- A dialog bringing the UI back mid-showcase: the sheet stays.
+        sheet:Show()
+        opts.onGameUIShown("dialog")
+        check("the UI shown for a dialog leaves the sheet open", sheet:IsShown())
+        sheet:Hide()
+    end
 end
 
 ------------------------------------------------------------
@@ -2282,7 +2312,7 @@ do
     local function openSheet()
         sheet:Hide()
         pcall(Cam.ForceRestore, Cam, "test")
-        Cam.active, Cam.mode = false, nil
+        check("  (the restore left nothing running)", not Cam.active)
         SetUIVisibility(true)
         AltStable.EnsureSheetVisible()
     end
@@ -2328,7 +2358,7 @@ do
     eq("closing it mid-capture still ends the showcase", Cam.mode, "exit")
     P.AbandonCapture(nil, true)
     pcall(Cam.ForceRestore, Cam, "test")
-    Cam.active, Cam.mode = false, nil
+    check("  (the restore left nothing running)", not Cam.active)
     enters = 0
     AltStable.EnsureSheetVisible()
     eq("  and the next open is a real one", enters, 1)
@@ -2397,7 +2427,6 @@ end
 -- "<name> asks to sync with you" (#61)
 ------------------------------------------------------------
 do
-    local POP = AltStable._test.SyncAskPopup
     local core = AltStable._test.CoreFrame
     local onCoreEvent = core:GetScript("OnEvent")
     local function ask(who)
@@ -2407,19 +2436,21 @@ do
     local function flush()
         for _ = 1, 10 do if #WoW.timers == 0 then break end WoW.flushTimers() end
     end
+    -- Our own prompt (Prompt.lua), one frame per kind: a list of at most one,
+    -- carrying the name it shows.
     local function asks()
-        local out = {}
-        for _, p in ipairs(WoW.popups) do
-            if p.which == POP and p.dialog:IsShown() then out[#out + 1] = p end
-        end
-        return out
+        local P = AltStable._test.Prompt("SyncAsk")
+        if not (P and P:IsShown()) then return {} end
+        return { { dialog = P, arg1 = (P.text:GetText() or ""):match("^|cffffffff(.-)|r") } }
     end
-    -- The client's order: the button's handler, then the dialog hides. Escape
-    -- is OnCancel (hideOnEscape), exactly like the middle button.
-    local function press(p, handler)
-        local def = StaticPopupDialogs[POP]
-        if def[handler] then def[handler](p.dialog, p.data, "clicked") end
-        StaticPopup_Hide(POP)
+    -- A button by its index (1 Allow, 2 Not now, 3 Never), or the Escape key.
+    local function press(p, which)
+        local P = p.dialog
+        if which == "ESCAPE" then
+            P:GetScript("OnKeyDown")(P, "ESCAPE")
+        else
+            P.buttons[which]:GetScript("OnClick")(P.buttons[which])
+        end
         flush()
     end
     local function fresh()
@@ -2429,23 +2460,38 @@ do
     end
 
     fresh()
+    WoW.popups = {}
     ask("Asker Surname")
     local shown = asks()
     eq("a stranger asking raises the prompt", #shown, 1)
+    eq("  ours, never a StaticPopup (#199)", #WoW.popups, 0)
     local p = shown[1]
     if p then
         eq("  naming them", p.arg1, "Asker Surname")
-        eq("  with three answers", StaticPopupDialogs[POP].button3, "Never")
+        eq("  with three answers", p.dialog.buttons[3]:GetText(), "Never")
+        check("  parented to nothing, so a hidden UI cannot hide it", p.dialog:GetParent() == nil)
+        check("  above the sheet", p.dialog:GetFrameStrata() == "FULLSCREEN_DIALOG")
         ask("Asker Surname")
         eq("  and asking again does not raise a second one", #asks(), 1)
 
-        -- Escape is "Not now": nothing refused, still waiting.
-        press(p, "OnCancel")
-        eq("Escape (or Not now) refuses nobody",
-           AltStable.SyncAuthFor("Asker Surname"), AltStable.AUTH_ASK)
+        -- Escape is "Not now": nothing refused, still waiting - and the key
+        -- stops at the prompt, so the sheet (in UISpecialFrames) stays open.
+        press(p, "ESCAPE")
+        eq("Escape refuses nobody", AltStable.SyncAuthFor("Asker Surname"), AltStable.AUTH_ASK)
         eq("  the request is still waiting", #AltStable.PendingSyncRequests(), 1)
+        eq("  the key is not passed on to close the sheet", p.dialog._propagate, false)
+        check("  and the prompt gives the keyboard back", not p.dialog:IsKeyboardEnabled())
         ask("Asker Surname")
         eq("  and they are not prompted again this session", #asks(), 0)
+    end
+
+    -- Not now, the middle button: the same as Escape.
+    fresh()
+    ask("Later Surname")
+    p = asks()[1]
+    if p then
+        press(p, 2)
+        eq("Not now refuses nobody", AltStable.SyncAuthFor("Later Surname"), AltStable.AUTH_ASK)
     end
 
     -- Never, from the third button.
@@ -2453,7 +2499,7 @@ do
     ask("Rude Surname")
     p = asks()[1]
     if p then
-        press(p, "OnAlt")
+        press(p, 3)
         eq("Never refuses them for good", AltStable.SyncAuthFor("Rude Surname"), AltStable.AUTH_NEVER)
     end
 
@@ -2463,7 +2509,7 @@ do
     p = asks()[1]
     if p then
         WoW.sent = {}
-        press(p, "OnAccept")
+        press(p, 1)
         eq("Allow approves them", AltStable.SyncAuthFor("Kind Surname"), AltStable.AUTH_AUTO)
         -- DATA, not just traffic: the request Allow sends back is traffic too.
         local chunks = 0
@@ -2485,9 +2531,30 @@ do
     p = asks()[1]
     eq("  the first to ask first", p and p.arg1, "First Surname")
     if p then
-        press(p, "OnCancel")
+        press(p, 2)
         local nxt = asks()[1]
         eq("  then the next", nxt and nxt.arg1, "Second Surname")
+    end
+
+    -- Answering announces, and the announcement looks for the next asker: that
+    -- must not open the next prompt inside the click, where the click's own
+    -- hide would dismiss it and that asker would never be asked (review of
+    -- #136). With the UI hidden too: the prompt must not care.
+    for _, button in ipairs({ 1, 3 }) do
+        fresh()
+        SetUIVisibility(false)
+        ask("Front Surname")
+        WoW.now = WoW.now + 1
+        ask("Queued Surname")
+        p = asks()[1]
+        check("button " .. button .. " with the UI hidden: the prompt can be seen",
+              p and p.dialog:IsVisible())
+        if p then
+            press(p, button)
+            local nxt = asks()[1]
+            eq("  and the next asker is still asked", nxt and nxt.arg1, "Queued Surname")
+        end
+        SetUIVisibility(true)
     end
 
     -- Answered elsewhere while the prompt is up: the stale question goes.
@@ -2498,57 +2565,20 @@ do
     flush()
     eq("  answering by /alts allow takes it down", #asks(), 0)
 
-    -- With the game UI hidden, putting the dialog back under UIParent runs its
-    -- OnHide in the middle of the button's handler (the client's re-entrant
-    -- hide, modelled as in the DropPopup test). The answer's announcement must
-    -- not open the next asker's prompt inside the click, where the click's
-    -- own closing hide dismisses it and that asker is never asked.
-    for _, handler in ipairs({ "OnAccept", "OnAlt" }) do
-        fresh()
-        local realHidden = AltStable.IsGameUIHidden
-        AltStable.IsGameUIHidden = function() return true end
-        UIParent:Hide()
-        ask("Front Surname")
-        WoW.now = WoW.now + 1
-        ask("Queued Surname")
-        p = asks()[1]
-        if p then
-            local d = p.dialog
-            local realSetParent = d.SetParent
-            d.SetParent = function(self, parent)
-                local r = realSetParent(self, parent)
-                if parent == UIParent then StaticPopupDialogs[POP].OnHide(self) end
-                return r
-            end
-            press(p, handler)
-            d.SetParent = realSetParent
-            local nxt = asks()[1]
-            eq(handler .. " with the UI hidden: the next asker is still asked",
-               nxt and nxt.arg1, "Queued Surname")
-        end
-        UIParent:Show()
-        AltStable.IsGameUIHidden = realHidden
-    end
-
-    -- Pressed away while hidden: the client hides a dialog that is not
-    -- visible without running OnHide. The slot must still come free.
+    -- Taken down by code, not a button: the slot still comes free.
     fresh()
     ask("Hidden Surname")
-    p = asks()[1]
-    if p then
-        StaticPopupDialogs[POP].OnCancel(p.dialog, p.data, "clicked")
-        p.dialog:Hide()                      -- no OnHide, as on the client
-        flush()
-        ask("After Surname")
-        local nxt = asks()[1]
-        eq("a prompt dismissed without OnHide still frees the slot", nxt and nxt.arg1, "After Surname")
-    end
+    AltStable.HidePrompt("SyncAsk")
+    flush()
+    ask("After Surname")
+    local nxt = asks()[1]
+    eq("a prompt taken down by code still frees the slot", nxt and nxt.arg1, "After Surname")
 
     -- A waiting request expiring as the next one arrives shows ONE prompt.
     fresh()
     ask("Expiring Surname")
     p = asks()[1]
-    if p then press(p, "OnCancel") end
+    if p then press(p, 2) end
     WoW.now = WoW.now + 301
     ask("Fresh Surname")
     eq("an expiry while choosing the next asker shows one prompt, not two", #asks(), 1)
@@ -2573,15 +2603,73 @@ do
     regen:GetScript("OnEvent")(regen, "PLAYER_REGEN_ENABLED")
     eq("  it comes when combat ends", #asks(), 1)
 
-    -- A refused show is not counted as asked.
+    -- Combat starting with the prompt up: it stays (closing it would count as
+    -- asked), and the keyboard goes back before the lockdown.
+    p = asks()[1]
+    if p then
+        check("  it holds the keyboard out of combat", p.dialog:IsKeyboardEnabled())
+        p.dialog:GetScript("OnEvent")(p.dialog, "PLAYER_REGEN_DISABLED")
+        check("combat starting with it up: it stays", p.dialog:IsShown())
+        check("  and lets go of the keyboard", not p.dialog:IsKeyboardEnabled())
+        p.dialog:GetScript("OnEvent")(p.dialog, "PLAYER_REGEN_ENABLED")
+        check("  and takes it back when combat ends, so Escape stops at it again",
+              p.dialog:IsKeyboardEnabled())
+    end
+
+    -- The consent lifecycle across prompts (#199): a sync question, then a
+    -- copy box and a forget confirmation beside it, then the question
+    -- answered elsewhere. Each prompt is its own frame, so the others stay,
+    -- and the next asker is still asked.
     fresh()
-    WoW.popupRefused = true
-    ask("Unlucky Surname")
-    eq("the client refusing the dialog shows nothing", #asks(), 0)
-    eq("  and refuses nobody", AltStable.SyncAuthFor("Unlucky Surname"), AltStable.AUTH_ASK)
-    WoW.popupRefused = nil
-    AltStable.OnSyncAuthChanged()
-    eq("  so the next chance still asks", #asks(), 1)
+    ask("Beside Surname")
+    WoW.now = WoW.now + 1
+    ask("Then Surname")
+    AltStable.ShowCopyText("Copy this", "some text")
+    AltStable.RequestForgetCharacter({ guid = "nobody", name = "Nobody" })
+    local copyP, forgetP = AltStable._test.Prompt("Copy"), AltStable._test.Prompt("Forget")
+    check("a copy box and a confirmation open beside the question",
+          #asks() == 1 and copyP:IsShown() and forgetP:IsShown())
+    -- Beside, not on top: no two prompts up share any vertical extent - checked
+    -- now, and again after the question is replaced below (Codex, #201: a
+    -- closed prompt left a gap, and the next question landed on the
+    -- confirmation).
+    local function disjoint()
+        local spans = {}
+        for _, kind in ipairs({ "SyncAsk", "Copy", "Forget" }) do
+            local f = AltStable._test.Prompt(kind)
+            if f and f:IsShown() then
+                local _, _, _, _, y = f:GetPoint(1)
+                spans[#spans + 1] = { top = y, bottom = y - f:GetHeight(), kind = kind }
+            end
+        end
+        for i = 1, #spans do
+            for j = i + 1, #spans do
+                local a, b = spans[i], spans[j]
+                if a.bottom < b.top and b.bottom < a.top then
+                    return false, a.kind .. " overlaps " .. b.kind
+                end
+            end
+        end
+        return #spans, "ok"
+    end
+    local n, why = disjoint()
+    check("  three prompts up, none covering another", n == 3, why)
+    eq("  the question is unchanged", asks()[1] and asks()[1].arg1, "Beside Surname")
+    AltStable.AllowSyncPeer("Beside Surname")
+    flush()
+    nxt = asks()[1]
+    eq("answered elsewhere: the next asker is asked", nxt and nxt.arg1, "Then Surname")
+    check("  and the copy box and the confirmation are untouched",
+          copyP:IsShown() and forgetP:IsShown())
+    n, why = disjoint()
+    check("  the next question covers neither of them", n == 3, why)
+    AltStable.HidePrompt("Copy")
+    AltStable.ShowCopyText("Again", "text")
+    n, why = disjoint()
+    check("  nor does a prompt reopened after another closed", n == 3, why)
+    AltStable.HidePrompt("Copy"); AltStable.HidePrompt("Forget")
+    flush()
+    eq("  closing them leaves the question up", #asks(), 1)
 
     ------------------------------------------------------------
     -- Options: requests and answers
@@ -3920,6 +4008,38 @@ do
     AltStableConfig.enableOpenAnimation = false
     AltStable.SetWindowMaximized(false)
     Open("summary")
+end
+
+------------------------------------------------------------
+-- No usable LibShowcase: no showcase, never an error (#199)
+------------------------------------------------------------
+-- Last in the file: it loads SheetUI.lua again, over everything above.
+do
+    local major = "LibShowcase-1.0"
+    local lib, minor = LibStub.libs[major], LibStub.minors[major]
+    local cases = {
+        { "half-loaded (ready ~= minor)", function() lib.ready = nil end },
+        { "older than r3", function() LibStub.minors[major] = 2; lib.ready = 2 end },
+        { "missing", function() LibStub.libs[major], LibStub.minors[major] = nil, nil end },
+    }
+    for _, case in ipairs(cases) do
+        local ready = lib.ready
+        case[2]()
+        local ok, err = pcall(dofile, "SheetUI.lua")
+        check("a showcase " .. case[1] .. " loads the sheet without an error", ok, tostring(err))
+        local Cam = AltStable._test.CameraPresentation
+        eq("  with no instance", AltStable.Showcase, nil)
+        check("  the showcase reports unsupported", Cam and Cam:IsSupported() == false)
+        check("  entering does nothing, quietly", Cam and pcall(Cam.Enter, Cam))
+        check("  nor do the other calls",
+              pcall(Cam.Exit, Cam, "x") and pcall(Cam.HideGameUI, Cam) and pcall(Cam.RestoreGameUI, Cam)
+              and pcall(Cam.ForceRestore, Cam, "x"))
+        eq("  its fields read nil", Cam and Cam.active, nil)
+        eq("  the UI is never reported hidden", AltStable.IsGameUIHidden(), false)
+        check("  and a lift is a no-op", pcall(AltStable.LiftAboveHiddenUI, CreateFrame("Frame"), true))
+        check("  the CVar popup suppressor is still callable", pcall(AltStable.SuppressExperimentalCVarPopup))
+        LibStub.libs[major], LibStub.minors[major], lib.ready = lib, minor, ready
+    end
 end
 
 print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
