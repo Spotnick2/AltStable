@@ -23,7 +23,6 @@ AltStable = AltStable or {}
 
 local WIDTH, PAD, BUTTON_H, GAP = 380, 16, 22, 8
 local prompts = {}   -- kind -> frame
-local order = {}     -- the kinds, in the order they were built
 
 -- Escape, the CharacterMenu way (CharacterMenu.lua has the whole argument).
 -- UISpecialFrames alone would close the sheet too: it is in that list, and
@@ -73,7 +72,30 @@ local function OnEvent(self, event)
     end
 end
 
+-- The prompts up, in the order they opened, laid out one under the next from
+-- the top. Recomputed on every open AND every close: placing a new one by the
+-- heights of the others alone ignored the gap a closed one left, and the next
+-- sync question landed exactly on the confirmation below it (Codex, #201).
+local stack = {}
+
+local function Reflow()
+    local y = -180
+    for _, f in ipairs(stack) do
+        f:ClearAllPoints()
+        f:SetPoint("TOP", 0, y)
+        y = y - (tonumber(f:GetHeight()) or 0) - GAP
+    end
+end
+
+local function Unstack(f)
+    for i = #stack, 1, -1 do
+        if stack[i] == f then table.remove(stack, i) end
+    end
+end
+
 local function OnHide(self)
+    Unstack(self)
+    Reflow()
     ReleaseKeyboard(self)
     -- A focused box keeps the keyboard after its frame is gone: every key
     -- would go on landing in it.
@@ -148,7 +170,6 @@ local function Build(kind, count, withCopy)
     if type(UISpecialFrames) == "table" then tinsert(UISpecialFrames, f:GetName()) end
 
     prompts[kind] = f
-    order[#order + 1] = kind
     return f
 end
 
@@ -177,17 +198,10 @@ function AltStable.ShowPrompt(kind, opts)
         f.edit._restoring = nil
     end
 
-    -- Below any other prompt already up, never on top of it: a copy box
-    -- opening over a sync question would hide its three buttons.
-    local y = -180
-    for _, k in ipairs(order) do
-        local o = prompts[k]
-        if o ~= f and o:IsShown() then y = y - (tonumber(o:GetHeight()) or 0) - GAP end
-    end
-    f:ClearAllPoints()
-    f:SetPoint("TOP", 0, y)
-
     f._choice, f._onClose = nil, opts.onClose
+    Unstack(f)
+    stack[#stack + 1] = f
+    Reflow()
     f:Show()
     f:Raise()
     TakeKeyboard(f)

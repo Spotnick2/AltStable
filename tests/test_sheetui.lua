@@ -2629,12 +2629,31 @@ do
     local copyP, forgetP = AltStable._test.Prompt("Copy"), AltStable._test.Prompt("Forget")
     check("a copy box and a confirmation open beside the question",
           #asks() == 1 and copyP:IsShown() and forgetP:IsShown())
-    -- Beside, not on top: each opens below the ones already up.
-    local function top(f) local _, _, _, _, y = f:GetPoint(1); return y end
-    local askP = asks()[1].dialog
-    check("  each below the last, none covering another",
-          top(copyP) < top(askP) and top(forgetP) < top(copyP),
-          ("%s %s %s"):format(tostring(top(askP)), tostring(top(copyP)), tostring(top(forgetP))))
+    -- Beside, not on top: no two prompts up share any vertical extent - checked
+    -- now, and again after the question is replaced below (Codex, #201: a
+    -- closed prompt left a gap, and the next question landed on the
+    -- confirmation).
+    local function disjoint()
+        local spans = {}
+        for _, kind in ipairs({ "SyncAsk", "Copy", "Forget" }) do
+            local f = AltStable._test.Prompt(kind)
+            if f and f:IsShown() then
+                local _, _, _, _, y = f:GetPoint(1)
+                spans[#spans + 1] = { top = y, bottom = y - f:GetHeight(), kind = kind }
+            end
+        end
+        for i = 1, #spans do
+            for j = i + 1, #spans do
+                local a, b = spans[i], spans[j]
+                if a.bottom < b.top and b.bottom < a.top then
+                    return false, a.kind .. " overlaps " .. b.kind
+                end
+            end
+        end
+        return #spans, "ok"
+    end
+    local n, why = disjoint()
+    check("  three prompts up, none covering another", n == 3, why)
     eq("  the question is unchanged", asks()[1] and asks()[1].arg1, "Beside Surname")
     AltStable.AllowSyncPeer("Beside Surname")
     flush()
@@ -2642,6 +2661,12 @@ do
     eq("answered elsewhere: the next asker is asked", nxt and nxt.arg1, "Then Surname")
     check("  and the copy box and the confirmation are untouched",
           copyP:IsShown() and forgetP:IsShown())
+    n, why = disjoint()
+    check("  the next question covers neither of them", n == 3, why)
+    AltStable.HidePrompt("Copy")
+    AltStable.ShowCopyText("Again", "text")
+    n, why = disjoint()
+    check("  nor does a prompt reopened after another closed", n == 3, why)
     AltStable.HidePrompt("Copy"); AltStable.HidePrompt("Forget")
     flush()
     eq("  closing them leaves the question up", #asks(), 1)
