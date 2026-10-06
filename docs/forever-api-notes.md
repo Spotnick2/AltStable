@@ -587,6 +587,33 @@ re-measured here.
 
 ---
 
+## Build 1.60.1.70235 (2026-10-05) — API unchanged
+
+Dumped (`forever-api-1.60.1.70235.md`, client built Oct 5 2026) and compared with
+`Compare-Dumps.ps1` against 70205:
+
+```
+Documented functions - no change (6598)
+Documented events - no change (1806)
+Documented tables - no change (797)
+Widget methods - no change (7530)
+Namespace functions - no change (5417)
+Documented surface identical.
+```
+
+The `_G`-walk sections moved only by other addons' globals (+10 -1 global functions, +140 -72
+namespace candidates), as on every build. Nothing the embedded libraries rely on moved either:
+LibShowcase's StaticPopup/SetUIVisibility/camera CVars and prompt events, LibAccountSync's
+Battle.net game-data calls and LibGlass's texture API are all in the identical documented surface,
+so their "measured on 70205" findings carry over.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 400 226 -1 5 table`, all as expected (a low-level
+character: a small XP bar and few factions met).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost on 70235.
+
+---
+
 ## Build 1.60.1.70205 (2026-10-03) — API unchanged
 
 Dumped (`forever-api-1.60.1.70205.md`, client built Oct 2 2026) and compared with
