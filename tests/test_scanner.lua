@@ -1131,6 +1131,7 @@ check("  and keeps saying so on the next login", #WoW.chatOut > 0)
 local realMeta = AltStable.API.GetAddOnMetadata
 for _, case in ipairs({
     { "v0.7.0-beta",        false, "a release" },
+    { "v0.11.0",            false, "a release tagged without -beta (from v0.10.0 on)" },
     { "dev-9ea1f00",        true,  "a deploy.ps1 copy" },
     { "dev",                true,  "a copy deployed outside git" },
     { "@project-version@",  true,  "a checkout run as-is" },
