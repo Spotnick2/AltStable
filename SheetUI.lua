@@ -208,9 +208,13 @@ end
 --
 -- What stays here is a thin adapter keeping AltStable's names: the options
 -- still come from AltStableConfig (read at every open, as before), and the
--- callers - the sheet's OnShow/OnHide, CharacterMenu, the popups - are
--- unchanged. The camera is global, so the library has ONE owner at a time: if
--- another addon is presenting, opening the sheet simply shows no showcase.
+-- callers - the sheet's OnShow/OnHide, CharacterMenu - are unchanged. The
+-- camera is global, so the library has ONE owner at a time: if another addon
+-- is presenting, opening the sheet simply shows no showcase.
+--
+-- r3 (#199): a Blizzard dialog or prompt (an invite, a ready check, a loot
+-- roll) brings the game UI back, and the sheet stays open over it. Our own
+-- prompts are never StaticPopups (Prompt.lua).
 ------------------------------------------------------------
 
 local AltStableCameraPresentation = {}
@@ -225,21 +229,41 @@ do
         end
     end
 
-
-    local Showcase = LibStub("LibShowcase-1.0"):New({
-        owner = "AltStable",
-        -- A function: AltStableConfig is replaced when the SavedVariables load.
-        db = function() return AltStableConfig end,
-        debug = CameraDebug,
-        -- Escape (or Alt+Z) with the showcase up: the engine shows the UI again.
-        -- Close the sheet too, so one Escape does the whole thing (its OnHide
-        -- exits). Combat, logout and zoning have already restored everything and
-        -- leave the sheet open, as before.
-        onForcedExit = function(reason)
-            local sheet = AltStableCameraPresentation.sheetFrame
-            if reason == "ui-shown" and sheet and sheet:IsShown() then sheet:Hide() end
-        end,
-    })
+    -- r3 or newer, fully loaded. r3 is the first MINOR that never touches
+    -- Blizzard's dialogs (and brings the UI back for them: onGameUIShown); an
+    -- older copy in another addon must not run our showcase. LibStub hands the
+    -- newest copy loaded, so an older one here means a newer never loaded.
+    -- Anything less: no showcase, never an error at load (IsSupported false).
+    local NEEDS_MINOR = 3
+    local lib, minor
+    if LibStub then lib, minor = LibStub:GetLibrary("LibShowcase-1.0", true) end
+    local Showcase
+    if lib and minor and minor >= NEEDS_MINOR and lib.ready == minor then
+        local ok, sc = pcall(lib.New, lib, {
+            owner = "AltStable",
+            -- A function: AltStableConfig is replaced when the SavedVariables load.
+            db = function() return AltStableConfig end,
+            debug = CameraDebug,
+            -- The library has already restored everything: the camera, the UI.
+            -- Close the sheet too, whatever the reason - Escape or Alt+Z
+            -- ("ui-shown") so one Escape does the whole thing, and combat,
+            -- logout or a loading screen, where a sheet left open over a
+            -- restored camera is a sheet nobody asked for any more.
+            onForcedExit = function()
+                local sheet = AltStableCameraPresentation.sheetFrame
+                if sheet and sheet:IsShown() then sheet:Hide() end
+            end,
+            -- The library brought the UI back for a Blizzard dialog or prompt
+            -- (an invite, a ready check, a loot roll). The sheet and the camera
+            -- stay; the UI stays up until the sheet closes. Nothing to do.
+            onGameUIShown = function(reason)
+                CameraDebug("game UI shown: " .. tostring(reason))
+            end,
+        })
+        if ok then Showcase = sc else CameraDebug("LibShowcase New failed: " .. tostring(sc)) end
+    elseif lib then
+        CameraDebug("LibShowcase-1.0 MINOR " .. tostring(minor) .. " is too old or half-loaded; no showcase")
+    end
     AltStable.Showcase = Showcase
 
     -- AltStableConfig -> the instance's options, at every open. Unset or
@@ -268,23 +292,28 @@ do
         return c.enableWorldCameraPresentation ~= false
     end
 
+    -- Enter may present with the game UI still UP (r3): a Blizzard dialog or a
+    -- prompt was already open, and hiding the UI would have lost it. Nothing
+    -- here assumes it is hidden - IsGameUIHidden says.
     function AltStableCameraPresentation:Enter()
-        if not SyncOptions() then return end
+        if not Showcase or not SyncOptions() then return end
         return Showcase:Enter(self.sheetFrame)
     end
-    function AltStableCameraPresentation:Exit(reason) return Showcase:Exit(reason) end
-    function AltStableCameraPresentation:ForceRestore(reason) return Showcase:ForceRestore(reason) end
-    function AltStableCameraPresentation:HideGameUI() return Showcase:HideGameUI(self.sheetFrame) end
-    function AltStableCameraPresentation:RestoreGameUI() return Showcase:RestoreGameUI() end
+    function AltStableCameraPresentation:Exit(reason) if Showcase then return Showcase:Exit(reason) end end
+    function AltStableCameraPresentation:ForceRestore(reason) if Showcase then return Showcase:ForceRestore(reason) end end
+    function AltStableCameraPresentation:HideGameUI() if Showcase then return Showcase:HideGameUI(self.sheetFrame) end end
+    function AltStableCameraPresentation:RestoreGameUI() if Showcase then return Showcase:RestoreGameUI() end end
     function AltStableCameraPresentation:IsSupported()
-        return type(SaveView) == "function" and type(SetView) == "function" and type(GetCameraZoom) == "function"
+        return Showcase ~= nil
+           and type(SaveView) == "function" and type(SetView) == "function" and type(GetCameraZoom) == "function"
            and type(CameraZoomIn) == "function" and type(CameraZoomOut) == "function"
     end
 
     -- The old fields, read-only, from the library (for /run debugging and tests):
     -- active, mode, capture (this addon's presentation only) and uiHidden.
     setmetatable(AltStableCameraPresentation, { __index = function(_, k)
-        local cam = LibStub("LibShowcase-1.0").state.cam
+        if not Showcase then return nil end
+        local cam = lib.state.cam
         if k == "active" then return Showcase:IsActive() end
         if k == "uiHidden" then return Showcase:IsGameUIHidden() end
         if k == "mode" then return Showcase:IsActive() and cam.mode or nil end
@@ -292,26 +321,29 @@ do
     end })
 
     AltStable._test = AltStable._test or {}
-    AltStable._test.CENTRING_CVARS = LibStub("LibShowcase-1.0").CENTRING_CVARS
+    AltStable._test.CENTRING_CVARS = Showcase and lib.CENTRING_CVARS or {}
     AltStable._test.CameraPresentation = AltStableCameraPresentation
 
     -- Anything that must stay visible while the game UI is hidden has to be lifted
     -- out from under UIParent - no strata makes a child of a hidden parent draw.
     -- The sheet and GameTooltip are lifted by the showcase; this is the same door
     -- for everything else (the character menu). Idempotent in both directions.
+    -- Our prompts (Prompt.lua) need no lift: they are parented to nothing.
     function AltStable.IsGameUIHidden()
-        return Showcase:IsGameUIHidden()
+        return Showcase ~= nil and Showcase:IsGameUIHidden() == true
     end
 
     function AltStable.LiftAboveHiddenUI(frame, state)
-        if not frame then return end
+        if not (frame and Showcase) then return end
         if state then Showcase:Lift(frame, "FULLSCREEN_DIALOG") else Showcase:Drop(frame) end
     end
 
     -- Suppress the "enable this experimental feature?" popup a test_* CVar write
-    -- raises. The library does it before each of its own writes
-    -- (GameEvent.UnregisterInternalEvent, given back afterwards).
-    AltStable.SuppressExperimentalCVarPopup = LibStub("LibShowcase-1.0").SuppressExperimentalCVarPopup
+    -- raises. The library does it before each of its own writes. Since r3 it is
+    -- never given back (re-registering it was measured to taint): it stays off
+    -- until the next /reload.
+    AltStable.SuppressExperimentalCVarPopup = Showcase and lib.SuppressExperimentalCVarPopup
+        or function() end
 end
 
 ------------------------------------------------------------
@@ -4630,40 +4662,6 @@ end
 -- not a view preference.
 ------------------------------------------------------------
 
-local FORGET_POPUP = "ALTSTABLE_CONFIRM_FORGET_CHARACTER"
-
--- Make a StaticPopup visible over our own window, and put the shared frame back
--- afterwards. LibShowcase does it (LiftPopup/DropPopup):
---
--- Done from the CALLER, on the frame StaticPopup_Show hands back, rather than
--- from the dialog's OnShow. A frame whose parent is hidden may never receive a
--- visibility event at all, so a fix that lives in OnShow is a fix that never
--- runs - which is the failure being fixed, wearing the fix's own clothes.
---
--- Two separate problems, and strata only answers one:
---   * the sheet is DIALOG and SetToplevel(true), and a StaticPopup is DIALOG,
---     so the sheet covers it: the popup is raised to FULLSCREEN_DIALOG;
---   * the camera showcase hides UIParent outright, and a StaticPopup is a CHILD
---     of UIParent - no strata makes the child of a hidden parent draw: it is
---     lifted out while UIParent is ACTUALLY hidden, by the showcase or by a
---     player who pressed Alt+Z before a capture.
---
--- Put back by every route out: the buttons and OnHide call DropPopup here, the
--- library hooks the dialog's OnHide as well, and any showcase restore drops it,
--- so a pooled dialog never stays detached or raised. Idempotent and
--- re-entrant (putting it back under a hidden UIParent fires its OnHide half
--- way through a drop).
-local function LiftPopup(dialog)
-    return AltStable.Showcase:LiftPopup(dialog)
-end
-
-local function DropPopup(dialog)
-    AltStable.Showcase:DropPopup(dialog)
-end
-
-AltStable.LiftPopup = LiftPopup
-AltStable.DropPopup = DropPopup
-
 ------------------------------------------------------------
 -- "Reload now?" - with a button that is ALLOWED to reload
 ------------------------------------------------------------
@@ -4754,61 +4752,22 @@ end
 AltStable._test = AltStable._test or {}
 AltStable._test.ReloadPrompt = function() return reloadPrompt end
 
-AltStable._test = AltStable._test or {}
-AltStable._test.LiftPopup = LiftPopup
-AltStable._test.DropPopup = DropPopup
-
-if type(StaticPopupDialogs) == "table" then
-    StaticPopupDialogs[FORGET_POPUP] = {
-        -- The recovery route is NAMED, because there is one and this dialog used
-        -- to deny it. "There is no undo" was false - /alts unforget lifts the
-        -- tombstone and re-asks every peer in full - and "it will only reappear
-        -- by logging into it" was worse than false: logging in on ANOTHER
-        -- account does not clear THIS account's tombstone, so a player following
-        -- that instruction leaves the record rejected indefinitely. The slash
-        -- command has printed the right answer all along; the dialog
-        -- contradicted it.
-        text = "Forget |cffffffff%s|r?\n\nThe local record is deleted, and a tombstone stops "
-            .. "other accounts sending it back. This is not hiding.\n\n"
-            .. "|cffffff00/alts unforget|r lifts the tombstone, and the character can then come "
-            .. "back from a peer on the next full sync - not instantly, and not by logging "
-            .. "into it.",
-        button1 = ACCEPT or "Forget",
-        button2 = CANCEL or "Cancel",
-        OnAccept = function(self, data)
-            DropPopup(self)
-            local guid = type(data) == "table" and data.guid or data
-            -- ForgetCharacter re-checks: it refuses the character you are
-            -- playing. It is the authority on that, not the menu that offered
-            -- the entry - state can change while a dialog sits open.
-            local ok, info = AltStable.ForgetCharacter(guid)
-            if not ok then
-                DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r " .. tostring(info))
-            end
-        end,
-        OnCancel = function(self) DropPopup(self) end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-        -- This confirmation was invisible until the sheet was closed, so the
-        -- right-click read as doing nothing.
-        --
-        -- TWO things hide it, and strata only answers one. The sheet is DIALOG
-        -- and SetToplevel(true), and a StaticPopup is DIALOG too, so the sheet
-        -- covers it. But the camera showcase - on by default whenever the sheet
-        -- is open - also hides UIParent outright, and a StaticPopup is a CHILD
-        -- of UIParent. No strata makes the child of a hidden parent draw.
-        --
-        -- So the popup is lifted out from under UIParent exactly as the sheet
-        -- and GameTooltip are, and put back on close: the frame is shared with
-        -- every other addon, and leaving it reparented or raised would quietly
-        -- change where everyone else's confirmations appear.
-        -- Belt and braces. The caller lifts; these put it back by whichever
-        -- route the dialog closes, and DropPopup is idempotent so they cannot
-        -- fight each other.
-        OnHide = function(self) DropPopup(self) end,
-    }
-end
+-- The forget confirmation, on our own prompt (Prompt.lua): a StaticPopup taints
+-- the client's dialog pool (#199), and it was invisible under the sheet and
+-- under the showcase's hidden UIParent anyway.
+--
+-- The recovery route is NAMED, because there is one and this dialog used to
+-- deny it. "There is no undo" was false - /alts unforget lifts the tombstone
+-- and re-asks every peer in full - and "it will only reappear by logging into
+-- it" was worse than false: logging in on ANOTHER account does not clear THIS
+-- account's tombstone, so a player following that instruction leaves the
+-- record rejected indefinitely. The slash command has printed the right answer
+-- all along; the dialog contradicted it.
+local FORGET_TEXT = "Forget |cffffffff%s|r?\n\nThe local record is deleted, and a tombstone stops "
+    .. "other accounts sending it back. This is not hiding.\n\n"
+    .. "|cffffff00/alts unforget|r lifts the tombstone, and the character can then come "
+    .. "back from a peer on the next full sync - not instantly, and not by logging "
+    .. "into it."
 
 ------------------------------------------------------------
 -- "<name> asks to sync with you" (#61)
@@ -4821,7 +4780,8 @@ end
 -- requests every time, so an answer given anywhere else - the slash command,
 -- the Options list - just drops out of it, and an expired request is never
 -- prompted.
-local SYNC_ASK_POPUP = "ALTSTABLE_SYNC_ASK"
+local SYNC_ASK_TEXT = "|cffffffff%s|r asks to sync with you.\n\nThey would receive every character "
+    .. "AltStable knows here - gold, bags, mail, lockouts."
 local syncPrompted = {}      -- PeerKey -> true: already asked this session
 local syncPromptKey          -- the peer on screen now, if any
 
@@ -4838,81 +4798,47 @@ local function NextSyncAsk()
     return best
 end
 
-local function ShowNextSyncAsk()
-    -- Not in the middle of a fight: PLAYER_REGEN_ENABLED tries again.
-    if InCombatLockdown and InCombatLockdown() then return end
-    if type(StaticPopupDialogs) ~= "table" or not StaticPopup_Show then return end
-    if not AltStable.PendingSyncRequests then return end
-    local e = NextSyncAsk()
-    -- One at a time. Checked AFTER NextSyncAsk, not before: it reads the
-    -- pending list, which announces an expired entry it drops - and that
-    -- announcement can show a prompt from in here (review of #136).
-    if not e or syncPromptKey then return end
-    local key = e.key or AltStable.PeerKey(e.name)
-    local dialog = StaticPopup_Show(SYNC_ASK_POPUP, e.name, nil, { name = e.name, key = key })
-    -- No frame (every dialog slot busy, or the client refused): not counted as
-    -- asked, so the next change tries again.
-    if not dialog then return end
-    syncPrompted[key] = true
-    syncPromptKey = key
-    LiftPopup(dialog)
-end
+local ShowNextSyncAsk
 
 -- The prompt is over: free the one-at-a-time slot and look for the next asker
--- on the next frame. Run from EVERY way out - the three buttons as well as
--- OnHide - because a dialog hidden while it is not visible (under a UIParent
--- the camera showcase hid) never gets OnHide, and a slot freed only there
--- stayed taken for the session: nobody was prompted again (review of #136).
+-- on the next frame, not from inside this one - the prompt is still being
+-- taken down, and showing it again from its own OnHide is asking for trouble.
 local function EndSyncAsk()
     syncPromptKey = nil
     if C_Timer and C_Timer.After then C_Timer.After(0, ShowNextSyncAsk) end
 end
 
-if type(StaticPopupDialogs) == "table" then
-    StaticPopupDialogs[SYNC_ASK_POPUP] = {
-        text = "|cffffffff%s|r asks to sync with you.\n\nThey would receive every character "
-            .. "AltStable knows here - gold, bags, mail, lockouts.",
-        button1 = "Allow",
-        button2 = "Not now",
-        button3 = "Never",
-        -- The answer FIRST, then DropPopup. With the game UI hidden, DropPopup
-        -- puts the dialog back under the hidden UIParent, which runs OnHide
-        -- there and then - freeing the slot. Answering after that let the
-        -- answer's announcement open the next asker's prompt inside this
-        -- click, and the click's own closing hide dismissed it: that asker was
-        -- marked prompted and never asked (Codex, review of #136).
-        OnAccept = function(self, data)
-            if type(data) == "table" then AltStable.AllowSyncPeer(data.name) end
-            DropPopup(self)
-            EndSyncAsk()
-        end,
-        -- "Not now", and ALSO what Escape does (hideOnEscape runs OnCancel), so
-        -- this must never refuse anyone: the request stays waiting.
+function ShowNextSyncAsk()
+    -- Not in the middle of a fight: PLAYER_REGEN_ENABLED tries again.
+    if InCombatLockdown and InCombatLockdown() then return end
+    if not (AltStable.PendingSyncRequests and AltStable.ShowPrompt) then return end
+    local e = NextSyncAsk()
+    -- One at a time. Checked AFTER NextSyncAsk, not before: it reads the
+    -- pending list, which announces an expired entry it drops - and that
+    -- announcement can show a prompt from in here (review of #136).
+    if not e or syncPromptKey then return end
+    local key, name = e.key or AltStable.PeerKey(e.name), e.name
+    AltStable.ShowPrompt("SyncAsk", {
+        text = SYNC_ASK_TEXT:format(name),
+        buttons = { "Allow", "Not now", "Never" },
+        -- Every way out comes here, once (Prompt.lua). The answer FIRST, then
+        -- the slot: answering announces, the announcement looks for the next
+        -- asker, and with the slot still taken it waits for EndSyncAsk's next
+        -- frame instead of opening inside this one (Codex, review of #136).
         --
-        -- With no dialog it is the client telling us the show FAILED (it calls
-        -- OnCancel(nil, data) before returning nil): nothing was on screen, so
-        -- nothing ends - and retrying on the next frame would retry every frame.
-        OnCancel = function(self)
-            if not self then return end
-            DropPopup(self)
+        -- "Not now" (2) and Escape (nil) refuse nobody: the request stays
+        -- waiting, in the Options list.
+        onClose = function(choice)
+            if choice == 1 then
+                AltStable.AllowSyncPeer(name)
+            elseif choice == 3 then
+                AltStable.DenySyncPeer(name)
+            end
             EndSyncAsk()
         end,
-        OnAlt = function(self, data)
-            if type(data) == "table" then AltStable.DenySyncPeer(data.name) end
-            DropPopup(self)
-            EndSyncAsk()
-        end,
-        -- Every route out ends here. The next asker is shown on the next frame,
-        -- not from inside this one: the dialog is still being torn down, and
-        -- DropPopup documents how its hide can re-enter.
-        OnHide = function(self)
-            DropPopup(self)
-            EndSyncAsk()
-        end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-    }
+    })
+    syncPrompted[key] = true
+    syncPromptKey = key
 end
 
 -- Core calls this whenever an answer or a pending request changes.
@@ -4924,13 +4850,13 @@ function AltStable.OnSyncAuthChanged()
     local shown = syncPromptKey
     if shown and C_Timer and C_Timer.After then
         C_Timer.After(0, function()
-            if syncPromptKey ~= shown or not StaticPopup_Hide then return end
+            if syncPromptKey ~= shown then return end
             local waiting = false
             for _, e in ipairs(AltStable.PendingSyncRequests()) do
                 if (e.key or AltStable.PeerKey(e.name)) == shown then waiting = true end
             end
             if not waiting or AltStable.SyncAuthFor(shown) ~= AltStable.AUTH_ASK then
-                StaticPopup_Hide(SYNC_ASK_POPUP)
+                AltStable.HidePrompt("SyncAsk")
             end
         end)
     end
@@ -4944,8 +4870,11 @@ do
     AltStable._test.SyncAskRegenFrame = regen
 end
 
-AltStable._test.SyncAskPopup = SYNC_ASK_POPUP
-AltStable._test.ResetSyncPrompts = function() syncPrompted = {}; syncPromptKey = nil end
+AltStable._test.ResetSyncPrompts = function()
+    syncPrompted = {}
+    syncPromptKey = nil
+    if AltStable.HidePrompt then AltStable.HidePrompt("SyncAsk") end
+end
 
 function AltStable.HideCharacter(guid)
     if not guid or not AltStable.SetCharacterHidden then return end
@@ -4962,12 +4891,25 @@ end
 -- Called by the menu's Forget entry. Asks first, always.
 function AltStable.RequestForgetCharacter(char)
     if type(char) ~= "table" or not char.guid then return end
-    if type(StaticPopup_Show) == "function" and StaticPopupDialogs
-        and StaticPopupDialogs[FORGET_POPUP] then
-        LiftPopup(StaticPopup_Show(FORGET_POPUP, char.name or "?", nil, { guid = char.guid }))
+    if AltStable.ShowPrompt then
+        local guid = char.guid
+        AltStable.ShowPrompt("Forget", {
+            text = FORGET_TEXT:format(char.name or "?"),
+            buttons = { ACCEPT or "Forget", CANCEL or "Cancel" },
+            onClose = function(choice)
+                if choice ~= 1 then return end
+                -- ForgetCharacter re-checks: it refuses the character you are
+                -- playing. It is the authority on that, not the menu that
+                -- offered the entry - state can change while a prompt sits open.
+                local ok, info = AltStable.ForgetCharacter(guid)
+                if not ok then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r " .. tostring(info))
+                end
+            end,
+        })
         return
     end
-    -- No popup API. Unlike hiding, this is NOT done anyway: forgetting is
+    -- No prompt. Unlike hiding, this is NOT done anyway: forgetting is
     -- irreversible, and doing it unconfirmed because the confirmation was
     -- unavailable is the worst of the three possible behaviours.
     DEFAULT_CHAT_FRAME:AddMessage(

@@ -13,16 +13,13 @@ enable-nolib-creation: no
 # externals: each pinned to a TAG, bumped only in a release made anyway.
 # Comments on their own lines only - the packager's YAML reader keeps an inline
 # "# ..." as part of the value (measured in GlassUnitFrames' migration).
-#
-# LibShowcase is not published yet: its r1 tag does not exist until the
-# library's repo is on GitHub and tagged, so CI cannot fetch it before then.
 externals:
   Libs/LibGlass-1.0:
     url: https://github.com/Spotnick2/LibGlass
     tag: r2
   Libs/LibShowcase-1.0:
     url: https://github.com/Spotnick2/LibShowcase
-    tag: r1
+    tag: r3
 
 # One CurseForge project, four addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested

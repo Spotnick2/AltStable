@@ -37,9 +37,7 @@ jobs:
           bash tests/fetch_libglass.sh "$RUNNER_TEMP/LibGlass"
           echo "LIBGLASS=$RUNNER_TEMP/LibGlass" >> "$GITHUB_ENV"
 
-      # The embedded LibShowcase-1.0 (the camera showcase), the same way. This
-      # step fails until github.com/Spotnick2/LibShowcase is public and has
-      # its r1 tag.
+      # The embedded LibShowcase-1.0 (the camera showcase), the same way.
       - name: Fetch LibShowcase at the pinned ref
         run: |
           bash tests/fetch_libshowcase.sh "$RUNNER_TEMP/LibShowcase"

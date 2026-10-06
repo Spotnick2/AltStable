@@ -32,6 +32,7 @@ dofile("Compat.lua")
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
+dofile("Prompt.lua")   -- our prompts, before Core (TOC order)
 assert(loadfile("Core.lua"))()
 -- Scanner.lua owns AltStable.GEAR_SLOTS, the one list of the seventeen
 -- equipment slots. The detail pane's paper doll walks it, and it used to carry
@@ -4334,13 +4335,11 @@ do
     hint.GetStringHeight = nil
     T.Refresh()
 
-    -- The link popup's letter limit: the client reuses its dialogs and sets a
-    -- limit only when the definition gives one, so a shorter dialog's limit
-    -- would otherwise cut the link (#179 review).
-    AltStable.ShowCompanionLink()
-    eq("the link popup sets no letter limit (0), whatever the last dialog had",
-       StaticPopupDialogs[WoW.popups[#WoW.popups].which].maxLetters, 0)
-    StaticPopup_Hide(WoW.popups[#WoW.popups].which)
+    -- The link box's letter limit: none (0). A limit would cut the link short
+    -- (#179 review); our own box, so no other dialog's limit can leak in.
+    local linkPrompt = AltStable.ShowCompanionLink()
+    eq("the link box sets no letter limit (0)", linkPrompt and linkPrompt.edit:GetMaxLetters(), 0)
+    AltStable.HidePrompt("Copy")
 
     -- The folder loaded (a manifest exists): no restart line, even with
     -- captures and someone still without a portrait.
@@ -4373,18 +4372,18 @@ do
     -- The click hands over /releases - the Companion has only pre-releases,
     -- and GitHub's /latest skips them - selected, ready to copy.
     local before = #WoW.popups
-    local dialog = AltStable.ShowCompanionLink()
-    check("the link opens the client's copy popup", #WoW.popups == before + 1 and dialog ~= nil)
-    local box = dialog and dialog:GetEditBox()
+    local prompt = AltStable.ShowCompanionLink()
+    check("the link opens our copy box", prompt ~= nil and prompt:IsShown())
+    eq("  never a StaticPopup (#199)", #WoW.popups, before)
+    local box = prompt and prompt.edit
     eq("  holding the releases page", box and box:GetText(), "https://github.com/Spotnick2/AltStableCompanion/releases")
     check("  not /latest", AltStable.COMPANION_URL:find("latest", 1, true) == nil)
-    local def = StaticPopupDialogs[WoW.popups[#WoW.popups].which]
     if box then
-        box:SetText("typed over")
-        def.EditBoxOnTextChanged(box, dialog.data)   -- as SharedTemplates.lua passes it
+        box._text = "typed over"
+        box:GetScript("OnTextChanged")(box, true)
         eq("  typing over it puts the link back", box:GetText(), AltStable.COMPANION_URL)
     end
-    StaticPopup_Hide(WoW.popups[#WoW.popups].which)
+    AltStable.HidePrompt("Copy")
 
     AltStableConfig.rosterView, AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil, nil
     p.GetWidth, p.GetHeight = heldW, heldH

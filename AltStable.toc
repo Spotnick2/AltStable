@@ -15,6 +15,7 @@ Compat.lua
 Glass.lua
 Theme.lua
 Skin.lua
+Prompt.lua
 Core.lua
 Scanner.lua
 Reputations.lua

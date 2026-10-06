@@ -236,7 +236,7 @@ upgrade rules).
 
 The showcase (camera swing, shoulder offset, orbit, Alt+Z-style UI hide with the sheet lifted) is
 **LibShowcase-1.0** (`..\LibShowcase`, embedded exactly like LibGlass: `.pkgmeta` external
-`tag: r1`, its non-dot ignores repeated, `Libs/LibShowcase-1.0/` gitignored, its XML loaded right
+`tag: r3`, its non-dot ignores repeated, `Libs/LibShowcase-1.0/` gitignored, its XML loaded right
 after LibGlass's, deployed through its own `Tools\deploy.ps1`, tests load it through
 `tests/libshowcase.lua`). It was extracted from this file's `AltStableCameraPresentation`; its
 `docs/DESIGN.md` holds the guarantees and its `CLAUDE.md` the contract.
@@ -244,14 +244,24 @@ after LibGlass's, deployed through its own `Tools\deploy.ps1`, tests load it thr
 - **Camera behaviour changes are LibShowcase changes**, never edits here.
 - `SheetUI.lua` keeps a thin adapter with the old names: `AltStable.AltStableCameraPresentation`
   (`Enter`/`Exit`/`ForceRestore`, and read-only `active`/`mode`/`capture`/`uiHidden`),
-  `AltStable.IsGameUIHidden`, `AltStable.LiftAboveHiddenUI`, `AltStable.SuppressExperimentalCVarPopup`,
-  `LiftPopup`/`DropPopup`. The options still live in `AltStableConfig` and are pushed into the
-  instance's `opts` at every open.
+  `AltStable.IsGameUIHidden`, `AltStable.LiftAboveHiddenUI` and
+  `AltStable.SuppressExperimentalCVarPopup`. The options still live in `AltStableConfig` and are
+  pushed into the instance's `opts` at every open.
+- **r3 or nothing.** The adapter needs MINOR 3+, fully loaded (`lib.ready == minor`). Anything less
+  means no showcase (`IsSupported()` false), never a load error.
+- **Never a StaticPopup.** Showing one from addon code, or reparenting, raising or hooking one,
+  taints Blizzard's shared dialog pool (MEASURED 70205: Quit then failed with
+  `ADDON_ACTION_FORBIDDEN ... ForceQuit()`). Our prompts are our own frames: `Prompt.lua`
+  (`AltStable.ShowPrompt(kind, opts)` / `HidePrompt(kind)`), one frame per kind, parented to
+  nothing, and `onClose(choice)` runs once on every way out.
+- **The UI may stay up.** With a Blizzard dialog or prompt open (an invite, a ready check, a loot
+  roll), `Enter`/`HideGameUI` keep the UI shown, and one appearing mid-showcase brings it back
+  (`onGameUIShown`). The sheet and camera stay; we don't re-hide. Read `IsGameUIHidden()`, never
+  assume. `onForcedExit` (Escape/Alt+Z, combat, logout, loading) closes the sheet.
 - **One owner.** The camera is global, so the library refuses a second addon while one presents;
   the sheet then opens without a showcase. The crash self-heal capture rides in
-  `AltStableConfig.LibShowcaseCapture` while a presentation is up.
-- **Not published yet**: the GitHub repo and the `r1` tag don't exist, so CI's fetch step fails
-  until they do.
+  `AltStableConfig.LibShowcaseCapture` while a presentation is up. The experimental-CVar popup,
+  once suppressed, stays off until `/reload` (re-registering it was measured to taint).
 
 ## Conventions
 

@@ -34,6 +34,7 @@ dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("tests/libshowcase.lua"); LoadShowcase("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
+dofile("Prompt.lua")   -- our prompts, before Core (TOC order)
 assert(loadfile("Core.lua"))()
 dofile("Scanner.lua")
 dofile("Reputations.lua")
@@ -153,11 +154,14 @@ check("  and neither does a real one on nothing",
 do
     WoW.popups = {}
     AltStable.CharacterMenuInvoke("forget", OTHER)
-    eq("forget asks before it deletes", #WoW.popups, 1)
-    check("  by name", WoW.popups[1] and WoW.popups[1].arg1 == "Someone",
-          tostring(WoW.popups[1] and WoW.popups[1].arg1))
+    local P = AltStable._test.Prompt("Forget")
+    check("forget asks before it deletes", P ~= nil and P:IsShown())
+    local text = P and P.text:GetText() or ""
+    check("  by name", text:find("Someone", 1, true) ~= nil, text)
     check("  and has deleted nothing yet", AltStableDB.other ~= nil)
-    StaticPopup_Hide(WoW.popups[1].which)
+    eq("  on our own prompt, never a StaticPopup (#199)", #WoW.popups, 0)
+    AltStable.HidePrompt("Forget")
+    check("  dismissing it deletes nothing", AltStableDB.other ~= nil)
 end
 
 ------------------------------------------------------------
@@ -491,8 +495,8 @@ do
     T.MenuClick("forget")
     eq("the menu is already closed when the action runs", wasOpenDuringAction, false)
     check("  and stays closed", T.MenuIsShown() == false)
-    eq("  the confirmation is raised", #WoW.popups, 1)
-    StaticPopup_Hide(WoW.popups[1].which)
+    check("  the confirmation is raised", AltStable._test.Prompt("Forget"):IsShown())
+    AltStable.HidePrompt("Forget")
 
     AltStable.RequestForgetCharacter = realForget
 end
@@ -503,7 +507,7 @@ do
     WoW.popups = {}
     AltStable.ShowCharacterMenu(ME)
     check("the disabled Forget does nothing when clicked", T.MenuClick("forget"))
-    eq("  no confirmation", #WoW.popups, 0)
+    check("  no confirmation", not AltStable._test.Prompt("Forget"):IsShown())
     check("  and the menu stays open, since nothing happened", T.MenuIsShown())
     AltStable.CloseCharacterMenu()
 end
