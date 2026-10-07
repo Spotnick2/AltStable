@@ -587,6 +587,30 @@ re-measured here.
 
 ---
 
+## Build 1.60.1.70245 (2026-10-06) — API unchanged
+
+Dumped (`forever-api-1.60.1.70245.md`, client built Oct 5 2026, like 70235) and compared with
+`Compare-Dumps.ps1` against 70235:
+
+```
+Documented functions - no change (6598)
+Documented events - no change (1806)
+Documented tables - no change (797)
+Widget methods - no change (7530)
+Namespace functions - no change (5417)
+Documented surface identical.
+```
+
+Global functions did not move at all (6146); namespace candidates moved +29 -11, other addons'
+globals as on every build. The embedded libraries' findings carry over, as on 70235.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 400 nil -1 5 table`, all as expected (`nil`: the
+character was not rested).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+---
+
 ## Build 1.60.1.70235 (2026-10-05) — API unchanged
 
 Dumped (`forever-api-1.60.1.70235.md`, client built Oct 5 2026) and compared with

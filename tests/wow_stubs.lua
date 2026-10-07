@@ -1706,7 +1706,7 @@ function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 -- Four returns, in this order. Config.lua reads the build from the second.
 -- The third return is the CLIENT's build date, as the dump records it
 -- ("client built Sep 23 2026"), not the day it was measured here.
-function GetBuildInfo() return "1.60.1", "70235", "Oct 5 2026", 16001 end
+function GetBuildInfo() return "1.60.1", "70245", "Oct 5 2026", 16001 end
 -- GetLocale() -> localeName (forever-api-1.60.1.70205.md). WoW.locale to test another.
 function GetLocale() return WoW.locale or "enUS" end
 -- Client string alias (in the dump's _G walk); LibStub's version check uses it.
