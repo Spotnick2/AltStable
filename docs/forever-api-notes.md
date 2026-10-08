@@ -715,6 +715,38 @@ character was not rested).
 
 ---
 
+## Build 1.60.1.70291 (2026-10-08) — voice chat / Discord retyped, none we use
+
+Dumped (`forever-api-1.60.1.70291.md`, client built Oct 7 2026) and compared with
+`Compare-Dumps.ps1` against 70245:
+
+```
+Documented functions - +25 -19   C_VoiceChat.* ids number -> VoiceChatID; C_Discord DiscordID ->
+                                 DiscordMemberOpaqueID; + C_Discord.IsVoiceEnabled,
+                                 + C_VoiceChat.Get/Set/RestoreActiveVoiceProvider,
+                                 ~ C_VoiceChat.Login(optional channelType);
+                                 + GetGlancingBlowChance / GetGlancingBlowPenalty
+Documented events - +25 -21      VOICE_CHAT_* payload ids number -> VoiceChatID;
+                                 + VOICE_CHAT_ACTIVE_VOICE_PROVIDER_CHANGED, _DISCORD_SETTINGS_UPDATED,
+                                   _VOICE_PROVIDER_CHANGED, _VOICE_PROVIDERS_AVAILABLE_CHANGED
+Documented tables - +6 -5        + Enum VoiceProviderID { Legacy, Discord }; VoiceChatChannel /
+                                 VoiceChatMember ids retyped; LfgEntryData / LfgListingCreateData /
+                                 LfgSearchResultData gain voiceMode
+Widget methods - no change (7530)
+Namespace functions - +4 -0      the four new functions above
+```
+
+Nothing AltStable, its stubs or its embedded libraries call is among them (no `.lua` hit for
+`C_VoiceChat`, `C_Discord`, `VOICE_CHAT`, the LFG structures or `GetGlancingBlow*`). The `_G`-walk
+sections moved by other addons' globals as usual (+169 -8 global functions, +458 -263 namespace
+candidates).
+
+**Behaviour**, the RUNBOOK step-3 line: `60 8800 2340 -1 5 table`, all as expected.
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+---
+
 ## Secret values — some unit numbers cannot be read, only passed along
 
 Hit live on 1.60.1.69977, on a **PvP realm**, mid-scan:
