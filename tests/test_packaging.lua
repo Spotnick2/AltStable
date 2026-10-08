@@ -196,6 +196,7 @@ check("Professions moves to its own folder",
     -- only the published one would carry the library's tests/docs/Tools.
     dofile("tests/libglass.lua")
     dofile("tests/libshowcase.lua")
+    dofile("tests/libaccountsync.lua")
     -- Line by line: a pattern that eats the newline on both sides skips every
     -- other entry.
     local function entries(block)
@@ -208,10 +209,11 @@ check("Professions moves to its own folder",
     end
     local ours = {}
     for _, e in ipairs(entries(ignore)) do ours[e] = true end
-    -- Both embedded libraries, the same way. Each is also an external pinned
+    -- Every embedded library, the same way. Each is also an external pinned
     -- to a tag (never `latest`: the packager would pick by creation date).
     for _, lib in ipairs({ { "LibGlass", "LibGlass-1.0", LibGlassRoot },
-                           { "LibShowcase", "LibShowcase-1.0", LibShowcaseRoot } }) do
+                           { "LibShowcase", "LibShowcase-1.0", LibShowcaseRoot },
+                           { "LibAccountSync", "LibAccountSync-1.0", LibAccountSyncRoot } }) do
         local name, major, root = lib[1], lib[2], lib[3]
         local libPkg = read(root() .. "/.pkgmeta") or ""
         local libIgnore = libPkg:match("ignore:%s*\n(.*)$") or ""
@@ -247,6 +249,11 @@ do
     check("  after LibGlass's", glass ~= nil and showcase ~= nil and glass < showcase)
     check("  before the addon's own files", showcase ~= nil and order["Compat.lua"] ~= nil
           and showcase < order["Compat.lua"] and showcase < order["SheetUI.lua"])
+    -- Core.lua builds the sync instance at load (#198).
+    local accountSync = order[ [[Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml]] ]
+    check("the TOC loads LibAccountSync's XML", accountSync ~= nil)
+    check("  before the addon's own files", accountSync ~= nil and order["Compat.lua"] ~= nil
+          and accountSync < order["Compat.lua"] and accountSync < order["Core.lua"])
 end
 
 check("CHANGELOG.md exists", read("CHANGELOG.md") ~= nil)

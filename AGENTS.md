@@ -52,7 +52,7 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 `.lua` file must be added there in the right position):
 
 `Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs\LibShowcase-1.0\LibShowcase-1.0.xml` →
-`Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
+`Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml` → `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
 `RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `PublicAPI.lua` → `Export.lua`.
@@ -97,8 +97,9 @@ Lua is first on `PATH`).
 - **Run all tests:** `pwsh tests/run.ps1` (override the interpreter with `-Lua <path>`; it
   defaults to the path above). It runs every `tests/test_*.lua` from the repo root and exits
   non-zero on failure. The tests need a **LibGlass checkout** (`$env:LIBGLASS`, else
-  `..\LibGlass`) and a **LibShowcase checkout** (`$env:LIBSHOWCASE`, else `..\LibShowcase`),
-  and fail loudly without them; `run.ps1` warns when one is not at its `.pkgmeta`
+  `..\LibGlass`), a **LibShowcase checkout** (`$env:LIBSHOWCASE`, else `..\LibShowcase`) and a
+  **LibAccountSync checkout** (`$env:LIBACCOUNTSYNC`, else `..\LibAccountSync`), and fail loudly
+  without them; `run.ps1` warns when one is not at its `.pkgmeta`
   pin. Lua only — no Python tests here, unlike upstream.
 - **How it works:** `tests/wow_stubs.lua` is a minimal WoW API mock driven via the exported
   `WoW` table (`WoW.reset()`, `WoW.flushTimers()`, `WoW.sentMessages()`, …). A test `dofile`s
@@ -262,6 +263,29 @@ after LibGlass's, deployed through its own `Tools\deploy.ps1`, tests load it thr
   the sheet then opens without a showcase. The crash self-heal capture rides in
   `AltStableConfig.LibShowcaseCapture` while a presentation is up. The experimental-CVar popup,
   once suppressed, stays off until `/reload` (re-registering it was measured to taint).
+
+## Own-account sync (LibAccountSync)
+
+The owner's own other accounts sync over **LibAccountSync-1.0** (`..\LibAccountSync`, embedded
+like the other two: `.pkgmeta` external `tag: r5`, its non-dot ignores repeated, gitignored, its
+XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests load it through
+`tests/libaccountsync.lua`). It was extracted from this repo's #58 channel (#198).
+
+- **Dual stack.** The legacy channel (`HI8` hello, `CHUNK5`/`DONE8`/`REQ8` on `ALTSTABLE` over
+  `BNSendGameData`) still runs unchanged: v0.10 clients speak only it. A peer moves to the library
+  only after an **AltStable message came from it over the library** (`CAP8` handshake,
+  `LibSync.peers` in `Core.lua`). Removing the legacy channel is a later release.
+- **Per peer, never broadcast.** Requests and replies go with `SendTo(guid, …)`. The library's
+  `Send` (to every account) is never used. A refused `SendTo` falls back to the legacy wire for
+  that one message, still to that one peer.
+- **Independent messages, detected when used.** The instance is made with `messages = true`, and
+  the library route is taken only while `inst.messages == true` and `inst.SendTo` exists: an older
+  copy's snapshot floor drops an older message that completes after a newer one
+  (LibAccountSync#18). Never cache the check at load.
+- **The store is `AltStableConfig.accountSync`** (account-wide, written once through
+  `SetConfigValue`, then by the library). Built on first use with the legacy keys: `bnetKey` at
+  `keyAt = 1`, `bnetTrusted` `true` entries as timestamps, 32-hex keys only.
+- **Library changes are LibAccountSync PRs**, never edits here.
 
 ## Conventions
 

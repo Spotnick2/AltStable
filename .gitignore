@@ -1,8 +1,9 @@
-# The embedded LibGlass-1.0 and LibShowcase-1.0: the packager fetches them
+# The embedded LibGlass-1.0, LibShowcase-1.0 and LibAccountSync-1.0: the packager fetches them
 # (.pkgmeta externals) and Tools/deploy.ps1 copies them from checkouts. Never
 # committed. The other libraries under Libs/ ARE vendored and tracked.
 Libs/LibGlass-1.0/
 Libs/LibShowcase-1.0/
+Libs/LibAccountSync-1.0/
 
 # Packaged zips. Release artifacts belong in GitHub Releases (the packager
 # attaches them to the tag) and on CurseForge — never committed.
