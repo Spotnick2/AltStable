@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fetch_libaccountsync.sh - Clone LibAccountSync-1.0 at the ref .pkgmeta pins, and prove
 # the checkout IS that ref. CI runs it before the tests (they load the library
-# from $LIBSHOWCASE); it also works locally from git bash.
+# from $LIBACCOUNTSYNC); it also works locally from git bash.
 #
 # The url and the pin are read from .pkgmeta, the one place they are written,
 # so CI tests exactly what the packager will embed.

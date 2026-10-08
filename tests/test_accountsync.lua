@@ -129,7 +129,9 @@ local function freshFake()
         return fake.ret
     end
     function fake.Peers() return fake.peers end
-    function fake.SetEnabled(on) fake.enabled = on end
+    fake.setCalls = 0
+    function fake.SetEnabled(on) fake.enabled = on; fake.setCalls = fake.setCalls + 1 end
+    function fake.IsEnabled() return fake.enabled end
     L.inst = fake
     L.Forget()
     return fake
@@ -157,27 +159,46 @@ end
 ------------------------------------------------------------
 -- The handshake
 ------------------------------------------------------------
+-- What went to them over the library, by message: the question (CAP8), the
+-- answer (CAP8|1), a request (REQ8|...).
+local ANSWER = L.MSG_CAP .. "|1"
+local function count(msg, prefix)
+    local n = 0
+    for _, s in ipairs(fake.sent) do
+        if (prefix and s.msg:sub(1, #msg) == msg) or s.msg == msg then n = n + 1 end
+    end
+    return n
+end
+
 reset()
 listBee()
 L.Ping()
-eq("a listed own account we have not heard on gets a CAP8", #fake.sent, 1)
+eq("a listed own account we have not heard on gets a CAP8 question", count(L.MSG_CAP), 1)
 eq("  to its GUID", fake.sent[1] and fake.sent[1].guid, BEE_GUID)
-eq("  the bare command", fake.sent[1] and fake.sent[1].msg, L.MSG_CAP)
 L.Ping()
-eq("  not again within 30 s", #fake.sent, 1)
-WoW.now = WoW.now + 31
-L.Ping()
-eq("  and again after, while it has not answered", #fake.sent, 2)
+eq("  not again within 30 s", count(L.MSG_CAP), 1)
+for _ = 1, 10 do WoW.now = WoW.now + 31; L.Ping() end
+eq("  again every 30 s, five times in all, then no more", count(L.MSG_CAP), 5)
 check("not counted as on the library just for being pinged", L.Peer(BEE) == nil)
 
+reset()
+listBee()
 fromBee(L.MSG_CAP)
-check("a CAP8 from them: on the library", L.Peer(BEE) ~= nil)
-eq("  answered with our own CAP8", fake.sent[3] and fake.sent[3].msg, L.MSG_CAP)
+check("a CAP8 question from them: on the library", L.Peer(BEE) ~= nil)
+eq("  answered with CAP8|1", count(ANSWER), 1)
+eq("  and, found only this way, asked for their data", count(T.MSG_REQUEST_V .. "|", true), 1)
 fromBee(L.MSG_CAP)
-eq("  once: a second CAP8 is not answered (no ping-pong)", #fake.sent, 3)
+eq("  a second question within 5 s is not answered again", count(ANSWER), 1)
+WoW.now = WoW.now + 6
+fromBee(L.MSG_CAP)
+eq("  but after, it is: they may have reloaded and forgotten us", count(ANSWER), 2)
+eq("  and they are not asked for their data twice", count(T.MSG_REQUEST_V .. "|", true), 1)
+WoW.now = WoW.now + 6           -- past the rate limit, so only the rule can hold it
+fromBee(ANSWER)
+eq("an answer is never answered (no ping-pong)", count(ANSWER), 2)
 WoW.now = WoW.now + 31
 L.Ping()
-eq("  and nobody heard on it is pinged again", #fake.sent, 3)
+eq("  and nobody heard on it is pinged", count(L.MSG_CAP), 0)
 
 -- An answer the library refuses (no nonce yet) does not count as given.
 reset()
@@ -186,7 +207,22 @@ fake.ret = 0
 fromBee(L.MSG_CAP)
 fake.ret = 1
 fromBee(L.MSG_CAP)
-eq("a refused answer is answered again at the next CAP8", #fake.sent, 2)
+eq("a refused answer is answered again at the next question", count(ANSWER), 2)
+
+-- Found by the legacy discovery as well: not asked twice.
+reset()
+WoW.bn.accounts[7] = { characterName = BEE, playerGuid = BEE_GUID, isOnline = true,
+                       clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true, regionID = 90,
+                       factionName = "Horde", realmName = "R", bnetAccountID = WoW.bn.me }
+AltStable.RescanOwnAccounts()
+flush()
+check("  (the legacy discovery found it)", AltStable.IsOwnBNetPeer(BEE))
+listBee()
+fake.sent = {}
+WoW.now = WoW.now + 301         -- past the request throttle, so only the rule can hold it
+fromBee(L.MSG_CAP)
+eq("a peer the legacy discovery found is not asked again from here", count(T.MSG_REQUEST_V .. "|", true), 0)
+WoW.bn.accounts[7] = nil
 
 -- The library no longer lists them (logged off, another character): not ours.
 reset()
@@ -392,7 +428,8 @@ reset()
 listBee()
 fromBee("WHAT9|something")
 fromBee("")
-check("an unknown command or an empty payload is ignored", next(AltStableDB) == nil and #fake.sent == 0)
+check("an unknown command or an empty payload is ignored",
+      next(AltStableDB) == nil and count(ANSWER) == 0 and count(L.MSG_DB .. "|", true) == 0)
 
 -- Battle.net gone, or the switch off: nobody is on the library any more.
 reset()
@@ -411,6 +448,32 @@ check("  and forgets who runs it", next(L.peers) == nil)
 AltStableConfig.bnetSync = nil
 AltStable.RescanOwnAccounts()
 eq("  and on again", fake.enabled, true)
+local calls = fake.setCalls
+AltStable.RescanOwnAccounts()
+AltStable.RescanOwnAccounts()
+eq("  told only when the switch changes, not on every scan", fake.setCalls, calls)
+
+-- A library-only peer refuses a database (too large, not-ready) and has no
+-- legacy Battle.net route: the reply goes nowhere, and no frame reaches anyone.
+reset()
+seed()
+listBee()
+fromBee(L.MSG_CAP)
+fake.sent, fake.ret = {}, nil
+T.SendFullDatabase("BNET", BEE)
+eq("a refused database to a library-only peer: no frame to anyone", #wire(), 0)
+eq("  after its one SendTo", count(L.MSG_DB .. "|", true), 1)
+
+-- A pairing made over the legacy channel after the store was built reaches
+-- the library's store too, by the import's rule.
+reset()
+AltStableConfig.bnetKey = OWN
+L.Store()
+T.TrustKey(PEER2)
+check("a key trusted later over the legacy channel is trusted by the library too",
+      type(AltStableConfig.accountSync.trusted[PEER2]) == "number")
+T.TrustKey("0123456789abcdef")
+eq("  but not one the library's rule refuses", AltStableConfig.accountSync.trusted["0123456789abcdef"], nil)
 
 L.inst = real
 print(("test_accountsync: %d passed, %d failed"):format(passed, failed))
