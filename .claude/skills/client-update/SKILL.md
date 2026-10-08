@@ -110,10 +110,12 @@ dumped.
 Edits (branch `build-<build>` from `main`):
 
 1. `Config.lua` - `local MEASURED_ON_BUILD = "<build>"`. This is what silences the login warning.
-2. `tests/wow_stubs.lua` - `function GetBuildInfo() return "<version>", "<build>", "<client date from the dump header, e.g. Sep 29 2026>", 16001 end`.
+2. `tests/wow_stubs.lua` - `function GetBuildInfo() return "<version>", "<build>", "<client date from the dump header, verbatim: a single-digit day keeps its padding, e.g. Oct  5 2026>", 16001 end`.
+   No test hard-codes the build: they read it from this stub.
 3. `docs/RUNBOOK.md` step 3 - the "Expected on <build>" sentence names the new build.
 4. `docs/forever-api-notes.md` - a `## Build <version>.<build> (<date>) - <one-line verdict>` section
-   next to the other build sections (see `## Build 1.60.1.70009` for the shape): what the diff
+   after the newest build section (they run oldest first; see `## Build 1.60.1.70009` for the
+   shape): what the diff
    showed (quote Compare-Dumps' summary), the behaviour line as pasted, and the persistence
    evidence if step 4 was run.
 

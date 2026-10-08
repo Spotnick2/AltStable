@@ -4411,7 +4411,9 @@ do
     check(said("3 characters tracked; 2 with a portrait (1 enhanced)"), "status counts characters, portraits, enhanced")
     check(said("2 portrait captures on record; AltStable Companion's folder is loaded"), "  captures (pairs, not shots) and the folder")
     check(said("sync protocol " .. T.PROTOCOL_VERSION), "  and the sync protocol")
-    check(said("client 1.60.1 (70235), enUS"), "  and the client build and locale")
+    -- From the stub, so a client bump does not have to edit this test.
+    local version, build = GetBuildInfo()
+    check(said("client " .. version .. " (" .. build .. "), enUS"), "  and the client build and locale")
     local P = AltStable._test.Prompt("Copy")
     check(P ~= nil and P:IsShown(), "  and opens the copy box")
     eq(#WoW.popups, before, "  ours, never a StaticPopup (#199)")

@@ -1217,8 +1217,9 @@ end
 
 AltStable.CheckSavedVariablesLoad = CheckSavedVariablesLoad
 
--- PLAYER_ENTERING_WORLD carries (isInitialLogin, isReloadingUi) on
--- 1.60.1.69913 through .70009 - checked against the API dump, not assumed. It
+-- PLAYER_ENTERING_WORLD carries (isInitialLogin, isReloadingUi) from
+-- 1.60.1.69913 on - checked against the API dump, not assumed; the documented
+-- events have not changed since (forever-api-notes, build sections). It
 -- also fires on every zone change with both false, and a zone change is not a
 -- write worth stamping, so those are ignored entirely.
 function AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
@@ -1239,7 +1240,7 @@ end
 -- someone would have noticed.
 ------------------------------------------------------------
 
-local MEASURED_ON_BUILD = "70235"
+local MEASURED_ON_BUILD = "70245"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
 -- A development copy, not a release: deploy.ps1 stamps "dev-<sha>" (or "dev"),
@@ -1272,9 +1273,9 @@ local function CheckClientBuild()
         DEFAULT_CHAT_FRAME:AddMessage(
             "|cffffcc00AltStable:|r this client is build " .. tostring(build)
             .. "; everything in the API notes was measured on " .. MEASURED_ON_BUILD
-            .. ". Treat it as unverified: re-run |cffffff00/apidump|r, re-check "
-            .. "SavedVariables persistence with the probe and the camera CVars (#25), "
-            .. "then bump MEASURED_ON_BUILD in Config.lua.")
+            .. ". Treat it as unverified: re-run |cffffff00/apidump|r and the RUNBOOK "
+            .. "behaviour line (\"When the client updates\"), then bump MEASURED_ON_BUILD "
+            .. "in Config.lua.")
     end
 end
 
