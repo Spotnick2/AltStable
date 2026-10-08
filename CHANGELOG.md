@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.11.0
+
+Your own accounts sync through a shared library, the showcase no longer breaks **Quit**, and
+AltStable's questions are its own windows. Measured on client 1.60.1.70245. The old sync wire
+still runs, so v0.11.0 syncs with v0.10.0, v0.9.0 and v0.8.x.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+There is no new version since v0.10.0: the newest one still finds your game by itself.
+
+### Fixed
+
+- **Quit works after AltStable asks you something**
+  ([#199](https://github.com/Spotnick2/AltStable/issues/199)). Copying the
+  `/alts status` line, forgetting a character, or a sync request could leave the game unable to
+  quit ("AddOn 'AltStable' tried to call the protected function"). Those questions are now
+  AltStable's own windows, not the game's shared dialogs.
+  - They show above the sheet and the showcase. Escape closes the question, not the sheet.
+  - Two at once sit one under the other, never on top.
+  - They stay out of `/alts portrait` captures.
+
+### Changed
+
+- **The camera showcase lets the game talk to you**
+  ([#199](https://github.com/Spotnick2/AltStable/issues/199)). A party invite, a ready check or
+  a loot roll now brings the game's interface back, while the sheet and the camera stay. The
+  interface stays up until you close the sheet. Combat, logging out or a loading screen close the
+  sheet as well as ending the showcase.
+- **Your own other accounts sync through LibAccountSync**
+  ([#198](https://github.com/Spotnick2/AltStable/issues/198)), the library AltStable's Battle.net
+  sync became. Nothing to set up: two accounts that already synced over Battle.net pick it up by
+  themselves, and `/alts bnet` shows which accounts are on it. An account still on an older
+  AltStable keeps syncing the old way.
+
+### Under the hood
+
+- AltStable now embeds three shared libraries: **LibGlass** (the glass look), **LibShowcase** (the
+  camera showcase) and **LibAccountSync** (your own-account sync). Other addons may carry newer
+  copies of them; the newest one installed is the one that runs.
+
 ## v0.10.0-beta
 
 The plugin tabs open at their own size, and the window keeps up with your screen. Measured on

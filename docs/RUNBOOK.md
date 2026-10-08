@@ -383,11 +383,17 @@ What to look for in the zip (re-verified on `v0.2.0-beta`):
 - no `Tools/`, `tests/`, `docs/`, `.github/` or agent files;
 - the libraries, the icons and the raid art present;
 - **`AltStable/Libs/LibGlass-1.0/`** with its XML, `LibGlass.lua`, `LibStub/`,
-  `LICENSE` and **15 `Media/*.tga`** (#184). A missing texture is silent in
+  `LICENSE` and **27 `Media/*.tga`** at r4 (#184; 15 at r1, the disc textures in
+  r2, the thin rims in r3). A missing texture is silent in
   game: `SetTexture` stores the path, the texture draws nothing, and the window
   comes up with no body and no rim rather than with an error. CI asserts the
   dry-run zip holds exactly the pinned commit's files; the published zip is the
   only place to check the real packager fetched it.
+- **`AltStable/Libs/LibShowcase-1.0/`** with its XML, `LibShowcase.lua` and `LICENSE`
+  (#199), and **`AltStable/Libs/LibAccountSync-1.0/`** with its XML,
+  `LibAccountSync.lua`, `LibStub/`, `ChatThrottleLib/` and `LICENSE` (#198). Neither
+  carries `tests/`, `docs/`, `Tools/` or agent files: CurseForge's packager ignores an
+  external's own ignore list, so ours repeats it.
 
 **And read the release notes back as a player.** `Tools/` is excluded, so
 anything registered in there - `/asicon`, `/asprobe`, `/asmodel` - does not
