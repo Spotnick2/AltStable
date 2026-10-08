@@ -8,8 +8,9 @@ enable-nolib-creation: no
 # that moved under a release would be one more variable in a port whose whole
 # problem is "which build is this true for").
 #
-# LibGlass-1.0, the glass material shared by the Glass addons (#184), and
-# LibShowcase-1.0, the camera showcase extracted from SheetUI.lua, are the
+# LibGlass-1.0, the glass material shared by the Glass addons (#184),
+# LibShowcase-1.0, the camera showcase extracted from SheetUI.lua, and
+# LibAccountSync-1.0, the own-account sync extracted from Core.lua (#198), are the
 # externals: each pinned to a TAG, bumped only in a release made anyway.
 # Comments on their own lines only - the packager's YAML reader keeps an inline
 # "# ..." as part of the value (measured in GlassUnitFrames' migration).
@@ -20,6 +21,9 @@ externals:
   Libs/LibShowcase-1.0:
     url: https://github.com/Spotnick2/LibShowcase
     tag: r3
+  Libs/LibAccountSync-1.0:
+    url: https://github.com/Spotnick2/LibAccountSync
+    tag: r5
 
 # One CurseForge project, four addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
@@ -85,3 +89,11 @@ ignore:
   - Libs/LibShowcase-1.0/AGENTS.md
   - Libs/LibShowcase-1.0/CLAUDE.md
   - Libs/LibShowcase-1.0/README.md
+  # The same for LibAccountSync-1.0 (its LICENSE ships, and so do its
+  # ChatThrottleLib/ and LibStub/: its XML loads them).
+  - Libs/LibAccountSync-1.0/tests
+  - Libs/LibAccountSync-1.0/docs
+  - Libs/LibAccountSync-1.0/Tools
+  - Libs/LibAccountSync-1.0/AGENTS.md
+  - Libs/LibAccountSync-1.0/CLAUDE.md
+  - Libs/LibAccountSync-1.0/README.md

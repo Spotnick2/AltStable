@@ -9,12 +9,14 @@
     as top-level folders under Interface\AddOns, so Plugins\Warband deploys to
     AddOns\AltStableWarband rather than inside AltStable.
 
-    The glass material is the embedded LibGlass-1.0 (#184), and the camera
-    showcase the embedded LibShowcase-1.0. The packager fetches them into
+    The glass material is the embedded LibGlass-1.0 (#184), the camera
+    showcase the embedded LibShowcase-1.0, and the own-account sync the
+    embedded LibAccountSync-1.0 (#198). The packager fetches them into
     Libs\ (.pkgmeta externals); for a dev copy this script hands that job to
     each checkout's own deploy.ps1, FIRST, which checks the checkout and may
-    refuse. The checkouts are $env:LIBGLASS, else ..\LibGlass, and
-    $env:LIBSHOWCASE, else ..\LibShowcase.
+    refuse. The checkouts are $env:LIBGLASS, else ..\LibGlass,
+    $env:LIBSHOWCASE, else ..\LibShowcase, and $env:LIBACCOUNTSYNC, else
+    ..\LibAccountSync.
 #>
 
 param(
@@ -33,7 +35,8 @@ $dest = Join-Path $AddOnsPath "AltStable"
 
 $pkgmeta = Get-Content -LiteralPath (Join-Path $RepoRoot ".pkgmeta")
 $libs = @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS; EnvName = "LIBGLASS" },
-          @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE; EnvName = "LIBSHOWCASE" })
+          @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE; EnvName = "LIBSHOWCASE" },
+          @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC; EnvName = "LIBACCOUNTSYNC" })
 foreach ($lib in $libs) {
     $lib.Root = if ($lib.Env) { $lib.Env } else { Join-Path (Split-Path -Parent $RepoRoot) $lib.Name }
     if (-not (Test-Path -LiteralPath (Join-Path $lib.Root "Tools\deploy.ps1"))) {
@@ -106,6 +109,7 @@ $excludeDirs = @(
     # overwrite them.
     (Join-Path $RepoRoot "Libs\LibGlass-1.0"),
     (Join-Path $RepoRoot "Libs\LibShowcase-1.0"),
+    (Join-Path $RepoRoot "Libs\LibAccountSync-1.0"),
     # Plugins are separate addons; they are deployed below, not nested here.
     (Join-Path $RepoRoot "Plugins")
 )

@@ -1632,6 +1632,10 @@ ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
 -- send fails so it can never leak onto the next raw send.
 local CTL_PRIORITIES = { BULK = true, NORMAL = true, ALERT = true }
 ChatThrottleLib = {
+    -- v32's version field: a bundled copy that loads later (LibAccountSync
+    -- carries one) compares it and steps aside for an equal or newer one, as
+    -- in game - without it, that copy's load errors on a nil compare.
+    version = 32,
     -- callbackFn runs after the send, as CTL v32's does (when the message
     -- leaves), with (arg, didSend, sendResult).
     --
@@ -1740,6 +1744,18 @@ function GetTime() return 0 end
 -- anything because every seeded expiry had become "the past". Tests pin their
 -- own WoW.now where a value matters.
 function time() return WoW.now end
+-- GetServerTime() -> time:number (forever-api-1.60.1.70245.md). The same
+-- clock: LibAccountSync stamps keys and stream ids with it.
+function GetServerTime() return WoW.now end
+-- debugprofilestop() -> elapsedMilliseconds:number (the 70245 dump): a
+-- high-resolution clock LibAccountSync mixes into its entropy.
+function debugprofilestop() return os.clock() * 1000 end
+-- fastrandom(low, high) (in the 70245 dump's _G walk): the client's own RNG,
+-- the other half of that entropy.
+function fastrandom(a, b) return math.random(a, b) end
+-- GetCurrentRegion() -> region:number (70245 dump). 90 on the Forever beta, as
+-- the Battle.net stub's regionID (measured, see SelfBNet).
+function GetCurrentRegion() return 90 end
 
 -- WoW exposes `date` as a global (Lua 5.1 only has os.date), and anything
 -- formatting a reset time calls it. Pinned to UTC so a test asserting a weekday

@@ -658,9 +658,37 @@ local function OwnAccountGame(id, me)
     return g
 end
 
+-- The same accounts through LibAccountSync-1.0 (#198); the rest is in "Own
+-- accounts through LibAccountSync" below. One local table: this file's main
+-- chunk is close to Lua 5.1's 200-local limit.
+--   inst   the library instance, or nil (no library, or a broken one)
+--   peers  AuthKey -> { name, guid, realm, faction }: an AltStable message came
+--          from them over the library this session - the only thing that says
+--          they run it (a v0.10 AltStable never does)
+local LibSync = { peers = {} }
+
+-- A peer heard over the library, while the library still lists that GUID
+-- under that name. Stale either way (the account logged off, another
+-- character): forgotten, and never trusted as ours again on the old word.
+function LibSync.Peer(name)
+    local key = AuthKey(name)
+    local p = key and LibSync.peers[key]
+    if not p or not LibSync.inst or not BNetEnabled() then return nil end
+    local ok, listed = pcall(LibSync.inst.Peers)
+    if ok and type(listed) == "table" then
+        for _, q in ipairs(listed) do
+            if q.guid == p.guid and AuthKey(q.name) == key then return p end
+        end
+    end
+    LibSync.peers[key] = nil
+    return nil
+end
+
+-- Ours, by either road: a binding Battle.net attested (the legacy channel), or
+-- an AltStable message the library proved came from our own account.
 local function OwnBNetPeer(name)
     if not BNetEnabled() then return nil end
-    return bnetPeers[AuthKey(name) or ""]
+    return bnetPeers[AuthKey(name) or ""] or LibSync.Peer(name)
 end
 
 -- A presence can stay BLANK - no character, no GUID - after a /reload, even
@@ -1839,7 +1867,9 @@ end
 local routeCheckedAt = {}  -- id -> { key, at }
 local function BNetRoute(target)
     local p = OwnBNetPeer(target)
-    if not p then return nil end
+    -- A peer known only through the library has no game account id here: no
+    -- legacy route to it.
+    if not p or not p.id then return nil end
     local key = AuthKey(target)
     local checked = routeCheckedAt[p.id]
     if checked and checked.key == key and (time() - checked.at) <= 2 then return p end
@@ -2031,7 +2061,122 @@ do
     end
 end
 
+------------------------------------------------------------
+-- Own accounts through LibAccountSync (#198)
+------------------------------------------------------------
+-- The library carries one whole message to ONE own account (SendTo), proven
+-- ours, and delivers what our accounts send us (OnMessage). AltStable keeps
+-- everything else: what to send, when, the gates, the merge.
+--
+-- Three messages, each a library payload (opaque bytes, binary-safe):
+--   REQ8|<watermark>    a request, exactly the legacy command
+--   DB8|<deflated>      a reply or a push: the payload ChunkAndSendPayload
+--                       would chunk, deflated (no addon-channel encoding)
+--   CAP8                "I run AltStable on the library": the handshake
+-- An unknown command is dropped: a newer AltStable's, or nonsense.
+--
+-- Used only while BOTH sides are known to run it: a peer is on the library
+-- once an AltStable message came from it that way (LibSync.peers), and that
+-- starts with CAP8. Until then, and for a v0.10 AltStable forever, the legacy
+-- channel (HI8, CHUNK5/DONE8 over BNSendGameData) carries everything, as before.
+--
+-- Only with a copy that delivers INDEPENDENT messages (inst.messages, r5+).
+-- r4's delivery is a snapshot floor: a database overtaken by a later request
+-- or ping was dropped silently (LibAccountSync#18). Checked when used, like
+-- SendTo: an instance made by an older copy gains functions when a newer copy
+-- loads, which can be after this file.
+local MSG_DB  = "DB"  .. PROTOCOL_VERSION
+local MSG_CAP = "CAP" .. PROTOCOL_VERSION
+LibSync.MSG_DB, LibSync.MSG_CAP = MSG_DB, MSG_CAP
+LibSync.pinged = {}      -- guid -> when our CAP8 last went to them
+LibSync.answered = {}    -- guid -> true: our CAP8 answer was taken by the library
+
+function LibSync.Usable()
+    local inst = LibSync.inst
+    return inst ~= nil and inst.messages == true and type(inst.SendTo) == "function"
+        and BNetEnabled()
+end
+
+-- Forget who runs it: Battle.net went away, or the switch went off.
+function LibSync.Forget()
+    LibSync.peers, LibSync.pinged, LibSync.answered = {}, {}, {}
+end
+
+-- One message to one GUID. True when the library took it: onDone(ok) then
+-- runs exactly once, when it is on the wire or has failed. False when it was
+-- refused: nothing was sent, and onDone never runs.
+--
+-- The library can report BEFORE SendTo returns (a peer without our nonce yet
+-- is "failed"/"not-ready" at once, and ChatThrottleLib can send at once), so
+-- its report is held until the return value says which case this is.
+function LibSync.SendGuid(guid, msg, onDone, target)
+    if not LibSync.Usable() or type(guid) ~= "string" then return false end
+    local accepted, early
+    local function report(ok)
+        if not ok and target and NoteUnreachable then NoteUnreachable(target, AuthKey(target), "BNET") end
+        if onDone then onDone(ok) end
+    end
+    local function result(_, status)
+        if accepted == nil then
+            early = status
+        elseif accepted then
+            report(status == "sent")
+        end
+    end
+    local okCall, r = pcall(LibSync.inst.SendTo, guid, msg, result)
+    accepted = okCall and r == 1
+    if accepted and early ~= nil then report(early == "sent") end
+    return accepted
+end
+
+-- The library route, when the legacy one would be Battle.net: "BNET", or a
+-- whisper to our own account. Never a WHISPER_DIRECT (an answer to a whisper
+-- goes back the way it came) and never a group channel.
+function LibSync.RouteFor(channel, target)
+    if channel ~= "BNET" and channel ~= "WHISPER" then return nil end
+    if not LibSync.Usable() then return nil end
+    return LibSync.Peer(target)
+end
+
+-- A request: over the library to a peer that runs it, else the legacy wire.
+-- A refusal falls back to legacy for this one message - still to this one
+-- peer, never a broadcast.
+function LibSync.SendRequest(msg, channel, target, prio, onSent)
+    local p = LibSync.RouteFor(channel, target)
+    if p and LibSync.SendGuid(p.guid, msg, onSent, target) then return end
+    QueueWire(msg, channel, target, prio, onSent)
+end
+
+-- The handshake. Each of our own accounts the library lists and we have not
+-- heard on it yet gets a CAP8, every 30 s at most until it answers. SendTo to
+-- a peer whose nonce we lack is refused - and makes the library say hello, so
+-- the next try goes through.
+function LibSync.Ping()
+    if not LibSync.Usable() then return end
+    local ok, listed = pcall(LibSync.inst.Peers)
+    if not ok or type(listed) ~= "table" then return end
+    local now = time()
+    for _, q in ipairs(listed) do
+        local key = AuthKey(q.name)
+        local known = key and LibSync.peers[key]
+        if type(q.guid) == "string" and not (known and known.guid == q.guid)
+            and (now - (LibSync.pinged[q.guid] or 0)) >= 30 then
+            LibSync.pinged[q.guid] = now
+            LibSync.SendGuid(q.guid, MSG_CAP)
+        end
+    end
+end
+
 local function ChunkAndSendPayload(payload, channel, target)
+
+    -- Our own account on the library: the whole payload as one message. A
+    -- refusal (no nonce yet, too large, switched off) falls through to the
+    -- chunks below, still to this one peer.
+    local libPeer = LibSync.RouteFor(channel, target)
+    if libPeer and LibDeflate then
+        local deflated = LibDeflate:CompressDeflate(payload or "", { level = 8 })
+        if LibSync.SendGuid(libPeer.guid, MSG_DB .. "|" .. deflated, nil, target) then return end
+    end
 
     -- Compress the whole payload once (DEFLATE crushes the repetitive recipe
     -- data), then make it addon-channel safe. The body is opaque bytes chunked
@@ -2417,7 +2562,7 @@ function RequestCharacters(channel, target, force, onSent)
     -- server-side drop. ALERT also puts it ahead of that queue - which
     -- /alts sync relies on, since its request is the reachability check that
     -- decides whether the push goes out at all.
-    QueueWire(MSG_REQUEST_V .. "|" .. wm, channel, target, "ALERT", onSent)
+    LibSync.SendRequest(MSG_REQUEST_V .. "|" .. wm, channel, target, "ALERT", onSent)
     WatchSyncPeer(target)
     -- We asked, so their answer may come in (#61) - if it starts in time.
     if target then GrantConsent(target, false, true) end
@@ -2580,9 +2725,14 @@ end
 
 function ScanOwnAccounts()
     AltStable._bnetLastScan = time()
+    -- The library follows the same switch (the Options toggle rescans).
+    if LibSync.inst and type(LibSync.inst.SetEnabled) == "function" then
+        pcall(LibSync.inst.SetEnabled, (AltStableConfig or {}).bnetSync ~= false)
+    end
     if not BNetEnabled() then
         bnetPeers, presence, bnetCapable, learnedNames, helloSent = {}, {}, {}, {}, {}
         myNonce, theirNonce = {}, {}
+        LibSync.Forget()
         return
     end
     -- A learned id that went offline or away is forgotten: whoever comes back
@@ -2650,6 +2800,7 @@ function ScanOwnAccounts()
         if not bnetPeers[key] then presence[key] = nil end
     end
     for _, p in pairs(bnetPeers) do OnNewPresence(p) end
+    LibSync.Ping()
 end
 AltStable.RescanOwnAccounts = ScanOwnAccounts
 
@@ -2669,6 +2820,11 @@ function AltStable.OwnBNetPeers()
     local out = {}
     if not BNetEnabled() then return out end
     for _, p in pairs(bnetPeers) do out[#out + 1] = p end
+    -- And those heard only over the library.
+    for key in pairs(LibSync.peers) do
+        local p = not bnetPeers[key] and LibSync.Peer(key)
+        if p then out[#out + 1] = p end
+    end
     table.sort(out, function(a, b) return a.name < b.name end)
     return out
 end
@@ -2782,8 +2938,8 @@ local function RequestResync(peer, reason, transport)
         C_Timer.After(2, function()
             if SyncAuthFor(peer) == AUTH_NEVER then return end
             -- The way the failed stream came (Codex, #142).
-            QueueWire(MSG_REQUEST_V .. "|" .. GetPeerWatermark(peer),
-                      transport == "BNET" and "BNET" or "WHISPER_DIRECT", peer, "ALERT")
+            LibSync.SendRequest(MSG_REQUEST_V .. "|" .. GetPeerWatermark(peer),
+                              transport == "BNET" and "BNET" or "WHISPER_DIRECT", peer, "ALERT")
         end)
         -- The retry's answer is a NEW stream: let it start, as the original
         -- was let in. This continues an admitted exchange; RequestResync is
@@ -2804,6 +2960,44 @@ end
 -- grace window (DONE arrived before a late/reordered chunk). Reads the
 -- DONE's checksum stashed on the buffer as `buf.checksum`.
 ------------------------------------------------------------
+
+-- A complete, decoded payload from a peer, by either transport: a character
+-- record or a whole (delta) database. The chunked stream's end (CompleteStream)
+-- and a library message (LibSync.Receive) both land here.
+function LibSync.Apply(peer, buffer)
+    -- A complete, decodable payload arrived — stop the stall-watch for this peer.
+    ClearSyncWatch(peer)
+
+    -- Dispatch
+    if buffer:sub(1, 5) == MSG_CHAR .. "\n" then
+        local charPayload = buffer:sub(6)
+        local c = DeserializeChar(charPayload)
+        if c then
+            Print(peer .. " sent character data for " .. (c.name or "unknown") .. ".")
+            ReceiveCharacter(c, peer)
+        end
+    else
+        Print("Receiving data from " .. peer .. "...")
+        local before = 0
+        for _ in pairs(AltStableDB) do before = before + 1 end
+        local maxTS, peerNow = DeserializeFullDB(buffer, peer)
+        -- Advance our delta watermark for this peer so the next request only
+        -- pulls what changes after this point.
+        AdvancePeerWatermark(peer, maxTS, peerNow)
+        local after = 0
+        for _ in pairs(AltStableDB) do after = after + 1 end
+        local newChars = after - before
+        if newChars > 0 then
+            Print("Sync with " .. peer .. " complete. " .. after .. " characters known (" .. newChars .. " new).")
+        else
+            Print("Sync with " .. peer .. " complete. " .. after .. " characters known.")
+        end
+    end
+
+    -- Success — clear the retry budget.
+    if autoRetryCounts then autoRetryCounts[AuthKey(peer) or peer] = nil end
+    lastStreamFrom[AuthKey(peer) or peer] = time()   -- answers a discovery retry (#58)
+end
 
 local function CompleteStream(peer, bkey)
     local buf = incomingBuffers[bkey]
@@ -2881,39 +3075,29 @@ local function CompleteStream(peer, bkey)
         return
     end
 
-    -- A complete, decodable stream arrived — stop the stall-watch for this peer.
-    ClearSyncWatch(peer)
-
-    -- Dispatch
-    if buffer:sub(1, 5) == MSG_CHAR .. "\n" then
-        local charPayload = buffer:sub(6)
-        local c = DeserializeChar(charPayload)
-        if c then
-            Print(peer .. " sent character data for " .. (c.name or "unknown") .. ".")
-            ReceiveCharacter(c, peer)
-        end
-    else
-        Print("Receiving data from " .. peer .. "...")
-        local before = 0
-        for _ in pairs(AltStableDB) do before = before + 1 end
-        local maxTS, peerNow = DeserializeFullDB(buffer, peer)
-        -- Advance our delta watermark for this peer so the next request only
-        -- pulls what changes after this point.
-        AdvancePeerWatermark(peer, maxTS, peerNow)
-        local after = 0
-        for _ in pairs(AltStableDB) do after = after + 1 end
-        local newChars = after - before
-        if newChars > 0 then
-            Print("Sync with " .. peer .. " complete. " .. after .. " characters known (" .. newChars .. " new).")
-        else
-            Print("Sync with " .. peer .. " complete. " .. after .. " characters known.")
-        end
-    end
-
-    -- Success — clear retry budget and buffer for this stream.
-    if autoRetryCounts then autoRetryCounts[AuthKey(peer) or peer] = nil end
-    lastStreamFrom[AuthKey(peer) or peer] = time()   -- answers a discovery retry (#58)
+    LibSync.Apply(peer, buffer)
     finish()
+end
+
+-- A DB8 from our own account over the library: one whole payload, admitted
+-- the way a legacy stream's first packet is - refused for good, or not
+-- approved and not asked for, and it is dropped unread (MayAdmit refuses a
+-- never; NoteRefusedStream says nothing to one). One difference: a legacy
+-- stream admitted at its first packet may finish after the consent window
+-- closes; this payload is judged once, as it arrives, whole.
+function LibSync.Receive(peer, deflated)
+    if not MayAdmit(peer) then
+        NoteRefusedStream(peer)
+        return
+    end
+    NoteSyncActivity(peer)
+    local buffer = LibDeflate and LibDeflate:DecompressDeflate(deflated or "")
+    if not buffer then
+        Print("|cffff0000Sync data from " .. peer .. " could not be decompressed|r; discarded.")
+        RequestResync(peer, "undecodable data.", "BNET")
+        return
+    end
+    LibSync.Apply(peer, buffer)
 end
 
 -- Every chunk present, with the DONE seen?
@@ -3441,6 +3625,95 @@ local function HandleAddonMessage(prefix, message, channel, sender, transport)
 
 end
 
+------------------------------------------------------------
+-- The LibAccountSync instance (#198)
+------------------------------------------------------------
+-- The store is account-wide (AltStableConfig; Export.lua never touches it) and
+-- holds the household key. Built on first use WITH the keys the legacy channel
+-- already shares, so two accounts that paired over it are paired here on day
+-- one, without both presences having to be full once more:
+--   * our bnetKey becomes the key, at keyAt 1 - older than any key the library
+--     makes - so it wins the library's oldest-key choice, even where another
+--     addon's store (GlassChat's) already holds one; that store keeps its own;
+--   * each bnetTrusted key becomes trusted, seen now. Only `true` entries:
+--     every one came from an account Battle.net verified as ours (the hello
+--     handler is the only writer).
+-- Only keys of exactly 32 lowercase hex, the library's own rule; the legacy
+-- channel accepted shorter ones. The library picks its key after PLAYER_LOGIN,
+-- from every registered store - and this one registers at load, so the import
+-- is always there first.
+local function AccountSyncStore()
+    if type(AltStableConfig) ~= "table" then return nil end
+    local t = AltStableConfig.accountSync
+    if type(t) == "table" then return t end
+    -- Through the config seam; not loaded yet (Config.lua) means not yet.
+    if not AltStable.SetConfigValue then return nil end
+    local function valid(k) return type(k) == "string" and #k == 32 and k:match("^[0-9a-f]+$") ~= nil end
+    t = { trusted = {} }
+    local own = AltStableConfig.bnetKey
+    if valid(own) then t.key, t.keyAt = own, 1 end
+    local now = time()
+    for k, v in pairs(type(AltStableConfig.bnetTrusted) == "table" and AltStableConfig.bnetTrusted or {}) do
+        if v == true and valid(k) and k ~= own then t.trusted[k] = now end
+    end
+    AltStable.SetConfigValue("accountSync", t)
+    return t
+end
+LibSync.Store = AccountSyncStore
+
+-- What came from our own account over the library. The sender is the
+-- library's word (Blizzard's sender id, proven ours), never the message's.
+function LibSync.OnMessage(payload, sender)
+    if type(payload) ~= "string" or type(sender) ~= "table" then return end
+    local name, guid = sender.name, sender.guid
+    local key = AuthKey(name)
+    if not key or type(guid) ~= "string" or not BNetEnabled() then return end
+    -- An AltStable message, so they run it: from now on, the library to them.
+    LibSync.peers[key] = { name = name, guid = guid, realm = sender.realm, faction = sender.faction }
+    local cmd, body = payload:match("^([^|]*)|?(.*)$")
+    if cmd == MSG_CAP then
+        -- Answered once a session, and only counted once the library took it:
+        -- a refused answer (no nonce yet) is answered again next time.
+        if not LibSync.answered[guid] and LibSync.SendGuid(guid, MSG_CAP) then
+            LibSync.answered[guid] = true
+        end
+    elseif cmd == MSG_REQUEST_V then
+        -- Every gate of the legacy path (never, consent, a pending request);
+        -- the reply goes back as "BNET", which is the library to them now.
+        HandleAddonMessage(PREFIX, payload, "WHISPER", name, "BNET")
+    elseif cmd == MSG_DB then
+        LibSync.Receive(name, body)
+    end
+end
+
+do
+    local lib, minor
+    if LibStub then lib, minor = LibStub:GetLibrary("LibAccountSync-1.0", true) end
+    if lib and type(lib.New) == "function" then
+        local ok, inst = pcall(lib.New, lib, {
+            addon = "AltStable",
+            store = AccountSyncStore,
+            -- Independent messages, not snapshots (LibAccountSync#18).
+            messages = true,
+            -- A whole database, deflated, is about 9 KB for 28 characters
+            -- (measured, #198); the cap leaves room to grow.
+            maxPayload = 32768,
+            report = function(text, kind)
+                if kind == "error" or kind == "warning" then Print(tostring(text)) end
+            end,
+        })
+        if ok and type(inst) == "table" then
+            LibSync.inst = inst
+            -- Right after New: a message that completes with no handler is
+            -- used up.
+            if type(inst.OnMessage) == "function" then inst.OnMessage(LibSync.OnMessage) end
+        end
+    end
+    LibSync.minor = minor
+    -- The handshake again while someone is still unanswered: the library can
+    -- prove an account at any moment, with no event of ours to notice it.
+    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(30, function() LibSync.Ping() end) end
+end
 
 ------------------------------------------------------------
 -- Event handler
@@ -3524,6 +3797,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     if event == "BN_DISCONNECTED" then
         bnetPeers, presence, bnetCapable, learnedNames, helloSent = {}, {}, {}, {}, {}
         myNonce, theirNonce = {}, {}
+        LibSync.Forget()
         return
     end
     if event == "BN_CONNECTED" then bnetUpSince = time() end
@@ -4350,6 +4624,23 @@ SlashCmdList["ALTSTABLE"] = function(args)
         Print(("  %d game account(s) known; found: %s; last scan: %s"):format(known,
             #names > 0 and table.concat(names, ", ") or "none",
             AltStable._bnetLastScan and (time() - AltStable._bnetLastScan) .. " s ago" or "never"))
+        -- The library (#198): its own account of itself, then who answered.
+        local inst = LibSync.inst
+        if not inst then
+            Print("  LibAccountSync: not loaded - the legacy channel carries everything")
+        else
+            Print(("  LibAccountSync MINOR %s, independent messages %s, SendTo %s"):format(
+                tostring(LibSync.minor), inst.messages == true and "yes" or "NO (legacy only)",
+                type(inst.SendTo) == "function" and "yes" or "NO (legacy only)"))
+            local okD, iter = pcall(inst.Diagnostics)
+            if okD and type(iter) == "function" then
+                for line in iter do Print("    " .. tostring(line)) end
+            end
+            local on = {}
+            for _, p in pairs(LibSync.peers) do on[#on + 1] = p.name end
+            table.sort(on)
+            Print("  on the library: " .. (#on > 0 and table.concat(on, ", ") or "nobody yet"))
+        end
         return
     end
 
@@ -4757,6 +5048,7 @@ local _seam = {
     MSG_CHUNK_V        = MSG_CHUNK_V,
     MSG_DONE_V         = MSG_DONE_V,
     MSG_REQUEST_V      = MSG_REQUEST_V,
+    LibSync            = LibSync,
     CommandVersion     = CommandVersion,
     CHUNK_VERSION      = CHUNK_VERSION,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests

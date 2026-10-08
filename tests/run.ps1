@@ -34,12 +34,15 @@ try {
     # The tests load the embedded libraries from checkouts: LibGlass-1.0 (#184)
     # from $env:LIBGLASS, else ..\LibGlass (tests/libglass.lua), and
     # LibShowcase-1.0 from $env:LIBSHOWCASE, else ..\LibShowcase
-    # (tests/libshowcase.lua). They take them as they are; CI loads the
+    # (tests/libshowcase.lua), and LibAccountSync-1.0 from
+    # $env:LIBACCOUNTSYNC, else ..\LibAccountSync (tests/libaccountsync.lua).
+    # They take them as they are; CI loads the
     # .pkgmeta pins. Running against something else is fine (a library change
     # before a pin bump) but must not pass for a check of what ships.
     $pkgmeta = Get-Content ".pkgmeta"
     foreach ($lib in @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS },
-                       @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE })) {
+                       @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE },
+                       @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC })) {
         $root = if ($lib.Env) { $lib.Env } else { Join-Path (Split-Path -Parent $RepoRoot) $lib.Name }
         # This library's own external block: its pin, not the first in the file.
         $pin = $null; $inBlock = $false
