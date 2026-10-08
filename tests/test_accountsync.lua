@@ -475,6 +475,71 @@ check("a key trusted later over the legacy channel is trusted by the library too
 T.TrustKey("0123456789abcdef")
 eq("  but not one the library's rule refuses", AltStableConfig.accountSync.trusted["0123456789abcdef"], nil)
 
+------------------------------------------------------------
+-- A peer only the library proved ours is a sync target (Codex, #204)
+------------------------------------------------------------
+local function targetsFor(name)
+    local out = {}
+    for _, t in ipairs(T.GetSyncTargets()) do
+        if t.target == name then out[#out + 1] = t end
+    end
+    return out
+end
+
+reset()
+listBee()
+fromBee(L.MSG_CAP)
+local tb = targetsFor(BEE)
+eq("a library-only peer is a sync target", #tb, 1)
+eq("  over \"BNET\", the library route", tb[1] and tb[1].channel, "BNET")
+AltStableConfig.whitelist = { BEE }
+eq("  once, whitelisted as well", #targetsFor(BEE), 1)
+AltStableConfig.whitelist = nil
+WoW.bn.accounts[7] = { characterName = BEE, playerGuid = BEE_GUID, isOnline = true,
+                       clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true, regionID = 90,
+                       factionName = "Horde", realmName = "R", bnetAccountID = WoW.bn.me }
+AltStable.RescanOwnAccounts()
+eq("  once, found by the legacy discovery as well", #targetsFor(BEE), 1)
+WoW.bn.accounts[7] = nil
+AltStable.RescanOwnAccounts()
+AltStableConfig.syncAuth = { [BEE:lower()] = "never" }
+eq("  never, when refused for good", #targetsFor(BEE), 0)
+AltStableConfig.syncAuth = nil
+fake.peers = {}
+eq("  and not once the library stops listing it", #targetsFor(BEE), 0)
+
+-- /alts cleanup wipes the database, then pushes and asks every target: a
+-- library-only peer is how the data comes back.
+reset()
+seed()
+listBee()
+fromBee(L.MSG_CAP)
+fake.sent = {}
+local realRefresh = AltStable.RefreshSheet
+AltStable.RefreshSheet = nil
+SlashCmdList["ALTSTABLE"]("cleanup")
+for _ = 1, 5 do WoW.now = WoW.now + 5; flush() end
+AltStable.RefreshSheet = realRefresh
+check("/alts cleanup pushes to a library-only peer", count(L.MSG_DB .. "|", true) >= 1)
+check("  and asks it for its data back", count(T.MSG_REQUEST_V .. "|", true) >= 1)
+
+------------------------------------------------------------
+-- The saved off switch holds from the start (Codex, #204)
+------------------------------------------------------------
+-- r5 reads store.enabled whenever nothing set it this session, and absent
+-- means on: an upgrade with Battle.net sync off must not let the library
+-- start before the first rescan turns it off.
 L.inst = real
+LAS.state.enabled = nil
+real.enabled = nil
+AltStableConfig = { bnetSync = false }
+local st = L.Store()
+eq("a store built with Battle.net sync off is switched off", st.enabled, false)
+eq("  and the real library reads it so", real.IsEnabled(), false)
+AltStableConfig.bnetSync = nil
+L.Store()
+eq("  and follows the setting back on", st.enabled, true)
+eq("  as the library reads it", real.IsEnabled(), true)
+
 print(("test_accountsync: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

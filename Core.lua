@@ -1200,6 +1200,14 @@ local function GetSyncTargets()
                 table.insert(targets, { channel = channel, target = p.name })
             end
         end
+        -- And those only the library proved ours (#198): "BNET", which takes
+        -- the library route to them. Whitelisted too: still one target.
+        for key, p in pairs(LibSync.peers) do
+            if not seen[key] and LibSync.Peer(p.name) and SyncAuthFor(p.name) ~= AUTH_NEVER then
+                seen[key] = true
+                table.insert(targets, { channel = "BNET", target = p.name })
+            end
+        end
     end
     -- "Refuse them for good" has to mean both directions. Gating only the
     -- inbound request left a denied peer on the whitelist, so every login
@@ -3671,12 +3679,20 @@ end
 -- is always there first.
 function LibSync.Store()
     if type(AltStableConfig) ~= "table" then return nil end
+    -- The library's own switch is store.enabled, read whenever nothing set it
+    -- this session - and absent means ON. So it follows Battle.net sync from
+    -- the moment the store exists, not from the first rescan after login:
+    -- with sync off, the library never says a hello or scans at all.
+    local on = AltStableConfig.bnetSync ~= false
     local t = AltStableConfig.accountSync
-    if type(t) == "table" then return t end
+    if type(t) == "table" then
+        if t.enabled ~= on then t.enabled = on end
+        return t
+    end
     -- Through the config seam; not loaded yet (Config.lua) means not yet.
     if not AltStable.SetConfigValue then return nil end
     local function valid(k) return type(k) == "string" and #k == 32 and k:match("^[0-9a-f]+$") ~= nil end
-    t = { trusted = {} }
+    t = { trusted = {}, enabled = on }
     local own = AltStableConfig.bnetKey
     if valid(own) then t.key, t.keyAt = own, 1 end
     local now = time()
