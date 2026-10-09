@@ -100,21 +100,16 @@ local LibDeflate = LibStub and LibStub:GetLibrary("LibDeflate", true)
 --   instead), which would abort the whole send. 255 - 35 = 220.
 local MAX_CHUNK = 220
 
--- Stream id, one per ChunkAndSendPayload call. Seeded from the clock, not 0:
--- a counter that restarted at 1 on every /reload handed a peer "stream 1"
--- again within seconds, and the receiver now ignores late packets of a stream
--- it already finished (#58). Up to 8 digits; MAX_CHUNK's header budget allows
--- "CHUNK5|99999999|99999/99999|". Receivers parse any %d+, so nothing on the
--- wire changes.
+-- Stream id, one per ChunkAndSendPayload call. Seeded from the clock, not 0,
+-- so ids stay distinct across a /reload: a counter that restarted at 1 handed
+-- a peer "stream 1" again within seconds (#58). Up to 8 digits; MAX_CHUNK's
+-- header budget allows "CHUNK5|99999999|99999/99999|". Receivers parse any
+-- %d+, so nothing on the wire changes.
 local streamCounter = (time() % 1000000) * 100
 -- When a DONE arrives but the buffer isn't complete, wait this long for
 -- late/reordered chunks before declaring the stream incomplete. Prevents a
 -- DONE that overtook an in-flight chunk from triggering a needless resync.
 local CHUNK_DONE_GRACE      = 2     -- seconds
--- Battle.net game data is delivered UNORDERED (ChatThrottleLib v32's own note),
--- so a DONE can overtake several chunks: settle longer before calling the rest
--- missing (#58).
-local BNET_SETTLE           = 6     -- seconds
 
 -- incomingBuffers[senderShort] = {
 --   chunks = { [seq] = chunkBody, ... },   -- sparse; receiver fills as packets arrive
@@ -128,11 +123,6 @@ local incomingBuffers = {}
 -- stream stays refused even if consent arrives half way - an Allow clicked
 -- while a push is still arriving must not start a buffer from its middle.
 local refusedStreams = {}
--- Streams that are OVER - merged, or failed and handed to the resync - by
--- buffer key. A late packet of one (unordered delivery, a DONE straggling in
--- after the settle) is ignored instead of starting a buffer, or - for a late
--- DONE - wiping another stream's retry budget (#58, Codex).
-local finishedStreams = {}
 
 -- Which protocol a command string belongs to, and whether we can speak it.
 --
@@ -220,11 +210,6 @@ C_Timer.NewTicker(60, function()
     end
     for key, at in pairs(refusedStreams) do
         if (now - at) > 120 then refusedStreams[key] = nil end
-    end
-    -- Short: long enough for any straggler of an unordered stream, short
-    -- enough that an old client's restarted stream ids cannot collide for long.
-    for key, at in pairs(finishedStreams) do
-        if (now - at) > 30 then finishedStreams[key] = nil end
     end
 end)
 
@@ -524,29 +509,19 @@ local function AuthKey(peer)
 end
 
 ------------------------------------------------------------
--- Your own other accounts, through Battle.net (#58)
+-- Your own other accounts, through Battle.net (#58, #198)
 ------------------------------------------------------------
 -- Whispers stop at the ruleset and the faction (measured, 70124). Battle.net
 -- game data between the owner's OWN accounts crosses both (measured: PvP2<->PvE,
 -- Horde<->Alliance, both directions). So the owner's other accounts are found
 -- through Battle.net and synced over it, with no whitelist and nothing typed.
 --
--- What is measured, and shapes all of this (docs/SYNC-DISCOVERY.md):
---   * a game account id is a handle LOCAL to the client that hands it out -
---     never stored, never exchanged; looked up here, or taken from a message;
---   * GetGameAccountInfoByID(id) is Blizzard's word on who is behind an id;
---     GetAccountInfoByGUID(guid).bnetAccountID says whose Battle.net account
---     it is - compared with OUR OWN, read on this client at the same moment.
+-- LibAccountSync-1.0 does the finding and the proving (docs/SYNC-DISCOVERY.md
+-- has the measurements it rests on); "Own accounts through LibAccountSync"
+-- below is what AltStable does with it. The legacy channel that did this here
+-- (HI8 hellos, CHUNK5/DONE8 over BNSendGameData) is gone (#206).
 --
 -- Session state only: nothing here is written to SavedVariables.
-local bnetPeers = {}      -- AuthKey(name) -> { id, name, guid, faction, realm }
--- Heard FROM over Battle.net this session (review of #142): only then does
--- ordinary traffic to a peer move to Battle.net. A peer with the switch off, or
--- an AltStable from before #58, never speaks it - and must keep its whisper
--- sync instead of being sent replies it drops unread. Discovery requests go
--- over Battle.net regardless (channel "BNET"): that is how a peer gets heard.
-local bnetCapable = {}    -- AuthKey -> true
-local bnetSeen = {}       -- AuthKey -> true: known this session as our own account
 
 local function BNetEnabled()
     AltStableConfig = AltStableConfig or {}
@@ -558,114 +533,18 @@ local function BNetEnabled()
     return true
 end
 
--- Who we are on Battle.net: { account, tag, game, project }, or nil.
---
--- Right after a login or /reload our OWN presence can still be blank (measured,
--- 70124: GetAccountInfoByGUID(our GUID) nil, our own game account with no
--- character - and the other client saw us the same way). So the BattleTag also
--- comes from BNGetInfo(), which does not wait for the presence; and the game
--- project, which only the presence carries, is reported missing rather than
--- guessed - the scan waits for it (ScanOwnAccounts).
-local function SelfBNet()
-    local s = {}
-    local ok, me = pcall(C_BattleNet.GetAccountInfoByGUID, UnitGUID("player"))
-    if ok and type(me) == "table" then
-        s.account, s.tag = me.bnetAccountID, me.battleTag
-        local g = type(me.gameAccountInfo) == "table" and me.gameAccountInfo or {}
-        s.game, s.project, s.region = g.gameAccountID, g.wowProjectID, g.regionID
-    end
-    if (s.tag == nil or s.account == nil) and BNGetInfo then
-        local okI, presenceID, battleTag = pcall(BNGetInfo)
-        if okI then
-            s.account = s.account or presenceID
-            s.tag = s.tag or battleTag
-        end
-    end
-    if s.project == nil and C_BattleNet.GetGameAccountInfoByGUID then
-        local okG, g = pcall(C_BattleNet.GetGameAccountInfoByGUID, UnitGUID("player"))
-        if okG and type(g) == "table" then
-            s.project = g.wowProjectID
-            s.region = s.region or g.regionID
-            s.game = s.game or g.gameAccountID
-        end
-    end
-    -- WHICH GAME we are (owner, 2026-10-01: a beta, a live realm, a PTR or TBC
-    -- Anniversary on the same Battle.net account must never sync with us).
-    -- Known only from our own presence, which can stay blank - so it is
-    -- remembered from any time it WAS known, and with nothing known the caller
-    -- fails closed. wowProjectID was 18 and regionID 90 on the Forever beta
-    -- (measured); a live Forever is expected to differ in region (unmeasured).
-    AltStableConfig = AltStableConfig or {}
-    if s.project ~= nil and s.region ~= nil then
-        if AltStableConfig.bnetSelfProject ~= s.project or AltStableConfig.bnetSelfRegion ~= s.region then
-            AltStable.SetConfigValue("bnetSelfProject", s.project)
-            AltStable.SetConfigValue("bnetSelfRegion", s.region)
-        end
-    else
-        s.project = s.project or AltStableConfig.bnetSelfProject
-        s.region = s.region or AltStableConfig.bnetSelfRegion
-    end
-    if s.account == nil and s.tag == nil then return nil end
-    return s
-end
-
--- Is this Battle.net account record ours? By account id or by BattleTag, and
--- never by two missing values.
-local function IsOurAccount(acct, me)
-    if type(acct) ~= "table" or not me then return false end
-    if me.account ~= nil and acct.bnetAccountID == me.account then return true end
-    if me.tag ~= nil and acct.battleTag == me.tag then return true end
-    return false
-end
-
--- The one eligibility test (#58, Codex): the game account behind `id`, when it
--- is a character of THIS game, online, in this region, on OUR OWN Battle.net
--- account - and not us. Anything failing any part is nil: a friend, another
--- game, a failed lookup (two nils must never compare equal).
---
--- The second return says WHY not, for /alts bnet - the only way to see this
--- work in game, where script errors are off by default.
-local function OwnAccountGame(id, me)
-    if type(id) ~= "number" then return nil, "no id" end
-    if not BNetEnabled() then return nil, "Battle.net sync off or not connected" end
-    local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-    if not ok or type(g) ~= "table" then return nil, "unknown id" end
-    if not g.isOnline then return nil, "offline" end
-    if g.clientProgram ~= "WoW" then return nil, "not WoW (" .. tostring(g.clientProgram) .. ")" end
-    if g.isInCurrentRegion == false then return nil, "another region" end
-    if type(g.characterName) ~= "string" or g.characterName == "" then return nil, "no character name" end
-    if type(g.playerGuid) ~= "string" or g.playerGuid == "" then return nil, "no character GUID" end
-    -- Ourselves are excluded by GUID - the one test that holds for every id
-    -- our own game account could be handed.
-    if g.playerGuid == UnitGUID("player") then return nil, "this character" end
-    me = me or SelfBNet()     -- a scan passes it in: one lookup per scan, not per id
-    if not me then return nil, "our Battle.net identity is not known yet" end
-    -- The same GAME and the same REGION as us, or nothing - never skipped: a
-    -- live realm, a PTR or TBC Anniversary on our own Battle.net account must
-    -- not sync with this one (owner, 2026-10-01). Not known (our presence blank
-    -- and never seen): fail closed.
-    if me.project == nil then return nil, "our own game is not known yet (our presence is blank)" end
-    if g.wowProjectID ~= me.project then
-        return nil, ("another game (project %s, ours %s)"):format(tostring(g.wowProjectID), tostring(me.project))
-    end
-    if me.region ~= nil and g.regionID ~= nil and g.regionID ~= me.region then
-        return nil, ("another region (%s, ours %s)"):format(tostring(g.regionID), tostring(me.region))
-    end
-    local okA, acct = pcall(C_BattleNet.GetAccountInfoByGUID, g.playerGuid)
-    if not okA or not IsOurAccount(acct, me) then
-        return nil, "someone else's Battle.net account"
-    end
-    return g
-end
-
 -- The same accounts through LibAccountSync-1.0 (#198); the rest is in "Own
 -- accounts through LibAccountSync" below. One local table: this file's main
 -- chunk is close to Lua 5.1's 200-local limit.
---   inst   the library instance, or nil (no library, or a broken one)
---   peers  AuthKey -> { name, guid, realm, faction }: an AltStable message came
---          from them over the library this session - the only thing that says
---          they run it (a v0.10 AltStable never does)
-local LibSync = { peers = {} }
+--   inst       the library instance, or nil (no library, or a broken one)
+--   peers      AuthKey -> { name, guid, realm, faction }: an AltStable message
+--              came from them over the library this session - the only thing
+--              that says they run it (the library also lists accounts that run
+--              only GlassChat, say)
+--   seen       AuthKey -> true: known as our own account this session, even
+--              after the library stopped listing them
+--   announced  AuthKey -> true: "found your other account" said once
+local LibSync = { peers = {}, seen = {}, announced = {} }
 
 -- A peer heard over the library, while the library still lists that GUID
 -- under that name. Stale either way (the account logged off, another
@@ -684,334 +563,10 @@ function LibSync.Peer(name)
     return nil
 end
 
--- Ours, by either road: a binding Battle.net attested (the legacy channel), or
--- an AltStable message the library proved came from our own account.
+-- Ours: an AltStable message the library proved came from our own account.
 local function OwnBNetPeer(name)
     if not BNetEnabled() then return nil end
-    return bnetPeers[AuthKey(name) or ""] or LibSync.Peer(name)
-end
-
--- A presence can stay BLANK - no character, no GUID - after a /reload, even
--- after a relog (measured, 70124). Then Battle.net cannot say whose account an
--- id is, or who is on it. Two facts that do not depend on the presence:
---
---   * this client only knows game accounts that are OURS or a FRIEND'S - so an
---     id with a blank presence that is not in any friend's list of game
---     accounts is our own other account ("by elimination");
---   * who is on it, it says itself: a hello over Battle.net, MSG_HELLO, carries
---     the character's name and GUID. Our own account vouches for itself; the
---     sender id is still Blizzard's.
---
--- A presence that is NOT blank is never judged by elimination: OwnAccountGame
--- decides those, so another WoW flavour on our account still gets nothing.
-local MSG_HELLO = "HI" .. PROTOCOL_VERSION
-local learnedNames = {}   -- game account id -> { name, guid, faction, realm }, from its hello
-
--- Every game account id of every friend - or nil when that cannot be known
--- in full. FAIL CLOSED (Codex, #142): a gap in the list would make a friend
--- "ours by elimination", so any missing or failed answer means "unknown", and
--- unknown never trusts. A list still loading reads as empty, so elimination
--- also waits until Battle.net has been up for a minute (bnetUpSince) - a
--- practical guard, not a proof of completeness.
-local BNET_SETTLED_AFTER = 60
-local bnetUpSince = 0      -- when Battle.net came up this session (login, BN_CONNECTED)
-
-local function FriendGameIDs()
-    if not (BNGetNumFriends and C_BattleNet.GetFriendNumGameAccounts
-            and C_BattleNet.GetFriendGameAccountInfo) then return nil end
-    if (time() - bnetUpSince) < BNET_SETTLED_AFTER then return nil end
-    local ok, n = pcall(BNGetNumFriends)
-    n = ok and tonumber(n)
-    if not n then return nil end
-    local ids = {}
-    for i = 1, n do
-        local okN, m = pcall(C_BattleNet.GetFriendNumGameAccounts, i)
-        m = okN and tonumber(m)
-        if not m then return nil end
-        for j = 1, m do
-            local okG, gi = pcall(C_BattleNet.GetFriendGameAccountInfo, i, j)
-            if not okG or type(gi) ~= "table" or not gi.gameAccountID then return nil end
-            ids[gi.gameAccountID] = true
-        end
-    end
-    return ids
-end
-
-local function OwnByElimination(id, me, friends)
-    if type(id) ~= "number" or not BNetEnabled() then return false end
-    local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-    if not ok or type(g) ~= "table" or g.isOnline == false then return false end
-    -- BLANK means no name AND no GUID: a GUID that is there decides through
-    -- OwnAccountGame, never elimination (Codex, #142).
-    if type(g.characterName) == "string" and g.characterName ~= "" then return false end
-    if type(g.playerGuid) == "string" and g.playerGuid ~= "" then return false end
-    if g.clientProgram ~= nil and g.clientProgram ~= "WoW" then return false end
-    me = me or SelfBNet()
-    if me and me.game == id then return false end
-    friends = friends or FriendGameIDs()
-    if not friends or friends[id] then return false end
-    return true
-end
-
-------------------------------------------------------------
--- SHA-256 and HMAC-SHA-256, pure Lua 5.1 (#58)
-------------------------------------------------------------
--- For the household-key handshake below: a peer proves it holds a key we
--- trust WITHOUT sending it - HMAC(key, our nonce | its name). The client offers
--- no hash to addons, and LibDeflate's checksums (Adler-32, CRC-32) are linear:
--- one observed proof would let anyone compute the next. Arithmetic only, no
--- `bit` library, so the game and the tests run the same code; the inputs are
--- a few dozen bytes a few times a session. Checked against the FIPS 180-2 and
--- RFC 4231 vectors in tests/test_comm.lua.
-local SHA256, HMAC256
-do
-    local TWO32 = 4294967296
-    local XOR4, AND4 = {}, {}
-    for x = 0, 15 do
-        XOR4[x], AND4[x] = {}, {}
-        for y = 0, 15 do
-            local rx, ra, bv, xx, yy = 0, 0, 1, x, y
-            for _ = 1, 4 do
-                local xb, yb = xx % 2, yy % 2
-                if xb ~= yb then rx = rx + bv end
-                if xb == 1 and yb == 1 then ra = ra + bv end
-                xx, yy, bv = (xx - xb) / 2, (yy - yb) / 2, bv * 2
-            end
-            XOR4[x][y], AND4[x][y] = rx, ra
-        end
-    end
-    local function nib(op, a, b)
-        local r, m = 0, 1
-        for _ = 1, 8 do
-            local na, nb = a % 16, b % 16
-            r = r + op[na][nb] * m
-            a, b, m = (a - na) / 16, (b - nb) / 16, m * 16
-        end
-        return r
-    end
-    local function bxor(a, b) return nib(XOR4, a, b) end
-    local function band(a, b) return nib(AND4, a, b) end
-    local function bnot(a) return 4294967295 - a end
-    local function shr(a, n) return math.floor(a / 2 ^ n) end
-    local function ror(a, n)
-        local lo = a % 2 ^ n
-        return (a - lo) / 2 ^ n + lo * 2 ^ (32 - n)
-    end
-
-    local K = {
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-    }
-
-    -- The raw 32-byte digest of a byte string.
-    local function digest(msg)
-        local len = #msg
-        msg = msg .. "\128" .. string.rep("\0", (55 - len) % 64)
-        local bits = len * 8
-        local tail = {}
-        for i = 8, 1, -1 do
-            tail[i] = string.char(bits % 256)
-            bits = math.floor(bits / 256)
-        end
-        msg = msg .. table.concat(tail)
-        local H = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 }
-        local w = {}
-        for chunk = 1, #msg, 64 do
-            for i = 0, 15 do
-                local b1, b2, b3, b4 = msg:byte(chunk + i * 4, chunk + i * 4 + 3)
-                w[i] = ((b1 * 256 + b2) * 256 + b3) * 256 + b4
-            end
-            for i = 16, 63 do
-                local x, y = w[i - 15], w[i - 2]
-                local s0 = bxor(bxor(ror(x, 7), ror(x, 18)), shr(x, 3))
-                local s1 = bxor(bxor(ror(y, 17), ror(y, 19)), shr(y, 10))
-                w[i] = (w[i - 16] + s0 + w[i - 7] + s1) % TWO32
-            end
-            local a, b, c, d, e, f, g, h = H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]
-            for i = 0, 63 do
-                local S1 = bxor(bxor(ror(e, 6), ror(e, 11)), ror(e, 25))
-                local ch = bxor(band(e, f), band(bnot(e), g))
-                local t1 = (h + S1 + ch + K[i + 1] + w[i]) % TWO32
-                local S0 = bxor(bxor(ror(a, 2), ror(a, 13)), ror(a, 22))
-                local maj = bxor(bxor(band(a, b), band(a, c)), band(b, c))
-                local t2 = (S0 + maj) % TWO32
-                h, g, f, e = g, f, e, (d + t1) % TWO32
-                d, c, b, a = c, b, a, (t1 + t2) % TWO32
-            end
-            H[1], H[2], H[3], H[4] = (H[1] + a) % TWO32, (H[2] + b) % TWO32, (H[3] + c) % TWO32, (H[4] + d) % TWO32
-            H[5], H[6], H[7], H[8] = (H[5] + e) % TWO32, (H[6] + f) % TWO32, (H[7] + g) % TWO32, (H[8] + h) % TWO32
-        end
-        local out = {}
-        for i = 1, 8 do
-            local v = H[i]
-            out[i] = string.char(math.floor(v / 16777216) % 256, math.floor(v / 65536) % 256,
-                                 math.floor(v / 256) % 256, v % 256)
-        end
-        return table.concat(out)
-    end
-
-    local function hex(s)
-        return (s:gsub(".", function(ch) return ("%02x"):format(ch:byte()) end))
-    end
-
-    function SHA256(msg) return hex(digest(msg)) end
-
-    function HMAC256(key, msg)
-        if #key > 64 then key = digest(key) end
-        key = key .. string.rep("\0", 64 - #key)
-        local ipad, opad = {}, {}
-        for i = 1, 64 do
-            local k = key:byte(i)
-            ipad[i] = string.char(bxor(k, 0x36))
-            opad[i] = string.char(bxor(k, 0x5c))
-        end
-        return hex(digest(table.concat(opad) .. digest(table.concat(ipad) .. msg)))
-    end
-end
-
--- THE HOUSEHOLD KEY (Codex, #142 round 2). Elimination cannot PROVE
--- ownership: a friends list that answers "zero" while still loading looks
--- complete, and a friend's blank account would be taken for ours - reproduced:
--- a friend was sent a chunk. So elimination is only a hint for where to say
--- hello; TRUST for a blank presence needs proof:
---
---   * every account has a random key (AltStableConfig.bnetKey);
---   * it is sent ONLY to an account Battle.net itself verified as ours (full
---     presence, our account id or BattleTag) - a friend never receives it;
---   * received FROM such a verified account, it is remembered as trusted
---     (AltStableConfig.bnetTrusted);
---   * a blank presence is believed only when its hello carries a trusted key.
---
--- So two accounts must have seen each other's full presence once, ever; after
--- that a blank presence on either side no longer stops them.
---
--- BOTH presences blank (Codex, #142 round 3): neither side can verify the
--- other, so neither may send its key. Instead each proves it HOLDS a trusted
--- key: every hello carries a nonce, fixed per id, and answers the other side's
--- latest nonce with HMAC(own key, nonce | own name). The receiver checks that
--- against the keys it trusts. A friend sees nonces and proofs only - no key, and
--- a proof is good for one id's nonce and one name. Proofs go only where hellos
--- go: ids Battle.net verifies, or that are ours by elimination.
-
--- Unpredictable bytes: math.random may start from the same seed every launch,
--- so the clocks and who we are are mixed in.
-local entropyCount = 0
-local function Entropy(extra)
-    entropyCount = entropyCount + 1
-    return SHA256(table.concat({ tostring(extra or ""), entropyCount, time(),
-        tostring(GetTime and GetTime() or 0), tostring(debugprofilestop and debugprofilestop() or 0),
-        tostring(UnitGUID and UnitGUID("player") or ""), math.random(0, 65535),
-        math.random(0, 65535), tostring({}) }, "|"))
-end
-
-local function OwnKey()
-    AltStableConfig = AltStableConfig or {}
-    local k = AltStableConfig.bnetKey
-    if type(k) ~= "string" or #k < 16 then
-        k = Entropy("key"):sub(1, 32)
-        AltStable.SetConfigValue("bnetKey", k)
-    end
-    return k
-end
-local function KeyTrusted(k)
-    return type(k) == "string" and #k >= 16 and type(AltStableConfig.bnetTrusted) == "table"
-        and AltStableConfig.bnetTrusted[k] == true
-end
-local function TrustKey(k)
-    if type(k) ~= "string" or #k < 16 or KeyTrusted(k) then return end
-    local copy = {}
-    for key, v in pairs(AltStableConfig.bnetTrusted or {}) do copy[key] = v end
-    copy[k] = true
-    AltStable.SetConfigValue("bnetTrusted", copy)
-    -- A pairing made over the legacy channel after the library's store was
-    -- built (the import runs once): the library learns it too, by the same
-    -- rule as the import - 32 lowercase hex, never our own key.
-    local store = AltStableConfig.accountSync
-    if type(store) == "table" and #k == 32 and k:match("^[0-9a-f]+$") and k ~= AltStableConfig.bnetKey then
-        if type(store.trusted) ~= "table" then store.trusted = {} end
-        if store.trusted[k] == nil then store.trusted[k] = time() end
-    end
-end
-
-local myNonce, theirNonce = {}, {}   -- game account id -> the nonce we send it / it sent us
-local function NonceFor(id)
-    myNonce[id] = myNonce[id] or Entropy(OwnKey() .. id):sub(1, 16)
-    return myNonce[id]
-end
-local function HelloProof(key, nonce, name)
-    return HMAC256(key, "AltStable#58|" .. nonce .. "|" .. (AuthKey(name) or "")):sub(1, 32)
-end
--- Does `proof` answer OUR nonce for this id, by a key we trust, for this name?
-local function ProofTrusted(proof, id, name)
-    local nonce = myNonce[id]
-    if not nonce or type(proof) ~= "string" or #proof ~= 32
-        or type(AltStableConfig.bnetTrusted) ~= "table" then return false end
-    for k, v in pairs(AltStableConfig.bnetTrusted) do
-        if v == true and HelloProof(k, nonce, name) == proof then return true end
-    end
-    return false
-end
-
--- The game record for an id: Battle.net's own; or - presence blank - what a
--- hello carrying a trusted key told us, while that id is still online and
--- still blank.
-local function GameFor(id, me, friends)
-    local g = OwnAccountGame(id, me)
-    if g then
-        -- Battle.net speaks for this id now: its word replaces anything learned.
-        learnedNames[id] = nil
-        return g
-    end
-    local l = learnedNames[id]
-    if not l then return nil end
-    local ok, raw = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-    if not ok or type(raw) ~= "table" or raw.isOnline == false
-        or (type(raw.characterName) == "string" and raw.characterName ~= "") then
-        learnedNames[id] = nil      -- gone, or no longer blank: Battle.net decides now
-        return nil
-    end
-    return { characterName = l.name, playerGuid = l.guid, factionName = l.faction,
-             realmName = l.realm }
-end
-
--- Tell an own account who we are. Over Battle.net only, ALERT priority.
--- At most once a minute per id - not once per session (Codex, #142): the other
--- side may /reload and forget us while our presence stays blank, and its new
--- hello must get ours back. Counted only once it has actually gone out.
-local HELLO_EVERY = 60
-local helloSent = {}      -- game account id -> when our hello last went to it
-local function SendHello(id, force)
-    if not force and helloSent[id] and (time() - helloSent[id]) < HELLO_EVERY then return end
-    -- The household key goes only to an account Battle.net verifies as ours.
-    local key = OwnAccountGame(id) and OwnKey() or ""
-    -- Our proof answers THEIR latest nonce (see the household key).
-    local proof = theirNonce[id] and HelloProof(OwnKey(), theirNonce[id], PLAYER_NAME) or ""
-    local msg = table.concat({ MSG_HELLO, PLAYER_NAME or "", UnitGUID("player") or "",
-        (UnitFactionGroup and UnitFactionGroup("player")) or "",
-        (GetRealmName and GetRealmName()) or "", key, NonceFor(id), proof }, "|")
-    local function sent(_, didSend) if didSend ~= false then helloSent[id] = time() end end
-    local ok = ChatThrottleLib and ChatThrottleLib.BNSendGameData
-        and pcall(ChatThrottleLib.BNSendGameData, ChatThrottleLib, "ALERT", PREFIX, msg, "WHISPER", id,
-                  nil, sent)
-    if not ok then
-        local okS, r = pcall(C_BattleNet.SendGameData, id, PREFIX, msg)
-        sent(nil, okS and (r == nil or r == true or r == 0))
-    end
-end
-
--- Forget what an id told us about itself: it went offline, its binding went,
--- or Battle.net now says otherwise.
-local function ForgetLearned(id)
-    learnedNames[id] = nil
-    helloSent[id] = nil
-    myNonce[id], theirNonce[id] = nil, nil   -- whoever comes back proves itself afresh
+    return LibSync.Peer(name)
 end
 
 local function SyncAuthFor(peer)
@@ -1025,7 +580,7 @@ local function SyncAuthFor(peer)
     for _, name in ipairs(AltStableConfig.whitelist or {}) do
         if AuthKey(name) == key then return AUTH_AUTO end
     end
-    -- Your own other account, attested by Battle.net this session: trusted like
+    -- Your own other account, proven by the library this session: trusted like
     -- a whitelist entry. A stored answer - never in particular - came first.
     if OwnBNetPeer(peer) then return AUTH_AUTO end
     return AUTH_ASK
@@ -1182,26 +737,11 @@ local function GetSyncTargets()
 
     local whitelist = AltStableConfig.whitelist or {}
     local targets, seen = {}, {}
-    -- Your own other accounts found through Battle.net (#58) count too, so the
+    -- Your own other accounts on the library (#58, #198) count too, so the
     -- login sync, a bare /alts sync and /alts cleanup reach them with no
-    -- whitelist. One entry per peer: whitelisted AND found is one target.
-    -- A peer heard over Battle.net: "WHISPER", which QueueWire routes over it.
-    -- One NOT heard yet: an explicit "BNET" request - unless it is whitelisted,
-    -- whose whisper is the route the player configured and may be the only one
-    -- that works (Battle.net sync off there, or an older AltStable) - Codex,
-    -- #142. Discovery's own requests probe Battle.net separately.
+    -- whitelist: "BNET", the library route to them. One entry per peer:
+    -- whitelisted AND found is one target.
     if BNetEnabled() then
-        local listed = {}
-        for _, name in ipairs(whitelist) do listed[AuthKey(name) or ""] = true end
-        for key, p in pairs(bnetPeers) do
-            if SyncAuthFor(p.name) ~= AUTH_NEVER then
-                seen[key] = true
-                local channel = (bnetCapable[key] or listed[key]) and "WHISPER" or "BNET"
-                table.insert(targets, { channel = channel, target = p.name })
-            end
-        end
-        -- And those only the library proved ours (#198): "BNET", which takes
-        -- the library route to them. Whitelisted too: still one target.
         for key, p in pairs(LibSync.peers) do
             if not seen[key] and LibSync.Peer(p.name) and SyncAuthFor(p.name) ~= AUTH_NEVER then
                 seen[key] = true
@@ -1853,99 +1393,28 @@ local function StampWhisper(key) lastWhisperAt[key] = time() end
 local SEND_OK = 0
 local SEND_TARGET_OFFLINE = (Enum and Enum.SendAddonMessageResult
     and Enum.SendAddonMessageResult.TargetOffline) or 12
-local SEND_TARGET_REQUIRED = (Enum and Enum.SendAddonMessageResult
-    and Enum.SendAddonMessageResult.TargetRequired) or 6
 local NoteUnreachable            -- defined with the unreachable-target handling below
-local RequestBNetScan            -- defined with the Battle.net discovery below
 
 local function SendSucceeded(result)
     return result == nil or result == true or result == SEND_OK
 end
 
--- Remove a Battle.net binding - only the one a failure was about. A late
--- callback for an old id must not remove the newer binding that replaced it.
-local function DropBNetBinding(key, id)
-    local p = key and bnetPeers[key]
-    if p and p.id == id then
-        bnetPeers[key] = nil
-        -- What was heard over the old binding says nothing about the next
-        -- one: it may come back with Battle.net sync off (Codex, #142).
-        bnetCapable[key] = nil
-        ForgetLearned(id)
-    end
-end
-
--- The route to `target` over Battle.net, re-checked right before use: the id
--- must still be our own other account AND still that character.
---
--- Re-checked at most every 2 s per binding: a 100-chunk reply used to make
--- three Battle.net API calls per chunk, all in the frame that queued them.
-local routeCheckedAt = {}  -- id -> { key, at }
-local function BNetRoute(target)
-    local p = OwnBNetPeer(target)
-    -- A peer known only through the library has no game account id here: no
-    -- legacy route to it.
-    if not p or not p.id then return nil end
-    local key = AuthKey(target)
-    local checked = routeCheckedAt[p.id]
-    if checked and checked.key == key and (time() - checked.at) <= 2 then return p end
-    local g = GameFor(p.id)
-    if not g or AuthKey(g.characterName) ~= key then
-        routeCheckedAt[p.id] = nil
-        DropBNetBinding(key, p.id)
-        if RequestBNetScan then RequestBNetScan() end
-        return nil
-    end
-    routeCheckedAt[p.id] = { key = key, at = time() }
-    return p
-end
-
--- One message to our own other account over Battle.net. ChatThrottleLib v32
--- paces BNSendGameData like addon messages (255 bytes, per-destination queue);
--- the callback is (arg, didSend, result). TargetOffline / TargetRequired mean
--- the binding is gone: drop it, look again, and treat the peer as unreachable.
--- Never stamped for the whisper echo filter: no "No player named" follows it.
-local function QueueBNet(msg, target, route, prio, onSent)
-    local key, id = AuthKey(target), route.id
-    local function sent(_, didSend, result)
-        local gone = result == SEND_TARGET_OFFLINE or result == SEND_TARGET_REQUIRED
-        if gone then
-            DropBNetBinding(key, id)
-            if RequestBNetScan then RequestBNetScan() end
-            if NoteUnreachable then NoteUnreachable(target, key, "BNET") end
-        end
-        if onSent then onSent(didSend ~= false and not gone) end
-    end
-    local ok = ChatThrottleLib and ChatThrottleLib.BNSendGameData
-        and pcall(ChatThrottleLib.BNSendGameData, ChatThrottleLib, prio or "BULK", PREFIX, msg,
-                  "WHISPER", id, PREFIX .. "BNET" .. (key or ""), sent, key)
-    if not ok then
-        local okS, r = pcall(C_BattleNet.SendGameData, id, PREFIX, msg)
-        sent(key, okS and SendSucceeded(r), okS and r or nil)
-    end
-end
-
 -- onSent(didSend), optional, runs when the message actually leaves - which
 -- under ChatThrottleLib can be well after this call returns.
+--
+-- Addon whispers only. Our own other accounts go over the library, which
+-- callers try first (LibSync.SendRequest, ChunkAndSendPayload); what reaches
+-- here as "BNET" is a library send that was refused, and there is no other
+-- way across: nothing is sent, never a whisper that cannot cross.
 local function QueueWire(msg, channel, target, prio, onSent)
-    -- Your own other account goes over Battle.net (#58): every whisper path -
-    -- a reply, a request, a resync - once it has been HEARD over Battle.net.
-    -- "BNET" is the explicit form (discovery, /alts sync to a found account):
-    -- Battle.net or nothing, never a whisper that cannot cross.
     if channel == "BNET" then
-        local route = BNetRoute(target)
-        if route then return QueueBNet(msg, target, route, prio, onSent) end
         if onSent then onSent(false) end
         return
     end
-    -- "WHISPER_DIRECT": a plain whisper, never promoted - the answer to a
-    -- request that came BY whisper goes back the same way (Codex, #142): a
-    -- peer that whispers may well be ignoring Battle.net right now.
+    -- "WHISPER_DIRECT": a plain whisper - the answer to a request that came BY
+    -- whisper goes back the same way (Codex, #142), never over the library.
     if channel == "WHISPER_DIRECT" then
         channel = "WHISPER"
-    elseif channel == "WHISPER" and bnetCapable[AuthKey(target) or ""] then
-        local route = BNetRoute(target)
-        if route then return QueueBNet(msg, target, route, prio, onSent) end
     end
     local key = channel == "WHISPER" and AuthKey(target) or nil
     local function sent(_, didSend, result)
@@ -2037,8 +1506,9 @@ local function SayUnreachable(name, key, transport)
     unreachableToldAt[key] = time()
     -- Over Battle.net, faction is no obstacle: say what IS known. That holds for
     -- a character known as our own this session even when this attempt fell
-    -- back to a whisper (its binding just went): it logged off or switched.
-    if transport == "BNET" or bnetSeen[key] then
+    -- back to a whisper (the library stopped listing it): it logged off or
+    -- switched.
+    if transport == "BNET" or LibSync.seen[key] then
         Print("|cffff8800" .. name .. " cannot be reached through Battle.net|r - they logged "
             .. "off or switched character, so this sync cannot go through.")
         return
@@ -2085,16 +1555,18 @@ end
 -- everything else: what to send, when, the gates, the merge.
 --
 -- Three messages, each a library payload (opaque bytes, binary-safe):
---   REQ8|<watermark>    a request, exactly the legacy command
+--   REQ8|<watermark>    a request, exactly the whisper command
 --   DB8|<deflated>      a reply or a push: the payload ChunkAndSendPayload
 --                       would chunk, deflated (no addon-channel encoding)
 --   CAP8, CAP8|1       "do you run AltStable on the library?" and "yes": the handshake
 -- An unknown command is dropped: a newer AltStable's, or nonsense.
 --
--- Used only while BOTH sides are known to run it: a peer is on the library
--- once an AltStable message came from it that way (LibSync.peers), and that
--- starts with CAP8. Until then, and for a v0.10 AltStable forever, the legacy
--- channel (HI8, CHUNK5/DONE8 over BNSendGameData) carries everything, as before.
+-- A peer is on the library once an AltStable message came from it that way
+-- (LibSync.peers), and that starts with CAP8. The library lists every own
+-- account that runs ANY addon on it - GlassChat alone, say - so CAP8 is how we
+-- learn which of them run AltStable. Nothing else reaches our own accounts
+-- across factions and rulesets since the legacy channel went (#206): a v0.10
+-- AltStable, which only spoke that, no longer syncs with us over Battle.net.
 --
 -- Only with a copy that delivers INDEPENDENT messages (inst.messages, r5+).
 -- r4's delivery is a snapshot floor: a database overtaken by a later request
@@ -2103,9 +1575,8 @@ end
 -- loads, which can be after this file.
 --
 -- CAP8 is a question, CAP8|1 its answer. A question is always answered (a
--- peer that reloaded has forgotten us and asks again - the legacy hello is
--- answered for the same reason), at most every few seconds; an answer is
--- never answered, so two accounts cannot ping-pong.
+-- peer that reloaded has forgotten us and asks again), at most every few
+-- seconds; an answer is never answered, so two accounts cannot ping-pong.
 LibSync.MSG_DB  = "DB"  .. PROTOCOL_VERSION
 LibSync.MSG_CAP = "CAP" .. PROTOCOL_VERSION
 LibSync.PING_EVERY, LibSync.PING_TRIES = 30, 5
@@ -2150,20 +1621,20 @@ function LibSync.SendGuid(guid, msg, onDone, target)
     return accepted
 end
 
--- The library route, when the legacy one would be Battle.net: "BNET", or a
--- whisper to our own account. Never a WHISPER_DIRECT (an answer to a whisper
--- goes back the way it came) and never a group channel.
+-- The library route: "BNET", or a whisper to our own account on it. Never a
+-- WHISPER_DIRECT (an answer to a whisper goes back the way it came) and never
+-- a group channel.
 function LibSync.RouteFor(channel, target)
     if channel ~= "BNET" and channel ~= "WHISPER" then return nil end
     if not LibSync.Usable() then return nil end
     return LibSync.Peer(target)
 end
 
--- A request: over the library to a peer that runs it, else the legacy wire.
--- A refusal falls back to legacy for this one message - still to this one
--- peer, never a broadcast (and to a peer known only through the library, the
--- legacy "BNET" route is none: onSent(false), as for any unreachable peer).
--- `prio` is the legacy wire's: the library has no priorities, so a request can
+-- A request: over the library to a peer that runs it, else the whisper wire.
+-- A refusal falls back for this one message - still to this one peer, never a
+-- broadcast: a whisper if it was one, and for "BNET" nothing at all
+-- (onSent(false), as for any unreachable peer).
+-- `prio` is the whisper wire's: the library has no priorities, so a request can
 -- wait behind a database still draining to the same account (a few seconds).
 function LibSync.SendRequest(msg, channel, target, prio, onSent)
     local p = LibSync.RouteFor(channel, target)
@@ -2173,9 +1644,11 @@ end
 
 -- The handshake. Each of our own accounts the library lists and we have not
 -- heard on it yet gets a CAP8 question, every 30 s at most, five times. SendTo
--- to a peer whose nonce we lack is refused - and makes the library say hello,
--- so the next try goes through. Five unanswered questions mean it runs no
--- AltStable on the library (GlassChat alone, or a v0.10 AltStable): asked
+-- to a peer whose nonce we lack is refused - and makes the library say hello
+-- (at most every 5 s, its own limit) - so a refused question is not counted:
+-- it is asked again at the next tick, which is what makes first contact quick
+-- now that no legacy hello comes first. Five unanswered questions mean it runs
+-- no AltStable on the library (GlassChat alone, or a v0.10 AltStable): asked
 -- again only after Battle.net reconnects or the switch is turned back on
 -- (LibSync.Forget), and it can always ask us.
 function LibSync.Ping()
@@ -2188,9 +1661,9 @@ function LibSync.Ping()
         local known = key and LibSync.peers[key]
         local asked = type(q.guid) == "string" and (LibSync.pinged[q.guid] or { at = 0, n = 0 })
         if asked and not (known and known.guid == q.guid) and asked.n < LibSync.PING_TRIES
-            and (now - asked.at) >= LibSync.PING_EVERY then
+            and (now - asked.at) >= LibSync.PING_EVERY
+            and LibSync.SendGuid(q.guid, LibSync.MSG_CAP) then
             LibSync.pinged[q.guid] = { at = now, n = asked.n + 1 }
-            LibSync.SendGuid(q.guid, LibSync.MSG_CAP)
         end
     end
 end
@@ -2199,15 +1672,15 @@ local function ChunkAndSendPayload(payload, channel, target)
 
     -- Our own account on the library: the whole payload as one message. A
     -- refusal (no nonce yet, too large, switched off) falls through to the
-    -- chunks below, still to this one peer, where there is a legacy route. To
-    -- a peer known only through the library there is none over Battle.net
-    -- (BNetRoute needs a game account id): the chunks go nowhere, as to any
-    -- unreachable peer, and the requester's stall watch says so.
+    -- chunks below, still to this one peer, when it was a whisper. Over
+    -- "BNET" there is no other way: nothing goes, as to any unreachable peer,
+    -- and the requester's stall watch says so.
     local libPeer = LibSync.RouteFor(channel, target)
     if libPeer and LibDeflate then
         local deflated = LibDeflate:CompressDeflate(payload or "", { level = 8 })
         if LibSync.SendGuid(libPeer.guid, LibSync.MSG_DB .. "|" .. deflated, nil, target) then return end
     end
+    if channel == "BNET" then return end
 
     -- Compress the whole payload once (DEFLATE crushes the repetitive recipe
     -- data), then make it addon-channel safe. The body is opaque bytes chunked
@@ -2634,127 +2107,30 @@ local function BroadcastRequest(force)
 end
 
 ------------------------------------------------------------
--- Battle.net discovery (#58)
+-- Battle.net discovery (#58, #198)
 ------------------------------------------------------------
--- Game account ids are small local handles (measured: 2, 3, 7, 8), so walk
--- 1..BNET_MAX_ID; a database character whose id falls beyond that is still
--- found by GUID. Each scan REBUILDS the map: a peer who left drops out, and a
--- changed id or character replaces the old binding.
-local BNET_MAX_ID = 128
-local BNET_RETRY_EVERY, BNET_RETRIES = 30, 2
-local presence = {}        -- AuthKey -> { id, guid, tries, requestedAt } for this session
-local bnetAnnounced = {}   -- AuthKey -> true: "found your other account" said once
-local lastStreamFrom = {}  -- AuthKey -> when a stream from them last completed
-local inboundChecked = {}  -- senderID -> { g, at }: a received packet's check, cached 2 s
+-- The library finds our own accounts and proves them ours. A scan here keeps
+-- it in step with the Battle.net sync switch and asks each account it lists
+-- whether it runs AltStable (LibSync.Ping); an answer is handled in
+-- LibSync.OnMessage, which announces the account and asks for its data.
 
 function AltStable.IsOwnBNetPeer(name) return OwnBNetPeer(name) ~= nil end
 
--- The route a sync the player types takes: over Battle.net to an own account
--- heard there (WHISPER routes it), or not yet heard and not whitelisted
--- (BNET - the only way across factions and rulesets); otherwise the whisper
--- the player configured.
+-- The route a sync the player types takes: over the library to an own account
+-- on it (BNET - the only way across factions and rulesets), unless it is
+-- whitelisted, whose whisper is the route the player configured (a whisper to
+-- an own account on the library still goes over it, and falls back to the
+-- whisper when refused); otherwise the whisper.
 function AltStable.SyncChannelFor(name)
     local key = AuthKey(name)
-    if not key or not OwnBNetPeer(name) or bnetCapable[key] then return "WHISPER" end
+    if not key or not OwnBNetPeer(name) then return "WHISPER" end
     for _, w in ipairs((AltStableConfig or {}).whitelist or {}) do
         if AuthKey(w) == key then return "WHISPER" end
     end
     return "BNET"
 end
 
--- One record shape for a found peer, wherever it was found.
--- The realm NAME is not always there: the record for a message's sender came
--- with only a numeric realmID (measured, 70124 - "Alliance, ?"). The database
--- knows that character's realm when it has synced it before.
-local function PeerRecord(id, g)
-    local c = (AltStableDB or {})[g.playerGuid]
-    local realm = g.realmDisplayName or g.realmName
-        or (type(c) == "table" and c.realm) or nil
-    return { id = id, name = g.characterName, guid = g.playerGuid,
-             faction = g.factionName, realm = realm }
-end
-
-local function NoteBNetPeer(g, id)
-    local key = AuthKey(g.characterName)
-    local cur = bnetPeers[key]
-    if cur and cur.id == id and cur.guid == g.playerGuid then return cur end
-    local p = PeerRecord(id, g)
-    bnetPeers[key] = p
-    bnetSeen[key] = true
-    return p
-end
-
--- A stream from them still arriving?
-local function StreamFromInProgress(key)
-    for bkey in pairs(incomingBuffers) do
-        if bkey:match("^(.*)#%d+$") == key then return true end
-    end
-    return false
-end
-
--- The one action for a peer seen this session, from the scan OR from a message
--- of theirs (#58, Codex): ask them, forced past the request throttle (a failed
--- login whisper may have set it), and ask again - twice, 30 s apart - until a
--- stream from them arrives. Tracked apart from the map, so serving THEIR
--- request does not stop us asking for ours.
-local function OnNewPresence(p)
-    local key = AuthKey(p.name)
-    local cur = presence[key]
-    if cur and cur.id == p.id and cur.guid == p.guid then return end
-    local entry = { id = p.id, guid = p.guid, tries = 0 }
-    presence[key] = entry
-    -- Refused for good: noticed, but neither announced nor asked.
-    if SyncAuthFor(p.name) == AUTH_NEVER then return end
-    -- Who we are, first: if OUR presence is blank, that is the only way they
-    -- can tell who is asking.
-    SendHello(p.id)
-    if not bnetAnnounced[key] then
-        bnetAnnounced[key] = true
-        Print("Found your other account: |cff88ff88" .. p.name .. "|r ("
-            .. tostring(p.faction or "?") .. ", " .. tostring(p.realm or "?") .. ") - syncing.")
-    end
-    local function ask()
-        if presence[key] ~= entry or not OwnBNetPeer(p.name) then return end
-        if entry.requestedAt and (lastStreamFrom[key] or 0) >= entry.requestedAt then return end
-        -- Their answer still arriving (a first sync can take longer than the
-        -- retry): wait, don't ask for a second copy (review of #142).
-        if StreamFromInProgress(key) then
-            C_Timer.After(BNET_RETRY_EVERY, ask)
-            return
-        end
-        entry.tries = entry.tries + 1
-        entry.requestedAt = time()
-        RequestCharacters("BNET", p.name, true)
-        if entry.tries <= BNET_RETRIES then C_Timer.After(BNET_RETRY_EVERY, ask) end
-    end
-    -- Asked moments ago already (the login whisper to a whitelisted peer): give
-    -- that answer the first retry's time, rather than two full replies.
-    local last = lastRequestedAt[key]
-    if last and (time() - last) < 10 then
-        entry.requestedAt = last
-        C_Timer.After(BNET_RETRY_EVERY, ask)
-    else
-        ask()
-    end
-end
-
-local BNET_SETTLING_EVERY, BNET_SETTLING_TRIES = 10, 30   -- up to 5 minutes
-local bnetSettlingPending, bnetSettlingTries = false, 0
-local ScanOwnAccounts
-
--- A presence still blank - ours, or a WoW account with no character yet - is
--- "not yet", not "no": look again in 10 s instead of the next minute.
-local function ScanAgainSoon()
-    if bnetSettlingPending or bnetSettlingTries >= BNET_SETTLING_TRIES then return end
-    bnetSettlingPending = true
-    bnetSettlingTries = bnetSettlingTries + 1
-    C_Timer.After(BNET_SETTLING_EVERY, function()
-        bnetSettlingPending = false
-        ScanOwnAccounts()
-    end)
-end
-
-function ScanOwnAccounts()
+local function ScanOwnAccounts()
     AltStable._bnetLastScan = time()
     -- The library follows the same switch (the Options toggle rescans) - told
     -- only when it differs: each SetEnabled writes the store and starts a
@@ -2765,83 +2141,16 @@ function ScanOwnAccounts()
         if not okE or now ~= on then pcall(inst.SetEnabled, on) end
     end
     if not BNetEnabled() then
-        bnetPeers, presence, bnetCapable, learnedNames, helloSent = {}, {}, {}, {}, {}
-        myNonce, theirNonce = {}, {}
         LibSync.Forget()
         return
     end
-    -- A learned id that went offline or away is forgotten: whoever comes back
-    -- on it must say hello again (Codex, #142).
-    for id in pairs(learnedNames) do
-        local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-        if not ok or type(g) ~= "table" or g.isOnline == false then ForgetLearned(id) end
-    end
-    local me = SelfBNet()
-    local settling = not me or me.project == nil
-    local fresh = {}
-    local function add(id, g)
-        local key = AuthKey(g.characterName)
-        fresh[key] = PeerRecord(id, g)
-        bnetSeen[key] = true
-    end
-    local friends = FriendGameIDs()
-    for id = 1, BNET_MAX_ID do
-        local g = GameFor(id, me, friends)
-        if g then
-            add(id, g)
-        elseif OwnByElimination(id, me, friends) then
-            -- Our own other account with a blank presence and no hello yet:
-            -- say hello, so it learns who we are and answers with its own.
-            SendHello(id)
-            settling = true
-        elseif not settling then
-            -- A WoW account here with no character yet is still logging in.
-            local ok, raw = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-            if ok and type(raw) == "table" and raw.clientProgram == "WoW" and raw.isOnline ~= false
-                and (type(raw.characterName) ~= "string" or raw.characterName == "") then
-                settling = true
-            end
-        end
-    end
-    if settling then ScanAgainSoon() else bnetSettlingTries = 0 end
-    -- Beyond the walk: our other account's characters we already know by GUID.
-    if C_BattleNet.GetGameAccountInfoByGUID then
-        for guid, c in pairs(AltStableDB or {}) do
-            if type(c) == "table" and not c.scannedHere and type(guid) == "string"
-                and guid:find("^Player%-") then
-                local ok, info = pcall(C_BattleNet.GetGameAccountInfoByGUID, guid)
-                local id = ok and type(info) == "table" and info.gameAccountID
-                if type(id) == "number" and id > BNET_MAX_ID then
-                    local g = OwnAccountGame(id, me)
-                    if g then add(id, g) end
-                end
-            end
-        end
-    end
-    -- A peer learned from its own message (an id beyond the walk, a character
-    -- not in the database) stays while it still checks out (review of #142).
-    for key, p in pairs(bnetPeers) do
-        if not fresh[key] then
-            local g = GameFor(p.id, me, friends)
-            if g and AuthKey(g.characterName) == key then fresh[key] = p end
-        end
-    end
-    for key, old in pairs(bnetPeers) do
-        local now = fresh[key]
-        if not now or now.id ~= old.id or now.guid ~= old.guid then bnetCapable[key] = nil end
-    end
-    bnetPeers = fresh
-    for key in pairs(presence) do
-        if not bnetPeers[key] then presence[key] = nil end
-    end
-    for _, p in pairs(bnetPeers) do OnNewPresence(p) end
     LibSync.Ping()
 end
 AltStable.RescanOwnAccounts = ScanOwnAccounts
 
--- Coalesced: events and failed sends can ask many times a second.
+-- Coalesced: Battle.net events can come many times a second.
 local bnetScanPending = false
-function RequestBNetScan()
+local function RequestBNetScan()
     if bnetScanPending then return end
     bnetScanPending = true
     C_Timer.After(2, function()
@@ -2854,10 +2163,8 @@ end
 function AltStable.OwnBNetPeers()
     local out = {}
     if not BNetEnabled() then return out end
-    for _, p in pairs(bnetPeers) do out[#out + 1] = p end
-    -- And those heard only over the library.
     for key in pairs(LibSync.peers) do
-        local p = not bnetPeers[key] and LibSync.Peer(key)
+        local p = LibSync.Peer(key)
         if p then out[#out + 1] = p end
     end
     table.sort(out, function(a, b) return a.name < b.name end)
@@ -3031,33 +2338,22 @@ function LibSync.Apply(peer, buffer)
 
     -- Success — clear the retry budget.
     if autoRetryCounts then autoRetryCounts[AuthKey(peer) or peer] = nil end
-    lastStreamFrom[AuthKey(peer) or peer] = time()   -- answers a discovery retry (#58)
 end
 
 local function CompleteStream(peer, bkey)
     local buf = incomingBuffers[bkey]
     if not buf then return end
-    -- Over, whichever way this ends: late packets of it are ignored.
-    -- Only Battle.net streams are remembered: delivery there is unordered, so
-    -- stragglers are real; a whisper stream is ordered - and a client from
-    -- before #58 restarts its stream ids on /reload, so remembering ITS ids
-    -- would drop a new stream as a "late" one (review of #142).
+    -- Over, whichever way this ends. Its id is not remembered: a whisper
+    -- stream is ordered, so there are no stragglers to drop - and a client
+    -- that restarts its stream ids on /reload would have a new stream taken
+    -- for a late one (review of #142).
     local function finish()
         incomingBuffers[bkey] = nil
-        if buf.transport == "BNET" then finishedStreams[bkey] = time() end
     end
 
     -- No never check here (#58): every way in has just made one - the last
     -- chunk and a complete DONE in the handler; a settle can only end in
     -- RequestResync, which refuses a never itself and merges nothing.
-
-    -- A DONE that settled with no chunk ever arriving (#58: a DONE can come
-    -- first now, and its stream may never follow).
-    if not buf.total or buf.total <= 0 then
-        finish()
-        RequestResync(peer, "no data arrived.", buf.transport)
-        return
-    end
 
     -- Completeness
     local missing = {}
@@ -3115,11 +2411,11 @@ local function CompleteStream(peer, bkey)
 end
 
 -- A DB8 from our own account over the library: one whole payload, admitted
--- the way a legacy stream's first packet is - refused for good, or not
+-- the way a whisper stream's first packet is - refused for good, or not
 -- approved and not asked for, and it is dropped unread (MayAdmit refuses a
--- never; NoteRefusedStream says nothing to one). One difference: a legacy
--- stream admitted at its first packet may finish after the consent window
--- closes; this payload is judged once, as it arrives, whole.
+-- never; NoteRefusedStream says nothing to one). One difference: a stream
+-- admitted at its first packet may finish after the consent window closes;
+-- this payload is judged once, as it arrives, whole.
 function LibSync.Receive(peer, deflated)
     if not MayAdmit(peer) then
         NoteRefusedStream(peer)
@@ -3148,12 +2444,11 @@ end
 -- QUIET, not at a fixed moment. Each check compares the buffer's packet count
 -- with the one it was scheduled at - any arrival since means "still coming",
 -- so it waits again - and only acts on the very buffer it was made for, so a
--- replaced stream is never finalized by an old timer (#58, Codex). Whisper
--- streams settle at the old 2 s; Battle.net, being unordered, at 6 s.
+-- replaced stream is never finalized by an old timer (#58, Codex).
 local function ScheduleSettle(peer, bkey, buf)
     if buf.settling then return end
     buf.settling = true
-    local wait = (buf.transport == "BNET") and BNET_SETTLE or CHUNK_DONE_GRACE
+    local wait = CHUNK_DONE_GRACE
     -- The count is taken when the check is SCHEDULED: read when it fires, it
     -- always matched, and a stream still arriving was finalized as missing.
     local check
@@ -3362,22 +2657,23 @@ frame:RegisterEvent("PLAYER_XP_UPDATE")
 frame:RegisterEvent("UPDATE_INSTANCE_INFO")   -- saved raid lockouts
 frame:RegisterEvent("MAIL_INBOX_UPDATE")      -- mail with expiry
 frame:RegisterEvent("CHAT_MSG_SYSTEM")    -- detect peer "X has come online" notifications
--- Battle.net: game data from our own other account, and presence changes that
--- may mean it came or went (#58). Registered through pcall: an event this
--- client does not know must not stop the addon loading.
+-- Battle.net presence changes that may mean our own other account came or
+-- went (#58): the library carries the data, these only trigger a rescan.
+-- Registered through pcall: an event this client does not know must not stop
+-- the addon loading.
 -- (Not BN_FRIEND_INFO_CHANGED: every friend's status change fires it, and none
 -- of them changes which of OUR accounts are online.)
-for _, ev in ipairs({ "BN_CHAT_MSG_ADDON", "BN_CONNECTED", "BN_DISCONNECTED", "BN_INFO_CHANGED" }) do
+for _, ev in ipairs({ "BN_CONNECTED", "BN_DISCONNECTED", "BN_INFO_CHANGED" }) do
     pcall(frame.RegisterEvent, frame, ev)
 end
 
 C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
 ------------------------------------------------------------
 -- One addon message, from whichever transport carried it (#58). The whisper
--- path calls this from CHAT_MSG_ADDON; Battle.net game data from our own
--- other account calls it from BN_CHAT_MSG_ADDON, with the sender's character
--- name, so authorization, buffers and replies treat both alike.
---   transport  "WHISPER" (a real addon whisper) or "BNET"
+-- path calls this from CHAT_MSG_ADDON; a request from our own other account
+-- over the library calls it from LibSync.OnMessage, with the sender's
+-- character name, so authorization and replies treat both alike.
+--   transport  "WHISPER" (a real addon whisper) or "BNET" (the library)
 ------------------------------------------------------------
 local function HandleAddonMessage(prefix, message, channel, sender, transport)
     transport = transport or "WHISPER"
@@ -3527,8 +2823,6 @@ local function HandleAddonMessage(prefix, message, channel, sender, transport)
             refusedStreams[bkey] = time()
             return
         end
-        -- A late packet of a stream that is already over.
-        if finishedStreams[bkey] then return end
         local buf = incomingBuffers[bkey]
         if not buf and (refusedStreams[bkey] or not MayAdmit(peer)) then
             refusedStreams[bkey] = time()
@@ -3544,8 +2838,6 @@ local function HandleAddonMessage(prefix, message, channel, sender, transport)
             incomingBuffers[bkey] = buf
         else
             buf.lastTouched = time()
-            -- Created by a DONE that came first: the first chunk tells the total.
-            if not buf.total then buf.total = total end
         end
         buf.chunks[seq] = body or ""
         buf.touches = (buf.touches or 0) + 1
@@ -3573,25 +2865,11 @@ local function HandleAddonMessage(prefix, message, channel, sender, transport)
             refusedStreams[bkey] = time()
             return
         end
-        -- Over already: a DONE straggling in after the stream finished is
-        -- ignored - it used to clear the retry budget of whatever came next.
-        if finishedStreams[bkey] then return end
         local buf = incomingBuffers[bkey]
 
-        if not buf then
-            -- The DONE came FIRST (#58: Battle.net delivery is unordered;
-            -- it was dropped here, and the chunks that followed never
-            -- completed). Admitted like a first chunk - and a refused
-            -- stream stays refused.
-            if refusedStreams[bkey] or not MayAdmit(peer) then
-                refusedStreams[bkey] = time()
-                NoteRefusedStream(peer)
-                return
-            end
-            buf = { chunks = {}, total = nil, lastTouched = time(),
-                    transport = transport, touches = 0 }
-            incomingBuffers[bkey] = buf
-        end
+        -- No buffer: a stream that was refused, or is already over. A whisper
+        -- stream is ordered, so its DONE never comes before its first chunk.
+        if not buf then return end
 
         -- Stash the checksum so a deferred completion can still verify it.
         buf.checksum = remoteChecksum
@@ -3665,18 +2943,20 @@ end
 ------------------------------------------------------------
 -- The store is account-wide (AltStableConfig; Export.lua never touches it) and
 -- holds the household key. Built on first use WITH the keys the legacy channel
--- already shares, so two accounts that paired over it are paired here on day
--- one, without both presences having to be full once more:
+-- shared, so two accounts that paired over it are paired here on day one,
+-- without both presences having to be full once more:
 --   * our bnetKey becomes the key, at keyAt 1 - older than any key the library
 --     makes - so it wins the library's oldest-key choice, even where another
 --     addon's store (GlassChat's) already holds one; that store keeps its own;
 --   * each bnetTrusted key becomes trusted, seen now. Only `true` entries:
---     every one came from an account Battle.net verified as ours (the hello
---     handler is the only writer).
+--     every one came from an account Battle.net verified as ours (the legacy
+--     hello handler was the only writer).
 -- Only keys of exactly 32 lowercase hex, the library's own rule; the legacy
 -- channel accepted shorter ones. The library picks its key after PLAYER_LOGIN,
 -- from every registered store - and this one registers at load, so the import
--- is always there first.
+-- is always there first. Nothing writes bnetKey or bnetTrusted since the
+-- legacy channel went (#206); they stay on disk for one release, so a
+-- downgrade still reads them, and an install that skipped v0.11 still pairs.
 function LibSync.Store()
     if type(AltStableConfig) ~= "table" then return nil end
     -- The library's own switch is store.enabled, read whenever nothing set it
@@ -3711,16 +2991,26 @@ function LibSync.OnMessage(payload, sender)
     local key = AuthKey(name)
     if not key or type(guid) ~= "string" or not BNetEnabled() then return end
     -- An AltStable message, so they run it: from now on, the library to them.
+    -- The realm name, when the library has none, is the database's for a
+    -- character synced before.
     local before = LibSync.peers[key]
-    LibSync.peers[key] = { name = name, guid = guid, realm = sender.realm, faction = sender.faction }
-    -- Newly on the library and not found by the legacy discovery (its
-    -- presence blank to it, say): nobody else will ask them for theirs.
-    -- Only while the library lists them as ours: a request opens our consent
-    -- window for the reply. RequestCharacters keeps its own throttle and
-    -- never-check.
-    if not (before and before.guid == guid) and not bnetPeers[key] and RequestCharacters
-        and LibSync.Peer(name) then
-        RequestCharacters("BNET", name)
+    local known = (AltStableDB or {})[guid]
+    local realm = sender.realm or (type(known) == "table" and known.realm) or nil
+    LibSync.peers[key] = { name = name, guid = guid, realm = realm, faction = sender.faction }
+    -- Newly on the library: said once, and asked for their data - only while
+    -- the library lists them as ours (a request opens our consent window for
+    -- the reply). Refused for good: noticed, but neither announced nor asked.
+    -- RequestCharacters keeps its own throttle and never-check.
+    if not (before and before.guid == guid) and LibSync.Peer(name) then
+        LibSync.seen[key] = true
+        if SyncAuthFor(name) ~= AUTH_NEVER then
+            if not LibSync.announced[key] then
+                LibSync.announced[key] = true
+                Print("Found your other account: |cff88ff88" .. name .. "|r ("
+                    .. tostring(sender.faction or "?") .. ", " .. tostring(realm or "?") .. ") - syncing.")
+            end
+            if RequestCharacters then RequestCharacters("BNET", name) end
+        end
     end
     local cmd, body = payload:match("^([^|]*)|?(.*)$")
     if cmd == LibSync.MSG_CAP then
@@ -3733,7 +3023,7 @@ function LibSync.OnMessage(payload, sender)
             LibSync.answered[guid] = time()
         end
     elseif cmd == MSG_REQUEST_V then
-        -- Every gate of the legacy path (never, consent, a pending request);
+        -- Every gate of the whisper path (never, consent, a pending request);
         -- the reply goes back as "BNET", which is the library to them now.
         HandleAddonMessage(PREFIX, payload, "WHISPER", name, "BNET")
     elseif cmd == LibSync.MSG_DB then
@@ -3767,7 +3057,9 @@ do
     LibSync.minor = minor
     -- The handshake again while someone is still unanswered: the library can
     -- prove an account at any moment, with no event of ours to notice it.
-    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(30, function() LibSync.Ping() end) end
+    -- Every 10 s, so a question it refused (no nonce yet) is asked again soon;
+    -- one it took waits PING_EVERY.
+    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(10, function() LibSync.Ping() end) end
 end
 
 ------------------------------------------------------------
@@ -3794,68 +3086,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    -- From our own other account only (#58): anyone else's game data - a
-    -- Battle.net friend's - fails OwnAccountGame and is dropped unread. The
-    -- sender is Blizzard's word (senderID), never the message's.
-    if event == "BN_CHAT_MSG_ADDON" then
-        local prefix, text, _, senderID = ...
-        if prefix ~= PREFIX or not BNetEnabled() then return end
-        -- A hello: who is on that game account, in its own words (see MSG_HELLO).
-        if type(text) == "string" and text:sub(1, #MSG_HELLO + 1) == MSG_HELLO .. "|" then
-            local _, name, guid, faction, realm, key, nonce, proof = strsplit("|", text)
-            if not name or name == "" or AuthKey(name) == AuthKey(PLAYER_NAME) then return end
-            -- A new nonce wants an answer now, past the once-a-minute limit; our
-            -- own stays the same per id, so two answers cannot ping-pong.
-            local fresh = type(nonce) == "string" and #nonce >= 16 and #nonce <= 32
-                and nonce ~= theirNonce[senderID]
-            if fresh then theirNonce[senderID] = nonce end
-            local g = OwnAccountGame(senderID)
-            if g then
-                -- Battle.net knows them: the hello must agree with it - and a
-                -- key from an account Battle.net verifies is ours to trust.
-                if AuthKey(g.characterName) ~= AuthKey(name) then return end
-                TrustKey(key)
-            elseif KeyTrusted(key) or ProofTrusted(proof, senderID, name) then
-                -- Presence blank: believed only on a trusted household key, or
-                -- proof of holding one.
-                learnedNames[senderID] = { name = name, guid = guid ~= "" and guid or nil,
-                    faction = faction ~= "" and faction or nil, realm = realm ~= "" and realm or nil }
-                g = GameFor(senderID)
-            end
-            if not g then
-                -- Not proven yet. Ours by elimination: answer its nonce - our
-                -- proof is what lets it believe us, and its next hello answers ours.
-                if fresh and OwnByElimination(senderID) then SendHello(senderID, true) end
-                return
-            end
-            inboundChecked[senderID] = nil
-            bnetCapable[AuthKey(g.characterName)] = true
-            -- Answered, even for a peer we already know: it may have reloaded
-            -- and forgotten us. Rate-limited, except for a new nonce.
-            SendHello(senderID, fresh)
-            OnNewPresence(NoteBNetPeer(g, senderID))
-            return
-        end
-        -- The check is cached per sender for 2 s: a stream is many packets.
-        local hit = inboundChecked[senderID]
-        local g = hit and (time() - hit.at) <= 2 and hit.g
-        if not g then
-            g = GameFor(senderID)
-            if not g then return end
-            inboundChecked[senderID] = { g = g, at = time() }
-        end
-        bnetCapable[AuthKey(g.characterName)] = true      -- heard over Battle.net
-        OnNewPresence(NoteBNetPeer(g, senderID))
-        HandleAddonMessage(prefix, text, "WHISPER", g.characterName, "BNET")
-        return
-    end
     if event == "BN_DISCONNECTED" then
-        bnetPeers, presence, bnetCapable, learnedNames, helloSent = {}, {}, {}, {}, {}
-        myNonce, theirNonce = {}, {}
         LibSync.Forget()
         return
     end
-    if event == "BN_CONNECTED" then bnetUpSince = time() end
     if event == "BN_CONNECTED" or event == "BN_INFO_CHANGED" then
         RequestBNetScan()
         return
@@ -3897,7 +3131,6 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
         -- Look for our other accounts on Battle.net once the client has
         -- settled, then every minute (#58).
-        bnetUpSince = time()
         C_Timer.After(5, ScanOwnAccounts)
         if not AltStable._bnetTicker and C_Timer.NewTicker then
             AltStable._bnetTicker = C_Timer.NewTicker(60, ScanOwnAccounts)
@@ -4632,70 +3865,30 @@ SlashCmdList["ALTSTABLE"] = function(args)
         return
     end
 
-    -- What Battle.net discovery sees, step by step (#58). Script errors are
-    -- off by default on this client, so this is how "nothing was found" gets
-    -- explained in game.
+    -- What own-account sync sees, step by step (#58, #198): the switch, then
+    -- the library's own account of itself and who answered on it. Script
+    -- errors are off by default on this client, so this is how "nothing was
+    -- found" gets explained in game.
     if cmd == "bnet" then
-        local BN = C_BattleNet or {}
-        Print(("Battle.net sync: setting %s, C_BattleNet %s, connected %s"):format(
+        Print(("Battle.net sync: setting %s, connected %s; last scan: %s"):format(
             AltStableConfig.bnetSync == false and "OFF" or "on",
-            BN.GetGameAccountInfoByID and "present" or "MISSING",
-            tostring(BNFeaturesEnabledAndConnected and BNFeaturesEnabledAndConnected())))
-        local okMe, me = pcall(BN.GetAccountInfoByGUID or function() end, UnitGUID("player"))
-        local myGame = okMe and type(me) == "table" and type(me.gameAccountInfo) == "table"
-            and me.gameAccountInfo or {}
-        Print(("  us: bnetAccountID %s, game account %s, project %s"):format(
-            tostring(okMe and type(me) == "table" and me.bnetAccountID),
-            tostring(myGame.gameAccountID), tostring(myGame.wowProjectID)))
-        local okI, _, tag = pcall(BNGetInfo or function() end)
-        Print(("  BattleTag %s%s"):format(tostring(okI and tag),
-            (okMe and type(me) == "table") and ""
-                or " - our own presence is not ready yet; it retries every 10 s. A /reload can "
-                .. "leave it blank: log out and back in (measured)"))
-        local known = 0
-        for id = 1, 128 do
-            local okG, g = pcall(BN.GetGameAccountInfoByID or function() end, id)
-            if okG and type(g) == "table" then
-                known = known + 1
-                local own, why = OwnAccountGame(id)
-                if not own then
-                    local learned = GameFor(id)
-                    if learned then
-                        own, why = learned, nil
-                        g = learned
-                    elseif OwnByElimination(id) then
-                        why = "probably our other account (presence blank, not a friend's) - "
-                        .. "waiting for a hello with a household key"
-                    end
-                end
-                Print(("  id %d: %s (%s, %s) - %s"):format(id, tostring(g.characterName),
-                    tostring(g.factionName), tostring(g.realmName or g.realmDisplayName),
-                    own and "|cff88ff88our other account|r" or tostring(why)))
-            end
-        end
-        local peers = AltStable.OwnBNetPeers()
-        local names = {}
-        for _, p in ipairs(peers) do names[#names + 1] = p.name end
-        Print(("  %d game account(s) known; found: %s; last scan: %s"):format(known,
-            #names > 0 and table.concat(names, ", ") or "none",
+            tostring(BNFeaturesEnabledAndConnected and BNFeaturesEnabledAndConnected()),
             AltStable._bnetLastScan and (time() - AltStable._bnetLastScan) .. " s ago" or "never"))
-        -- The library (#198): its own account of itself, then who answered.
         local inst = LibSync.inst
         if not inst then
-            Print("  LibAccountSync: not loaded - the legacy channel carries everything")
-        else
-            Print(("  LibAccountSync MINOR %s, independent messages %s, SendTo %s"):format(
-                tostring(LibSync.minor), inst.messages == true and "yes" or "NO (legacy only)",
-                type(inst.SendTo) == "function" and "yes" or "NO (legacy only)"))
-            local okD, iter = pcall(inst.Diagnostics)
-            if okD and type(iter) == "function" then
-                for line in iter do Print("    " .. tostring(line)) end
-            end
-            local on = {}
-            for _, p in pairs(LibSync.peers) do on[#on + 1] = p.name end
-            table.sort(on)
-            Print("  on the library: " .. (#on > 0 and table.concat(on, ", ") or "nobody yet"))
+            Print("  LibAccountSync: not loaded - own-account sync is off; whitelisted characters still sync by whisper")
+            return
         end
+        Print(("  LibAccountSync MINOR %s, independent messages %s, SendTo %s"):format(
+            tostring(LibSync.minor), inst.messages == true and "yes" or "NO (cannot sync)",
+            type(inst.SendTo) == "function" and "yes" or "NO (cannot sync)"))
+        local okD, iter = pcall(inst.Diagnostics)
+        if okD and type(iter) == "function" then
+            for line in iter do Print("    " .. tostring(line)) end
+        end
+        local on = {}
+        for _, p in ipairs(AltStable.OwnBNetPeers()) do on[#on + 1] = p.name end
+        Print("  on the library: " .. (#on > 0 and table.concat(on, ", ") or "nobody yet"))
         return
     end
 
@@ -4970,13 +4163,8 @@ end
 -- earlier one and failed far from the cause. Harmless in game: nothing calls it.
 local function ResetSyncState()
     pendingAuth = {}
-    bnetPeers, presence, bnetAnnounced, lastStreamFrom = {}, {}, {}, {}
-    bnetCapable, bnetSeen, routeCheckedAt, inboundChecked = {}, {}, {}, {}
-    learnedNames, helloSent = {}, {}
-    myNonce, theirNonce = {}, {}
-    bnetUpSince = 0
-    bnetScanPending, bnetSettlingPending, bnetSettlingTries = false, false, 0
-    finishedStreams = {}
+    LibSync.seen, LibSync.announced = {}, {}
+    bnetScanPending = false
     lastWhisperAt, syncAttempt, manualSyncAt, unreachableToldAt = {}, {}, {}, {}
     refusedStreams = {}
     consent = {}
@@ -5097,14 +4285,11 @@ local _seam = {
     CHAR_SEP            = CHAR_SEP,
     MAX_CHUNK           = MAX_CHUNK,
     PROTOCOL_VERSION    = PROTOCOL_VERSION,
-    SHA256              = SHA256,
-    HMAC256             = HMAC256,
     PREFIX             = PREFIX,
     MSG_CHUNK_V        = MSG_CHUNK_V,
     MSG_DONE_V         = MSG_DONE_V,
     MSG_REQUEST_V      = MSG_REQUEST_V,
     LibSync            = LibSync,
-    TrustKey           = TrustKey,
     CommandVersion     = CommandVersion,
     CHUNK_VERSION      = CHUNK_VERSION,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests

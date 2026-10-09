@@ -209,20 +209,118 @@ fake.ret = 1
 fromBee(L.MSG_CAP)
 eq("a refused answer is answered again at the next question", count(ANSWER), 2)
 
--- Found by the legacy discovery as well: not asked twice.
+-- A question the library refuses (no nonce yet - it says hello instead) is
+-- not counted: asked again at the next tick, not 30 s later (#206: no legacy
+-- hello comes first any more, so this is first contact).
+reset()
+listBee()
+fake.ret = 0
+L.Ping()
+L.Ping()
+eq("a refused question is asked again at once", count(L.MSG_CAP), 2)
+fake.ret = 1
+L.Ping()
+eq("  until one is taken", count(L.MSG_CAP), 3)
+L.Ping()
+eq("  which then waits its 30 s", count(L.MSG_CAP), 3)
+for _ = 1, 10 do WoW.now = WoW.now + 31; L.Ping() end
+eq("  and refusals did not use up the five tries", count(L.MSG_CAP), 7)
+
+-- Found on the library: said once, with where they are, and trusted like a
+-- whitelist entry.
+reset()
+listBee()
+WoW.chatOut = {}
+fromBee(L.MSG_CAP)
+local function said(text)
+    local n = 0
+    for _, l in ipairs(WoW.chatOut) do if l:find(text, 1, true) then n = n + 1 end end
+    return n
+end
+eq("a new own account is announced", said("Found your other account"), 1)
+eq("  with its faction and realm", said("(Horde, R)"), 1)
+eq("  and is served without asking (#61)", AltStable.SyncAuthFor(BEE), AltStable.AUTH_AUTO)
+WoW.now = WoW.now + 6
+fromBee(L.MSG_CAP)
+eq("  and not announced again", said("Found your other account"), 1)
+
+-- No realm from the library: the database's, for a character synced before.
+reset()
+fake.peers = { { name = BEE, guid = BEE_GUID, faction = "Horde" } }
+AltStableDB[BEE_GUID] = { guid = BEE_GUID, name = BEE, class = "MAGE", level = 1, lastUpdate = 1, realm = "Classic Beta PvE" }
+WoW.chatOut = {}
+L.OnMessage(L.MSG_CAP, { name = BEE, guid = BEE_GUID, faction = "Horde", proven = "bnet" })
+eq("a record without a realm takes the database's", said("(Horde, Classic Beta PvE)"), 1)
+
+-- Refused for good: noticed, but neither announced nor asked.
+reset()
+listBee()
+AltStableConfig.syncAuth = { [BEE:lower()] = "never" }
+WoW.chatOut = {}
+fromBee(L.MSG_CAP)
+eq("a refused own account is not announced", said("Found your other account"), 0)
+eq("  nor asked for its data", count(T.MSG_REQUEST_V .. "|", true), 0)
+
+-- An own account that never answers is reported by the stall watch: it is
+-- online, so silence is worth a line (what the owner saw while #206's switch
+-- was off on the other side).
+reset()
+listBee()
+fromBee(L.MSG_CAP)
+WoW.chatOut = {}
+WoW.now = WoW.now + 60
+flush()
+eq("a found account that never answers is reported", said("No sync response from " .. BEE), 1)
+
+-- A character known as our own this session, no longer listed (logged off,
+-- another character), is not explained as "factions" when a whisper echoes.
+reset()
+WoW.faction = "Alliance"
+AltStableDB = { [BEE_GUID] = { guid = BEE_GUID, name = BEE, class = "MAGE", level = 60,
+                               lastUpdate = 1000, faction = "Horde" } }
+listBee()
+fromBee(L.MSG_CAP)
+fake.peers = {}
+WoW.chatOut = {}
+SlashCmdList["ALTSTABLE"]("sync " .. BEE)
+T.frame:GetScript("OnEvent")(T.frame, "CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format(BEE))
+flush()
+check("an own account that just left is not explained as 'factions'",
+      said("through Battle.net") == 1 and said("do not cross factions") == 0)
+WoW.faction = "Horde"
+
+-- Battle.net game data is nobody's business now (#206): the legacy channel's
+-- event is not even registered, and a REQ8 handed to the handler anyway is
+-- dropped - not served, not asked about.
+check("BN_CHAT_MSG_ADDON is not registered", not T.frame:IsEventRegistered("BN_CHAT_MSG_ADDON"))
+check("  while Battle.net's coming and going still is", T.frame:IsEventRegistered("BN_CONNECTED")
+      and T.frame:IsEventRegistered("BN_DISCONNECTED") and T.frame:IsEventRegistered("BN_INFO_CHANGED"))
 reset()
 WoW.bn.accounts[7] = { characterName = BEE, playerGuid = BEE_GUID, isOnline = true,
                        clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true, regionID = 90,
                        factionName = "Horde", realmName = "R", bnetAccountID = WoW.bn.me }
-AltStable.RescanOwnAccounts()
+T.frame:GetScript("OnEvent")(T.frame, "BN_CHAT_MSG_ADDON", T.PREFIX, T.MSG_REQUEST_V .. "|0", "WHISPER", 7)
 flush()
-check("  (the legacy discovery found it)", AltStable.IsOwnBNetPeer(BEE))
-listBee()
-fake.sent = {}
-WoW.now = WoW.now + 301         -- past the request throttle, so only the rule can hold it
-fromBee(L.MSG_CAP)
-eq("a peer the legacy discovery found is not asked again from here", count(T.MSG_REQUEST_V .. "|", true), 0)
+eq("a legacy request over Battle.net game data is not answered", #WoW.sent, 0)
+eq("  nor asked about", #AltStable.PendingSyncRequests(), 0)
+check("  and does not make them our own account", not AltStable.IsOwnBNetPeer(BEE))
 WoW.bn.accounts[7] = nil
+
+-- /alts bnet: the switch, the library's own account of itself, and who is on
+-- it - nothing from the legacy discovery's id walk (#206).
+reset()
+listBee()
+fromBee(L.MSG_CAP)
+fake.Diagnostics = function()
+    local lines, k = { "LibAccountSync-1.0 r5, stand-in" }, 0
+    return function() k = k + 1; return lines[k] end
+end
+WoW.chatOut = {}
+SlashCmdList["ALTSTABLE"]("bnet")
+eq("/alts bnet gives the switch", said("Battle.net sync: setting on"), 1)
+eq("  the library's own lines", said("LibAccountSync-1.0 r5, stand-in"), 1)
+eq("  and who is on the library", said("on the library: " .. BEE), 1)
+eq("  and nothing from the old id walk", said("game account(s) known") + said("id 7:"), 0)
 
 -- The library no longer lists them (logged off, another character): not ours.
 reset()
@@ -243,7 +341,7 @@ local REQ = T.MSG_REQUEST_V .. "|0"
 
 reset()
 L.SendRequest(REQ, "WHISPER", BEE, "ALERT")
-eq("a peer not heard on the library: the request goes legacy", #wire(T.MSG_REQUEST_V), 1)
+eq("a peer not heard on the library: the request is whispered", #wire(T.MSG_REQUEST_V), 1)
 eq("  and nothing over the library", #fake.sent, 0)
 
 reset()
@@ -254,8 +352,8 @@ local sentResults = {}
 L.SendRequest(REQ, "BNET", BEE, "ALERT", function(ok) sentResults[#sentResults + 1] = ok end)
 eq("on the library: one SendTo", #fake.sent, 1)
 eq("  to their GUID", fake.sent[1] and fake.sent[1].guid, BEE_GUID)
-eq("  carrying the legacy command unchanged", fake.sent[1] and fake.sent[1].msg, REQ)
-eq("  and no legacy frame", #wire(), 0)
+eq("  carrying the whisper command unchanged", fake.sent[1] and fake.sent[1].msg, REQ)
+eq("  and no whisper", #wire(), 0)
 eq("  onSent waits for the library", #sentResults, 0)
 fake.sent[1].onResult({ guid = BEE_GUID }, "sent")
 eq("  then runs once", #sentResults, 1)
@@ -268,7 +366,7 @@ fromBee(L.MSG_CAP)
 fake.sent, fake.ret, fake.early = {}, 0, "failed"
 sentResults = {}
 L.SendRequest(REQ, "WHISPER", BEE, "ALERT", function(ok) sentResults[#sentResults + 1] = ok end)
-eq("refused (not-ready): the request falls back to the legacy wire", #wire(T.MSG_REQUEST_V), 1)
+eq("refused (not-ready): a whispered request falls back to the whisper", #wire(T.MSG_REQUEST_V), 1)
 eq("  one SendTo, never a second try or a broadcast", #fake.sent, 1)
 eq("  and onSent runs once, the fallback's", #sentResults, 1)
 fake.early = nil
@@ -283,7 +381,7 @@ L.SendRequest(REQ, "BNET", BEE, "ALERT", function(ok) sentResults[#sentResults +
 fake.sent[1].onResult({ guid = BEE_GUID }, "failed", "offline")
 eq("a send that fails after starting: onSent(false)", sentResults[1], false)
 eq("  once, with no fallback (the library took it)", #sentResults, 1)
-eq("  and no legacy frame", #wire(), 0)
+eq("  and no whisper", #wire(), 0)
 
 -- Taken, and reported "sent" before SendTo returned (ChatThrottleLib sent at once).
 reset()
@@ -305,7 +403,7 @@ L.SendRequest(REQ, "WHISPER_DIRECT", BEE, "ALERT")
 eq("WHISPER_DIRECT stays a whisper", #wire(T.MSG_REQUEST_V), 1)
 eq("  and never the library", #fake.sent, 0)
 
--- A copy without the #18 delivery, or without SendTo: legacy only.
+-- A copy without the #18 delivery, or without SendTo: not the library.
 for _, case in ipairs({ { "a snapshot-mode copy (messages ~= true)", function() fake.messages = nil end },
                         { "a copy without SendTo", function() fake.SendTo = nil end } }) do
     reset()
@@ -356,11 +454,10 @@ check("a request over the library is served over the library", db ~= nil)
 eq("  to their GUID", db and db.guid, BEE_GUID)
 local raw = db and LD:DecompressDeflate(db.msg:sub(#L.MSG_DB + 2))
 check("  one whole deflated payload", type(raw) == "string" and raw:find("Alpha", 1, true) ~= nil, raw)
-check("  with our clock at the end, as the legacy stream has", raw and raw:find("\n==NOW==:", 1, true) ~= nil, raw)
-eq("  and no legacy chunks", #wire(T.MSG_CHUNK_V), 0)
+check("  with our clock at the end, as the whispered stream has", raw and raw:find("\n==NOW==:", 1, true) ~= nil, raw)
+eq("  and no whispered chunks", #wire(T.MSG_CHUNK_V), 0)
 
--- A whisper to our own account on the library: the library, not the whisper
--- (the legacy route the reply test above used had no binding to show it).
+-- A whisper to our own account on the library: the library, not the whisper.
 reset()
 seed()
 listBee()
@@ -370,22 +467,22 @@ T.SendFullDatabase("WHISPER", BEE)
 check("a push by whisper to an own account on the library goes over it", dbSent() ~= nil)
 eq("  and not also as whispered chunks", #wire(T.MSG_CHUNK_V), 0)
 
--- Refused (too large, not-ready): the reply falls back to chunks for this one
--- send - still to this one peer.
+-- Refused (too large, not-ready): a whispered push falls back to whispered
+-- chunks for this one send - still to this one peer.
 reset()
 seed()
 listBee()
 fromBee(L.MSG_CAP)
 fake.sent, fake.ret = {}, nil
 T.SendFullDatabase("WHISPER", BEE)
-check("a refused reply goes out as legacy chunks", #wire(T.MSG_CHUNK_V) > 0)
+check("a refused push goes out as whispered chunks", #wire(T.MSG_CHUNK_V) > 0)
 eq("  after one SendTo", #fake.sent, 1)
 for _, m in ipairs(wire()) do
-    if m.target ~= BEE then check("  every legacy frame to them alone", false, m.target) break end
+    if m.target ~= BEE then check("  every whisper to them alone", false, m.target) break end
 end
 
 ------------------------------------------------------------
--- Inbound: the same gates as the legacy path
+-- Inbound: the same gates as the whisper path
 ------------------------------------------------------------
 local function deflated(text) return L.MSG_DB .. "|" .. LD:CompressDeflate(text, { level = 8 }) end
 local function payloadOf(db)
@@ -453,27 +550,16 @@ AltStable.RescanOwnAccounts()
 AltStable.RescanOwnAccounts()
 eq("  told only when the switch changes, not on every scan", fake.setCalls, calls)
 
--- A library-only peer refuses a database (too large, not-ready) and has no
--- legacy Battle.net route: the reply goes nowhere, and no frame reaches anyone.
+-- The library refuses a database (too large, not-ready) sent as "BNET": there
+-- is no other way across, so it goes nowhere, and no whisper reaches anyone.
 reset()
 seed()
 listBee()
 fromBee(L.MSG_CAP)
 fake.sent, fake.ret = {}, nil
 T.SendFullDatabase("BNET", BEE)
-eq("a refused database to a library-only peer: no frame to anyone", #wire(), 0)
+eq("a refused database over \"BNET\": no whisper to anyone", #wire(), 0)
 eq("  after its one SendTo", count(L.MSG_DB .. "|", true), 1)
-
--- A pairing made over the legacy channel after the store was built reaches
--- the library's store too, by the import's rule.
-reset()
-AltStableConfig.bnetKey = OWN
-L.Store()
-T.TrustKey(PEER2)
-check("a key trusted later over the legacy channel is trusted by the library too",
-      type(AltStableConfig.accountSync.trusted[PEER2]) == "number")
-T.TrustKey("0123456789abcdef")
-eq("  but not one the library's rule refuses", AltStableConfig.accountSync.trusted["0123456789abcdef"], nil)
 
 ------------------------------------------------------------
 -- A peer only the library proved ours is a sync target (Codex, #204)
@@ -495,13 +581,6 @@ eq("  over \"BNET\", the library route", tb[1] and tb[1].channel, "BNET")
 AltStableConfig.whitelist = { BEE }
 eq("  once, whitelisted as well", #targetsFor(BEE), 1)
 AltStableConfig.whitelist = nil
-WoW.bn.accounts[7] = { characterName = BEE, playerGuid = BEE_GUID, isOnline = true,
-                       clientProgram = "WoW", wowProjectID = 18, isInCurrentRegion = true, regionID = 90,
-                       factionName = "Horde", realmName = "R", bnetAccountID = WoW.bn.me }
-AltStable.RescanOwnAccounts()
-eq("  once, found by the legacy discovery as well", #targetsFor(BEE), 1)
-WoW.bn.accounts[7] = nil
-AltStable.RescanOwnAccounts()
 AltStableConfig.syncAuth = { [BEE:lower()] = "never" }
 eq("  never, when refused for good", #targetsFor(BEE), 0)
 AltStableConfig.syncAuth = nil
