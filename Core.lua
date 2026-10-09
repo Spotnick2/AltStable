@@ -3467,7 +3467,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                             AltStable.RepackGearMod(info.link, char["gearid_"..slotKey])
                     end
                     -- And the enchant's words (#94): the tooltip can come back
-                    -- without its lines while the item is uncached.
+                    -- without its lines while the item is uncached. nil is
+                    -- "none, or still cannot say" - either way, nothing to add.
                     -- Read off the logged-in character, so only for that one.
                     if AltStable.RereadEnchantText and info.guid == UnitGUID("player") then
                         local words = AltStable.RereadEnchantText(slotKey)

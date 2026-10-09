@@ -1755,6 +1755,17 @@ local function EnchantWords(char, slotKey)
     return w
 end
 
+-- What the audit and the paper doll both say for a slot's enchant: the words,
+-- or "enchanted" when only the id is known (a peer on an older build, or a
+-- tooltip read before the item was cached), or nil for none. One function, so
+-- the two views of one record cannot disagree.
+local function EnchantLabel(char, slotKey)
+    local words = EnchantWords(char, slotKey)
+    if words then return words end
+    if EnchantFromMod(char["gearmod_" .. slotKey]) then return "enchanted" end
+    return nil
+end
+
 -- Whether THIS character's slot can take one.
 --
 -- Offhand is the awkward case, and the discriminator is EXCLUSION rather than
@@ -1827,12 +1838,11 @@ local function AuditCharacter(char)
     local occupied = 0
     for _, slot in ipairs(GEAR_SLOTS) do
         local id = tonumber(char["gearid_" .. slot.key]) or 0
-        local words = id > 0 and EnchantWords(char, slot.key)
-        if words then
-            occupied = occupied + 1
-            out[#out + 1] = { slot = slot.key, label = slot.label, issue = words, rank = 4 }
+        if id > 0 then occupied = occupied + 1 end
+        local present = id > 0 and EnchantLabel(char, slot.key)
+        if present then
+            out[#out + 1] = { slot = slot.key, label = slot.label, issue = present, rank = 4 }
         elseif id > 0 then
-            occupied = occupied + 1
             local can = EnchantableHere(char, slot.key)
             if can == nil then
                 -- Cannot tell whether it takes one. Reported, not dropped: an
@@ -1862,11 +1872,6 @@ local function AuditCharacter(char)
                 elseif ench == false then
                     out[#out + 1] = { slot = slot.key, label = slot.label,
                                       issue = "cannot read the item", rank = 2 }
-                else
-                    -- Enchanted, but no words: a peer on an older build, or a
-                    -- tooltip read before the item was cached.
-                    out[#out + 1] = { slot = slot.key, label = slot.label,
-                                      issue = "enchanted", rank = 4 }
                 end
             end
         end
@@ -1907,6 +1912,9 @@ local DETAIL_TAB_W, DETAIL_TAB_STRIDE = 72, 74
 -- STEP leaves room for the item level drawn UNDER each icon; at 40 the
 -- number sat against the next slot's border.
 local SLOT_SIZE, SLOT_STEP = 34, 48
+-- Room for the longest slot label ("Trinket 1", "Main Hand") in an audit row;
+-- the value starts past it.
+local AUDIT_LABEL_W = 62
 
 local function BuildSlot(parent)
     local b = CreateFrame("Button", nil, parent)
@@ -1942,14 +1950,20 @@ local function BuildSlot(parent)
     b.ench:Hide()
 
     b:SetScript("OnEnter", function(self)
-        if not self.link or self.link == "" then return end
+        local hasLink = self.link and self.link ~= ""
+        -- A synced character has no link (gearlink_ is local-only), so its
+        -- enchant is shown here in words: the paper doll can cut long ones
+        -- short, the weapons row especially (#94).
+        if not hasLink and not self.enchWords then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         -- SetHyperlink rather than SetInventoryItem: the item belongs to a
         -- character who is not logged in, so there is no inventory slot to
-        -- point at - only the link we stored when they were.
-        local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, self.link)
+        -- point at - only the link we stored when they were. The link carries
+        -- the enchant, so the tooltip it builds already names it.
+        local ok = hasLink and pcall(GameTooltip.SetHyperlink, GameTooltip, self.link)
         if not ok then
             GameTooltip:AddLine(self.itemName or self.slotLabel or "", 1, 1, 1)
+            if self.enchWords then GameTooltip:AddLine(self.enchWords, 0.1, 1, 0.1) end
         end
         GameTooltip:Show()
     end)
@@ -2086,6 +2100,9 @@ local function BuildDetail()
         row.label:SetTextColor(0.62, 0.62, 0.62)
         row.value = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         row.value:SetJustifyH("RIGHT")
+        -- One line, cut short with an ellipsis: enchant words are tooltip text
+        -- and can be longer than the room beside the slot label (#94).
+        if row.value.SetWordWrap then row.value:SetWordWrap(false) end
         detailAudit.rows[#detailAudit.rows + 1] = row
     end
 
@@ -2195,7 +2212,8 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY, size
         -- Toward the figure on the side columns, so the words sit over the
         -- stage rather than off the edge of the panel; under the item level
         -- on the weapons row.
-        local words = showEnchants and id > 0 and EnchantWords(char, slot.key)
+        b.enchWords = id > 0 and EnchantLabel(char, slot.key) or nil
+        local words = showEnchants and b.enchWords
         b.ench:ClearAllPoints()
         if words then
             if slot.side == "left" then
@@ -2461,13 +2479,32 @@ local function RenderDetail(char)
     -- table and sorting it to throw the result away was work done on a timer.
     local findings, reason = {}, nil
     if not onChar then findings, reason = AuditCharacter(char) end
+    local issues = 0
+    for _, f in ipairs(findings) do
+        if f.rank < 4 then issues = issues + 1 end
+    end
+    -- CLAMPED to the panel, like the Char column below: one row per slot since
+    -- #94, and `detail` does not clip, so a short inherited frame would draw the
+    -- list over the game world. The findings sort first, so what is cut is the
+    -- listed enchants, and the "+N more" notice below says how many.
+    local auditBottom = -detail:GetHeight() + 4
+    local auditNeed = (#findings + ((not onChar and issues == 0) and 1 or 0)) * STAT_ROW_H
+    local auditFloor = auditBottom
+        + ((not onChar and auditNeed > (y - auditBottom)) and STAT_ROW_H or 0)
+    local auditHidden = 0
     for i, row in ipairs(detailAudit.rows) do
         local f = findings[i]
-        if f and not onChar then
+        if f and not onChar and (y - STAT_ROW_H) < auditFloor then
+            auditHidden = auditHidden + 1
+            row.label:Hide(); row.value:Hide()
+        elseif f and not onChar then
             row.label:ClearAllPoints()
             row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
             row.label:SetText(f.label)
             row.value:ClearAllPoints()
+            -- Bounded on the LEFT too, past the longest slot label, so long
+            -- words are cut short instead of drawn over the label.
+            row.value:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6 + AUDIT_LABEL_W, y)
             row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
             row.value:SetText(f.issue)
             -- Amber for a finding, grey for "cannot tell", green for an enchant
@@ -2484,11 +2521,10 @@ local function RenderDetail(char)
     end
     -- The summary line goes under the rows whenever nothing is wrong, so the
     -- clean bill still reads as one now that the enchants are listed above it.
-    local issues = 0
-    for _, f in ipairs(findings) do
-        if f.rank < 4 then issues = issues + 1 end
-    end
-    if not onChar and issues == 0 then
+    if not onChar and issues == 0 and (y - STAT_ROW_H) < auditFloor then
+        auditHidden = auditHidden + 1
+        detailAudit.none:Hide()
+    elseif not onChar and issues == 0 then
         detailAudit.none:ClearAllPoints()
         detailAudit.none:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
         -- The right edge, so it wraps inside the column instead of running out
@@ -2549,7 +2585,8 @@ local function RenderDetail(char)
     local rowH  = math.max(STAT_ROW_H, lineH)
     local headH = rowH + 2
     local gapH  = STAT_SECTION_GAP
-    local hidden, mightTruncate = 0, false
+    -- The audit's cut rows share the notice: on that tab the stats are hidden.
+    local hidden, mightTruncate = auditHidden, false
     if onChar then
         -- What the column needs at full size, counting only what will be drawn.
         local needed = 0

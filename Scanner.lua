@@ -170,10 +170,11 @@ end
 -- "Enchanted: Stamina +2" and enchantID matching the link's field. An ordinary
 -- green "Equip:" line is type 0, so there is nothing to tell apart by colour.
 --
--- Returns the words, "" for a slot whose tooltip has no enchant line, or nil
--- when the client cannot say (no API, no lines yet). The scan has already reset
--- the field to "", so words from the item worn before can never survive a swap;
--- the Roster falls back to the enchant id in gearmod_ to say "enchanted".
+-- Returns the words, or nil: no enchant line, or the client cannot say (no API,
+-- no lines yet). Only asked for a slot whose LINK has an enchant id, so a nil
+-- there means "cannot say", and the Roster falls back to that id to say
+-- "enchanted". The scan resets the field to nil first, so words from the item
+-- worn before can never survive a swap.
 local ENCHANT_LINE = (Enum and Enum.TooltipDataLineType
     and Enum.TooltipDataLineType.ItemEnchantmentPermanent) or 15
 
@@ -194,16 +195,26 @@ local function EnchantText(slotID)
             if prefix and prefix ~= "" and text:sub(1, #prefix) == prefix then
                 text = text:sub(#prefix + 1)
             end
+            if text == "" then return nil end
             return text
         end
     end
-    return ""
+    return nil
+end
+
+-- The words for an equipped slot, read only when the link carries an enchant
+-- id: most slots have none, and a tooltip build per slot per scan is waste.
+local function SlotEnchantWords(slotID, link)
+    if ParseItemMods(link) == 0 then return nil end
+    return EnchantText(slotID)
 end
 
 -- Re-read once the item is cached; same retry as RepackGearMod.
 function AltStable.RereadEnchantText(slotKey)
     for _, slot in ipairs(GEAR_SLOTS) do
-        if slot.key == slotKey then return EnchantText(slot.id) end
+        if slot.key == slotKey then
+            return SlotEnchantWords(slot.id, GetInventoryItemLink("player", slot.id))
+        end
     end
 end
 
@@ -413,7 +424,7 @@ local function ResetCharacter(char)
         char["gearsubtype_"..slot.key] = ""  -- item subtype ("Dagger", "Mail", ...) — authoritative gear type
         char["gearlink_"..slot.key] = ""   -- full item link (for tooltips)
         char["gearmod_"..slot.key]  = ""   -- packed "ench:sockets:g1:g2:g3" (synced)
-        char["gearench_"..slot.key] = ""   -- the enchant in words, "" for none (synced, #94)
+        char["gearench_"..slot.key] = nil  -- the enchant in words, absent for none (synced, #94)
     end
 
     -- Helm/cloak display toggles. 1 = hidden, 0 = shown.
@@ -880,8 +891,7 @@ function AltStable.ScanCharacter()
             -- even while the item itself is uncached; only the socket count inside
             -- PackGearMod can come back unresolved ("?").
             char["gearmod_"..slot.key] = PackGearMod(link, itemID)
-            local words = EnchantText(slot.id)
-            if words then char["gearench_"..slot.key] = words end
+            char["gearench_"..slot.key] = SlotEnchantWords(slot.id, link)
             local itemName, _, quality, ilvl, _, _, itemSubType = GetItemInfo(link)
             if ilvl then
                 char["gear_"..slot.key]      = ilvl
@@ -901,7 +911,6 @@ function AltStable.ScanCharacter()
             char["gearsubtype_"..slot.key] = ""
             char["gearlink_"..slot.key]  = ""
             char["gearmod_"..slot.key]   = ""
-            char["gearench_"..slot.key]  = ""
         end
     end
 

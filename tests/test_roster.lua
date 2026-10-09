@@ -2321,12 +2321,53 @@ do
         end
         AltStableDB.decked = decked
         T.DrillDown("decked")
+        local d = T.DetailFrame()
+        local wasH = d:GetHeight()
+        d:SetHeight(900)
         T.TabClick("Audit")
-        local got = 0
-        for _, line in ipairs(T.DetailAudit()) do
-            if line:find("=Stamina +", 1, true) then got = got + 1 end
+        local function count()
+            local got = 0
+            for _, line in ipairs(T.DetailAudit()) do
+                if line:find("=Stamina +", 1, true) then got = got + 1 end
+            end
+            return got
         end
-        eq("every occupied slot's enchant is listed", got, n)
+        eq("every occupied slot's enchant is listed", count(), n)
+        eq("  with no notice when they fit", T.DetailStatsMore(), nil)
+
+        -- A short panel: `detail` does not clip, so the list is CLAMPED, and
+        -- what is cut is said out loud.
+        d:SetHeight(260)
+        T.Refresh()
+        local shown = count()
+        check("  a short panel cuts the list", shown < n, tostring(shown))
+        local lowest = 0
+        for _, r in ipairs(T.DetailAuditRows()) do
+            if r.label:IsShown() then
+                local by = select(5, r.label:GetPoint(1)) or 0
+                if by < lowest then lowest = by end
+            end
+        end
+        check("  and no row starts below the panel",
+              lowest - 15 >= -260, tostring(lowest))
+        -- Room is RESERVED for the notice, so it sits under the last row
+        -- rather than on top of it.
+        local noticeY = select(5, T.DetailFrame().statsMore:GetPoint(1)) or 0
+        check("  the notice sits under the last row, not on it",
+              noticeY <= lowest - 15, ("notice %s, last row %s"):format(noticeY, lowest))
+        local more = T.DetailStatsMore() or ""
+        -- +1 for the clean-bill line, which is cut too.
+        check("  and the notice counts what was cut",
+              more:find("+" .. (n - shown + 1) .. " more", 1, true) ~= nil, more)
+        d:SetHeight(wasH)
+        T.Refresh()
+
+        -- Long words are bounded on the LEFT as well, so they are cut short
+        -- rather than drawn over the slot label.
+        local row = T.DetailAuditRows()[1]
+        local pts = {}
+        for i = 1, row.value:GetNumPoints() do pts[(row.value:GetPoint(i))] = true end
+        check("  an audit value is bounded on both sides", pts.TOPLEFT and pts.TOPRIGHT)
         AltStableDB.decked = nil
     end
     -- One with a missing enchant gets no clean bill, listed enchants or not.
@@ -2541,7 +2582,25 @@ do
         eq("  a weapon's under its item level", tostring(mp) .. ">" .. tostring(mrelp), "TOP>BOTTOM")
         check("    anchored to that label", mrel == T.DetailSlotFrame("mainhand").ilvl)
         eq("  an empty slot shows none", (ench("feet")), nil)
-        eq("  nor a slot without words", (ench("chest")), nil)
+        eq("  nor a slot without an enchant", (ench("chest")), nil)
+        -- An id with no words reads "enchanted" here as in the audit: one
+        -- record, one answer.
+        AltStableDB.messy.gearid_back, AltStableDB.messy.gearmod_back = 10, "41:0:0:0:0"
+        T.Refresh()
+        eq("  an enchant id without words reads 'enchanted', as in the audit",
+           (ench("back")), "enchanted")
+        -- And hovering a synced slot (no link) names the enchant in full.
+        do
+            local b = T.DetailSlotFrame("mainhand")
+            b.link = nil
+            GameTooltip:Hide()
+            b:GetScript("OnEnter")(b)
+            local text = table.concat(WoW.tooltipLines or {}, "|")
+            check("  hovering a synced slot shows its enchant in words",
+                  text:find("Crusader", 1, true) ~= nil, text)
+            b:GetScript("OnLeave")(b)
+        end
+        AltStableDB.messy.gearid_back, AltStableDB.messy.gearmod_back = nil, nil
         AltStableConfig.rosterEnchants = false
         T.Refresh()
         eq("  and switched off they go", (ench("wrist")), nil)
@@ -2689,8 +2748,12 @@ do
               and (tex or ""):find(string.char(92), 1, true) ~= nil,
               tostring(tex))
     end
+    -- A real panel height: the block above leaves it at 20, where the clamp
+    -- rightly cuts even this one line.
+    T.DetailFrame():SetHeight(700)
     T.TabClick("Audit")
     local naked = table.concat(T.DetailAudit(), " | ")
+    T.DetailFrame():SetHeight(20)
     check("a character wearing nothing is not told it is fully enchanted",
           naked:find("Every enchantable slot", 1, true) == nil, naked)
     check("  it is told there is nothing to check",

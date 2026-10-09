@@ -1317,15 +1317,15 @@ do
     WoW.equipped[5]  = "|Hitem:5101:41::::::::|h[Gown]|h"
     WoW.equipped[9]  = "|Hitem:5102:41::::::::|h[Bracers]|h"
     WoW.equipped[10] = "|Hitem:5103|h[Gloves]|h"
-    WoW.tooltipLines[5] = {
+    WoW.slotTooltip[5] = {
         L(LT.ItemName, "Gown"),
         L(LT.None, "Equip: Increases damage and healing done by magical spells and effects by up to 2."),
         L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +2"),
         L(LT.SellPrice, ""),
     }
     -- Colour codes and a line break: the field rides the wire as one line.
-    WoW.tooltipLines[9] = { L(LT.ItemEnchantmentPermanent, "Enchanted: |cff00ff00Minor\nStamina|r") }
-    WoW.tooltipLines[10] = {
+    WoW.slotTooltip[9] = { L(LT.ItemEnchantmentPermanent, "Enchanted: |cff00ff00Minor\nStamina|r") }
+    WoW.slotTooltip[10] = {
         L(LT.ItemName, "Gloves"),
         L(LT.None, "Equip: Increases damage and healing done by magical spells and effects by up to 1."),
     }
@@ -1334,44 +1334,74 @@ do
     local me = AltStableDB[UnitGUID("player")] or {}
     eq("an enchant is stored in words, without the client's label", me.gearench_chest, "Stamina +2")
     eq("  colour codes and line breaks are stripped", me.gearench_wrist, "Minor Stamina")
-    eq("a green Equip line is not an enchant", me.gearench_hands, "")
-    -- "" and not nil: nil means "cannot say", and the cache retry writes only
-    -- what it can say.
-    eq("  and reads as none rather than unknown", AltStable._testScanner.EnchantText(10), "")
-    eq("an empty slot has none", me.gearench_feet, "")
+    eq("a green Equip line is not an enchant", AltStable._testScanner.EnchantText(10), nil)
+    eq("  an unenchanted slot stores nothing", me.gearench_hands, nil)
+    eq("an empty slot has none", me.gearench_feet, nil)
+    -- Only read when the link carries an enchant id: a tooltip per slot per
+    -- scan is waste for the many slots that have none.
+    do
+        local realTip, reads = C_TooltipInfo, {}
+        C_TooltipInfo = { GetInventoryItem = function(u, slot)
+            reads[#reads + 1] = slot; return realTip.GetInventoryItem(u, slot) end }
+        AltStable.ScanCharacter()
+        table.sort(reads)
+        eq("  the tooltip is read only for slots whose link has an enchant",
+           table.concat(reads, ","), "5,9")
+        C_TooltipInfo = realTip
+    end
+    -- A label with nothing after it is no words.
+    WoW.slotTooltip[10] = { L(LT.ItemEnchantmentPermanent, "Enchanted: ") }
+    eq("  an enchant line with no words reads as none", AltStable._testScanner.EnchantText(10), nil)
+    WoW.slotTooltip[10] = nil
+
+    -- Taking the item OFF clears its words: the scan resets the field, and an
+    -- emptied slot is never read, so nothing else would.
+    do
+        local chest = WoW.equipped[5]
+        WoW.equipped[5] = nil
+        AltStable.ScanCharacter()
+        eq("an item taken off takes its enchant's words with it",
+           (AltStableDB[UnitGUID("player")] or {}).gearench_chest, nil)
+        WoW.equipped[5] = chest
+        AltStable.ScanCharacter()
+        me = AltStableDB[UnitGUID("player")] or {}
+    end
 
     -- The client's label is the localised global, not an English literal.
     local realLabel = ENCHANTED_TOOLTIP_LINE
     ENCHANTED_TOOLTIP_LINE = "Verzaubert: %s"
-    WoW.tooltipLines[5] = { L(LT.ItemEnchantmentPermanent, "Verzaubert: Ausdauer +2") }
+    WoW.slotTooltip[5] = { L(LT.ItemEnchantmentPermanent, "Verzaubert: Ausdauer +2") }
     eq("  the label is read from the client's own string",
        AltStable._testScanner.EnchantText(5), "Ausdauer +2")
     ENCHANTED_TOOLTIP_LINE = nil
-    WoW.tooltipLines[5] = { L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +2") }
+    WoW.slotTooltip[5] = { L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +2") }
     eq("  and falls back to the English one", AltStable._testScanner.EnchantText(5), "Stamina +2")
     ENCHANTED_TOOLTIP_LINE = realLabel
 
     -- No API (or a tooltip with no lines yet): the scan does not die, and the
-    -- words go blank rather than outliving the item they described - the
-    -- Roster says "enchanted" off gearmod_ instead.
+    -- words go rather than outliving the item they described - the Roster
+    -- says "enchanted" off gearmod_ instead.
     local realTip = C_TooltipInfo
     C_TooltipInfo = nil
     check("a client without C_TooltipInfo still scans", pcall(AltStable.ScanCharacter))
     me = AltStableDB[UnitGUID("player")] or {}
-    eq("  and stores no words", me.gearench_chest, "")
+    eq("  and stores no words", me.gearench_chest, nil)
     check("  while the enchant id is still there", (me.gearmod_chest or ""):find("^41:") ~= nil,
           tostring(me.gearmod_chest))
     C_TooltipInfo = realTip
-    WoW.tooltipLines[5] = nil
-    eq("a slot with no tooltip data says nothing", AltStable._testScanner.EnchantText(5), nil)
+    WoW.slotTooltip[5] = {}
+    eq("a tooltip with no lines yet says nothing", AltStable._testScanner.EnchantText(5), nil)
+    WoW.slotTooltip[5] = nil
+    eq("an empty slot's tooltip says nothing", AltStable._testScanner.EnchantText(3), nil)
     C_TooltipInfo = { GetInventoryItem = function() error("boom") end }
     eq("  nor does one whose tooltip read throws", AltStable._testScanner.EnchantText(5), nil)
     C_TooltipInfo = realTip
 
     -- A cached-late item: the retry re-reads the words for the logged-in character.
-    WoW.tooltipLines[9] = { L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +3") }
+    WoW.slotTooltip[9] = { L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +3") }
     eq("the cache retry re-reads a slot by key", AltStable.RereadEnchantText("wrist"), "Stamina +3")
     eq("  and an unknown key reads nothing", AltStable.RereadEnchantText("nope"), nil)
+    eq("  nor a slot whose link has no enchant", AltStable.RereadEnchantText("hands"), nil)
     WoW.reset()
 end
 

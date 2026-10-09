@@ -62,7 +62,7 @@ function WoW.reset()
     -- after the first WoW.reset().
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.equipped = {}
-    WoW.tooltipLines = {}
+    WoW.slotTooltip = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
@@ -1240,13 +1240,20 @@ Enum = {
 
 -- C_TooltipInfo.GetInventoryItem, in the shape measured on 1.60.1.70291: a table
 -- whose `lines` are typed, and the permanent enchant is its own line type with
--- the words in leftText - "Enchanted: Stamina +2", enchantID = 41. Tests put
--- the lines for a slot in WoW.tooltipLines[slot]; nothing there, no tooltip.
+-- the words in leftText - "Enchanted: Stamina +2", enchantID = 41. Like the
+-- client, any EQUIPPED slot answers with a table (its name line, unless a test
+-- puts lines in WoW.slotTooltip[slot]); an empty slot answers nil.
+WoW.slotTooltip = {}
 C_TooltipInfo = {
     GetInventoryItem = function(unit, slot)
-        local lines = WoW.tooltipLines and WoW.tooltipLines[slot]
-        if not lines then return nil end
-        return { type = 0, id = 0, lines = lines }
+        local link = WoW.equipped[slot]
+        if not link then return nil end
+        local lines = WoW.slotTooltip and WoW.slotTooltip[slot]
+        if not lines then
+            lines = { { type = 22, leftText = tostring(link):match("%[(.-)%]") or "" } }
+        end
+        return { dataInstanceID = 1, guid = "Item-0", type = 0,
+                 id = tonumber(tostring(link):match("item:(%d+)")) or 0, lines = lines }
     end,
 }
 ENCHANTED_TOOLTIP_LINE = "Enchanted: %s"
