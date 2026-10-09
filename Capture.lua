@@ -1046,7 +1046,7 @@ function AltStable.PortraitCommand(args)
     if auto == "on" or auto == "off" then
         AltStable.SetConfigValue("portraitAuto", auto == "on")
         Out(auto == "on"
-            and "when your look changes, a toast above the chat counts down 10 minutes to a new portrait"
+            and "when your look changes, a toast above the chat counts down 5 minutes to a new portrait"
             or "no automatic portraits")
         if AltStable.EvaluateAutoCapture then AltStable.EvaluateAutoCapture() end
         return

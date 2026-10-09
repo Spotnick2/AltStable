@@ -43,7 +43,8 @@ GetTime = function() return clock end
 local function tick(n) for _ = 1, n or 1 do clock = clock + 1; A.Tick() end end
 local function update(st) status = st; AltStable.PortraitStatusUpdated(st) end
 local function changed(look) return { due = true, reason = "changed", changedSlots = { "Chest" }, look = look } end
-local function shown() return A.toast() ~= nil and A.toast():IsShown() end
+-- The offer is up while its icon is: the box beside it can be put away.
+local function shown() return A.toast() ~= nil and A.toast().toggle:IsShown() end
 local function reset()
     A.Stop()
     blocked, capturing, shots = nil, false, {}
@@ -69,20 +70,88 @@ eq("  and the chain still runs upstream", upstream, 1)
 reset()
 update(changed("5:1"))
 check("a changed look shows the toast", shown())
-eq("  counting down ten minutes", A.dueAt(), clock + 600)
-check("  saying so", (A.toast().title:GetText() or ""):find("10:00", 1, true) ~= nil, A.toast().title:GetText())
+eq("  counting down five minutes", A.dueAt(), clock + 300)
+check("  saying so", (A.toast().title:GetText() or ""):find("5:00", 1, true) ~= nil, A.toast().title:GetText())
 check("  and why", (A.toast().sub:GetText() or ""):find("look changed", 1, true) ~= nil, A.toast().sub:GetText())
 check("  ticking", A.ticker() ~= nil)
 tick(61)
-check("the countdown moves", (A.toast().title:GetText() or ""):find("8:59", 1, true) ~= nil, A.toast().title:GetText())
+check("the countdown moves", (A.toast().title:GetText() or ""):find("3:59", 1, true) ~= nil, A.toast().title:GetText())
+
+-- Like Blizzard's: in full at first, then one line.
+do
+    reset()
+    update(changed("5:1"))
+    local f = A.toast()
+    eq("it starts in full", f.compact, false)
+    check("  with the reason showing", f.sub:IsShown())
+    local fullW = f:GetWidth()
+    tick(A.COMPACT_AFTER - 1)
+    eq("  for a while", f.compact, false)
+    tick(1)
+    eq("then it shrinks to one line", f.compact, true)
+    check("  narrower", f:GetWidth() < fullW, f:GetWidth() .. " vs " .. fullW)
+    check("  without the reason", not f.sub:IsShown())
+    check("  still counting", (f.title:GetText() or ""):find("Portrait in 4:5", 1, true) ~= nil, f.title:GetText())
+    f:GetScript("OnEnter")(f)
+    eq("hovering brings the full text back", f.compact, false)
+    tick(1)
+    eq("  and keeps it while the cursor is there", f.compact, false)
+    -- Onto the X: OnLeave fires, but the cursor is still on the toast.
+    f.IsMouseOver = function() return true end
+    f:GetScript("OnLeave")(f)
+    eq("  reaching for the X does not shrink it", f.compact, false)
+    f.IsMouseOver = function() return false end
+    f:GetScript("OnLeave")(f)
+    eq("  leaving does", f.compact, true)
+    -- A fresh offer starts in full again.
+    update(changed("5:9"))
+    eq("a new look starts in full again", f.compact, false)
+
+    -- The icon toggles the box; the offer and its countdown carry on.
+    local icon = f.toggle
+    icon:GetScript("OnClick")(icon)
+    check("clicking the icon puts the box away", not f:IsShown())
+    check("  leaving the icon up", icon:IsShown())
+    local dueBefore = A.dueAt()
+    tick(5)
+    check("  through the ticks", not f:IsShown())
+    eq("  while the countdown carries on", A.dueAt(), dueBefore)
+    icon:GetScript("OnClick")(icon)
+    check("clicking it again brings the box back", f:IsShown())
+    icon:GetScript("OnClick")(icon)
+    update(changed("5:10"))
+    check("a new look brings the box back too", f:IsShown())
+    A.Stop()
+    check("the offer ending takes both down", not f:IsShown() and not icon:IsShown())
+    -- Up again for the blocks below, which read an offer in progress.
+    update(changed("5:1"))
+end
 
 -- Where Blizzard's toasts are: above the chat window, bottom left.
 do
-    local p, rel, relp = A.toast():GetPoint(1)
+    local icon = A.toast().toggle
+    local p, rel = icon:GetPoint(1)
     eq("it sits bottom left", p, "BOTTOMLEFT")
     check("  above the chat", rel == DEFAULT_CHAT_FRAME or rel == ChatAlertFrame, tostring(rel))
     eq("  under the interface, so a capture, Alt+Z and the showcase hide it",
        A.toast():GetParent(), UIParent)
+    eq("  the icon too", icon:GetParent(), UIParent)
+    local bp, brel, brelp = A.toast():GetPoint(1)
+    check("  the box to the right of its icon", bp == "LEFT" and brel == icon and brelp == "RIGHT",
+          tostring(bp) .. ">" .. tostring(brelp))
+    -- Above the friends button when it shows, as Blizzard's toast is: at the
+    -- container's base it covered the button (measured).
+    QuickJoinToastButton = CreateFrame("Button")
+    QuickJoinToastButton:Show()
+    tick(1)
+    local qp, qrel, qrelp = icon:GetPoint(1)
+    check("  above the friends button while it shows",
+          qp == "BOTTOMLEFT" and qrel == QuickJoinToastButton and qrelp == "TOPLEFT",
+          tostring(qp) .. ">" .. tostring(qrelp))
+    QuickJoinToastButton:Hide()
+    tick(1)
+    check("  and back down when it does not", select(2, icon:GetPoint(1)) ~= QuickJoinToastButton)
+    QuickJoinToastButton = nil
 end
 
 -- The same look again (a status refresh with nothing new) does not restart it.
@@ -91,7 +160,7 @@ update(changed("5:1"))
 eq("the same look does not restart the countdown", A.dueAt(), due)
 -- A different one does: the player is still changing.
 update(changed("5:2"))
-eq("a different look restarts it", A.dueAt(), clock + 600)
+eq("a different look restarts it", A.dueAt(), clock + A.DELAY)
 -- Nothing due any more (changed back, or captured by hand): it goes.
 update({ due = false, reason = "pending", changedSlots = {} })
 check("nothing due takes the toast down", not shown())
@@ -149,8 +218,8 @@ check("  keeping the offer", shown())
 ------------------------------------------------------------
 reset()
 update(changed("5:1"))
-tick(599)
-eq("nothing before the ten minutes are up", #shots, 0)
+tick(A.DELAY - 1)
+eq("nothing before the countdown is up", #shots, 0)
 blocked = "not while you are moving"
 tick(5)
 eq("past it, not while blocked", #shots, 0)
@@ -180,7 +249,7 @@ for _, case in ipairs({
     reset()
     update(changed("5:1"))
     case.set()
-    tick(610)
+    tick(A.DELAY + 10)
     eq("it waits for " .. case.what, #shots, 0)
     GetCurrentKeyBoardFocus = nil
 end

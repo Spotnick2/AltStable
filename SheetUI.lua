@@ -3534,7 +3534,7 @@ local function CreateFrameIfNeeded()
 
     -- Off unless asked for (#124): it takes a picture on its own.
     local optAutoPortraitCheck = MakeOptCheckRow("portraitAuto",
-        "Offer a new portrait when your look changes (a toast above the chat, 10 minutes to cancel)", Y,
+        "Offer a new portrait when your look changes (a toast above the chat, 5 minutes to cancel)", Y,
         function(checked)
             AltStable.SetConfigValue("portraitAuto", checked)
             if AltStable.EvaluateAutoCapture then AltStable.EvaluateAutoCapture() end
