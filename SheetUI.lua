@@ -2630,9 +2630,12 @@ local function CreateFrameIfNeeded()
     refTipText:SetPoint("TOPLEFT", 9, -8)
     refTipText:SetPoint("BOTTOMRIGHT", -9, 8)
     refTipText:SetJustifyH("LEFT"); refTipText:SetJustifyV("TOP")
+    -- The Companion is said up front (owner's call, #124): without it the two
+    -- screenshots never become a portrait, and the button gives no other hint.
     local REF_TIP_BASE = "|cffffffffCapture portrait|r\n|cffbbbbbbHides the interface for about " ..
         "three seconds and takes two screenshots for the Roster lineup. You will be " ..
-        "offered a reload afterwards, so the capture is saved.|r"
+        "offered a reload afterwards, so the capture is saved.|r\n" ..
+        AltStable.COMPANION_NEEDED
     refTipText:SetText(REF_TIP_BASE)
     refTip:Hide()
 
@@ -3534,13 +3537,26 @@ local function CreateFrameIfNeeded()
 
     -- Off unless asked for (#124): it takes a picture on its own.
     local optAutoPortraitCheck = MakeOptCheckRow("portraitAuto",
-        "Offer a new portrait when your look changes (a toast above the chat, 5 minutes to cancel)", Y,
+        "Offer a new portrait when your look changes", Y,
         function(checked)
             AltStable.SetConfigValue("portraitAuto", checked)
             if AltStable.EvaluateAutoCapture then AltStable.EvaluateAutoCapture() end
         end,
         function() return AltStableConfig and AltStableConfig.portraitAuto == true end)
-    Y = Y - 22
+    Y = Y - 20
+    -- Without the Companion this only takes screenshots nothing turns into a
+    -- portrait: said under the option (owner's call, #124).
+    local optAutoPortraitHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optAutoPortraitHint:SetPoint("TOPLEFT", P + 22, Y)
+    optAutoPortraitHint:SetPoint("TOPRIGHT", -P, Y)
+    optAutoPortraitHint:SetJustifyH("LEFT")
+    optAutoPortraitHint:SetWordWrap(true)
+    optAutoPortraitHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAutoPortraitHint:SetText("A toast above the chat counts down 5 minutes; close it to skip that look. "
+        .. AltStable.COMPANION_NEEDED_PLAIN)
+    AltStable._test = AltStable._test or {}
+    AltStable._test.optAutoPortraitHint = optAutoPortraitHint
+    Y = Y - 30
 
     -- The portrait capture angle (#149): what `/alts portrait facing` sets, as
     -- a slider. 0, the default, faces you straight on.

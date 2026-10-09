@@ -45,6 +45,13 @@ local function update(st) status = st; AltStable.PortraitStatusUpdated(st) end
 local function changed(look) return { due = true, reason = "changed", changedSlots = { "Chest" }, look = look } end
 -- The offer is up while its icon is: the box beside it can be put away.
 local function shown() return A.toast() ~= nil and A.toast().toggle:IsShown() end
+-- A real press: the mouse goes down, then the click. The down is what clears a
+-- finished drag, so a click without it is not one a player can make.
+local function press(frame, button)
+    local down = frame:GetScript("OnMouseDown")
+    if down then down(frame, button or "LeftButton") end
+    frame:GetScript("OnClick")(frame, button or "LeftButton")
+end
 local function reset()
     A.Stop()
     blocked, capturing, shots = nil, false, {}
@@ -88,6 +95,12 @@ check("  ticking", A.ticker() ~= nil)
 tick(61)
 do
     local icon = A.toast().toggle
+    WoW.tooltipLines = {}
+    icon:GetScript("OnEnter")(icon)
+    check("the icon's tooltip says the Companion is needed",
+          table.concat(WoW.tooltipLines, "|"):find("Needs AltStable Companion", 1, true),
+          table.concat(WoW.tooltipLines, "|"))
+    icon:GetScript("OnLeave")(icon)
     local made = pills[1]
     eq("the icon is a glass pill, made once", #pills, 1)
     check("  on the toggle", made and made.button == icon)
@@ -136,6 +149,14 @@ do
     f.IsMouseOver = function() return false end
     f:GetScript("OnLeave")(f)
     eq("  leaving does", f.compact, true)
+    -- Onto the X, then straight off the toast: only the X's OnLeave fires
+    -- then, so it lets go of the hover too (review of #215).
+    f:GetScript("OnEnter")(f)
+    f.IsMouseOver = function() return true end
+    f:GetScript("OnLeave")(f)
+    f.IsMouseOver = function() return false end
+    f.close:GetScript("OnLeave")(f.close)
+    eq("  leaving through the X lets it shrink again", f.compact, true)
     -- A fresh offer starts in full again.
     update(changed("5:9"))
     eq("a new look starts in full again", f.compact, false)
@@ -200,11 +221,27 @@ check("nothing due takes the toast down", not shown())
 eq("  and the countdown", A.dueAt(), nil)
 eq("  and the ticker", A.ticker(), nil)
 
--- A missing portrait is offered too, saying so.
+-- A missing portrait is offered too, saying so. With a look, as the client
+-- gives once inventory has loaded: the fixture without one was the only reason
+-- "No portrait yet" passed while the game never said it (review of #215).
 reset()
-update({ due = true, reason = "missing", changedSlots = {} })
+update({ due = true, reason = "missing", changedSlots = {}, look = "5:1" })
 check("no portrait at all is offered", shown())
 check("  saying so", (A.toast().sub:GetText() or ""):find("No portrait yet", 1, true) ~= nil, A.toast().sub:GetText())
+
+-- Due but no look yet (inventory not loaded after a login): wait for it, then
+-- offer under the look - one countdown, not one restarted when it loads.
+reset()
+update({ due = true, reason = "missing", changedSlots = {} })
+check("due with no look yet offers nothing", not shown())
+update({ due = true, reason = "missing", changedSlots = {}, look = "5:1" })
+check("  until the look is known", shown())
+eq("  under the look", A.offered(), "5:1")
+local firstDue = A.dueAt()
+tick(3)
+update({ due = true, reason = "missing", changedSlots = {} })
+eq("  and a look that goes unreadable again does not restart it", A.dueAt(), firstDue)
+check("  nor take it down", shown())
 
 -- Switched off mid-countdown: gone.
 AltStableConfig.portraitAuto = false
@@ -218,6 +255,11 @@ reset()
 update(changed("5:1"))
 A.Skip()
 check("skipping takes it down", not shown())
+-- A different look that the PUBLIC signal does not report (same slots
+-- changed) reaches the auto-capture through its own hook.
+AltStable.PortraitLookChanged(changed("5:4"))
+check("the look hook alone offers a new look", shown())
+A.Stop()
 eq("  remembering the look", AltStableConfig.portraitAutoSkip[UnitGUID("player")], "5:1")
 update(changed("5:1"))
 check("  so the same look is not offered again", not shown())
@@ -370,10 +412,122 @@ do
     check("  above the chat", select(2, icon:GetPoint(1)) ~= UIParent)
 
     alt = false
-    icon:GetScript("OnClick")(icon, "LeftButton")
+    press(icon)
     check("a plain click still toggles", not f:IsShown())
+    press(icon)
+
+    -- Alt let go BEFORE the mouse button: the release still ends a drag, not a
+    -- click - "take it now" by accident was the failure (review of #215).
+    alt = true
+    f:GetScript("OnMouseDown")(f, "LeftButton")
+    f:GetScript("OnDragStart")(f)
+    f:GetScript("OnDragStop")(f)
+    alt = false
+    f:GetScript("OnClick")(f, "LeftButton")
+    eq("a drag released after Alt is not 'take it now'", #shots, 0)
+    icon:GetScript("OnMouseDown")(icon, "LeftButton")
+    icon:GetScript("OnDragStart")(icon)
+    alt = true
+    icon:GetScript("OnDragStart")(icon)
+    icon:GetScript("OnDragStop")(icon)
+    alt = false
+    local before = f:IsShown()
     icon:GetScript("OnClick")(icon, "LeftButton")
+    eq("  nor a toggle on the icon", f:IsShown(), before)
+    press(f)
+    eq("  while the next real press is", #shots, 1)
+
+    -- A drag whose release fires no click (the client need not send one) must
+    -- not swallow the next real press: the press clears what the drag left.
+    alt = true
+    f:GetScript("OnMouseDown")(f, "LeftButton")
+    f:GetScript("OnDragStart")(f)
+    f:GetScript("OnDragStop")(f)
+    alt = false
+    local shotsBefore = #shots
+    press(f)
+    eq("a drag with no click after it does not swallow the next press", #shots, shotsBefore + 1)
+
+    -- While it is being dragged, the ticks leave it where the cursor has it -
+    -- with no saved spot, so the anchor really does change under it.
+    AltStableConfig.portraitToastPos = nil
+    reset()
+    update(changed("5:1"))
+    alt = true
+    icon:GetScript("OnDragStart")(icon)
+    icon:ClearAllPoints()
+    icon:SetPoint("CENTER", UIParent, "CENTER", 7, 7)     -- where StartMoving has it
+    QuickJoinToastButton = CreateFrame("Button"); QuickJoinToastButton:Show()
+    tick(2)
+    eq("the ticks do not re-anchor it mid-drag", (icon:GetPoint(1)), "CENTER")
+    icon._GetLeft, icon._GetBottom = 50, 60
+    icon:GetScript("OnDragStop")(icon)
+    check("  and the drop puts it where it was saved", select(4, icon:GetPoint(1)) == 50)
+    -- Dropped on the very spot already saved: still put back on the saved
+    -- anchor, not left where StartMoving had it.
+    icon:GetScript("OnDragStart")(icon)
+    icon:ClearAllPoints()
+    icon:SetPoint("CENTER", UIParent, "CENTER", 7, 7)
+    icon:GetScript("OnDragStop")(icon)
+    eq("  even dropped on the spot already saved", (icon:GetPoint(1)), "BOTTOMLEFT")
+    QuickJoinToastButton = nil
+    alt = false
+    AltStableConfig.portraitToastPos = nil
     IsAltKeyDown = nil
+end
+
+------------------------------------------------------------
+-- A capture that started and was abandoned is offered again
+------------------------------------------------------------
+do
+    reset()
+    update(changed("5:1"))
+    tick(A.DELAY + 2)
+    eq("the countdown took its shot", #shots, 1)
+    check("  ending the offer", not shown())
+    -- Combat, death or the watchdog gave it up; the status is the same.
+    AltStable.OnPortraitCaptureAbandoned()
+    check("an abandoned capture is offered again", shown())
+    eq("  with a fresh countdown", A.dueAt(), clock + A.DELAY)
+end
+
+------------------------------------------------------------
+-- A tick asks once, and lays out only what changed
+------------------------------------------------------------
+do
+    reset()
+    update(changed("5:1"))
+    local asked = 0
+    AltStable.PortraitBlockedReason = function() asked = asked + 1; return "not while you are moving" end
+    tick(A.DELAY + 1)
+    asked = 0
+    tick(1)
+    eq("one blocked check per tick once the countdown is up", asked, 1)
+    AltStable.PortraitBlockedReason = function() return blocked end
+    local f = A.toast()
+    local sized = 0
+    local realSize = f.SetSize
+    f.SetSize = function(self, ...) sized = sized + 1; return realSize(self, ...) end
+    reset()
+    update(changed("5:1"))
+    sized = 0
+    tick(3)
+    eq("no re-layout while nothing changes", sized, 0)
+    tick(A.COMPACT_AFTER)
+    eq("  one when it shrinks", sized, 1)
+    f.SetSize = realSize
+    local icon = f.toggle
+    local placed = 0
+    local realPoint = icon.SetPoint
+    icon.SetPoint = function(self, ...) placed = placed + 1; return realPoint(self, ...) end
+    tick(3)
+    eq("no re-anchoring while the anchor is the same", placed, 0)
+    QuickJoinToastButton = CreateFrame("Button"); QuickJoinToastButton:Show()
+    tick(1)
+    eq("  one when it changes", placed, 1)
+    QuickJoinToastButton = nil
+    tick(1)
+    icon.SetPoint = realPoint
 end
 
 ------------------------------------------------------------

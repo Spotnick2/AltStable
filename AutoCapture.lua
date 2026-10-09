@@ -38,7 +38,8 @@ local SETTLE = 8       -- after coming back to life, as Capture.lua's loading-sc
 local CLEAR_NEEDED = 2 -- clear seconds in a row before the shot
 
 local toast, ticker
-local offered          -- the look this offer is for (or the status reason)
+local offered          -- the look this offer is for
+local offeredReason    -- "changed" or "missing": what the toast says
 local dueAt            -- GetTime() when the countdown ends
 local shownAt          -- GetTime() the offer was made: when to shrink
 local hovered          -- the full text stays while the cursor is on it
@@ -58,10 +59,12 @@ local function Guid()
     return UnitGUID and UnitGUID("player") or nil
 end
 
--- What a skip remembers: the look, so the next change offers again. A missing
--- portrait has no look to compare; its reason stands in.
+-- What an offer is for, and what a skip remembers: the look, so the next
+-- change offers again. Always a look: Evaluate waits for one, because a key
+-- that was the reason until inventory loaded and the look after it restarted
+-- the countdown, and a skip stored then never matched again (review of #215).
 local function OfferKey(status)
-    return status.look or status.reason
+    return status.look
 end
 
 local function Skipped(status)
@@ -104,20 +107,29 @@ end
 --
 -- Unless the player moved it (Alt+drag): then where they put it, kept in
 -- AltStableConfig.portraitToastPos as the icon's bottom left against UIParent's.
+--
+-- Only when the anchor CHANGES: re-anchoring every tick was work for nothing,
+-- and it fought an Alt+drag in progress (review of #215).
+local placedAt
 local function Place(f)
-    f:ClearAllPoints()
     local pos = AltStableConfig and AltStableConfig.portraitToastPos
+    local rel, relPoint, x, y
     if type(pos) == "table" and tonumber(pos.x) and tonumber(pos.y) then
-        f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", tonumber(pos.x), tonumber(pos.y))
+        rel, relPoint, x, y = UIParent, "BOTTOMLEFT", tonumber(pos.x), tonumber(pos.y)
     elseif QuickJoinToastButton and QuickJoinToastButton.IsShown and QuickJoinToastButton:IsShown() then
-        f:SetPoint("BOTTOMLEFT", QuickJoinToastButton, "TOPLEFT", 0, 4)
+        rel, relPoint, x, y = QuickJoinToastButton, "TOPLEFT", 0, 4
     elseif ChatAlertFrame then
-        f:SetPoint("BOTTOMLEFT", ChatAlertFrame, "BOTTOMLEFT", 0, 0)
+        rel, relPoint, x, y = ChatAlertFrame, "BOTTOMLEFT", 0, 0
     elseif DEFAULT_CHAT_FRAME then
-        f:SetPoint("BOTTOMLEFT", DEFAULT_CHAT_FRAME, "TOPLEFT", 0, 34)
+        rel, relPoint, x, y = DEFAULT_CHAT_FRAME, "TOPLEFT", 0, 34
     else
-        f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 20, 220)
+        rel, relPoint, x, y = UIParent, "BOTTOMLEFT", 20, 220
     end
+    local key = tostring(rel) .. relPoint .. x .. "," .. y
+    if placedAt == key then return end
+    placedAt = key
+    f:ClearAllPoints()
+    f:SetPoint("BOTTOMLEFT", rel, relPoint, x, y)
 end
 
 local Stop, Skip, Now, Paint
@@ -155,6 +167,10 @@ end
 -- Alt+drag, from the icon or the box: the icon moves and the box follows it.
 -- Alt, so a plain click keeps meaning what it says (toggle, take it now).
 local dragging
+-- The release that ends a drag is not a click - whatever Alt is doing by then:
+-- letting go of Alt before the button made it "take it now" (review of #215).
+-- Cleared by the next press, which comes before that press's own click.
+local justDragged
 local function DragStart()
     if not AltDown() or not toast then return end
     dragging = true
@@ -163,6 +179,7 @@ end
 local function DragStop()
     if not dragging then return end
     dragging = nil
+    justDragged = true
     local t = toast.toggle
     t:StopMovingOrSizing()
     -- Ours to keep, not the client's layout cache: a named frame moved by
@@ -173,6 +190,7 @@ local function DragStop()
     if x and y then
         AltStable.SetConfigValue("portraitToastPos", { x = math.floor(x + 0.5), y = math.floor(y + 0.5) })
     end
+    placedAt = nil      -- StartMoving re-anchored it: put it where it was saved
     Paint()
 end
 
@@ -218,7 +236,7 @@ local function Build()
     end
     t.symbol = CameraSymbol(t)
     -- Pressed, the symbol moves a pixel, as GlassChat's bubble does.
-    t:SetScript("OnMouseDown", function(self) PlaceSymbol(self, true) end)
+    t:SetScript("OnMouseDown", function(self) justDragged = nil; PlaceSymbol(self, true) end)
     t:SetScript("OnMouseUp", function(self) PlaceSymbol(self, false) end)
     t:SetMovable(true)
     t:SetClampedToScreen(true)
@@ -235,7 +253,7 @@ local function Build()
             end
             return
         end
-        if AltDown() then return end      -- the end of an Alt+drag, not a click
+        if justDragged or AltDown() then justDragged = nil; return end   -- the end of an Alt+drag
         boxHidden = not boxHidden
         Paint()
     end)
@@ -244,6 +262,9 @@ local function Build()
         GameTooltip:AddLine("New portrait", 1, 1, 1)
         GameTooltip:AddLine("Click to show or hide the countdown.", 0.8, 0.8, 0.8, true)
         GameTooltip:AddLine("Alt+drag to move it; Alt+right-click to put it back.", 0.6, 0.6, 0.6, true)
+        if AltStable.COMPANION_NEEDED_PLAIN then
+            GameTooltip:AddLine(AltStable.COMPANION_NEEDED_PLAIN, 1, 0.82, 0, true)
+        end
         GameTooltip:Show()
     end)
     t:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -289,14 +310,24 @@ local function Build()
         GameTooltip:AddLine("Asked again when your look changes.", 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
     end)
-    close:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- Leaving the X straight off the toast fires only THIS OnLeave - the toast's
+    -- fired on the way onto the X and kept the full text - so it is let go here
+    -- too, or the toast stayed in full for the rest of the offer (review of #215).
+    close:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+        if not (toast.IsMouseOver and toast:IsMouseOver()) then
+            hovered = false
+            Paint()
+        end
+    end)
     f.close = close
 
     f:RegisterForClicks("LeftButtonUp")
     f:SetScript("OnClick", function()
-        if AltDown() then return end      -- the end of an Alt+drag, not "take it now"
+        if justDragged or AltDown() then justDragged = nil; return end   -- the end of an Alt+drag
         Now()
     end)
+    f:SetScript("OnMouseDown", function() justDragged = nil end)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", DragStart)
     f:SetScript("OnDragStop", DragStop)
@@ -314,8 +345,10 @@ local function Build()
     return f
 end
 
--- Full, then one line: the title alone, in a narrower box.
+-- Full, then one line: the title alone, in a narrower box. Only when that
+-- changes, not every tick.
 local function Layout(compact)
+    if toast.compact == compact then return end
     toast:SetSize(compact and COMPACT_W or FULL_W, compact and COMPACT_H or FULL_H)
     toast.title:ClearAllPoints()
     if compact then
@@ -328,7 +361,8 @@ local function Layout(compact)
     toast.compact = compact
 end
 
-function Paint()
+-- `why` is the caller's NotNow() when it has one, so a tick asks once.
+function Paint(why)
     if not toast or not dueAt then return end
     local left = math.max(0, math.ceil(dueAt - GetTime()))
     -- In full again once the countdown ends, as Blizzard's does ("Refreshing
@@ -337,19 +371,19 @@ function Paint()
     local compact = left > 0 and not hovered and shownAt ~= nil
         and (GetTime() - shownAt) >= COMPACT_AFTER
     Layout(compact)
-    Place(toast.toggle)
+    if not dragging then Place(toast.toggle) end
     toast.toggle:Show()
     toast:SetShown(not boxHidden)
     if left > 0 then
         local clock = ("%d:%02d"):format(math.floor(left / 60), left % 60)
         toast.title:SetText((compact and "Portrait in " or "New portrait in ") .. clock)
     else
-        local why = NotNow()
+        if why == nil then why = NotNow() end
         toast.title:SetText("New portrait at the next quiet moment")
         toast.sub:SetText(why and ("Waiting: " .. why) or "Hold still...")
         return
     end
-    toast.sub:SetText(offered == "missing" and "No portrait yet - click to take it now"
+    toast.sub:SetText(offeredReason == "missing" and "No portrait yet - click to take it now"
         or "Your look changed - click to take it now")
 end
 
@@ -359,7 +393,7 @@ end
 
 function Stop()
     if ticker then ticker:Cancel(); ticker = nil end
-    offered, dueAt, clearFor, shownAt, hovered, boxHidden = nil, nil, 0, nil, false, false
+    offered, offeredReason, dueAt, clearFor, shownAt, hovered, boxHidden = nil, nil, nil, 0, nil, false, false
     if toast then toast:Hide(); toast.toggle:Hide() end
 end
 
@@ -392,8 +426,10 @@ end
 
 local function Tick()
     if not dueAt then return end
+    local why = false        -- not asked: the countdown is still running
     if GetTime() >= dueAt then
-        if NotNow() then
+        why = NotNow()
+        if why then
             clearFor = 0
         else
             clearFor = clearFor + 1
@@ -403,7 +439,7 @@ local function Tick()
             end
         end
     end
-    Paint()
+    Paint(why or nil)
 end
 
 -- Called whenever the status changes, the option is switched, or the player
@@ -411,6 +447,9 @@ end
 -- look is a different one, and ends it when nothing is due any more.
 local function Evaluate(status)
     status = status or (AltStable.CurrentPortraitStatus and AltStable.CurrentPortraitStatus())
+    -- Due, but the look cannot be read yet (inventory not loaded after a
+    -- login): wait for it rather than offer under a key that changes later.
+    if On() and type(status) == "table" and status.due and not status.look then return end
     if not On() or type(status) ~= "table" or not status.due or Skipped(status) then
         Stop()
         return
@@ -420,7 +459,7 @@ local function Evaluate(status)
     if Dead() then return end
     local key = OfferKey(status)
     if offered == key and dueAt then return end
-    offered, dueAt, clearFor, shownAt = key, GetTime() + DELAY, 0, GetTime()
+    offered, offeredReason, dueAt, clearFor, shownAt = key, status.reason, GetTime() + DELAY, 0, GetTime()
     boxHidden = false     -- a new offer is said in full, whatever the last one was
     Build()
     Paint()
@@ -437,6 +476,17 @@ do
         Evaluate(status)
     end
 end
+
+-- A different look under the same public answer (chest B, then chest C: both
+-- "Chest changed"). Capture.lua says so here rather than widening the public
+-- PortraitStatusChanged signal (review of #215).
+AltStable.PortraitLookChanged = function(status) Evaluate(status) end
+
+-- A capture that started and was then abandoned (combat, death, the watchdog):
+-- the offer ended when the shot began, and the status did not change, so
+-- nothing else would offer it again (review of #215). A capture REFUSED
+-- before it starts stays one attempt, as above.
+AltStable.OnPortraitCaptureAbandoned = function() Evaluate() end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_UNGHOST")
@@ -463,5 +513,6 @@ AltStable._test.autoCapture = {
     ticker = function() return ticker end,
     events = events,
     dragging = function() return dragging end,
+    offeredReason = function() return offeredReason end,
     DELAY = DELAY, SETTLE = SETTLE, CLEAR_NEEDED = CLEAR_NEEDED, COMPACT_AFTER = COMPACT_AFTER,
 }

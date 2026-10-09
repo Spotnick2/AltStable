@@ -35,6 +35,7 @@
 
 AltStable = AltStable or {}
 
+
 local KEY_DELAY   = 1.25   -- let the model stream in before the first shot
 local SHOT_DELAY  = 0.65   -- let the client finish writing a file
 
@@ -607,6 +608,11 @@ local function AbandonCapture(message, restoreUI)
         Out(message .. ((back or not restoreUI) and ""
             or " (interface returns when the fight ends)"))
     end
+    -- A capture that STARTED and was given up: still due, and the status did
+    -- not change, so the auto-capture is told to offer it again (review of
+    -- #215). Inside a pcall: this runs on the PLAYER_DEAD and combat paths,
+    -- which must finish whatever a listener does.
+    if AltStable.OnPortraitCaptureAbandoned then pcall(AltStable.OnPortraitCaptureAbandoned) end
 end
 
 ------------------------------------------------------------
@@ -965,18 +971,25 @@ function AltStable.PortraitStatusUpdated(status)
     if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(status) end
 end
 
-local lastStatusKey, lastStatus
+local lastStatusKey, lastStatus, lastLookKey
 function AltStable.RefreshPortraitStatus()
     local status = PortraitStatus()
     lastStatus = status
-    -- The look too, while one is due: chest B and chest C are both "Chest
-    -- changed", but a different answer - the auto-capture skips a LOOK, and
-    -- without this, swapping a skipped chest for another one was never offered
-    -- (#124).
     local key = status.reason .. "|" .. table.concat(status.changedSlots, ",")
-        .. "|" .. (status.due and tostring(status.look) or "")
-    if key == lastStatusKey then return status end
-    lastStatusKey = key
+    -- The look, while one is due, is NOT part of that key: PortraitStatusChanged
+    -- is public, documented as "GetPortraitStatus() would answer differently",
+    -- and chest B then chest C answer the same (review of #215). The
+    -- auto-capture still needs to hear it - it skips a LOOK, so a skipped chest
+    -- swapped for another must be offered (#124) - so it has its own hook.
+    local lookKey = status.due and tostring(status.look) or ""
+    if key == lastStatusKey then
+        if lookKey ~= lastLookKey then
+            lastLookKey = lookKey
+            if AltStable.PortraitLookChanged then AltStable.PortraitLookChanged(status) end
+        end
+        return status
+    end
+    lastStatusKey, lastLookKey = key, lookKey
     AltStable.PortraitStatusUpdated(status)
     return status
 end
@@ -1046,7 +1059,8 @@ function AltStable.PortraitCommand(args)
     if auto == "on" or auto == "off" then
         AltStable.SetConfigValue("portraitAuto", auto == "on")
         Out(auto == "on"
-            and "when your look changes, a toast above the chat counts down 5 minutes to a new portrait"
+            and ("when your look changes, a toast above the chat counts down 5 minutes to a new portrait. "
+                .. AltStable.COMPANION_NEEDED)
             or "no automatic portraits")
         if AltStable.EvaluateAutoCapture then AltStable.EvaluateAutoCapture() end
         return
@@ -1103,6 +1117,6 @@ AltStable._test.portrait = {
     PortraitStatus = function() return PortraitStatus() end,
     CutoutEntry    = CutoutEntry,
     LOOK_SLOTS     = LOOK_SLOTS,
-    ResetStatus    = function() lastStatusKey, lastStatus = nil, nil end,
+    ResetStatus    = function() lastStatusKey, lastStatus, lastLookKey = nil, nil, nil end,
     SetSessionStart = function(t) SESSION_START = t end,
 }

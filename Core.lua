@@ -4,6 +4,15 @@ AltStable = AltStable or {}
 local GetItemInfo = AltStable.API.GetItemInfo
 AltStableDB = AltStableDB or {}
 
+-- What every way to take a portrait says about the Companion: the screenshots
+-- become a portrait only through it, so without it a capture is two screenshots
+-- and nothing more (owner's call, #124). One wording, used by the sheet's
+-- capture button, the auto-capture option, its toggle and its slash reply.
+-- Here because SheetUI loads before Capture.lua.
+AltStable.COMPANION_NEEDED_PLAIN = "Needs AltStable Companion, the free Windows app that turns "
+    .. "the screenshots into portraits - without it, these are only screenshots."
+AltStable.COMPANION_NEEDED = "|cffffd100" .. AltStable.COMPANION_NEEDED_PLAIN .. "|r"
+
 ------------------------------------------------------------
 -- DB cleanup — wipes all entries except the current character,
 -- then rescans and requests fresh data from all peers.

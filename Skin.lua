@@ -134,6 +134,15 @@ end
 -- time (#184). A toast
 -- that appeared before the sheet was ever built would otherwise get the file's
 -- default look rather than the chosen one: clear glass in a smoked window.
+-- The preset into the material's STYLE, before an Apply or a Pill: the three
+-- body parameters, the tint COPIED (see SkinWindow for why never aliased). One
+-- place, so the copy rule cannot drift between two callers (review of #215).
+local function PushPreset(preset, body)
+    local st = Glass.STYLE
+    st.grain, st.wash = preset.grain, preset.wash
+    st.tint = { body[1], body[2], body[3], body[4] }
+end
+
 function AltStable.SkinWindow(frame, size)
     if not AltStable.SkinIsGlass() then return nil end
     local preset = AltStable.Skin()
@@ -147,10 +156,7 @@ function AltStable.SkinWindow(frame, size)
     -- permanently, for the rest of the session, for every window. The
     -- material is a library this addon does not own (#184), which makes
     -- shared mutable state exactly the wrong thing to hand it.
-    local body = (size == "small") and AltStable.SkinPopupTint() or preset.tint
-    local st = Glass.STYLE
-    st.grain, st.wash = preset.grain, preset.wash
-    st.tint = { body[1], body[2], body[3], body[4] }
+    PushPreset(preset, (size == "small") and AltStable.SkinPopupTint() or preset.tint)
 
     -- Kept on the frame. The rim lives on a CHILD at host level + 10, pinned at
     -- Apply time, so anything that moves the host's level afterwards leaves the
@@ -168,11 +174,7 @@ end
 -- nil when the skin is not glass or the library predates Pill (r4 and older).
 function AltStable.SkinPill(button, opts)
     if not AltStable.SkinIsGlass() or type(Glass.Pill) ~= "function" then return nil end
-    local preset = AltStable.Skin()
-    local body = AltStable.SkinPopupTint()
-    local st = Glass.STYLE
-    st.grain, st.wash = preset.grain, preset.wash
-    st.tint = { body[1], body[2], body[3], body[4] }
+    PushPreset(AltStable.Skin(), AltStable.SkinPopupTint())
     return Glass.Pill(button, opts)
 end
 
