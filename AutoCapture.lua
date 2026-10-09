@@ -117,6 +117,35 @@ end
 local Stop, Skip, Now, Paint
 
 local FULL_W, FULL_H, COMPACT_W, COMPACT_H = 300, 52, 210, 30
+local TOGGLE_SIZE = 24                  -- GlassChat's button size (Buttons.SIZE)
+local GOLD = { 1, 0.82, 0 }             -- GlassChat's symbol gold (Skin.TAB_GOLD)
+
+-- A camera in gold fills on a 16x12 holder: the body, the viewfinder bump on
+-- top, and the lens as a dark square with a gold glint.
+local function CameraSymbol(parent)
+    local h = CreateFrame("Frame", nil, parent)
+    h:SetSize(16, 12)
+    local function fill(w, hh, point, rel, relPoint, x, y, c)
+        local tex = h:CreateTexture(nil, "OVERLAY")
+        tex:SetSize(w, hh)
+        tex:SetPoint(point, rel, relPoint, x, y)
+        tex:SetColorTexture(c[1], c[2], c[3], 1)
+        return tex
+    end
+    local body = fill(16, 9, "BOTTOM", h, "BOTTOM", 0, 0, GOLD)
+    fill(6, 3, "BOTTOMLEFT", body, "TOPLEFT", 3, 0, GOLD)
+    local lens = fill(6, 6, "CENTER", body, "CENTER", 0, 0, { 0.08, 0.08, 0.1 })
+    lens:SetDrawLayer("OVERLAY", 1)
+    local glint = fill(2, 2, "CENTER", lens, "CENTER", 0, 0, GOLD)
+    glint:SetDrawLayer("OVERLAY", 2)
+    h:SetPoint("CENTER", parent, "CENTER", 0, 0)
+    return h
+end
+
+local function PlaceSymbol(t, pressed)
+    t.symbol:ClearAllPoints()
+    t.symbol:SetPoint("CENTER", t, "CENTER", pressed and 1 or 0, pressed and -1 or 0)
+end
 
 local function Build()
     if toast then return toast end
@@ -124,14 +153,39 @@ local function Build()
     -- itself (it must not be in the picture), for Alt+Z, for the showcase.
     -- The icon, on its own, left of the box: Blizzard's toggle. It stays up for
     -- the whole offer, so a box put away is not an offer forgotten.
+    --
+    -- Styled like GlassChat's buttons beside the chat, which it sits among: a
+    -- small glass pill with a flat gold symbol, not a full-colour item icon
+    -- (owner's call: the spyglass looked out of place there). The symbol is a
+    -- camera drawn from fills, as GlassChat draws its chat bubble - no
+    -- frameless camera art is known on this client.
     local t = CreateFrame("Button", "AltStablePortraitToastToggle", UIParent)
-    t:SetSize(28, 28)
+    t:SetSize(TOGGLE_SIZE, TOGGLE_SIZE)
     t:SetFrameStrata("DIALOG")
-    t.icon = t:CreateTexture(nil, "ARTWORK")
-    t.icon:SetAllPoints()
-    t.icon:SetTexture("Interface\\Icons\\INV_Misc_Spyglass_02")
-    t.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    if t.SetHighlightTexture then t:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD") end
+    t.pill = CreateFrame("Frame", nil, t)
+    t.pill:SetAllPoints()
+    t.pill:SetFrameLevel(math.max(0, (t:GetFrameLevel() or 1) - 1))
+    local g = AltStable.SkinWindow and AltStable.SkinWindow(t.pill, "small")
+    if g then
+        -- GlassChat's pill tuning: no grain and no shadow at 24 px, and the
+        -- rim down with the pill so it does not draw over the symbol.
+        if g.grain then g.grain:SetAlpha(0) end
+        if g.shadow then g.shadow:SetAlpha(0) end
+        if g.top then g.top:SetFrameLevel(t.pill:GetFrameLevel()) end
+    else
+        local bg = t.pill:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0.08, 0.08, 0.1, 0.85)
+    end
+    t.symbol = CameraSymbol(t)
+    if t.SetHighlightTexture then
+        t:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+        local h = t.GetHighlightTexture and t:GetHighlightTexture()
+        if h then h:SetAlpha(0.4) end     -- softened, as GlassChat's are
+    end
+    -- Pressed, the symbol moves a pixel, as GlassChat's bubble does.
+    t:SetScript("OnMouseDown", function(self) PlaceSymbol(self, true) end)
+    t:SetScript("OnMouseUp", function(self) PlaceSymbol(self, false) end)
     t:RegisterForClicks("LeftButtonUp")
     t:SetScript("OnClick", function()
         boxHidden = not boxHidden

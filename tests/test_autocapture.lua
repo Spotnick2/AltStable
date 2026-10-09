@@ -67,6 +67,16 @@ eq("  and the chain still runs upstream", upstream, 1)
 ------------------------------------------------------------
 -- The offer
 ------------------------------------------------------------
+-- The material, as a spy: the toggle is built at the first offer, styled as
+-- GlassChat's buttons beside the chat are (a "small" pill, no grain, no shadow,
+-- the rim down with the pill).
+local skinned = {}
+AltStable.SkinWindow = function(f, size)
+    local g = { grain = f:CreateTexture(), shadow = f:CreateTexture(), top = CreateFrame("Frame") }
+    g.top:SetFrameLevel(99)
+    skinned[#skinned + 1] = { frame = f, size = size, g = g }
+    return g
+end
 reset()
 update(changed("5:1"))
 check("a changed look shows the toast", shown())
@@ -75,6 +85,26 @@ check("  saying so", (A.toast().title:GetText() or ""):find("5:00", 1, true) ~= 
 check("  and why", (A.toast().sub:GetText() or ""):find("look changed", 1, true) ~= nil, A.toast().sub:GetText())
 check("  ticking", A.ticker() ~= nil)
 tick(61)
+do
+    local icon = A.toast().toggle
+    local pill
+    for _, sk in ipairs(skinned) do if sk.frame == icon.pill then pill = sk end end
+    check("the icon is a glass pill", pill ~= nil)
+    eq("  a small one", pill and pill.size, "small")
+    eq("  GlassChat's size", icon:GetWidth(), 24)
+    eq("  without grain", pill and pill.g.grain:GetAlpha(), 0)
+    eq("  or shadow", pill and pill.g.shadow:GetAlpha(), 0)
+    eq("  its rim down with it, under the symbol", pill and pill.g.top:GetFrameLevel(), icon.pill:GetFrameLevel())
+    check("  the pill under the button", icon.pill:GetFrameLevel() < icon:GetFrameLevel())
+    check("  with a symbol, not an item icon", icon.symbol ~= nil and icon.icon == nil)
+    local _, _, _, x0, y0 = icon.symbol:GetPoint(1)
+    icon:GetScript("OnMouseDown")(icon)
+    local _, _, _, x1, y1 = icon.symbol:GetPoint(1)
+    check("  which moves a pixel when pressed", x1 ~= x0 or y1 ~= y0)
+    icon:GetScript("OnMouseUp")(icon)
+    local _, _, _, x2, y2 = icon.symbol:GetPoint(1)
+    check("  and back", x2 == x0 and y2 == y0)
+end
 check("the countdown moves", (A.toast().title:GetText() or ""):find("3:59", 1, true) ~= nil, A.toast().title:GetText())
 
 -- Like Blizzard's: in full at first, then one line.
