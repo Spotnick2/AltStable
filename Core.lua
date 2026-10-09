@@ -544,7 +544,8 @@ end
 --              after the library stopped listing them
 --   announced  AuthKey -> true: "found your other account" said once
 --   asked      AuthKey -> true once a request for their data went out over
---              the library, "pending" while one is on its way (LibSync.Fetch)
+--              the library, "pending" while one is on its way, else the count
+--              of failed tries (LibSync.Fetch). Cleared with the binding.
 local LibSync = { peers = {}, seen = {}, announced = {}, asked = {} }
 
 -- A peer heard over the library, while the library still lists that GUID
@@ -560,7 +561,9 @@ function LibSync.Peer(name)
             if q.guid == p.guid and AuthKey(q.name) == key then return p end
         end
     end
-    LibSync.peers[key] = nil
+    -- The fetch state goes with the binding (Codex, #212): rediscovered, they
+    -- are asked for their data again, with a fresh budget.
+    LibSync.peers[key], LibSync.asked[key] = nil, nil
     return nil
 end
 
@@ -3045,6 +3048,8 @@ function LibSync.OnMessage(payload, sender)
     -- The realm name, when the library has none, is the database's for a
     -- character synced before.
     local before = LibSync.peers[key]
+    -- Another character on that name's binding: a new binding, asked afresh.
+    if before and before.guid ~= guid then LibSync.asked[key] = nil end
     local known = (AltStableDB or {})[guid]
     local realm = sender.realm or (type(known) == "table" and known.realm) or nil
     LibSync.peers[key] = { name = name, guid = guid, realm = realm, faction = sender.faction }

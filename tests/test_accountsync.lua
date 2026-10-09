@@ -291,6 +291,36 @@ fake.ret = 1
 fromBee(L.MSG_CAP)
 eq("  and starts again after Battle.net reconnects (Forget)", count(REQS, true), 31)
 
+-- The fetch state goes with the binding (Codex, #212): a peer asked once,
+-- dropped when the library stopped listing it, then found again, is asked
+-- again - as on first contact.
+reset()
+listBee()
+fromBee(L.MSG_CAP)
+for _, s in ipairs(fake.sent) do
+    if s.msg:sub(1, #REQS) == REQS then s.onResult({ guid = BEE_GUID }, "sent") end
+end
+eq("(asked once, and it went out)", count(REQS, true), 1)
+fake.peers = {}
+check("(they logged off: the binding is dropped)", L.Peer(BEE) == nil)
+listBee()
+WoW.now = WoW.now + 6
+fromBee(L.MSG_CAP)
+eq("found again on the same character: asked for their data again", count(REQS, true), 2)
+
+-- Another character on the same name's binding is a new binding too.
+reset()
+listBee()
+fromBee(L.MSG_CAP)
+for _, s in ipairs(fake.sent) do
+    if s.msg:sub(1, #REQS) == REQS then s.onResult({ guid = BEE_GUID }, "sent") end
+end
+local OTHER_GUID = "Player-1-0000B0B"
+fake.peers = { { name = BEE, guid = OTHER_GUID, realm = "R", faction = "Horde" } }
+WoW.now = WoW.now + 6
+L.OnMessage(L.MSG_CAP, { name = BEE, guid = OTHER_GUID, realm = "R", faction = "Horde", proven = "bnet" })
+eq("the name on another GUID: asked afresh", count(REQS, true), 2)
+
 -- Refused for good: never asked, however many ticks.
 reset()
 listBee()
