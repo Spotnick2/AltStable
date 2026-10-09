@@ -365,9 +365,11 @@ CurseForge builds releases from the tag webhook, reading `.pkgmeta`. The same ta
 `package-check.yml`, whose `release` job publishes a **GitHub Release** (#209): the zip CI built
 and checked, with that tag's `CHANGELOG.md` section as the notes, and a pre-release when the tag
 has `alpha` or `beta` in it. The job fails, rather than publishing, if there is no `## vX.Y.Z`
-heading for the tag. To release a tag whose job failed or never ran (v0.11.0 predates it): fix
-the cause, delete any half-made release, then **Actions → Package check → Run workflow** with the
-tag.
+heading for the tag. To release a tag whose job failed (or v0.11.0, which predates it): fix the
+cause on `main`, delete any half-made release, then **Actions → Package check → Run workflow**
+with the tag. That run packages the tag's tree but reads the notes from `main`'s `CHANGELOG.md`,
+so a fixed heading needs no moved tag (moving it would re-fire CurseForge). Tags older than
+v0.11.0 fail its checks.
 
 1. Update `CHANGELOG.md` — it is the release notes. The tag's section must be headed exactly
    `## vX.Y.Z` (the tag name).
