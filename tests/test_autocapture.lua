@@ -185,6 +185,19 @@ for _, case in ipairs({
     GetCurrentKeyBoardFocus = nil
 end
 
+-- The in-game shortcut ends the countdown and nothing else: the clear-moment
+-- rule still holds.
+reset()
+update(changed("5:1"))
+A.Expire()
+eq("Expire ends the countdown", A.dueAt(), clock)
+tick(1)
+eq("  but still waits for a clear moment", #shots, 0)
+tick(1)
+eq("  then takes it", #shots, 1)
+A.Expire()
+eq("  and with no offer up it does nothing", A.dueAt(), nil)
+
 ------------------------------------------------------------
 -- Dead
 ------------------------------------------------------------

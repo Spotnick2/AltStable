@@ -279,6 +279,9 @@ AltStable._test.autoCapture = {
     toast = function() return toast end,
     offered = function() return offered end,
     dueAt = function() return dueAt end,
+    -- For an in-game check without the ten-minute wait:
+    --   /run AltStable._test.autoCapture.Expire()
+    Expire = function() if dueAt then dueAt = GetTime() end end,
     ticker = function() return ticker end,
     events = events,
     DELAY = DELAY, SETTLE = SETTLE, CLEAR_NEEDED = CLEAR_NEEDED,
