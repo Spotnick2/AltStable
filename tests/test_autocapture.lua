@@ -305,6 +305,78 @@ A.Expire()
 eq("  and with no offer up it does nothing", A.dueAt(), nil)
 
 ------------------------------------------------------------
+-- Moving it: Alt+drag, kept; Alt+right-click puts it back
+------------------------------------------------------------
+do
+    reset()
+    update(changed("5:1"))
+    local f = A.toast()
+    local icon = f.toggle
+    local alt = false
+    IsAltKeyDown = function() return alt end
+    local moved, stopped = 0, 0
+    icon.StartMoving = function() moved = moved + 1 end
+    icon.StopMovingOrSizing = function() stopped = stopped + 1 end
+    local placed
+    icon.SetUserPlaced = function(_, v) placed = v end
+
+    icon:GetScript("OnDragStart")(icon)
+    eq("a plain drag does not move it", moved, 0)
+    icon:GetScript("OnDragStop")(icon)
+    eq("  and its release pins nothing: it still follows the chat", AltStableConfig.portraitToastPos, nil)
+
+    alt = true
+    icon:GetScript("OnDragStart")(icon)
+    eq("an Alt+drag on the icon moves it", moved, 1)
+    icon._GetLeft, icon._GetBottom = 412.4, 233.6
+    icon:GetScript("OnDragStop")(icon)
+    eq("  and stops", stopped, 1)
+    local pos = AltStableConfig.portraitToastPos
+    check("  where it was dropped is kept", pos and pos.x == 412 and pos.y == 234,
+          pos and (pos.x .. "," .. pos.y) or "nil")
+    eq("  as ours, not the client's layout cache", placed, false)
+    local p, rel, relp, x, y = icon:GetPoint(1)
+    check("  and it stays there", p == "BOTTOMLEFT" and rel == UIParent and relp == "BOTTOMLEFT"
+          and x == 412 and y == 234, ("%s %s %s,%s"):format(tostring(p), tostring(relp), tostring(x), tostring(y)))
+    tick(1)
+    check("  through the ticks", select(4, icon:GetPoint(1)) == 412)
+
+    -- The release that ends a drag is not a click.
+    local wasHidden = not f:IsShown()
+    icon:GetScript("OnClick")(icon, "LeftButton")
+    eq("an Alt+click on the icon does not toggle", not f:IsShown(), wasHidden)
+    f:GetScript("OnClick")(f, "LeftButton")
+    eq("  nor does one on the box take it now", #shots, 0)
+
+    -- The box drags the icon, and the box follows.
+    moved = 0
+    f:GetScript("OnDragStart")(f)
+    eq("an Alt+drag on the box moves the icon", moved, 1)
+    f:GetScript("OnDragStop")(f)
+
+    -- A new offer, or the next session, comes up where it was put.
+    A.Stop()
+    update(changed("5:2"))
+    check("a new offer comes up where it was put", select(4, icon:GetPoint(1)) == 412)
+
+    -- Alt+right-click: back above the chat.
+    alt = false
+    icon:GetScript("OnClick")(icon, "RightButton")
+    check("a plain right-click does nothing", AltStableConfig.portraitToastPos ~= nil)
+    check("  not even toggle", f:IsShown())
+    alt = true
+    icon:GetScript("OnClick")(icon, "RightButton")
+    eq("an Alt+right-click puts it back", AltStableConfig.portraitToastPos, nil)
+    check("  above the chat", select(2, icon:GetPoint(1)) ~= UIParent)
+
+    alt = false
+    icon:GetScript("OnClick")(icon, "LeftButton")
+    check("a plain click still toggles", not f:IsShown())
+    icon:GetScript("OnClick")(icon, "LeftButton")
+    IsAltKeyDown = nil
+end
+
+------------------------------------------------------------
 -- Dead
 ------------------------------------------------------------
 -- The corpse run that set off three dialogs in the probe.

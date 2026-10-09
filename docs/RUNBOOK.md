@@ -449,7 +449,9 @@ or a missing portrait brings up a toast above the chat window: "New portrait in
 5:00". Click it to take the portrait now, or close it to skip that look (it asks
 again when the look changes). Like Blizzard's world-refresh toast, it shrinks to one
 line after a few seconds (hover for the full text), and the icon to its left puts
-the box away and brings it back while the countdown carries on. When the countdown ends, the capture waits for two
+the box away and brings it back while the countdown carries on. Alt+drag (the icon or
+the box) moves it and the spot is kept; Alt+right-click on the icon puts it back above
+the chat. When the countdown ends, the capture waits for two
 clear seconds in a row: not in combat, dead, a dungeon or moving, the interface
 showing and nobody typing. An automatic capture does not offer the reload; the
 record is written at the next reload or logout. `AutoCapture.lua` decides when;

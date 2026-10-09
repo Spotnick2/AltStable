@@ -101,9 +101,15 @@ end
 -- and Blizzard's world-refresh toast sits above it - measured in game: at the
 -- container's base the toast covered the button. So above it while it shows.
 -- Re-placed on every paint: the button comes and goes on its own.
+--
+-- Unless the player moved it (Alt+drag): then where they put it, kept in
+-- AltStableConfig.portraitToastPos as the icon's bottom left against UIParent's.
 local function Place(f)
     f:ClearAllPoints()
-    if QuickJoinToastButton and QuickJoinToastButton.IsShown and QuickJoinToastButton:IsShown() then
+    local pos = AltStableConfig and AltStableConfig.portraitToastPos
+    if type(pos) == "table" and tonumber(pos.x) and tonumber(pos.y) then
+        f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", tonumber(pos.x), tonumber(pos.y))
+    elseif QuickJoinToastButton and QuickJoinToastButton.IsShown and QuickJoinToastButton:IsShown() then
         f:SetPoint("BOTTOMLEFT", QuickJoinToastButton, "TOPLEFT", 0, 4)
     elseif ChatAlertFrame then
         f:SetPoint("BOTTOMLEFT", ChatAlertFrame, "BOTTOMLEFT", 0, 0)
@@ -140,6 +146,34 @@ local function CameraSymbol(parent)
     glint:SetDrawLayer("OVERLAY", 2)
     h:SetPoint("CENTER", parent, "CENTER", 0, 0)
     return h
+end
+
+local function AltDown()
+    return type(IsAltKeyDown) == "function" and IsAltKeyDown() and true or false
+end
+
+-- Alt+drag, from the icon or the box: the icon moves and the box follows it.
+-- Alt, so a plain click keeps meaning what it says (toggle, take it now).
+local dragging
+local function DragStart()
+    if not AltDown() or not toast then return end
+    dragging = true
+    toast.toggle:StartMoving()
+end
+local function DragStop()
+    if not dragging then return end
+    dragging = nil
+    local t = toast.toggle
+    t:StopMovingOrSizing()
+    -- Ours to keep, not the client's layout cache: a named frame moved by
+    -- StartMoving is marked user-placed, and the client would then restore it
+    -- from layout-local.txt on its own, fighting Place.
+    if t.SetUserPlaced then t:SetUserPlaced(false) end
+    local x, y = t:GetLeft(), t:GetBottom()
+    if x and y then
+        AltStable.SetConfigValue("portraitToastPos", { x = math.floor(x + 0.5), y = math.floor(y + 0.5) })
+    end
+    Paint()
 end
 
 local function PlaceSymbol(t, pressed)
@@ -186,8 +220,22 @@ local function Build()
     -- Pressed, the symbol moves a pixel, as GlassChat's bubble does.
     t:SetScript("OnMouseDown", function(self) PlaceSymbol(self, true) end)
     t:SetScript("OnMouseUp", function(self) PlaceSymbol(self, false) end)
-    t:RegisterForClicks("LeftButtonUp")
-    t:SetScript("OnClick", function()
+    t:SetMovable(true)
+    t:SetClampedToScreen(true)
+    t:RegisterForDrag("LeftButton")
+    t:SetScript("OnDragStart", DragStart)
+    t:SetScript("OnDragStop", DragStop)
+    t:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    t:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            -- Alt+right-click: back above the chat.
+            if AltDown() then
+                AltStable.SetConfigValue("portraitToastPos", nil)
+                Paint()
+            end
+            return
+        end
+        if AltDown() then return end      -- the end of an Alt+drag, not a click
         boxHidden = not boxHidden
         Paint()
     end)
@@ -195,6 +243,7 @@ local function Build()
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine("New portrait", 1, 1, 1)
         GameTooltip:AddLine("Click to show or hide the countdown.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Alt+drag to move it; Alt+right-click to put it back.", 0.6, 0.6, 0.6, true)
         GameTooltip:Show()
     end)
     t:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -244,7 +293,13 @@ local function Build()
     f.close = close
 
     f:RegisterForClicks("LeftButtonUp")
-    f:SetScript("OnClick", function() Now() end)
+    f:SetScript("OnClick", function()
+        if AltDown() then return end      -- the end of an Alt+drag, not "take it now"
+        Now()
+    end)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", DragStart)
+    f:SetScript("OnDragStop", DragStop)
     -- The full text on hover. OnLeave fires when the cursor moves onto the X,
     -- a child, so it asks whether the cursor is still over the toast at all -
     -- or reaching for the X would shrink the toast out from under it.
@@ -407,5 +462,6 @@ AltStable._test.autoCapture = {
     Expire = function() if dueAt then dueAt = GetTime() end end,
     ticker = function() return ticker end,
     events = events,
+    dragging = function() return dragging end,
     DELAY = DELAY, SETTLE = SETTLE, CLEAR_NEEDED = CLEAR_NEEDED, COMPACT_AFTER = COMPACT_AFTER,
 }
