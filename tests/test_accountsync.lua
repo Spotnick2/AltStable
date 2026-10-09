@@ -246,6 +246,62 @@ eq("found on the library moments after a login whisper: still asked", count(T.MS
 T.ResetSyncState()
 check("the test seam's reset forgets who is on the library too", next(L.peers) == nil)
 
+-- First contact whose request the library refuses (Codex, #212): their CAP8
+-- overtook the library's hello, so we can hear them but not yet send to them.
+-- The request stays pending until one goes out.
+local REQS = T.MSG_REQUEST_V .. "|"
+reset()
+listBee()
+fake.ret = 0
+fromBee(L.MSG_CAP)
+eq("first contact, library not ready: the request is tried", count(REQS, true), 1)
+fake.ret = 1
+WoW.now = WoW.now + 10
+L.Ping()
+eq("  and tried again at the next tick, once the library is ready", count(REQS, true), 2)
+local last = fake.sent[#fake.sent]
+L.Ping()
+eq("  not again while that one is on its way", count(REQS, true), 2)
+last.onResult({ guid = BEE_GUID }, "sent")
+WoW.now = WoW.now + 10
+L.Ping()
+fromBee(L.MSG_CAP)
+eq("  and never again once it went out", count(REQS, true), 2)
+
+-- Taken by the library, then failed on the way: asked again too.
+reset()
+listBee()
+fromBee(L.MSG_CAP)
+for _, s in ipairs(fake.sent) do
+    if s.msg:sub(1, #REQS) == REQS then s.onResult({ guid = BEE_GUID }, "failed", "offline") end
+end
+local before = count(REQS, true)
+L.Ping()
+eq("a request that failed on the way is asked again", count(REQS, true), before + 1)
+
+-- Bounded: a library that never becomes ready is not asked all session.
+reset()
+listBee()
+fake.ret = 0
+fromBee(L.MSG_CAP)
+for _ = 1, 40 do WoW.now = WoW.now + 10; L.Ping() end
+eq("a request the library keeps refusing stops after 30 tries", count(REQS, true), 30)
+L.Forget()
+fake.ret = 1
+fromBee(L.MSG_CAP)
+eq("  and starts again after Battle.net reconnects (Forget)", count(REQS, true), 31)
+
+-- Refused for good: never asked, however many ticks.
+reset()
+listBee()
+fake.ret = 0
+fromBee(L.MSG_CAP)
+AltStableConfig.syncAuth = { [BEE:lower()] = "never" }
+fake.ret = 1
+local n0 = count(REQS, true)
+for _ = 1, 5 do WoW.now = WoW.now + 10; L.Ping() end
+eq("a peer refused for good after first contact is not asked again", count(REQS, true), n0)
+
 -- Found on the library: said once, with where they are, and trusted like a
 -- whitelist entry.
 reset()

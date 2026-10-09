@@ -543,7 +543,9 @@ end
 --   seen       AuthKey -> true: known as our own account this session, even
 --              after the library stopped listing them
 --   announced  AuthKey -> true: "found your other account" said once
-local LibSync = { peers = {}, seen = {}, announced = {} }
+--   asked      AuthKey -> true once a request for their data went out over
+--              the library, "pending" while one is on its way (LibSync.Fetch)
+local LibSync = { peers = {}, seen = {}, announced = {}, asked = {} }
 
 -- A peer heard over the library, while the library still lists that GUID
 -- under that name. Stale either way (the account logged off, another
@@ -1591,7 +1593,33 @@ end
 
 -- Forget who runs it: Battle.net went away, or the switch went off.
 function LibSync.Forget()
-    LibSync.peers, LibSync.pinged, LibSync.answered = {}, {}, {}
+    LibSync.peers, LibSync.pinged, LibSync.answered, LibSync.asked = {}, {}, {}, {}
+end
+
+-- Ask an own account on the library for its data - until one request has
+-- actually gone out (Codex, #212). The first one can be refused (the library
+-- has no nonce of theirs yet) or fail on the way, and a peer marked found
+-- after it was never asked again: their data stayed stale all session while
+-- they had ours. So a request counts only once the library reports it sent;
+-- until then each message from them, and each ping tick, asks again. Forced
+-- past the request throttle: the login whisper to a whitelisted own account
+-- sets it, and may have gone nowhere (the other faction, or not online yet).
+-- Bounded: FETCH_TRIES failed requests, then it waits for LibSync.Forget (a
+-- Battle.net reconnect, the switch turned back on). A peer refused for good is
+-- never asked (the callers check; RequestCharacters checks again), and one the
+-- library stops listing has no route, so its tries fail and run out.
+LibSync.FETCH_TRIES = 30
+function LibSync.Fetch(name)
+    local key = AuthKey(name)
+    local state = key and LibSync.asked[key]
+    if not key or state == true or state == "pending" or not RequestCharacters then return end
+    local failed = state or 0
+    if failed >= LibSync.FETCH_TRIES then return end
+    LibSync.asked[key] = "pending"
+    local function done(ok)
+        if LibSync.asked[key] == "pending" then LibSync.asked[key] = ok and true or failed + 1 end
+    end
+    if not RequestCharacters("BNET", name, true, done) then done(false) end
 end
 
 -- One message to one GUID. True when the library took it: onDone(ok) then
@@ -1664,6 +1692,11 @@ function LibSync.Ping()
     for _, q in ipairs(listed) do
         local key = AuthKey(q.name)
         local known = key and LibSync.peers[key]
+        -- Heard on the library, but our request for their data has not gone
+        -- out yet (refused at first contact, say): ask again (LibSync.Fetch).
+        if known and known.guid == q.guid and SyncAuthFor(q.name) ~= AUTH_NEVER then
+            LibSync.Fetch(q.name)
+        end
         local asked = type(q.guid) == "string" and (LibSync.pinged[q.guid] or { at = 0, n = 0 })
         if asked and not (known and known.guid == q.guid) and asked.n < LibSync.PING_TRIES
             and (asked.r or 0) < LibSync.PING_REFUSALS and (now - asked.at) >= LibSync.PING_EVERY then
@@ -3015,22 +3048,19 @@ function LibSync.OnMessage(payload, sender)
     local known = (AltStableDB or {})[guid]
     local realm = sender.realm or (type(known) == "table" and known.realm) or nil
     LibSync.peers[key] = { name = name, guid = guid, realm = realm, faction = sender.faction }
-    -- Newly on the library: said once, and asked for their data - only while
-    -- the library lists them as ours (a request opens our consent window for
-    -- the reply). Refused for good: noticed, but neither announced nor asked.
-    -- Forced past the request throttle: the login whisper to a whitelisted own
-    -- account sets it, and may have gone nowhere (the other faction, or not
-    -- online yet) - this is the request that gets their data. The never-check
-    -- is RequestCharacters' own.
-    if not (before and before.guid == guid) and LibSync.Peer(name) then
-        LibSync.seen[key] = true
+    -- Newly on the library: said once. Asked for their data until a request
+    -- has gone out (LibSync.Fetch) - only while the library lists them as ours
+    -- (a request opens our consent window for the reply). Refused for good:
+    -- noticed, but neither announced nor asked.
+    if LibSync.Peer(name) then
+        if not (before and before.guid == guid) then LibSync.seen[key] = true end
         if SyncAuthFor(name) ~= AUTH_NEVER then
             if not LibSync.announced[key] then
                 LibSync.announced[key] = true
                 Print("Found your other account: |cff88ff88" .. name .. "|r ("
                     .. tostring(sender.faction or "?") .. ", " .. tostring(realm or "?") .. ") - syncing.")
             end
-            if RequestCharacters then RequestCharacters("BNET", name, true) end
+            LibSync.Fetch(name)
         end
     end
     local cmd, body = payload:match("^([^|]*)|?(.*)$")
