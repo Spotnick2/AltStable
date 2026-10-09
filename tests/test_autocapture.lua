@@ -225,6 +225,10 @@ tick(5)
 eq("past it, not while blocked", #shots, 0)
 check("  saying what it waits for", (A.toast().sub:GetText() or ""):find("moving", 1, true) ~= nil,
       A.toast().sub:GetText())
+-- In full again, as Blizzard's is once its countdown ends: it was one line by
+-- now, and the shot can come at any moment.
+eq("  in full again once the countdown ends", A.toast().compact, false)
+check("    with the reason showing", A.toast().sub:IsShown())
 blocked = nil
 tick(1)
 eq("  not on the first clear second either", #shots, 0)

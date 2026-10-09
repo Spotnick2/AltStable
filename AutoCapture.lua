@@ -221,18 +221,22 @@ end
 
 function Paint()
     if not toast or not dueAt then return end
-    local compact = not hovered and shownAt ~= nil and (GetTime() - shownAt) >= COMPACT_AFTER
+    local left = math.max(0, math.ceil(dueAt - GetTime()))
+    -- In full again once the countdown ends, as Blizzard's does ("Refreshing
+    -- your world at any time..."): the shot can now come at any moment, which
+    -- is worth the full sentence.
+    local compact = left > 0 and not hovered and shownAt ~= nil
+        and (GetTime() - shownAt) >= COMPACT_AFTER
     Layout(compact)
     Place(toast.toggle)
     toast.toggle:Show()
     toast:SetShown(not boxHidden)
-    local left = math.max(0, math.ceil(dueAt - GetTime()))
     if left > 0 then
         local clock = ("%d:%02d"):format(math.floor(left / 60), left % 60)
         toast.title:SetText((compact and "Portrait in " or "New portrait in ") .. clock)
     else
         local why = NotNow()
-        toast.title:SetText(compact and "Portrait: waiting" or "New portrait at the next quiet moment")
+        toast.title:SetText("New portrait at the next quiet moment")
         toast.sub:SetText(why and ("Waiting: " .. why) or "Hold still...")
         return
     end
