@@ -17,3 +17,4 @@ Pets.lua
 Scene.lua
 WhatIcon.lua
 Professions.lua
+Enchants.lua

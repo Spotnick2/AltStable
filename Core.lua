@@ -1229,6 +1229,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^gear_") or k:find("^gearq_")
         or k:find("^gearname_") or k:find("^gearid_")
         or k:find("^gearmod_")   -- NOTE: "^gear_" does NOT match "gearmod_"
+        or k:find("^gearench_")  -- the enchant in words (#94); "^gear_" misses it too
         or k:find("^gearlink_") or k:find("^gearsubtype_")  -- both local-only (see note above)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
@@ -3464,6 +3465,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     if AltStable.RepackGearMod then
                         char["gearmod_"..slotKey] =
                             AltStable.RepackGearMod(info.link, char["gearid_"..slotKey])
+                    end
+                    -- And the enchant's words (#94): the tooltip can come back
+                    -- without its lines while the item is uncached. nil is
+                    -- "none, or still cannot say" - either way, nothing to add.
+                    -- Read off the logged-in character, so only for that one.
+                    if AltStable.RereadEnchantText and info.guid == UnitGUID("player") then
+                        local words = AltStable.RereadEnchantText(slotKey)
+                        if words then char["gearench_"..slotKey] = words end
                     end
                     anyResolved = true
                 end

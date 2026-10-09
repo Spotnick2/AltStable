@@ -184,7 +184,7 @@ client ignores it.
 - **Columns** (`Columns.lua` + `RowRenderer.lua`): each column has a typed renderer. Add one by
   appending to `AltStable.Columns` and implementing its type in `RowRenderer.lua`.
 - **Character record fields:** gear as `gear_<slot>` (ilvl) / `gearq_<slot>` / `gearid_<slot>` /
-  `gearname_<slot>` / `gearmod_<slot>`; `gearlink_*` and `gearsubtype_*` are local-only, not
+  `gearname_<slot>` / `gearmod_<slot>` / `gearench_<slot>`; `gearlink_*` and `gearsubtype_*` are local-only, not
   synced. Professions as `prof_<Name>` / `profmax_<Name>`; cooldowns as `cd_<Name>` Unix
   timestamps. `maxRank` is **dynamic** for weapon/defense skills — read it, don't assume it.
 - **`gearmod_<slot>`** packs enchant, socket count and gems as `"<ench>:<sockets>:<g1>:<g2>:<g3>"`.
@@ -194,6 +194,10 @@ client ignores it.
   field means touching three places: the reset in `Scanner.lua`, the denylist in
   `SerializeChar`, and the wipe list in `ClearSyncedStateFields` (note `^gear_` does **not**
   match `gearmod_`).
+- **`gearench_<slot>`** is the enchant in words ("Stamina +2"), read off the tooltip's
+  `ItemEnchantmentPermanent` line (type 15, measured on 70291), `""` for none. Synced. The
+  Roster's audit lists it; when it is blank but `gearmod_` has an enchant id, the audit says
+  "enchanted".
 - **`hidehelm` / `hidecloak` are NUMBERS, 1 or 0 — never booleans.** Everything on a character
   record rides the wire as `tostring(v)`, and `DeserializeChar` coerces with `tonumber`, so a
   boolean arrives at the peer as the STRING `"false"` — which is truthy in Lua, making a shown

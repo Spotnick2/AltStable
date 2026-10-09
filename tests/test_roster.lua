@@ -2055,11 +2055,21 @@ do
     -- What gets reported
     ----------------------------------------------------------
 
+    -- Findings only: rank 4 is an enchant that IS there, listed in words (#94).
     local function findings(char)
         char.level = char.level or FLOOR
         local out = {}
         for _, f in ipairs(T.AuditCharacter(char)) do
-            out[#out + 1] = f.slot .. ":" .. f.issue
+            if f.rank < 4 then out[#out + 1] = f.slot .. ":" .. f.issue end
+        end
+        return table.concat(out, " | ")
+    end
+    -- And the listed ones, separately.
+    local function listed(char)
+        char.level = char.level or FLOOR
+        local out = {}
+        for _, f in ipairs(T.AuditCharacter(char)) do
+            if f.rank == 4 then out[#out + 1] = f.slot .. ":" .. f.issue end
         end
         return table.concat(out, " | ")
     end
@@ -2129,6 +2139,56 @@ do
     eq("  with the unreadable one last", both[3].issue, "cannot read the item")
 
     ----------------------------------------------------------
+    -- The enchants that ARE there, in words (#94)
+    ----------------------------------------------------------
+    -- No judgement of which are weak - the owner's call was the words only.
+    eq("an enchant is listed in words",
+       listed({ gearid_chest = 10, gearmod_chest = "41:0:0:0:0", gearench_chest = "Stamina +2" }),
+       "chest:Stamina +2")
+    -- A peer on an older build sends the id but no words; a tooltip read
+    -- before the item was cached leaves "". Either way: still enchanted.
+    eq("  an enchant without words is still listed as one",
+       listed({ gearid_chest = 10, gearmod_chest = "41:0:0:0:0" }), "chest:enchanted")
+    eq("  and so is one whose words are blank",
+       listed({ gearid_chest = 10, gearmod_chest = "41:0:0:0:0", gearench_chest = "" }),
+       "chest:enchanted")
+    -- Any occupied slot with words, so an arcanum or a scope shows although
+    -- those slots are never flagged as missing one.
+    eq("  a head arcanum is listed though the head is never a finding",
+       listed({ gearid_head = 10, gearmod_head = "2583:0:0:0:0", gearench_head = "Arcanum of Focus" }),
+       "head:Arcanum of Focus")
+    eq("  while a bare head is still no finding",
+       findings({ gearid_head = 10, gearmod_head = "0:0:0:0:0", gearench_head = "" }), "")
+    -- Words on an EMPTY slot are left over and say nothing.
+    eq("  words on an empty slot are not listed",
+       listed({ gearid_chest = 0, gearench_chest = "Stamina +2" }), "")
+    -- DeserializeChar coerces a number-looking value; it is still the words.
+    eq("  a number-looking value reads as text",
+       listed({ gearid_wrist = 10, gearmod_wrist = "41:0:0:0:0", gearench_wrist = 5 }), "wrist:5")
+    -- An off-hand with words is listed even when its kind cannot be resolved,
+    -- and is not queued: the enchant answers whether it takes one.
+    AltStable.PendingAuditItems = nil
+    eq("  an off-hand of unknown kind with words is listed",
+       listed({ gearid_offhand = 999999, gearmod_offhand = "41:0:0:0:0", gearench_offhand = "Spirit +3" }),
+       "offhand:Spirit +3")
+    check("    and not queued", AltStable.PendingAuditItems == nil)
+    -- After the findings, which keep their order.
+    do
+        local mixed = T.AuditCharacter({
+            level = FLOOR,
+            gearid_wrist = 10, gearmod_wrist = "41:0:0:0:0", gearench_wrist = "Stamina +2",
+            gearid_feet  = 10, gearmod_feet  = "0:0:0:0:0",
+            gearid_chest = 10, gearmod_chest = "41:0:0:0:0", gearench_chest = "Stamina +2",
+        })
+        eq("a finding comes before the listed enchants", mixed[1].issue, "no enchant")
+        eq("  which are alphabetical after it", mixed[2].label .. "," .. mixed[3].label, "Chest,Wrist")
+    end
+    -- Not audited below the floor: no words either.
+    eq("  a levelling alt lists nothing",
+       listed({ level = 14, gearid_chest = 10, gearmod_chest = "41:0:0:0:0",
+                gearench_chest = "Stamina +2" }), "")
+
+    ----------------------------------------------------------
     -- When the audit does not run at all
     ----------------------------------------------------------
 
@@ -2163,7 +2223,8 @@ do
         tidy  = { guid = "tidy", name = "Tidy One", class = "MAGE", realm = "R",
                   level = FLOOR, race = "Human", raceName = "Human", ilvl = 50,
                   money = 100, stat_int = 400,
-                  gearid_chest = 10, gearmod_chest = "2504:0:0:0:0" },
+                  gearid_chest = 10, gearmod_chest = "2504:0:0:0:0",
+                  gearench_chest = "Stamina +2" },
         naked = { guid = "naked", name = "Naked One", class = "MAGE", realm = "R",
                   level = FLOOR, race = "Human", raceName = "Human", ilvl = 0,
                   money = 100, stat_int = 400 },
@@ -2229,6 +2290,131 @@ do
     local clean = table.concat(T.DetailAudit(), " | ")
     check("a clean character is told so",
           clean:find("Every enchantable slot", 1, true) ~= nil, clean)
+    -- And shown the enchant it has, green (#94).
+    check("  and shown the enchant it has", clean:find("Chest=Stamina +2", 1, true) ~= nil, clean)
+    do
+        local shown
+        for _, r in ipairs(T.DetailAuditRows()) do
+            if r.value:IsShown() and r.value:GetText() == "Stamina +2" then shown = r end
+        end
+        local c = shown and shown.value._textColor or {}
+        eq("  in green", ("%.2f,%.2f,%.2f"):format(c[1] or -1, c[2] or -1, c[3] or -1),
+           "0.45,0.80,0.45")
+        -- The clean bill goes BELOW the listed enchants, not on top of them.
+        local _, _, _, _, lineY = T.DetailAuditLine():GetPoint(1)
+        local rowY = shown and select(5, shown.label:GetPoint(1))
+        check("  with the clean bill under the list", (lineY or 0) < (rowY or 0),
+              tostring(lineY) .. " vs " .. tostring(rowY))
+    end
+    -- Every slot can list one, so the rows are pooled per GEAR slot: an
+    -- enchantable-slots pool (7) would drop the eighth and ninth silently.
+    do
+        local decked = { guid = "decked", name = "Decked One", class = "MAGE", realm = "R",
+                         level = FLOOR, race = "Human", raceName = "Human", ilvl = 50,
+                         money = 100, stat_int = 400 }
+        local n = 0
+        for _, slot in ipairs(T.GEAR_SLOTS) do
+            decked["gearid_" .. slot.key] = 10
+            decked["gearmod_" .. slot.key] = "41:0:0:0:0"
+            decked["gearench_" .. slot.key] = "Stamina +" .. slot.key
+            n = n + 1
+        end
+        AltStableDB.decked = decked
+        T.DrillDown("decked")
+        local d = T.DetailFrame()
+        local wasH = d:GetHeight()
+        d:SetHeight(900)
+        T.TabClick("Audit")
+        local function count()
+            local got = 0
+            for _, line in ipairs(T.DetailAudit()) do
+                if line:find("=Stamina +", 1, true) then got = got + 1 end
+            end
+            return got
+        end
+        eq("every occupied slot's enchant is listed", count(), n)
+        eq("  with no notice when they fit", T.DetailStatsMore(), nil)
+
+        -- A short panel: `detail` does not clip, so the list is CLAMPED, and
+        -- what is cut is said out loud.
+        d:SetHeight(260)
+        T.Refresh()
+        local shown = count()
+        check("  a short panel cuts the list", shown < n, tostring(shown))
+        local lowest = 0
+        for _, r in ipairs(T.DetailAuditRows()) do
+            if r.label:IsShown() then
+                local by = select(5, r.label:GetPoint(1)) or 0
+                if by < lowest then lowest = by end
+            end
+        end
+        check("  and no row starts below the panel",
+              lowest - 15 >= -260, tostring(lowest))
+        -- Room is RESERVED for the notice, so it sits under the last row
+        -- rather than on top of it.
+        local noticeY = select(5, T.DetailFrame().statsMore:GetPoint(1)) or 0
+        check("  the notice sits under the last row, not on it",
+              noticeY <= lowest - 15, ("notice %s, last row %s"):format(noticeY, lowest))
+        local more = T.DetailStatsMore() or ""
+        -- +1 for the clean-bill line, which is cut too.
+        check("  and the notice counts what was cut",
+              more:find("+" .. (n - shown + 1) .. " more", 1, true) ~= nil, more)
+        d:SetHeight(wasH)
+        T.Refresh()
+
+        -- Long words are bounded on the LEFT as well, so they are cut short
+        -- rather than drawn over the slot label.
+        local row = T.DetailAuditRows()[1]
+        local pts = {}
+        for i = 1, row.value:GetNumPoints() do pts[(row.value:GetPoint(i))] = true end
+        check("  an audit value is bounded on both sides", pts.TOPLEFT and pts.TOPRIGHT)
+        AltStableDB.decked = nil
+    end
+    -- The clean bill WRAPS, so it is budgeted at its whole box: at no panel
+    -- height may it be shown hanging below the bottom edge, and wherever it is
+    -- cut, the notice says so (Codex review of #214).
+    do
+        T.DrillDown("tidy")
+        T.TabClick("Audit")
+        local d = T.DetailFrame()
+        local wasW, wasH = d:GetWidth(), d:GetHeight()
+        d:SetWidth(320)
+        local shownAt, cutAt, bad = 0, 0, {}
+        for h = 120, 420, 3 do
+            d:SetHeight(h)
+            T.Refresh()
+            local none = T.DetailAuditLine()
+            if none:IsShown() then
+                shownAt = shownAt + 1
+                local top = select(5, none:GetPoint(1)) or 0
+                if top - none:GetHeight() < -h + 4 then bad[#bad + 1] = h end
+            else
+                cutAt = cutAt + 1
+                if not (T.DetailStatsMore() or ""):find("more", 1, true) then
+                    bad[#bad + 1] = "silent@" .. h
+                end
+                -- And the notice has its room: under the last row, not on it.
+                local noticeY = select(5, T.DetailFrame().statsMore:GetPoint(1)) or 0
+                for _, r in ipairs(T.DetailAuditRows()) do
+                    if r.label:IsShown()
+                        and noticeY > (select(5, r.label:GetPoint(1)) or 0) - 15 then
+                        bad[#bad + 1] = "overlap@" .. h
+                    end
+                end
+            end
+        end
+        check("the clean bill is both shown and cut across the heights tried",
+              shownAt > 0 and cutAt > 0, shownAt .. "/" .. cutAt)
+        eq("  and is never drawn past the bottom, nor cut silently", table.concat(bad, ","), "")
+        d:SetWidth(wasW); d:SetHeight(wasH)
+        T.Refresh()
+    end
+    -- One with a missing enchant gets no clean bill, listed enchants or not.
+    T.DrillDown("messy")
+    T.TabClick("Audit")
+    local messy = table.concat(T.DetailAudit(), " | ")
+    check("a character with a finding gets no clean bill",
+          messy:find("Every enchantable slot", 1, true) == nil, messy)
 
     -- The reason line has to be BOUNDED. With only a TOPLEFT anchor a
     -- FontString is as wide as its text, and the longest of these sentences
@@ -2405,6 +2591,64 @@ do
         check("  while the side columns start beside it",
               yOf("head") > fig.bottom, tostring(yOf("head")))
 
+        -- The enchant in words beside each slot (#94), behind an option that
+        -- is off by default. Toward the figure on the sides, under the item
+        -- level on the weapons row.
+        AltStableDB.messy.gearid_wrist, AltStableDB.messy.gearench_wrist = 10, "Stamina +2"
+        AltStableDB.messy.gearid_hands, AltStableDB.messy.gearench_hands = 10, "Agility +5"
+        AltStableDB.messy.gearid_mainhand, AltStableDB.messy.gearench_mainhand = 10, "Crusader"
+        AltStableDB.messy.gearench_feet = "Left over"           -- an empty slot
+        AltStableConfig.rosterEnchants = nil
+        T.Refresh()
+        check("enchant words are off by default", not T.DetailSlotFrame("wrist").ench:IsShown())
+        AltStableConfig.rosterEnchants = true
+        T.Refresh()
+        local function ench(key)
+            local e = T.DetailSlotFrame(key).ench
+            return e:IsShown() and e:GetText() or nil, e
+        end
+        eq("  on, a slot shows its enchant", (ench("wrist")), "Stamina +2")
+        local _, wrist = ench("wrist")
+        local p, rel, relp = wrist:GetPoint(1)
+        eq("  a left-column slot's words sit to its right, over the figure",
+           tostring(p) .. ">" .. tostring(relp), "LEFT>RIGHT")
+        check("    anchored to the slot", rel == T.DetailSlotFrame("wrist"))
+        local _, hands = ench("hands")
+        local hp, _, hrelp = hands:GetPoint(1)
+        eq("  a right-column slot's to its left", tostring(hp) .. ">" .. tostring(hrelp), "RIGHT>LEFT")
+        local _, mh = ench("mainhand")
+        local mp, mrel, mrelp = mh:GetPoint(1)
+        eq("  a weapon's under its item level", tostring(mp) .. ">" .. tostring(mrelp), "TOP>BOTTOM")
+        check("    anchored to that label", mrel == T.DetailSlotFrame("mainhand").ilvl)
+        eq("  an empty slot shows none", (ench("feet")), nil)
+        eq("  nor a slot without an enchant", (ench("chest")), nil)
+        -- An id with no words reads "enchanted" here as in the audit: one
+        -- record, one answer.
+        AltStableDB.messy.gearid_back, AltStableDB.messy.gearmod_back = 10, "41:0:0:0:0"
+        T.Refresh()
+        eq("  an enchant id without words reads 'enchanted', as in the audit",
+           (ench("back")), "enchanted")
+        -- And hovering a synced slot (no link) names the enchant in full.
+        do
+            local b = T.DetailSlotFrame("mainhand")
+            b.link = nil
+            GameTooltip:Hide()
+            b:GetScript("OnEnter")(b)
+            local text = table.concat(WoW.tooltipLines or {}, "|")
+            check("  hovering a synced slot shows its enchant in words",
+                  text:find("Crusader", 1, true) ~= nil, text)
+            b:GetScript("OnLeave")(b)
+        end
+        AltStableDB.messy.gearid_back, AltStableDB.messy.gearmod_back = nil, nil
+        AltStableConfig.rosterEnchants = false
+        T.Refresh()
+        eq("  and switched off they go", (ench("wrist")), nil)
+        AltStableDB.messy.gearid_wrist, AltStableDB.messy.gearench_wrist = nil, nil
+        AltStableDB.messy.gearid_hands, AltStableDB.messy.gearench_hands = nil, nil
+        AltStableDB.messy.gearid_mainhand, AltStableDB.messy.gearench_mainhand = nil, nil
+        AltStableDB.messy.gearench_feet = nil
+        T.Refresh()
+
         -- A cutout is a transparent image with nothing behind it, so on a flat
         -- panel it floats and anything near it reads as colliding. The box is
         -- what makes the figure look like it is INSIDE something.
@@ -2543,8 +2787,12 @@ do
               and (tex or ""):find(string.char(92), 1, true) ~= nil,
               tostring(tex))
     end
+    -- A real panel height: the block above leaves it at 20, where the clamp
+    -- rightly cuts even this one line.
+    T.DetailFrame():SetHeight(700)
     T.TabClick("Audit")
     local naked = table.concat(T.DetailAudit(), " | ")
+    T.DetailFrame():SetHeight(20)
     check("a character wearing nothing is not told it is fully enchanted",
           naked:find("Every enchantable slot", 1, true) == nil, naked)
     check("  it is told there is nothing to check",

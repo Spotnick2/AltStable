@@ -15,6 +15,7 @@
         /asprobe bank         run the container section with the bank window OPEN
         /asprobe <section>    client|identity|skills|prof|rep|items|containers|tooltip|instances|events
         /asprobe whisper <Name>   send a cross-account addon-message ping
+        /asprobe enchant      each equipped slot's enchant: link id + tooltip lines (#94)
         /asprobe copy         reopen the copy window (selectable text, Ctrl+A/Ctrl+C)
         /asprobe dump         re-print the last run
 
@@ -825,6 +826,10 @@ SlashCmdList["ASPROBE"] = function(msg)
     end
     if cmd == "pet" then
         AltStableProbe.Pet(arg)
+        return
+    end
+    if cmd == "enchant" then
+        AltStableProbe.Enchants()
         return
     end
     if cmd == "whisper" then

@@ -97,6 +97,10 @@ local function EnsureDefaults()
     if AltStableConfig.rosterPets == nil then
         AltStableConfig.rosterPets = false
     end
+    -- Enchant words beside the Roster's paper-doll slots (#94): off unless asked for.
+    if AltStableConfig.rosterEnchants == nil then
+        AltStableConfig.rosterEnchants = false
+    end
     if AltStableConfig.toastsEnabled == nil then
         AltStableConfig.toastsEnabled = true
     end
