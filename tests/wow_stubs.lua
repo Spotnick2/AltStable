@@ -62,6 +62,7 @@ function WoW.reset()
     -- after the first WoW.reset().
     WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
     WoW.equipped = {}
+    WoW.tooltipLines = {}
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
@@ -1232,7 +1233,23 @@ Enum = {
     },
     BankType = { Character = 0, Guild = 1, Account = 2 },
     TooltipDataType = { Item = 0 },
+    -- Measured on 1.60.1.70291 (/asprobe enchant, #94): the ones the addon reads.
+    TooltipDataLineType = { None = 0, SellPrice = 11, ItemEnchantmentPermanent = 15,
+                            ItemBinding = 20, EquipSlot = 21, ItemName = 22 },
 }
+
+-- C_TooltipInfo.GetInventoryItem, in the shape measured on 1.60.1.70291: a table
+-- whose `lines` are typed, and the permanent enchant is its own line type with
+-- the words in leftText - "Enchanted: Stamina +2", enchantID = 41. Tests put
+-- the lines for a slot in WoW.tooltipLines[slot]; nothing there, no tooltip.
+C_TooltipInfo = {
+    GetInventoryItem = function(unit, slot)
+        local lines = WoW.tooltipLines and WoW.tooltipLines[slot]
+        if not lines then return nil end
+        return { type = 0, id = 0, lines = lines }
+    end,
+}
+ENCHANTED_TOOLTIP_LINE = "Enchanted: %s"
 
 ------------------------------------------------------------
 -- C_Item  (tuple returns, Classic order)

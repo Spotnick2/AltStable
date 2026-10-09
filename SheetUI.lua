@@ -3522,6 +3522,16 @@ local function CreateFrameIfNeeded()
         function() return AltStableConfig and AltStableConfig.rosterPets == true end)
     Y = Y - 22
 
+    -- Off unless asked for (#94): words over the figure are clutter to some.
+    local optEnchantsCheck = MakeOptCheckRow("rosterEnchants",
+        "Show enchants beside the gear slots on a Roster character", Y,
+        function(checked)
+            AltStable.SetConfigValue("rosterEnchants", checked)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end,
+        function() return AltStableConfig and AltStableConfig.rosterEnchants == true end)
+    Y = Y - 22
+
     -- The portrait capture angle (#149): what `/alts portrait facing` sets, as
     -- a slider. 0, the default, faces you straight on.
     local optFacingLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -4239,6 +4249,7 @@ local function CreateFrameIfNeeded()
         optSaluteCheck:SetChecked(optSaluteCheck._getter())
         optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
         optPetsCheck:SetChecked(optPetsCheck._getter())
+        optEnchantsCheck:SetChecked(optEnchantsCheck._getter())
         optFacingUpdating = true
         optFacingSlider:SetValue(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0)
         optFacingUpdating = false

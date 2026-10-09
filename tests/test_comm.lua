@@ -291,6 +291,11 @@ local char = {
     gearmod_head  = "2673:0:0:0:0",
     gearmod_chest = "2661:2:24028:35759:0",
     gearmod_wrist = "0:?:0:0:0",                 -- unresolved socket count
+    -- The enchant in words (#94) rides the wire too; a colon in it is the same
+    -- first-colon-split case, and a number-looking one must survive as text.
+    gearench_chest = "Stamina +2",
+    gearench_hands = "Crusader: holy",
+    gearench_feet  = "",
     specIcon = 98765,                            -- must be excluded (client-specific)
     someTable = { nested = true },               -- must be excluded (table)
 }
@@ -311,6 +316,9 @@ eq(d.gearmod_head,  "2673:0:0:0:0",           "packed gearmod_ round-trips intac
 eq(d.gearmod_chest, "2661:2:24028:35759:0",   "colon-bearing gearmod_ survives the first-colon split")
 eq(d.gearmod_wrist, "0:?:0:0:0",              "unresolved '?' socket count round-trips")
 eq(type(d.gearmod_head), "string",            "gearmod_ stays a string (tonumber must not coerce it)")
+eq(d.gearench_chest, "Stamina +2",            "the enchant's words round-trip (#94)")
+eq(d.gearench_hands, "Crusader: holy",        "  a colon in them survives the first-colon split")
+eq(d.gearench_feet,  "",                      "  and an empty slot's empty words round-trip as empty")
 check(T.DeserializeChar("name:NoGuid\nlevel:10") == nil, "record without a guid is rejected")
 
 -- Helm/cloak display toggles. They MUST ride the wire: the render pipeline reads one
@@ -951,6 +959,7 @@ AltStableDB = { ["Player-Stale-1"] = {
     gearlink_head = "|Hitem:111|h[Felheart Horns]|h",
     -- Likewise stale: the peer re-enchanted, so the old packed mods must not survive.
     gearmod_head = "2673:0:0:0:0",
+    gearench_head = "Arcanum of Focus",
     account = 2,                     -- metadata, must survive when peer omits it
     lastUpdate = 1000,
 } }
@@ -964,6 +973,7 @@ eq(rec.gearid_head,   999, "synced item id replaces the old one")
 eq(rec.gearname_head, "Hood of the Corruptor", "synced item name replaces the old one")
 eq(rec.gearlink_head, nil, "stale local-only gearlink_ is cleared on merge (fixes cross-account stale tooltip)")
 eq(rec.gearmod_head,  nil, "stale gearmod_ is cleared on merge -- '^gear_' does NOT match 'gearmod_', so it needs its own pattern")
+eq(rec.gearench_head, nil, "stale enchant words are cleared on merge -- '^gear_' misses 'gearench_' too (#94)")
 eq(rec.account,       2,   "metadata (account) is preserved when the incoming record omits it")
 
 ------------------------------------------------------------
@@ -1532,6 +1542,48 @@ check(AltStable.PendingAuditItems[88888], "a failed cache event leaves the item 
 
 AltStable.RefreshSheet = prevRefresh
 AltStable.PendingAuditItems = nil
+
+------------------------------------------------------------
+-- The cache retry re-reads the enchant's words (#94)
+--
+-- The tooltip can come back without its lines while the item is uncached, so
+-- the retry that fixes the item level also re-reads the words - but only for
+-- the logged-in character, because the read is off "player".
+------------------------------------------------------------
+
+do
+    local me = UnitGUID("player")
+    local link = "|Hitem:88001:41::::::::|h[Gown]|h"
+    WoW.items[88001] = { name = "Gown", quality = 2, ilvl = 20, itemType = "Armor", subType = "Cloth" }
+    local realReread = AltStable.RereadEnchantText
+    local asked = {}
+    AltStable.RereadEnchantText = function(key) asked[#asked + 1] = key; return "Stamina +2" end
+
+    AltStableDB = { [me] = { guid = me, gearlink_chest = link, gearid_chest = 88001, gearench_chest = "" } }
+    AltStable.PendingGearSlots = { chest = { link = link, guid = me } }
+    onEvent(T.frame, "GET_ITEM_INFO_RECEIVED", 88001, true)
+    eq(AltStableDB[me].gearench_chest, "Stamina +2", "the retry fills in the words")
+
+    -- Someone else's record: the read is off "player", so it would be the
+    -- wrong character's enchant.
+    asked = {}
+    AltStableDB = { other = { guid = "other", gearlink_chest = link, gearid_chest = 88001, gearench_chest = "" } }
+    AltStable.PendingGearSlots = { chest = { link = link, guid = "other" } }
+    onEvent(T.frame, "GET_ITEM_INFO_RECEIVED", 88001, true)
+    eq(#asked, 0, "  but never for a character who is not logged in")
+    eq(AltStableDB.other.gearench_chest, "", "  whose words stay as they were")
+
+    -- Cannot say (nil): the field is left as it was.
+    AltStable.RereadEnchantText = function() return nil end
+    AltStableDB = { [me] = { guid = me, gearlink_chest = link, gearid_chest = 88001, gearench_chest = "" } }
+    AltStable.PendingGearSlots = { chest = { link = link, guid = me } }
+    onEvent(T.frame, "GET_ITEM_INFO_RECEIVED", 88001, true)
+    eq(AltStableDB[me].gearench_chest, "", "  and a read that cannot say writes nothing")
+
+    AltStable.RereadEnchantText = realReread
+    AltStable.PendingGearSlots = nil
+    AltStableDB = {}
+end
 
 ------------------------------------------------------------
 -- Summary

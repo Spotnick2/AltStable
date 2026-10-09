@@ -1302,6 +1302,80 @@ do
 end
 
 ------------------------------------------------------------
+-- The enchant in words (#94), off the typed tooltip lines
+------------------------------------------------------------
+-- Measured on 1.60.1.70291: the permanent enchant is line type 15, and an
+-- ordinary green "Equip:" line is type 0 - so the type is the discriminator,
+-- and a green Equip line must never be read as an enchant.
+do
+    local LT = Enum.TooltipDataLineType
+    local function L(t, text) return { type = t, leftText = text } end
+    WoW.reset()
+    WoW.items[5101] = { name = "Gown", quality = 2, ilvl = 20, itemType = "Armor", subType = "Cloth" }
+    WoW.items[5102] = { name = "Bracers", quality = 1, ilvl = 15, itemType = "Armor", subType = "Cloth" }
+    WoW.items[5103] = { name = "Gloves", quality = 2, ilvl = 12, itemType = "Armor", subType = "Cloth" }
+    WoW.equipped[5]  = "|Hitem:5101:41::::::::|h[Gown]|h"
+    WoW.equipped[9]  = "|Hitem:5102:41::::::::|h[Bracers]|h"
+    WoW.equipped[10] = "|Hitem:5103|h[Gloves]|h"
+    WoW.tooltipLines[5] = {
+        L(LT.ItemName, "Gown"),
+        L(LT.None, "Equip: Increases damage and healing done by magical spells and effects by up to 2."),
+        L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +2"),
+        L(LT.SellPrice, ""),
+    }
+    -- Colour codes and a line break: the field rides the wire as one line.
+    WoW.tooltipLines[9] = { L(LT.ItemEnchantmentPermanent, "Enchanted: |cff00ff00Minor\nStamina|r") }
+    WoW.tooltipLines[10] = {
+        L(LT.ItemName, "Gloves"),
+        L(LT.None, "Equip: Increases damage and healing done by magical spells and effects by up to 1."),
+    }
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("an enchant is stored in words, without the client's label", me.gearench_chest, "Stamina +2")
+    eq("  colour codes and line breaks are stripped", me.gearench_wrist, "Minor Stamina")
+    eq("a green Equip line is not an enchant", me.gearench_hands, "")
+    -- "" and not nil: nil means "cannot say", and the cache retry writes only
+    -- what it can say.
+    eq("  and reads as none rather than unknown", AltStable._testScanner.EnchantText(10), "")
+    eq("an empty slot has none", me.gearench_feet, "")
+
+    -- The client's label is the localised global, not an English literal.
+    local realLabel = ENCHANTED_TOOLTIP_LINE
+    ENCHANTED_TOOLTIP_LINE = "Verzaubert: %s"
+    WoW.tooltipLines[5] = { L(LT.ItemEnchantmentPermanent, "Verzaubert: Ausdauer +2") }
+    eq("  the label is read from the client's own string",
+       AltStable._testScanner.EnchantText(5), "Ausdauer +2")
+    ENCHANTED_TOOLTIP_LINE = nil
+    WoW.tooltipLines[5] = { L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +2") }
+    eq("  and falls back to the English one", AltStable._testScanner.EnchantText(5), "Stamina +2")
+    ENCHANTED_TOOLTIP_LINE = realLabel
+
+    -- No API (or a tooltip with no lines yet): the scan does not die, and the
+    -- words go blank rather than outliving the item they described - the
+    -- Roster says "enchanted" off gearmod_ instead.
+    local realTip = C_TooltipInfo
+    C_TooltipInfo = nil
+    check("a client without C_TooltipInfo still scans", pcall(AltStable.ScanCharacter))
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  and stores no words", me.gearench_chest, "")
+    check("  while the enchant id is still there", (me.gearmod_chest or ""):find("^41:") ~= nil,
+          tostring(me.gearmod_chest))
+    C_TooltipInfo = realTip
+    WoW.tooltipLines[5] = nil
+    eq("a slot with no tooltip data says nothing", AltStable._testScanner.EnchantText(5), nil)
+    C_TooltipInfo = { GetInventoryItem = function() error("boom") end }
+    eq("  nor does one whose tooltip read throws", AltStable._testScanner.EnchantText(5), nil)
+    C_TooltipInfo = realTip
+
+    -- A cached-late item: the retry re-reads the words for the logged-in character.
+    WoW.tooltipLines[9] = { L(LT.ItemEnchantmentPermanent, "Enchanted: Stamina +3") }
+    eq("the cache retry re-reads a slot by key", AltStable.RereadEnchantText("wrist"), "Stamina +3")
+    eq("  and an unknown key reads nothing", AltStable.RereadEnchantText("nope"), nil)
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- The pet (#75), in the shapes measured on 70124
 ------------------------------------------------------------
 do

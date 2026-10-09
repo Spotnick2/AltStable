@@ -1079,6 +1079,15 @@ bootstrap, so it would **abort Warband's plugin registration**. Confirmed, as pr
 Fix: `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, …)`. `C_TooltipInfo` is
 also present and `C_TooltipInfo.GetHyperlink("item:6948")` returns structured tooltip data.
 
+**The enchant is a typed line (measured, 1.60.1.70291, `/asprobe enchant`, #94).**
+`C_TooltipInfo.GetInventoryItem("player", slot)` returns `{ dataInstanceID, guid, id, lines, type,
+… }`. The permanent enchant is its own line type,
+`Enum.TooltipDataLineType.ItemEnchantmentPermanent` (15), with `leftText = "Enchanted: Stamina +2"`
+(green) and `enchantID = 41`, which matches the enchant field of the item link. A green "Equip:" line
+is type 0 (`None`), so you can tell them apart by type, not by colour. Other types seen: 22 `ItemName`,
+20 `ItemBinding`, 21 `EquipSlot`, 43 `UsageRequirement`, 11 `SellPrice`; armour, stats and
+durability lines are all 0. `GemSocketEnchantment` (30) exists in the enum and was not seen.
+
 ---
 
 ## Events — 2 of 23 rejected
