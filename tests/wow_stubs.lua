@@ -715,6 +715,17 @@ local function makeFrame()
     f.SetClipsChildren = function(self, v) self._clipsChildren = v and true or false; return self end
     f.DoesClipChildren = function(self) return self._clipsChildren == true end
 
+    -- The highlight is a texture that exists once it is set, as on the client:
+    -- the chaining default answered GetHighlightTexture with the frame itself
+    -- before anything was set, so "set it before Pill softens it" was untestable.
+    f.SetHighlightTexture = function(self, path, blend)
+        local t = self._highlight or self:CreateTexture(nil, "HIGHLIGHT")
+        t._path, t._blend = path, blend
+        self._highlight = t
+        return self
+    end
+    f.GetHighlightTexture = function(self) return self._highlight end
+
     -- Regions a TEMPLATE would have created (OptionsSliderTemplate gives a
     -- slider .Low/.High/.Text, a scroll frame gets .ScrollBar, and so on). The
     -- chaining default would hand back a function, and `slider.Low:SetText(...)`

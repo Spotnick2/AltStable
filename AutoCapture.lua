@@ -162,27 +162,27 @@ local function Build()
     local t = CreateFrame("Button", "AltStablePortraitToastToggle", UIParent)
     t:SetSize(TOGGLE_SIZE, TOGGLE_SIZE)
     t:SetFrameStrata("DIALOG")
-    t.pill = CreateFrame("Frame", nil, t)
-    t.pill:SetAllPoints()
-    t.pill:SetFrameLevel(math.max(0, (t:GetFrameLevel() or 1) - 1))
-    local g = AltStable.SkinWindow and AltStable.SkinWindow(t.pill, "small")
-    if g then
-        -- GlassChat's pill tuning: no grain and no shadow at 24 px, and the
-        -- rim down with the pill so it does not draw over the symbol.
-        if g.grain then g.grain:SetAlpha(0) end
-        if g.shadow then g.shadow:SetAlpha(0) end
-        if g.top then g.top:SetFrameLevel(t.pill:GetFrameLevel()) end
-    else
+    -- Level 2, not 0: the pill goes one level UNDER the button, and at 0 it
+    -- would be level with it, where the rims are not sure to draw under the
+    -- symbol (LibGlass docs, Pill).
+    t:SetFrameLevel(2)
+    -- The highlight first: Pill softens it (0.4, GlassChat's) rather than
+    -- removing it, so hovering still shows.
+    if t.SetHighlightTexture then
+        t:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    end
+    -- The pill itself is LibGlass r5's Glass.Pill (LibGlass#31), through the
+    -- skin so it is the chosen glass: one level under the button, no grain or
+    -- shadow, the rims under the symbol. A plain dark square without glass.
+    t.pill = AltStable.SkinPill and AltStable.SkinPill(t)
+    if not t.pill then
+        t.pill = CreateFrame("Frame", nil, t)
+        t.pill:SetAllPoints()
         local bg = t.pill:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints()
         bg:SetColorTexture(0.08, 0.08, 0.1, 0.85)
     end
     t.symbol = CameraSymbol(t)
-    if t.SetHighlightTexture then
-        t:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-        local h = t.GetHighlightTexture and t:GetHighlightTexture()
-        if h then h:SetAlpha(0.4) end     -- softened, as GlassChat's are
-    end
     -- Pressed, the symbol moves a pixel, as GlassChat's bubble does.
     t:SetScript("OnMouseDown", function(self) PlaceSymbol(self, true) end)
     t:SetScript("OnMouseUp", function(self) PlaceSymbol(self, false) end)

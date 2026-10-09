@@ -67,15 +67,16 @@ eq("  and the chain still runs upstream", upstream, 1)
 ------------------------------------------------------------
 -- The offer
 ------------------------------------------------------------
--- The material, as a spy: the toggle is built at the first offer, styled as
--- GlassChat's buttons beside the chat are (a "small" pill, no grain, no shadow,
--- the rim down with the pill).
-local skinned = {}
-AltStable.SkinWindow = function(f, size)
-    local g = { grain = f:CreateTexture(), shadow = f:CreateTexture(), top = CreateFrame("Frame") }
-    g.top:SetFrameLevel(99)
-    skinned[#skinned + 1] = { frame = f, size = size, g = g }
-    return g
+-- The skin's pill, as a spy: the toggle is built at the first offer, on
+-- LibGlass r5's Glass.Pill (through AltStable.SkinPill), as GlassChat's
+-- buttons beside the chat are. What the pill does is LibGlass's, tested there.
+local pills = {}
+AltStable.SkinPill = function(button, opts)
+    local pill = CreateFrame("Frame", nil, button)
+    pills[#pills + 1] = { button = button, opts = opts, pill = pill,
+                          level = button:GetFrameLevel(),
+                          highlight = button.GetHighlightTexture and button:GetHighlightTexture() }
+    return pill, {}
 end
 reset()
 update(changed("5:1"))
@@ -87,15 +88,17 @@ check("  ticking", A.ticker() ~= nil)
 tick(61)
 do
     local icon = A.toast().toggle
-    local pill
-    for _, sk in ipairs(skinned) do if sk.frame == icon.pill then pill = sk end end
-    check("the icon is a glass pill", pill ~= nil)
-    eq("  a small one", pill and pill.size, "small")
+    local made = pills[1]
+    eq("the icon is a glass pill, made once", #pills, 1)
+    check("  on the toggle", made and made.button == icon)
+    check("  kept as its pill", made and icon.pill == made.pill)
     eq("  GlassChat's size", icon:GetWidth(), 24)
-    eq("  without grain", pill and pill.g.grain:GetAlpha(), 0)
-    eq("  or shadow", pill and pill.g.shadow:GetAlpha(), 0)
-    eq("  its rim down with it, under the symbol", pill and pill.g.top:GetFrameLevel(), icon.pill:GetFrameLevel())
-    check("  the pill under the button", icon.pill:GetFrameLevel() < icon:GetFrameLevel())
+    -- At level 0 the pill would be LEVEL with the button, where the rims are
+    -- not sure to draw under the symbol (LibGlass docs).
+    check("  on a button above level 0 when it was made", made and made.level >= 1,
+          tostring(made and made.level))
+    -- Set first, so Pill softens it rather than finding nothing to soften.
+    check("  whose highlight was set before", made and made.highlight ~= nil)
     check("  with a symbol, not an item icon", icon.symbol ~= nil and icon.icon == nil)
     local _, _, _, x0, y0 = icon.symbol:GetPoint(1)
     icon:GetScript("OnMouseDown")(icon)

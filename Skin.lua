@@ -161,6 +161,21 @@ function AltStable.SkinWindow(frame, size)
     return g
 end
 
+-- A small glass pill behind a button's symbol (LibGlass r5, Glass.Pill):
+-- GlassChat's buttons beside the chat, which the portrait toast's toggle sits
+-- among (#124). The preset goes into STYLE first, as SkinWindow's does, so the
+-- pill is the chosen glass and not the library default. Returns pill, g - or
+-- nil when the skin is not glass or the library predates Pill (r4 and older).
+function AltStable.SkinPill(button, opts)
+    if not AltStable.SkinIsGlass() or type(Glass.Pill) ~= "function" then return nil end
+    local preset = AltStable.Skin()
+    local body = AltStable.SkinPopupTint()
+    local st = Glass.STYLE
+    st.grain, st.wash = preset.grain, preset.wash
+    st.tint = { body[1], body[2], body[3], body[4] }
+    return Glass.Pill(button, opts)
+end
+
 -- Re-pin the material's rim above its host.
 --
 -- Raise() and SetFrameLevel() move the HOST, and the rim is a separate child
