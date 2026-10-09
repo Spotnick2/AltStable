@@ -2370,6 +2370,45 @@ do
         check("  an audit value is bounded on both sides", pts.TOPLEFT and pts.TOPRIGHT)
         AltStableDB.decked = nil
     end
+    -- The clean bill WRAPS, so it is budgeted at its whole box: at no panel
+    -- height may it be shown hanging below the bottom edge, and wherever it is
+    -- cut, the notice says so (Codex review of #214).
+    do
+        T.DrillDown("tidy")
+        T.TabClick("Audit")
+        local d = T.DetailFrame()
+        local wasW, wasH = d:GetWidth(), d:GetHeight()
+        d:SetWidth(320)
+        local shownAt, cutAt, bad = 0, 0, {}
+        for h = 120, 420, 3 do
+            d:SetHeight(h)
+            T.Refresh()
+            local none = T.DetailAuditLine()
+            if none:IsShown() then
+                shownAt = shownAt + 1
+                local top = select(5, none:GetPoint(1)) or 0
+                if top - none:GetHeight() < -h + 4 then bad[#bad + 1] = h end
+            else
+                cutAt = cutAt + 1
+                if not (T.DetailStatsMore() or ""):find("more", 1, true) then
+                    bad[#bad + 1] = "silent@" .. h
+                end
+                -- And the notice has its room: under the last row, not on it.
+                local noticeY = select(5, T.DetailFrame().statsMore:GetPoint(1)) or 0
+                for _, r in ipairs(T.DetailAuditRows()) do
+                    if r.label:IsShown()
+                        and noticeY > (select(5, r.label:GetPoint(1)) or 0) - 15 then
+                        bad[#bad + 1] = "overlap@" .. h
+                    end
+                end
+            end
+        end
+        check("the clean bill is both shown and cut across the heights tried",
+              shownAt > 0 and cutAt > 0, shownAt .. "/" .. cutAt)
+        eq("  and is never drawn past the bottom, nor cut silently", table.concat(bad, ","), "")
+        d:SetWidth(wasW); d:SetHeight(wasH)
+        T.Refresh()
+    end
     -- One with a missing enchant gets no clean bill, listed enchants or not.
     T.DrillDown("messy")
     T.TabClick("Audit")

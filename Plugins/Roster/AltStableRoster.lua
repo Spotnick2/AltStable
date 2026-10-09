@@ -2487,8 +2487,14 @@ local function RenderDetail(char)
     -- #94, and `detail` does not clip, so a short inherited frame would draw the
     -- list over the game world. The findings sort first, so what is cut is the
     -- listed enchants, and the "+N more" notice below says how many.
+    --
+    -- The summary is budgeted at its FULL box, not one row: it word-wraps in a
+    -- column that can narrow to the tab row, so one row's budget let a wrapped
+    -- clean bill hang below the panel (Codex review of #214).
+    local SUMMARY_H = STAT_ROW_H * 3
     local auditBottom = -detail:GetHeight() + 4
-    local auditNeed = (#findings + ((not onChar and issues == 0) and 1 or 0)) * STAT_ROW_H
+    local auditNeed = #findings * STAT_ROW_H
+        + ((not onChar and issues == 0) and SUMMARY_H or 0)
     local auditFloor = auditBottom
         + ((not onChar and auditNeed > (y - auditBottom)) and STAT_ROW_H or 0)
     local auditHidden = 0
@@ -2521,7 +2527,7 @@ local function RenderDetail(char)
     end
     -- The summary line goes under the rows whenever nothing is wrong, so the
     -- clean bill still reads as one now that the enchants are listed above it.
-    if not onChar and issues == 0 and (y - STAT_ROW_H) < auditFloor then
+    if not onChar and issues == 0 and (y - SUMMARY_H) < auditFloor then
         auditHidden = auditHidden + 1
         detailAudit.none:Hide()
     elseif not onChar and issues == 0 then
@@ -2536,7 +2542,7 @@ local function RenderDetail(char)
         -- zero. The line went invisible and the SetHeight below could not save
         -- it, because two conflicting anchors beat an explicit size.
         detailAudit.none:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
-        detailAudit.none:SetHeight(STAT_ROW_H * 3)
+        detailAudit.none:SetHeight(SUMMARY_H)
         -- A reason means the audit did not RUN - nothing equipped, or the
         -- character is still levelling. That is not a clean bill, and saying
         -- "every enchantable slot is enchanted" to somebody wearing nothing is
