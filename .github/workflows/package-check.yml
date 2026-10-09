@@ -1,15 +1,26 @@
 name: Package check
 
-# Dry run only. Releases are built by CurseForge's own packager from the tag
-# webhook, against the same .pkgmeta - this job exists so a packaging mistake
-# surfaces on a pull request instead of in a published zip.
+# The packager runs as a dry run here. CurseForge builds its releases with its
+# own packager from the tag webhook, against the same .pkgmeta - `check` exists
+# so a packaging mistake surfaces on a pull request instead of in a published
+# zip. On a tag, the `release` job then PUBLISHES a GitHub Release (#209).
 #
 # -d is the real no-upload switch: merely leaving CF_API_KEY out still lets the
-# packager cut a GitHub release.
+# packager cut a GitHub release - with the WHOLE CHANGELOG.md as its notes.
+# That is why the GitHub Release is the `release` job below, not the packager.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
+  # Release a tag whose release failed, or v0.11.0, pushed before the release
+  # job existed. Runs this file from main: `check` against the tag's tree (so
+  # only tags from v0.11.0 on pass it), the notes from main's CHANGELOG.md.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release (e.g. v0.11.0)
+        required: true
 
 permissions:
   contents: read
@@ -21,6 +32,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Empty except on a manual run, so checkout keeps its default: the
+          # commit that triggered the run (a branch ref would build its tip).
+          ref: ${{ inputs.tag }}
 
       - name: Install Lua 5.1
         run: |
@@ -268,3 +282,57 @@ jobs:
           path: .release/*.zip
           include-hidden-files: true
           if-no-files-found: error
+
+  # A GitHub Release for every tag (#209): the zip `check` built and checked
+  # above - not a second build - with that tag's CHANGELOG.md section as the
+  # notes. The only job allowed to write.
+  release:
+    needs: check
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      # Only CHANGELOG.md, at the run's own commit: the tag on a tag push,
+      # main on a manual run - so a heading fixed on main after the tag
+      # can still be released without moving the tag.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: altstable-package
+          path: dist
+
+      # The packager names the zip {package}-{version}-forever.zip (the TOC's
+      # game type adds -forever) from the version it read off the tree, so
+      # this also proves the checked zip IS the tag's build.
+      - name: The zip is the tag's
+        run: |
+          ls dist
+          zip="dist/AltStable-$TAG-forever.zip"
+          test -f "$zip" || { echo "no $zip"; exit 1; }
+          echo "ZIP=$zip" >> "$GITHUB_ENV"
+
+      # From the tag's "## vX.Y.Z" heading up to the next "## " heading.
+      - name: Release notes from the tag's changelog section
+        run: |
+          tr -d '\r' < CHANGELOG.md |
+            awk -v h="## $TAG" '$0 == h { on = 1; next } on && /^## / { exit } on' > notes.md
+          grep -q '[^[:space:]]' notes.md || { echo "CHANGELOG.md has no '## $TAG' section"; exit 1; }
+          cat notes.md
+
+      # gh refuses an existing release rather than overwriting it.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=
+          # Case-insensitive, as the packager and CurseForge classify tags.
+          case "${TAG,,}" in *alpha*|*beta*) pre=--prerelease ;; esac
+          gh release create "$TAG" "$ZIP" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "AltStable ${TAG#v}" --notes-file notes.md $pre

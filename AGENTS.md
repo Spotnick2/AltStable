@@ -154,12 +154,15 @@ The tag name sets the release type: a bare `vX.Y.Z` publishes as a release, `-be
 Releases are bare tags from v0.10.0 on (the addon is public; see RUNBOOK "Releasing"). `CHANGELOG.md` is the release
 notes (`manual-changelog`), and is itself ignored so it does not ship inside the addon.
 
-`.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on pull requests and on
-pushes to `main` — a push to a feature branch with no PR open runs nothing — and then asserts the
+`.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on pull requests, on
+pushes to `main` and on `v*` tags — a push to a feature branch with no PR open runs nothing — and
+on a tag **publishes** a GitHub Release (below). Its `check` job asserts the
 built zip's shape: the three folders present, `Tools/`, `tests/` and
 `docs/` absent, and every `.toc` version substituted. `-d` is the real no-upload switch — merely
-omitting the API key still cuts a GitHub release. `tests/test_packaging.lua` checks the inputs that
-feed it (the TOCs, `.pkgmeta`, the deploy script) and runs in the normal suite.
+omitting the API key still cuts a GitHub release, with the whole changelog as its notes. On a `v*`
+tag its `release` job (the only one with `contents: write`) publishes the GitHub Release instead:
+the checked zip plus the tag's `CHANGELOG.md` section (#209). `tests/test_packaging.lua` checks the
+inputs that feed it (the TOCs, `.pkgmeta`, the deploy script) and runs in the normal suite.
 
 After a release, check the published files on CurseForge by hand: CI runs the BigWigs packager, and
 CurseForge runs its own, so the zip players get is not the zip CI inspected. Checked on
