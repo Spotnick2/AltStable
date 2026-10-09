@@ -44,7 +44,7 @@ local dueAt            -- GetTime() when the countdown ends
 local shownAt          -- GetTime() the offer was made: when to shrink
 local hovered          -- the full text stays while the cursor is on it
 local boxHidden        -- the icon was clicked: the box is put away, the offer stands
-local clearFor = 0     -- clear seconds in a row, once it has
+local clearSince       -- GetTime() it was first seen clear, once it has
 
 local function Out(s)
     if AltStable.Print then AltStable.Print(s)
@@ -132,7 +132,7 @@ local function Place(f)
     f:SetPoint("BOTTOMLEFT", rel, relPoint, x, y)
 end
 
-local Stop, Skip, Now, Paint
+local Stop, Skip, Now, Paint, Evaluate
 
 local FULL_W, FULL_H, COMPACT_W, COMPACT_H = 300, 52, 210, 30
 local TOGGLE_SIZE = 24                  -- GlassChat's button size (Buttons.SIZE)
@@ -403,7 +403,7 @@ end
 
 function Stop()
     if ticker then ticker:Cancel(); ticker = nil end
-    offered, offeredReason, dueAt, clearFor, shownAt, hovered, boxHidden = nil, nil, nil, 0, nil, false, false
+    offered, offeredReason, dueAt, clearSince, shownAt, hovered, boxHidden = nil, nil, nil, nil, nil, false, false
     if toast then toast:Hide(); toast.toggle:Hide() end
 end
 
@@ -440,10 +440,22 @@ local function Tick()
     if GetTime() >= dueAt then
         why = NotNow()
         if why then
-            clearFor = 0
+            clearSince = nil
         else
-            clearFor = clearFor + 1
-            if clearFor >= CLEAR_NEEDED then
+            -- Two seconds measured, not two ticks: the first clear tick can
+            -- come just after the player stopped (Codex review of #215).
+            clearSince = clearSince or GetTime()
+            if GetTime() - clearSince >= CLEAR_NEEDED then
+                -- What is worn NOW, not what the last status said: Capture.lua
+                -- refreshes the status two seconds after a gear change, and a
+                -- look swapped inside that wait was never offered (Codex review
+                -- of #215). A different look restarts the countdown; nothing
+                -- due ends it.
+                local status = AltStable.CurrentPortraitStatus and AltStable.CurrentPortraitStatus()
+                if type(status) == "table" and (not status.due or OfferKey(status) ~= offered) then
+                    Evaluate(status)
+                    return
+                end
                 Shoot(true)
                 return
             end
@@ -455,7 +467,7 @@ end
 -- Called whenever the status changes, the option is switched, or the player
 -- comes back to life. Starts an offer for a due look, restarts it when the
 -- look is a different one, and ends it when nothing is due any more.
-local function Evaluate(status)
+function Evaluate(status)
     status = status or (AltStable.CurrentPortraitStatus and AltStable.CurrentPortraitStatus())
     -- Due, but the look cannot be read yet (inventory not loaded after a
     -- login): wait for it rather than offer under a key that changes later.
@@ -469,7 +481,7 @@ local function Evaluate(status)
     if Dead() then return end
     local key = OfferKey(status)
     if offered == key and dueAt then return end
-    offered, offeredReason, dueAt, clearFor, shownAt = key, status.reason, GetTime() + DELAY, 0, GetTime()
+    offered, offeredReason, dueAt, clearSince, shownAt = key, status.reason, GetTime() + DELAY, nil, GetTime()
     boxHidden = false     -- a new offer is said in full, whatever the last one was
     Build()
     Paint()

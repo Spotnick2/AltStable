@@ -325,11 +325,66 @@ blocked = nil
 tick(1)
 eq("  a blocked second starts the count again", #shots, 0)
 tick(1)
+eq("  a second clear tick is only one second clear", #shots, 0)
+tick(1)
 eq("two clear seconds in a row take it", #shots, 1)
 eq("  automatically", shots[1].auto, true)
 check("  and end the offer", not shown() and A.ticker() == nil)
 tick(10)
 eq("  once", #shots, 1)
+
+-- Two seconds by the clock, not two ticks: a stop seen just after it happened
+-- still waits the full two seconds (Codex review of #215).
+reset()
+update(changed("5:1"))
+tick(A.DELAY + 1)
+blocked = "not while you are moving"
+tick(1)
+blocked = nil
+clock = clock + 0.1; A.Tick()
+clock = clock + 1.8; A.Tick()
+eq("1.8 seconds still is not two", #shots, 0)
+clock = clock + 0.2; A.Tick()
+eq("  two are", #shots, 1)
+
+-- The look as worn at the moment of the shot, not as the last status said:
+-- Capture.lua refreshes two seconds after a gear change, and a swap inside
+-- that wait must not be shot unannounced (Codex review of #215). `status` is
+-- what CurrentPortraitStatus reads live; no update() is sent.
+reset()
+update(changed("5:1"))
+tick(A.DELAY + 1)
+status = changed("5:2")
+tick(3)
+eq("a look swapped before the refresh is not shot", #shots, 0)
+check("  but offered, its countdown from the start", shown() and A.dueAt() > clock + A.DELAY - 5,
+      tostring(A.dueAt()) .. " vs " .. clock)
+tick(math.ceil(A.dueAt() - clock))
+eq("  whose end waits two clear seconds of its own", #shots, 0)
+reset()
+update(changed("5:1"))
+tick(A.DELAY + 1)
+-- Same look, nothing due any more (taken by hand, say): no second shot.
+status = { due = false, reason = "pending", changedSlots = {}, look = "5:1" }
+tick(3)
+eq("nothing due any more by the shot: nothing shot", #shots, 0)
+reset()
+update(changed("5:1"))
+tick(A.DELAY + 1)
+status = { due = false, reason = "none", changedSlots = {}, look = "5:0" }
+tick(3)
+eq("back to the captured look before the refresh: nothing shot", #shots, 0)
+check("  and the offer ends", not shown())
+reset()
+update(changed("5:1"))
+tick(A.DELAY + 1)
+status = { due = true, reason = "changed", changedSlots = { "Chest" } }
+tick(3)
+eq("a look that cannot be read yet is not shot", #shots, 0)
+check("  the offer waits", shown())
+status = changed("5:1")
+tick(2)
+eq("  and once it reads the same, it is", #shots, 1)
 
 -- The other reasons to wait.
 for _, case in ipairs({
@@ -353,7 +408,7 @@ A.Expire()
 eq("Expire ends the countdown", A.dueAt(), clock)
 tick(1)
 eq("  but still waits for a clear moment", #shots, 0)
-tick(1)
+tick(2)
 eq("  then takes it", #shots, 1)
 A.Expire()
 eq("  and with no offer up it does nothing", A.dueAt(), nil)
