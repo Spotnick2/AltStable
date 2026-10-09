@@ -55,7 +55,7 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 `Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml` → `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
-`RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `PublicAPI.lua` → `Export.lua`.
+`RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `PublicAPI.lua` → `Export.lua`.
 
 `PublicAPI.lua` is what OTHER addons build on (`docs/PUBLIC-API.md`): copies of a fixed set
 of fields, never live tables. Changing what a field means, or removing one, bumps

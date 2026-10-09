@@ -3532,6 +3532,16 @@ local function CreateFrameIfNeeded()
         function() return AltStableConfig and AltStableConfig.rosterEnchants == true end)
     Y = Y - 22
 
+    -- Off unless asked for (#124): it takes a picture on its own.
+    local optAutoPortraitCheck = MakeOptCheckRow("portraitAuto",
+        "Offer a new portrait when your look changes (a toast above the chat, 10 minutes to cancel)", Y,
+        function(checked)
+            AltStable.SetConfigValue("portraitAuto", checked)
+            if AltStable.EvaluateAutoCapture then AltStable.EvaluateAutoCapture() end
+        end,
+        function() return AltStableConfig and AltStableConfig.portraitAuto == true end)
+    Y = Y - 22
+
     -- The portrait capture angle (#149): what `/alts portrait facing` sets, as
     -- a slider. 0, the default, faces you straight on.
     local optFacingLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -4250,6 +4260,7 @@ local function CreateFrameIfNeeded()
         optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
         optPetsCheck:SetChecked(optPetsCheck._getter())
         optEnchantsCheck:SetChecked(optEnchantsCheck._getter())
+        optAutoPortraitCheck:SetChecked(optAutoPortraitCheck._getter())
         optFacingUpdating = true
         optFacingSlider:SetValue(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0)
         optFacingUpdating = false

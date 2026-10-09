@@ -101,6 +101,11 @@ local function EnsureDefaults()
     if AltStableConfig.rosterEnchants == nil then
         AltStableConfig.rosterEnchants = false
     end
+    -- Automatic portraits (#124): a toast and a countdown when the look
+    -- changes. Off unless asked for.
+    if AltStableConfig.portraitAuto == nil then
+        AltStableConfig.portraitAuto = false
+    end
     if AltStableConfig.toastsEnabled == nil then
         AltStableConfig.toastsEnabled = true
     end

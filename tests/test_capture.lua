@@ -189,6 +189,31 @@ check("  and says so in chat too", told)
 eq("  and reloads nothing by itself - the click does that", WoW.reloaded, 0)
 eq("the screenshot format is put back", WoW.cvars.screenshotFormat, "jpeg")
 
+-- An AUTOMATIC capture (#124) asks nothing afterwards: the countdown took it,
+-- not a click, and the reload dialog would interrupt someone who did not just
+-- ask for a picture. The chat line still says to reload.
+do
+    resetCapture()
+    check("no capture is running before", AltStable.PortraitCapturing() == false)
+    T.Capture({ auto = true })
+    check("  one is while it runs", AltStable.PortraitCapturing() == true)
+    eq("  marked automatic", T.autoRun(), true)
+    runChain()
+    eq("an automatic capture finishes", #renders(), 2)
+    eq("  and offers no reload", #prompts, 0)
+    local told = false
+    for _, line in ipairs(WoW.chatOut) do
+        if tostring(line):find("reload", 1, true) then told = true end
+    end
+    check("  though chat still says to", told)
+    eq("  and the mark does not outlive it", T.autoRun(), nil)
+    -- The NEXT capture, by hand, is not automatic because the last one was.
+    resetCapture()
+    AltStable.CapturePortrait()
+    runChain()
+    eq("a manual capture after it offers the reload again", #prompts, 1)
+end
+
 ------------------------------------------------------------
 -- TGA or nothing
 ------------------------------------------------------------
@@ -799,6 +824,7 @@ wear({ [5] = 100, [7] = 200, [2] = 300 })
 local st = T.PortraitStatus()
 eq("no portrait and no capture: missing", st.reason, "missing")
 eq("  which is due", st.due, true)
+eq("  and carries what is worn, for the auto-capture's skip (#124)", st.look, T.CurrentLook())
 
 pair(look)
 st = T.PortraitStatus()

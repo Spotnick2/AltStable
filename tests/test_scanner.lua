@@ -1048,7 +1048,7 @@ end
 
 for _, path in ipairs({ "Core.lua", "SheetUI.lua", "Theme.lua", "Toasts.lua",
                         "Scanner.lua", "Reputations.lua", "Columns.lua",
-                        "RowRenderer.lua", "Export.lua",
+                        "RowRenderer.lua", "Export.lua", "Capture.lua", "AutoCapture.lua",
                         "Plugins/Warband/AltStableWarband.lua" }) do
     local bad = ConfigWriteViolations(path)
     check(path .. " writes AltStableConfig only through the seam", #bad == 0,
