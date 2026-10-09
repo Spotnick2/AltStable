@@ -933,6 +933,26 @@ eq("a refresh with nothing new notifies once", table.concat(seen, ","), "missing
 pair(T.CurrentLook())
 AltStable.RefreshPortraitStatus()
 eq("  and again when the answer changes", table.concat(seen, ","), "missing,pending")
+-- A different item in the SAME changed slot is a different answer: the
+-- auto-capture skips a look, so chest C after a skipped chest B must be heard.
+do
+    local base = {}
+    for slot, id in pairs({ [5] = 100, [7] = 200 }) do base[slot] = id end
+    wear(base)
+    pair(T.CurrentLook())
+    AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1, epoch = 1 } }
+    seen = {}
+    T.ResetStatus()
+    AltStable.RefreshPortraitStatus()
+    wear({ [5] = 101, [7] = 200 })
+    AltStable.RefreshPortraitStatus()
+    wear({ [5] = 102, [7] = 200 })
+    AltStable.RefreshPortraitStatus()
+    AltStable.RefreshPortraitStatus()
+    eq("  a second item in the same changed slot notifies again, once",
+       table.concat(seen, ","), table.concat({ seen[1], "changed", "changed" }, ","))
+    AltStableCutoutManifest = nil
+end
 AltStable.PortraitStatusUpdated = realUpdated
 
 -- Gear changes are coalesced, then re-evaluated.

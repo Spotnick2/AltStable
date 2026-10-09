@@ -969,7 +969,12 @@ local lastStatusKey, lastStatus
 function AltStable.RefreshPortraitStatus()
     local status = PortraitStatus()
     lastStatus = status
+    -- The look too, while one is due: chest B and chest C are both "Chest
+    -- changed", but a different answer - the auto-capture skips a LOOK, and
+    -- without this, swapping a skipped chest for another one was never offered
+    -- (#124).
     local key = status.reason .. "|" .. table.concat(status.changedSlots, ",")
+        .. "|" .. (status.due and tostring(status.look) or "")
     if key == lastStatusKey then return status end
     lastStatusKey = key
     AltStable.PortraitStatusUpdated(status)
