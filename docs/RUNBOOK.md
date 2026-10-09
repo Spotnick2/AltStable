@@ -446,7 +446,7 @@ resampled), pads to a power of two, and writes the manifest.
 **Automatic portraits (opt-in, #124).** With "Offer a new portrait when your look
 changes" ticked (Options, Presentation) or `/alts portrait auto on`, a changed look
 or a missing portrait brings up a toast above the chat window: "New portrait in
-5:00". Click it to take the portrait now, or close it to skip that look (it asks
+5 minutes" (whole minutes, then seconds for the last one, as Blizzard's counts). Click it to take the portrait now, or close it to skip that look (it asks
 again when the look changes). Like Blizzard's world-refresh toast, it shrinks to one
 line after a few seconds (hover for the full text), and the icon to its left puts
 the box away and brings it back while the countdown carries on. Alt+drag (the icon or

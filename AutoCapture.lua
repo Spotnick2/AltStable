@@ -345,6 +345,17 @@ local function Build()
     return f
 end
 
+-- How long is left, as Blizzard's world-refresh toast says it (measured in
+-- game): whole minutes - "4 minutes" through a fifth of the way down - then
+-- seconds for the last one. Not a ticking m:ss clock.
+local function Remaining(left)
+    if left >= 60 then
+        local m = math.floor(left / 60)
+        return m .. (m == 1 and " minute" or " minutes")
+    end
+    return left .. (left == 1 and " second" or " seconds")
+end
+
 -- Full, then one line: the title alone, in a narrower box. Only when that
 -- changes, not every tick.
 local function Layout(compact)
@@ -375,8 +386,7 @@ function Paint(why)
     toast.toggle:Show()
     toast:SetShown(not boxHidden)
     if left > 0 then
-        local clock = ("%d:%02d"):format(math.floor(left / 60), left % 60)
-        toast.title:SetText((compact and "Portrait in " or "New portrait in ") .. clock)
+        toast.title:SetText((compact and "Portrait in " or "New portrait in ") .. Remaining(left))
     else
         if why == nil then why = NotNow() end
         toast.title:SetText("New portrait at the next quiet moment")

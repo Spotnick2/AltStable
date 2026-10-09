@@ -89,7 +89,7 @@ reset()
 update(changed("5:1"))
 check("a changed look shows the toast", shown())
 eq("  counting down five minutes", A.dueAt(), clock + 300)
-check("  saying so", (A.toast().title:GetText() or ""):find("5:00", 1, true) ~= nil, A.toast().title:GetText())
+eq("  saying so", A.toast().title:GetText(), "New portrait in 5 minutes")
 check("  and why", (A.toast().sub:GetText() or ""):find("look changed", 1, true) ~= nil, A.toast().sub:GetText())
 check("  ticking", A.ticker() ~= nil)
 tick(61)
@@ -121,7 +121,19 @@ do
     local _, _, _, x2, y2 = icon.symbol:GetPoint(1)
     check("  and back", x2 == x0 and y2 == y0)
 end
-check("the countdown moves", (A.toast().title:GetText() or ""):find("3:59", 1, true) ~= nil, A.toast().title:GetText())
+-- In whole minutes, then seconds for the last one, as Blizzard's says it.
+check("the countdown moves, in whole minutes", (A.toast().title:GetText() or ""):find("in 3 minutes", 1, true) ~= nil,
+      A.toast().title:GetText())
+local function leaveLeft(n) tick(A.dueAt() - clock - n) end
+leaveLeft(60)
+check("  one minute left is singular", (A.toast().title:GetText() or ""):find("in 1 minute", 1, true) ~= nil
+      and not (A.toast().title:GetText() or ""):find("minutes", 1, true), A.toast().title:GetText())
+leaveLeft(59)
+check("  then seconds for the last one", (A.toast().title:GetText() or ""):find("in 59 seconds", 1, true) ~= nil,
+      A.toast().title:GetText())
+leaveLeft(1)
+check("  down to one, singular", (A.toast().title:GetText() or ""):find("in 1 second", 1, true) ~= nil
+      and not (A.toast().title:GetText() or ""):find("seconds", 1, true), A.toast().title:GetText())
 
 -- Like Blizzard's: in full at first, then one line.
 do
@@ -137,7 +149,7 @@ do
     eq("then it shrinks to one line", f.compact, true)
     check("  narrower", f:GetWidth() < fullW, f:GetWidth() .. " vs " .. fullW)
     check("  without the reason", not f.sub:IsShown())
-    check("  still counting", (f.title:GetText() or ""):find("Portrait in 4:5", 1, true) ~= nil, f.title:GetText())
+    eq("  still counting", f.title:GetText(), "Portrait in 4 minutes")
     f:GetScript("OnEnter")(f)
     eq("hovering brings the full text back", f.compact, false)
     tick(1)
