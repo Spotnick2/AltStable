@@ -12,6 +12,11 @@ first.
 
 ## #58, shipped: your own accounts, through Battle.net
 
+> **Superseded.** LibAccountSync-1.0 was seeded from this design and carries own-account sync
+> since v0.11.0 (#198); the channel described below - discovery, the household key, `HI8` hellos,
+> chunks over `BNSendGameData` - was removed from AltStable in #206. Kept as the design record and
+> for its measurements. What runs now: `AGENTS.md`, "Own-account sync (LibAccountSync)".
+
 Measured on 70124 (the probe rounds of 2026-09-30, `Tools/AltStableProbe/BNet.lua`): Battle.net
 game data between two WoW accounts on the **same Battle.net account** is delivered - across
 rulesets and across factions, both directions - where whispers and channels stop at both. So:

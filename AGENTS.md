@@ -274,20 +274,24 @@ like the other two: `.pkgmeta` external `tag: r5`, its non-dot ignores repeated,
 XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests load it through
 `tests/libaccountsync.lua`). It was extracted from this repo's #58 channel (#198).
 
-- **Dual stack.** The legacy channel (`HI8` hello, `CHUNK5`/`DONE8`/`REQ8` on `ALTSTABLE` over
-  `BNSendGameData`) still runs unchanged: v0.10 clients speak only it. A peer moves to the library
-  only after an **AltStable message came from it over the library** (`CAP8` handshake,
-  `LibSync.peers` in `Core.lua`). Removing the legacy channel is a later release.
+- **The library only.** The legacy Battle.net channel (`HI8` hello, `CHUNK5`/`DONE8` over
+  `BNSendGameData`) was removed in #206, so a v0.10 client no longer syncs with us over Battle.net.
+  The library lists every own account that runs *any* addon on it (GlassChat alone, say), so a peer
+  counts as running AltStable only after an **AltStable message came from it over the library**
+  (`CAP8` handshake, `LibSync.peers` in `Core.lua`). Keep `CAP8`: it is the only discovery left,
+  and v0.11 relies on it.
 - **Per peer, never broadcast.** Requests and replies go with `SendTo(guid, …)`. The library's
-  `Send` (to every account) is never used. A refused `SendTo` falls back to the legacy wire for
-  that one message, still to that one peer.
+  `Send` (to every account) is never used. A refused `SendTo` falls back to a whisper for that one
+  message when it was one, still to that one peer; a refused `"BNET"` send goes nowhere.
 - **Independent messages, detected when used.** The instance is made with `messages = true`, and
   the library route is taken only while `inst.messages == true` and `inst.SendTo` exists: an older
   copy's snapshot floor drops an older message that completes after a newer one
   (LibAccountSync#18). Never cache the check at load.
 - **The store is `AltStableConfig.accountSync`** (account-wide, written once through
   `SetConfigValue`, then by the library). Built on first use with the legacy keys: `bnetKey` at
-  `keyAt = 1`, `bnetTrusted` `true` entries as timestamps, 32-hex keys only.
+  `keyAt = 1`, `bnetTrusted` `true` entries as timestamps, 32-hex keys only. Since #206 nothing
+  writes `bnetKey`, `bnetTrusted`, `bnetSelfProject` or `bnetSelfRegion`; they stay on disk for a
+  release (a downgrade still reads them) and are then retired deliberately.
 - **Library changes are LibAccountSync PRs**, never edits here.
 
 ## Conventions

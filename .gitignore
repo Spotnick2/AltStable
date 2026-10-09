@@ -53,3 +53,4 @@ Media/Scene/References/
 
 # Recipe generator page cache (Wowhead HTML) - regenerable, never committed
 Tools/RecipeData/.cache/
+luac.out
