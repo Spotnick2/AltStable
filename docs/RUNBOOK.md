@@ -361,9 +361,16 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 
 ## Releasing
 
-CurseForge builds releases from the tag webhook, reading `.pkgmeta`. Nothing here uploads.
+CurseForge builds releases from the tag webhook, reading `.pkgmeta`. The same tag also runs
+`package-check.yml`, whose `release` job publishes a **GitHub Release** (#209): the zip CI built
+and checked, with that tag's `CHANGELOG.md` section as the notes, and a pre-release when the tag
+has `alpha` or `beta` in it. The job fails, rather than publishing, if there is no `## vX.Y.Z`
+heading for the tag. To release a tag whose job failed or never ran (v0.11.0 predates it): fix
+the cause, delete any half-made release, then **Actions → Package check → Run workflow** with the
+tag.
 
-1. Update `CHANGELOG.md` — it is the release notes.
+1. Update `CHANGELOG.md` — it is the release notes. The tag's section must be headed exactly
+   `## vX.Y.Z` (the tag name).
 2. `git tag -a vX.Y.Z -m "..."` and `git push origin vX.Y.Z`, with a version that has not been
    used before (`git tag -l` lists them).
 3. The tag name sets the release type: a bare `vX.Y.Z` publishes as a **release**, `-beta` as a
