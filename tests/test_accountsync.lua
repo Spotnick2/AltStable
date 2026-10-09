@@ -126,7 +126,7 @@ local function freshFake()
     function fake.SendTo(guid, msg, onResult)
         fake.sent[#fake.sent + 1] = { guid = guid, msg = msg, onResult = onResult }
         if fake.early then onResult({ guid = guid }, fake.early, "not-ready") end
-        return fake.ret
+        return fake.ret, fake.why
     end
     function fake.Peers() return fake.peers end
     fake.setCalls = 0
@@ -225,6 +225,26 @@ L.Ping()
 eq("  which then waits its 30 s", count(L.MSG_CAP), 3)
 for _ = 1, 10 do WoW.now = WoW.now + 31; L.Ping() end
 eq("  and refusals did not use up the five tries", count(L.MSG_CAP), 7)
+
+-- An account that never gets a nonce (no addon on the library there at all)
+-- is not asked - and so not said hello to by the library - all session.
+reset()
+listBee()
+fake.ret = 0
+for _ = 1, 40 do WoW.now = WoW.now + 10; L.Ping() end
+eq("refused questions stop after their own budget of 30", count(L.MSG_CAP), 30)
+
+-- First contact is forced past the request throttle: the login whisper to a
+-- whitelisted own account sets it, and may have gone nowhere.
+reset()
+AltStableConfig.whitelist = { BEE }
+T.RequestCharacters("WHISPER", BEE)
+listBee()
+fake.sent = {}
+fromBee(L.MSG_CAP)
+eq("found on the library moments after a login whisper: still asked", count(T.MSG_REQUEST_V .. "|", true), 1)
+T.ResetSyncState()
+check("the test seam's reset forgets who is on the library too", next(L.peers) == nil)
 
 -- Found on the library: said once, with where they are, and trusted like a
 -- whitelist entry.
@@ -561,6 +581,28 @@ T.SendFullDatabase("BNET", BEE)
 eq("a refused database over \"BNET\": no whisper to anyone", #wire(), 0)
 eq("  after its one SendTo", count(L.MSG_DB .. "|", true), 1)
 
+-- Refused as too large: that never gets better by asking again, so the player
+-- is told - once per send, naming who and the limit. Any other refusal is the
+-- requester's stall watch to report.
+local function saidHere(text)
+    for _, l in ipairs(WoW.chatOut) do if l:find(text, 1, true) then return true end end
+    return false
+end
+reset()
+seed()
+listBee()
+fromBee(L.MSG_CAP)
+fake.sent, fake.ret, fake.why = {}, nil, "too-large"
+WoW.chatOut = {}
+T.SendFullDatabase("BNET", BEE)
+check("a database the library finds too large is reported", saidHere("too large to send to " .. BEE))
+check("  with the limit", saidHere("the limit is 32 KB"))
+fake.why = "not-ready"
+WoW.chatOut = {}
+T.SendFullDatabase("BNET", BEE)
+check("  a not-ready refusal is not called too large", not saidHere("too large"))
+fake.why = nil
+
 ------------------------------------------------------------
 -- A peer only the library proved ours is a sync target (Codex, #204)
 ------------------------------------------------------------
@@ -580,6 +622,9 @@ eq("a library-only peer is a sync target", #tb, 1)
 eq("  over \"BNET\", the library route", tb[1] and tb[1].channel, "BNET")
 AltStableConfig.whitelist = { BEE }
 eq("  once, whitelisted as well", #targetsFor(BEE), 1)
+eq("  over \"WHISPER\" then: the library still, with the whisper to fall back on",
+   targetsFor(BEE)[1] and targetsFor(BEE)[1].channel, "WHISPER")
+eq("  the route /alts sync <name> takes too", AltStable.SyncChannelFor(BEE), "WHISPER")
 AltStableConfig.whitelist = nil
 AltStableConfig.syncAuth = { [BEE:lower()] = "never" }
 eq("  never, when refused for good", #targetsFor(BEE), 0)

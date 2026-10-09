@@ -523,12 +523,11 @@ end
 --
 -- Session state only: nothing here is written to SavedVariables.
 
+-- The switch, and Battle.net up. Which C_BattleNet calls exist is the
+-- library's business now: it checks its own, and /alts bnet shows them.
 local function BNetEnabled()
     AltStableConfig = AltStableConfig or {}
     if AltStableConfig.bnetSync == false then return false end
-    if not (C_BattleNet and C_BattleNet.GetGameAccountInfoByID and C_BattleNet.GetAccountInfoByGUID) then
-        return false
-    end
     if BNFeaturesEnabledAndConnected and not BNFeaturesEnabledAndConnected() then return false end
     return true
 end
@@ -564,10 +563,7 @@ function LibSync.Peer(name)
 end
 
 -- Ours: an AltStable message the library proved came from our own account.
-local function OwnBNetPeer(name)
-    if not BNetEnabled() then return nil end
-    return LibSync.Peer(name)
-end
+local OwnBNetPeer = LibSync.Peer
 
 local function SyncAuthFor(peer)
     AltStableConfig = AltStableConfig or {}
@@ -739,13 +735,17 @@ local function GetSyncTargets()
     local targets, seen = {}, {}
     -- Your own other accounts on the library (#58, #198) count too, so the
     -- login sync, a bare /alts sync and /alts cleanup reach them with no
-    -- whitelist: "BNET", the library route to them. One entry per peer:
-    -- whitelisted AND found is one target.
+    -- whitelist: "BNET", the library route to them - or, whitelisted,
+    -- "WHISPER", which still takes the library and keeps the whisper the
+    -- player configured for when the library refuses (as SyncChannelFor).
+    -- One entry per peer: whitelisted AND found is one target.
     if BNetEnabled() then
+        local listed = {}
+        for _, name in ipairs(whitelist) do listed[AuthKey(name) or ""] = true end
         for key, p in pairs(LibSync.peers) do
             if not seen[key] and LibSync.Peer(p.name) and SyncAuthFor(p.name) ~= AUTH_NEVER then
                 seen[key] = true
-                table.insert(targets, { channel = "BNET", target = p.name })
+                table.insert(targets, { channel = listed[key] and "WHISPER" or "BNET", target = p.name })
             end
         end
     end
@@ -1615,10 +1615,11 @@ function LibSync.SendGuid(guid, msg, onDone, target)
             report(status == "sent")
         end
     end
-    local okCall, r = pcall(LibSync.inst.SendTo, guid, msg, result)
+    local okCall, r, why = pcall(LibSync.inst.SendTo, guid, msg, result)
     accepted = okCall and r == 1
     if accepted and early ~= nil then report(early == "sent") end
-    return accepted
+    -- Refused: the library's reason ("too-large", "not-ready", ...), when it gave one.
+    return accepted, (not accepted and okCall) and why or nil
 end
 
 -- The library route: "BNET", or a whisper to our own account on it. Never a
@@ -1645,12 +1646,16 @@ end
 -- The handshake. Each of our own accounts the library lists and we have not
 -- heard on it yet gets a CAP8 question, every 30 s at most, five times. SendTo
 -- to a peer whose nonce we lack is refused - and makes the library say hello
--- (at most every 5 s, its own limit) - so a refused question is not counted:
--- it is asked again at the next tick, which is what makes first contact quick
--- now that no legacy hello comes first. Five unanswered questions mean it runs
--- no AltStable on the library (GlassChat alone, or a v0.10 AltStable): asked
+-- (at most every 5 s, its own limit) - so a refused question is not counted
+-- as a try: it is asked again at the next tick, which is what makes first
+-- contact quick now that no legacy hello comes first. Refusals have their own
+-- budget, 30 (5 minutes of ticks): an account that runs no addon on the
+-- library at all never gets a nonce, and must not be said hello to all
+-- session. Five unanswered questions, or the refusals spent, mean it runs no
+-- AltStable on the library (GlassChat alone, or a v0.10 AltStable): asked
 -- again only after Battle.net reconnects or the switch is turned back on
 -- (LibSync.Forget), and it can always ask us.
+LibSync.PING_REFUSALS = 30
 function LibSync.Ping()
     if not LibSync.Usable() then return end
     local ok, listed = pcall(LibSync.inst.Peers)
@@ -1661,9 +1666,12 @@ function LibSync.Ping()
         local known = key and LibSync.peers[key]
         local asked = type(q.guid) == "string" and (LibSync.pinged[q.guid] or { at = 0, n = 0 })
         if asked and not (known and known.guid == q.guid) and asked.n < LibSync.PING_TRIES
-            and (now - asked.at) >= LibSync.PING_EVERY
-            and LibSync.SendGuid(q.guid, LibSync.MSG_CAP) then
-            LibSync.pinged[q.guid] = { at = now, n = asked.n + 1 }
+            and (asked.r or 0) < LibSync.PING_REFUSALS and (now - asked.at) >= LibSync.PING_EVERY then
+            if LibSync.SendGuid(q.guid, LibSync.MSG_CAP) then
+                LibSync.pinged[q.guid] = { at = now, n = asked.n + 1, r = asked.r }
+            else
+                LibSync.pinged[q.guid] = { at = asked.at, n = asked.n, r = (asked.r or 0) + 1 }
+            end
         end
     end
 end
@@ -1677,8 +1685,18 @@ local function ChunkAndSendPayload(payload, channel, target)
     -- and the requester's stall watch says so.
     local libPeer = LibSync.RouteFor(channel, target)
     if libPeer and LibDeflate then
-        local deflated = LibDeflate:CompressDeflate(payload or "", { level = 8 })
-        if LibSync.SendGuid(libPeer.guid, LibSync.MSG_DB .. "|" .. deflated, nil, target) then return end
+        local msg = LibSync.MSG_DB .. "|" .. LibDeflate:CompressDeflate(payload or "", { level = 8 })
+        local sent, why = LibSync.SendGuid(libPeer.guid, msg, nil, target)
+        if sent then return end
+        -- Too large never gets better by asking again, and nothing else
+        -- carries it over Battle.net: say so, here, rather than leave the
+        -- other side's stall watch to guess. Only a full database gets this
+        -- big (a delta stays small) - about 9 KB deflated per 28 characters.
+        if why == "too-large" and channel == "BNET" then
+            Print(("|cffff8800Your character database is too large to send to %s over Battle.net|r "
+                .. "(%d KB compressed; the limit is 32 KB). A sync that only sends what changed since an earlier one still fits.")
+                :format(tostring(target), math.ceil(#msg / 1024)))
+        end
     end
     if channel == "BNET" then return end
 
@@ -3000,7 +3018,10 @@ function LibSync.OnMessage(payload, sender)
     -- Newly on the library: said once, and asked for their data - only while
     -- the library lists them as ours (a request opens our consent window for
     -- the reply). Refused for good: noticed, but neither announced nor asked.
-    -- RequestCharacters keeps its own throttle and never-check.
+    -- Forced past the request throttle: the login whisper to a whitelisted own
+    -- account sets it, and may have gone nowhere (the other faction, or not
+    -- online yet) - this is the request that gets their data. The never-check
+    -- is RequestCharacters' own.
     if not (before and before.guid == guid) and LibSync.Peer(name) then
         LibSync.seen[key] = true
         if SyncAuthFor(name) ~= AUTH_NEVER then
@@ -3009,7 +3030,7 @@ function LibSync.OnMessage(payload, sender)
                 Print("Found your other account: |cff88ff88" .. name .. "|r ("
                     .. tostring(sender.faction or "?") .. ", " .. tostring(realm or "?") .. ") - syncing.")
             end
-            if RequestCharacters then RequestCharacters("BNET", name) end
+            if RequestCharacters then RequestCharacters("BNET", name, true) end
         end
     end
     local cmd, body = payload:match("^([^|]*)|?(.*)$")
@@ -4163,6 +4184,7 @@ end
 -- earlier one and failed far from the cause. Harmless in game: nothing calls it.
 local function ResetSyncState()
     pendingAuth = {}
+    LibSync.Forget()
     LibSync.seen, LibSync.announced = {}, {}
     bnetScanPending = false
     lastWhisperAt, syncAttempt, manualSyncAt, unreachableToldAt = {}, {}, {}, {}
