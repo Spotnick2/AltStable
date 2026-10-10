@@ -4020,6 +4020,38 @@ do
 end
 
 ------------------------------------------------------------
+-- The key binding: Bindings.xml's code, and its name in Key Bindings
+------------------------------------------------------------
+do
+    local fh = assert(io.open("Bindings.xml", "r"))
+    local xml = fh:read("*a"); fh:close()
+    local bindings = {}
+    for attrs, body in xml:gmatch("<Binding%s+(.-)>%s*(.-)%s*</Binding>") do
+        bindings[#bindings + 1] = { name = attrs:match('name%s*=%s*"([^"]+)"'),
+                                    category = attrs:match('category%s*=%s*"([^"]+)"'),
+                                    header = attrs:match("header%s*="), body = body }
+    end
+    eq("Bindings.xml has one binding", #bindings, 1)
+    local b = bindings[1] or {}
+    eq("  the toggle", b.name, "ALTSTABLE_TOGGLE")
+    -- Measured in Gnomesweeper: with no category it lands in "Other", and a
+    -- header there shows as a raw HEADER_ row.
+    eq("  in an AltStable section of its own", b.category, "AltStable")
+    check("  with no header", not b.header)
+    eq("  its line in Key Bindings", rawget(_G, "BINDING_NAME_ALTSTABLE_TOGGLE"), "Open or close AltStable")
+    local run = loadstring(b.body or "")
+    check("  its code compiles", run ~= nil)
+    if run then
+        local sheet = AltStable._test.frame   -- built by the blocks above
+        if sheet:IsShown() then sheet:Hide() end
+        run()
+        check("the key opens the sheet", sheet:IsShown())
+        run()
+        check("  and closes it", not sheet:IsShown())
+    end
+end
+
+------------------------------------------------------------
 -- No usable LibShowcase: no showcase, never an error (#199)
 ------------------------------------------------------------
 -- Last in the file: it loads SheetUI.lua again, over everything above.
