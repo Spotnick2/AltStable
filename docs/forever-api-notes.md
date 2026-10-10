@@ -745,6 +745,27 @@ candidates).
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+## Build 1.60.1.70334 (2026-10-09) — API unchanged
+
+Dumped (`forever-api-1.60.1.70334.md`, client built Oct 9 2026) and compared with
+`Compare-Dumps.ps1` against 70291:
+
+```
+Documented functions - no change (6604)
+Documented events - no change (1810)
+Documented tables - no change (798)
+Widget methods - no change (7530)
+Namespace functions - no change (5421)
+Global functions - +1 -155 (walks _G: addon noise, not listed)
+Namespace candidates - +67 -328 (walks _G: addon noise, not listed)
+
+Documented surface identical.
+```
+
+**Behaviour**, the RUNBOOK step-3 line: `60 400 104 -1 9 table`, all as expected.
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
 ---
 
 ## Secret values — some unit numbers cannot be read, only passed along
