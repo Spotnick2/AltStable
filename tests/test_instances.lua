@@ -82,10 +82,15 @@ for _, name in ipairs({ "Karazhan", "Gruul's Lair", "Serpentshrine Cavern", "Bla
 end
 eq("Barrow Deeps binds with its article", T.matchRaid("the barrow deeps")
    and T.matchRaid("the barrow deeps").apiName, "Barrow Deeps")
+-- The achievements' boss lists, for the raid name's tooltip: as many as each
+-- "Conqueror" achievement has.
+eq("Barrow Deeps lists 8 bosses", byName["Barrow Deeps"] and #byName["Barrow Deeps"].listed, 8)
+eq("Hyjal Summit lists 13", byName["Hyjal Summit"] and #byName["Hyjal Summit"].listed, 13)
+eq("Onyxia's Lair lists Onyxia", byName["Onyxia's Lair"] and byName["Onyxia's Lair"].listed[1], "Onyxia")
 do
     local named = nil
     for _, r in ipairs(T.RAIDS) do if r.bosses then named = r.apiName end end
-    check("no raid carries a boss-name list (#17)", named == nil, tostring(named))
+    check("no raid carries a list a killmask could be read against (#17)", named == nil, tostring(named))
 end
 
 ------------------------------------------------------------
@@ -232,6 +237,10 @@ do
         AltStableDB["Player-Deep-1"] = nil
         return lk["Player-Deep-1"]["barrow deeps"]
     end
+    -- The achievement's list is never read against the mask: its order is the
+    -- achievement's, not the encounters' (#17).
+    AltStableConfig.raidEncounters = nil
+    eq("no learned list: no names, the achievement's list notwithstanding", deeps(5).bosses, nil)
     AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = names8 } }
     local b = deeps(1 + 4 + 128).bosses   -- the 1st, 3rd and 8th dead
     check("a learned list names the bosses", b ~= nil and #b == 8, b and #b)
@@ -516,6 +525,53 @@ do
                       and not text:find("Not killed", 1, true), text)
             end
             AltStableDB[guid], AltStableConfig.raidEncounters = nil, nil
+        end
+
+        -- Hovering a raid's name lists its bosses: the achievement's list
+        -- until a lockout teaches the client's own.
+        do
+            local held = AltStableDB
+            AltStableDB = {}
+            T.Refresh()
+            local hyjalHit
+            for _, b in ipairs(T.Bands() or {}) do
+                if b.hit and b.hit:IsShown() and b.hit.raid and b.hit.raid.apiName == "Hyjal Summit" then
+                    hyjalHit = b.hit
+                end
+            end
+            check("each raid's name can be hovered", hyjalHit ~= nil)
+            if hyjalHit then
+                WoW.tooltipLines = {}
+                hyjalHit:GetScript("OnEnter")(hyjalHit)
+                eq("  the raid's name first", WoW.tooltipLines[1], "Hyjal Summit")
+                eq("  then how many", WoW.tooltipLines[2], "13 bosses")
+                eq("  and each of them", WoW.tooltipLines[15], "Nythus the Dreambound")
+            end
+            local hyjal = T.RAIDS[2]
+            AltStableConfig.raidEncounters = { ["Hyjal Summit@14"] = { names = { "Learned A", "Learned B" } } }
+            eq("a learned list wins over the achievement's", T.raidBossList(hyjal)[1], "Learned A")
+            AltStableConfig.raidEncounters["Hyjal Summit@14"].unstable = true
+            eq("  unless it is unstable", T.raidBossList(hyjal)[1], "Bandalar")
+            AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = { "Elsewhere" } } }
+            eq("  and only its own raid's", T.raidBossList(hyjal)[1], "Bandalar")
+            AltStableConfig.raidEncounters = nil
+            eq("a raid with no list at all: none", T.raidBossList({ apiName = "Somewhere", isOther = true }), nil)
+            -- A returning raid's row comes and goes: its hover area with it.
+            local function mc(on)
+                AltStableDB = on and { ["Player-MC-1"] = { guid = "Player-MC-1", name = "Firelord", class = "MAGE",
+                    level = 60, ["si_Molten Core@1"] = (WoW.now + 86400) .. "|1|10|40|Normal" } } or {}
+                T.Refresh()
+                local b = (T.Bands() or {})[4]
+                return b and b.hit
+            end
+            local hit4 = mc(true)
+            check("a returning raid's row can be hovered", hit4 and hit4:IsShown() and hit4.raid.apiName == "Molten Core")
+            hit4 = mc(false)
+            check("  its hover area goes with the row", hit4 and not hit4:IsShown())
+            hit4 = mc(true)
+            check("  and comes back with it", hit4 and hit4:IsShown())
+            AltStableDB = held
+            T.Refresh()
         end
 
         -- Nobody level 60 and nobody saved: the raids still show (owner's

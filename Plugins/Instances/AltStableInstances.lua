@@ -82,14 +82,26 @@ local BAND_VSCALE = BAND_IMG_H / BAND_TEX_H
 -- Summit (13) and Onyxia's Lair (1), in the owner's order, with the owner's
 -- art for all three (toned apart: teal, gold, ember).
 --
+-- `listed` is the bosses as their "Conqueror" achievement lists them, for the
+-- raid name's tooltip only (owner's call, until a lockout teaches the client's
+-- own list). It is NEVER read against a killmask: its order is the
+-- achievement's, not the encounters' (#17). See bossNames and raidBossList.
+--
 -- The Vanilla raids are not in at launch but will come back (owner): `later`
 -- rows are kept, art and all, and shown only once a character holds a lockout
 -- there - so their return needs no change here.
 ------------------------------------------------------------
 local RAIDS = {
-    { apiName = "Barrow Deeps",        display = "Barrow Deeps",        art = "deeps" },
-    { apiName = "Hyjal Summit",        display = "Hyjal Summit",        art = "hyjal" },
-    { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony"  },
+    { apiName = "Barrow Deeps",        display = "Barrow Deeps",        art = "deeps",
+      listed = { "Chillhowl", "Khalith the Dreadspinner", "Amethrax", "Ravus and Darlissa",
+                 "Elder Tangleclaw", "Well of Sorrow", "Del'lynar Songwood", "Sonya Darkhallow" } },
+    { apiName = "Hyjal Summit",        display = "Hyjal Summit",        art = "hyjal",
+      listed = { "Bandalar", "Time-Lost Battalion", "Old Gloomlurker", "Kathris the Haunted",
+                 "Elder Minderel", "Council of Thorns", "The Wild King", "Ancient of Decay",
+                 "Sylvestris Dusksong", "Gharalis the Abyssal", "Anara Chillwind",
+                 "Tracker Stillwind", "Nythus the Dreambound" } },
+    { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony",
+      listed = { "Onyxia" } },
     { apiName = "Molten Core",         display = "Molten Core",         art = "mc",   later = true },
     { apiName = "Blackwing Lair",      display = "Blackwing Lair",      art = "bwl",  later = true },
     { apiName = "Zul'Gurub",           display = "Zul'Gurub",           art = "zg",   later = true },
@@ -535,6 +547,28 @@ end
 
 -- A raid row's background: full-width plain band + a landmark thumbnail in the
 -- name cell + a readability shade. `art`/`solid` are SEPARATE textures on purpose.
+-- The bosses to list for a raid's name: a stable list a lockout taught this
+-- machine (any difficulty), else the achievement's `listed`, else nil.
+local function raidBossList(raid)
+    local store = AltStableConfig and AltStableConfig.raidEncounters
+    if type(store) == "table" then
+        local keys = {}
+        for key in pairs(store) do keys[#keys + 1] = key end
+        table.sort(keys)   -- the same answer every time, whatever pairs() does
+        for _, key in ipairs(keys) do
+            local known = store[key]
+            local name = key:match("^(.+)@%d+$")
+            local r = name and (matchRaid(name:lower()) or nil)
+            local same = (r == raid) or (raid.isOther and name == raid.apiName)
+            if same and type(known) == "table" and not known.unstable
+               and type(known.names) == "table" and #known.names > 0 then
+                return known.names
+            end
+        end
+    end
+    return raid.listed
+end
+
 local function getBand(j)
     local b = AT_SI.bands[j]
     if not b then
@@ -542,6 +576,22 @@ local function getBand(j)
         b.row   = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
         b.art   = panel:CreateTexture(nil, "BORDER", nil, 0)
         b.shade = panel:CreateTexture(nil, "BORDER", nil, 1)
+        -- Hovering the raid's name lists its bosses (owner's call).
+        b.hit = CreateFrame("Frame", nil, panel)
+        b.hit:EnableMouse(true)
+        b.hit:SetScript("OnEnter", function(self)
+            local raid = self.raid
+            if not raid then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(raid.display, 0.6, 0.8, 1)
+            local bosses = raidBossList(raid)
+            if bosses then
+                GameTooltip:AddLine(#bosses == 1 and "1 boss" or (#bosses .. " bosses"), 0.7, 0.7, 0.7)
+                for _, name in ipairs(bosses) do GameTooltip:AddLine(name, 0.9, 0.9, 0.9) end
+            end
+            GameTooltip:Show()
+        end)
+        b.hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
         AT_SI.bands[j] = b
     end
     return b
@@ -649,7 +699,7 @@ local function hideFrom(pool, from)
 end
 
 local function hideBand(b)
-    if b then b.row:Hide(); b.art:Hide(); b.shade:Hide() end
+    if b then b.row:Hide(); b.art:Hide(); b.shade:Hide(); b.hit:Hide() end
 end
 
 -- Wake up when the soonest displayed lockout expires, so a tab left open drops
@@ -806,6 +856,12 @@ function AT_SI.Refresh()
             else
                 band.art:Hide(); band.shade:Hide()
             end
+
+            band.hit:ClearAllPoints()
+            band.hit:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, y)
+            band.hit:SetSize(NAME_COL_W, rh)
+            band.hit.raid = raid
+            band.hit:Show()
 
             local lbl = getRowLabel(rr)
             lbl:ClearAllPoints()
@@ -1151,6 +1207,7 @@ function AT_SI._Bootstrap()
             Groups   = function() return AT_SI.groups end,
             Cells    = function() return AT_SI.cells end,
             Refresh  = function() AT_SI.Refresh() end,
+            raidBossList = raidBossList,
             EmptyText = function() return emptyFS and emptyFS:IsShown() and emptyFS:GetText() or nil end,
         },
     })
