@@ -4665,6 +4665,11 @@ local function Refresh()
     ResizeFrameToContent()
 end
 
+-- The key binding (Bindings.xml, its own "AltStable" section, as Gnomesweeper's)
+-- calls this toggle; this is its line in Key Bindings. A global, as the client
+-- looks it up by name.
+BINDING_NAME_ALTSTABLE_TOGGLE = "Open or close AltStable"
+
 function AltStable.ShowSheet()
     CreateFrameIfNeeded()
     if frame:IsShown() then frame:Hide(); return end

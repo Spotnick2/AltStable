@@ -81,24 +81,28 @@ end
 -- in CI's zip check), and the first hit is reported as file:line.
 do
     local found, scanned = nil, 0
+    local function scan(path)
+        local code = read(path)
+        if not code then return end
+        scanned = scanned + 1
+        local n = 0
+        for codeLine in (code .. "\n"):gmatch("([^\n]*)\n") do
+            n = n + 1
+            local keyword = codeLine:match("(@[%w%-]+@)")
+            if keyword and not found then found = path .. ":" .. n .. ": " .. keyword end
+        end
+    end
     for _, t in ipairs(TOCS) do
         local src = read(t.toc) or ""
         for line in (src .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
             local file = line:match("^%s*([%w_%-%./\\]+%.[lx][um][al])%s*$")
-            local code = file and read(t.dir .. file:gsub("\\", "/"))
-            if code then
-                scanned = scanned + 1
-                local n = 0
-                for codeLine in (code .. "\n"):gmatch("([^\n]*)\n") do
-                    n = n + 1
-                    local keyword = codeLine:match("(@[%w%-]+@)")
-                    if keyword and not found then
-                        found = t.dir .. file:gsub("\\", "/") .. ":" .. n .. ": " .. keyword
-                    end
-                end
-            end
+            if file then scan(t.dir .. file:gsub("\\", "/")) end
         end
     end
+    -- Shipped and loaded, but by the client from the addon root, not the TOC.
+    local before = scanned
+    scan("Bindings.xml")
+    check("the keyword sweep read Bindings.xml", scanned == before + 1)
     check("the keyword sweep read the shipped files", scanned >= 20, tostring(scanned))
     check("no shipped Lua or XML file contains a packager keyword (it would be substituted)",
           found == nil, found)

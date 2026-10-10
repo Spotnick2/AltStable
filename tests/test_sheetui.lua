@@ -4041,12 +4041,14 @@ do
     eq("  its line in Key Bindings", rawget(_G, "BINDING_NAME_ALTSTABLE_TOGGLE"), "Open or close AltStable")
     local run = loadstring(b.body or "")
     check("  its code compiles", run ~= nil)
-    AltStable.ShowSheet()
-    if AltStable._test.frame:IsShown() then AltStable._test.frame:Hide() end
-    run()
-    check("the key opens the sheet", AltStable._test.frame:IsShown())
-    run()
-    check("  and closes it", not AltStable._test.frame:IsShown())
+    if run then
+        local sheet = AltStable._test.frame   -- built by the blocks above
+        if sheet:IsShown() then sheet:Hide() end
+        run()
+        check("the key opens the sheet", sheet:IsShown())
+        run()
+        check("  and closes it", not sheet:IsShown())
+    end
 end
 
 ------------------------------------------------------------

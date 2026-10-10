@@ -120,6 +120,7 @@ jobs:
 
           for f in AltStable/AltStable.toc \
                    AltStable/Core.lua \
+                   AltStable/Bindings.xml \
                    AltStable/Libs/LibDeflate/LibDeflate.lua \
                    AltStable/Media/Raids/scene-raid-mc.tga \
                    AltStable/LICENSE \
