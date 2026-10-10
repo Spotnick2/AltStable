@@ -1492,7 +1492,15 @@ do
     scan(A)
     known = scan({ { "Chillhowl", true }, { "Amethrax, Renamed", false }, { "Sonya Darkhallow", true } })
     check(known and not known.unstable and known.names[2] == "Amethrax, Renamed",
-          "a renamed boss replaces the list, and does not switch names off")
+          "a boss renamed in its place replaces the list, and does not switch names off")
+    -- A rename does not hide a move (Codex, #223): one character's mask was
+    -- taken against [Chillhowl, Amethrax]; another character's scan comes back
+    -- [Amethrax, Chillhowl (renamed)]. Accepting it would make the first mask
+    -- name Amethrax as the kill.
+    AltStableConfig.raidEncounters = nil
+    scan({ { "Chillhowl", true }, { "Amethrax", false } })
+    known = scan({ { "Amethrax", true }, { "Chillhowl (renamed)", false } })
+    check(known and known.unstable == true, "a rename together with a move is still a move: unstable")
     -- An entry not shaped as the scan writes it is replaced, not indexed blind.
     AltStableConfig.raidEncounters = { ["Barrow Deeps@1"] = { unstable = false } }
     local ok = pcall(scan, A)

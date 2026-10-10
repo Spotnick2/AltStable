@@ -2552,13 +2552,14 @@ end
 -- Bit e-1 of ANOTHER character's mask is read against this list, which holds
 -- only if the client lists a raid's encounters in a fixed order. So the list
 -- is checked against every later scan:
---   * the same bosses in the same order: nothing to do;
---   * the same bosses in ANOTHER order: the order is not fixed, so the raid is
---     marked `unstable` for good - "X/Y", never a name that might belong to
---     another boss;
---   * a different set of bosses (a renamed one, a different count): a new
---     list, not an ordering question - it replaces the old one (review of
---     #223: a hotfix rename must not switch the names off for good).
+--   * the same list: nothing to do;
+--   * any boss in both lists at ANOTHER index: the order is not fixed, and a
+--     mask taken against the old list would now name the wrong boss - so the
+--     raid is marked `unstable` for good: "X/Y", never a name that might
+--     belong to another boss. A rename does not hide a move (Codex, #223);
+--   * otherwise (a boss renamed in its place, bosses added or dropped at the
+--     end): every kept name is where it was, so the new list replaces the old
+--     one - a hotfix rename must not switch the names off for good.
 -- An entry not shaped as this writes it is replaced, never indexed blind: this
 -- runs inside the lockout scan, and an error here would lose the whole scan.
 function AltStable.LearnRaidEncounters(key, names)
@@ -2568,15 +2569,15 @@ function AltStable.LearnRaidEncounters(key, names)
     local known = store[key]
     if type(known) == "table" and type(known.names) == "table" then
         if known.unstable then return end
-        local sameOrder, sameSet = #known.names == #names, #known.names == #names
-        local had = {}
-        for _, n in ipairs(known.names) do had[n] = true end
+        local same, moved = #known.names == #names, false
+        local was = {}
+        for e, n in ipairs(known.names) do was[n] = e end
         for e = 1, #names do
-            if known.names[e] ~= names[e] then sameOrder = false end
-            if not had[names[e]] then sameSet = false end
+            if known.names[e] ~= names[e] then same = false end
+            if was[names[e]] and was[names[e]] ~= e then moved = true end
         end
-        if sameOrder then return end
-        if sameSet then
+        if same then return end
+        if moved then
             known.unstable = true
         else
             store[key] = { names = names }

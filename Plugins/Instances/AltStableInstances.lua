@@ -299,16 +299,22 @@ end
 
 -- The lockout's bosses in encounter order, each { name, killed }, or nil when
 -- they cannot be named safely (#17): no usable list learned on this machine,
--- or one whose length is not the lockout's boss count. Worked out on hover,
--- not per refresh: only the hovered cell ever needs it.
+-- one whose length is not the lockout's boss count, or a mask that does not
+-- add up to the lockout's progress - an absent mask (a scan that rejected the
+-- flags, an older record) reads as 0, and at 3/8 that is not "nobody killed"
+-- but "not known" (Codex, #223). Worked out on hover, not per refresh: only
+-- the hovered cell ever needs it.
 local function bossNames(lk)
     local store = AltStableConfig and AltStableConfig.raidEncounters
     local names = type(store) == "table" and usableList(store[lk.name .. "@" .. lk.diff])
     if not names or lk.total <= 0 or #names ~= lk.total then return nil end
-    local out = {}
+    local out, kills = {}, 0
     for e, name in ipairs(names) do
-        out[e] = { name = name, killed = math.floor(lk.mask / 2 ^ (e - 1)) % 2 == 1 }
+        local killed = math.floor(lk.mask / 2 ^ (e - 1)) % 2 == 1
+        if killed then kills = kills + 1 end
+        out[e] = { name = name, killed = killed }
     end
+    if kills ~= lk.prog then return nil end
     return out
 end
 

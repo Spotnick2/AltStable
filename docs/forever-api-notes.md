@@ -1494,8 +1494,10 @@ UnitXPMax("player")         ->  400
    `GetSavedInstanceEncounterInfo(i, e)` row as its kill flag (Retail shape assumed: `bossName,
    fileDataID, isKilled`; a row not shaped that way teaches no names), in
    `AltStableConfig.raidEncounters["<name>@<difficulty>"]`, account-wide and not synced. Every
-   later scan re-checks the list: the same bosses in another order mark the raid `unstable` for
-   good, while a different set (a rename, another count) replaces the list. The tooltip names bosses only from a stable list as long as the lockout's
+   later scan re-checks the list: any boss found at another index marks the raid `unstable` for
+   good (even alongside a rename), while a rename in place or bosses added or dropped at the end
+   replace the list. A cell names its bosses only when the mask's kills add up to the lockout's
+   progress, so an absent mask at 3/8 is "not known", not "nobody killed". The tooltip names bosses only from a stable list as long as the lockout's
    boss count, otherwise "X/Y".
 
    **Still to see at launch:** the first real raid save, with `/dump GetSavedInstanceEncounterInfo(1, 1)`

@@ -227,9 +227,9 @@ eq("  but no names without a learned list", T.bossNames(lookup["Player-A-1"]["mo
 do
     local names8 = { "Chillhowl", "Khalith the Dreadspinner", "Amethrax", "Ravus and Darlissa",
                      "Elder Tangleclaw", "Well of Sorrow", "Del'lynar Songwood", "Sonya Darkhallow" }
-    local function deeps(mask, total)
+    local function deeps(mask, total, prog)
         AltStableDB["Player-Deep-1"] = { guid = "Player-Deep-1", name = "Delver", class = "MAGE", level = 60,
-                                         ["si_Barrow Deeps@14"] = "1700086400|3|" .. (total or 8) .. "|20|Normal",
+                                         ["si_Barrow Deeps@14"] = "1700086400|" .. (prog or 3) .. "|" .. (total or 8) .. "|20|Normal",
                                          ["si_boss_Barrow Deeps@14"] = mask and tostring(mask) or nil }
         local _, lk = T.gather()
         AltStableDB["Player-Deep-1"] = nil
@@ -238,7 +238,7 @@ do
     -- The achievement's list is never read against the mask: its order is the
     -- achievement's, not the encounters' (#17).
     AltStableConfig.raidEncounters = nil
-    eq("no learned list: no names, the achievement's list notwithstanding", T.bossNames(deeps(5)), nil)
+    eq("no learned list: no names, the achievement's list notwithstanding", T.bossNames(deeps(7)), nil)
     AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = names8 } }
     local b = T.bossNames(deeps(1 + 4 + 128))   -- the 1st, 3rd and 8th dead
     check("a learned list names the bosses", b ~= nil and #b == 8, b and #b)
@@ -247,12 +247,17 @@ do
     eq("  bit 1 the second", b and b[2].killed, false)
     eq("  bit 2 the third", b and b[3].killed, true)
     eq("  bit 7 the eighth", b and b[8].killed, true)
-    eq("no mask stored: nobody killed yet", T.bossNames(deeps(nil))[1].killed, false)
-    eq("a list of another length names nothing", T.bossNames(deeps(5, 9)), nil)
+    -- An absent mask is "nobody killed" only at 0 progress; at 3/8 it is not
+    -- known, and so is a mask whose kills do not add up (Codex, #223).
+    local none = T.bossNames(deeps(nil, 8, 0))
+    eq("no mask at 0/8: nobody killed yet", none and none[1].killed, false)
+    eq("no mask at 3/8: not known, so no names", T.bossNames(deeps(nil, 8, 3)), nil)
+    eq("a mask that does not add up to the progress: no names", T.bossNames(deeps(1 + 4, 8, 3)), nil)
+    eq("a list of another length names nothing", T.bossNames(deeps(7, 9)), nil)
     AltStableConfig.raidEncounters["Barrow Deeps@14"].unstable = true
-    eq("an unstable list names nothing", T.bossNames(deeps(5)), nil)
+    eq("an unstable list names nothing", T.bossNames(deeps(7)), nil)
     AltStableConfig.raidEncounters = { ["Barrow Deeps@1"] = { names = names8 } }
-    eq("another difficulty's list is not used", T.bossNames(deeps(5)), nil)
+    eq("another difficulty's list is not used", T.bossNames(deeps(7)), nil)
     AltStableConfig.raidEncounters = nil
 end
 
