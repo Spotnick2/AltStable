@@ -2543,6 +2543,51 @@ end
 -- locally and re-scans don't churn the delta sync. Raids only — the 5/hour
 -- dungeon cap is deferred (see issue #20).
 ------------------------------------------------------------
+-- The boss names of each raid, by "<name>@<difficulty>" (the key the lockout
+-- and its killmask use), in the client's encounter order: what the Raids
+-- plugin needs to turn a killmask into named bosses (#17). Account-wide and
+-- kept on this machine, not synced: the names are the same for every
+-- character, and the masks they read already sync.
+--
+-- Bit e-1 of ANOTHER character's mask is read against this list, which holds
+-- only if the client lists a raid's encounters in a fixed order. So the list
+-- is checked against every later scan:
+--   * the same list: nothing to do;
+--   * any boss in both lists at ANOTHER index: the order is not fixed, and a
+--     mask taken against the old list would now name the wrong boss - so the
+--     raid is marked `unstable` for good: "X/Y", never a name that might
+--     belong to another boss. A rename does not hide a move (Codex, #223);
+--   * otherwise (a boss renamed in its place, bosses added or dropped at the
+--     end): every kept name is where it was, so the new list replaces the old
+--     one - a hotfix rename must not switch the names off for good.
+-- An entry not shaped as this writes it is replaced, never indexed blind: this
+-- runs inside the lockout scan, and an error here would lose the whole scan.
+function AltStable.LearnRaidEncounters(key, names)
+    AltStableConfig = AltStableConfig or {}
+    AltStableConfig.raidEncounters = AltStableConfig.raidEncounters or {}
+    local store = AltStableConfig.raidEncounters
+    local known = store[key]
+    if type(known) == "table" and type(known.names) == "table" then
+        if known.unstable then return end
+        local same, moved = #known.names == #names, false
+        local was = {}
+        for e, n in ipairs(known.names) do was[n] = e end
+        for e = 1, #names do
+            if known.names[e] ~= names[e] then same = false end
+            if was[names[e]] and was[names[e]] ~= e then moved = true end
+        end
+        if same then return end
+        if moved then
+            known.unstable = true
+        else
+            store[key] = { names = names }
+        end
+    else
+        store[key] = { names = names }
+    end
+    AltStable.OnConfigChanged("raidEncounters")
+end
+
 local function ScanSavedInstances()
     local guid = UnitGUID("player")
     local char = guid and AltStableDB and AltStableDB[guid]
@@ -2566,11 +2611,9 @@ local function ScanSavedInstances()
                        .. (numEncounters or 0) .. "|" .. (maxPlayers or 0) .. "|" .. (difficultyName or "")
 
             -- Per-boss kill state as a positional bitmask (bit e-1 set = encounter e
-            -- dead). NOTHING READS IT YET: a named Killed / Not-killed list needs the
-            -- encounter ORDER to match a static boss list, and no raid lockout is
-            -- obtainable on the beta to check that (#17), so the Raids plugin shows
-            -- aggregate progress only. Captured now so the data exists the day it can
-            -- be verified.
+            -- dead). The Raids plugin reads it against the names learned below
+            -- (#17): each name from the same API row as its kill flag, so no
+            -- static list has to match the client's encounter order.
             -- Stored as a SEPARATE si_boss_<name>@<diff> field, NOT appended to the
             -- si_ value: the "si_boss_" prefix still matches the existing "^si_"
             -- serialize / clear / orphan-drop rules, so it syncs, gets cleaned up on
@@ -2581,14 +2624,27 @@ local function ScanSavedInstances()
             -- picks it up.
             if type(GetSavedInstanceEncounterInfo) == "function"
                and numEncounters and numEncounters > 0 then
-                local mask = 0
+                local mask, names = 0, {}
                 for e = 1, numEncounters do
-                    local _, _, isKilled = GetSavedInstanceEncounterInfo(i, e)
-                    if isKilled then mask = mask + 2 ^ (e - 1) end
+                    local bossName, _, isKilled = GetSavedInstanceEncounterInfo(i, e)
+                    -- `== true`, not truthiness: a numeric flag (0 for alive)
+                    -- must not count every boss dead (review of #223).
+                    if isKilled == true then mask = mask + 2 ^ (e - 1) end
+                    -- The name from the SAME row as its kill flag (#17), so no
+                    -- static list has to agree with the client's order. Only a
+                    -- row shaped as Retail's (a name, then a true/false flag)
+                    -- counts; one that is not leaves the raid without names.
+                    if names and type(bossName) == "string" and bossName ~= ""
+                       and type(isKilled) == "boolean" then
+                        names[e] = bossName
+                    else
+                        names = nil
+                    end
                 end
                 if mask > 0 then
                     newSet["si_boss_" .. name .. "@" .. diff] = tostring(mask)
                 end
+                if names then AltStable.LearnRaidEncounters(name .. "@" .. diff, names) end
             end
         end
     end

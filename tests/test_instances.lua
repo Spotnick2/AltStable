@@ -1,14 +1,14 @@
 ------------------------------------------------------------
 -- test_instances.lua — the Raids plugin (#11)
 --
--- Vanilla raids only: the nine Outland raids the TBC plugin carried do not
--- exist here, and a group header renders even with no rows under it.
+-- Forever's launch raids (Barrow Deeps, Hyjal Summit, Onyxia's Lair), with the
+-- Vanilla raids kept for their return and shown only when someone is saved.
 --
--- AGGREGATE PROGRESS ONLY. The core stores a per-encounter killmask
--- (si_boss_<name>@<diff>), but mapping bit e-1 onto a static boss-name list
--- assumes Forever orders encounters as TBC did, and no raid lockout is
--- obtainable on the beta to check that (#17). So this plugin reads the mask
--- for nothing: a wrong name looks like data, while "3/10" cannot be wrong.
+-- BOSS NAMES COME FROM THE LOCKOUT (#17). A static name list would have to
+-- match the client's encounter order, which no beta lockout could check, so
+-- there is none: the core learns each raid's names from the same API row as
+-- the kill flag, and the plugin names bosses only from a list that is stable
+-- and as long as the lockout's boss count. Anything else is "X/Y".
 ------------------------------------------------------------
 
 dofile("tests/wow_stubs.lua")
@@ -52,21 +52,44 @@ local T = plugin._test
 
 local byName = {}
 for _, r in ipairs(T.RAIDS) do byName[r.apiName] = r end
-eq("seven raids", #T.RAIDS, 7)
-for _, name in ipairs({ "Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub",
+-- The launch raids, in the owner's order, always shown.
+do
+    local launch = {}
+    for _, r in ipairs(T.RAIDS) do if not r.later then launch[#launch + 1] = r.apiName end end
+    eq("the launch raids, in order", table.concat(launch, ","), "Barrow Deeps,Hyjal Summit,Onyxia's Lair")
+    eq("  and first in the list", T.RAIDS[1].apiName, "Barrow Deeps")
+end
+-- The Vanilla raids come back later: kept, with their art, until they do.
+for _, name in ipairs({ "Molten Core", "Blackwing Lair", "Zul'Gurub",
                         "Ruins of Ahn'Qiraj", "Temple of Ahn'Qiraj", "Naxxramas" }) do
-    check(name .. " is in the catalogue", byName[name] ~= nil)
+    check(name .. " is kept for later", byName[name] ~= nil and byName[name].later == true)
+    check("  with its art", byName[name] ~= nil and byName[name].art ~= nil)
+end
+eq("nine raids in all", #T.RAIDS, 9)
+-- Every raid's art ships: a missing file draws nothing and throws nothing.
+for _, r in ipairs(T.RAIDS) do
+    local f = r.art and io.open("Media/Raids/scene-raid-" .. r.art .. ".tga", "rb")
+    check(r.apiName .. " has its art on disk", f ~= nil, tostring(r.art))
+    if f then
+        local h = f:read(18); f:close()
+        check("  uncompressed, 512x256", h:byte(3) == 2 and h:byte(13) + h:byte(14) * 256 == 512
+              and h:byte(15) + h:byte(16) * 256 == 256)
+    end
 end
 for _, name in ipairs({ "Karazhan", "Gruul's Lair", "Serpentshrine Cavern", "Black Temple",
-                        "Zul'Aman", "Sunwell Plateau", "Hyjal Summit", "Tempest Keep",
-                        "Magtheridon's Lair" }) do
+                        "Zul'Aman", "Sunwell Plateau", "Tempest Keep", "Magtheridon's Lair" }) do
     check("no " .. name .. " (Outland)", byName[name] == nil)
 end
-do
-    local named = nil
-    for _, r in ipairs(T.RAIDS) do if r.bosses then named = r.apiName end end
-    check("no raid carries a boss-name list (#17)", named == nil, tostring(named))
-end
+eq("Barrow Deeps binds with its article", T.matchRaid("the barrow deeps")
+   and T.matchRaid("the barrow deeps").apiName, "Barrow Deeps")
+-- The achievements' boss lists, for the raid name's tooltip: as many as each
+-- "Conqueror" achievement has.
+eq("Barrow Deeps lists 8 bosses", byName["Barrow Deeps"] and #byName["Barrow Deeps"].listed, 8)
+eq("Hyjal Summit lists 13", byName["Hyjal Summit"] and #byName["Hyjal Summit"].listed, 13)
+eq("Onyxia's Lair lists Onyxia", byName["Onyxia's Lair"] and byName["Onyxia's Lair"].listed[1], "Onyxia")
+-- Those lists are never read against a killmask (#17): see "no learned list:
+-- no names, the achievement's list notwithstanding" below, which asserts the
+-- behaviour rather than a field name.
 
 ------------------------------------------------------------
 -- Matching a live lockout name to a row
@@ -197,7 +220,46 @@ check("a saved character has its lockouts", lookup["Player-A-1"] ~= nil)
 eq("  keyed by the canonical raid name", lookup["Player-A-1"]["molten core"].prog, 7)
 eq("  a second lockout too", lookup["Player-A-1"]["onyxia's lair"].total, 1)
 check("an unsaved character has none", lookup["Player-B-1"] == nil)
-eq("the killmask is not read into the model (#17)", lookup["Player-A-1"]["molten core"].mask, nil)
+eq("the killmask is read with its lockout (#17)", lookup["Player-A-1"]["molten core"].mask, 127)
+eq("  but no names without a learned list", T.bossNames(lookup["Player-A-1"]["molten core"]), nil)
+
+-- Boss names, from the list the core learned off a lockout (#17).
+do
+    local names8 = { "Chillhowl", "Khalith the Dreadspinner", "Amethrax", "Ravus and Darlissa",
+                     "Elder Tangleclaw", "Well of Sorrow", "Del'lynar Songwood", "Sonya Darkhallow" }
+    local function deeps(mask, total, prog)
+        AltStableDB["Player-Deep-1"] = { guid = "Player-Deep-1", name = "Delver", class = "MAGE", level = 60,
+                                         ["si_Barrow Deeps@14"] = "1700086400|" .. (prog or 3) .. "|" .. (total or 8) .. "|20|Normal",
+                                         ["si_boss_Barrow Deeps@14"] = mask and tostring(mask) or nil }
+        local _, lk = T.gather()
+        AltStableDB["Player-Deep-1"] = nil
+        return lk["Player-Deep-1"]["barrow deeps"]
+    end
+    -- The achievement's list is never read against the mask: its order is the
+    -- achievement's, not the encounters' (#17).
+    AltStableConfig.raidEncounters = nil
+    eq("no learned list: no names, the achievement's list notwithstanding", T.bossNames(deeps(7)), nil)
+    AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = names8 } }
+    local b = T.bossNames(deeps(1 + 4 + 128))   -- the 1st, 3rd and 8th dead
+    check("a learned list names the bosses", b ~= nil and #b == 8, b and #b)
+    eq("  in encounter order", b and b[2].name, "Khalith the Dreadspinner")
+    eq("  bit 0 is the first boss", b and b[1].killed, true)
+    eq("  bit 1 the second", b and b[2].killed, false)
+    eq("  bit 2 the third", b and b[3].killed, true)
+    eq("  bit 7 the eighth", b and b[8].killed, true)
+    -- An absent mask is "nobody killed" only at 0 progress; at 3/8 it is not
+    -- known, and so is a mask whose kills do not add up (Codex, #223).
+    local none = T.bossNames(deeps(nil, 8, 0))
+    eq("no mask at 0/8: nobody killed yet", none and none[1].killed, false)
+    eq("no mask at 3/8: not known, so no names", T.bossNames(deeps(nil, 8, 3)), nil)
+    eq("a mask that does not add up to the progress: no names", T.bossNames(deeps(1 + 4, 8, 3)), nil)
+    eq("a list of another length names nothing", T.bossNames(deeps(7, 9)), nil)
+    AltStableConfig.raidEncounters["Barrow Deeps@14"].unstable = true
+    eq("an unstable list names nothing", T.bossNames(deeps(7)), nil)
+    AltStableConfig.raidEncounters = { ["Barrow Deeps@1"] = { names = names8 } }
+    eq("another difficulty's list is not used", T.bossNames(deeps(7)), nil)
+    AltStableConfig.raidEncounters = nil
+end
 
 -- Two lockouts for the same raid at different difficulties: one row, one rule.
 -- Without it, pairs() order decides, and it can change between refreshes.
@@ -283,7 +345,14 @@ for _, r in ipairs(rows) do
     if r.isGroup then groups = groups + 1 else raidRows = raidRows + 1 end
 end
 eq("one group header", groups, 1)
-eq("  with every raid under it", raidRows, 7)
+-- The launch three, plus the returning raids someone is saved to (Molten Core
+-- and Zul'Gurub in this fixture) - not the four nobody is.
+do
+    local shown = {}
+    for _, r in ipairs(rows) do if r.raid then shown[#shown + 1] = r.raid.apiName end end
+    eq("  the launch raids, then the returning ones someone is saved to", table.concat(shown, ","),
+       "Barrow Deeps,Hyjal Summit,Onyxia's Lair,Molten Core,Zul'Gurub")
+end
 
 -- The column cap must not drop a saved character: they sort last (low level),
 -- so a plain truncation would cut exactly the ones the filter exists to keep.
@@ -423,6 +492,125 @@ do
             end
         end
         check("at least the header was painted", hdr ~= nil)
+
+        -- Hovering a cell names each boss, killed or not (#17).
+        do
+            local guid = "Player-Hover-1"
+            AltStableDB[guid] = { guid = guid, name = "Delver Hover", class = "MAGE", level = 60, ilvl = 70,
+                                  ["si_Onyxia's Lair@1"] = (WoW.now + 86400) .. "|1|1|40|Normal",
+                                  ["si_boss_Onyxia's Lair@1"] = "1",
+                                  ["si_Hyjal Summit@1"] = (WoW.now + 86400) .. "|0|2|20|Normal" }
+            AltStableConfig.raidEncounters = { ["Onyxia's Lair@1"] = { names = { "Onyxia" } } }
+            T.Refresh()
+            local onyCell, hyjalCell
+            for _, col in pairs(T.Cells() or {}) do
+                for _, cell in pairs(col) do
+                    local d = cell.info
+                    if d and d.charName == "Delver Hover" then
+                        if d.raidName == "Onyxia's Lair" then onyCell = cell end
+                        if d.raidName == "Hyjal Summit" then hyjalCell = cell end
+                    end
+                end
+            end
+            check("the saved character has an Onyxia cell", onyCell ~= nil)
+            if onyCell then
+                WoW.tooltipLines = {}
+                onyCell:GetScript("OnEnter")(onyCell)
+                local text = table.concat(WoW.tooltipLines, " / ")
+                check("  hovering it names the boss as killed", text:find("Onyxia|Killed", 1, true), text)
+            end
+            if hyjalCell then
+                WoW.tooltipLines = {}
+                hyjalCell:GetScript("OnEnter")(hyjalCell)
+                local text = table.concat(WoW.tooltipLines, " / ")
+                check("a raid with no learned names shows progress only",
+                      text:find("Progress: 0/2", 1, true) and not text:find("|Killed", 1, true)
+                      and not text:find("Not killed", 1, true), text)
+            end
+            AltStableDB[guid], AltStableConfig.raidEncounters = nil, nil
+        end
+
+        -- Hovering a raid's name lists its bosses: the achievement's list
+        -- until a lockout teaches the client's own.
+        do
+            local held = AltStableDB
+            AltStableDB = {}
+            T.Refresh()
+            local hyjalHit
+            for _, b in ipairs(T.Bands() or {}) do
+                if b.hit and b.hit:IsShown() and b.hit.raid and b.hit.raid.apiName == "Hyjal Summit" then
+                    hyjalHit = b.hit
+                end
+            end
+            check("each raid's name can be hovered", hyjalHit ~= nil)
+            if hyjalHit then
+                WoW.tooltipLines = {}
+                hyjalHit:GetScript("OnEnter")(hyjalHit)
+                eq("  the raid's name first", WoW.tooltipLines[1], "Hyjal Summit")
+                eq("  then how many", WoW.tooltipLines[2], "13 bosses")
+                eq("  and each of them", WoW.tooltipLines[15], "Nythus the Dreambound")
+            end
+            local hyjal = T.RAIDS[2]
+            AltStableConfig.raidEncounters = { ["Hyjal Summit@14"] = { names = { "Learned A", "Learned B" } } }
+            eq("a learned list wins over the achievement's", T.raidBossList(hyjal)[1], "Learned A")
+            AltStableConfig.raidEncounters["Hyjal Summit@14"].unstable = true
+            eq("  unless it is unstable", T.raidBossList(hyjal)[1], "Bandalar")
+            AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = { "Elsewhere" } } }
+            eq("  and only its own raid's", T.raidBossList(hyjal)[1], "Bandalar")
+            AltStableConfig.raidEncounters = { ["Hyjal Summit@14"] = { names = {} } }
+            eq("  and never an empty one", T.raidBossList(hyjal)[1], "Bandalar")
+            AltStableConfig.raidEncounters = nil
+            eq("a raid with no list at all: none", T.raidBossList({ apiName = "Somewhere", isOther = true }), nil)
+            -- A returning raid's row comes and goes: its hover area with it.
+            local function mc(on)
+                AltStableDB = on and { ["Player-MC-1"] = { guid = "Player-MC-1", name = "Firelord", class = "MAGE",
+                    level = 60, ["si_Molten Core@1"] = (WoW.now + 86400) .. "|1|10|40|Normal" } } or {}
+                T.Refresh()
+                local b = (T.Bands() or {})[4]
+                return b and b.hit
+            end
+            local hit4 = mc(true)
+            check("a returning raid's row can be hovered", hit4 and hit4:IsShown() and hit4.raid.apiName == "Molten Core")
+            hit4 = mc(false)
+            check("  its hover area goes with the row", hit4 and not hit4:IsShown())
+            hit4 = mc(true)
+            check("  and comes back with it", hit4 and hit4:IsShown())
+            AltStableDB = held
+            T.Refresh()
+        end
+
+        -- Nobody level 60 and nobody saved: the raids still show (owner's
+        -- call), with a word where the columns will go.
+        do
+            local held = AltStableDB
+            AltStableDB = { ["Player-Low-1"] = { guid = "Player-Low-1", name = "Low Alt", class = "MAGE", level = 18 } }
+            T.Refresh()
+            local shownBands, withArt = 0, 0
+            for _, b in ipairs(T.Bands() or {}) do
+                if b.row and b.row:IsShown() then shownBands = shownBands + 1 end
+                if b.art and b.art:IsShown() then withArt = withArt + 1 end
+            end
+            eq("no columns yet: the three launch raids still show", shownBands, 3)
+            eq("  each with its art", withArt, 3)
+            eq("  and a word where the columns go", T.EmptyText(), "Your level-60 characters show here.")
+            -- ...inside the window: its width counts the word (review of #223).
+            local askedW
+            local realReq = AltStable.RequestWindowSize
+            AltStable.RequestWindowSize = function(w) askedW = w end
+            T.Refresh()
+            AltStable.RequestWindowSize = realReq
+            local need = AltStable.LAYOUT.SIDEBAR_WIDTH + 1 + 12 + 190 + 92 + 40 + 20 + 12   -- stub width 40
+            check("  and the window is wide enough for it", askedW and askedW >= need,
+                  tostring(askedW) .. " < " .. need)
+            AltStableDB = {}
+            T.Refresh()
+            eq("no characters at all says so", T.EmptyText(), "No characters tracked yet.")
+            AltStableDB = { ["Player-Max-1"] = { guid = "Player-Max-1", name = "Max Alt", class = "MAGE", level = 60 } }
+            T.Refresh()
+            eq("a level-60 column takes the word away", T.EmptyText(), nil)
+            AltStableDB = held
+            T.Refresh()
+        end
 
         -- Sized through the sheet's request (#150), so a maximized window
         -- stays maximized; and measured from the sidebar as it is now, so a

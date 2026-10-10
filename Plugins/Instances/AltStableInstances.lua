@@ -7,23 +7,26 @@
 --   si_boss_<name>@<diff> = "<killmask>"  (bit e-1 set = encounter e dead)
 --
 -- Laid out SavedInstances-style, grouped DBM-style:
---   rows   = the seven Vanilla raids under a collapsible header; collapse state
+--   rows   = the launch raids (and any returning Vanilla raid someone is
+--            saved to) under a collapsible header; collapse state
 --            persists per logged-in character. A raid nobody is saved to still
 --            shows, with a dash per alt. A landmark thumbnail sits in the name
 --            cell; the rest of the row is a plain band.
 --   cols   = characters level 60+ (fillers), ranked by level then item level,
 --            plus anyone who actually holds a lockout.
 --   cell   = boss progress "X/Y", coloured by how soon it resets,
---   hover  = progress, lockout size and time to reset.
+--   hover  = progress, each boss killed or not, lockout size and time to reset.
 --
--- AGGREGATE PROGRESS ONLY. GetSavedInstanceInfo reports encounterProgress and
--- numEncounters directly, so "X/Y bosses" needs no assumption about ordering.
--- A NAMED list would: the core encodes kills as a positional bitmask by API
--- encounter index, and mapping those onto a static name list renders confidently
--- wrong names if Forever orders encounters differently - the worst kind of bug,
--- because it looks like data. No raid lockout is obtainable on the beta, so that
--- ordering cannot be checked (#17). The mask is still captured and synced by the
--- core; this plugin does not read it.
+-- KILLED / NOT KILLED COMES FROM THE LOCKOUT, never from a list here (#17). The core
+-- encodes kills as a positional bitmask by API encounter index; a static name
+-- list would have to match the client's order, which no beta lockout could
+-- check - and a wrong name looks like data. Instead the core keeps each boss's
+-- name from the same API row as its kill flag (AltStable.LearnRaidEncounters),
+-- and a list that ever comes back in another order is marked unstable. A cell
+-- names its bosses only when the list is there, stable, and as long as the
+-- lockout's boss count; otherwise it shows "X/Y", which cannot be wrong.
+-- The `listed` names in RAIDS (from the achievements) only feed the raid
+-- name's tooltip, which says who is in the raid and nothing about who is dead.
 --
 -- LoadOnDemand: registers on PLAYER_LOGIN, or immediately if enabled mid-session.
 ------------------------------------------------------------
@@ -71,20 +74,43 @@ local BAND_VSCALE = BAND_IMG_H / BAND_TEX_H
 ------------------------------------------------------------
 -- Canonical raid catalogue
 --
--- Order = table order = progression order (drives row order within a group).
+-- Order = table order (drives row order within a group).
 -- `match` lists the lower-cased phrase(s) a live lockout name must contain to
 -- bind to this row (GetSavedInstanceInfo prefixes some, e.g. "Coilfang:
--- Serpentshrine Cavern"). No boss names here: see the note at the top (#17).
+-- Serpentshrine Cavern"). No boss names here: they come from the lockout
+-- itself (#17, see the note at the top).
+--
+-- Forever's launch raids first, always shown: Barrow Deeps (8 bosses), Hyjal
+-- Summit (13) and Onyxia's Lair (1), in the owner's order, with the owner's
+-- art for all three (toned apart: teal, gold, ember).
+--
+-- `listed` is the bosses as their "Conqueror" achievement lists them, for the
+-- raid name's tooltip only (owner's call, until a lockout teaches the client's
+-- own list). It is NEVER read against a killmask: its order is the
+-- achievement's, not the encounters' (#17). See bossNames and raidBossList.
+--
+-- The Vanilla raids are not in at launch but will come back (owner): `later`
+-- rows are kept, art and all, and shown only once a character holds a lockout
+-- there - so their return needs no change here.
 ------------------------------------------------------------
 local RAIDS = {
-    { apiName = "Molten Core",         display = "Molten Core",         art = "mc" },
-    { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony"  },
-    { apiName = "Blackwing Lair",      display = "Blackwing Lair",      art = "bwl" },
-    { apiName = "Zul'Gurub",           display = "Zul'Gurub",           art = "zg"  },
-    { apiName = "Ruins of Ahn'Qiraj",  display = "Ruins of Ahn'Qiraj",  art = "aq20"  },
+    { apiName = "Barrow Deeps",        display = "Barrow Deeps",        art = "deeps",
+      listed = { "Chillhowl", "Khalith the Dreadspinner", "Amethrax", "Ravus and Darlissa",
+                 "Elder Tangleclaw", "Well of Sorrow", "Del'lynar Songwood", "Sonya Darkhallow" } },
+    { apiName = "Hyjal Summit",        display = "Hyjal Summit",        art = "hyjal",
+      listed = { "Bandalar", "Time-Lost Battalion", "Old Gloomlurker", "Kathris the Haunted",
+                 "Elder Minderel", "Council of Thorns", "The Wild King", "Ancient of Decay",
+                 "Sylvestris Dusksong", "Gharalis the Abyssal", "Anara Chillwind",
+                 "Tracker Stillwind", "Nythus the Dreambound" } },
+    { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony",
+      listed = { "Onyxia" } },
+    { apiName = "Molten Core",         display = "Molten Core",         art = "mc",   later = true },
+    { apiName = "Blackwing Lair",      display = "Blackwing Lair",      art = "bwl",  later = true },
+    { apiName = "Zul'Gurub",           display = "Zul'Gurub",           art = "zg",   later = true },
+    { apiName = "Ruins of Ahn'Qiraj",  display = "Ruins of Ahn'Qiraj",  art = "aq20", later = true },
     { apiName = "Temple of Ahn'Qiraj", aliases = { "Ahn'Qiraj Temple" },
-      display = "Temple of Ahn'Qiraj", art = "aq40" },
-    { apiName = "Naxxramas",           display = "Naxxramas",           art = "naxx" },
+      display = "Temple of Ahn'Qiraj", art = "aq40", later = true },
+    { apiName = "Naxxramas",           display = "Naxxramas",           art = "naxx", later = true },
 }
 
 -- One group on Forever. A group header still renders (the "Other" group below
@@ -93,7 +119,7 @@ local RAIDS = {
 local GROUPS = {
     { key = "vanilla", label = "Raids" },
 }
--- Nothing starts collapsed: seven raids fit without folding them away.
+-- Nothing starts collapsed: three raids (nine at most) fit without folding.
 local DEFAULT_COLLAPSED = {}
 
 -- Build each raid's lower-cased match phrases (apiName + aliases).
@@ -260,6 +286,38 @@ end
 -- Read model
 ------------------------------------------------------------
 
+-- A list the core learned off a lockout (AltStable.LearnRaidEncounters), when
+-- it can be used at all: shaped as written, with names, and not marked
+-- unstable. The one rule both readers below share.
+local function usableList(known)
+    if type(known) ~= "table" or known.unstable or type(known.names) ~= "table"
+       or #known.names == 0 then
+        return nil
+    end
+    return known.names
+end
+
+-- The lockout's bosses in encounter order, each { name, killed }, or nil when
+-- they cannot be named safely (#17): no usable list learned on this machine,
+-- one whose length is not the lockout's boss count, or a mask that does not
+-- add up to the lockout's progress - an absent mask (a scan that rejected the
+-- flags, an older record) reads as 0, and at 3/8 that is not "nobody killed"
+-- but "not known" (Codex, #223). Worked out on hover, not per refresh: only
+-- the hovered cell ever needs it.
+local function bossNames(lk)
+    local store = AltStableConfig and AltStableConfig.raidEncounters
+    local names = type(store) == "table" and usableList(store[lk.name .. "@" .. lk.diff])
+    if not names or lk.total <= 0 or #names ~= lk.total then return nil end
+    local out, kills = {}, 0
+    for e, name in ipairs(names) do
+        local killed = math.floor(lk.mask / 2 ^ (e - 1)) % 2 == 1
+        if killed then kills = kills + 1 end
+        out[e] = { name = name, killed = killed }
+    end
+    if kills ~= lk.prog then return nil end
+    return out
+end
+
 -- Which of two lockouts for the same raid row to show (see gather).
 local function PreferLockout(a, b)
     if not a then return b end
@@ -291,14 +349,15 @@ local function gather()
             local mine
             for k, v in pairs(c) do
                 if type(k) == "string" then
-                    -- si_boss_<name>@<diff> (the per-encounter killmask) is read
-                    -- by nothing here: see the boss-name note above (#17).
+                    -- si_boss_<name>@<diff> is the per-encounter killmask: read
+                    -- with its lockout below, not as a lockout of its own.
                     if k:find("^si_boss_") then   -- skip
                     elseif type(v) == "string" and k:find("^si_") then
                         local lk = parseLockout(k, v)
                         if lk and lk.expires > now then
                             mine = mine or {}
                             lk.canon = matchRaid(lk.name:lower())
+                            lk.mask = tonumber(c["si_boss_" .. lk.name .. "@" .. lk.diff]) or 0
                             local key = lk.canon and lk.canon.apiName:lower() or lk.name:lower()
                             mine[key] = PreferLockout(mine[key], lk)
                         end
@@ -353,6 +412,15 @@ local function columnsForView(allChars, lookup)
     return cols
 end
 
+-- A returning raid gets its row once anyone holds a lockout there.
+local function anySaved(lookup, raid)
+    local key = raid.apiName:lower()
+    for _, mine in pairs(lookup) do
+        if mine[key] then return true end
+    end
+    return false
+end
+
 -- Flatten the catalogue into display rows: an expansion header per group, its
 -- raid rows when expanded, then an "Other" group for any unrecognised lockout.
 local function buildDisplayRows(lookup)
@@ -360,7 +428,9 @@ local function buildDisplayRows(lookup)
     for _, g in ipairs(GROUPS) do
         out[#out + 1] = { isGroup = true, key = g.key, label = g.label }
         if not isCollapsed(g.key) then
-            for _, r in ipairs(RAIDS) do out[#out + 1] = { raid = r } end
+            for _, r in ipairs(RAIDS) do
+                if not r.later or anySaved(lookup, r) then out[#out + 1] = { raid = r } end
+            end
         end
     end
     -- Bounded and sorted: rows sit at absolute offsets with no vertical scroller,
@@ -493,6 +563,26 @@ local function getGroup(i)
     return gh
 end
 
+-- The bosses to list for a raid's name: a stable list a lockout taught this
+-- machine (any difficulty), else the achievement's `listed`, else nil.
+local function raidBossList(raid)
+    local store = AltStableConfig and AltStableConfig.raidEncounters
+    if type(store) == "table" then
+        local keys = {}
+        for key in pairs(store) do keys[#keys + 1] = key end
+        table.sort(keys)   -- the same answer every time, whatever pairs() does
+        for _, key in ipairs(keys) do
+            local known = store[key]
+            local name = key:match("^(.+)@%d+$")
+            local r = name and matchRaid(name:lower())
+            local same = (r == raid) or (raid.isOther and name == raid.apiName)
+            local names = same and usableList(store[key])
+            if names then return names end
+        end
+    end
+    return raid.listed
+end
+
 -- A raid row's background: full-width plain band + a landmark thumbnail in the
 -- name cell + a readability shade. `art`/`solid` are SEPARATE textures on purpose.
 local function getBand(j)
@@ -502,6 +592,22 @@ local function getBand(j)
         b.row   = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
         b.art   = panel:CreateTexture(nil, "BORDER", nil, 0)
         b.shade = panel:CreateTexture(nil, "BORDER", nil, 1)
+        -- Hovering the raid's name lists its bosses (owner's call).
+        b.hit = CreateFrame("Frame", nil, panel)
+        b.hit:EnableMouse(true)
+        b.hit:SetScript("OnEnter", function(self)
+            local raid = self.raid
+            if not raid then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(raid.display, 0.6, 0.8, 1)
+            local bosses = raidBossList(raid)
+            if bosses then
+                GameTooltip:AddLine(#bosses == 1 and "1 boss" or (#bosses .. " bosses"), 0.7, 0.7, 0.7)
+                for _, name in ipairs(bosses) do GameTooltip:AddLine(name, 0.9, 0.9, 0.9) end
+            end
+            GameTooltip:Show()
+        end)
+        b.hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
         AT_SI.bands[j] = b
     end
     return b
@@ -574,6 +680,15 @@ local function getCell(j, i)
             if d.total > 0 then
                 GameTooltip:AddLine("Progress: " .. d.prog .. "/" .. d.total, 0.85, 0.85, 0.85)
             end
+            -- Each boss, named from the lockout itself (#17); none when the
+            -- names cannot be trusted, and "Progress" above still says it all.
+            for _, boss in ipairs(d.lk and bossNames(d.lk) or {}) do
+                if boss.killed then
+                    GameTooltip:AddDoubleLine(boss.name, "Killed", 0.85, 0.85, 0.85, 0.52, 0.90, 0.52)
+                else
+                    GameTooltip:AddDoubleLine(boss.name, "Not killed", 0.85, 0.85, 0.85, 0.6, 0.6, 0.6)
+                end
+            end
             local rem = (d.expires or 0) - time()
             if rem > 0 then
                 GameTooltip:AddLine("Resets in " .. fmtDur(rem), 0.6, 0.85, 1)
@@ -600,7 +715,7 @@ local function hideFrom(pool, from)
 end
 
 local function hideBand(b)
-    if b then b.row:Hide(); b.art:Hide(); b.shade:Hide() end
+    if b then b.row:Hide(); b.art:Hide(); b.shade:Hide(); b.hit:Hide() end
 end
 
 -- Wake up when the soonest displayed lockout expires, so a tab left open drops
@@ -630,25 +745,6 @@ function AT_SI.Refresh()
     local now = time()
     local chars = columnsForView(allChars, lookup)
 
-    if #chars == 0 then
-        for _, fs in ipairs(AT_SI.headers) do fs:Hide() end
-        for _, fs in ipairs(AT_SI.rowLabels) do fs:Hide() end
-        for _, rc in ipairs(AT_SI.resetCells) do rc:Hide() end
-        for _, row in ipairs(AT_SI.cells) do for _, c in ipairs(row) do c:Hide() end end
-        for _, b in ipairs(AT_SI.bands) do hideBand(b) end
-        for _, t in ipairs(AT_SI.vlines) do t:Hide() end
-        for _, t in ipairs(AT_SI.cvlines) do t:Hide() end
-        for _, t in ipairs(AT_SI.hlines) do t:Hide() end
-        for _, g in ipairs(AT_SI.groups) do g:Hide() end
-        raidHdr:Hide(); resetHdr:Hide(); headerBG:Hide(); headerSep:Hide()
-        colScroll:Hide(); hbar:Hide()
-        if statsBar then statsBar:Hide() end
-        emptyFS:SetText((#allChars == 0) and "No characters tracked yet."
-                        or "No level-60+ characters to show here.")
-        emptyFS:Show()
-        return
-    end
-    emptyFS:Hide()
     raidHdr:Show(); resetHdr:Show()
 
     local display  = buildDisplayRows(lookup)
@@ -656,6 +752,18 @@ function AT_SI.Refresh()
     local colX0    = PAD_X + NAME_COL_W + RESET_COL_W
     local rowTop   = PAD_Y + TITLE_H + HEADER_H
     local hdrTop   = -(PAD_Y + TITLE_H)
+
+    -- No columns yet (nobody level 60, nobody saved): the raids still show,
+    -- art and all (owner's call), with a word where the columns will go.
+    if nCols == 0 then
+        emptyFS:ClearAllPoints()
+        emptyFS:SetPoint("LEFT", panel, "TOPLEFT", colX0 + 10, hdrTop - HEADER_H / 2)
+        emptyFS:SetText((#allChars == 0) and "No characters tracked yet."
+                        or "Your level-60 characters show here.")
+        emptyFS:Show()
+    else
+        emptyFS:Hide()
+    end
     local CHILD_DY = PAD_Y + TITLE_H          -- panelY + CHILD_DY = colChild-local y
 
     -- Total content height up front, to size the scroller.
@@ -765,6 +873,12 @@ function AT_SI.Refresh()
                 band.art:Hide(); band.shade:Hide()
             end
 
+            band.hit:ClearAllPoints()
+            band.hit:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_X, y)
+            band.hit:SetSize(NAME_COL_W, rh)
+            band.hit.raid = raid
+            band.hit:Show()
+
             local lbl = getRowLabel(rr)
             lbl:ClearAllPoints()
             lbl:SetPoint("LEFT", panel, "TOPLEFT", PAD_X + 8, y - rh / 2)
@@ -801,7 +915,7 @@ function AT_SI.Refresh()
                         raidName = raid.display,
                         prog = lk.prog, total = lk.total,
                         size = lk.size, diffName = lk.diffName,
-                        expires = lk.expires,
+                        expires = lk.expires, lk = lk,
                     }
                     activeSaves = activeSaves + 1
                     sumProg  = sumProg + (lk.prog or 0)
@@ -888,7 +1002,10 @@ function AT_SI.Refresh()
     local f = _G["AltStableSheet"]
     if f and AT_SI._sidebarW then
         local leftBase = ((AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or AT_SI._sidebarW) + 1 + PAD_X
-        local wGrid    = leftBase + (NAME_COL_W + RESET_COL_W + viewportW) + 12
+        -- With no columns, the word where they will go needs its room too
+        -- (review of #223: it ran past the window's edge).
+        local emptyW   = emptyFS:IsShown() and ((emptyFS:GetStringWidth() or 0) + 20) or 0
+        local wGrid    = leftBase + (NAME_COL_W + RESET_COL_W + math.max(viewportW, emptyW)) + 12
         local wFooter  = leftBase + (statsFS:GetStringWidth() or 0) + PAD_X + 6
         local w = math.max(wGrid, wFooter, 560)
         local h = (AT_SI._titleH or 30) + (PAD_Y + TITLE_H + HEADER_H) + contentH
@@ -1107,6 +1224,10 @@ function AT_SI._Bootstrap()
             HeaderBG = function() return headerBG end,
             Bands    = function() return AT_SI.bands end,
             Groups   = function() return AT_SI.groups end,
+            Cells    = function() return AT_SI.cells end,
+            Refresh  = function() AT_SI.Refresh() end,
+            raidBossList = raidBossList, bossNames = bossNames,
+            EmptyText = function() return emptyFS and emptyFS:IsShown() and emptyFS:GetText() or nil end,
         },
     })
 end
