@@ -3186,9 +3186,11 @@ local function CreateFrameIfNeeded()
     local optTintHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optTintHint:SetPoint("LEFT", tintBtns[2], "RIGHT", 14, 0)
     optTintHint:SetPoint("RIGHT", optionsFrame, "TOPRIGHT", -P, Y - 10)
-    optTintHint:SetJustifyH("LEFT"); optTintHint:SetWordWrap(true)
+    -- One line, never wrapped: the reload line sits 24 below, with no room
+    -- for a second (review of #220).
+    optTintHint:SetJustifyH("LEFT"); optTintHint:SetWordWrap(false)
     optTintHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optTintHint:SetText("The window's glass, on the glass skins.")
+    optTintHint:SetText("On the glass skins.")
     AltStable._test.tintBtns = tintBtns
 
     -- WHAT IS ON DISK vs WHAT IS ON SCREEN. The material is built when the
@@ -3229,9 +3231,9 @@ local function CreateFrameIfNeeded()
     -- Through the secure prompt: ReloadUI() from our own click is blocked on
     -- this client (see AltStable.ShowReloadPrompt).
     optSkinReloadBtn:SetScript("OnClick", function()
-        if not AltStable.ShowReloadPrompt("Reload now to put on the new skin?") then
+        if not AltStable.ShowReloadPrompt("Reload now to put on the new look?") then
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r type |cffffff00/reload|r "
-                .. "once the fight is over to put on the new skin.")
+                .. "once the fight is over to put on the new look.")
         end
     end)
 
@@ -3249,10 +3251,10 @@ local function CreateFrameIfNeeded()
         end
         -- Against what the WINDOW is wearing, which is resolved once per
         -- session: choosing the one already loaded is not a pending change.
-        -- The glass colour only counts on a glass skin: on flat there is no
-        -- glass to colour, so nothing is waiting for a reload.
+        -- The glass colour only counts where there is glass: not on flat, and
+        -- not without the library (a source install), as SkinIsGlass asks.
         local skinWaiting = pending ~= AltStable.SkinName()
-        local tintWaiting = not skinWaiting and AltStable.SKINS[pending].material == true
+        local tintWaiting = not skinWaiting and AltStable.SkinIsGlass()
             and tint ~= AltStable.SkinClassTint()
         local waiting = skinWaiting or tintWaiting
         local what = skinWaiting

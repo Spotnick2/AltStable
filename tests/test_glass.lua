@@ -1419,8 +1419,10 @@ do
     g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
     eq("on: applied", AltStable.SkinApplyClassTint(g), true)
     local c = tintOf(g)
-    check("  the class colour at 60%",
-          math.abs(c[1] - 0.402) < 1e-6 and math.abs(c[2] - 0.498) < 1e-6 and math.abs(c[3] - 0.27) < 1e-6,
+    -- Smoked takes less of it than clear: at its opacity a light class at 60%
+    -- is a near-solid light body (review of #220).
+    check("  the class colour at smoked's 30%",
+          math.abs(c[1] - 0.201) < 1e-6 and math.abs(c[2] - 0.249) < 1e-6 and math.abs(c[3] - 0.135) < 1e-6,
           table.concat(c, ","))
     eq("  at the preset's own opacity", c[4], AltStable.SKINS.smoked.tint[4])
 
@@ -1434,6 +1436,14 @@ do
     eq("a class with no colour: nothing", AltStable.SkinApplyClassTint(g), false)
     WoW.player.class = "HUNTER"
     eq("no glass (flat): nothing", AltStable.SkinApplyClassTint(nil), false)
+
+    -- Held from the build even with no glass to paint: a flat window built
+    -- with it off stays off for the session (review of #220).
+    AltStableConfig.skinClassTint = false
+    useSkin("flat")
+    AltStable.SkinApplyClassTint(AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent)))
+    AltStableConfig.skinClassTint = true
+    eq("the build holds the choice, glass or not", AltStable.SkinClassTint(), false)
 
     RAID_CLASS_COLORS.HUNTER, WoW.player.class = heldColour, heldClass
     AltStableConfig.skinClassTint = nil

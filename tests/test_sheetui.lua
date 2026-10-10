@@ -2286,7 +2286,7 @@ do
     local btn = AltStable._test.SkinReloadButton()
     btn:GetScript("OnClick")(btn)
     check("the skin row's Reload offers the prompt", f:IsShown())
-    check("  saying why", tostring(f.text:GetText()):find("skin", 1, true) ~= nil,
+    check("  saying why", tostring(f.text:GetText()):find("new look", 1, true) ~= nil,
           tostring(f.text:GetText()))
     eq("  without reloading by itself", WoW.reloaded, 0)
     f:Hide()

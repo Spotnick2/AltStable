@@ -43,6 +43,8 @@ AltStable.SKINS = {
         data = { 0.05, 0.06, 0.08, 1.00 },
         -- A floating popup's body. See SkinPopupTint.
         popup = { 0.05, 0.06, 0.09, 0.55 },
+        -- The class colour's share when the glass wears it. See SkinApplyClassTint.
+        classShade = 0.6,
     },
 
     -- Darker, for reading. The body is a denser, cooler grey and the top-down
@@ -54,6 +56,10 @@ AltStable.SKINS = {
         pane = { 0.03, 0.03, 0.04, 0.80 },
         data = { 0.04, 0.04, 0.05, 1.00 },
         popup = { 0.03, 0.04, 0.05, 0.72 },
+        -- Darker than clear's: at smoked's 0.62 opacity a light class (priest
+        -- white, rogue yellow) at 60% would be a near-solid light body - the
+        -- milky plastic again, and no longer smoked (review of #220).
+        classShade = 0.3,
     },
 }
 
@@ -181,17 +187,22 @@ function AltStable.SkinWindow(frame, size)
     return g
 end
 
--- The class colour on a window's glass, when the option is on. Darkened, at
--- the preset's own opacity: tried in game on a hunter, the colour at full
--- strength turned the glass milky - painted plastic - where 60% of it read as
--- a cast on the glass, with the world still showing through.
-local CLASS_TINT_SHADE = 0.6
+-- The class colour on a window's glass, when the option is on. Darkened by
+-- the preset's classShade, at the preset's own opacity: tried in game on a
+-- hunter on clear glass, the colour at full strength turned the glass milky -
+-- painted plastic - where 60% of it read as a cast on the glass, with the
+-- world still showing through.
+--
+-- The session's choice is read FIRST, whatever else is missing: this runs when
+-- the window is built, and that is the moment it is held for (review of #220).
+-- RAID_CLASS_COLORS directly, not GetClassRGB: its grey fallback would tint a
+-- class with no colour grey, where this leaves the glass alone.
 function AltStable.SkinApplyClassTint(g)
-    if not (g and AltStable.SkinClassTint() and Glass and Glass.SetSurfaceTint) then return false end
+    if not (AltStable.SkinClassTint() and g and Glass and Glass.SetSurfaceTint) then return false end
     local _, class = UnitClass("player")
     local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
     if not c then return false end
-    local S = CLASS_TINT_SHADE
+    local S = AltStable.Skin().classShade or 0.6
     return Glass.SetSurfaceTint(g, c.r * S, c.g * S, c.b * S) ~= false
 end
 
