@@ -1478,7 +1478,7 @@ UnitXPMax("player")         ->  400
 ## Still to measure
 
 1. ~~Bank~~ — **answered**, see above.
-2. **Saved instances — DEFERRED TO POST-LAUNCH.** `GetNumSavedInstances()` was 0 and a raid lockout
+2. **Saved instances — shape to confirm at launch.** `GetNumSavedInstances()` was 0 and a raid lockout
    isn't obtainable on the beta, so `GetSavedInstanceEncounterInfo` ordering can't be confirmed.
 
    Consequence is limited to one feature, not the whole plugin. `GetSavedInstanceInfo` returns
@@ -1488,10 +1488,19 @@ UnitXPMax("player")         ->  400
    means mapping those indices onto a static boss list. If Forever's ordering differs, that renders
    confidently wrong names.
 
-   **The Raids plugin therefore ships aggregate progress only** (#11): it does not read the mask at
-   all, and carries no boss-name lists - `tests/test_instances.lua` asserts both, so re-adding one
-   without verifying the order fails the suite. The mask is still captured and synced, so the data
-   is there the day a real lockout can confirm the ordering (#17).
+   **The ordering question is now designed away** (#17, 2026-10-10). The plugin still carries no
+   boss-name lists. Instead `ScanSavedInstances` keeps each boss's name from the same
+   `GetSavedInstanceEncounterInfo(i, e)` row as its kill flag (Retail shape assumed: `bossName,
+   fileDataID, isKilled`; a row not shaped that way teaches no names), in
+   `AltStableConfig.raidEncounters["<name>@<difficulty>"]`, account-wide and not synced. Every
+   later scan re-checks the list, and one that comes back in another order marks the raid
+   `unstable` for good. The tooltip names bosses only from a stable list as long as the lockout's
+   boss count, otherwise "X/Y".
+
+   **Still to see at launch:** the first real raid save, with `/dump GetSavedInstanceEncounterInfo(1, 1)`
+   to confirm the shape. The launch raids are Barrow Deeps (8 bosses, achievement 62035), Hyjal
+   Summit (13, 62034) and Onyxia's Lair (1, 684); the achievements' criteria order is not the
+   encounter order and is not used.
 3. **Professions** — re-run on a character that has some. Both probed characters returned
    `GetProfessions() -> nil x7`.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.

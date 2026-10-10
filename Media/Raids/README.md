@@ -6,7 +6,13 @@ One landmark image per raid, shown in the name cell of each row in the Raids tab
 ## What ships here
 
 Seven files, one per Vanilla raid. The name is `scene-raid-<art>.tga`, where
-`<art>` is the `art` field of the matching entry in that file's `RAIDS` table:
+`<art>` is the `art` field of the matching entry in that file's `RAIDS` table.
+
+Forever launches with **Barrow Deeps**, **Hyjal Summit** and **Onyxia's Lair**. The
+two new raids have no art yet (no `art` field), so their rows show the name on a
+plain band; they will be `deeps` and `hyjal` when art arrives. The other six
+Vanilla raids are not in at launch and keep their files for when they return:
+their rows appear once a character is saved there.
 
 | art | Raid |
 |---|---|

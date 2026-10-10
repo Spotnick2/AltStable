@@ -1438,6 +1438,59 @@ savedList = { { name = "Karazhan", reset = 3600, prog = 8, total = 11, maxP = 10
 T.ScanSavedInstances()
 check(AltStableDB[sguid]["si_Gruul's Lair@1"] == nil, "a lockout no longer saved is cleared on re-scan")
 eq(AltStableDB[sguid]["si_Karazhan@1"], "103560|8|11|10|Normal", "boss-progress change is captured (7/11 -> 8/11)")
+-- Boss names from the lockout itself (#17): each name read off the same API
+-- row as its kill flag, learned per raid@difficulty, and a list that comes
+-- back in another order marked unstable for good.
+do
+    local stubEnc = GetSavedInstanceEncounterInfo
+    local rows = {}   -- [encounter] = { name, killed }
+    _G.GetSavedInstanceEncounterInfo = function(_, e)
+        local r = rows[e]
+        if r then return r[1], 12345, r[2], false end
+    end
+    local changedKeys = {}
+    local realChanged = AltStable.OnConfigChanged
+    AltStable.OnConfigChanged = function(key) changedKeys[#changedKeys + 1] = key end
+    local function scan(list)
+        rows = list
+        savedList = { { name = "Barrow Deeps", reset = 3600, prog = 0, total = #list, maxP = 20, isRaid = true } }
+        T.ScanSavedInstances()
+        return AltStableConfig.raidEncounters and AltStableConfig.raidEncounters["Barrow Deeps@1"]
+    end
+    local A = { { "Chillhowl", true }, { "Amethrax", false }, { "Sonya Darkhallow", true } }
+    local known = scan(A)
+    check(known and known.names and table.concat(known.names, ",") == "Chillhowl,Amethrax,Sonya Darkhallow",
+          "a lockout teaches its boss names, in encounter order")
+    eq(AltStableDB[sguid]["si_boss_Barrow Deeps@1"], "5", "  beside the killmask (1st and 3rd dead)")
+    check(changedKeys[#changedKeys] == "raidEncounters", "  reported as a config change")
+    local before = #changedKeys
+    known = scan({ { "Chillhowl", false }, { "Amethrax", true }, { "Sonya Darkhallow", false } })
+    check(known and not known.unstable, "the same order on another scan keeps the list")
+    eq(#changedKeys, before, "  and reports nothing")
+    known = scan({ { "Amethrax", true }, { "Chillhowl", false }, { "Sonya Darkhallow", false } })
+    check(known and known.unstable == true, "another order marks the raid unstable")
+    known = scan(A)
+    check(known and known.unstable == true, "  for good: the first order again does not undo it")
+    before = #changedKeys
+    scan({ { "Sonya Darkhallow", true }, { "Amethrax", false }, { "Chillhowl", false } })
+    eq(#changedKeys, before, "  and an unstable raid reports nothing more")
+    -- Fewer bosses with the same first names is not the same list.
+    AltStableConfig.raidEncounters = nil
+    scan(A)
+    known = scan({ { "Chillhowl", true }, { "Amethrax", false } })
+    check(known and known.unstable == true, "a shorter list is not the same list")
+    -- A row not shaped as Retail's teaches nothing (but the mask still counts).
+    AltStableConfig.raidEncounters = nil
+    known = scan({ { "Chillhowl", true }, { nil, false }, { "Sonya Darkhallow", true } })
+    check(known == nil, "a row with no name teaches no names")
+    known = scan({ { "Chillhowl", 1 }, { "Amethrax", false } })
+    check(known == nil, "a kill flag that is not true/false teaches no names")
+    eq(AltStableDB[sguid]["si_boss_Barrow Deeps@1"], "1", "  while the kill still counts in the mask")
+    AltStable.OnConfigChanged = realChanged
+    _G.GetSavedInstanceEncounterInfo = stubEnc
+    AltStableConfig.raidEncounters = nil
+end
+
 -- Restored: left installed, these quietly re-enabled the lockout scan in every later section.
 GetNumSavedInstances, GetSavedInstanceInfo = stubNumSaved, stubSavedInfo
 
