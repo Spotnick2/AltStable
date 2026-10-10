@@ -745,6 +745,8 @@ candidates).
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+---
+
 ## Build 1.60.1.70334 (2026-10-09) — API unchanged
 
 Dumped (`forever-api-1.60.1.70334.md`, client built Oct 9 2026) and compared with
