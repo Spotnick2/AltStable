@@ -518,6 +518,30 @@ do
             AltStableDB[guid], AltStableConfig.raidEncounters = nil, nil
         end
 
+        -- Nobody level 60 and nobody saved: the raids still show (owner's
+        -- call), with a word where the columns will go.
+        do
+            local held = AltStableDB
+            AltStableDB = { ["Player-Low-1"] = { guid = "Player-Low-1", name = "Low Alt", class = "MAGE", level = 18 } }
+            T.Refresh()
+            local shownBands, withArt = 0, 0
+            for _, b in ipairs(T.Bands() or {}) do
+                if b.row and b.row:IsShown() then shownBands = shownBands + 1 end
+                if b.art and b.art:IsShown() then withArt = withArt + 1 end
+            end
+            eq("no columns yet: the three launch raids still show", shownBands, 3)
+            eq("  each with its art", withArt, 3)
+            eq("  and a word where the columns go", T.EmptyText(), "Your level-60 characters show here.")
+            AltStableDB = {}
+            T.Refresh()
+            eq("no characters at all says so", T.EmptyText(), "No characters tracked yet.")
+            AltStableDB = { ["Player-Max-1"] = { guid = "Player-Max-1", name = "Max Alt", class = "MAGE", level = 60 } }
+            T.Refresh()
+            eq("a level-60 column takes the word away", T.EmptyText(), nil)
+            AltStableDB = held
+            T.Refresh()
+        end
+
         -- Sized through the sheet's request (#150), so a maximized window
         -- stays maximized; and measured from the sidebar as it is now, so a
         -- collapsed one asks for less.

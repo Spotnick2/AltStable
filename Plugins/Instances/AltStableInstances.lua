@@ -679,25 +679,6 @@ function AT_SI.Refresh()
     local now = time()
     local chars = columnsForView(allChars, lookup)
 
-    if #chars == 0 then
-        for _, fs in ipairs(AT_SI.headers) do fs:Hide() end
-        for _, fs in ipairs(AT_SI.rowLabels) do fs:Hide() end
-        for _, rc in ipairs(AT_SI.resetCells) do rc:Hide() end
-        for _, row in ipairs(AT_SI.cells) do for _, c in ipairs(row) do c:Hide() end end
-        for _, b in ipairs(AT_SI.bands) do hideBand(b) end
-        for _, t in ipairs(AT_SI.vlines) do t:Hide() end
-        for _, t in ipairs(AT_SI.cvlines) do t:Hide() end
-        for _, t in ipairs(AT_SI.hlines) do t:Hide() end
-        for _, g in ipairs(AT_SI.groups) do g:Hide() end
-        raidHdr:Hide(); resetHdr:Hide(); headerBG:Hide(); headerSep:Hide()
-        colScroll:Hide(); hbar:Hide()
-        if statsBar then statsBar:Hide() end
-        emptyFS:SetText((#allChars == 0) and "No characters tracked yet."
-                        or "No level-60+ characters to show here.")
-        emptyFS:Show()
-        return
-    end
-    emptyFS:Hide()
     raidHdr:Show(); resetHdr:Show()
 
     local display  = buildDisplayRows(lookup)
@@ -705,6 +686,18 @@ function AT_SI.Refresh()
     local colX0    = PAD_X + NAME_COL_W + RESET_COL_W
     local rowTop   = PAD_Y + TITLE_H + HEADER_H
     local hdrTop   = -(PAD_Y + TITLE_H)
+
+    -- No columns yet (nobody level 60, nobody saved): the raids still show,
+    -- art and all (owner's call), with a word where the columns will go.
+    if nCols == 0 then
+        emptyFS:ClearAllPoints()
+        emptyFS:SetPoint("LEFT", panel, "TOPLEFT", colX0 + 10, hdrTop - HEADER_H / 2)
+        emptyFS:SetText((#allChars == 0) and "No characters tracked yet."
+                        or "Your level-60 characters show here.")
+        emptyFS:Show()
+    else
+        emptyFS:Hide()
+    end
     local CHILD_DY = PAD_Y + TITLE_H          -- panelY + CHILD_DY = colChild-local y
 
     -- Total content height up front, to size the scroller.
@@ -1158,6 +1151,7 @@ function AT_SI._Bootstrap()
             Groups   = function() return AT_SI.groups end,
             Cells    = function() return AT_SI.cells end,
             Refresh  = function() AT_SI.Refresh() end,
+            EmptyText = function() return emptyFS and emptyFS:IsShown() and emptyFS:GetText() or nil end,
         },
     })
 end
