@@ -289,7 +289,7 @@ authoritatively as a current one.
    ```
    /run print(GetMaxPlayerLevel(), UnitXPMax("player"), GetXPExhaustion(), Enum.BagIndex.Keyring, C_Reputation.GetNumFactions(), type(TooltipDataProcessor))
    ```
-   Expected on 70334: `60`, a positive number, a number while rested (`nil` when not), `-1`,
+   Expected on 70338: `60`, a positive number, a number while rested (`nil` when not), `-1`,
    your faction count, `table`. Update this line with the build when you bump
    `MEASURED_ON_BUILD` below — an expectation pinned to an older build is the staleness this
    checklist exists to prevent.
