@@ -2551,22 +2551,36 @@ end
 --
 -- Bit e-1 of ANOTHER character's mask is read against this list, which holds
 -- only if the client lists a raid's encounters in a fixed order. So the list
--- is checked against every later scan, and one that comes back in a different
--- order marks the raid `unstable` for good: it shows "X/Y" and never a name
--- that might belong to another boss.
+-- is checked against every later scan:
+--   * the same bosses in the same order: nothing to do;
+--   * the same bosses in ANOTHER order: the order is not fixed, so the raid is
+--     marked `unstable` for good - "X/Y", never a name that might belong to
+--     another boss;
+--   * a different set of bosses (a renamed one, a different count): a new
+--     list, not an ordering question - it replaces the old one (review of
+--     #223: a hotfix rename must not switch the names off for good).
+-- An entry not shaped as this writes it is replaced, never indexed blind: this
+-- runs inside the lockout scan, and an error here would lose the whole scan.
 function AltStable.LearnRaidEncounters(key, names)
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.raidEncounters = AltStableConfig.raidEncounters or {}
     local store = AltStableConfig.raidEncounters
     local known = store[key]
-    if type(known) == "table" then
+    if type(known) == "table" and type(known.names) == "table" then
         if known.unstable then return end
-        local same = #known.names == #names
+        local sameOrder, sameSet = #known.names == #names, #known.names == #names
+        local had = {}
+        for _, n in ipairs(known.names) do had[n] = true end
         for e = 1, #names do
-            if known.names[e] ~= names[e] then same = false end
+            if known.names[e] ~= names[e] then sameOrder = false end
+            if not had[names[e]] then sameSet = false end
         end
-        if same then return end
-        known.unstable = true
+        if sameOrder then return end
+        if sameSet then
+            known.unstable = true
+        else
+            store[key] = { names = names }
+        end
     else
         store[key] = { names = names }
     end
@@ -2596,11 +2610,9 @@ local function ScanSavedInstances()
                        .. (numEncounters or 0) .. "|" .. (maxPlayers or 0) .. "|" .. (difficultyName or "")
 
             -- Per-boss kill state as a positional bitmask (bit e-1 set = encounter e
-            -- dead). NOTHING READS IT YET: a named Killed / Not-killed list needs the
-            -- encounter ORDER to match a static boss list, and no raid lockout is
-            -- obtainable on the beta to check that (#17), so the Raids plugin shows
-            -- aggregate progress only. Captured now so the data exists the day it can
-            -- be verified.
+            -- dead). The Raids plugin reads it against the names learned below
+            -- (#17): each name from the same API row as its kill flag, so no
+            -- static list has to match the client's encounter order.
             -- Stored as a SEPARATE si_boss_<name>@<diff> field, NOT appended to the
             -- si_ value: the "si_boss_" prefix still matches the existing "^si_"
             -- serialize / clear / orphan-drop rules, so it syncs, gets cleaned up on
@@ -2614,7 +2626,9 @@ local function ScanSavedInstances()
                 local mask, names = 0, {}
                 for e = 1, numEncounters do
                     local bossName, _, isKilled = GetSavedInstanceEncounterInfo(i, e)
-                    if isKilled then mask = mask + 2 ^ (e - 1) end
+                    -- `== true`, not truthiness: a numeric flag (0 for alive)
+                    -- must not count every boss dead (review of #223).
+                    if isKilled == true then mask = mask + 2 ^ (e - 1) end
                     -- The name from the SAME row as its kill flag (#17), so no
                     -- static list has to agree with the client's order. Only a
                     -- row shaped as Retail's (a name, then a true/false flag)

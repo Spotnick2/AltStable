@@ -17,7 +17,7 @@
 --   cell   = boss progress "X/Y", coloured by how soon it resets,
 --   hover  = progress, each boss killed or not, lockout size and time to reset.
 --
--- BOSS NAMES COME FROM THE LOCKOUT, never from a list here (#17). The core
+-- KILLED / NOT KILLED COMES FROM THE LOCKOUT, never from a list here (#17). The core
 -- encodes kills as a positional bitmask by API encounter index; a static name
 -- list would have to match the client's order, which no beta lockout could
 -- check - and a wrong name looks like data. Instead the core keeps each boss's
@@ -25,6 +25,8 @@
 -- and a list that ever comes back in another order is marked unstable. A cell
 -- names its bosses only when the list is there, stable, and as long as the
 -- lockout's boss count; otherwise it shows "X/Y", which cannot be wrong.
+-- The `listed` names in RAIDS (from the achievements) only feed the raid
+-- name's tooltip, which says who is in the raid and nothing about who is dead.
 --
 -- LoadOnDemand: registers on PLAYER_LOGIN, or immediately if enabled mid-session.
 ------------------------------------------------------------
@@ -284,16 +286,27 @@ end
 -- Read model
 ------------------------------------------------------------
 
+-- A list the core learned off a lockout (AltStable.LearnRaidEncounters), when
+-- it can be used at all: shaped as written, with names, and not marked
+-- unstable. The one rule both readers below share.
+local function usableList(known)
+    if type(known) ~= "table" or known.unstable or type(known.names) ~= "table"
+       or #known.names == 0 then
+        return nil
+    end
+    return known.names
+end
+
 -- The lockout's bosses in encounter order, each { name, killed }, or nil when
--- they cannot be named safely (#17): no list learned on this machine, one
--- marked unstable, or one whose length is not the lockout's boss count.
+-- they cannot be named safely (#17): no usable list learned on this machine,
+-- or one whose length is not the lockout's boss count. Worked out on hover,
+-- not per refresh: only the hovered cell ever needs it.
 local function bossNames(lk)
     local store = AltStableConfig and AltStableConfig.raidEncounters
-    local known = type(store) == "table" and store[lk.name .. "@" .. lk.diff]
-    if type(known) ~= "table" or known.unstable or type(known.names) ~= "table" then return nil end
-    if lk.total <= 0 or #known.names ~= lk.total then return nil end
+    local names = type(store) == "table" and usableList(store[lk.name .. "@" .. lk.diff])
+    if not names or lk.total <= 0 or #names ~= lk.total then return nil end
     local out = {}
-    for e, name in ipairs(known.names) do
+    for e, name in ipairs(names) do
         out[e] = { name = name, killed = math.floor(lk.mask / 2 ^ (e - 1)) % 2 == 1 }
     end
     return out
@@ -339,7 +352,6 @@ local function gather()
                             mine = mine or {}
                             lk.canon = matchRaid(lk.name:lower())
                             lk.mask = tonumber(c["si_boss_" .. lk.name .. "@" .. lk.diff]) or 0
-                            lk.bosses = bossNames(lk)
                             local key = lk.canon and lk.canon.apiName:lower() or lk.name:lower()
                             mine[key] = PreferLockout(mine[key], lk)
                         end
@@ -545,8 +557,6 @@ local function getGroup(i)
     return gh
 end
 
--- A raid row's background: full-width plain band + a landmark thumbnail in the
--- name cell + a readability shade. `art`/`solid` are SEPARATE textures on purpose.
 -- The bosses to list for a raid's name: a stable list a lockout taught this
 -- machine (any difficulty), else the achievement's `listed`, else nil.
 local function raidBossList(raid)
@@ -558,17 +568,17 @@ local function raidBossList(raid)
         for _, key in ipairs(keys) do
             local known = store[key]
             local name = key:match("^(.+)@%d+$")
-            local r = name and (matchRaid(name:lower()) or nil)
+            local r = name and matchRaid(name:lower())
             local same = (r == raid) or (raid.isOther and name == raid.apiName)
-            if same and type(known) == "table" and not known.unstable
-               and type(known.names) == "table" and #known.names > 0 then
-                return known.names
-            end
+            local names = same and usableList(store[key])
+            if names then return names end
         end
     end
     return raid.listed
 end
 
+-- A raid row's background: full-width plain band + a landmark thumbnail in the
+-- name cell + a readability shade. `art`/`solid` are SEPARATE textures on purpose.
 local function getBand(j)
     local b = AT_SI.bands[j]
     if not b then
@@ -666,7 +676,7 @@ local function getCell(j, i)
             end
             -- Each boss, named from the lockout itself (#17); none when the
             -- names cannot be trusted, and "Progress" above still says it all.
-            for _, boss in ipairs(d.bosses or {}) do
+            for _, boss in ipairs(d.lk and bossNames(d.lk) or {}) do
                 if boss.killed then
                     GameTooltip:AddDoubleLine(boss.name, "Killed", 0.85, 0.85, 0.85, 0.52, 0.90, 0.52)
                 else
@@ -899,7 +909,7 @@ function AT_SI.Refresh()
                         raidName = raid.display,
                         prog = lk.prog, total = lk.total,
                         size = lk.size, diffName = lk.diffName,
-                        expires = lk.expires, bosses = lk.bosses,
+                        expires = lk.expires, lk = lk,
                     }
                     activeSaves = activeSaves + 1
                     sumProg  = sumProg + (lk.prog or 0)
@@ -986,7 +996,10 @@ function AT_SI.Refresh()
     local f = _G["AltStableSheet"]
     if f and AT_SI._sidebarW then
         local leftBase = ((AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or AT_SI._sidebarW) + 1 + PAD_X
-        local wGrid    = leftBase + (NAME_COL_W + RESET_COL_W + viewportW) + 12
+        -- With no columns, the word where they will go needs its room too
+        -- (review of #223: it ran past the window's edge).
+        local emptyW   = emptyFS:IsShown() and ((emptyFS:GetStringWidth() or 0) + 20) or 0
+        local wGrid    = leftBase + (NAME_COL_W + RESET_COL_W + math.max(viewportW, emptyW)) + 12
         local wFooter  = leftBase + (statsFS:GetStringWidth() or 0) + PAD_X + 6
         local w = math.max(wGrid, wFooter, 560)
         local h = (AT_SI._titleH or 30) + (PAD_Y + TITLE_H + HEADER_H) + contentH
@@ -1207,7 +1220,7 @@ function AT_SI._Bootstrap()
             Groups   = function() return AT_SI.groups end,
             Cells    = function() return AT_SI.cells end,
             Refresh  = function() AT_SI.Refresh() end,
-            raidBossList = raidBossList,
+            raidBossList = raidBossList, bossNames = bossNames,
             EmptyText = function() return emptyFS and emptyFS:IsShown() and emptyFS:GetText() or nil end,
         },
     })

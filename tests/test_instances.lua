@@ -87,11 +87,9 @@ eq("Barrow Deeps binds with its article", T.matchRaid("the barrow deeps")
 eq("Barrow Deeps lists 8 bosses", byName["Barrow Deeps"] and #byName["Barrow Deeps"].listed, 8)
 eq("Hyjal Summit lists 13", byName["Hyjal Summit"] and #byName["Hyjal Summit"].listed, 13)
 eq("Onyxia's Lair lists Onyxia", byName["Onyxia's Lair"] and byName["Onyxia's Lair"].listed[1], "Onyxia")
-do
-    local named = nil
-    for _, r in ipairs(T.RAIDS) do if r.bosses then named = r.apiName end end
-    check("no raid carries a list a killmask could be read against (#17)", named == nil, tostring(named))
-end
+-- Those lists are never read against a killmask (#17): see "no learned list:
+-- no names, the achievement's list notwithstanding" below, which asserts the
+-- behaviour rather than a field name.
 
 ------------------------------------------------------------
 -- Matching a live lockout name to a row
@@ -223,7 +221,7 @@ eq("  keyed by the canonical raid name", lookup["Player-A-1"]["molten core"].pro
 eq("  a second lockout too", lookup["Player-A-1"]["onyxia's lair"].total, 1)
 check("an unsaved character has none", lookup["Player-B-1"] == nil)
 eq("the killmask is read with its lockout (#17)", lookup["Player-A-1"]["molten core"].mask, 127)
-eq("  but no names without a learned list", lookup["Player-A-1"]["molten core"].bosses, nil)
+eq("  but no names without a learned list", T.bossNames(lookup["Player-A-1"]["molten core"]), nil)
 
 -- Boss names, from the list the core learned off a lockout (#17).
 do
@@ -240,21 +238,21 @@ do
     -- The achievement's list is never read against the mask: its order is the
     -- achievement's, not the encounters' (#17).
     AltStableConfig.raidEncounters = nil
-    eq("no learned list: no names, the achievement's list notwithstanding", deeps(5).bosses, nil)
+    eq("no learned list: no names, the achievement's list notwithstanding", T.bossNames(deeps(5)), nil)
     AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = names8 } }
-    local b = deeps(1 + 4 + 128).bosses   -- the 1st, 3rd and 8th dead
+    local b = T.bossNames(deeps(1 + 4 + 128))   -- the 1st, 3rd and 8th dead
     check("a learned list names the bosses", b ~= nil and #b == 8, b and #b)
     eq("  in encounter order", b and b[2].name, "Khalith the Dreadspinner")
     eq("  bit 0 is the first boss", b and b[1].killed, true)
     eq("  bit 1 the second", b and b[2].killed, false)
     eq("  bit 2 the third", b and b[3].killed, true)
     eq("  bit 7 the eighth", b and b[8].killed, true)
-    eq("no mask stored: nobody killed yet", deeps(nil).bosses[1].killed, false)
-    eq("a list of another length names nothing", deeps(5, 9).bosses, nil)
+    eq("no mask stored: nobody killed yet", T.bossNames(deeps(nil))[1].killed, false)
+    eq("a list of another length names nothing", T.bossNames(deeps(5, 9)), nil)
     AltStableConfig.raidEncounters["Barrow Deeps@14"].unstable = true
-    eq("an unstable list names nothing", deeps(5).bosses, nil)
+    eq("an unstable list names nothing", T.bossNames(deeps(5)), nil)
     AltStableConfig.raidEncounters = { ["Barrow Deeps@1"] = { names = names8 } }
-    eq("another difficulty's list is not used", deeps(5).bosses, nil)
+    eq("another difficulty's list is not used", T.bossNames(deeps(5)), nil)
     AltStableConfig.raidEncounters = nil
 end
 
@@ -554,6 +552,8 @@ do
             eq("  unless it is unstable", T.raidBossList(hyjal)[1], "Bandalar")
             AltStableConfig.raidEncounters = { ["Barrow Deeps@14"] = { names = { "Elsewhere" } } }
             eq("  and only its own raid's", T.raidBossList(hyjal)[1], "Bandalar")
+            AltStableConfig.raidEncounters = { ["Hyjal Summit@14"] = { names = {} } }
+            eq("  and never an empty one", T.raidBossList(hyjal)[1], "Bandalar")
             AltStableConfig.raidEncounters = nil
             eq("a raid with no list at all: none", T.raidBossList({ apiName = "Somewhere", isOther = true }), nil)
             -- A returning raid's row comes and goes: its hover area with it.
@@ -588,6 +588,15 @@ do
             eq("no columns yet: the three launch raids still show", shownBands, 3)
             eq("  each with its art", withArt, 3)
             eq("  and a word where the columns go", T.EmptyText(), "Your level-60 characters show here.")
+            -- ...inside the window: its width counts the word (review of #223).
+            local askedW
+            local realReq = AltStable.RequestWindowSize
+            AltStable.RequestWindowSize = function(w) askedW = w end
+            T.Refresh()
+            AltStable.RequestWindowSize = realReq
+            local need = AltStable.LAYOUT.SIDEBAR_WIDTH + 1 + 12 + 190 + 92 + 40 + 20 + 12   -- stub width 40
+            check("  and the window is wide enough for it", askedW and askedW >= need,
+                  tostring(askedW) .. " < " .. need)
             AltStableDB = {}
             T.Refresh()
             eq("no characters at all says so", T.EmptyText(), "No characters tracked yet.")

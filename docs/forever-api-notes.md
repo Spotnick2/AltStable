@@ -1488,13 +1488,14 @@ UnitXPMax("player")         ->  400
    means mapping those indices onto a static boss list. If Forever's ordering differs, that renders
    confidently wrong names.
 
-   **The ordering question is now designed away** (#17, 2026-10-10). The plugin still carries no
-   boss-name lists. Instead `ScanSavedInstances` keeps each boss's name from the same
+   **The ordering question is now designed away** (#17, 2026-10-10). No static list is ever read
+   against a killmask (the achievements' lists in `RAIDS.listed` feed only the raid name's
+   tooltip). Instead `ScanSavedInstances` keeps each boss's name from the same
    `GetSavedInstanceEncounterInfo(i, e)` row as its kill flag (Retail shape assumed: `bossName,
    fileDataID, isKilled`; a row not shaped that way teaches no names), in
    `AltStableConfig.raidEncounters["<name>@<difficulty>"]`, account-wide and not synced. Every
-   later scan re-checks the list, and one that comes back in another order marks the raid
-   `unstable` for good. The tooltip names bosses only from a stable list as long as the lockout's
+   later scan re-checks the list: the same bosses in another order mark the raid `unstable` for
+   good, while a different set (a rename, another count) replaces the list. The tooltip names bosses only from a stable list as long as the lockout's
    boss count, otherwise "X/Y".
 
    **Still to see at launch:** the first real raid save, with `/dump GetSavedInstanceEncounterInfo(1, 1)`

@@ -1478,14 +1478,27 @@ do
     AltStableConfig.raidEncounters = nil
     scan(A)
     known = scan({ { "Chillhowl", true }, { "Amethrax", false } })
-    check(known and known.unstable == true, "a shorter list is not the same list")
+    check(known and #known.names == 2 and not known.unstable,
+          "a shorter list is not the same list: it replaces the old one")
     -- A row not shaped as Retail's teaches nothing (but the mask still counts).
     AltStableConfig.raidEncounters = nil
     known = scan({ { "Chillhowl", true }, { nil, false }, { "Sonya Darkhallow", true } })
     check(known == nil, "a row with no name teaches no names")
-    known = scan({ { "Chillhowl", 1 }, { "Amethrax", false } })
+    known = scan({ { "Chillhowl", 0 }, { "Amethrax", 1 } })
     check(known == nil, "a kill flag that is not true/false teaches no names")
-    eq(AltStableDB[sguid]["si_boss_Barrow Deeps@1"], "1", "  while the kill still counts in the mask")
+    eq(AltStableDB[sguid]["si_boss_Barrow Deeps@1"], nil, "  nor counts as a kill, 0 or 1 (no mask at all)")
+    -- A different SET of bosses is a new list, not an ordering question.
+    AltStableConfig.raidEncounters = nil
+    scan(A)
+    known = scan({ { "Chillhowl", true }, { "Amethrax, Renamed", false }, { "Sonya Darkhallow", true } })
+    check(known and not known.unstable and known.names[2] == "Amethrax, Renamed",
+          "a renamed boss replaces the list, and does not switch names off")
+    -- An entry not shaped as the scan writes it is replaced, not indexed blind.
+    AltStableConfig.raidEncounters = { ["Barrow Deeps@1"] = { unstable = false } }
+    local ok = pcall(scan, A)
+    check(ok, "a malformed stored entry does not break the scan")
+    known = AltStableConfig.raidEncounters["Barrow Deeps@1"]
+    check(known and known.names and known.names[1] == "Chillhowl", "  and is replaced by the list just read")
     AltStable.OnConfigChanged = realChanged
     _G.GetSavedInstanceEncounterInfo = stubEnc
     AltStableConfig.raidEncounters = nil
