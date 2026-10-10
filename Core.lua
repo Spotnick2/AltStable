@@ -3756,6 +3756,10 @@ function AltStable.ParseSlashArgs(args)
     return (cmd and cmd:lower() or ""), target
 end
 
+-- The key binding (Bindings.xml, its own "AltStable" section, as Gnomesweeper's):
+-- its line in Key Bindings. A global, as the client looks it up by name.
+BINDING_NAME_ALTSTABLE_TOGGLE = "Open or close AltStable"
+
 SLASH_ALTSTABLE1 = "/alts"
 SLASH_ALTSTABLE2 = "/altstable"
 

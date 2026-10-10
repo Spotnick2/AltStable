@@ -1,0 +1,9 @@
+<Bindings>
+	<!-- Key Bindings > AltStable: a section of its own, as Gnomesweeper's (measured there: a
+	     binding with no category lands in "Other", and a header there shows as a raw HEADER_
+	     row). The name is the BINDING_NAME_ global in Core.lua; the code is the minimap
+	     button's own toggle. -->
+	<Binding name="ALTSTABLE_TOGGLE" category="AltStable">
+		AltStable.ToggleSheet()
+	</Binding>
+</Bindings>
