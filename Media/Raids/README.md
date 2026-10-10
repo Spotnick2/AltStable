@@ -5,17 +5,22 @@ One landmark image per raid, shown in the name cell of each row in the Raids tab
 
 ## What ships here
 
-Seven files, one per Vanilla raid. The name is `scene-raid-<art>.tga`, where
-`<art>` is the `art` field of the matching entry in that file's `RAIDS` table.
+Nine files, one per raid. The name is `scene-raid-<art>.tga`, where `<art>` is
+the `art` field of the matching entry in that file's `RAIDS` table.
 
-Forever launches with **Barrow Deeps**, **Hyjal Summit** and **Onyxia's Lair**. The
-two new raids have no art yet (no `art` field), so their rows show the name on a
-plain band; they will be `deeps` and `hyjal` when art arrives. The other six
-Vanilla raids are not in at launch and keep their files for when they return:
-their rows appear once a character is saved there.
+Forever launches with **Barrow Deeps**, **Hyjal Summit** and **Onyxia's Lair**.
+Their art is the owner's sepia line drawings (2026-10-10), each re-toned so the
+three rows tell apart and match the set's darkness: grey, a sigmoidal contrast
+(`5,48%`), then a three-stop colour map - Barrow Deeps teal
+(`#07130f #3a8270 #dcfff0`), Hyjal Summit gold (`#140d04 #9c6a28 #fff0b8`),
+Onyxia's Lair ember (`#160403 #a63616 #ffc080`) - and saturation 125%. The
+other six Vanilla raids are not in at launch and keep their files for when they
+return: their rows appear once a character is saved there.
 
 | art | Raid |
 |---|---|
+| `deeps` | Barrow Deeps |
+| `hyjal` | Hyjal Summit |
 | `mc` | Molten Core |
 | `ony` | Onyxia's Lair |
 | `bwl` | Blackwing Lair |

@@ -79,16 +79,16 @@ local BAND_VSCALE = BAND_IMG_H / BAND_TEX_H
 -- itself (#17, see the note at the top).
 --
 -- Forever's launch raids first, always shown: Barrow Deeps (8 bosses), Hyjal
--- Summit (13) and Onyxia's Lair (1), in the owner's order. No art for the two
--- new ones yet: the row shows its name on the plain band.
+-- Summit (13) and Onyxia's Lair (1), in the owner's order, with the owner's
+-- art for all three (toned apart: teal, gold, ember).
 --
 -- The Vanilla raids are not in at launch but will come back (owner): `later`
 -- rows are kept, art and all, and shown only once a character holds a lockout
 -- there - so their return needs no change here.
 ------------------------------------------------------------
 local RAIDS = {
-    { apiName = "Barrow Deeps",        display = "Barrow Deeps" },
-    { apiName = "Hyjal Summit",        display = "Hyjal Summit" },
+    { apiName = "Barrow Deeps",        display = "Barrow Deeps",        art = "deeps" },
+    { apiName = "Hyjal Summit",        display = "Hyjal Summit",        art = "hyjal" },
     { apiName = "Onyxia's Lair",       display = "Onyxia's Lair",       art = "ony"  },
     { apiName = "Molten Core",         display = "Molten Core",         art = "mc",   later = true },
     { apiName = "Blackwing Lair",      display = "Blackwing Lair",      art = "bwl",  later = true },

@@ -66,7 +66,16 @@ for _, name in ipairs({ "Molten Core", "Blackwing Lair", "Zul'Gurub",
     check("  with its art", byName[name] ~= nil and byName[name].art ~= nil)
 end
 eq("nine raids in all", #T.RAIDS, 9)
-eq("Onyxia keeps her art", byName["Onyxia's Lair"] and byName["Onyxia's Lair"].art, "ony")
+-- Every raid's art ships: a missing file draws nothing and throws nothing.
+for _, r in ipairs(T.RAIDS) do
+    local f = r.art and io.open("Media/Raids/scene-raid-" .. r.art .. ".tga", "rb")
+    check(r.apiName .. " has its art on disk", f ~= nil, tostring(r.art))
+    if f then
+        local h = f:read(18); f:close()
+        check("  uncompressed, 512x256", h:byte(3) == 2 and h:byte(13) + h:byte(14) * 256 == 512
+              and h:byte(15) + h:byte(16) * 256 == 256)
+    end
+end
 for _, name in ipairs({ "Karazhan", "Gruul's Lair", "Serpentshrine Cavern", "Black Temple",
                         "Zul'Aman", "Sunwell Plateau", "Tempest Keep", "Magtheridon's Lair" }) do
     check("no " .. name .. " (Outland)", byName[name] == nil)
