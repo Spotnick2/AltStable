@@ -55,7 +55,7 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 `Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml` → `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
-`RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `PublicAPI.lua` → `Export.lua`.
+`RowRenderer.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `PublicAPI.lua` → `Export.lua`.
 
 `PublicAPI.lua` is what OTHER addons build on (`docs/PUBLIC-API.md`): copies of a fixed set
 of fields, never live tables. Changing what a field means, or removing one, bumps
@@ -230,7 +230,7 @@ upgrade rules).
   is gitignored; the other libraries stay vendored. A dev copy comes from the LibGlass checkout
   (`$env:LIBGLASS`, default `..\LibGlass`) through its own `Tools\deploy.ps1`, which
   `Tools\deploy.ps1` here calls first. The tests load the same checkout (`tests/libglass.lua`).
-- **The pin:** `.pkgmeta` pins a tag (`tag: r4`), **never `tag: latest`**, and no comment on a
+- **The pin:** `.pkgmeta` pins a tag (`tag: r5`), **never `tag: latest`**, and no comment on a
   value line. Bump it only in a release made anyway: players get library fixes earlier through
   whichever glass addon ships the newest copy. CI fetches the pin (`tests/fetch_libglass.sh`),
   tests against it, and asserts the zip's `Libs/LibGlass-1.0/` is exactly that commit's shipped

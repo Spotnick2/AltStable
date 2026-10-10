@@ -28,12 +28,13 @@
 -- converter reads - see docs/PORTRAIT-CONTRACT.md before changing a field.
 --
 -- Lifted from the development probe (Tools/AltStableProbe/Render.lua, removed
--- in #89 - see git history), manual capture only. Automatic capture - noticing
--- a changed look at login and offering a countdown - is #124; Capture()
--- and AltStable.PortraitBlockedReason() are its seam.
+-- in #89 - see git history). Automatic capture - a toast with a countdown when
+-- the look changes - is AutoCapture.lua (#124), through AltStable.CapturePortrait,
+-- PortraitBlockedReason and PortraitCapturing.
 ------------------------------------------------------------
 
 AltStable = AltStable or {}
+
 
 local KEY_DELAY   = 1.25   -- let the model stream in before the first shot
 local SHOT_DELAY  = 0.65   -- let the client finish writing a file
@@ -321,6 +322,10 @@ local captureToken = 0
 local renderMark = 0
 local captureStartedAt
 local watchdog           -- cancelled by Finish, or it fires into the NEXT capture
+-- Started by the auto-capture countdown rather than by the player (#124). Such
+-- a capture asks nothing afterwards: the reload dialog would interrupt someone
+-- who did not just ask for a picture, and logging out writes the record anyway.
+local autoRun
 
 local function Build()
     if frame then return end
@@ -603,6 +608,11 @@ local function AbandonCapture(message, restoreUI)
         Out(message .. ((back or not restoreUI) and ""
             or " (interface returns when the fight ends)"))
     end
+    -- A capture that STARTED and was given up: still due, and the status did
+    -- not change, so the auto-capture is told to offer it again (review of
+    -- #215). Inside a pcall: this runs on the PLAYER_DEAD and combat paths,
+    -- which must finish whatever a listener does.
+    if AltStable.OnPortraitCaptureAbandoned then pcall(AltStable.OnPortraitCaptureAbandoned) end
 end
 
 ------------------------------------------------------------
@@ -634,11 +644,12 @@ local function Finish()
 
     Out("portrait captured - |cffffff00/reload|r so it reaches AltStable Companion "
         .. "(the record is only written on reload or logout)")
-    ShowReloadPrompt()
+    if not autoRun then ShowReloadPrompt() end
+    autoRun = nil
     if AltStable.RefreshPortraitStatus then AltStable.RefreshPortraitStatus() end
 end
 
-local function Capture()
+local function Capture(opts)
     -- ONE AT A TIME. Overlapping captures fought over the UI-restore flag and
     -- left the interface hidden. The age check is the get-out: a capture that
     -- somehow never finished does not seize the feature up forever.
@@ -678,6 +689,7 @@ local function Capture()
     end
 
     capturing = true
+    autoRun = type(opts) == "table" and opts.auto and true or nil
     captureStartedAt = GetTime()
     captureToken = captureToken + 1
     local token = captureToken
@@ -855,9 +867,15 @@ end)
 -- The capture, wherever it is asked for: the sheet's title-bar button and
 -- /alts portrait. Returns true because it has taken responsibility - refusing
 -- (combat, a dungeon) is an answer the player has been given, not a fall-through.
-function AltStable.CapturePortrait()
-    Capture()
+-- opts.auto: started by the countdown, not by a click (see autoRun).
+function AltStable.CapturePortrait(opts)
+    Capture(opts)
     return true
+end
+
+-- Whether a capture is running now - the countdown must not start a second.
+function AltStable.PortraitCapturing()
+    return capturing and true or false
 end
 
 -- Why a capture cannot happen right now, or nil. For anything that wants to
@@ -918,6 +936,9 @@ function PortraitStatus()
     if not guid then return status end
     local pair, captured = LatestPair(guid)
     local look = CurrentLook()
+    -- What is worn now, so the auto-capture can remember a look it was told to
+    -- skip (#124).
+    status.look = look
     local diff = (pair and pair.look and look) and LookDiff(pair.look, look) or {}
     local entry = CutoutEntry(guid, PlayerName())
     local madeFrom = entry and tonumber(entry.epoch)
@@ -950,13 +971,25 @@ function AltStable.PortraitStatusUpdated(status)
     if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(status) end
 end
 
-local lastStatusKey, lastStatus
+local lastStatusKey, lastStatus, lastLookKey
 function AltStable.RefreshPortraitStatus()
     local status = PortraitStatus()
     lastStatus = status
     local key = status.reason .. "|" .. table.concat(status.changedSlots, ",")
-    if key == lastStatusKey then return status end
-    lastStatusKey = key
+    -- The look, while one is due, is NOT part of that key: PortraitStatusChanged
+    -- is public, documented as "GetPortraitStatus() would answer differently",
+    -- and chest B then chest C answer the same (review of #215). The
+    -- auto-capture still needs to hear it - it skips a LOOK, so a skipped chest
+    -- swapped for another must be offered (#124) - so it has its own hook.
+    local lookKey = status.due and tostring(status.look) or ""
+    if key == lastStatusKey then
+        if lookKey ~= lastLookKey then
+            lastLookKey = lookKey
+            if AltStable.PortraitLookChanged then AltStable.PortraitLookChanged(status) end
+        end
+        return status
+    end
+    lastStatusKey, lastLookKey = key, lookKey
     AltStable.PortraitStatusUpdated(status)
     return status
 end
@@ -984,7 +1017,7 @@ function AltStable.SetPortraitFacing(deg)
 end
 AltStable.PORTRAIT_FACING_LIMIT = FACING_LIMIT
 
-local USAGE = "usage: |cffffff00/alts portrait|r [preview | facing <degrees> | cancel | glow on|off]"
+local USAGE = "usage: |cffffff00/alts portrait|r [preview | facing <degrees> | cancel | glow on|off | auto on|off]"
 
 -- /alts portrait [preview | facing <deg> | cancel]. `args` is what Core's
 -- dispatcher left after the subcommand, already trimmed, or nil.
@@ -1022,6 +1055,16 @@ function AltStable.PortraitCommand(args)
         if AltStable.UpdateCaptureGlow then AltStable.UpdateCaptureGlow(AltStable.CurrentPortraitStatus()) end
         return
     end
+    local auto = msg:match("^auto%s+(%a+)$")
+    if auto == "on" or auto == "off" then
+        AltStable.SetConfigValue("portraitAuto", auto == "on")
+        Out(auto == "on"
+            and ("when your look changes, a toast above the chat counts down 5 minutes to a new portrait. "
+                .. AltStable.COMPANION_NEEDED)
+            or "no automatic portraits")
+        if AltStable.EvaluateAutoCapture then AltStable.EvaluateAutoCapture() end
+        return
+    end
     local deg = msg:match("^facing%s+(%-?%d+%.?%d*)$")
     if deg then
         if AltStable.SetPortraitFacing(deg) then
@@ -1040,7 +1083,8 @@ end
 -- A sub-table: Core and SheetUI already own names on _test.
 AltStable._test = AltStable._test or {}
 AltStable._test.portrait = {
-    Capture        = function() return Capture() end,
+    Capture        = function(opts) return Capture(opts) end,
+    autoRun        = function() return autoRun end,
     AbandonCapture = function(m, r) return AbandonCapture(m, r) end,
     Build          = function() return Build() end,
     Preview        = function() return Preview() end,
@@ -1073,6 +1117,6 @@ AltStable._test.portrait = {
     PortraitStatus = function() return PortraitStatus() end,
     CutoutEntry    = CutoutEntry,
     LOOK_SLOTS     = LOOK_SLOTS,
-    ResetStatus    = function() lastStatusKey, lastStatus = nil, nil end,
+    ResetStatus    = function() lastStatusKey, lastStatus, lastLookKey = nil, nil, nil end,
     SetSessionStart = function(t) SESSION_START = t end,
 }

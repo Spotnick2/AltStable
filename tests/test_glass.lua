@@ -1362,5 +1362,41 @@ do
     end
 end
 
+------------------------------------------------------------
+-- The pill (LibGlass r5's Glass.Pill, #124): the portrait toast's toggle,
+-- matching GlassChat's buttons beside the chat
+------------------------------------------------------------
+do
+    useSkin("flat")
+    local b = CreateFrame("Button", nil, UIParent)
+    b:SetFrameLevel(5)
+    eq("under flat, no pill", AltStable.SkinPill(b), nil)
+
+    useSkin("clear")
+    -- Poisoned, as for SkinWindow: the shared STYLE must be written by THIS call.
+    Glass.STYLE.tint, Glass.STYLE.grain, Glass.STYLE.wash = { -1, -1, -1, -1 }, -1, -1
+    b:SetHighlightTexture("Interface\Buttons\ButtonHilight-Square", "ADD")
+    local pill, pg = AltStable.SkinPill(b)
+    check("under glass, a pill", pill ~= nil and pg ~= nil)
+    if pill then
+        eq("  on the button", pill:GetParent(), b)
+        eq("  one level under it", pill:GetFrameLevel(), 4)
+        eq("  its rims there too, under the symbol", pg.top:GetFrameLevel(), 4)
+        eq("  no grain", pg.grain:GetAlpha(), 0)
+        eq("  no shadow", pg.shadow:GetAlpha(), 0)
+        eq("  the highlight softened, not removed", b:GetHighlightTexture():GetAlpha(), 0.4)
+        local preset, body = AltStable.Skin(), AltStable.SkinPopupTint()
+        eq("  the chosen glass, not the library default: grain", Glass.STYLE.grain, preset.grain)
+        eq("  wash", Glass.STYLE.wash, preset.wash)
+        eq("  and the small surfaces' tint", Glass.STYLE.tint[4], body[4])
+    end
+
+    -- A library from before Pill (r4 and older) means no pill, not an error.
+    local realPill = Glass.Pill
+    Glass.Pill = nil
+    eq("a library without Pill gives no pill", AltStable.SkinPill(CreateFrame("Button", nil, UIParent)), nil)
+    Glass.Pill = realPill
+end
+
 print(("test_glass: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

@@ -189,6 +189,49 @@ check("  and says so in chat too", told)
 eq("  and reloads nothing by itself - the click does that", WoW.reloaded, 0)
 eq("the screenshot format is put back", WoW.cvars.screenshotFormat, "jpeg")
 
+-- A capture that STARTED and was given up tells the auto-capture, so it can
+-- offer it again (review of #215); nothing running, nothing to tell.
+do
+    resetCapture()
+    local told = 0
+    AltStable.OnPortraitCaptureAbandoned = function() told = told + 1 end
+    T.AbandonCapture("x", true)
+    eq("abandoning nothing tells no one", told, 0)
+    T.Capture()
+    T.AbandonCapture("combat", true)
+    eq("abandoning a running capture tells the auto-capture", told, 1)
+    AltStable.OnPortraitCaptureAbandoned = function() error("boom") end
+    T.Capture()
+    check("  and a listener that fails does not stop the abandon",
+          pcall(T.AbandonCapture, "combat", true) and not T.capturing())
+    AltStable.OnPortraitCaptureAbandoned = nil
+end
+
+-- An AUTOMATIC capture (#124) asks nothing afterwards: the countdown took it,
+-- not a click, and the reload dialog would interrupt someone who did not just
+-- ask for a picture. The chat line still says to reload.
+do
+    resetCapture()
+    check("no capture is running before", AltStable.PortraitCapturing() == false)
+    T.Capture({ auto = true })
+    check("  one is while it runs", AltStable.PortraitCapturing() == true)
+    eq("  marked automatic", T.autoRun(), true)
+    runChain()
+    eq("an automatic capture finishes", #renders(), 2)
+    eq("  and offers no reload", #prompts, 0)
+    local told = false
+    for _, line in ipairs(WoW.chatOut) do
+        if tostring(line):find("reload", 1, true) then told = true end
+    end
+    check("  though chat still says to", told)
+    eq("  and the mark does not outlive it", T.autoRun(), nil)
+    -- The NEXT capture, by hand, is not automatic because the last one was.
+    resetCapture()
+    AltStable.CapturePortrait()
+    runChain()
+    eq("a manual capture after it offers the reload again", #prompts, 1)
+end
+
 ------------------------------------------------------------
 -- TGA or nothing
 ------------------------------------------------------------
@@ -799,6 +842,7 @@ wear({ [5] = 100, [7] = 200, [2] = 300 })
 local st = T.PortraitStatus()
 eq("no portrait and no capture: missing", st.reason, "missing")
 eq("  which is due", st.due, true)
+eq("  and carries what is worn, for the auto-capture's skip (#124)", st.look, T.CurrentLook())
 
 pair(look)
 st = T.PortraitStatus()
@@ -907,6 +951,36 @@ eq("a refresh with nothing new notifies once", table.concat(seen, ","), "missing
 pair(T.CurrentLook())
 AltStable.RefreshPortraitStatus()
 eq("  and again when the answer changes", table.concat(seen, ","), "missing,pending")
+-- A different item in the SAME changed slot is a different answer: the
+-- auto-capture skips a look, so chest C after a skipped chest B must be heard.
+do
+    local base = {}
+    for slot, id in pairs({ [5] = 100, [7] = 200 }) do base[slot] = id end
+    wear(base)
+    pair(T.CurrentLook())
+    AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1, epoch = 1 } }
+    seen = {}
+    local looks = {}
+    local realLook = AltStable.PortraitLookChanged
+    AltStable.PortraitLookChanged = function(s) looks[#looks + 1] = s.look end
+    T.ResetStatus()
+    AltStable.RefreshPortraitStatus()
+    wear({ [5] = 101, [7] = 200 })
+    AltStable.RefreshPortraitStatus()
+    wear({ [5] = 102, [7] = 200 })
+    AltStable.RefreshPortraitStatus()
+    AltStable.RefreshPortraitStatus()
+    -- The PUBLIC signal does not fire for it: GetPortraitStatus() answers the
+    -- same, and PortraitStatusChanged is documented as firing only when it
+    -- would answer differently (review of #215).
+    eq("  a second item in the same changed slot is not a public change",
+       table.concat(seen, ","), table.concat({ seen[1], "changed" }, ","))
+    -- But the auto-capture hears it, once: it skips a LOOK (#124).
+    eq("  the look hook hears it, once", #looks, 1)
+    check("  with the new look", (looks[1] or ""):find("5:102", 1, true) ~= nil, tostring(looks[1]))
+    AltStable.PortraitLookChanged = realLook
+    AltStableCutoutManifest = nil
+end
 AltStable.PortraitStatusUpdated = realUpdated
 
 -- Gear changes are coalesced, then re-evaluated.
@@ -965,6 +1039,15 @@ AltStable.PortraitCommand("glow off")
 eq("/alts portrait glow off turns it off", AltStableConfig.portraitGlow, false)
 AltStable.PortraitCommand("glow on")
 eq("  and on", AltStableConfig.portraitGlow, true)
+
+-- /alts portrait auto on|off (#124), saying the Companion is needed.
+WoW.chatOut = {}
+AltStable.PortraitCommand("auto on")
+eq("/alts portrait auto on turns it on", AltStableConfig.portraitAuto, true)
+check("  saying the Companion is needed",
+      (WoW.chatOut[#WoW.chatOut] or ""):find("Needs AltStable Companion", 1, true), tostring(WoW.chatOut[#WoW.chatOut]))
+AltStable.PortraitCommand("auto off")
+eq("  and off", AltStableConfig.portraitAuto, false)
 
 -- The angle as a setting (#149): one setter behind the slider and the command,
 -- straight on by default, and never written into a newer AltStable's store.

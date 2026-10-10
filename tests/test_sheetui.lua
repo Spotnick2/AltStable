@@ -2383,6 +2383,10 @@ do
         AltStableConfig.portraitGlow = nil
         AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
         check("a due capture makes the button glow", btn._glowing == true and glow:IsShown())
+        -- Without the Companion a capture is two screenshots and nothing more,
+        -- and the button gave no hint of it (owner's call, #124).
+        check("the capture button says the Companion is needed",
+              tipText():find("Needs AltStable Companion", 1, true), tipText())
         check("  and the tooltip says why", tipText():find("No portrait", 1, true), tipText())
 
         AltStable.UpdateCaptureGlow({ due = true, reason = "changed", changedSlots = { "Chest", "Legs" } })
@@ -3442,6 +3446,11 @@ do
         end
     end
     eq("every anchor to the Options page is measured from its top", #offenders, 0)
+    -- The auto-capture option says the Companion is needed, under it (#124).
+    local hint = AltStable._test.optAutoPortraitHint
+    check("the auto-portrait option says the Companion is needed",
+          hint and (hint:GetText() or ""):find("Needs AltStable Companion", 1, true),
+          hint and hint:GetText() or "no hint")
     if #offenders > 0 then print("    " .. table.concat(offenders, ", ")) end
 
     -- Answers arriving while Options is open move the page too.
