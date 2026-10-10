@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.12.0
+
+Opt-in automatic portraits, and enchants in words on the Roster. Own-account sync now runs only
+through LibAccountSync. Measured on client 1.60.1.70334.
+
+**v0.10.0 and older no longer sync with your other Battle.net accounts.** Update every account
+to v0.11.0 or later; v0.11.0 and v0.12.0 sync with each other. Whisper sync with whitelisted
+characters is unchanged.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+There is no new version since v0.10.0. Every place that takes a portrait now says that it needs the
+Companion.
+
+### New
+
+- **A new portrait when your look changes, if you want one**
+  ([#124](https://github.com/Spotnick2/AltStable/issues/124)). Off by default: turn on
+  **Offer a new portrait when your look changes** in Options, or type `/alts portrait auto on`.
+  - When you change a visible piece of gear, a toast appears above the chat:
+    "New portrait in 5 minutes". Click it to take the portrait now, or the X to skip that look.
+  - After a few seconds it shrinks to one line. The camera button to its left hides it and brings
+    it back.
+  - When the countdown ends, it waits for a quiet moment before taking the portrait: two seconds
+    standing still, out of combat, not typing.
+  - Alt+drag the camera button to move the toast. Alt+right-click puts it back.
+  - It never offers while you are dead, and it never asks you to reload afterwards.
+- **Enchants in words on the Roster**
+  ([#94](https://github.com/Spotnick2/AltStable/issues/94)). A character's audit lists each
+  enchanted slot with its enchant, such as "Stamina +2". To also see the enchant beside each
+  gear slot, turn on **Show enchants beside the gear slots on a Roster character** in Options.
+  Enchants sync with your other accounts. Each character shows its enchants once you have logged
+  it in on v0.12.0.
+
+### Removed
+
+- **The old Battle.net sync channel**
+  ([#206](https://github.com/Spotnick2/AltStable/issues/206)). Since v0.11.0, your accounts sync
+  through LibAccountSync, and the old channel only stayed for accounts on v0.10.0 and older.
+
 ## v0.11.0
 
 Your own accounts sync through a shared library, the showcase no longer breaks **Quit**, and
