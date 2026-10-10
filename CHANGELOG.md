@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.13.0
+
+Forever's launch raids in the Raids tab, a key binding, and glass in your class colour. Measured
+on client 1.60.1.70338. Nothing changes on the sync wire, so v0.13.0 syncs with v0.11.0 and
+v0.12.0.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+There is no new version since v0.10.0.
+
+### New
+
+- **Forever's launch raids in the Raids tab**
+  ([#17](https://github.com/Spotnick2/AltStable/issues/17)): Barrow Deeps, Hyjal Summit and
+  Onyxia's Lair, each with its own art.
+  - The raids show even before any of your characters is level 60.
+  - Hover a raid's name to see its bosses.
+  - Once a character is saved to a raid, hover their cell to see each boss as **Killed** or
+    **Not killed**. AltStable learns the names from the lockout itself. If it cannot be sure, it
+    shows the progress ("3/8") alone rather than guess.
+  - The Vanilla raids are not in at launch. Their rows come back on their own once a character
+    is saved to one.
+- **A key binding**: **Key Bindings > AltStable > Open or close AltStable**.
+- **Glass in your class colour**: in Options, set **Glass** to **Class colour**. The main window's
+  glass takes a darkened shade of the class colour of the character you are on. It applies after a
+  reload, and only on the glass skins.
+
 ## v0.12.0
 
 Opt-in automatic portraits, and enchants in words on the Roster. Own-account sync now runs only
