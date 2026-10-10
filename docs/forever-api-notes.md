@@ -770,6 +770,29 @@ Documented surface identical.
 
 ---
 
+## Build 1.60.1.70338 (2026-10-10) — API unchanged
+
+Dumped (`forever-api-1.60.1.70338.md`, client built Oct 9 2026) and compared with
+`Compare-Dumps.ps1` against 70334:
+
+```
+Documented functions - no change (6604)
+Documented events - no change (1810)
+Documented tables - no change (798)
+Widget methods - no change (7530)
+Namespace functions - no change (5421)
+Global functions - +35 -0 (walks _G: addon noise, not listed)
+Namespace candidates - +247 -66 (walks _G: addon noise, not listed)
+
+Documented surface identical.
+```
+
+**Behaviour**, the RUNBOOK step-3 line: `60 10100 2370 -1 5 table`, all as expected.
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+---
+
 ## Secret values — some unit numbers cannot be read, only passed along
 
 Hit live on 1.60.1.69977, on a **PvP realm**, mid-scan:
