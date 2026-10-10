@@ -4052,6 +4052,65 @@ do
 end
 
 ------------------------------------------------------------
+-- Glass in the class colour: the Options row
+------------------------------------------------------------
+do
+    local tb = AltStable._test.tintBtns
+    eq("the glass row has two choices", tb and #tb, 2)
+    eq("  neutral first", tb[1].lbl:GetText(), "Neutral")
+    eq("  then the class colour", tb[2].lbl:GetText(), "Class colour")
+    AltStable.EnsureConfigDefaults()
+    eq("off by default", AltStableConfig.skinClassTint, false)
+
+    -- On a glass skin, with the skin itself not pending.
+    local heldSkin = AltStableConfig.skin
+    AltStableConfig.skin, AltStableConfig.skinClassTint = "clear", false
+    AltStable._ResetSkinCache()
+    AltStable._test.RefreshSkinRow()
+    eq("nothing pending on the loaded choice", AltStable._test.SkinReloadPrompt(), nil)
+    tb[2]:GetScript("OnClick")(tb[2])
+    eq("clicking Class colour stores it", AltStableConfig.skinClassTint, true)
+    local prompt = AltStable._test.SkinReloadPrompt()
+    check("  and says it waits for a reload",
+          prompt and prompt:find("Class-coloured glass|r takes effect after a reload", 1, true), tostring(prompt))
+    tb[1]:GetScript("OnClick")(tb[1])
+    eq("back to Neutral: nothing pending", AltStable._test.SkinReloadPrompt(), nil)
+    eq("  and stored", AltStableConfig.skinClassTint, false)
+
+    -- On flat there is no glass to colour: nothing waits.
+    AltStableConfig.skin = "flat"
+    AltStable._ResetSkinCache()
+    AltStable.SkinName(); AltStable.SkinClassTint()   -- the window built: flat, neutral
+    tb[2]:GetScript("OnClick")(tb[2])
+    eq("on flat, the glass colour waits for nothing", AltStable._test.SkinReloadPrompt(), nil)
+    -- A skin change pending still names the skin.
+    AltStableConfig.skin = "clear"
+    AltStable._test.RefreshSkinRow()
+    check("a pending skin is still named first",
+          (AltStable._test.SkinReloadPrompt() or ""):find("Clear glass", 1, true), AltStable._test.SkinReloadPrompt())
+
+    -- The window built with it on wears the class colour, darkened.
+    AltStableConfig.skin, AltStableConfig.skinClassTint = "clear", true
+    AltStable._ResetSkinCache()
+    RAID_CLASS_COLORS = RAID_CLASS_COLORS or {}
+    local heldColour = RAID_CLASS_COLORS.PRIEST
+    RAID_CLASS_COLORS.PRIEST = { r = 0.5, g = 1, b = 0.25 }
+    local heldClass = WoW.player.class
+    WoW.player.class = "PRIEST"
+    dofile("SheetUI.lua")
+    AltStable.ShowSheet()
+    local c = AltStable.glass and AltStable.glass.tint and AltStable.glass.tint._colorTexture
+    check("the window is built in the class colour",
+          c and math.abs(c[1] - 0.3) < 1e-6 and math.abs(c[2] - 0.6) < 1e-6 and math.abs(c[3] - 0.15) < 1e-6,
+          c and table.concat(c, ",") or "no tint")
+    eq("  at the preset's own opacity", c and c[4], AltStable.SKINS.clear.tint[4])
+    if AltStable._test.frame:IsShown() then AltStable._test.frame:Hide() end
+    RAID_CLASS_COLORS.PRIEST, WoW.player.class = heldColour, heldClass
+    AltStableConfig.skin, AltStableConfig.skinClassTint = heldSkin, false
+    AltStable._ResetSkinCache()
+end
+
+------------------------------------------------------------
 -- No usable LibShowcase: no showcase, never an error (#199)
 ------------------------------------------------------------
 -- Last in the file: it loads SheetUI.lua again, over everything above.

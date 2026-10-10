@@ -2341,6 +2341,7 @@ local function CreateFrameIfNeeded()
     -- (The hooks go in at the END of this function, not here: see below.)
     if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(frame) end
     AltStable.glass = AltStable.SkinWindow(frame)
+    AltStable.SkinApplyClassTint(AltStable.glass)
     if not AltStable.glass then
         AltStable.ApplyBackdrop(frame,
             AltStable.C.BG_MAIN[1], AltStable.C.BG_MAIN[2],
@@ -3155,6 +3156,41 @@ local function CreateFrameIfNeeded()
         prevSkinBtn = b
     end
 
+    -- ── Glass colour row ──────────────────────────────────
+    -- The main window's glass, neutral or in the class colour (owner's call,
+    -- after a peek in game). Its own row under the skin, as the accent has
+    -- one: a material choice, so it shares the skin's reload line below.
+    Y = Y - 30
+    local optTintLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optTintLabel:SetPoint("TOPLEFT", P, Y)
+    optTintLabel:SetText("Glass")
+    optTintLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+
+    local tintBtns = {}
+    for i, choice in ipairs({ { false, "Neutral" }, { true, "Class colour" } }) do
+        local b = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+        b:SetSize(96, 22)
+        if i == 1 then b:SetPoint("TOPLEFT", P + 60, Y + 1)
+        else b:SetPoint("LEFT", tintBtns[i - 1], "RIGHT", 8, 0) end
+        AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+        local lbl = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbl:SetAllPoints(); lbl:SetJustifyH("CENTER")
+        lbl:SetText(choice[2])
+        b.classTint, b.lbl = choice[1], lbl
+        b:SetScript("OnClick", function()
+            AltStable.SetConfigValue("skinClassTint", choice[1])
+            RefreshSkinRow()
+        end)
+        tintBtns[i] = b
+    end
+    local optTintHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optTintHint:SetPoint("LEFT", tintBtns[2], "RIGHT", 14, 0)
+    optTintHint:SetPoint("RIGHT", optionsFrame, "TOPRIGHT", -P, Y - 10)
+    optTintHint:SetJustifyH("LEFT"); optTintHint:SetWordWrap(true)
+    optTintHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optTintHint:SetText("The window's glass, on the glass skins.")
+    AltStable._test.tintBtns = tintBtns
+
     -- WHAT IS ON DISK vs WHAT IS ON SCREEN. The material is built when the
     -- window is, so choosing one here changes the next load, not this one -
     -- and saying so only when they disagree keeps a permanent instruction off
@@ -3207,12 +3243,23 @@ local function CreateFrameIfNeeded()
         for _, b in ipairs(skinBtns) do
             SetChoiceBtnState(b, b.lbl, b.skinName == pending)
         end
+        local tint = AltStable.PendingSkinClassTint()
+        for _, b in ipairs(tintBtns) do
+            SetChoiceBtnState(b, b.lbl, b.classTint == tint)
+        end
         -- Against what the WINDOW is wearing, which is resolved once per
         -- session: choosing the one already loaded is not a pending change.
-        local waiting = pending ~= AltStable.SkinName()
+        -- The glass colour only counts on a glass skin: on flat there is no
+        -- glass to colour, so nothing is waiting for a reload.
+        local skinWaiting = pending ~= AltStable.SkinName()
+        local tintWaiting = not skinWaiting and AltStable.SKINS[pending].material == true
+            and tint ~= AltStable.SkinClassTint()
+        local waiting = skinWaiting or tintWaiting
+        local what = skinWaiting
+            and (AltStable.SKINS[pending] and AltStable.SKINS[pending].label or pending)
+            or (tint and "Class-coloured glass" or "Neutral glass")
         optSkinReload:SetText(waiting
-            and ("|cffffcc00" .. (AltStable.SKINS[pending] and AltStable.SKINS[pending].label
-                 or pending) .. "|r takes effect after a reload") or "")
+            and ("|cffffcc00" .. what .. "|r takes effect after a reload") or "")
         optSkinReload:SetShown(waiting)
         optSkinReloadBtn:SetShown(waiting)
     end

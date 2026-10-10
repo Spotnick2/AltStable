@@ -82,6 +82,7 @@ AltStable.PendingSkinName = StoredSkin
 -- after SavedVariables have loaded, and stable from then on. The command writes
 -- the config and says reload; the config is the pending choice, not the live one.
 local active
+local activeClassTint   -- see SkinClassTint, below
 function AltStable.SkinName()
     if not active then active = StoredSkin() end
     return active
@@ -92,6 +93,19 @@ end
 -- change under the window's feet.
 function AltStable._ResetSkinCache()
     active = nil
+    activeClassTint = nil
+end
+
+-- The main window's glass in the class colour (an option, off by default):
+-- held for the session like the skin, and for the same reason - it is painted
+-- when the window is built, so a change waits for the reload.
+local function StoredClassTint()
+    return AltStableConfig ~= nil and AltStableConfig.skinClassTint == true
+end
+AltStable.PendingSkinClassTint = StoredClassTint
+function AltStable.SkinClassTint()
+    if activeClassTint == nil then activeClassTint = StoredClassTint() end
+    return activeClassTint
 end
 
 function AltStable.Skin()
@@ -165,6 +179,20 @@ function AltStable.SkinWindow(frame, size)
     local g = Glass.Apply(frame, size or "large")
     frame._glass = g
     return g
+end
+
+-- The class colour on a window's glass, when the option is on. Darkened, at
+-- the preset's own opacity: tried in game on a hunter, the colour at full
+-- strength turned the glass milky - painted plastic - where 60% of it read as
+-- a cast on the glass, with the world still showing through.
+local CLASS_TINT_SHADE = 0.6
+function AltStable.SkinApplyClassTint(g)
+    if not (g and AltStable.SkinClassTint() and Glass and Glass.SetSurfaceTint) then return false end
+    local _, class = UnitClass("player")
+    local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+    if not c then return false end
+    local S = CLASS_TINT_SHADE
+    return Glass.SetSurfaceTint(g, c.r * S, c.g * S, c.b * S) ~= false
 end
 
 -- A small glass pill behind a button's symbol (LibGlass r5, Glass.Pill):

@@ -1398,5 +1398,47 @@ do
     Glass.Pill = realPill
 end
 
+-- The class colour on the window's glass: darkened, at the preset's opacity,
+-- and only when asked for.
+do
+    RAID_CLASS_COLORS = RAID_CLASS_COLORS or {}
+    local heldColour, heldClass = RAID_CLASS_COLORS.HUNTER, WoW.player.class
+    RAID_CLASS_COLORS.HUNTER = { r = 0.67, g = 0.83, b = 0.45 }
+    WoW.player.class = "HUNTER"
+    local function tintOf(g) return g.tint._colorTexture end
+
+    AltStableConfig.skinClassTint = false
+    useSkin("clear")
+    local g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    local before = { unpack(tintOf(g)) }
+    eq("off: nothing to do", AltStable.SkinApplyClassTint(g), false)
+    eq("  the glass left as built", tintOf(g)[1], before[1])
+
+    AltStableConfig.skinClassTint = true
+    useSkin("smoked")
+    g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    eq("on: applied", AltStable.SkinApplyClassTint(g), true)
+    local c = tintOf(g)
+    check("  the class colour at 60%",
+          math.abs(c[1] - 0.402) < 1e-6 and math.abs(c[2] - 0.498) < 1e-6 and math.abs(c[3] - 0.27) < 1e-6,
+          table.concat(c, ","))
+    eq("  at the preset's own opacity", c[4], AltStable.SKINS.smoked.tint[4])
+
+    -- Held for the session, as the skin is: the window is painted once.
+    AltStableConfig.skinClassTint = false
+    eq("a change waits for the reload", AltStable.SkinClassTint(), true)
+    eq("  while the stored choice says so", AltStable.PendingSkinClassTint(), false)
+    AltStableConfig.skinClassTint = true
+
+    WoW.player.class = "NOSUCHCLASS"
+    eq("a class with no colour: nothing", AltStable.SkinApplyClassTint(g), false)
+    WoW.player.class = "HUNTER"
+    eq("no glass (flat): nothing", AltStable.SkinApplyClassTint(nil), false)
+
+    RAID_CLASS_COLORS.HUNTER, WoW.player.class = heldColour, heldClass
+    AltStableConfig.skinClassTint = nil
+    useSkin("clear")
+end
+
 print(("test_glass: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

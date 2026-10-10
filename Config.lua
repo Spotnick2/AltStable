@@ -106,6 +106,10 @@ local function EnsureDefaults()
     if AltStableConfig.portraitAuto == nil then
         AltStableConfig.portraitAuto = false
     end
+    -- The main window's glass in the class colour: off unless asked for.
+    if AltStableConfig.skinClassTint == nil then
+        AltStableConfig.skinClassTint = false
+    end
     if AltStableConfig.toastsEnabled == nil then
         AltStableConfig.toastsEnabled = true
     end
