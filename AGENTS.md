@@ -14,9 +14,9 @@ Repository-specific additions:
 - Post every pull-request review and follow-up review on the PR, then link the posted review in the
   final response.
 - Match `MEASURED_ON_BUILD` in `Config.lua` to
-  `C:\Projects\References\forever-api-<version>.<build>.md`. Runtime measurements live in
+  `C:\Projects\WoW\References\forever-api-<version>.<build>.md`. Runtime measurements live in
   `docs/forever-api-notes.md`; addon-agnostic Forever findings live in the canonical
-  `C:\Projects\References\PORTING-TBC-TO-FOREVER.md`.
+  `C:\Projects\WoW\References\PORTING-TBC-TO-FOREVER.md`.
 
 ## What this project is
 
@@ -29,7 +29,7 @@ It is a port of AltTracker (TBC Anniversary) — see `..\AltTracker` for the ups
 is the active work; `docs/PORTING-TBC-TO-FOREVER.md` and `docs/forever-api-notes.md` are
 measured against the live client and should be treated as fact rather than re-derived.
 
-**The addon-agnostic porting guide is canonical at `C:\Projects\References\PORTING-TBC-TO-FOREVER.md`**,
+**The addon-agnostic porting guide is canonical at `C:\Projects\WoW\References\PORTING-TBC-TO-FOREVER.md`**,
 not at `docs/PORTING-TBC-TO-FOREVER.md`. That copy is shared across every Forever addon project and
 is edited by other sessions; the one in this repo is an older snapshot. Read the canonical one, and
 write new addon-agnostic findings there. `docs/forever-api-notes.md` stays here — it is
@@ -107,7 +107,7 @@ Lua is first on `PATH`).
 - **The stubs must model Forever, not Classic.** A stub that returns the old tuple where the
   live client returns a struct makes a broken port pass. When a stub shape is in question,
   check it against `docs/forever-api-notes.md` — that file is measured on the live client — and
-  against the API dump in `C:\Projects\References` for the declared shape.
+  against the API dump in `C:\Projects\WoW\References` for the declared shape.
 - File-local internals are reached through the **`AltStable._test = { … }` seam** at the bottom
   of `Core.lua` (harmless in-game) — extend that seam rather than promoting internals to
   real globals.

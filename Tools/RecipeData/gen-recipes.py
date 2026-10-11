@@ -15,7 +15,7 @@ at runtime, in the player's own language, and a rename cannot leave them stale.
     python Tools/RecipeData/gen-recipes.py --check      # compare with the committed file, write nothing
 
 A run also writes a human-readable copy - names included, one table per profession -
-to C:\Projects\References\forever-recipes-<snapshot date>.md/.tsv, beside the API
+to C:\Projects\WoW\References\forever-recipes-<snapshot date>.md/.tsv, beside the API
 dumps and the consumables list (--reference DIR to put it elsewhere, '' to skip).
 
 Run by the owner, never by CI (tests/test_recipedata.py covers the parsing with
@@ -68,7 +68,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, ".cache")
 OUT = os.path.join(HERE, "..", "..", "Plugins", "Professions", "RecipeData.lua")
-REFERENCES = r"C:\Projects\References"
+REFERENCES = r"C:\Projects\WoW\References"
 BASE = "https://www.wowhead.com/forever"
 USER_AGENT = "AltStable recipe data generator (github.com/Spotnick2/AltStable)"
 DELAY = 1.5
@@ -414,7 +414,7 @@ def source_line(text):
 
 
 # ---------------------------------------------------------------------------
-# The human-readable reference, in C:\Projects\References beside the API dumps
+# The human-readable reference, in C:\Projects\WoW\References beside the API dumps
 # and the consumables list: for people and other projects, not for the addon
 # ---------------------------------------------------------------------------
 

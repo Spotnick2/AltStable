@@ -1,6 +1,6 @@
 ---
 name: client-update
-description: Handle a new WoW Forever client build for AltStable - convert the owner's /apidump into C:\Projects\References, diff it against the previous build, verify behaviour, and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
+description: Handle a new WoW Forever client build for AltStable - convert the owner's /apidump into C:\Projects\WoW\References, diff it against the previous build, verify behaviour, and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
 version: 1.0.0
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
@@ -30,7 +30,7 @@ pwsh Tools/ForeverAPIDump/Convert-Dump.ps1
 
 It picks the newest `ForeverAPIDump.lua` under `_classic_beta_\WTF\Account\*\SavedVariables`
 (whichever account the owner dumped from), prints the section counts and writes
-`C:\Projects\References\forever-api-<version>.<build>.md`. "Build changed: … is a different build"
+`C:\Projects\WoW\References\forever-api-<version>.<build>.md`. "Build changed: … is a different build"
 is expected - it lists every older dump. **Never delete old dumps**; that is the owner's call.
 
 If it wrote the *same* build as the newest existing file, the owner has not dumped since the
