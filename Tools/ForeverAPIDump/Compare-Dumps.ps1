@@ -22,7 +22,7 @@
 param(
     [string]$Old,
     [string]$New,
-    [string]$Dir = "C:\Projects\References",
+    [string]$Dir = "C:\Projects\WoW\References",
     [int]$Max = 60
 )
 

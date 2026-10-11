@@ -34,7 +34,7 @@ through `12-dalaran-small-3.png`. Related source: [wowreforged's Dalaran post](h
 These screenshots are reference material, not finished backdrops: some contain
 watermarks, NPCs, or cinematic framing.
 
-The two originals were copied from `C:\Projects\AltTracker\Media\Scene`.
+The two originals were copied from `C:\Projects\WoW\AltTracker\Media\Scene`.
 Their PNGs are byte-identical to the supplied files. Karazhan retains its original
 smaller, slightly right-of-center fire; the new scenes use Forest Camp as their
 common composition reference.

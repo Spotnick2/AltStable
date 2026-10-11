@@ -280,7 +280,7 @@ authoritatively as a current one.
 
 1. **Regenerate the dump.** `/apidump`, then `/reload`, then
    `pwsh Tools/ForeverAPIDump/Convert-Dump.ps1`. It writes
-   `C:\Projects\References\forever-api-<version>.<build>.md` and says so when the build changed.
+   `C:\Projects\WoW\References\forever-api-<version>.<build>.md` and says so when the build changed.
 2. **Diff the documented surfaces** against the previous file -
    `pwsh Tools/ForeverAPIDump/Compare-Dumps.ps1` does it: documented functions, events, enums
    and structures, widget methods, namespace functions. Ignore the global-functions and
