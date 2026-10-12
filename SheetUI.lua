@@ -963,6 +963,17 @@ local function BuildDisplayList()
         end
     end
     table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc))
+
+    -- Grouped by realm unless the player turned it off (Options, "Group
+    -- characters by realm"): then one list, in the sort order alone, with no
+    -- headers - and no collapsed realm hiding anyone.
+    if AltStableConfig and AltStableConfig.sheetGroupByRealm == false then
+        for _, char in ipairs(allChars) do
+            table.insert(displayList, { kind = "char", data = char })
+        end
+        return
+    end
+
     local realmOrder, realmChars = {}, {}
     for _, char in ipairs(allChars) do
         local realm = char.realm or "Unknown"
@@ -3734,6 +3745,16 @@ local function CreateFrameIfNeeded()
             end
         end)
     AltStable._test.OptRememberSort = optRememberSortCheck
+    Y = Y - 22
+
+    -- Realm groups on the sheet. Off: one list, in the sort order alone.
+    local optGroupRealmCheck = MakeOptCheckRow("sheetGroupByRealm",
+        "Group characters by realm", Y,
+        function(checked)
+            AltStable.SetConfigValue("sheetGroupByRealm", checked)
+            AltStable.RefreshSheet()
+        end)
+    AltStable._test.OptGroupRealm = optGroupRealmCheck
     Y = Y - 30
 
     -- ── Account & Sync section ────────────────────────────
@@ -4332,6 +4353,7 @@ local function CreateFrameIfNeeded()
         optMinimapCheck:SetChecked(optMinimapCheck._getter())
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
         optRememberSortCheck:SetChecked(optRememberSortCheck._getter())
+        optGroupRealmCheck:SetChecked(optGroupRealmCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
         optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)

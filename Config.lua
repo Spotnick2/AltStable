@@ -316,6 +316,11 @@ local function EnsureDefaults()
     if AltStableConfig.rememberSortOrder == nil then
         AltStableConfig.rememberSortOrder = true
     end
+    -- The sheet's realm groups. Off: one list across every realm, sorted as a
+    -- whole.
+    if AltStableConfig.sheetGroupByRealm == nil then
+        AltStableConfig.sheetGroupByRealm = true
+    end
     if AltStableConfig.sidebarCompact == nil then
         AltStableConfig.sidebarCompact = false
     end

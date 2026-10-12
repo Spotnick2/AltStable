@@ -3884,6 +3884,55 @@ do
 end
 
 ------------------------------------------------------------
+-- Realm groups can be switched off: one list, sorted as a whole
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    AltStable.EnsureSheetVisible()
+    local savedDB = AltStableDB
+    AltStableDB = {
+        a = { guid = "a", name = "Alpha", realm = "North", level = 10 },
+        b = { guid = "b", name = "Beta",  realm = "South", level = 30 },
+        c = { guid = "c", name = "Gamma", realm = "North", level = 20 },
+    }
+    AltStableConfig.sheetSort = nil
+    T.ForgetSessionSorts()
+    AltStable.RefreshSheet()
+
+    local function Shape()
+        local out = {}
+        for _, it in ipairs(T.DisplayList()) do
+            out[#out + 1] = it.kind == "group" and ("[" .. it.realm .. "]") or it.data.guid
+        end
+        return table.concat(out, ",")
+    end
+
+    eq("grouped by default: each realm under its header", Shape(), "[South],b,[North],c,a")
+
+    local cb = T.OptGroupRealm
+    check("the option shows grouping on by default", cb._getter() == true)
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    eq("off is saved", AltStableConfig.sheetGroupByRealm, false)
+    eq("  and the sheet is one list in level order, realms interleaved", Shape(), "b,c,a")
+
+    -- A collapsed realm hides nobody once the groups are gone.
+    AltStableConfig.sheetGroupByRealm = true
+    AltStable.RefreshSheet()
+    AltStable.ToggleRealm("North")
+    eq("a collapsed realm keeps only its header", Shape(), "[South],b,[North]")
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    eq("off, every character is listed", Shape(), "b,c,a")
+
+    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+    eq("back on, the groups return, the collapse kept", Shape(), "[South],b,[North]")
+    AltStable.ToggleRealm("North")
+
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
+end
+
+------------------------------------------------------------
 -- A tab switch glides to the new tab's size (#159)
 ------------------------------------------------------------
 
