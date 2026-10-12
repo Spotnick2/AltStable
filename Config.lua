@@ -650,6 +650,29 @@ function AltStable.RulesetOf(realm)
     return "Normal"
 end
 
+-- No ruleset art exists in the client (its UI source has the words, not
+-- pictures), so a small coloured badge: what kind of realm the character is on.
+-- One table for the Roster's camp list (#170) and the sheet's Ruleset column.
+-- The third entry is the tooltip's spelled-out name.
+local RULESET_BADGE = {
+    Normal   = { "PvE", "|cff8fd18f", "PvE" },
+    PvP      = { "PvP", "|cffff6b6b", "PvP" },
+    RP       = { "RP",  "|cffc79bff", "Roleplay" },
+    Hardcore = { "HC",  "|cffff9a3c", "Hardcore" },
+}
+
+-- The coloured badge for a realm, or "" for one we cannot read.
+function AltStable.RulesetBadge(realm)
+    local b = RULESET_BADGE[AltStable.RulesetOf(realm)]
+    return b and (b[2] .. b[1] .. "|r") or ""
+end
+
+-- The ruleset as a player calls it ("PvE", "Roleplay"), or nil when unknown.
+function AltStable.RulesetName(realm)
+    local b = RULESET_BADGE[AltStable.RulesetOf(realm)]
+    return b and b[3] or nil
+end
+
 ------------------------------------------------------------
 -- Roster camps (#152)
 --

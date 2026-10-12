@@ -3892,9 +3892,9 @@ do
     AltStable.EnsureSheetVisible()
     local savedDB = AltStableDB
     AltStableDB = {
-        a = { guid = "a", name = "Alpha", realm = "North", level = 10 },
-        b = { guid = "b", name = "Beta",  realm = "South", level = 30 },
-        c = { guid = "c", name = "Gamma", realm = "North", level = 20 },
+        a = { guid = "a", name = "Alpha", realm = "Forever Hardcore", level = 10 },
+        b = { guid = "b", name = "Beta",  realm = "Forever PvP",      level = 30 },
+        c = { guid = "c", name = "Gamma", realm = "Forever Hardcore", level = 20 },
     }
     AltStableConfig.sheetSort = nil
     T.ForgetSessionSorts()
@@ -3908,25 +3908,48 @@ do
         return table.concat(out, ",")
     end
 
-    eq("grouped by default: each realm under its header", Shape(), "[South],b,[North],c,a")
+    local function Fields()
+        local cols = T.ColumnLayout()
+        local out = {}
+        for i = 1, math.min(4, #cols) do out[i] = cols[i].field end
+        return table.concat(out, ",")
+    end
+    local function RulesetCells()
+        local cols, _, _, rows = T.ColumnLayout()
+        local at
+        for i, c in ipairs(cols) do if c.field == "ruleset" then at = i end end
+        local out = {}
+        for r = 1, 2 do   -- the stub body has no height: two rows render
+            local text = rows[r] and rows[r].cells[at] and rows[r].cells[at]:GetText() or ""
+            out[#out + 1] = (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+        end
+        return table.concat(out, ",")
+    end
+
+    eq("grouped by default: each realm under its header", Shape(), "[Forever PvP],b,[Forever Hardcore],c,a")
+    eq("  and no Ruleset column: the header says where they are", Fields(), "class,race,level,ilvl")
 
     local cb = T.OptGroupRealm
     check("the option shows grouping on by default", cb._getter() == true)
     cb:SetChecked(false); cb:GetScript("OnClick")(cb)
     eq("off is saved", AltStableConfig.sheetGroupByRealm, false)
     eq("  and the sheet is one list in level order, realms interleaved", Shape(), "b,c,a")
+    eq("  with a Ruleset column after Race instead", Fields(), "class,race,ruleset,level")
+    eq("  showing each character's ruleset", RulesetCells(), "PvP,HC")
+    eq("  named in full for the tooltip", AltStable.RulesetName("Forever Hardcore"), "Hardcore")
 
     -- A collapsed realm hides nobody once the groups are gone.
     AltStableConfig.sheetGroupByRealm = true
     AltStable.RefreshSheet()
-    AltStable.ToggleRealm("North")
-    eq("a collapsed realm keeps only its header", Shape(), "[South],b,[North]")
+    AltStable.ToggleRealm("Forever Hardcore")
+    eq("a collapsed realm keeps only its header", Shape(), "[Forever PvP],b,[Forever Hardcore]")
     cb:SetChecked(false); cb:GetScript("OnClick")(cb)
     eq("off, every character is listed", Shape(), "b,c,a")
 
     cb:SetChecked(true); cb:GetScript("OnClick")(cb)
-    eq("back on, the groups return, the collapse kept", Shape(), "[South],b,[North]")
-    AltStable.ToggleRealm("North")
+    eq("back on, the groups return, the collapse kept", Shape(), "[Forever PvP],b,[Forever Hardcore]")
+    eq("  and the Ruleset column goes", Fields(), "class,race,level,ilvl")
+    AltStable.ToggleRealm("Forever Hardcore")
 
     AltStableDB = savedDB
     AltStable.RefreshSheet()

@@ -675,18 +675,9 @@ function L.FactionArt(faction)
     return { file = art.file }
 end
 
--- No ruleset art exists in the client (its UI source has the words, not
--- pictures), so a small coloured badge: what kind of realm the character is on.
-local RULESET_BADGE = {
-    Normal   = { "PvE", "|cff8fd18f" },
-    PvP      = { "PvP", "|cffff6b6b" },
-    RP       = { "RP",  "|cffc79bff" },
-    Hardcore = { "HC",  "|cffff9a3c" },
-}
+-- The ruleset badge: the core's, shared with the sheet's Ruleset column.
 function L.RulesetBadge(realm)
-    local rs = AltStable.RulesetOf and AltStable.RulesetOf(realm)
-    local b = rs and RULESET_BADGE[rs]
-    return b and (b[2] .. b[1] .. "|r") or ""
+    return AltStable.RulesetBadge and AltStable.RulesetBadge(realm) or ""
 end
 
 local function Row(i)

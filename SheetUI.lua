@@ -709,9 +709,15 @@ local function BuildScrollableColsForSection(section)
         for _, f in ipairs(section.fields) do fields[#fields+1] = f end
         for _, f in ipairs(AltStable.RepFieldsInUse(GetCharacterStore())) do fields[#fields+1] = f end
     end
+    -- With the realm groups off, nothing says where a character is: the
+    -- Ruleset column goes in after Race, on every tab.
+    local ungrouped = AltStableConfig and AltStableConfig.sheetGroupByRealm == false
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
         if col then scrollableCols[#scrollableCols+1] = col end
+        if field == "race" and ungrouped then
+            scrollableCols[#scrollableCols+1] = ColumnFor("ruleset")
+        end
     end
 end
 
@@ -4710,8 +4716,10 @@ local function ColumnSignature()
     return table.concat(fields, ",")
 end
 
+-- Every tab, not only Reputations: the realm-grouping option adds or removes
+-- the Ruleset column on any of them.
 local function RebuildDataDrivenColumns()
-    if not (activeSection and activeSection.repFields) then return end
+    if not activeSection then return end
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
     if ColumnSignature() ~= before then

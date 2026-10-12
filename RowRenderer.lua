@@ -619,8 +619,8 @@ function AltStable.CreateRow(parent, height, columns)
             row.cells[i] = cell
         end
 
-        -- General tooltip button for classIcon, raceIcon, level, restPercent, profSkill
-        if col.type=="classIcon" or col.type=="raceIcon"
+        -- General tooltip button for classIcon, raceIcon, ruleset, level, restPercent, profSkill
+        if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
         or col.field=="level" or col.type=="restXP"
         or col.field=="restPercent" or col.type=="profSkill" then
             local tip = CreateFrame("Button", nil, row)
@@ -1004,6 +1004,12 @@ function AltStable.RenderRow(row, char, index, columns)
         elseif col.field=="lastUpdate"  then
             local isMe = char.guid == UnitGUID("player")
             value = FormatLastOnline(char.lastUpdate, isMe)
+        elseif col.type=="ruleset"      then
+            value = AltStable.RulesetBadge(char.realm)
+            if tip then
+                tip.line1 = AltStable.RulesetName(char.realm)
+                tip.line2, tip.line3, tip.cdLines = nil, nil, nil
+            end
         elseif col.type=="money"        then value = FormatMoney(char[col.field])
         elseif col.type=="rep"          then
             local standing = char[col.field]
