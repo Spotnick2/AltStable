@@ -2185,6 +2185,31 @@ do
 end
 
 do
+    -- The owner's clock runs ahead of ours, so the record we forget carries a
+    -- lastUpdate later than our time(). Offered back unchanged - nobody played
+    -- it - it must stay forgotten; counting the forget from our clock alone let
+    -- that very record undo it, on every repeat (#226 review).
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    local ahead = WoW.now + 3600
+    local function copy(ts)
+        return { guid = "Player-Skew-1", name = "Skewed", class = "MAGE",
+                 level = 30, lastUpdate = ts }
+    end
+    AltStableDB = { ["Player-Skew-1"] = copy(ahead) }
+    check(AltStable.ForgetCharacter("Player-Skew-1"), "a future-stamped record can be forgotten")
+
+    T.DeserializeFullDB(T.SerializeChar(copy(ahead)) .. "\n" .. T.CHAR_SEP, "Peer Surname")
+    eq(AltStableDB["Player-Skew-1"], nil, "  and the same record offered back stays out")
+    T.ReceiveCharacter(copy(ahead), "Peer Surname")
+    eq(AltStableDB["Player-Skew-1"], nil, "  on the single-character path too")
+    check(AltStable.IsCharacterForgotten("Player-Skew-1"), "  still forgotten")
+
+    T.ReceiveCharacter(copy(ahead + 1), "Peer Surname")
+    check(AltStableDB["Player-Skew-1"] ~= nil, "  while a login after it still brings it back")
+end
+
+do
     -- A tombstone from before forgottenAt existed: only `at`, which every offer
     -- moved. Its forget is read from `at` once and frozen there - the case this
     -- was found on, with a living character refused on the other account.

@@ -457,7 +457,13 @@ end
 
 -- The player forgot it, now or at `when`: a fresh tombstone. An existing name
 -- is never overwritten with nothing - the player is not always naming it.
-function AltStable.MarkCharacterForgotten(guid, when, name)
+--
+-- `seen` is the lastUpdate of the record being forgotten, and the forget counts
+-- from no earlier than it. That stamp is the owner's clock, not ours: with the
+-- owner's running ahead it can be later than our time(), and the very record
+-- the player just deleted, offered back unchanged, would look played since and
+-- undo the forget - every time it was repeated (#226 review).
+function AltStable.MarkCharacterForgotten(guid, when, name, seen)
     if not guid then return false end
     AltStableConfig = AltStableConfig or {}
     local current = AltStableConfig.forgottenCharacters or {}
@@ -467,7 +473,7 @@ function AltStable.MarkCharacterForgotten(guid, when, name)
     local stamp = tonumber(when) or time()
     copy[guid] = {
         at          = stamp,
-        forgottenAt = stamp,
+        forgottenAt = math.max(stamp, tonumber(seen) or 0),
         name        = name or (type(prev) == "table" and prev.name) or nil,
     }
     AltStable.SetConfigValue("forgottenCharacters", copy)
@@ -497,8 +503,10 @@ end
 -- somebody logged in on it after the forget: it is not gone.
 --
 -- Two machines' clocks meet here - the owner's lastUpdate, this account's
--- forget. A skewed one can bring back a character deleted minutes before it was
--- forgotten; forgetting it again fixes that for good, since a deleted
+-- forget. The forget counts from no earlier than the record it deleted, so a
+-- skewed clock cannot undo it with that record. It can with a newer copy this
+-- account never held (played, deleted and forgotten before it arrived): that
+-- comes back once, and forgetting it again counts from it, for good - a deleted
 -- character's lastUpdate never moves again.
 function AltStable.CameBackSince(guid, lastUpdate)
     local e = guid and ((AltStableConfig or {}).forgottenCharacters or {})[guid]

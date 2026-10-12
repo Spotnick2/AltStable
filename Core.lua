@@ -1057,8 +1057,9 @@ function AltStable.ForgetCharacter(guid)
     end
 
     local name = AltStableDB[guid].name or guid
+    local seen = AltStableDB[guid].lastUpdate
     AltStableDB[guid] = nil
-    AltStable.MarkCharacterForgotten(guid, time(), name)
+    AltStable.MarkCharacterForgotten(guid, time(), name, seen)
 
     -- Drop the display preferences with the record. The hidden list keeps
     -- orphans on purpose, because "the record usually comes back on the next
