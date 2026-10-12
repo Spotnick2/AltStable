@@ -69,11 +69,14 @@ connection instead of being ignored.
 
 - Measured on 1.60.1.70338, 2026-10-12: `C_Housing.RequestPlayerCharacterList()` **disconnected
   the client** immediately.
-- It was tried because it is the one API in the dump that lists an account's characters
-  (`PLAYER_CHARACTER_LIST_UPDATED` → `HouseOwnerCharacterInfo { playerGUID, ... }`). It would have
-  let deleted characters be found automatically.
-- Don't call it again, and don't call its neighbours: `C_CurrencyInfo.RequestCurrencyDataForAccountCharacters`
-  is the same shape, a Retail account-wide request for a feature that isn't here.
+- It was tried in the hope of listing an account's characters, so deleted ones could be found
+  automatically. That hope is **inferred, not measured**: the 70338 dump declares only
+  `PLAYER_CHARACTER_LIST_UPDATED -> characterInfos:table, ownerListIndex:number`. The element shape
+  (`HouseOwnerCharacterInfo { playerGUID, characterName, ... }`) comes from Retail's UI source, and
+  the disconnect came before any data, so neither its contents nor its scope were seen on Forever.
+- Don't call it again. As a **precaution, not a second measurement**, don't call its neighbours
+  either: `C_CurrencyInfo.RequestCurrencyDataForAccountCharacters` is the same shape, a Retail
+  account-wide request for a feature that isn't here, and was never tried.
 - Before probing a server request for a feature Forever doesn't ship, tell whoever runs it that it
   may disconnect them.
 
