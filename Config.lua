@@ -398,7 +398,13 @@ AltStable.EnsureConfigDefaults = EnsureDefaults
 -- gone is not evidence for account B, which may still be playing it.
 --
 -- Each entry is { at = <when a peer last offered it>, name = <what it was
--- called> }.
+-- called>, forgottenAt = <when the player forgot it> }.
+--
+-- A tombstone is not forever, though: a character played SINCE it was
+-- forgotten is not gone, whatever this account once decided. Without that rule
+-- a forget left on one account silently ate a living character's every sync
+-- there - its portrait included - and logging in on it changed nothing,
+-- because the refusal only refreshed the tombstone. See CameBackSince.
 --
 -- `at` is deliberately not "when it was forgotten". That is what lets the list
 -- expire safely: a tombstone has to outlive every peer that still remembers the
@@ -438,23 +444,74 @@ function AltStable.IsCharacterForgotten(guid)
     return (gone and gone[guid]) and true or false
 end
 
--- Records the tombstone, or refreshes how recently a peer offered the record.
--- An existing name is never overwritten with nothing: the refresh path runs
--- when a peer offers the record back, and the peer's copy is not the authority
--- on what the player called it when they forgot it.
-function AltStable.MarkCharacterForgotten(guid, when, name)
+-- When the player forgot it. A tombstone written before forgottenAt existed has
+-- only `at`, and `at` moves every time a peer offers the record back - read
+-- live, the forget would keep sliding forward past every login and nothing
+-- would ever come back. So it is read from `at` once, and RefreshForgotten
+-- freezes it there. Since `at` is at least the forget itself, the frozen value
+-- errs late: a character played since then returns on its next login.
+local function ForgottenAt(e)
+    if type(e) ~= "table" then return 0 end
+    return tonumber(e.forgottenAt) or tonumber(e.at) or 0
+end
+
+-- The player forgot it, now or at `when`: a fresh tombstone. An existing name
+-- is never overwritten with nothing - the player is not always naming it.
+--
+-- `seen` is the lastUpdate of the record being forgotten, and the forget counts
+-- from no earlier than it. That stamp is the owner's clock, not ours: with the
+-- owner's running ahead it can be later than our time(), and the very record
+-- the player just deleted, offered back unchanged, would look played since and
+-- undo the forget - every time it was repeated (#226 review).
+function AltStable.MarkCharacterForgotten(guid, when, name, seen)
     if not guid then return false end
     AltStableConfig = AltStableConfig or {}
     local current = AltStableConfig.forgottenCharacters or {}
     local copy = {}
     for k, v in pairs(current) do copy[k] = v end
     local prev = current[guid]
+    local stamp = tonumber(when) or time()
     copy[guid] = {
-        at   = tonumber(when) or time(),
-        name = name or (type(prev) == "table" and prev.name) or nil,
+        at          = stamp,
+        forgottenAt = math.max(stamp, tonumber(seen) or 0),
+        name        = name or (type(prev) == "table" and prev.name) or nil,
     }
     AltStable.SetConfigValue("forgottenCharacters", copy)
     return true
+end
+
+-- A peer offered the record back: move `at`, keep everything else. The peer's
+-- copy is not the authority on what the player called it, nor on when they
+-- forgot it.
+function AltStable.RefreshForgotten(guid, when)
+    local prev = guid and ((AltStableConfig or {}).forgottenCharacters or {})[guid]
+    if not prev then return false end
+    local copy = {}
+    for k, v in pairs(AltStableConfig.forgottenCharacters) do copy[k] = v end
+    copy[guid] = {
+        at          = tonumber(when) or time(),
+        forgottenAt = ForgottenAt(prev),
+        name        = type(prev) == "table" and prev.name or nil,
+    }
+    AltStable.SetConfigValue("forgottenCharacters", copy)
+    return true
+end
+
+-- Has this forgotten character been played since it was forgotten? `lastUpdate`
+-- only moves on the client logged in on the character (a received record never
+-- touches it - see the Professions plugin's deserializer), so a newer one means
+-- somebody logged in on it after the forget: it is not gone.
+--
+-- Two machines' clocks meet here - the owner's lastUpdate, this account's
+-- forget. The forget counts from no earlier than the record it deleted, so a
+-- skewed clock cannot undo it with that record. It can with a newer copy this
+-- account never held (played, deleted and forgotten before it arrived): that
+-- comes back once, and forgetting it again counts from it, for good - a deleted
+-- character's lastUpdate never moves again.
+function AltStable.CameBackSince(guid, lastUpdate)
+    local e = guid and ((AltStableConfig or {}).forgottenCharacters or {})[guid]
+    if not e then return false end
+    return (tonumber(lastUpdate) or 0) > ForgottenAt(e)
 end
 
 -- The GUID we hold for a forgotten character of this name.

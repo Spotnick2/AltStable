@@ -1924,8 +1924,9 @@ do
     AltStableDB = {}
     AltStable.MarkCharacterForgotten("Player-Gone-1", 1000, "Ghost")
 
+    -- Last played BEFORE it was forgotten: a character that is really gone.
     local blob = T.SerializeChar({ guid = "Player-Gone-1", name = "Ghost", class = "PRIEST",
-                                   level = 12, lastUpdate = 2000 })
+                                   level = 12, lastUpdate = 500 })
     T.DeserializeFullDB(blob .. "\n" .. T.CHAR_SEP, "Peer Surname")
     eq(AltStableDB["Player-Gone-1"], nil,
        "a forgotten character offered back by a peer is not taken")
@@ -2061,7 +2062,7 @@ do
     AltStable.MarkCharacterForgotten("Player-Gone-3", 1000, "Ghost")
 
     T.ReceiveCharacter({ guid = "Player-Gone-3", name = "Ghost", class = "PRIEST",
-                         level = 12, lastUpdate = 2000 }, "Peer Surname")
+                         level = 12, lastUpdate = 500 }, "Peer Surname")
     eq(AltStableDB["Player-Gone-3"], nil,
        "the single-character path refuses a forgotten character too")
 
@@ -2119,6 +2120,113 @@ do
     AltStable.ForgetCharacter("Player-Plug-1")
     eq(told, "Player-Plug-1", "plugins are told which character was forgotten")
     AltStable.plugins = {}
+end
+
+
+------------------------------------------------------------
+-- Forgetting: a character played since is not gone
+------------------------------------------------------------
+-- A tombstone left on one account silently ate a living character's every sync
+-- there, portrait and all, and logging in on it changed nothing - the refusal
+-- only refreshed the tombstone. A record stamped after the forget means
+-- somebody logged in on it since: it comes back.
+
+do
+    -- The bulk path.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = { ["Peer Surname"] = 99999 },
+                        forgottenCharacters = {} }
+    AltStableDB = {}
+    AltStable.MarkCharacterForgotten("Player-Alive-1", 1000, "Lazarus")
+
+    WoW.chatOut = {}
+    local blob = T.SerializeChar({ guid = "Player-Alive-1", name = "Lazarus", class = "PRIEST",
+                                   level = 12, lastUpdate = 2000 })
+    local maxTS = T.DeserializeFullDB(blob .. "\n" .. T.CHAR_SEP, "Peer Surname")
+    check(AltStableDB["Player-Alive-1"] ~= nil,
+          "a forgotten character played since the forget is taken back")
+    check(not AltStable.IsCharacterForgotten("Player-Alive-1"), "  and the tombstone is lifted")
+    eq(next(AltStableConfig.peerWatermarks or {}), nil,
+       "  every watermark is reset, so the rest of it comes in full")
+    eq(maxTS, 0, "  and this reply reports nothing to advance the peer's watermark to")
+    local said = table.concat(WoW.chatOut, "\n")
+    check(said:find("Lazarus", 1, true) and said:find("back", 1, true),
+          "  and the player is told it is back: " .. said)
+end
+
+do
+    -- The single-character path, which has drifted from the bulk one before.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    AltStableDB = {}
+    AltStable.MarkCharacterForgotten("Player-Alive-2", 1000, "Lazarus")
+    T.ReceiveCharacter({ guid = "Player-Alive-2", name = "Lazarus", class = "PRIEST",
+                         level = 12, lastUpdate = 2000 }, "Peer Surname")
+    check(AltStableDB["Player-Alive-2"] ~= nil,
+          "the single-character path takes it back too")
+    check(not AltStable.IsCharacterForgotten("Player-Alive-2"), "  and lifts the tombstone")
+end
+
+do
+    -- A peer offering it back must not move the forget. The refusal refreshes
+    -- `at` to now; if that dragged forgottenAt along, every later login would
+    -- still look older than the forget and the character would never return.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    AltStableDB = {}
+    AltStable.MarkCharacterForgotten("Player-Alive-3", 1000, "Lazarus")
+    T.ReceiveCharacter({ guid = "Player-Alive-3", name = "Lazarus", class = "PRIEST",
+                         level = 12, lastUpdate = 500 }, "Peer Surname")
+    check(AltStable.IsCharacterForgotten("Player-Alive-3"), "a stale copy is still refused")
+    T.ReceiveCharacter({ guid = "Player-Alive-3", name = "Lazarus", class = "PRIEST",
+                         level = 12, lastUpdate = 2000 }, "Peer Surname")
+    check(AltStableDB["Player-Alive-3"] ~= nil,
+          "  and a login after the forget still brings it back, refresh or not")
+end
+
+do
+    -- The owner's clock runs ahead of ours, so the record we forget carries a
+    -- lastUpdate later than our time(). Offered back unchanged - nobody played
+    -- it - it must stay forgotten; counting the forget from our clock alone let
+    -- that very record undo it, on every repeat (#226 review).
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {} }
+    local ahead = WoW.now + 3600
+    local function copy(ts)
+        return { guid = "Player-Skew-1", name = "Skewed", class = "MAGE",
+                 level = 30, lastUpdate = ts }
+    end
+    AltStableDB = { ["Player-Skew-1"] = copy(ahead) }
+    check(AltStable.ForgetCharacter("Player-Skew-1"), "a future-stamped record can be forgotten")
+
+    T.DeserializeFullDB(T.SerializeChar(copy(ahead)) .. "\n" .. T.CHAR_SEP, "Peer Surname")
+    eq(AltStableDB["Player-Skew-1"], nil, "  and the same record offered back stays out")
+    T.ReceiveCharacter(copy(ahead), "Peer Surname")
+    eq(AltStableDB["Player-Skew-1"], nil, "  on the single-character path too")
+    check(AltStable.IsCharacterForgotten("Player-Skew-1"), "  still forgotten")
+
+    T.ReceiveCharacter(copy(ahead + 1), "Peer Surname")
+    check(AltStableDB["Player-Skew-1"] ~= nil, "  while a login after it still brings it back")
+end
+
+do
+    -- A tombstone from before forgottenAt existed: only `at`, which every offer
+    -- moved. Its forget is read from `at` once and frozen there - the case this
+    -- was found on, with a living character refused on the other account.
+    WoW.reset()
+    AltStableConfig = { peerWatermarks = {}, forgottenCharacters = {
+        ["Player-Old-1"] = { at = 5000, name = "Lazarus" },
+    } }
+    AltStableDB = {}
+    T.ReceiveCharacter({ guid = "Player-Old-1", name = "Lazarus", class = "PRIEST",
+                         level = 12, lastUpdate = 4000 }, "Peer Surname")
+    check(AltStable.IsCharacterForgotten("Player-Old-1"),
+          "an old tombstone still refuses what was played before it")
+    -- `at` is now WoW.now, far past 6000; the forget is not.
+    T.ReceiveCharacter({ guid = "Player-Old-1", name = "Lazarus", class = "PRIEST",
+                         level = 12, lastUpdate = 6000 }, "Peer Surname")
+    check(AltStableDB["Player-Old-1"] ~= nil,
+          "  and lets back what was played after it, though `at` moved past both")
 end
 
 
