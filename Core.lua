@@ -1284,12 +1284,26 @@ end
 --
 -- Refreshing the stamp keeps a contested tombstone at the front of the eviction
 -- queue.
+--
+-- Unless it has been played since it was forgotten (CameBackSince): then it is
+-- not gone, and it is let back in - this record included - rather than eaten
+-- silently every sync. UnforgetCharacter resets the watermarks, because a delta
+-- carries only what changed since the last one and the rest of this character
+-- (Warband's older sections) has to come in full. Returns refused, lifted.
 local function RefuseIfForgotten(c)
     if not c or not c.guid then return false end
     if not (AltStable.IsCharacterForgotten and AltStable.IsCharacterForgotten(c.guid)) then
         return false
     end
-    AltStable.MarkCharacterForgotten(c.guid, time())
+    if AltStable.CameBackSince(c.guid, c.lastUpdate) then
+        local e = AltStableConfig.forgottenCharacters[c.guid]
+        local name = (type(e) == "table" and e.name) or c.name or c.guid
+        AltStable.UnforgetCharacter(c.guid)
+        Print("|cff88ff88" .. name .. "|r is back: played since you forgot it. "
+            .. "|cffffff00/alts forget " .. name .. "|r if it should stay gone.")
+        return false, true
+    end
+    AltStable.RefreshForgotten(c.guid, time())
     return true
 end
 
@@ -1299,6 +1313,7 @@ local function DeserializeFullDB(payload, sender)
     local rejected = 0
     local maxTS = 0   -- newest lastUpdate seen; the caller advances the peer watermark to it
     local peerNow     -- the sender's clock, when it sent one (SEND_TIME)
+    local lifted      -- a forgotten character came back in this reply
 
     for line in (payload .. "\n"):gmatch("([^\n]*)\n") do
 
@@ -1324,7 +1339,9 @@ local function DeserializeFullDB(payload, sender)
                 -- them and they aren't re-requested next delta.
                 if (c.lastUpdate or 0) > maxTS then maxTS = c.lastUpdate end
 
-                if RefuseIfForgotten(c) then c = nil end
+                local refused, back = RefuseIfForgotten(c)
+                if refused then c = nil end
+                if back then lifted = true end
             end
 
             if c and c.guid then
@@ -1364,6 +1381,11 @@ local function DeserializeFullDB(payload, sender)
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
     end
+
+    -- A character let back in reset every watermark, so the next reply brings
+    -- the rest of it in full. Advancing this peer's to this reply's newest stamp
+    -- would undo that for the very peer that has it: report nothing to advance.
+    if lifted then maxTS = 0 end
 
     return maxTS, peerNow
 
