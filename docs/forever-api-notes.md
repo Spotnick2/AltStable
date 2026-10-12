@@ -62,6 +62,21 @@ Reference implementations settle it faster than reasoning does. Narcissus 1.8.6 
 120100) answered both the `TryOn` and the `CameraZoomIn(0)` questions in about a minute of grep,
 without being installed.
 
+**A request to the server can cost a disconnect.** A `type()` probe and a local read are free.
+A call that asks the *server* for something (most `Request*`, and the `Fetch*` that wait for
+an event) is different: a Retail feature that Forever's server doesn't implement can drop the
+connection instead of being ignored.
+
+- Measured on 1.60.1.70338, 2026-10-12: `C_Housing.RequestPlayerCharacterList()` **disconnected
+  the client** immediately.
+- It was tried because it is the one API in the dump that lists an account's characters
+  (`PLAYER_CHARACTER_LIST_UPDATED` → `HouseOwnerCharacterInfo { playerGUID, ... }`). It would have
+  let deleted characters be found automatically.
+- Don't call it again, and don't call its neighbours: `C_CurrencyInfo.RequestCurrencyDataForAccountCharacters`
+  is the same shape, a Retail account-wide request for a feature that isn't here.
+- Before probing a server request for a feature Forever doesn't ship, tell whoever runs it that it
+  may disconnect them.
+
 ---
 
 ## Client
