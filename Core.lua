@@ -1048,7 +1048,8 @@ AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWaterma
 -- scan seconds later, so "forgetting" it would look broken rather than
 -- destructive - and the honest answer is that you cannot forget somebody you
 -- are standing on.
-function AltStable.ForgetCharacter(guid)
+-- `when` is a synced forget's own stamp (the settings sync); the player's is now.
+function AltStable.ForgetCharacter(guid, when)
     if not guid or not AltStableDB or not AltStableDB[guid] then
         return false, "no such character"
     end
@@ -1059,7 +1060,7 @@ function AltStable.ForgetCharacter(guid)
     local name = AltStableDB[guid].name or guid
     local seen = AltStableDB[guid].lastUpdate
     AltStableDB[guid] = nil
-    AltStable.MarkCharacterForgotten(guid, time(), name, seen)
+    AltStable.MarkCharacterForgotten(guid, when or time(), name, seen)
 
     -- Drop the display preferences with the record. The hidden list keeps
     -- orphans on purpose, because "the record usually comes back on the next
@@ -1315,6 +1316,9 @@ local function DeserializeFullDB(payload, sender)
     local maxTS = 0   -- newest lastUpdate seen; the caller advances the peer watermark to it
     local peerNow     -- the sender's clock, when it sent one (SEND_TIME)
     local lifted      -- a forgotten character came back in this reply
+    -- What the settings sync changed (own account, setting on): groups taken,
+    -- characters forgotten here and let back.
+    local prefGroups, prefForgot, prefBack = {}, 0, 0
 
     for line in (payload .. "\n"):gmatch("([^\n]*)\n") do
 
@@ -1326,6 +1330,17 @@ local function DeserializeFullDB(payload, sender)
             -- Camps and the list order (#171), only from the player's own other
             -- account: a friend's sync never rearranges your Roster.
             if OwnBNetPeer(sender) then AltStable.ApplyCampSyncLine(line) end
+        elseif AltStable.PREFS_LINE and (line:find(AltStable.PREFS_LINE, 1, true) == 1
+                or line:find(AltStable.FORGOT_LINE, 1, true) == 1) then
+            -- Settings and the forgotten list, the same way: own account only.
+            if OwnBNetPeer(sender) then
+                local group, forgot, back = AltStable.ApplyPrefsSyncLine(line)
+                if group then prefGroups[group] = true end
+                prefForgot = prefForgot + (forgot or 0)
+                prefBack = prefBack + (back or 0)
+                -- Let back: the watermarks were reset for its full record.
+                if (back or 0) > 0 then lifted = true end
+            end
         elseif line == CHAR_SEP then
             -- End of a character block — deserialize what we have.
             local msg = table.concat(current, "\n")
@@ -1381,6 +1396,9 @@ local function DeserializeFullDB(payload, sender)
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
+    end
+    if AltStable.SettingsSynced then
+        AltStable.SettingsSynced(PeerShort(sender), prefGroups, prefForgot, prefBack)
     end
 
     -- A character let back in reset every watermark, so the next reply brings
@@ -1848,6 +1866,10 @@ local function SendFullDatabase(channel, target, sinceTS)
     local payload = SerializeFullDB(accountOnly, sinceTS, toOwn and AltStable.CampMemberGuids() or nil)
     if toOwn then
         for _, line in ipairs(AltStable.CampSyncLines()) do
+            payload = payload .. "\n" .. line
+        end
+        -- And the settings, when the player chose to sync them.
+        for _, line in ipairs(AltStable.PrefsSyncLines and AltStable.PrefsSyncLines() or {}) do
             payload = payload .. "\n" .. line
         end
     end

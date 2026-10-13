@@ -3859,6 +3859,22 @@ local function CreateFrameIfNeeded()
         end)
     Y = Y - 24
 
+    -- Settings and the forgotten list, to and from your own other accounts.
+    -- Off unless asked for: each account keeps its own look until then.
+    local optSyncSettingsCheck = MakeOptCheckRow("syncSettings",
+        "Sync settings and forgotten characters with your other accounts", Y, nil,
+        function() return AltStableConfig and AltStableConfig.syncSettings == true end)
+    AltStable._test.OptSyncSettings = optSyncSettingsCheck
+    Y = Y - 18
+    local optSyncSettingsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optSyncSettingsHint:SetPoint("TOPLEFT", P + 22, Y)
+    optSyncSettingsHint:SetPoint("TOPRIGHT", -P, Y)
+    optSyncSettingsHint:SetJustifyH("LEFT"); optSyncSettingsHint:SetWordWrap(true)
+    optSyncSettingsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optSyncSettingsHint:SetText("Tick it on each account. Appearance, toasts and mail, the sheet "
+        .. "options, hidden and favourite characters: the latest change wins.")
+    Y = Y - 30
+
     -- ── Lists that take only the room they use (#151) ─────
     --
     -- The three lists below - sync peers, requests and answers, hidden
@@ -4183,10 +4199,11 @@ local function CreateFrameIfNeeded()
         cb:SetSize(16, 16)
         cb:SetPoint("TOPLEFT", P + 18, Y + 2)
         cb:SetScript("OnClick", function(self)
-            AltStableConfig = AltStableConfig or {}
-            AltStableConfig.toastProfessions = AltStableConfig.toastProfessions or {}
-            AltStableConfig.toastProfessions[profKey] = self:GetChecked() and true or false
-            AltStable.OnConfigChanged("toastProfessions")
+            -- A copy, through the write path: the settings sync stamps it there.
+            local copy = {}
+            for k, v in pairs((AltStableConfig or {}).toastProfessions or {}) do copy[k] = v end
+            copy[profKey] = self:GetChecked() and true or false
+            AltStable.SetConfigValue("toastProfessions", copy)
         end)
         local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
@@ -4195,6 +4212,7 @@ local function CreateFrameIfNeeded()
         optProfChecks[profKey] = cb
         Y = Y - 18
     end
+    AltStable._test.OptProfChecks = optProfChecks
 
     Y = Y - 12
 
@@ -4363,6 +4381,7 @@ local function CreateFrameIfNeeded()
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
         optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)
+        optSyncSettingsCheck:SetChecked(optSyncSettingsCheck._getter())
         optToastsCheck:SetChecked(AltStableConfig.toastsEnabled ~= false)
         optMailAlertsCheck:SetChecked(AltStableConfig.mailAlertsEnabled ~= false)
         AltStableConfig.toastProfessions = AltStableConfig.toastProfessions or {}
@@ -4381,6 +4400,11 @@ local function CreateFrameIfNeeded()
         -- lit button and silently discard the choice they made.
         RefreshSkinRow()
     end)
+
+    -- Settings that arrived from another account (the settings sync).
+    AltStable.RefreshOptions = function()
+        if optionsPanel:IsShown() then optionsPanel:GetScript("OnShow")(optionsPanel) end
+    end
 
     -- Add the Options sidebar button
     local optSect, optBtn

@@ -59,11 +59,16 @@ end
 -- account box and /alts account.
 local SYNC_SCOPE_KEYS = { sendAllAccounts = true, accountNumber = true }
 
+-- Stamps a synced setting's group when the player changes it (see "Syncing
+-- settings" below, where it is defined).
+local NotePrefChange
+
 function AltStable.SetConfigValue(key, value)
     AltStableConfig = AltStableConfig or {}
     local previous = AltStableConfig[key]
     AltStableConfig[key] = value
     AltStable.OnConfigChanged(key)
+    if NotePrefChange then NotePrefChange(key, previous, value) end
     -- tostring: accountNumber is a number from the Options box and /alts account
     -- but a string from EnsureDefaults (and older saved configs), so re-entering the same
     -- "1" must not count as a change.
@@ -482,6 +487,13 @@ function AltStable.MarkCharacterForgotten(guid, when, name, seen)
         name        = name or (type(prev) == "table" and prev.name) or nil,
     }
     AltStable.SetConfigValue("forgottenCharacters", copy)
+    -- Forgotten again: the newer decision is this one.
+    if (AltStableConfig.unforgottenCharacters or {})[guid] then
+        local back = {}
+        for k, v in pairs(AltStableConfig.unforgottenCharacters) do back[k] = v end
+        back[guid] = nil
+        AltStable.SetConfigValue("unforgottenCharacters", back)
+    end
     return true
 end
 
@@ -570,12 +582,37 @@ function AltStable.ForgottenGuidFor(name)
     return nil, "|cffff8800Not on the forgotten list:|r " .. name
 end
 
-function AltStable.UnforgetCharacter(guid)
+-- `when` is a synced unforget's own stamp; the player's is now - and never
+-- before the forget it undoes, whatever the clocks say, or the forget would
+-- read as the newer decision on the next sync.
+function AltStable.UnforgetCharacter(guid, when)
     if not guid or not AltStable.IsCharacterForgotten(guid) then return false end
     local copy = {}
     for k, v in pairs(AltStableConfig.forgottenCharacters or {}) do copy[k] = v end
+    local e = copy[guid]
     copy[guid] = nil
     AltStable.SetConfigValue("forgottenCharacters", copy)
+
+    -- Remembered, so the settings sync can tell the other account (see
+    -- "Syncing settings" below). Capped like the tombstones, oldest out.
+    local back, all = {}, {}
+    for k, v in pairs(AltStableConfig.unforgottenCharacters or {}) do
+        back[k] = v; all[#all + 1] = k
+    end
+    back[guid] = {
+        at   = tonumber(when) or math.max(time(), ForgottenAt(e) + 1),
+        name = type(e) == "table" and e.name or nil,
+    }
+    all[#all + 1] = guid
+    if #all > TOMBSTONE_CAP then
+        table.sort(all, function(a, b)
+            local x, y = tonumber(back[a].at) or 0, tonumber(back[b].at) or 0
+            if x ~= y then return x > y end
+            return a < b
+        end)
+        for i = TOMBSTONE_CAP + 1, #all do back[all[i]] = nil end
+    end
+    AltStable.SetConfigValue("unforgottenCharacters", back)
 
     -- Dropping the tombstone is not enough to bring the character back, and
     -- saying it was would be a lie. The record's lastUpdate is frozen at
@@ -1133,6 +1170,313 @@ function AltStable.ApplyCampSyncLine(line)
     end
     return false
 end
+
+------------------------------------------------------------
+-- Syncing settings between the player's own accounts
+--
+-- Opt-in, and off by default (syncSettings): AltStableConfig is per account on
+-- purpose, and an account kept looking its own way must stay that way. On, on
+-- BOTH accounts, two more lines ride with the camps - to, and only from, the
+-- player's own accounts, after the last record, where every parser reads past
+-- them. The camps' rules: no PROTOCOL_VERSION bump, the line carries its own.
+--
+--   ==PREFS1==:<group>:<stamp>;<key>=<value>;<key>=<value>...
+--   ==FORGOT1==:<guid>,<f|u>,<stamp>,<name>;...
+--
+-- Settings travel in groups, each stamped when the player last changed one of
+-- them, and the newer group wins whole, as the camps do. Never the sync
+-- machinery, the window's place, the camera or the portrait capture: those
+-- belong to an account or a machine.
+--
+-- The forgotten list merges per character instead. Each forget and unforget
+-- is stamped, and the newer decision about a character wins - a forget never
+-- over a character played since, nor over the one being played.
+------------------------------------------------------------
+
+AltStable.PREFS_LINE, AltStable.FORGOT_LINE = "==PREFS1==", "==FORGOT1=="
+
+local function LevelCapDefault()
+    return (AltStable.API and AltStable.API.LevelCap and AltStable.API.LevelCap()) or 60
+end
+
+-- kind: bool, num (min..max), word (a token, nil allowed when the default is
+-- nil), guids (a set of characters), flags (name = true/false).
+local PREF_GROUPS = {
+    { id = "characters", keys = {
+        { key = "hiddenCharacters",    kind = "guids", default = {} },
+        { key = "favouriteCharacters", kind = "guids", default = {} },
+        { key = "sheetShowHidden",     kind = "bool",  default = false },
+    } },
+    { id = "appearance", keys = {
+        { key = "theme",         kind = "word", default = "dark" },
+        { key = "skin",          kind = "word" },
+        { key = "skinClassTint", kind = "bool", default = false },
+        { key = "scale",         kind = "num",  default = 1.0, min = 0.75, max = 1.25 },
+    } },
+    { id = "alerts", keys = {
+        { key = "toastsEnabled",     kind = "bool",  default = true },
+        { key = "toastProfessions",  kind = "flags", default = { Tailoring = true, Alchemy = true } },
+        { key = "mailAlertsEnabled", kind = "bool",  default = true },
+    } },
+    { id = "sheet", keys = {
+        { key = "auditMinLevel",     kind = "num",  default = LevelCapDefault, min = 1, max = 100 },
+        { key = "rosterPets",        kind = "bool", default = false },
+        { key = "rosterEnchants",    kind = "bool", default = false },
+        { key = "sheetGroupByRealm", kind = "bool", default = true },
+    } },
+}
+local PREF_KEYS, PREF_GROUP = {}, {}
+for _, g in ipairs(PREF_GROUPS) do
+    PREF_GROUP[g.id] = g
+    for _, k in ipairs(g.keys) do k.group = g.id; PREF_KEYS[k.key] = k end
+end
+
+local function SortedKeys(t)
+    local out = {}
+    for k in pairs(t) do if type(k) == "string" then out[#out + 1] = k end end
+    table.sort(out)
+    return out
+end
+
+-- A value as it travels; nil travels as "", so a newer group can say "the
+-- default" too. Sets go sorted, so the same set is the same text.
+local function Encode(k, v)
+    if v == nil then return "" end
+    if k.kind == "bool" then return v and "1" or "0" end
+    if k.kind == "num" then return tonumber(v) and tostring(tonumber(v)) or "" end
+    if k.kind == "word" then return type(v) == "string" and v:match("^[%w_]+$") and v or "" end
+    if type(v) ~= "table" then return "" end
+    local parts = {}
+    for _, name in ipairs(SortedKeys(v)) do
+        if k.kind == "guids" then
+            if v[name] and GoodGuid(name) then parts[#parts + 1] = name end
+        elseif name:match("^%a+$") then
+            parts[#parts + 1] = name .. ":" .. (v[name] and "1" or "0")
+        end
+    end
+    return table.concat(parts, k.kind == "guids" and "," or "+")
+end
+
+-- A received value: ok, value. Anything that does not read is refused, and
+-- the key keeps ours.
+local function Decode(k, text)
+    if text == "" then
+        if k.default == nil then return true, nil end
+        if k.kind ~= "guids" and k.kind ~= "flags" then return false end
+    end
+    if k.kind == "bool" then
+        if text == "1" or text == "0" then return true, text == "1" end
+        return false
+    end
+    if k.kind == "num" then
+        local n = tonumber(text)
+        if not n or n < k.min or n > k.max then return false end
+        return true, n
+    end
+    if k.kind == "word" then
+        if #text <= 32 and text:match("^[%w_]+$") then return true, text end
+        return false
+    end
+    local out, count = {}, 0
+    for item in text:gmatch(k.kind == "guids" and "[^,]+" or "[^+]+") do
+        if count >= MAX_SYNCED_ORDER then break end
+        if k.kind == "guids" then
+            if GoodGuid(item) then out[item] = true; count = count + 1 end
+        else
+            local name, on = item:match("^(%a+):([01])$")
+            if name and #name <= 32 then out[name] = (on == "1"); count = count + 1 end
+        end
+    end
+    return true, out
+end
+
+local function DefaultOf(k)
+    if type(k.default) == "function" then return k.default() end
+    return k.default
+end
+
+-- A group's stamp as it compares. Settings changed before there were stamps
+-- are the player's too: the oldest possible choice, sent and beaten by any
+-- stamped one - the camps' rule. Untouched defaults are nobody's choice.
+local function GroupStamp(g)
+    local stamp = tonumber((AltStableConfig.prefsStamps or {})[g.id])
+    if stamp and stamp > 0 then return stamp end
+    for _, k in ipairs(g.keys) do
+        local v = AltStableConfig[k.key]
+        if v ~= nil and Encode(k, v) ~= Encode(k, DefaultOf(k)) then return 1 end
+    end
+    return 0
+end
+
+local applyingPrefs   -- a synced change is not the player's: never stamped
+
+NotePrefChange = function(key, previous, value)
+    local k = PREF_KEYS[key]
+    if not k or applyingPrefs then return end
+    if Encode(k, previous) == Encode(k, value) then return end
+    local stamps = {}
+    for g, s in pairs(AltStableConfig.prefsStamps or {}) do stamps[g] = s end
+    stamps[k.group] = NextStamp(stamps[k.group])
+    AltStable.SetConfigValue("prefsStamps", stamps)
+end
+
+-- Run `fn` as the sync, not the player. Protected, so an error cannot leave
+-- every later change of the player's unstamped.
+local function AsSync(fn)
+    applyingPrefs = true
+    local ok, err = pcall(fn)
+    applyingPrefs = false
+    if not ok and geterrorhandler then geterrorhandler()(err) end
+end
+
+function AltStable.SettingsSyncOn()
+    return (AltStableConfig and AltStableConfig.syncSettings) == true
+end
+
+local function UnforgetStamp(e)
+    return type(e) == "table" and tonumber(e.at) or 0
+end
+
+-- The lines to send to our own other account: nothing while it is off.
+function AltStable.PrefsSyncLines()
+    local out = {}
+    if not AltStable.SettingsSyncOn() then return out end
+    for _, g in ipairs(PREF_GROUPS) do
+        local stamp = GroupStamp(g)
+        if stamp > 0 then
+            local parts = { AltStable.PREFS_LINE .. ":" .. g.id .. ":" .. stamp }
+            for _, k in ipairs(g.keys) do
+                parts[#parts + 1] = k.key .. "=" .. Encode(k, AltStableConfig[k.key])
+            end
+            out[#out + 1] = table.concat(parts, ";")
+        end
+    end
+    local entries = {}
+    for guid, e in pairs(AltStableConfig.forgottenCharacters or {}) do
+        local at = ForgottenAt(e)
+        if GoodGuid(guid) and at > 0 then
+            entries[#entries + 1] = guid .. ",f," .. at .. "," .. Esc(type(e) == "table" and e.name)
+        end
+    end
+    for guid, e in pairs(AltStableConfig.unforgottenCharacters or {}) do
+        local at = UnforgetStamp(e)
+        if GoodGuid(guid) and at > 0 then
+            entries[#entries + 1] = guid .. ",u," .. at .. "," .. Esc(type(e) == "table" and e.name)
+        end
+    end
+    if #entries > 0 then
+        table.sort(entries)
+        out[#out + 1] = AltStable.FORGOT_LINE .. ":" .. table.concat(entries, ";")
+    end
+    return out
+end
+
+-- One settings group from our own account. Newer than ours wins whole.
+-- Returns the group's id when it was taken.
+local function ApplyPrefsLine(body)
+    local gid, stampText, rest = body:match("^(%w+):(%d+);?(.*)$")
+    local g, stamp = PREF_GROUP[gid or ""], tonumber(stampText)
+    if not g or not stamp or stamp <= 0 or stamp <= GroupStamp(g) then return nil end
+    local values = {}
+    for pair in rest:gmatch("[^;]+") do
+        local key, text = pair:match("^([%w_]+)=(.*)$")
+        local k = key and PREF_KEYS[key]
+        if k and k.group == g.id then
+            local ok, v = Decode(k, text)
+            if ok then values[#values + 1] = { k = k, v = v } end
+        end
+    end
+    AsSync(function()
+        for _, e in ipairs(values) do
+            -- The scale through its own setter, which also resizes the window.
+            if e.k.key == "scale" and AltStable.SetScale then
+                AltStable.SetScale(e.v)
+            else
+                AltStable.SetConfigValue(e.k.key, e.v)
+            end
+        end
+        local stamps = {}
+        for id, s in pairs(AltStableConfig.prefsStamps or {}) do stamps[id] = s end
+        stamps[g.id] = stamp
+        AltStable.SetConfigValue("prefsStamps", stamps)
+    end)
+    return g.id
+end
+
+-- The forgotten list from our own account: per character, the newer decision
+-- wins. Returns how many were forgotten here, and how many let back.
+local function ApplyForgotLine(body)
+    local me = UnitGUID and UnitGUID("player")
+    local forgot, back, seen = 0, 0, 0
+    AsSync(function()
+        for chunk in body:gmatch("[^;]+") do
+            seen = seen + 1
+            if seen > 2 * TOMBSTONE_CAP then break end
+            local guid, state, stampText, nameText = chunk:match("^([^,]+),([fu]),(%d+),?(.*)$")
+            local stamp = tonumber(stampText)
+            if guid and GoodGuid(guid) and stamp and stamp > 0 then
+                local gone = (AltStableConfig.forgottenCharacters or {})[guid]
+                if state == "f" then
+                    local rec = AltStableDB and AltStableDB[guid]
+                    local undone = (AltStableConfig.unforgottenCharacters or {})[guid]
+                    -- Not over a newer unforget, nor a character played since
+                    -- the forget (it would only come back), nor the one we are.
+                    if not gone and guid ~= me and stamp > UnforgetStamp(undone)
+                       and not (type(rec) == "table" and (tonumber(rec.lastUpdate) or 0) > stamp) then
+                        local name = Unesc(nameText):gsub("%c", "")
+                        if name == "" or #name > MAX_NAME then name = nil end
+                        if type(rec) == "table" and AltStable.ForgetCharacter then
+                            AltStable.ForgetCharacter(guid, stamp)
+                        else
+                            AltStable.MarkCharacterForgotten(guid, stamp, name)
+                        end
+                        forgot = forgot + 1
+                    end
+                elseif gone and stamp > ForgottenAt(gone) then
+                    AltStable.UnforgetCharacter(guid, stamp)
+                    back = back + 1
+                end
+            end
+        end
+    end)
+    return forgot, back
+end
+
+-- One line from the player's own account (Core checks that). Returns what
+-- changed, for SettingsSynced: a group's id, or forgot and back counts.
+function AltStable.ApplyPrefsSyncLine(line)
+    if type(line) ~= "string" or not AltStable.SettingsSyncOn() then return nil end
+    local body = line:match("^" .. AltStable.PREFS_LINE .. ":(.*)$")
+    if body then return ApplyPrefsLine(body) end
+    body = line:match("^" .. AltStable.FORGOT_LINE .. ":(.*)$")
+    if body then return nil, ApplyForgotLine(body) end
+    return nil
+end
+
+-- After a sync brought settings: show them, and say so once.
+function AltStable.SettingsSynced(sender, groups, forgot, back)
+    local said = {}
+    for _, g in ipairs(PREF_GROUPS) do
+        if groups[g.id] then said[#said + 1] = g.id end
+    end
+    if forgot > 0 then said[#said + 1] = forgot .. " forgotten" end
+    if back > 0 then said[#said + 1] = back .. " let back" end
+    if #said == 0 then return end
+
+    if groups.appearance and AltStable.ApplyTheme then AltStable.ApplyTheme() end
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    if AltStable.RefreshOptions then AltStable.RefreshOptions() end
+    local msg = "Settings from " .. tostring(sender) .. ": " .. table.concat(said, ", ") .. "."
+    if groups.appearance and AltStable.PendingSkinName and AltStable.SkinName
+       and (AltStable.PendingSkinName() ~= AltStable.SkinName()
+            or (AltStable.SkinIsGlass and AltStable.SkinIsGlass()
+                and AltStable.PendingSkinClassTint() ~= AltStable.SkinClassTint())) then
+        msg = msg .. " The new skin takes effect after a |cffffff00/reload|r."
+    end
+    if AltStable.Print then AltStable.Print(msg) end
+end
+
+AltStable._PREF_GROUPS = PREF_GROUPS
 
 -- A camp moved to place `pos` in the list.
 function AltStable.MoveCamp(id, pos)
