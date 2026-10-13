@@ -709,9 +709,15 @@ local function BuildScrollableColsForSection(section)
         for _, f in ipairs(section.fields) do fields[#fields+1] = f end
         for _, f in ipairs(AltStable.RepFieldsInUse(GetCharacterStore())) do fields[#fields+1] = f end
     end
+    -- With the realm groups off, nothing says where a character is: the
+    -- Ruleset column goes in after Race, on every tab.
+    local ungrouped = AltStableConfig and AltStableConfig.sheetGroupByRealm == false
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
         if col then scrollableCols[#scrollableCols+1] = col end
+        if field == "race" and ungrouped then
+            scrollableCols[#scrollableCols+1] = ColumnFor("ruleset")
+        end
     end
 end
 
@@ -963,6 +969,17 @@ local function BuildDisplayList()
         end
     end
     table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc))
+
+    -- Grouped by realm unless the player turned it off (Options, "Group
+    -- characters by realm"): then one list, in the sort order alone, with no
+    -- headers - and no collapsed realm hiding anyone.
+    if AltStableConfig and AltStableConfig.sheetGroupByRealm == false then
+        for _, char in ipairs(allChars) do
+            table.insert(displayList, { kind = "char", data = char })
+        end
+        return
+    end
+
     local realmOrder, realmChars = {}, {}
     for _, char in ipairs(allChars) do
         local realm = char.realm or "Unknown"
@@ -3734,6 +3751,16 @@ local function CreateFrameIfNeeded()
             end
         end)
     AltStable._test.OptRememberSort = optRememberSortCheck
+    Y = Y - 22
+
+    -- Realm groups on the sheet. Off: one list, in the sort order alone.
+    local optGroupRealmCheck = MakeOptCheckRow("sheetGroupByRealm",
+        "Group characters by realm", Y,
+        function(checked)
+            AltStable.SetConfigValue("sheetGroupByRealm", checked)
+            AltStable.RefreshSheet()
+        end)
+    AltStable._test.OptGroupRealm = optGroupRealmCheck
     Y = Y - 30
 
     -- ── Account & Sync section ────────────────────────────
@@ -4332,6 +4359,7 @@ local function CreateFrameIfNeeded()
         optMinimapCheck:SetChecked(optMinimapCheck._getter())
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
         optRememberSortCheck:SetChecked(optRememberSortCheck._getter())
+        optGroupRealmCheck:SetChecked(optGroupRealmCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
         optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)
@@ -4688,8 +4716,10 @@ local function ColumnSignature()
     return table.concat(fields, ",")
 end
 
+-- Every tab, not only Reputations: the realm-grouping option adds or removes
+-- the Ruleset column on any of them.
 local function RebuildDataDrivenColumns()
-    if not (activeSection and activeSection.repFields) then return end
+    if not activeSection then return end
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
     if ColumnSignature() ~= before then

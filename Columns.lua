@@ -62,6 +62,11 @@ AltStable.Columns = {
       sortValue=function(c) return AltStable.ClassDisplayName(c) end },
     { label="Race",  field="race",  width=22, align="CENTER", type="raceIcon",  group="always", sortText=true,
       sortValue=function(c) return AltStable.RaceDisplayName(c) end },
+    -- Only while the realm groups are off (Options): the sheet adds it after
+    -- Race then, since a realm header no longer says where anyone is. The
+    -- ruleset, not the realm - Forever's realms are its rulesets to a player.
+    { label="Ruleset", field="ruleset", width=50, align="CENTER", type="ruleset", group="always",
+      sortText=true, sortValue=function(c) return AltStable.RulesetName(c.realm) end },
     { label="Lvl",   field="level", width=35, align="RIGHT",  type="number",    group="always",
       sortValue=LevelSortValue },
     { label="iLvl",  field="ilvl",  width=45, align="RIGHT",  type="number",    group="always" },
