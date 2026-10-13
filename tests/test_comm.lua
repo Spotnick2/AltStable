@@ -3807,7 +3807,239 @@ do
               "  and the camps go with the next sync made with the Roster on")
     end
     AltStable.DefaultCampBackdrop = nil
+
+    -- Settings and the forgotten list ride to our own other account too, when
+    -- the player chose to sync them - through the real send and receive paths.
+    do
+        local GONE, BACK, KEPT = "Player-4613-95", "Player-4613-96", "Player-4613-97"
+        local function senderSide()
+            freshAuth()
+            ownOnLibrary("Karuzo Test")
+            mine()
+            AltStableConfig.syncSettings = true
+            AltStableConfig.theme = "class"
+            AltStableConfig.hiddenCharacters = { ["Player-4613-90"] = true }
+            AltStableConfig.favouriteCharacters = {}
+            AltStableConfig.prefsStamps = { appearance = 5000, characters = 5000 }
+            AltStableConfig.forgottenCharacters = {
+                [GONE] = { at = 4000, forgottenAt = 4000, name = "Gone, One" },
+                [KEPT] = { at = 4000, forgottenAt = 4000, name = "Played Since" },
+            }
+            AltStableConfig.unforgottenCharacters = { [BACK] = { at = 4500, name = "Back One" } }
+        end
+        local function wireTo(target)
+            senderSide()
+            WoW.sent = {}
+            T.SendFullDatabase("WHISPER", target); flushAll()
+            return WoW.sentMessages()
+        end
+        local function receiverSide(on)
+            AltStableConfig = { syncSettings = on, theme = "dark", peerWatermarks = {},
+                                forgottenCharacters = { [BACK] = { at = 4000, forgottenAt = 4000, name = "Back One" } } }
+            AltStableDB = {
+                [GONE] = { guid = GONE, name = "Gone, One", class = "MAGE", level = 60, lastUpdate = 3000 },
+                [KEPT] = { guid = KEPT, name = "Played Since", class = "MAGE", level = 60, lastUpdate = 4200 },
+            }
+            WoW.chatOut = {}
+        end
+
+        local wire = wireTo("Karuzo Test")
+        receiverSide(true)
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(AltStableConfig.theme, "class", "settings sync: a newer appearance arrives")
+        eq(AltStableConfig.prefsStamps.appearance, 5000, "  with its stamp, not a new one")
+        check(AltStableConfig.hiddenCharacters["Player-4613-90"], "  the hidden list arrives")
+        check(AltStable.IsCharacterForgotten(GONE), "  a forget arrives")
+        check(AltStableDB[GONE] == nil, "  and drops the record")
+        eq(AltStableConfig.forgottenCharacters[GONE].name, "Gone, One", "  keeping the name")
+        eq(AltStableConfig.forgottenCharacters[GONE].forgottenAt, 4000, "  and the forget's own stamp, so it echoes back unchanged")
+        check(not AltStable.IsCharacterForgotten(KEPT), "  but not over a character played since")
+        check(AltStableDB[KEPT] ~= nil, "  which keeps its record")
+        check(not AltStable.IsCharacterForgotten(BACK), "  a newer unforget lets a character back")
+        eq(AltStableConfig.unforgottenCharacters[BACK].at, 4500, "  with the unforget's own stamp")
+        check(chatHas("Settings from Karuzo Test: characters, appearance, 1 forgotten, 1 let back."),
+              "  and says so once")
+        local mark
+        for _, v in pairs(AltStableConfig.peerWatermarks) do mark = v end
+        eq(mark, nil, "  a character let back keeps the watermarks reset, for its full record")
+
+        -- A synced forget drops the character from our hidden list, as the
+        -- player's does - but that is not the player changing the list.
+        wire = wireTo("Karuzo Test")
+        receiverSide(true)
+        AltStableConfig.hiddenCharacters = { [GONE] = true }
+        AltStableConfig.prefsStamps = { characters = 9000 }
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(AltStableConfig.hiddenCharacters[GONE], nil, "a synced forget unhides the character")
+        eq(AltStableConfig.prefsStamps.characters, 9000, "  without stamping our hidden list")
+
+        -- Off here: nothing taken.
+        receiverSide(nil)
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(AltStableConfig.theme, "dark", "settings sync off here: nothing taken")
+        check(not AltStable.IsCharacterForgotten(GONE), "  not the forgotten list either")
+        check(not chatHas("Settings from"), "  and nothing said")
+
+        -- Off there: nothing sent.
+        senderSide()
+        AltStableConfig.syncSettings = nil
+        eq(#AltStable.PrefsSyncLines(), 0, "settings sync off: nothing to send")
+
+        -- Never someone else's account, either way.
+        wire = wireTo("Friend Person")
+        receiverSide(true)
+        for _, m in ipairs(wire) do receive(m, "Karuzo Test") end
+        flushAll()
+        eq(AltStableConfig.theme, "dark", "settings are not sent to someone else's account")
+        wire = wireTo("Karuzo Test")
+        receiverSide(true)
+        for _, m in ipairs(wire) do receive(m, "Friend Person") end
+        flushAll()
+        eq(AltStableConfig.theme, "dark", "  nor taken from one")
+        check(not AltStable.IsCharacterForgotten(GONE), "  nor their forgotten list")
+    end
     offLibrary()
+end
+
+-- Settings sync: what is stamped, what is taken, what is refused.
+do
+    local function line(group, stamp, body)
+        return AltStable.PREFS_LINE .. ":" .. group .. ":" .. stamp .. ";" .. body
+    end
+
+    -- The player's change stamps its group; the same value again does not.
+    AltStableConfig = {}
+    WoW.now = 8000
+    AltStable.SetConfigValue("theme", "class")
+    eq((AltStableConfig.prefsStamps or {}).appearance, 8000, "changing a synced setting stamps its group")
+    WoW.now = 8100
+    AltStable.SetConfigValue("theme", "class")
+    eq(AltStableConfig.prefsStamps.appearance, 8000, "  the same value again does not")
+    AltStable.SetCharacterHidden("Player-4613-90", true)
+    eq(AltStableConfig.prefsStamps.characters, 8100, "  hiding a character stamps the characters")
+    AltStable.SetConfigValue("toastProfessions", { Tailoring = false })
+    eq(AltStableConfig.prefsStamps.alerts, 8100, "  a toast profession, the alerts")
+    AltStable.SetConfigValue("sheetGroupByRealm", false)
+    eq(AltStableConfig.prefsStamps.sheet, 8100, "  the realm groups, the sheet")
+    AltStable.SetConfigValue("worldCameraEnterDuration", 2)
+    AltStable.SetConfigValue("bnetSync", false)
+    local groups = 0
+    for _ in pairs(AltStableConfig.prefsStamps) do groups = groups + 1 end
+    eq(groups, 4, "  the camera and the sync machinery are never synced")
+    -- A stamp adopted from a clock running ahead is never undercut.
+    AltStableConfig.prefsStamps.appearance = 9000
+    AltStable.SetConfigValue("theme", "dark")
+    eq(AltStableConfig.prefsStamps.appearance, 9001, "  an edit after a fast clock's stamp still beats it")
+
+    -- What goes: only stamped or changed groups; settings changed before
+    -- there were stamps go as the oldest choice.
+    AltStableConfig = { syncSettings = true, theme = "dark", scale = 1.0, hiddenCharacters = {},
+                        toastsEnabled = true, mailAlertsEnabled = true }
+    eq(#AltStable.PrefsSyncLines(), 0, "untouched defaults are nobody's choice: nothing sent")
+    AltStableConfig.theme = "class"
+    local sent = AltStable.PrefsSyncLines()
+    eq(#sent, 1, "a setting changed before stamps is sent")
+    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=0;scale=1",
+       "  as the oldest possible choice")
+
+    -- Taking a group.
+    AltStableConfig = { syncSettings = true, theme = "dark", scale = 1.1, skin = "flat",
+                        prefsStamps = { appearance = 100 } }
+    check(not AltStable.ApplyPrefsSyncLine(line("appearance", 100, "theme=class")),
+          "a group no newer than ours is refused")
+    eq(AltStableConfig.theme, "dark", "  and changes nothing")
+    eq(AltStable.ApplyPrefsSyncLine(line("appearance", 200,
+        "theme=class;skin=;scale=5;skinClassTint=yes;hiddenCharacters=Player-1;future=1")),
+       "appearance", "a newer group is taken")
+    eq(AltStableConfig.theme, "class", "  its values")
+    eq(AltStableConfig.skin, nil, "  an empty skin is the default skin")
+    eq(AltStableConfig.scale, 1.1, "  a scale out of range is refused")
+    eq(AltStableConfig.skinClassTint, nil, "  so is a flag that is not one")
+    eq(AltStableConfig.hiddenCharacters, nil, "  and another group's key")
+    eq(AltStableConfig.prefsStamps.appearance, 200, "  the stamp is the sender's")
+    check(not AltStable.ApplyPrefsSyncLine("==PREFS==:appearance:300;theme=dark"),
+          "a line without its version is ignored")
+    check(not AltStable.ApplyPrefsSyncLine(line("camera", 300, "x=1")), "  so is an unknown group")
+    eq(AltStable.ApplyPrefsSyncLine(line("characters", 300,
+        "hiddenCharacters=Player-1,bad guid!,Creature-0-1;favouriteCharacters=")),
+       "characters", "a character list")
+    check(AltStableConfig.hiddenCharacters["Player-1"], "  keeps the characters")
+    local n = 0
+    for _ in pairs(AltStableConfig.hiddenCharacters) do n = n + 1 end
+    eq(n, 1, "  and drops what is not one")
+    -- An unset flag travels as its default, not as nothing (#229 review):
+    -- "show hidden" is unset until the player first touches it.
+    AltStableConfig = { syncSettings = true, favouriteCharacters = { ["Player-1"] = true },
+                        prefsStamps = { characters = 400 } }
+    sent = AltStable.PrefsSyncLines()
+    check(sent[1]:find(";sheetShowHidden=0", 1, true) ~= nil, "an unset flag is sent as its default")
+    AltStableConfig = { syncSettings = true, sheetShowHidden = true, prefsStamps = { characters = 300 } }
+    AltStable.ApplyPrefsSyncLine(sent[1])
+    eq(AltStableConfig.sheetShowHidden, false, "  so it turns off what the other account has on")
+    AltStableConfig = { sheetShowHidden = false }
+    AltStable.SetConfigValue("sheetShowHidden", nil)
+    eq(AltStableConfig.prefsStamps, nil, "  and unset is no change from its default")
+
+    AltStableConfig.syncSettings = false
+    check(not AltStable.ApplyPrefsSyncLine(line("appearance", 999, "theme=dark")), "nothing is taken while it is off")
+
+    -- The forgotten list, per character.
+    WoW.reset()
+    AltStableConfig = { syncSettings = true, peerWatermarks = {},
+                        unforgottenCharacters = { ["Player-4613-1"] = { at = 600 } },
+                        forgottenCharacters = { ["Player-4613-3"] = { at = 700, forgottenAt = 700 } } }
+    AltStableDB = { [WoW.player.guid] = { guid = WoW.player.guid, name = "Me", lastUpdate = 10 } }
+    local function forgot(body) return select(2, AltStable.ApplyPrefsSyncLine(AltStable.FORGOT_LINE .. ":" .. body)) end
+    eq(forgot("Player-4613-1,f,500,Old"), 0, "a forget older than our unforget is refused")
+    eq(forgot("Player-4613-1,f,650,New"), 1, "  a newer one is taken")
+    eq(forgot(WoW.player.guid .. ",f,900,Me"), 0, "the character being played is never forgotten")
+    eq(forgot("Player-4613-3,u,650,X"), 0, "an unforget older than our forget is refused")
+    check(AltStable.IsCharacterForgotten("Player-4613-3"), "  and leaves it forgotten")
+    eq(forgot("bad,f,900,X;Player-4613-4,f,0,X;Player-4613-5,f,900,"), 1,
+       "a bad guid and a missing stamp are refused")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-5"].name, nil, "  a missing name is no name")
+
+    -- Three accounts (#229 review): an unforget that arrives before its
+    -- forget ever did is kept, so the older forget from a third account
+    -- cannot win when it comes.
+    eq(forgot("Player-4613-7,u,200,Seven"), 0, "an unforget of a character not forgotten here")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-7"].at, 200, "  is kept all the same")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-7"].name, "Seven", "  with its name")
+    AltStableDB["Player-4613-7"] = { guid = "Player-4613-7", name = "Seven", lastUpdate = 50 }
+    eq(forgot("Player-4613-7,f,100,Seven"), 0, "  so an older forget arriving later is refused")
+    check(AltStableDB["Player-4613-7"] ~= nil, "  and the record stays")
+    forgot("Player-4613-7,u,150,Seven")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-7"].at, 200, "  an older unforget does not replace it")
+
+    -- Forgotten here and there, at different times: the newer forget is kept,
+    -- so an unforget made here afterwards beats both (#229 review).
+    AltStableConfig.forgottenCharacters["Player-4613-8"] = { at = 100, forgottenAt = 100, name = "Eight" }
+    eq(forgot("Player-4613-8,f,300,Other"), 0, "a newer forget of one forgotten here is not a new forget")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-8"].forgottenAt, 300, "  but its stamp is kept")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-8"].name, "Eight", "  and our name for it")
+    forgot("Player-4613-8,f,200,Eight")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-8"].forgottenAt, 300, "  an older one does not lower it")
+    WoW.now = 150
+    AltStable.UnforgetCharacter("Player-4613-8")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-8"].at, 301,
+       "  so unforgetting here beats the newer forget, whatever our clock says")
+
+    -- Unforgetting is remembered, and forgetting again ends that.
+    WoW.now = 1000
+    AltStable.UnforgetCharacter("Player-4613-5")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-5"].at, 1000, "an unforget is stamped")
+    AltStable.MarkCharacterForgotten("Player-4613-5", 1100)
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-5"], nil, "  and forgetting again clears it")
+    AltStableConfig.forgottenCharacters["Player-4613-6"] = { at = 5000, forgottenAt = 5000 }
+    AltStable.UnforgetCharacter("Player-4613-6")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-6"].at, 5001,
+       "  an unforget is never older than its forget, whatever the clock says")
+    sent = AltStable.PrefsSyncLines()
+    check(sent[#sent]:find("Player-4613-6,u,5001,", 1, true) ~= nil, "  and goes with the forgotten list")
+    WoW.reset()
 end
 
 ------------------------------------------------------------

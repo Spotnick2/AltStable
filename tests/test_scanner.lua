@@ -949,7 +949,8 @@ AltStable.OnConfigChanged = function(key) changed[#changed + 1] = key end
 AltStableConfig = { whitelist = {} }
 AltStable.SetConfigValue("toastsEnabled", false)
 eq("SetConfigValue assigns", AltStableConfig.toastsEnabled, false)
-eq("  and reports the key", changed[#changed], "toastsEnabled")
+-- First: a synced setting's change also stamps its group (prefsStamps).
+eq("  and reports the key", changed[1], "toastsEnabled")
 
 changed = {}
 Slash("whitelist Hook Target")

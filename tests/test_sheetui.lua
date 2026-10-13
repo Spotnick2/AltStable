@@ -3956,6 +3956,43 @@ do
 end
 
 ------------------------------------------------------------
+-- Syncing settings with your other accounts: off unless ticked
+------------------------------------------------------------
+do
+    local T = AltStable._test
+    local cb = T.OptSyncSettings
+    local held = AltStableConfig.syncSettings
+    AltStableConfig.syncSettings = nil
+    check("settings sync shows off on a profile that never chose", cb._getter() == false)
+    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+    eq("ticking it saves it", AltStableConfig.syncSettings, true)
+    check("  and it is on", AltStable.SettingsSyncOn())
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    check("unticking it turns it off", not AltStable.SettingsSyncOn())
+    -- Settings that arrive while Options is open show there at once.
+    local wasShown = T.optionsPanel:IsShown()
+    T.optionsPanel:Show()
+    AltStableConfig.syncSettings = true
+    AltStable.RefreshOptions()
+    check("open Options shows what changed underneath it", cb:GetChecked() and true or false)
+    if not wasShown then T.optionsPanel:Hide() end
+    AltStableConfig.syncSettings = held
+
+    -- A toast profession's box goes through the write path, where the sync
+    -- stamps it - and as a copy, never an edit of the table it replaces.
+    AltStableConfig.prefsStamps = nil
+    local before = { Tailoring = true, Alchemy = true }
+    AltStableConfig.toastProfessions = before
+    local box = T.OptProfChecks.Tailoring
+    box:SetChecked(false); box:GetScript("OnClick")(box)
+    eq("unticking a toast profession saves it", AltStableConfig.toastProfessions.Tailoring, false)
+    eq("  keeping the others", AltStableConfig.toastProfessions.Alchemy, true)
+    check("  as a new table", AltStableConfig.toastProfessions ~= before and before.Tailoring == true)
+    check("  and stamps the alerts", (AltStableConfig.prefsStamps or {}).alerts ~= nil)
+    AltStableConfig.toastProfessions = before
+end
+
+------------------------------------------------------------
 -- A tab switch glides to the new tab's size (#159)
 ------------------------------------------------------------
 
