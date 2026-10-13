@@ -582,6 +582,26 @@ function AltStable.ForgottenGuidFor(name)
     return nil, "|cffff8800Not on the forgotten list:|r " .. name
 end
 
+-- An unforget, remembered so the settings sync can tell the other accounts
+-- (see "Syncing settings" below). Capped like the tombstones, oldest out.
+local function RememberUnforget(guid, at, name)
+    local back, all = {}, {}
+    for k, v in pairs(AltStableConfig.unforgottenCharacters or {}) do
+        if k ~= guid then back[k] = v; all[#all + 1] = k end
+    end
+    back[guid] = { at = at, name = name }
+    all[#all + 1] = guid
+    if #all > TOMBSTONE_CAP then
+        table.sort(all, function(a, b)
+            local x, y = tonumber(back[a].at) or 0, tonumber(back[b].at) or 0
+            if x ~= y then return x > y end
+            return a < b
+        end)
+        for i = TOMBSTONE_CAP + 1, #all do back[all[i]] = nil end
+    end
+    AltStable.SetConfigValue("unforgottenCharacters", back)
+end
+
 -- `when` is a synced unforget's own stamp; the player's is now - and never
 -- before the forget it undoes, whatever the clocks say, or the forget would
 -- read as the newer decision on the next sync.
@@ -593,26 +613,8 @@ function AltStable.UnforgetCharacter(guid, when)
     copy[guid] = nil
     AltStable.SetConfigValue("forgottenCharacters", copy)
 
-    -- Remembered, so the settings sync can tell the other account (see
-    -- "Syncing settings" below). Capped like the tombstones, oldest out.
-    local back, all = {}, {}
-    for k, v in pairs(AltStableConfig.unforgottenCharacters or {}) do
-        back[k] = v; all[#all + 1] = k
-    end
-    back[guid] = {
-        at   = tonumber(when) or math.max(time(), ForgottenAt(e) + 1),
-        name = type(e) == "table" and e.name or nil,
-    }
-    all[#all + 1] = guid
-    if #all > TOMBSTONE_CAP then
-        table.sort(all, function(a, b)
-            local x, y = tonumber(back[a].at) or 0, tonumber(back[b].at) or 0
-            if x ~= y then return x > y end
-            return a < b
-        end)
-        for i = TOMBSTONE_CAP + 1, #all do back[all[i]] = nil end
-    end
-    AltStable.SetConfigValue("unforgottenCharacters", back)
+    RememberUnforget(guid, tonumber(when) or math.max(time(), ForgottenAt(e) + 1),
+                     type(e) == "table" and e.name or nil)
 
     -- Dropping the tombstone is not enough to bring the character back, and
     -- saying it was would be a lie. The record's lastUpdate is frozen at
@@ -1238,9 +1240,17 @@ local function SortedKeys(t)
     return out
 end
 
--- A value as it travels; nil travels as "", so a newer group can say "the
--- default" too. Sets go sorted, so the same set is the same text.
+local function DefaultOf(k)
+    if type(k.default) == "function" then return k.default() end
+    return k.default
+end
+
+-- A value as it travels. Unset is the default - "" only for a key whose
+-- default is unset (the skin), so a newer group can say "the default" too,
+-- and an unset flag is not refused as no flag at all (#229 review). Sets go
+-- sorted, so the same set is the same text.
 local function Encode(k, v)
+    if v == nil then v = DefaultOf(k) end
     if v == nil then return "" end
     if k.kind == "bool" then return v and "1" or "0" end
     if k.kind == "num" then return tonumber(v) and tostring(tonumber(v)) or "" end
@@ -1288,11 +1298,6 @@ local function Decode(k, text)
         end
     end
     return true, out
-end
-
-local function DefaultOf(k)
-    if type(k.default) == "function" then return k.default() end
-    return k.default
 end
 
 -- A group's stamp as it compares. Settings changed before there were stamps
@@ -1416,15 +1421,29 @@ local function ApplyForgotLine(body)
             local stamp = tonumber(stampText)
             if guid and GoodGuid(guid) and stamp and stamp > 0 then
                 local gone = (AltStableConfig.forgottenCharacters or {})[guid]
-                if state == "f" then
+                local undone = (AltStableConfig.unforgottenCharacters or {})[guid]
+                local name = Unesc(nameText):gsub("%c", "")
+                if name == "" or #name > MAX_NAME then name = nil end
+                if state == "f" and gone then
+                    -- Forgotten here too, earlier: the newer forget is the one
+                    -- to beat, or an unforget made here after seeing it would
+                    -- be stamped below it (#229 review).
+                    if stamp > ForgottenAt(gone) then
+                        local copy = {}
+                        for k, v in pairs(AltStableConfig.forgottenCharacters) do copy[k] = v end
+                        copy[guid] = {
+                            at          = math.max(type(gone) == "table" and tonumber(gone.at) or 0, stamp),
+                            forgottenAt = stamp,
+                            name        = (type(gone) == "table" and gone.name) or name,
+                        }
+                        AltStable.SetConfigValue("forgottenCharacters", copy)
+                    end
+                elseif state == "f" then
                     local rec = AltStableDB and AltStableDB[guid]
-                    local undone = (AltStableConfig.unforgottenCharacters or {})[guid]
                     -- Not over a newer unforget, nor a character played since
                     -- the forget (it would only come back), nor the one we are.
-                    if not gone and guid ~= me and stamp > UnforgetStamp(undone)
+                    if guid ~= me and stamp > UnforgetStamp(undone)
                        and not (type(rec) == "table" and (tonumber(rec.lastUpdate) or 0) > stamp) then
-                        local name = Unesc(nameText):gsub("%c", "")
-                        if name == "" or #name > MAX_NAME then name = nil end
                         if type(rec) == "table" and AltStable.ForgetCharacter then
                             AltStable.ForgetCharacter(guid, stamp)
                         else
@@ -1432,9 +1451,15 @@ local function ApplyForgotLine(body)
                         end
                         forgot = forgot + 1
                     end
-                elseif gone and stamp > ForgottenAt(gone) then
-                    AltStable.UnforgetCharacter(guid, stamp)
-                    back = back + 1
+                elseif gone then
+                    if stamp > ForgottenAt(gone) then
+                        AltStable.UnforgetCharacter(guid, stamp)
+                        back = back + 1
+                    end
+                elseif stamp > UnforgetStamp(undone) then
+                    -- Not forgotten here (yet): kept all the same, so an older
+                    -- forget from a third account cannot win later (#229 review).
+                    RememberUnforget(guid, stamp, name or (type(undone) == "table" and undone.name) or nil)
                 end
             end
         end

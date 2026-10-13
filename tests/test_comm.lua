@@ -3942,7 +3942,7 @@ do
     AltStableConfig.theme = "class"
     local sent = AltStable.PrefsSyncLines()
     eq(#sent, 1, "a setting changed before stamps is sent")
-    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=;scale=1",
+    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=0;scale=1",
        "  as the oldest possible choice")
 
     -- Taking a group.
@@ -3970,6 +3970,19 @@ do
     local n = 0
     for _ in pairs(AltStableConfig.hiddenCharacters) do n = n + 1 end
     eq(n, 1, "  and drops what is not one")
+    -- An unset flag travels as its default, not as nothing (#229 review):
+    -- "show hidden" is unset until the player first touches it.
+    AltStableConfig = { syncSettings = true, favouriteCharacters = { ["Player-1"] = true },
+                        prefsStamps = { characters = 400 } }
+    sent = AltStable.PrefsSyncLines()
+    check(sent[1]:find(";sheetShowHidden=0", 1, true) ~= nil, "an unset flag is sent as its default")
+    AltStableConfig = { syncSettings = true, sheetShowHidden = true, prefsStamps = { characters = 300 } }
+    AltStable.ApplyPrefsSyncLine(sent[1])
+    eq(AltStableConfig.sheetShowHidden, false, "  so it turns off what the other account has on")
+    AltStableConfig = { sheetShowHidden = false }
+    AltStable.SetConfigValue("sheetShowHidden", nil)
+    eq(AltStableConfig.prefsStamps, nil, "  and unset is no change from its default")
+
     AltStableConfig.syncSettings = false
     check(not AltStable.ApplyPrefsSyncLine(line("appearance", 999, "theme=dark")), "nothing is taken while it is off")
 
@@ -3988,6 +4001,31 @@ do
     eq(forgot("bad,f,900,X;Player-4613-4,f,0,X;Player-4613-5,f,900,"), 1,
        "a bad guid and a missing stamp are refused")
     eq(AltStableConfig.forgottenCharacters["Player-4613-5"].name, nil, "  a missing name is no name")
+
+    -- Three accounts (#229 review): an unforget that arrives before its
+    -- forget ever did is kept, so the older forget from a third account
+    -- cannot win when it comes.
+    eq(forgot("Player-4613-7,u,200,Seven"), 0, "an unforget of a character not forgotten here")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-7"].at, 200, "  is kept all the same")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-7"].name, "Seven", "  with its name")
+    AltStableDB["Player-4613-7"] = { guid = "Player-4613-7", name = "Seven", lastUpdate = 50 }
+    eq(forgot("Player-4613-7,f,100,Seven"), 0, "  so an older forget arriving later is refused")
+    check(AltStableDB["Player-4613-7"] ~= nil, "  and the record stays")
+    forgot("Player-4613-7,u,150,Seven")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-7"].at, 200, "  an older unforget does not replace it")
+
+    -- Forgotten here and there, at different times: the newer forget is kept,
+    -- so an unforget made here afterwards beats both (#229 review).
+    AltStableConfig.forgottenCharacters["Player-4613-8"] = { at = 100, forgottenAt = 100, name = "Eight" }
+    eq(forgot("Player-4613-8,f,300,Other"), 0, "a newer forget of one forgotten here is not a new forget")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-8"].forgottenAt, 300, "  but its stamp is kept")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-8"].name, "Eight", "  and our name for it")
+    forgot("Player-4613-8,f,200,Eight")
+    eq(AltStableConfig.forgottenCharacters["Player-4613-8"].forgottenAt, 300, "  an older one does not lower it")
+    WoW.now = 150
+    AltStable.UnforgetCharacter("Player-4613-8")
+    eq(AltStableConfig.unforgottenCharacters["Player-4613-8"].at, 301,
+       "  so unforgetting here beats the newer forget, whatever our clock says")
 
     -- Unforgetting is remembered, and forgetting again ends that.
     WoW.now = 1000
