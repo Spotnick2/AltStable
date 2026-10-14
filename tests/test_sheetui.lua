@@ -3951,6 +3951,19 @@ do
     eq("  and the Ruleset column goes", Fields(), "class,race,level,ilvl")
     AltStable.ToggleRealm("Forever Hardcore")
 
+    -- Switched FROM the Options tab, which has no columns: a refresh there
+    -- threw (ipairs on its nil fields) on every Options checkbox that
+    -- refreshes the sheet - this one, the Roster's pets and enchants.
+    local nav = {}
+    for _, b in ipairs(T.sidebarBtns or {}) do nav[b.sectionId] = b end
+    nav.options:GetScript("OnClick")(nav.options)
+    cb:SetChecked(false)
+    local ok, err = pcall(cb:GetScript("OnClick"), cb)
+    check("a refresh on the Options tab is no error", ok, tostring(err))
+    nav.summary:GetScript("OnClick")(nav.summary)
+    eq("  and back on the table, the Ruleset column is there", Fields(), "class,race,ruleset,level")
+    AltStableConfig.sheetGroupByRealm = true
+
     AltStableDB = savedDB
     AltStable.RefreshSheet()
 end
