@@ -89,6 +89,9 @@ Switch HD models back on before `/alts portrait` if you want HD portraits.
 
 - **Your other WoW accounts on the same Battle.net account** find each other and sync
   automatically, across factions and rulesets. Options has an off switch.
+- **Your settings can follow you** between your own accounts: the look, the sheet options,
+  alerts, and hidden, favourite and forgotten characters. Off by default; tick it in Options
+  on each account.
 - **Another account or player** can be added with `/alts whitelist <name>`.
 - **Nobody gets your characters without asking.** Someone you have not allowed gets a
   prompt on your side (Allow, Not now, Never), and Options lists every answer so you can

@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.14.0
+
+A cleaner glass, settings that follow you between your accounts if you want them to, and a sheet
+that can drop its realm groups. Measured on client 1.60.1.70374. Characters sync as before, so
+v0.14.0 syncs with v0.11.0, v0.12.0 and v0.13.0. Settings sync needs v0.14.0 on both accounts.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+There is no new version since v0.10.0.
+
+### New
+
+- **Clean glass** ([#230](https://github.com/Spotnick2/AltStable/issues/230)), now the default:
+  thin rims, no grain, softer shading and a lighter shadow. Clear and Smoked glass keep their own
+  colour and opacity. To go back to the glass you had, set **Look** to **Classic** in Options and
+  reload.
+- **Settings sync between your own accounts**
+  ([#229](https://github.com/Spotnick2/AltStable/pull/229)). Off by default: tick **Sync
+  settings and forgotten characters with your other accounts** in Options, on each account.
+  - It carries the appearance (skin, glass, look, accent, scale), toasts and mail alerts, the
+    sheet options, and your hidden and favourite characters. When the same setting differs, the
+    latest change wins.
+  - A character you forget on one account is forgotten on the others too, and bringing it back
+    works the same way.
+  - A changed skin or look still waits for a reload. Chat says so when one arrives.
+  - It never touches the sync settings themselves, the window's position, the camera or
+    portraits.
+- **The sheet without realm groups**
+  ([#228](https://github.com/Spotnick2/AltStable/pull/228)). Untick **Group characters by realm**
+  in Options to see one list sorted as a whole. A **Ruleset** column (PvE, PvP, RP, HC) after
+  Race then shows where each character is.
+
+### Fixed
+
+- **A forgotten character that is still played comes back**
+  ([#226](https://github.com/Spotnick2/AltStable/pull/226)). Forgetting a character on one account
+  used to refuse it there for good, even while you kept playing it on another account, so it
+  never synced again, portrait included. Now, if it has been played since you forgot it, it comes
+  back with its next sync, and chat says so. A deleted character stays forgotten.
+
 ## v0.13.0
 
 Forever's launch raids in the Raids tab, a key binding, and glass in your class colour. Measured
