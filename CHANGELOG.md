@@ -24,8 +24,10 @@ There is no new version since v0.10.0.
   ([#229](https://github.com/Spotnick2/AltStable/pull/229)). Off by default: tick **Sync
   settings and forgotten characters with your other accounts** in Options, on each account.
   - It carries the appearance (skin, glass, look, accent, scale), toasts and mail alerts, the
-    sheet options, and your hidden and favourite characters. When the same setting differs, the
-    latest change wins.
+    sheet options, and your hidden and favourite characters.
+  - These go as four groups: appearance, alerts, sheet options, and hidden and favourite
+    characters. The group changed last replaces that whole group on your other accounts, so
+    changing only the accent on one account brings its skin along too.
   - A character you forget on one account is forgotten on the others too, and bringing it back
     works the same way.
   - A changed skin or look still waits for a reload. Chat says so when one arrives.
