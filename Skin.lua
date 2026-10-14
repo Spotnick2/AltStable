@@ -109,11 +109,11 @@ function AltStable._ResetSkinCache()
     activeClean = nil
 end
 
--- The clean look (#230, LibGlass r6's preset; an option, off by default):
--- held for the session like the skin. LibGlass builds the look into each
--- surface, so a change waits for the reload.
+-- The clean look (#230, LibGlass r6's preset; the default since the owner saw
+-- it in game, Classic only when chosen): held for the session like the skin.
+-- LibGlass builds the look into each surface, so a change waits for the reload.
 local function StoredClean()
-    return AltStableConfig ~= nil and AltStableConfig.skinClean == true
+    return not (AltStableConfig ~= nil and AltStableConfig.skinClean == false)
 end
 AltStable.PendingSkinClean = StoredClean
 function AltStable.SkinClean()

@@ -4241,7 +4241,7 @@ do
     eq("  classic first", lb[1].lbl:GetText(), "Classic")
     eq("  then clean", lb[2].lbl:GetText(), "Clean")
     AltStable.EnsureConfigDefaults()
-    eq("off by default", AltStableConfig.skinClean, false)
+    eq("on by default", AltStableConfig.skinClean, true)
 
     local heldSkin = AltStableConfig.skin
     AltStableConfig.skin, AltStableConfig.skinClean = "clear", false
