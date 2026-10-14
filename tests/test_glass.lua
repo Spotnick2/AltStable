@@ -801,7 +801,7 @@ do
         -- AltStable.Glass here proves nothing - the upvalue is already bound.
         -- Loading the file again with it absent is what a dropped Glass.lua
         -- actually looks like, and it is the only way to reach this branch.
-        local held = AltStable.Glass
+        local held, heldUse = AltStable.Glass, AltStable.UseGlassLook
         AltStable.Glass = nil
         dofile("Skin.lua")
         AltStable._ResetSkinCache()
@@ -822,7 +822,12 @@ do
         LibStub = realLibStub
         check("no LibGlass under Libs: Glass.lua loads without an error", ok, tostring(err))
         check("  and leaves the material nil, so the skin goes flat", AltStable.Glass == nil)
-        AltStable.Glass = held
+        check("  and no look to pick (#230)", AltStable.UseGlassLook == nil)
+        AltStable._ResetSkinCache()
+        AltStableConfig.skinClean = true
+        eq("  the clean look asked for anyway is no error", AltStable.SkinClean(), true)
+        AltStableConfig.skinClean = nil
+        AltStable.Glass, AltStable.UseGlassLook = held, heldUse
         dofile("Skin.lua")
         AltStable._ResetSkinCache()
         useSkin("flat")
@@ -1448,6 +1453,58 @@ do
     RAID_CLASS_COLORS.HUNTER, WoW.player.class = heldColour, heldClass
     AltStableConfig.skinClassTint = nil
     useSkin("clear")
+end
+
+------------------------------------------------------------
+-- The clean look (#230): LibGlass r6's preset, an option, held for the session
+------------------------------------------------------------
+do
+    AltStableConfig.skinClean = nil
+    useSkin("clear")
+    eq("classic by default", AltStable.SkinClean(), false)
+    local g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    eq("  the classic rims", g and g.size, "large")
+    eq("  the skin's grain", g and g.grain:GetAlpha(), AltStable.SKINS.clear.grain)
+    local small = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "small")
+    eq("  and on the small surfaces", small and small.size, "small")
+
+    AltStableConfig.skinClean = true
+    useSkin("smoked")
+    eq("asked for: clean", AltStable.SkinClean(), true)
+    g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    eq("  thin rims on the window", g and g.size, "thin")
+    eq("  no grain, though the skin has some", g and g.grain:GetAlpha(), 0)
+    eq("  the skin's wash all the same", Glass.STYLE.wash, AltStable.SKINS.smoked.wash)
+    eq("  the body still the skin's", g and g.tint._colorTexture[4], AltStable.SKINS.smoked.tint[4])
+    eq("  the rim's weight kept", Glass.STYLE.rimAlpha, 1)
+    eq("  the preset's lighter shadow", Glass.STYLE.shadowAlpha, 0.30)
+    small = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "small")
+    eq("  thin rims on the small surfaces", small and small.size, "thin_small")
+    local _, pg = AltStable.SkinPill(CreateFrame("Button", nil, UIParent))
+    eq("  a pill without grain too", pg and pg.grain:GetAlpha(), 0)
+
+    -- Held for the session: the surfaces are built in the look.
+    AltStableConfig.skinClean = false
+    eq("a change waits for the reload", AltStable.SkinClean(), true)
+    eq("  while the stored choice says so", AltStable.PendingSkinClean(), false)
+    g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    eq("  and later surfaces keep the look", g and g.size, "thin")
+
+    -- The next session's choice takes: classic again, its grain back.
+    useSkin("clear")
+    g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    eq("classic again after the reload", g and g.size, "large")
+    eq("  its grain back", g and g.grain:GetAlpha(), AltStable.SKINS.clear.grain)
+    eq("  and its shadow", Glass.STYLE.shadowAlpha, 1)
+
+    -- Picked with the skin, before any surface: whichever asks first.
+    AltStableConfig.skinClean = true
+    AltStable._ResetSkinCache()
+    AltStable.SkinIsGlass()
+    eq("the look is picked with the skin", Glass.STYLE.thinRim, true)
+    AltStableConfig.skinClean = nil
+    useSkin("clear")
+    AltStable.SkinName()
 end
 
 print(("test_glass: %d passed, %d failed"):format(passed, failed))

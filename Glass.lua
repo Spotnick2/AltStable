@@ -20,6 +20,34 @@
 -- library that is there but half-loaded still errors in New, loudly: that is
 -- a broken copy to find, not an install to forgive.)
 
+--
+-- The look (#230): LibGlass r6's clean preset - thin rectangular rims, no
+-- grain, softer gloss and shading - is a construction setting, and the saved
+-- choice is only readable once SavedVariables load, after every file has taken
+-- its `local Glass = AltStable.Glass`. So AltStable.Glass forwards to the
+-- instance in use, which Skin.lua picks once through UseGlassLook before
+-- anything is built (GlassUnitFrames#102's shape). The instance's functions are
+-- closures bound to it, so a forwarded Glass.Apply(...) is that instance's own.
+
 AltStable = AltStable or {}
 local lib = LibStub("LibGlass-1.0", true)
-AltStable.Glass = lib and lib:New({ style = { rimAlpha = 1 } }) or nil
+if lib then
+    local looks = { classic = lib:New({ style = { rimAlpha = 1 } }) }
+    local current = looks.classic
+    AltStable.Glass = setmetatable({}, {
+        __index = function(_, k) return current[k] end,
+        __newindex = function(_, k, v) current[k] = v end,
+    })
+    -- Before the build only: surfaces built earlier keep their look. The clean
+    -- instance is made the first time it is asked for, so a classic session
+    -- never makes one.
+    function AltStable.UseGlassLook(clean)
+        if clean and not looks.clean then
+            looks.clean = lib:New({ preset = "clean", style = { rimAlpha = 1 } })
+        end
+        current = clean and looks.clean or looks.classic
+    end
+else
+    AltStable.Glass = nil
+    AltStable.UseGlassLook = nil
+end

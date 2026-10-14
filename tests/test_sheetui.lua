@@ -4220,6 +4220,70 @@ do
 end
 
 ------------------------------------------------------------
+-- The clean look (#230): the Options row
+------------------------------------------------------------
+do
+    local lb = AltStable._test.lookBtns
+    eq("the look row has two choices", lb and #lb, 2)
+    eq("  classic first", lb[1].lbl:GetText(), "Classic")
+    eq("  then clean", lb[2].lbl:GetText(), "Clean")
+    AltStable.EnsureConfigDefaults()
+    eq("off by default", AltStableConfig.skinClean, false)
+
+    local heldSkin = AltStableConfig.skin
+    AltStableConfig.skin, AltStableConfig.skinClean = "clear", false
+    AltStable._ResetSkinCache()
+    AltStable._test.RefreshSkinRow()
+    eq("nothing pending on the loaded look", AltStable._test.SkinReloadPrompt(), nil)
+    lb[2]:GetScript("OnClick")(lb[2])
+    eq("clicking Clean stores it", AltStableConfig.skinClean, true)
+    -- The one ON DISK reads as chosen, in all three channels of the accent.
+    local function isAccent(fs)
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        local r, g, b = fs:GetTextColor()
+        return r == ar and g == ag and b == ab
+    end
+    check("  Clean reads as chosen", isAccent(lb[2].lbl))
+    check("  Classic does not", not isAccent(lb[1].lbl))
+    local prompt = AltStable._test.SkinReloadPrompt()
+    check("  and says it waits for a reload",
+          prompt and prompt:find("Clean glass|r takes effect after a reload", 1, true), tostring(prompt))
+    lb[1]:GetScript("OnClick")(lb[1])
+    eq("back to Classic: nothing pending", AltStable._test.SkinReloadPrompt(), nil)
+    eq("  and stored", AltStableConfig.skinClean, false)
+
+    -- On flat there is no glass to make clean: nothing waits.
+    AltStableConfig.skin = "flat"
+    AltStable._ResetSkinCache()
+    AltStable.SkinName()
+    lb[2]:GetScript("OnClick")(lb[2])
+    eq("on flat, the look waits for nothing", AltStable._test.SkinReloadPrompt(), nil)
+
+    -- A look that came by settings sync says it waits for the reload too.
+    AltStableConfig.skin, AltStableConfig.skinClean = "clear", false
+    AltStable._ResetSkinCache()
+    AltStable.SkinName()
+    AltStableConfig.skinClean = true
+    local said
+    local heldPrint = AltStable.Print
+    AltStable.Print = function(m) said = m end
+    AltStable.SettingsSynced("Other", { appearance = true }, 0, 0)
+    AltStable.Print = heldPrint
+    check("a synced look says it waits for a reload",
+          said and said:find("takes effect after a", 1, true), tostring(said))
+
+    -- The window built with it on is the clean glass.
+    AltStableConfig.skin = "clear"
+    AltStable._ResetSkinCache()
+    dofile("SheetUI.lua")
+    AltStable.ShowSheet()
+    eq("the window is built with thin rims", AltStable.glass and AltStable.glass.size, "thin")
+    if AltStable._test.frame:IsShown() then AltStable._test.frame:Hide() end
+    AltStableConfig.skin, AltStableConfig.skinClean = heldSkin, false
+    AltStable._ResetSkinCache()
+end
+
+------------------------------------------------------------
 -- No usable LibShowcase: no showcase, never an error (#199)
 ------------------------------------------------------------
 -- Last in the file: it loads SheetUI.lua again, over everything above.
