@@ -3210,6 +3210,40 @@ local function CreateFrameIfNeeded()
     optTintHint:SetText("On the glass skins.")
     AltStable._test.tintBtns = tintBtns
 
+    -- ── Look row (#230) ───────────────────────────────────
+    -- LibGlass r6's clean preset, or the classic glass. A material choice
+    -- like the two above, so it shares their reload line.
+    Y = Y - 30
+    local optLookLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optLookLabel:SetPoint("TOPLEFT", P, Y)
+    optLookLabel:SetText("Look")
+    optLookLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+
+    local lookBtns = {}
+    for i, choice in ipairs({ { false, "Classic" }, { true, "Clean" } }) do
+        local b = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+        b:SetSize(96, 22)
+        if i == 1 then b:SetPoint("TOPLEFT", P + 60, Y + 1)
+        else b:SetPoint("LEFT", lookBtns[i - 1], "RIGHT", 8, 0) end
+        AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+        local lbl = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbl:SetAllPoints(); lbl:SetJustifyH("CENTER")
+        lbl:SetText(choice[2])
+        b.clean, b.lbl = choice[1], lbl
+        b:SetScript("OnClick", function()
+            AltStable.SetConfigValue("skinClean", choice[1])
+            RefreshSkinRow()
+        end)
+        lookBtns[i] = b
+    end
+    local optLookHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optLookHint:SetPoint("LEFT", lookBtns[2], "RIGHT", 14, 0)
+    optLookHint:SetPoint("RIGHT", optionsFrame, "TOPRIGHT", -P, Y - 10)
+    optLookHint:SetJustifyH("LEFT"); optLookHint:SetWordWrap(false)
+    optLookHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optLookHint:SetText("Clean: thin rims, no grain.")
+    AltStable._test.lookBtns = lookBtns
+
     -- WHAT IS ON DISK vs WHAT IS ON SCREEN. The material is built when the
     -- window is, so choosing one here changes the next load, not this one -
     -- and saying so only when they disagree keeps a permanent instruction off
@@ -3266,17 +3300,24 @@ local function CreateFrameIfNeeded()
         for _, b in ipairs(tintBtns) do
             SetChoiceBtnState(b, b.lbl, b.classTint == tint)
         end
+        local clean = AltStable.PendingSkinClean()
+        for _, b in ipairs(lookBtns) do
+            SetChoiceBtnState(b, b.lbl, b.clean == clean)
+        end
         -- Against what the WINDOW is wearing, which is resolved once per
         -- session: choosing the one already loaded is not a pending change.
-        -- The glass colour only counts where there is glass: not on flat, and
-        -- not without the library (a source install), as SkinIsGlass asks.
+        -- The glass colour and look only count where there is glass: not on
+        -- flat, and not without the library (a source install), as SkinIsGlass
+        -- asks.
         local skinWaiting = pending ~= AltStable.SkinName()
-        local tintWaiting = not skinWaiting and AltStable.SkinIsGlass()
-            and tint ~= AltStable.SkinClassTint()
-        local waiting = skinWaiting or tintWaiting
+        local glass = not skinWaiting and AltStable.SkinIsGlass()
+        local tintWaiting = glass and tint ~= AltStable.SkinClassTint()
+        local lookWaiting = glass and clean ~= AltStable.SkinClean()
+        local waiting = skinWaiting or tintWaiting or lookWaiting
         local what = skinWaiting
             and (AltStable.SKINS[pending] and AltStable.SKINS[pending].label or pending)
-            or (tint and "Class-coloured glass" or "Neutral glass")
+            or tintWaiting and (tint and "Class-coloured glass" or "Neutral glass")
+            or (clean and "Clean glass" or "Classic glass")
         optSkinReload:SetText(waiting
             and ("|cffffcc00" .. what .. "|r takes effect after a reload") or "")
         optSkinReload:SetShown(waiting)

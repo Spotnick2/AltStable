@@ -115,6 +115,10 @@ local function EnsureDefaults()
     if AltStableConfig.skinClassTint == nil then
         AltStableConfig.skinClassTint = false
     end
+    -- The clean glass look (#230, LibGlass r6): off unless asked for.
+    if AltStableConfig.skinClean == nil then
+        AltStableConfig.skinClean = false
+    end
     if AltStableConfig.toastsEnabled == nil then
         AltStableConfig.toastsEnabled = true
     end
@@ -1213,7 +1217,8 @@ local PREF_GROUPS = {
         { key = "theme",         kind = "word", default = "dark" },
         { key = "skin",          kind = "word" },
         { key = "skinClassTint", kind = "bool", default = false },
-        { key = "scale",         kind = "num",  default = 1.0, min = 0.75, max = 1.25 },
+        { key = "skinClean",     kind = "bool", default = false },
+        { key = "scale",        kind = "num",  default = 1.0, min = 0.75, max = 1.25 },
     } },
     { id = "alerts", keys = {
         { key = "toastsEnabled",     kind = "bool",  default = true },
@@ -1495,7 +1500,8 @@ function AltStable.SettingsSynced(sender, groups, forgot, back)
     if groups.appearance and AltStable.PendingSkinName and AltStable.SkinName
        and (AltStable.PendingSkinName() ~= AltStable.SkinName()
             or (AltStable.SkinIsGlass and AltStable.SkinIsGlass()
-                and AltStable.PendingSkinClassTint() ~= AltStable.SkinClassTint())) then
+                and (AltStable.PendingSkinClassTint() ~= AltStable.SkinClassTint()
+                     or AltStable.PendingSkinClean() ~= AltStable.SkinClean()))) then
         msg = msg .. " The new skin takes effect after a |cffffff00/reload|r."
     end
     if AltStable.Print then AltStable.Print(msg) end

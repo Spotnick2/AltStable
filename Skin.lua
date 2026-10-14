@@ -89,8 +89,14 @@ AltStable.PendingSkinName = StoredSkin
 -- the config and says reload; the config is the pending choice, not the live one.
 local active
 local activeClassTint   -- see SkinClassTint, below
+local activeClean       -- see SkinClean, below
 function AltStable.SkinName()
-    if not active then active = StoredSkin() end
+    if not active then
+        active = StoredSkin()
+        -- The look picks the material instance, so it is resolved with the
+        -- skin: before the first Apply, whichever surface asks first.
+        AltStable.SkinClean()
+    end
     return active
 end
 
@@ -100,6 +106,22 @@ end
 function AltStable._ResetSkinCache()
     active = nil
     activeClassTint = nil
+    activeClean = nil
+end
+
+-- The clean look (#230, LibGlass r6's preset; an option, off by default):
+-- held for the session like the skin. LibGlass builds the look into each
+-- surface, so a change waits for the reload.
+local function StoredClean()
+    return AltStableConfig ~= nil and AltStableConfig.skinClean == true
+end
+AltStable.PendingSkinClean = StoredClean
+function AltStable.SkinClean()
+    if activeClean == nil then
+        activeClean = StoredClean()
+        if AltStable.UseGlassLook then AltStable.UseGlassLook(activeClean) end
+    end
+    return activeClean
 end
 
 -- The main window's glass in the class colour (an option, off by default):
@@ -157,9 +179,12 @@ end
 -- The preset into the material's STYLE, before an Apply or a Pill: the three
 -- body parameters, the tint COPIED (see SkinWindow for why never aliased). One
 -- place, so the copy rule cannot drift between two callers (review of #215).
+-- Under the clean look the grain stays off, as the preset built it: the
+-- skin's grain is the classic frost.
 local function PushPreset(preset, body)
     local st = Glass.STYLE
-    st.grain, st.wash = preset.grain, preset.wash
+    st.grain = AltStable.SkinClean() and 0 or preset.grain
+    st.wash = preset.wash
     st.tint = { body[1], body[2], body[3], body[4] }
 end
 

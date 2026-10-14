@@ -3942,7 +3942,7 @@ do
     AltStableConfig.theme = "class"
     local sent = AltStable.PrefsSyncLines()
     eq(#sent, 1, "a setting changed before stamps is sent")
-    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=0;scale=1",
+    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=0;skinClean=0;scale=1",
        "  as the oldest possible choice")
 
     -- Taking a group.
@@ -3960,6 +3960,15 @@ do
     eq(AltStableConfig.skinClassTint, nil, "  so is a flag that is not one")
     eq(AltStableConfig.hiddenCharacters, nil, "  and another group's key")
     eq(AltStableConfig.prefsStamps.appearance, 200, "  the stamp is the sender's")
+    -- The clean look (#230) travels with the appearance. A version from before
+    -- it sends no such key, and ours stays.
+    AltStableConfig.skinClean = true
+    eq(AltStable.ApplyPrefsSyncLine(line("appearance", 250, "theme=class;skin=;skinClassTint=0;scale=1")),
+       "appearance", "a group from before the clean look is taken")
+    eq(AltStableConfig.skinClean, true, "  and leaves our look alone")
+    eq(AltStable.ApplyPrefsSyncLine(line("appearance", 260, "skinClean=0")), "appearance",
+       "a group with the look")
+    eq(AltStableConfig.skinClean, false, "  sets it")
     check(not AltStable.ApplyPrefsSyncLine("==PREFS==:appearance:300;theme=dark"),
           "a line without its version is ignored")
     check(not AltStable.ApplyPrefsSyncLine(line("camera", 300, "x=1")), "  so is an unknown group")
