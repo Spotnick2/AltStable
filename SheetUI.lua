@@ -4782,9 +4782,11 @@ local function ColumnSignature()
 end
 
 -- Every tab, not only Reputations: the realm-grouping option adds or removes
--- the Ruleset column on any of them.
+-- the Ruleset column on any of them. Not a tab without columns (Options, the
+-- plugins): it has nothing to rebuild, and switching back to a table builds
+-- that table's columns afresh.
 local function RebuildDataDrivenColumns()
-    if not activeSection then return end
+    if not (activeSection and activeSection.fields) then return end
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
     if ColumnSignature() ~= before then
