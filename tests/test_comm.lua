@@ -3942,7 +3942,7 @@ do
     AltStableConfig.theme = "class"
     local sent = AltStable.PrefsSyncLines()
     eq(#sent, 1, "a setting changed before stamps is sent")
-    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=0;skinClean=0;scale=1",
+    eq(sent[1], "==PREFS1==:appearance:1;theme=class;skin=;skinClassTint=0;skinClean=1;scale=1",
        "  as the oldest possible choice")
 
     -- Taking a group.

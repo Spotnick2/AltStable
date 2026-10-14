@@ -43,6 +43,11 @@ local function useSkin(name)
     AltStable._ResetSkinCache()
 end
 
+-- The CLASSIC look until the look's own block at the end: everything before
+-- it measures the skins' grain, which the clean look (the default, #230)
+-- turns off.
+AltStableConfig.skinClean = false
+
 local Glass = AltStable.Glass
 check("the material loaded", Glass ~= nil)
 if not Glass then
@@ -826,7 +831,7 @@ do
         AltStable._ResetSkinCache()
         AltStableConfig.skinClean = true
         eq("  the clean look asked for anyway is no error", AltStable.SkinClean(), true)
-        AltStableConfig.skinClean = nil
+        AltStableConfig.skinClean = false
         AltStable.Glass, AltStable.UseGlassLook = held, heldUse
         dofile("Skin.lua")
         AltStable._ResetSkinCache()
@@ -1456,13 +1461,19 @@ do
 end
 
 ------------------------------------------------------------
--- The clean look (#230): LibGlass r6's preset, an option, held for the session
+-- The clean look (#230): LibGlass r6's preset, the default, held for the session
 ------------------------------------------------------------
 do
     AltStableConfig.skinClean = nil
     useSkin("clear")
-    eq("classic by default", AltStable.SkinClean(), false)
+    eq("clean by default", AltStable.SkinClean(), true)
     local g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
+    eq("  thin rims", g and g.size, "thin")
+
+    AltStableConfig.skinClean = false
+    useSkin("clear")
+    eq("Classic when chosen", AltStable.SkinClean(), false)
+    g = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent))
     eq("  the classic rims", g and g.size, "large")
     eq("  the skin's grain", g and g.grain:GetAlpha(), AltStable.SKINS.clear.grain)
     local small = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "small")

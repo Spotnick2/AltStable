@@ -115,9 +115,9 @@ local function EnsureDefaults()
     if AltStableConfig.skinClassTint == nil then
         AltStableConfig.skinClassTint = false
     end
-    -- The clean glass look (#230, LibGlass r6): off unless asked for.
+    -- The clean glass look (#230, LibGlass r6): on unless Classic is chosen.
     if AltStableConfig.skinClean == nil then
-        AltStableConfig.skinClean = false
+        AltStableConfig.skinClean = true
     end
     if AltStableConfig.toastsEnabled == nil then
         AltStableConfig.toastsEnabled = true
@@ -1217,7 +1217,7 @@ local PREF_GROUPS = {
         { key = "theme",         kind = "word", default = "dark" },
         { key = "skin",          kind = "word" },
         { key = "skinClassTint", kind = "bool", default = false },
-        { key = "skinClean",     kind = "bool", default = false },
+        { key = "skinClean",     kind = "bool", default = true },
         { key = "scale",        kind = "num",  default = 1.0, min = 0.75, max = 1.25 },
     } },
     { id = "alerts", keys = {
