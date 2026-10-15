@@ -78,6 +78,10 @@ jobs:
           find . -name '*.lua' -not -path './.git/*' -print0 | xargs -0 luac5.1 -p
 
       - name: Unit tests
+        env:
+          # ForeverProbe is private and local, so the probe's tests
+          # (test_probe, test_whaticon) skip here and run locally (#240).
+          FOREVERPROBE_OPTIONAL: "1"
         run: |
           for f in tests/test_*.lua; do
             echo "-- $f"

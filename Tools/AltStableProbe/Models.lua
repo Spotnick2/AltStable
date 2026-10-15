@@ -63,11 +63,10 @@ local CREATURE_TRIES = {
     { id = 1793,  label = "1793" },
 }
 
-AltStableProbeDB = AltStableProbeDB or {}
+local _, NS = ...
+local Probe = NS.Probe
 
-local function Out(s)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[model]|r " .. tostring(s))
-end
+local function Out(s) Probe:Say("[model] " .. tostring(s)) end
 
 -- Every model call goes through here: the client is allowed to not have one.
 local function Try(obj, method, ...)
@@ -321,6 +320,7 @@ local function BuildViewer()
     if viewer then return viewer end
 
     viewer = CreateFrame("Frame", "AltStableModelProbe", UIParent, "BasicFrameTemplateWithInset")
+    viewer:Hide()   -- a new frame starts shown; the toggle must see it closed (as Pets.lua)
     viewer:SetSize(560, 510)
     viewer:SetPoint("CENTER")
     viewer:SetMovable(true); viewer:EnableMouse(true)
@@ -445,8 +445,7 @@ end
 -- Commands
 ------------------------------------------------------------
 
-SLASH_ASMODEL1 = "/asmodel"
-SlashCmdList["ASMODEL"] = function(msg)
+Probe:Command("model", function(msg)
     msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
 
     if msg == "capture" then
@@ -456,7 +455,7 @@ SlashCmdList["ASMODEL"] = function(msg)
     end
     if msg == "list" then
         local list = StoredList()
-        if #list == 0 then Out("nothing captured yet - /asmodel capture on each character") end
+        if #list == 0 then Out("nothing captured yet - /fp as model capture on each character") end
         for i, rec in ipairs(list) do Out(i .. ". " .. Describe(rec)) end
         return
     end
@@ -467,27 +466,27 @@ SlashCmdList["ASMODEL"] = function(msg)
         return
     end
     if msg ~= "" and msg ~= "show" then
-        Out("usage: /asmodel [show] | capture | list | caps | wipe")
+        Out("usage: /fp as model [show] | capture | list | caps | wipe")
         return
     end
 
     local f = BuildViewer()
     if f:IsShown() then f:Hide() else f:Show(); ApplyBoth("display") end
-end
+end, "[show] | capture | list | caps | wipe: offline character models (#15)")
 
 ------------------------------------------------------------
 -- Capture on login, so simply playing your alts fills the set.
 ------------------------------------------------------------
 
 local ev = CreateFrame("Frame")
-ev:RegisterEvent("PLAYER_LOGIN")
+Probe:RegisterEvents(ev, { "PLAYER_LOGIN" })
 ev:SetScript("OnEvent", function()
     -- A short delay: display id and inventory are not reliably readable the
     -- instant PLAYER_LOGIN fires.
     C_Timer.After(5, function()
         local rec = CaptureSelf()
         if rec then
-            Out("captured " .. Describe(rec) .. "  (/asmodel to compare)")
+            Out("captured " .. Describe(rec) .. "  (/fp as model to compare)")
         end
     end)
 end)

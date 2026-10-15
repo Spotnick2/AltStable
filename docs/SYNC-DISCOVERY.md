@@ -262,7 +262,7 @@ measure (2026-09-30):** "cannot friend itself" was never the question - the ques
 the server delivers game data to your OWN other game account, by id, with both online. Nothing
 measured says no. Overlord Forever 1.3.2 (`C:\Projects\WoW\References\Overlord-1.3.2`, read for
 technique only - All Rights Reserved) bridges Horde and Alliance this way through Battle.net
-FRIENDS, whose clients relay. `/asprobe bnet me` / `send <id>` measure the own-account case. If it
+FRIENDS, whose clients relay. `/fp as bnet me` / `send <id>` (`/asprobe bnet` at the time) measure the own-account case. If it
 delivers, it crosses rulesets AND factions, which nothing else here does.
 
 **MEASURED, 2026-09-30 23:39 (70124): it delivers - across rulesets.** Karuzo Test (account #1,
@@ -276,7 +276,7 @@ ClassicBetaPvP2) looked up Karuzo Mortalis (#12, ClassicBetaPvE) with
   other; `SendGameData(7)` typed on the other side returned `6 (TargetRequired)`. Never store or
   exchange an id; look it up on the sending client, or reply to `senderID`.
 - **The GUID lookup needs the GUID and the character online.** Mortalis's own scan found nothing:
-  its database had never seen Karuzo Test. `/asprobe bnet ids` measures discovery with no GUID
+  its database had never seen Karuzo Test. `/fp as bnet ids` measures discovery with no GUID
   (walk the small local ids, keep our own `bnetAccountID`).
 - **Across factions:** measured since, in game with #58: Horde <-> Alliance syncs both ways.
 - **Also measured:** a `/reload` keeps channel membership; a logout drops it.
@@ -416,8 +416,8 @@ two rulesets cannot sync directly at all.
   `JoinChannelByName` and `JoinPermanentChannel` all exist; `JoinTemporaryChannel(name, pw)`
   returned `0`, and the server's notice arrives as `CHAT_MSG_CHANNEL_NOTICE` (18 arguments).
 
-**The probe:** `/asprobe channel …` in `Tools/AltStableProbe/Channel.lua` (deploy with
-`pwsh Tools/deploy-probe.ps1`), everything to the wire log for `/asprobe copy`:
+**The probe:** `/fp as channel …` (was `/asprobe channel`) in `Tools/AltStableProbe/Channel.lua`
+(deploy with `pwsh Tools/deploy-probe.ps1`), everything to the wire log and the `/fp` console:
 
 | command | answers |
 |---|---|
@@ -427,7 +427,7 @@ two rulesets cannot sync directly at all.
 | `status [name]`, and 8 s after login | 3: still joined after a relog |
 | `cap` | 4: joins `ASPCap1..20` - past the cap of 20, with the client's own 5 - logs each result and the notices, leaves them all |
 | `leave <name>` | |
-| `log`, `clear` | the channel results (the wire log, kept across relogs) in the copy window; empty it |
+| `log`, `clear` | the channel results (the wire log, kept across relogs) in the console; empty it |
 
 **Reading the results:** `python Tools/AltStableProbe/read-wirelog.py [--since HH:MM]` prints the
 wire log from every account's `WTF\Account\<id>\SavedVariables\AltStableProbe.lua` - written on

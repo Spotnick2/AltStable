@@ -1,5 +1,5 @@
 ------------------------------------------------------------
--- test_whaticon.lua — naming the texture under the cursor (/asicon)
+-- test_whaticon.lua — naming the texture under the cursor (/fp as icon)
 --
 -- The command exists because guessing a texture path from a screenshot is how
 -- you ship the green question mark. It shipped with a bug that threw on
@@ -10,6 +10,9 @@
 ------------------------------------------------------------
 
 dofile("tests/wow_stubs.lua")
+-- The probe is a ForeverProbe module (#240): the real host, which CI skips.
+dofile("tests/foreverprobe.lua")
+local FP = loadForeverProbe()
 
 local passed, failed = 0, 0
 local function check(name, ok, detail)
@@ -21,20 +24,14 @@ local function eq(name, got, want)
 end
 
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
--- A stand-in for what Probe.lua provides. The hand-off is the PR's only change
--- to that file and nothing exercised it, so breaking it left the suite green.
-AltStableProbe = {}
-local copyShown, copyLines = false, nil
-AltStableProbe.ShowCopy = function(lines) copyShown, copyLines = true, lines end
-AltStableProbe.HideCopy = function()
-    local was = copyShown
-    copyShown = false
-    return was
-end
 dofile("Compat.lua")
-dofile("Tools/AltStableProbe/WhatIcon.lua")
+-- The module Probe.lua makes, handed over the way it hands it: through the
+-- addon's namespace.
+local ns = { Probe = FP:Module("AltStableProbe", { api = 1, cmd = "as" }) }
+assert(loadfile("Tools/AltStableProbe/WhatIcon.lua"))("AltStableProbe", ns)
+local function icon(args) SlashCmdList.FOREVERPROBE("as icon " .. args) end
 
-local T = AltStableProbe._testIcon
+local T = ns._testIcon
 check("the probe exposes a seam", T ~= nil)
 if not T then
     print(("test_whaticon: %d passed, %d failed"):format(passed, failed + 1))
@@ -139,6 +136,7 @@ do
     }
     _G.GetMouseFoci = function() return { button } end
 
+    FP.Console.Hide()
     local lines = T.WhatIsUnderTheCursor(sink)
     local all = table.concat(said, "\n")
 
@@ -150,12 +148,12 @@ do
     for _ in all:gmatch("lfg%-eye") do hits = hits + 1 end
     eq("a texture that is both a region and a named field is reported once", hits, 1)
 
-    -- The returned lines are what the copy window shows, so they must be free
-    -- of colour codes - a path with |cffffff00 glued to it is not a path.
+    -- The returned lines are the plain answer, so they must be free of colour
+    -- codes - a path with |cffffff00 glued to it is not a path.
     local joined = table.concat(lines, "\n")
-    check("the answer is handed to the copy window", copyShown,
-          "chat is not selectable, so a path has to be retypeable from somewhere")
-    check("  with the same lines", copyLines ~= nil and #copyLines > 0)
+    check("the answer brings the /fp console up", FP.Console.IsShown(),
+          "the path has to be copyable from somewhere: Freeze, Select all")
+    eq("  filtered to this probe", FP.Console.filter, "AltStableProbe")
 
     check("the copyable lines carry no colour codes",
           joined:find("|c", 1, true) == nil and joined:find("|r", 1, true) == nil,
@@ -195,7 +193,7 @@ end
 -- It waits for you to point at the thing
 ------------------------------------------------------------
 -- The first version read the cursor the instant the command ran, which sounds
--- right and is useless: typing "/asicon" means being at the chat box, so the
+-- right and is useless: typing the command means being at the chat box, so the
 -- pointer has already left whatever you wanted named. The first real use came
 -- back "UI-HUD-ExperienceBar-Fill-Prediction" - the status bar behind the chat
 -- frame, correctly identified and entirely beside the point.
@@ -218,12 +216,11 @@ do
                    end } }
     end
 
-    -- Starting a read dismisses the last answer, or the big mouse-enabled copy
-    -- window sits under the cursor and the next reading is of the probe.
-    copyShown = true
+    -- Starting a read puts the /fp console away, or the big mouse-enabled
+    -- frame sits under the cursor and the reading is of the probe. One frame
+    -- later, because the host shows the console after the command returns.
+    FP.Console.Show("AltStableProbe")
     T.ReadAfterDelay()
-    check("starting a read puts the copy window away", not copyShown,
-          "it would be the thing under the cursor")
     check("the read is pending", T.reading())
     check("  and nothing was read yet", not answered,
           "it read the cursor while the player was still at the chat box")
@@ -232,11 +229,17 @@ do
     for i = 1, T.READ_DELAY - 1 do
         WoW.flushTimers()
         check(("  still waiting after %d tick(s)"):format(i), not answered)
+        if i == 1 then
+            check("a frame later the console is put away", not FP.Console.IsShown(),
+                  "it would be the thing under the cursor")
+        end
     end
 
     WoW.flushTimers()
     check("it reads once the countdown ends", answered)
     check("  and stops being pending", not T.reading())
+    -- The answer is a path to retype exactly: the console comes back with it.
+    check("  and the console comes back with the answer", FP.Console.IsShown())
 
     -- The ticker must not keep firing afterwards.
     answered = false
@@ -248,42 +251,51 @@ end
 do
     -- THROUGH THE REAL COMMAND, because which of the two it calls is the whole
     -- fix. Calling ReadAfterDelay directly proves the countdown works and says
-    -- nothing about whether /asicon uses it - and "it reads immediately" is
+    -- nothing about whether the command uses it - and "it reads immediately" is
     -- exactly the bug being fixed.
     WoW.timers = {}
-    local reads = 0
-    _G.GetMouseFoci = function() reads = reads + 1; return {} end
+    local reads, consoleAtRead = 0, nil
+    _G.GetMouseFoci = function()
+        reads = reads + 1
+        consoleAtRead = FP.Console.IsShown()
+        return {}
+    end
 
-    SlashCmdList["ASICON"]("")
-    eq("bare /asicon does not read straight away", reads, 0)
+    icon("")
+    eq("bare /fp as icon does not read straight away", reads, 0)
     check("  it counts down instead", T.reading())
     for _ = 1, T.READ_DELAY do WoW.flushTimers() end
     eq("  and reads when the countdown ends", reads, 1)
+    eq("  with the console out of the way", consoleAtRead, false)
 
-    SlashCmdList["ASICON"]("now")
-    eq("/asicon now reads immediately", reads, 2)
+    -- A keybind fires `now` with the console still up from the last answer:
+    -- it has to go before the read, not a frame later.
+    FP.Console.Show("AltStableProbe")
+    icon("now")
+    eq("/fp as icon now reads immediately", reads, 2)
+    eq("  with the console out of the way", consoleAtRead, false)
     check("  without queueing anything", not T.reading())
 
     -- `now` while a countdown is ALREADY running. Without cancelling it, the
     -- pending one fires five seconds later and overwrites the answer just
     -- given with whatever the cursor has wandered onto - two readings from one
     -- ask, and the wrong one last.
-    SlashCmdList["ASICON"]("")
+    icon("")
     check("a countdown is running", T.reading())
-    SlashCmdList["ASICON"]("now")
-    eq("  /asicon now answers straight away", reads, 3)
+    icon("now")
+    eq("  /fp as icon now answers straight away", reads, 3)
     check("  and cancels the countdown rather than leaving it armed", not T.reading())
     for _ = 1, T.READ_DELAY + 1 do WoW.flushTimers() end
     eq("  so it does not read again behind your back", reads, 3)
 
-    SlashCmdList["ASICON"]("")
+    icon("")
     check("a countdown is running", T.reading())
-    SlashCmdList["ASICON"]("cancel")
-    check("/asicon cancel stops it", not T.reading())
+    icon("cancel")
+    check("/fp as icon cancel stops it", not T.reading())
     for _ = 1, T.READ_DELAY + 1 do WoW.flushTimers() end
     eq("  and it never reads", reads, 3)
 
-    SlashCmdList["ASICON"]("nonsense")
+    icon("nonsense")
     eq("an unknown argument reads nothing", reads, 3)
     check("  and starts nothing", not T.reading())
 end

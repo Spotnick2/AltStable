@@ -5,6 +5,11 @@
     Tools/AltStableProbe/Probe.lua). It is never packaged — it lives under
     Tools/, which .pkgmeta ignores.
 
+    AltStableProbe is a ForeverProbe module (#240): it has
+    ## Dependencies: ForeverProbe, so the host is deployed first, from the
+    ForeverProbe checkout ($env:FOREVERPROBE, else ..\ForeverProbe). Without it
+    the client loads no AltStableProbe at all.
+
     Usage:
         pwsh Tools/deploy-probe.ps1
         pwsh Tools/deploy-probe.ps1 -AddOnsPath "D:\Games\WoW\_classic_beta_\Interface\AddOns"
@@ -17,12 +22,21 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$src = Join-Path $RepoRoot "Tools\AltStableProbe"
+$ForeverProbe = if ($env:FOREVERPROBE) { $env:FOREVERPROBE } else { Join-Path (Split-Path -Parent $RepoRoot) "ForeverProbe" }
 
 if (-not (Test-Path $AddOnsPath)) {
     Write-Error "AddOns path not found: $AddOnsPath"
     exit 1
 }
+
+# The host first. Its own deploy refuses an incomplete checkout or a luac
+# failure, and prints the commit; then nothing of ours is touched.
+if (-not (Test-Path -LiteralPath (Join-Path $ForeverProbe "Tools\deploy.ps1"))) {
+    Write-Error "ForeverProbe checkout not found at $ForeverProbe (clone github.com/Spotnick2/ForeverProbe there, or set `$env:FOREVERPROBE)"
+    exit 1
+}
+& pwsh -NoProfile -File (Join-Path $ForeverProbe "Tools\deploy.ps1") -AddOnsPath $AddOnsPath
+if ($LASTEXITCODE -ne 0) { Write-Error "ForeverProbe deploy refused; AltStableProbe was not touched"; exit 1 }
 
 # /MIR: we own these folders wholesale, so stale files get purged.
 # SavedVariables live in WTF\, not here, so purging is safe.
@@ -52,12 +66,13 @@ foreach ($retired in @("AltStableDevConfig")) {
 
 Write-Host "Done -> $dest" -ForegroundColor Green
 Write-Host ""
-Write-Host "In-game:" -ForegroundColor Yellow
+Write-Host "In-game (a new or changed addon needs only /reload):" -ForegroundColor Yellow
 Write-Host "  /console scriptErrors 1   (errors are OFF by default on this client)"
 Write-Host "  /reload"
-Write-Host "  /asprobe                  run every section"
-Write-Host "  /asprobe bank             re-run containers with the BANK WINDOW OPEN"
-Write-Host "  /asprobe whisper <Name>   cross-account ping (log the other account in first)"
+Write-Host "  /fp as                    the probe's commands; its lines are in the /fp console"
+Write-Host "  /fp as all                run every section"
+Write-Host "  /fp as bank               containers + bank tabs, with the BANK WINDOW OPEN"
+Write-Host "  /fp as whisper <Name>     cross-account ping (log the other account in first)"
 Write-Host ""
 Write-Host "Results are written to AltStableProbeDB on logout or /reload:"
-Write-Host "  ...\_classic_beta_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua"
+Write-Host "  ...\_classic_beta_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua   (log, wireLog, ...)"

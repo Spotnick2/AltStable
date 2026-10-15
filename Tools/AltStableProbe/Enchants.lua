@@ -1,5 +1,5 @@
 ----------------------------------------------------------------------------
--- /asprobe enchant - where does the client say WHICH enchant a slot has? (#94)
+-- /fp as enchant - where does the client say WHICH enchant a slot has? (#94)
 --
 -- gearmod_<slot> stores the enchant id from the item link; nothing maps that
 -- id to words on this client (AltTracker's table was TBC data). The tooltip
@@ -14,7 +14,8 @@
 -- enchant (a poison, an oil) on a weapon is worth seeing too.
 ----------------------------------------------------------------------------
 
-AltStableProbe = AltStableProbe or {}
+local _, NS = ...
+local Probe = NS.Probe
 
 local SLOTS = {
     { 1, "head" }, { 3, "shoulder" }, { 5, "chest" }, { 6, "waist" }, { 7, "legs" },
@@ -30,12 +31,8 @@ local function Color(c)
     return ("%.2f,%.2f,%.2f"):format(r, g or 0, b or 0)
 end
 
-function AltStableProbe.Enchants()
-    local out = {}
-    local function add(s)
-        out[#out + 1] = s
-        DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[enchant]|r " .. s)
-    end
+local function Enchants()
+    local function add(s) Probe:Say("[enchant] " .. s) end
     local version, build = GetBuildInfo()
     add(("client %s (%s)"):format(tostring(version), tostring(build)))
 
@@ -98,8 +95,6 @@ function AltStableProbe.Enchants()
             add(("%s (slot %d): empty"):format(key, slot))
         end
     end
-
-    AltStableProbeDB = AltStableProbeDB or {}
-    AltStableProbeDB.enchants = out
-    if AltStableProbe.ShowCopy then AltStableProbe.ShowCopy(out) end
 end
+
+Probe:Command("enchant", Enchants, "each equipped slot's enchant: link id + tooltip lines (#94)")

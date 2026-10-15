@@ -1,5 +1,5 @@
 ----------------------------------------------------------------------------
--- /asprobe channel ... - the #58 channel measurements
+-- /fp as channel ... - the #58 channel measurements
 --
 -- docs/SYNC-DISCOVERY.md, "Measure before building any of it". The discovery
 -- design wants a private custom channel as the rendezvous for one household's
@@ -16,10 +16,12 @@
 --   7. does a whisper reply to a channel sender's `sender` string arrive.
 -- (6 - a whisper to an offline character shows "No player named" - is measured.)
 --
--- Everything goes to the wire log: /asprobe copy after a session.
+-- Everything goes to the wire log: Tools/AltStableProbe/read-wirelog.py reads
+-- it off disk after a session, or /fp as channel log shows its tail.
 ----------------------------------------------------------------------------
 
-AltStableProbe = AltStableProbe or {}
+local _, NS = ...
+local Probe = NS.Probe
 
 local PREFIX = "ASPROBE"
 local CAP_PREFIX = "ASPCap"
@@ -27,10 +29,7 @@ local CAP_PREFIX = "ASPCap"
 -- of 20, so the refusal is actually reached (review of #141).
 local CAP_TRIES = 20
 
-local function Log(s)
-    if AltStableProbe.WireRecord then AltStableProbe.WireRecord(s)
-    else DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[probe]|r " .. tostring(s)) end
-end
+local function Log(s) NS.WireRecord(s) end
 
 local RESULT_NAME = {}
 if Enum and Enum.SendAddonMessageResult then
@@ -109,7 +108,7 @@ end
 
 local function Send(name, kind)
     local id = LocalId(name)
-    if not id then Log(("send: not in channel %s - /asprobe channel join %s first"):format(name, name)); return end
+    if not id then Log(("send: not in channel %s - /fp as channel join %s first"):format(name, name)); return end
     local msg = (kind or "CPING") .. "|" .. Where() .. "|" .. time()
     -- The local id as a number; the string form also delivers (measured, 70124).
     local ok, r = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "CHANNEL", id)
@@ -150,9 +149,9 @@ local function Cap()
 end
 
 -- Shared with BNet.lua.
-AltStableProbe.util = { Log = Log, Args = Args, ResultStr = ResultStr, Where = Where }
+NS.util = { Log = Log, Args = Args, ResultStr = ResultStr, Where = Where }
 
-function AltStableProbe.Channel(arg)
+Probe:Command("channel", function(arg)
     local sub, rest = (arg or ""):match("^(%S*)%s*(.*)$")
     sub = (sub or ""):lower()
     local name, password = rest:match("^(%S+)%s*(%S*)$")
@@ -166,28 +165,24 @@ function AltStableProbe.Channel(arg)
     elseif sub == "status" then Status(name or AltStableProbeCharDB.channelName)
     elseif sub == "cap" then Cap()
     elseif sub == "log" then
-        -- The wire log, which survives /reload and relogs - /asprobe copy shows
-        -- the last SWEEP instead, which is how a first round came back empty.
+        -- The wire log, which survives /reload and relogs - the console holds
+        -- only this session, which is how a first round came back empty.
         local w = AltStableProbeDB.wireLog or {}
-        local out = { "AltStableProbe channel log  " .. Where() }
-        for i = math.max(1, #w - 400), #w do out[#out + 1] = w[i] end
-        AltStableProbe.ShowCopy(out)   -- the export: ShowCopy itself is local to Probe.lua
+        Probe:Say("AltStableProbe channel log  " .. Where())
+        for i = math.max(1, #w - 400), #w do Probe:Say(w[i]) end
     elseif sub == "clear" then
         AltStableProbeDB.wireLog = {}
-        DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[probe]|r channel log cleared")
+        Probe:Say("channel log cleared")
     else
-        Log("usage: /asprobe channel join <name> [password] | send <name> | status [name] | leave <name> | cap | log | clear")
+        Log("usage: /fp as channel join <name> [password] | send <name> | status [name] | leave <name> | cap | log | clear")
     end
-end
+end, "join <name> [pw] | send <name> | status | leave <name> | cap | log | clear (#58)")
 
 ----------------------------------------------------------------------------
 -- Receiving: every argument, and replies that answer 1, 2 and 7
 ----------------------------------------------------------------------------
 local f = CreateFrame("Frame")
-f:RegisterEvent("CHAT_MSG_ADDON")
-f:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
-f:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE_USER")
-f:RegisterEvent("PLAYER_LOGIN")
+Probe:RegisterEvents(f, { "CHAT_MSG_ADDON", "CHAT_MSG_CHANNEL_NOTICE", "CHAT_MSG_CHANNEL_NOTICE_USER", "PLAYER_LOGIN" })
 f:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
         -- (3) survives a relog? Look once the client has settled.

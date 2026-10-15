@@ -69,8 +69,10 @@ of fields, never live tables. Changing what a field means, or removing one, bump
   capped at 255 bytes; the sync path chunks payloads (`MAX_CHUNK = 220`) with an inter-packet
   delay, base64 + checksum over the reassembled stream.
 - `tests/` — Lua 5.1 unit tests (see below).
-- `Tools/deploy.ps1` — deploy script. `Tools/AltStableProbe/` — in-game API probe addon (portrait
-  capture used to live there; it ships in `Capture.lua` now).
+- `Tools/deploy.ps1` — deploy script. `Tools/AltStableProbe/` — in-game API probe addon, a
+  ForeverProbe module (`/fp as`, deployed with the host by `Tools/deploy-probe.ps1`; read
+  `C:\Projects\WoW\References\PROBES.md` before changing it). Portrait capture used to live there;
+  it ships in `Capture.lua` now.
   `Tools/` is ignored by `.pkgmeta` and never ships.
 - `docs/` — the porting guide, the measured API notes, and `docs/WORKFLOW.md` (issue → branch →
   PR → Codex review → merge).
