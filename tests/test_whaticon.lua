@@ -353,32 +353,58 @@ do
 end
 
 do
-    -- The read says what it can't show: whether the countdown's frame could
-    -- be seen (a UI that hides the errors frame swallows it), and whether the
-    -- console came back. The first in-game check got a "no" for the two at
-    -- once, and neither half is in a screenshot.
+    -- The countdown is the probe's own banner, not the errors frame: that one
+    -- is UIParent's, so with the AltStable sheet open (it hides the game UI)
+    -- the countdown vanished, and so does the console. Measured in game,
+    -- 2026-10-15 (ForeverProbe#7).
     WoW.timers = {}
-    local flashed = {}
-    _G.UIErrorsFrame = {
-        AddMessage = function(_, text) flashed[#flashed + 1] = text end,
-        IsShown = function() return false end,
-        IsVisible = function() return false end,
-        GetAlpha = function() return 1 end,
-        GetEffectiveAlpha = function() return 0 end,
-    }
-    _G.GetMouseFoci = function() return {} end
+    _G.GetMouseFoci = function() return { { GetObjectType = function() return "Frame" end,
+                                            GetName = function() return "Thing" end,
+                                            GetRegions = function() end } } end
     local from = #FP.lines
     icon("")
-    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    local b = T.banner()
+    check("the countdown shows on a banner", b ~= nil and b:IsShown())
+    check("  saying what to do", b and b.text:GetText():find("hover the thing", 1, true) ~= nil,
+          b and b.text:GetText())
+    check("  hung from nothing, so a hidden UIParent leaves it up", b and b:GetParent() == nil)
+    check("  and it never takes the mouse, so a reading cannot name it", b and not b:IsMouseEnabled())
+    eq("  at the interface's size", b and b:GetScale(), UIParent:GetEffectiveScale())
+
+    WoW.flushTimers()
+    check("each second shows on it", b:IsShown() and b.text:GetText() == "4...", b.text:GetText())
+    for _ = 2, T.READ_DELAY do WoW.flushTimers() end
+    check("after the read it says where the answer went", b:IsShown()
+        and b.text:GetText():find("read: %d+ line%(s%) %- in the /fp console, or the log after /reload") ~= nil,
+          b.text:GetText())
     local said = {}
     for i = from + 1, #FP.lines do said[#said + 1] = FP.lines[i].text end
     said = table.concat(said, "\n")
-    check("the countdown is flashed", #flashed >= 1 and flashed[1]:find("hover the thing", 1, true) ~= nil)
-    check("  and the log says the errors frame could not be seen",
-          said:find("UIErrorsFrame shown=false visible=false alpha=1 effectiveAlpha=0", 1, true) ~= nil, said)
     check("the log says whether the console came back",
           said:find("console back after the read: true", 1, true) ~= nil, said)
-    _G.UIErrorsFrame = nil
+    WoW.flushTimers()
+    check("  and then the banner goes", not b:IsShown())
+
+    -- Cancelled: the banner goes with the countdown, not left saying "3...".
+    icon("")
+    check("a new countdown brings it back", b:IsShown())
+    icon("cancel")
+    check("  and cancelling takes it away", not b:IsShown())
+    -- A finished read's hide timer must not take down the NEXT countdown's
+    -- banner: read, then ask again before that timer has fired.
+    icon("")
+    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    check("a read leaves its 'read:' banner up, its hide pending", b:IsShown() and #WoW.timers > 0)
+    icon("")
+    -- Only the one-shot timers - the old hide, and the console's - and not the
+    -- ticker: in the client the hide lands between two ticks, and a full
+    -- flush would let the next tick show the banner again and hide the bug.
+    local pending = WoW.timers
+    WoW.timers = {}
+    for _, e in ipairs(pending) do e.fn() end
+    check("  a new countdown's banner outlives it", b:IsShown(),
+          "the countdown would blink out mid-way")
+    icon("cancel")
 end
 
 do
