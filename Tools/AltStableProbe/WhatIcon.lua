@@ -198,11 +198,6 @@ local function WhatIsUnderTheCursor(sink)
     if total == 0 then
         say("that frame draws no texture of its own - try a parent, or the art "
             .. "may be a child frame the pointer is not over.")
-    else
-        -- The answer is a path to be retyped exactly. Transcribing it by eye
-        -- is the error this command exists to avoid, so the console comes
-        -- back with it in view: Freeze, Select all, Ctrl+C.
-        ShowConsole()
     end
 
     return lines
@@ -226,17 +221,18 @@ local function CancelRead()
 end
 
 local function ReadAfterDelay()
+    -- Get the console off the screen first, or the reading is of the probe's
+    -- own backdrop. One frame later: the host shows the console after this
+    -- command returns - a repeated one too, so this comes before the early
+    -- return below (Codex on #241).
+    C_Timer.After(0, HideConsole)
+
     -- Idempotent, like the capture countdown: five of these queued at once is
     -- how a countdown turns into a burst.
     if pendingRead then
         Out("already counting down - |cffffff00/fp as icon cancel|r to stop it")
         return
     end
-
-    -- Get the console off the screen first, or the reading is of the probe's
-    -- own backdrop. One frame later: the host shows the console after this
-    -- command returns.
-    C_Timer.After(0, HideConsole)
 
     Out(("hover the thing now - reading in %ds. "):format(READ_DELAY)
         .. "|cffffff00/fp as icon cancel|r to stop, |cffffff00/fp as icon now|r to skip the wait.")
@@ -251,7 +247,14 @@ local function ReadAfterDelay()
         end
         ticker:Cancel()
         pendingRead = nil
+        -- Again at the read itself: anything may have shown the console
+        -- during the countdown (another /fp command, a bare /fp).
+        HideConsole()
         WhatIsUnderTheCursor()
+        -- Then back, whatever the answer. Output goes nowhere else, and the
+        -- read runs outside the host's dispatch, which would show it. A path
+        -- is retyped from there: Freeze, Select all, Ctrl+C.
+        ShowConsole()
     end)
 end
 

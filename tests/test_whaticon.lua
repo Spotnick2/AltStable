@@ -136,7 +136,6 @@ do
     }
     _G.GetMouseFoci = function() return { button } end
 
-    FP.Console.Hide()
     local lines = T.WhatIsUnderTheCursor(sink)
     local all = table.concat(said, "\n")
 
@@ -151,10 +150,6 @@ do
     -- The returned lines are the plain answer, so they must be free of colour
     -- codes - a path with |cffffff00 glued to it is not a path.
     local joined = table.concat(lines, "\n")
-    check("the answer brings the /fp console up", FP.Console.IsShown(),
-          "the path has to be copyable from somewhere: Freeze, Select all")
-    eq("  filtered to this probe", FP.Console.filter, "AltStableProbe")
-
     check("the copyable lines carry no colour codes",
           joined:find("|c", 1, true) == nil and joined:find("|r", 1, true) == nil,
           joined)
@@ -315,6 +310,66 @@ do
 
     for _ = 1, T.READ_DELAY + 2 do WoW.flushTimers() end
     check("a cancelled countdown never reads", not answered)
+end
+
+------------------------------------------------------------
+-- The console around a delayed read (Codex on #241)
+------------------------------------------------------------
+-- Output goes only to the console now, and the countdown puts it away. So it
+-- has to be gone at the read whatever showed it meanwhile, and back after the
+-- read whatever the answer - an empty one included, or the explanation of why
+-- nothing was found is never seen.
+
+do
+    WoW.timers = {}
+    local reads, consoleAtRead = 0, nil
+    _G.GetMouseFoci = function()
+        reads = reads + 1
+        consoleAtRead = FP.Console.IsShown()
+        return {}                          -- nothing under the cursor
+    end
+
+    -- Asking again mid-countdown: the host shows the console after the
+    -- repeated command too, and the early "already counting down" return
+    -- must not leave it up.
+    icon("")
+    WoW.flushTimers()
+    check("the countdown put the console away", not FP.Console.IsShown())
+    icon("")
+    check("  asking again shows it (the host does, after any command)", FP.Console.IsShown())
+    WoW.flushTimers()
+    check("  and a frame later it is away again", not FP.Console.IsShown(),
+          "the pending read would name the console")
+    eq("  still one countdown, not read yet", reads, 0)
+
+    -- Anything else showing it meanwhile (a bare /fp).
+    FP.Console.Show()
+    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    eq("the read happens once", reads, 1)
+    eq("  with the console away at that moment", consoleAtRead, false)
+    check("  and back afterwards, though nothing was found", FP.Console.IsShown(),
+          "the 'nothing under the cursor' line would be in a hidden console")
+    eq("  filtered to this probe", FP.Console.filter, "AltStableProbe")
+end
+
+do
+    -- A frame that draws nothing: the other empty answer.
+    WoW.timers = {}
+    _G.GetMouseFoci = function()
+        return { { GetObjectType = function() return "Frame" end,
+                   GetName = function() return "Bare" end,
+                   GetRegions = function() end } }
+    end
+    icon("")
+    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    check("a frame with no texture brings the console back too", FP.Console.IsShown())
+
+    -- And the client without the API at all.
+    FP.Console.Hide()
+    _G.GetMouseFoci = nil
+    icon("")
+    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    check("so does a client without GetMouseFoci", FP.Console.IsShown())
 end
 
 print(("test_whaticon: %d passed, %d failed"):format(passed, failed))
