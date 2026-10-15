@@ -151,6 +151,13 @@ local function EnsureDefaults()
     end
     -- Retired with the BiS column (#8): nothing reads it any more.
     AltStableConfig.bisTier = nil
+    -- Retired with the legacy Battle.net channel (#206). Kept on disk through
+    -- v0.12-v0.14 so a downgrade still read them; the library's store
+    -- (accountSync) holds the household key now.
+    AltStableConfig.bnetKey = nil
+    AltStableConfig.bnetTrusted = nil
+    AltStableConfig.bnetSelfProject = nil
+    AltStableConfig.bnetSelfRegion = nil
 
     -- Characters hidden from the sheet, keyed by GUID: names are not unique on
     -- Forever (every character has a surname, and two can share a first name).

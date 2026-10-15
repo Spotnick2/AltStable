@@ -292,10 +292,9 @@ XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests 
   copy's snapshot floor drops an older message that completes after a newer one
   (LibAccountSync#18). Never cache the check at load.
 - **The store is `AltStableConfig.accountSync`** (account-wide, written once through
-  `SetConfigValue`, then by the library). Built on first use with the legacy keys: `bnetKey` at
-  `keyAt = 1`, `bnetTrusted` `true` entries as timestamps, 32-hex keys only. Since #206 nothing
-  writes `bnetKey`, `bnetTrusted`, `bnetSelfProject` or `bnetSelfRegion`; they stay on disk for a
-  release (a downgrade still reads them) and are then retired deliberately.
+  `SetConfigValue`, then by the library), built empty on first use. The legacy channel's
+  `bnetKey`, `bnetTrusted`, `bnetSelfProject` and `bnetSelfRegion` were kept on disk through
+  v0.12–v0.14 and are cleared by `EnsureDefaults` since; nothing imports them any more.
 - **Library changes are LibAccountSync PRs**, never edits here.
 
 ## Conventions
