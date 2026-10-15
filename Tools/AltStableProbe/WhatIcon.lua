@@ -206,32 +206,50 @@ end
 local READ_DELAY = 5
 local pendingRead
 
--- The countdown has to be seen while the console is put away: the errors
--- frame at the top of the screen, which is not chat.
-local function Flash(text)
-    local f = rawget(_G, "UIErrorsFrame")
-    if type(f) == "table" and type(f.AddMessage) == "function" then f:AddMessage(text, 1, 0.82, 0) end
+-- The countdown, on a banner of the probe's own. It was on the errors frame,
+-- which is UIParent's, like the console: both vanish while the AltStable sheet
+-- hides the game UI - which is when this command is most wanted, to name the
+-- sheet's own textures (measured in game, 2026-10-15; ForeverProbe#7). So:
+--   * parentless, so a hidden UIParent doesn't take it along (the sheet's
+--     showcase lifts the sheet the same way);
+--   * scaled to UIParent's effective scale, so it reads the same size;
+--   * never takes the mouse, so it can't be what a reading names.
+-- After the read it says where the answer went, since the console may be
+-- hidden with the rest, then goes.
+local BANNER_HOLD = 4
+local banner, bannerToken = nil, 0
+
+local function Banner(text, hold)
+    if not banner then
+        banner = CreateFrame("Frame", nil, nil)
+        banner:SetFrameStrata("FULLSCREEN_DIALOG")
+        banner:EnableMouse(false)
+        banner:SetSize(700, 40)
+        banner.text = banner:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        banner.text:SetAllPoints()
+    end
+    banner:SetScale(UIParent:GetEffectiveScale())
+    banner:ClearAllPoints()
+    banner:SetPoint("TOP", WorldFrame, "TOP", 0, -140)
+    banner.text:SetText(text)
+    banner:Show()
+    bannerToken = bannerToken + 1
+    if hold then
+        local mine = bannerToken
+        C_Timer.After(hold, function() if bannerToken == mine then banner:Hide() end end)
+    end
 end
 
--- Whether that countdown can be seen at all: a UI that hides or fades the
--- errors frame swallows it (the first in-game check of #240 answered "no"
--- without saying which half failed). Logged once per countdown.
-local function ErrorsFrameState()
-    local f = rawget(_G, "UIErrorsFrame")
-    if type(f) ~= "table" then return "UIErrorsFrame absent" end
-    local function ask(method)
-        if type(f[method]) ~= "function" then return "?" end
-        local ok, v = pcall(f[method], f)
-        return ok and tostring(v) or "error"
-    end
-    return ("UIErrorsFrame shown=%s visible=%s alpha=%s effectiveAlpha=%s"):format(
-        ask("IsShown"), ask("IsVisible"), ask("GetAlpha"), ask("GetEffectiveAlpha"))
+local function HideBanner()
+    bannerToken = bannerToken + 1
+    if banner then banner:Hide() end
 end
 
 local function CancelRead()
     if not pendingRead then return false end
     pendingRead:Cancel()
     pendingRead = nil
+    HideBanner()
     return true
 end
 
@@ -251,14 +269,13 @@ local function ReadAfterDelay()
 
     Out(("hover the thing now - reading in %ds. "):format(READ_DELAY)
         .. "|cffffff00/fp as icon cancel|r to stop, |cffffff00/fp as icon now|r to skip the wait.")
-    Flash(("hover the thing now - reading in %ds"):format(READ_DELAY))
-    Out("countdown on " .. ErrorsFrameState())
+    Banner(("hover the thing now - reading in %d"):format(READ_DELAY))
 
     local remaining = READ_DELAY
     pendingRead = C_Timer.NewTicker(1, function(ticker)
         remaining = remaining - 1
         if remaining > 0 then
-            if remaining <= 3 then Flash(tostring(remaining) .. "...") end
+            Banner(tostring(remaining) .. "...")
             return
         end
         ticker:Cancel()
@@ -266,13 +283,14 @@ local function ReadAfterDelay()
         -- Again at the read itself: anything may have shown the console
         -- during the countdown (another /fp command, a bare /fp).
         HideConsole()
-        WhatIsUnderTheCursor()
+        local lines = WhatIsUnderTheCursor()
         -- Then back, whatever the answer. Output goes nowhere else, and the
         -- read runs outside the host's dispatch, which would show it. A path
         -- is retyped from there: Freeze, Select all, Ctrl+C.
         ShowConsole()
         local c = Console()
         Out("console back after the read: " .. (c and tostring(c.IsShown()) or "no ForeverProbe.Console"))
+        Banner(("read: %d line(s) - in the /fp console, or the log after /reload"):format(#lines), BANNER_HOLD)
     end)
 end
 
@@ -305,6 +323,7 @@ NS._testIcon = {
     CancelRead = function() return CancelRead() end,
     ReadAfterDelay = function() return ReadAfterDelay() end,
     reading = function() return pendingRead ~= nil end,
+    banner = function() return banner end,
     Describe = Describe,
     DescribeRegions = DescribeRegions,
     FociList = function(...) return FociList(...) end,

@@ -767,8 +767,8 @@ Probe:Steps("icon", {
     { text = "Close any open AltStable or probe windows. Press Run, then within 5 seconds hover an "
           .. "action-bar icon and hold still until the reading is done.",
       button = "Run", run = function() Command("icon") end },
-    { text = "While you waited: did a countdown (\"hover the thing now\", then 3... 2... 1...) show "
-          .. "near the top of the screen?", ask = true },
+    { text = "While you waited: did a countdown (\"hover the thing now\", then 4... 3... 2... 1..., "
+          .. "then \"read: ...\") show near the top of the screen?", ask = true },
     { text = "Is the /fp console open now, listing the icon's textures (lines tagged [icon])?",
       ask = true, check = ConsoleShown },
     { text = "Type /reload (or press Reload now) to save the results.", reload = true },
