@@ -3797,7 +3797,7 @@ function AltStable.StatusLines()
 end
 
 -- The player's commands, for /alts help and for anything /alts does not know.
--- The developer-only ones (/asprobe, /apidump) are left out: they do not ship.
+-- The developer-only ones (the probe's /fp as, /apidump) are left out: they do not ship.
 AltStable.HELP_LINES = {
     "|cffffff00/alts|r - open the sheet (and ask your other accounts for news)",
     "|cffffff00/alts portrait|r - capture this character for the Roster's portraits",

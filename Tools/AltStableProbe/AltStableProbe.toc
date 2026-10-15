@@ -1,10 +1,10 @@
 ## Interface: 16001
 ## Title: AltStable Probe
-## Notes: Throwaway API-shape probe for the WoW Forever port. Never shipped - lives under Tools/ and is excluded from the package.
+## Notes: Throwaway API-shape probe for the WoW Forever port. A ForeverProbe module: /fp as. Never shipped - lives under Tools/ and is excluded from the package.
 ## IconTexture: 8197123
 ## Author: Spotnick
 ## Version: dev
-## Dependencies: AltStable
+## Dependencies: AltStable, ForeverProbe
 ## SavedVariables: AltStableProbeDB
 ## SavedVariablesPerCharacter: AltStableProbeCharDB
 ## SavedVariablesMachine: AltStableProbeMachineDB

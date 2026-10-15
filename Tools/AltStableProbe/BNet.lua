@@ -1,5 +1,5 @@
 ----------------------------------------------------------------------------
--- /asprobe bnet ... - can one of the owner's WoW accounts reach the OTHER
+-- /fp as bnet ... - can one of the owner's WoW accounts reach the OTHER
 -- through Battle.net game data?
 --
 -- Channels and whispers stop at the ruleset and the faction (measured,
@@ -10,9 +10,9 @@
 -- SYNC-DISCOVERY recorded that as closed without measuring it. The question:
 -- will the server deliver game data to your OWN other game account?
 --
---   /asprobe bnet me          this account's Battle.net identity and game
+--   /fp as bnet me            this account's Battle.net identity and game
 --                             account id (the other account's send target)
---   /asprobe bnet send <id>   a BPING to that game account id
+--   /fp as bnet send <id>     a BPING to that game account id
 --   (receiving a BPING)       every BN_CHAT_MSG_ADDON argument; a BPONG back
 --                             to the sender's id
 --
@@ -20,10 +20,11 @@
 -- whether the server took the target.
 ----------------------------------------------------------------------------
 
-AltStableProbe = AltStableProbe or {}
-local U = AltStableProbe.util
+local _, NS = ...
+local Probe = NS.Probe
+local U = NS.util
 local Log, Args, ResultStr, Where = U.Log, U.Args, U.ResultStr, U.Where
-local function Val(v) return AltStableProbe.ValStr and AltStableProbe.ValStr(v, 3) or tostring(v) end
+local function Val(v) return Probe.Describe(v, 3) end
 
 local PREFIX = "ASPROBE"
 
@@ -58,7 +59,7 @@ local function Me()
         -- a copied 7 gave TargetRequired) - never a target for the other
         -- account. It finds this one with scan or ids (review of #141).
         Log(("  |cff55ff55this game account id here: %s|r - local to this client; on the other "
-            .. "account use /asprobe bnet scan or /asprobe bnet ids"):format(tostring(id)))
+            .. "account use /fp as bnet scan or /fp as bnet ids"):format(tostring(id)))
         Call("C_BattleNet.GetGameAccountInfoByID(own id)", BN.GetGameAccountInfoByID, id)
     else
         Log("  |cffff5555no game account id found for this character|r")
@@ -72,8 +73,8 @@ local function Send(id)
     id = tonumber(id)
     Log("|cffffd100== bnet send ==|r  " .. Where())
     if not id then
-        Log("usage: /asprobe bnet send <gameAccountID>  - an id as THIS client knows it "
-            .. "(from /asprobe bnet ids here); ids from another client do not carry over")
+        Log("usage: /fp as bnet send <gameAccountID>  - an id as THIS client knows it "
+            .. "(from /fp as bnet ids here); ids from another client do not carry over")
         return
     end
     Call("C_BattleNet.GetGameAccountInfoByID(target)", C_BattleNet and C_BattleNet.GetGameAccountInfoByID, id)
@@ -151,18 +152,18 @@ local function Ids()
     Log(("  ids 1-%d: %d known to this client, %d of them our own other online account(s)"):format(MAX_ID, seen, own))
 end
 
-function AltStableProbe.BNet(arg)
+Probe:Command("bnet", function(arg)
     local sub, rest = (arg or ""):match("^(%S*)%s*(.*)$")
     sub = (sub or ""):lower()
     if sub == "me" then Me()
     elseif sub == "send" then Send(rest)
     elseif sub == "scan" then Scan()
     elseif sub == "ids" then Ids()
-    else Log("usage: /asprobe bnet me | scan | ids | send <gameAccountID>") end
-end
+    else Log("usage: /fp as bnet me | scan | ids | send <gameAccountID>") end
+end, "me | scan | ids | send <gameAccountID>: own-account Battle.net game data")
 
 local f = CreateFrame("Frame")
-f:RegisterEvent("BN_CHAT_MSG_ADDON")
+Probe:RegisterEvents(f, { "BN_CHAT_MSG_ADDON" })
 f:SetScript("OnEvent", function(_, _, ...)
     local prefix, text, _, senderID = ...
     if prefix ~= PREFIX then return end

@@ -7,14 +7,15 @@
 -- after switching to another profession. So this probe watches instead of
 -- being asked.
 --
---   /asprof         snapshot now (also runs by itself, see below)
---   /asprof cd      every learned recipe that reports a cooldown, full tuple
---   /asprof log     toggle the event log in chat (the snapshots always save)
---   /asprof clear   empty the saved log
+--   /fp as recipes         snapshot now (also runs by itself, see below)
+--   /fp as recipes cd      every learned recipe that reports a cooldown, full tuple
+--   /fp as recipes log     toggle the event lines in the console (the snapshots always save)
+--   /fp as recipes clear   empty the saved snapshots
+-- (It was /asprof. /fp as prof is Probe.lua's GetProfessions section.)
 --
 -- While loaded it listens to the trade-skill events and takes a snapshot one
--- second after each, tagged with the event that triggered it. One chat line per
--- snapshot; the full detail - every learned recipe ID, one recipe's whole info
+-- second after each, tagged with the event that triggered it. One console line
+-- per snapshot; the full detail - every learned recipe ID, one recipe's whole info
 -- struct, the cooldown tuples - goes to AltStableProbeDB.prof, which is written
 -- on logout/reload and read off disk.
 --
@@ -32,14 +33,13 @@
 -- undocumented on this client, which proves existence and nothing else.
 ------------------------------------------------------------
 
-AltStableProbeDB = AltStableProbeDB or {}
+local _, NS = ...
+local Probe = NS.Probe
 
 local MAX_ENTRIES = 80
-local chatLog = true
+local eventLines = true
 
-local function Out(s)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[prof]|r " .. tostring(s))
-end
+local function Out(s) Probe:Say("[prof] " .. tostring(s)) end
 
 local function Try(fn, ...)
     if type(fn) ~= "function" then return false, "absent" end
@@ -195,10 +195,7 @@ local EVENTS = { "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DAT
                  "NEW_RECIPE_LEARNED", "SKILL_LINES_CHANGED" }
 
 local frame = CreateFrame("Frame")
-for _, ev in ipairs(EVENTS) do
-    local ok, err = pcall(frame.RegisterEvent, frame, ev)
-    if not ok then Out("RegisterEvent " .. ev .. " rejected: " .. tostring(err)) end
-end
+Probe:RegisterEvents(frame, EVENTS)
 
 local pending = {}
 frame:SetScript("OnEvent", function(_, ev, ...)
@@ -213,7 +210,7 @@ frame:SetScript("OnEvent", function(_, ev, ...)
     -- snapshot per skill-up in a fight would push the window snapshots out of
     -- the capped log (review of #130). Logged, never snapshotted.
     if ev == "SKILL_LINES_CHANGED" then return end
-    if chatLog then Out("|cff888888" .. line .. "|r") end
+    if eventLines then Out("|cff888888" .. line .. "|r") end
     -- One snapshot per event name per second: LIST_UPDATE can fire in bursts.
     if not pending[ev] then
         pending[ev] = true
@@ -221,18 +218,17 @@ frame:SetScript("OnEvent", function(_, ev, ...)
     end
 end)
 
-SLASH_ASPROF1 = "/asprof"
-SlashCmdList["ASPROF"] = function(msg)
+Probe:Command("recipes", function(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
     if msg == "cd" then
         Cooldowns()
     elseif msg == "log" then
-        chatLog = not chatLog
-        Out("event log in chat: " .. (chatLog and "on" or "off"))
+        eventLines = not eventLines
+        Out("event lines in the console: " .. (eventLines and "on" or "off"))
     elseif msg == "clear" then
         AltStableProbeDB.prof, AltStableProbeDB.profEvents, AltStableProbeDB.profCooldowns = nil, nil, nil
         Out("cleared")
     else
         Snapshot("manual")
     end
-end
+end, "[cd | log | clear]: a trade-skill snapshot, cooldowns (#14; was /asprof)")

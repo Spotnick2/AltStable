@@ -25,9 +25,10 @@
 -- Both are documented on this client. Documented is not working, so: measure.
 ------------------------------------------------------------
 
-local function Out(s)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[scene]|r " .. tostring(s))
-end
+local _, NS = ...
+local Probe = NS.Probe
+
+local function Out(s) Probe:Say("[scene] " .. tostring(s)) end
 
 local function Try(obj, method, ...)
     local fn = obj and obj[method]
@@ -85,6 +86,7 @@ local function Build()
     if frame then return frame end
 
     local win = CreateFrame("Frame", "AltStableSceneProbe", UIParent, "BasicFrameTemplateWithInset")
+    win:Hide()   -- a new frame starts shown; the toggle must see it closed (as Pets.lua)
     win:SetSize(380, 470); win:SetPoint("CENTER", 320, 0)
     win:SetMovable(true); win:EnableMouse(true)
     win:RegisterForDrag("LeftButton")
@@ -130,9 +132,10 @@ local function Build()
     return win
 end
 
-SLASH_ASSCENE1 = "/asscene"
-SlashCmdList["ASSCENE"] = function()
-    local win = _G["AltStableSceneProbe"] or Build()
-    win = _G["AltStableSceneProbe"]
+Probe:Command("scene", function()
+    -- Build() hands back the SCENE once it exists, not its window: the window
+    -- is the named global.
+    Build()
+    local win = _G["AltStableSceneProbe"]
     if win:IsShown() then win:Hide() else win:Show(); FromUnit() end
-end
+end, "the ModelScene viewer: glues, unit, creature (#15)")

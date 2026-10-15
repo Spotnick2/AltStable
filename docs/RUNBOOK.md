@@ -243,32 +243,26 @@ and the probe reports it only for completeness.
 To check persistence on a new build:
 
 ```
-pwsh Tools/deploy-probe.ps1     # deploys AltStableProbe, ForeverAPIDump
+pwsh Tools/deploy-probe.ps1     # deploys ForeverProbe (the host), AltStableProbe, ForeverAPIDump
 ```
 
-The probe keeps a counter in each store and reports at `PLAYER_LOGIN` what it found there.
-Healthy, as of 70009:
-
-```
-[probe] SavedVariables (account) LOADED - previous loadCount=1
-[probe] SavedVariablesPerCharacter LOADED - previous loadCount=1
-[probe] SavedVariablesMachine first ever run - not loaded
-[probe] account #2 / per-character #2 / machine #1 - only a FULL EXIT and relaunch counts; /reload proves nothing
-```
-
-Broken looks like `first ever run - not loaded`, with every counter stuck at 1 launch after
-launch.
+The probe is a ForeverProbe module (#240): its lines go to the `/fp` console and to
+`AltStableProbeDB.log`, never to chat. It keeps a counter in each store and checks at
+`PLAYER_LOGIN` what it found there. Healthy is **silent**. A store that did not load gets a line
+in the console, `SavedVariables (account) did not load - first ever run, or #23 has come back`
+(or `SavedVariablesPerCharacter ...`), and broken looks like that line with the counter stuck at 1
+launch after launch. `/fp as savedvariables` shows the counts.
 
 **The procedure is the point, not the line:**
 
 1. log in (this writes the file on logout),
 2. **exit the client completely**,
 3. relaunch and log in again,
-4. read the line. A counter that rises after a `/reload` proves nothing — the process stayed
-   alive, so the in-memory table was never re-read.
+4. run `/fp as savedvariables`. A counter that rises after a `/reload` proves nothing — the
+   process stayed alive, so the in-memory table was never re-read.
 
-The probe prints that caveat itself, on the counter line, because three separate tests on this
-project concluded a store persisted when it had not.
+The section prints that caveat itself, because three separate tests on this project concluded a
+store persisted when it had not.
 
 ---
 
@@ -354,7 +348,7 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts cleanup` | Wipe every character but this one, then re-pull in full |
 | `/alts config` | Options panel |
 | `/alts portrait [preview \| facing <deg> \| cancel \| glow on\|off]` | Capture this character for the Roster lineup |
-| `/asprobe`, `/asprobe bank`, `/asprobe whisper <name>` | The dev probe (needs `deploy-probe.ps1`) |
+| `/fp as`, `/fp as all`, `/fp as bank`, `/fp as whisper <name>` | The dev probe, a ForeverProbe module (needs `deploy-probe.ps1`; its lines are in the `/fp` console) |
 | `/apidump` | Dump the client's API surface to SavedVariables |
 
 ---
@@ -405,7 +399,7 @@ What to look for in the zip (re-verified on `v0.2.0-beta`):
   external's own ignore list, so ours repeats it.
 
 **And read the release notes back as a player.** `Tools/` is excluded, so
-anything registered in there - `/asicon`, `/asprobe`, `/asmodel` - does not
+anything registered in there - `/fp as icon`, `/fp as`, `/apidump` - does not
 exist in what people download. Notes that name one, or UI that points at one,
 are telling players to type something the client answers with "Type /help"
 (found this way on v0.2.0-beta, after the tag was pushed).
@@ -546,6 +540,7 @@ if you see a stall with no reason, the stream really was lost.
   delete `WTF\Account\<id>\SavedVariables\AltStable*.lua`. Back them up if there is any chance the
   contents matter — they contain real character names and realms.
 - **Removing the dev tools** from the client: delete the `AltStableProbe` and `ForeverAPIDump`
-  folders from `Interface\AddOns`. They are never packaged. (`AltStableDevConfig`, retired
+  folders from `Interface\AddOns` (and `ForeverProbe`, unless another project's probe uses it).
+  They are never packaged. (`AltStableDevConfig`, retired
   2026-10-01, seeded a whitelist from code while #23 kept settings from loading; with #23 fixed it
   only fought the player's own settings - delete its folder if an old install still has one.)

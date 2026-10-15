@@ -1,5 +1,5 @@
 ----------------------------------------------------------------------------
--- /asprobe pet ... - can the Roster draw a hunter pet or a warlock demon with
+-- /fp as pet ... - can the Roster draw a hunter pet or a warlock demon with
 -- nobody logged in? (#75)
 --
 -- Offline PLAYER display ids render untextured (Models.lua): a player's look
@@ -8,12 +8,12 @@
 -- a creature display id MAY render textured from the saved number alone. If
 -- it does, pets need no screenshot capture at all.
 --
---   /asprobe pet            capture the summoned pet (if any), open the viewer
---   /asprobe pet capture    record the pet: GUID, npc id, display id, family
---   /asprobe pet stable     the hunter's 5 active slots, read anywhere?
---   /asprobe pet me         your own character's box, same units as a pet's
---   /asprobe pet list       what has been recorded
---   /asprobe pet wipe       forget the records
+--   /fp as pet              capture the summoned pet (if any), open the viewer
+--   /fp as pet capture      record the pet: GUID, npc id, display id, family
+--   /fp as pet stable       the hunter's 5 active slots, read anywhere?
+--   /fp as pet me           your own character's box, same units as a pet's
+--   /fp as pet list         what has been recorded
+--   /fp as pet wipe         forget the records
 --
 -- The viewer draws the selected record three ways, side by side:
 --   Live      SetUnit("pet")          baseline, only while a pet is out
@@ -44,11 +44,10 @@
 -- hand: our own actor, its bounding box read once loaded, scaled to fit.
 ----------------------------------------------------------------------------
 
-AltStableProbe = AltStableProbe or {}
+local _, NS = ...
+local Probe = NS.Probe
 
-local function Out(s)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[pet]|r " .. tostring(s))
-end
+local function Out(s) Probe:Say("[pet] " .. tostring(s)) end
 
 local function Call(obj, method, ...)
     local fn = obj and obj[method]
@@ -59,7 +58,6 @@ local function Call(obj, method, ...)
 end
 
 local function Store()
-    AltStableProbeDB = AltStableProbeDB or {}
     AltStableProbeDB.pets = AltStableProbeDB.pets or {}
     return AltStableProbeDB.pets
 end
@@ -375,7 +373,7 @@ local function Build()
     return viewer
 end
 
-function AltStableProbe.Pet(arg)
+Probe:Command("pet", function(arg)
     arg = (arg or ""):lower()
     if arg == "capture" then Capture(); return end
     if arg == "stable" then StableSlots(); return end
@@ -394,12 +392,12 @@ function AltStableProbe.Pet(arg)
     end
     if arg == "list" then
         local list = List()
-        if #list == 0 then Out("nothing recorded - summon a pet, /asprobe pet capture") end
+        if #list == 0 then Out("nothing recorded - summon a pet, /fp as pet capture") end
         for i, rec in ipairs(list) do Out(i .. ". " .. Describe(rec)) end
         return
     end
     if arg == "wipe" then Store(); AltStableProbeDB.pets = {}; Out("records cleared"); return end
-    if arg ~= "" then Out("usage: /asprobe pet [capture | stable | me | list | wipe]"); return end
+    if arg ~= "" then Out("usage: /fp as pet [capture | stable | me | list | wipe]"); return end
     local f = Build()
     if f:IsShown() then f:Hide(); return end
     f:Show()
@@ -409,11 +407,11 @@ function AltStableProbe.Pet(arg)
     else
         Render()
     end
-end
+end, "[capture | stable | me | list | wipe]: offline pet models (#75)")
 
 -- Record a pet whenever one comes out, so simply playing fills the set.
 local ev = CreateFrame("Frame")
-ev:RegisterEvent("UNIT_PET")
+Probe:RegisterEvents(ev, { "UNIT_PET" })
 ev:SetScript("OnEvent", function(_, _, unit)
     if unit ~= "player" then return end
     C_Timer.After(2, function()

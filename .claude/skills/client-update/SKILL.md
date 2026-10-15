@@ -35,8 +35,10 @@ Expected: `60`, a positive number, a number while rested / `nil` when not, `-1`,
 faction count, `table`. Anything else: stop and investigate before bumping.
 
 **Chat lines are capped at 255 characters.** Anything longer than one `/run` line does not belong in
-chat - add a slash command to `Tools/AltStableProbe` and have the owner run
-`pwsh Tools/deploy-probe.ps1` instead.
+chat - add a command to `Tools/AltStableProbe` (a ForeverProbe module, `/fp as`; read
+`C:\Projects\WoW\References\PROBES.md` first) and have the owner run
+`pwsh Tools/deploy-probe.ps1` instead. Read its results from `AltStableProbe.lua`'s `log` after
+the owner's `/reload`; nothing needs pasting.
 
 ## 4. Persistence - only when something looks lost
 
@@ -69,14 +71,15 @@ with persistence broken. Before believing a rise:
    write and the next load is only a hint - a quick relaunch can be seconds, a slow `/reload` can
    be long - never the proof on its own.
 2. **Then compare the counters.** The first write in the new process must hold the last
-   pre-restart value + 1, or the owner's login line `[probe] SavedVariables (account) LOADED -
-   previous loadCount=N` must name that value. `first ever run - not loaded` means it is broken -
-   stop, this is #23 again. Check the per-character store the same way: a store that did not load
-   restarts at 1.
+   pre-restart value + 1. A store that did not load restarts at 1, and the probe's saved `log`
+   then holds `SavedVariables (account) did not load - first ever run, or #23 has come back` (or
+   the per-character line): that means it is broken - stop, this is #23 again. Check the
+   per-character store the same way.
 
-Ask for the owner's `[probe] …` lines from the login after a **full client exit** (Exit Game, wait
-for the process to go, relaunch). Lines tagged `[Probe]` with a capital P and "launch #n" are
-**PriestlyProbe**, another project's probe - not evidence about AltStable.
+The login check is silent while the stores load, so there is no line to ask the owner for. After
+a **full client exit** (Exit Game, wait for the process to go, relaunch) and a `/reload` to write
+the files, read the counters and the `log` yourself. Lines from other modules in ForeverProbe's
+console (e.g. **PriestlyProbe**) are another project's probe - not evidence about AltStable.
 
 ## 5. The bump PR
 

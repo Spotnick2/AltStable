@@ -10,100 +10,50 @@
     client. A tuple that shifts by one position yields empty data with no error,
     which is the failure mode this addon exists to prevent.
 
-    Usage in-game:
-        /asprobe              run every section
-        /asprobe bank         run the container section with the bank window OPEN
-        /asprobe <section>    client|identity|skills|prof|rep|items|containers|tooltip|instances|events
-        /asprobe whisper <Name>   send a cross-account addon-message ping
-        /asprobe enchant      each equipped slot's enchant: link id + tooltip lines (#94)
-        /asprobe copy         reopen the copy window (selectable text, Ctrl+A/Ctrl+C)
-        /asprobe dump         re-print the last run
+    A ForeverProbe module (C:\Projects\WoW\ForeverProbe, docs/GUIDE.md, #240):
+    every line goes to the /fp console and to AltStableProbeDB.log, never to
+    chat. The copy window it used to open is gone: in the console, Freeze, then
+    Select all, then Ctrl+C.
 
-    Results also land in AltStableProbeDB so they can be read off disk:
+    Usage in-game (/fp as alone lists every command):
+        /fp as all              run every section
+        /fp as bank             containers + bank tabs, with the bank window OPEN
+        /fp as <section>        client|savedvariables|identity|skills|prof|rep|items|containers|tooltip|instances|events
+        /fp as whisper <Name>   send a cross-account addon-message ping
+        /fp as enchant          each equipped slot's enchant: link id + tooltip lines (#94)
+        /fp as channel|bnet|pet|model|recipes|scene|icon ...   the other files
+        /fp as clear            empty the saved log
+        /fp steps as check      the guided in-game check of this module (#240)
+
+    Results land in AltStableProbeDB so they can be read off disk after a /reload:
         _classic_beta_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua
 ]]
 
-local ADDON = ...
+local ADDON, NS = ...
+local MAX_LOG = 3000
 
-AltStableProbeDB = AltStableProbeDB or {}
-AltStableProbeCharDB = AltStableProbeCharDB or {}
--- Machine scope lands in the TOP-LEVEL WTF\SavedVariables\ folder, not under
--- WTF\Account\<id>\. That folder demonstrably survives a full restart on
--- 1.60.1.69913 - Blizzard_Console.lua carries history across launches - while
--- everything under WTF\Account\ is wiped. On 1.60.1.69913 the answer is no:
--- the client never writes a third-party machine-scope variable at all. Kept so
--- each new build can be checked the same way.
-AltStableProbeMachineDB = AltStableProbeMachineDB or {}
+local Probe = ForeverProbe:Module("AltStableProbe", { api = 1, cmd = "as" })
+NS.Probe = Probe   -- the other files' handle on it
 
-local lines = {}
-
-local function Out(s)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[probe]|r " .. tostring(s))
-end
-
-local function Record(s)
-    lines[#lines + 1] = s
-    Out(s)
-end
+local function Say(s) Probe:Say(s) end
 
 local function Section(name)
-    Record(" ")
-    Record("|cffffd100== " .. name .. " ==|r")
+    Say("|cffffd100== " .. name .. " ==|r")
 end
 
--- Describe one value, including table contents (structs are the whole reason
--- this exists). `depth` bounds recursion so a frame reference can't run away.
-local function ValStr(v, depth)
-    local t = type(v)
-    if t == "nil" then return "nil" end
-    if t == "string" then return string.format("%q", v) end
-    if t == "number" or t == "boolean" then return tostring(v) end
-    if t == "table" then
-        if (depth or 0) <= 0 then return "{...}" end
-        local keys = {}
-        for k in pairs(v) do keys[#keys + 1] = k end
-        if #keys == 0 then return "{}" end
-        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-        local parts = {}
-        for i = 1, #keys do
-            local k = keys[i]
-            parts[#parts + 1] = tostring(k) .. "=" .. ValStr(v[k], (depth or 1) - 1)
-        end
-        return "{" .. table.concat(parts, ", ") .. "}"
-    end
-    return "<" .. t .. ">"
-end
+-- One value as text, tables included (structs are the whole reason this
+-- exists). Describe is this probe's old ValStr, moved into the host.
+local Describe = Probe.Describe
 
--- Call `fn` and report the return tuple with positions preserved, INCLUDING
--- trailing nils. Building a table from pcall's results would silently drop
--- those, and trailing nils are exactly what we're checking for.
-local function Call(label, fn, ...)
-    if type(fn) ~= "function" then
-        Record(("%-46s ABSENT (%s)"):format(label, type(fn)))
-        return
-    end
-    local function handle(ok, ...)
-        if not ok then
-            Record(("%-46s ERROR: %s"):format(label, tostring((...))))
-            return
-        end
-        local n = select("#", ...)
-        if n == 0 then
-            Record(("%-46s (no returns)"):format(label))
-            return
-        end
-        local parts = {}
-        for i = 1, n do
-            parts[#parts + 1] = "[" .. i .. "]=" .. ValStr((select(i, ...)), 2)
-        end
-        Record(("%-46s %d: %s"):format(label, n, table.concat(parts, "  ")))
-    end
-    handle(pcall(fn, ...))
-end
+-- The return tuple with positions preserved, INCLUDING trailing nils: the
+-- host's Call is this probe's old one.
+local function Call(label, fn, ...) Probe:Call(label, fn, ...) end
 
 local function Has(path, v)
-    Record(("%-46s %s"):format(path, type(v) == "nil" and "|cffff5555ABSENT|r" or ("present (" .. type(v) .. ")")))
+    Say(path .. "  " .. (type(v) == "nil" and "|cffff5555ABSENT|r" or ("present (" .. type(v) .. ")")))
 end
+
+local function Value(label, v) Say(label .. "  " .. Describe(v, 1)) end
 
 ----------------------------------------------------------------------------
 -- Sections
@@ -114,41 +64,30 @@ local P = {}
 -- Where the SavedVariables counts live now that login is silent about them.
 --
 -- They are worth having when somebody is investigating persistence, which is
--- what /asprobe is for, and worth nothing as a line of chat at every login.
+-- what this section is for, and worth nothing as a line at every login.
 function P.savedvariables()
     Section("savedvariables  (#23 - only a FULL EXIT proves anything)")
-    Record(("%-46s %s"):format("account loadCount",
-        ValStr(AltStableProbeDB and AltStableProbeDB.loadCount, 1)))
-    Record(("%-46s %s"):format("  last load",
-        ValStr(AltStableProbeDB and AltStableProbeDB.lastLoadStamp, 1)))
-    Record(("%-46s %s"):format("per-character loadCount",
-        ValStr(AltStableProbeCharDB and AltStableProbeCharDB.loadCount, 1)))
-    Record(("%-46s %s"):format("  last load",
-        ValStr(AltStableProbeCharDB and AltStableProbeCharDB.lastLoadStamp, 1)))
+    Value("account loadCount", AltStableProbeDB and AltStableProbeDB.loadCount)
+    Value("  last load", AltStableProbeDB and AltStableProbeDB.lastLoadStamp)
+    Value("per-character loadCount", AltStableProbeCharDB and AltStableProbeCharDB.loadCount)
+    Value("  last load", AltStableProbeCharDB and AltStableProbeCharDB.lastLoadStamp)
     -- Stated rather than measured again: the answer is on disk and does not
     -- change between sessions.
-    Record(("%-46s %s"):format("machine scope",
-        "NEVER WRITTEN on this client - no file under WTF (measured)"))
-    Record("A count only proves persistence if it climbs across a FULL EXIT and")
-    Record("relaunch. /reload keeps the process alive, so the value survives in")
-    Record("memory and the counter climbs without anything touching the disk -")
-    Record("which is how three separate tests concluded a store persisted when")
-    Record("it did not.")
+    Say("machine scope  NEVER WRITTEN on this client - no file under WTF (measured)")
+    Say("A count only proves persistence if it climbs across a FULL EXIT and")
+    Say("relaunch. /reload keeps the process alive, so the value survives in")
+    Say("memory and the counter climbs without anything touching the disk -")
+    Say("which is how three separate tests concluded a store persisted when")
+    Say("it did not.")
 end
 
 function P.client()
     Section("client")
-    local function buildinfo()
-        local n = select("#", GetBuildInfo())
-        local parts = {}
-        for i = 1, n do parts[#parts + 1] = "[" .. i .. "]=" .. ValStr((select(i, GetBuildInfo())), 1) end
-        Record(("%-46s %d: %s"):format("GetBuildInfo()", n, table.concat(parts, "  ")))
-    end
-    buildinfo()
-    Record(("%-46s %s"):format("WOW_PROJECT_ID", ValStr(WOW_PROJECT_ID, 1)))
-    Record(("%-46s %s"):format("WOW_PROJECT_MAINLINE", ValStr(WOW_PROJECT_MAINLINE, 1)))
-    Record(("%-46s %s"):format("MAX_PLAYER_LEVEL (level cap)", ValStr(MAX_PLAYER_LEVEL, 1)))
-    Record(("%-46s %s"):format("GetMaxPlayerLevel()", type(GetMaxPlayerLevel) == "function" and ValStr(GetMaxPlayerLevel(), 1) or "ABSENT"))
+    Call("GetBuildInfo()", GetBuildInfo)
+    Value("WOW_PROJECT_ID", WOW_PROJECT_ID)
+    Value("WOW_PROJECT_MAINLINE", WOW_PROJECT_MAINLINE)
+    Value("MAX_PLAYER_LEVEL (level cap)", MAX_PLAYER_LEVEL)
+    Call("GetMaxPlayerLevel()", GetMaxPlayerLevel)
     Call("UnitLevel('player')", UnitLevel, "player")
     Call("GetAverageItemLevel()", GetAverageItemLevel)
     Call("UnitXP('player')", UnitXP, "player")
@@ -169,41 +108,38 @@ end
 -- the FIRST NAME ONLY, so the two identity sources disagree.
 --
 -- Still open: what CHAT_MSG_ADDON reports as `sender`, and whether a whisper
--- routes to a target containing a space. That is what /asprobe whisper answers.
+-- routes to a target containing a space. That is what /fp as whisper answers.
 function P.identity()
     Section("identity  (SURNAMES - first names are no longer unique)")
-    local function multi(label, fn, ...)
-        Call(label, fn, ...)
-    end
-    multi("UnitName('player')", UnitName, "player")
-    multi("UnitFullName('player')", UnitFullName, "player")
-    multi("UnitNameUnmodified('player')", UnitNameUnmodified, "player")
-    multi("GetUnitName('player', false)", GetUnitName, "player", false)
-    multi("GetUnitName('player', true)", GetUnitName, "player", true)
-    multi("UnitGUID('player')", UnitGUID, "player")
+    Call("UnitName('player')", UnitName, "player")
+    Call("UnitFullName('player')", UnitFullName, "player")
+    Call("UnitNameUnmodified('player')", UnitNameUnmodified, "player")
+    Call("GetUnitName('player', false)", GetUnitName, "player", false)
+    Call("GetUnitName('player', true)", GetUnitName, "player", true)
+    Call("UnitGUID('player')", UnitGUID, "player")
     local guid = UnitGUID and UnitGUID("player")
     if guid then
-        multi("UnitNameFromGUID(guid)", UnitNameFromGUID, guid)
-        multi("GetPlayerInfoByGUID(guid)", GetPlayerInfoByGUID, guid)
+        Call("UnitNameFromGUID(guid)", UnitNameFromGUID, guid)
+        Call("GetPlayerInfoByGUID(guid)", GetPlayerInfoByGUID, guid)
     end
-    multi("GetRealmName()", GetRealmName)
-    multi("GetNormalizedRealmName()", GetNormalizedRealmName)
+    Call("GetRealmName()", GetRealmName)
+    Call("GetNormalizedRealmName()", GetNormalizedRealmName)
     if type(C_PlayerInfo) == "table" then
-        multi("C_PlayerInfo.ShouldDisplaySurname()", C_PlayerInfo.ShouldDisplaySurname)
-        multi("C_PlayerInfo.GetName('player')", C_PlayerInfo.GetName, "player")
-        multi("C_PlayerInfo.GetPlayerCharacterData()", C_PlayerInfo.GetPlayerCharacterData)
+        Call("C_PlayerInfo.ShouldDisplaySurname()", C_PlayerInfo.ShouldDisplaySurname)
+        Call("C_PlayerInfo.GetName('player')", C_PlayerInfo.GetName, "player")
+        Call("C_PlayerInfo.GetPlayerCharacterData()", C_PlayerInfo.GetPlayerCharacterData)
     end
     -- Anything we can see about other players tells us what a whisper target
     -- and an incoming CHAT_MSG_ADDON sender look like.
     for _, unit in ipairs({ "target", "party1", "party2" }) do
         if UnitExists and UnitExists(unit) and UnitIsPlayer and UnitIsPlayer(unit) then
-            multi("UnitName('" .. unit .. "')", UnitName, unit)
-            multi("UnitFullName('" .. unit .. "')", UnitFullName, unit)
+            Call("UnitName('" .. unit .. "')", UnitName, unit)
+            Call("UnitFullName('" .. unit .. "')", UnitFullName, unit)
         end
     end
-    Record("  >> compare the above against this character's WTF folder name")
-    Record("  >> if the surname appears in NONE of these, sync must key on GUID, not name")
-    Record("  >> to check whisper routing: /asprobe whisper <FirstName> and see if it lands")
+    Say("  >> compare the above against this character's WTF folder name")
+    Say("  >> if the surname appears in NONE of these, sync must key on GUID, not name")
+    Say("  >> to check whisper routing: /fp as whisper <FirstName> and see if it lands")
 end
 
 function P.skills()
@@ -219,7 +155,7 @@ function P.skills()
     for i = 1, math.min(n, 20) do
         Call("  GetSkillLineInfo(" .. i .. ")", C_SkillInfo.GetSkillLineInfo, i)
     end
-    if n > 20 then Record("  ... " .. (n - 20) .. " more skill lines") end
+    if n > 20 then Say("  ... " .. (n - 20) .. " more skill lines") end
 end
 
 function P.prof()
@@ -252,7 +188,7 @@ function P.rep()
     for i = 1, math.min(n, 12) do
         Call("  GetFactionDataByIndex(" .. i .. ")", C_Reputation.GetFactionDataByIndex, i)
     end
-    if n > 12 then Record("  ... " .. (n - 12) .. " more factions") end
+    if n > 12 then Say("  ... " .. (n - 12) .. " more factions") end
     -- Known Vanilla faction IDs: 72 Stormwind, 76 Orgrimmar, 529 Argent Dawn,
     -- 609 Cenarion Circle, 270 Zandalar Tribe, 59 Thorium Brotherhood.
     for _, id in ipairs({ 72, 76, 529, 609, 270, 59 }) do
@@ -284,16 +220,16 @@ function P.items()
 end
 
 function P.containers()
-    Section("containers  (run '/asprobe bank' with the BANK WINDOW OPEN)")
+    Section("containers  (run '/fp as bank' with the BANK WINDOW OPEN)")
     Has("C_Container", C_Container)
     if type(C_Container) ~= "table" then return end
     -- Enum.BagIndex is the authoritative container-id map. Forever remapped
     -- these (bag -1 is the Keyring here, not the bank), so sweep what the enum
     -- names plus a wide numeric net rather than trusting Classic's constants.
     if Enum and Enum.BagIndex then
-        Record("Enum.BagIndex: " .. ValStr(Enum.BagIndex, 2))
+        Say("Enum.BagIndex: " .. Describe(Enum.BagIndex, 2))
     else
-        Record("Enum.BagIndex ABSENT")
+        Say("Enum.BagIndex ABSENT")
     end
     local ids, seen = {}, {}
     if Enum and Enum.BagIndex then
@@ -304,7 +240,7 @@ function P.containers()
     for n = -10, 40 do if not seen[n] then seen[n] = true; ids[#ids + 1] = n end end
     table.sort(ids)
 
-    Record("bag id -> slots / name")
+    Say("bag id -> slots / name")
     for _, bag in ipairs(ids) do
         local slots
         if type(C_Container.GetContainerNumSlots) == "function" then
@@ -317,7 +253,7 @@ function P.containers()
                 local ok, v = pcall(C_Container.GetBagName, bag)
                 name = ok and v or nil
             end
-            Record(("  bag %-4d slots=%-3d name=%s"):format(bag, slots, ValStr(name, 1)))
+            Say(("  bag %-4d slots=%-3d name=%s"):format(bag, slots, Describe(name, 1)))
             -- Return SHAPE of the first occupied slot in this bag.
             for s = 1, math.min(slots, 6) do
                 local ok, info = pcall(C_Container.GetContainerItemInfo, bag, s)
@@ -329,10 +265,10 @@ function P.containers()
         end
     end
     Section("bank type / shared storage")
-    Record(("%-46s %s"):format("BankFrame:IsShown()",
-        (BankFrame and BankFrame.IsShown) and tostring(BankFrame:IsShown()) or "no BankFrame"))
+    Say("BankFrame:IsShown()  " ..
+        ((BankFrame and BankFrame.IsShown) and tostring(BankFrame:IsShown()) or "no BankFrame"))
     if Enum and Enum.BankType then
-        Record(("%-46s %s"):format("Enum.BankType", ValStr(Enum.BankType, 2)))
+        Say("Enum.BankType  " .. Describe(Enum.BankType, 2))
         for label, id in pairs(Enum.BankType) do
             if type(id) == "number" then
                 Call(("  C_Bank.CanViewBank(%s=%d)"):format(tostring(label), id), C_Bank and C_Bank.CanViewBank, id)
@@ -345,9 +281,9 @@ function P.containers()
         Call("C_Bank.AreAnyBankTypesViewable()", C_Bank.AreAnyBankTypesViewable)
         Call("C_Bank.CanViewBank(1)", C_Bank.CanViewBank, 1)
     end
-    Record(("%-46s %s"):format("NUM_BANKGENERIC_SLOTS", ValStr(NUM_BANKGENERIC_SLOTS, 1)))
-    Record(("%-46s %s"):format("NUM_BAG_SLOTS", ValStr(NUM_BAG_SLOTS, 1)))
-    Record(("%-46s %s"):format("NUM_BANKBAGSLOTS", ValStr(NUM_BANKBAGSLOTS, 1)))
+    Value("NUM_BANKGENERIC_SLOTS", NUM_BANKGENERIC_SLOTS)
+    Value("NUM_BAG_SLOTS", NUM_BAG_SLOTS)
+    Value("NUM_BANKBAGSLOTS", NUM_BANKBAGSLOTS)
 end
 
 -- Open question. With the bank demonstrably open (BankFrame:IsShown() == true)
@@ -357,11 +293,11 @@ end
 -- through C_Bank rather than as plain containers. Enum.BagIndex settles it.
 function P.bank()
     Section("bank  (open the bank first)")
-    Record(("%-46s %s"):format("BankFrame:IsShown()",
-        (BankFrame and BankFrame.IsShown) and tostring(BankFrame:IsShown()) or "no BankFrame"))
-    if not (Enum and Enum.BankType) then Record("Enum.BankType ABSENT"); return end
-    Record(("%-46s %s"):format("Enum.BankType", ValStr(Enum.BankType, 2)))
-    if type(C_Bank) ~= "table" then Record("C_Bank ABSENT"); return end
+    Say("BankFrame:IsShown()  " ..
+        ((BankFrame and BankFrame.IsShown) and tostring(BankFrame:IsShown()) or "no BankFrame"))
+    if not (Enum and Enum.BankType) then Say("Enum.BankType ABSENT"); return end
+    Say("Enum.BankType  " .. Describe(Enum.BankType, 2))
+    if type(C_Bank) ~= "table" then Say("C_Bank ABSENT"); return end
 
     Call("C_Bank.FetchViewableBankTypes()", C_Bank.FetchViewableBankTypes)
     for label, bt in pairs(Enum.BankType) do
@@ -397,8 +333,8 @@ function P.tooltip()
     local okHook, errHook = pcall(function()
         GameTooltip:HookScript("OnTooltipSetItem", function() fired.hook = true end)
     end)
-    Record(("%-46s %s"):format("GameTooltip:HookScript('OnTooltipSetItem')",
-        okHook and "installed without error" or ("|cffff5555ERROR: " .. tostring(errHook) .. "|r")))
+    Say("GameTooltip:HookScript('OnTooltipSetItem')  " ..
+        (okHook and "installed without error" or ("|cffff5555ERROR: " .. tostring(errHook) .. "|r")))
 
     Has("TooltipDataProcessor", TooltipDataProcessor)
     Has("C_TooltipInfo", C_TooltipInfo)
@@ -406,24 +342,23 @@ function P.tooltip()
        and Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item then
         local ok, err = pcall(TooltipDataProcessor.AddTooltipPostCall, Enum.TooltipDataType.Item,
             function() fired.tdp = true end)
-        Record(("%-46s %s"):format("TooltipDataProcessor.AddTooltipPostCall",
-            ok and "installed without error" or ("ERROR: " .. tostring(err))))
+        Say("TooltipDataProcessor.AddTooltipPostCall  " ..
+            (ok and "installed without error" or ("ERROR: " .. tostring(err))))
     end
 
     -- Now actually drive a tooltip and see which path fires.
     GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
     local okSet, errSet = pcall(function() GameTooltip:SetHyperlink("item:6948") end)
-    Record(("%-46s %s"):format("GameTooltip:SetHyperlink('item:6948')",
-        okSet and "ok" or ("ERROR: " .. tostring(errSet))))
+    Say("GameTooltip:SetHyperlink('item:6948')  " .. (okSet and "ok" or ("ERROR: " .. tostring(errSet))))
     GameTooltip:Hide()
 
     local function report(when)
-        Record(("%-46s OnTooltipSetItem=%s  TooltipDataProcessor=%s"):format(
-            "  fired " .. when, tostring(fired.hook), tostring(fired.tdp)))
+        Say(("  fired %s  OnTooltipSetItem=%s  TooltipDataProcessor=%s"):format(
+            when, tostring(fired.hook), tostring(fired.tdp)))
         if not fired.hook then
-            Record("  |cffff5555>> OnTooltipSetItem did NOT fire - Warband's tooltip must move to TooltipDataProcessor|r")
+            Say("  |cffff5555>> OnTooltipSetItem did NOT fire - Warband's tooltip must move to TooltipDataProcessor|r")
         else
-            Record("  |cff55ff55>> OnTooltipSetItem fires - Warband's existing hook is safe|r")
+            Say("  |cff55ff55>> OnTooltipSetItem fires - Warband's existing hook is safe|r")
         end
     end
     report("immediately")
@@ -443,7 +378,7 @@ function P.instances()
         if ok and type(v) == "number" then n = v end
     end
     if n == 0 then
-        Record("  no lockouts right now - re-run after saving to a raid to check encounter order")
+        Say("  no lockouts right now - re-run after saving to a raid to check encounter order")
     end
     for i = 1, n do
         Call("  GetSavedInstanceInfo(" .. i .. ")", GetSavedInstanceInfo, i)
@@ -478,13 +413,13 @@ function P.events()
         local ok, err = pcall(f.RegisterEvent, f, ev)
         if not ok then
             bad[#bad + 1] = ev
-            Record(("  |cffff5555%-34s REJECTED: %s|r"):format(ev, tostring(err)))
+            Say(("  |cffff5555%-34s REJECTED: %s|r"):format(ev, tostring(err)))
         end
     end
     if #bad == 0 then
-        Record("  all " .. #want .. " events registered cleanly")
+        Say("  all " .. #want .. " events registered cleanly")
     else
-        Record("  |cffff5555" .. #bad .. " of " .. #want .. " events rejected (above)|r")
+        Say("  |cffff5555" .. #bad .. " of " .. #want .. " events rejected (above)|r")
     end
     f:UnregisterAllEvents()
 end
@@ -493,183 +428,48 @@ end
 -- Driver
 ----------------------------------------------------------------------------
 
--- Defined further down (needs the frame helpers); forward-declared so Run can call it.
-local ShowCopy
-
 local ORDER = { "client", "savedvariables", "identity", "skills", "prof", "rep", "items", "containers", "bank", "tooltip", "instances", "events" }
 
 local function Run(which)
-    lines = {}
-    Record("AltStableProbe  " .. date("%Y-%m-%d %H:%M:%S"))
-    if which and P[which] then
+    Say("AltStableProbe " .. (which or "all") .. "  " .. date("%Y-%m-%d %H:%M:%S"))
+    if which then
         P[which]()
     else
         for _, k in ipairs(ORDER) do P[k]() end
     end
-    AltStableProbeDB.lastRun = date("%Y-%m-%d %H:%M:%S")
-    AltStableProbeDB.build = { GetBuildInfo() }
-    AltStableProbeDB.lines = lines
-    Out("|cff55ff55done|r - " .. #lines .. " lines saved to AltStableProbeDB (written on logout/reload)")
-    ShowCopy(lines)
+    Say("|cff55ff55done|r - saved to AltStableProbeDB.log (written on logout/reload)")
 end
 
-----------------------------------------------------------------------------
--- Copy window.
---
--- The chat frame can't be selected, so the same output also goes into a
--- scrollable multi-line EditBox where Ctrl+A / Ctrl+C works. Paged, because a
--- full sweep is a few hundred lines and stuffing all of it into one EditBox is
--- asking for a truncation surprise.
---
--- Built without UIPanelScrollFrameTemplate on purpose: that template still
--- exists on Mainline but its scrollbar internals changed in 10.1, and this is
--- the one piece of UI that has to work on an unfamiliar client.
-----------------------------------------------------------------------------
-
-local LINES_PER_PAGE = 150
-local copyFrame, copyEdit, copyScroll, copyLabel
-local copyPages, copyPage = {}, 1
-
-local function StripColors(s)
-    s = tostring(s)
-    s = s:gsub("|c%x%x%x%x%x%x%x%x", "")
-    s = s:gsub("|r", "")
-    s = s:gsub("|T.-|t", "")
-    return s
+-- The bank's sections together, the way the BANKFRAME_OPENED capture runs
+-- them: the bank tabs answer only with the window open.
+local function Bank()
+    Say("AltStableProbe bank  " .. date("%Y-%m-%d %H:%M:%S"))
+    P.containers()
+    P.bank()
 end
 
-local function BuildPages(src)
-    copyPages = {}
-    local buf = {}
-    for i = 1, #src do
-        buf[#buf + 1] = StripColors(src[i])
-        if #buf >= LINES_PER_PAGE then
-            copyPages[#copyPages + 1] = table.concat(buf, "\n")
-            buf = {}
-        end
+Probe:Command("all", function() Run(nil) end, "every section below, in order")
+local HELP = {
+    client = "build, project, level cap, XP",
+    savedvariables = "the load counters (#23)",
+    identity = "names, surnames, GUID, realm",
+    skills = "C_SkillInfo skill lines",
+    prof = "GetProfessions / GetProfessionInfo",
+    rep = "C_Reputation factions",
+    items = "C_Item tuples, cache misses, stats",
+    containers = "every container id and its first item",
+    tooltip = "OnTooltipSetItem vs TooltipDataProcessor",
+    instances = "saved lockouts and encounter order",
+    events = "which events this client rejects",
+}
+for _, k in ipairs(ORDER) do
+    if k ~= "bank" then
+        local section = k
+        Probe:Command(section, function() Run(section) end, HELP[section])
     end
-    if #buf > 0 then copyPages[#copyPages + 1] = table.concat(buf, "\n") end
-    if #copyPages == 0 then copyPages[1] = "(no output - run /asprobe first)" end
 end
-
-local function ShowPage(n)
-    copyPage = math.max(1, math.min(n, #copyPages))
-    copyEdit:SetText(copyPages[copyPage])
-    copyEdit:SetCursorPosition(0)
-    copyScroll:SetVerticalScroll(0)
-    copyLabel:SetText(("page %d / %d      Ctrl+A  then  Ctrl+C"):format(copyPage, #copyPages))
-end
-
-local function Button(parent, text, width)
-    local ok, b = pcall(CreateFrame, "Button", nil, parent, "UIPanelButtonTemplate")
-    if not ok or not b then
-        b = CreateFrame("Button", nil, parent)
-        local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        fs:SetAllPoints(); fs:SetJustifyH("CENTER")
-        b.Text = fs
-    end
-    b:SetSize(width or 80, 22)
-    if b.SetText then b:SetText(text) elseif b.Text then b.Text:SetText(text) end
-    return b
-end
-
-local function CreateCopyFrame()
-    if copyFrame then return end
-
-    local ok, f = pcall(CreateFrame, "Frame", "AltStableProbeCopyFrame", UIParent, "BackdropTemplate")
-    if not ok or not f then f = CreateFrame("Frame", "AltStableProbeCopyFrame", UIParent) end
-    copyFrame = f
-
-    f:SetSize(780, 540)
-    f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG")
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
-    if f.SetBackdrop then
-        f:SetBackdrop({
-            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true, tileSize = 32, edgeSize = 32,
-            insets = { left = 11, right = 12, top = 12, bottom = 11 },
-        })
-    end
-    -- Escape closes it.
-    tinsert(UISpecialFrames, "AltStableProbeCopyFrame")
-
-    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("AltStable probe output")
-
-    copyLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    copyLabel:SetPoint("TOPRIGHT", -16, -18)
-
-    local sc = CreateFrame("ScrollFrame", nil, f)
-    sc:SetPoint("TOPLEFT", 18, -44)
-    sc:SetPoint("BOTTOMRIGHT", -20, 44)
-    copyScroll = sc
-
-    local eb = CreateFrame("EditBox", nil, sc)
-    eb:SetMultiLine(true)
-    eb:SetAutoFocus(false)
-    eb:SetMaxLetters(0)
-    eb:SetFontObject(ChatFontNormal)
-    eb:SetWidth(740)
-    eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    sc:SetScrollChild(eb)
-    copyEdit = eb
-
-    sc:EnableMouseWheel(true)
-    sc:SetScript("OnMouseWheel", function(self, delta)
-        local cur, max = self:GetVerticalScroll(), self:GetVerticalScrollRange()
-        local new = cur - delta * 45
-        if new < 0 then new = 0 elseif new > max then new = max end
-        self:SetVerticalScroll(new)
-    end)
-
-    local prev = Button(f, "< Prev", 70)
-    prev:SetPoint("BOTTOMLEFT", 18, 14)
-    prev:SetScript("OnClick", function() ShowPage(copyPage - 1) end)
-
-    local nxt = Button(f, "Next >", 70)
-    nxt:SetPoint("LEFT", prev, "RIGHT", 6, 0)
-    nxt:SetScript("OnClick", function() ShowPage(copyPage + 1) end)
-
-    local sel = Button(f, "Select all", 90)
-    sel:SetPoint("LEFT", nxt, "RIGHT", 12, 0)
-    sel:SetScript("OnClick", function()
-        copyEdit:SetFocus()
-        copyEdit:HighlightText()
-    end)
-
-    local close = Button(f, "Close", 80)
-    close:SetPoint("BOTTOMRIGHT", -18, 14)
-    close:SetScript("OnClick", function() f:Hide() end)
-
-    f:Hide()
-end
-
-function ShowCopy(src)
-    CreateCopyFrame()
-    BuildPages(src or {})
-    ShowPage(1)
-    copyFrame:Show()
-end
-
--- Shared with the other probe files. WoW chat is not selectable, so any command
--- whose answer is a path the player has to retype needs this, not just this one.
-AltStableProbe = AltStableProbe or {}
-AltStableProbe.ShowCopy = ShowCopy
-
--- The copy window is a big mouse-enabled frame in the middle of the screen, so
--- anything that reads the cursor has to be able to move it out of the way
--- first - otherwise the second reading is of this.
-function AltStableProbe.HideCopy()
-    if copyFrame and copyFrame:IsShown() then copyFrame:Hide(); return true end
-    return false
-end
+Probe:Command("bank", Bank, "containers + bank tabs: open the bank window first")
+Probe:Command("clear", function() Probe:ClearLog(); Say("log cleared") end, "empty the saved log")
 
 ----------------------------------------------------------------------------
 -- Cross-account whisper test (run with both WOW1 and WOW12 logged in).
@@ -682,30 +482,27 @@ end
 local WPREFIX = "ASPROBE"
 local wire = CreateFrame("Frame")
 
--- The wire log is kept separately: Run() wipes `lines`, and a PONG can land
--- minutes after the sweep that prompted it.
+-- The wire log is kept apart from the module log: it spans sessions and both
+-- accounts' files, and Tools/AltStableProbe/read-wirelog.py reads it straight
+-- from WTF\...\AltStableProbe.lua. Its lines keep their shape for that.
 local function WireRecord(s)
     AltStableProbeDB.wireLog = AltStableProbeDB.wireLog or {}
     -- Who wrote it, on every line: two characters of one account share this
-    -- file, and the log is read straight from WTF\...\AltStableProbe.lua by
-    -- Tools/AltStableProbe/read-wirelog.py rather than copied out of the game.
+    -- file.
     local who = (AltStable and AltStable.API and AltStable.API.PlayerFullName
         and AltStable.API.PlayerFullName()) or (UnitName and UnitName("player")) or "?"
     local entry = date("%Y-%m-%d %H:%M:%S") .. "  [" .. who .. "]  " .. s
     AltStableProbeDB.wireLog[#AltStableProbeDB.wireLog + 1] = entry
-    lines[#lines + 1] = entry
-    Out(s)
+    Say(s)
 end
-AltStableProbe = AltStableProbe or {}
-AltStableProbe.WireRecord = WireRecord     -- Channel.lua logs through it
-AltStableProbe.ValStr = ValStr             -- and BNet.lua describes structs with it
+NS.WireRecord = WireRecord     -- Channel.lua and BNet.lua log through it
 
 -- Send the same ping to every plausible spelling of the target, each tagged
 -- with the form that produced it. Whichever tags come back as PONG are the
 -- forms that actually route - no guessing about space vs hyphen.
 local function SendPing(target)
     if not C_ChatInfo or not C_ChatInfo.SendAddonMessage then
-        Out("|cffff5555C_ChatInfo.SendAddonMessage absent|r"); return
+        Say("|cffff5555C_ChatInfo.SendAddonMessage absent|r"); return
     end
     local me = (UnitFullName and UnitFullName("player")) or UnitName("player") or "?"
 
@@ -735,7 +532,7 @@ local function SendPing(target)
         local auto = C_AutoComplete and C_AutoComplete.GetAutoCompleteRealms
             and { pcall(C_AutoComplete.GetAutoCompleteRealms) }
         if auto then
-            WireRecord("  GetAutoCompleteRealms -> " .. ValStr(auto[2], 2))
+            WireRecord("  GetAutoCompleteRealms -> " .. Describe(auto[2], 2))
             if auto[1] and type(auto[2]) == "table" then
                 for _, r in ipairs(auto[2]) do addRealm(r) end
             end
@@ -766,22 +563,24 @@ local function SendPing(target)
     WireRecord("  >> A PONG line naming a form is the proof that form routes.")
 end
 
-wire:RegisterEvent("CHAT_MSG_ADDON")
-pcall(wire.RegisterEvent, wire, "BANKFRAME_OPENED")
+Probe:Command("whisper", function(arg)
+    if arg == "" then
+        Say("usage: /fp as whisper <CharacterName>   (log the other account in first)")
+    else
+        SendPing(arg)
+    end
+end, "<Name>: a cross-account addon-message ping, every spelling of the name")
+
+Probe:RegisterEvents(wire, { "CHAT_MSG_ADDON", "BANKFRAME_OPENED" })
 wire:SetScript("OnEvent", function(_, event, prefix, text, channel, sender)
     if event == "BANKFRAME_OPENED" then
         -- Run one frame later: the bank bags are not populated at the instant
-        -- the event fires, which is why a manual "/asprobe bank" kept coming
-        -- back empty.
+        -- the event fires, which is why a manual bank run kept coming back
+        -- empty.
         if C_Timer and C_Timer.After then
             C_Timer.After(0.25, function()
-                Out("|cffffd100bank opened - auto-capturing containers + bank tabs|r")
-                lines = {}
-                Record("AltStableProbe (bank auto-capture)  " .. date("%Y-%m-%d %H:%M:%S"))
-                P.containers()
-                P.bank()
-                AltStableProbeDB.lines = lines
-                ShowCopy(lines)
+                Say("|cffffd100bank opened - auto-capturing containers + bank tabs|r")
+                Bank()
             end)
         end
         return
@@ -794,7 +593,7 @@ wire:SetScript("OnEvent", function(_, event, prefix, text, channel, sender)
     if kindOnly ~= "PING" and kindOnly ~= "PONG" then return end
     -- `sender` verbatim is the whole point of this test.
     WireRecord(("|cff55ff55RECV|r prefix=%s channel=%s sender=%s text=%s"):format(
-        tostring(prefix), tostring(channel), ValStr(sender, 1), ValStr(text, 1)))
+        tostring(prefix), tostring(channel), Describe(sender, 1), Describe(text, 1)))
     local kind, label = tostring(text):match("^(%u+)|([^|]*)")
     if kind == "PING" then
         local me = (UnitFullName and UnitFullName("player")) or UnitName("player") or "?"
@@ -811,76 +610,37 @@ if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
     pcall(C_ChatInfo.RegisterAddonMessagePrefix, WPREFIX)
 end
 
-SLASH_ASPROBE1 = "/asprobe"
-SlashCmdList["ASPROBE"] = function(msg)
-    msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    local cmd, arg = msg:match("^(%S+)%s*(.*)$")
-    cmd = (cmd or ""):lower()
-    if cmd == "channel" then
-        AltStableProbe.Channel(arg)
-        return
-    end
-    if cmd == "bnet" then
-        AltStableProbe.BNet(arg)
-        return
-    end
-    if cmd == "pet" then
-        AltStableProbe.Pet(arg)
-        return
-    end
-    if cmd == "enchant" then
-        AltStableProbe.Enchants()
-        return
-    end
-    if cmd == "whisper" then
-        if arg == "" then
-            Out("usage: /asprobe whisper <CharacterName>   (log the other account in first)")
-        else
-            SendPing(arg)
-        end
-        return
-    end
-    msg = msg:lower()
-    if msg == "copy" then
-        local src = (#lines > 0) and lines or (AltStableProbeDB.lines or {})
-        ShowCopy(src)
-        return
-    end
-    if msg == "dump" then
-        for _, l in ipairs(AltStableProbeDB.lines or {}) do Out(l) end
-        local w = AltStableProbeDB.wireLog or {}
-        if #w > 0 then
-            Out("|cffffd100-- wire log --|r")
-            for _, l in ipairs(w) do Out(l) end
-        end
-        return
-    end
-    if msg == "bank" then
-        Out("running container section - make sure the bank window is OPEN")
-        Run("containers")
-        return
-    end
-    if msg ~= "" and not P[msg] then
-        Out("unknown section '" .. msg .. "'. try: " .. table.concat(ORDER, " ") .. " bank whisper channel bnet pet copy dump")
-        return
-    end
-    Run(msg ~= "" and msg or nil)
+----------------------------------------------------------------------------
+-- Saved tables, and the SavedVariables persistence canary.
+--
+-- The tables are adopted at our own ADDON_LOADED, never made at file scope:
+-- the client loads SavedVariables after the addon's files, so a table made
+-- here would be replaced (GUIDE.md section 1).
+--
+-- The canary is the decisive test for "the client writes SavedVariables but
+-- never reads them back". A counter that never rises above 1 means the load is
+-- not happening; a counter that climbs means it is. Read at PLAYER_LOGIN.
+----------------------------------------------------------------------------
+
+local function Adopt()
+    Probe:Ready()
+    if type(AltStableProbeDB) ~= "table" then AltStableProbeDB = {} end
+    if type(AltStableProbeCharDB) ~= "table" then AltStableProbeCharDB = {} end
+    -- Machine scope lands in the TOP-LEVEL WTF\SavedVariables\ folder, not
+    -- under WTF\Account\<id>\. On 1.60.1.69913 the answer was no: the client
+    -- never writes a third-party machine-scope variable at all. Kept so each
+    -- new build can be checked the same way.
+    if type(AltStableProbeMachineDB) ~= "table" then AltStableProbeMachineDB = {} end
+    local db = AltStableProbeDB
+    if type(db.log) ~= "table" then db.log = {} end
+    Probe:UseLog(db.log, MAX_LOG)
+    -- Retired with the copy window (#240): the last run's lines, which the
+    -- log now holds. Left on disk, an old run reads as a fresh one.
+    db.lines, db.lastRun, db.build, db.enchants = nil, nil, nil, nil
+    Say("loaded. /fp as for the commands")
 end
 
-----------------------------------------------------------------------------
--- SavedVariables persistence probe.
---
--- Decisive test for "the client writes SavedVariables but never reads them
--- back". A counter that never rises above 1 means the load is not happening;
--- a counter that climbs means it is.
---
--- Deliberately read at PLAYER_LOGIN rather than file scope: SavedVariables are
--- not guaranteed to be populated while an addon's files are still executing.
-----------------------------------------------------------------------------
-
-local boot = CreateFrame("Frame")
-boot:RegisterEvent("PLAYER_LOGIN")
-boot:SetScript("OnEvent", function()
+local function Canary()
     -- Account-wide and per-character are SEPARATE mechanisms; test them
     -- independently. If only one is broken that is a real workaround for any
     -- addon whose state does not need sharing across characters.
@@ -888,26 +648,19 @@ boot:SetScript("OnEvent", function()
     local prevChar = AltStableProbeCharDB.loadCount
 
     -- SILENT WHEN THEY LOAD, which since #23 was fixed on 1.60.1.70009 is
-    -- every session.
+    -- every session. A status line that says "still fine" every session is
+    -- one nobody reads, which is how the day it says something else gets
+    -- missed. The counts are on demand under /fp as savedvariables.
     --
-    -- This block used to report all three scopes at every login, in green when
-    -- they worked. That was the right shape while the question was open and
-    -- the answer changed from run to run; it is the wrong shape now. A status
-    -- line that says "still fine" every single session is one nobody reads,
-    -- which is how the day it says something else gets missed. The counts are
-    -- still there on demand under /asprobe.
-    --
-    -- Machine scope is gone from here entirely: it is never written on this
-    -- client (measured - no file anywhere under WTF, see
-    -- docs/forever-api-notes.md), so its line was a red "not loaded" at every
-    -- login, for ever, reporting a settled answer as a fault.
+    -- Machine scope is not reported: it is never written on this client
+    -- (measured - no file anywhere under WTF, see docs/forever-api-notes.md),
+    -- so its line was a "not loaded" at every login, a settled answer
+    -- reported as a fault.
     if prev == nil then
-        Out("|cffff5555SavedVariables (account)|r did not load - "
-            .. "first ever run, or #23 has come back")
+        Say("|cffff5555SavedVariables (account)|r did not load - first ever run, or #23 has come back")
     end
     if prevChar == nil then
-        Out("|cffff5555SavedVariablesPerCharacter|r did not load - "
-            .. "first ever run, or #23 has come back")
+        Say("|cffff5555SavedVariablesPerCharacter|r did not load - first ever run, or #23 has come back")
     end
 
     AltStableProbeDB.loadCount = (tonumber(prev) or 0) + 1
@@ -917,25 +670,17 @@ boot:SetScript("OnEvent", function()
 
     -- Rule out a LATE load: if the client executes a SavedVariables file after
     -- PLAYER_LOGIN, it REPLACES the global table. Different bug, different
-    -- workaround, so it is worth distinguishing - for every store, not just the
-    -- account one.
+    -- workaround, so it is worth distinguishing - for every store.
     --
     -- Detected by identity, not by count. Every session starts at loadCount = 1
     -- on this client, so a late load of the file just written reads back as 1 -
-    -- indistinguishable from the probe's own 1, and a `now > 1` check can never
-    -- fire. A per-session mark on each table can: a replaced table has lost it.
-    local mark = tostring(GetTime()) .. ":" .. tostring(math.random(1, 1000000000))
-    -- Machine scope is deliberately NOT watched. It is never written on this
-    -- client - measured, no file anywhere under WTF, see
-    -- docs/forever-api-notes.md - so watching it meant reporting a settled
-    -- answer as a failure at every single login. A known non-fault shouted
-    -- every session is how real failures stop being read.
+    -- indistinguishable from the probe's own 1. A per-session mark on each
+    -- table can: a replaced table has lost it.
     --
-    -- The other two are kept, and this is the whole remaining point of the
-    -- watcher: #23 is fixed on 1.60.1.70009, but this is a beta client and
-    -- everything the addon persists rides on those two scopes. Silent while
-    -- they work, loud the day a patch breaks them again - which is what a
-    -- canary is for, and it costs nothing while it is quiet.
+    -- #23 is fixed on 1.60.1.70009, but this is a beta client and everything
+    -- the addon persists rides on these two scopes. Silent while they work,
+    -- loud the day a patch breaks them again - which is what a canary is for.
+    local mark = tostring(GetTime()) .. ":" .. tostring(math.random(1, 1000000000))
     local STORES = {
         { label = "account",       global = "AltStableProbeDB",     atLogin = prev },
         { label = "per-character", global = "AltStableProbeCharDB", atLogin = prevChar },
@@ -957,7 +702,7 @@ boot:SetScript("OnEvent", function()
                 for _, store in ipairs(STORES) do
                     if store.atLogin == nil and not store.reportedLate and Replaced(store) then
                         store.reportedLate = true
-                        Out(("|cff55ff55%s SV arrived LATE|r - replaced after %ds, loadCount=%s")
+                        Say(("|cff55ff55%s SV arrived LATE|r - replaced after %ds, loadCount=%s")
                             :format(store.label, delay, tostring(_G[store.global].loadCount)))
                     end
                 end
@@ -975,17 +720,47 @@ boot:SetScript("OnEvent", function()
             -- at all - and nothing in-game can tell them apart, because the
             -- global is nil either way. Only the disk can, so this points
             -- there rather than guessing which one it is.
-            --
-            -- Silent when they load, which after #23 is every session. This
-            -- line is now a regression alarm rather than a status report.
             if #never > 0 then
-                Out(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
+                Say(("|cffff5555SV never loaded|r - still nothing after 30s for: %s. "
                     .. "That only says they did not LOAD: check the files under WTF on disk "
                     .. "to tell 'written but not read' from 'never written'.")
                     :format(table.concat(never, ", ")))
             end
         end)
     end
+end
 
-    Out("run |cffffd100/asprobe|r for everything, or |cffffd100/asprobe bank|r with the bank open.")
+----------------------------------------------------------------------------
+-- /fp steps as check - the in-game check of the move onto ForeverProbe (#240):
+-- what the stubs cannot show (the viewers' template frames, the console in
+-- the way of a cursor reading), as answers saved for a session to read.
+----------------------------------------------------------------------------
+
+local function Command(line) SlashCmdList.FOREVERPROBE("as " .. line) end
+
+Probe:Steps("check", {
+    title = "AltStableProbe on ForeverProbe (#240)",
+    { text = "Every section runs into the console.", auto = true,
+      run = function() Run(nil); return #Probe.log end },
+    { text = "Press Run: the model viewer opens.", button = "Run", run = function() Command("model") end },
+    { text = "Did the model viewer open on that first press, with two panes?", ask = true, screenshot = "model viewer" },
+    { text = "Close it. Press Run: the scene viewer opens.", button = "Run", run = function() Command("scene") end },
+    { text = "Did the scene viewer open on that first press?", ask = true, screenshot = "scene viewer" },
+    { text = "Close it. Press Run, then within 5 seconds hover an action-bar icon and hold still.",
+      button = "Run", run = function() Command("icon") end },
+    { text = "Did the countdown show at the top of the screen, and the console come back naming the icon's texture?",
+      ask = true, screenshot = "icon answer" },
+    { text = "Type /reload (or press Reload now) to save the results.", reload = true },
+})
+
+local boot = CreateFrame("Frame")
+Probe:RegisterEvents(boot, { "ADDON_LOADED", "PLAYER_LOGIN" })
+boot:SetScript("OnEvent", function(self, event, name)
+    if event == "ADDON_LOADED" then
+        if name ~= ADDON then return end
+        self:UnregisterEvent("ADDON_LOADED")
+        Adopt()
+    elseif event == "PLAYER_LOGIN" then
+        Canary()
+    end
 end)

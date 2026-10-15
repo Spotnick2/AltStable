@@ -2,7 +2,9 @@
 
 Probe runs 2026-09-20 on build **1.60.1.69913**, against two low-level characters on the
 "Classic Beta PvE" realm. Character names and GUIDs below are placeholders; the values are as
-measured. Produced by `Tools/AltStableProbe`.
+measured. Produced by `Tools/AltStableProbe` (a ForeverProbe module since #240: the
+`/asprobe`, `/asmodel`, `/asprof`, `/asscene` and `/asicon` named below are now `/fp as <section>`,
+`model`, `recipes`, `scene` and `icon`).
 
 Everything below is an observed return value. Where it contradicts an assumption in the migration
 plan, that's called out.
@@ -1608,7 +1610,7 @@ answers `GetObjectType` — a frame does, a list does not. Guessing wrong here
 reports "nothing under the cursor" while the thing is plainly hovered, which
 sends you looking in the wrong place entirely.
 
-`Tools/AltStableProbe/WhatIcon.lua` (`/asicon`) is the working example.
+`Tools/AltStableProbe/WhatIcon.lua` (`/fp as icon`) is the working example.
 ## A file id cannot be validated; a path can
 
 Measured 2026-09-26 on 1.60.1.70009:
@@ -1885,7 +1887,7 @@ The probe no longer watches machine scope at all, and no longer reports the two
 that work. A status line saying "still fine" at every login is one nobody reads,
 which is how the day it says something else gets missed — so the login report is
 silent while the stores load and loud when they do not, and the counts moved to
-`/asprobe savedvariables` where somebody investigating persistence will look for
+`/fp as savedvariables` where somebody investigating persistence will look for
 them.
 
 ## Translucent surfaces: what an addon can and cannot do about legibility
