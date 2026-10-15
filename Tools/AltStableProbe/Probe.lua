@@ -750,27 +750,21 @@ Probe:Steps("check", {
     { text = "Type /reload (or press Reload now) to save the results.", reload = true },
 })
 
--- /fp steps as icon - the countdown and the console around a cursor reading,
--- one question each. The first check asked both at once and got a "no" that
--- could be either; a screenshot can't settle it either (the host hides its
--- console for every shot, and the errors frame has faded by then). The read
--- logs the errors frame's state and the console's, and the second question's
--- check records the console as the answer is given.
-local function ConsoleShown()
-    local c = rawget(_G, "ForeverProbe") and ForeverProbe.Console
-    if type(c) ~= "table" or type(c.IsShown) ~= "function" then return false, "no ForeverProbe.Console" end
-    return c.IsShown() == true, "console shown: " .. tostring(c.IsShown())
-end
-
+-- /fp steps as icon - a cursor reading where it is most wanted: on the
+-- AltStable sheet, which hides the game UI. The countdown is the probe's own
+-- banner, and the console and this panel stay up over the sheet since
+-- ForeverProbe#7; the reading puts them away (Probe:HideWindows) and brings
+-- them back. One question each: the first check asked two at once and got a
+-- "no" that could be either.
 Probe:Steps("icon", {
-    title = "/fp as icon: the countdown and the console",
-    { text = "Close any open AltStable or probe windows. Press Run, then within 5 seconds hover an "
-          .. "action-bar icon and hold still until the reading is done.",
+    title = "/fp as icon on the AltStable sheet",
+    { text = "Open the AltStable sheet (/alts). Is this panel still in view over it?", ask = true },
+    { text = "Press Run, then within 5 seconds hover an icon on the sheet (a side tab) and hold "
+          .. "still until the reading is done.",
       button = "Run", run = function() Command("icon") end },
-    { text = "While you waited: did a countdown (\"hover the thing now\", then 4... 3... 2... 1..., "
-          .. "then \"read: ...\") show near the top of the screen?", ask = true },
-    { text = "Is the /fp console open now, listing the icon's textures (lines tagged [icon])?",
-      ask = true, check = ConsoleShown },
+    { text = "While you waited: did this panel go away, and a countdown (\"hover the thing now\", "
+          .. "then 4... 3... 2... 1..., then \"read: ...\") show near the top of the screen?", ask = true },
+    { text = "Is the /fp console open now, listing the icon's textures (lines tagged [icon])?", ask = true },
     { text = "Type /reload (or press Reload now) to save the results.", reload = true },
 })
 
