@@ -23,6 +23,7 @@
         /fp as enchant          each equipped slot's enchant: link id + tooltip lines (#94)
         /fp as channel|bnet|pet|model|recipes|scene|icon ...   the other files
         /fp as clear            empty the saved log
+        /fp steps as check      the guided in-game check of this module (#240)
 
     Results land in AltStableProbeDB so they can be read off disk after a /reload:
         _classic_beta_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua
@@ -728,6 +729,29 @@ local function Canary()
         end)
     end
 end
+
+----------------------------------------------------------------------------
+-- /fp steps as check - the in-game check of the move onto ForeverProbe (#240):
+-- what the stubs cannot show (the viewers' template frames, the console in
+-- the way of a cursor reading), as answers saved for a session to read.
+----------------------------------------------------------------------------
+
+local function Command(line) SlashCmdList.FOREVERPROBE("as " .. line) end
+
+Probe:Steps("check", {
+    title = "AltStableProbe on ForeverProbe (#240)",
+    { text = "Every section runs into the console.", auto = true,
+      run = function() Run(nil); return #Probe.log end },
+    { text = "Press Run: the model viewer opens.", button = "Run", run = function() Command("model") end },
+    { text = "Did the model viewer open on that first press, with two panes?", ask = true, screenshot = "model viewer" },
+    { text = "Close it. Press Run: the scene viewer opens.", button = "Run", run = function() Command("scene") end },
+    { text = "Did the scene viewer open on that first press?", ask = true, screenshot = "scene viewer" },
+    { text = "Close it. Press Run, then within 5 seconds hover an action-bar icon and hold still.",
+      button = "Run", run = function() Command("icon") end },
+    { text = "Did the countdown show at the top of the screen, and the console come back naming the icon's texture?",
+      ask = true, screenshot = "icon answer" },
+    { text = "Type /reload (or press Reload now) to save the results.", reload = true },
+})
 
 local boot = CreateFrame("Frame")
 Probe:RegisterEvents(boot, { "ADDON_LOADED", "PLAYER_LOGIN" })

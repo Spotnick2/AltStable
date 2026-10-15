@@ -72,6 +72,11 @@ for _, slash in ipairs({ "ASPROBE", "ASMODEL", "ASPROF", "ASSCENE", "ASICON" }) 
         and SlashCmdList[slash] == nil)
 end
 check("no AltStableProbe global: the files share the addon namespace", rawget(_G, "AltStableProbe") == nil)
+-- The in-game check is a procedure (CLAUDE.md: never a checklist in chat).
+local proc = FP.procedures and FP.procedures["AltStableProbe/check"]
+check("/fp steps as check is defined", proc ~= nil and #proc.steps >= 2)
+check("  and ends with a /reload, so its answers reach the disk",
+      proc ~= nil and proc.steps[#proc.steps].reload == true)
 
 ------------------------------------------------------------
 -- The saved tables
