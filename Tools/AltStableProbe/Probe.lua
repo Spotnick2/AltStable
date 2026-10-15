@@ -746,10 +746,31 @@ Probe:Steps("check", {
     { text = "Did the model viewer open on that first press, with two panes?", ask = true, screenshot = "model viewer" },
     { text = "Close it. Press Run: the scene viewer opens.", button = "Run", run = function() Command("scene") end },
     { text = "Did the scene viewer open on that first press?", ask = true, screenshot = "scene viewer" },
-    { text = "Close it. Press Run, then within 5 seconds hover an action-bar icon and hold still.",
+    { text = "Close it. The icon reading is its own procedure: /fp steps as icon.", },
+    { text = "Type /reload (or press Reload now) to save the results.", reload = true },
+})
+
+-- /fp steps as icon - the countdown and the console around a cursor reading,
+-- one question each. The first check asked both at once and got a "no" that
+-- could be either; a screenshot can't settle it either (the host hides its
+-- console for every shot, and the errors frame has faded by then). The read
+-- logs the errors frame's state and the console's, and the second question's
+-- check records the console as the answer is given.
+local function ConsoleShown()
+    local c = rawget(_G, "ForeverProbe") and ForeverProbe.Console
+    if type(c) ~= "table" or type(c.IsShown) ~= "function" then return false, "no ForeverProbe.Console" end
+    return c.IsShown() == true, "console shown: " .. tostring(c.IsShown())
+end
+
+Probe:Steps("icon", {
+    title = "/fp as icon: the countdown and the console",
+    { text = "Close any open AltStable or probe windows. Press Run, then within 5 seconds hover an "
+          .. "action-bar icon and hold still until the reading is done.",
       button = "Run", run = function() Command("icon") end },
-    { text = "Did the countdown show at the top of the screen, and the console come back naming the icon's texture?",
-      ask = true, screenshot = "icon answer" },
+    { text = "While you waited: did a countdown (\"hover the thing now\", then 3... 2... 1...) show "
+          .. "near the top of the screen?", ask = true },
+    { text = "Is the /fp console open now, listing the icon's textures (lines tagged [icon])?",
+      ask = true, check = ConsoleShown },
     { text = "Type /reload (or press Reload now) to save the results.", reload = true },
 })
 

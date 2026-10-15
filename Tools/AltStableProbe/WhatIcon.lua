@@ -213,6 +213,21 @@ local function Flash(text)
     if type(f) == "table" and type(f.AddMessage) == "function" then f:AddMessage(text, 1, 0.82, 0) end
 end
 
+-- Whether that countdown can be seen at all: a UI that hides or fades the
+-- errors frame swallows it (the first in-game check of #240 answered "no"
+-- without saying which half failed). Logged once per countdown.
+local function ErrorsFrameState()
+    local f = rawget(_G, "UIErrorsFrame")
+    if type(f) ~= "table" then return "UIErrorsFrame absent" end
+    local function ask(method)
+        if type(f[method]) ~= "function" then return "?" end
+        local ok, v = pcall(f[method], f)
+        return ok and tostring(v) or "error"
+    end
+    return ("UIErrorsFrame shown=%s visible=%s alpha=%s effectiveAlpha=%s"):format(
+        ask("IsShown"), ask("IsVisible"), ask("GetAlpha"), ask("GetEffectiveAlpha"))
+end
+
 local function CancelRead()
     if not pendingRead then return false end
     pendingRead:Cancel()
@@ -237,6 +252,7 @@ local function ReadAfterDelay()
     Out(("hover the thing now - reading in %ds. "):format(READ_DELAY)
         .. "|cffffff00/fp as icon cancel|r to stop, |cffffff00/fp as icon now|r to skip the wait.")
     Flash(("hover the thing now - reading in %ds"):format(READ_DELAY))
+    Out("countdown on " .. ErrorsFrameState())
 
     local remaining = READ_DELAY
     pendingRead = C_Timer.NewTicker(1, function(ticker)
@@ -255,6 +271,8 @@ local function ReadAfterDelay()
         -- read runs outside the host's dispatch, which would show it. A path
         -- is retyped from there: Freeze, Select all, Ctrl+C.
         ShowConsole()
+        local c = Console()
+        Out("console back after the read: " .. (c and tostring(c.IsShown()) or "no ForeverProbe.Console"))
     end)
 end
 

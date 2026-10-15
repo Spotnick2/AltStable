@@ -353,6 +353,35 @@ do
 end
 
 do
+    -- The read says what it can't show: whether the countdown's frame could
+    -- be seen (a UI that hides the errors frame swallows it), and whether the
+    -- console came back. The first in-game check got a "no" for the two at
+    -- once, and neither half is in a screenshot.
+    WoW.timers = {}
+    local flashed = {}
+    _G.UIErrorsFrame = {
+        AddMessage = function(_, text) flashed[#flashed + 1] = text end,
+        IsShown = function() return false end,
+        IsVisible = function() return false end,
+        GetAlpha = function() return 1 end,
+        GetEffectiveAlpha = function() return 0 end,
+    }
+    _G.GetMouseFoci = function() return {} end
+    local from = #FP.lines
+    icon("")
+    for _ = 1, T.READ_DELAY do WoW.flushTimers() end
+    local said = {}
+    for i = from + 1, #FP.lines do said[#said + 1] = FP.lines[i].text end
+    said = table.concat(said, "\n")
+    check("the countdown is flashed", #flashed >= 1 and flashed[1]:find("hover the thing", 1, true) ~= nil)
+    check("  and the log says the errors frame could not be seen",
+          said:find("UIErrorsFrame shown=false visible=false alpha=1 effectiveAlpha=0", 1, true) ~= nil, said)
+    check("the log says whether the console came back",
+          said:find("console back after the read: true", 1, true) ~= nil, said)
+    _G.UIErrorsFrame = nil
+end
+
+do
     -- A frame that draws nothing: the other empty answer.
     WoW.timers = {}
     _G.GetMouseFoci = function()
