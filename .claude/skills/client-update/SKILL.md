@@ -1,6 +1,6 @@
 ---
 name: client-update
-description: Handle a new WoW Forever client build for AltStable - convert the owner's /apidump into C:\Projects\WoW\References, diff it against the previous build, verify behaviour, and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
+description: Handle a new WoW Forever client build for AltStable - after the shared forever-api-dump skill has dumped, converted and diffed the build, verify behaviour and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
 version: 1.0.0
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
@@ -15,40 +15,17 @@ already caught a session. If the two ever disagree, fix the RUNBOOK and this fil
 
 | Step | Who | What |
 |---|---|---|
-| 1. Dump | **owner**, in game | `/apidump`, then `/reload` (the reload flushes it to SavedVariables) |
-| 1. Convert | you | `pwsh Tools/ForeverAPIDump/Convert-Dump.ps1` |
-| 2. Diff | you | `pwsh Tools/ForeverAPIDump/Compare-Dumps.ps1` |
+| 1-2. Dump, convert, diff | owner + you | the shared `forever-api-dump` skill (`C:\Projects\WoW\.claude\skills\forever-api-dump\SKILL.md`) |
 | 3. Behaviour | **owner** pastes one `/run` line; you judge it | expected values below |
 | 4. Persistence | **only if saved data looks lost** - no longer per build | the probe counters |
 | 5. Bump PR | you | four edits, tests, branch, PR (commit/push only when asked) |
 
-## 1. Convert
+## 1-2. Dump, convert, diff
 
-```
-pwsh Tools/ForeverAPIDump/Convert-Dump.ps1
-```
-
-It picks the newest `ForeverAPIDump.lua` under `_classic_beta_\WTF\Account\*\SavedVariables`
-(whichever account the owner dumped from), prints the section counts and writes
-`C:\Projects\WoW\References\forever-api-<version>.<build>.md`. "Build changed: … is a different build"
-is expected - it lists every older dump. **Never delete old dumps**; that is the owner's call.
-
-If it wrote the *same* build as the newest existing file, the owner has not dumped since the
-update (or dumped before `/reload`): say so and stop.
-
-## 2. Diff
-
-```
-pwsh Tools/ForeverAPIDump/Compare-Dumps.ps1          # newest two dumps; -Old/-New to choose, -Max 0 for all
-```
-
-- Five documented sections are listed line by line: documented functions, events, tables, widget
-  methods, namespace functions. **These are the client.**
-- "Global functions" and "Namespace candidates" walk `_G` and pick up whatever addons were loaded
-  (Attune, RXPGuides, Priestly, the probes). Counted, never listed, never a finding on their own.
-- For every documented change, grep the repo (`*.lua`, `tests/wow_stubs.lua`,
-  `docs/forever-api-notes.md`) for the affected names. A removed or re-signatured function we call
-  is a bug to fix before the bump, not a note.
+Run the shared `forever-api-dump` skill first. It owns the dump, the conversion, the diff and
+their traps. The tooling still lives here (`Tools/ForeverAPIDump/`) and serves every project, so a
+change to it is a change for all of them. When it reaches its impact step, grep `*.lua`,
+`tests/wow_stubs.lua` and `docs/forever-api-notes.md`.
 
 ## 3. Behaviour (the dump proves shape, not behaviour)
 
