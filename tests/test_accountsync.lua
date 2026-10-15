@@ -52,48 +52,37 @@ eq("  with SendTo", real and type(real.SendTo), "function")
 eq("  and our handler registered right after New", real and real.handler, L.OnMessage)
 
 ------------------------------------------------------------
--- The key import (#198, LibAccountSync#14)
+-- The store, and the retired legacy keys (#206)
 ------------------------------------------------------------
 local OWN   = ("a"):rep(32)
 local PEER1 = ("b"):rep(32)
-local PEER2 = ("c"):rep(32)
 do
-    AltStableConfig = {
-        bnetKey = OWN,
-        bnetTrusted = {
-            [PEER1] = true,
-            [PEER2] = false,                       -- never written so, but not ours to trust
-            [("f"):rep(32)] = 1,                   -- truthy, but not the `true` the hello handler writes
-            ["0123456789abcdef"] = true,           -- 16 characters: the legacy rule, not the library's
-            [("D"):rep(32)] = true,                -- upper case: not the library's hex
-            [OWN] = true,                          -- our own key is never trusted
-        },
-    }
+    -- The legacy channel's keys on disk: no longer imported...
+    AltStableConfig = { bnetKey = OWN, bnetTrusted = { [PEER1] = true } }
     local t = L.Store()
     check("the store is built on first use", type(t) == "table" and AltStableConfig.accountSync == t)
-    eq("  our legacy key becomes the key", t.key, OWN)
-    eq("  at keyAt 1, older than any key the library makes", t.keyAt, 1)
-    check("  a trusted key comes along, as a lastSeen number", type(t.trusted[PEER1]) == "number")
-    local n = 0
-    for _ in pairs(t.trusted) do n = n + 1 end
-    eq("  and nothing else: not false, not 1, not short, not upper case, not ours", n, 1)
+    eq("  with no key: the library chooses one", t.key, nil)
+    eq("  and nobody trusted from the legacy keys", next(t.trusted), nil)
     check("asked again, the same table (built once)", L.Store() == t)
 
-    -- A key the legacy rule accepted but the library's does not: no key, and
-    -- the library makes its own.
-    AltStableConfig = { bnetKey = "0123456789abcdef" }
-    eq("a 16-character legacy key is not imported", L.Store().key, nil)
+    -- ...and cleared from disk with the other retired settings.
+    AltStableConfig = { bnetKey = OWN, bnetTrusted = { [PEER1] = true },
+                        bnetSelfProject = 1, bnetSelfRegion = 1 }
+    AltStable.EnsureConfigDefaults()
+    eq("the legacy key is cleared", AltStableConfig.bnetKey, nil)
+    eq("  and the legacy trusted list", AltStableConfig.bnetTrusted, nil)
+    eq("  and bnetSelfProject", AltStableConfig.bnetSelfProject, nil)
+    eq("  and bnetSelfRegion", AltStableConfig.bnetSelfRegion, nil)
 
     AltStableConfig = nil
     eq("before the SavedVariables load, no store", L.Store(), nil)
 end
 
--- The real library's choice: our imported oldest key becomes the household
--- key even where another addon's store (GlassChat's) already holds one, and
--- that store keeps its own key, never overwritten.
+-- The real library's choice: a fresh store of ours joins the household key
+-- another addon's store (GlassChat's) already holds, and that store keeps it.
 do
     local G = ("e"):rep(32)
-    AltStableConfig = { bnetKey = OWN, bnetTrusted = { [PEER1] = true } }
+    AltStableConfig = { bnetKey = OWN }
     local gc = { key = G, keyAt = 1700000000, trusted = {} }
     local okNew, glass = pcall(LAS.New, LAS, { addon = "GlassChat", store = function() return gc end })
     check("a second addon registers on the same library", okNew and type(glass) == "table", glass)
@@ -102,10 +91,9 @@ do
     local wasIn = S.loggedIn
     S.loggedIn = true
     local chosen = LAS.impl.OwnKey()
-    eq("the household key is our imported one", chosen, OWN)
+    eq("the household key is GlassChat's, not the legacy one", chosen, G)
     eq("  GlassChat's store keeps its own key", gc.key, G)
-    eq("  and ours holds the household key", AltStableConfig.accountSync.key, OWN)
-    check("  our trusted key is trusted in GlassChat's store too", type(gc.trusted[PEER1]) == "number")
+    eq("  and ours holds the household key", AltStableConfig.accountSync.key, G)
     -- Back as it was: the rest of this file is not about the real library.
     LAS.byTag.GlassChat = nil
     for i = #LAS.instances, 1, -1 do

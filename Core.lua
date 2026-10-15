@@ -3107,21 +3107,9 @@ end
 -- The LibAccountSync instance (#198)
 ------------------------------------------------------------
 -- The store is account-wide (AltStableConfig; Export.lua never touches it) and
--- holds the household key. Built on first use WITH the keys the legacy channel
--- shared, so two accounts that paired over it are paired here on day one,
--- without both presences having to be full once more:
---   * our bnetKey becomes the key, at keyAt 1 - older than any key the library
---     makes - so it wins the library's oldest-key choice, even where another
---     addon's store (GlassChat's) already holds one; that store keeps its own;
---   * each bnetTrusted key becomes trusted, seen now. Only `true` entries:
---     every one came from an account Battle.net verified as ours (the legacy
---     hello handler was the only writer).
--- Only keys of exactly 32 lowercase hex, the library's own rule; the legacy
--- channel accepted shorter ones. The library picks its key after PLAYER_LOGIN,
--- from every registered store - and this one registers at load, so the import
--- is always there first. Nothing writes bnetKey or bnetTrusted since the
--- legacy channel went (#206); they stay on disk for one release, so a
--- downgrade still reads them, and an install that skipped v0.11 still pairs.
+-- holds the household key, which the library chooses and fills in. Built empty
+-- on first use: the legacy channel's keys it once imported are retired (see
+-- EnsureDefaults in Config.lua).
 function LibSync.Store()
     if type(AltStableConfig) ~= "table" then return nil end
     -- The library's own switch is store.enabled, read whenever nothing set it
@@ -3136,14 +3124,7 @@ function LibSync.Store()
     end
     -- Through the config seam; not loaded yet (Config.lua) means not yet.
     if not AltStable.SetConfigValue then return nil end
-    local function valid(k) return type(k) == "string" and #k == 32 and k:match("^[0-9a-f]+$") ~= nil end
     t = { trusted = {}, enabled = on }
-    local own = AltStableConfig.bnetKey
-    if valid(own) then t.key, t.keyAt = own, 1 end
-    local now = time()
-    for k, v in pairs(type(AltStableConfig.bnetTrusted) == "table" and AltStableConfig.bnetTrusted or {}) do
-        if v == true and valid(k) and k ~= own then t.trusted[k] = now end
-    end
     AltStable.SetConfigValue("accountSync", t)
     return t
 end
