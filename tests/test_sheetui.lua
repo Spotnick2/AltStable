@@ -1931,7 +1931,9 @@ end
 -- read the release notes never knew there was one.
 do
     local btns = AltStable._test.skinBtns or {}
-    eq("there is a button per skin", #btns, 3)
+    local skins = 0
+    for _ in pairs(AltStable.SKINS) do skins = skins + 1 end
+    eq("there is a button per skin", #btns, skins)
     -- BUILT FROM THE TABLE, so a fourth preset arrives on its own rather than
     -- being a fourth place to remember.
     local labels = {}

@@ -61,6 +61,22 @@ AltStable.SKINS = {
         -- milky plastic again, and no longer smoked (review of #220).
         classShade = 0.3,
     },
+
+    -- EXPERIMENT: the reflective shell of References\LIBGLASS-WINDOW-STYLING.md
+    -- (GlassRaidFrames' accepted look; LibGlass r9's Glass.Reflect), to compare
+    -- against clear in game. A moderately smoked shell lit from above by
+    -- static gradients, and protected reading regions for the text. The
+    -- recipe's values, by surface role: the shell is `tint`, the reading
+    -- regions are `pane` (0.94) and `data` (opaque, as every skin's table),
+    -- small panels and popups are `popup`. The rest is ReflectShell, below.
+    reflective = {
+        material = true, label = "Reflective", reflective = true,
+        tint = { 0.085, 0.095, 0.115, 0.78 }, grain = 0, wash = 0,
+        pane = { 0.072, 0.082, 0.10, 0.94 },
+        data = { 0.072, 0.082, 0.10, 1.00 },
+        popup = { 0.055, 0.07, 0.09, 0.86 },
+        classShade = 0.3,
+    },
 }
 
 local DEFAULT_SKIN = "clear"
@@ -188,7 +204,44 @@ local function PushPreset(preset, body)
     st.tint = { body[1], body[2], body[3], body[4] }
 end
 
-function AltStable.SkinWindow(frame, size)
+-- The reflective skin's per-surface treatment (LIBGLASS-WINDOW-STYLING.md),
+-- after the Apply: the tint and wash came in through STYLE already. A large
+-- surface is the outer shell - the edge off (the top highlight takes its
+-- place), a faint base rim, a masked backing under the tint, and Glass.Reflect's
+-- lit rim, top highlight and, with `header`, the header reflection fitted to
+-- the title bar so it is gone before the content. A small one is an internal
+-- panel or popup: restrained edges, no reflection.
+-- LibGlass r9's calls; an older library skips them and leaves the plain glass.
+local function ReflectShell(frame, g, size, header)
+    if type(Glass.SetSurfaceAlpha) ~= "function" or type(Glass.Reflect) ~= "function" then
+        return false
+    end
+    if size == "small" then
+        Glass.SetEdge(g, 0.10, 0.015, 0.12, 3)
+        Glass.SetSurfaceAlpha(g, "rim", 0.22)
+        Glass.SetSurfaceAlpha(g, "dark", 0.35)
+        Glass.SetSurfaceAlpha(g, "shadow", 0.05)
+        Glass.SetSurfaceAlpha(g, "grain", 0)
+        return true
+    end
+    Glass.SetEdge(g, 0, 0, 0)
+    Glass.SetSurfaceAlpha(g, "rim", 0.12)
+    Glass.SetSurfaceAlpha(g, "dark", 0.55)
+    Glass.SetSurfaceAlpha(g, "shadow", 0.18)
+    Glass.SetSurfaceAlpha(g, "grain", 0)
+    -- BACKGROUND -7: over the shadow (-8), under the tint (-6).
+    local backing = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
+    backing:SetAllPoints(frame)
+    backing:AddMaskTexture(g.mask)
+    backing:SetColorTexture(0.03, 0.03, 0.035, 0.55)
+    g.reflectBacking = backing
+    Glass.Reflect(g, frame, (header and header > 0) and { header = header } or nil)
+    return true
+end
+
+-- `opts.header`: the height of the window's header, for the reflective skin's
+-- header reflection (the main window's title bar). Ignored by other skins.
+function AltStable.SkinWindow(frame, size, opts)
     if not AltStable.SkinIsGlass() then return nil end
     local preset = AltStable.Skin()
 
@@ -209,6 +262,7 @@ function AltStable.SkinWindow(frame, size)
     -- that, let alone fix it. See SkinRelevel.
     local g = Glass.Apply(frame, size or "large")
     frame._glass = g
+    if preset.reflective then ReflectShell(frame, g, size or "large", opts and opts.header) end
     return g
 end
 
@@ -366,6 +420,16 @@ end
 function AltStable.SkinTitleBand(bar, window, bg, sep)
     if not AltStable.SkinIsGlass() then return false end
     if not bar or not window or not bg then return false end
+
+    -- The reflective skin lights the header with the shell's own reflection
+    -- (Glass.Reflect, fitted to this bar), so the band steps aside rather than
+    -- doubling it, and the divider is fainter: the recipe avoids strong lines
+    -- inside the glass.
+    if AltStable.Skin().reflective then
+        bg:Hide()
+        if sep then sep:SetColorTexture(1, 1, 1, 0.08) end
+        return true
+    end
 
     -- SetColorTexture then SetGradient: the colour is the canvas the gradient
     -- multiplies, so a gradient on an unpainted texture shows nothing.
