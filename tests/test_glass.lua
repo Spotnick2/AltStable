@@ -1519,7 +1519,7 @@ do
 end
 
 ------------------------------------------------------------
--- The reflective skin (EXPERIMENT): LIBGLASS-WINDOW-STYLING.md on the sheet
+-- The reflective skin: LIBGLASS-WINDOW-STYLING.md on the sheet
 ------------------------------------------------------------
 -- The shell is lit from above by LibGlass r9's Glass.Reflect, fitted to the
 -- title bar; small surfaces are restrained panels with no reflection; the

@@ -62,11 +62,13 @@ AltStable.SKINS = {
         classShade = 0.3,
     },
 
-    -- EXPERIMENT: the reflective shell of References\LIBGLASS-WINDOW-STYLING.md
-    -- (GlassRaidFrames' accepted look; LibGlass r9's Glass.Reflect), to compare
-    -- against clear in game. A moderately smoked shell lit from above by
-    -- static gradients, and protected reading regions for the text. The
-    -- recipe's values, by surface role: the shell is `tint`, the reading
+    -- The reflective shell of References\LIBGLASS-WINDOW-STYLING.md
+    -- (GlassRaidFrames' accepted look; LibGlass r9's Glass.Reflect): a smoked
+    -- shell lit from above by static gradients, and protected reading regions
+    -- for the text. Compared in game over bright Teldrassil grass (2026-10-16):
+    -- the most readable sidebar of the four, at the cost of most of the glass
+    -- (tint and backing cover ~90%); kept as a choice beside clear and smoked.
+    -- The recipe's values, by surface role: the shell is `tint`, the reading
     -- regions are `pane` (0.94) and `data` (opaque, as every skin's table),
     -- small panels and popups are `popup`. The rest is ReflectShell, below.
     reflective = {

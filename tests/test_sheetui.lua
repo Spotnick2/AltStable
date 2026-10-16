@@ -4235,6 +4235,29 @@ do
 end
 
 ------------------------------------------------------------
+-- The reflective skin on the real sheet
+------------------------------------------------------------
+-- Skin.lua's own tests call SkinWindow with a header; this is the sheet
+-- actually passing its title bar's, and the band stepping aside for it. A
+-- helper tested and its call untested is how the title band once went unwired.
+do
+    local heldSkin = AltStableConfig.skin
+    AltStableConfig.skin, AltStableConfig.skinClassTint = "reflective", false
+    AltStable._ResetSkinCache()
+    dofile("SheetUI.lua")
+    AltStable.ShowSheet()
+    local rf = AltStable.glass and AltStable.glass.reflect
+    check("the sheet's shell is lit (Glass.Reflect)", rf ~= nil)
+    eq("  its header reflection fitted to the title bar",
+       rf and rf.header and rf.header:GetHeight(), AltStable.LAYOUT.TITLE_H)
+    check("  and the white title band steps aside for it",
+          AltStable._test.titleBarBG and not AltStable._test.titleBarBG:IsShown())
+    if AltStable._test.frame:IsShown() then AltStable._test.frame:Hide() end
+    AltStableConfig.skin = heldSkin
+    AltStable._ResetSkinCache()
+end
+
+------------------------------------------------------------
 -- The clean look (#230): the Options row
 ------------------------------------------------------------
 do
