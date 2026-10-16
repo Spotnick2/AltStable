@@ -2357,7 +2357,7 @@ local function CreateFrameIfNeeded()
     -- panels are its children, so one mark covers them. See MarkTooltipHost.
     -- (The hooks go in at the END of this function, not here: see below.)
     if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(frame) end
-    AltStable.glass = AltStable.SkinWindow(frame)
+    AltStable.glass = AltStable.SkinWindow(frame, "large", { header = TITLE_H })
     AltStable.SkinApplyClassTint(AltStable.glass)
     if not AltStable.glass then
         AltStable.ApplyBackdrop(frame,

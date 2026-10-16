@@ -1518,5 +1518,68 @@ do
     AltStable.SkinName()
 end
 
+------------------------------------------------------------
+-- The reflective skin: LIBGLASS-WINDOW-STYLING.md on the sheet
+------------------------------------------------------------
+-- The shell is lit from above by LibGlass r9's Glass.Reflect, fitted to the
+-- title bar; small surfaces are restrained panels with no reflection; the
+-- white title band steps aside for the reflection instead of doubling it.
+
+do
+    AltStableConfig.skinClean = true
+    useSkin("reflective")
+    local preset = AltStable.SKINS.reflective
+    check("the reflective skin exists", preset ~= nil and preset.reflective == true)
+    check("  and is glass", AltStable.SkinIsGlass())
+
+    local win = CreateFrame("Frame", nil, UIParent)
+    local g = AltStable.SkinWindow(win, "large", { header = 30 })
+    check("the shell is built", g ~= nil)
+    local rf = g and g.reflect
+    check("  lit by Glass.Reflect", rf ~= nil and rf.rim ~= nil and rf.top ~= nil)
+    check("  with a header reflection, fitted to the title bar", rf and rf.header ~= nil
+        and rf.header:GetHeight() == 30, rf and rf.header and tostring(rf.header:GetHeight()))
+    -- The library reads alphas back in 1/255 steps (LibGlass r9 notes).
+    local function near(a, b) return type(a) == "number" and math.abs(a - b) < 0.01 end
+    check("  a faint base rim (0.12)", near(g and g.rim:GetAlpha(), 0.12), tostring(g and g.rim:GetAlpha()))
+    check("  the dark rim at 0.55", near(g and g.dark:GetAlpha(), 0.55))
+    check("  the shadow at 0.18", near(g and g.shadow:GetAlpha(), 0.18))
+    check("  a masked backing under the tint", g and g.reflectBacking ~= nil
+        and g.reflectBacking._sublevel == -7)
+    eq("  the shell's tint alpha", Glass.STYLE.tint[4], 0.78)
+    eq("  no wash", Glass.STYLE.wash, 0)
+
+    -- A window with no header: no header layer, the rest still lit.
+    local plain = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "large")
+    check("a shell with no header gets no header reflection", plain and plain.reflect
+        and plain.reflect.header == nil and plain.reflect.rim ~= nil)
+
+    -- A popup: the small panel recipe.
+    local p = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "small")
+    check("a popup is not lit like the shell", p ~= nil and p.reflect == nil)
+    check("  its rim at 0.22", near(p and p.rim:GetAlpha(), 0.22))
+    eq("  in the popup tint", Glass.STYLE.tint[4], preset.popup[4])
+
+    -- The title band steps aside; under clear it is still the white band.
+    local bar = CreateFrame("Frame", nil, win)
+    local bg, sep = bar:CreateTexture(), bar:CreateTexture()
+    check("the title band is handled", AltStable.SkinTitleBand(bar, win, bg, sep))
+    check("  and hidden: the reflection lights the header", not bg:IsShown())
+
+    -- The table stays opaque, as in every skin.
+    eq("the table is opaque", AltStable.SkinDataColor()[4], 1)
+
+    -- An older library (no Reflect): the plain glass, no error.
+    local held = Glass.Reflect
+    Glass.Reflect = nil
+    local old = AltStable.SkinWindow(CreateFrame("Frame", nil, UIParent), "large", { header = 30 })
+    Glass.Reflect = held
+    check("without Glass.Reflect the shell is plain glass", old ~= nil and old.reflect == nil)
+
+    AltStableConfig.skinClean = nil
+    useSkin("clear")
+    AltStable.SkinName()
+end
+
 print(("test_glass: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

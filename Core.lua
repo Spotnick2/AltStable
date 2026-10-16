@@ -3859,7 +3859,7 @@ SlashCmdList["ALTSTABLE"] = function(args)
     ----------------------------------------------------
 
     ----------------------------------------------------
-    -- /alts skin [flat|clear|smoked]
+    -- /alts skin [flat|clear|reflective|smoked]
     --
     -- Applied on the NEXT LOAD, not now. Glass.Apply creates its regions every
     -- time it is called and has no teardown or update path, so switching in
