@@ -162,5 +162,30 @@ local inConsole = false
 for _, l in ipairs(FP.lines) do if l.m == "AltStableProbe" and l.text:find("== client ==", 1, true) then inConsole = true end end
 check("  and in the console", inConsole)
 
+------------------------------------------------------------
+-- The icon procedure keeps its panel through a bare /fp (Codex on #244)
+------------------------------------------------------------
+-- The reading puts the console and the steps panel away (Probe:HideWindows).
+-- A bare /fp typed mid-countdown used to clear the host's record and bring
+-- back only the console, so the procedure went on with no panel to answer in
+-- (ForeverProbe#10, fixed in its #12). Through the real procedure, both ways
+-- the countdown can end.
+_G.GetMouseFoci = function() return {} end
+local function runToRead(finish)
+    WoW.timers = {}
+    SlashCmdList.FOREVERPROBE("steps as icon")
+    check("the icon procedure's panel is up", FP.Steps.IsShown())
+    FP.Steps.Answer(true)                           -- 1: the panel over the sheet
+    FP.Steps.Run()                                  -- 2: Run -> /fp as icon
+    check("  the countdown puts it away", not FP.Steps.IsShown())
+    SlashCmdList.FOREVERPROBE("")                   -- a bare /fp mid-countdown
+    finish()
+    check("  and it is back when the reading ends", FP.Steps.IsShown(),
+          "the procedure would go on with no panel to answer in")
+    SlashCmdList.FOREVERPROBE("steps stop")
+end
+runToRead(function() for _ = 1, 5 do WoW.flushTimers() end end)
+runToRead(function() run("icon cancel") end)
+
 print(("test_probe: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
