@@ -77,17 +77,15 @@ local proc = FP.procedures and FP.procedures["AltStableProbe/check"]
 check("/fp steps as check is defined", proc ~= nil and #proc.steps >= 2)
 check("  and ends with a /reload, so its answers reach the disk",
       proc ~= nil and proc.steps[#proc.steps].reload == true)
--- The icon reading's own: one question per half, the console measured too.
+-- The icon reading's own, on the sheet: one question per thing to see.
 local iconProc = FP.procedures and FP.procedures["AltStableProbe/icon"]
 check("/fp steps as icon is defined", iconProc ~= nil)
 if iconProc then
-    local asks, measured = 0, false
+    local asks = 0
     for _, st in ipairs(iconProc.steps) do
         if st.ask then asks = asks + 1 end
-        if st.ask and st.check then measured = true end
     end
-    eq("  it asks the countdown and the console apart", asks, 2)
-    check("  and measures the console as the answer is given", measured)
+    eq("  one question each: the panel over the sheet, the countdown, the console", asks, 3)
     check("  and ends with a /reload", iconProc.steps[#iconProc.steps].reload == true)
 end
 

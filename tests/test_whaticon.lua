@@ -329,21 +329,25 @@ do
         return {}                          -- nothing under the cursor
     end
 
-    -- Asking again mid-countdown: the host shows the console after the
-    -- repeated command too, and the early "already counting down" return
-    -- must not leave it up.
+    -- Probe:HideWindows (ForeverProbe#8) holds through the command, so the
+    -- countdown puts the console away at once, not a frame later.
+    local function bareFp() SlashCmdList.FOREVERPROBE("") end
     icon("")
-    WoW.flushTimers()
     check("the countdown put the console away", not FP.Console.IsShown())
+
+    -- A bare /fp mid-countdown brings it back (the host's rule), and asking
+    -- again then has to put it away again: the early "already counting down"
+    -- return must not leave it up (Codex on #241).
+    bareFp()
+    check("  a bare /fp brings it back", FP.Console.IsShown())
     icon("")
-    check("  asking again shows it (the host does, after any command)", FP.Console.IsShown())
-    WoW.flushTimers()
-    check("  and a frame later it is away again", not FP.Console.IsShown(),
+    check("  and asking again puts it away again", not FP.Console.IsShown(),
           "the pending read would name the console")
     eq("  still one countdown, not read yet", reads, 0)
 
-    -- Anything else showing it meanwhile (a bare /fp).
-    FP.Console.Show()
+    -- A bare /fp again, left up until the read.
+    bareFp()
+    check("a bare /fp mid-countdown shows it", FP.Console.IsShown())
     for _ = 1, T.READ_DELAY do WoW.flushTimers() end
     eq("the read happens once", reads, 1)
     eq("  with the console away at that moment", consoleAtRead, false)
@@ -361,7 +365,6 @@ do
     _G.GetMouseFoci = function() return { { GetObjectType = function() return "Frame" end,
                                             GetName = function() return "Thing" end,
                                             GetRegions = function() end } } end
-    local from = #FP.lines
     icon("")
     local b = T.banner()
     check("the countdown shows on a banner", b ~= nil and b:IsShown())
@@ -375,13 +378,9 @@ do
     check("each second shows on it", b:IsShown() and b.text:GetText() == "4...", b.text:GetText())
     for _ = 2, T.READ_DELAY do WoW.flushTimers() end
     check("after the read it says where the answer went", b:IsShown()
-        and b.text:GetText():find("read: %d+ line%(s%) %- in the /fp console, or the log after /reload") ~= nil,
+        and b.text:GetText():find("^read: %d+ line%(s%) %- in the /fp console$") ~= nil,
           b.text:GetText())
-    local said = {}
-    for i = from + 1, #FP.lines do said[#said + 1] = FP.lines[i].text end
-    said = table.concat(said, "\n")
-    check("the log says whether the console came back",
-          said:find("console back after the read: true", 1, true) ~= nil, said)
+    check("  with the console back to read it", FP.Console.IsShown())
     WoW.flushTimers()
     check("  and then the banner goes", not b:IsShown())
 
@@ -425,6 +424,36 @@ do
     icon("")
     for _ = 1, T.READ_DELAY do WoW.flushTimers() end
     check("so does a client without GetMouseFoci", FP.Console.IsShown())
+end
+
+do
+    -- ShowWindows on every path (ForeverProbe's contract for HideWindows):
+    -- left hidden, the console and the steps panel stay away until the owner
+    -- types a bare /fp, with nothing on screen saying why.
+    WoW.timers = {}
+    local P = ns.Probe
+    _G.GetMouseFoci = function() return {} end
+
+    icon("")
+    check("a countdown has the windows hidden", P:WindowsHidden())
+    icon("cancel")
+    check("  cancelling brings them back", not P:WindowsHidden())
+
+    -- A read that throws: the windows still come back, then the error.
+    _G.GetMouseFoci = function() error("boom") end
+    icon("now")
+    check("a throwing immediate read brings them back", not P:WindowsHidden())
+    icon("")
+    local ok = true
+    for _ = 1, T.READ_DELAY do
+        local fine = pcall(WoW.flushTimers)
+        ok = ok and fine
+    end
+    check("  a throwing delayed read raises", not ok)
+    check("  and brings them back too", not P:WindowsHidden())
+    check("  and takes its banner away", not T.banner():IsShown())
+    _G.GetMouseFoci = function() return {} end
+    WoW.timers = {}
 end
 
 print(("test_whaticon: %d passed, %d failed"):format(passed, failed))

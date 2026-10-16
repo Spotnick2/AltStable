@@ -41,30 +41,6 @@ local Probe = NS.Probe
 
 local function Out(msg) Probe:Say("[icon] " .. msg) end
 
--- The /fp console is a big mouse-enabled frame in the middle of the screen,
--- and the host shows it after every command: left up, the next reading is of
--- the console. ForeverProbe has no module call to put it away yet
--- (Spotnick2/ForeverProbe#5), so this reaches its Console table, guarded.
--- Remove once the host has one.
-local function Console()
-    local fp = rawget(_G, "ForeverProbe")
-    local c = type(fp) == "table" and fp.Console
-    if type(c) == "table" and type(c.Hide) == "function" and type(c.Show) == "function"
-        and type(c.IsShown) == "function" then
-        return c
-    end
-end
-
-local function HideConsole()
-    local c = Console()
-    if c and c.IsShown() then c.Hide(); return true end
-    return false
-end
-
-local function ShowConsole()
-    local c = Console()
-    if c then c.Show(Probe.name) end
-end
 
 -- Everything a texture will tell us about itself, as one printable line - or
 -- nil when it is an empty layer.
@@ -206,16 +182,32 @@ end
 local READ_DELAY = 5
 local pendingRead
 
+-- The /fp console and the steps panel are big mouse-enabled frames: left up,
+-- the reading is of them. Probe:HideWindows() puts them away and holds through
+-- the command that called it; Probe:ShowWindows() brings back what was open,
+-- the console filtered to this probe on its newest lines - where a path to
+-- retype is copied from: Freeze, Select all, Ctrl+C (ForeverProbe#5, #8).
+-- ShowWindows on every path, a throwing read included.
+local function ReadBetweenWindows()
+    -- Hiding while already hidden does nothing; a bare /fp in the meantime
+    -- showed the console and cleared that, so this puts it away again.
+    Probe:HideWindows()
+    local ok, lines = pcall(WhatIsUnderTheCursor)
+    Probe:ShowWindows()
+    if not ok then error(lines, 0) end
+    return lines
+end
+
 -- The countdown, on a banner of the probe's own. It was on the errors frame,
--- which is UIParent's, like the console: both vanish while the AltStable sheet
--- hides the game UI - which is when this command is most wanted, to name the
--- sheet's own textures (measured in game, 2026-10-15; ForeverProbe#7). So:
+-- which is UIParent's: it vanished while the AltStable sheet hides the game
+-- UI - which is when this command is most wanted, to name the sheet's own
+-- textures (measured in game, 2026-10-15). The console stays up there since
+-- ForeverProbe#7, but it is put away for the countdown. So:
 --   * parentless, so a hidden UIParent doesn't take it along (the sheet's
 --     showcase lifts the sheet the same way);
 --   * scaled to UIParent's effective scale, so it reads the same size;
 --   * never takes the mouse, so it can't be what a reading names.
--- After the read it says where the answer went, since the console may be
--- hidden with the rest, then goes.
+-- After the read it says where the answer went, then goes.
 local BANNER_HOLD = 4
 local banner, bannerToken = nil, 0
 
@@ -250,15 +242,15 @@ local function CancelRead()
     pendingRead:Cancel()
     pendingRead = nil
     HideBanner()
+    Probe:ShowWindows()        -- the countdown put them away
     return true
 end
 
 local function ReadAfterDelay()
-    -- Get the console off the screen first, or the reading is of the probe's
-    -- own backdrop. One frame later: the host shows the console after this
-    -- command returns - a repeated one too, so this comes before the early
-    -- return below (Codex on #241).
-    C_Timer.After(0, HideConsole)
+    -- Get the windows off the screen first, or the reading is of the probe's
+    -- own backdrop. Before the early return below: a repeated ask after a
+    -- bare /fp has to put them away again (Codex on #241).
+    Probe:HideWindows()
 
     -- Idempotent, like the capture countdown: five of these queued at once is
     -- how a countdown turns into a burst.
@@ -280,17 +272,11 @@ local function ReadAfterDelay()
         end
         ticker:Cancel()
         pendingRead = nil
-        -- Again at the read itself: anything may have shown the console
-        -- during the countdown (another /fp command, a bare /fp).
-        HideConsole()
-        local lines = WhatIsUnderTheCursor()
-        -- Then back, whatever the answer. Output goes nowhere else, and the
-        -- read runs outside the host's dispatch, which would show it. A path
-        -- is retyped from there: Freeze, Select all, Ctrl+C.
-        ShowConsole()
-        local c = Console()
-        Out("console back after the read: " .. (c and tostring(c.IsShown()) or "no ForeverProbe.Console"))
-        Banner(("read: %d line(s) - in the /fp console, or the log after /reload"):format(#lines), BANNER_HOLD)
+        -- The windows come back whatever the answer: output goes nowhere
+        -- else. If the read throws, the banner goes too.
+        HideBanner()
+        local lines = ReadBetweenWindows()
+        Banner(("read: %d line(s) - in the /fp console"):format(#lines), BANNER_HOLD)
     end)
 end
 
@@ -307,8 +293,7 @@ Probe:Command("icon", function(msg)
         -- whatever the cursor has wandered onto - two readings from one ask,
         -- and the wrong one last.
         CancelRead()
-        HideConsole()
-        WhatIsUnderTheCursor()
+        ReadBetweenWindows()
         return
     end
     if msg ~= "" then
