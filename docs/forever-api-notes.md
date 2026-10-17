@@ -836,6 +836,47 @@ Documented surface identical.
 
 ---
 
+## Build 1.60.1.70450 (2026-10-16) — mail, SD/HD and level-up retyped, none we use
+
+**1.60.1.70425** (client built Oct 14 2026) came between: dumped by another project's session
+(`forever-api-1.60.1.70425.md`) but never measured here, so this compares across it.
+
+Dumped (`forever-api-1.60.1.70450.md`, client built Oct 15 2026) and compared with
+`Compare-Dumps.ps1` against 70374, the last build measured here:
+
+```
+Documented functions - +16 -3    - C_GamepadTargeting.HasReticleHoverTarget;
+                                 C_SecureTransfer.GetMailInfo -> GetMailSendInfo / GetMailReceiveInfo,
+                                   + TakeMailMoney, ShouldShowTradeRMTWarning;
+                                 ~ C_GameRules.SetSDHDToggleValue(setToSD, + usageLocation);
+                                 + C_AuctionHouse.GetItemKeySampleLink,
+                                   C_BattleNet.AreRealIDFriendsEnabled / GetFriendLevelFromInviteText,
+                                   C_ExternalEventURL.CanShow, C_Tutorial.SendTutorialStartButtonTelem,
+                                   GetCreditsDisplayInfo, GetCursorCenterPosition, IsCursorVisible,
+                                   GetOffhandHitModifier, GetPetCritChance, GetPetDodgeChance
+Documented events - +6 -2        EXTERNAL_EVENT_LAUNCH_URL_FAILED -> _RESULT (result:bool);
+                                 PLAYER_LEVEL_UP gains a trailing spiritDelta;
+                                 + EXTERNAL_EVENT_URL_CHANGED, MAIL_OPEN_ALL_CANCELED,
+                                   SECURE_TRANSFER_CONFIRM_TAKE_MAIL_MONEY, SHARD_TRANSFER_CANCELLED
+Documented tables - +6 -3        MailInfo -> MailSendInfo / MailReceiveInfo; GroupBuffItem gains
+                                 displaySpellID; PVPScoreInfo gains gender;
+                                 + Enum SdToggleUsageLocationUI, Structure CreditsDisplayInfo
+Widget methods - no change (7530)
+Namespace functions - +5 -1      the new namespace functions above; - HasReticleHoverTarget
+Global functions - +17 -9 (walks _G: addon noise, not listed)
+Namespace candidates - +363 -559 (walks _G: addon noise, not listed)
+```
+
+Nothing AltStable, its stubs or its embedded libraries call is among them (no `.lua` hit for any
+changed name). `PLAYER_LEVEL_UP` is registered only by the probe's events check, and its new
+argument comes last, so no earlier position moves.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 16000 10744 -1 5 table`, all as expected.
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+---
+
 ## Secret values — some unit numbers cannot be read, only passed along
 
 Hit live on 1.60.1.69977, on a **PvP realm**, mid-scan:
