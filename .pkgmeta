@@ -20,7 +20,7 @@ externals:
     tag: r9
   Libs/LibShowcase-1.0:
     url: https://github.com/Spotnick2/LibShowcase
-    tag: r3
+    tag: r4
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
     tag: r5
