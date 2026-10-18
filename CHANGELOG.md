@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.15.0
+
+A fourth skin, Reflective, and AltStable on Wago Addons. Measured on client 1.60.1.70450. Nothing
+changes on the sync wire, so v0.15.0 syncs with v0.11.0 to v0.14.0. Settings sync needs v0.14.0 or
+later on both accounts.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+There is no new version since v0.10.0.
+
+### New
+
+- **A Reflective skin** ([#249](https://github.com/Spotnick2/AltStable/pull/249)), beside Clear
+  and Smoked: a smoked shell lit from above, with a highlighted rim and title bar, and near-solid
+  panes behind the text. It is the most readable of the skins over bright scenery, at the cost of
+  most of the see-through glass. Pick it in Options > Skin, or with `/alts skin reflective`, and
+  reload. Clear stays the default.
+- **AltStable is on Wago Addons** too. Each release now goes to CurseForge, Wago Addons and
+  [GitHub](https://github.com/Spotnick2/AltStable/releases), and the GitHub release carries what
+  WowUp needs to install it from there.
+
+### Changed
+
+- **An install updated straight from v0.10.0 or older pairs its accounts again**
+  ([#236](https://github.com/Spotnick2/AltStable/pull/236)). Its old Battle.net pairing is no
+  longer brought over; the accounts find each other again once both are online. From v0.11.0 on,
+  nothing changes.
+
 ## v0.14.0
 
 A cleaner glass, settings that follow you between your accounts if you want them to, and a sheet
