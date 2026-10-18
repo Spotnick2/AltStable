@@ -36,7 +36,7 @@ faction count, `table`. Anything else: stop and investigate before bumping.
 
 **Chat lines are capped at 255 characters.** Anything longer than one `/run` line does not belong in
 chat - add a command to `Tools/AltStableProbe` (a ForeverProbe module, `/fp as`; read
-`C:\Projects\WoW\References\PROBES.md` first) and have the owner run
+`C:\Projects\WoW\References\Docs\PROBES.md` first) and have the owner run
 `pwsh Tools/deploy-probe.ps1` instead. Read its results from `AltStableProbe.lua`'s `log` after
 the owner's `/reload`; nothing needs pasting.
 

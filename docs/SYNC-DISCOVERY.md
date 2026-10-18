@@ -260,7 +260,7 @@ friend's** game account id. Our two WoW accounts live under one Battle.net accou
 (`50284074#1` and `50284074#12`), and an account cannot friend itself. ~~Closed.~~ **Reopened, to
 measure (2026-09-30):** "cannot friend itself" was never the question - the question is whether
 the server delivers game data to your OWN other game account, by id, with both online. Nothing
-measured says no. Overlord Forever 1.3.2 (`C:\Projects\WoW\References\Overlord-1.3.2`, read for
+measured says no. Overlord Forever 1.3.2 (`C:\Projects\WoW\References\Addons\PvP\Overlord`, read for
 technique only - All Rights Reserved) bridges Horde and Alliance this way through Battle.net
 FRIENDS, whose clients relay. `/fp as bnet me` / `send <id>` (`/asprobe bnet` at the time) measure the own-account case. If it
 delivers, it crosses rulesets AND factions, which nothing else here does.

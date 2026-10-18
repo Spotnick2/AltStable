@@ -62,7 +62,7 @@ AltStable.SKINS = {
         classShade = 0.3,
     },
 
-    -- The reflective shell of References\LIBGLASS-WINDOW-STYLING.md
+    -- The reflective shell of References\Docs\LIBGLASS-WINDOW-STYLING.md
     -- (GlassRaidFrames' accepted look; LibGlass r9's Glass.Reflect): a smoked
     -- shell lit from above by static gradients, and protected reading regions
     -- for the text. Compared in game over bright Teldrassil grass (2026-10-16):
