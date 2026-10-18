@@ -356,14 +356,18 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 ## Releasing
 
 CurseForge builds releases from the tag webhook, reading `.pkgmeta`. The same tag also runs
-`package-check.yml`, whose `release` job publishes a **GitHub Release** (#209): the zip CI built
-and checked, with that tag's `CHANGELOG.md` section as the notes, and a pre-release when the tag
-has `alpha` or `beta` in it. The job fails, rather than publishing, if there is no `## vX.Y.Z`
-heading for the tag. To release a tag whose job failed (or v0.11.0, which predates it): fix the
-cause on `main`, delete any half-made release, then **Actions → Package check → Run workflow**
-with the tag. That run packages the tag's tree but reads the notes from `main`'s `CHANGELOG.md`,
-so a fixed heading needs no moved tag (moving it would re-fire CurseForge). Tags older than
-v0.11.0 fail its checks.
+`package-check.yml`, which publishes the zip CI built and checked twice more: its `release` job
+makes a **GitHub Release** (#209) with `release.json` (what WowUp reads) and that tag's
+`CHANGELOG.md` section as the notes, a pre-release when the tag has `alpha` or `beta` in it; its
+`wago` job uploads it to **Wago Addons** (`aNeraj62`, from the packaged TOC's `X-Wago-ID`) as
+`stable`, `beta` or `alpha`. Both fail, rather than publishing, if there is no `## vX.Y.Z` heading
+for the tag (an alpha falls back to its `## vX.Y.Z` section). `wago` also fails when Wago doesn't
+list the TOC's patch (`16001` → `1.60.1`) for Forever yet. To publish a tag again where one target
+failed: fix the cause, delete any half-made GitHub Release, then **Actions → Package check → Run
+workflow** from `main` with the tag and `publish` (`both`, `github` or `wago`). That run builds the
+tag's tree, notes included, so a fixed changelog heading needs a new tag. Tags older than v0.11.0
+fail `check`, and tags older than v0.15.0 have no `X-Wago-ID` and fail `wago`. The shared guide is
+`C:\Projects\WoW\References\Docs\RELEASING.md`.
 
 1. Update `CHANGELOG.md` — it is the release notes. The tag's section must be headed exactly
    `## vX.Y.Z` (the tag name).

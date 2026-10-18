@@ -67,6 +67,17 @@ for _, t in ipairs(TOCS) do
     end
 end
 
+-- The store IDs, in the main TOC only: the `wago` job uploads to the project
+-- the PACKAGED AltStable.toc names, and the Wago and CurseForge apps match an
+-- installed addon by them. A missing ID fails only at tag time, in CI.
+do
+    local src = read("AltStable.toc") or ""
+    check("AltStable.toc declares the Wago project ID",
+          src:find("\n## X%-Wago%-ID: aNeraj62\r?\n") ~= nil)
+    check("AltStable.toc declares the CurseForge project ID",
+          src:find("\n## X%-Curse%-Project%-ID: 1708797\r?\n") ~= nil)
+end
+
 -- No packager keyword in shipped Lua. The packager substitutes them in EVERY
 -- file it ships, not only the .toc: v0.7.0-beta's Config.lua compared the
 -- version against "@project-version@" written out, shipped comparing it

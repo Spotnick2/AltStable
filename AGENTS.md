@@ -145,8 +145,12 @@ the measurements that decide the design. Parked until the port is done.
 
 ## Releasing
 
-One CurseForge project publishes all three folders. CurseForge's own packager builds the release
-from the tag webhook, reading `.pkgmeta`; nothing here uploads, and no API key lives in this repo.
+One CurseForge project ([1708797](https://www.curseforge.com/wow/addons/altstable)) publishes
+every folder. CurseForge's own packager builds the release from the tag webhook, reading
+`.pkgmeta`; no CurseForge key lives in this repo. The same tag also goes to **Wago Addons**
+(project `aNeraj62`, https://addons.wago.io/addons/aNeraj62) through CI, with the account-wide
+`WAGO_API_TOKEN` secret. Both IDs are in `AltStable.toc` (`X-Curse-Project-ID`, `X-Wago-ID`). The
+shared guide is `C:\Projects\WoW\References\Docs\RELEASING.md`.
 
 ```
 git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
@@ -161,10 +165,14 @@ pushes to `main` and on `v*` tags — a push to a feature branch with no PR open
 on a tag **publishes** a GitHub Release (below). Its `check` job asserts the
 built zip's shape: the three folders present, `Tools/`, `tests/` and
 `docs/` absent, and every `.toc` version substituted. `-d` is the real no-upload switch — merely
-omitting the API key still cuts a GitHub release, with the whole changelog as its notes. On a `v*`
-tag its `release` job (the only one with `contents: write`) publishes the GitHub Release instead:
-the checked zip plus the tag's `CHANGELOG.md` section (#209). `tests/test_packaging.lua` checks the
-inputs that feed it (the TOCs, `.pkgmeta`, the deploy script) and runs in the normal suite.
+omitting the API key still cuts a GitHub release, with the whole changelog as its notes. Every run
+also builds the tag's notes and `release.json` (`tests/release_files.sh`, the shared template,
+unchanged). On a `v*` tag, two jobs publish that same checked zip: `release` (the only one with
+`contents: write`) makes the GitHub Release with `release.json` and the tag's `CHANGELOG.md` section
+(#209), and `wago` uploads it to Wago, failing if Wago doesn't list the TOC's patch yet. Both come
+from the shared template (`References\Docs\release\package-check.yml`). `tests/test_packaging.lua`
+checks the inputs that feed it (the TOCs and their store IDs, `.pkgmeta`, the deploy script) and
+runs in the normal suite.
 
 After a release, check the published files on CurseForge by hand: CI runs the BigWigs packager, and
 CurseForge runs its own, so the zip players get is not the zip CI inspected. Checked on

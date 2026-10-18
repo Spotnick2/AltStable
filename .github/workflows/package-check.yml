@@ -3,27 +3,40 @@ name: Package check
 # The packager runs as a dry run here. CurseForge builds its releases with its
 # own packager from the tag webhook, against the same .pkgmeta - `check` exists
 # so a packaging mistake surfaces on a pull request instead of in a published
-# zip. On a tag, the `release` job then PUBLISHES a GitHub Release (#209).
+# zip.
 #
 # -d is the real no-upload switch: merely leaving CF_API_KEY out still lets the
 # packager cut a GitHub release - with the WHOLE CHANGELOG.md as its notes.
-# That is why the GitHub Release is the `release` job below, not the packager.
+#
+# On a tag, once `check` has passed, the zip it built and checked is published
+# twice more, never rebuilt: `release` makes the GitHub Release (#209, with
+# release.json), `wago` uploads to Wago Addons. The packager stays out of both.
+# The release-files step and both publishing jobs are the shared template
+# (References\Docs\release\package-check.yml, RELEASING.md §2), unchanged.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
-  # Release a tag whose release failed, or v0.11.0, pushed before the release
-  # job existed. Runs this file from main: `check` against the tag's tree (so
-  # only tags from v0.11.0 on pass it), the notes from main's CHANGELOG.md.
+  # Publish an existing tag again where it failed. Run it from main: `check`
+  # builds the tag's tree, notes included. Only tags from v0.11.0 on pass
+  # `check`, and only tags from v0.15.0 on (the TOC's X-Wago-ID) pass `wago`.
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and release (e.g. v0.11.0)
+        description: Existing tag to build and publish (e.g. v0.15.0)
         required: true
+      publish:
+        description: Where to publish it
+        type: choice
+        options: [both, github, wago]
+        default: both
 
 permissions:
   contents: read
+
+env:
+  ADDON: AltStable
 
 jobs:
   check:
@@ -98,6 +111,21 @@ jobs:
       - name: Update-Cutouts attachment rule
         shell: pwsh
         run: ./Tools/RenderCutout/Update-Cutouts.ps1 -SelfTest
+
+      # On a manual run GITHUB_REF is main, and the packager names the build
+      # after whichever tag at HEAD it sorts first (release.sh 613-628 prefers
+      # GITHUB_REF_NAME only on a tag push). An alpha promoted to a release
+      # without a code change puts two tags on one commit, so drop the others
+      # from this checkout: the zip and its TOC version are the requested tag's.
+      - name: Only the requested tag at HEAD
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          for t in $(git tag --points-at HEAD); do
+            [ "$t" = "$TAG" ] || git tag -d "$t"
+          done
+          test "$(git tag --points-at HEAD)" = "$TAG" || { echo "$TAG is not at HEAD"; exit 1; }
 
       # Pinned to a SHA, not the moving v2 tag: v2 has already moved once during
       # this port (it now carries Forever support, commit 7391c8de).
@@ -277,67 +305,164 @@ jobs:
           done < <(cd "unpacked/$lib" && find . -type f | sed 's|^\./||')
           test "$bad" -eq 0
 
-      # .release is hidden, and upload-artifact@v4 skips hidden content unless
-      # told otherwise - without this the upload silently finds nothing and the
-      # job stays green while proving nothing.
+      # What a tag publishes next to the zip, from the tag's own CHANGELOG.md,
+      # built on every run so a changelog heading or TOC field that breaks it
+      # fails on the pull request. Off a tag there is no tag section, so it
+      # reads the newest one. `release` and `wago` publish these very files.
+      # The script is the workflow's own (GITHUB_SHA), not the checked-out
+      # tree's: a manual run checks out the requested tag, and a tag from
+      # before the script has none (Codex, NodeRadar #36).
+      - name: The release notes and release.json build
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          zip=$(ls .release/*.zip | head -1)
+          tag="$TAG"
+          if [ -z "$tag" ]; then
+            tag=$(tr -d '\r' < CHANGELOG.md | sed -n 's/^## \(v[^ ]*\).*/\1/p' | head -1)
+          fi
+          git show "$GITHUB_SHA:tests/release_files.sh" > "$RUNNER_TEMP/release_files.sh"
+          bash "$RUNNER_TEMP/release_files.sh" "$tag" "$zip" "$RUNNER_TEMP/release-files"
+
+      # .release is a hidden directory, and upload-artifact@v4 skips hidden
+      # content by default - without include-hidden-files the upload finds
+      # nothing. `warn` then leaves the job green while publishing no artifact.
       - name: Keep the zip for inspection
         uses: actions/upload-artifact@v4
         with:
-          name: altstable-package
+          name: package
           path: .release/*.zip
           include-hidden-files: true
           if-no-files-found: error
 
-  # A GitHub Release for every tag (#209): the zip `check` built and checked
-  # above - not a second build - with that tag's CHANGELOG.md section as the
-  # notes. The only job allowed to write.
+      - name: Keep the notes and release.json for the publishers
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release-files/
+          if-no-files-found: error
+
+  # A GitHub Release for every tag: the zip `check` built and checked,
+  # release.json, and the tag's CHANGELOG.md section as the notes. The only job
+  # allowed to write to the repository.
   release:
     needs: check
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    if: >-
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish != 'wago')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      # Only CHANGELOG.md, at the run's own commit: the tag on a tag push,
-      # main on a manual run - so a heading fixed on main after the tag
-      # can still be released without moving the tag.
-      - uses: actions/checkout@v4
+      # Everything comes from `check`'s artifacts - the zip, and the notes and
+      # release.json it built from the tag's tree - so there is no checkout:
+      # on a manual run from main, one would read main's CHANGELOG.md.
+      - uses: actions/download-artifact@v4
         with:
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
+          name: package
+          path: dist
 
       - uses: actions/download-artifact@v4
         with:
-          name: altstable-package
-          path: dist
+          name: release-files
+          path: out
 
-      # The packager names the zip {package}-{version}-forever.zip (the TOC's
-      # game type adds -forever) from the version it read off the tree, so
-      # this also proves the checked zip IS the tag's build.
-      - name: The zip is the tag's
+      - name: The zip and release.json are the tag's
         run: |
-          ls dist
-          zip="dist/AltStable-$TAG-forever.zip"
+          ls dist out
+          zip="dist/$ADDON-$TAG-forever.zip"
           test -f "$zip" || { echo "no $zip"; exit 1; }
+          jq -e --arg v "$TAG" --arg f "${zip#dist/}" \
+            '.releases[0].version == $v and .releases[0].filename == $f' out/release.json > /dev/null ||
+            { echo "release.json is not $TAG's:"; cat out/release.json; exit 1; }
           echo "ZIP=$zip" >> "$GITHUB_ENV"
 
-      # From the tag's "## vX.Y.Z" heading up to the next "## " heading.
-      - name: Release notes from the tag's changelog section
-        run: |
-          tr -d '\r' < CHANGELOG.md |
-            awk -v h="## $TAG" '$0 == h { on = 1; next } on && /^## / { exit } on' > notes.md
-          grep -q '[^[:space:]]' notes.md || { echo "CHANGELOG.md has no '## $TAG' section"; exit 1; }
-          cat notes.md
-
-      # gh refuses an existing release rather than overwriting it.
+      # The title is release.json's name: the packaged TOC's Title, colour
+      # codes stripped.
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=
-          # Case-insensitive, as the packager and CurseForge classify tags.
           case "${TAG,,}" in *alpha*|*beta*) pre=--prerelease ;; esac
-          gh release create "$TAG" "$ZIP" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "AltStable ${TAG#v}" --notes-file notes.md $pre
+          title="$(jq -r '.releases[0].name' out/release.json) ${TAG#v}"
+          gh release create "$TAG" "$ZIP" out/release.json --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$title" --notes-file out/notes.md $pre
+
+  # The same zip on Wago Addons, through its upload API - the request the
+  # packager's upload_wago makes, minus its two problems: it would package a
+  # second, unchecked zip, and send the whole CHANGELOG.md as the changelog.
+  # Only this job sees WAGO_API_TOKEN.
+  wago:
+    needs: check
+    if: >-
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish != 'github')
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      # As in `release`: `check`'s artifacts only, no checkout.
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: out
+
+      - name: The zip and release.json are the tag's
+        run: |
+          zip="dist/$ADDON-$TAG-forever.zip"
+          test -f "$zip" || { echo "no $zip"; exit 1; }
+          jq -e --arg v "$TAG" --arg f "${zip#dist/}" \
+            '.releases[0].version == $v and .releases[0].filename == $f' out/release.json > /dev/null ||
+            { echo "release.json is not $TAG's:"; cat out/release.json; exit 1; }
+          echo "ZIP=$zip" >> "$GITHUB_ENV"
+
+      # The project is the packaged TOC's X-Wago-ID. Each interface becomes the
+      # patch Wago names it by (16001 -> 1.60.1), which must be one Wago lists
+      # for Forever: the packager would fall back to a neighbouring patch, but a
+      # new client build Wago doesn't know yet should stop here instead. Run the
+      # tag again (workflow_dispatch, wago) once Wago lists it.
+      - name: The Wago upload metadata
+        run: |
+          id=$(unzip -p "$ZIP" "$ADDON/$ADDON.toc" | tr -d '\r' | sed -n 's/^## X-Wago-ID: *//p' | head -1)
+          test -n "$id" || { echo "the packaged TOC has no X-Wago-ID"; exit 1; }
+          echo "WAGO_ID=$id" >> "$GITHUB_ENV"
+          known=$(curl -sS --fail --retry 3 https://addons.wago.io/api/data/game | jq -c '.patches.forever // []')
+          echo "Wago's Forever patches: $known"
+          patches=()
+          for i in $(jq -r '.releases[0].metadata[].interface' out/release.json); do
+            p=$(printf '%d.%d.%d' $((i / 10000)) $((i / 100 % 100)) $((i % 100)))
+            jq -e --arg p "$p" 'index($p) != null' <<< "$known" > /dev/null ||
+              { echo "Wago lists no Forever patch $p (interface $i)"; exit 1; }
+            patches+=("$p")
+          done
+          case "${TAG,,}" in *alpha*) stability=alpha ;; *beta*) stability=beta ;; *) stability=stable ;; esac
+          jq -n --arg label "$TAG" --arg stability "$stability" --rawfile changelog out/notes.md \
+            --argjson patches "$(printf '%s\n' "${patches[@]}" | jq -R . | jq -s .)" \
+            '{label: $label, stability: $stability, changelog: $changelog,
+              supported_forever_patches: $patches}' > out/metadata.json
+          cat out/metadata.json
+
+      - name: Upload to Wago Addons
+        env:
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+        run: |
+          test -n "$WAGO_API_TOKEN" || { echo "the WAGO_API_TOKEN secret is not set"; exit 1; }
+          code=$(curl -sS --retry 3 --retry-delay 10 -o out/result.json -w '%{http_code}' \
+            -H "authorization: Bearer $WAGO_API_TOKEN" \
+            -H 'accept: application/json' \
+            -F 'metadata=<out/metadata.json' \
+            -F "file=@$ZIP" \
+            "https://addons.wago.io/api/projects/$WAGO_ID/version")
+          echo "HTTP $code"
+          case "$code" in
+            200|201) echo "uploaded: https://addons.wago.io/addons/$WAGO_ID" ;;
+            *) cat out/result.json 2>/dev/null; exit 1 ;;
+          esac
