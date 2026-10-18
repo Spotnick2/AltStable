@@ -303,7 +303,7 @@ finally:
     gen.build = real_build
 
 # ---------------------------------------------------------------------------
-# The human-readable reference (C:\Projects\WoW\References, like the consumables list)
+# The human-readable reference (C:\Projects\WoW\References\Forever\recipes, like the consumables list)
 # ---------------------------------------------------------------------------
 
 meta = {2333: {"name": "Elixir of Lesser Agility", "profession": "Alchemy", "status": "unchanged"},

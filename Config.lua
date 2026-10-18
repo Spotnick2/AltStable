@@ -1710,7 +1710,7 @@ end
 ------------------------------------------------------------
 -- Which build were the findings measured on?
 --
--- docs/forever-api-notes.md and References/forever-api-<build>.md were
+-- docs/forever-api-notes.md and References/Forever/api/forever-api-<build>.md were
 -- measured against one client build, and the beta updates without
 -- announcement. The build therefore lives in the SOURCE - the one thing that
 -- survives a restart on this client - and a mismatch at login says so.
