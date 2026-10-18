@@ -8,6 +8,7 @@ Libs/LibAccountSync-1.0/
 # Packaged zips. Release artifacts belong in GitHub Releases (the packager
 # attaches them to the tag) and on CurseForge — never committed.
 dist/
+.release/
 
 # Probe / SavedVariables captures pulled off the client. These carry real
 # character names, GUIDs and realm data, and this repo is public.

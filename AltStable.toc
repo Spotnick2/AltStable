@@ -3,6 +3,8 @@
 ## Notes: Cross-alt tracker for World of Warcraft: Forever.
 ## IconTexture: 8197123
 ## Author: Spotnick
+## X-Curse-Project-ID: 1708797
+## X-Wago-ID: aNeraj62
 ## Version: @project-version@
 ## SavedVariables: AltStableDB AltStableConfig AltStablePortraits
 
