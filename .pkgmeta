@@ -17,7 +17,7 @@ enable-nolib-creation: no
 externals:
   Libs/LibGlass-1.0:
     url: https://github.com/Spotnick2/LibGlass
-    tag: r9
+    tag: r10
   Libs/LibShowcase-1.0:
     url: https://github.com/Spotnick2/LibShowcase
     tag: r4
