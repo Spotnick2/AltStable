@@ -260,8 +260,8 @@ friend's** game account id. Our two WoW accounts live under one Battle.net accou
 (`50284074#1` and `50284074#12`), and an account cannot friend itself. ~~Closed.~~ **Reopened, to
 measure (2026-09-30):** "cannot friend itself" was never the question - the question is whether
 the server delivers game data to your OWN other game account, by id, with both online. Nothing
-measured says no. Overlord Forever 1.3.2 (`C:\Projects\WoW\References\Addons\PvP\Overlord`, read for
-technique only - All Rights Reserved) bridges Horde and Alliance this way through Battle.net
+measured says no. Overlord Forever (`C:\Projects\WoW\References\Addons\PvP\Overlord`, read for
+technique only - All Rights Reserved; read at 1.3.2, unchanged in 2.0.7) bridges Horde and Alliance this way through Battle.net
 FRIENDS, whose clients relay. `/fp as bnet me` / `send <id>` (`/asprobe bnet` at the time) measure the own-account case. If it
 delivers, it crosses rulesets AND factions, which nothing else here does.
 
@@ -285,7 +285,12 @@ Overlord also answers two practical questions for the channel half: it joins wit
 `JoinChannelByName(name, nil, 0, 0)` - frame id 0, so no chat window lists it - through
 `securecall`, to keep the chat system untainted; and it waits until the client's General channel
 holds slot /1 before joining (up to ~30 s), because joining first moved General to /2 every session
-and players reported it. Both apply to us as they stand.
+and players reported it. Both still hold in 2.0.7, and would apply as they stand to a channel of
+ours (none ships today: see the note at the top). 2.0.7 adds a third: when the server answers the
+join with `CHANNEL_PASSWORD_REQUEST` (the name is taken, with a password), the client opens a
+password dialog that takes the keyboard, once per try, so Overlord stops joining for the session
+(the next try is a login, a `/reload` or leaving an instance, never its timer). A password-keyed
+household channel (below) faces the same thing if someone else holds its name.
 
 **Shipped as #58** (PR #142): our own other game accounts, found by walking the local ids and synced with no whitelist across rulesets and factions. Separate Battle.net accounts that are friends: #143, deferred until there is a tester.
 
