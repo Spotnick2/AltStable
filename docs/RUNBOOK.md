@@ -90,6 +90,14 @@ a peer offers it back.
 - `/alts forgotten` lists them. Forgetting also drops the character's hidden and
   favourite entries, since the record will not be coming back to need them.
 
+Options → **Old characters** (#259) forgets in bulk: every character whose
+`lastUpdate` is older than N days (90 by default), ticked, each forgotten the
+ordinary way after one confirmation. `lastUpdate` is stamped by every complete
+login scan and only by the client playing the character, so it is "last seen
+played" on every account that synced it. Only the rows on screen are ever
+forgotten, so a long list goes eight at a time. One forgotten while only idle
+comes back on its next login (`CameBackSince`).
+
 Hiding (#21) is a different thing and still the right one for "I do not want to
 look at my bank alt": the record stays and keeps syncing.
 
@@ -336,6 +344,7 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts forget <name>` | Remove a character that no longer exists, for good |
 | `/alts unforget <name>` | Undo that — it returns on the next sync |
 | `/alts forgotten` | What has been forgotten on this account |
+| `/alts stale [days]` | Characters not played in that long (default 90, or the Options age). Read-only |
 | `/alts favourite <name>` | Pin to the top of the Roster grid (the scene shows camps, #152) |
 | `/alts unfavourite <name>` | Unpin |
 | `/alts favourite` | List them |

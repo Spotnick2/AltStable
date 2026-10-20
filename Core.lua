@@ -1080,6 +1080,64 @@ function AltStable.ForgetCharacter(guid, when)
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true, name
 end
+
+-- Characters nobody has played for `days` days (#259): the deleted, and the
+-- record a transfer leaves behind under its old GUID. Oldest first.
+--
+-- lastUpdate is the signal. Every complete login scan stamps it, and only the
+-- client playing the character does (a received record keeps the owner's), so
+-- it reads as "last seen played" on every account that synced it. A record
+-- with no stamp at all counts as the oldest there is.
+--
+-- Never the character being played: ForgetCharacter would refuse it anyway,
+-- and listing it would offer what cannot be done.
+local DAY = 86400
+AltStable.STALE_DAYS = 90
+
+-- The age Options was last set to, else the default. Per account, not synced.
+function AltStable.GetStaleDays()
+    local d = tonumber(AltStableConfig and AltStableConfig.staleDays)
+    return (d and d >= 1) and math.floor(d) or AltStable.STALE_DAYS
+end
+
+function AltStable.StaleCharacters(days, now)
+    days = tonumber(days)
+    if not days or days < 1 then return {} end
+    now = now or time()
+    local cutoff = now - days * DAY
+    local me = UnitGUID and UnitGUID("player")
+    local out = {}
+    for guid, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and guid ~= me then
+            local seen = tonumber(c.lastUpdate) or 0
+            if seen < cutoff then
+                out[#out + 1] = {
+                    guid = guid, name = c.name or guid, realm = c.realm, class = c.class,
+                    level = c.level, money = tonumber(c.money), lastUpdate = seen,
+                    days = seen > 0 and math.floor((now - seen) / DAY) or nil,
+                }
+            end
+        end
+    end
+    -- The guid breaks ties, so the list reads the same every time it is drawn.
+    table.sort(out, function(a, b)
+        if a.lastUpdate ~= b.lastUpdate then return a.lastUpdate < b.lastUpdate end
+        return tostring(a.guid) < tostring(b.guid)
+    end)
+    return out
+end
+
+-- Forget several at once, each the ordinary way. Returns the names forgotten
+-- and the reasons for any that were refused.
+function AltStable.ForgetCharacters(guids)
+    local done, refused = {}, {}
+    for _, guid in ipairs(guids or {}) do
+        local ok, info = AltStable.ForgetCharacter(guid)
+        if ok then done[#done + 1] = info else refused[#refused + 1] = info end
+    end
+    return done, refused
+end
+
 -- A character by name, for the slash commands. Returns the GUID, or nil and a
 -- message to print.
 --
@@ -3807,6 +3865,7 @@ AltStable.HELP_LINES = {
     "|cffffff00/alts auth|r, |cffffff00allow|r / |cffffff00deny|r <name> - who may ask for your data",
     "|cffffff00/alts favourite|r / |cffffff00unfavourite|r <name> - pin to the top of the Roster grid",
     "|cffffff00/alts forget|r / |cffffff00unforget|r <name>, |cffffff00/alts forgotten|r - characters that no longer exist",
+    "|cffffff00/alts stale|r [days] - characters not played in that long (90 unless set in Options)",
     "|cffffff00/alts account|r <n> - this account's number in the sheet",
     "|cffffff00/alts export|r - every character as a spreadsheet",
     "|cffffff00/alts config|r - options",
@@ -4119,6 +4178,23 @@ SlashCmdList["ALTSTABLE"] = function(args)
         end
         for _, e in ipairs(list) do
             Print(("  %s  |cff888888(%s)|r"):format(e.name or "?", e.guid))
+        end
+        return
+    end
+
+    -- Who has not been played in a while (#259). Only a list: forgetting them
+    -- is done from Options, where each one can be unticked first.
+    if cmd == "stale" then
+        local days = tonumber(target) or AltStable.GetStaleDays()
+        local list = AltStable.StaleCharacters(days)
+        if #list == 0 then
+            Print(("Every character was played in the last %d days."):format(days))
+            return
+        end
+        Print(("Not played in %d days (Options > Old characters to forget them):"):format(days))
+        for _, e in ipairs(list) do
+            Print(("  %s%s  |cff888888%s|r"):format(e.name, e.realm and (" - " .. e.realm) or "",
+                e.days and (e.days .. " days") or "never seen"))
         end
         return
     end

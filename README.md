@@ -117,6 +117,7 @@ The Companion has its own **Check for updates** under **Help → About**.
 | `/alts whitelist` [remove] [name] | Who you sync with |
 | `/alts favourite` / `unfavourite` &lt;name&gt; | Pin a character to the top |
 | `/alts forget` / `unforget` &lt;name&gt; | Remove a character that no longer exists (or bring it back) |
+| `/alts stale` [days] | Characters nobody has played in that long; forget them from Options, Old characters |
 | `/alts export` | Every character as a spreadsheet |
 | `/alts config` | Options |
 

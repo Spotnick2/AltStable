@@ -4381,6 +4381,197 @@ local function CreateFrameIfNeeded()
         return names, optHiddenNote:GetText()
     end
 
+    -- ── Old characters (#259) ─────────────────────────────
+    -- Forget, for everyone not played in N days at once: deleted characters,
+    -- and the record a transfer leaves under its old GUID, which otherwise
+    -- count in the totals for good. Each one listed is ticked; untick to keep.
+    -- Only the rows on screen are ever forgotten - a tick nobody could see is
+    -- not a choice anybody made - so past the reserve the note says to forget
+    -- these first.
+    local optStaleHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optStaleHdr:SetPoint("TOPLEFT", P, Y)
+    optStaleHdr:SetText("OLD CHARACTERS")
+    optStaleHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    Y = Y - 18
+
+    local optStaleHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optStaleHint:SetPoint("TOPLEFT", P, Y)
+    optStaleHint:SetPoint("TOPRIGHT", -P, Y)
+    optStaleHint:SetJustifyH("LEFT"); optStaleHint:SetWordWrap(true)
+    optStaleHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optStaleHint:SetText("Nobody has played these in that long: deleted, or left behind by a "
+        .. "transfer. Untick any to keep. One played again comes back on its own.")
+    Y = Y - 32
+
+    local optStaleLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optStaleLabel:SetPoint("TOPLEFT", P, Y)
+    optStaleLabel:SetText("Not played in")
+    optStaleLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+
+    local optStaleBox = CreateFrame("EditBox", "AltStableOptStaleBox", optionsFrame, "InputBoxTemplate")
+    optStaleBox:SetSize(44, 22)
+    optStaleBox:SetPoint("LEFT", optStaleLabel, "RIGHT", 10, 0)
+    optStaleBox:SetAutoFocus(false)
+    optStaleBox:SetNumeric(true)
+    optStaleBox:SetMaxLetters(4)
+
+    local optStaleUnit = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optStaleUnit:SetPoint("LEFT", optStaleBox, "RIGHT", 6, 0)
+    optStaleUnit:SetText("days")
+    optStaleUnit:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    Y = Y - 28
+
+    local OPT_STALE_ROWS = 8
+    local optStaleRows = {}
+    local staleKept = {}       -- guid -> true: unticked, for this session
+    local staleShown = {}      -- the entries on the rows now
+    for i = 1, OPT_STALE_ROWS do
+        local row = CreateFrame("Frame", nil, optionsFrame)
+        row:SetSize(520, 18)
+        row:SetPoint("TOPLEFT", P + 2, Y - (i - 1) * 18)
+        local cb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+        cb:SetSize(16, 16)
+        cb:SetPoint("LEFT", 0, 0)
+        row.check = cb
+        local lbl = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0); lbl:SetJustifyH("LEFT")
+        lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        row.label = lbl
+        row:Hide()
+        optStaleRows[i] = row
+    end
+    local optStaleNone = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optStaleNone:SetPoint("TOPLEFT", P + 4, Y)
+    optStaleNone:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    Y = Y - (OPT_STALE_ROWS * 18) - 6
+    local optStaleFlow = optFlow.Mark(OPT_STALE_ROWS, 18)
+
+    local optStaleForget = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+    optStaleForget:SetSize(120, 20)
+    optStaleForget:SetPoint("TOPLEFT", P + 4, Y)
+    AltStable.ApplyBackdrop(optStaleForget, 0.18, 0.05, 0.05, 1)
+    local optStaleForgetLbl = optStaleForget:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optStaleForgetLbl:SetAllPoints(); optStaleForgetLbl:SetJustifyH("CENTER")
+
+    local optStaleMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    optStaleMore:SetPoint("LEFT", optStaleForget, "RIGHT", 12, 0)
+    optStaleMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    Y = Y - 30
+
+    local function StaleSelected()
+        local out = {}
+        for _, e in ipairs(staleShown) do
+            if not staleKept[e.guid] then out[#out + 1] = e end
+        end
+        return out
+    end
+
+    local function OptRefreshStale()
+        local days = AltStable.GetStaleDays()
+        if not optStaleBox:HasFocus() then optStaleBox:SetText(tostring(days)) end
+        local list = AltStable.StaleCharacters(days)
+        optFlow.Use(optStaleFlow, #list)
+        staleShown = {}
+        for i, row in ipairs(optStaleRows) do
+            local e = list[i]
+            if e then
+                staleShown[#staleShown + 1] = e
+                local label = AltStable.ClassColor(e.class) .. e.name .. "|r"
+                if e.realm and e.realm ~= "" then label = label .. "  |cff808080" .. e.realm .. "|r" end
+                label = label .. "  |cffaaaaaa" .. (e.days and (e.days .. " days") or "never seen") .. "|r"
+                if e.money and e.money > 0 then label = label .. "  " .. AltStable.FormatMoneyShort(e.money) end
+                row.label:SetText(label)
+                row.check:SetChecked(not staleKept[e.guid])
+                row.check:SetScript("OnClick", function(self)
+                    staleKept[e.guid] = (not self:GetChecked()) or nil
+                    OptRefreshStale()
+                end)
+                row:Show()
+            else
+                row.label:SetText("")
+                row:Hide()
+            end
+        end
+        if #list == 0 then
+            optStaleNone:SetText(("Everyone was played in the last %d days."):format(days))
+            optStaleNone:Show()
+        else
+            optStaleNone:SetText("")
+            optStaleNone:Hide()
+        end
+        local n = #StaleSelected()
+        optStaleForgetLbl:SetText(n > 0 and ("|cffddddddForget " .. n .. "|r") or "|cff666666Forget|r")
+        optStaleMore:SetText(#list > OPT_STALE_ROWS
+            and ("+" .. (#list - OPT_STALE_ROWS) .. " more - forget these first") or "")
+    end
+
+    local function CommitStaleDays(text)
+        local n = tonumber(tostring(text or ""):match("^%s*(%d+)%s*$"))
+        -- Empty or 0 reverts rather than clears: the box selects all of its
+        -- text when focused, the account box's trap.
+        if n and n >= 1 then AltStable.SetConfigValue("staleDays", n) end
+        optStaleBox:SetText(tostring(AltStable.GetStaleDays()))
+        OptRefreshStale()
+    end
+    optStaleBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()          -- first, so the refresh writes the box
+        CommitStaleDays(self:GetText())
+    end)
+    optStaleBox:SetScript("OnEditFocusLost", function(self)
+        CommitStaleDays(self:GetText())
+        self:HighlightText(0, 0)
+    end)
+    optStaleBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        self:SetText(tostring(AltStable.GetStaleDays()))
+    end)
+
+    local STALE_TEXT = "Forget |cffffffff%d %s|r?\n\n%s\n\nEach is forgotten as Forget on the sheet "
+        .. "does: the record is deleted, and a tombstone stops other accounts sending it back. "
+        .. "One played again comes back on its own."
+
+    optStaleForget:SetScript("OnClick", function()
+        local chosen = StaleSelected()
+        if #chosen == 0 or not AltStable.ShowPrompt then return end
+        local names, guids, copper = {}, {}, 0
+        for _, e in ipairs(chosen) do
+            names[#names + 1] = AltStable.ClassColor(e.class) .. e.name .. "|r"
+            guids[#guids + 1] = e.guid
+            copper = copper + (e.money or 0)
+        end
+        local body = table.concat(names, ", ")
+        if copper > 0 then body = body .. "\n\n" .. AltStable.FormatMoneyShort(copper) .. " leaves the totals." end
+        local text = STALE_TEXT:format(#chosen, #chosen == 1 and "character" or "characters", body)
+        if AltStableConfig and AltStableConfig.syncSettings == true then
+            text = text .. "\n\nSettings sync is on: your other accounts forget them too."
+        end
+        -- The single Forget's prompt: one forget question at a time, and the
+        -- capture already knows to keep it out of a portrait (Capture.lua).
+        AltStable.ShowPrompt("Forget", {
+            text = text,
+            buttons = { ACCEPT or "Forget", CANCEL or "Cancel" },
+            onClose = function(choice)
+                if choice ~= 1 then return end
+                local done, refused = AltStable.ForgetCharacters(guids)
+                if #done > 0 then
+                    AltStable.Print(("Forgotten %d: %s. |cffffff00/alts unforget <name>|r to undo one.")
+                        :format(#done, table.concat(done, ", ")))
+                end
+                for _, why in ipairs(refused) do
+                    AltStable.Print("|cffff8800Cannot forget one:|r " .. tostring(why))
+                end
+                OptRefreshStale()
+            end,
+        })
+    end)
+
+    AltStable._test.OptStale = {
+        rows = optStaleRows, box = optStaleBox, forget = optStaleForget,
+        forgetLabel = optStaleForgetLbl, none = optStaleNone, more = optStaleMore,
+        refresh = OptRefreshStale, commit = CommitStaleDays,
+        reset = function() staleKept = {} end,
+    }
+
     -- Content height is known once the layout cursor has run; the scroll range
     -- derives from it, less whatever the lists are not using (OptFlow).
     optFlow.Finish(math.abs(Y) + 24)
@@ -4432,6 +4623,7 @@ local function CreateFrameIfNeeded()
         OptRefreshWhitelist()
         OptRefreshSyncAuth()
         OptRefreshHidden()
+        OptRefreshStale()
         RefreshThemeBtns()
         -- And the skin row, which is the ONE control here that can be changed
         -- from outside this panel: `/alts skin` writes the config and says
