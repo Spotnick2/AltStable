@@ -3936,6 +3936,11 @@ SlashCmdList["ALTSTABLE"] = function(args)
                   .. table.concat(names, ", "))
             return
         end
+        -- Following Glass UI, the skin is set there (#261), and ours waits.
+        if AltStable.SuiteFollowing and AltStable.SuiteFollowing() then
+            AltStable.SuiteRefuse()
+            return
+        end
         AltStable.SetConfigValue("skin", target)
         Print("Skin set to |cffffff00" .. target .. "|r - |cffffff00/reload|r to see it.")
         return

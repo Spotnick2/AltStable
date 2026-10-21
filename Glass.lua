@@ -47,7 +47,29 @@ if lib then
         end
         current = clean and looks.clean or looks.classic
     end
+    -- Glass UI's suite material (#261, Skin.lua): Pearl, LibGlass r11, as the
+    -- preset is - no rimAlpha of ours, it is the suite's glass. Under pcall:
+    -- an older copy of the library that won the LibStub race errors on the
+    -- name. Returns true, or false and the reason Glass UI's page shows.
+    function AltStable.UseGlassPreset(preset)
+        if not looks[preset] then
+            local ok, inst = pcall(lib.New, lib, { preset = preset })
+            if not ok or type(inst) ~= "table" then
+                return false, (AltStable.GlassMinor() or 0) < 11 and "library-too-old" or "build-failed"
+            end
+            looks[preset] = inst
+        end
+        current = looks[preset]
+        return true
+    end
+    -- The MINOR that won: what the build actually ran on.
+    function AltStable.GlassMinor()
+        local _, minor = LibStub("LibGlass-1.0", true)
+        return tonumber(minor)
+    end
 else
     AltStable.Glass = nil
     AltStable.UseGlassLook = nil
+    AltStable.UseGlassPreset = nil
+    AltStable.GlassMinor = function() return nil end
 end

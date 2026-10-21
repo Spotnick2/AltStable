@@ -7,6 +7,7 @@
 ## X-Wago-ID: aNeraj62
 ## Version: @project-version@
 ## SavedVariables: AltStableDB AltStableConfig AltStablePortraits
+## OptionalDeps: GlassUI
 
 Libs\LibGlass-1.0\LibGlass-1.0.xml
 Libs\LibShowcase-1.0\LibShowcase-1.0.xml

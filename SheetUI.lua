@@ -3166,6 +3166,7 @@ local function CreateFrameIfNeeded()
         lbl:SetText(preset.label or name)
         b.skinName, b.lbl = name, lbl
         b:SetScript("OnClick", function()
+            if AltStable.SuiteFollowing() then AltStable.SuiteRefuse() return end
             AltStable.SetConfigValue("skin", name)
             RefreshSkinRow()
         end)
@@ -3195,6 +3196,7 @@ local function CreateFrameIfNeeded()
         lbl:SetText(choice[2])
         b.classTint, b.lbl = choice[1], lbl
         b:SetScript("OnClick", function()
+            if AltStable.SuiteFollowing() then AltStable.SuiteRefuse() return end
             AltStable.SetConfigValue("skinClassTint", choice[1])
             RefreshSkinRow()
         end)
@@ -3231,6 +3233,7 @@ local function CreateFrameIfNeeded()
         lbl:SetText(choice[2])
         b.clean, b.lbl = choice[1], lbl
         b:SetScript("OnClick", function()
+            if AltStable.SuiteFollowing() then AltStable.SuiteRefuse() return end
             AltStable.SetConfigValue("skinClean", choice[1])
             RefreshSkinRow()
         end)
@@ -3282,6 +3285,11 @@ local function CreateFrameIfNeeded()
     -- Through the secure prompt: ReloadUI() from our own click is blocked on
     -- this client (see AltStable.ShowReloadPrompt).
     optSkinReloadBtn:SetScript("OnClick", function()
+        -- Following Glass UI, the row's button opens Glass UI instead (#261).
+        if AltStable.SuiteFollowing() then
+            if not AltStable.OpenGlassUI() then AltStable.SuiteRefuse() end
+            return
+        end
         if not AltStable.ShowReloadPrompt("Reload now to put on the new look?") then
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r type |cffffff00/reload|r "
                 .. "once the fight is over to put on the new look.")
@@ -3291,7 +3299,33 @@ local function CreateFrameIfNeeded()
     AltStable._test.SkinReloadButton = function() return optSkinReloadBtn end
     AltStable._test.SkinReloadText = function() return optSkinReload end
 
+    -- Following Glass UI (#261): the rows show what the window is wearing,
+    -- dimmed, since none of them is ours to change, and the reload line says
+    -- who sets it, with a button to Glass UI. The saved choices wait, unshown.
+    local SUITE_TINT_TEXT = { clear = "clear", smoked = "smoked", class = "class-coloured" }
+    local appearanceBtns = {}
+    for _, list in ipairs({ skinBtns, tintBtns, lookBtns }) do
+        for _, b in ipairs(list) do appearanceBtns[#appearanceBtns + 1] = b end
+    end
+    local function ShowFollowing(look)
+        for _, b in ipairs(skinBtns) do SetChoiceBtnState(b, b.lbl, b.skinName == AltStable.SkinName()) end
+        for _, b in ipairs(tintBtns) do SetChoiceBtnState(b, b.lbl, b.classTint == AltStable.SkinClassTint()) end
+        -- Pearl is neither Classic nor Clean.
+        for _, b in ipairs(lookBtns) do SetChoiceBtnState(b, b.lbl, false) end
+        for _, b in ipairs(appearanceBtns) do b:SetAlpha(0.45) end
+        optSkinReload:SetText(("|cff7fd4ffSet in Glass UI|r: %s, %s glass, %s accent"):format(
+            look.preset == "pearl" and "Pearl" or look.preset,
+            SUITE_TINT_TEXT[look.tint] or look.tint, look.accent))
+        optSkinReloadBtn:SetText("Glass UI")
+        optSkinReload:Show()
+        optSkinReloadBtn:Show()
+    end
+
     RefreshSkinRow = function()
+        local look = AltStable.SuiteFollowing() and AltStable.SuiteLook()
+        if look then return ShowFollowing(look) end
+        for _, b in ipairs(appearanceBtns) do b:SetAlpha(1) end
+        optSkinReloadBtn:SetText("Reload")
         local pending = AltStable.PendingSkinName()
         for _, b in ipairs(skinBtns) do
             SetChoiceBtnState(b, b.lbl, b.skinName == pending)
@@ -3375,8 +3409,13 @@ local function CreateFrameIfNeeded()
     local SetThemeBtnState = SetChoiceBtnState
     local function RefreshThemeBtns()
         local cur = AltStableConfig and AltStableConfig.theme or "dark"
-        SetThemeBtnState(optDarkBtn,  optDarkLbl,  cur == "dark")
-        SetThemeBtnState(optClassBtn, optClassLbl, cur ~= "dark")
+        -- Following Glass UI, the accent is its own (gold or ice): shown on
+        -- the skin row's line, and neither of ours is the one in use.
+        local suiteLook = AltStable.SuiteFollowing() and AltStable.SuiteLook()
+        SetThemeBtnState(optDarkBtn,  optDarkLbl,  not suiteLook and cur == "dark")
+        SetThemeBtnState(optClassBtn, optClassLbl, not suiteLook and cur ~= "dark")
+        optDarkBtn:SetAlpha(suiteLook and 0.45 or 1)
+        optClassBtn:SetAlpha(suiteLook and 0.45 or 1)
     end
     -- Sync when accent changes (sidebar callback won't call SwitchSection)
     AltStable.RegisterThemeCallback(function()
@@ -3389,12 +3428,14 @@ local function CreateFrameIfNeeded()
     end)
 
     optDarkBtn:SetScript("OnClick", function()
+        if AltStable.SuiteFollowing() then AltStable.SuiteRefuse() return end
         AltStableConfig = AltStableConfig or {}
         AltStable.SetConfigValue("theme", "dark")
         RefreshThemeBtns()
         AltStable.ApplyTheme()
     end)
     optClassBtn:SetScript("OnClick", function()
+        if AltStable.SuiteFollowing() then AltStable.SuiteRefuse() return end
         AltStableConfig = AltStableConfig or {}
         AltStable.SetConfigValue("theme", "class")
         RefreshThemeBtns()

@@ -91,6 +91,152 @@ local function StoredSkin()
 end
 AltStable.PendingSkinName = StoredSkin
 
+------------------------------------------------------------
+-- Following Glass UI (#261)
+--
+-- Glass UI (..\GlassUI, its docs/SUITE.md and SUITE-LOOK.md) owns the suite's
+-- material and look. With it loaded and its "Use Glass UI appearance" on for
+-- AltStable, the window is Pearl glass in the suite's tint and accent.
+--
+-- Asked ONCE per session, before the first glass is built, like the skin:
+-- at PLAYER_LOGIN, or at the first skin question if that comes sooner.
+-- `## OptionalDeps: GlassUI` has Glass UI ready by then.
+--
+-- AltStable's own choices (skin, glass colour, look, accent) stay saved and
+-- unused while it follows, and come back when it stops. Flat and Reflective
+-- are not in the suite's vocabulary: they are what not following is for.
+--
+-- Not live. The glass is built once (see the header), so a suite change made
+-- while playing waits for a reload, and the report says so (`live = false`):
+-- Glass UI's page compares the look reported here with its current one.
+------------------------------------------------------------
+
+local SUITE_ADDON = "AltStable"
+-- The suite's tints, as this file's skins: class is clear in the class colour.
+local SUITE_SKINS = { clear = "clear", smoked = "smoked", class = "clear" }
+
+local suite              -- GlassUI.Suite, when it speaks API 1
+local suiteStarted = false
+local following          -- what this session built from the suite, or nil
+
+-- Glass UI's suite API when it speaks version 1; anything else counts as absent.
+local function SuiteAPI()
+    local G = rawget(_G, "GlassUI")
+    if type(G) ~= "table" then return nil end
+    local S = rawget(G, "Suite")
+    if type(S) ~= "table" or rawget(S, "API") ~= 1 then return nil end
+    if type(rawget(S, "Theme")) ~= "function" or type(rawget(S, "Report")) ~= "function" then
+        return nil
+    end
+    return S
+end
+
+-- One of the suite's optional functions, feature-detected on its own.
+local function SuiteCall(name, ...)
+    local fn = suite and rawget(suite, name)
+    if type(fn) ~= "function" then return nil end
+    local ok, r = pcall(fn, ...)
+    if ok then return r end
+end
+
+local function IsRGB(c, n)
+    if type(c) ~= "table" then return false end
+    for i = 1, n or 3 do
+        if type(c[i]) ~= "number" or c[i] < 0 or c[i] > 1 then return false end
+    end
+    return true
+end
+
+-- The body for a suite tint: Glass UI's numbers (Suite.Body, the one owner
+-- of them), else our skin's, in the same shape. `wash` is a factor of the
+-- material's own; a class body has no tint, only its shade over clear glass.
+local function SuiteBody(tint)
+    local b = SuiteCall("Body", tint)
+    if type(b) == "table" and type(b.wash) == "number"
+        and (IsRGB(b.tint, 4) or (b.tint == nil and type(b.classShade) == "number")) then
+        return { tint = b.tint and { b.tint[1], b.tint[2], b.tint[3], b.tint[4] },
+                 classShade = b.classShade, wash = b.wash }
+    end
+    local skin = AltStable.SKINS[SUITE_SKINS[tint]]
+    return { tint = tint ~= "class" and skin.tint or nil, classShade = skin.classShade,
+             wash = skin.wash / AltStable.SKINS.clear.wash }
+end
+
+function AltStable.SuiteStart()
+    if suiteStarted then return end
+    suiteStarted = true
+    suite = SuiteAPI()
+    if not suite then return end
+
+    local state = { api = 1, live = false, minor = AltStable.GlassMinor and AltStable.GlassMinor(),
+                    options = AltStable.OpenConfig }
+    local ok, answer = pcall(suite.Theme, SUITE_ADDON)
+    if ok and type(answer) == "table" and type(answer.preset) == "string" then
+        local built, why = false, "build-failed"
+        if AltStable.UseGlassPreset then built, why = AltStable.UseGlassPreset(answer.preset) end
+        if built then
+            local look = SuiteCall("Look")
+            local tint = type(look) == "table" and SUITE_SKINS[look.tint] and look.tint or "clear"
+            local accent = type(look) == "table" and type(look.accent) == "string" and look.accent or "gold"
+            local rgb = SuiteCall("Accent", accent)
+            if not IsRGB(rgb) then
+                accent, rgb = "gold", AltStable.C.ACCENT
+            end
+            following = {
+                preset = answer.preset, tint = tint, accent = accent,
+                accentRGB = { rgb[1], rgb[2], rgb[3] },
+                body = SuiteBody(tint),
+                -- The preset's own wash, before any skin pushes one: the
+                -- body's wash is a factor of it.
+                wash = Glass.STYLE.wash,
+            }
+            state.built = answer.preset
+            state.look = { tint = tint, accent = accent }
+            -- The body's backing is never painted: our panes keep their own
+            -- colours. Not a look key, so no reload is asked for it.
+            state.own = { backing = true }
+        else
+            state.reason = why
+        end
+    end
+    pcall(suite.Report, SUITE_ADDON, state)
+    -- The accent's users may have painted already, in our own gold.
+    if following and AltStable.ApplyTheme then AltStable.ApplyTheme() end
+end
+
+-- Is this session's look Glass UI's?
+function AltStable.SuiteFollowing()
+    AltStable.SuiteStart()
+    return following ~= nil
+end
+
+-- What it built from the suite: { preset, tint, accent }, a copy, or nil.
+function AltStable.SuiteLook()
+    if not following then return nil end
+    return { preset = following.preset, tint = following.tint, accent = following.accent }
+end
+
+-- The suite's accent while following, else nil. Never starts the session's
+-- decision: the accent is read early and often, the decision has its moment.
+function AltStable.SuiteAccentRGB()
+    local c = following and following.accentRGB
+    if c then return c[1], c[2], c[3] end
+end
+
+-- Glass UI's own page. True when it opened.
+function AltStable.OpenGlassUI()
+    AltStable.SuiteStart()
+    return SuiteCall("Open") == true
+end
+
+-- The answer to every write path while following.
+function AltStable.SuiteRefuse()
+    if AltStable.Print then
+        AltStable.Print("AltStable follows Glass UI's look: set it in Glass UI (|cffffff00/glassui|r), "
+            .. "or turn off its \"Use Glass UI appearance\" for AltStable there.")
+    end
+end
+
 -- The ACTIVE skin: resolved once, then held for the session.
 --
 -- This used to read the config on every call, which is wrong in both directions
@@ -110,7 +256,8 @@ local activeClassTint   -- see SkinClassTint, below
 local activeClean       -- see SkinClean, below
 function AltStable.SkinName()
     if not active then
-        active = StoredSkin()
+        AltStable.SuiteStart()
+        active = following and SUITE_SKINS[following.tint] or StoredSkin()
         -- The look picks the material instance, so it is resolved with the
         -- skin: before the first Apply, whichever surface asks first.
         AltStable.SkinClean()
@@ -125,6 +272,7 @@ function AltStable._ResetSkinCache()
     active = nil
     activeClassTint = nil
     activeClean = nil
+    suite, suiteStarted, following = nil, false, nil
 end
 
 -- The clean look (#230, LibGlass r6's preset; the default since the owner saw
@@ -136,8 +284,14 @@ end
 AltStable.PendingSkinClean = StoredClean
 function AltStable.SkinClean()
     if activeClean == nil then
-        activeClean = StoredClean()
-        if AltStable.UseGlassLook then AltStable.UseGlassLook(activeClean) end
+        AltStable.SuiteStart()
+        if following then
+            -- Pearl is built on clean (no grain, thin rims), and is in use already.
+            activeClean = true
+        else
+            activeClean = StoredClean()
+            if AltStable.UseGlassLook then AltStable.UseGlassLook(activeClean) end
+        end
     end
     return activeClean
 end
@@ -150,7 +304,11 @@ local function StoredClassTint()
 end
 AltStable.PendingSkinClassTint = StoredClassTint
 function AltStable.SkinClassTint()
-    if activeClassTint == nil then activeClassTint = StoredClassTint() end
+    if activeClassTint == nil then
+        AltStable.SuiteStart()
+        if following then activeClassTint = following.tint == "class"
+        else activeClassTint = StoredClassTint() end
+    end
     return activeClassTint
 end
 
@@ -202,7 +360,12 @@ end
 local function PushPreset(preset, body)
     local st = Glass.STYLE
     st.grain = AltStable.SkinClean() and 0 or preset.grain
-    st.wash = preset.wash
+    -- Following: the suite material's own wash, times the body's factor.
+    if following and following.wash then
+        st.wash = following.wash * following.body.wash
+    else
+        st.wash = preset.wash
+    end
     st.tint = { body[1], body[2], body[3], body[4] }
 end
 
@@ -256,7 +419,10 @@ function AltStable.SkinWindow(frame, size, opts)
     -- permanently, for the rest of the session, for every window. The
     -- material is a library this addon does not own (#184), which makes
     -- shared mutable state exactly the wrong thing to hand it.
-    PushPreset(preset, (size == "small") and AltStable.SkinPopupTint() or preset.tint)
+    -- Following, the window's body is the suite's (a class body has no tint
+    -- of its own: clear glass, shaded by SkinApplyClassTint).
+    local body = following and following.body.tint or preset.tint
+    PushPreset(preset, (size == "small") and AltStable.SkinPopupTint() or body)
 
     -- Kept on the frame. The rim lives on a CHILD at host level + 10, pinned at
     -- Apply time, so anything that moves the host's level afterwards leaves the
@@ -283,7 +449,7 @@ function AltStable.SkinApplyClassTint(g)
     local _, class = UnitClass("player")
     local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
     if not c then return false end
-    local S = AltStable.Skin().classShade or 0.6
+    local S = following and following.body.classShade or AltStable.Skin().classShade or 0.6
     return Glass.SetSurfaceTint(g, c.r * S, c.g * S, c.b * S) ~= false
 end
 

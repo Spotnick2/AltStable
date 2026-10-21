@@ -38,6 +38,13 @@ AltStable can only read the character you are playing, so:
 Where something is missing, the tab says what to open. Data from another of your
 WoW accounts arrives through sync (below).
 
+## With Glass UI
+
+With **Glass UI** installed, AltStable wears the Glass suite's look: its Pearl glass, its
+tint and its accent. Turn that off for AltStable on Glass UI's page ("Use Glass UI
+appearance") to get your own skin back; AltStable keeps it saved meanwhile. A change made
+in Glass UI shows in AltStable after a `/reload`.
+
 ## The tabs
 
 - **The sheet** has one row per character: level, gear and item level, professions,
