@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.16.0
+
+Old characters can be forgotten in bulk, and AltStable can wear Glass UI's look. Measured on client
+1.60.1.70450. Nothing changes on the sync wire, so v0.16.0 syncs with v0.11.0 to v0.15.0. Settings
+sync needs v0.14.0 or later on both accounts.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+There is no new version since v0.10.0.
+
+### New
+
+- **Forget old characters from one list**
+  ([#260](https://github.com/Spotnick2/AltStable/pull/260)). A deleted character, or the record a
+  transfer leaves behind, used to stay in the sheet and in your gold total until you forgot it by
+  name. Options now has an **Old characters** section that lists every character nobody has played
+  in a number of days (90 to start; change it in the box). The character you are on is never
+  listed.
+  - Every row starts ticked. Untick the ones to keep, then press **Forget**. AltStable asks once,
+    naming the characters and the gold that leaves your totals.
+  - The list shows eight characters at a time; **Next** shows the rest. Only the characters on
+    screen are forgotten.
+  - With settings sync on, they are forgotten on your other accounts too, and the question says so.
+  - Nothing is ever forgotten on its own. A character you log into again comes back, as with
+    `/alts forget`.
+  - `/alts stale` [days] lists the same characters in chat, without forgetting any.
+- **AltStable follows Glass UI**
+  ([#262](https://github.com/Spotnick2/AltStable/pull/262)). With Glass UI installed, AltStable
+  wears the Glass suite's look: its Pearl glass, its tint and its accent, and it is listed on Glass
+  UI's page beside the Glass addons. Untick **Use Glass UI appearance** there for AltStable to get
+  your own skin back; AltStable keeps it saved meanwhile. While it follows, the appearance rows in
+  AltStable's Options show what Glass UI set, and `/alts skin` points to Glass UI. A change made in
+  Glass UI shows in AltStable after a `/reload`. Without Glass UI, nothing changes.
+
 ## v0.15.0
 
 A fourth skin, Reflective, and AltStable on Wago Addons. Measured on client 1.60.1.70450. Nothing
