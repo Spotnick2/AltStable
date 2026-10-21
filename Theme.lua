@@ -99,6 +99,11 @@ function AltStable.HexColor(c)
 end
 
 function AltStable.GetAccentRGB()
+    -- Glass UI's accent while following it (#261, Skin.lua); ours kept for after.
+    if AltStable.SuiteAccentRGB then
+        local r, g, b = AltStable.SuiteAccentRGB()
+        if r then return r, g, b end
+    end
     local theme = AltStableConfig and AltStableConfig.theme or "dark"
     if theme == "class" then
         local _, class = UnitClass("player")
@@ -110,6 +115,8 @@ end
 
 function AltStable.GetAccent2RGB()
     local theme = AltStableConfig and AltStableConfig.theme or "dark"
+    -- Following Glass UI, the class accent is not the one in use.
+    if AltStable.SuiteAccentRGB and AltStable.SuiteAccentRGB() then theme = "dark" end
     if theme == "class" then
         local r, g, b = AltStable.GetAccentRGB()
         return math.min(r + 0.15, 1), math.min(g + 0.15, 1), math.min(b + 0.15, 1)

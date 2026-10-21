@@ -1767,6 +1767,8 @@ initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
     if event == "PLAYER_LOGIN" then
         EnsureDefaults()
+        -- Glass UI's suite, asked once before any glass is built (#261, Skin.lua).
+        if AltStable.SuiteStart then AltStable.SuiteStart() end
         CheckClientBuild()
         -- Drop tombstones nobody has offered in a month (#65). Once here,
         -- because it only changes on the scale of months and a sweep on every
