@@ -4386,8 +4386,8 @@ local function CreateFrameIfNeeded()
     -- and the record a transfer leaves under its old GUID, which otherwise
     -- count in the totals for good. Each one listed is ticked; untick to keep.
     -- Only the rows on screen are ever forgotten - a tick nobody could see is
-    -- not a choice anybody made - so past the reserve the note says to forget
-    -- these first.
+    -- not a choice anybody made - so past the reserve the list pages, eight
+    -- at a time, and an untick holds on every page.
     local optStaleHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optStaleHdr:SetPoint("TOPLEFT", P, Y)
     optStaleHdr:SetText("OLD CHARACTERS")
@@ -4425,6 +4425,9 @@ local function CreateFrameIfNeeded()
     local optStaleRows = {}
     local staleKept = {}       -- guid -> true: unticked, for this session
     local staleShown = {}      -- the entries on the rows now
+    -- Where the rows start in the list. Paged, so a run of kept characters at
+    -- the top can never wall off the ones below them (Codex, #260).
+    local staleOffset = 0
     for i = 1, OPT_STALE_ROWS do
         local row = CreateFrame("Frame", nil, optionsFrame)
         row:SetSize(520, 18)
@@ -4453,8 +4456,16 @@ local function CreateFrameIfNeeded()
     local optStaleForgetLbl = optStaleForget:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     optStaleForgetLbl:SetAllPoints(); optStaleForgetLbl:SetJustifyH("CENTER")
 
+    -- Next eight, and from the last page back to the first.
+    local optStalePage = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+    optStalePage:SetSize(60, 20)
+    optStalePage:SetPoint("LEFT", optStaleForget, "RIGHT", 8, 0)
+    AltStable.ApplyBackdrop(optStalePage, 0.12, 0.12, 0.12, 1)
+    local optStalePageLbl = optStalePage:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optStalePageLbl:SetAllPoints(); optStalePageLbl:SetJustifyH("CENTER")
+
     local optStaleMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optStaleMore:SetPoint("LEFT", optStaleForget, "RIGHT", 12, 0)
+    optStaleMore:SetPoint("LEFT", optStalePage, "RIGHT", 12, 0)
     optStaleMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
     Y = Y - 30
 
@@ -4470,10 +4481,15 @@ local function CreateFrameIfNeeded()
         local days = AltStable.GetStaleDays()
         if not optStaleBox:HasFocus() then optStaleBox:SetText(tostring(days)) end
         local list = AltStable.StaleCharacters(days)
+        -- Forgetting shrinks the list under the page: back to the last one there is.
+        if staleOffset >= #list then
+            staleOffset = math.max(0, math.floor((#list - 1) / OPT_STALE_ROWS) * OPT_STALE_ROWS)
+        end
+        -- The whole reserve once the list pages, so the buttons hold still.
         optFlow.Use(optStaleFlow, #list)
         staleShown = {}
         for i, row in ipairs(optStaleRows) do
-            local e = list[i]
+            local e = list[staleOffset + i]
             if e then
                 staleShown[#staleShown + 1] = e
                 local label = AltStable.ClassColor(e.class) .. e.name .. "|r"
@@ -4501,15 +4517,33 @@ local function CreateFrameIfNeeded()
         end
         local n = #StaleSelected()
         optStaleForgetLbl:SetText(n > 0 and ("|cffddddddForget " .. n .. "|r") or "|cff666666Forget|r")
-        optStaleMore:SetText(#list > OPT_STALE_ROWS
-            and ("+" .. (#list - OPT_STALE_ROWS) .. " more - forget these first") or "")
+        if #list > OPT_STALE_ROWS then
+            local last = staleOffset + OPT_STALE_ROWS >= #list
+            optStalePageLbl:SetText(last and "|cffddddddFirst|r" or "|cffddddddNext|r")
+            optStalePage:Show()
+            optStaleMore:SetText(("%d-%d of %d"):format(staleOffset + 1,
+                math.min(staleOffset + OPT_STALE_ROWS, #list), #list))
+        else
+            optStalePage:Hide()
+            optStaleMore:SetText("")
+        end
     end
+
+    optStalePage:SetScript("OnClick", function()
+        local total = #AltStable.StaleCharacters(AltStable.GetStaleDays())
+        staleOffset = staleOffset + OPT_STALE_ROWS
+        if staleOffset >= total then staleOffset = 0 end
+        OptRefreshStale()
+    end)
 
     local function CommitStaleDays(text)
         local n = tonumber(tostring(text or ""):match("^%s*(%d+)%s*$"))
         -- Empty or 0 reverts rather than clears: the box selects all of its
         -- text when focused, the account box's trap.
-        if n and n >= 1 then AltStable.SetConfigValue("staleDays", n) end
+        if n and n >= 1 and n ~= AltStable.GetStaleDays() then
+            AltStable.SetConfigValue("staleDays", n)
+            staleOffset = 0                -- a different list: from its top
+        end
         optStaleBox:SetText(tostring(AltStable.GetStaleDays()))
         OptRefreshStale()
     end
@@ -4568,8 +4602,9 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptStale = {
         rows = optStaleRows, box = optStaleBox, forget = optStaleForget,
         forgetLabel = optStaleForgetLbl, none = optStaleNone, more = optStaleMore,
+        page = optStalePage, pageLabel = optStalePageLbl,
         refresh = OptRefreshStale, commit = CommitStaleDays,
-        reset = function() staleKept = {} end,
+        reset = function() staleKept = {}; staleOffset = 0 end,
     }
 
     -- Content height is known once the layout cursor has run; the scroll range

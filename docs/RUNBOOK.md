@@ -95,7 +95,8 @@ Options → **Old characters** (#259) forgets in bulk: every character whose
 ordinary way after one confirmation. `lastUpdate` is stamped by every complete
 login scan and only by the client playing the character, so it is "last seen
 played" on every account that synced it. Only the rows on screen are ever
-forgotten, so a long list goes eight at a time. One forgotten while only idle
+forgotten, so a long list pages eight at a time (Next / First), and an untick
+holds across pages. One forgotten while only idle
 comes back on its next login (`CameBackSince`).
 
 Hiding (#21) is a different thing and still the right one for "I do not want to

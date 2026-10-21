@@ -192,14 +192,57 @@ if S and panel then
     S.reset()
     for i = 1, 10 do char("many" .. i, ("Many%02d"):format(i), 100 + i) end
     panel:GetScript("OnShow")(panel)
-    check("past the reserve, the note says so",
-          (S.more:GetText() or ""):find("more", 1, true) ~= nil, S.more:GetText())
+    eq("past the reserve, the note says where in the list it is", S.more:GetText(), "1-8 of 13")
+    check("  and offers the next page", (S.pageLabel:GetText() or ""):find("Next", 1, true) ~= nil)
     clickForget()
     answer(1)
-    local left = 0
-    for k in pairs(AltStableDB) do if k:find("^many") or k == "old" or k == "older" or k == "nostamp" then left = left + 1 end end
-    eq("only the rows on screen were forgotten", left, 13 - #S.rows)
+    local function left()
+        local n = 0
+        for k in pairs(AltStableDB) do if k ~= ME and k ~= "fresh" and k ~= "edge" then n = n + 1 end end
+        return n
+    end
+    eq("only the rows on screen were forgotten", left(), 13 - #S.rows)
     AltStableConfig.forgottenCharacters = {}
+
+    -- Keeping a whole page must not wall off the rest (Codex, #260): nine old,
+    -- the oldest eight unticked, and the ninth still has to be reachable.
+    seed()
+    S.reset()
+    for i = 1, 6 do char("many" .. i, ("Many%02d"):format(i), 200 + i) end
+    panel:GetScript("OnShow")(panel)
+    eq("nine old characters", S.more:GetText(), "1-8 of 9")
+    for i = 1, #S.rows do untick(i) end
+    check("  the whole first page kept: nothing to forget on it",
+          (S.forgetLabel:GetText() or ""):find("Forget|r", 1, true) ~= nil, S.forgetLabel:GetText())
+    S.page:GetScript("OnClick")(S.page)
+    eq("Next shows the ninth", shownNames(), "Old")
+    eq("  says so", S.more:GetText(), "9-9 of 9")
+    check("  ticked, since nobody unticked it", S.rows[1].check:GetChecked())
+    check("  and the last page offers the way back", (S.pageLabel:GetText() or ""):find("First", 1, true) ~= nil)
+    clickForget()
+    check("  the question names only the ninth",
+          not (T.Prompt("Forget").text:GetText() or ""):find("Older", 1, true))
+    answer(1)
+    eq("forgetting from page two takes only the ninth", AltStableDB.old, nil)
+    eq("  and keeps all eight kept", left(), 8)
+    eq("  the emptied page falls back to the last one there is", S.more:GetText(), "")
+    check("  where the kept ones are still unticked", not S.rows[1].check:GetChecked())
+    S.page:GetScript("OnClick")(S.page)
+    AltStableConfig.forgottenCharacters = {}
+
+    -- First wraps, and a new age starts the list from its top.
+    seed()
+    S.reset()
+    for i = 1, 10 do char("many" .. i, ("Many%02d"):format(i), 100 + i) end
+    panel:GetScript("OnShow")(panel)
+    S.page:GetScript("OnClick")(S.page)
+    eq("on page two", S.more:GetText(), "9-13 of 13")
+    S.page:GetScript("OnClick")(S.page)
+    eq("First goes back to the top", S.more:GetText(), "1-8 of 13")
+    S.page:GetScript("OnClick")(S.page)
+    S.commit("102")
+    eq("a new age starts from the top", S.more:GetText(), "1-8 of 11")
+    AltStableConfig.staleDays = nil
 
     -- The age box: a new age redraws the list; empty reverts.
     seed()
