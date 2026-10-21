@@ -192,6 +192,9 @@ function AltStable.SuiteStart()
             }
             state.built = answer.preset
             state.look = { tint = tint, accent = accent }
+            -- The body's backing is never painted: our panes keep their own
+            -- colours. Not a look key, so no reload is asked for it.
+            state.own = { backing = true }
         else
             state.reason = why
         end

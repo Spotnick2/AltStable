@@ -144,6 +144,8 @@ do
     eq("  not live: a suite change waits for a reload", st.live, false)
     check("  the look it built", st.look and st.look.tint == "smoked" and st.look.accent == "ice")
     eq("  a way to our options", type(st.options), "function")
+    check("  its own backing, and no look key of its own",
+          st.own and st.own.backing == true and st.own.tint == nil and st.own.accent == nil)
     eq("  the MINOR it ran on", st.minor, AltStable.GlassMinor())
 
     -- Once per session: asking again changes nothing and reports nothing.
