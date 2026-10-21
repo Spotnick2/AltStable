@@ -139,12 +139,27 @@ local function SuiteCall(name, ...)
     if ok then return r end
 end
 
-local function IsRGB(c)
+local function IsRGB(c, n)
     if type(c) ~= "table" then return false end
-    for i = 1, 3 do
+    for i = 1, n or 3 do
         if type(c[i]) ~= "number" or c[i] < 0 or c[i] > 1 then return false end
     end
     return true
+end
+
+-- The body for a suite tint: Glass UI's numbers (Suite.Body, the one owner
+-- of them), else our skin's, in the same shape. `wash` is a factor of the
+-- material's own; a class body has no tint, only its shade over clear glass.
+local function SuiteBody(tint)
+    local b = SuiteCall("Body", tint)
+    if type(b) == "table" and type(b.wash) == "number"
+        and (IsRGB(b.tint, 4) or (b.tint == nil and type(b.classShade) == "number")) then
+        return { tint = b.tint and { b.tint[1], b.tint[2], b.tint[3], b.tint[4] },
+                 classShade = b.classShade, wash = b.wash }
+    end
+    local skin = AltStable.SKINS[SUITE_SKINS[tint]]
+    return { tint = tint ~= "class" and skin.tint or nil, classShade = skin.classShade,
+             wash = skin.wash / AltStable.SKINS.clear.wash }
 end
 
 function AltStable.SuiteStart()
@@ -170,8 +185,9 @@ function AltStable.SuiteStart()
             following = {
                 preset = answer.preset, tint = tint, accent = accent,
                 accentRGB = { rgb[1], rgb[2], rgb[3] },
+                body = SuiteBody(tint),
                 -- The preset's own wash, before any skin pushes one: the
-                -- skins' washes scale from it, as Glass UI's body does.
+                -- body's wash is a factor of it.
                 wash = Glass.STYLE.wash,
             }
             state.built = answer.preset
@@ -341,10 +357,9 @@ end
 local function PushPreset(preset, body)
     local st = Glass.STYLE
     st.grain = AltStable.SkinClean() and 0 or preset.grain
-    -- Following: the suite material's own wash, scaled as the skin scales
-    -- clear's (smoked's 0.14 of clear's 0.18), as Glass UI's body does.
+    -- Following: the suite material's own wash, times the body's factor.
     if following and following.wash then
-        st.wash = following.wash * preset.wash / AltStable.SKINS.clear.wash
+        st.wash = following.wash * following.body.wash
     else
         st.wash = preset.wash
     end
@@ -401,7 +416,10 @@ function AltStable.SkinWindow(frame, size, opts)
     -- permanently, for the rest of the session, for every window. The
     -- material is a library this addon does not own (#184), which makes
     -- shared mutable state exactly the wrong thing to hand it.
-    PushPreset(preset, (size == "small") and AltStable.SkinPopupTint() or preset.tint)
+    -- Following, the window's body is the suite's (a class body has no tint
+    -- of its own: clear glass, shaded by SkinApplyClassTint).
+    local body = following and following.body.tint or preset.tint
+    PushPreset(preset, (size == "small") and AltStable.SkinPopupTint() or body)
 
     -- Kept on the frame. The rim lives on a CHILD at host level + 10, pinned at
     -- Apply time, so anything that moves the host's level afterwards leaves the
@@ -428,7 +446,7 @@ function AltStable.SkinApplyClassTint(g)
     local _, class = UnitClass("player")
     local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
     if not c then return false end
-    local S = AltStable.Skin().classShade or 0.6
+    local S = following and following.body.classShade or AltStable.Skin().classShade or 0.6
     return Glass.SetSurfaceTint(g, c.r * S, c.g * S, c.b * S) ~= false
 end
 

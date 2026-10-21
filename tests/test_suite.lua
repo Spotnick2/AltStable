@@ -64,6 +64,8 @@ local function fakeSuite(opts)
         return c and { c[1], c[2], c[3] }
     end
     S.Open = function() S.opened = true; return true end
+    -- Suite.Body only when asked for: without it, our own copy is the body.
+    if opts.body then S.Body = function(tint) return opts.body[tint] end end
     GlassUI = { Suite = S }
     return S
 end
@@ -148,6 +150,62 @@ do
     AltStable.SuiteStart()
     AltStable.SkinName()
     eq("decided once per session", #reports, 1)
+end
+
+-- Glass UI's body numbers, when it has Suite.Body: its own, not our copy.
+do
+    fakeSuite({ preset = "pearl", look = { tint = "smoked", accent = "gold" },
+                body = { smoked = { tint = { 0.01, 0.02, 0.03, 0.5 }, wash = 0.5,
+                                    backing = { 0, 0, 0, 0.9 } },
+                         class = { classShade = 0.25, wash = 2, backing = { 0, 0, 0, 0.3 } } } })
+    session(SAVED)
+    AltStable.SkinName()
+    local pearlWash = AltStable.Glass.STYLE.wash
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(200, 200)
+    AltStable.SkinWindow(f, "large")
+    local t = AltStable.Glass.STYLE.tint
+    check("the window's body is Glass UI's", t[1] == 0.01 and t[2] == 0.02 and t[3] == 0.03 and t[4] == 0.5,
+          ("%s %s %s %s"):format(tostring(t[1]), tostring(t[2]), tostring(t[3]), tostring(t[4])))
+    near("  the wash is Pearl's times its factor", AltStable.Glass.STYLE.wash, pearlWash * 0.5)
+
+    -- A class body: clear glass, shaded by Glass UI's classShade.
+    fakeSuite({ preset = "pearl", look = { tint = "class", accent = "gold" },
+                body = { class = { classShade = 0.25, wash = 2, backing = { 0, 0, 0, 0.3 } } } })
+    session(SAVED)
+    AltStable.SkinName()
+    local shaded
+    local realTint, realColors = AltStable.Glass.SetSurfaceTint, RAID_CLASS_COLORS
+    local cr = 0.8
+    RAID_CLASS_COLORS = { [select(2, UnitClass("player"))] = { r = cr, g = 0.4, b = 0.2 } }
+    AltStable.Glass.SetSurfaceTint = function(_, r) shaded = r end
+    AltStable.SkinApplyClassTint({})
+    AltStable.Glass.SetSurfaceTint, RAID_CLASS_COLORS = realTint, realColors
+    near("a class body uses Glass UI's classShade", shaded, cr * 0.25)
+    f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(200, 200)
+    AltStable.SkinWindow(f, "large")
+    eq("  over clear glass", AltStable.Glass.STYLE.tint[4], AltStable.SKINS.clear.tint[4])
+
+    -- Junk from Body: our copy instead.
+    fakeSuite({ preset = "pearl", look = { tint = "smoked", accent = "gold" },
+                body = { smoked = { tint = "dark", wash = "lots" } } })
+    session(SAVED)
+    AltStable.SkinName()
+    f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(200, 200)
+    AltStable.SkinWindow(f, "large")
+    eq("a body Glass UI cannot give is our smoked", AltStable.Glass.STYLE.tint[4], AltStable.SKINS.smoked.tint[4])
+
+    -- A good wash with a junk tint is still junk.
+    fakeSuite({ preset = "pearl", look = { tint = "smoked", accent = "gold" },
+                body = { smoked = { tint = "dark", wash = 1 } } })
+    session(SAVED)
+    AltStable.SkinName()
+    f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(200, 200)
+    AltStable.SkinWindow(f, "large")
+    eq("  so is one with a good wash and a junk tint", AltStable.Glass.STYLE.tint[4], AltStable.SKINS.smoked.tint[4])
 end
 
 do
