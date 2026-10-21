@@ -2,9 +2,9 @@
 
 ## v0.16.0
 
-Old characters can be forgotten in bulk, and AltStable can wear Glass UI's look. Measured on client
-1.60.1.70450. Nothing changes on the sync wire, so v0.16.0 syncs with v0.11.0 to v0.15.0. Settings
-sync needs v0.14.0 or later on both accounts.
+Old characters can be forgotten in bulk, AltStable can wear Glass UI's look, and AltStable Companion
+leaves beta with v0.1.0. Measured on client 1.60.1.70450. Nothing changes on the sync wire, so
+v0.16.0 syncs with v0.11.0 to v0.15.0. Settings sync needs v0.14.0 or later on both accounts.
 
 ### AltStable Companion
 
@@ -12,7 +12,10 @@ The Roster's character portraits come from **AltStable Companion**, a free Windo
 your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
 Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
 [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
-There is no new version since v0.10.0.
+**Companion v0.1.0 is out**, the first that is not a beta. A portrait that enhancing leaves
+alone now says why on its row (hidden in an account, below level 4, or a record missing its
+race, gender or class), and the Settings page scrolls, so its options can be reached in a small
+window.
 
 ### New
 
