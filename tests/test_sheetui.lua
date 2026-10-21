@@ -3304,14 +3304,16 @@ do
     local flow = T.OptFlow
     local optPanel = T.optionsPanel
     check("the Options page records what sits below its lists", flow.items and #flow.items > 0)
-    eq("three lists flow: peers, requests, hidden", #flow.lists, 3)
+    eq("four lists flow: peers, requests, hidden, old characters", #flow.lists, 4)
 
     local saved = { AltStableConfig.whitelist, AltStable.SyncAuthList,
-                    AltStable.PendingSyncRequests, AltStable.HiddenCharacterList }
+                    AltStable.PendingSyncRequests, AltStable.HiddenCharacterList,
+                    AltStable.StaleCharacters }
     local auth, hidden = {}, {}
     AltStable.SyncAuthList = function() return auth end
     AltStable.PendingSyncRequests = function() return {} end
     AltStable.HiddenCharacterList = function() return hidden end
+    AltStable.StaleCharacters = function() return {} end
 
     -- Where an item is now, against where the layout put it.
     local function ShiftOf(it)
@@ -3361,7 +3363,8 @@ do
         eq("  and it moved up by both gaps", ShiftOf(deepest), (4 + 5) * 18)
     end
     local fullH = flow.height
-    local shown = (fullH - (4 + 5 + 5) * 18)
+    -- The old-characters list is empty too: seven of its eight rows unused.
+    local shown = (fullH - (4 + 5 + 5 + 7) * 18)
     -- The page's own height follows: read it from the scroll child.
     local child = flow.items[1].o:GetParent()
     eq("  the page height drops by the rows not used", child:GetHeight(), shown)
@@ -3496,6 +3499,7 @@ do
 
     AltStableConfig.whitelist, AltStable.SyncAuthList, AltStable.PendingSyncRequests,
         AltStable.HiddenCharacterList = saved[1], saved[2], saved[3], saved[4]
+    AltStable.StaleCharacters = saved[5]
 end
 
 ------------------------------------------------------------
