@@ -25,7 +25,15 @@
 -- and the last one recorded still is the look.
 --
 --   look   = "1;" .. option .. ";" .. option ...     (the barber's own order)
---   option = optionID~optionName~number~choiceID~choiceName~swatchHex
+--   option = optionID~optionName~number~choiceID~choiceName~swatchHex~form
+--
+-- `form` is the name of the category for an option that belongs to a druid
+-- form (or another model the character can take), empty for the character's
+-- own. Those are categories in the SAME read: the barber builds its category
+-- list from one GetAvailableCustomizations call, and a form's categories
+-- carry spellShapeshiftFormID / chrModelID (Blizzard_CharacterCustomize).
+-- Without it a druid's panel would list a Fur Color per form with no way to
+-- tell them apart. Last, so a string written before it decodes unchanged.
 --
 -- The number is what the barber always shows next to a choice, and the name or
 -- the colour swatch is what it shows when the choice has one. The ids are what
@@ -62,6 +70,8 @@ function AltStable.EncodeLook(categories)
     local parts, seen = { LOOK_FORMAT }, {}
     for _, cat in ipairs(categories) do
         local options = type(cat) == "table" and type(cat.options) == "table" and cat.options or {}
+        local form = type(cat) == "table" and (cat.spellShapeshiftFormID or cat.chrModelID)
+            and Clean(cat.name) or ""
         for _, opt in ipairs(options) do
             -- currentChoiceIndex is a Lua index into choices, and nilable.
             local idx = type(opt) == "table" and tonumber(opt.currentChoiceIndex)
@@ -71,6 +81,7 @@ function AltStable.EncodeLook(categories)
                 parts[#parts + 1] = table.concat({
                     tostring(opt.id), Clean(opt.name), tostring(idx),
                     tostring(choice.id or ""), Clean(choice.name), Hex(choice.swatchColor1),
+                    form,
                 }, "~")
             end
         end
@@ -79,7 +90,7 @@ function AltStable.EncodeLook(categories)
     return table.concat(parts, ";")
 end
 
--- The stored string -> { { optionID, option, number, choiceID, choice, swatch } ... },
+-- The stored string -> { { optionID, option, number, choiceID, choice, swatch, form } ... },
 -- or nil for nothing, or for a format this build cannot read.
 function AltStable.DecodeLook(s)
     if type(s) ~= "string" then return nil end
@@ -97,6 +108,7 @@ function AltStable.DecodeLook(s)
                 optionID = tonumber(f[1]), option   = f[2] or "",
                 number   = tonumber(f[3]), choiceID = tonumber(f[4]),
                 choice   = f[5] or "",     swatch   = (f[6] or "") ~= "" and f[6] or nil,
+                form     = (f[7] or "") ~= "" and f[7] or nil,
             }
         end
     end
@@ -250,7 +262,9 @@ local function Swatch(hex)
 end
 
 -- The panel's text, frame-free so a test can read it. One line per option, as
--- the barber has them: the number always, then the name or the swatch.
+-- the barber has them: the number always, then the name or the swatch. The
+-- character's own options first, then each form under its name, in the order
+-- the barber listed them.
 function AltStable.CharacterLookText(char)
     local list = type(char) == "table" and AltStable.DecodeLook(char.look)
     if not list then return nil end
@@ -265,12 +279,30 @@ function AltStable.CharacterLookText(char)
         local r, g, b = AltStable.GetAccentRGB()
         if r then accent = AltStable.HexColor({ r, g, b }) end
     end
+    local own, forms, byForm = {}, {}, {}
     for _, o in ipairs(list) do
+        if o.form then
+            if not byForm[o.form] then
+                byForm[o.form] = {}
+                forms[#forms + 1] = o.form
+            end
+            table.insert(byForm[o.form], o)
+        else
+            own[#own + 1] = o
+        end
+    end
+    local function Add(o)
         local label = o.option ~= "" and o.option or ("Option " .. tostring(o.optionID or "?"))
         local line = accent .. label .. ":|r " .. tostring(o.number or "?")
         if o.choice ~= "" then line = line .. "  " .. o.choice end
         if o.swatch then line = line .. Swatch(o.swatch) end
         lines[#lines + 1] = line
+    end
+    for _, o in ipairs(own) do Add(o) end
+    for _, name in ipairs(forms) do
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = name
+        for _, o in ipairs(byForm[name]) do Add(o) end
     end
     if char.lookAt and type(date) == "function" then
         lines[#lines + 1] = ""

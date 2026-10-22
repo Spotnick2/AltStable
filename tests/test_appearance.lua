@@ -278,5 +278,47 @@ do
     check("an unnamed option is named by its id", text:find("Option 42:|r 3", 1, true) ~= nil, text)
 end
 
+------------------------------------------------------------
+-- A druid: the forms are categories in the same read
+------------------------------------------------------------
+
+do
+    -- Shaped as Blizzard_CharacterCustomize reads them: a form's category
+    -- carries spellShapeshiftFormID (and the model's chrModelID), the
+    -- character's own carry neither. Two forms with an option each named the
+    -- same - the case a flat list could not tell apart.
+    local chair = {
+        { id = 1, name = "Body", options = {
+            { id = 10, name = "Skin Color", currentChoiceIndex = 1, choices = { { id = 100, name = "" } } },
+        } },
+        { id = 5, name = "Cat Form", spellShapeshiftFormID = 1, chrModelID = 30, options = {
+            { id = 50, name = "Fur Color", currentChoiceIndex = 2,
+              choices = { { id = 500, name = "" }, { id = 501, name = "Midnight" } } },
+        } },
+        { id = 6, name = "Bear Form", spellShapeshiftFormID = 5, chrModelID = 31, options = {
+            { id = 60, name = "Fur Color", currentChoiceIndex = 3,
+              choices = { { id = 600, name = "" }, { id = 601, name = "" }, { id = 602, name = "Ember" } } },
+        } },
+    }
+    local look = AltStable.EncodeLook(chair)
+    local list = AltStable.DecodeLook(look)
+    eq("every form's options are recorded", list and #list, 3)
+    eq("  the character's own carry no form", OptionOf(list, 10).form, nil)
+    eq("  a form's carry its name", OptionOf(list, 50).form, "Cat Form")
+    eq("  each its own", OptionOf(list, 60).form, "Bear Form")
+
+    local text = AltStable.CharacterLookText({ name = "Druid", class = "DRUID", look = look }) or ""
+    local cat, bear = text:find("\nCat Form\n", 1, true), text:find("\nBear Form\n", 1, true)
+    local skin = text:find("Skin Color", 1, true)
+    check("the panel heads each form by name", cat and bear, text)
+    check("  after the character's own options", skin and cat and skin < cat, text)
+    check("  in the barber's order", cat and bear and cat < bear, text)
+    check("  each Fur Color under its form",
+          text:find("Cat Form\n[^\n]*Fur Color:|r 2  Midnight") ~= nil
+          and text:find("Bear Form\n[^\n]*Fur Color:|r 3  Ember") ~= nil, text)
+    check("a look with no forms has no headings",
+          not (AltStable.CharacterLookText({ name = "N", look = "1;42~Face~3~420~~" }) or ""):find("\n\n%a+\n"))
+end
+
 print(string.format("test_appearance: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end
