@@ -2016,3 +2016,18 @@ What prompted the check is worth keeping too: another addon was erroring in
 `ScrollFrame_OnScrollRangeChanged` — a handler our own scroll frames also run.
 Somebody else's error is a reasonable prompt to check your own use of the same
 template; it is not evidence that yours is broken.
+
+## A character's look is readable only in the barber's chair — MEASURED
+
+`C_BarberShop.GetAvailableCustomizations()` returns nothing away from a barber (owner's `/dump`,
+1.60.1.70450: "empty result"), and no other call carries the customization choices. The whole
+finding, with what was ruled out, is in the canonical porting guide ("Reading a character's
+customization choices"). `Appearance.lua` builds on it: the look is recorded when the chair
+opens and when a change is paid for, as one synced string field, `look` (its header has the
+format).
+
+Seen in game on 1.60.1.70450 (night elf, the Appearance panel): option names are all filled
+(Skin Color, Hair Style, Eyesight, Feathers...). Choice names are filled for styles ("Shy",
+"Winged", "Hoops", "Both") and empty for Face and most colours, which carry a swatch instead;
+Hair Color 9 is named "New 30", a placeholder in the client's own data. So number + name-or-swatch,
+as the barber shows them, is the right display.

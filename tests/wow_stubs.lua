@@ -334,6 +334,9 @@ local function makeFrame()
     end
     f.SetText = function(self, text) self._text = text; return self end
     f.GetText = function(self) return self._text end
+    -- Real state: a reused prompt frame must not keep the last showing's.
+    f.SetJustifyH = function(self, j) self._justifyH = j; return self end
+    f.GetJustifyH = function(self) return self._justifyH end
     -- Keyboard focus is ONE global slot, as on the client: an edit box that
     -- keeps it after its prompt closes goes on eating every key the player
     -- presses. Chaining would have answered HasFocus with the frame (truthy)
@@ -2050,6 +2053,32 @@ function CreateFrame(kind, name, parent, ...)
     end
     return f
 end
+
+-- C_BarberShop: the choices exist only while the chair is open. Measured on
+-- 1.60.1.70450 (owner's /dump away from a barber): GetAvailableCustomizations
+-- returns NOTHING - "empty result", not an empty table. Set WoW.barber to a
+-- categories table (CharCustomizationCategory, options with a Lua-index
+-- currentChoiceIndex) to sit in the chair; nil gets up.
+WoW.barber = nil
+C_BarberShop = {
+    GetAvailableCustomizations = function()
+        if WoW.barber then return WoW.barber end
+    end,
+    -- A preview: moves the option's current choice, as the barber's own UI
+    -- sees it on the next read.
+    SetCustomizationChoice = function(optionID, choiceID)
+        for _, cat in ipairs(WoW.barber or {}) do
+            for _, opt in ipairs(cat.options or {}) do
+                if opt.id == optionID then
+                    for i, c in ipairs(opt.choices or {}) do
+                        if c.id == choiceID then opt.currentChoiceIndex = i end
+                    end
+                end
+            end
+        end
+    end,
+    ApplyCustomizationChoices = function() return WoW.barber ~= nil end,
+}
 
 _G.WoW = WoW
 return WoW
