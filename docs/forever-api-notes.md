@@ -2024,4 +2024,10 @@ template; it is not evidence that yours is broken.
 finding, with what was ruled out, is in the canonical porting guide ("Reading a character's
 customization choices"). `Appearance.lua` builds on it: the look is recorded when the chair
 opens and when a change is paid for, as one synced string field, `look` (its header has the
-format). Still to see in game: what Forever puts in the option and choice names.
+format).
+
+Seen in game on 1.60.1.70450 (night elf, the Appearance panel): option names are all filled
+(Skin Color, Hair Style, Eyesight, Feathers...). Choice names are filled for styles ("Shy",
+"Winged", "Hoops", "Both") and empty for Face and most colours, which carry a swatch instead;
+Hair Color 9 is named "New 30", a placeholder in the client's own data. So number + name-or-swatch,
+as the barber shows them, is the right display.
