@@ -77,6 +77,23 @@ function AltStable.CharacterMenuEntries(char)
         out[#out + 1] = { id = "camp:new", text = mine and "Move to a new camp" or "Add to a new camp" }
     end
 
+    -- The look recorded at a barber (Appearance.lua). Disabled rather than
+    -- absent until one has been, for the reason Forget is below - and the
+    -- reason is the only place the player learns how to record it.
+    if AltStable.CharacterLookState then
+        local state = AltStable.CharacterLookState(char)
+        if state == "ok" then
+            out[#out + 1] = { id = "look", text = "Appearance\226\128\166" }
+        elseif state == "newer" then
+            out[#out + 1] = { id = "look", text = "Appearance\226\128\166", disabled = true,
+                              why = "Recorded by a newer AltStable. Update it to see this look." }
+        else
+            out[#out + 1] = { id = "look", text = "Appearance\226\128\166", disabled = true,
+                              why = "Not recorded yet. Sit in a barber's chair on this character"
+                                 .. " and AltStable records the look. Getting up again costs nothing." }
+        end
+    end
+
     if AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) then
         out[#out + 1] = { id = "unhide", text = "Unhide" }
     else
@@ -135,6 +152,11 @@ function AltStable.CharacterMenuInvoke(id, char)
         if not AltStable.RequestForgetCharacter then return false end
         AltStable.RequestForgetCharacter(char)
         return true
+    end
+
+    if id == "look" then
+        if not AltStable.ShowCharacterLook then return false end
+        return AltStable.ShowCharacterLook(char)
     end
 
     -- Roster camps (#152). The scene shows the camp the character went to.

@@ -43,6 +43,7 @@ dofile("Toasts.lua")
 dofile("Columns.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
+dofile("Appearance.lua")   -- after CharacterMenu (TOC order): the Appearance entry
 dofile("SheetUI.lua")
 -- PublicAPI.lua (after SheetUI in the .toc): the footer computes its totals through it.
 dofile("PublicAPI.lua")
@@ -74,21 +75,21 @@ end
 -- What the menu offers
 ------------------------------------------------------------
 
-eq("a plain character gets all four entries", ids(OTHER), "title,favourite,hide,forget")
+eq("a plain character gets all five entries", ids(OTHER), "title,favourite,look,hide,forget")
 
 AltStable.SetCharacterFavourite("other", true)
-eq("a favourite is offered the way back", ids(OTHER), "title,unfavourite,hide,forget")
+eq("a favourite is offered the way back", ids(OTHER), "title,unfavourite,look,hide,forget")
 AltStable.SetCharacterFavourite("other", false)
 
 AltStable.SetCharacterHidden("other", true)
-eq("a hidden character is offered Unhide", ids(OTHER), "title,favourite,unhide,forget")
+eq("a hidden character is offered Unhide", ids(OTHER), "title,favourite,look,unhide,forget")
 AltStable.SetCharacterHidden("other", false)
-eq("  and Hide again once it is back", ids(OTHER), "title,favourite,hide,forget")
+eq("  and Hide again once it is back", ids(OTHER), "title,favourite,look,hide,forget")
 
 -- Favourite and hidden are separate states and must not collapse into one.
 AltStable.SetCharacterFavourite("other", true)
 AltStable.SetCharacterHidden("other", true)
-eq("a character can be both at once", ids(OTHER), "title,unfavourite,unhide,forget")
+eq("a character can be both at once", ids(OTHER), "title,unfavourite,look,unhide,forget")
 AltStable.SetCharacterFavourite("other", false)
 AltStable.SetCharacterHidden("other", false)
 
@@ -101,7 +102,7 @@ do
         if e.id == "forget" then forget = e end
     end
     eq("the character you are playing still lists Forget", ids(ME),
-       "title,favourite,hide,forget")
+       "title,favourite,look,hide,forget")
     check("  but cannot choose it", forget and forget.disabled == true)
     check("  and is told why", forget and (forget.why or ""):find("playing") ~= nil,
           tostring(forget and forget.why))

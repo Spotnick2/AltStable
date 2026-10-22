@@ -28,6 +28,7 @@ Toasts.lua
 Columns.lua
 RowRenderer.lua
 CharacterMenu.lua
+Appearance.lua
 SheetUI.lua
 Capture.lua
 AutoCapture.lua

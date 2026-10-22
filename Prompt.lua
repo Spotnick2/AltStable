@@ -178,12 +178,14 @@ end
 --   opts.text     the message
 --   opts.buttons  the labels, left to right; the count is fixed per kind
 --   opts.copy     text to hand over, selected, in a read-only box
+--   opts.justify  "LEFT" for a list; centred otherwise
 --   opts.onClose  function(choice): the button's index, or nil
 function AltStable.ShowPrompt(kind, opts)
     local labels = opts.buttons or { CLOSE or "Close" }
     local f = prompts[kind] or Build(kind, #labels, opts.copy ~= nil)
     if f:IsShown() then f:Hide() end
 
+    f.text:SetJustifyH(opts.justify or "CENTER")
     f.text:SetText(opts.text or "")
     for i, b in ipairs(f.buttons) do b:SetText(labels[i] or "") end
     local textH = tonumber(f.text:GetStringHeight()) or 40
