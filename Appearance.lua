@@ -122,6 +122,64 @@ local function ReadLook()
     return ok and AltStable.EncodeLook(categories) or nil
 end
 
+------------------------------------------------------------
+-- Saying so
+--
+-- Chat is no use for this: the barber is a full-screen panel (area "full"),
+-- so the chat frame is hidden for exactly as long as the chair is open, and
+-- the camera showcase hides it too. So the line goes to chat as a record, and
+-- a notice of our own says it where it can be seen - parented to nothing, as
+-- the prompts are (Prompt.lua), so neither hidden interface can hide it.
+--
+-- Shown when the player GETS UP, not when the look is read: the read is the
+-- moment the chair opens, and a notice then would sit over the barber's own
+-- controls. Paying for a change closes the chair too, so that one shows at
+-- once.
+------------------------------------------------------------
+
+local NOTICE_W, NOTICE_PAD, NOTICE_SECONDS = 340, 12, 6
+
+local notice        -- built on first use
+local unannounced   -- what to say once the player is up
+local inChair = false
+
+local function ShowNotice(msg)
+    if not notice then
+        notice = CreateFrame("Frame", "AltStableLookNotice", nil, "BackdropTemplate")
+        notice:SetFrameStrata("FULLSCREEN_DIALOG")
+        notice:SetToplevel(true)
+        notice:SetClampedToScreen(true)
+        notice:SetWidth(NOTICE_W)
+        notice:EnableMouse(true)
+        if not (AltStable.SkinWindow and AltStable.SkinWindow(notice, "small")) then
+            if AltStable.ApplyBackdrop then AltStable.ApplyBackdrop(notice, 0.05, 0.05, 0.05, 0.96) end
+        end
+        -- An explicit width, for the reason Prompt.lua gives: measured right
+        -- after SetText, before the frame has ever been laid out.
+        local text = notice:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        text:SetPoint("TOP", 0, -NOTICE_PAD)
+        text:SetWidth(NOTICE_W - 2 * NOTICE_PAD)
+        text:SetJustifyH("CENTER")
+        if AltStable.SkinText then AltStable.SkinText(text) end
+        notice.text = text
+        -- A click puts it away; otherwise it goes by itself.
+        notice:SetScript("OnMouseDown", function(self) self:Hide() end)
+    end
+    notice.text:SetText(msg)
+    notice:SetHeight((tonumber(notice.text:GetStringHeight()) or 30) + 2 * NOTICE_PAD)
+    notice:ClearAllPoints()
+    notice:SetPoint("TOP", 0, -120)
+    notice:Show()
+    notice:Raise()
+    if notice._timer then notice._timer:Cancel() end
+    notice._timer = C_Timer.NewTimer(NOTICE_SECONDS, function() notice:Hide() end)
+end
+
+local function Announce(msg)
+    if AltStable.Print then AltStable.Print(msg) end
+    if inChair then unannounced = msg else ShowNotice(msg) end
+end
+
 -- Writes the look onto the character being played. Nothing readable leaves
 -- what was recorded alone; the same look is not a change, so it neither
 -- re-stamps the record nor wakes the delta sync.
@@ -134,14 +192,13 @@ local function StoreLook(look)
     char.look = look
     char.lookAt = time()
     char.lastUpdate = time()
-    if AltStable.Print then
-        local name = char.name or "this character"
-        if first then
-            AltStable.Print("Recorded " .. name .. "'s look. Right-click them in AltStable"
-                .. " and choose Appearance to see it.")
-        else
-            AltStable.Print("Recorded " .. name .. "'s new look.")
-        end
+    local name = (AltStable.ClassColor and AltStable.ClassColor(char.class) or "")
+        .. (char.name or "this character") .. "|r"
+    if first then
+        Announce("Recorded " .. name .. "'s look. Right-click them in AltStable"
+            .. " and choose Appearance to see it.")
+    else
+        Announce("Recorded " .. name .. "'s new look.")
     end
     return true
 end
@@ -163,14 +220,17 @@ frame:RegisterEvent("BARBER_SHOP_APPEARANCE_APPLIED")
 frame:RegisterEvent("BARBER_SHOP_CLOSE")
 frame:SetScript("OnEvent", function(_, event)
     if event == "BARBER_SHOP_OPEN" then
-        pending = nil
+        pending, inChair = nil, true
         StoreLook(ReadLook())
     elseif event == "BARBER_SHOP_APPEARANCE_APPLIED" then
         StoreLook(ReadLook() or pending)
         pending = nil
     else
         -- Got up without paying: previews are not a look.
-        pending = nil
+        pending, inChair = nil, false
+        local msg = unannounced
+        unannounced = nil
+        if msg then ShowNotice(msg) end
     end
 end)
 
@@ -228,3 +288,4 @@ end
 
 AltStable._test = AltStable._test or {}
 AltStable._test.LookFrame = function() return frame end
+AltStable._test.LookNotice = function() return notice end

@@ -140,8 +140,16 @@ Fire("BARBER_SHOP_OPEN")
 check("opening the chair records the look", AltStable.CharacterLookState(ME) == "ok", tostring(ME.look))
 eq("  stamped when it was recorded", ME.lookAt, 5000)
 eq("  and the record, so the next delta sync carries it", ME.lastUpdate, 5000)
-check("  and the player is told where to see it",
-      (WoW.chatOut[1] or ""):find("Appearance", 1, true) ~= nil, tostring(WoW.chatOut[1]))
+check("  logged to chat", (WoW.chatOut[1] or ""):find("Appearance", 1, true) ~= nil,
+      tostring(WoW.chatOut[1]))
+-- The chat frame is hidden while the chair is open (a full-screen panel), and
+-- the notice would sit over the barber's controls: it waits for the player
+-- to get up.
+local function NoticeUp()
+    local n = T.LookNotice()
+    return n ~= nil and n:IsShown() and true or false
+end
+eq("  but not shown over the barber", NoticeUp(), false)
 local recorded = ME.look
 
 WoW.now = 6000
@@ -153,6 +161,25 @@ C_BarberShop.SetCustomizationChoice(11, 111)
 Fire("BARBER_SHOP_CLOSE")
 WoW.barber = nil
 eq("previews abandoned leave the look alone", ME.look, recorded)
+
+do
+    local n = T.LookNotice()
+    eq("getting up shows the notice", NoticeUp(), true)
+    check("  telling where to see it", (n and n.text:GetText() or ""):find("Appearance", 1, true) ~= nil,
+          n and n.text:GetText())
+    -- Parented to nothing, like the prompts: the barber and the camera
+    -- showcase both hide UIParent, and everything under it with them.
+    eq("  under no parent a hidden interface could take with it", n and n._parent, nil)
+    WoW.flushTimers()
+    eq("  and goes by itself", NoticeUp(), false)
+end
+
+-- Up again with nothing new: nothing to say.
+WoW.barber = Chair()
+Fire("BARBER_SHOP_OPEN")
+Fire("BARBER_SHOP_CLOSE")
+WoW.barber = nil
+eq("nothing recorded, no notice", NoticeUp(), false)
 
 -- Paying for a change. Blizzard's barber answers the applied event by
 -- cancelling, which tears the chair down - so the read at the event finds
@@ -166,6 +193,26 @@ WoW.now = 7000
 Fire("BARBER_SHOP_APPEARANCE_APPLIED")
 eq("a change paid for is recorded", OptionOf(AltStable.DecodeLook(ME.look), 11).number, 2)
 eq("  and stamped", ME.lookAt, 7000)
+eq("  said once the chair has closed", NoticeUp(), false)
+Fire("BARBER_SHOP_CLOSE")
+eq("  which paying for it does", NoticeUp(), true)
+check("  as a new look", (T.LookNotice().text:GetText() or ""):find("new look", 1, true) ~= nil)
+T.LookNotice():GetScript("OnMouseDown")(T.LookNotice())
+eq("a click puts it away", NoticeUp(), false)
+
+do
+    -- The order of the client's events is not ours to choose: if the chair
+    -- has already closed when the applied event lands, it is said at once.
+    local c = Chair()
+    c[1].options[2].currentChoiceIndex = 2      -- the face already paid for
+    c[2].options[1].currentChoiceIndex = 2      -- and a new hair style
+    WoW.barber = c
+    Fire("BARBER_SHOP_CLOSE")
+    Fire("BARBER_SHOP_APPEARANCE_APPLIED")
+    WoW.barber = nil
+    eq("a change landing after the chair closed shows at once", NoticeUp(), true)
+    WoW.flushTimers()
+end
 
 ------------------------------------------------------------
 -- The wire
@@ -212,7 +259,7 @@ do
     check("  it is up", f and f:IsShown())
     local text = f and f.text:GetText() or ""
     check("  listing each option with its number", text:find("Face:|r 2", 1, true) ~= nil, text)
-    check("  the choice's name when it has one", text:find("1  Mohawk", 1, true) ~= nil, text)
+    check("  the choice's name when it has one", text:find("2  Braids", 1, true) ~= nil, text)
     check("  the swatch in its colour", text:find(":255:0:0|t", 1, true) ~= nil, text)
     check("  and when it was recorded", text:find("Recorded at a barber on", 1, true) ~= nil, text)
     eq("  as a list, not centred", f and f.text:GetJustifyH(), "LEFT")
