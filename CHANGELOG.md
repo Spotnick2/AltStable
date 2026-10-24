@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.17.0
+
+The Professions tab counts reagents across all your alts, every character's look is kept from
+the barber, and the recipe list loses recipes Forever doesn't have. Measured on client
+1.60.1.70450. Nothing changes on the sync wire, so v0.17.0 syncs with v0.11.0 to v0.16.0.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v0.1.1** finds WoW Forever in its live folder, `_forever_`. If its Settings still name
+the beta's `_classic_beta_`, press **Detect** again or **Browse** to `_forever_`.
+
+### New
+
+- **Reagents across your alts**
+  ([#277](https://github.com/Spotnick2/AltStable/pull/277)). Hover a recipe in the Professions tab:
+  - each reagent shows how many one craft needs and how many your alts hold in their bags and
+    banks, in green when there are enough, with who holds them;
+  - each alt who knows the recipe either **has the reagents**, or says what it is short of and
+    which alt holds the most, e.g. "needs 1 Silverleaf (Birch has 5)";
+  - a bank count older than a week is flagged, since a bank is only read when you visit it.
+
+  The new **Craftable** filter lists the recipes one of your alts knows and has the reagents for
+  somewhere in the stable (or the alt you picked, if you picked one). The counts come from the
+  **Warband** plugin. With Warband off, a recipe still lists what it needs, and Craftable says it
+  needs Warband. Hidden characters are left out of the counts.
+- **Each character's look, from the barber**
+  ([#265](https://github.com/Spotnick2/AltStable/pull/265)). Forever only shows a character's face,
+  hair, skin colour and the rest while you sit in a barber's chair. AltStable now records them
+  there, and again when you pay for a change. Right-click a character and choose **Appearance...**
+  to see them, with the barber's numbers, names and colours. It stays greyed out until that
+  character has visited a barber, and says so. The look syncs to your other accounts.
+
+### Changed
+
+- **Recipes Forever doesn't have are gone**
+  ([#274](https://github.com/Spotnick2/AltStable/pull/274)). The recipe list carried 287 Season of
+  Discovery recipes that are in the game files but can't be learned on Forever. They made the
+  "known" counts look lower than they are, filled **Missing** and **Nobody** with recipes nobody
+  can get, and put recipe lines on their items' tooltips. The game files mark them as Season of
+  Discovery, and that is what removes them.
+- The Professions tab needs a slightly wider window than before (700 instead of 600), so its fifth
+  filter fits.
+
 ## v0.16.0
 
 Old characters can be forgotten in bulk, AltStable can wear Glass UI's look, and AltStable Companion
