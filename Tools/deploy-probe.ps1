@@ -1,5 +1,5 @@
 <#
-    deploy-probe.ps1 — Deploy the throwaway AltStableProbe addon to the Forever beta client.
+    deploy-probe.ps1 — Deploy the throwaway AltStableProbe addon to the Forever client, on demand.
 
     The probe answers the open API-contract questions for the port (see
     Tools/AltStableProbe/Probe.lua). It is never packaged — it lives under
@@ -12,11 +12,19 @@
 
     Usage:
         pwsh Tools/deploy-probe.ps1
-        pwsh Tools/deploy-probe.ps1 -AddOnsPath "D:\Games\WoW\_classic_beta_\Interface\AddOns"
+        pwsh Tools/deploy-probe.ps1 -AddOnsPath "D:\Games\WoW\_forever_\Interface\AddOns"
+        pwsh Tools/deploy-probe.ps1 -Remove
+
+    The client is the live one now (_forever_, the owner's own install), so the
+    dev tools go in only when a question needs them and come out after:
+    -Remove deletes AltStableProbe and ForeverAPIDump, and the ForeverProbe host
+    too unless another project's probe still depends on it. Their saved logs in
+    WTF\ stay. restore-release.ps1 runs -Remove as well.
 #>
 
 param(
-    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns"
+    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns",
+    [switch]$Remove
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +35,30 @@ $ForeverProbe = if ($env:FOREVERPROBE) { $env:FOREVERPROBE } else { Join-Path (S
 if (-not (Test-Path $AddOnsPath)) {
     Write-Error "AddOns path not found: $AddOnsPath"
     exit 1
+}
+
+if ($Remove) {
+    foreach ($name in @("AltStableProbe", "ForeverAPIDump")) {
+        $old = Join-Path $AddOnsPath $name
+        if (Test-Path -LiteralPath $old) {
+            Remove-Item -LiteralPath $old -Recurse -Force
+            Write-Host "Removed $name from AddOns" -ForegroundColor DarkYellow
+        }
+    }
+    $hostDir = Join-Path $AddOnsPath "ForeverProbe"
+    if (Test-Path -LiteralPath $hostDir) {
+        $users = @(Get-ChildItem -LiteralPath $AddOnsPath -Directory | Where-Object {
+            $_.Name -ne "ForeverProbe" -and
+            (Get-ChildItem -LiteralPath $_.FullName -Filter *.toc | Select-String -Quiet -Pattern '^## (Dependencies|RequiredDeps):.*\bForeverProbe\b')
+        } | ForEach-Object { $_.Name })
+        if ($users.Count -gt 0) {
+            Write-Host "Kept ForeverProbe: $($users -join ', ') still depend on it" -ForegroundColor DarkGray
+        } else {
+            Remove-Item -LiteralPath $hostDir -Recurse -Force
+            Write-Host "Removed ForeverProbe from AddOns" -ForegroundColor DarkYellow
+        }
+    }
+    exit 0
 }
 
 # The host first. Its own deploy refuses an incomplete checkout or a luac
@@ -75,4 +107,6 @@ Write-Host "  /fp as bank               containers + bank tabs, with the BANK WI
 Write-Host "  /fp as whisper <Name>     cross-account ping (log the other account in first)"
 Write-Host ""
 Write-Host "Results are written to AltStableProbeDB on logout or /reload:"
-Write-Host "  ...\_classic_beta_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua   (log, wireLog, ...)"
+Write-Host "  ...\_forever_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua   (log, wireLog, ...)"
+Write-Host ""
+Write-Host "When the question is answered, take them out again: pwsh Tools/deploy-probe.ps1 -Remove" -ForegroundColor DarkGray

@@ -303,6 +303,29 @@ if deploy then
           pluginLoop ~= nil and pluginLoop:find("\n%s*robocopy @pluginArgs") ~= nil)
     check("  and collects that folder's TOC for substitution",
           pluginLoop ~= nil and pluginLoop:find("$deployedTocs +=", 1, true) ~= nil)
+
+    -- The installed release is kept before anything lands on it, and the
+    -- libraries are the first thing that does (into its Libs\): a snapshot
+    -- taken after them would hand restore-release.ps1 a dev library inside a
+    -- "release". Statements, not comments, again.
+    local keep = deploy:find("\n%s*robocopy %$from %(Join%-Path %$snapshot")
+    local libs = deploy:find("\n%s*& pwsh %-NoProfile %-File %(Join%-Path %$lib%.Root")
+    check("it keeps the installed release before the libraries are deployed",
+          keep ~= nil and libs ~= nil and keep < libs)
+    -- An interrupted deploy leaves the release's version in the TOC over a
+    -- half-dev tree (the version is substituted last), so a retry must keep
+    -- the copy it already has rather than take that tree again (Codex, #266).
+    check("  and only when it has not kept that version already",
+          deploy:find("\n%s*if %(%$installed %-and %$installed %-notlike \"dev%*\" %-and %$installed %-ne %$kept%)") ~= nil)
+end
+
+-- The beta is over (2026-10): the live client's _forever_ is the only target,
+-- and a script still defaulting to the beta folder deploys where no client runs.
+for _, script in ipairs({ "Tools/deploy.ps1", "Tools/deploy-probe.ps1", "Tools/restore-release.ps1" }) do
+    local src = read(script) or ""
+    local default = src:match('%[string%]%$AddOnsPath = "([^"]*)"') or ""
+    check(script .. " defaults to the live client's _forever_",
+          default:find("\\_forever_\\Interface\\AddOns", 1, true) ~= nil, default)
 end
 
 ------------------------------------------------------------

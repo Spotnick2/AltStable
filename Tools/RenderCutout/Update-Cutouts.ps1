@@ -37,8 +37,8 @@
 param(
     [switch] $Watch,
     [switch] $SelfTest,
-    [string] $Shots = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Screenshots",
-    [string] $AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns"
+    [string] $Shots = "C:\Program Files (x86)\World of Warcraft\_forever_\Screenshots",
+    [string] $AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns"
 )
 
 $ErrorActionPreference = 'Stop'

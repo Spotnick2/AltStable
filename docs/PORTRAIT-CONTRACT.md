@@ -24,7 +24,7 @@ why the middle step is outside the game.
 
 ## 1. The capture records (addon → converter)
 
-**Where.** `<WoW>\_classic_beta_\WTF\Account\<ACCOUNT>\SavedVariables\AltStable.lua`,
+**Where.** `<WoW>\_forever_\WTF\Account\<ACCOUNT>\SavedVariables\AltStable.lua`,
 one per account. A machine with several accounts has several files, and all of
 them write screenshots into the **same** Screenshots folder, so read every
 account's file.

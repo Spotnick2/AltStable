@@ -38,7 +38,8 @@ faction count, `table`. Anything else: stop and investigate before bumping.
 chat - add a command to `Tools/AltStableProbe` (a ForeverProbe module, `/fp as`; read
 `C:\Projects\WoW\References\Docs\PROBES.md` first) and have the owner run
 `pwsh Tools/deploy-probe.ps1` instead. Read its results from `AltStableProbe.lua`'s `log` after
-the owner's `/reload`; nothing needs pasting.
+the owner's `/reload`; nothing needs pasting. The probe is on demand only: once the results are
+read, `pwsh Tools/deploy-probe.ps1 -Remove` takes it out of the live client again.
 
 ## 4. Persistence - only when something looks lost
 

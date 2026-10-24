@@ -19,9 +19,9 @@ Verified against client build **1.60.1.69913** on 2026-09-20.
 | **`## Interface:`** | **`16001`** |
 | Client version / build | `1.60.1` / `69913` |
 | `WOW_PROJECT_ID` | `WOW_PROJECT_MAINLINE` (`1`) |
-| Install folder | `_classic_beta_` |
-| AddOns path | `C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns` |
-| `.flavor.info` | `wow_classic_beta` |
+| Install folder | `_forever_` (live, from 2026-11-04; the beta was `_classic_beta_`) |
+| AddOns path | `C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns` |
+| `.flavor.info` | `wowf` (the beta's was `wow_classic_beta`) |
 | API surface | 269 `C_*` namespaces, 6,045 globals — full Retail |
 
 ### Interface number: 16001, not 11601
@@ -33,14 +33,14 @@ bug — someone read 1.60.1 as 1.16.1. Don't copy it.
 
 Independent confirmation, in order of authority:
 
-1. **`_classic_beta_\WTF\Config.wtf` → `SET engineSurveyPatch "16001"`.** The client writes its own
+1. **`_forever_\WTF\Config.wtf` → `SET engineSurveyPatch "16001"`.** The client writes its own
    patch ID here. This is the single best trick in this document: it works for **every** flavor.
    Cross-checked on one machine: `_retail_` = 120100, `_anniversary_` = 20506, `_classic_` = 50504,
    `_classic_era_` = 11509. All correct.
 2. Third-party addons that load without an out-of-date flag: Leatrix_Plus, Leatrix_Maps, Prat-3.0,
    DBM, Scrap, WhatsTraining all carry `16001`.
 
-**Stock `Blizzard_*` addons live inside CASC, not on disk** — in `_classic_beta_` or any other
+**Stock `Blizzard_*` addons live inside CASC, not on disk** — in `_forever_` or any other
 modern flavor. There is no `Interface\FrameXML` either; `Interface\` contains only `AddOns\`. Use
 the Retail (Mainline) branch of `Gethe/wow-ui-source` as your reference, not a Classic branch.
 
@@ -445,7 +445,7 @@ data from it, that's your blocker.
 ## 5. Local test loop
 
 ```
-Deploy:  copy addon folders into _classic_beta_\Interface\AddOns\
+Deploy:  copy addon folders into _forever_\Interface\AddOns\
 In-game: /console scriptErrors 1
          /reload
 Check:   AddOn list — enabled AND not flagged out of date
@@ -460,8 +460,8 @@ Syntax-check outside the game (WoW is Lua 5.1, so use a 5.1 toolchain):
 SavedVariables land in:
 
 ```
-_classic_beta_\WTF\Account\<accountID>\SavedVariables\<Addon>.lua            (account-wide)
-_classic_beta_\WTF\Account\<accountID>\<RealmName>\<Char>\SavedVariables\    (per-character)
+_forever_\WTF\Account\<accountID>\SavedVariables\<Addon>.lua            (account-wide)
+_forever_\WTF\Account\<accountID>\<RealmName>\<Char>\SavedVariables\    (per-character)
 ```
 
 This client writes **both** the Classic-style `<RealmName>\<Char>\` layout and a Retail-style

@@ -26,7 +26,7 @@
         /fp steps as check      the guided in-game check of this module (#240)
 
     Results land in AltStableProbeDB so they can be read off disk after a /reload:
-        _classic_beta_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua
+        _forever_\WTF\Account\<id>\SavedVariables\AltStableProbe.lua
 ]]
 
 local ADDON, NS = ...

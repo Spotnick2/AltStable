@@ -50,9 +50,9 @@ try:
 except ImportError:
     np = None   # the pure-Python matte still works, it is just slower
 
-SHOTS = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\Screenshots"
+SHOTS = r"C:\Program Files (x86)\World of Warcraft\_forever_\Screenshots"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
-WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF\Account"
+WTF = r"C:\Program Files (x86)\World of Warcraft\_forever_\WTF\Account"
 
 
 def latest_capture(wtf=WTF):
