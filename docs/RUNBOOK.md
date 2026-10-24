@@ -4,12 +4,15 @@ Operational notes for working on AltStable against a live WoW: Forever client. T
 design decisions lives in `AGENTS.md` and `docs/forever-api-notes.md`; this is the *how*.
 
 Paths below assume the default install:
-`C:\Program Files (x86)\World of Warcraft\_classic_beta_`. Each script takes its own override,
-and they are not the same flag:
+`C:\Program Files (x86)\World of Warcraft\_forever_`. It is the live client (from 2026-11-04) and
+the only deploy target: the beta and its `_classic_beta_` are over. It is also the owner's own
+play install, with CurseForge's copy of AltStable in it, so a dev deploy can always be undone
+(see [Back to the published version](#back-to-the-published-version)). Each script takes its own
+override, and they are not the same flag:
 
 | Script | Override |
 |---|---|
-| `Tools/deploy.ps1`, `Tools/deploy-probe.ps1` | `-AddOnsPath "<...>\Interface\AddOns"` |
+| `Tools/deploy.ps1`, `Tools/deploy-probe.ps1`, `Tools/restore-release.ps1` | `-AddOnsPath "<...>\Interface\AddOns"` |
 | `Tools/ForeverAPIDump/Convert-Dump.ps1` | `-WtfAccountPath "<...>\WTF\Account"`, and `-OutDir` for where the artifact lands |
 | `tests/run.ps1` | `-Lua "<path to lua5.1.exe>"` (no client involved) |
 
@@ -200,6 +203,10 @@ for a `/alts sync` you typed.
 
 ### What deploy does
 
+- If the installed `AltStable` is a release (its `.toc` version is not `dev-*`), it and the plugin
+  folders are first copied to `Interface\AddOns-release\AltStable\`, beside `AddOns` where the
+  client does not look. A dev copy over a dev copy leaves that alone, so it always holds the last
+  release that was installed.
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,
   `.git`, `.claude`, `.vscode`, `Plugins/`.
 - Each folder under `Plugins/` becomes its own top-level addon folder named after its `.toc`:
@@ -209,16 +216,28 @@ for a `/alts sync` you typed.
 
 Deploy is a file copy. There is no build step, and nothing in the repo changes.
 
+### Back to the published version
+
+```
+pwsh Tools/restore-release.ps1              # put back the release deploy.ps1 kept
+pwsh Tools/restore-release.ps1 -Tag latest  # nothing kept: fetch the release zip from GitHub (gh)
+```
+
+It mirrors the kept folders back over the dev copies, byte for byte, so the CurseForge app sees
+its own install again. It removes dev-only plugin folders the release does not have, and runs
+`deploy-probe.ps1 -Remove`. It says whether `/reload` is enough. It isn't when a TOC's file list
+differs from the dev copy's, because the client reads that list only at start.
+
 ---
 
 ## Where the client keeps things
 
 ```
-_classic_beta_\WTF\Account\<id>\SavedVariables\AltStable.lua            account-wide
-_classic_beta_\WTF\Account\<id>\<Realm>\<Character>\SavedVariables\...  per-character
-_classic_beta_\WTF\SavedVariables\                                      machine scope (Blizzard only)
-_classic_beta_\Screenshots\                                             /alts portrait's screenshot pairs
-_classic_beta_\Logs\                                                    client logs
+_forever_\WTF\Account\<id>\SavedVariables\AltStable.lua            account-wide
+_forever_\WTF\Account\<id>\<Realm>\<Character>\SavedVariables\...  per-character
+_forever_\WTF\SavedVariables\                                      machine scope (Blizzard only)
+_forever_\Screenshots\                                             /alts portrait's screenshot pairs
+_forever_\Logs\                                                    client logs
 ```
 
 `<id>` looks like `50284074#12`. Two accounts on one machine are two `<id>` folders, which is what
@@ -254,6 +273,11 @@ To check persistence on a new build:
 ```
 pwsh Tools/deploy-probe.ps1     # deploys ForeverProbe (the host), AltStableProbe, ForeverAPIDump
 ```
+
+**The probe goes in on demand only.** This is the live client and the owner's play install. Deploy
+it for the question at hand, then take it out again with `pwsh Tools/deploy-probe.ps1 -Remove`. That
+removes AltStableProbe and ForeverAPIDump, plus the ForeverProbe host when no other project's probe
+still depends on it. The saved logs in `WTF\` stay.
 
 The probe is a ForeverProbe module (#240): its lines go to the `/fp` console and to
 `AltStableProbeDB.log`, never to chat. It keeps a counter in each store and checks at
@@ -553,8 +577,7 @@ if you see a stall with no reason, the stream really was lost.
 - **Deleting SavedVariables by hand:** close the client first (it rewrites them on exit), then
   delete `WTF\Account\<id>\SavedVariables\AltStable*.lua`. Back them up if there is any chance the
   contents matter — they contain real character names and realms.
-- **Removing the dev tools** from the client: delete the `AltStableProbe` and `ForeverAPIDump`
-  folders from `Interface\AddOns` (and `ForeverProbe`, unless another project's probe uses it).
-  They are never packaged. (`AltStableDevConfig`, retired
+- **Removing the dev tools** from the client: `pwsh Tools/deploy-probe.ps1 -Remove` (it keeps
+  `ForeverProbe` while another project's probe uses it). They are never packaged. (`AltStableDevConfig`, retired
   2026-10-01, seeded a whitelist from code while #23 kept settings from loading; with #23 fixed it
   only fought the player's own settings - delete its folder if an old install still has one.)

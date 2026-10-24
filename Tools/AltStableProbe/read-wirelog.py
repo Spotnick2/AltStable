@@ -18,7 +18,7 @@ import os
 import re
 import sys
 
-DEFAULT_WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF"
+DEFAULT_WTF = r"C:\Program Files (x86)\World of Warcraft\_forever_\WTF"
 
 
 def wire_lines(path):

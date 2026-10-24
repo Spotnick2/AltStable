@@ -3,7 +3,13 @@
 
     Usage:
         pwsh Tools/deploy.ps1
-        pwsh Tools/deploy.ps1 -AddOnsPath "D:\Games\WoW\_classic_beta_\Interface\AddOns"
+        pwsh Tools/deploy.ps1 -AddOnsPath "D:\Games\WoW\_forever_\Interface\AddOns"
+
+    The live client's _forever_ is the only target (the beta and its
+    _classic_beta_ are over; live opens 2026-11-04). What it overwrites there
+    is normally CurseForge's release:
+    a release copy is kept first, in Interface\AddOns-release\AltStable where
+    the client does not look, and Tools/restore-release.ps1 puts it back.
 
     Plugins fan out into sibling top-level folders: WoW only discovers addons
     as top-level folders under Interface\AddOns, so Plugins\Warband deploys to
@@ -20,7 +26,7 @@
 #>
 
 param(
-    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns"
+    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns"
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,6 +71,31 @@ foreach ($lib in $libs) {
             Write-Host "  this deploy tests a library the release won't ship." -ForegroundColor Yellow
         }
     }
+}
+
+# Keep the installed release before anything of ours lands on it (the libraries
+# below already write into its Libs\). Only a release: a dev copy over a dev
+# copy leaves the kept one alone, so restore-release.ps1 always has the last
+# published version. The plugin folders go with it, named as deployed below.
+function Get-TocVersion([string]$toc) {
+    if (-not (Test-Path -LiteralPath $toc)) { return $null }
+    $m = Select-String -LiteralPath $toc -Pattern '^## Version:\s*(\S+)' | Select-Object -First 1
+    if ($m) { $m.Matches[0].Groups[1].Value } else { $null }
+}
+$installed = Get-TocVersion (Join-Path $dest "AltStable.toc")
+if ($installed -and $installed -notlike "dev*") {
+    $snapshot = Join-Path (Split-Path -Parent $AddOnsPath) "AddOns-release\AltStable"
+    $names = @("AltStable") + @(Get-ChildItem (Join-Path $RepoRoot "Plugins") -Filter *.toc -Recurse -Depth 1 |
+        ForEach-Object { $_.BaseName })
+    if (Test-Path -LiteralPath $snapshot) { Remove-Item -LiteralPath $snapshot -Recurse -Force }
+    foreach ($name in $names) {
+        $from = Join-Path $AddOnsPath $name
+        if (-not (Test-Path -LiteralPath $from)) { continue }
+        robocopy $from (Join-Path $snapshot $name) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "keeping the installed $name failed (robocopy $LASTEXITCODE); nothing was deployed" }
+    }
+    Set-Content -LiteralPath (Join-Path $snapshot "VERSION") $installed
+    Write-Host "Kept the installed $installed in $snapshot (Tools/restore-release.ps1 puts it back)" -ForegroundColor DarkGray
 }
 
 # The libraries first: a refusal must leave the deployed addon as it was (a new
@@ -191,3 +222,5 @@ Write-Host "In-game:" -ForegroundColor Yellow
 Write-Host "  /console scriptErrors 1   (errors are OFF by default on this client)"
 Write-Host "  /reload"
 Write-Host "  /alts                     open the sheet"
+Write-Host ""
+Write-Host "Back to the published version: pwsh Tools/restore-release.ps1" -ForegroundColor DarkGray

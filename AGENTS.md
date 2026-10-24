@@ -69,8 +69,9 @@ of fields, never live tables. Changing what a field means, or removing one, bump
   capped at 255 bytes; the sync path chunks payloads (`MAX_CHUNK = 220`) with an inter-packet
   delay, base64 + checksum over the reassembled stream.
 - `tests/` — Lua 5.1 unit tests (see below).
-- `Tools/deploy.ps1` — deploy script. `Tools/AltStableProbe/` — in-game API probe addon, a
-  ForeverProbe module (`/fp as`, deployed with the host by `Tools/deploy-probe.ps1`; read
+- `Tools/deploy.ps1` — deploy script; `Tools/restore-release.ps1` puts the published version
+  back. `Tools/AltStableProbe/` — in-game API probe addon, a ForeverProbe module (`/fp as`,
+  deployed on demand with the host by `Tools/deploy-probe.ps1`, removed by its `-Remove`; read
   `C:\Projects\WoW\References\Docs\PROBES.md` before changing it). Portrait capture used to live there;
   it ships in `Capture.lua` now.
   `Tools/` is ignored by `.pkgmeta` and never ships.
@@ -130,6 +131,14 @@ Copies the addon to `Interface\AddOns\AltStable` additively (`robocopy /E`), exc
 deployed as its own top-level addon folder named after its `.toc` (`AltStableWarband`,
 `AltStableInstances`) — WoW only discovers addons as top-level folders. Then `/reload` in-game.
 Deploy is a file copy — low-stakes, no build.
+
+The default target is the **live** client's `_forever_` (from 2026-11-04). The beta's
+`_classic_beta_` is gone, and `_forever_` is the only deploy path. It is also the owner's play
+install, with CurseForge's release in it. So `deploy.ps1` first keeps an installed release in
+`Interface\AddOns-release\AltStable`, and `pwsh Tools/restore-release.ps1` puts it back at any
+time (`-Tag latest` fetches it from GitHub when nothing was kept). The probe and ForeverAPIDump are
+**on demand only**: `deploy-probe.ps1` when a question needs them, `deploy-probe.ps1 -Remove` once
+it is answered.
 
 `@project-version@` is substituted in every deployed `.toc`, in the **deployed copy only**. Never
 commit a literal version over that keyword: the packager needs it, and it has been overwritten by

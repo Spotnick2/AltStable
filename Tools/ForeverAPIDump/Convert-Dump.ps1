@@ -24,7 +24,7 @@
 #>
 
 param(
-    [string]$WtfAccountPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF\Account",
+    [string]$WtfAccountPath = "C:\Program Files (x86)\World of Warcraft\_forever_\WTF\Account",
     [string]$OutDir = "C:\Projects\WoW\References\Forever\api",
     [switch]$SelfTest
 )

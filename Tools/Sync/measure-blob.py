@@ -40,7 +40,7 @@ import re
 import sys
 import zlib
 
-WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF\Account"
+WTF = r"C:\Program Files (x86)\World of Warcraft\_forever_\WTF\Account"
 MAX_CHUNK = 220                      # Core.lua
 PLUGIN_PREFIX = "plugin_warband:"    # Core.lua, SerializeFullDB
 
