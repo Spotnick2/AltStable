@@ -232,6 +232,19 @@ AltStableWarbandDB = { [GUID] = { bags = { [2318] = 8 }, bank = { [2318] = 13 },
 local total = T.CountItem(2318)
 eq("the cross-alt count sums bags and bank", total, 21)
 
+-- Published for the Professions plugin's reagents (#268), with what it needs.
+check("the count is published to the core as AltStable.ItemHolders", AltStable.ItemHolders == T.CountItem)
+local _, holders = T.CountItem(2318)
+eq("  a holder carries its guid (Professions leaves hidden alts out)", holders[1] and holders[1].guid, GUID)
+eq("  a fresh bank is not stale", holders[1] and holders[1].bankStale, false)
+AltStableWarbandDB[GUID].bankStamp = WoW.now - 8 * 86400
+_, holders = T.CountItem(2318)
+eq("  a bank over a week old is", holders[1] and holders[1].bankStale, true)
+AltStableWarbandDB[GUID].bank = {}
+_, holders = T.CountItem(2318)
+eq("  a count with nothing in the bank never is", holders[1] and holders[1].bankStale, false)
+AltStableWarbandDB[GUID] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, bankStamp = WoW.now }
+
 AltStable.SetConfigValue("warbandItemTooltips", true)
 local lines = {}
 local tt = WoW.makeFrame()

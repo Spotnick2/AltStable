@@ -42,9 +42,11 @@ local Core = AltStable._test
 -- A small, fixed catalogue instead of the generated file, so the numbers here
 -- do not move when Wowhead does. Shapes as RecipeData.lua writes them.
 AltStableRecipeData = { source = "test", recipes = {
-    [2329] = { skill = { 171 }, learn = 1,   colors = { 1, 55, 75, 95 }, makes = 2454, src = { 6 } },
+    [2329] = { skill = { 171 }, learn = 1,   colors = { 1, 55, 75, 95 }, makes = 2454, src = { 6 },
+               reagents = { 2449, 1, 765, 1, 3371, 1 } },
     [2330] = { skill = { 171 }, learn = 15,  colors = { 15, 60, 80, 100 }, makes = 118, src = { 6 } },
-    [2331] = { skill = { 171 }, learn = 50,  colors = { 50, 80, 100, 120 }, makes = 2455, src = { 2 } },
+    [2331] = { skill = { 171 }, learn = 50,  colors = { 50, 80, 100, 120 }, makes = 2455, src = { 2 },
+               reagents = { 785, 2, 3371, 1 } },
     [2332] = { skill = { 171 }, learn = 125, colors = { 125, 150, 170, 190 }, makes = 2456, src = { 5, 6 } },
     [2333] = { skill = { 171 } },                                -- requirement unknown (9999 on Wowhead)
     [3100] = { skill = { 164 }, learn = 1,   makes = 2862, src = { 6 } },
@@ -597,6 +599,149 @@ WoW.spellNames = { [2331] = "Elixir of Lesser Agility", [3101] = "Rough Copper V
 rows = T.BuildRows({ line = 171, search = "copper" })
 eq("search spans every profession", rows[1] and rows[1].id, 3101)
 eq("  and only matches", #rows, 1)
+
+------------------------------------------------------------
+-- Reagents across the stable (#268)
+------------------------------------------------------------
+
+-- Warband's AltStable.ItemHolders, shaped as its CountItem returns: total, then
+-- { guid, name, class, bags, bank, bankStale } per holder (test_warband checks
+-- the real one has that shape).
+local held = {}
+local function holdersStub(item)
+    local total, out = 0, {}
+    for guid, items in pairs(held) do
+        local h = items[item]
+        if h then
+            total = total + (h.bags or 0) + (h.bank or 0)
+            out[#out + 1] = { guid = guid, name = AltStableDB[guid] and AltStableDB[guid].name,
+                              class = AltStableDB[guid] and AltStableDB[guid].class,
+                              bags = h.bags or 0, bank = h.bank or 0, bankStale = h.bankStale }
+        end
+    end
+    return total, out
+end
+local function owner(guid) for _, x in ipairs(T.Owners(171)) do if x.guid == guid then return x end end end
+
+readModelState()
+AltStable.ItemHolders = nil
+check("without Warband nothing is counted", not T.ReagentsCounted())
+eq("  so no plan", T.ReagentPlan(2329, { owner(A) }), nil)
+eq("  and Craftable keeps nothing, known or not", ids(T.BuildRows({ line = 171, filter = "craftable" })), "")
+local lines = T.ReagentLines(2329, { owner(A) })
+eq("the tooltip still lists what one craft needs", lines[2] and lines[2][1], "1 x item 2449")
+check("  and says how to get the counts", lines[#lines][1]:find("Warband", 1, true) ~= nil, lines[#lines][1])
+eq("a recipe without reagents has no block", #T.ReagentLines(2330, {}), 0)
+
+AltStable.ItemHolders = holdersStub
+held = {
+    [A] = { [2449] = { bags = 3 }, [3371] = { bags = 1 } },          -- Alder: no Silverleaf (765)
+    [B] = { [765] = { bags = 2, bank = 3 }, [785] = { bags = 1 } },  -- Birch holds it
+}
+local plan = T.ReagentPlan(2329, { owner(A), owner(B) })
+check("with Warband, a plan", plan ~= nil)
+eq("  totals per reagent, bags and bank", plan and plan.reagents[2].total, 5)
+check("  the stable has enough for one craft", plan and plan.enough)
+local alder, birch = plan.crafters[1], plan.crafters[2]
+eq("  Alder lacks one reagent", alder and #alder.short, 1)
+eq("    Silverleaf", alder and alder.short[1] and alder.short[1].item, 765)
+eq("    and Birch, who has 5, is who to ask", alder and alder.short[1].from and alder.short[1].from.name, "Birch")
+eq("  Birch lacks two (Earthroot and the vial)", birch and #birch.short, 2)
+eq("Craftable: known, and the stable holds every reagent", ids(T.BuildRows({ line = 171, filter = "craftable" })), "2329")
+-- 2331 is known by Alder, but the stable has 1 Mageroyal of the 2 it needs.
+check("  short of one reagent: not craftable", not T.ReagentPlan(2331, {}).enough)
+eq("Craftable, focused on Birch: she knows 2329", ids(T.BuildRows({ line = 171, filter = "craftable", focus = B })), "2329")
+AltStableProfessionsDB[B].profs[171].known[2329] = nil
+eq("  and once she doesn't, nothing for her", ids(T.BuildRows({ line = 171, filter = "craftable", focus = B })), "")
+AltStableProfessionsDB[B].profs[171].known[2329] = true
+
+-- Hidden alts: their bags are out of the counts, as they are out of the list.
+AltStable.IsCharacterHidden = function(guid) return guid == B end
+plan = T.ReagentPlan(2329, { owner(A) })
+eq("a hidden alt's bags do not count", plan.reagents[2].total, 0)
+check("  so the stable is short", not plan.enough)
+eq("  and Alder has nobody to ask", plan.crafters[1].short[1].from, nil)
+AltStable.IsCharacterHidden = realHidden
+
+-- Most first: the alt to ask for a reagent is the one holding the most.
+held[U] = { [765] = { bags = 9 } }
+AltStableDB[U] = { guid = U, name = "Umber", class = "ROGUE" }
+plan = T.ReagentPlan(2329, { owner(A) })
+eq("holders are sorted most first", plan.reagents[2].holders[1].name, "Umber")
+eq("  and the one to ask is the one with the most", plan.crafters[1].short[1].from.name, "Umber")
+held[U] = nil
+
+-- The tooltip lines.
+WoW.items[765] = { name = "Silverleaf" }
+lines = T.ReagentLines(2329, { owner(A), owner(B) })
+local text = {}
+for _, l in ipairs(lines) do text[#text + 1] = l[1] .. "|" .. tostring(l[2]) end
+text = table.concat(text, "\n")
+check("a reagent's line names it and the count needed", text:find("1 x Silverleaf|", 1, true) ~= nil, text)
+check("  with the stable's total in green when enough", text:find("|cff40ff405|r", 1, true) ~= nil, text)
+check("  and who holds it", text:find("Birch|r 5", 1, true) ~= nil, text)
+check("a knower who is short says what and from whom",
+      text:find("needs 1 Silverleaf (", 1, true) ~= nil and text:find(" has 5)", 1, true) ~= nil, text)
+check("  and how many more reagents are short", text:find("needs 1 item 2449 (", 1, true) ~= nil
+      and text:find(" +1", 1, true) ~= nil, text)
+check("no stale-bank note while the banks are fresh", not text:find("over a week old", 1, true), text)
+held[B][765].bankStale = true
+lines = T.ReagentLines(2329, { owner(A) })
+check("an old bank count is flagged", lines[#lines - 1][1]:find("over a week old", 1, true) ~= nil,
+      tostring(lines[#lines - 1][1]))
+held[A] = { [2449] = { bags = 1 }, [765] = { bags = 1 }, [3371] = { bags = 1 } }
+held[B] = nil
+check("exactly what one craft needs is enough", T.ReagentPlan(2329, {}).enough)
+lines = T.ReagentLines(2329, { owner(A) })
+check("a knower with everything on them has the reagents",
+      lines[#lines][2] and lines[#lines][2]:find("has the reagents", 1, true) ~= nil, tostring(lines[#lines][2]))
+held[A][3371] = nil
+lines = T.ReagentLines(2329, { owner(A) })
+check("a reagent nobody holds says so", lines[#lines][2]:find("nobody has it", 1, true) ~= nil, lines[#lines][2])
+check("  and its total is red", table.concat({ lines[4][2] or "" }):find("|cffff40400|r", 1, true) ~= nil,
+      tostring(lines[4][2]))
+
+-- Names: cached ones are used, a miss is asked for once.
+WoW.itemLoadRequests = {}
+for k in pairs(T.itemRequested) do T.itemRequested[k] = nil end
+eq("a cached name", T.ItemName(765), "Silverleaf")
+eq("an uncached one is a placeholder", T.ItemName(3371), "item 3371")
+T.ItemName(3371)
+eq("  asked for once, not on every hover", #WoW.itemLoadRequests, 1)
+
+-- A Warband that throws, or answers with no list, is an UNKNOWN count - never
+-- zero, never an error in the tab (Codex review of #277).
+for label, fn in pairs({ throws = function() error("boom") end, ["gives no list"] = function() return 0 end }) do
+    AltStable.ItemHolders = fn
+    local p, why = T.ReagentPlan(2329, { owner(A) })
+    check("a count that " .. label .. " gives no plan", p == nil and why == "failed", tostring(why))
+    eq("  so Craftable does not claim it", ids(T.BuildRows({ line = 171, filter = "craftable" })), "")
+    lines = T.ReagentLines(2329, { owner(A) })
+    local all = {}
+    for _, l in ipairs(lines) do all[#all + 1] = l[1] .. "|" .. tostring(l[2]) end
+    all = table.concat(all, "\n")
+    check("  and the tooltip says the counts could not be read", all:find("could not be read", 1, true) ~= nil, all)
+    check("  never that nobody has a reagent, or a red zero",
+          not all:find("nobody has it", 1, true) and not all:find("|cffff40400|r", 1, true), all)
+    check("  nor to turn on a Warband that is on", not all:find("Turn on", 1, true), all)
+end
+AltStable.ItemHolders = holdersStub
+
+-- The stale-bank note looks at every holder, not only the three named: a
+-- fourth one's bank is in the total too (Codex review of #277).
+for i, g in ipairs({ "Player-C", "Player-D", "Player-E", "Player-F" }) do
+    AltStableDB[g] = { guid = g, name = "Holder" .. i, class = "MAGE" }
+    held[g] = { [765] = { bags = 10 - i, bank = i == 4 and 1 or 0, bankStale = i == 4 } }
+end
+lines = T.ReagentLines(2329, { owner(A) })
+local seen = false
+for _, l in ipairs(lines) do if l[1]:find("over a week old", 1, true) then seen = true end end
+check("an old bank on the fourth holder is still flagged", seen)
+for _, g in ipairs({ "Player-C", "Player-D", "Player-E", "Player-F" }) do AltStableDB[g], held[g] = nil, nil end
+AltStable.ItemHolders = nil
+held = {}
+WoW.items[765] = nil
+readModelState()   -- the sections below expect the shared fixture as it was
 
 -- A spell the client does not have: asked for once, and a failed answer does
 -- not come back as a redraw.

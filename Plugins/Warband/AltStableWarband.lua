@@ -503,9 +503,11 @@ end
 -- Sum one itemID across every tracked character's bags+bank (for the global
 -- item-tooltip hook). Returns total + a holders list shaped like gather()'s.
 -- Unfiltered on purpose: a tooltip on an item anywhere in the game answers
--- "who has this", whatever the Warband tab happens to be showing.
+-- "who has this", whatever the Warband tab happens to be showing. The guid and
+-- bankStale ride along for the Professions plugin's reagent counts (#268),
+-- which leaves hidden alts out and says when a bank count is old.
 local function CountItem(itemID)
-    local total, holders = 0, {}
+    local total, holders, now = 0, {}, time()
     for guid, c in pairs(AltStableDB or {}) do
         if type(c) == "table" and c.name then
             local wb = AltStableWarbandDB[guid]
@@ -515,8 +517,9 @@ local function CountItem(itemID)
                 if bags + bank > 0 then
                     total = total + bags + bank
                     holders[#holders + 1] = {
-                        name = c.name, class = c.class, realm = c.realm,
+                        guid = guid, name = c.name, class = c.class, realm = c.realm,
                         bags = bags, bank = bank, bankStamp = wb.bankStamp,
+                        bankStale = bank > 0 and wb.bankStamp ~= nil and (now - wb.bankStamp) > BANK_STALE,
                     }
                 end
             end
@@ -1851,6 +1854,9 @@ local function BootstrapPlugin()
         return
     end
     EnsureTooltipHook()   -- install now so the global item-tooltip option works pre-panel
+    -- Who holds an item, for other plugins (Professions' reagents, #268). Set
+    -- only while this plugin is loaded: absent means "not counted", never "none".
+    AltStable.ItemHolders = CountItem
     AltStable.RegisterPlugin({
         id            = ADDON_ID,
         label         = "Warband",

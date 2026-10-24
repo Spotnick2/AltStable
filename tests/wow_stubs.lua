@@ -1318,6 +1318,12 @@ C_Item = {
     GetItemCount = function(v) local it = WoW.items[itemID(v) or -1]; return it and (it.count or 0) or 0 end,
     GetItemStats = function(v) local it = WoW.items[itemID(v) or -1]; if not it then return end; return it.stats or {} end,
     GetItemQualityByID = function(v) local it = WoW.items[itemID(v) or -1]; return it and it.quality or nil end,
+    -- optional itemName (70532 dump): nil on a cache miss, until the load is asked for.
+    GetItemNameByID = function(v) local it = WoW.items[itemID(v) or -1]; return it and it.name or nil end,
+    RequestLoadItemDataByID = function(v)
+        WoW.itemLoadRequests = WoW.itemLoadRequests or {}
+        WoW.itemLoadRequests[#WoW.itemLoadRequests + 1] = itemID(v)
+    end,
 }
 
 ------------------------------------------------------------

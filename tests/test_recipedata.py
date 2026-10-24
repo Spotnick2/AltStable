@@ -102,8 +102,11 @@ check("a Camping recipe with rank \"Tier 1\" is kept", gen.recipe_from_record(ma
 tier_enchant = {"id": 7, "learnedat": 40, "rank": "Tier 2", "skill": [333], "colors": [40, 50, 60, 70]}
 check("a ranked recipe that makes nothing but has colours is kept", gen.recipe_from_record(tier_enchant) is not None)
 r = gen.recipe_from_record(recs[2])
-check("a recipe keeps skill, learn, colors, makes, src",
-      r == {"skill": [171], "learn": 140, "colors": [140, 165, 185, 205], "makes": 3390, "src": [2, 16]}, repr(r))
+check("a recipe keeps skill, learn, colors, makes, src, and Wowhead's reagents",
+      r == {"skill": [171], "learn": 140, "colors": [140, 165, 185, 205], "makes": 3390, "src": [2, 16],
+            "reagents": [[3355, 1]]}, repr(r))
+r2 = gen.recipe_from_record(recs[1])
+check("Wowhead's reagents keep the order served", r2["reagents"] == [[2449, 1], [765, 1], [3371, 1]], repr(r2))
 
 enchant = {"id": 13648, "skill": [333], "learnedat": 170, "colors": [170, 190, 210, 230], "source": [5]}
 e = gen.recipe_from_record(enchant)
@@ -188,6 +191,9 @@ check("a listing that is not recipe items is refused",
 
 linked_text = gen.render_lua({2335: {"skill": [171], "learn": 60, "items": [2555]}}, "x")
 check("linked items are written", "[2335]={skill={171},learn=60,items={2555}}," in linked_text, linked_text)
+reagent_text = gen.render_lua({2329: {"skill": [171], "learn": 1, "reagents": [[2449, 1], [765, 1], [3371, 1]]}}, "x")
+check("reagents are written flat, item then count, in order",
+      "[2329]={skill={171},learn=1,reagents={2449,1,765,1,3371,1}}," in reagent_text, reagent_text)
 
 # ---------------------------------------------------------------------------
 # Page checks and merging
@@ -267,7 +273,20 @@ TSC_ROWS = [
 ]
 
 
-def write_client_db(directory, build, sla=True, tsc=True, tsc_rows=None):
+SR_HEADER = ("ID,SpellID," + ",".join("Reagent_%d" % i for i in range(8)) + ","
+             + ",".join("ReagentCount_%d" % i for i in range(8)) + ","
+             + ",".join("ReagentReCraftCount_%d" % i for i in range(8)) + ","
+             + ",".join("ReagentSource_%d" % i for i in range(8)))
+SR_ROWS = [
+    "19558,2329,2449,765,3371,0,0,0,0,0,1,1,1,0,0,0,0,0" + ",0" * 16,     # Elixir of Minor Strength
+    "36428,1250794,3355,785,3371,0,0,0,0,0,2,1,1,0,0,0,0,0" + ",0" * 16,  # Elixir of Lesser Spirit
+]
+
+
+def write_client_db(directory, build, sla=True, tsc=True, tsc_rows=None, sr=True, sr_rows=None):
+    if sr:
+        with open(os.path.join(directory, "forever-spellreagents-%s.csv" % build), "w", encoding="utf-8") as f:
+            f.write("\n".join([SR_HEADER] + (SR_ROWS if sr_rows is None else sr_rows)) + "\n")
     if sla:
         with open(os.path.join(directory, "forever-skilllineability-%s.csv" % build), "w", encoding="utf-8") as f:
             f.write("\n".join([SLA_HEADER] + SLA_ROWS) + "\n")
@@ -279,9 +298,11 @@ def write_client_db(directory, build, sla=True, tsc=True, tsc_rows=None):
 cdb = tempfile.mkdtemp()
 write_client_db(cdb, "1.60.1.70450")
 write_client_db(cdb, "1.60.1.70532")
-write_client_db(cdb, "1.60.1.70999", tsc=False)   # half a pair: not a candidate
+write_client_db(cdb, "1.60.1.70999", tsc=False)   # incomplete: not a candidate
+write_client_db(cdb, "1.60.1.71000", sr=False)    # nor this one (no SpellReagents)
 picked = gen.client_tables(cdb)
-check("the newest build with BOTH tables is used", picked[0] == "1.60.1.70532", repr(picked))
+check("the newest build with ALL the tables is used", picked[0] == "1.60.1.70532", repr(picked))
+check("  with a path for each", sorted(picked[1]) == sorted(gen.CLIENT_TABLES), repr(picked[1]))
 numeric = tempfile.mkdtemp()
 write_client_db(numeric, "1.60.1.9999")
 write_client_db(numeric, "1.60.1.70532")
@@ -291,7 +312,13 @@ empty = tempfile.mkdtemp()
 check("no tables at all is an error, not a run without the filter", raises(lambda: gen.client_tables(empty)))
 check("a missing folder is an error too", raises(lambda: gen.client_tables(os.path.join(empty, "nope"))))
 
-season = gen.load_season(cdb, lambda m: None)
+def season_of(directory):
+    return gen.load_client(directory, lambda m: None)["season"]
+
+
+client = gen.load_client(cdb, lambda m: None)
+season = client["season"]
+check("load_client names the build it read", client["build"] == "1.60.1.70532", repr(client["build"]))
 check("an SoD recipe is in the set", 429348 in season, repr(season))
 check("a recipe under a child of an SoD category is in the set", 90001 in season, repr(season))
 check("a Vanilla and a Forever recipe are not", not ({2329, 1250794} & season), repr(season))
@@ -301,12 +328,12 @@ check("a recipe the client does not list is not dropped", 1251750 not in season)
 renamed = tempfile.mkdtemp()
 write_client_db(renamed, "1.60.1.70532", tsc_rows=['2593,"Season of Mastery",,0,2938,0,0'])
 check("no SEASON OF DISCOVERY category is an error, not a filter that drops nothing",
-      raises(lambda: gen.load_season(renamed, lambda m: None)))
+      raises(lambda: season_of(renamed)))
 badcol = tempfile.mkdtemp()
 write_client_db(badcol, "1.60.1.70532")
 with open(os.path.join(badcol, "forever-skilllineability-1.60.1.70532.csv"), "w", encoding="utf-8") as f:
     f.write("ID,Spell\n1,429348\n")
-check("a table without the expected column is an error", raises(lambda: gen.load_season(badcol, lambda m: None)))
+check("a table without the expected column is an error", raises(lambda: season_of(badcol)))
 
 # The ability table must classify something too (Codex review of #274): a header
 # alone, or rows none of which is under an SoD category, would drop nothing.
@@ -316,7 +343,39 @@ for label, body in (("only its header", ""),
     write_client_db(d, "1.60.1.70532")
     with open(os.path.join(d, "forever-skilllineability-1.60.1.70532.csv"), "w", encoding="utf-8") as f:
         f.write(SLA_HEADER + "\n" + (body + "\n" if body else ""))
-    check("an ability table with %s is an error" % label, raises(lambda: gen.load_season(d, lambda m: None)))
+    check("an ability table with %s is an error" % label, raises(lambda: season_of(d)))
+
+# Reagents: the client's slots in order, empty slots skipped.
+check("the client's reagents, in slot order", client["reagents"][2329] == [[2449, 1], [765, 1], [3371, 1]],
+      repr(client["reagents"].get(2329)))
+check("  with their counts", client["reagents"][1250794] == [[3355, 2], [785, 1], [3371, 1]],
+      repr(client["reagents"].get(1250794)))
+noreag = tempfile.mkdtemp()
+write_client_db(noreag, "1.60.1.70532", sr_rows=[])
+check("an empty SpellReagents is an error, not a silent fall back to Wowhead",
+      raises(lambda: gen.load_client(noreag, lambda m: None)))
+badcount = tempfile.mkdtemp()
+write_client_db(badcount, "1.60.1.70532", sr_rows=["1,2329,2449,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0" + ",0" * 16] + SR_ROWS[1:])
+bad_client = gen.load_client(badcount, lambda m: None)   # other spells' rows are no reason to stop
+check("a reagent with no count is an error for a recipe that uses it",
+      raises(lambda: gen.apply_reagents({2329: {"skill": [171]}}, bad_client["reagents"])))
+check("  and none for the recipes that do not",
+      not raises(lambda: gen.apply_reagents({1250794: {"skill": [171]}}, bad_client["reagents"])))
+
+mixed = {
+    2329: {"skill": [171], "reagents": [[765, 1], [2449, 1], [3371, 1]]},   # same set, Wowhead's order
+    1250794: {"skill": [171], "reagents": [[3355, 1]]},                     # Wowhead disagrees
+    7000: {"skill": [171], "reagents": [[2318, 4]]},                        # the client lacks it
+    13262: {"skill": [333]},                                                # nobody has any
+}
+ours, theirs, none, disagree = gen.apply_reagents(mixed, client["reagents"])
+check("the client's reagents replace Wowhead's, in the client's order",
+      mixed[2329]["reagents"] == [[2449, 1], [765, 1], [3371, 1]], repr(mixed[2329]))
+check("  and win a disagreement", mixed[1250794]["reagents"] == [[3355, 2], [785, 1], [3371, 1]], repr(mixed[1250794]))
+check("a recipe the client lacks keeps Wowhead's", mixed[7000]["reagents"] == [[2318, 4]], repr(mixed[7000]))
+check("a recipe with none gets none", "reagents" not in mixed[13262], repr(mixed[13262]))
+check("the counts and the disagreement are reported (an order change is not one)",
+      (ours, theirs, none, disagree) == (2, 1, 1, [1250794]), repr((ours, theirs, none, disagree)))
 
 held = {2329: {"skill": [171]}, 429348: {"skill": [164]}}
 held_meta = {2329: {"name": "a"}, 429348: {"name": "b"}}
