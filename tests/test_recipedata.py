@@ -308,6 +308,16 @@ with open(os.path.join(badcol, "forever-skilllineability-1.60.1.70532.csv"), "w"
     f.write("ID,Spell\n1,429348\n")
 check("a table without the expected column is an error", raises(lambda: gen.load_season(badcol, lambda m: None)))
 
+# The ability table must classify something too (Codex review of #274): a header
+# alone, or rows none of which is under an SoD category, would drop nothing.
+for label, body in (("only its header", ""),
+                    ("no row under an SoD category", "\n".join(SLA_ROWS[0:1] + SLA_ROWS[2:3]))):
+    d = tempfile.mkdtemp()
+    write_client_db(d, "1.60.1.70532")
+    with open(os.path.join(d, "forever-skilllineability-1.60.1.70532.csv"), "w", encoding="utf-8") as f:
+        f.write(SLA_HEADER + "\n" + (body + "\n" if body else ""))
+    check("an ability table with %s is an error" % label, raises(lambda: gen.load_season(d, lambda m: None)))
+
 held = {2329: {"skill": [171]}, 429348: {"skill": [164]}}
 held_meta = {2329: {"name": "a"}, 429348: {"name": "b"}}
 dropped = gen.drop_season(held, held_meta, season)

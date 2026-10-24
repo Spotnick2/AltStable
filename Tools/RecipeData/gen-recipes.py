@@ -424,7 +424,12 @@ def season_spells(abilities, categories):
     rows = {}
     for a in abilities:
         rows.setdefault(int(a["Spell"]), []).append(in_season(int(a["TradeSkillCategoryID"] or 0)))
-    return {spell for spell, flags in rows.items() if all(flags)}
+    spells = {spell for spell, flags in rows.items() if all(flags)}
+    # The same for the other table: an export with no rows, or none under those
+    # categories, would drop nothing and write every SoD recipe back (Codex review of #274).
+    if not spells:
+        raise DataError("SkillLineAbility files no spell under %r" % SEASON_CATEGORY)
+    return spells
 
 
 def load_season(directory, log):
