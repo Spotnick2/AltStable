@@ -80,3 +80,17 @@ agentic sequences across many interconnected files. Use it for:
 Don't use Fable for single-file/single-module work regardless of stakes — that's Opus's job. Fable
 needs **explicit per-turn user approval for any implementation use**; critique/review stays
 default-on.
+
+## Consulting Codex
+
+The shared `codex-consult` skill (user level) has the invocation and the gotchas. For this repo:
+
+For AltStable specifically, good things to hand Codex: the `Core.lua` sync/wire-protocol logic,
+a serialization-format or protocol-version change, an adapter mapping in `Compat.lua` (especially
+anything struct-vs-tuple), a scanner change, or a plan that touches SavedVariables shape — paste
+the relevant code/paths and ask what breaks. Hand it `docs/forever-api-notes.md` alongside the
+diff: those findings are measured on the live client, and a cold reviewer will otherwise argue
+from Classic-era API behaviour that no longer holds.
+
+The PR review loop in `docs/WORKFLOW.md` is this skill's main use here — that doc has the
+diff-capture and posting steps that wrap the invocation below.
