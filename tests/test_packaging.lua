@@ -312,6 +312,11 @@ if deploy then
     local libs = deploy:find("\n%s*& pwsh %-NoProfile %-File %(Join%-Path %$lib%.Root")
     check("it keeps the installed release before the libraries are deployed",
           keep ~= nil and libs ~= nil and keep < libs)
+    -- An interrupted deploy leaves the release's version in the TOC over a
+    -- half-dev tree (the version is substituted last), so a retry must keep
+    -- the copy it already has rather than take that tree again (Codex, #266).
+    check("  and only when it has not kept that version already",
+          deploy:find("\n%s*if %(%$installed %-and %$installed %-notlike \"dev%*\" %-and %$installed %-ne %$kept%)") ~= nil)
 end
 
 -- The beta is over (2026-10): the live client's _forever_ is the only target,

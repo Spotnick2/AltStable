@@ -205,8 +205,9 @@ for a `/alts sync` you typed.
 
 - If the installed `AltStable` is a release (its `.toc` version is not `dev-*`), it and the plugin
   folders are first copied to `Interface\AddOns-release\AltStable\`, beside `AddOns` where the
-  client does not look. A dev copy over a dev copy leaves that alone, so it always holds the last
-  release that was installed.
+  client does not look. A dev copy over a dev copy leaves that alone, and so does a release it has
+  already kept. An interrupted deploy leaves the release's version in the TOC over a half-dev
+  tree, and the retry must not keep that. So it always holds the last release that was installed.
 - `AltStable/` gets the core addon (`robocopy /E`, additive), minus `Tools/`, `tests/`, `docs/`,
   `.git`, `.claude`, `.vscode`, `Plugins/`.
 - Each folder under `Plugins/` becomes its own top-level addon folder named after its `.toc`:

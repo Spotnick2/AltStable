@@ -77,14 +77,23 @@ foreach ($lib in $libs) {
 # below already write into its Libs\). Only a release: a dev copy over a dev
 # copy leaves the kept one alone, so restore-release.ps1 always has the last
 # published version. The plugin folders go with it, named as deployed below.
+#
+# Nor is a release kept twice. The TOC only says dev-<sha> once the deploy has
+# finished, so after an interrupted one it still names the release over a
+# half-dev tree: keeping that again would replace the clean copy with it. So
+# the kept copy is replaced only when the installed version is a different one
+# (CurseForge updated it). VERSION is written last, so a copy without it was
+# itself interrupted, and is taken again from a tree nothing had touched yet.
 function Get-TocVersion([string]$toc) {
     if (-not (Test-Path -LiteralPath $toc)) { return $null }
     $m = Select-String -LiteralPath $toc -Pattern '^## Version:\s*(\S+)' | Select-Object -First 1
     if ($m) { $m.Matches[0].Groups[1].Value } else { $null }
 }
 $installed = Get-TocVersion (Join-Path $dest "AltStable.toc")
-if ($installed -and $installed -notlike "dev*") {
-    $snapshot = Join-Path (Split-Path -Parent $AddOnsPath) "AddOns-release\AltStable"
+$snapshot = Join-Path (Split-Path -Parent $AddOnsPath) "AddOns-release\AltStable"
+$keptFile = Join-Path $snapshot "VERSION"
+$kept = if (Test-Path -LiteralPath $keptFile) { (Get-Content -LiteralPath $keptFile | Select-Object -First 1) } else { $null }
+if ($installed -and $installed -notlike "dev*" -and $installed -ne $kept) {
     $names = @("AltStable") + @(Get-ChildItem (Join-Path $RepoRoot "Plugins") -Filter *.toc -Recurse -Depth 1 |
         ForEach-Object { $_.BaseName })
     if (Test-Path -LiteralPath $snapshot) { Remove-Item -LiteralPath $snapshot -Recurse -Force }
@@ -94,7 +103,7 @@ if ($installed -and $installed -notlike "dev*") {
         robocopy $from (Join-Path $snapshot $name) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "keeping the installed $name failed (robocopy $LASTEXITCODE); nothing was deployed" }
     }
-    Set-Content -LiteralPath (Join-Path $snapshot "VERSION") $installed
+    Set-Content -LiteralPath $keptFile $installed
     Write-Host "Kept the installed $installed in $snapshot (Tools/restore-release.ps1 puts it back)" -ForegroundColor DarkGray
 }
 
