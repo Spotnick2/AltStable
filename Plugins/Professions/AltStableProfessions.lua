@@ -720,13 +720,16 @@ local function ReagentsCounted()
     return type(AltStable.ItemHolders) == "function"
 end
 
--- One item's holders, hidden alts left out, most first. `cache` (optional) is
--- one per redraw: a list asks for the same Empty Vial a hundred times.
+-- One item's holders, hidden alts left out, most first, or nil when Warband's
+-- answer could not be read (it threw, or gave no list): unknown, which is not
+-- zero (Codex review of #277). `cache` (optional) is one per redraw: a list
+-- asks for the same Empty Vial a hundred times.
 local function Holders(item, cache)
     if cache and cache[item] then return cache[item] end
-    local total, out = 0, {}
     local ok, _, list = pcall(AltStable.ItemHolders, item)
-    for _, h in ipairs((ok and type(list) == "table") and list or {}) do
+    if not ok or type(list) ~= "table" then return nil end
+    local total, out = 0, {}
+    for _, h in ipairs(list) do
         if not IsHidden(h.guid) then
             local n = (h.bags or 0) + (h.bank or 0)
             total = total + n
@@ -742,19 +745,22 @@ local function Holders(item, cache)
     return res
 end
 
--- What the stable can do about one recipe, or nil when nothing can be said
--- (no reagent data, or no Warband to count with). Pure over the stores:
+-- What the stable can do about one recipe, or nil and why when nothing can be
+-- said: "none" (no reagent data), "absent" (no Warband to count with), "failed"
+-- (a count could not be read - nothing is claimed then either). Pure over the stores:
 --   reagents = { { item, need, total, holders } } for one craft
 --   enough   = every reagent's total across the stable covers one craft
 --   crafters = for each of `knowers`: { owner, short = { { item, need, have, from } } },
 --              `from` the other alt holding the most; an empty `short` is "has it all"
 local function ReagentPlan(id, knowers, cache)
     local r = Data()[id]
-    if not (r and r.reagents and r.reagents[1]) or not ReagentsCounted() then return nil end
+    if not (r and r.reagents and r.reagents[1]) then return nil, "none" end
+    if not ReagentsCounted() then return nil, "absent" end
     local plan = { reagents = {}, enough = true, crafters = {} }
     for i = 1, #r.reagents - 1, 2 do
         local item, need = r.reagents[i], r.reagents[i + 1]
         local h = Holders(item, cache)
+        if not h then return nil, "failed" end
         plan.reagents[#plan.reagents + 1] = { item = item, need = need, total = h.total, holders = h.list }
         if h.total < need then plan.enough = false end
     end
@@ -796,21 +802,27 @@ local function ReagentLines(id, knowers)
     local r = Data()[id]
     if not (r and r.reagents and r.reagents[1]) then return {} end
     local out = { { "Reagents", nil, 1, 0.82, 0 } }
-    local plan = ReagentPlan(id, knowers)
+    local plan, why = ReagentPlan(id, knowers)
     if not plan then
         for i = 1, #r.reagents - 1, 2 do
             out[#out + 1] = { r.reagents[i + 1] .. " x " .. ItemName(r.reagents[i]), nil, 1, 1, 1 }
         end
-        out[#out + 1] = { "Turn on the Warband plugin to count them across your alts.", nil, 0.6, 0.6, 0.6 }
+        out[#out + 1] = { why == "failed" and "The counts across your alts could not be read."
+                          or "Turn on the Warband plugin to count them across your alts.", nil, 0.6, 0.6, 0.6 }
         return out
     end
     local stale = false
     for _, g in ipairs(plan.reagents) do
         local parts = {}
         for i, h in ipairs(g.holders) do
-            if i > 3 then parts[#parts + 1] = "+" .. (#g.holders - 3); break end
-            parts[#parts + 1] = ColorName(h) .. " " .. h.n
+            -- Every holder counts toward the total, so every one's bank age
+            -- does - not only the three named (Codex review of #277).
             if h.bankStale then stale = true end
+            if i <= 3 then
+                parts[#parts + 1] = ColorName(h) .. " " .. h.n
+            elseif i == 4 then
+                parts[#parts + 1] = "+" .. (#g.holders - 3)
+            end
         end
         local ok = g.total >= g.need
         out[#out + 1] = { g.need .. " x " .. ItemName(g.item),

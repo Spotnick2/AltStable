@@ -709,10 +709,35 @@ eq("an uncached one is a placeholder", T.ItemName(3371), "item 3371")
 T.ItemName(3371)
 eq("  asked for once, not on every hover", #WoW.itemLoadRequests, 1)
 
--- A Warband that throws is "no holders", never an error in the tab.
-AltStable.ItemHolders = function() error("boom") end
-plan = T.ReagentPlan(2329, { owner(A) })
-check("a failing count reads as none held", plan and plan.reagents[1].total == 0 and not plan.enough)
+-- A Warband that throws, or answers with no list, is an UNKNOWN count - never
+-- zero, never an error in the tab (Codex review of #277).
+for label, fn in pairs({ throws = function() error("boom") end, ["gives no list"] = function() return 0 end }) do
+    AltStable.ItemHolders = fn
+    local p, why = T.ReagentPlan(2329, { owner(A) })
+    check("a count that " .. label .. " gives no plan", p == nil and why == "failed", tostring(why))
+    eq("  so Craftable does not claim it", ids(T.BuildRows({ line = 171, filter = "craftable" })), "")
+    lines = T.ReagentLines(2329, { owner(A) })
+    local all = {}
+    for _, l in ipairs(lines) do all[#all + 1] = l[1] .. "|" .. tostring(l[2]) end
+    all = table.concat(all, "\n")
+    check("  and the tooltip says the counts could not be read", all:find("could not be read", 1, true) ~= nil, all)
+    check("  never that nobody has a reagent, or a red zero",
+          not all:find("nobody has it", 1, true) and not all:find("|cffff40400|r", 1, true), all)
+    check("  nor to turn on a Warband that is on", not all:find("Turn on", 1, true), all)
+end
+AltStable.ItemHolders = holdersStub
+
+-- The stale-bank note looks at every holder, not only the three named: a
+-- fourth one's bank is in the total too (Codex review of #277).
+for i, g in ipairs({ "Player-C", "Player-D", "Player-E", "Player-F" }) do
+    AltStableDB[g] = { guid = g, name = "Holder" .. i, class = "MAGE" }
+    held[g] = { [765] = { bags = 10 - i, bank = i == 4 and 1 or 0, bankStale = i == 4 } }
+end
+lines = T.ReagentLines(2329, { owner(A) })
+local seen = false
+for _, l in ipairs(lines) do if l[1]:find("over a week old", 1, true) then seen = true end end
+check("an old bank on the fourth holder is still flagged", seen)
+for _, g in ipairs({ "Player-C", "Player-D", "Player-E", "Player-F" }) do AltStableDB[g], held[g] = nil, nil end
 AltStable.ItemHolders = nil
 held = {}
 WoW.items[765] = nil
