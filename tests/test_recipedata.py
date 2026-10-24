@@ -242,6 +242,95 @@ if luac:
     os.unlink(f.name)
     check("the output is valid Lua", res.returncode == 0, res.stderr)
 
+# ---------------------------------------------------------------------------
+# Season of Discovery leftovers, by the client's tables (#267)
+# ---------------------------------------------------------------------------
+
+# The two wago.tools exports, trimmed: real headers (build 1.60.1.70532), real rows.
+SLA_HEADER = ("AbilityVerb_lang,AbilityAllVerb_lang,ID,SkillLine,Spell,MinSkillLineRank,ClassMask,"
+              "SupercedesSpell,AcquireMethod,TrivialSkillLineRankHigh,TrivialSkillLineRankLow,Flags,"
+              "NumSkillUps,UniqueBit,TradeSkillCategoryID,SkillupSkillLineID,Field_5_5_4_67090_014_0,"
+              "Field_5_5_4_67090_014_1,RaceMasks_0,RaceMasks_1")
+SLA_ROWS = [
+    ",,1378,171,2329,1,0,0,0,95,55,0,1,1047,2450,2937,0,0,0,0",       # Elixir of Minor Strength
+    ",,49324,164,429348,1,0,0,0,205,175,0,1,0,2593,2938,0,0,0,0",     # Shifting Silver Breastplate (SoD)
+    ",,54552,171,1250794,1,0,0,0,75,70,0,1,0,2450,2937,0,0,0,0",      # Elixir of Lesser Spirit (Forever)
+    ",,90001,164,90001,1,0,0,0,0,0,0,1,0,9001,2938,0,0,0,0",          # made up: under an SoD child category
+    ",,90002,164,90002,1,0,0,0,0,0,0,1,0,2593,2938,0,0,0,0",          # made up: one SoD row...
+    ",,90003,165,90002,1,0,0,0,0,0,0,1,0,2450,2938,0,0,0,0",          # ...and one ordinary row
+]
+TSC_HEADER = "ID,Name_lang,HordeName_lang,ParentTradeSkillCategoryID,SkillLineID,OrderIndex,Flags"
+TSC_ROWS = [
+    '2450,"Elixirs",,2425,2937,0,0',
+    '2593,"SEASON OF DISCOVERY",,0,2938,0,0',
+    '9001,"Runes",,2593,2938,0,0',
+]
+
+
+def write_client_db(directory, build, sla=True, tsc=True, tsc_rows=None):
+    if sla:
+        with open(os.path.join(directory, "forever-skilllineability-%s.csv" % build), "w", encoding="utf-8") as f:
+            f.write("\n".join([SLA_HEADER] + SLA_ROWS) + "\n")
+    if tsc:
+        with open(os.path.join(directory, "forever-tradeskillcategory-%s.csv" % build), "w", encoding="utf-8") as f:
+            f.write("\n".join([TSC_HEADER] + (TSC_ROWS if tsc_rows is None else tsc_rows)) + "\n")
+
+
+cdb = tempfile.mkdtemp()
+write_client_db(cdb, "1.60.1.70450")
+write_client_db(cdb, "1.60.1.70532")
+write_client_db(cdb, "1.60.1.70999", tsc=False)   # half a pair: not a candidate
+picked = gen.client_tables(cdb)
+check("the newest build with BOTH tables is used", picked[0] == "1.60.1.70532", repr(picked))
+numeric = tempfile.mkdtemp()
+write_client_db(numeric, "1.60.1.9999")
+write_client_db(numeric, "1.60.1.70532")
+check("builds compare as numbers, not text", gen.client_tables(numeric)[0] == "1.60.1.70532",
+      repr(gen.client_tables(numeric)))
+empty = tempfile.mkdtemp()
+check("no tables at all is an error, not a run without the filter", raises(lambda: gen.client_tables(empty)))
+check("a missing folder is an error too", raises(lambda: gen.client_tables(os.path.join(empty, "nope"))))
+
+season = gen.load_season(cdb, lambda m: None)
+check("an SoD recipe is in the set", 429348 in season, repr(season))
+check("a recipe under a child of an SoD category is in the set", 90001 in season, repr(season))
+check("a Vanilla and a Forever recipe are not", not ({2329, 1250794} & season), repr(season))
+check("a recipe with one ordinary row as well is kept", 90002 not in season, repr(season))
+check("a recipe the client does not list is not dropped", 1251750 not in season)
+
+renamed = tempfile.mkdtemp()
+write_client_db(renamed, "1.60.1.70532", tsc_rows=['2593,"Season of Mastery",,0,2938,0,0'])
+check("no SEASON OF DISCOVERY category is an error, not a filter that drops nothing",
+      raises(lambda: gen.load_season(renamed, lambda m: None)))
+badcol = tempfile.mkdtemp()
+write_client_db(badcol, "1.60.1.70532")
+with open(os.path.join(badcol, "forever-skilllineability-1.60.1.70532.csv"), "w", encoding="utf-8") as f:
+    f.write("ID,Spell\n1,429348\n")
+check("a table without the expected column is an error", raises(lambda: gen.load_season(badcol, lambda m: None)))
+
+held = {2329: {"skill": [171]}, 429348: {"skill": [164]}}
+held_meta = {2329: {"name": "a"}, 429348: {"name": "b"}}
+dropped = gen.drop_season(held, held_meta, season)
+check("drop_season removes the SoD recipe and reports it", dropped == [429348] and sorted(held) == [2329],
+      repr((dropped, held)))
+check("...and its reference row", sorted(held_meta) == [2329], repr(held_meta))
+saved_overrides = gen.ITEM_OVERRIDES
+gen.ITEM_OVERRIDES = {211111: 429348}
+try:
+    check("a hand-checked override to an SoD recipe is an error",
+          raises(lambda: gen.drop_season({429348: {"skill": [164]}}, None, season)))
+finally:
+    gen.ITEM_OVERRIDES = saved_overrides
+
+# The shipped file: the four SoD recipes looked up on Wowhead for #267 are gone,
+# Forever's own are there.
+shipped = gen.recipes_in_lua(open(os.path.join(HERE, "..", "Plugins", "Professions", "RecipeData.lua"),
+                                  encoding="utf-8").read())
+check("the shipped data has no SoD samples (#267)",
+      not ({429348, 430397, 1213481, 1213490} & set(shipped)), repr({429348, 430397, 1213481, 1213490} & set(shipped)))
+check("the shipped data keeps Forever's recipes, listed by the client or not",
+      {2329, 1250794, 1251750} <= set(shipped))
+
 # main(): a rerun with unchanged content keeps the old `source` date, so the file
 # only changes when the data does; --check says whether it would.
 tmp = tempfile.mkdtemp()
@@ -254,8 +343,8 @@ try:
     quiet = open(os.devnull, "w")
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        rc_check = gen.main(["--check", "--out", out, "--reference", tmp])
-        gen.main(["--out", out, "--reference", tmp])
+        rc_check = gen.main(["--check", "--out", out, "--reference", tmp, "--client-db", cdb])
+        gen.main(["--out", out, "--reference", tmp, "--client-db", cdb])
     finally:
         sys.stdout = old_stdout
     check("--check passes on unchanged content", rc_check == 0, str(rc_check))
@@ -267,7 +356,7 @@ try:
     gen.build = lambda refresh, log, meta=None: grown
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        rc_changed = gen.main(["--check", "--out", out, "--reference", tmp])
+        rc_changed = gen.main(["--check", "--out", out, "--reference", tmp, "--client-db", cdb])
     finally:
         sys.stdout = old_stdout
     check("--check fails when a recipe was added", rc_changed == 1, str(rc_changed))
@@ -281,7 +370,7 @@ try:
         f.write(body.replace("-- GENERATED", "-- generated", 1))
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        rc_header = gen.main(["--check", "--out", out, "--reference", tmp])
+        rc_header = gen.main(["--check", "--out", out, "--reference", tmp, "--client-db", cdb])
     finally:
         sys.stdout = old_stdout
     check("--check notices a changed header", rc_header == 1, str(rc_header))
@@ -292,13 +381,36 @@ try:
         f.write(body.replace('source = "wowhead forever 2026-01-01",', "source = 'hand edited',", 1))
     old_stdout, sys.stdout = sys.stdout, quiet
     try:
-        gen.main(["--out", out, "--reference", tmp])
+        gen.main(["--out", out, "--reference", tmp, "--client-db", cdb])
     finally:
         sys.stdout = old_stdout
     rewritten = open(out, encoding="utf-8").read()
     check("an unreadable source line becomes a dated one, not null",
           "null" not in rewritten and (gen.source_line(rewritten) or "").startswith("wowhead forever "),
           rewritten.splitlines()[10] if len(rewritten.splitlines()) > 10 else rewritten)
+
+    # An SoD recipe Wowhead lists never reaches the file (#267)...
+    with_sod = {k: dict(v) for k, v in recipes.items()}
+    with_sod[429348] = {"skill": [164], "learn": 175, "colors": [0, 175, 190, 205]}
+    gen.build = lambda refresh, log, meta=None: with_sod
+    old_stdout, sys.stdout = sys.stdout, quiet
+    try:
+        gen.main(["--out", out, "--reference", tmp, "--client-db", cdb])
+    finally:
+        sys.stdout = old_stdout
+    check("main() leaves the SoD recipe out of the file", "[429348]" not in open(out, encoding="utf-8").read())
+
+    # ...and without the client tables nothing is fetched or written at all.
+    fetched = []
+    gen.build = lambda refresh, log, meta=None: fetched.append(1) or {}
+    before = open(out, encoding="utf-8").read()
+    old_stdout, sys.stdout = sys.stdout, quiet
+    try:
+        no_tables = raises(lambda: gen.main(["--out", out, "--reference", tmp, "--client-db", empty]))
+    finally:
+        sys.stdout = old_stdout
+    check("main() without the client tables stops before fetching",
+          no_tables and not fetched and open(out, encoding="utf-8").read() == before)
 finally:
     gen.build = real_build
 

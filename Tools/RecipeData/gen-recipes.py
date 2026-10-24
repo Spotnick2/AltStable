@@ -50,6 +50,23 @@ Which ITEM teaches a recipe (for the recipe-item tooltips, #14):
     gets NO link - a wrong "Known by" on a recipe someone is about to buy is
     worse than none.
 
+Season of Discovery recipes (#267). Wowhead lists every recipe in the client data,
+and the client still carries SoD's - 287 of them, which Forever does not offer
+(Shifting Silver Breastplate, Razorspike Battleplate...). Nothing on Wowhead's
+pages tells them apart (envChange says "unchanged", like any Vanilla recipe), but
+the client does: it files each under a TradeSkillCategory named "SEASON OF
+DISCOVERY". So the run also reads two client tables, exported from wago.tools:
+
+    https://wago.tools/db2/SkillLineAbility/csv?build=<build>
+    https://wago.tools/db2/TradeSkillCategory/csv?build=<build>
+
+saved as forever-skilllineability-<build>.csv and forever-tradeskillcategory-<build>.csv
+in C:\Projects\WoW\References\Forever\db (--client-db DIR); the newest build that has
+both is used. A recipe goes when every row the client has for it is in such a
+category. One that the client does not list at all stays: no row is no evidence.
+The drop comes after the recipe items are linked, so an SoD recipe still makes a
+same-named item ambiguous instead of handing it to its namesake.
+
 Wowhead source codes seen on these pages (kept as numbers; the plugin labels the
 ones it knows and shows anything else as "other"):
   1 crafted  2 drop  3 pvp  4 quest  5 vendor  6 trainer  7 discovery
@@ -57,6 +74,7 @@ ones it knows and shows anything else as "other"):
 """
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -69,6 +87,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, ".cache")
 OUT = os.path.join(HERE, "..", "..", "Plugins", "Professions", "RecipeData.lua")
 REFERENCES = r"C:\Projects\WoW\References\Forever\recipes"
+CLIENT_DB = r"C:\Projects\WoW\References\Forever\db"
+SEASON_CATEGORY = "SEASON OF DISCOVERY"
 BASE = "https://www.wowhead.com/forever"
 USER_AGENT = "AltStable recipe data generator (github.com/Spotnick2/AltStable)"
 DELAY = 1.5
@@ -110,7 +130,6 @@ ITEM_OVERRIDES = {
     17062: 20916,    # Recipe: Mithril Head Trout -> Mithril Headed Trout
     18654: 23096,    # Schematic: Gnomish Alarm-O-Bot -> Alarm-O-Bot
     21737: 26443,    # Schematic: Cluster Launcher -> Firework Cluster Launcher
-    215156: 435960,  # Schematic: Hyperconductive Goldwrap -> Hyperconductive Goldwap
     19447: 23802,    # Formula: Enchant Bracer - Healing -> Enchant Bracer - Healing Power
     3832: 3453,      # Recipe: Elixir of Detect Lesser Invisibility -> Draught of ...
     6211: 3188,      # Recipe: Elixir of Ogre's Strength -> Elixir of Ogre Strength
@@ -350,6 +369,86 @@ def check_page(records, skill_line, path):
                         % (path, len(foreign), len(records), skill_line))
 
 
+# ---------------------------------------------------------------------------
+# Season of Discovery leftovers, by the client's own tables (#267)
+# ---------------------------------------------------------------------------
+
+_DB_FILE = re.compile(r"^forever-(skilllineability|tradeskillcategory)-(\d+(?:\.\d+)+)\.csv$")
+
+
+def client_tables(directory):
+    """(build, SkillLineAbility path, TradeSkillCategory path) for the newest build
+    that has both. Missing is an error: without them the SoD recipes come back."""
+    found = {}
+    if directory and os.path.isdir(directory):
+        for name in os.listdir(directory):
+            m = _DB_FILE.match(name)
+            if m:
+                found.setdefault(m.group(2), {})[m.group(1)] = os.path.join(directory, name)
+    builds = [b for b, t in found.items() if len(t) == 2]
+    if not builds:
+        raise DataError("no forever-skilllineability-<build>.csv + forever-tradeskillcategory-<build>.csv "
+                        "pair in %r (see the docstring for where to get them)" % directory)
+    build = max(builds, key=lambda b: tuple(int(p) for p in b.split(".")))
+    return build, found[build]["skilllineability"], found[build]["tradeskillcategory"]
+
+
+def _read_csv(path, columns):
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        missing = [c for c in columns if c not in (reader.fieldnames or [])]
+        if missing:
+            raise DataError("%s: no column %s" % (os.path.basename(path), ", ".join(missing)))
+        return list(reader)
+
+
+def season_spells(abilities, categories):
+    """Spells every SkillLineAbility row of which sits in a SEASON OF DISCOVERY
+    category (or under one). `abilities` and `categories` are CSV rows. No such
+    category at all is an error: a renamed category would otherwise drop nothing,
+    quietly."""
+    parent = {int(c["ID"]): int(c["ParentTradeSkillCategoryID"] or 0) for c in categories}
+    season = {int(c["ID"]) for c in categories if (c["Name_lang"] or "").strip().upper() == SEASON_CATEGORY}
+    if not season:
+        raise DataError("TradeSkillCategory has no %r category any more" % SEASON_CATEGORY)
+
+    def in_season(cat):
+        for _ in range(20):   # a loop in the parent links must not hang the run
+            if not cat:
+                return False
+            if cat in season:
+                return True
+            cat = parent.get(cat, 0)
+        return False
+
+    rows = {}
+    for a in abilities:
+        rows.setdefault(int(a["Spell"]), []).append(in_season(int(a["TradeSkillCategoryID"] or 0)))
+    return {spell for spell, flags in rows.items() if all(flags)}
+
+
+def load_season(directory, log):
+    build, sla, tsc = client_tables(directory)
+    spells = season_spells(_read_csv(sla, ["Spell", "TradeSkillCategoryID"]),
+                           _read_csv(tsc, ["ID", "Name_lang", "ParentTradeSkillCategoryID"]))
+    log("client tables %s: %d Season of Discovery spells" % (build, len(spells)))
+    return spells
+
+
+def drop_season(recipes, meta, season):
+    """Removes the SoD recipes in place; returns their IDs. A hand-checked item
+    override pointing at one is a contradiction, not something to drop quietly."""
+    dropped = sorted(set(recipes) & season)
+    bad = sorted(item for item, sid in ITEM_OVERRIDES.items() if sid in season)
+    if bad:
+        raise DataError("ITEM_OVERRIDES link items %s to Season of Discovery recipes" % bad)
+    for sid in dropped:
+        del recipes[sid]
+        if meta is not None:
+            meta.pop(sid, None)
+    return dropped
+
+
 def merge(recipes, spell_id, recipe, path):
     held = recipes.get(spell_id)
     if held is None:
@@ -378,6 +477,8 @@ def render_lua(recipes, source):
         "--                      items = recipe items that teach it, or nil (matched by name) }",
         "-- Source codes: 1 crafted 2 drop 3 pvp 4 quest 5 vendor 6 trainer 7 discovery",
         "--               16 fished 21 pickpocketed; anything else is shown as \"other\".",
+        "-- Season of Discovery recipes are left out: the client files them under their own",
+        "-- TradeSkillCategory, and Forever does not offer them.",
         "AltStableRecipeData = {",
         "source = %s," % json.dumps(source),
         "recipes = {",
@@ -468,7 +569,8 @@ def render_reference_md(rows, source):
         "for enchants), the recipe items that teach it (matched by name, see the generator),",
         "sources, and Wowhead's change flag against Vanilla (`new` = Forever-only).",
         "Profession spells (ranks, specialisations, Find Herbs, Smelting...) are not recipes and",
-        "are left out.",
+        "are left out, and so are Season of Discovery recipes (the client files them under a",
+        "\"SEASON OF DISCOVERY\" trade skill category; Forever does not offer them).",
         "",
         "**Diffing:** rerun the generator after a patch. The file is named by the snapshot date,",
         "which only moves when a recipe changed.",
@@ -578,13 +680,20 @@ def main(argv=None):
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--reference", default=REFERENCES,
                     help="folder for the human-readable .md/.tsv reference ('' to skip)")
+    ap.add_argument("--client-db", default=CLIENT_DB,
+                    help="folder with the client's SkillLineAbility / TradeSkillCategory CSVs")
     args = ap.parse_args(argv)
 
     def log(msg):
         print(msg, flush=True)
 
+    season = load_season(args.client_db, log)   # before the fetches: a missing table fails fast
     meta = {}
     recipes = build(args.refresh, log, meta)
+    dropped = drop_season(recipes, meta, season)
+    log("left out %d Season of Discovery recipes" % len(dropped))
+    if dropped:
+        log("  %s%s" % (", ".join(map(str, dropped[:40])), " ..." if len(dropped) > 40 else ""))
     old_text = ""
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as f:
