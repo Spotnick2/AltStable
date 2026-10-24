@@ -55,14 +55,15 @@ and the client still carries SoD's - 287 of them, which Forever does not offer
 (Shifting Silver Breastplate, Razorspike Battleplate...). Nothing on Wowhead's
 pages tells them apart (envChange says "unchanged", like any Vanilla recipe), but
 the client does: it files each under a TradeSkillCategory named "SEASON OF
-DISCOVERY". So the run also reads two client tables, exported from wago.tools:
+DISCOVERY". So the run also reads two client tables from wago.tools, fetched with
+the shared tool (the `wago-tools` skill), never by hand:
 
-    https://wago.tools/db2/SkillLineAbility/csv?build=<build>
-    https://wago.tools/db2/TradeSkillCategory/csv?build=<build>
+    python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory
 
-saved as forever-skilllineability-<build>.csv and forever-tradeskillcategory-<build>.csv
-in C:\Projects\WoW\References\Forever\db (--client-db DIR); the newest build that has
-both is used. A recipe goes when every row the client has for it is in such a
+It saves them as forever-skilllineability-<build>.csv and
+forever-tradeskillcategory-<build>.csv in C:\Projects\WoW\References\Forever\db
+(--client-db DIR); the newest build that has both is used. After a new client
+build, get them again at that build before rerunning. A recipe goes when every row the client has for it is in such a
 category. One that the client does not list at all stays: no row is no evidence.
 The drop comes after the recipe items are linked, so an SoD recipe still makes a
 same-named item ambiguous instead of handing it to its namesake.
