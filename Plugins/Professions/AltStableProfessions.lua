@@ -706,6 +706,138 @@ local function AllOwners()
     return by
 end
 
+------------------------------------------------------------
+-- Reagents across the stable (#268)
+--
+-- RecipeData carries each recipe's reagents (the client's SpellReagents), flat:
+-- { item, count, item, count... }. The counts are the Warband plugin's: it
+-- publishes AltStable.ItemHolders while it is loaded - every alt's bags and
+-- bank. Without it nothing is claimed about who holds what: "not counted" is
+-- not "nobody has any".
+------------------------------------------------------------
+
+local function ReagentsCounted()
+    return type(AltStable.ItemHolders) == "function"
+end
+
+-- One item's holders, hidden alts left out, most first. `cache` (optional) is
+-- one per redraw: a list asks for the same Empty Vial a hundred times.
+local function Holders(item, cache)
+    if cache and cache[item] then return cache[item] end
+    local total, out = 0, {}
+    local ok, _, list = pcall(AltStable.ItemHolders, item)
+    for _, h in ipairs((ok and type(list) == "table") and list or {}) do
+        if not IsHidden(h.guid) then
+            local n = (h.bags or 0) + (h.bank or 0)
+            total = total + n
+            out[#out + 1] = { guid = h.guid, name = h.name, class = h.class, n = n, bankStale = h.bankStale }
+        end
+    end
+    table.sort(out, function(a, b)
+        if a.n ~= b.n then return a.n > b.n end
+        return (a.name or "") < (b.name or "")
+    end)
+    local res = { total = total, list = out }
+    if cache then cache[item] = res end
+    return res
+end
+
+-- What the stable can do about one recipe, or nil when nothing can be said
+-- (no reagent data, or no Warband to count with). Pure over the stores:
+--   reagents = { { item, need, total, holders } } for one craft
+--   enough   = every reagent's total across the stable covers one craft
+--   crafters = for each of `knowers`: { owner, short = { { item, need, have, from } } },
+--              `from` the other alt holding the most; an empty `short` is "has it all"
+local function ReagentPlan(id, knowers, cache)
+    local r = Data()[id]
+    if not (r and r.reagents and r.reagents[1]) or not ReagentsCounted() then return nil end
+    local plan = { reagents = {}, enough = true, crafters = {} }
+    for i = 1, #r.reagents - 1, 2 do
+        local item, need = r.reagents[i], r.reagents[i + 1]
+        local h = Holders(item, cache)
+        plan.reagents[#plan.reagents + 1] = { item = item, need = need, total = h.total, holders = h.list }
+        if h.total < need then plan.enough = false end
+    end
+    for _, o in ipairs(knowers or {}) do
+        local short = {}
+        for _, g in ipairs(plan.reagents) do
+            local have, from = 0, nil
+            for _, h in ipairs(g.holders) do
+                if h.guid == o.guid then have = h.n elseif not from then from = h end
+            end
+            if have < g.need then short[#short + 1] = { item = g.item, need = g.need, have = have, from = from } end
+        end
+        plan.crafters[#plan.crafters + 1] = { owner = o, short = short }
+    end
+    return plan
+end
+
+-- Item names from the client, asked for once when not cached yet (the next
+-- hover has them); "item 2840" until then.
+local itemRequested = {}
+local function ItemName(item)
+    local n
+    if C_Item and C_Item.GetItemNameByID then
+        local ok, v = pcall(C_Item.GetItemNameByID, item); if ok then n = v end
+    end
+    if n and n ~= "" then return n end
+    if not itemRequested[item] and C_Item and C_Item.RequestLoadItemDataByID then
+        itemRequested[item] = true
+        pcall(C_Item.RequestLoadItemDataByID, item)
+    end
+    return "item " .. item
+end
+
+local CRAFTERS_SHOWN = 4
+
+-- The reagent block of a recipe row's tooltip, as { left, right, lr, lg, lb, rr, rg, rb }
+-- lines (a nil right is a single line). Pure, so tests read it.
+local function ReagentLines(id, knowers)
+    local r = Data()[id]
+    if not (r and r.reagents and r.reagents[1]) then return {} end
+    local out = { { "Reagents", nil, 1, 0.82, 0 } }
+    local plan = ReagentPlan(id, knowers)
+    if not plan then
+        for i = 1, #r.reagents - 1, 2 do
+            out[#out + 1] = { r.reagents[i + 1] .. " x " .. ItemName(r.reagents[i]), nil, 1, 1, 1 }
+        end
+        out[#out + 1] = { "Turn on the Warband plugin to count them across your alts.", nil, 0.6, 0.6, 0.6 }
+        return out
+    end
+    local stale = false
+    for _, g in ipairs(plan.reagents) do
+        local parts = {}
+        for i, h in ipairs(g.holders) do
+            if i > 3 then parts[#parts + 1] = "+" .. (#g.holders - 3); break end
+            parts[#parts + 1] = ColorName(h) .. " " .. h.n
+            if h.bankStale then stale = true end
+        end
+        local ok = g.total >= g.need
+        out[#out + 1] = { g.need .. " x " .. ItemName(g.item),
+                          (ok and "|cff40ff40" or "|cffff4040") .. g.total .. "|r" ..
+                          (#parts > 0 and ("  " .. table.concat(parts, ", ")) or ""),
+                          1, 1, 1, 1, 1, 1 }
+    end
+    if stale then out[#out + 1] = { "Some bank counts are over a week old.", nil, 0.6, 0.6, 0.6 } end
+    for i, c in ipairs(plan.crafters) do
+        if i > CRAFTERS_SHOWN then
+            out[#out + 1] = { "+" .. (#plan.crafters - CRAFTERS_SHOWN) .. " more who know it", nil, 0.6, 0.6, 0.6 }
+            break
+        end
+        local right
+        if #c.short == 0 then
+            right = "|cff40ff40has the reagents|r"
+        else
+            local s = c.short[1]
+            right = "needs " .. (s.need - s.have) .. " " .. ItemName(s.item) ..
+                (s.from and (" (" .. ColorName(s.from) .. " has " .. s.from.n .. ")") or " (nobody has it)") ..
+                (#c.short > 1 and (" +" .. (#c.short - 1)) or "")
+        end
+        out[#out + 1] = { ColorName(c.owner), right, 1, 1, 1, 1, 1, 1 }
+    end
+    return out
+end
+
 -- Builds the list the panel shows. Pure: state in, rows out, so tests drive it.
 --   state = { line, search, filter ("all"|"known"|"missing"|"nobody"), onlyDrops,
 --             focus (guid), owners (from AllOwners, optional) }
@@ -718,6 +850,7 @@ local function BuildRows(state)
         lines[1] = state.line
     end
     local ownersBy = state.owners or AllOwners()
+    local reagentCache = {}
     local rows = {}
     for _, line in ipairs(lines) do
         local entry = ownersBy[line] or { list = {}, hidden = 0 }
@@ -749,6 +882,13 @@ local function BuildRows(state)
                     end
                 elseif f == "nobody" then
                     keep = #knownBy == 0
+                elseif f == "craftable" then
+                    -- Someone (the focused alt, if one is) knows it, and the
+                    -- stable holds enough of every reagent for one craft. Not
+                    -- counted (no Warband) keeps nothing: it is not a yes.
+                    local knows = focus and focus.known[id] or (not focus and #knownBy > 0)
+                    local plan = knows and ReagentPlan(id, nil, reagentCache)
+                    keep = plan and plan.enough or false
                 end
                 if keep then
                     rows[#rows + 1] = { id = id, line = line, name = name, recipe = r, knownBy = knownBy,
@@ -984,6 +1124,12 @@ local function RowOnEnter(self)
     if #unknown > 0 then
         GameTooltip:AddLine("Not scanned yet: " .. table.concat(unknown, ", "), 0.6, 0.6, 0.6, true)
     end
+    local reagents = ReagentLines(row.id, row.knownBy)
+    if #reagents > 0 then GameTooltip:AddLine(" ") end
+    for _, l in ipairs(reagents) do
+        if l[2] then GameTooltip:AddDoubleLine(l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[8])
+        else GameTooltip:AddLine(l[1], l[3], l[4], l[5], true) end
+    end
     GameTooltip:Show()
 end
 
@@ -1181,7 +1327,12 @@ function AT.Refresh()
     else
         emptyFS:Hide()
     end
-    statusFS:SetText(#AT.rows .. " recipes")
+    -- Craftable counts with Warband's bags and banks: without it, say why it is empty.
+    if AT.filter == "craftable" and not ReagentsCounted() then
+        statusFS:SetText("Needs the Warband plugin")
+    else
+        statusFS:SetText(#AT.rows .. " recipes")
+    end
     AT.Layout()
 end
 
@@ -1206,7 +1357,8 @@ function AT.OnWheel(delta, overCards)
     end
 end
 
-local FILTERS = { { "all", "All" }, { "known", "Known" }, { "missing", "Missing" }, { "nobody", "Nobody" } }
+local FILTERS = { { "all", "All" }, { "known", "Known" }, { "missing", "Missing" }, { "nobody", "Nobody" },
+                  { "craftable", "Craftable" } }
 
 local function BuildPanel(mainFrame)
     if panel then return end
@@ -1367,9 +1519,11 @@ local GRID_PARTS = { "bodyScroll", "frozenScroll", "headerScroll", "frozenHeader
 -- at all, so it took whatever the tab before it left. The recipe row needs
 -- about 700 (name 210, skill, source, then the "known by" names from 400 on),
 -- and the toolbar - twelve profession buttons and the search box - about 570.
+-- The filter row needs about 700 since Craftable made it five buttons (#268):
+-- the two checkboxes and the status text on its right would overlap below that.
 -- Below the floor's height there is no room for rows under the cards.
 local PREFERRED_PANEL_W = 760
-local MIN_PANEL_W, MIN_PANEL_H = 600, 400
+local MIN_PANEL_W, MIN_PANEL_H = 700, 400
 AT.PREFERRED_PANEL_W, AT.MIN_PANEL_W, AT.MIN_PANEL_H = PREFERRED_PANEL_W, MIN_PANEL_W, MIN_PANEL_H
 
 -- The floor as a window size: the panel sits beside the sidebar, under the
@@ -1444,6 +1598,8 @@ local function BootstrapPlugin()
             PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
             ResetState = function() pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil end,
             Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
+            ReagentPlan = ReagentPlan, ReagentLines = ReagentLines, ReagentsCounted = ReagentsCounted,
+            ItemName = ItemName, itemRequested = itemRequested,
         },
     })
 

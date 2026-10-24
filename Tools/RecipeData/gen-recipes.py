@@ -55,18 +55,23 @@ and the client still carries SoD's - 287 of them, which Forever does not offer
 (Shifting Silver Breastplate, Razorspike Battleplate...). Nothing on Wowhead's
 pages tells them apart (envChange says "unchanged", like any Vanilla recipe), but
 the client does: it files each under a TradeSkillCategory named "SEASON OF
-DISCOVERY". So the run also reads two client tables from wago.tools, fetched with
-the shared tool (the `wago-tools` skill), never by hand:
+DISCOVERY". So the run also reads client tables from wago.tools, fetched with the
+shared tool (the `wago-tools` skill), never by hand:
 
-    python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory
+    python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory SpellReagents
 
-It saves them as forever-skilllineability-<build>.csv and
-forever-tradeskillcategory-<build>.csv in C:\Projects\WoW\References\Forever\db
-(--client-db DIR); the newest build that has both is used. After a new client
-build, get them again at that build before rerunning. A recipe goes when every row the client has for it is in such a
+It saves them as forever-<table lowercase>-<build>.csv in
+C:\Projects\WoW\References\Forever\db (--client-db DIR); the newest build that has
+all three is used. After a new client build, get them again at that build before
+rerunning. A recipe goes when every row the client has for it is in such a
 category. One that the client does not list at all stays: no row is no evidence.
 The drop comes after the recipe items are linked, so an SoD recipe still makes a
 same-named item ambiguous instead of handing it to its namesake.
+
+Reagents (#268) come from the client's SpellReagents, in its order. Wowhead's
+listing carries them too, and is the fallback for a recipe the table lacks (27 on
+1.60.1.70532). Where both have a recipe they agreed on every one (2177); a
+disagreement is logged, and the client's wins.
 
 Wowhead source codes seen on these pages (kept as numbers; the plugin labels the
 ones it knows and shows anything else as "other"):
@@ -290,6 +295,11 @@ def recipe_from_record(rec):
     src = rec.get("source")
     if src:
         out["src"] = sorted(int(s) for s in src)
+    # Wowhead's, as served: the fallback for a recipe the client's SpellReagents
+    # lacks (apply_reagents replaces it with the client's where it can).
+    reagents = rec.get("reagents")
+    if reagents:
+        out["reagents"] = [[int(item), int(n)] for item, n in reagents]
     return out
 
 
@@ -371,27 +381,28 @@ def check_page(records, skill_line, path):
 
 
 # ---------------------------------------------------------------------------
-# Season of Discovery leftovers, by the client's own tables (#267)
+# The client's own tables: Season of Discovery leftovers (#267), reagents (#268)
 # ---------------------------------------------------------------------------
 
-_DB_FILE = re.compile(r"^forever-(skilllineability|tradeskillcategory)-(\d+(?:\.\d+)+)\.csv$")
+CLIENT_TABLES = ("skilllineability", "tradeskillcategory", "spellreagents")
+_DB_FILE = re.compile(r"^forever-(%s)-(\d+(?:\.\d+)+)\.csv$" % "|".join(CLIENT_TABLES))
 
 
 def client_tables(directory):
-    """(build, SkillLineAbility path, TradeSkillCategory path) for the newest build
-    that has both. Missing is an error: without them the SoD recipes come back."""
+    """(build, {table: path}) for the newest build that has every one of
+    CLIENT_TABLES. Missing is an error: without them the SoD recipes come back."""
     found = {}
     if directory and os.path.isdir(directory):
         for name in os.listdir(directory):
             m = _DB_FILE.match(name)
             if m:
                 found.setdefault(m.group(2), {})[m.group(1)] = os.path.join(directory, name)
-    builds = [b for b, t in found.items() if len(t) == 2]
+    builds = [b for b, t in found.items() if len(t) == len(CLIENT_TABLES)]
     if not builds:
-        raise DataError("no forever-skilllineability-<build>.csv + forever-tradeskillcategory-<build>.csv "
-                        "pair in %r (see the docstring for where to get them)" % directory)
+        raise DataError("no build in %r has all of %s (see the docstring for where to get them)"
+                        % (directory, ", ".join("forever-%s-<build>.csv" % t for t in CLIENT_TABLES)))
     build = max(builds, key=lambda b: tuple(int(p) for p in b.split(".")))
-    return build, found[build]["skilllineability"], found[build]["tradeskillcategory"]
+    return build, found[build]
 
 
 def _read_csv(path, columns):
@@ -433,12 +444,61 @@ def season_spells(abilities, categories):
     return spells
 
 
-def load_season(directory, log):
-    build, sla, tsc = client_tables(directory)
-    spells = season_spells(_read_csv(sla, ["Spell", "TradeSkillCategoryID"]),
-                           _read_csv(tsc, ["ID", "Name_lang", "ParentTradeSkillCategoryID"]))
-    log("client tables %s: %d Season of Discovery spells" % (build, len(spells)))
-    return spells
+def spell_reagents(rows):
+    """{spell: [[item, count], ...]} from SpellReagents rows, in the client's slot
+    order (Reagent_0..7; an empty slot is item 0). A row naming an item with no
+    count is kept as None: 120 such rows on 1.60.1.70532, none a recipe we ship,
+    so it is an error only for a recipe that uses it (apply_reagents). An empty
+    table is an error: every recipe would quietly fall back to Wowhead's."""
+    out = {}
+    for r in rows:
+        pairs = []
+        for i in range(8):
+            item, n = int(r.get("Reagent_%d" % i) or 0), int(r.get("ReagentCount_%d" % i) or 0)
+            if item:
+                if n <= 0:
+                    pairs = None
+                    break
+                pairs.append([item, n])
+        if pairs is None or pairs:
+            out[int(r["SpellID"])] = pairs
+    if not any(out.values()):
+        raise DataError("SpellReagents has no reagents")
+    return out
+
+
+def load_client(directory, log):
+    """The client tables' answers: {"build", "season" (spell IDs), "reagents"}."""
+    build, paths = client_tables(directory)
+    season = season_spells(_read_csv(paths["skilllineability"], ["Spell", "TradeSkillCategoryID"]),
+                           _read_csv(paths["tradeskillcategory"], ["ID", "Name_lang", "ParentTradeSkillCategoryID"]))
+    reagents = spell_reagents(_read_csv(paths["spellreagents"],
+                                        ["SpellID"] + ["Reagent_%d" % i for i in range(8)]
+                                        + ["ReagentCount_%d" % i for i in range(8)]))
+    log("client tables %s: %d Season of Discovery spells, reagents for %d spells"
+        % (build, len(season), len(reagents)))
+    return {"build": build, "season": season, "reagents": reagents}
+
+
+def apply_reagents(recipes, client):
+    """The client's reagents replace Wowhead's in place. Returns (from the client,
+    from Wowhead only, none, [spell IDs where the two disagreed])."""
+    ours = theirs = none = 0
+    disagree = []
+    for sid, r in recipes.items():
+        c = client.get(sid)
+        if sid in client and c is None:
+            raise DataError("SpellReagents: recipe %d names a reagent with no count" % sid)
+        if c:
+            if r.get("reagents") and sorted(r["reagents"]) != sorted(c):
+                disagree.append(sid)
+            r["reagents"] = [list(p) for p in c]
+            ours += 1
+        elif r.get("reagents"):
+            theirs += 1
+        else:
+            none += 1
+    return ours, theirs, none, sorted(disagree)
 
 
 def drop_season(recipes, meta, season):
@@ -473,14 +533,16 @@ def _lua_list(values):
 
 def render_lua(recipes, source):
     lines = [
-        "-- GENERATED by Tools/RecipeData/gen-recipes.py from Wowhead's Forever database.",
+        "-- GENERATED by Tools/RecipeData/gen-recipes.py from Wowhead's Forever database and the",
+        "-- client's own tables (wago.tools).",
         "-- Do not edit by hand: rerun the generator (it says how) and commit the result.",
         "--",
         "-- recipes[spellID] = { skill = {skill lines}, learn = required skill or nil (unknown),",
         "--                      colors = {orange, yellow, green, grey} or nil,",
         "--                      makes = crafted item or nil (enchants make none),",
         "--                      src = Wowhead source codes or nil (unknown),",
-        "--                      items = recipe items that teach it, or nil (matched by name) }",
+        "--                      items = recipe items that teach it, or nil (matched by name),",
+        "--                      reagents = {item, count, item, count, ...} for one craft, or nil }",
         "-- Source codes: 1 crafted 2 drop 3 pvp 4 quest 5 vendor 6 trainer 7 discovery",
         "--               16 fished 21 pickpocketed; anything else is shown as \"other\".",
         "-- Season of Discovery recipes are left out: the client files them under their own",
@@ -502,6 +564,10 @@ def render_lua(recipes, source):
             fields.append("src=%s" % _lua_list(r["src"]))
         if r.get("items"):
             fields.append("items=%s" % _lua_list(r["items"]))
+        if r.get("reagents"):
+            # Flat (item, count, item, count...): a table per pair cost the client
+            # 670 KB more than the file without reagents, flat 330 KB.
+            fields.append("reagents=%s" % _lua_list(v for p in r["reagents"] for v in p))
         lines.append("[%d]={%s}," % (spell_id, ",".join(fields)))
     lines += ["},", "}", ""]
     return "\n".join(lines)
@@ -540,13 +606,14 @@ def reference_rows(recipes, meta):
             "colors": "/".join(str(c) for c in r.get("colors", [])),
             "makes": str(r.get("makes", "")), "source": _sources(r), "status": m.get("status", ""),
             "items": ",".join(str(i) for i in r.get("items", [])),
+            "reagents": " ".join("%dx%d" % (item, n) for item, n in r.get("reagents", [])),
         })
     rows.sort(key=lambda x: (x["profession"], int(x["learn"]) if x["learn"] != "?" else 99999,
                              x["name"], x["id"]))
     return rows
 
 
-REFERENCE_COLUMNS = ["id", "profession", "learn", "colors", "makes", "source", "status", "items", "name"]
+REFERENCE_COLUMNS = ["id", "profession", "learn", "colors", "makes", "source", "status", "items", "reagents", "name"]
 
 
 def render_reference_tsv(rows):
@@ -693,13 +760,18 @@ def main(argv=None):
     def log(msg):
         print(msg, flush=True)
 
-    season = load_season(args.client_db, log)   # before the fetches: a missing table fails fast
+    client = load_client(args.client_db, log)   # before the fetches: a missing table fails fast
     meta = {}
     recipes = build(args.refresh, log, meta)
-    dropped = drop_season(recipes, meta, season)
+    dropped = drop_season(recipes, meta, client["season"])
     log("left out %d Season of Discovery recipes" % len(dropped))
     if dropped:
         log("  %s%s" % (", ".join(map(str, dropped[:40])), " ..." if len(dropped) > 40 else ""))
+    ours, theirs, none, disagree = apply_reagents(recipes, client["reagents"])
+    log("reagents: %d from the client, %d from Wowhead only, %d with none" % (ours, theirs, none))
+    if disagree:
+        log("  Wowhead disagreed on %d (the client's kept): %s%s"
+            % (len(disagree), ", ".join(map(str, disagree[:40])), " ..." if len(disagree) > 40 else ""))
     old_text = ""
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as f:
