@@ -389,31 +389,9 @@ local function QueueModelPathRetry(guid)
     end)
 end
 
+-- The gear fields and the display toggles. The professions and secondaries are
+-- reset by ScanSkills itself, once it has a list to read (docs/AUDIT.md, A2).
 local function ResetCharacter(char)
-
-    -- primary professions (legacy fields kept for compat)
-    char.prof1 = ""
-    char.prof2 = ""
-    char.prof1Skill = 0
-    char.prof2Skill = 0
-    char.prof1Max = 0
-    char.prof2Max = 0
-
-    -- flat per-profession fields used by new columns
-    for _, name in ipairs(ALL_PROFESSIONS) do
-        char["prof_"..name]    = nil
-        char["profmax_"..name] = nil
-    end
-
-    -- secondary professions
-    char.fishing = 0
-    char.fishingMax = 0
-    char.cooking = 0
-    char.cookingMax = 0
-    char.firstAid = 0
-    char.firstAidMax = 0
-    char.riding = 0
-    char.ridingMax = 0
 
     -- gear slots
     for _, slot in ipairs(GEAR_SLOTS) do
@@ -444,10 +422,40 @@ end
 -- ScanCharacter needs ~30 stubbed APIs; this needs two, and it is where the
 -- tuple-to-struct change actually bites.
 function AltStable.ScanSkills(char)
+    -- An empty list is "not readable", not "no skills": a character always has
+    -- header lines. The stored values stay, as reputations' do (docs/AUDIT.md,
+    -- A2), and the reset below runs only once the list is there.
+    local n = GetNumSkillLines()
+    if not n or n == 0 then return end
+
+    -- primary professions (legacy fields kept for compat)
+    char.prof1 = ""
+    char.prof2 = ""
+    char.prof1Skill = 0
+    char.prof2Skill = 0
+    char.prof1Max = 0
+    char.prof2Max = 0
+
+    -- flat per-profession fields used by new columns
+    for _, name in ipairs(ALL_PROFESSIONS) do
+        char["prof_"..name]    = nil
+        char["profmax_"..name] = nil
+    end
+
+    -- secondary professions
+    char.fishing = 0
+    char.fishingMax = 0
+    char.cooking = 0
+    char.cookingMax = 0
+    char.firstAid = 0
+    char.firstAidMax = 0
+    char.riding = 0
+    char.ridingMax = 0
+
     local primaryCount = 0
     local seen = {}
 
-    for i = 1, GetNumSkillLines() do
+    for i = 1, n do
 
         -- One struct, not the old 7-value tuple. Destructuring positionally
         -- here would yield nil for every field and silently record no

@@ -89,8 +89,10 @@ end
 -- Scanner captured the alias at load, so reload it against the tuple stub.
 dofile("Compat.lua"); dofile("Scanner.lua")
 AltStable.ScanSkills(char2)
+-- Nothing read: the fields hold the reset values (the list was there, so the
+-- reset ran), and no profession field at all was written.
 check("a tuple-shaped API records nothing (proves the assertions bite)",
-      char2.fishing == nil and char2.prof1 == nil,
+      char2.fishing == 0 and char2.prof1 == "" and char2.prof_Alchemy == nil,
       "fishing=" .. tostring(char2.fishing) .. " prof1=" .. tostring(char2.prof1))
 C_SkillInfo.GetSkillLineInfo = realGet
 dofile("Compat.lua"); dofile("Scanner.lua")
@@ -1517,6 +1519,48 @@ do
 
     WoW.equipped[1] = nil
     AltStable.PendingGearSlots = nil
+    WoW.reset()
+    AltStableDB = {}
+end
+
+------------------------------------------------------------
+-- A2 (docs/AUDIT.md): an empty skill list leaves the stored professions
+------------------------------------------------------------
+-- A character always has header lines, so zero lines is "not readable", not
+-- "no skills": the stored values stay, as reputations already do. A list
+-- that is there still clears a profession it no longer lists.
+do
+    local savedLines = WoW.skillLines
+    local c = { prof1 = "Alchemy", prof1Skill = 120, prof1Max = 300, prof_Alchemy = 120, profmax_Alchemy = 300,
+                prof2 = "Herbalism", prof_Herbalism = 47, fishing = 42, fishingMax = 150, cooking = 77 }
+    WoW.skillLines = {}
+    AltStable.ScanSkills(c)
+    eq("A2: an empty skill list leaves the stored professions alone", c.prof1, "Alchemy")
+    eq("  and their ranks", c.prof_Alchemy, 120)
+    eq("  and the secondaries", c.fishing, 42)
+    WoW.skillLines = {
+        { name = "Class Skills", isHeader = true,  rank = 0,   maxRank = 0,   skillID = 7 },
+        { name = "Alchemy",      isHeader = false, rank = 125, maxRank = 300, skillID = 171 },
+    }
+    AltStable.ScanSkills(c)
+    eq("  a list that is there clears a profession it no longer lists", c.prof_Herbalism, nil)
+    eq("  and prof2 with it", c.prof2, "")
+    eq("  while the listed one updates", c.prof_Alchemy, 125)
+    eq("  and a secondary no longer listed reads 0", c.fishing, 0)
+
+    -- The real path: a login whose skill list is empty keeps the professions
+    -- the last scan stored (the reset used to run before the list was read).
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("a full scan records the profession", me.prof_Alchemy, 125)
+    WoW.skillLines = {}
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  and a rescan with an empty list keeps it", me.prof_Alchemy, 125)
+    eq("  and prof1", me.prof1, "Alchemy")
+
+    WoW.skillLines = savedLines
     WoW.reset()
     AltStableDB = {}
 end
