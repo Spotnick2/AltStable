@@ -322,6 +322,30 @@ T.DeserializePlayer("Player-Peer-3", "v1|s=200|b=2318,1")
 eq("  and one with no bank field leaves the bank alone",
    AltStableWarbandDB["Player-Peer-3"].bank[2318], 13)
 
+-- B1 (docs/AUDIT.md): kt=0 says the owner has never read this bank since its
+-- data began (a bank read as empty carries its scan time). That is no
+-- knowledge, so a held snapshot stays; the bags are still taken.
+AltStableWarbandDB["Player-Peer-4"] = { bags = { [2318] = 8 }, bank = { [2318] = 13 },
+                                        stamp = 100, bagsStamp = 100, bankStamp = 90 }
+T.DeserializePlayer("Player-Peer-4", "v1|s=200|kt=0|b=2318,9|k=")
+local p4 = AltStableWarbandDB["Player-Peer-4"]
+eq("B1: a blob whose owner never read the bank keeps the held snapshot", p4.bank[2318], 13)
+eq("  and its stamp", p4.bankStamp, 90)
+eq("  while the bags are taken", p4.bags[2318], 9)
+eq("  and the record's stamp moves", p4.stamp, 200)
+redraws = 0
+wb.Refresh, wb.isActive = function() redraws = redraws + 1 end, true
+T.DeserializePlayer("Player-Peer-4", "v1|s=200|kt=0|b=2318,9|k=")
+eq("  re-sending it changes nothing and does not redraw", redraws, 0)
+wb.Refresh, wb.isActive = realRefresh, realActive
+T.DeserializePlayer("Player-Peer-4", "v1|s=300|kt=300|b=2318,9|k=")
+eq("  a bank read as empty (kt>0) still empties it", next(p4.bank), nil)
+eq("  with its stamp", p4.bankStamp, 300)
+-- Nothing held: kt=0 stores the empty map, as before.
+T.DeserializePlayer("Player-Peer-5", "v1|s=200|kt=0|b=2318,1|k=")
+check("  with nothing held, kt=0 stores an empty bank",
+      AltStableWarbandDB["Player-Peer-5"] ~= nil and next(AltStableWarbandDB["Player-Peer-5"].bank) == nil)
+
 ------------------------------------------------------------
 -- Cleanup and orphans
 ------------------------------------------------------------

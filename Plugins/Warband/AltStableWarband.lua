@@ -19,6 +19,15 @@
 -- bags and bank are SEPARATE maps: bags refresh live on BAG_UPDATE, but the
 -- bank is only readable while its frame is open, so a bag rescan must never
 -- clobber the (intentionally stale) bank snapshot.
+--
+-- What a received blob may and may not do (docs/AUDIT.md):
+--   * an older stamp is refused; an equal one applies only when the maps differ;
+--   * a bank the owner has never read (kt=0) leaves a held snapshot alone;
+--   * two moves in one second relayed out of order keep the later-arriving
+--     map until the next change: one-second stamps carry no order (declared);
+--   * inventory whose character record is gone is kept, invisible, until that
+--     character is forgotten or the database cleaned up: the login never
+--     deletes it, so a loss of AltStable.lua does not take this file with it.
 ------------------------------------------------------------
 
 AltStableWarbandDB = AltStableWarbandDB or {}
@@ -337,6 +346,15 @@ local function DeserializePlayer(guid, blob)
     if not bags or not bank then return end   -- malformed: keep existing good data
 
     local bankStamp = tonumber(rest:match("kt=(%d+)")) or incomingStamp
+
+    -- kt=0 says the owner has never read this bank since its data began (a
+    -- bank read as empty carries its scan time), so it is no knowledge: a held
+    -- snapshot stays, and only the bags are taken. Without this, a data reset
+    -- on the owning account erased the bank everywhere until its next bank
+    -- visit (docs/AUDIT.md, B1).
+    if bankStamp == 0 and existing and (existing.bankStamp or 0) > 0 then
+        bank, bankStamp = existing.bank, existing.bankStamp
+    end
 
     -- Nothing new: a full response re-sends every character, and the sheet is
     -- redrawn per character while the panel is open - each redraw rebuilds the
