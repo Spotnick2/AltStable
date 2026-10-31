@@ -1565,6 +1565,37 @@ do
     AltStableDB = {}
 end
 
+------------------------------------------------------------
+-- A3 (docs/AUDIT.md): a failed identity read keeps the stored value
+------------------------------------------------------------
+-- The name and the display id are the two reads with a known failure value
+-- (nil and 0). A record that loses its name is an orphan to the Warband
+-- store, and a 0 display id syncs as fact. Both keep the old value, as the
+-- faction already does.
+do
+    WoW.reset()
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("a scan stores the name", me.name, "Example Surname")
+    eq("  and the display id", me.displayid, 56658)
+
+    local savedName, savedDisplay = WoW.player.name, WoW.displayID
+    WoW.player.name = ""          -- UnitName gives nothing: PlayerFullName is nil
+    WoW.displayID = nil           -- no display id from the client: the read is 0
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("A3: a scan that cannot read the name keeps the stored one", me.name, "Example Surname")
+    eq("  and one that cannot read the display id keeps the stored one", me.displayid, 56658)
+
+    WoW.player.name, WoW.displayID = savedName, savedDisplay
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  a readable name is written", me.name, "Example Surname")
+    WoW.reset()
+    AltStableDB = {}
+end
+
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

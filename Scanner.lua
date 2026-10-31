@@ -636,7 +636,10 @@ function AltStable.ScanCharacter()
     -- the merge will not let a peer's echo of it overwrite it unless strictly
     -- newer. Local-only - never serialized.
     char.scannedHere = true
-    char.name = name
+    -- A name the client could not give keeps the stored one: a nameless record
+    -- is invisible to the sheet and an orphan to the plugins' stores
+    -- (docs/AUDIT.md, A3). Same rule as the faction below.
+    char.name = name or char.name
     char.realm = realm
 
     -- Account number: set once with /alts account 1 (or 2, etc.)
@@ -677,7 +680,10 @@ function AltStable.ScanCharacter()
 
     -- Compact appearance fields for offline model reconstruction (sync-safe).
     -- These are tiny values and ride through the normal character serializer.
-    char.displayid = ReadPlayerDisplayID()
+    -- 0 is the read's failure value (A3): it keeps the stored id rather than
+    -- syncing "no model" as fact.
+    local displayid = ReadPlayerDisplayID()
+    if displayid > 0 or not char.displayid then char.displayid = displayid end
 
     -- Model path capture is two-phase because the model file load is
     -- asynchronous in TBC Classic 2.5.x. The synchronous read often
