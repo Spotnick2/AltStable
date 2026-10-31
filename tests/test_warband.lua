@@ -362,12 +362,16 @@ eq("the core's cleanup clears other characters' inventory too",
    AltStableWarbandDB["Player-Other-1"], nil)
 check("  and keeps this character's", AltStableWarbandDB[GUID] ~= nil)
 
--- A guid no character record mentions any more is invisible in the UI but
--- would sit in SavedVariables forever.
+-- A4 (docs/AUDIT.md): a guid no character record mentions is invisible in the
+-- UI and stays on disk. The login used to delete it, which made a loss of
+-- AltStable.lua take every bank snapshot in AltStableWarband.lua with it;
+-- forget and cleanup are the deletes, and they are explicit.
 AltStableWarbandDB["Player-Gone-1"] = { bags = { [2318] = 5 }, stamp = 100 }
-T.PruneOrphans()
-eq("an orphaned record is pruned", AltStableWarbandDB["Player-Gone-1"], nil)
-check("  while a known character stays", AltStableWarbandDB[GUID] ~= nil)
+T.BootstrapPlugin()
+check("A4: an orphaned record survives the login", AltStableWarbandDB["Player-Gone-1"] ~= nil)
+check("  and a known character's too", AltStableWarbandDB[GUID] ~= nil)
+local total = T.CountItem(2318)
+eq("  an orphan is invisible to the counts", total, 8)
 
 ------------------------------------------------------------
 -- The login pull
@@ -386,22 +390,22 @@ AltStableWarbandDB = { [GUID] = { bags = { [2318] = 8 }, stamp = 100 },
                        ["Player-Ghost-1"] = { bags = { [2318] = 3 }, stamp = 100 } }
 T.BootstrapPlugin()
 eq("holding inventory, a login does not force a full re-pull", resets, 0)
-eq("  and login prunes a record no character record mentions",
-   AltStableWarbandDB["Player-Ghost-1"], nil)
+check("  and a record no character record mentions is kept (A4)",
+      AltStableWarbandDB["Player-Ghost-1"] ~= nil)
 
 AltStableWarbandDB = {}
 T.BootstrapPlugin()
 eq("holding none, it does force one", resets, 1)
 
--- Orphans don't count as "we hold inventory": they are pruned at login, so
--- counting them first would skip the baseline pull and leave the real
--- inventory unfetched behind watermarks that are already ahead.
+-- Orphans don't count as "we hold inventory": they are invisible, so counting
+-- them would skip the baseline pull and leave the real inventory unfetched
+-- behind watermarks that are already ahead.
 resets = 0
 AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid" } }
 AltStableWarbandDB = { ["Player-Ghost-2"] = { bags = { [2318] = 3 }, stamp = 100 } }
 T.BootstrapPlugin()
 eq("inventory for a character nobody has does not count as data", resets, 1)
-eq("  and it is pruned", AltStableWarbandDB["Player-Ghost-2"], nil)
+check("  and it is kept (A4)", AltStableWarbandDB["Player-Ghost-2"] ~= nil)
 AltStable.ResetPeerWatermarks = realReset
 
 ------------------------------------------------------------
