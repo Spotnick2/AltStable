@@ -1474,6 +1474,53 @@ do
     AltStableDB = {}
 end
 
+------------------------------------------------------------
+-- A1 (docs/AUDIT.md): an uncached slot keeps the previous scan's values
+------------------------------------------------------------
+-- ResetCharacter zeroes every gear field before the gear loop, so an uncached
+-- slot used to "keep" those zeros, and a Warband bag update stamped them as
+-- fact a second later. The previous scan's level, quality, name and subtype
+-- stay while the same item is in the slot; a different uncached item is
+-- unknown and reads 0/"" until the cache answers (declared).
+do
+    WoW.reset()
+    WoW.items[5002] = { name = "A Helm", quality = 3, ilvl = 55,
+                        itemType = "Armor", subType = "Mail", equipLoc = "INVTYPE_HEAD" }
+    WoW.equipped[1] = "|Hitem:5002|h[A Helm]|h"
+    AltStableDB = {}
+    AltStable.PendingGearSlots = nil
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("a cached helm scans its level", me.gear_head, 55)
+    local stamped = me.lastUpdate
+
+    -- A fresh login: the link is known, the item is not in the cache yet.
+    WoW.items[5002] = nil
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("A1: an uncached slot keeps the previous scan's level", me.gear_head, 55)
+    eq("  its quality", me.gearq_head, 3)
+    eq("  its name", me.gearname_head, "A Helm")
+    eq("  and its subtype", me.gearsubtype_head, "Mail")
+    eq("  the id is still written", me.gearid_head, 5002)
+    check("  and the slot waits for the cache event",
+          AltStable.PendingGearSlots ~= nil and AltStable.PendingGearSlots.head ~= nil)
+    eq("  lastUpdate is withheld while a slot is pending", me.lastUpdate, stamped)
+
+    -- A different item, also uncached: unknown, not the old item's values.
+    WoW.equipped[1] = "|Hitem:5003|h[Other Helm]|h"
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  a different uncached item reads 0 until the cache answers", me.gear_head, 0)
+    eq("  and no name", me.gearname_head, "")
+    eq("  with the new id", me.gearid_head, 5003)
+
+    WoW.equipped[1] = nil
+    AltStable.PendingGearSlots = nil
+    WoW.reset()
+    AltStableDB = {}
+end
+
 
 print(("test_scanner: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end

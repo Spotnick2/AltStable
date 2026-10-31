@@ -766,8 +766,20 @@ function AltStable.ScanCharacter()
     end
 
     --------------------------------------------------------
-    -- Reset profession data
+    -- Reset the gear fields and the display toggles
     --------------------------------------------------------
+
+    -- The previous scan's cache-dependent gear values, by slot, taken before
+    -- the reset. The item cache can miss a slot at login, and the retry fills
+    -- it only when the cache answers; the reset below used to zero these first,
+    -- so an uncached slot "kept" zeros, and a Warband bag update stamped the
+    -- record as fact a second later (docs/AUDIT.md, A1).
+    local prevGear = {}
+    for _, slot in ipairs(GEAR_SLOTS) do
+        local k = slot.key
+        prevGear[k] = { id = char["gearid_"..k], ilvl = char["gear_"..k], q = char["gearq_"..k],
+                        name = char["gearname_"..k], sub = char["gearsubtype_"..k] }
+    end
 
     ResetCharacter(char)
 
@@ -899,8 +911,18 @@ function AltStable.ScanCharacter()
                 char["gearname_"..slot.key]  = itemName or ""
                 char["gearsubtype_"..slot.key] = itemSubType or ""
             else
-                -- Item link exists but item data isn't cached yet. Keep the
-                -- existing ilvl/quality/name/subtype values and retry on cache event.
+                -- Item link exists but item data isn't cached yet: keep the
+                -- previous scan's ilvl/quality/name/subtype while the SAME item
+                -- is still in the slot, and retry on the cache event. A
+                -- different item is unknown until then and reads 0/"" (never
+                -- the old item's values).
+                local prev = prevGear[slot.key]
+                if prev and itemID and prev.id == itemID and (prev.ilvl or 0) > 0 then
+                    char["gear_"..slot.key]        = prev.ilvl
+                    char["gearq_"..slot.key]       = prev.q or 0
+                    char["gearname_"..slot.key]    = prev.name or ""
+                    char["gearsubtype_"..slot.key] = prev.sub or ""
+                end
                 pendingSlots[slot.key] = link
             end
         else
