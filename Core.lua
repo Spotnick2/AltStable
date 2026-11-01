@@ -618,10 +618,16 @@ local function SetSyncAuth(peer, mode)
     local current = AltStableConfig.syncAuth or {}
     local copy = {}
     for k, v in pairs(current) do copy[k] = v end
+    local wasNever = copy[key] == AUTH_NEVER
     copy[key] = mode          -- nil clears it, back to whitelist-or-ask
     AltStable.SetConfigValue("syncAuth", copy)
     -- Not announced here: the callers (allow, deny, forget) announce once,
     -- when everything that goes with the answer is done.
+    -- Except to other addons (Codex, #282): refusing an own account on the
+    -- library, or taking the refusal back, changes whom the own-account
+    -- channel reaches, and nothing else would say so - the binding is the
+    -- same, so no later message from them does. Coalesced, so it is one call.
+    if wasNever ~= (mode == AUTH_NEVER) and LibSync.peers[key] then LibSync.PeersChanged() end
     return true
 end
 

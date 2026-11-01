@@ -211,6 +211,7 @@ character logged in on that account.
 
 - an own account was found;
 - the library stopped listing one;
+- the player refused one in the sync options, or took the refusal back;
 - Battle.net disconnected, or the player turned Battle.net sync off.
 
 Send what the other side needs then, for example your data's version. It is coalesced like

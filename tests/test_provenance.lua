@@ -451,5 +451,35 @@ L.Peer(BEE)
 flush()
 eq("the library stops listing it: OwnAccountPeersChanged", seen.OwnAccountPeersChanged, 1)
 
+-- Refused, and the refusal taken back (Codex, #282): the list changes with the
+-- same binding, so nothing from them would say so.
+reset()
+proveBee()
+flush()
+seen = {}
+AltStable.DenySyncPeer(BEE)
+flush()
+eq("refusing an own account: OwnAccountPeersChanged", seen.OwnAccountPeersChanged, 1)
+eq("  and it is off the list", #AltStable.GetOwnAccountPeers(), 0)
+seen = {}
+AltStable.DenySyncPeer(BEE)
+flush()
+eq("  refused again: no callback", seen.OwnAccountPeersChanged, nil)
+AltStable.ForgetSyncPeer(BEE)
+flush()
+eq("taking the refusal back: OwnAccountPeersChanged", seen.OwnAccountPeersChanged, 1)
+eq("  and it is on the list again", #AltStable.GetOwnAccountPeers(), 1)
+seen = {}
+AltStable.DenySyncPeer(BEE)
+flush()
+seen = {}
+AltStable.AllowSyncPeer(BEE)
+flush()
+eq("allowing a refused one: OwnAccountPeersChanged", seen.OwnAccountPeersChanged, 1)
+seen = {}
+AltStable.DenySyncPeer(FRIEND)
+flush()
+eq("refusing a friend: no callback (not an own account)", seen.OwnAccountPeersChanged, nil)
+
 print(("test_provenance: %d passed, %d failed"):format(passed, failed))
 if failed > 0 then os.exit(1) end
