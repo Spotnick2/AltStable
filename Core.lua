@@ -908,6 +908,21 @@ function Provenance.Apply(line, sender)
     return n
 end
 
+-- What a record says is worn (#281, AS-003): the item ids and item strings,
+-- slot by slot. A merge that changes it is a gear change other addons hear
+-- about ("GearChanged", PublicAPI.lua); the scanner reports its own.
+function Provenance.GearSig(c)
+    local parts = {}
+    for i, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
+        parts[i] = tostring(c["gearid_" .. slot.key]) .. "=" .. tostring(c["gearstr_" .. slot.key])
+    end
+    return table.concat(parts, ",")
+end
+
+function Provenance.GearMerged(guid, before, c)
+    if Provenance.GearSig(c) ~= before and AltStable.GearUpdated then AltStable.GearUpdated(guid) end
+end
+
 -- PublicAPI.lua defines it, as the "ProvenanceChanged" callback. Scanner.lua
 -- calls it too, for a character marked "self".
 function Provenance.Changed()
@@ -1377,12 +1392,16 @@ local function ClearSyncedStateFields(t)
     -- on the word of a scan that peer can no longer confirm. Absent means "shown", which is
     -- the safe direction to fail.
     t.hidehelm = nil; t.hidecloak = nil
+    -- When the gear last changed (#281): an older peer's record has none, and
+    -- the stamp of a gear set no longer on the record must not linger.
+    t.gearAt = nil
     for k in pairs(t) do
         if k:find("^prof_") or k:find("^profmax_")
         or k:find("^gear_") or k:find("^gearq_")
         or k:find("^gearname_") or k:find("^gearid_")
         or k:find("^gearmod_")   -- NOTE: "^gear_" does NOT match "gearmod_"
         or k:find("^gearench_")  -- the enchant in words (#94); "^gear_" misses it too
+        or k:find("^gearstr_")   -- the item string (#281): absent from an older peer = unknown
         or k:find("^gearlink_") or k:find("^gearsubtype_")  -- both local-only (see note above)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
@@ -1518,6 +1537,7 @@ local function DeserializeFullDB(payload, sender)
 
                     if ShouldMerge(existing, c) then
                         local priorName = existing.name
+                        local gearBefore = Provenance.GearSig(existing)
                         DispatchPluginPayloads(c)
                         ClearSyncedStateFields(existing)
                         for k,v in pairs(c) do
@@ -1525,6 +1545,7 @@ local function DeserializeFullDB(payload, sender)
                         end
                         KeepFullerName(existing, priorName)
                         AltStableDB[c.guid] = existing
+                        Provenance.GearMerged(c.guid, gearBefore, existing)
                     else
                         DispatchPluginPayloads(c, true)
                     end
@@ -2460,6 +2481,7 @@ local function ReceiveCharacter(c, sender)
     end
 
     local priorName = existing.name
+    local gearBefore = Provenance.GearSig(existing)
     DispatchPluginPayloads(c)
     ClearSyncedStateFields(existing)
     for k,v in pairs(c) do
@@ -2468,6 +2490,7 @@ local function ReceiveCharacter(c, sender)
     KeepFullerName(existing, priorName)
 
     AltStableDB[c.guid] = existing
+    Provenance.GearMerged(c.guid, gearBefore, existing)
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()

@@ -38,6 +38,7 @@ AltStable.PUBLIC_API_VERSION = 1
 AltStable.PUBLIC_API_FEATURES = {
     provenance = true,          -- GetCharacterProvenance, the provenance fields, ProvenanceChanged
     ownAccountChannel = true,   -- SendToOwnAccounts and the rest, OwnAccountPeersChanged
+    gear = true,                -- GetCharacterGear, GearChanged (AS-003)
 }
 
 -- Whose character a record is (Core.lua, "Ownership provenance"): kind, the
@@ -113,6 +114,69 @@ function AltStable.GetTotals()
     return AltStable.CharacterTotals()
 end
 
+-- One character's equipped gear (#281, AS-003), as a copy. nil for a
+-- character AltStable has no record of. Per inventory slot id:
+--   state       "occupied": itemString is exact;
+--               "empty": nothing in the slot;
+--               "unknown": the record cannot say which item (a record from an
+--               AltStable before #281, or a string that disagrees with the
+--               record's item id, enchant or gems - stale, never trusted).
+--               itemID is still given when known, as a hint.
+--   itemString  "item:..." with the random suffix (Forever: bonus IDs) and the
+--               enchant and gems, without the scanner's level and spec
+--               (Scanner.lua, GearItemString)
+--   itemLevel   nil when the scanning client had not cached the item
+local function GearSlot(char, slot)
+    local out = { slot = slot.id, key = slot.key }
+    local id = tonumber(char["gearid_" .. slot.key])
+    if id == nil then out.state = "unknown" return out end
+    if id == 0 then out.state = "empty" return out end
+    out.itemID = id
+    local lvl = PlainNumber(char["gear_" .. slot.key])
+    if lvl and lvl > 0 then out.itemLevel = lvl end
+    local str = char["gearstr_" .. slot.key]
+    -- Our own scan from before #281 still has its link to read it from.
+    if (type(str) ~= "string" or str == "") and char.scannedHere and AltStable.GearItemString then
+        str = AltStable.GearItemString(char["gearlink_" .. slot.key])
+    end
+    out.state = "unknown"
+    if type(str) ~= "string" then return out end
+    local f = {}
+    for v in (str:gsub("^item:", "") .. ":"):gmatch("([^:]*):") do f[#f + 1] = v end
+    if tonumber(f[1]) ~= id then return out end
+    -- An older client relays a string it cannot clear on a later merge: one
+    -- whose enchant or gems disagree with the record's own is stale.
+    local mod = char["gearmod_" .. slot.key]
+    if type(mod) == "string" and mod ~= "" then
+        local ench, _, g1, g2, g3 = mod:match("^(%d+):([^:]*):(%d+):(%d+):(%d+)$")
+        if ench and (tonumber(f[2]) or 0) ~= tonumber(ench) then return out end
+        if g1 and ((tonumber(f[3]) or 0) ~= tonumber(g1) or (tonumber(f[4]) or 0) ~= tonumber(g2)
+                   or (tonumber(f[5]) or 0) ~= tonumber(g3)) then return out end
+    end
+    out.state, out.itemString = "occupied", str
+    return out
+end
+
+function AltStable.GetCharacterGear(guid)
+    local char = type(AltStableDB) == "table" and type(guid) == "string" and AltStableDB[guid]
+    if type(char) ~= "table" or not char.name then return nil end
+    local out = {
+        guid = guid,
+        -- The record's stamp: the gear is as of then (a scan stamps it only
+        -- when every slot resolved). Not a receive time.
+        capturedAt = PlainNumber(char.lastUpdate),
+        -- When the worn items last changed, on the character's own client; nil
+        -- on a record from an AltStable before #281.
+        gearAt = PlainNumber(char.gearAt),
+        provenance = (ProvenanceOf(char)),
+        slots = {},
+    }
+    for _, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
+        out.slots[slot.id] = GearSlot(char, slot)
+    end
+    return out
+end
+
 -- One character's provenance: kind, at, via (see ProvenanceOf). nil for a
 -- character AltStable has no record of.
 function AltStable.GetCharacterProvenance(guid)
@@ -170,6 +234,7 @@ end
 local callbacks = {}          -- event -> { fn = true }
 local pending = {}            -- event -> true while its callback is scheduled
 local firing = {}             -- event -> true while its listeners run
+local gearGuids = {}          -- guid -> true: gear changed since the last GearChanged
 
 local function Listeners(event)
     local list = {}
@@ -190,9 +255,19 @@ local function Fire(event)
     -- its callback would ADD a key mid-traversal, which is undefined in Lua 5.1's
     -- pairs(). The new one is heard from the next change on.
     local listeners = Listeners(event)
+    -- "GearChanged" says WHICH characters (#281): the GUIDs gathered over the
+    -- burst, a fresh list for each listener.
+    local guids
+    if event == "GearChanged" then guids, gearGuids = gearGuids, {} end
     firing[event] = true
     for _, fn in ipairs(listeners) do
-        xpcall(function() return fn(event) end, Report)
+        local arg
+        if guids then
+            arg = {}
+            for guid in pairs(guids) do arg[#arg + 1] = guid end
+            table.sort(arg)
+        end
+        xpcall(function() return fn(event, arg) end, Report)
     end
     firing[event] = nil
 end
@@ -214,7 +289,8 @@ local function Changed(event)
 end
 
 local EVENTS = { CharactersChanged = true, PortraitStatusChanged = true,
-                 ProvenanceChanged = true, OwnAccountPeersChanged = true }   -- the last two: #281
+                 ProvenanceChanged = true, OwnAccountPeersChanged = true,    -- #281
+                 GearChanged = true }                                         -- #281, AS-003
 
 function AltStable.RegisterCallback(event, fn)
     if not EVENTS[event] then error("AltStable.RegisterCallback: unknown event " .. tostring(event), 2) end
@@ -263,6 +339,15 @@ end
 -- onto the library or leaves it. Coalesced like the others.
 function AltStable.ProvenanceUpdated() Changed("ProvenanceChanged") end
 function AltStable.OwnAccountPeersUpdated() Changed("OwnAccountPeersChanged") end
+
+-- "GearChanged" (#281, AS-003): Scanner.lua for our own scan, Core.lua for a
+-- merge that changed what a record says is worn. Nothing gathered while
+-- nobody listens.
+function AltStable.GearUpdated(guid)
+    if not next(callbacks.GearChanged or {}) then return end
+    if type(guid) == "string" then gearGuids[guid] = true end
+    Changed("GearChanged")
+end
 
 ------------------------------------------------------------
 -- The own-account channel (#281)

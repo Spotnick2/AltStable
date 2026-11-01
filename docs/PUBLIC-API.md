@@ -43,6 +43,7 @@ if F and F.ownAccountChannel then ... end
 |---|---|---|
 | `provenance` | #281 | `GetCharacterProvenance`, the `provenance*` fields on `GetCharacters`, `"ProvenanceChanged"` |
 | `ownAccountChannel` | #281 | `SendToOwnAccounts`, `RegisterOwnAccountHandler`, `GetOwnAccountPeers`, `"OwnAccountPeersChanged"` |
+| `gear` | #281 (AS-003) | `GetCharacterGear`, `"GearChanged"` |
 
 An older AltStable has no table, or no flag. Treat that as "not available", not as an error.
 
@@ -108,6 +109,42 @@ no record of. The same three values as the `provenance*` fields above.
 - `at` is nil for a `"self"` record not scanned since the update, and `via` is nil except
   for `"own-account"`.
 
+## `AltStable.GetCharacterGear(guid)` → table
+
+One character's equipped gear, as a copy; `nil` for a character AltStable has no record of.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `guid` | string | |
+| `capturedAt` | number or nil | The record's stamp (`lastUpdate`): the gear is as of then. A scan stamps it only once every slot has resolved. It is not a receive time. |
+| `gearAt` | number or nil | When the worn items last changed, `time()` on the character's own client. It is separate from `lastUpdate`, which plugins move for their own data. nil on a record from an AltStable before #281. |
+| `provenance` | string | As `GetCharacterProvenance`. |
+| `slots` | table | Keyed by inventory slot id: 1-3 and 5-18. The shirt (4) and tabard (19) are not gear slots. |
+
+Each slot is `{ slot, key, state, itemID, itemString, itemLevel }`:
+
+| Field | Meaning |
+|---|---|
+| `state` | `"occupied"`, `"empty"` or `"unknown"`. |
+| `itemString` | Given exactly when the slot is `"occupied"`: `"item:..."`, with the random suffix, the enchant and the gems. |
+| `itemID` | Given for an occupied slot. For an `"unknown"` one too, when known, as a hint only. |
+| `itemLevel` | nil when the scanning client had not cached the item. |
+
+A slot is `"unknown"` when the record can't say which item is worn:
+
+- the record has nothing for the slot;
+- the record is from an AltStable before #281, which sent no item string;
+- the record's string disagrees with its item id, enchant or gems. An older AltStable can relay a string it can't clear, so a mismatch is treated as stale.
+
+`"unknown"` is never a guess at the item.
+
+About the item string:
+
+- **On Forever a random suffix is a bonus ID,** not the classic suffix field, which is always empty. This was measured on 205 stored links. *Beaded Wraps of the Sorcerer* is `item:14094::::::::::::1:12745`. The string keeps the bonus and modifier block.
+- **It blanks the link level and spec,** which belong to the character that scanned the item, not to the item. A level-up therefore doesn't change it.
+- **It drops what follows the modifiers,** such as a crafter's GUID.
+- **Whether `GetItemStats` and `GetItemInfo` read such a trimmed string the same as the full link is not measured yet.** Glass Gear's GG-103 probe covers it.
+
 ## `AltStable.ToggleSheet()` / `AltStable.OpenSheet()`
 
 `ToggleSheet` is what a click on an info-bar block should do: open the sheet, or close it if
@@ -145,8 +182,9 @@ the callback carries nothing else.
 - Registering does not call you; the first call is the next change. A listener registered
   from inside a callback is called from the next change on. One unregistered from inside a
   callback may still receive the call already in progress.
-- The events are `"CharactersChanged"`, `"PortraitStatusChanged"`, `"ProvenanceChanged"`
-  and `"OwnAccountPeersChanged"` (below). Registering anything else is an error.
+- The events are `"CharactersChanged"`, `"PortraitStatusChanged"`, `"ProvenanceChanged"`,
+  `"OwnAccountPeersChanged"` and `"GearChanged"` (below). Registering anything else is an
+  error.
 
 ## `AltStable.RegisterCallback("PortraitStatusChanged", fn)`
 
@@ -159,6 +197,18 @@ call per change, on the next frame, with the same rules as above.
 `fn("ProvenanceChanged")` is called when a character's provenance changes: a scan marks it
 `"self"`, or a sync from an own account marks it `"own-account"`. Read
 `GetCharacterProvenance` or `GetCharacters` again. Coalesced, with the same rules as above.
+
+## `AltStable.RegisterCallback("GearChanged", fn)`
+
+`fn("GearChanged", guids)` is called when a character's worn items change. That can be this
+client's own scan, or a sync that brings a record whose gear differs from the one held.
+
+- `guids` lists the characters that changed during the burst, sorted. Each listener gets its
+  own list.
+- A level-up alone is not a change. Neither is a newer record with the same gear.
+- The first scan after updating AltStable also reports one, with nothing changed.
+- Changes made while nobody is registered are not collected.
+- Otherwise it follows the same rules as the other callbacks.
 
 ## The own-account channel
 
