@@ -1509,6 +1509,15 @@ do
           AltStable.PendingGearSlots ~= nil and AltStable.PendingGearSlots.head ~= nil)
     eq("  lastUpdate is withheld while a slot is pending", me.lastUpdate, stamped)
 
+    -- The same item id under another link (a suffixed variant has another
+    -- name): not the same item, so nothing is kept (Codex, PR #280).
+    WoW.equipped[1] = "|Hitem:5002:0:0:0:0:0:123|h[A Helm of the Monkey]|h"
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  the same id under another link is unknown: no level", me.gear_head, 0)
+    eq("  and no name", me.gearname_head, "")
+    eq("  with the id still written", me.gearid_head, 5002)
+
     -- A different item, also uncached: unknown, not the old item's values.
     WoW.equipped[1] = "|Hitem:5003|h[Other Helm]|h"
     AltStable.ScanCharacter()

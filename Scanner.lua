@@ -791,7 +791,7 @@ function AltStable.ScanCharacter()
     local prevGear = {}
     for _, slot in ipairs(GEAR_SLOTS) do
         local k = slot.key
-        prevGear[k] = { id = char["gearid_"..k], ilvl = char["gear_"..k], q = char["gearq_"..k],
+        prevGear[k] = { link = char["gearlink_"..k], ilvl = char["gear_"..k], q = char["gearq_"..k],
                         name = char["gearname_"..k], sub = char["gearsubtype_"..k] }
     end
 
@@ -926,12 +926,14 @@ function AltStable.ScanCharacter()
                 char["gearsubtype_"..slot.key] = itemSubType or ""
             else
                 -- Item link exists but item data isn't cached yet: keep the
-                -- previous scan's ilvl/quality/name/subtype while the SAME item
-                -- is still in the slot, and retry on the cache event. A
-                -- different item is unknown until then and reads 0/"" (never
+                -- previous scan's ilvl/quality/name/subtype while the SAME link
+                -- is still in the slot, and retry on the cache event. The whole
+                -- link, not the item id: a suffixed variant ("of the Monkey")
+                -- shares the id and has another name (Codex, PR #280). A
+                -- different link is unknown until then and reads 0/"" (never
                 -- the old item's values).
                 local prev = prevGear[slot.key]
-                if prev and itemID and prev.id == itemID and (prev.ilvl or 0) > 0 then
+                if prev and prev.link == link and (prev.ilvl or 0) > 0 then
                     char["gear_"..slot.key]        = prev.ilvl
                     char["gearq_"..slot.key]       = prev.q or 0
                     char["gearname_"..slot.key]    = prev.name or ""

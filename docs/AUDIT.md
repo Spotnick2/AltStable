@@ -84,7 +84,7 @@ once more with the fix reverted and went red again. Lines are as of this branch.
 
 | # | Finding | Fix | Witness (reverted → red) |
 |---|---|---|---|
-| A1 | `ResetCharacter` zeroed every gear field before the gear loop (Scanner.lua:419-428), so an uncached slot "kept" zeros (the comment at the uncached branch said otherwise). The scanner withholds `lastUpdate` while a slot is pending, but Warband's `ApplyScan` → `TouchCharacter` stamps the record a second later, so the zeros rode the next delta and `ShouldMerge` took them as newer. A cache event answering `success=false` left them until the next good scan | the previous scan's level, quality, name and subtype are snapshotted per slot before the reset and restored for an uncached slot that still holds the same item id; a different uncached item reads 0/"" until the cache event (declared, transient) | `test_scanner` "A1: an uncached slot keeps the previous scan's level" (+ quality, name, subtype, pending, `lastUpdate` withheld; 4 red); `test_warband_sync` R6 "the delta carries the helm's level from the previous scan, not 0" (W4, 3 red) |
+| A1 | `ResetCharacter` zeroed every gear field before the gear loop (Scanner.lua:419-428), so an uncached slot "kept" zeros (the comment at the uncached branch said otherwise). The scanner withholds `lastUpdate` while a slot is pending, but Warband's `ApplyScan` → `TouchCharacter` stamps the record a second later, so the zeros rode the next delta and `ShouldMerge` took them as newer. A cache event answering `success=false` left them until the next good scan | the previous scan's level, quality, name and subtype are snapshotted per slot before the reset and restored for an uncached slot that still holds the same **link** (not the same item id: a suffixed variant shares the id and has another name; Codex on PR #280); a different link reads 0/"" until the cache event (declared, transient) | `test_scanner` "A1: an uncached slot keeps the previous scan's level" (+ quality, name, subtype, pending, `lastUpdate` withheld; 4 red), "the same id under another link is unknown" (W7: red with the guard loosened to any previous value); `test_warband_sync` R6 "the delta carries the helm's level from the previous scan, not 0" (W4, 3 red) |
 | A2 | `ScanSkills` had no empty-list guard where `ScanReputations` has one (Reputations.lua:191), and the profession reset had already run in `ResetCharacter` | the profession and secondary reset moved into `ScanSkills`, after a `GetNumSkillLines() == 0 → return`; the tuple-shape witness now asserts the reset values | `test_scanner` "A2: …" through `ScanSkills` and through a full rescan with an empty list (6 red with the fix reverted) |
 | A3 | `name` was written nil when `PlayerFullName()` returned nil (a nameless record is invisible and, before A4, an orphan to the Warband store); `displayid` was written 0, the read's failure value, and synced as "no model" | both keep the stored value when the read fails, as `faction` already did (`name or char.name`; `displayid` only when `> 0` or none stored). `guild` nil → "" stays until the live reading (section 5) says whether nil at +2 s means "not loaded" | `test_scanner` "A3: a scan that cannot read the name keeps the stored one", "…display id…" (2 red) |
 | A4 | `PruneOrphans` ran at every login and deleted every Warband entry without a *named* core record, so a lost or unreadable `AltStable.lua` took every bank snapshot in `AltStableWarband.lua` with it (Codex, round 1: promote from declared to fixed) | no prune at login; an orphan stays, invisible (`gather` and `CountItem` iterate the named records), and does not count as held data for the baseline pull; `OnForget` and `OnCleanup` remain the explicit deletes | `test_warband` "A4: an orphaned record survives the login", "…is kept (A4)" ×2 (3 red); `test_login_migrations` "the Warband store keeps the orphan (A4)" |
@@ -134,8 +134,9 @@ What a login or a sync knowingly overwrites or loses, and where it is said:
 `tests/test_warband_sync.lua` (27 checks): the real plugin registered with the core, two "sides" that are
 the three SavedVariables globals swapped in one Lua state, and payloads delivered to `LibSync.Apply`, where
 both transports land. It tests the merge and the dispatch, not admission, transport or login
-(`test_comm.lua` and `test_accountsync.lua` own those; Codex, round 1). `observe()` reads every Warband map
-and stamp plus the core fields a Warband change rides with; each row states its expected differences by
+(`test_comm.lua` and `test_accountsync.lua` own those; Codex, round 1). `snap()` reads every entry of every
+Warband map (an empty map and an absent one marked apart), the three stamps, and four core fields a Warband
+change rides with (`name`, `class`, `lastUpdate`, `gear_head`); each row states its expected differences by
 hand and passes only when the differences are exactly those.
 
 | Row | What it does | Expected, by hand |
@@ -168,8 +169,9 @@ PLAYER_LOGIN (the scan's moment), what the scan reads: `UnitName` both halves, `
 `C_SkillInfo.GetNumSkillLines()`, `C_PlayerInfo.GetDisplayID()`, into `AltStableProbeDB.audit.login`. The
 procedure then shows that reading and checks it, asks whether the character is in a guild and compares, and
 runs the Warband round trip with the owner's other account: a bag change seen on the other side after
-`/alts sync`, the bank snapshot surviving a bag-only sync, one full exit on both accounts (proven by
-`WowB`'s StartTime, never a `/reload`), the inventory still held afterwards on both sides. Listed in #275.
+`/alts sync`, the bank snapshot surviving a bag-only sync, one full exit on both accounts, the inventory
+still held afterwards on both sides. The host cannot tell a `/reload` from a relaunch (GUIDE.md, section
+3), so the exit is the owner's to prove, by `WowB`'s StartTime, never a `/reload`. Listed in #275.
 
 | Step | What it proves |
 |---|---|

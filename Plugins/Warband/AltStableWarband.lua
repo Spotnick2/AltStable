@@ -352,7 +352,7 @@ local function DeserializePlayer(guid, blob)
     -- snapshot stays, and only the bags are taken. Without this, a data reset
     -- on the owning account erased the bank everywhere until its next bank
     -- visit (docs/AUDIT.md, B1).
-    if bankStamp == 0 and existing and (existing.bankStamp or 0) > 0 then
+    if bankStamp == 0 and existing and existing.bank and (existing.bankStamp or 0) > 0 then
         bank, bankStamp = existing.bank, existing.bankStamp
     end
 

@@ -96,8 +96,11 @@ local function snap(s)
     end
     for guid, w in pairs(s.wb) do
         for _, k in ipairs({ "stamp", "bagsStamp", "bankStamp" }) do out["wb." .. guid .. "." .. k] = w[k] end
+        -- An empty map and an absent one are different states (the plugin
+        -- header): both are marked, so a row can tell them apart.
         for _, m in ipairs({ "bags", "bank" }) do
             if w[m] == nil then out["wb." .. guid .. "." .. m] = "absent"
+            elseif next(w[m]) == nil then out["wb." .. guid .. "." .. m] = "empty"
             else for id, n in pairs(w[m]) do out["wb." .. guid .. "." .. m .. "[" .. id .. "]"] = n end end
         end
     end
@@ -141,7 +144,8 @@ expectDiffs("R1: a full pull brings both records and both inventories, and nothi
     y("name") .. ": nil -> Yarrow Surname", y("class") .. ": nil -> MAGE", y("lastUpdate") .. ": nil -> 900",
     wx("bags[2318]") .. ": nil -> 8", wx("bank[2589]") .. ": nil -> 20",
     wx("stamp") .. ": nil -> 1000", wx("bagsStamp") .. ": nil -> 1000", wx("bankStamp") .. ": nil -> 950",
-    wy("bags[159]") .. ": nil -> 2", wy("stamp") .. ": nil -> 900", wy("bagsStamp") .. ": nil -> 900", wy("bankStamp") .. ": nil -> 0",
+    wy("bags[159]") .. ": nil -> 2", wy("bank") .. ": nil -> empty",
+    wy("stamp") .. ": nil -> 900", wy("bagsStamp") .. ": nil -> 900", wy("bankStamp") .. ": nil -> 0",
 })
 eq("  the watermark for A is the newest stamp seen", T.GetPeerWatermark(A.name), 1000)
 
@@ -183,7 +187,7 @@ eq("  a bank read as empty carries its stamp", A.wb[X].bankStamp, WoW.now)
 use(B); before = snap(B)
 receive(B, A, payloadFrom(A, T.GetPeerWatermark(A.name)))
 expectDiffs("  and B's snapshot goes with it", before, snap(B), {
-    wx("bank[2589]") .. ": 20 -> nil", wx("bankStamp") .. ": 950 -> " .. WoW.now,
+    wx("bank[2589]") .. ": 20 -> nil", wx("bank") .. ": nil -> empty", wx("bankStamp") .. ": 950 -> " .. WoW.now,
     wx("stamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now, wx("bagsStamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
     x("lastUpdate") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
 })
@@ -250,8 +254,8 @@ before = snap(B)
 receive(B, A, payloadFrom(A, T.GetPeerWatermark(A.name)))
 expectDiffs("  played since the forget, it is let back with its inventory", before, snap(B), {
     y("name") .. ": nil -> Yarrow Surname", y("class") .. ": nil -> MAGE", y("lastUpdate") .. ": nil -> " .. WoW.now,
-    wy("bags[159]") .. ": nil -> 3", wy("stamp") .. ": nil -> " .. WoW.now, wy("bagsStamp") .. ": nil -> " .. WoW.now,
-    wy("bankStamp") .. ": nil -> 0",
+    wy("bags[159]") .. ": nil -> 3", wy("bank") .. ": nil -> empty",
+    wy("stamp") .. ": nil -> " .. WoW.now, wy("bagsStamp") .. ": nil -> " .. WoW.now, wy("bankStamp") .. ": nil -> 0",
 })
 eq("  and every watermark is reset, so the rest of it comes in full", next(B.cfg.peerWatermarks), nil)
 
@@ -276,7 +280,7 @@ L.OnMessage(L.MSG_DB .. "|" .. LD:CompressDeflate(full, { level = 8 }),
             { name = A.name, guid = A.guid, realm = "R", faction = "Horde", proven = "bnet" })
 expectDiffs("  a synced forget drops the record and the inventory on B", before, snap(B), {
     y("name") .. ": Yarrow Surname -> nil", y("class") .. ": MAGE -> nil", y("lastUpdate") .. ": " .. (WoW.now - 10) .. " -> nil",
-    wy("bags[159]") .. ": 3 -> nil", wy("stamp") .. ": " .. (WoW.now - 10) .. " -> nil",
+    wy("bags[159]") .. ": 3 -> nil", wy("bank") .. ": empty -> nil", wy("stamp") .. ": " .. (WoW.now - 10) .. " -> nil",
     wy("bagsStamp") .. ": " .. (WoW.now - 10) .. " -> nil", wy("bankStamp") .. ": 0 -> nil",
 })
 
