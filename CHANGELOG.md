@@ -47,6 +47,19 @@ the beta's `_classic_beta_`, press **Detect** again or **Browse** to `_forever_`
 - The Professions tab needs a slightly wider window than before (700 instead of 600), so its fifth
   filter fits.
 
+### Fixed
+
+- **Data that was lost at login or on a sync**
+  ([#280](https://github.com/Spotnick2/AltStable/pull/280), the audit in `docs/AUDIT.md`). An item
+  the game had not loaded yet at login scanned as item level 0, and that 0 synced to your other
+  accounts as if it were true; it now keeps the last reading until the game answers. An empty skill
+  list at login wiped the professions; it now leaves them. A name or display id the game could not
+  give overwrote the stored one. The Warband plugin deleted every character's bags and bank at login
+  when the core database was missing or unreadable, so losing `AltStable.lua` took
+  `AltStableWarband.lua` with it; it no longer does. And an account that had lost its own Warband
+  data blanked the bank snapshots your other accounts still held for its characters until it next
+  visited a bank; those are kept now.
+
 ## v0.16.0
 
 Old characters can be forgotten in bulk, AltStable can wear Glass UI's look, and AltStable Companion

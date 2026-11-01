@@ -89,8 +89,10 @@ end
 -- Scanner captured the alias at load, so reload it against the tuple stub.
 dofile("Compat.lua"); dofile("Scanner.lua")
 AltStable.ScanSkills(char2)
+-- Nothing read: the fields hold the reset values (the list was there, so the
+-- reset ran), and no profession field at all was written.
 check("a tuple-shaped API records nothing (proves the assertions bite)",
-      char2.fishing == nil and char2.prof1 == nil,
+      char2.fishing == 0 and char2.prof1 == "" and char2.prof_Alchemy == nil,
       "fishing=" .. tostring(char2.fishing) .. " prof1=" .. tostring(char2.prof1))
 C_SkillInfo.GetSkillLineInfo = realGet
 dofile("Compat.lua"); dofile("Scanner.lua")
@@ -1470,6 +1472,135 @@ do
     eq("only hunters and warlocks have a pet", c.pet_display, nil)
 
     WoW.player.class = savedClass
+    WoW.reset()
+    AltStableDB = {}
+end
+
+------------------------------------------------------------
+-- A1 (docs/AUDIT.md): an uncached slot keeps the previous scan's values
+------------------------------------------------------------
+-- ResetCharacter zeroes every gear field before the gear loop, so an uncached
+-- slot used to "keep" those zeros, and a Warband bag update stamped them as
+-- fact a second later. The previous scan's level, quality, name and subtype
+-- stay while the same item is in the slot; a different uncached item is
+-- unknown and reads 0/"" until the cache answers (declared).
+do
+    WoW.reset()
+    WoW.items[5002] = { name = "A Helm", quality = 3, ilvl = 55,
+                        itemType = "Armor", subType = "Mail", equipLoc = "INVTYPE_HEAD" }
+    WoW.equipped[1] = "|Hitem:5002|h[A Helm]|h"
+    AltStableDB = {}
+    AltStable.PendingGearSlots = nil
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("a cached helm scans its level", me.gear_head, 55)
+    local stamped = me.lastUpdate
+
+    -- A fresh login: the link is known, the item is not in the cache yet.
+    WoW.items[5002] = nil
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("A1: an uncached slot keeps the previous scan's level", me.gear_head, 55)
+    eq("  its quality", me.gearq_head, 3)
+    eq("  its name", me.gearname_head, "A Helm")
+    eq("  and its subtype", me.gearsubtype_head, "Mail")
+    eq("  the id is still written", me.gearid_head, 5002)
+    check("  and the slot waits for the cache event",
+          AltStable.PendingGearSlots ~= nil and AltStable.PendingGearSlots.head ~= nil)
+    eq("  lastUpdate is withheld while a slot is pending", me.lastUpdate, stamped)
+
+    -- The same item id under another link (a suffixed variant has another
+    -- name): not the same item, so nothing is kept (Codex, PR #280).
+    WoW.equipped[1] = "|Hitem:5002:0:0:0:0:0:123|h[A Helm of the Monkey]|h"
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  the same id under another link is unknown: no level", me.gear_head, 0)
+    eq("  and no name", me.gearname_head, "")
+    eq("  with the id still written", me.gearid_head, 5002)
+
+    -- A different item, also uncached: unknown, not the old item's values.
+    WoW.equipped[1] = "|Hitem:5003|h[Other Helm]|h"
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  a different uncached item reads 0 until the cache answers", me.gear_head, 0)
+    eq("  and no name", me.gearname_head, "")
+    eq("  with the new id", me.gearid_head, 5003)
+
+    WoW.equipped[1] = nil
+    AltStable.PendingGearSlots = nil
+    WoW.reset()
+    AltStableDB = {}
+end
+
+------------------------------------------------------------
+-- A2 (docs/AUDIT.md): an empty skill list leaves the stored professions
+------------------------------------------------------------
+-- A character always has header lines, so zero lines is "not readable", not
+-- "no skills": the stored values stay, as reputations already do. A list
+-- that is there still clears a profession it no longer lists.
+do
+    local savedLines = WoW.skillLines
+    local c = { prof1 = "Alchemy", prof1Skill = 120, prof1Max = 300, prof_Alchemy = 120, profmax_Alchemy = 300,
+                prof2 = "Herbalism", prof_Herbalism = 47, fishing = 42, fishingMax = 150, cooking = 77 }
+    WoW.skillLines = {}
+    AltStable.ScanSkills(c)
+    eq("A2: an empty skill list leaves the stored professions alone", c.prof1, "Alchemy")
+    eq("  and their ranks", c.prof_Alchemy, 120)
+    eq("  and the secondaries", c.fishing, 42)
+    WoW.skillLines = {
+        { name = "Class Skills", isHeader = true,  rank = 0,   maxRank = 0,   skillID = 7 },
+        { name = "Alchemy",      isHeader = false, rank = 125, maxRank = 300, skillID = 171 },
+    }
+    AltStable.ScanSkills(c)
+    eq("  a list that is there clears a profession it no longer lists", c.prof_Herbalism, nil)
+    eq("  and prof2 with it", c.prof2, "")
+    eq("  while the listed one updates", c.prof_Alchemy, 125)
+    eq("  and a secondary no longer listed reads 0", c.fishing, 0)
+
+    -- The real path: a login whose skill list is empty keeps the professions
+    -- the last scan stored (the reset used to run before the list was read).
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("a full scan records the profession", me.prof_Alchemy, 125)
+    WoW.skillLines = {}
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  and a rescan with an empty list keeps it", me.prof_Alchemy, 125)
+    eq("  and prof1", me.prof1, "Alchemy")
+
+    WoW.skillLines = savedLines
+    WoW.reset()
+    AltStableDB = {}
+end
+
+------------------------------------------------------------
+-- A3 (docs/AUDIT.md): a failed identity read keeps the stored value
+------------------------------------------------------------
+-- The name and the display id are the two reads with a known failure value
+-- (nil and 0). A record that loses its name is an orphan to the Warband
+-- store, and a 0 display id syncs as fact. Both keep the old value, as the
+-- faction already does.
+do
+    WoW.reset()
+    AltStableDB = {}
+    AltStable.ScanCharacter()
+    local me = AltStableDB[UnitGUID("player")] or {}
+    eq("a scan stores the name", me.name, "Example Surname")
+    eq("  and the display id", me.displayid, 56658)
+
+    local savedName, savedDisplay = WoW.player.name, WoW.displayID
+    WoW.player.name = ""          -- UnitName gives nothing: PlayerFullName is nil
+    WoW.displayID = nil           -- no display id from the client: the read is 0
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("A3: a scan that cannot read the name keeps the stored one", me.name, "Example Surname")
+    eq("  and one that cannot read the display id keeps the stored one", me.displayid, 56658)
+
+    WoW.player.name, WoW.displayID = savedName, savedDisplay
+    AltStable.ScanCharacter()
+    me = AltStableDB[UnitGUID("player")] or {}
+    eq("  a readable name is written", me.name, "Example Surname")
     WoW.reset()
     AltStableDB = {}
 end

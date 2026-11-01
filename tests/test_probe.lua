@@ -88,6 +88,21 @@ if iconProc then
     eq("  one question each: the panel over the sheet, the countdown, the console", asks, 3)
     check("  and ends with a /reload", iconProc.steps[#iconProc.steps].reload == true)
 end
+-- The audit's in-game part (#279): the login reading, a two-account round
+-- trip, and one full exit, the only test of persistence.
+local auditProc = FP.procedures and FP.procedures["AltStableProbe/audit"]
+check("/fp steps as audit is defined", auditProc ~= nil)
+if auditProc then
+    local exits, asks = 0, 0
+    for _, st in ipairs(auditProc.steps) do
+        if st.reload == "exit" then exits = exits + 1 end
+        if st.ask then asks = asks + 1 end
+    end
+    eq("  one full exit", exits, 1)
+    eq("  four questions only the owner can answer", asks, 4)
+    check("  the first step shows the login reading and checks it", auditProc.steps[1].auto and auditProc.steps[1].check ~= nil)
+    check("  and ends with a /reload", auditProc.steps[#auditProc.steps].reload == true)
+end
 
 ------------------------------------------------------------
 -- The saved tables
@@ -110,6 +125,19 @@ eq("the per-character one starts", AltStableProbeCharDB.loadCount, 1)
 local text = logText()
 check("  and the store that did not load says so", text:find("SavedVariablesPerCharacter", 1, true) ~= nil, text)
 check("  the one that did stays quiet", text:find("SavedVariables (account)", 1, true) == nil, text)
+-- The audit's login reading (#279): what the scan reads, 2 s after login.
+WoW.skillLines = { { name = "Defense", isHeader = false, rank = 1, maxRank = 5, skillID = 95 } }
+WoW.flushTimers()
+local reading = db.audit and db.audit.login
+check("the login reading is taken 2 s after PLAYER_LOGIN", type(reading) == "table")
+if reading then
+    eq("  the name", reading.name, "Example")
+    eq("  and the surname", reading.surname, "Surname")
+    eq("  the skill lines", reading.skillLines, 1)
+    eq("  the display id", reading.displayID, 56658)
+    check("  the guild, nil as the stub has none", reading.guild == nil)
+    check("  and it says so in the log", logText():find("[audit] login+2s", 1, true) ~= nil)
+end
 
 ------------------------------------------------------------
 -- Every command runs, and nothing reaches chat

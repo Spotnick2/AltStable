@@ -389,31 +389,9 @@ local function QueueModelPathRetry(guid)
     end)
 end
 
+-- The gear fields and the display toggles. The professions and secondaries are
+-- reset by ScanSkills itself, once it has a list to read (docs/AUDIT.md, A2).
 local function ResetCharacter(char)
-
-    -- primary professions (legacy fields kept for compat)
-    char.prof1 = ""
-    char.prof2 = ""
-    char.prof1Skill = 0
-    char.prof2Skill = 0
-    char.prof1Max = 0
-    char.prof2Max = 0
-
-    -- flat per-profession fields used by new columns
-    for _, name in ipairs(ALL_PROFESSIONS) do
-        char["prof_"..name]    = nil
-        char["profmax_"..name] = nil
-    end
-
-    -- secondary professions
-    char.fishing = 0
-    char.fishingMax = 0
-    char.cooking = 0
-    char.cookingMax = 0
-    char.firstAid = 0
-    char.firstAidMax = 0
-    char.riding = 0
-    char.ridingMax = 0
 
     -- gear slots
     for _, slot in ipairs(GEAR_SLOTS) do
@@ -444,10 +422,40 @@ end
 -- ScanCharacter needs ~30 stubbed APIs; this needs two, and it is where the
 -- tuple-to-struct change actually bites.
 function AltStable.ScanSkills(char)
+    -- An empty list is "not readable", not "no skills": a character always has
+    -- header lines. The stored values stay, as reputations' do (docs/AUDIT.md,
+    -- A2), and the reset below runs only once the list is there.
+    local n = GetNumSkillLines()
+    if not n or n == 0 then return end
+
+    -- primary professions (legacy fields kept for compat)
+    char.prof1 = ""
+    char.prof2 = ""
+    char.prof1Skill = 0
+    char.prof2Skill = 0
+    char.prof1Max = 0
+    char.prof2Max = 0
+
+    -- flat per-profession fields used by new columns
+    for _, name in ipairs(ALL_PROFESSIONS) do
+        char["prof_"..name]    = nil
+        char["profmax_"..name] = nil
+    end
+
+    -- secondary professions
+    char.fishing = 0
+    char.fishingMax = 0
+    char.cooking = 0
+    char.cookingMax = 0
+    char.firstAid = 0
+    char.firstAidMax = 0
+    char.riding = 0
+    char.ridingMax = 0
+
     local primaryCount = 0
     local seen = {}
 
-    for i = 1, GetNumSkillLines() do
+    for i = 1, n do
 
         -- One struct, not the old 7-value tuple. Destructuring positionally
         -- here would yield nil for every field and silently record no
@@ -628,7 +636,10 @@ function AltStable.ScanCharacter()
     -- the merge will not let a peer's echo of it overwrite it unless strictly
     -- newer. Local-only - never serialized.
     char.scannedHere = true
-    char.name = name
+    -- A name the client could not give keeps the stored one: a nameless record
+    -- is invisible to the sheet and an orphan to the plugins' stores
+    -- (docs/AUDIT.md, A3). Same rule as the faction below.
+    char.name = name or char.name
     char.realm = realm
 
     -- Account number: set once with /alts account 1 (or 2, etc.)
@@ -669,7 +680,10 @@ function AltStable.ScanCharacter()
 
     -- Compact appearance fields for offline model reconstruction (sync-safe).
     -- These are tiny values and ride through the normal character serializer.
-    char.displayid = ReadPlayerDisplayID()
+    -- 0 is the read's failure value (A3): it keeps the stored id rather than
+    -- syncing "no model" as fact.
+    local displayid = ReadPlayerDisplayID()
+    if displayid > 0 or not char.displayid then char.displayid = displayid end
 
     -- Model path capture is two-phase because the model file load is
     -- asynchronous in TBC Classic 2.5.x. The synchronous read often
@@ -766,8 +780,20 @@ function AltStable.ScanCharacter()
     end
 
     --------------------------------------------------------
-    -- Reset profession data
+    -- Reset the gear fields and the display toggles
     --------------------------------------------------------
+
+    -- The previous scan's cache-dependent gear values, by slot, taken before
+    -- the reset. The item cache can miss a slot at login, and the retry fills
+    -- it only when the cache answers; the reset below used to zero these first,
+    -- so an uncached slot "kept" zeros, and a Warband bag update stamped the
+    -- record as fact a second later (docs/AUDIT.md, A1).
+    local prevGear = {}
+    for _, slot in ipairs(GEAR_SLOTS) do
+        local k = slot.key
+        prevGear[k] = { link = char["gearlink_"..k], ilvl = char["gear_"..k], q = char["gearq_"..k],
+                        name = char["gearname_"..k], sub = char["gearsubtype_"..k] }
+    end
 
     ResetCharacter(char)
 
@@ -899,8 +925,20 @@ function AltStable.ScanCharacter()
                 char["gearname_"..slot.key]  = itemName or ""
                 char["gearsubtype_"..slot.key] = itemSubType or ""
             else
-                -- Item link exists but item data isn't cached yet. Keep the
-                -- existing ilvl/quality/name/subtype values and retry on cache event.
+                -- Item link exists but item data isn't cached yet: keep the
+                -- previous scan's ilvl/quality/name/subtype while the SAME link
+                -- is still in the slot, and retry on the cache event. The whole
+                -- link, not the item id: a suffixed variant ("of the Monkey")
+                -- shares the id and has another name (Codex, PR #280). A
+                -- different link is unknown until then and reads 0/"" (never
+                -- the old item's values).
+                local prev = prevGear[slot.key]
+                if prev and prev.link == link and (prev.ilvl or 0) > 0 then
+                    char["gear_"..slot.key]        = prev.ilvl
+                    char["gearq_"..slot.key]       = prev.q or 0
+                    char["gearname_"..slot.key]    = prev.name or ""
+                    char["gearsubtype_"..slot.key] = prev.sub or ""
+                end
                 pendingSlots[slot.key] = link
             end
         else

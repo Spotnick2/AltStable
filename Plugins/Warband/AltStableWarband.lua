@@ -19,6 +19,15 @@
 -- bags and bank are SEPARATE maps: bags refresh live on BAG_UPDATE, but the
 -- bank is only readable while its frame is open, so a bag rescan must never
 -- clobber the (intentionally stale) bank snapshot.
+--
+-- What a received blob may and may not do (docs/AUDIT.md):
+--   * an older stamp is refused; an equal one applies only when the maps differ;
+--   * a bank the owner has never read (kt=0) leaves a held snapshot alone;
+--   * two moves in one second relayed out of order keep the later-arriving
+--     map until the next change: one-second stamps carry no order (declared);
+--   * inventory whose character record is gone is kept, invisible, until that
+--     character is forgotten or the database cleaned up: the login never
+--     deletes it, so a loss of AltStable.lua does not take this file with it.
 ------------------------------------------------------------
 
 AltStableWarbandDB = AltStableWarbandDB or {}
@@ -338,6 +347,15 @@ local function DeserializePlayer(guid, blob)
 
     local bankStamp = tonumber(rest:match("kt=(%d+)")) or incomingStamp
 
+    -- kt=0 says the owner has never read this bank since its data began (a
+    -- bank read as empty carries its scan time), so it is no knowledge: a held
+    -- snapshot stays, and only the bags are taken. Without this, a data reset
+    -- on the owning account erased the bank everywhere until its next bank
+    -- visit (docs/AUDIT.md, B1).
+    if bankStamp == 0 and existing and existing.bank and (existing.bankStamp or 0) > 0 then
+        bank, bankStamp = existing.bank, existing.bankStamp
+    end
+
     -- Nothing new: a full response re-sends every character, and the sheet is
     -- redrawn per character while the panel is open - each redraw rebuilds the
     -- whole aggregate, its buckets and its rows. Compare what we would store,
@@ -366,18 +384,13 @@ end
 -- the peer watermarks so everything is re-pulled in full. Our records are keyed
 -- by the same guids, and the stale-reject guard below would refuse the re-pull
 -- (the peers' stamps have not moved), so they have to go at the same time.
--- Orphans are dropped too: a guid no peer still has is invisible in the UI but
--- would sit in SavedVariables forever.
+-- This and OnForget are the only deletes: an orphan (a guid no character
+-- record mentions) is invisible in the UI and stays, because the login used to
+-- prune them and that made a lost AltStable.lua take every bank snapshot with
+-- it (docs/AUDIT.md, A4).
 local function CleanupWarbandDB(keepGuid)
     for guid in pairs(AltStableWarbandDB) do
         if guid ~= keepGuid then AltStableWarbandDB[guid] = nil end
-    end
-end
-
-local function PruneOrphans()
-    for guid in pairs(AltStableWarbandDB) do
-        local c = AltStableDB and AltStableDB[guid]
-        if type(c) ~= "table" or not c.name then AltStableWarbandDB[guid] = nil end
     end
 end
 
@@ -1875,8 +1888,7 @@ local function BootstrapPlugin()
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
         OnCleanup     = function(keepGuid) CleanupWarbandDB(keepGuid) end,
         -- #65: a forgotten character's bags and bank go with its record, or
-        -- they sit in SavedVariables until PruneOrphans happens to run at the
-        -- next login - for a character nothing shows.
+        -- they sit in SavedVariables for good - for a character nothing shows.
         OnForget      = function(guid)
             if guid and AltStableWarbandDB then AltStableWarbandDB[guid] = nil end
         end,
@@ -1887,21 +1899,18 @@ local function BootstrapPlugin()
             EncodeMap = EncodeMap, ParseMap = ParseMap, mapsEqual = mapsEqual,
             OnBagUpdate = OnBagUpdate, OnBankOpened = OnBankOpened, OnBankClosed = OnBankClosed,
             CarriedBagIDs = CarriedBagIDs, BankTabIDs = BankTabIDs, IsBankContainer = IsBankContainer,
-            CleanupWarbandDB = CleanupWarbandDB, PruneOrphans = PruneOrphans,
+            CleanupWarbandDB = CleanupWarbandDB,
             InvalidateTabCache = InvalidateTabCache, BootstrapPlugin = BootstrapPlugin,
             OnBankTabsChanged = OnBankTabsChanged,
             ScanContainerSet = ScanContainerSet, EnsureTooltipHook = EnsureTooltipHook,
         },
     })
 
-    -- Orphans first: inventory for a guid no character record mentions is
-    -- invisible in the UI, so counting it as "we hold data" could skip the
-    -- baseline pull below and leave the real inventory unfetched.
-    PruneOrphans()
-
     -- Full-baseline pull when we hold no inventory at all: the peer watermark
     -- may already be ahead of data we never received, which a delta pull would
-    -- never backfill.
+    -- never backfill. Inventory for a guid no character record mentions is
+    -- invisible in the UI, so it does not count as "we hold data" (counting it
+    -- would skip the pull and leave the real inventory unfetched).
     --
     -- NOT on "loaded on demand": the core loads enabled plugins from its own
     -- PLAYER_LOGIN handler, so IsLoggedIn() is already true and EVERY login
@@ -1910,8 +1919,10 @@ local function BootstrapPlugin()
     -- on a large database). Holding data is the only signal that matters.
     if AltStable.ResetPeerWatermarks then
         local hasData = false
-        for _, cdb in pairs(AltStableWarbandDB) do
-            if type(cdb) == "table" and ((cdb.bags and next(cdb.bags)) or (cdb.bank and next(cdb.bank))) then
+        for guid, cdb in pairs(AltStableWarbandDB) do
+            local c = AltStableDB and AltStableDB[guid]
+            if type(c) == "table" and c.name and type(cdb) == "table"
+               and ((cdb.bags and next(cdb.bags)) or (cdb.bank and next(cdb.bank))) then
                 hasData = true; break
             end
         end

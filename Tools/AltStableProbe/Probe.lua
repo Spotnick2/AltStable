@@ -768,6 +768,112 @@ Probe:Steps("icon", {
     { text = "Type /reload (or press Reload now) to save the results.", reload = true },
 })
 
+----------------------------------------------------------------------------
+-- /fp steps as audit - the audit's in-game part (#279, docs/AUDIT.md section
+-- 5): what the scan's sources answer 2 s after PLAYER_LOGIN (the scan's
+-- moment), and a Warband round trip with the owner's other account, with a
+-- full exit. The reading is taken at every login while the probe is deployed,
+-- so the procedure can show it whenever it is started.
+----------------------------------------------------------------------------
+
+local function LoginReading()
+    local first, second = UnitName("player")
+    local r = {
+        at = time(), build = select(2, GetBuildInfo()),
+        name = first, surname = second,
+        guild = GetGuildInfo("player"),
+        skillLines = C_SkillInfo and C_SkillInfo.GetNumSkillLines and C_SkillInfo.GetNumSkillLines(),
+        displayID = C_PlayerInfo and C_PlayerInfo.GetDisplayID and C_PlayerInfo.GetDisplayID(),
+    }
+    AltStableProbeDB.audit = AltStableProbeDB.audit or {}
+    AltStableProbeDB.audit.login = r
+    Say(("[audit] login+2s: name %s / %s, guild %s, skill lines %s, display %s"):format(
+        Describe(r.name), Describe(r.surname), Describe(r.guild), Describe(r.skillLines), Describe(r.displayID)))
+    return r
+end
+
+local function Reading() return type(AltStableProbeDB.audit) == "table" and AltStableProbeDB.audit.login or nil end
+
+-- The owner's yes/no on step i of this procedure, from the host's record;
+-- nil when unanswered or unsure, which a check reports as unverified.
+local function Answered(i)
+    local fp = rawget(_G, "ForeverProbeDB")
+    local recs = type(fp) == "table" and type(fp.steps) == "table" and type(fp.steps.records) == "table" and fp.steps.records
+    local r = recs and recs["AltStableProbe/audit"]
+    local res = type(r) == "table" and type(r.results) == "table" and r.results[i]
+    if type(res) ~= "table" then return nil end
+    if res.status == "yes" then return true elseif res.status == "no" then return false end
+    return nil
+end
+
+local function MyWarband()
+    local guid = UnitGUID("player")
+    local wb = rawget(_G, "AltStableWarbandDB")
+    return guid and type(wb) == "table" and wb[guid] or nil
+end
+local function Count(map) local n = 0; for _, c in pairs(map or {}) do n = n + c end; return n end
+local function Inventory()
+    local wb = MyWarband()
+    if not wb then return "no Warband data for this character" end
+    return ("bags %d items (stamp %s), bank %d items (stamp %s)"):format(
+        Count(wb.bags), tostring(wb.bagsStamp), Count(wb.bank), tostring(wb.bankStamp))
+end
+
+Probe:Steps("audit", {
+    title = "Audit: the scan's sources at login, and a Warband round trip (#279)",
+    rev = 1,
+    { text = "The reading taken 2 s after this login, the scan's moment: name, guild, skill lines, display id.",
+      auto = true,
+      run = function()
+          local r = Reading()
+          if not r then error("no login reading yet: /reload, then start again", 0) end
+          return r.name, r.surname, r.guild, r.skillLines, r.displayID
+      end,
+      check = function()
+          local r = Reading()
+          local ok = r ~= nil and type(r.skillLines) == "number" and r.skillLines > 0 and r.name ~= nil
+          return ok, ("skill lines %s, name %s"):format(Describe(r and r.skillLines), Describe(r and r.name))
+      end },
+    { text = "Is this character in a guild?", ask = true },
+    { text = "GetGuildInfo at login+2 s, against your answer.", auto = true,
+      run = function() local r = Reading(); return r and r.guild end,
+      check = function()
+          local r = Reading()
+          local inGuild = Answered(2)
+          if inGuild == nil then return false, "unverified: no answer on the guild question" end
+          if inGuild and (r == nil or r.guild == nil) then
+              return false, "A3: in a guild, but GetGuildInfo was nil at login+2 s (the scan would write \"\")"
+          end
+          if not inGuild and r and r.guild ~= nil then
+              return false, "not in a guild, but GetGuildInfo answered " .. Describe(r.guild)
+          end
+          return true, "GetGuildInfo at login+2 s agrees: " .. Describe(r and r.guild)
+      end },
+    { text = "Log your other account in too, with AltStable running, and open its Warband tab. "
+          .. "Then press Record: this character's bags and bank as the plugin holds them here.",
+      button = "Record",
+      run = function()
+          AltStableProbeDB.audit = AltStableProbeDB.audit or {}
+          AltStableProbeDB.audit.before = Inventory()
+          return Inventory()
+      end },
+    { text = "Move an item between two bags here and wait 10 s. On the other account, type /alts sync. "
+          .. "Does its Warband tab now show this character's bags as they are now?", ask = true },
+    { text = "Without opening the bank here: does the other account's Warband tab still list this "
+          .. "character's bank items, the snapshot from the last bank visit?", ask = true },
+    { text = "Exit the game fully on BOTH accounts (not /reload), then relaunch this one. "
+          .. "The procedure resumes at login.", reload = "exit" },
+    { text = "After the relaunch: this character's inventory as the plugin holds it.", auto = true,
+      run = function() return Inventory() end,
+      check = function()
+          local wb = MyWarband()
+          return wb ~= nil and wb.bags ~= nil and next(wb.bags) ~= nil, Inventory()
+      end },
+    { text = "Log the other account in again. Does its Warband tab still show this character's bags "
+          .. "and bank as before the exit?", ask = true },
+    { text = "Type /reload (or press Reload now) to save the results.", reload = true },
+})
+
 local boot = CreateFrame("Frame")
 Probe:RegisterEvents(boot, { "ADDON_LOADED", "PLAYER_LOGIN" })
 boot:SetScript("OnEvent", function(self, event, name)
@@ -777,5 +883,7 @@ boot:SetScript("OnEvent", function(self, event, name)
         Adopt()
     elseif event == "PLAYER_LOGIN" then
         Canary()
+        -- The scan's moment (Core.lua's PLAYER_LOGIN timer): read what it reads.
+        C_Timer.After(2, LoginReading)
     end
 end)

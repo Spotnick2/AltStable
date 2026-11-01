@@ -322,6 +322,30 @@ T.DeserializePlayer("Player-Peer-3", "v1|s=200|b=2318,1")
 eq("  and one with no bank field leaves the bank alone",
    AltStableWarbandDB["Player-Peer-3"].bank[2318], 13)
 
+-- B1 (docs/AUDIT.md): kt=0 says the owner has never read this bank since its
+-- data began (a bank read as empty carries its scan time). That is no
+-- knowledge, so a held snapshot stays; the bags are still taken.
+AltStableWarbandDB["Player-Peer-4"] = { bags = { [2318] = 8 }, bank = { [2318] = 13 },
+                                        stamp = 100, bagsStamp = 100, bankStamp = 90 }
+T.DeserializePlayer("Player-Peer-4", "v1|s=200|kt=0|b=2318,9|k=")
+local p4 = AltStableWarbandDB["Player-Peer-4"]
+eq("B1: a blob whose owner never read the bank keeps the held snapshot", p4.bank[2318], 13)
+eq("  and its stamp", p4.bankStamp, 90)
+eq("  while the bags are taken", p4.bags[2318], 9)
+eq("  and the record's stamp moves", p4.stamp, 200)
+redraws = 0
+wb.Refresh, wb.isActive = function() redraws = redraws + 1 end, true
+T.DeserializePlayer("Player-Peer-4", "v1|s=200|kt=0|b=2318,9|k=")
+eq("  re-sending it changes nothing and does not redraw", redraws, 0)
+wb.Refresh, wb.isActive = realRefresh, realActive
+T.DeserializePlayer("Player-Peer-4", "v1|s=300|kt=300|b=2318,9|k=")
+eq("  a bank read as empty (kt>0) still empties it", next(p4.bank), nil)
+eq("  with its stamp", p4.bankStamp, 300)
+-- Nothing held: kt=0 stores the empty map, as before.
+T.DeserializePlayer("Player-Peer-5", "v1|s=200|kt=0|b=2318,1|k=")
+check("  with nothing held, kt=0 stores an empty bank",
+      AltStableWarbandDB["Player-Peer-5"] ~= nil and next(AltStableWarbandDB["Player-Peer-5"].bank) == nil)
+
 ------------------------------------------------------------
 -- Cleanup and orphans
 ------------------------------------------------------------
@@ -338,12 +362,16 @@ eq("the core's cleanup clears other characters' inventory too",
    AltStableWarbandDB["Player-Other-1"], nil)
 check("  and keeps this character's", AltStableWarbandDB[GUID] ~= nil)
 
--- A guid no character record mentions any more is invisible in the UI but
--- would sit in SavedVariables forever.
+-- A4 (docs/AUDIT.md): a guid no character record mentions is invisible in the
+-- UI and stays on disk. The login used to delete it, which made a loss of
+-- AltStable.lua take every bank snapshot in AltStableWarband.lua with it;
+-- forget and cleanup are the deletes, and they are explicit.
 AltStableWarbandDB["Player-Gone-1"] = { bags = { [2318] = 5 }, stamp = 100 }
-T.PruneOrphans()
-eq("an orphaned record is pruned", AltStableWarbandDB["Player-Gone-1"], nil)
-check("  while a known character stays", AltStableWarbandDB[GUID] ~= nil)
+T.BootstrapPlugin()
+check("A4: an orphaned record survives the login", AltStableWarbandDB["Player-Gone-1"] ~= nil)
+check("  and a known character's too", AltStableWarbandDB[GUID] ~= nil)
+local total = T.CountItem(2318)
+eq("  an orphan is invisible to the counts", total, 8)
 
 ------------------------------------------------------------
 -- The login pull
@@ -362,22 +390,22 @@ AltStableWarbandDB = { [GUID] = { bags = { [2318] = 8 }, stamp = 100 },
                        ["Player-Ghost-1"] = { bags = { [2318] = 3 }, stamp = 100 } }
 T.BootstrapPlugin()
 eq("holding inventory, a login does not force a full re-pull", resets, 0)
-eq("  and login prunes a record no character record mentions",
-   AltStableWarbandDB["Player-Ghost-1"], nil)
+check("  and a record no character record mentions is kept (A4)",
+      AltStableWarbandDB["Player-Ghost-1"] ~= nil)
 
 AltStableWarbandDB = {}
 T.BootstrapPlugin()
 eq("holding none, it does force one", resets, 1)
 
--- Orphans don't count as "we hold inventory": they are pruned at login, so
--- counting them first would skip the baseline pull and leave the real
--- inventory unfetched behind watermarks that are already ahead.
+-- Orphans don't count as "we hold inventory": they are invisible, so counting
+-- them would skip the baseline pull and leave the real inventory unfetched
+-- behind watermarks that are already ahead.
 resets = 0
 AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid" } }
 AltStableWarbandDB = { ["Player-Ghost-2"] = { bags = { [2318] = 3 }, stamp = 100 } }
 T.BootstrapPlugin()
 eq("inventory for a character nobody has does not count as data", resets, 1)
-eq("  and it is pruned", AltStableWarbandDB["Player-Ghost-2"], nil)
+check("  and it is kept (A4)", AltStableWarbandDB["Player-Ghost-2"] ~= nil)
 AltStable.ResetPeerWatermarks = realReset
 
 ------------------------------------------------------------
