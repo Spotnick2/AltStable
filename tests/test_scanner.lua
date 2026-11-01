@@ -1175,6 +1175,17 @@ AltStableDB = AltStableDB or {}
 pcall(AltStable.ScanCharacter)
 local scanned = AltStableDB[UnitGUID("player")]
 check("scanning a character marks it as ours", scanned ~= nil and scanned.scannedHere == true)
+-- And stamps its provenance (#281): "self", with the time it was established.
+check("  with provenance self", scanned ~= nil and scanned.provKind == "self")
+check("  stamped with a time", scanned ~= nil and type(scanned.provAt) == "number")
+do
+    -- A record a peer had marked as its own account's: our scan is the truth.
+    AltStableDB[UnitGUID("player")] = { guid = UnitGUID("player"), name = "Was",
+        provKind = "own-account", provAt = 5, provVia = "Bee Surname" }
+    pcall(AltStable.ScanCharacter)
+    local again = AltStableDB[UnitGUID("player")]
+    check("  a scan turns an own-account mark into self", again.provKind == "self" and again.provVia == nil)
+end
 
 -- UnitXPMax 0 (Retail's value at the cap; unmeasured on Forever). At the cap the
 -- zero is real; below it the read is bad, and must not become a 1-XP level

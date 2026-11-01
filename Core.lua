@@ -573,7 +573,14 @@ function LibSync.Peer(name)
     -- The fetch state goes with the binding (Codex, #212): rediscovered, they
     -- are asked for their data again, with a fresh budget.
     LibSync.peers[key], LibSync.asked[key] = nil, nil
+    LibSync.PeersChanged()
     return nil
+end
+
+-- PublicAPI.lua defines it, as the "OwnAccountPeersChanged" callback (#281):
+-- an own account came onto the library, or left it.
+function LibSync.PeersChanged()
+    if AltStable.OwnAccountPeersUpdated then AltStable.OwnAccountPeersUpdated() end
 end
 
 -- Ours: an AltStable message the library proved came from our own account.
@@ -832,6 +839,75 @@ local function PurgeRetiredFields()
     end
 end
 
+------------------------------------------------------------
+-- Ownership provenance (#281)
+--
+-- Whose character a record is, for other addons (docs/PUBLIC-API.md):
+--   self         this client scans it (scannedHere)
+--   own-account  our own other account, proven by LibAccountSync, said it
+--                scans it there - first-hand, in the ==MINE1== line below
+--   third-party  anything else: a whitelisted friend's, a record relayed by
+--                anyone (our own account included), an unknown sender's
+-- The `account` label, a field on a received record and roster membership
+-- are never ownership: a peer can type or send any of them.
+--
+-- Stored on the record as provKind / provAt (when it was established) /
+-- provVia (the own account that said so). It only ever moves up: a later
+-- sync from a third party says nothing about who owns the character.
+--
+-- One table, not several locals: this file's main chunk is close to Lua
+-- 5.1's 200-local limit.
+------------------------------------------------------------
+local Provenance = {
+    -- After the last record, like ==CAMPS1== and ==NOW==: an older parser
+    -- collects it into a record block that never closes, and drops it. So it
+    -- is additive, with no PROTOCOL_VERSION bump.
+    LINE = "==MINE1==",
+    -- What THIS client knows about a record, never a peer's to tell: never
+    -- sent, and dropped on receipt. Before #281 a peer sending
+    -- "scannedHere:1" had it merged, and ShouldMerge then guarded that
+    -- peer's record as our own scan.
+    LOCAL_ONLY = { scannedHere = true, provKind = true, provAt = true, provVia = true },
+}
+
+-- The line our own other account gets: every character this client scans.
+-- All of them, not only the records in this reply, so a delta that carries
+-- none of them still establishes the ones the peer already holds.
+function Provenance.Line()
+    local guids = {}
+    for guid, c in pairs(type(AltStableDB) == "table" and AltStableDB or {}) do
+        if type(c) == "table" and c.scannedHere and type(guid) == "string"
+            and not guid:find("[,\n]") then
+            guids[#guids + 1] = guid
+        end
+    end
+    if #guids == 0 then return nil end
+    table.sort(guids)
+    return Provenance.LINE .. table.concat(guids, ",")
+end
+
+-- The line from `sender`, ALREADY proven our own account by the caller.
+-- Marks the records we hold that it scans; one we do not hold is skipped
+-- (the next sync brings it), and our own scan stays "self". Returns how many
+-- changed.
+function Provenance.Apply(line, sender)
+    local n = 0
+    for guid in line:sub(#Provenance.LINE + 1):gmatch("[^,]+") do
+        local c = AltStableDB[guid]
+        if type(c) == "table" and not c.scannedHere and c.provKind ~= "own-account" then
+            c.provKind, c.provAt, c.provVia = "own-account", time(), sender
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- PublicAPI.lua defines it, as the "ProvenanceChanged" callback. Scanner.lua
+-- calls it too, for a character marked "self".
+function Provenance.Changed()
+    if AltStable.ProvenanceUpdated then AltStable.ProvenanceUpdated() end
+end
+
 -- Hand each plugin its own blob for an ACCEPTED character, then drop the
 -- carrier field so it never reaches the database or the wire.
 -- independentOnly: the record itself lost the merge (ShouldMerge), so only a
@@ -872,8 +948,8 @@ local function SerializeChar(c, sinceTS)
                                       -- gearid_* stays included (compact + sync-safe)
         and not k:find("^gearsubtype_") -- local-only: only used by the local render pipeline;
                                       -- synced alts fall back to keyword inference on gearname_
-        and k ~= "scannedHere"         -- local-only: "this client scans it". On the wire it
-                                      -- would tell every peer the character was ITS own
+        and not Provenance.LOCAL_ONLY[k] -- scannedHere and the provenance (#281): on the
+                                      -- wire they would tell every peer the character was ITS own
         -- NOTE: hidehelm / hidecloak ride sync on purpose — a portrait pipeline has to know
         -- the player hid a slot, since the equipped item list alone can't tell it. They are
         -- plain 1/0 numbers, so the tonumber() coercion below round-trips them unchanged.
@@ -932,7 +1008,9 @@ local function DeserializeChar(msg)
                 -- none of them get mis-coerced. Don't "fix" this without a
                 -- per-field type marker — a blanket string keep would break
                 -- numeric sorting.
-                if not RETIRED_FIELDS[k] then
+                -- Local-only fields are ours alone (#281): a peer cannot
+                -- make a record our own scan, or our own account's.
+                if not RETIRED_FIELDS[k] and not Provenance.LOCAL_ONLY[k] then
                     local num = tonumber(v)
                     c[k] = num or v
                 end
@@ -1377,6 +1455,7 @@ local function DeserializeFullDB(payload, sender)
     -- What the settings sync changed (own account, setting on): groups taken,
     -- characters forgotten here and let back.
     local prefGroups, prefForgot, prefBack = {}, 0, 0
+    local mine        -- the sender's ==MINE1== line, from our own account only (#281)
 
     for line in (payload .. "\n"):gmatch("([^\n]*)\n") do
 
@@ -1399,6 +1478,11 @@ local function DeserializeFullDB(payload, sender)
                 -- Let back: the watermarks were reset for its full record.
                 if (back or 0) > 0 then lifted = true end
             end
+        elseif line:find(Provenance.LINE, 1, true) == 1 then
+            -- The characters the sender scans itself: believed from our own
+            -- other account only, and applied after the loop, once every
+            -- record in this reply is in.
+            if OwnBNetPeer(sender) then mine = line end
         elseif line == CHAR_SEP then
             -- End of a character block — deserialize what we have.
             local msg = table.concat(current, "\n")
@@ -1451,6 +1535,8 @@ local function DeserializeFullDB(payload, sender)
     if rejected > 0 then
         Print("|cffff8800Warning:|r " .. rejected .. " character(s) rejected due to validation failures.")
     end
+
+    if mine and Provenance.Apply(mine, sender) > 0 then Provenance.Changed() end
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
@@ -1705,7 +1791,9 @@ end
 
 -- Forget who runs it: Battle.net went away, or the switch went off.
 function LibSync.Forget()
+    local had = next(LibSync.peers) ~= nil
     LibSync.peers, LibSync.pinged, LibSync.answered, LibSync.asked = {}, {}, {}, {}
+    if had then LibSync.PeersChanged() end
 end
 
 -- Ask an own account on the library for its data - until one request has
@@ -1920,7 +2008,8 @@ local function SendFullDatabase(channel, target, sinceTS)
     -- The camps and the list order (#171), to the player's own other account
     -- only - after the last record, where every parser reads past them - with
     -- the records of everyone in a camp.
-    local toOwn = target and OwnBNetPeer(target) and AltStable.CampSyncLines
+    local own = target and OwnBNetPeer(target)
+    local toOwn = own and AltStable.CampSyncLines
     local payload = SerializeFullDB(accountOnly, sinceTS, toOwn and AltStable.CampMemberGuids() or nil)
     if toOwn then
         for _, line in ipairs(AltStable.CampSyncLines()) do
@@ -1931,6 +2020,10 @@ local function SendFullDatabase(channel, target, sinceTS)
             payload = payload .. "\n" .. line
         end
     end
+    -- Which characters we scan (#281), to our own account only: a friend
+    -- has no use for it, and it is the word our own account trusts.
+    local mine = own and Provenance.Line()
+    if mine then payload = payload .. "\n" .. mine end
     -- Our clock, so the requester can keep its watermark in OUR frame.
     payload = payload .. "\n" .. SEND_TIME .. ":" .. time()
     ChunkAndSendPayload(payload, channel, target)
@@ -3208,7 +3301,10 @@ function LibSync.OnMessage(payload, sender)
     -- (a request opens our consent window for the reply). Refused for good:
     -- noticed, but neither announced nor asked.
     if LibSync.Peer(name) then
-        if not (before and before.guid == guid) then LibSync.seen[key] = true end
+        if not (before and before.guid == guid) then
+            LibSync.seen[key] = true
+            LibSync.PeersChanged()
+        end
         if SyncAuthFor(name) ~= AUTH_NEVER then
             if not LibSync.announced[key] then
                 LibSync.announced[key] = true
@@ -3234,7 +3330,65 @@ function LibSync.OnMessage(payload, sender)
         HandleAddonMessage(PREFIX, payload, "WHISPER", name, "BNET")
     elseif cmd == LibSync.MSG_DB then
         LibSync.Receive(name, body)
+    elseif cmd == LibSync.MSG_EXT then
+        -- Another addon's message (#281). The library proved the sender our
+        -- own account; it must also be listed as ours NOW, and not refused
+        -- for good - both checked here, before any consumer code runs.
+        local ns, data = body:match("^([^|]+)|(.*)$")
+        if ns and LibSync.Peer(name) and SyncAuthFor(name) ~= AUTH_NEVER
+            and AltStable.OwnAccountDeliver then
+            AltStable.OwnAccountDeliver(ns, data, { name = name, guid = guid, realm = realm,
+                                                    faction = sender.faction })
+        end
     end
+end
+
+------------------------------------------------------------
+-- The own-account channel for other addons (#281, docs/PUBLIC-API.md)
+------------------------------------------------------------
+-- "EXT1|<namespace>|<payload>" over the library, to our own accounts only.
+-- Its own version, not PROTOCOL_VERSION's: a sync-format bump must not cut
+-- every consumer off. An AltStable without it drops the command unread
+-- (LibSync.OnMessage ignores what it does not know).
+LibSync.MSG_EXT = "EXT1"
+-- The library's cap on one message, ours included (it hashes the whole of it).
+LibSync.MAX_PAYLOAD = 32768
+
+-- Whom it goes to: the own accounts the library lists now and that run
+-- AltStable on it (an AltStable message from them this session), less any
+-- the player refused for good - the same set GetSyncTargets syncs with.
+function LibSync.ExtPeers()
+    local out = {}
+    for _, p in ipairs(AltStable.OwnBNetPeers()) do
+        if SyncAuthFor(p.name) ~= AUTH_NEVER then out[#out + 1] = p end
+    end
+    return out
+end
+
+-- To every one of them, or only `guid` when given (and one of them).
+-- Returns how many the library took, and why none did when that is 0.
+function LibSync.SendExt(namespace, payload, guid)
+    local msg = LibSync.MSG_EXT .. "|" .. namespace .. "|" .. payload
+    if #msg > LibSync.MAX_PAYLOAD then return 0, "too-large" end
+    if not LibSync.Usable() then return 0, "unavailable" end
+    local n, why = 0, nil
+    for _, p in ipairs(LibSync.ExtPeers()) do
+        if not guid or p.guid == guid then
+            local ok, w = LibSync.SendGuid(p.guid, msg)
+            if ok then n = n + 1 else why = why or w or "not-ready" end
+        end
+    end
+    if n > 0 then return n end
+    return 0, why or "no-peers"
+end
+AltStable.OwnAccountSend = LibSync.SendExt
+
+function AltStable.OwnAccountPeerList()
+    local out = {}
+    for _, p in ipairs(LibSync.ExtPeers()) do
+        out[#out + 1] = { name = p.name, guid = p.guid, realm = p.realm, faction = p.faction }
+    end
+    return out
 end
 
 do
@@ -3248,7 +3402,7 @@ do
             messages = true,
             -- A whole database, deflated, is about 9 KB for 28 characters
             -- (measured, #198); the cap leaves room to grow.
-            maxPayload = 32768,
+            maxPayload = LibSync.MAX_PAYLOAD,
             report = function(text, kind)
                 if kind == "error" or kind == "warning" then Print(tostring(text)) end
             end,
@@ -4528,6 +4682,7 @@ local _seam = {
     MSG_DONE_V         = MSG_DONE_V,
     MSG_REQUEST_V      = MSG_REQUEST_V,
     LibSync            = LibSync,
+    Provenance         = Provenance,
     CommandVersion     = CommandVersion,
     CHUNK_VERSION      = CHUNK_VERSION,
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests

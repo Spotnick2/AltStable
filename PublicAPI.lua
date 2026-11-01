@@ -31,6 +31,30 @@ local PlainNumber = AltStable.API.PlainNumber
 
 AltStable.PUBLIC_API_VERSION = 1
 
+-- What this AltStable offers beyond version 1's functions (#281). Additions
+-- do not bump the version (docs/PUBLIC-API.md), so a consumer checks the
+-- flag: an older AltStable has no table, or no flag, and reads as "not
+-- available" rather than as an error.
+AltStable.PUBLIC_API_FEATURES = {
+    provenance = true,          -- GetCharacterProvenance, the provenance fields, ProvenanceChanged
+    ownAccountChannel = true,   -- SendToOwnAccounts and the rest, OwnAccountPeersChanged
+}
+
+-- Whose character a record is (Core.lua, "Ownership provenance"): kind, the
+-- time it was established (nil when not known), and for "own-account" the
+-- own account that said so.
+local function ProvenanceOf(char)
+    if char.scannedHere then
+        -- provAt is the scan's stamp: nothing else writes one on our own
+        -- scan (Provenance.Apply skips it). nil on a record from before #281.
+        return "self", PlainNumber(char.provAt), nil
+    end
+    if char.provKind == "own-account" then
+        return "own-account", PlainNumber(char.provAt), char.provVia
+    end
+    return "third-party", nil, nil
+end
+
 -- The fields a character copy carries. Everything else on the record is
 -- internal and may change without notice.
 local FIELDS = { "guid", "name", "realm", "faction", "class", "level", "money",
@@ -65,6 +89,7 @@ function AltStable.GetCharacters()
             copy.account = tostring(char.account or "")
             copy.hidden = (AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(char.guid)) or false
             copy.current = (me ~= nil and char.guid == me)
+            copy.provenance, copy.provenanceAt, copy.provenanceVia = ProvenanceOf(char)
             out[#out + 1] = copy
         end
     end
@@ -86,6 +111,14 @@ end
 --   levels     their levels summed (the footer's average divides this)
 function AltStable.GetTotals()
     return AltStable.CharacterTotals()
+end
+
+-- One character's provenance: kind, at, via (see ProvenanceOf). nil for a
+-- character AltStable has no record of.
+function AltStable.GetCharacterProvenance(guid)
+    local char = type(AltStableDB) == "table" and type(guid) == "string" and AltStableDB[guid]
+    if type(char) ~= "table" or not char.name then return nil end
+    return ProvenanceOf(char)
 end
 
 function AltStable.OpenSheet()
@@ -180,7 +213,8 @@ local function Changed(event)
     if C_Timer and C_Timer.After then C_Timer.After(0, run) else run() end
 end
 
-local EVENTS = { CharactersChanged = true, PortraitStatusChanged = true }
+local EVENTS = { CharactersChanged = true, PortraitStatusChanged = true,
+                 ProvenanceChanged = true, OwnAccountPeersChanged = true }   -- the last two: #281
 
 function AltStable.RegisterCallback(event, fn)
     if not EVENTS[event] then error("AltStable.RegisterCallback: unknown event " .. tostring(event), 2) end
@@ -222,4 +256,69 @@ do
             return original(...)
         end
     end
+end
+
+-- "ProvenanceChanged" and "OwnAccountPeersChanged" (#281): Core and Scanner
+-- call these when a character's provenance moves, or an own account comes
+-- onto the library or leaves it. Coalesced like the others.
+function AltStable.ProvenanceUpdated() Changed("ProvenanceChanged") end
+function AltStable.OwnAccountPeersUpdated() Changed("OwnAccountPeersChanged") end
+
+------------------------------------------------------------
+-- The own-account channel (#281)
+------------------------------------------------------------
+-- A consumer's own messages between the player's own accounts, over
+-- AltStable's LibAccountSync instance. Both directions are gated in Core
+-- before anything here runs: out only to accounts the library proved ours
+-- and lists now, in only from them, never to or from one the player refused.
+-- A whitelisted friend is not an own account and never sees any of it.
+
+local handlers = {}   -- namespace -> fn(payload, sender)
+
+local function CheckNamespace(namespace, who)
+    if type(namespace) ~= "string" or #namespace == 0 or #namespace > 32
+        or not namespace:find("^[%w_%.%-]+$") then
+        error(who .. ": namespace must be 1-32 letters, digits, '_', '.' or '-'", 3)
+    end
+end
+
+-- One handler per namespace; registering again replaces it. fn(payload,
+-- sender) runs once per message, with the sender as the library proved it:
+-- { name, guid, realm, faction }.
+function AltStable.RegisterOwnAccountHandler(namespace, fn)
+    CheckNamespace(namespace, "AltStable.RegisterOwnAccountHandler")
+    if type(fn) ~= "function" then error("AltStable.RegisterOwnAccountHandler: fn must be a function", 2) end
+    handlers[namespace] = fn
+end
+
+function AltStable.UnregisterOwnAccountHandler(namespace)
+    handlers[namespace] = nil
+end
+
+-- Core's only way in. A message for a namespace nobody registered is
+-- dropped: the other side may run a consumer this one does not.
+function AltStable.OwnAccountDeliver(namespace, payload, sender)
+    local fn = handlers[namespace]
+    if not fn then return end
+    -- `sender` is already a table of its own, built by Core for this message.
+    xpcall(function() return fn(payload, sender) end, Report)
+end
+
+-- Sends `payload` (any string) to every own account, or only to `guid` when
+-- given. Returns how many accounts the library took it for; 0 with a reason
+-- when none: "no-peers", "too-large", "not-ready", "unavailable" (Battle.net
+-- sync off or down) or the library's own. Taken is not delivered: the
+-- library does not acknowledge, so a consumer that must know asks back.
+function AltStable.SendToOwnAccounts(namespace, payload, guid)
+    CheckNamespace(namespace, "AltStable.SendToOwnAccounts")
+    if type(payload) ~= "string" then error("AltStable.SendToOwnAccounts: payload must be a string", 2) end
+    if guid ~= nil and type(guid) ~= "string" then error("AltStable.SendToOwnAccounts: guid must be a string", 2) end
+    if not AltStable.OwnAccountSend then return 0, "unavailable" end
+    return AltStable.OwnAccountSend(namespace, payload, guid)
+end
+
+-- The own accounts a send would reach right now, as copies:
+-- { { name, guid, realm, faction }, ... }, sorted by name.
+function AltStable.GetOwnAccountPeers()
+    return AltStable.OwnAccountPeerList and AltStable.OwnAccountPeerList() or {}
 end

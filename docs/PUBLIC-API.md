@@ -1,8 +1,9 @@
 # AltStable's public API
 
-A small, read-only API for other addons that want to show AltStable's characters —
-first asked for by GlassPanel's **[AltStable]** block (#123). Build on these functions,
-never on `AltStableDB`: its layout is internal and changes without notice.
+A small API for other addons that want to show AltStable's characters — first asked for
+by GlassPanel's **[AltStable]** block (#123). It is read-only, apart from the own-account
+channel (#281) a consumer uses to send its own data. Build on these functions, never on
+`AltStableDB`: its layout is internal and changes without notice.
 
 ```toc
 ## OptionalDeps: AltStable
@@ -28,6 +29,23 @@ may still hold what it had last session: AltStable rescans it about two seconds 
 Not `AltStable.API` — that is AltStable's internal adapter for the Retail API, a
 different table entirely.
 
+## `AltStable.PUBLIC_API_FEATURES`
+
+What this AltStable offers beyond version 1's first functions. They are additions, so the
+version stays `1` and you check the flag instead:
+
+```lua
+local F = AltStable and AltStable.PUBLIC_API_FEATURES
+if F and F.ownAccountChannel then ... end
+```
+
+| Flag | Since | Gives |
+|---|---|---|
+| `provenance` | #281 | `GetCharacterProvenance`, the `provenance*` fields on `GetCharacters`, `"ProvenanceChanged"` |
+| `ownAccountChannel` | #281 | `SendToOwnAccounts`, `RegisterOwnAccountHandler`, `GetOwnAccountPeers`, `"OwnAccountPeersChanged"` |
+
+An older AltStable has no table, or no flag. Treat that as "not available", not as an error.
+
 ## `AltStable.GetCharacters()` → `{ character, ... }`
 
 Every character AltStable knows, sorted by realm, then name (a plain byte-wise, case-sensitive
@@ -47,6 +65,9 @@ you like, it is not AltStable's data.
 | `lastUpdate` | number or nil | The record's update stamp, `time()` on the client that last changed it - the character's own client, not when this client received it. A scan that learned nothing new can leave it unchanged. Good for "how old is this"; not a receive time. |
 | `hidden` | boolean | The player hid it from AltStable's sheet. Yours to show dimmed or skip. |
 | `current` | boolean | It is the character logged in right now. |
+| `provenance` | string | Whose character it is: `"self"`, `"own-account"` or `"third-party"`. See `GetCharacterProvenance`. |
+| `provenanceAt` | number or nil | When that was established (`time()` on this client); nil when not known. |
+| `provenanceVia` | string or nil | For `"own-account"`, the name of the own account's character that said so. |
 
 These are the characters AltStable's sheet lists: every one it has a record for. A character
 the player **forgot** has no record, so it is not here - unless the player has logged into it
@@ -65,6 +86,27 @@ function, so a bar that shows "total gold" shows the same figure.
 | `characters` | How many count: every character the sheet lists, less the hidden ones. Low-level bank alts count; they hold gold. |
 | `hidden` | How many were left out for being hidden. |
 | `levels` | Their levels summed. |
+
+## `AltStable.GetCharacterProvenance(guid)` → `kind, at, via`
+
+Whether a character is the player's own, for one GUID; `nil` for a character AltStable has
+no record of. The same three values as the `provenance*` fields above.
+
+| `kind` | Means |
+|---|---|
+| `"self"` | This client scans it: a character of the WoW account logged in here. |
+| `"own-account"` | The player's own other WoW account said it scans it there. That account was proven the player's own by LibAccountSync, over Battle.net, and said so first-hand. |
+| `"third-party"` | Anything else: a whitelisted friend's character, a record relayed by anyone (the player's own other account included), a sender AltStable could not prove. |
+
+- The `account` label, a field on a received record and roster membership are **never**
+  ownership: a peer can type or send any of them.
+- It only moves up. `"third-party"` can become `"own-account"` or `"self"`. Nothing moves
+  it back except the player forgetting the character.
+- Own accounts on another Battle.net account are not proven, so their characters stay
+  `"third-party"`. So do the characters of an own account that runs an AltStable older than
+  #281, until it updates.
+- `at` is nil for a `"self"` record not scanned since the update, and `via` is nil except
+  for `"own-account"`.
 
 ## `AltStable.ToggleSheet()` / `AltStable.OpenSheet()`
 
@@ -103,14 +145,76 @@ the callback carries nothing else.
 - Registering does not call you; the first call is the next change. A listener registered
   from inside a callback is called from the next change on. One unregistered from inside a
   callback may still receive the call already in progress.
-- The events are `"CharactersChanged"` and `"PortraitStatusChanged"` (below). Registering
-  anything else is an error.
+- The events are `"CharactersChanged"`, `"PortraitStatusChanged"`, `"ProvenanceChanged"`
+  and `"OwnAccountPeersChanged"` (below). Registering anything else is an error.
 
 ## `AltStable.RegisterCallback("PortraitStatusChanged", fn)`
 
 `fn("PortraitStatusChanged")` is called when `GetPortraitStatus()` would answer
 differently - gear changed, a capture was taken, the first look after logging in. One
 call per change, on the next frame, with the same rules as above.
+
+## `AltStable.RegisterCallback("ProvenanceChanged", fn)`
+
+`fn("ProvenanceChanged")` is called when a character's provenance changes: a scan marks it
+`"self"`, or a sync from an own account marks it `"own-account"`. Read
+`GetCharacterProvenance` or `GetCharacters` again. Coalesced, with the same rules as above.
+
+## The own-account channel
+
+A consumer's own data, sent between the player's own WoW accounts over AltStable's
+LibAccountSync connection (Battle.net: any ruleset, any faction). AltStable checks both
+directions **before** your code runs:
+
+- **Out**, it goes only to accounts LibAccountSync proved the player's own, that the library
+  lists right now and that run AltStable. An AltStable from before #281 drops the message
+  unread, so it counts as sent but never arrives.
+- **In**, it is accepted only from those accounts. It never goes over a whisper.
+- An own account the player **refused** in AltStable's sync options is left out in both
+  directions.
+- A whitelisted friend is not an own account and never sends or receives any of it.
+
+It is a transport, not a sync: it carries one message, with no retry, ordering or
+acknowledgement. If you need to know that a message arrived, have the other side answer.
+
+### `AltStable.SendToOwnAccounts(namespace, payload [, guid])` → `count [, why]`
+
+Sends `payload` (any string, binary included) to every own account, or only to the one
+whose character is `guid`.
+
+- It returns how many accounts the library took the message for. With `0` it also returns
+  why: `"no-peers"`, `"too-large"`, `"not-ready"`, `"unavailable"` (Battle.net sync is off or
+  down) or another library reason.
+- Taken is not delivered.
+- `namespace` is 1-32 letters, digits, `_`, `.` or `-`; use your addon's name. The whole
+  message, `EXT1|<namespace>|` included, is at most 32768 bytes.
+- A bad namespace or a payload that is not a string is an error.
+
+### `AltStable.RegisterOwnAccountHandler(namespace, fn)` / `UnregisterOwnAccountHandler(namespace)`
+
+`fn(payload, sender)` runs once for each message to `namespace`.
+
+- `sender` is the character it came from, as LibAccountSync proved it:
+  `{ name, guid, realm, faction }`. The table is yours.
+- There is one handler per namespace, and registering again replaces it.
+- A message for a namespace with no handler is dropped.
+- `fn` runs under `pcall`, as the callbacks do.
+
+### `AltStable.GetOwnAccountPeers()` → `{ { name, guid, realm, faction }, ... }`
+
+The own accounts a send would reach right now, as copies sorted by name. Each is the
+character logged in on that account.
+
+### `AltStable.RegisterCallback("OwnAccountPeersChanged", fn)`
+
+`fn("OwnAccountPeersChanged")` is called when that list may have changed:
+
+- an own account was found;
+- the library stopped listing one;
+- Battle.net disconnected, or the player turned Battle.net sync off.
+
+Send what the other side needs then, for example your data's version. It is coalesced like
+the other callbacks.
 
 ## Example — a GlassPanel-style block
 

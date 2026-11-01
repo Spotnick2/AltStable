@@ -636,6 +636,13 @@ function AltStable.ScanCharacter()
     -- the merge will not let a peer's echo of it overwrite it unless strictly
     -- newer. Local-only - never serialized.
     char.scannedHere = true
+    -- Ownership provenance (#281, Core.lua): our own scan, and since when.
+    -- The first scan by a build that knows it stamps it; an older record
+    -- reads as "self" from scannedHere anyway, with no time.
+    if char.provKind ~= "self" then
+        char.provKind, char.provAt, char.provVia = "self", time(), nil
+        if AltStable.ProvenanceUpdated then AltStable.ProvenanceUpdated() end
+    end
     -- A name the client could not give keeps the stored one: a nameless record
     -- is invisible to the sheet and an orphan to the plugins' stores
     -- (docs/AUDIT.md, A3). Same rule as the faction below.
