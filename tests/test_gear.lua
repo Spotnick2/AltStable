@@ -142,7 +142,7 @@ WoW.items[14094] = nil
 AltStable.ScanCharacter()
 eq("an uncached item still has its exact string", AltStableDB[ME].gearstr_wrist, "item:14094::::::::::::1:12746")
 -- A changed item still uncached: the scan holds lastUpdate back for the cache
--- retry, but the new string is exact, and capturedAt covers it (Codex, PR #283).
+-- retry, but the new string is exact, and capturedAt is that scan (Codex, PR #283).
 events = {}
 WoW.equipped[9] = link("14094::::::::11:1482:::1:12747::::::", "Beaded Wraps of the Eagle")
 WoW.now = 4700
@@ -164,6 +164,19 @@ AltStable.ScanCharacter()
 flush()
 eq("an item taken off is a change", #events, 1)
 eq("  its string cleared", AltStableDB[ME].gearstr_feet, nil)
+eq("  capturedAt is that scan", AltStable.GetCharacterGear(ME).capturedAt, 5000)
+
+-- A swap puts the old item in a bag: Warband's 1 s bag scan touches the
+-- record before the equipment change's 3 s rescan. capturedAt must stay the
+-- gear read, not the bag stamp over the old gear (Codex, PR #283).
+WoW.equipped[9] = link("14094::::::::11:1482:::1:12748::::::", "Beaded Wraps of the Whale")
+WoW.now = 5001
+AltStable.TouchCharacter(ME)
+local raced = AltStable.GetCharacterGear(ME)
+eq("a plugin's touch moves lastUpdate", AltStableDB[ME].lastUpdate, 5001)
+eq("  but not capturedAt, while the slot still shows the old item", raced.capturedAt, 5000)
+eq("  (the old item)", raced.slots[9].itemString, "item:14094::::::::::::1:12746")
+WoW.equipped[9] = link("14094::::::::11:1482:::1:12746::::::", "Beaded Wraps of the Owl")
 
 ------------------------------------------------------------
 -- The wire
@@ -171,11 +184,13 @@ eq("  its string cleared", AltStableDB[ME].gearstr_feet, nil)
 local wire = T.SerializeChar(AltStableDB[ME])
 check("the item string is sent", wire:find("gearstr_wrist:item:14094::::::::::::1:12746", 1, true) ~= nil)
 check("  and gearAt", wire:find("\ngearAt:5000", 1, true) ~= nil or wire:find("^gearAt:5000") ~= nil)
+check("  and gearReadAt", wire:find("\ngearReadAt:5000", 1, true) ~= nil)
 check("  the link still is not", not wire:find("gearlink_", 1, true))
 check("  and nothing for an empty slot", not wire:find("gearstr_head", 1, true))
 local back = T.DeserializeChar(wire)
 eq("it comes back a string, not a number", back.gearstr_wrist, "item:14094::::::::::::1:12746")
 eq("  gearAt a number", back.gearAt, 5000)
+eq("  gearReadAt a number", back.gearReadAt, 5000)
 
 -- A peer's record lands.
 local OTHER = "Player-9-ALT"
@@ -186,7 +201,7 @@ local function peerRecord(fields)
     return table.concat(lines, "\n") .. "\n==NOW==:9000"
 end
 events = {}
-T.DeserializeFullDB(peerRecord({ "lastUpdate:6000", "gearAt:5500", "gearid_wrist:14094",
+T.DeserializeFullDB(peerRecord({ "lastUpdate:6000", "gearAt:5500", "gearReadAt:5900", "gearid_wrist:14094",
     "gearmod_wrist:0:0:0:0:0", "gear_wrist:14", "gearstr_wrist:item:14094::::::::::::1:12745",
     "gearid_head:0" }), "Peer Person")
 flush()
@@ -200,7 +215,7 @@ eq("  its item id", g.slots[9].itemID, 14094)
 eq("  its item level", g.slots[9].itemLevel, 14)
 eq("an empty remote slot is empty", g.slots[1].state, "empty")
 eq("a slot the record does not have is unknown", g.slots[5].state, "unknown")
-eq("capturedAt is the record's stamp", g.capturedAt, 6000)
+eq("capturedAt is the owner's gear read, not the record's stamp", g.capturedAt, 5900)
 eq("gearAt is the owner's", g.gearAt, 5500)
 eq("provenance comes with it", g.provenance, "third-party")
 
@@ -231,6 +246,7 @@ eq("an older peer's record: the suffix slot is unknown", g.slots[9].state, "unkn
 eq("  never the old string", g.slots[9].itemString, nil)
 eq("  the item id is still given, as a hint", g.slots[9].itemID, 14094)
 eq("  its gearAt cleared", g.gearAt, nil)
+eq("  and its capturedAt", g.capturedAt, nil)
 eq("  and the empty slot is still empty", g.slots[1].state, "empty")
 eq("  that is a change (the string went away)", #events, 1)
 

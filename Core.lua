@@ -1396,8 +1396,10 @@ local function ClearSyncedStateFields(t)
     -- the safe direction to fail.
     t.hidehelm = nil; t.hidecloak = nil
     -- When the gear last changed (#281): an older peer's record has none, and
-    -- the stamp of a gear set no longer on the record must not linger.
+    -- the stamp of a gear set no longer on the record must not linger. Nor
+    -- the time it was read.
     t.gearAt = nil
+    t.gearReadAt = nil
     for k in pairs(t) do
         if k:find("^prof_") or k:find("^profmax_")
         or k:find("^gear_") or k:find("^gearq_")

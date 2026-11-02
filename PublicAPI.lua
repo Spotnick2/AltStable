@@ -157,26 +157,18 @@ local function GearSlot(char, slot)
     return out
 end
 
-local function GearCapturedAt(char)
-    local at, gearAt = PlainNumber(char.lastUpdate), PlainNumber(char.gearAt)
-    if gearAt and (not at or gearAt > at) then return gearAt end
-    return at
-end
-
 function AltStable.GetCharacterGear(guid)
     local char = type(AltStableDB) == "table" and type(guid) == "string" and AltStableDB[guid]
     if type(char) ~= "table" or not char.name then return nil end
     local out = {
         guid = guid,
-        -- The latest time the record is known to show what was worn: the
-        -- record's stamp, or gearAt when that is later. The stamp is not only a
-        -- gear read: TouchCharacter moves it for a plugin's change (bags, bank,
-        -- recipes), always on the character being played, whose gear is
-        -- rescanned on every equipment change (3 s debounce) - so the gear
-        -- held was still worn then. A scan holds the stamp back while an item
-        -- is uncached, but the strings come from the links and are exact
-        -- already, hence gearAt (Codex, PR #283). Not a receive time.
-        capturedAt = GearCapturedAt(char),
+        -- When the scan that wrote these slots read the gear (gearReadAt, on
+        -- the character's own client). Not lastUpdate: plugins move that for
+        -- their own data, and a bag change can land before the equipment
+        -- change's debounced rescan, under the old gear (Codex, PR #283). A
+        -- scan with an item still uncached stamps it too: the strings come
+        -- from the links and are exact. nil on a record from before #281.
+        capturedAt = PlainNumber(char.gearReadAt),
         -- When the worn items last changed, on the character's own client; nil
         -- on a record from an AltStable before #281.
         gearAt = PlainNumber(char.gearAt),

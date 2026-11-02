@@ -116,7 +116,7 @@ One character's equipped gear, as a copy; `nil` for a character AltStable has no
 | Field | Type | Meaning |
 |---|---|---|
 | `guid` | string | |
-| `capturedAt` | number or nil | The latest time the record is known to show what was worn: the record's stamp (`lastUpdate`), or `gearAt` when that is later. It is not always a gear read. A plugin's change (bags, bank, recipes) moves the stamp too, but only while that character is played, and AltStable rescans the gear within about 3 seconds of any equipment change then. A scan holds `lastUpdate` back while an item is still uncached, but the item strings come from the links and are exact already. It is not a receive time. |
+| `capturedAt` | number or nil | When the scan that wrote these slots read the gear, `time()` on the character's own client. Every scan stamps it, even one with an item still uncached, because the item strings come from the links and are exact. It is not `lastUpdate`, which plugins move for their own data (bags, bank, recipes), and it is not a receive time. nil on a record from an AltStable before #281. |
 | `gearAt` | number or nil | When the worn items last changed, `time()` on the character's own client. It is separate from `lastUpdate`, which plugins move for their own data. nil on a record from an AltStable before #281. |
 | `provenance` | string | As `GetCharacterProvenance`. |
 | `slots` | table | Keyed by inventory slot id: 1-3 and 5-18. The shirt (4) and tabard (19) are not gear slots. |

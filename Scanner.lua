@@ -1016,6 +1016,10 @@ function AltStable.ScanCharacter()
         char.gearAt = time()
         if AltStable.GearUpdated then AltStable.GearUpdated(char.guid) end
     end
+    -- When the gear was read, every scan: what GetCharacterGear calls
+    -- capturedAt. lastUpdate cannot say it (plugins move it, and a scan with
+    -- an item uncached holds it back; Codex, PR #283).
+    char.gearReadAt = time()
 
     -- Helm/cloak display toggles. A portrait pipeline needs these because the equipment
     -- list alone cannot say a slot is hidden: a character with the helm hidden would
