@@ -168,10 +168,14 @@ function AltStable.GetCharacterGear(guid)
     if type(char) ~= "table" or not char.name then return nil end
     local out = {
         guid = guid,
-        -- When the gear was last read as it is: the record's stamp, or gearAt
-        -- when that is later. A scan holds lastUpdate back while an item is
-        -- uncached (the cache retry stamps it), but the strings come from the
-        -- links and are exact already (Codex, PR #283). Not a receive time.
+        -- The latest time the record is known to show what was worn: the
+        -- record's stamp, or gearAt when that is later. The stamp is not only a
+        -- gear read: TouchCharacter moves it for a plugin's change (bags, bank,
+        -- recipes), always on the character being played, whose gear is
+        -- rescanned on every equipment change (3 s debounce) - so the gear
+        -- held was still worn then. A scan holds the stamp back while an item
+        -- is uncached, but the strings come from the links and are exact
+        -- already, hence gearAt (Codex, PR #283). Not a receive time.
         capturedAt = GearCapturedAt(char),
         -- When the worn items last changed, on the character's own client; nil
         -- on a record from an AltStable before #281.
