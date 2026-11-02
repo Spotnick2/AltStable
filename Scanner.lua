@@ -91,6 +91,44 @@ local function ItemIDFromLink(link)
 end
 
 ------------------------------------------------------------
+-- The item string other addons get (#281, AS-003), synced as gearstr_<slot>
+--
+-- Forever's links are the Mainline layout. Measured on the stored links
+-- (205 of them, beta SavedVariables, 2026-10):
+--   item:id:enchant:gem1:gem2:gem3:gem4:suffix:unique:linkLevel:spec:
+--        modifiersMask:context:numBonus[:bonus...]:numModifiers[:type:value...]:...
+-- The classic suffix field is ALWAYS empty: a random suffix is a bonus ID
+-- ("Beaded Wraps of the Sorcerer" is item:14094::::::::10:1482:::1:12745).
+-- So the bonus and modifier block is what has to travel.
+--
+-- linkLevel and spec are the scanning character's level and spec, not the
+-- item's: kept, they would make the same item look changed at every ding. They
+-- are blanked. Everything after the modifiers (the crafter's GUID on a crafted
+-- item, relic data) is dropped: no stats live there. Trailing empty fields are
+-- trimmed, so a plain item is just "item:288919".
+------------------------------------------------------------
+local function GearItemString(link)
+    if type(link) ~= "string" then return nil end
+    local body = link:match("item:([^|]+)")
+    if not body then return nil end
+    local f, n = {}, 0
+    for v in (body .. ":"):gmatch("([^:]*):") do n = n + 1; f[n] = v end
+    if not tonumber(f[1]) then return nil end
+    f[9], f[10] = "", ""
+    local bonuses = tonumber(f[13]) or 0
+    local mods = tonumber(f[14 + bonuses]) or 0
+    -- A count past the fields there are (a malformed link) keeps what is there:
+    -- the missing ones read as empty and are trimmed below.
+    local last = 12
+    if bonuses > 0 or mods > 0 then last = 14 + bonuses + 2 * mods end
+    while last > 1 and (f[last] == nil or f[last] == "") do last = last - 1 end
+    local out = {}
+    for i = 1, last do out[i] = f[i] or "" end
+    return "item:" .. table.concat(out, ":")
+end
+AltStable.GearItemString = GearItemString
+
+------------------------------------------------------------
 -- Permanent enchant + gems, packed for sync
 --
 -- The TBC itemString is
@@ -223,6 +261,7 @@ AltStable._testScanner = {
     EnchantText   = EnchantText,
     ParseItemMods = ParseItemMods,
     PackGearMod   = PackGearMod,
+    GearItemString = GearItemString,
     SocketCount   = SocketCount,
     GEAR_SLOTS    = GEAR_SLOTS,
 }
@@ -402,6 +441,8 @@ local function ResetCharacter(char)
         char["gearsubtype_"..slot.key] = ""  -- item subtype ("Dagger", "Mail", ...) — authoritative gear type
         char["gearlink_"..slot.key] = ""   -- full item link (for tooltips)
         char["gearmod_"..slot.key]  = ""   -- packed "ench:sockets:g1:g2:g3" (synced)
+        char["gearstr_"..slot.key]  = nil  -- the item string for other addons (synced, #281);
+                                           -- none for an empty slot: gearid_ 0 says so
         char["gearench_"..slot.key] = nil  -- the enchant in words, absent for none (synced, #94)
     end
 
@@ -924,6 +965,8 @@ function AltStable.ScanCharacter()
             -- even while the item itself is uncached; only the socket count inside
             -- PackGearMod can come back unresolved ("?").
             char["gearmod_"..slot.key] = PackGearMod(link, itemID)
+            -- From the link alone, so it is exact even while the item is uncached.
+            char["gearstr_"..slot.key] = GearItemString(link)
             char["gearench_"..slot.key] = SlotEnchantWords(slot.id, link)
             local itemName, _, quality, ilvl, _, _, itemSubType = GetItemInfo(link)
             if ilvl then
@@ -958,6 +1001,25 @@ function AltStable.ScanCharacter()
             char["gearmod_"..slot.key]   = ""
         end
     end
+
+    -- When the gear last changed (#281, AS-003): what is worn, as item strings,
+    -- against the previous scan's links. Synced as gearAt, separate from
+    -- lastUpdate, which plugins move for their own data. The first scan by a
+    -- build that has it stamps it too, so it can be LATER than the real change:
+    -- a consumer then sees "changed" once, which is the safe way to be wrong.
+    local before, after = {}, {}
+    for i, slot in ipairs(GEAR_SLOTS) do
+        before[i] = GearItemString(prevGear[slot.key].link) or ""
+        after[i] = char["gearstr_"..slot.key] or ""
+    end
+    if table.concat(before, ",") ~= table.concat(after, ",") or not char.gearAt then
+        char.gearAt = time()
+        if AltStable.GearUpdated then AltStable.GearUpdated(char.guid) end
+    end
+    -- When the gear was read, every scan: what GetCharacterGear calls
+    -- capturedAt. lastUpdate cannot say it (plugins move it, and a scan with
+    -- an item uncached holds it back; Codex, PR #283).
+    char.gearReadAt = time()
 
     -- Helm/cloak display toggles. A portrait pipeline needs these because the equipment
     -- list alone cannot say a slot is hidden: a character with the helm hidden would
