@@ -157,14 +157,22 @@ local function GearSlot(char, slot)
     return out
 end
 
+local function GearCapturedAt(char)
+    local at, gearAt = PlainNumber(char.lastUpdate), PlainNumber(char.gearAt)
+    if gearAt and (not at or gearAt > at) then return gearAt end
+    return at
+end
+
 function AltStable.GetCharacterGear(guid)
     local char = type(AltStableDB) == "table" and type(guid) == "string" and AltStableDB[guid]
     if type(char) ~= "table" or not char.name then return nil end
     local out = {
         guid = guid,
-        -- The record's stamp: the gear is as of then (a scan stamps it only
-        -- when every slot resolved). Not a receive time.
-        capturedAt = PlainNumber(char.lastUpdate),
+        -- When the gear was last read as it is: the record's stamp, or gearAt
+        -- when that is later. A scan holds lastUpdate back while an item is
+        -- uncached (the cache retry stamps it), but the strings come from the
+        -- links and are exact already (Codex, PR #283). Not a receive time.
+        capturedAt = GearCapturedAt(char),
         -- When the worn items last changed, on the character's own client; nil
         -- on a record from an AltStable before #281.
         gearAt = PlainNumber(char.gearAt),

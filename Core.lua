@@ -908,13 +908,16 @@ function Provenance.Apply(line, sender)
     return n
 end
 
--- What a record says is worn (#281, AS-003): the item ids and item strings,
--- slot by slot. A merge that changes it is a gear change other addons hear
--- about ("GearChanged", PublicAPI.lua); the scanner reports its own.
+-- What a record says is worn (#281, AS-003): the item ids, item strings and
+-- enchant/gem fields, slot by slot - everything GetCharacterGear's slot state
+-- reads (a new enchant under a stale string turns the slot unknown; Codex,
+-- PR #283). A merge that changes it is a gear change other addons hear about
+-- ("GearChanged", PublicAPI.lua); the scanner reports its own.
 function Provenance.GearSig(c)
     local parts = {}
     for i, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
         parts[i] = tostring(c["gearid_" .. slot.key]) .. "=" .. tostring(c["gearstr_" .. slot.key])
+                   .. "/" .. tostring(c["gearmod_" .. slot.key])
     end
     return table.concat(parts, ",")
 end

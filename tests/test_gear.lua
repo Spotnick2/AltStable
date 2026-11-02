@@ -141,6 +141,19 @@ events = {}
 WoW.items[14094] = nil
 AltStable.ScanCharacter()
 eq("an uncached item still has its exact string", AltStableDB[ME].gearstr_wrist, "item:14094::::::::::::1:12746")
+-- A changed item still uncached: the scan holds lastUpdate back for the cache
+-- retry, but the new string is exact, and capturedAt covers it (Codex, PR #283).
+events = {}
+WoW.equipped[9] = link("14094::::::::11:1482:::1:12747::::::", "Beaded Wraps of the Eagle")
+WoW.now = 4700
+AltStable.ScanCharacter()
+flush()
+local pendingGear = AltStable.GetCharacterGear(ME)
+check("a changed, uncached item: lastUpdate is held back", (AltStableDB[ME].lastUpdate or 0) < 4700,
+      AltStableDB[ME].lastUpdate)
+eq("  capturedAt is the gear change, not the older stamp", pendingGear.capturedAt, 4700)
+eq("  with the new string", pendingGear.slots[9].itemString, "item:14094::::::::::::1:12747")
+WoW.equipped[9] = link("14094::::::::11:1482:::1:12746::::::", "Beaded Wraps of the Owl")
 WoW.items[14094] = { name = "Beaded Wraps of the Owl", quality = 2, ilvl = 14, itemType = "Armor", subType = "Cloth" }
 
 -- Taking an item off.
@@ -197,6 +210,16 @@ T.DeserializeFullDB(peerRecord({ "lastUpdate:6100", "gearAt:5500", "gearid_wrist
     "gearid_head:0" }), "Peer Person")
 flush()
 eq("a newer record with the same gear: no GearChanged", #events, 0)
+
+-- An older client relays the string it could not clear, under a new enchant:
+-- the slot turns unknown, and that is a change too (Codex, PR #283).
+events = {}
+T.DeserializeFullDB(peerRecord({ "lastUpdate:6200", "gearAt:5500", "gearid_wrist:14094",
+    "gearmod_wrist:41:0:0:0:0", "gear_wrist:14", "gearstr_wrist:item:14094::::::::::::1:12745",
+    "gearid_head:0" }), "Peer Person")
+flush()
+eq("a new enchant under a stale string: unknown", AltStable.GetCharacterGear(OTHER).slots[9].state, "unknown")
+eq("  and that is a GearChanged", #events, 1)
 
 -- An older AltStable's record: no strings, no gearAt. The merge clears ours.
 events = {}

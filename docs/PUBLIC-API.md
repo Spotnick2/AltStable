@@ -116,7 +116,7 @@ One character's equipped gear, as a copy; `nil` for a character AltStable has no
 | Field | Type | Meaning |
 |---|---|---|
 | `guid` | string | |
-| `capturedAt` | number or nil | The record's stamp (`lastUpdate`): the gear is as of then. A scan stamps it only once every slot has resolved. It is not a receive time. |
+| `capturedAt` | number or nil | When the gear was last read as shown: the record's stamp (`lastUpdate`), or `gearAt` when that is later. A scan holds `lastUpdate` back while an item is still uncached, but the item strings come from the links and are exact already. It is not a receive time. |
 | `gearAt` | number or nil | When the worn items last changed, `time()` on the character's own client. It is separate from `lastUpdate`, which plugins move for their own data. nil on a record from an AltStable before #281. |
 | `provenance` | string | As `GetCharacterProvenance`. |
 | `slots` | table | Keyed by inventory slot id: 1-3 and 5-18. The shirt (4) and tabard (19) are not gear slots. |
@@ -206,6 +206,8 @@ client's own scan, or a sync that brings a record whose gear differs from the on
 - `guids` lists the characters that changed during the burst, sorted. Each listener gets its
   own list.
 - A level-up alone is not a change. Neither is a newer record with the same gear.
+- A sync that changes only a slot's enchant or gems is a change, since it can change the slot's
+  state.
 - The first scan after updating AltStable also reports one, with nothing changed.
 - Changes made while nobody is registered are not collected.
 - Otherwise it follows the same rules as the other callbacks.
