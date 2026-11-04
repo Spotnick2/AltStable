@@ -1,10 +1,12 @@
 # Changelog
 
-## v0.17.0
+## v1.0.0 - 2026-11-04
 
-The Professions tab counts reagents across all your alts, every character's look is kept from
-the barber, and the recipe list loses recipes Forever doesn't have. Measured on client
-1.60.1.70450. Nothing changes on the sync wire, so v0.17.0 syncs with v0.11.0 to v0.16.0.
+AltStable 1.0, for the launch of WoW: Forever. The Professions tab counts reagents across all
+your alts, every character's look is kept from the barber, the recipe list loses recipes Forever
+doesn't have, and other addons can now read your alts from AltStable. Measured on client
+1.60.1.70450, the last beta build; the live client is newer. The sync carries a few new fields
+that older versions ignore, so v1.0.0 still syncs with v0.11.0 to v0.16.0.
 
 ### AltStable Companion
 
@@ -59,6 +61,20 @@ the beta's `_classic_beta_`, press **Detect** again or **Browse** to `_forever_`
   `AltStableWarband.lua` with it; it no longer does. And an account that had lost its own Warband
   data blanked the bank snapshots your other accounts still held for its characters until it next
   visited a bank; those are kept now.
+
+### For addon authors
+
+- **More of AltStable for other addons to read**
+  ([#282](https://github.com/Spotnick2/AltStable/pull/282),
+  [#283](https://github.com/Spotnick2/AltStable/pull/283)), in
+  [docs/PUBLIC-API.md](https://github.com/Spotnick2/AltStable/blob/main/docs/PUBLIC-API.md):
+  - where each character's record came from: scanned on this account, synced from one of your own
+    accounts, or from someone else;
+  - a channel for an addon's own data between your own WoW accounts, riding AltStable's sync;
+  - each character's worn gear as item strings, with Forever's random suffixes (a bonus ID on
+    Forever) and enchants, and a `"GearChanged"` callback.
+
+  `AltStable.PUBLIC_API_FEATURES` says which of these the installed AltStable has.
 
 ## v0.16.0
 

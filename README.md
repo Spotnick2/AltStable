@@ -4,7 +4,7 @@ All your characters in one window, for **World of Warcraft: Forever**. You can s
 gear, professions and recipes, reputations, gold, rested XP, raid lockouts, and what's in
 their bags and banks. You can also stand them together as a roster.
 
-![The sheet: one row per character, grouped by realm, with level, item level, guild, rested XP, gold and when each was last played](docs/images/sheet.jpg)
+![The sheet: one row per character, grouped by realm, with level, item level, guild, rested XP, gold and when each was last played](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
 
 ## Three pieces, and only the first is required
 
@@ -49,22 +49,26 @@ in Glass UI shows in AltStable after a `/reload`.
 
 - **The sheet** has one row per character: level, gear and item level, professions,
   reputations (Vanilla's and Forever's own factions), gold, rested XP. Sort by any column.
-  Right-click a character to hide it, mark it a favourite, or forget it.
+  Right-click a character to hide it, mark it a favourite, forget it, or see its
+  **Appearance** (face, hair, skin and the rest, recorded when it sits in a barber's chair).
 - **Warband** shows every item across all your characters' bags and banks, laid out like a
   warband bank, with your own tabs. Hovering an item shows who holds how many, and item
   tooltips in the game can show the counts too.
 - **Raids** shows who is saved to which raid and when each resets.
-- **Professions** shows which character knows which recipe. Recipe items in the game
+- **Professions** shows which character knows which recipe. Hover a recipe to see its
+  reagents and how many your alts hold in their bags and banks, and, for each alt who knows
+  it, whether it has them or what it is short of. The **Craftable** filter lists the recipes
+  an alt knows and has the reagents for somewhere among your alts. Recipe items in the game
   (at a vendor, in the auction house) can show who already knows them.
 - **Roster** shows your characters as character cards, or standing together around a
   campfire in **camps** of four, each camp with its own backdrop. Click a character for its
   paper doll and stats.
 
-![A camp in the Roster: four characters around a campfire in Dalaran, from portraits made by AltStable Companion, with the camp list beside it](docs/images/roster.jpg)
+![A camp in the Roster: four characters around a campfire in Dalaran, from portraits made by AltStable Companion, with the camp list beside it](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
 
 *Roster portraits from your own captures, made by the free AltStable Companion.*
 
-![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](docs/images/roster-enhanced.jpg)
+![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-enhanced.jpg)
 
 *Another camp, with the optional enhanced portraits (Codex CLI, uses your ChatGPT account's usage).*
 
@@ -122,9 +126,11 @@ The Companion has its own **Check for updates** under **Help → About**.
 | `/alts portrait` | Capture this character for the Roster |
 | `/alts sync` [name] | Sync now, with everyone or one character |
 | `/alts whitelist` [remove] [name] | Who you sync with |
+| `/alts auth`, `/alts allow` / `deny` &lt;name&gt; | Who may ask for your data |
 | `/alts favourite` / `unfavourite` &lt;name&gt; | Pin a character to the top |
-| `/alts forget` / `unforget` &lt;name&gt; | Remove a character that no longer exists (or bring it back) |
+| `/alts forget` / `unforget` &lt;name&gt;, `/alts forgotten` | Remove a character that no longer exists (or bring it back), and list the forgotten |
 | `/alts stale` [days] | Characters nobody has played in that long; forget them from Options, Old characters |
+| `/alts account` &lt;n&gt; | This account's number in the sheet |
 | `/alts export` | Every character as a spreadsheet |
 | `/alts config` | Options |
 
@@ -146,15 +152,19 @@ can send.
 
 ## Licence
 
-AltStable's own code is MIT — see [LICENSE](LICENSE).
+AltStable's own code is MIT — see
+[LICENSE](https://github.com/Spotnick2/AltStable/blob/main/LICENSE).
 
 The libraries under `Libs/` are **not** covered by it. Each is redistributed
 under its own terms and stays the work of its authors: LibStub (public domain),
-LibDeflate (zlib), LibGlass-1.0 (MIT, fetched at build time), and ChatThrottleLib
-(no stated licence — embedded by convention). The same note travels in `LICENSE`, which ships inside the addon;
-this file does not.
+LibDeflate (zlib), LibGlass-1.0, LibShowcase-1.0 and LibAccountSync-1.0 (MIT, fetched at
+build time), and ChatThrottleLib (no stated licence — embedded by convention). The same note
+travels in `LICENSE`, which ships inside the addon; this file does not.
 
 ---
 
-*For developers: how it's built, tested and released is in [`AGENTS.md`](AGENTS.md) and
-[`docs/`](docs/).*
+*For addon authors: what other addons can read from AltStable is in
+[`docs/PUBLIC-API.md`](https://github.com/Spotnick2/AltStable/blob/main/docs/PUBLIC-API.md).
+For developers: how it's built, tested and released is in
+[`AGENTS.md`](https://github.com/Spotnick2/AltStable/blob/main/AGENTS.md) and
+[`docs/`](https://github.com/Spotnick2/AltStable/tree/main/docs).*
