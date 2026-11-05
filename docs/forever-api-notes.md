@@ -875,6 +875,41 @@ argument comes last, so no earlier position moves.
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+## Build 1.60.1.70790 (2026-11-05) — experience preset split, title icons gain subIcon, none we use
+
+**1.60.1.70532** (client built Oct 20 2026) came between: dumped (`forever-api-1.60.1.70532.md`)
+but never measured here, so this compares across it.
+
+Dumped (`forever-api-1.60.1.70790.md`, client built Nov 3 2026) and compared with
+`Compare-Dumps.ps1` against 70450, the last build measured here:
+
+```
+Documented functions - +8 -4     C_GameRules.SetForeverExperiencePreset -> ...PreLogin / ...PostLogin;
+                                 ~ C_Texture.GetTitleIconTexture / IsTitleIconTextureReady /
+                                   SetTitleIconTexture (+ optional subIcon);
+                                 + C_ActionBar.IsHighestSpellRank, C_BattleNet.GetDefaultTitleWhisperTarget,
+                                   C_PetInfo.IsPetOrderMoveToPending
+Documented events - +2 -0        + PET_ORDER_MOVE_TO_PENDING_CHANGED, SETTINGS_HEADER_TEXT_UPDATE
+Documented tables - +3 -3        ForeverExperiencePreset: Modern -> Enhanced;
+                                 SubscriptionInterstitialType gains SubscriptionPeriod;
+                                 BNetGameAccountInfo gains a trailing optional subIcon
+Widget methods - no change (7530)
+Namespace functions - +8 -1      the new functions above, C_Seasons.GetActiveSeason / HasActiveSeason
+                                 (new since 70450, undocumented),
+                                 ChatFrameUtil.GetCharacterWhisperTargetIfTitleFriend;
+                                 - SetForeverExperiencePreset
+Global functions - +52 -103 (walks _G: addon noise, not listed)
+Namespace candidates - +1291 -472 (walks _G: addon noise, not listed)
+```
+
+Nothing AltStable, its stubs or its embedded libraries call is among them (no `.lua` hit for any
+changed name). `BNetGameAccountInfo` is what `C_BattleNet.GetGameAccountInfoByID` / `ByGUID`
+return, and its new field is an optional addition, so no reader of the existing fields changes.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 10100 72 -1 7 table`, all as expected.
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
 ---
 
 ## Secret values — some unit numbers cannot be read, only passed along
