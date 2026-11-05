@@ -49,7 +49,9 @@ if ($Remove) {
     if (Test-Path -LiteralPath $hostDir) {
         $users = @(Get-ChildItem -LiteralPath $AddOnsPath -Directory | Where-Object {
             $_.Name -ne "ForeverProbe" -and
-            (Get-ChildItem -LiteralPath $_.FullName -Filter *.toc | Select-String -Quiet -Pattern '^## (Dependencies|RequiredDeps):.*\bForeverProbe\b')
+            # -Quiet answers once per .toc: an addon with several (Gargul, Questie) gives
+            # an array of $false, which is truthy. Ask whether any of them is $true.
+            (@(Get-ChildItem -LiteralPath $_.FullName -Filter *.toc | Select-String -Quiet -Pattern '^## (Dependencies|RequiredDeps):.*\bForeverProbe\b') -contains $true)
         } | ForEach-Object { $_.Name })
         if ($users.Count -gt 0) {
             Write-Host "Kept ForeverProbe: $($users -join ', ') still depend on it" -ForegroundColor DarkGray
