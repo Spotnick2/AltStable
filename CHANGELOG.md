@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.0.1 - 2026-11-06
+
+A hotfix for a Lua error on the live client. Measured on client 1.60.1.70790, the live build.
+Nothing in the sync changed: v1.0.1 syncs with everything v1.0.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.0.0** is the same app as 0.1.1 with its 1.0 version number. If you run 0.1.1,
+**Help → Check for updates** offers it, and nothing you have needs to change.
+
+### Fixed
+
+- **"attempt to index local 'text' (a secret string value ...)"**
+  ([#288](https://github.com/Spotnick2/AltStable/pull/288)). The live client can hand addons a
+  system chat message they aren't allowed to read, and AltStable tried to read it anyway, raising
+  a Lua error at `Core.lua:1715`. AltStable now leaves such messages alone; they show in chat as
+  the game sends them.
+
 ## v1.0.0 - 2026-11-04
 
 AltStable 1.0, for the launch of WoW: Forever. The Professions tab counts reagents across all
