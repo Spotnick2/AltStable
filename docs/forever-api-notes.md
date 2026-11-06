@@ -932,6 +932,14 @@ secrets for the **player's own character** on that realm, while `UnitXPMax`, `Un
 is per-API (and evidently per-realm-type), not a blanket switch: assume any unit number can be
 secret and check the ones you do maths on.
 
+**Strings too, chat text included** (seen on 1.60.1.70790, an owner's error report): a
+`CHAT_MSG_SYSTEM` message arrived as a secret string, both to the event handler and to a chat
+filter. `type()` on it says `"string"`, so a `type(text) ~= "string"` guard lets it through, and
+the first method call throws: `attempt to index local 'text' (a secret string value, while
+execution tainted by 'AltStable')`. Ask `issecretvalue` before any `:match`/`:find` on event text.
+What makes a system message secret was not measured. (The fallback below, for a build *without*
+`issecretvalue`, still treats every string as plain; it is not what runs on current builds.)
+
 The client's own predicate:
 
 ```lua

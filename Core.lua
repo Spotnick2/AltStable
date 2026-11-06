@@ -1703,10 +1703,17 @@ local unreachableToldAt = {}      -- AuthKey -> when we said so for this attempt
 
 -- Built once from the client's format string: this runs for every system
 -- message, in every chat frame's filter.
+--
+-- A system message can arrive as a SECRET string (see "Secret values" in
+-- Compat.lua): type() still says "string", but :match on it throws
+-- "attempt to index local 'text' (a secret string value, while execution
+-- tainted by 'AltStable')" (seen on 1.60.1.70790). A secret line is not one we
+-- can read, so it is not our echo: left alone, shown as the client sends it.
 local notFoundPattern, notFoundFormat
 local function NotFoundName(text)
     local fmt = ERR_CHAT_PLAYER_NOT_FOUND_S
     if type(fmt) ~= "string" or type(text) ~= "string" then return nil end
+    if AltStable.API.IsSecretValue(text) then return nil end
     if fmt ~= notFoundFormat then
         local pattern = fmt:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0")
         notFoundPattern = "^" .. pattern:gsub("%%s", "(.+)", 1) .. "$"
@@ -3602,6 +3609,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
     if event == "CHAT_MSG_SYSTEM" then
         local text = ...
         if not text or type(text) ~= "string" then return end
+        -- A secret string reports type "string" and throws on every match
+        -- below (see NotFoundName). Unreadable, so nothing to act on.
+        if AltStable.API.IsSecretValue(text) then return end
 
         -- "No player named X" answering our own whisper: remember it, and say
         -- so once if the player asked for this sync by hand. The chat filter
