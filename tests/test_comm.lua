@@ -3501,6 +3501,32 @@ do
     local auto = notFound("Asleep Surname")
     check(WoW.chatFiltered("CHAT_MSG_SYSTEM", auto), "a login request's 'no player named' is hidden")
     check(not chatHas("cannot be reached"), "  and not replaced by a line of ours")
+
+    -- A SECRET system message (seen on 70790): type() says "string", but any
+    -- method call on it throws. The stub's WoW.secret is a coroutine, so this
+    -- marks a real string secret and makes indexing it throw, like the client.
+    -- It is even our own echo's text: unreadable still means left alone.
+    freshAuth({ whitelist = { "Hidden Surname" } })
+    T.RequestCharacters("WHISPER", "Hidden Surname", true)
+    local secretLine = ERR_CHAT_PLAYER_NOT_FOUND_S:format("Hidden Surname")
+        .. " |Hplayer:Hidden Surname|h"
+    local stringMeta = getmetatable("")
+    local realIndex, realPredicate = stringMeta.__index, issecretvalue
+    stringMeta.__index = function(s, k)
+        if s == secretLine then
+            error("attempt to index local 'text' (a secret string value, while execution tainted by 'AltStable')")
+        end
+        return realIndex[k]
+    end
+    issecretvalue = function(v) return v == secretLine or realPredicate(v) end
+    dofile("Compat.lua")                                  -- it holds the predicate it loaded with
+    local okEvent, errEvent = pcall(onEvent, T.frame, "CHAT_MSG_SYSTEM", secretLine)
+    local okFilter, hidden = pcall(WoW.chatFiltered, "CHAT_MSG_SYSTEM", secretLine)
+    stringMeta.__index, issecretvalue = realIndex, realPredicate
+    dofile("Compat.lua")
+    check(okEvent, "a secret system message does not break the event handler: " .. tostring(errEvent))
+    check(okFilter, "  nor the chat filter: " .. tostring(hidden))
+    check(okFilter and not hidden, "  and the filter leaves it shown")
 end
 
 ------------------------------------------------------------
