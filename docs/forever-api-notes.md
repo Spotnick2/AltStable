@@ -910,6 +910,28 @@ return, and its new field is an optional addition, so no reader of the existing 
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+## Build 1.60.1.70862 (2026-11-07) — API unchanged
+
+Dumped (`forever-api-1.60.1.70862.md`, client built Nov 6 2026) and compared with
+`Compare-Dumps.ps1` against 70790:
+
+```
+Documented functions - no change (6621)
+Documented events - no change (1816)
+Documented tables - no change (801)
+Widget methods - no change (7530)
+Namespace functions - no change (5432)
+Global functions - no change (6117) (walks _G: addon noise, not listed)
+Namespace candidates - +95 -48 (walks _G: addon noise, not listed)
+
+Documented surface identical.
+```
+
+**Behaviour**, the RUNBOOK step-3 line: `60 17700 nil -1 13 table`, all as expected (`nil`: not
+rested).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
 ---
 
 ## Secret values — some unit numbers cannot be read, only passed along
