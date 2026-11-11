@@ -32,5 +32,6 @@ Appearance.lua
 SheetUI.lua
 Capture.lua
 AutoCapture.lua
+GoldTooltip.lua
 PublicAPI.lua
 Export.lua

@@ -1865,6 +1865,9 @@ for _, n in ipairs({ "C_FriendList", "C_Texture", "RAID_CLASS_COLORS", "CLASS_IC
 for _, n in ipairs({ "GameFontHighlight", "GameFontHighlightSmall", "GameFontDisableSmall", "ChatAlertFrame", "QuickJoinToastButton", "BankFrame" }) do allowNil[n] = true end
 for _, n in ipairs({ "Minimap", "CLOSE", "ERR_FRIEND_OFFLINE_S", "MAX_PLAYER_LEVEL", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS" }) do allowNil[n] = true end
 for _, n in ipairs({ "NUM_BANKGENERIC_SLOTS", "WOW_PROJECT_ID", "WOW_PROJECT_MAINLINE" }) do allowNil[n] = true end
+-- Blizzard's bag frames (#305): test_goldtooltip builds them itself, and drops
+-- one to pin that a client without it is handled.
+for _, n in ipairs({ "ContainerFrame1", "ContainerFrameCombinedBags" }) do allowNil[n] = true end
 Kit.strict(allowNil)
 
 return WoW
