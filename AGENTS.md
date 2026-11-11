@@ -169,6 +169,13 @@ The tag name sets the release type: a bare `vX.Y.Z` publishes as a release, `-be
 Releases are bare tags from v0.10.0 on (the addon is public; see RUNBOOK "Releasing"). `CHANGELOG.md` is the release
 notes (`manual-changelog`), and is itself ignored so it does not ship inside the addon.
 
+**A release tag (`vX.Y.Z`, not an alpha or beta) updates both READMEs** in its prep PR (RELEASING.md
+§3): `README.md` and the untracked `README.curseforge.md` describe what the release does (features,
+commands, options, limits, screenshots) and nothing it no longer does. The PR body says whether
+`README.curseforge.md` changed, since the owner pastes it into CurseForge and Wago after the release.
+The CurseForge copy has no `<...>` and no bullet lists: CurseForge escapes the first and draws the
+second with the bullet inside the text.
+
 `.github/workflows/package-check.yml` dry-runs the BigWigs packager (`-d`) on pull requests, on
 pushes to `main` and on `v*` tags — a push to a feature branch with no PR open runs nothing — and
 on a tag **publishes** a GitHub Release (below). Its `check` job asserts the
