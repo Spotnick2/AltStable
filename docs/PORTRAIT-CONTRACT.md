@@ -20,6 +20,9 @@ in game     the Roster reads AltStableCutoutManifest and draws the cutouts
 An addon can neither write an image nor read the Screenshots folder, which is
 why the middle step is outside the game.
 
+The companion can also take a portrait from the picture Blizzard's armory website
+renders of a character, with no capture at all (section 4).
+
 ---
 
 ## 1. The capture records (addon → converter)
@@ -214,7 +217,7 @@ is called: the Roster finds a portrait by its GUID and reads the name from `file
 
 | When | The file is named | Example |
 |---|---|---|
-| Another character's file already has that name | `<slug>-<last 6 characters of its guid>`, lowercased | `twin-name-bbbbbb.tga` |
+| Another character's file already has that name (in `Cutouts\` or `Cutouts\Armory\`, section 4) | `<slug>-<last 6 characters of its guid>`, lowercased | `twin-name-bbbbbb.tga` |
 | That name is another character's too (a third namesake whose GUID ends in the same six) | `<slug>-<slug of its whole guid>` | `twin-player-3-00bbbbbb.tga` |
 | The slug is empty (a name with nothing in `a-z0-9`: Cyrillic, Korean, Chinese) | `<slug of its guid>` | `player-4395-0a1b2c3d.tga` |
 
@@ -242,8 +245,11 @@ foreign file - give such a file its content top-left, or a sidecar (#131).
 
 An entry counts only when `file` is a non-empty string.
 
-**`epoch`** (optional, since #128) names the capture the portrait was made from:
-the `epoch` of that capture's **first** shot record. The addon compares it with
+**`epoch`** (optional, since #128) names the **newest capture converted for this
+character**: the `epoch` of that capture's **first** shot record. That is the
+capture the portrait was made from, unless the entry points at an armory render
+(section 4); then `epoch` still names the capture, and an entry for a character
+that was never captured has none. The addon compares it with
 the newest capture it holds for the character - a newer capture is "waiting for
 the converter" until an entry names it, across reloads. Write it whenever the
 capture record had one; a converter that wrote the second shot's instead still
@@ -261,7 +267,8 @@ stays at `version = 1`, and a reader that knows none of it draws the plain
 portrait.
 
 **Files.** `Cutouts\Enhanced\<base>.tga` and `<base>.json` (its sidecar), where
-`<base>` is the primary portrait's file name without `.tga`, and
+`<base>` is the primary portrait's file name without its folder and `.tga` (an
+armory primary `Cutouts\Armory\x.tga` has its enhanced picture at `Enhanced\x.tga`), and
 `<guid>.attempts.json` (the companion's own history, one per character), keyed by
 the `Player-...` GUID the sidecar carries rather than by `<base>`, because a
 character keeps one history across renames and namesake files. A **subfolder**,
@@ -333,8 +340,8 @@ carries `## X-AltStable-Enhanced: 1`. The companion reads that file and that
 line before it spends a generation. It means "support is installed", not "the
 plugin is loaded" - the Roster is load-on-demand and may be switched off.
 
-**What the companion also reads** for enhancement (never for conversion), from
-the same `AltStable.lua`:
+**What the companion also reads** for enhancement and armory renders (section 4),
+never for conversion, from the same `AltStable.lua`:
 
 | input | type | missing or malformed |
 |---|---|---|
@@ -344,10 +351,11 @@ the same `AltStable.lua`:
 | `AltStableDB[guid].gender` | string (`"Male"` / `"Female"`) | not eligible |
 | `AltStableDB[guid].level` | number | not eligible |
 | `AltStableDB[guid].lastUpdate` | number (epoch seconds) | the record counts as oldest |
+| `AltStableDB[guid].gearAt` | number (epoch seconds), armory only | `lastUpdate` alone |
 | `AltStableConfig.hiddenCharacters` | table, guid → true | nobody is hidden |
 
 A roster table that is missing or malformed makes characters ineligible for
-enhancement; it never affects conversion.
+enhancement and armory renders; it never affects conversion.
 
 **Compatibility.**
 
@@ -357,3 +365,90 @@ enhancement; it never affects conversion.
 | an old companion | never looks in `Enhanced\` |
 | an old companion, or the old script, rebuilds the manifest | writes it **without** `enhanced`; the files stay, and the next enhancement-aware rebuild restores the field |
 | two manifest writers at once | unsupported, as before |
+
+---
+
+## 4. Armory renders (companion → Roster, optional)
+
+The companion can take a character's portrait from the picture Blizzard's armory
+website renders of it (Spotnick2/AltStableCompanion#63). The player is asked once
+whether to use it; it is never on by default. Everything here is additive:
+`AltStablePortraits` stays at `version = 1`, and the Roster needs no change,
+because it draws `file` whatever folder it names, as it already does for
+`Enhanced\`.
+
+**The source** (measured 2026-11-11 on Forever US):
+
+- `https://render.worldofwarcraft.com/forever-us/character/<n % 256>/<n>-main-raw.png`,
+  where `<n>` is the GUID's player number (`Player-<realm>-<hex>`, the hex read as
+  a number). `main-sd-raw.png` is the same picture with the SD (classic) model.
+- A 1600x1200 transparent 8-bit RGBA PNG, the figure about 330x700, always in the same pose.
+- It carries `Last-Modified` and `ETag`, and a conditional request answers `304`.
+  `403` means no render (yet).
+- A render lands about 7 hours after the character was last played. Nobody needs
+  to open the armory page for that.
+- The armory has characters of level 10 and up. A level-10 character played on
+  11 Nov still had no render 9 hours later, so a character that has never been
+  rendered may take longer.
+- No URL needs an account or a key. The EU route is unmeasured, and the companion
+  uses this only when `Config.wtf` says `SET portal "US"`.
+
+**Files.** `Cutouts\Armory\<base>.tga` and `<base>.json`, a subfolder for the same
+reason as `Enhanced\`: no reader of `Cutouts\` takes it for a capture. The TGA is
+written like a capture's cutout: the render cropped to its non-transparent box
+(alpha > 0.02), never upscaled, top-left on a power-of-two canvas. The sidecar:
+
+| field | type | |
+|---|---|---|
+| `guid` | string | the character |
+| `w`, `h`, `texw`, `texh` | numbers | as for a capture |
+| `url` | string | the render it was made from (HD or SD) |
+| `etag`, `lastModified` | strings | the CDN's, as sent |
+| `fetched` | string | UTC, ISO 8601 |
+| `tgaHash` | string | SHA-256, lower-case hex, of the TGA's bytes |
+
+There is one armory file per character. A TGA whose SHA-256 differs from its sidecar's
+`tgaHash` (a write that was cut short) is not used, and the render is fetched again.
+
+**The base name** is the character's capture file's base when it has one, else its
+existing armory base, else a new name by section 2's rules. A name counts as taken
+when a sidecar in `Cutouts\` **or** `Cutouts\Armory\` names another GUID. That also
+applies when naming a new capture, because `Enhanced\<base>` serves both. So a
+character's capture and render share one base, and the first capture of a
+character that only had a render takes the render's base.
+
+**Which one the entry names.** When a character has both, `file` points at the
+newer of the two by this estimate: a render shows the character as of
+`Last-Modified` minus 7 hours, and the capture wins when its `epoch` is at least
+that. A new capture therefore wins until a render from later play arrives. It is an
+estimate: a capture taken within minutes of a session's end can be ordered wrongly
+either way, and the next capture or render corrects it. An entry that points at a
+render:
+
+- keeps the newest converted capture's `epoch` (section 2), or none if the character was never captured;
+- has no `nativeW`/`nativeH`, which are a fraction of a screen the render was not shot on.
+
+**Enhanced pictures** follow whichever primary the entry names. Section 3 is
+unchanged; `sourceHash` is that primary's hash. The companion limits how often an
+updated render can cost a new enhanced picture (a setting, in days). Its
+`<guid>.attempts.json` records gain `source` (`"capture"` or `"armory"`; missing
+means a capture) and `confirmed` (the player asked for it; missing means false).
+
+**What the companion reads** for this, besides the section 3 table:
+`AltStableDB[guid].level` (renders from 10 up) and `lastUpdate`/`gearAt` (when it
+was last played, which decides when to look for a new render), from every account's
+file; a character hidden on any account is left out. It also reads `SET portal`
+from `WTF\Config.wtf` for the region.
+
+**The capture prompt.** The addon's "changed" status compares the newest
+capture's `look` with what is worn. A render carries no look, so after a gear
+change the button still asks for a capture, although the render will show the new gear
+on its own. That is unchanged for now: Spotnick2/AltStable#301.
+
+**Compatibility.**
+
+| | |
+|---|---|
+| an old Roster | draws the render like any cutout |
+| an old companion | never looks in `Armory\`; it rebuilds the manifest from captures only, and the files stay |
+| `Tools/RenderCutout/Update-Cutouts.ps1` rebuilds the manifest | it lists `Cutouts\` only, so an entry that pointed at a render points at the capture again (or disappears for a character never captured) until the companion's next rebuild; not fixed, the script is a fallback |
