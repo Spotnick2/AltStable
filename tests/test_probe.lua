@@ -63,7 +63,7 @@ check("the probe is /fp as", P ~= nil and P.name == "AltStableProbe")
 eq("  the namespace holds the same module", ns.Probe, P)
 for _, cmd in ipairs({ "all", "client", "savedvariables", "identity", "skills", "prof", "rep", "items",
                        "containers", "bank", "tooltip", "instances", "events", "clear", "whisper",
-                       "channel", "bnet", "pet", "enchant", "model", "recipes", "scene", "icon" }) do
+                       "channel", "bnet", "pet", "enchant", "model", "recipes", "scene", "icon", "ping" }) do
     check("  /fp as " .. cmd .. " exists", P and P.commands[cmd] ~= nil)
 end
 -- The old commands are gone, and with them the global the files shared.
@@ -102,6 +102,24 @@ if auditProc then
     eq("  four questions only the owner can answer", asks, 4)
     check("  the first step shows the login reading and checks it", auditProc.steps[1].auto and auditProc.steps[1].check ~= nil)
     check("  and ends with a /reload", auditProc.steps[#auditProc.steps].reload == true)
+end
+-- The Glass Gear API in game (#281): measured by run, wait and check, with
+-- the other account acting; no full exit, and no question only the owner
+-- can answer.
+local gearProc = FP.procedures and FP.procedures["AltStableProbe/gear"]
+check("/fp steps as gear is defined", gearProc ~= nil)
+if gearProc then
+    local waits, checks, asks, exits = 0, 0, 0, 0
+    for _, st in ipairs(gearProc.steps) do
+        if st.wait then waits = waits + 1 end
+        if st.check then checks = checks + 1 end
+        if st.ask then asks = asks + 1 end
+        if st.reload == "exit" then exits = exits + 1 end
+    end
+    eq("  three waits: the swap, the ping, the refusal", waits, 3)
+    eq("  five checks", checks, 5)
+    eq("  no question and no full exit", asks + exits, 0)
+    check("  and ends with a /reload", gearProc.steps[#gearProc.steps].reload == true)
 end
 
 ------------------------------------------------------------

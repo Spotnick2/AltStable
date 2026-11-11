@@ -874,6 +874,179 @@ Probe:Steps("audit", {
     { text = "Type /reload (or press Reload now) to save the results.", reload = true },
 })
 
+----------------------------------------------------------------------------
+-- /fp steps as gear - the Glass Gear API in game (#281: AS-001 #282, AS-003
+-- #283; #275 section 2). Two accounts, both running this probe (one AddOns
+-- folder): the procedure runs on one, the other account acts. From each
+-- login, both clients record the API's callbacks and the own-account
+-- messages, so each account's log keeps its own side (GearChanged fires on
+-- both after a swap).
+----------------------------------------------------------------------------
+
+local NS_PING = "AltStableProbe"
+local G   -- this session's recording: AltStableProbeDB.gear, reset at each login
+
+local function GearListen()
+    local AS = rawget(_G, "AltStable")
+    if type(AS) ~= "table" or type(AS.RegisterCallback) ~= "function" then
+        Say("[gear] AltStable's public API is not loaded: nothing recorded")
+        return
+    end
+    G = { at = time(), gear = {}, provenance = 0, peers = 0, messages = {} }
+    AltStableProbeDB.gear = G
+    AS.RegisterCallback("GearChanged", function(_, guids)
+        local list = {}
+        for _, g in ipairs(guids or {}) do list[#list + 1] = g end
+        G.gear[#G.gear + 1] = { at = time(), guids = list }
+        Say("[gear] GearChanged: " .. table.concat(list, ", "))
+    end)
+    AS.RegisterCallback("ProvenanceChanged", function()
+        G.provenance = G.provenance + 1
+        Say("[gear] ProvenanceChanged (" .. G.provenance .. " this session)")
+    end)
+    AS.RegisterCallback("OwnAccountPeersChanged", function()
+        G.peers = G.peers + 1
+        Say("[gear] OwnAccountPeersChanged (" .. G.peers .. " this session)")
+    end)
+    if type(AS.RegisterOwnAccountHandler) == "function" then
+        AS.RegisterOwnAccountHandler(NS_PING, function(payload, sender)
+            local s = type(sender) == "table" and sender or {}
+            G.messages[#G.messages + 1] = { at = time(), payload = payload, name = s.name, guid = s.guid }
+            Say(("[gear] own-account message %s from %s (%s)"):format(Describe(payload), Describe(s.name), Describe(s.guid)))
+        end)
+    end
+end
+
+-- /fp as ping: one own-account message, sent from the account that acts.
+Probe:Command("ping", function()
+    local AS = rawget(_G, "AltStable")
+    if type(AS) ~= "table" or type(AS.SendToOwnAccounts) ~= "function" then Say("[gear] no SendToOwnAccounts"); return end
+    local n, why = AS.SendToOwnAccounts(NS_PING, "ping " .. time())
+    Say(("[gear] ping sent: taken by %s account(s)%s"):format(Describe(n), why and (", " .. Describe(why)) or ""))
+end, "send one own-account message (for /fp steps as gear)")
+
+local function OwnCharacters()
+    local AS = rawget(_G, "AltStable")
+    local kinds, other = { self = 0, ["own-account"] = 0, ["third-party"] = 0 }, nil
+    for _, c in ipairs(type(AS) == "table" and AS.GetCharacters and AS.GetCharacters() or {}) do
+        local k = c.provenance
+        kinds[k] = (kinds[k] or 0) + 1
+        if k == "own-account" and not other then other = c end
+    end
+    return kinds, other
+end
+local function Peers()
+    local AS = rawget(_G, "AltStable")
+    return type(AS) == "table" and AS.GetOwnAccountPeers and AS.GetOwnAccountPeers() or {}
+end
+-- The other account's character the swap is watched on: the first GUID a
+-- GearChanged named that isn't one of ours.
+local function SwappedGuid()
+    local AS = rawget(_G, "AltStable")
+    for i = #(G and G.gear or {}), 1, -1 do
+        for _, guid in ipairs(G.gear[i].guids) do
+            if AS.GetCharacterProvenance(guid) == "own-account" then return guid end
+        end
+    end
+end
+local function GearReading(guid)
+    local AS = rawget(_G, "AltStable")
+    local g = guid and AS.GetCharacterGear(guid)
+    if not g then return nil end
+    local occupied, empty, unknown, suffixed = 0, 0, 0, {}
+    for _, s in pairs(g.slots or {}) do
+        if s.state == "occupied" then
+            occupied = occupied + 1
+            -- A random suffix on Forever is a bonus id: "...:1:<bonus>" after the
+            -- string's fixed fields (PUBLIC-API.md, measured on 205 links).
+            if type(s.itemString) == "string" and s.itemString:match(":1:%d+$") then suffixed[#suffixed + 1] = s.itemString end
+        elseif s.state == "empty" then empty = empty + 1
+        else unknown = unknown + 1 end
+    end
+    return { capturedAt = g.capturedAt, gearAt = g.gearAt, provenance = g.provenance,
+             occupied = occupied, empty = empty, unknown = unknown, suffixed = suffixed }
+end
+
+Probe:Steps("gear", {
+    title = "Glass Gear API: gear strings, timestamps, provenance, the own-account channel (#281)",
+    rev = 1,
+    { text = "Log your other account in too (AltStable and this probe load there as well), on a character "
+          .. "that has an item \"of the ...\" in its bags, NOT worn yet. Wait until both have synced, then press Record.",
+      button = "Record",
+      run = function()
+          local kinds, other = OwnCharacters()
+          local peers = Peers()
+          return #peers, kinds.self, kinds["own-account"], kinds["third-party"], other and other.provenanceVia
+      end,
+      check = function()
+          local kinds, other = OwnCharacters()
+          local ok = #Peers() >= 1 and kinds.self >= 1 and kinds["own-account"] >= 1 and other ~= nil and other.provenanceVia ~= nil
+          return ok, ("peers %d; self %d, own-account %d (via %s), third-party %d; ProvenanceChanged %s this session"):format(
+              #Peers(), kinds.self, kinds["own-account"], Describe(other and other.provenanceVia), kinds["third-party"],
+              Describe(G and G.provenance))
+      end },
+    { text = "On the OTHER account, equip that \"of the ...\" item (a swap). This step completes when the swap "
+          .. "reaches this account (type /alts sync here if it takes long).",
+      wait = function() local g = SwappedGuid(); return g ~= nil, "waiting for a GearChanged naming the other account's character" end,
+      timeout = 300 },
+    { text = "That character's gear as GetCharacterGear reads it here.", auto = true,
+      run = function()
+          local r = GearReading(SwappedGuid())
+          if not r then error("no gear record for the swapped character", 0) end
+          AltStableProbeDB.gear.afterSwap = r
+          return r.occupied, r.empty, r.unknown, r.suffixed[1], r.capturedAt, r.gearAt
+      end,
+      check = function()
+          local r = AltStableProbeDB.gear.afterSwap
+          return r ~= nil and #r.suffixed >= 1 and r.unknown == 0 and r.gearAt ~= nil and r.capturedAt ~= nil,
+              ("suffixed %s, unknown %s, empty %s"):format(Describe(r and r.suffixed[1]), Describe(r and r.unknown), Describe(r and r.empty))
+      end },
+    { text = "On the OTHER account, move an item between two bags only (don't touch the gear), wait 10 s, "
+          .. "then type /alts sync here and press Next." },
+    { text = "The timestamps again: a bag move must not move gearAt, and must not fire GearChanged.", auto = true,
+      run = function()
+          local r = GearReading(SwappedGuid())
+          return r and r.capturedAt, r and r.gearAt, #G.gear
+      end,
+      check = function()
+          local before, now = AltStableProbeDB.gear.afterSwap, GearReading(SwappedGuid())
+          local guid, later = SwappedGuid(), 0
+          for _, e in ipairs(G.gear) do
+              if before and e.at > (before.gearAt or 0) then
+                  for _, g in ipairs(e.guids) do if g == guid then later = later + 1 end end
+              end
+          end
+          return before ~= nil and now ~= nil and now.gearAt == before.gearAt and later <= 1,
+              ("gearAt %s -> %s, capturedAt %s -> %s, GearChanged for it since the swap: %d"):format(
+                  Describe(before and before.gearAt), Describe(now and now.gearAt),
+                  Describe(before and before.capturedAt), Describe(now and now.capturedAt), later)
+      end },
+    { text = "On the OTHER account, type /fp as ping. This step completes when the message arrives here.",
+      wait = function() return G ~= nil and #G.messages >= 1, "waiting for the ping" end,
+      timeout = 120,
+      check = function()
+          local m = G.messages[#G.messages]
+          local fromPeer = false
+          for _, p in ipairs(Peers()) do if m and p.guid == m.guid then fromPeer = true end end
+          return m ~= nil and fromPeer, ("from %s (%s), a listed peer: %s"):format(Describe(m and m.name), Describe(m and m.guid), tostring(fromPeer))
+      end },
+    { text = "Here, in AltStable's Options (sync), refuse your other account. This step completes when "
+          .. "AltStable reports the peers changed and lists none.",
+      wait = function() return G ~= nil and G.peers >= 1 and #Peers() == 0, "peers listed: " .. #Peers() end,
+      timeout = 300 },
+    { text = "On the OTHER account, type /fp as ping again, wait 10 s, then press Next.",
+      button = "Pinged",
+      run = function() AltStableProbeDB.gear.messagesWhenRefused = #G.messages; return #G.messages end },
+    { text = "Nothing should have arrived while refused.", auto = true,
+      run = function() return #G.messages end,
+      check = function()
+          local n = AltStableProbeDB.gear.messagesWhenRefused
+          return n ~= nil and #G.messages == n, ("messages %s before, %d now"):format(Describe(n), #G.messages)
+      end },
+    { text = "Take the refusal back in Options, so the accounts sync again. Then press Next." },
+    { text = "Type /reload (or press Reload now) here AND on the other account, to save both sides.", reload = true },
+})
+
 local boot = CreateFrame("Frame")
 Probe:RegisterEvents(boot, { "ADDON_LOADED", "PLAYER_LOGIN" })
 boot:SetScript("OnEvent", function(self, event, name)
@@ -885,5 +1058,7 @@ boot:SetScript("OnEvent", function(self, event, name)
         Canary()
         -- The scan's moment (Core.lua's PLAYER_LOGIN timer): read what it reads.
         C_Timer.After(2, LoginReading)
+        -- The Glass Gear API's callbacks and messages, from the start (#281).
+        GearListen()
     end
 end)
