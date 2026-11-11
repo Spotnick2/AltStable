@@ -902,10 +902,13 @@ function AltStable.RenderRow(row, char, index, columns)
                 end
                 value = string.format("|cff%02x%02x00%d%%|r", math.floor(r*255), math.floor(g*255), p)
             end
+            -- The 150% needs saying: it's the cap (1.5 levels of XP), and a
+            -- bare "to reach 150%" read like a strange target (asked by a user).
             if tip and not atCap then
                 if p >= 150 then
                     tip.line1 = "Rested XP: " .. p .. "% (full)"
-                    tip.line2 = nil; tip.line3 = nil
+                    tip.line2 = "150% is the most: 1.5 levels of XP"
+                    tip.line3 = nil
                 elseif p > 0 then
                     local needed  = 150 - p
                     -- Time to full depends on whether the character
@@ -915,15 +918,15 @@ function AltStable.RenderRow(row, char, index, columns)
                     local days    = math.floor(hours / 24)
                     local remHour = hours % 24
                     local timeStr = days > 0 and (days.."d "..remHour.."h") or (hours.."h")
-                    tip.line1 = "Rested XP: " .. p .. "%"
+                    tip.line1 = "Rested XP: " .. p .. "% of a level (max 150%)"
                     if InRestedArea(char) then
-                        tip.line2 = "~" .. timeStr .. " offline to reach 150% (in inn/city)"
+                        tip.line2 = "~" .. timeStr .. " offline to fill it (in inn/city)"
                     else
-                        tip.line2 = "~" .. timeStr .. " offline to reach 150% (open world)"
+                        tip.line2 = "~" .. timeStr .. " offline to fill it (open world)"
                     end
                     tip.line3 = nil
                 else
-                    tip.line1 = "Rested XP: 0%"
+                    tip.line1 = "Rested XP: 0% of a level (max 150%)"
                     tip.line2 = "Log off in an inn to accumulate faster"
                     tip.line3 = nil
                 end

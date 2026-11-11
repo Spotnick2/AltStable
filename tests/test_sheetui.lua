@@ -3757,6 +3757,31 @@ do
               "restPercent", false),
        "old,fresh")
 
+    -- The rested cell's tooltip says that 150% is the cap. "~9d 23h offline
+    -- to reach 150%" alone made a user ask why 150.
+    do
+        local cols = { { label = "Rested XP", field = "restPercent", width = 70, type = "restXP" } }
+        local row = AltStable.CreateRow(WoW.makeFrame(), 18, cols)
+        local function tipFor(char)
+            AltStable.RenderRow(row, char, 1, cols)
+            local t = row.cellTips[1]
+            return (t.line1 or "") .. " / " .. (t.line2 or "")
+        end
+        local now = time()
+        local low = tipFor({ name = "Low", level = 5, restPercent = 1, restedArea = true, restTimestamp = now })
+        check("a rested tooltip names the 150% as the most", low:find("max 150%", 1, true) ~= nil, low)
+        check("  and the wait is to fill it, from an inn: 149% at 0.625%/h = 9d 23h",
+              low:find("~9d 23h offline to fill it (in inn/city)", 1, true) ~= nil, low)
+        local out = tipFor({ name = "Out", level = 5, restPercent = 1, restedArea = "false", restTimestamp = now })
+        check("  or from the open world", out:find("offline to fill it (open world)", 1, true) ~= nil, out)
+        local none = tipFor({ name = "None", level = 5, restPercent = 0, restTimestamp = now })
+        check("  at 0% too", none:find("max 150%", 1, true) ~= nil, none)
+        local full = tipFor({ name = "Full", level = 5, restPercent = 150, restTimestamp = now })
+        check("  and when full, why it stops there", full:find("(full)", 1, true) ~= nil
+              and full:find("1.5 levels", 1, true) ~= nil, full)
+        check("no wording says 'to reach 150%' any more", not (low .. out .. none .. full):find("reach 150", 1, true))
+    end
+
     -- Many rows with gaps, both ways: table.sort raises "invalid order
     -- function" on a comparator that is not a strict weak order.
     local many = {}
