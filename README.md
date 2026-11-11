@@ -24,13 +24,14 @@ doesn't move it anywhere, and whether you can pass it on still depends on the ga
 ### Which alt has my materials?
 
 The **Warband** tab lays out every item in all your characters' bags and banks like a warband
-bank, with tabs you can arrange yourself. Hover an item to see who holds how many, split between
-bags and bank. You can show everyone on your current ruleset, a chosen ruleset, or only the
-character you are on.
+bank, with tabs you can arrange yourself. Show one tab at a time, or three side by side. Hover an
+item to see who holds how many, split between bags and bank. You can show everyone on your
+current ruleset, a chosen ruleset, or only the character you are on.
 
-![The Warband tab: trade goods from every character's bags and banks in one grid, with Single and Combined views, the tooltip-count option, a ruleset menu and user tabs down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband.jpg)
+![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset menu and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
 
-*The Warband tab: everyone's trade goods in one place. Hover any item to see who holds it.*
+*The Warband tab, Combined view: everyone's trade goods, consumables and equipment in one place.
+Hover any item to see who holds it.*
 
 Tick **Show character counts in tooltips** in the Warband tab and item tooltips everywhere in the
 game (your bags, merchants, links) show the same counts. It's off by default, so it doesn't
