@@ -103,10 +103,24 @@ Lua is first on `PATH`).
   `..\LibGlass`), a **LibShowcase checkout** (`$env:LIBSHOWCASE`, else `..\LibShowcase`) and a
   **LibAccountSync checkout** (`$env:LIBACCOUNTSYNC`, else `..\LibAccountSync`), and fail loudly
   without them; `run.ps1` warns when one is not at its `.pkgmeta`
-  pin. Lua only — no Python tests here, unlike upstream.
-- **How it works:** `tests/wow_stubs.lua` is a minimal WoW API mock driven via the exported
-  `WoW` table (`WoW.reset()`, `WoW.flushTimers()`, `WoW.sentMessages()`, …). A test `dofile`s
-  the stubs, sets up SavedVariable globals, `loadfile`s the module under test, and asserts.
+  pin. It also runs the cutout manifest's self-test and the Python suites (skipped without Python).
+- **The test scaffolding is WowTestKit** (`C:\Projects\WoW\WowTestKit`; its README is the
+  reference) at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that
+  commit in `%LOCALAPPDATA%\WowTestKit\<sha>` and hands off to the kit's runner; CI fetches it with
+  `tests\fetch_kit.sh`. `tests\kit.lua`, `kit.ps1` and `fetch_kit.sh` are the kit's bootstrap
+  copies: never edit them here. A kit need is an issue on the kit, worked around in
+  `tests\wow_stubs.lua` with a `-- WowTestKit #N:` comment meanwhile. `tests\run.ps1 -KitDev`
+  runs against the `..\WowTestKit` working copy instead of the pin.
+- **How it works:** `tests/wow_stubs.lua` loads the kit (strict globals, secrets, events checked
+  against the build, widgets that record every method called), then adds AltStable's own client
+  APIs and the frame behaviours the suite was written against, as `WoW.Methods` overrides. It is
+  driven via the exported `WoW` table (`WoW.reset()`, `WoW.flushTimers()`, `WoW.sentMessages()`,
+  …). A test `dofile`s the stubs, sets up SavedVariable globals, `loadfile`s the module under
+  test, asserts with its own `check`/`eq`, and ends with `WoW.finish(name, passed, failed)` (the
+  kit's stray-`|` check, then the result line). Reading a global the stub doesn't define is an
+  error: stub it from the dump, or add it to the stub's `allowNil` groups with its reason.
+  `test_methods` checks every widget method the addon calls exists in the pinned build, and
+  `test_toc` runs the kit's TOC checks.
 - **The stubs must model Forever, not Classic.** A stub that returns the old tuple where the
   live client returns a struct makes a broken port pass. When a stub shape is in question,
   check it against `docs/forever-api-notes.md` — that file is measured on the live client — and

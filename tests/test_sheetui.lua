@@ -685,8 +685,8 @@ check("the name row handles clicks", type(onClick) == "function")
 -- one assertion the whole section can pass against a menu that cannot be
 -- opened in game.
 check("the row listens for right-clicks at all",
-      row.nameTipBtn:HandlesClick("RightButton"),
-      table.concat(row.nameTipBtn:RegisteredClicks(), ","))
+      WoW.handlesClick(row.nameTipBtn, "RightButton"),
+      table.concat(WoW.registeredClicks(row.nameTipBtn), ","))
 
 if onClick then
     AltStable.CloseCharacterMenu()
@@ -2190,11 +2190,11 @@ do
     P:Hide()
 
     -- In combat it does not take the keyboard at all.
-    WoW.inCombat = true
+    WoW.combat = true
     show("Test", { text = "Fight?", buttons = { "Yes", "No" } })
     check("shown in combat it leaves the keyboard alone", not P:IsKeyboardEnabled())
     P:Hide()
-    WoW.inCombat = false
+    WoW.combat = false
 
     -- The copy box: focused and selected; Enter and Escape close it, and the
     -- focus goes with it.
@@ -2251,7 +2251,7 @@ do
     check("  and answers the press as well as the release",
           (function()
               local up, down = false, false
-              for _, c in ipairs(r:RegisteredClicks()) do
+              for _, c in ipairs(WoW.registeredClicks(r)) do
                   if c == "AnyUp" then up = true end
                   if c == "AnyDown" then down = true end
               end
@@ -2279,10 +2279,10 @@ do
     f:GetScript("OnEvent")(f, "PLAYER_REGEN_DISABLED")
     check("combat puts it away before the lockdown", not f:IsShown())
 
-    WoW.inCombat = true
+    WoW.combat = true
     check("in combat it is not offered at all", AltStable.ShowReloadPrompt("x") == false)
     check("  and does not appear", not f:IsShown())
-    WoW.inCombat = false
+    WoW.combat = false
 
     -- The Options skin row's Reload offers the same prompt.
     local btn = AltStable._test.SkinReloadButton()
@@ -2381,7 +2381,7 @@ do
     check("the capture button and its glow exist", btn ~= nil and glow ~= nil and AltStable.UpdateCaptureGlow ~= nil)
     if btn and glow and AltStable.UpdateCaptureGlow then
         local function tipText() return txt and txt:GetText() or "" end
-        WoW.inCombat = false
+        WoW.combat = false
         AltStableConfig.portraitGlow = nil
         AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
         check("a due capture makes the button glow", btn._glowing == true and glow:IsShown())
@@ -2401,10 +2401,10 @@ do
         AltStable.UpdateCaptureGlow({ due = false, reason = "none", changedSlots = {} })
         check("with nothing to say, the tooltip is the plain one", not tipText():find("\n\n", 1, true))
 
-        WoW.inCombat = true
+        WoW.combat = true
         AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} })
         check("no glow in combat", btn._glowing == false and not glow:IsShown())
-        WoW.inCombat = false
+        WoW.combat = false
         AltStable.UpdateCaptureGlow({ due = true, reason = "missing", changedSlots = {} }, true)
         check("no glow when the caller says combat, before the lockdown has begun",
               btn._glowing == false and not glow:IsShown())
@@ -2601,10 +2601,10 @@ do
 
     -- Not in combat; after it.
     fresh()
-    WoW.inCombat = true
+    WoW.combat = true
     ask("Combat Surname")
     eq("no prompt in combat", #asks(), 0)
-    WoW.inCombat = false
+    WoW.combat = false
     local regen = AltStable._test.SyncAskRegenFrame
     regen:GetScript("OnEvent")(regen, "PLAYER_REGEN_ENABLED")
     eq("  it comes when combat ends", #asks(), 1)
@@ -4357,5 +4357,4 @@ do
     end
 end
 
-print(("test_sheetui: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_sheetui", passed, failed)

@@ -48,13 +48,13 @@ end
 -- preview, so this is the only point in the file where it genuinely does not
 -- exist yet. Every check below constructs it.
 
-WoW.inCombat = true
+WoW.combat = true
 local okFresh, freshErr = pcall(function()
     T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
 end)
 check("combat before the stage exists does not error", okFresh, tostring(freshErr))
 check("  and nothing was capturing to abandon", not T.capturing())
-WoW.inCombat = false
+WoW.combat = false
 eq("an install that never captured writes no store at all", AltStablePortraits, nil)
 
 -- The reload prompt lives in SheetUI (a secure button; pinned in test_sheetui).
@@ -70,7 +70,7 @@ local function resetCapture()
     WoW.dead = false
     WoW.instanceType, WoW.speed, WoW.falling = "none", 0, false
     AltStablePortraits = nil
-    WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
+    WoW.combat, WoW.uiVisible, WoW.screenshots = false, true, 0
     UIParent:Show()
     WoW.timers = {}
     WoW.chatOut = {}
@@ -122,7 +122,7 @@ end
 ------------------------------------------------------------
 
 resetCapture()
-WoW.inCombat = true
+WoW.combat = true
 T.Capture()
 check("a capture is refused in combat", not T.capturing())
 eq("  and nothing was photographed", WoW.screenshots, 0)
@@ -262,7 +262,7 @@ end
 resetCapture()
 T.Capture()
 local before = T.token()
-WoW.inCombat = true
+WoW.combat = true
 T.events:GetScript("OnEvent")(T.events, "PLAYER_REGEN_DISABLED")
 
 check("combat abandons the capture", not T.capturing())
@@ -276,7 +276,7 @@ eq("  and the abandoned chain takes no pictures", WoW.screenshots, shotsBefore)
 eq("  and makes no shutter sound", #WoW.sounds, 0)
 eq("  and writes no records", #renders(), 0)
 eq("  and offers no reload", #prompts, 0)
-WoW.inCombat = false
+WoW.combat = false
 
 ------------------------------------------------------------
 -- The player takes their interface back
@@ -719,10 +719,10 @@ do
     local times = runChain()
     eq("  and the capture still takes its two shots", #times, 2)
 
-    WoW.inCombat = true
+    WoW.combat = true
     T.Preview()
     check("no preview in combat", not T.previewing())
-    WoW.inCombat = false
+    WoW.combat = false
 end
 
 -- A preview closed by combat stays closed: `facing` used to bring it back.
@@ -1017,7 +1017,7 @@ check("Capture leaks no global PortraitStatus or GlowForCombat",
 local glowCalls = {}
 local realGlow = AltStable.UpdateCaptureGlow
 AltStable.UpdateCaptureGlow = function(status, inCombat) glowCalls[#glowCalls + 1] = { status = status, inCombat = inCombat } end
-WoW.inCombat = false
+WoW.combat = false
 local okDis, errDis = pcall(onEvent, T.events, "PLAYER_REGEN_DISABLED")
 check("combat starting with the glow in place raises nothing", okDis, tostring(errDis))
 eq("  and tells the glow it is combat, though the lockdown has not begun", glowCalls[1] and glowCalls[1].inCombat, true)
@@ -1101,5 +1101,4 @@ do
     AltStablePortraits = nil
 end
 
-print(("test_capture: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_capture", passed, failed)

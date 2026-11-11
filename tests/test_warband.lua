@@ -1010,5 +1010,4 @@ do
     WoW.reset()
 end
 
-print(("test_warband: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_warband", passed, failed)

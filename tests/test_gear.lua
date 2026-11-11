@@ -329,5 +329,4 @@ flush()
 check("each listener has its own list", seenA ~= nil and seenB ~= nil and seenA ~= seenB)
 eq("  one changing its list changes nobody else's", seenB and seenB[1], OTHER)
 
-print(("test_gear: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_gear", passed, failed)

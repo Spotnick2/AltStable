@@ -90,6 +90,14 @@ jobs:
           echo "checking $count files"
           find . -name '*.lua' -not -path './.git/*' -print0 | xargs -0 luac5.1 -p
 
+      # WowTestKit at the commit tests/kit.pin names (#284): the tests'
+      # mechanics and the client build's API lists. tests/kit.lua finds it
+      # through $WOWTESTKIT.
+      - name: Fetch WowTestKit at its pin
+        run: |
+          bash tests/fetch_kit.sh "$RUNNER_TEMP/WowTestKit"
+          echo "WOWTESTKIT=$RUNNER_TEMP/WowTestKit" >> "$GITHUB_ENV"
+
       - name: Unit tests
         env:
           # ForeverProbe is private and local, so the probe's tests

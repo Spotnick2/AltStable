@@ -481,5 +481,4 @@ AltStable.DenySyncPeer(FRIEND)
 flush()
 eq("refusing a friend: no callback (not an own account)", seen.OwnAccountPeersChanged, nil)
 
-print(("test_provenance: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_provenance", passed, failed)

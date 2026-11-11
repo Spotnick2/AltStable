@@ -1440,11 +1440,11 @@ do
     -- cannot be opened in game. The card had exactly that shape before #69:
     -- SetScript("OnClick") and no registration at all.
     check("the card listens for right-clicks",
-          card:HandlesClick("RightButton"),
-          table.concat(card:RegisteredClicks(), ","))
+          WoW.handlesClick(card, "RightButton"),
+          table.concat(WoW.registeredClicks(card), ","))
     check("  and still for left-clicks, which select",
-          card:HandlesClick("LeftButton"),
-          table.concat(card:RegisteredClicks(), ","))
+          WoW.handlesClick(card, "LeftButton"),
+          table.concat(WoW.registeredClicks(card), ","))
 
     T.RenderCard(card, AltStableDB.shown, 100, 140)
     local onClick = card:GetScript("OnClick")
@@ -4131,20 +4131,20 @@ do
     check("the dialog takes the keyboard out of combat", d:IsKeyboardEnabled())
     d:GetScript("OnKeyDown")(d, "ESCAPE")
     check("  and gives it back when Escape closes it", not d:IsKeyboardEnabled())
-    WoW.inCombat = true
+    WoW.combat = true
     L.OpenDialog(AltStable.GetCamps()[1])
     check("reopened in combat it does not take the keyboard", not d:IsKeyboardEnabled())
     d.delete:GetScript("OnClick")(d.delete)
     check("  even at the delete confirmation", not d:IsKeyboardEnabled())
-    WoW.inCombat = false
+    WoW.combat = false
     L.CloseDialog()
     -- Reopened while still open (no close in between), now in combat: the
     -- earlier grab is let go, not inherited.
     L.OpenDialog(nil)
-    WoW.inCombat = true
+    WoW.combat = true
     L.OpenDialog(AltStable.GetCamps()[1])
     check("reopened in combat while open, it lets go of the earlier grab", not d:IsKeyboardEnabled())
-    WoW.inCombat = false
+    WoW.combat = false
     L.CloseDialog()
     L.OpenDialog(nil)
     d:GetScript("OnEvent")(d, "PLAYER_REGEN_DISABLED")
@@ -4763,5 +4763,4 @@ do
     pcall(AltStable.RosterPlugin.Refresh)
 end
 
-print(("test_roster: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_roster", passed, failed)

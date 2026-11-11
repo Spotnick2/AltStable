@@ -4,13 +4,22 @@
 -- A WoW: Forever (1.60.1) API surface, minimal but SHAPED CORRECTLY, so
 -- AltStable's files load and run under stock Lua 5.1 with no game client.
 --
+-- Built on WowTestKit (#284; C:\Projects\WoW\WowTestKit, its README is the
+-- reference), at the commit and client build tests/kit.pin names. The kit
+-- holds the mechanics: strict globals, secrets, events checked against the
+-- build, widgets that record every method called (Kit.checkMethods), print
+-- with the stray-"|" check. This file holds what is AltStable's own: the
+-- client APIs it calls, and the frame behaviours below that the suite was
+-- written against.
+--
 -- Two rules this file exists to enforce:
 --
 --   1. The removed Classic globals are NOT defined here. GetItemInfo,
 --      GetSkillLineInfo, GetFactionInfo, GetContainerItemInfo and friends are
 --      absent on the real client, so code that reaches for one must fail in
 --      tests too. Defining them "for convenience" would hide exactly the bug
---      this port is about.
+--      this port is about. (Kit.strict, the last line, now makes reading any
+--      undefined global an error rather than a nil.)
 --
 --   2. Return SHAPES match what was measured in-game, not what Classic did.
 --      Skills, reputation and containers return a STRUCT. Items return the
@@ -20,7 +29,15 @@
 -- Drive it through the exported `WoW` table; reset with WoW.reset().
 ------------------------------------------------------------
 
-local WoW = {
+-- Lua's own print, before the kit replaces it: the suite's result and FAIL
+-- lines go through print, and must still reach the runner (see print below).
+local luaPrint = print
+
+dofile("tests/kit.lua")
+local Methods = WoW.Methods
+
+-- AltStable's state, on the kit's WoW table.
+for k, v in pairs({
     items       = {},   -- [itemID] = { name=, quality=, ilvl=, ... }; absent = cache miss
     skillLines  = {},   -- array of skill structs
     factions    = {},   -- array of faction structs
@@ -31,7 +48,6 @@ local WoW = {
     tooltipPostCalls = {},  -- [Enum.TooltipDataType.X] = { fn, ... }
     loaded      = {},
     loadCalls   = {},
-    timers      = {},
     tickers     = {},
     sent        = {},
     maxLevel    = 60,
@@ -49,18 +65,20 @@ local WoW = {
     -- altered after the addon closes, and nothing in game says so.
     cvars       = {},
     camera      = { zoom = 4, view = 1, savedViews = {} },
-}
+}) do WoW[k] = v end
 
-function WoW.reset()
+-- WoW.reset() clears the kit's state (frames, timers, combat, ...), then runs
+-- this for AltStable's own.
+WoW.onReset[#WoW.onReset + 1] = function()
     WoW.items, WoW.skillLines, WoW.factions, WoW.factionByID = {}, {}, {}, {}
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.tooltipPostCalls = {}
-    WoW.loaded, WoW.loadCalls, WoW.timers, WoW.sent = {}, {}, {}, {}
+    WoW.loaded, WoW.loadCalls, WoW.sent = {}, {}, {}
     -- Tickers are NOT cleared: they are registered once at load, like the
     -- client's, and a reset is a new test section rather than a new session.
     -- Clearing them here is what left Core's stale-buffer sweep unreachable
     -- after the first WoW.reset().
-    WoW.inCombat, WoW.uiVisible, WoW.screenshots = false, true, 0
+    WoW.uiVisible, WoW.screenshots = true, 0
     WoW.equipped = {}
     WoW.slotTooltip = {}
     if UIParent then UIParent:Show() end
@@ -75,11 +93,7 @@ function WoW.reset()
     WoW.displayID = 56658
     WoW.instanceType, WoW.speed, WoW.falling = "none", 0, false
     -- Crit and hit are STATE, so they reset; the functions that read them are
-    -- defined at file scope like every other stub. An earlier version put the
-    -- whole stat block in here at column 0, which meant UnitStat and its
-    -- neighbours did not exist until something called WoW.reset() - and every
-    -- reset after that silently redefined them, quietly undoing anything a
-    -- test had substituted.
+    -- defined at file scope like every other stub.
     WoW.critChance, WoW.hitModifier = 12.5, 3
     -- UIParent is built ONCE for the whole run, so without this its child list
     -- accumulates every frame every block ever created and a test walking it
@@ -100,725 +114,506 @@ function WoW.reset()
     -- path would otherwise leave that name in place for every test after it,
     -- and the addon's own captured copy would agree with it - so the mistake
     -- hides itself.
-    WoW.player.name = "Example Surname"
-    WoW.player.realm, WoW.player.normalizedRealm = "Classic Beta PvE", "ClassicBetaPvE"
-    WoW.player.class, WoW.player.classLocalized, WoW.player.race = "PRIEST", "Priest", "Scourge"
+    if WoW.player then
+        WoW.player.name = "Example Surname"
+        WoW.player.realm, WoW.player.normalizedRealm = "Classic Beta PvE", "ClassicBetaPvE"
+        WoW.player.class, WoW.player.classLocalized, WoW.player.race = "PRIEST", "Priest", "Scourge"
+    end
+end
+
+-- The kit's print records every line in WoW.chat and checks it for a stray
+-- "|". Before the kit, print here was Lua's own, so the addon's prints and the
+-- suite's own FAIL and result lines all reached stdout; they still do.
+do
+    local kitPrint = print
+    function print(...)
+        kitPrint(...)
+        luaPrint(...)
+    end
+end
+
+-- A test file's last line: the kit's stray-"|" check over every printed line
+-- (what the kit's done() adds), then "<name>: N passed, M failed", the exit
+-- code. The files keep their own check/eq: their argument orders differ from
+-- the kit's and from each other.
+function WoW.finish(name, passed, failed)
+    local strays = WoW.strays or {}
+    if #strays == 0 then passed = passed + 1 else
+        failed = failed + 1
+        io.write("  FAIL: no stray | in any printed line: " .. strays[1] .. "\n")
+    end
+    io.write(string.format("%s: %d passed, %d failed\n", name, passed, failed))
+    io.flush()
+    os.exit(failed == 0 and 0 or 1)
 end
 
 ------------------------------------------------------------
--- Frames / timers
+-- Frames
+--
+-- The kit's widgets (WoW.newWidget: method calls recorded for
+-- Kit.checkMethods), with the behaviours below in place of the kit's where the
+-- suite was written against them. Every one is kept for that reason: each
+-- comment says what a test asks of it. Field names are the ones the tests
+-- read (_colorTexture, _GetLeft, _texCoord, ...); scripts and events live in
+-- the kit's _scripts and _events, which WoW.fire and WoW.tick read.
 ------------------------------------------------------------
 
--- Events the live client REJECTS. Measured: RegisterEvent throws on these.
--- A stub that accepted every event would contradict our own notes and let a
--- dead handler ship.
-local INVALID_EVENTS = {
-    PLAYERBANKBAGSLOTS_CHANGED = true,
-    TRADE_SKILL_UPDATE         = true,
-}
-WoW.INVALID_EVENTS = INVALID_EVENTS
+local newWidget = WoW.newWidget
 
-local function makeFrame()
-    local f = {}
-    local function chain() return f end
-    f.RegisterEvent = function(self, ev)
-        if INVALID_EVENTS[ev] then
-            error('Frame:RegisterEvent(): Attempt to register unknown event "' .. tostring(ev) .. '"', 2)
-        end
-        self["_ev_" .. tostring(ev)] = true
-        return self
+-- What a frame made by hand (not CreateFrame) is: tests and the stubs below
+-- build loose frames this way. Not in WoW.frames, as before.
+function WoW.makeFrame(kind, parent) return newWidget(kind or "Frame", parent) end
+local makeFrame = WoW.makeFrame
+
+-- Unlike the kit's, HookScript REJECTS the script types the live client does
+-- not have. OnTooltipSetItem throws there, and a stub that accepted everything
+-- is precisely why the old Warband tests could not catch that (issue #10).
+-- CHAINED INTO THE SAME DISPATCH as SetScript, so Show()/Hide() run it.
+function Methods.HookScript(self, ev, fn)
+    if ev == "OnTooltipSetItem" or ev == "OnTooltipSetUnit" then
+        error("bad argument #2 to 'HookScript' (Usage: self:HookScript(scriptTypeName, script))", 2)
     end
-    f.IsEventRegistered = function(self, ev) return self["_ev_" .. tostring(ev)] == true end
-    f.SetScript = function(self, ev, fn) self["_script_" .. tostring(ev)] = fn; return self end
-    f.GetScript = function(self, ev) return self["_script_" .. tostring(ev)] end
-    -- Unlike the AltStable stubs, HookScript REJECTS unknown script types the
-    -- way the live client does. OnTooltipSetItem throws there, and a stub that
-    -- accepted everything is precisely why the old Warband tests could not
-    -- catch that (issue #10).
-    f.HookScript = function(self, ev, fn)
-        if ev == "OnTooltipSetItem" or ev == "OnTooltipSetUnit" then
-            error("bad argument #2 to 'HookScript' (Usage: self:HookScript(scriptTypeName, script))", 2)
-        end
-        -- CHAINED INTO THE SAME DISPATCH as SetScript, because a hook that is
-        -- only recorded is a hook nothing can test. Storing it under its own
-        -- key meant Show()/Hide() - which fire _script_ - never ran it, so an
-        -- addon could stop hooking OnHide entirely with every suite green.
-        local prev = self["_script_" .. tostring(ev)]
-        self["_script_" .. tostring(ev)] = function(...)
-            if prev then prev(...) end
-            fn(...)
-        end
-        self["_hook_" .. tostring(ev)] = fn
-        return self
+    local prev = self._scripts[ev]
+    self._scripts[ev] = function(...)
+        if prev then prev(...) end
+        fn(...)
     end
-    -- The draw layer is REAL state. Which of two textures is on top is a
-    -- correctness question - an underlay drawn above its overlay hides the
-    -- thing it is backing up - and the chaining default swallowed it.
-    -- The SUBLEVEL is real state too, and the CREATION ORDER is recorded,
-    -- because between two textures the client resolves it in exactly that
-    -- priority: layer, then sublevel, then which was created first. A stub that
-    -- kept only the layer could not tell a border from a lid - the two are the
-    -- same layer - so the bug where an edge drawn after its inset covers it
-    -- completely was invisible to the suite. See T.TextureOrder.
-    -- The full client signature: CreateTexture(name, drawLayer, templateName,
-    -- subLevel). The TEMPLATE slot is third and easy to drop, and dropping it
-    -- silently shifts the sublevel into it - every explicit sublevel in the
-    -- addon read back as nil, so a draw-order assertion compared 0 against 0
-    -- and passed whatever the code said.
-    f.GetRegions       = function(self) return unpack(self._regions or {}) end
-    f.GetNumRegions    = function(self) return #(self._regions or {}) end
-    f.CreateTexture    = function(self, _, layer, _template, sublevel)
-        local t = makeFrame()
-        t._layer, t._sublevel = layer, sublevel
-        -- A frame knows what it drew, the way the client's GetRegions does.
-        -- Without this "how many backgrounds does this frame paint" is not a
-        -- question a test can ask, and the answer - one, not two stacked - is
-        -- the whole point of a translucent material.
-        if type(self) == "table" then
-            self._regions = self._regions or {}
-            self._regions[#self._regions + 1] = t
-            t._regionOwner = self
-            t._parent = t._parent or self      -- a region's GetParent is its frame
+    self["_hook_" .. tostring(ev)] = fn
+    return self
+end
+
+-- Regions: the draw layer, the SUBLEVEL and the CREATION ORDER are real state,
+-- because between two textures the client resolves which is on top in exactly
+-- that priority: layer, then sublevel, then which was created first (see
+-- T.TextureOrder). The full client signature is CreateTexture(name, drawLayer,
+-- templateName, subLevel): the TEMPLATE slot is third and easy to drop.
+-- A frame knows what it drew, the way the client's GetRegions does, and a
+-- region's GetParent is its frame.
+local function newRegion(self, kind, name)
+    local r = newWidget(kind, self, name)
+    if type(self) == "table" then
+        self._regions = self._regions or {}
+        self._regions[#self._regions + 1] = r
+        r._regionOwner = self
+    end
+    if type(name) == "string" and name ~= "" then rawset(_G, name, r) end
+    return r
+end
+function Methods.GetRegions(self) return unpack(self._regions or {}) end
+function Methods.GetNumRegions(self) return #(self._regions or {}) end
+function Methods.CreateTexture(self, name, layer, _template, sublevel)
+    local t = newRegion(self, "Texture", name)
+    t._layer, t._sublevel = layer, sublevel
+    WoW.textureSeq = (WoW.textureSeq or 0) + 1
+    t._created = WoW.textureSeq
+    return t
+end
+-- The client's SetDrawLayer takes the sublevel as an optional second argument
+-- and resets it to 0 when omitted, rather than leaving the previous one.
+function Methods.SetDrawLayer(self, v, sub) self._layer = v; self._sublevel = sub or 0; return self end
+function Methods.GetDrawLayer(self) return self._layer, self._sublevel end
+-- Owned by the frame that creates it, and that ownership is the assertion:
+-- Glass.Mask puts the mask on the region being clipped while ANCHORING it to
+-- the shape to clip against.
+function Methods.CreateMaskTexture(self, name, layer, _template, sublevel)
+    local m = newRegion(self, "MaskTexture", name)
+    m._layer, m._sublevel = layer, sublevel
+    WoW.textureSeq = (WoW.textureSeq or 0) + 1
+    m._created = WoW.textureSeq
+    m._isMask = true
+    m._maskOwner = self
+    return m
+end
+-- A font string IS a region, as on the client: GetRegions returns it with the
+-- textures (the Options page moving what sits below its lists, #151).
+function Methods.CreateFontString(self, name)
+    local fs = newRegion(self, "FontString", name)
+    fs._isFontString = true
+    return fs
+end
+
+-- The backdrop (BackdropTemplateMixin): the FLAT path's painting is asserted.
+function Methods.SetBackdrop(self, bd) self._backdrop = bd; return self end
+function Methods.GetBackdrop(self) return self._backdrop end
+function Methods.SetBackdropColor(self, r, g, b, a) self._backdropColor = { r, g, b, a }; return self end
+function Methods.GetBackdropColor(self)
+    local c = self._backdropColor
+    if not c then return end
+    return c[1], c[2], c[3], c[4]
+end
+function Methods.SetBackdropBorderColor(self, r, g, b, a) self._backdropBorder = { r, g, b, a }; return self end
+
+-- Text colour: "is this label readable" and "is this the selected one" are
+-- colour questions. White, alpha 1, until set.
+function Methods.SetTextColor(self, r, g, b, a) self._textColor = { r, g, b, a }; return self end
+function Methods.GetTextColor(self)
+    local c = self._textColor
+    if not c then return 1, 1, 1, 1 end
+    return c[1], c[2], c[3], c[4] or 1
+end
+-- Texture coordinates, set with four numbers (left, right, top, bottom), read
+-- back as EIGHT, the corners: upper-left, lower-left, upper-right, lower-right.
+function Methods.SetTexCoord(self, ...) self._texCoord = { ... }; return self end
+function Methods.GetTexCoord(self)
+    local c = self._texCoord or { 0, 1, 0, 1 }
+    local l, r, t, b = c[1], c[2], c[3], c[4]
+    return l, t, l, b, r, t, r, b
+end
+-- Whether the cursor is over a frame: false unless a test puts the mouse there
+-- (`frame._mouseOver = true`).
+function Methods.IsMouseOver(self) return self._mouseOver == true end
+function Methods.SetChecked(self, v) self._checked = v and true or false end
+function Methods.GetChecked(self) return self._checked == true end
+-- A texture's vertex TINT: white until set. Separate from SetColorTexture,
+-- which the client does not report through GetVertexColor.
+function Methods.SetVertexColor(self, r, g, b, a) self._vertexColor = { r, g, b, a }; return self end
+function Methods.GetVertexColor(self)
+    local c = self._vertexColor
+    if not c then return 1, 1, 1, 1 end
+    return c[1], c[2], c[3], c[4] or 1
+end
+-- A tooltip's OWNER and anchor point: "where does this tooltip open".
+function Methods.SetOwner(self, owner, anchor) self._owner, self._ownerAnchor = owner, anchor; return self end
+function Methods.GetOwner(self) return self._owner end
+function Methods.GetAnchorType(self) return self._ownerAnchor end
+-- A text shadow defaults to none, which is the whole assertion: over glass a
+-- shadow is what keeps a label legible.
+function Methods.SetShadowOffset(self, x, y) self._shadowX, self._shadowY = x, y; return self end
+function Methods.GetShadowOffset(self) return self._shadowX or 0, self._shadowY or 0 end
+function Methods.SetShadowColor(self, r, g, b, a) self._shadowColor = { r, g, b, a }; return self end
+function Methods.GetShadowColor(self)
+    local c = self._shadowColor
+    if not c then return 0, 0, 0, 0 end
+    return c[1], c[2], c[3], c[4]
+end
+-- Text is REMEMBERED. Unlike the kit's, an EditBox's SetText does not run its
+-- OnTextChanged: the suite's prompt and search tests were written that way.
+function Methods.SetText(self, text) self._text = text; return self end
+function Methods.GetText(self) return self._text end
+function Methods.SetJustifyH(self, j) self._justifyH = j; return self end
+function Methods.GetJustifyH(self) return self._justifyH end
+-- Keyboard focus is ONE global slot, as on the client: an edit box that keeps
+-- it after its prompt closes goes on eating every key the player presses.
+function Methods.SetFocus(self) WoW.focus = self; return self end
+function Methods.ClearFocus(self) if WoW.focus == self then WoW.focus = nil end; return self end
+function Methods.HasFocus(self) return WoW.focus == self end
+function Methods.HighlightText(self) self._highlighted = true; return self end
+function Methods.SetMaxLetters(self, n) self._maxLetters = n; return self end
+function Methods.GetMaxLetters(self) return self._maxLetters end
+
+-- Geometry getters return NUMBERS, set or not: layout code does arithmetic on
+-- them. A test pins one by writing the field (`frame._GetLeft = 40`).
+local NUMERIC = {
+    GetWidth = 100, GetHeight = 20, GetStringWidth = 40, GetStringHeight = 10,
+    GetNumLines = 0, GetVerticalScroll = 0, GetHorizontalScroll = 0,
+    GetVerticalScrollRange = 0, GetHorizontalScrollRange = 0,
+    GetLeft = 0, GetRight = 100, GetTop = 100, GetBottom = 0,
+    GetID = 0,
+}
+for name, value in pairs(NUMERIC) do
+    Methods[name] = function(self) return self["_" .. name] or value end
+end
+-- A FontString is SHORTER than a layout stride, and TEXT-DEPENDENT: an
+-- auto-sized one with no text has no height. An explicit SetHeight still wins,
+-- as on the client. MODELLED, NOT MEASURED.
+function Methods.GetHeight(self)
+    if self._GetHeight then return self._GetHeight end
+    if self._isFontString then
+        local t = self._text
+        return (t and t ~= "") and 12 or 0
+    end
+    return 20
+end
+-- A slider's or bar's value: the kit's SetValue (OnValueChanged on a change),
+-- read back here as a number before anything set it.
+function Methods.GetValue(self) return self._value or self._GetValue or 0 end
+function Methods.GetScale(self) return self._scale or 1 end
+function Methods.SetScale(self, v) self._scale = v; return self end
+-- EFFECTIVE scale walks the parent chain, which is the whole difference
+-- between it and GetScale (the window's screen clamp).
+function Methods.GetEffectiveScale(self)
+    local s, p, guard = self._scale or 1, self._parent, 0
+    while p and guard < 32 do
+        s = s * (p._scale or 1)
+        p, guard = p._parent, guard + 1
+    end
+    return s
+end
+-- Movable is state (the kit has no SetMovable). Before the kit, the old stub's
+-- unknown methods returned the frame itself, so IsMovable() was truthy for any
+-- frame and "the sheet is still movable" (test_sheetui) passed whatever the
+-- addon did.
+function Methods.SetMovable(self, v) self._movable = v and true or false; return self end
+function Methods.IsMovable(self) return self._movable == true end
+function Methods.SetClampedToScreen(self, v) self._clamped = not not v; return self end
+function Methods.IsClampedToScreen(self) return self._clamped == true end
+
+-- SetTexture takes a path OR a file id, and the two behave DIFFERENTLY.
+-- MEASURED on 1.60.1.70009: a file id is stored, not resolved; a nonsense one
+-- is echoed straight back. A PATH resolving to a file id (and being able to
+-- fail) is NOT MEASURED: modelled through WoW.textures, the one table that
+-- already decides whether a path exists (GetFileIDFromPath reads it too).
+function Methods.SetTexture(self, v)
+    if type(v) == "number" then
+        self._texture, self._fileID = v, v
+    elseif type(v) == "string" then
+        local id = GetFileIDFromPath(v)
+        self._texture = id and v or nil
+        self._fileID  = id
+    else
+        self._texture, self._fileID = nil, nil
+    end
+    return self
+end
+-- A SOLID COLOUR: recorded in `_colorTexture` rather than answered by a
+-- getter, because the client has no GetColorTexture.
+function Methods.SetColorTexture(self, r, g, b, a)
+    self._colorTexture = { r, g, b, a }
+    self._texture = nil                     -- a colour replaces any art
+    return self
+end
+-- The material's API (#97): which region is masked by what and in what order.
+function Methods.SetTextureSliceMargins(self, l, t, r, b) self._slice = { l, t, r, b }; return self end
+function Methods.GetTextureSliceMargins(self) return self._slice end
+function Methods.SetTextureSliceMode(self, m) self._sliceMode = m; return self end
+function Methods.GetTextureSliceMode(self) return self._sliceMode end
+function Methods.SetHorizTile(self, v) self._hTile = not not v; return self end
+function Methods.SetVertTile(self, v) self._vTile = not not v; return self end
+function Methods.SetBlendMode(self, m) self._blend = m; return self end
+function Methods.GetBlendMode(self) return self._blend end
+function Methods.SetGradient(self, orient, minC, maxC)
+    self._gradient = { orient = orient, min = minC, max = maxC }
+    return self
+end
+function Methods.AddMaskTexture(self, mask)
+    self._masks = self._masks or {}
+    self._masks[#self._masks + 1] = mask
+    return self
+end
+function Methods.GetNumMaskTextures(self) return self._masks and #self._masks or 0 end
+function Methods.GetMaskTexture(self, i) return self._masks and self._masks[i] end
+function Methods.GetTexture(self) return self._texture end
+function Methods.GetTextureFileID(self) return self._fileID end
+function Methods.GetTextureFilePath(self) return type(self._texture) == "string" and self._texture or nil end
+
+function Methods.SetFrameStrata(self, v) self._strata = v; return self end
+function Methods.GetFrameStrata(self) return self._strata or "MEDIUM" end
+-- Frame level: "which of two siblings takes the click". 1 until set.
+function Methods.SetFrameLevel(self, v) self._GetFrameLevel = v; return self end
+function Methods.GetFrameLevel(self) return self._GetFrameLevel or 1 end
+-- Raise MOVES THE LEVEL, which is what anything watching sees.
+function Methods.Raise(self) self._GetFrameLevel = (self._GetFrameLevel or 0) + 5; return self end
+function Methods.GetChildren(self) return unpack(self._children or {}) end
+-- SetParent MAINTAINS the child list, so GetChildren and GetParent agree where
+-- the showcase lifts the sheet out from under UIParent.
+function Methods.SetParent(self, p)
+    local old = self._parent
+    if type(old) == "table" and old._children then
+        for i = #old._children, 1, -1 do
+            if old._children[i] == self then table.remove(old._children, i) end
         end
-        WoW.textureSeq = (WoW.textureSeq or 0) + 1
-        t._created = WoW.textureSeq
-        t.SetDrawLayer = function(self, v, sub)
-            self._layer = v
-            -- The client's SetDrawLayer takes the sublevel as an optional
-            -- second argument and resets it to 0 when omitted, rather than
-            -- leaving the previous one in place.
-            self._sublevel = sub or 0
+    end
+    self._parent = p
+    if type(p) == "table" then
+        p._children = p._children or {}
+        p._children[#p._children + 1] = self
+    end
+    return self
+end
+
+-- Show and Hide FIRE their scripts, only on an actual change, and ON THE
+-- DESCENDANTS, as the client does: hiding a parent fires OnHide on every child
+-- that was on screen (their own shown flag untouched), showing it again fires
+-- their OnShow. That is how hiding UIParent reaches the sheet (#89). A
+-- protected frame in combat refuses, as in the kit.
+local function cascade(frame, script)
+    for _, c in ipairs(frame._children or {}) do
+        if c._shown ~= false then
+            local fn = c._scripts and c._scripts[script]
+            if fn then fn(c) end
+            cascade(c, script)
+        end
+    end
+end
+function Methods.Show(self)
+    if WoW.refused(self, "Show") then return end
+    local was = self._shown
+    local wasVisible = Methods.IsVisible(self)
+    self._shown = true
+    if was ~= true and self._scripts.OnShow then self._scripts.OnShow(self) end
+    if not wasVisible and Methods.IsVisible(self) then cascade(self, "OnShow") end
+    return self
+end
+function Methods.Hide(self)
+    if WoW.refused(self, "Hide") then return end
+    local was = self._shown
+    local wasVisible = Methods.IsVisible(self)
+    self._shown = false
+    if was ~= false and self._scripts.OnHide then self._scripts.OnHide(self) end
+    if wasVisible then cascade(self, "OnHide") end
+    return self
+end
+function Methods.IsShown(self) return self._shown ~= false end
+function Methods.SetShown(self, v)
+    if v then self:Show() else self:Hide() end
+    return self
+end
+-- Visible means shown AND every ancestor shown.
+function Methods.IsVisible(self)
+    if self._shown == false then return false end
+    local p = self._parent
+    while p do
+        if p._shown == false then return false end
+        p = p._parent
+    end
+    return true
+end
+
+-- Enabled state: `nil` DISABLES, matching the client; never having been
+-- called, a widget is enabled.
+function Methods.SetEnabled(self, v) self._enabled = not not v; return self end
+function Methods.Enable(self) self._enabled = true; return self end
+function Methods.Disable(self) self._enabled = false; return self end
+function Methods.IsEnabled(self) return self._enabled ~= false end
+-- Word wrap: on unless turned off; the same nil rule.
+function Methods.SetWordWrap(self, v) self._wrap = not not v; return self end
+function Methods.GetWordWrap(self) return self._wrap ~= false end
+-- SetNonSpaceWrap / CanNonSpaceWrap (SimpleFontStringAPI): off by default.
+function Methods.SetNonSpaceWrap(self, v) self._nonSpaceWrap = not not v; return self end
+function Methods.CanNonSpaceWrap(self) return self._nonSpaceWrap == true end
+
+-- Anchors: SetPoint is variadic in the client; all three arities are
+-- normalised. An anchor given without a frame is to the PARENT, without a
+-- relative point to the same point. It REPLACES the anchor for a point
+-- already set, as the client does: a pooled menu entry re-anchored on every
+-- open must not accumulate stale anchors.
+function Methods.SetPoint(self, point, a, b, c, d)
+    if WoW.refused(self, "SetPoint") then return end
+    local rel, relPoint, x, y
+    if type(a) == "number" then
+        x, y = a, b
+    elseif type(b) == "number" then
+        rel, x, y = a, b, c
+    else
+        rel, relPoint, x, y = a, b, c, d
+    end
+    if rel == nil then rel = self._parent end
+    if relPoint == nil then relPoint = point end
+    self._points = self._points or {}
+    for _, existing in ipairs(self._points) do
+        if existing.point == point then
+            existing.rel, existing.relPoint, existing.x, existing.y = rel, relPoint, x, y
             return self
         end
-        t.GetDrawLayer = function(self) return self._layer, self._sublevel end
-        return t
     end
-    -- A FontString is SHORTER than a layout stride, and the generic 20px default
-    -- was not: it is taller than STAT_ROW_H (15), which inverts the relationship
-    -- the Roster column is built on - a stride that must never be shorter than
-    -- the text it steps over. With the default, compressing the rows silently
-    -- GREW them and the compression tests passed without exercising compression.
-    --
-    -- And it is TEXT-DEPENDENT: an auto-sized FontString with no text has no
-    -- height. A fixed 12 hid a real bug - code that measures a font string to
-    -- reserve room for it reads 0 before the text is set, and the fixed stub
-    -- made that lifecycle unreachable, so the reservation looked correct in the
-    -- suite and overflowed in game on the first render.
-    --
-    -- An explicit SetHeight still wins, as it does on the client: that is a
-    -- FontString told how tall to be rather than asked.
-    --
-    -- MODELLED, NOT MEASURED. The exact number does not matter; being smaller
-    -- than a stride does, being zero when empty does, and no client renders a
-    -- small font at 20px.
-    -- Owned by the frame that creates it, and that ownership is the assertion:
-    -- Glass.Mask deliberately puts the mask on the region being clipped while
-    -- ANCHORING it to the shape to clip against, and getting those two the wrong
-    -- way round rounds the panel into a floating capsule instead of trimming a
-    -- corner.
-    f.CreateMaskTexture = function(self, name, layer, template, sublevel)
-        local m = self:CreateTexture(name, layer, template, sublevel)
-        m._isMask = true
-        m._maskOwner = self
-        return m
-    end
-    f.CreateFontString = function(self)
-        local fs = makeFrame()
-        -- A font string IS a region, as on the client: GetRegions returns it
-        -- with the textures. Left out, anything that walks a frame's regions
-        -- - the Options page moving what sits below its lists (#151) - was
-        -- tested on textures only, and every label it moves went unseen.
-        if type(self) == "table" then
-            self._regions = self._regions or {}
-            self._regions[#self._regions + 1] = fs
-            fs._regionOwner = self
-            fs._parent = fs._parent or self    -- likewise
-            fs._isFontString = true
-        end
-        fs.GetHeight = function(self)
-            if self._GetHeight then return self._GetHeight end
-            local t = self._text
-            return (t and t ~= "") and 12 or 0
-        end
-        return fs
-    end
-    -- Text is REMEMBERED, not swallowed: a footer or a label is a real
-    -- assertion ("does it say 1 unknown"), and a no-op SetText makes every
-    -- display bug invisible to the suite.
-    -- A text shadow is REAL state and defaults to none, which is the whole
-    -- assertion: over glass a shadow is what keeps a label legible when
-    -- something bright passes behind it, and the chaining default returned the
-    -- frame for GetShadowOffset - truthy, non-zero, indistinguishable from a
-    -- shadow that was actually set.
-    -- The backdrop, which was nowhere in here at all - so every ApplyBGOnly and
-    -- every SetBackdropColor in the addon went to the chaining default and the
-    -- FLAT path's painting could not be asserted. That matters more now that
-    -- flat is the documented revert: "the revert restores what was there" is a
-    -- claim, and until this existed nothing could check it.
-    f.SetBackdrop = function(self, bd) self._backdrop = bd; return self end
-    f.GetBackdrop = function(self) return self._backdrop end
-    f.SetBackdropColor = function(self, r, g, b, a)
-        self._backdropColor = { r, g, b, a }; return self
-    end
-    f.GetBackdropColor = function(self)
-        local c = self._backdropColor
-        if not c then return end
-        return c[1], c[2], c[3], c[4]
-    end
-    f.SetBackdropBorderColor = function(self, r, g, b, a)
-        self._backdropBorder = { r, g, b, a }; return self
-    end
-
-    -- Text colour, likewise real state. "Is this label readable" and "is this
-    -- the selected one" are both colour questions, and both were unanswerable.
-    f.SetTextColor = function(self, r, g, b, a)
-        self._textColor = { r, g, b, a }; return self
-    end
-    f.GetTextColor = function(self)
-        local c = self._textColor
-        if not c then return 1, 1, 1, 1 end
-        return c[1], c[2], c[3], c[4] or 1
-    end
-    -- Texture coordinates, as the client has them: set with four numbers
-    -- (left, right, top, bottom), read back as EIGHT - the corners, upper-left,
-    -- lower-left, upper-right, lower-right, each x then y. Unset: the whole.
-    -- (The eight-number form of SetTexCoord is not modelled; nothing uses it.)
-    f.SetTexCoord = function(self, l, r, t, b) self._texCoord = { l, r, t, b }; return self end
-    f.GetTexCoord = function(self)
-        local c = self._texCoord or { 0, 1, 0, 1 }
-        local l, r, t, b = c[1], c[2], c[3], c[4]
-        return l, t, l, b, r, t, r, b
-    end
-    -- Whether the cursor is over a frame: real state, false unless a test puts
-    -- the mouse there (`frame._mouseOver = true`). The chaining default
-    -- answered every frame with itself - "yes" - so a drop would have landed
-    -- on whichever frame happened to be asked first.
-    f.IsMouseOver = function(self) return self._mouseOver == true end
-    -- A check button's state, as the client has it. The chaining default
-    -- answered GetChecked with the frame itself - always truthy - so an Options
-    -- handler reading it could never see "unchecked".
-    f.SetChecked = function(self, v) self._checked = v and true or false end
-    f.GetChecked = function(self) return self._checked == true end
-    -- A texture's vertex TINT, as the client has it: Set records, Get reads it
-    -- back, white until set. Separate from SetColorTexture, which the client
-    -- does not report through GetVertexColor (see below). An icon header's
-    -- tint is the only sign that the rows are sorted by it.
-    f.SetVertexColor = function(self, r, g, b, a)
-        self._vertexColor = { r, g, b, a }; return self
-    end
-    f.GetVertexColor = function(self)
-        local c = self._vertexColor
-        if not c then return 1, 1, 1, 1 end
-        return c[1], c[2], c[3], c[4] or 1
-    end
-
-    -- A tooltip's OWNER and anchor point are real state. "Where does this
-    -- tooltip open" is a question the addon answers differently per call site,
-    -- and the chaining default answered it with the tooltip itself.
-    f.SetOwner = function(self, owner, anchor)
-        self._owner, self._ownerAnchor = owner, anchor
-        return self
-    end
-    f.GetOwner = function(self) return self._owner end
-    f.GetAnchorType = function(self) return self._ownerAnchor end
-
-    f.SetShadowOffset = function(self, x, y) self._shadowX, self._shadowY = x, y; return self end
-    f.GetShadowOffset = function(self) return self._shadowX or 0, self._shadowY or 0 end
-    f.SetShadowColor  = function(self, r, g, b, a)
-        self._shadowColor = { r, g, b, a }; return self
-    end
-    f.GetShadowColor  = function(self)
-        local c = self._shadowColor
-        if not c then return 0, 0, 0, 0 end
-        return c[1], c[2], c[3], c[4]
-    end
-    f.SetText = function(self, text) self._text = text; return self end
-    f.GetText = function(self) return self._text end
-    -- Real state: a reused prompt frame must not keep the last showing's.
-    f.SetJustifyH = function(self, j) self._justifyH = j; return self end
-    f.GetJustifyH = function(self) return self._justifyH end
-    -- Keyboard focus is ONE global slot, as on the client: an edit box that
-    -- keeps it after its prompt closes goes on eating every key the player
-    -- presses. Chaining would have answered HasFocus with the frame (truthy)
-    -- whether or not anything ever cleared it.
-    f.SetFocus   = function(self) WoW.focus = self; return self end
-    f.ClearFocus = function(self) if WoW.focus == self then WoW.focus = nil end; return self end
-    f.HasFocus   = function(self) return WoW.focus == self end
-    f.HighlightText = function(self) self._highlighted = true; return self end
-    f.SetMaxLetters = function(self, n) self._maxLetters = n; return self end
-    f.GetMaxLetters = function(self) return self._maxLetters end
-    -- Geometry getters return NUMBERS. The chaining default would hand back the
-    -- frame itself, and layout code does arithmetic on these - so a stub that
-    -- chains them turns every layout pass into "arithmetic on a table value".
-    local NUMERIC = {
-        GetWidth = 100, GetHeight = 20, GetStringWidth = 40, GetStringHeight = 10,
-        GetNumLines = 0, GetValue = 0, GetVerticalScroll = 0, GetHorizontalScroll = 0,
-        GetVerticalScrollRange = 0, GetHorizontalScrollRange = 0,
-        GetLeft = 0, GetRight = 100, GetTop = 100, GetBottom = 0,
-        GetScale = 1, GetEffectiveScale = 1, GetNumPoints = 0, GetAlpha = 1,
-        GetFrameLevel = 1, GetID = 0,
-    }
-    for name, value in pairs(NUMERIC) do
-        f[name] = function(self) return self["_" .. name] or value end
-    end
-    -- EFFECTIVE scale walks the parent chain, which is the whole difference
-    -- between it and GetScale. Returning only the frame's own scale made the
-    -- two identical, so UIParent's scale was always 1 here and code converting
-    -- between the two coordinate spaces could be deleted without any test
-    -- noticing - which is exactly what happened to the window's screen clamp.
-    f.GetEffectiveScale = function(self)
-        local s, p, guard = self._scale or 1, self._parent, 0
-        while p and guard < 32 do
-            s = s * (p._scale or 1)
-            p, guard = p._parent, guard + 1
-        end
-        return s
-    end
-    -- Real state: "is the window kept on the display" is the question #99 is
-    -- about, and the chaining default answered it with the frame itself.
-    f.SetClampedToScreen = function(self, v) self._clamped = not not v; return self end
-    f.IsClampedToScreen  = function(self) return self._clamped == true end
-    -- Strata, parent, scale and shown-ness are REAL state, not chained no-ops.
-    -- Code that lifts a frame out from under a hidden UIParent and puts it back
-    -- is exactly what needs testing, and with the chaining default every such
-    -- save/restore stored the FRAME ITSELF as "the saved strata" and restored
-    -- nothing - a silent no-op that reads as correct.
-    -- Textures: what was set, and whether the client knew it.
-    --
-    -- SetTexture takes a path OR a file id, and the two behave DIFFERENTLY.
-    --
-    -- MEASURED on 1.60.1.70009:
-    --     /run local t=UIParent:CreateTexture() t:SetTexture(999999999)
-    --          print(t:GetTexture(), t:GetTextureFileID())
-    --     999999999   999999999
-    --
-    -- A file id is stored, not resolved. A nonsense one is echoed straight
-    -- back, so NOTHING a texture can be asked will tell you whether the art
-    -- exists - the only symptom is that it draws nothing. An earlier version of
-    -- this stub returned nil for an unknown id, which made a validity check
-    -- look testable when on the client it could never fire.
-    --
-    -- A PATH is believed to be different - the client resolving it to a file id
-    -- and being able to fail - but that half is NOT MEASURED. See the caveat in
-    -- docs/forever-api-notes.md. Modelled the optimistic way so the behaviour
-    -- is expressible, and driven by WoW.textures, which is the one table that
-    -- already decides whether a path exists (GetFileIDFromPath reads it too).
-    f.SetTexture = function(self, v)
-        if type(v) == "number" then
-            self._texture, self._fileID = v, v     -- echoed, whatever it is
-        elseif type(v) == "string" then
-            -- The SAME table GetFileIDFromPath consults. Two notions of "a path
-            -- this client has" disagree the moment a test configures one of
-            -- them: with WoW.textures set, a missing path reported absent to
-            -- GetFileIDFromPath and present to SetTexture, at once.
-            local id = GetFileIDFromPath(v)
-            self._texture = id and v or nil
-            self._fileID  = id
-        else
-            self._texture, self._fileID = nil, nil
-        end
-        return self
-    end
-    -- A SOLID COLOUR is what most of this addon's textures are, and the colour
-    -- is the assertion: a quality border's whole job is which colour it is.
-    -- Swallowed by the chaining default, a palette could lose an entry and every
-    -- test still pass.
-    --
-    -- Recorded in `_colorTexture` rather than answered by a getter, because the
-    -- client has no GetColorTexture and GetVertexColor is a DIFFERENT thing - it
-    -- returns the vertex tint, which SetColorTexture does not touch. Inventing
-    -- a getter here would be a stub that models an API the client does not
-    -- have, which is the failure mode wow_stubs exists to avoid.
-    f.SetColorTexture = function(self, r, g, b, a)
-        self._colorTexture = { r, g, b, a }
-        self._texture = nil                     -- a colour replaces any art
-        return self
-    end
-    -- The material's API (#97). All of it records REAL state, because the whole
-    -- point of the glass layer stack is which region is masked by what and in
-    -- what order, and a chaining no-op would make every one of those questions
-    -- unanswerable - which is how this repo shipped three layout bugs already.
-    f.SetTextureSliceMargins = function(self, l, t, r, b)
-        self._slice = { l, t, r, b }; return self
-    end
-    f.GetTextureSliceMargins = function(self) return self._slice end
-    f.SetTextureSliceMode = function(self, m) self._sliceMode = m; return self end
-    f.GetTextureSliceMode = function(self) return self._sliceMode end
-    f.SetHorizTile = function(self, v) self._hTile = not not v; return self end
-    f.SetVertTile  = function(self, v) self._vTile = not not v; return self end
-    f.SetBlendMode = function(self, m) self._blend = m; return self end
-    f.GetBlendMode = function(self) return self._blend end
-    f.SetGradient  = function(self, orient, minC, maxC)
-        self._gradient = { orient = orient, min = minC, max = maxC }
-        return self
-    end
-    -- A mask affects textures of the frame that OWNS it. `_maskOwner` is
-    -- recorded because attaching a mask to the wrong frame is silent in game and
-    -- was the single likeliest way to get the corner clipping wrong.
-    f.AddMaskTexture = function(self, mask)
-        self._masks = self._masks or {}
-        self._masks[#self._masks + 1] = mask
-        return self
-    end
-    f.GetNumMaskTextures = function(self) return self._masks and #self._masks or 0 end
-    f.GetMaskTexture = function(self, i) return self._masks and self._masks[i] end
-    f.GetTexture         = function(self) return self._texture end
-    f.GetTextureFileID   = function(self) return self._fileID end
-    f.GetTextureFilePath = function(self)
-        return type(self._texture) == "string" and self._texture or nil
-    end
-    f.SetTexCoord = function(self, ...) self._texCoord = { ... }; return self end
-
-    f.SetFrameStrata = function(self, v) self._strata = v; return self end
-    f.GetFrameStrata = function(self) return self._strata or "MEDIUM" end
-    -- Frame level is REAL state. "Which of two siblings takes the click" is a
-    -- correctness question - a catcher drawn over the menu it is meant to sit
-    -- behind eats every entry - and the chaining default made every level 1.
-    f.SetFrameLevel = function(self, v) self._GetFrameLevel = v; return self end
-    -- Raise MOVES THE LEVEL. The client puts the frame above the others in its
-    -- strata; what matters to anything watching is that the level changed, and
-    -- the chaining default changed nothing - so a test that raised a frame and
-    -- checked what followed was asserting against a no-op.
-    f.Raise = function(self)
-        self._GetFrameLevel = (self._GetFrameLevel or 0) + 5
-        return self
-    end
-
-    f.GetChildren = function(self) return unpack(self._children or {}) end
-
-    -- SetParent MAINTAINS the child list. Appending only at creation left
-    -- GetChildren disagreeing with GetParent exactly where this codebase
-    -- reparents frames - the showcase lifts the sheet out from under UIParent,
-    -- and the lifted frame would still have answered UIParent:GetChildren().
-    -- A test walking children instead of parents would have asserted the
-    -- opposite of the truth.
-    f.SetParent = function(self, p)
-        local old = self._parent
-        if type(old) == "table" and old._children then
-            for i = #old._children, 1, -1 do
-                if old._children[i] == self then table.remove(old._children, i) end
-            end
-        end
-        self._parent = p
-        if type(p) == "table" then
-            p._children = p._children or {}
-            p._children[#p._children + 1] = self
-        end
-        return self
-    end
-    f.GetParent      = function(self) return self._parent end
-    f.SetScale       = function(self, v) self._scale = v; return self end
-    f.GetScale       = function(self) return self._scale or 1 end
-    -- Show and Hide FIRE their scripts, because that is where cleanup lives.
-    -- A frame's OnHide is how it lets go of things it raised, and with Hide as
-    -- a bare flag flip none of that ran: the sheet could close while leaving a
-    -- full-screen click-catcher over the game and the suite saw a tidy world.
-    -- Only on an actual change, as the client does - re-hiding a hidden frame
-    -- fires nothing.
-    --
-    -- AND ON THE DESCENDANTS, as the client does: hiding a parent fires OnHide
-    -- on every child that was on screen - their own shown flag untouched - and
-    -- showing it again fires their OnShow. That is how hiding UIParent reaches
-    -- the sheet, and a stub that stopped at the frame itself hid every bug
-    -- that lives on that path (#89: a capture that hid UIParent and a sheet
-    -- that could not tell "my parent went" from "I was closed").
-    local function cascade(frame, script)
-        for _, c in ipairs(frame._children or {}) do
-            if c._shown ~= false then
-                local fn = c["_script_" .. script]
-                if fn then fn(c) end
-                cascade(c, script)
-            end
-        end
-    end
-    f.Show = function(self)
-        local was = self._shown
-        local wasVisible = self.IsVisible and self:IsVisible()
-        self._shown = true
-        if was ~= true and self._script_OnShow then self:_script_OnShow() end
-        if not wasVisible and self:IsVisible() then cascade(self, "OnShow") end
-        return self
-    end
-    f.Hide = function(self)
-        local was = self._shown
-        local wasVisible = self.IsVisible and self:IsVisible()
-        self._shown = false
-        if was ~= false and self._script_OnHide then self:_script_OnHide() end
-        if wasVisible then cascade(self, "OnHide") end
-        return self
-    end
-    f.IsShown        = function(self) return self._shown ~= false end
-    -- SetShown is Show/Hide with the condition inline, and the client has it.
-    -- Chaining meant SetShown(false) left the frame shown, so a renderer that
-    -- hid a widget conditionally looked identical to one that never hid it -
-    -- a mutation removing exactly that survived the suite.
-    f.SetShown = function(self, v)
-        if v then self:Show() else self:Hide() end
-        return self
-    end
-
-    -- Enabled state is REAL. The active tab is meant to be the one you cannot
-    -- press, and with SetEnabled swallowed by the chaining default that claim
-    -- was asserted nowhere - worse, a client missing the method entirely would
-    -- have thrown while the suite stayed green.
-    --
-    -- `nil` DISABLES, matching the client: these take a boolean, and a missing
-    -- argument is a falsy one, not "leave it alone". An earlier version wrote
-    -- `v ~= false`, which made SetEnabled(nil) and SetEnabled() enable the
-    -- widget - so a caller passing a nil flag by mistake looked correct here
-    -- and did the opposite in game. The DEFAULT, never having been called, is
-    -- still enabled, which is what a fresh frame is.
-    f.SetEnabled  = function(self, v) self._enabled = not not v; return self end
-    f.Enable      = function(self) self._enabled = true; return self end
-    f.Disable     = function(self) self._enabled = false; return self end
-    f.IsEnabled   = function(self) return self._enabled ~= false end
-
-    -- Word wrap is REAL state. A FontString with only a left anchor is as wide
-    -- as its text, so whether it wraps decides whether a long line stays
-    -- inside the frame or runs out over the game world - which it did. With
-    -- SetWordWrap swallowed by the chaining default, and GetWordWrap returning
-    -- the frame itself (truthy), an assertion about it could not fail. Same
-    -- nil rule as SetEnabled above.
-    f.SetWordWrap = function(self, v) self._wrap = not not v; return self end
-    f.GetWordWrap = function(self) return self._wrap ~= false end
-    -- Breaking a word with no spaces in it, letter by letter: the client's
-    -- SetNonSpaceWrap / CanNonSpaceWrap (SimpleFontStringAPI). Off by default.
-    -- A stacked faction header turns it on; a header slot reused for a text
-    -- column must turn it off again, or "Guild" wraps a letter per line.
-    f.SetNonSpaceWrap = function(self, v) self._nonSpaceWrap = not not v; return self end
-    f.CanNonSpaceWrap = function(self) return self._nonSpaceWrap == true end
-    -- Visible means shown AND every ancestor shown - the distinction the whole
-    -- hidden-UIParent problem turns on.
-    f.IsVisible      = function(self)
-        if self._shown == false then return false end
-        local p = self._parent
-        while p do
-            if p._shown == false then return false end
-            p = p._parent
-        end
-        return true
-    end
-    -- Anchors are RECORDED. Placing a menu at the cursor is arithmetic - divide
-    -- the cursor's physical pixels by the frame's effective scale, then clamp
-    -- to the screen - and with SetPoint as a no-op none of that arithmetic was
-    -- observable. A menu that opens at a multiple of the right distance from
-    -- the corner looks like it opened somewhere random, and no test could see
-    -- it.
-    --
-    -- SetPoint is variadic in the client; all three arities are normalised here
-    -- so a caller does not have to know which one this stub prefers.
-    f.SetPoint = function(self, point, a, b, c, d)
-        local rel, relPoint, x, y
-        if type(a) == "number" then
-            x, y = a, b                       -- SetPoint(point, x, y)
-        elseif type(b) == "number" then
-            rel, x, y = a, b, c               -- SetPoint(point, rel, x, y)
-        else
-            rel, relPoint, x, y = a, b, c, d  -- SetPoint(point, rel, relPoint, x, y)
-        end
-        -- What the client hands back from GetPoint: an anchor given without a
-        -- frame is to the PARENT, and without a relative point is to the same
-        -- point. Recorded as nil, the page-anchored branch a layout takes in
-        -- game (`rel == optionsFrame`, #158 review) was never the one tested.
-        if rel == nil and self.GetParent then rel = self:GetParent() end
-        if relPoint == nil then relPoint = point end
-        -- REPLACES the anchor for a point already set, which is what the
-        -- client does. Appending instead meant a frame re-anchored on every
-        -- open - which every pooled menu entry is - accumulated stale anchors,
-        -- and GetPoint(1) handed back a position from several openings ago. A
-        -- placement assertion could then pass, or fail, for the wrong reason,
-        -- which defeats the point of recording anchors at all.
-        self._points = self._points or {}
-        for _, existing in ipairs(self._points) do
-            if existing.point == point then
-                existing.rel, existing.relPoint, existing.x, existing.y = rel, relPoint, x, y
-                return self
-            end
-        end
-        self._points[#self._points + 1] =
-            { point = point, rel = rel, relPoint = relPoint, x = x, y = y }
-        return self
-    end
-    f.ClearAllPoints = function(self) self._points = nil; return self end
-    -- REPLACES the anchors, as the client's does - it is not a fifth point.
-    -- Recorded because "does this region cover its whole frame" is what tells
-    -- a background apart from a box drawn inside one.
-    f.SetAllPoints   = function(self, rel)
-        self._points = nil
-        self._allPoints = rel or true
-        return self
-    end
-    f.GetNumPoints   = function(self) return self._points and #self._points or 0 end
-    f.GetPoint = function(self, i)
-        local pt = self._points and self._points[i or 1]
-        if not pt then return nil end
-        return pt.point, pt.rel, pt.relPoint, pt.x, pt.y
-    end
-
-    -- Alpha is REAL state. Dimming a hidden character's row IS the feature
-    -- (#69), and rows come from a pool - so "was it set back to 1 for the next
-    -- character" is the assertion, and the chaining default answered every
-    -- alpha question with the constant 1.
-    f.SetAlpha = function(self, a) self._GetAlpha = a; return self end
-    f.GetAlpha = function(self) return self._GetAlpha or 1 end
-
-    -- Which buttons a Button actually listens for.
-    --
-    -- Not bookkeeping: a Button fires OnClick for the LEFT button only until
-    -- RegisterForClicks says otherwise. A right-click handler on a button that
-    -- never registered right-clicks is dead code in game and perfect code to a
-    -- test that calls the handler directly. Recording it is what lets a test
-    -- ask the question the client asks.
-    -- Attributes are STORED. The chaining default made GetAttribute hand back
-    -- the frame itself - truthy, and nothing like the value - so a secure
-    -- button with no action at all looked configured.
-    f.SetAttribute = function(self, k, v)
-        self._attributes = self._attributes or {}
-        self._attributes[k] = v
-        return self
-    end
-    f.GetAttribute = function(self, k) return self._attributes and self._attributes[k] end
-    f.RegisterForClicks = function(self, ...)
-        self._clicks = { ... }
-        return self
-    end
-    f.RegisteredClicks = function(self) return self._clicks or {} end
-    f.HandlesClick = function(self, button)
-        for _, c in ipairs(self._clicks or {}) do
-            if c == button .. "Up" or c == button .. "Down" or c == "AnyUp" or c == "AnyDown" then
-                return true
-            end
-        end
-        -- The client's default for a Button with no registration at all.
-        return self._clicks == nil and button == "LeftButton" or false
-    end
-
-    -- DISABLED BY DEFAULT for a Frame, as on the client - a BUTTON is enabled
-    -- when it is created, which is why the kind is passed in below. Defaulting
-    -- everything to enabled meant "does this window eat the mouse" answered yes
-    -- for a window that had never been asked to, and the world showing through
-    -- it (#74) was not a question a test could put. Defaulting everything to
-    -- disabled would have been the same mistake pointed the other way: a test
-    -- asking whether a button takes the mouse would fail against correct code.
-    --
-    -- `v == true`, not `v ~= false`: the client reads EnableMouse(nil) as
-    -- DISABLE, so `f:EnableMouse(cfg.something)` with a nil config value is off
-    -- in game and would have been on here.
-    f.EnableMouse    = function(self, v) self._mouse = v == true; return self end
-    f.IsMouseEnabled = function(self) return self._mouse == true end
-    f.EnableKeyboard = function(self, v) self._keyboard = v ~= false; return self end
-    f.IsKeyboardEnabled = function(self) return self._keyboard == true end
-    f.SetPropagateKeyboardInput = function(self, v) self._propagate = v; return self end
-
-    f.SetWidth  = function(self, w) self._GetWidth = w; return self end
-    f.SetHeight = function(self, h) self._GetHeight = h; return self end
-    f.SetSize   = function(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
-    -- Clipping is state, as on the client: the chaining default answered
-    -- DoesClipChildren with the frame itself, which reads as "yes" to everything.
-    f.SetClipsChildren = function(self, v) self._clipsChildren = v and true or false; return self end
-    f.DoesClipChildren = function(self) return self._clipsChildren == true end
-
-    -- The highlight is a texture that exists once it is set, as on the client:
-    -- the chaining default answered GetHighlightTexture with the frame itself
-    -- before anything was set, so "set it before Pill softens it" was untestable.
-    f.SetHighlightTexture = function(self, path, blend)
-        local t = self._highlight or self:CreateTexture(nil, "HIGHLIGHT")
-        t._path, t._blend = path, blend
-        self._highlight = t
-        return self
-    end
-    f.GetHighlightTexture = function(self) return self._highlight end
-
-    -- Regions a TEMPLATE would have created (OptionsSliderTemplate gives a
-    -- slider .Low/.High/.Text, a scroll frame gets .ScrollBar, and so on). The
-    -- chaining default would hand back a function, and `slider.Low:SetText(...)`
-    -- then fails on a function value - so these come back as frames.
-    local TEMPLATE_CHILDREN = {
-        Low = true, High = true, Text = true, ScrollBar = true, ScrollFrame = true,
-        EditBox = true, Icon = true, Border = true, Left = true, Middle = true,
-        Right = true, Center = true, Background = true, Label = true, Thumb = true,
-    }
-
-    -- Any unknown METHOD chains (widget methods are all capitalised). A plain
-    -- field reads nil, as on a real frame - `row.dividers or {}` must see nil.
-    setmetatable(f, { __index = function(self, k)
-        if type(k) ~= "string" then return nil end
-        if TEMPLATE_CHILDREN[k] then
-            local child = makeFrame()
-            self[k] = child        -- cached, so identity is stable across reads
-            return child
-        end
-        if k:find("^%u") then return chain end
-    end })
-    return f
+    self._points[#self._points + 1] = { point = point, rel = rel, relPoint = relPoint, x = x, y = y }
+    return self
 end
-WoW.makeFrame = makeFrame
-
--- The PARENT argument is honoured, and a named frame becomes a global, because
--- the client does both.
---
--- This used to be `function CreateFrame() return makeFrame() end`, which threw
--- the parent away. Everything about lifting a frame out from under a hidden
--- UIParent then only worked because the code under test called SetParent by
--- hand: a frame that was merely CREATED as a child of UIParent looked like an
--- orphan, so "it is not parented to UIParent" was trivially true and the
--- assertion proved nothing.
-function CreateFrame(kind, name, parent)
-    local f = makeFrame()
-    -- The KIND, which this threw away. A Button takes the mouse from the
-    -- moment it exists; a Frame does not until something says so.
-    f._mouse = (kind == "Button" or kind == "CheckButton")
-    f._frameKind = kind
-    f._parent = parent
-    -- The parent keeps a CHILD LIST, because GetChildren() is how a test walks
-    -- a panel it did not build - the buttons on a prompt, say - and asks what
-    -- the player can actually press.
-    if type(parent) == "table" then
-        parent._children = parent._children or {}
-        parent._children[#parent._children + 1] = f
-    end
-    if type(name) == "string" and name ~= "" then _G[name] = f end
-    return f
+function Methods.ClearAllPoints(self) self._points = nil; return self end
+-- REPLACES the anchors: "does this region cover its whole frame".
+function Methods.SetAllPoints(self, rel) self._points = nil; self._allPoints = rel or true; return self end
+function Methods.GetNumPoints(self) return self._points and #self._points or 0 end
+function Methods.GetPoint(self, i)
+    local pt = self._points and self._points[i or 1]
+    if not pt then return nil end
+    return pt.point, pt.rel, pt.relPoint, pt.x, pt.y
 end
 
--- The roots of the client's frame hierarchy. Absent until now, so every
--- CreateFrame(..., UIParent) passed nil and any code that lifts a frame OUT
--- from under UIParent - to survive the showcase hiding it - had nothing to be
--- compared against: "not parented to UIParent" was trivially true because
--- UIParent was nil.
--- A DISPLAY-SIZED UIParent.
---
--- It was a bare frame, so it inherited the generic 20px default - a screen
--- twenty pixels tall. Nothing noticed because nothing measured it, and that is
--- precisely why a window running off the bottom of the display could not be
--- caught here: every sane clamp against a 20px screen is indistinguishable from
--- a broken one.
---
--- MODELLED, NOT MEASURED. 1920x1080 is a plausible display rather than any
--- particular one; what matters is that it is bigger than the window and that
--- the ratio between the two is real.
-UIParent = makeFrame()
--- 1365x768 at scale 1.4, which is ~1911x1075 physical: a 1080p display at the
--- client's default UI scale. The NUMBERS matter less than the fact that the
--- scale is not 1 - at 1, effective scale and own scale are the same thing and
--- any conversion between the two is untestable. It was 1920x1080 at scale 1,
--- and a mutation deleting the UIParent factor from the window clamp survived.
+-- Alpha: dimming a hidden character's row IS the feature (#69), on pooled rows.
+function Methods.SetAlpha(self, a) self._GetAlpha = a; return self end
+function Methods.GetAlpha(self) return self._GetAlpha or 1 end
+
+-- Attributes are STORED: a secure button with no action must not look
+-- configured.
+function Methods.SetAttribute(self, k, v)
+    self._attributes = self._attributes or {}
+    self._attributes[k] = v
+    return self
+end
+function Methods.GetAttribute(self, k) return self._attributes and self._attributes[k] end
+-- Which buttons a Button actually listens for: LEFT only until
+-- RegisterForClicks says otherwise.
+function Methods.RegisterForClicks(self, ...) self._clicks = { ... }; return self end
+function WoW.registeredClicks(self) return self._clicks or {} end
+function WoW.handlesClick(self, button)
+    for _, c in ipairs(self._clicks or {}) do
+        if c == button .. "Up" or c == button .. "Down" or c == "AnyUp" or c == "AnyDown" then
+            return true
+        end
+    end
+    return self._clicks == nil and button == "LeftButton" or false
+end
+-- DISABLED BY DEFAULT for a Frame, ENABLED for a Button (CreateFrame below).
+-- `v == true`: the client reads EnableMouse(nil) as DISABLE.
+function Methods.EnableMouse(self, v) self._mouse = v == true; return self end
+function Methods.IsMouseEnabled(self) return self._mouse == true end
+function Methods.EnableKeyboard(self, v) self._keyboard = v ~= false; return self end
+function Methods.IsKeyboardEnabled(self) return self._keyboard == true end
+function Methods.SetPropagateKeyboardInput(self, v) self._propagate = v; return self end
+function Methods.SetWidth(self, w) self._GetWidth = w; return self end
+function Methods.SetHeight(self, h) self._GetHeight = h; return self end
+function Methods.SetSize(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
+function Methods.SetClipsChildren(self, v) self._clipsChildren = v and true or false; return self end
+function Methods.DoesClipChildren(self) return self._clipsChildren == true end
+-- The highlight is a texture that exists once it is set, as on the client.
+function Methods.SetHighlightTexture(self, path, blend)
+    local t = self._highlight or self:CreateTexture(nil, "HIGHLIGHT")
+    t._path, t._blend = path, blend
+    self._highlight = t
+    return self
+end
+function Methods.GetHighlightTexture(self) return self._highlight end
+
+-- Templates: the children Blizzard's XML gives them, by parentKey
+-- (wow-ui-source, 70862). Only the keys anything here reads.
+local function fontChild(w, key) w[key] = Methods.CreateFontString(w); return w[key] end
+local function textureChild(w, key) w[key] = Methods.CreateTexture(w); return w[key] end
+-- UISliderTemplateWithLabels (SharedUIPanelTemplates.xml): Text, Low, High.
+WoW.templates.OptionsSliderTemplate = function(w)
+    fontChild(w, "Text"); fontChild(w, "Low"); fontChild(w, "High")
+end
+-- UICheckButtonTemplate (CheckButtonTemplates.xml): Text.
+WoW.templates.UICheckButtonTemplate = function(w) fontChild(w, "Text") end
+-- UIPanelButtonNoTooltipTemplate (SecureUIPanelTemplates.xml): Left, Right,
+-- Middle, and its ButtonText as Text.
+WoW.templates.UIPanelButtonTemplate = function(w)
+    textureChild(w, "Left"); textureChild(w, "Right"); textureChild(w, "Middle"); fontChild(w, "Text")
+end
+-- UIPanelScrollFrameTemplate (SecureScrollTemplates.xml): ScrollBar.
+WoW.templates.UIPanelScrollFrameTemplate = function(w) w.ScrollBar = newWidget("Slider", w) end
+
+-- The PARENT argument is honoured and a named frame becomes a global (the
+-- kit's CreateFrame); a Button takes the mouse from the moment it exists, a
+-- Frame does not until something says so.
+do
+    local kitCreateFrame = CreateFrame
+    function CreateFrame(kind, name, parent, template, ...)
+        local f = kitCreateFrame(kind, name, parent, template, ...)
+        f._mouse = (kind == "Button" or kind == "CheckButton")
+        -- WowTestKit #22: the kit answers every capitalised key, so a method
+        -- Forever lacks can't read as absent. PlayerModel has no GetModel on
+        -- this client, and Scanner feature-detects it: a raw false reads as
+        -- "not a function", as the client's nil does.
+        if kind == "PlayerModel" or kind == "DressUpModel" then rawset(f, "GetModel", false) end
+        return f
+    end
+end
+
+-- A DISPLAY-SIZED UIParent: 1365x768 at scale 1.4, ~1911x1075 physical, a
+-- 1080p display at the client's default UI scale. The scale is not 1, or any
+-- conversion between effective and own scale is untestable. MODELLED.
 UIParent:SetSize(1365, 768)
 UIParent:SetScale(1.4)
-WorldFrame = makeFrame()
+WorldFrame = newWidget("Frame", nil, "WorldFrame")
 
--- The cursor, in PHYSICAL pixels - which is the trap this models. Frame offsets
--- are in the frame's own scaled units, so code that places something at the
--- cursor has to divide by the effective scale. A stub that returned values
--- already in frame units would make the division look optional.
+-- The cursor, in PHYSICAL pixels: code that places something at the cursor
+-- has to divide by the effective scale.
 WoW.cursorX, WoW.cursorY = 800, 600
 function GetCursorPosition() return WoW.cursorX, WoW.cursorY end
 
-
 -- WoW's table helpers, which are globals there and absent in plain Lua 5.1.
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
--- WoW hoists a few math/string functions to globals; code written against the
--- client uses them bare.
+-- WoW hoists a few math/string functions to globals.
 floor, ceil, abs, min, max = math.floor, math.ceil, math.abs, math.min, math.max
 format, strsub, strlower, strupper = string.format, string.sub, string.lower, string.upper
 function tinsert(...) return table.insert(...) end
@@ -827,41 +622,19 @@ function tContains(t, v) for _, x in ipairs(t) do if x == v then return true end
 UISpecialFrames = UISpecialFrames or {}
 
 ------------------------------------------------------------
--- Secret values
---
--- Retail's "secret values", present on this client: a value an addon may hold
--- and pass along but must not inspect. Arithmetic, comparison, tostring and
--- concatenation all throw - which is what aborted a live character scan. The
--- stub models the THROWING, not just the flag, so code that reaches for the
--- number fails here the way it fails in game.
+-- Secret values: the kit's (WoW.Secret, issecretvalue). Arithmetic, ordering,
+-- tostring and concatenation on one throw, which is what aborted a live
+-- character scan. WoW.secret(n) is the suite's name for one.
 ------------------------------------------------------------
 
--- A secret is NOT a table: code that filters on type(v) == "table" (the
--- serializer does, for nested data) would skip it and the guard that matters
--- would never run. Lua 5.1 cannot make userdata from script, so a coroutine
--- stands in: a distinct type whose arithmetic and comparisons throw by
--- themselves, exactly like the client's secret numbers.
---
--- Difference from the client, stated rather than papered over: tostring() on a
--- coroutine returns "thread: 0x..." instead of throwing. So a test can only
--- show that a secret is kept OFF the wire, not that carrying one would error.
-local secrets = setmetatable({}, { __mode = "k" })
+function WoW.secret(n) return WoW.Secret("secret " .. tostring(n)) end
 
-function WoW.secret(n)
-    local v = coroutine.create(function() return n end)
-    secrets[v] = n
-    return v
-end
-
-function issecretvalue(v)
-    return secrets[v] ~= nil
-end
-
--- Pending timers land in WoW.timers as { delay = <seconds>, fn = <callback> }, so
--- a test can assert WHEN something was scheduled, not just that it ran. A
--- NewTimer handle that is cancelled drops out of the queue, the way the client
--- stops it firing - the old stub returned an inert handle and recorded nothing,
--- so a scheduled-for-later callback was invisible to every test.
+-- Timers: AltStable's own, in place of the kit's, because the suite reads
+-- them this way. Pending one-shots land in WoW.timers as { delay =, fn = },
+-- so a test can assert WHEN something was scheduled; a cancelled NewTimer
+-- drops out of the queue; a ticker repeats, lives in WoW.tickers (not
+-- WoW.timers, so a one-shot count still means one-shots) and survives
+-- WoW.reset(), as Core's 60-second sweep registered at load must.
 C_Timer = {
     After = function(delay, fn)
         table.insert(WoW.timers, { delay = delay, fn = fn })
@@ -876,18 +649,6 @@ C_Timer = {
         end
         return entry
     end,
-    -- A REAL ticker: it queues like the others, fires on each flush, and stays
-    -- queued until cancelled. The inert version returned a handle that never
-    -- fired and a Cancel that did nothing, which made every countdown built on
-    -- NewTicker untestable - the callback simply never ran, so a test could
-    -- only assert that something had been scheduled.
-    -- Tickers live in their own list, NOT in WoW.timers.
-    --
-    -- Core registers a 60-second sweep at load, so a repeating entry in
-    -- WoW.timers would mean the count never reaches zero - and test_comm's
-    -- flushAll short-circuits on exactly that, while test_instances asserts
-    -- `#WoW.timers == 0`. A real ticker should not quietly change what a
-    -- one-shot timer count means.
     NewTicker = function(delay, fn)
         local entry = { delay = delay, ticker = true }
         entry.Cancel = function()
@@ -908,8 +669,6 @@ function WoW.flushTimers()
     local t = WoW.timers
     WoW.timers = {}
     for _, e in ipairs(t) do e.fn() end
-
-    -- Snapshot first: a ticker's callback may cancel itself or add another.
     local ticking = {}
     for _, e in ipairs(WoW.tickers) do ticking[#ticking + 1] = e end
     for _, e in ipairs(ticking) do
@@ -917,13 +676,8 @@ function WoW.flushTimers()
     end
 end
 
--- Combat, the interface toggle, and screenshots.
---
--- All three are real client calls the render probe makes, and none of them was
--- modelled - which is why that file went through three review rounds with no
--- test able to load it at all. Combat lockdown and Alt+Z are exactly the states
--- its bugs lived in.
-WoW.inCombat = false
+-- Combat is the kit's: WoW.combat, read by InCombatLockdown.
+
 -- A colour OBJECT, which is what SetGradient takes on this client - not four
 -- numbers. Absent entirely until the glass material needed it, so Glass.Apply
 -- threw on load in the test harness while working fine in game.
@@ -933,7 +687,6 @@ function CreateColor(r, g, b, a)
              GetRGB  = function(self) return self.r, self.g, self.b end }
 end
 
-function InCombatLockdown() return WoW.inCombat and true or false end
 
 -- The stat block, so a full ScanCharacter runs. Values are arbitrary but
 -- DISTINCT: identical numbers would let a scan that wrote the wrong field into
@@ -1073,6 +826,8 @@ function hooksecurefunc(a, b, c)
     if type(prev) ~= "function" then
         error("Attempt to hook a nonexistent function: " .. tostring(name), 2)
     end
+    WoW.hooked[host] = WoW.hooked[host] or {}
+    WoW.hooked[host][name] = (WoW.hooked[host][name] or 0) + 1
     host[name] = function(...)
         local r = { prev(...) }
         fn(...)
@@ -1086,7 +841,7 @@ DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(WoW.chatOut, m) 
 -- it every hover path in the addon is unreachable from a test - the code calls
 -- a global that simply is not there, so a tooltip that shows the wrong thing
 -- (or nothing) can only be caught in game.
-GameTooltip = makeFrame()
+GameTooltip = newWidget("GameTooltip", nil, "GameTooltip")
 GameTooltip.ClearLines = function() WoW.tooltipLines = {} end
 GameTooltip.AddLine = function(_, text) table.insert(WoW.tooltipLines, tostring(text)) end
 GameTooltip.AddDoubleLine = function(_, l, r)
@@ -2023,41 +1778,33 @@ C_Spell.IsCurrentSpell = function(id) return WoW.currentSpells[id] == true end
 -- Model frames: a PlayerModel resolves a creature to its display id at once
 -- (measured: GetDisplayInfo right after SetCreature read 1132 for 1860), and a
 -- ModelScene hands out actors whose box is the six-number form.
-local createFrameBeforePets = CreateFrame
-function CreateFrame(kind, name, parent, ...)
-    local f = createFrameBeforePets(kind, name, parent, ...)
-    if kind == "PlayerModel" or kind == "DressUpModel" then
-        f.SetCreature = function(self, npc) self._display = WoW.creatureDisplays[npc] or 0; return self end
-        f.SetDisplayInfo = function(self, id) self._display = id; return self end
-        f.ClearModel = function(self) self._display = nil; return self end
-        f.GetDisplayInfo = function(self) return self._display or 0 end
-    elseif kind == "ModelScene" then
-        f.SetPaused = function(self, paused, global) self._paused, self._globalPause = paused, global end
-        f.CreateActor = function(self)
-            local a = WoW.makeFrame()
-            a._scale = 1
-            a.SetModelByCreatureDisplayID = function(s, id) s._display = id; return true end
-            a.ClearModel = function(s) s._display = nil end
-            a.GetActiveBoundingBox = function(s)
-                local b = s._display and WoW.modelBoxes[s._display]
-                if not b then return 0, 0, 0, 0, 0, 0 end
-                return b[1], b[2], b[3], b[4], b[5], b[6]
-            end
-            a.SetScale = function(s, v) s._scale = v; return s end
-            a.GetScale = function(s) return s._scale end
-            a.SetYaw = function(s, v) s._yaw = v; return s end
-            a.SetParticleOverrideScale = function(s, v) s._particles = v end
-            a.SetAnimation = function(s, anim, variation, speed)
-                s._anim, s._animSpeed = anim, (speed == nil) and 1 or speed
-            end
-            a.GetYaw = function(s) return s._yaw end
-            self._actors = self._actors or {}
-            self._actors[#self._actors + 1] = a
-            WoW.actors[#WoW.actors + 1] = a
-            return a
-        end
-    end
-    return f
+-- As Methods, so the methods check sees them: PlayerModel and DressUpModel
+-- (SetCreature, SetDisplayInfo, ClearModel, GetDisplayInfo), ModelScene
+-- (SetPaused, CreateActor) and its ModelSceneActor.
+function Methods.SetCreature(self, npc) self._display = WoW.creatureDisplays[npc] or 0; return self end
+function Methods.SetDisplayInfo(self, id) self._display = id; return self end
+function Methods.ClearModel(self) self._display = nil; return self end
+function Methods.GetDisplayInfo(self) return self._display or 0 end
+function Methods.SetPaused(self, paused, global) self._paused, self._globalPause = paused, global end
+function Methods.CreateActor(self)
+    local a = newWidget("ModelSceneActor", self)
+    a._scale = 1
+    self._actors = self._actors or {}
+    self._actors[#self._actors + 1] = a
+    WoW.actors[#WoW.actors + 1] = a
+    return a
+end
+function Methods.SetModelByCreatureDisplayID(self, id) self._display = id; return true end
+function Methods.GetActiveBoundingBox(self)
+    local b = self._display and WoW.modelBoxes[self._display]
+    if not b then return 0, 0, 0, 0, 0, 0 end
+    return b[1], b[2], b[3], b[4], b[5], b[6]
+end
+function Methods.SetYaw(self, v) self._yaw = v; return self end
+function Methods.GetYaw(self) return self._yaw end
+function Methods.SetParticleOverrideScale(self, v) self._particles = v end
+function Methods.SetAnimation(self, anim, variation, speed)
+    self._anim, self._animSpeed = anim, (speed == nil) and 1 or speed
 end
 
 -- C_BarberShop: the choices exist only while the chair is open. Measured on
@@ -2086,5 +1833,38 @@ C_BarberShop = {
     ApplyCustomizationChoices = function() return WoW.barber ~= nil end,
 }
 
-_G.WoW = WoW
+-- Strict globals, last: reading any global nobody defined is an error.
+-- These may read as nil:
+local allowNil = {}
+-- AltStable's own globals and SavedVariables, before they are assigned: the
+-- addon, its plugins and probe, the frames it looks up by name before making
+-- them, and the Companion's manifest (a separate addon folder).
+for _, n in ipairs({ "AltStable", "AltStableDB", "AltStableConfig", "AltStablePortraits", "AltStableAltsDB", "AltStableRosterDB" }) do allowNil[n] = true end
+for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
+for _, n in ipairs({ "AltStableCopyPrompt", "AltStableForgetPrompt", "AltStableSyncAskPrompt", "AltStableProbe", "AltStableProbeCharDB", "AltStableProbeMachineDB" }) do allowNil[n] = true end
+-- Libraries, before their file creates them.
+for _, n in ipairs({ "LibStub", "ChatThrottleLib" }) do allowNil[n] = true end
+-- Absent on Forever (none is in the build's function list): the Classic APIs
+-- Compat.lua and the tests look for, which must read nil, as on the client.
+for _, n in ipairs({ "GetItemInfo", "GetItemInfoInstant", "GetItemIcon", "GetItemCount", "GetItemStats", "GetSkillLineInfo" }) do allowNil[n] = true end
+for _, n in ipairs({ "GetNumSkillLines", "GetFactionInfo", "GetNumFactions", "GetContainerNumSlots", "GetContainerItemInfo", "GetContainerItemLink" }) do allowNil[n] = true end
+for _, n in ipairs({ "SendAddonMessage", "RegisterAddonMessagePrefix", "IsAddOnLoaded", "LoadAddOn", "GetAddOnMetadata", "UnitDefense" }) do allowNil[n] = true end
+for _, n in ipairs({ "UnitDisplayID", "UnitModel", "GetPlayerModelDisplayInfo" }) do allowNil[n] = true end
+-- Stubbed above, and removed by a test to model a client without it.
+for _, n in ipairs({ "C_TooltipInfo", "SetUIVisibility", "issecretvalue", "GetHitModifier", "GetCritChance", "GetFramesRegisteredForEvent" }) do allowNil[n] = true end
+for _, n in ipairs({ "ENCHANTED_TOOLTIP_LINE" }) do allowNil[n] = true end
+-- On the client, but never stubbed here: the suite has always run with these
+-- reading nil, and the addon copes. Kept nil so the tests say what they said
+-- before the kit (#284). Stubbing one changes what the tests exercise: each is
+-- its own change.
+for _, n in ipairs({ "GetAverageItemLevel", "GetChannelList", "GetCurrentKeyBoardFocus", "GetGuildRosterInfo", "GetNumGuildMembers", "GetInboxHeaderInfo" }) do allowNil[n] = true end
+for _, n in ipairs({ "GetInboxNumItems", "GetMacroIcons", "GetMacroItemIcons", "GetMouseFoci", "GetNumSavedInstances", "GetSavedInstanceEncounterInfo" }) do allowNil[n] = true end
+for _, n in ipairs({ "GetSavedInstanceInfo", "IsAltKeyDown", "IsMounted", "MoveViewLeftStart", "MoveViewLeftStop", "MoveViewRightStart" }) do allowNil[n] = true end
+for _, n in ipairs({ "MoveViewRightStop", "RequestRaidInfo", "ShowingCloak", "ShowingHelm", "UnitAffectingCombat", "C_AutoComplete" }) do allowNil[n] = true end
+for _, n in ipairs({ "C_FriendList", "C_Texture", "RAID_CLASS_COLORS", "CLASS_ICON_TCOORDS", "ITEM_QUALITY_COLORS", "GameFontNormal" }) do allowNil[n] = true end
+for _, n in ipairs({ "GameFontHighlight", "GameFontHighlightSmall", "GameFontDisableSmall", "ChatAlertFrame", "QuickJoinToastButton", "BankFrame" }) do allowNil[n] = true end
+for _, n in ipairs({ "Minimap", "CLOSE", "ERR_FRIEND_OFFLINE_S", "MAX_PLAYER_LEVEL", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS" }) do allowNil[n] = true end
+for _, n in ipairs({ "NUM_BANKGENERIC_SLOTS", "WOW_PROJECT_ID", "WOW_PROJECT_MAINLINE" }) do allowNil[n] = true end
+Kit.strict(allowNil)
+
 return WoW

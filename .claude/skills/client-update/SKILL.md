@@ -93,6 +93,9 @@ Edits (branch `build-<build>` from `main`):
 1. `Config.lua` - `local MEASURED_ON_BUILD = "<build>"`. This is what silences the login warning.
 2. `tests/wow_stubs.lua` - `function GetBuildInfo() return "<version>", "<build>", "<client date from the dump header, verbatim: a single-digit day keeps its padding, e.g. Oct  5 2026>", 16001 end`.
    No test hard-codes the build: they read it from this stub.
+   And `tests/kit.pin`: `build=` the new build and `sha=` a WowTestKit `main` commit that has its
+   `data/forever-<build>/` (the forever-api-dump skill's step 4 makes it; until it's merged on
+   the kit, keep the older pin and say so in the PR).
 3. `docs/RUNBOOK.md` step 3 - the "Expected on <build>" sentence names the new build.
 4. `docs/forever-api-notes.md` - a `## Build <version>.<build> (<date>) - <one-line verdict>` section
    after the newest build section (they run oldest first; see `## Build 1.60.1.70009` for the

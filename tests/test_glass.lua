@@ -1581,5 +1581,4 @@ do
     AltStable.SkinName()
 end
 
-print(("test_glass: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_glass", passed, failed)

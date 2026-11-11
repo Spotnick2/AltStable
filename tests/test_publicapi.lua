@@ -350,5 +350,4 @@ eq("a portrait change inside a CharactersChanged callback is still heard", portr
 AltStable.UnregisterCallback("CharactersChanged", charListener)
 AltStable.UnregisterCallback("PortraitStatusChanged", portraitListener)
 
-print(("test_publicapi: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_publicapi", passed, failed)

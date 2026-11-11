@@ -215,5 +215,4 @@ end
 runToRead(function() for _ = 1, 5 do WoW.flushTimers() end end)
 runToRead(function() run("icon cancel") end)
 
-print(("test_probe: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_probe", passed, failed)

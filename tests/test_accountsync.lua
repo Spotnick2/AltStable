@@ -739,5 +739,4 @@ L.Store()
 eq("  and follows the setting back on", st.enabled, true)
 eq("  as the library reads it", real.IsEnabled(), true)
 
-print(("test_accountsync: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_accountsync", passed, failed)

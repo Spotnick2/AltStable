@@ -633,5 +633,4 @@ do
     end
 end
 
-print(("test_instances: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_instances", passed, failed)
