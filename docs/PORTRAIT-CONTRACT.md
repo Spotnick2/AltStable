@@ -440,15 +440,23 @@ was last played, which decides when to look for a new render), from every accoun
 file; a character hidden on any account is left out. It also reads `SET portal`
 from `WTF\Config.wtf` for the region.
 
-**The capture prompt.** The addon's "changed" status compares the newest
-capture's `look` with what is worn. A render carries no look, so after a gear
-change the button still asks for a capture, although the render will show the new gear
-on its own. That is unchanged for now: Spotnick2/AltStable#301.
+**The capture prompt: `armory`** (optional, boolean, since #301). The addon's
+"changed" status compares the newest capture's `look` with what is worn, and asks
+for a capture (the button's glow, the auto-capture's toast) when they differ. A
+render carries no look, but it shows the new gear on its own a few hours after
+play. So the companion writes `armory = true` on the entry of every character
+whose portrait it keeps from the armory (renders on, the character eligible),
+**whichever file the entry names**, and the addon then never says "changed" for
+that character. "Missing" and "pending" are unchanged: a character with no entry
+yet (no capture, no render) is still asked for one, and a newer capture still
+waits for the converter. Anything but `true` counts as absent; an entry without it
+asks for a capture after a gear change, as before. Additive: no `version` bump.
 
 **Compatibility.**
 
 | | |
 |---|---|
 | an old Roster | draws the render like any cutout |
+| an old addon (before #301) | ignores `armory`, and asks for a capture after a gear change |
 | an old companion | never looks in `Armory\`; it rebuilds the manifest from captures only, and the files stay |
 | `Tools/RenderCutout/Update-Cutouts.ps1` rebuilds the manifest | it lists `Cutouts\` only, so an entry that pointed at a render points at the capture again (or disappears for a character never captured) until the companion's next rebuild; not fixed, the script is a fallback |

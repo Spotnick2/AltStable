@@ -860,6 +860,26 @@ eq("the chest changed since the capture: changed", st.reason, "changed")
 eq("  due", st.due, true)
 eq("  naming the slot", table.concat(st.changedSlots, ","), "Chest")
 
+-- The companion keeps this portrait from the armory (#301): the render shows the
+-- new look on its own, so a gear change asks for no capture.
+AltStableCutoutManifest[GUID].armory = true
+st = T.PortraitStatus()
+eq("the same change, with the armory keeping the portrait: nothing to do", st.reason, "none")
+eq("  not due (no glow, no auto-capture toast)", st.due, false)
+AltStableCutoutManifest[GUID].armory = "yes"
+eq("  only a real true counts (a malformed field still asks)", T.PortraitStatus().reason, "changed")
+AltStableCutoutManifest[GUID].armory = true
+-- The newer capture shows the old look too: the look check is what is skipped,
+-- not the converter's.
+AltStablePortraits.renders[#AltStablePortraits.renders + 1] = { guid = GUID, shot = 1, epoch = 900, look = look }
+AltStablePortraits.renders[#AltStablePortraits.renders + 1] = { guid = GUID, shot = 2, epoch = 901, look = look }
+AltStableCutoutManifest[GUID].epoch = 10
+eq("  a newer capture waiting for the converter is still pending", T.PortraitStatus().reason, "pending")
+AltStableCutoutManifest[GUID].armory = nil
+eq("  and without the armory, that same state asks for a capture", T.PortraitStatus().reason, "changed")
+AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
+pair(look)
+
 -- A capture from before looks were recorded never reads as changed.
 pair(nil)
 st = T.PortraitStatus()
