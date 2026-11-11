@@ -1,82 +1,187 @@
-# AltStable — Forever Edition
+# AltStable — Alt Tracker (Altoholic Alternative)
 
-All your characters in one window, for **World of Warcraft: Forever**. You can see their
-gear, professions and recipes, reputations, gold, rested XP, raid lockouts, and what's in
-their bags and banks. You can also stand them together as a roster.
+**For World of Warcraft: Forever.**
 
-![The sheet: one row per character, grouped by realm, with level, item level, guild, rested XP, gold and when each was last played](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
+Looking for an Altoholic alternative for WoW Forever? AltStable brings your characters' gear,
+inventory, professions and progression together in one window, so you can check what your alts
+have without logging into each of them.
 
-## Three pieces, and only the first is required
+Everything below works with the addon on its own. Character portraits for the Roster are an
+optional extra that needs the free [AltStable Companion](#optional-character-portraits-and-the-companion)
+app.
 
-| Piece | What it is | Do you need it? |
-|---|---|---|
-| **AltStable** (this addon) | Tracks and compares your characters in the game | Yes. It is complete on its own |
-| **[AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases)** | A free Windows app that turns your portrait captures into the Roster's character portraits | Only for portraits in the Roster |
-| **Enhanced portraits** | A setting in the Companion that asks the Codex CLI on your PC for a nicer picture of each portrait | No. It's off by default and uses your ChatGPT account's usage |
+![The sheet: one row per character with class, race, ruleset, level, item level, guild, rested XP, gold and when each was last played, with totals along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
 
-## Install
+*The sheet: every character at a glance, with total levels, average item level and total gold
+along the bottom. (Names blurred in all screenshots.)*
 
-Install **AltStable** from [CurseForge](https://www.curseforge.com/wow/addons/altstable), either with the CurseForge app or by unzipping it
-into the `Interface\AddOns` folder inside your Forever game folder. The download contains
-five folders (`AltStable` and its four tabs); keep all of them. Then start the game, or
-restart it if it was running.
+## What AltStable helps you do
 
-Type `/alts` or click the minimap button to open the window.
+What you see for another character is what AltStable **recorded** the last time you played it
+(or the last time it synced). Only the character you are on is live. Seeing an item on an alt
+doesn't move it anywhere, and whether you can pass it on still depends on the game's own rules.
 
-## How characters get tracked
+### Which alt has my materials?
 
-AltStable can only read the character you are playing, so:
+The **Warband** tab lays out every item in all your characters' bags and banks like a warband
+bank, with tabs you can arrange yourself. Hover an item to see who holds how many, split between
+bags and bank. You can show everyone on your current ruleset, a chosen ruleset, or only the
+character you are on.
 
-- **Log in on each character once.** It is recorded at login and kept up to date while you
-  play. A character you have not logged into since installing is simply not there yet.
-- **Open your bank once** on each character for the Warband tab. The game only lets an
-  addon read a bank while it is open. Bags are read without asking.
-- **Open each profession window once** for the Professions tab to know its recipes. Until
-  then, the profession shows as "not scanned".
-- **Raid lockouts** come from the game's saved-instance list, which is read at login.
+![The Warband tab: trade goods from every character's bags and banks in one grid, with Single and Combined views, the tooltip-count option, a ruleset menu and user tabs down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband.jpg)
 
-Where something is missing, the tab says what to open. Data from another of your
-WoW accounts arrives through sync (below).
+*The Warband tab: everyone's trade goods in one place. Hover any item to see who holds it.*
 
-## With Glass UI
+Tick **Show character counts in tooltips** in the Warband tab and item tooltips everywhere in the
+game (your bags, merchants, links) show the same counts. It's off by default, so it doesn't
+double up with another inventory addon's counts.
 
-With **Glass UI** installed, AltStable wears the Glass suite's look: its Pearl glass, its
-tint and its accent. Turn that off for AltStable on Glass UI's page ("Use Glass UI
-appearance") to get your own skin back; AltStable keeps it saved meanwhile. A change made
-in Glass UI shows in AltStable after a `/reload`.
+Bags are read as you play. A bank is only readable while it's open, so its count is from your
+last visit, and the tooltip warns when that is more than a week old. Equipped gear appears on the
+sheet rather than in these counts.
 
-## The tabs
+### Who knows this recipe?
 
-- **The sheet** has one row per character: level, gear and item level, professions,
-  reputations (Vanilla's and Forever's own factions), gold, rested XP. Sort by any column.
-  Right-click a character to hide it, mark it a favourite, forget it, or see its
-  **Appearance** (face, hair, skin and the rest, recorded when it sits in a barber's chair).
-- **Warband** shows every item across all your characters' bags and banks, laid out like a
-  warband bank, with your own tabs. Hovering an item shows who holds how many, and item
-  tooltips in the game can show the counts too.
-- **Raids** shows who is saved to which raid and when each resets.
-- **Professions** shows which character knows which recipe. Hover a recipe to see its
-  reagents and how many your alts hold in their bags and banks, and, for each alt who knows
-  it, whether it has them or what it is short of. The **Craftable** filter lists the recipes
-  an alt knows and has the reagents for somewhere among your alts. Recipe items in the game
-  (at a vendor, in the auction house) can show who already knows them.
-- **Roster** shows your characters as character cards, or standing together around a
-  campfire in **camps** of four, each camp with its own backdrop. Click a character for its
-  paper doll and stats.
+The **Professions** tab shows which character knows which recipe, the skill it needs and where
+it comes from (trainer, vendor, quest or drop). Filter for the recipes you know, the ones you're
+missing, or the ones nobody has yet.
+
+![The Professions tab for Cooking: each recipe with its skill level, its source and which characters know it, a progress card per cook, and a recipe tooltip listing its reagents](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/professions.jpg)
+
+*The Professions tab: who knows each recipe, and where to get the ones nobody has.*
+
+Recipe items in the game (at a vendor, in the auction house) can also show who already knows
+them, who has the skill to learn them and whose skill is too low. Crafted items show who can make
+them.
+
+### Do my characters already have the reagents?
+
+Hover a recipe in the Professions tab to see its reagents and how many your alts hold in their
+bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
+**Craftable** filter lists the recipes an alt knows and has the reagents for somewhere among
+your alts.
+
+Profession cooldowns are tracked too, and a notification tells you when one is ready.
+
+### Which characters are saved to a raid, and when do they reset?
+
+The **Raids** tab shows who is saved to which raid, how many bosses each has killed, and when
+each lockout resets. Hover a cell for the boss-by-boss detail. It lists your level-60
+characters, plus anyone else who holds a lockout.
+
+### How much gold, rested XP and progression does each character have?
+
+The **sheet** has one row per character: level, item level and gear in every slot, professions,
+reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
+played. Sort by any column. Rested XP keeps counting up while you're away, worked out from where
+the character logged out.
+
+![The sheet's gear view: the item level of every equipped slot for each character, coloured by quality](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-gear.jpg)
+
+*Gear: the item level in every slot, for every character.*
+
+![The sheet's reputation view: each character's standing with Vanilla and Forever factions](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-reputations.jpg)
+
+*Reputations, including Forever's own factions.*
+
+Right-click a character to hide it, mark it a favourite, forget it, or see its **Appearance**
+(face, hair, skin and the rest, recorded when it sits in a barber's chair). At login, AltStable
+also warns you about mail that's about to expire on any alt, as of its last mailbox visit.
+
+### Can I see characters from my other WoW accounts?
+
+Yes. Your other WoW accounts on the same Battle.net account find each other and sync
+automatically, and you can add other people's characters by name. See
+[Multiple accounts and sync](#multiple-accounts-and-sync).
+
+## Coming from Altoholic?
+
+AltStable covers the everyday alt-tracking jobs: what each character carries in its bags and
+bank, who knows which recipe, raid lockouts, gold, rested XP, gear, professions and reputations,
+across your characters and accounts. It's an independent addon, not affiliated with Altoholic,
+and it doesn't try to match every Altoholic feature.
+
+- **No import.** AltStable can't read Altoholic's or DataStore's saved data. It builds its own
+  record as you play, starting from scratch.
+- **What to visit once per character:** log in, open the bank, open each profession window and,
+  for the expiring-mail warning, the mailbox. See [Quick start](#quick-start).
+- **Not recorded:** what's in the mailbox (AltStable keeps only a short summary for the expiry
+  warning), auction house listings, currencies and quests.
+- **Running both:** AltStable's item tooltip counts are off by default, so an existing inventory
+  addon's counts don't appear twice.
+
+## Quick start
+
+1. **Install** AltStable from [CurseForge](https://www.curseforge.com/wow/addons/altstable),
+   either with the CurseForge app or by unzipping it into the `Interface\AddOns` folder inside
+   your Forever game folder. The download contains five folders (`AltStable` and its four tabs);
+   keep all of them. Then start the game, or restart it if it was running.
+2. **Open it** by typing `/alts` or clicking the minimap button.
+3. **Log in on each character once.** AltStable can only read the character you are playing. It
+   records it at login and keeps it up to date while you play. A character you haven't logged
+   into since installing isn't there yet.
+4. **Open your bank once** on each character for the Warband tab. The game only lets an addon
+   read a bank while it's open. Bags are read without asking.
+5. **Open each profession window once** for the Professions tab to know its recipes. Until then,
+   the profession shows as "not scanned".
+
+Raid lockouts come from the game's saved-instance list, which is read at login. Where something
+is missing, the tab says what to open.
+
+## Multiple accounts and sync
+
+Sync swaps the recorded characters between copies of AltStable. Both sides need AltStable
+installed and need to be **online at the same time**.
+
+- **Your other WoW accounts on the same Battle.net account** find each other and sync
+  automatically, across factions and rulesets. There's nothing to set up. Options has an off
+  switch.
+- **Another account or player** can be added with `/alts whitelist <name>`. This goes by
+  whisper, so it only works between characters on the **same faction and ruleset**.
+- **Nobody gets your characters without asking.** Someone you haven't allowed gets a prompt on
+  your side (Allow, Not now, Never), and Options lists every answer so you can change it.
+- **Your settings can follow you** between your own accounts: the look, the sheet options,
+  alerts, and hidden, favourite and forgotten characters. Off by default; tick it in Options on
+  each account.
+
+`/alts sync` syncs straight away, with everyone or with one character.
+
+## Optional: character portraits and the Companion
+
+The **Roster** tab shows your characters as character cards, or standing together around a
+campfire in **camps** of four, each camp with its own backdrop. Click a character for its paper
+doll and stats.
+
+![The Roster's character cards: one full-length portrait per character with its level, and a plain card with the class icon for characters without a portrait yet](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-cards.jpg)
+
+*Character cards. A character without a portrait gets a plain card with its class icon.*
+
+![A character opened from the Roster: its portrait with the equipped gear around it, and its gold, rested XP, health, mana, attributes and combat stats](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-character.jpg)
+
+*Click a character for its paper doll and stats. The Audit tab beside Char lists its enchants.*
 
 ![A camp in the Roster: four characters around a campfire in Dalaran, from portraits made by AltStable Companion, with the camp list beside it](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
 
 *Roster portraits from your own captures, made by the free AltStable Companion.*
 
+There are three separate pieces here, and only the first is required:
+
+| Piece | What it is | Do you need it? |
+|---|---|---|
+| **AltStable** (this addon) | Tracks and compares your characters in the game, including the Roster | Yes. It's complete on its own |
+| **[AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases)** | A free Windows app that turns your portrait captures into the Roster's character portraits | Only for portraits in the Roster |
+| **Enhanced portraits** | A setting in the Companion that asks the Codex CLI on your PC for a nicer picture of each portrait | No. It's off by default and uses your ChatGPT account's usage |
+
+The Companion makes ordinary portraits without any AI. Enhanced portraits are the only part that
+uses one.
+
 ![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-enhanced.jpg)
 
 *Another camp, with the optional enhanced portraits (Codex CLI, uses your ChatGPT account's usage).*
 
-## Your first portrait (optional)
+### Your first portrait
 
-The Roster draws your characters from portraits you capture yourself. You need
-[AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases) for this.
-Clicking the Roster's hint in the game shows its link.
+Clicking the Roster's hint in the game shows the Companion's link.
 
 1. Install and start **AltStable Companion** on your PC, and press **Start watching**.
 2. In the game, on the character you want, type `/alts portrait` (or press the spyglass
@@ -96,23 +201,21 @@ A portrait is the character exactly as the game draws it when you capture. With 
 SD (classic) character models switched on, your portraits will most likely come out in SD too.
 Switch HD models back on before `/alts portrait` if you want HD portraits.
 
-## Your other accounts (sync)
+## With Glass UI
 
-- **Your other WoW accounts on the same Battle.net account** find each other and sync
-  automatically, across factions and rulesets. Options has an off switch.
-- **Your settings can follow you** between your own accounts: the look, the sheet options,
-  alerts, and hidden, favourite and forgotten characters. Off by default; tick it in Options
-  on each account.
-- **Another account or player** can be added with `/alts whitelist <name>`.
-- **Nobody gets your characters without asking.** Someone you have not allowed gets a
-  prompt on your side (Allow, Not now, Never), and Options lists every answer so you can
-  change it.
+With **Glass UI** installed, AltStable wears the Glass suite's look: its Pearl glass, its
+tint and its accent. Turn that off for AltStable on Glass UI's page ("Use Glass UI
+appearance") to get your own skin back; AltStable keeps it saved meanwhile. A change made
+in Glass UI shows in AltStable after a `/reload`.
 
 ## Updating
 
 Update through CurseForge as usual. Your characters, camps and portraits are kept: they
 live in the game's saved data and in the Companion's `AltStableCutouts` folder, neither of
 which an update touches.
+
+Updating while the game is running? Type `/reload` (or restart) afterwards: until then a
+window can show bright green where the glass should be.
 
 The Companion has its own **Check for updates** under **Help → About**.
 
@@ -132,7 +235,7 @@ The Companion has its own **Check for updates** under **Help → About**.
 | `/alts stale` [days] | Characters nobody has played in that long; forget them from Options, Old characters |
 | `/alts account` &lt;n&gt; | This account's number in the sheet |
 | `/alts export` | Every character as a spreadsheet |
-| `/alts config` | Options |
+| `/alts config` | Options (also a right-click on the minimap button) |
 
 ## Reporting a problem
 
