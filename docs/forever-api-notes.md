@@ -932,6 +932,31 @@ rested).
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+## Build 1.60.1.70888 (2026-11-10) — party invite gains isCrossShard, none we use
+
+Dumped (`forever-api-1.60.1.70888.md`, client built Nov 9 2026) and compared with
+`Compare-Dumps.ps1` against 70862:
+
+```
+Documented functions - no change (6621)
+Documented events - +1 -1        ~ PARTY_INVITE_REQUEST gains isCrossShard:bool after
+                                   isNativeRealm (the later payload values shift one place)
+Documented tables - no change (801)
+Widget methods - no change (7530)
+Namespace functions - no change (5432)
+Global functions - +160 -1 (walks _G: addon noise, not listed)
+Namespace candidates - +123 -22 (walks _G: addon noise, not listed)
+```
+
+Past the addon names, the `_G` walk adds `GetPartyInviteString` and drops
+`ShouldShowBattlePetIcon`. Nothing AltStable, its stubs or its embedded libraries use is among
+them (no `.lua` hit under `C:\Projects\WoW` for any of the three names).
+
+**Behaviour**, the RUNBOOK step-3 line: `60 400 80 -1 5 table`, all as expected (a level-1
+character, rested).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
 ---
 
 ## Secret values — some unit numbers cannot be read, only passed along
