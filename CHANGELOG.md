@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.1.0 - 2026-11-10
+
+AltStable now knows the new RP-PvP realms, and the description is rewritten around what it helps
+you do, with new screenshots. Measured on client 1.60.1.70888, the live build. Nothing in the sync
+changed: v1.1.0 syncs with everything v1.0.1 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.1.0** makes portraits sharp on a large screen: a portrait is now made as tall as
+the Roster's Char page draws it on your screen. A portrait made before keeps its old size, so capture a
+character again to get the sharp one. If you run an older Companion, **Help → Check for updates**
+offers it.
+
+### New
+
+- **RP-PvP realms**
+  ([#295](https://github.com/Spotnick2/AltStable/pull/295)). Forever added an RP-PvP ruleset, and
+  AltStable read those realms as plain RP. They now have a ruleset of their own: an **RP-PvP**
+  badge on the sheet and in the Roster's camp list, their own entry in the Warband tab's ruleset
+  menu, and the Warband tab no longer mixes their items with the RP realms' when it shows the
+  current ruleset.
+
+### Changed
+
+- **A new description**
+  ([#291](https://github.com/Spotnick2/AltStable/pull/291),
+  [#293](https://github.com/Spotnick2/AltStable/pull/293)). The README and the CurseForge page now
+  start with what AltStable answers (which alt has my materials, who knows this recipe, who is
+  saved to which raid), say what to visit on each character, and explain what changes for
+  players coming from Altoholic. The Companion and its portraits come after, as the optional
+  extra they are. New screenshots of the sheet, gear, reputations, the Warband tab, the Professions
+  tab and the Roster.
+
 ## v1.0.1 - 2026-11-06
 
 A hotfix for a Lua error on the live client. Measured on client 1.60.1.70790, the live build.
