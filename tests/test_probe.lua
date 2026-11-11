@@ -63,7 +63,7 @@ check("the probe is /fp as", P ~= nil and P.name == "AltStableProbe")
 eq("  the namespace holds the same module", ns.Probe, P)
 for _, cmd in ipairs({ "all", "client", "savedvariables", "identity", "skills", "prof", "rep", "items",
                        "containers", "bank", "tooltip", "instances", "events", "clear", "whisper",
-                       "channel", "bnet", "pet", "enchant", "model", "recipes", "scene", "icon" }) do
+                       "channel", "bnet", "pet", "enchant", "model", "recipes", "scene", "icon", "ping" }) do
     check("  /fp as " .. cmd .. " exists", P and P.commands[cmd] ~= nil)
 end
 -- The old commands are gone, and with them the global the files shared.
@@ -102,6 +102,24 @@ if auditProc then
     eq("  four questions only the owner can answer", asks, 4)
     check("  the first step shows the login reading and checks it", auditProc.steps[1].auto and auditProc.steps[1].check ~= nil)
     check("  and ends with a /reload", auditProc.steps[#auditProc.steps].reload == true)
+end
+-- The Glass Gear API in game (#281): measured by run, wait and check, with
+-- the other account acting; no full exit, and no question only the owner
+-- can answer.
+local gearProc = FP.procedures and FP.procedures["AltStableProbe/gear"]
+check("/fp steps as gear is defined", gearProc ~= nil)
+if gearProc then
+    local waits, checks, asks, exits = 0, 0, 0, 0
+    for _, st in ipairs(gearProc.steps) do
+        if st.wait then waits = waits + 1 end
+        if st.check then checks = checks + 1 end
+        if st.ask then asks = asks + 1 end
+        if st.reload == "exit" then exits = exits + 1 end
+    end
+    eq("  three waits: the swap, the ping, the refusal", waits, 3)
+    eq("  five checks", checks, 5)
+    eq("  no question and no full exit", asks + exits, 0)
+    check("  and ends with a /reload", gearProc.steps[#gearProc.steps].reload == true)
 end
 
 ------------------------------------------------------------
@@ -214,5 +232,68 @@ local function runToRead(finish)
 end
 runToRead(function() for _ = 1, 5 do WoW.flushTimers() end end)
 runToRead(function() run("icon cancel") end)
+
+------------------------------------------------------------
+-- /fp steps as gear: each observation counts only what follows its baseline
+-- (Codex on #299)
+------------------------------------------------------------
+-- The steps' own functions, against a stand-in for AltStable's public API.
+-- What has to hold: a GearChanged from before Record (the login's first sync)
+-- can't end the swap wait; one more GearChanged for that character after the
+-- swap reading fails the bag-move check; a ping delivered while refused fails,
+-- however soon after the refusal it lands.
+if gearProc then
+    local SELF, OTHER = "Player-1-0000000A", "Player-2-0000000B"
+    local cb, handler = {}, nil
+    local peers = { { guid = OTHER, name = "Other" } }
+    local gear = { capturedAt = 100, gearAt = 90, provenance = "own-account",
+                   slots = { [1] = { state = "occupied", itemString = "item:6:0:0:0:0:0:0:0:60:0:0:0:1:1234" },
+                             [2] = { state = "empty" } } }
+    AltStable.RegisterCallback = function(name, fn) cb[name] = fn end
+    AltStable.RegisterOwnAccountHandler = function(_, fn) handler = fn end
+    AltStable.GetCharacterProvenance = function(guid) return guid == SELF and "self" or "own-account" end
+    AltStable.GetCharacters = function()
+        return { { guid = SELF, provenance = "self" }, { guid = OTHER, provenance = "own-account", provenanceVia = OTHER } }
+    end
+    AltStable.GetOwnAccountPeers = function() return peers end
+    AltStable.GetCharacterGear = function(guid) return guid == OTHER and gear or nil end
+    fireProbeEvent("PLAYER_LOGIN")                  -- GearListen, now with the API there
+    check("the gear listener registered", cb.GearChanged ~= nil and handler ~= nil)
+
+    local S = gearProc.steps
+    local RECORD, SWAP, READ, BAGCHECK, PING, REFUSE, BASELINE, REFUSEDCHECK = 1, 2, 3, 5, 6, 7, 8, 10
+    check("  the steps are where this test reads them", S[SWAP].wait and S[READ].auto and S[BAGCHECK].check
+          and S[PING].wait and S[REFUSE].wait and S[BASELINE].auto and S[REFUSEDCHECK].check, "renumber the test")
+    local function ok(i) return (S[i].check()) end
+
+    cb.GearChanged(nil, { OTHER })                  -- the first sync, before Record
+    handler("ping 0", { name = "Other", guid = OTHER })  -- and a ping from an earlier try
+    S[RECORD].run()
+    check("  Record passes with a peer and both kinds of character", ok(RECORD))
+    check("a GearChanged from before Record doesn't end the swap wait", not S[SWAP].wait())
+    cb.GearChanged(nil, { SELF })
+    check("  nor one naming only this account's character", not S[SWAP].wait())
+    cb.GearChanged(nil, { OTHER })                  -- the swap
+    check("  the swap after Record does", S[SWAP].wait())
+
+    S[READ].run()
+    check("the swap reading finds the suffix", ok(READ))
+    check("a bag move with no callback and gearAt unchanged passes", ok(BAGCHECK))
+    cb.GearChanged(nil, { OTHER })                  -- a bag move that fired GearChanged
+    check("  one more GearChanged for it after the swap reading fails", not ok(BAGCHECK))
+
+    check("no ping yet: the ping wait holds", not S[PING].wait())
+    handler("ping 1", { name = "Other", guid = OTHER })
+    check("  the ping ends it", S[PING].wait())
+    check("  and it is from a listed peer", ok(PING))
+
+    peers = {}
+    cb.OwnAccountPeersChanged()
+    check("the refusal ends its wait", S[REFUSE].wait())
+    S[BASELINE].run()
+    check("nothing arrived while refused: passes", ok(REFUSEDCHECK))
+    handler("ping 2", { name = "Other", guid = OTHER })  -- the refusal let it through
+    check("  a ping delivered while refused fails", not ok(REFUSEDCHECK))
+end
 
 WoW.finish("test_probe", passed, failed)

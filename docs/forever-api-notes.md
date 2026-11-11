@@ -957,6 +957,25 @@ character, rested).
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+## The live install (from 2026-11-04) — persistence holds, own-account sync works
+
+`_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk
+on 2026-11-10, with the client closed (no `WowB` process: the last session ended in a full exit
+and its write), #275's two first-login questions:
+
+- **SavedVariables load back on the new install.** One account's `AltStable.lua` (written
+  2026-11-10 22:02) holds 13 character records whose `lastUpdate` runs from 2026-11-04 (launch
+  day) to 2026-11-10, across many sessions. The other account's oldest record is 2026-11-07, so
+  it can't have synced the launch-day ones back: they were read from disk after full exits.
+- **Own-account sync works on live.** The two accounts' files share 11 characters (11 and 13 in
+  all), `bnetSync` is on and the `accountSync` store exists in both. Nothing carried over from the
+  beta, so the question of a beta-saved region failing closed (`docs/SYNC-DISCOVERY.md`) never
+  arises on this install.
+
+The client tables the recipe generator reads, SkillLineAbility and TradeSkillCategory, are saved
+at 70888 too (`References\Forever\db`). Both are row for row the same as the previous saved
+build (70862 and 70532), so `RecipeData.lua` needs no regeneration.
+
 ---
 
 ## Secret values — some unit numbers cannot be read, only passed along
@@ -1678,8 +1697,8 @@ UnitXPMax("player")         ->  400
    to confirm the shape. The launch raids are Barrow Deeps (8 bosses, achievement 62035), Hyjal
    Summit (13, 62034) and Onyxia's Lair (1, 684); the achievements' criteria order is not the
    encounter order and is not used.
-3. **Professions** — re-run on a character that has some. Both probed characters returned
-   `GetProfessions() -> nil x7`.
+3. ~~**Professions** — re-run on a character that has some.~~ — **answered** on 70124, see
+   "Measured with professions" under Professions above.
 4. **Gear slot 18** (ranged/relic) — needs a character with something equipped there.
 5. ~~**`GetFramesRegisteredForEvent`'s return shape**~~ — **answered live**, see above. The
    unregister count came back `1` where a table read scored `0`, which can only happen if the
