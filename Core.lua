@@ -4689,6 +4689,47 @@ function AltStable.HookItemTooltip(fn)
     return true
 end
 
+-- Addons that put their own per-character counts in item tooltips. Bagnon's
+-- come from BagBrother, Baganator's from Syndicator; Altoholic's from itself.
+-- `label` is what the player installed.
+AltStable.ITEM_COUNT_ADDONS = {
+    { addon = "BagBrother", label = "Bagnon" },
+    { addon = "Bagnon",     label = "Bagnon" },
+    { addon = "Syndicator", label = "Syndicator (Baganator)" },
+    { addon = "Altoholic",  label = "Altoholic" },
+}
+
+-- The label of the first of those that is loaded, or nil.
+function AltStable.OtherItemCountsAddon()
+    local loaded = AltStable.API and AltStable.API.IsAddOnLoaded
+    if not loaded then return nil end
+    for _, a in ipairs(AltStable.ITEM_COUNT_ADDONS) do
+        if loaded(a.addon) then return a.label end
+    end
+    return nil
+end
+
+-- Character counts in item tooltips (#304). The player's own choice when they
+-- made one (`warbandItemTooltips` true or false); unset, they are on unless
+-- another addon already shows counts, so nobody gets them twice.
+function AltStable.ItemTooltipCountsOn()
+    local v = AltStableConfig and AltStableConfig.warbandItemTooltips
+    if v ~= nil then return v == true end
+    return AltStable.OtherItemCountsAddon() == nil
+end
+
+-- The checkbox's help, shared by the Warband tab and Options.
+function AltStable.ItemTooltipCountsHelp(tt)
+    tt:AddLine("Show character counts in tooltips")
+    tt:AddLine("Adds who holds how many to item tooltips everywhere - bags, "
+        .. "merchants, links - not only in AltStable. Needs the Warband tab.", .8, .8, .8, true)
+    local other = AltStable.OtherItemCountsAddon()
+    local v = AltStableConfig and AltStableConfig.warbandItemTooltips
+    if other and v == nil then
+        tt:AddLine(other .. " already shows its own counts, so this starts off.", 1, .82, 0, true)
+    end
+end
+
 local _seam = {
     ReplyDelay          = ReplyDelay,
     ComputeChecksum     = ComputeChecksum,

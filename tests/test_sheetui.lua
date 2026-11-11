@@ -4002,6 +4002,29 @@ end
 ------------------------------------------------------------
 -- Syncing settings with your other accounts: off unless ticked
 ------------------------------------------------------------
+-- #304: the item-tooltip counts box in Options shows the setting in effect.
+do
+    local T = AltStable._test
+    local cb = T.OptItemCounts
+    check("Options has the item-tooltip counts box", cb ~= nil)
+    if cb then
+        local held = AltStableConfig.warbandItemTooltips
+        WoW.loaded = WoW.loaded or {}
+        AltStableConfig.warbandItemTooltips = nil
+        check("  never chosen and nothing else loaded: shown on", cb._getter() == true)
+        WoW.loaded.Syndicator = true
+        check("  never chosen with Syndicator loaded: shown off", cb._getter() == false)
+        cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+        eq("  ticking it saves the player's own choice", AltStableConfig.warbandItemTooltips, true)
+        check("  which wins over Syndicator", cb._getter() == true)
+        cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+        eq("  unticking saves false", AltStableConfig.warbandItemTooltips, false)
+        WoW.loaded.Syndicator = nil
+        check("  and false stays off with nothing else loaded", cb._getter() == false)
+        AltStableConfig.warbandItemTooltips = held
+    end
+end
+
 do
     local T = AltStable._test
     local cb = T.OptSyncSettings

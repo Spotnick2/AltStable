@@ -603,9 +603,9 @@ local function EnsureTooltipHook()
         local e = AT_WB.hoverEntry
         if e and id == e.id then AppendBreakdown(tt, e.total, e.holders); return end
         if e then return end
-        -- Global enrichment is opt-in (default off) so it doesn't double up with
-        -- another inventory addon's counts. Enable it in the Warband tab.
-        if not (AltStableConfig and AltStableConfig.warbandItemTooltips) then return end
+        -- Global enrichment: on unless the player turned it off, or (never
+        -- having chosen) another addon already shows counts (#304, Core.lua).
+        if not (AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn()) then return end
         if id then
             local total, holders = CountItem(id)
             if total > 0 then AppendBreakdown(tt, total, holders) end
@@ -1678,12 +1678,14 @@ local function BuildPanel(mainFrame)
     viewBtns.combined = MakeButton(panel, 86, 22, "Combined", function() AT_WB.SetView("combined") end)
     viewBtns.combined:SetPoint("LEFT", viewBtns.single, "RIGHT", 2, 0)
 
-    -- Opt-in toggle for the global item-tooltip enrichment (off by default so it
-    -- doesn't double up with Bagnon). Lives here rather than in SheetUI's Options.
+    -- The global item-tooltip enrichment: on by default unless another addon
+    -- shows counts (#304). Also in Options; it shows the setting in effect,
+    -- refreshed on every Activate, and a click makes it the player's own choice.
     local tipCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    AT_WB.tipCheck = tipCheck
     tipCheck:SetSize(18, 18)
     tipCheck:SetPoint("LEFT", viewBtns.combined, "RIGHT", 16, 0)
-    tipCheck:SetChecked(AltStableConfig and AltStableConfig.warbandItemTooltips and true or false)
+    tipCheck:SetChecked(AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn() or false)
     tipCheck:SetScript("OnClick", function(self)
         -- Through the config seam (Config.lua), like every other setting write.
         AltStable.SetConfigValue("warbandItemTooltips", self:GetChecked() and true or false)
@@ -1694,9 +1696,7 @@ local function BuildPanel(mainFrame)
     tipLbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
     tipCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        GameTooltip:AddLine("Show character counts in tooltips")
-        GameTooltip:AddLine("Adds who holds how many to item tooltips everywhere - bags, "
-            .. "merchants, links - not only in AltStable.", .8, .8, .8, true)
+        AltStable.ItemTooltipCountsHelp(GameTooltip)
         GameTooltip:Show()
     end)
     tipCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1826,6 +1826,10 @@ end
 function AT_WB.Activate(mainFrame)
     BuildPanel(mainFrame)
     HookRefresh()
+    -- Options may have changed the setting since the panel was built (#304).
+    if AT_WB.tipCheck and AltStable.ItemTooltipCountsOn then
+        AT_WB.tipCheck:SetChecked(AltStable.ItemTooltipCountsOn())
+    end
     AT_WB.isActive = true
     AT_WB.RequestPreferredSize()
     AT_WB.HoldMinSize()
