@@ -888,13 +888,19 @@ end
 -- Is a new capture due? (#128)
 --
 -- For the character being played:
---   "changed" - the newest capture's look differs from what is worn now
+--   "changed" - the newest capture's look differs from what is worn now, and
+--               the companion does not keep this portrait from the armory
+--               (an entry with `armory = true`: the render shows the new look
+--               on its own a few hours after play, #301)
 --   "missing" - no portrait, and no capture waiting to become one
 --   "pending" - captured, not converted yet (NOT due: it is done, and the
 --               companion or a reload is what it waits for)
 --   "none"    - a portrait, and nothing says it is out of date
 -- A capture recorded before looks were (no `look`) never reads as "changed".
 ------------------------------------------------------------
+
+-- The Forever armory renders characters from this level up (contract section 4).
+local ARMORY_MIN_LEVEL = 10
 
 -- The Roster's identity rules, from the core: a portrait there is one here.
 -- The character's manifest entry, or nil.
@@ -942,7 +948,15 @@ function PortraitStatus()
     local diff = (pair and pair.look and look) and LookDiff(pair.look, look) or {}
     local entry = CutoutEntry(guid, PlayerName())
     local madeFrom = entry and tonumber(entry.epoch)
-    if #diff > 0 then
+    -- The companion follows this character's armory render: a new look reaches
+    -- the portrait without a capture, so it is not asked for (#301). Missing
+    -- and pending are unchanged. The armory only has characters from level 10
+    -- (owner), so below that, or with the level unreadable, the flag is not
+    -- believed and a capture is still the only way to the new look.
+    local level = AltStable.API and AltStable.API.PlainNumber
+        and AltStable.API.PlainNumber(UnitLevel("player")) or nil
+    local armory = entry and entry.armory == true and (level or 0) >= ARMORY_MIN_LEVEL
+    if #diff > 0 and not armory then
         status.due, status.reason, status.changedSlots = true, "changed", diff
     elseif pair and not entry then
         status.reason = "pending"
