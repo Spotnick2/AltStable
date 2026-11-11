@@ -940,12 +940,16 @@ local function Peers()
     return type(AS) == "table" and AS.GetOwnAccountPeers and AS.GetOwnAccountPeers() or {}
 end
 -- The other account's character the swap is watched on: the first GUID a
--- GearChanged named that isn't one of ours.
+-- GearChanged named, after Record, that isn't one of ours. Kept once found, so
+-- every later reading is of the same character. Callbacks from before Record
+-- (the login's first sync) don't count: they would end the wait before the swap.
 local function SwappedGuid()
+    if not (G and G.mark) then return nil end
+    if G.swapped then return G.swapped end
     local AS = rawget(_G, "AltStable")
-    for i = #(G and G.gear or {}), 1, -1 do
+    for i = G.mark.gear + 1, #G.gear do
         for _, guid in ipairs(G.gear[i].guids) do
-            if AS.GetCharacterProvenance(guid) == "own-account" then return guid end
+            if AS.GetCharacterProvenance(guid) == "own-account" then G.swapped = guid; return guid end
         end
     end
 end
@@ -969,11 +973,13 @@ end
 
 Probe:Steps("gear", {
     title = "Glass Gear API: gear strings, timestamps, provenance, the own-account channel (#281)",
-    rev = 1,
+    rev = 2,
     { text = "Log your other account in too (AltStable and this probe load there as well), on a character "
           .. "that has an item \"of the ...\" in its bags, NOT worn yet. Wait until both have synced, then press Record.",
       button = "Record",
       run = function()
+          -- What arrived before this press is not the swap or the ping.
+          if G then G.mark = { gear = #G.gear, messages = #G.messages }; G.swapped = nil end
           local kinds, other = OwnCharacters()
           local peers = Peers()
           return #peers, kinds.self, kinds["own-account"], kinds["third-party"], other and other.provenanceVia
@@ -993,6 +999,7 @@ Probe:Steps("gear", {
       run = function()
           local r = GearReading(SwappedGuid())
           if not r then error("no gear record for the swapped character", 0) end
+          r.events = #G.gear         -- the callbacks so far; the bag move must add none for it
           AltStableProbeDB.gear.afterSwap = r
           return r.occupied, r.empty, r.unknown, r.suffixed[1], r.capturedAt, r.gearAt
       end,
@@ -1011,18 +1018,18 @@ Probe:Steps("gear", {
       check = function()
           local before, now = AltStableProbeDB.gear.afterSwap, GearReading(SwappedGuid())
           local guid, later = SwappedGuid(), 0
-          for _, e in ipairs(G.gear) do
-              if before and e.at > (before.gearAt or 0) then
-                  for _, g in ipairs(e.guids) do if g == guid then later = later + 1 end end
-              end
+          -- Counted by position, not time: the other client's gearAt and this
+          -- client's clock are not the same clock.
+          for i = (before and before.events or #G.gear) + 1, #G.gear do
+              for _, g in ipairs(G.gear[i].guids) do if g == guid then later = later + 1 end end
           end
-          return before ~= nil and now ~= nil and now.gearAt == before.gearAt and later <= 1,
-              ("gearAt %s -> %s, capturedAt %s -> %s, GearChanged for it since the swap: %d"):format(
+          return before ~= nil and now ~= nil and now.gearAt == before.gearAt and later == 0,
+              ("gearAt %s -> %s, capturedAt %s -> %s, GearChanged for it since the swap reading: %d"):format(
                   Describe(before and before.gearAt), Describe(now and now.gearAt),
                   Describe(before and before.capturedAt), Describe(now and now.capturedAt), later)
       end },
     { text = "On the OTHER account, type /fp as ping. This step completes when the message arrives here.",
-      wait = function() return G ~= nil and #G.messages >= 1, "waiting for the ping" end,
+      wait = function() return G ~= nil and G.mark ~= nil and #G.messages > G.mark.messages, "waiting for the ping" end,
       timeout = 120,
       check = function()
           local m = G.messages[#G.messages]
@@ -1034,9 +1041,11 @@ Probe:Steps("gear", {
           .. "AltStable reports the peers changed and lists none.",
       wait = function() return G ~= nil and G.peers >= 1 and #Peers() == 0, "peers listed: " .. #Peers() end,
       timeout = 300 },
-    { text = "On the OTHER account, type /fp as ping again, wait 10 s, then press Next.",
-      button = "Pinged",
+    -- The count is taken before the owner is asked to ping: taken after, a
+    -- ping the refusal let through would already be in it.
+    { text = "The messages so far, before the refused ping.", auto = true,
       run = function() AltStableProbeDB.gear.messagesWhenRefused = #G.messages; return #G.messages end },
+    { text = "On the OTHER account, type /fp as ping again, wait 10 s, then press Next." },
     { text = "Nothing should have arrived while refused.", auto = true,
       run = function() return #G.messages end,
       check = function()
