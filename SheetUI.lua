@@ -3636,6 +3636,21 @@ local function CreateFrameIfNeeded()
         Y = Y - 34
     end
 
+    -- Character counts in item tooltips (#304): the Warband tab's checkbox too,
+    -- here where players look for settings. Shows the setting in effect; a click
+    -- makes it the player's own choice (Core.lua, ItemTooltipCountsOn).
+    local optItemCountsCheck = MakeOptCheckRow("warbandItemTooltips",
+        "Show character counts in item tooltips", Y, nil,
+        function() return AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn() or false end)
+    optItemCountsCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        AltStable.ItemTooltipCountsHelp(GameTooltip)
+        GameTooltip:Show()
+    end)
+    optItemCountsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptItemCounts = optItemCountsCheck
+    Y = Y - 30
+
     -- ── Presentation section ──────────────────────────────
     -- Camera presentation, frame shift, continuous orbit, open animation,
     -- and the minimap-button toggle all live here so users find them in
@@ -4678,6 +4693,7 @@ local function CreateFrameIfNeeded()
         optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
         optPetsCheck:SetChecked(optPetsCheck._getter())
         optEnchantsCheck:SetChecked(optEnchantsCheck._getter())
+        optItemCountsCheck:SetChecked(optItemCountsCheck._getter())
         optAutoPortraitCheck:SetChecked(optAutoPortraitCheck._getter())
         optFacingUpdating = true
         optFacingSlider:SetValue(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0)

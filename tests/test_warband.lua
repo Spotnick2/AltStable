@@ -260,6 +260,37 @@ AltStable.SetConfigValue("warbandItemTooltips", false)
 for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
 eq("with the setting off, nothing is appended", #lines, 0)
 
+-- #304: never chosen (nil) means on, unless another addon already shows counts.
+local function tipLines()
+    lines = {}
+    for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+    return #lines
+end
+AltStableConfig.warbandItemTooltips = nil
+WoW.loaded = WoW.loaded or {}
+check("never chosen, no other counts addon: on by default", tipLines() > 0)
+for _, other in ipairs({ "BagBrother", "Bagnon", "Syndicator", "Altoholic" }) do
+    WoW.loaded[other] = true
+    eq("  but off with " .. other .. " loaded (no counts twice)", tipLines(), 0)
+    WoW.loaded[other] = nil
+end
+WoW.loaded.Bagnon, WoW.loaded.BagBrother = true, true
+eq("  the help says which addon, by the name the player installed",
+   AltStable.OtherItemCountsAddon(), "Bagnon")
+local help = {}
+local htip = { AddLine = function(_, s) help[#help + 1] = s end }
+AltStable.ItemTooltipCountsHelp(htip)
+check("  and the checkbox's help explains why it starts off",
+      (help[#help] or ""):find("Bagnon already shows its own counts", 1, true) ~= nil, help[#help])
+AltStable.SetConfigValue("warbandItemTooltips", true)
+check("the player's own true wins over another addon", tipLines() > 0)
+help = {}
+AltStable.ItemTooltipCountsHelp(htip)
+eq("  and the help no longer says it starts off", #help, 2)
+AltStable.SetConfigValue("warbandItemTooltips", false)
+WoW.loaded.Bagnon, WoW.loaded.BagBrother = nil, nil
+eq("the player's own false wins with nothing else loaded", tipLines(), 0)
+
 ------------------------------------------------------------
 -- Sync blob
 ------------------------------------------------------------
@@ -637,6 +668,19 @@ do
     main.GetHeight = function() return 800 end
     wb.Activate(main)
     check("the panel anchors beside the sidebar's edge (#150)", besideSidebar ~= nil)
+    -- #304: the tab's counts box follows a change made in Options meanwhile.
+    if wb.tipCheck then
+        local heldTips = AltStableConfig.warbandItemTooltips
+        AltStableConfig.warbandItemTooltips = false
+        wb.Activate(main)
+        eq("the counts box shows a change made elsewhere on the next open", wb.tipCheck:GetChecked() and true or false, false)
+        AltStableConfig.warbandItemTooltips = true
+        wb.Activate(main)
+        eq("  both ways", wb.tipCheck:GetChecked() and true or false, true)
+        AltStableConfig.warbandItemTooltips = heldTips
+    else
+        check("the Warband tab exposes its counts box", false)
+    end
     check("  and re-lays out when the window changes size", type(plugin.OnResize) == "function")
     AltStable.AnchorBesideSidebar = nil
     -- Activating rescans our own (stubbed, empty) bags; put Kaleid's back.
