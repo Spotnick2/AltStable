@@ -4196,6 +4196,9 @@ do
     check("  a PvE realm's says PvE", L.RulesetBadge("Classic Beta PvE"):find("PvE", 1, true) ~= nil)
     check("  Hardcore is HC", L.RulesetBadge("Forever Hardcore"):find("HC", 1, true) ~= nil)
     check("  RP is RP", L.RulesetBadge("Forever RP"):find("RP", 1, true) ~= nil)
+    check("  and not RP-PvP", L.RulesetBadge("Forever RP"):find("PvP", 1, true) == nil)
+    check("  RP-PvP is RP-PvP", L.RulesetBadge("Forever RP-PvP"):find("RP-PvP", 1, true) ~= nil)
+    eq("  spelled out in the tooltip", AltStable.RulesetName("Forever RP-PvP"), "Roleplay PvP")
     eq("  an unreadable realm has none", L.RulesetBadge(nil), "")
     T.Refresh()
     local r1, r2

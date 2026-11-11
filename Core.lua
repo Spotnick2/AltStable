@@ -502,7 +502,7 @@ AltStable.AUTH_AUTO, AltStable.AUTH_ASK, AltStable.AUTH_NEVER = AUTH_AUTO, AUTH_
 -- A gate that did not once stored `/alts deny karuzo` under a key the handler
 -- never read: it printed "refusing" and went on serving them.
 --
--- Realm: on Forever the realms are four rulesets (PvP, PvE, RP, Hardcore) over
+-- Realm: on Forever the realms are its rulesets (PvE, PvP, RP, RP-PvP, Hardcore) over
 -- one region, and character names - guild names too - are unique across the
 -- whole region. A realm suffix says where a character is, never who; "Bob" and
 -- "Bob-OtherRealm" cannot be two people. An earlier version kept the realm as

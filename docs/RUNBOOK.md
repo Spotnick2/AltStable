@@ -157,7 +157,7 @@ arriving on the guild channel used to be answered on the guild channel, so
 approving one peer broadcast the database to every member. Nothing is sent to a
 room. (`BroadcastDB` is a separate, deliberate act.)
 
-**An answer is by name.** On Forever the realms are four rulesets (PvP, PvE, RP,
+**An answer is by name.** On Forever the realms are its rulesets (PvE, PvP, RP, RP-PvP,
 Hardcore) over one region, and character names are unique across the region, so
 `Trusted-OtherRealm` and `Trusted` are the same character: one answer covers
 every form, and holds whichever ruleset you are playing. Case is folded too,

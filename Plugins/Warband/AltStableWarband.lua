@@ -815,7 +815,7 @@ end
 
 local RULESET_LABEL = {
     current = "Current ruleset", all = "All rulesets",
-    Normal = "Normal", PvP = "PvP", RP = "RP", Hardcore = "Hardcore",
+    Normal = "Normal", PvP = "PvP", RP = "RP", RPPvP = "RP-PvP", Hardcore = "Hardcore",
 }
 
 local function RulesetText(setting)
@@ -958,7 +958,7 @@ local function OpenRulesetMenu()
         end
         CloseOnEscape(rulesetMenu, CloseRulesetMenu)
         rulesetMenu.rows = {}
-        local keys = { "current", "all", "Normal", "PvP", "RP", "Hardcore" }
+        local keys = { "current", "all", "Normal", "PvP", "RP", "RPPvP", "Hardcore" }
         for i, key in ipairs(keys) do
             local row = MakeButton(rulesetMenu, 180, 22, "", function()
                 CloseRulesetMenu()

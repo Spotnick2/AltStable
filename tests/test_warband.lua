@@ -533,6 +533,15 @@ do
     eq("PvP 2 is the same ruleset", M.RulesetOf("Classic Beta PvP 2"), "PvP")
     eq("case does not matter", M.RulesetOf("CLASSIC BETA PVP"), "PvP")
     eq("an RP realm", M.RulesetOf("Forever RP"), "RP")
+    eq("RP-PvP is its own ruleset, not RP", M.RulesetOf("Forever RP-PvP"), "RPPvP")
+    eq("  however it is written: RPPvP", M.RulesetOf("Forever RPPvP"), "RPPvP")
+    eq("  RP PvP", M.RulesetOf("Forever RP PvP 2"), "RPPvP")
+    eq("  Roleplay PvP", M.RulesetOf("Forever Roleplay PvP"), "RPPvP")
+    eq("  in capitals, never PvP", M.RulesetOf("CAMWOW US2 Realm 3 RP-PVP"), "RPPvP")
+    eq("an RP realm with no PvP stays RP", M.RulesetOf("CAMWOW US2 Realm 2 RP"), "RP")
+    check("RP-PvP is in the list of rulesets", (function()
+        for _, r in ipairs(M.RULESETS) do if r == "RPPvP" then return true end end
+    end)())
     eq("a Hardcore realm", M.RulesetOf("Forever Hardcore"), "Hardcore")
     eq("'rp' inside a word is not RP", M.RulesetOf("Carp Lake"), "Normal")
     eq("no realm is Unknown, never Normal", M.RulesetOf(nil), "Unknown")
@@ -541,6 +550,7 @@ do
     eq("  and so does an unset setting", M.ResolveRuleset(nil, "Classic Beta PvE"), "Normal")
     eq("'all' is no filter", M.ResolveRuleset("all", "Classic Beta PvP"), nil)
     eq("a named ruleset is itself", M.ResolveRuleset("RP", "Classic Beta PvP"), "RP")
+    eq("'current' on an RP-PvP realm is RP-PvP", M.ResolveRuleset("current", "Forever RP-PvP"), "RPPvP")
 
     -- Tabs claim by category; two claims show twice; the rest is Other.
     local tabs = { { cats = { tradegoods = true } }, { cats = { tradegoods = true, recipes = true } } }
