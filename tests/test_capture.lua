@@ -863,8 +863,14 @@ eq("  naming the slot", table.concat(st.changedSlots, ","), "Chest")
 -- The companion keeps this portrait from the armory (#301): the render shows the
 -- new look on its own, so a gear change asks for no capture.
 AltStableCutoutManifest[GUID].armory = true
+local levelBefore = WoW.level
+WoW.level = 9
+eq("below level 10 (no armory render) the flag is not believed: changed", T.PortraitStatus().reason, "changed")
+WoW.level = WoW.secret(60)
+eq("  nor with the level unreadable", T.PortraitStatus().reason, "changed")
+WoW.level = 10
 st = T.PortraitStatus()
-eq("the same change, with the armory keeping the portrait: nothing to do", st.reason, "none")
+eq("the same change at level 10, with the armory keeping the portrait: nothing to do", st.reason, "none")
 eq("  not due (no glow, no auto-capture toast)", st.due, false)
 AltStableCutoutManifest[GUID].armory = "yes"
 eq("  only a real true counts (a malformed field still asks)", T.PortraitStatus().reason, "changed")
@@ -877,6 +883,7 @@ AltStableCutoutManifest[GUID].epoch = 10
 eq("  a newer capture waiting for the converter is still pending", T.PortraitStatus().reason, "pending")
 AltStableCutoutManifest[GUID].armory = nil
 eq("  and without the armory, that same state asks for a capture", T.PortraitStatus().reason, "changed")
+WoW.level = levelBefore
 AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
 pair(look)
 

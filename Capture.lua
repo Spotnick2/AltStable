@@ -899,6 +899,9 @@ end
 -- A capture recorded before looks were (no `look`) never reads as "changed".
 ------------------------------------------------------------
 
+-- The Forever armory renders characters from this level up (contract section 4).
+local ARMORY_MIN_LEVEL = 10
+
 -- The Roster's identity rules, from the core: a portrait there is one here.
 -- The character's manifest entry, or nil.
 local function CutoutEntry(guid, name)
@@ -947,8 +950,12 @@ function PortraitStatus()
     local madeFrom = entry and tonumber(entry.epoch)
     -- The companion follows this character's armory render: a new look reaches
     -- the portrait without a capture, so it is not asked for (#301). Missing
-    -- and pending are unchanged.
-    local armory = entry and entry.armory == true
+    -- and pending are unchanged. The armory only has characters from level 10
+    -- (owner), so below that, or with the level unreadable, the flag is not
+    -- believed and a capture is still the only way to the new look.
+    local level = AltStable.API and AltStable.API.PlainNumber
+        and AltStable.API.PlainNumber(UnitLevel("player")) or nil
+    local armory = entry and entry.armory == true and (level or 0) >= ARMORY_MIN_LEVEL
     if #diff > 0 and not armory then
         status.due, status.reason, status.changedSlots = true, "changed", diff
     elseif pair and not entry then

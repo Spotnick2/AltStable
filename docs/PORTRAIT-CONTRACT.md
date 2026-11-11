@@ -447,7 +447,10 @@ render carries no look, but it shows the new gear on its own a few hours after
 play. So the companion writes `armory = true` on the entry of every character
 whose portrait it keeps from the armory (renders on, the character eligible),
 **whichever file the entry names**, and the addon then never says "changed" for
-that character. "Missing" and "pending" are unchanged: a character with no entry
+that character. The addon believes the field only while the character is level 10
+or higher, which it reads itself: the armory has no render below that, so a
+capture stays the only way to the new look there, and an unreadable level counts
+as below. "Missing" and "pending" are unchanged: a character with no entry
 yet (no capture, no render) is still asked for one, and a newer capture still
 waits for the converter. Anything but `true` counts as absent; an entry without it
 asks for a capture after a gear change, as before. Additive: no `version` bump.
