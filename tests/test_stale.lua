@@ -288,5 +288,4 @@ do
     check("  and says when nobody is that old", table.concat(WoW.chatOut, "\n"):find("Every character", 1, true) ~= nil)
 end
 
-print(("test_stale: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_stale", passed, failed)

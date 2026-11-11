@@ -971,5 +971,4 @@ eq("forgetting a character drops its recipes", AltStableProfessionsDB[A], nil)
 plugin.OnCleanup(B)
 check("cleanup keeps only the named character", AltStableProfessionsDB[B] ~= nil and next(AltStableProfessionsDB, nil) == B)
 
-print(("test_professions: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_professions", passed, failed)

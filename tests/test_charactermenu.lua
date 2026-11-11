@@ -197,8 +197,8 @@ do
     -- padding, and the menu closes when you aim slightly wide of an entry.
     check("  and the panel takes the mouse itself", pnl:IsMouseEnabled())
     check("the catcher hears every button, not just the left one",
-          cat:HandlesClick("RightButton") and cat:HandlesClick("LeftButton"),
-          table.concat(cat:RegisteredClicks(), ","))
+          WoW.handlesClick(cat, "RightButton") and WoW.handlesClick(cat, "LeftButton"),
+          table.concat(WoW.registeredClicks(cat), ","))
 end
 
 do
@@ -208,10 +208,10 @@ do
     -- does nothing whatsoever, which reads as a dead menu.
     AltStable.ShowCharacterMenu(OTHER)
     local entry = T.MenuEntry("hide")
-    check("an entry hears the right button", entry and entry:HandlesClick("RightButton"),
-          entry and table.concat(entry:RegisteredClicks(), ","))
-    check("  and the left one", entry and entry:HandlesClick("LeftButton"),
-          entry and table.concat(entry:RegisteredClicks(), ","))
+    check("an entry hears the right button", entry and WoW.handlesClick(entry, "RightButton"),
+          entry and table.concat(WoW.registeredClicks(entry), ","))
+    check("  and the left one", entry and WoW.handlesClick(entry, "LeftButton"),
+          entry and table.concat(WoW.registeredClicks(entry), ","))
     AltStable.CloseCharacterMenu()
 end
 
@@ -650,7 +650,7 @@ do
               ("panel %s vs catcher %s"):format(
                   tostring(panel:GetFrameLevel()), tostring(catcher:GetFrameLevel())))
         check("  and the catcher still covers the screen and takes clicks",
-              catcher:IsShown() and catcher:HandlesClick("LeftButton"))
+              catcher:IsShown() and WoW.handlesClick(catcher, "LeftButton"))
     end
 
     -- The hover fill is rounded, keeping its own full-entry bounds: the nav
@@ -666,5 +666,4 @@ do
     AltStable.CloseCharacterMenu()
 end
 
-print(("test_charactermenu: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_charactermenu", passed, failed)

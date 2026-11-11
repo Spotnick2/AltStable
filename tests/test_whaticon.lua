@@ -456,5 +456,4 @@ do
     WoW.timers = {}
 end
 
-print(("test_whaticon: %d passed, %d failed"):format(passed, failed))
-os.exit(failed > 0 and 1 or 0)
+WoW.finish("test_whaticon", passed, failed)

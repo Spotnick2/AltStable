@@ -320,5 +320,4 @@ do
           not (AltStable.CharacterLookText({ name = "N", look = "1;42~Face~3~420~~" }) or ""):find("\n\n%a+\n"))
 end
 
-print(string.format("test_appearance: %d passed, %d failed", passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_appearance", passed, failed)

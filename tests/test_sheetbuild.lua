@@ -50,5 +50,4 @@ local f = T.frame
 check("  and leaves the window hidden, on its own anchor", f and not f:IsShown() and (f:GetPoint(1)) ~= "BOTTOMLEFT",
       tostring(f and f:GetPoint(1)))
 
-print(("test_sheetbuild: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_sheetbuild", passed, failed)

@@ -315,5 +315,4 @@ do
     eq("  and they write", AltStableConfig.skinClean, true)
 end
 
-print(("test_suite: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_suite", passed, failed)

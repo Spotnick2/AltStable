@@ -4168,9 +4168,4 @@ do
     AltStable.EnsureSheetVisible = heldEnsure
     AltStableCutoutManifest, AltStablePortraits = heldManifest, heldStore
 end
-if failures == 0 then
-    print(("test_comm: %d passed, %d failed"):format(testsRun, 0))
-else
-    print(("test_comm: %d passed, %d failed"):format(testsRun - failures, failures))
-    os.exit(1)
-end
+WoW.finish("test_comm", testsRun - failures, failures)

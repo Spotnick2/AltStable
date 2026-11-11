@@ -612,5 +612,4 @@ eq("coming back to life waits for the world to settle", WoW.timers[1] and WoW.ti
 WoW.flushTimers()
 check("  then offers it", shown())
 
-print(("test_autocapture: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_autocapture", passed, failed)

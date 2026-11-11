@@ -88,5 +88,4 @@ eq("a TargetOffline refusal is not delivered", #WoW.sent, 0)
 check("  and the callback reports it: not sent, TargetOffline",
       report and report.sent == false and report.result == 12)
 
-print(("test_ctl: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_ctl", passed, failed)

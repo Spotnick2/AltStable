@@ -1,9 +1,12 @@
 <#
     run.ps1 - Run all AltStable unit tests.
 
-    Lua tests are plain Lua 5.1 scripts (no dependencies) that load addon files
-    against tests/wow_stubs.lua. WoW uses Lua 5.1, so the tests do too — not
-    the newer Lua that may be first on PATH.
+    Lua tests are plain Lua 5.1 scripts that load addon files against
+    tests/wow_stubs.lua, built on WowTestKit (#284) at the commit and client
+    build tests/kit.pin names. This puts that commit in
+    %LOCALAPPDATA%\WowTestKit\<sha> (tests/kit.ps1) and hands the Lua tests to
+    the kit's runner, which syntax-checks the TOCs' files first. WoW uses Lua
+    5.1, so the tests do too — not the newer Lua that may be first on PATH.
 
     Lua, plus test_*.py for the cutout converter. This runner was Lua-only
     because AltTracker's Python tests pulled in deferred tooling; these use the
@@ -13,10 +16,12 @@
     Usage:
         pwsh tests/run.ps1
         pwsh tests/run.ps1 -Lua "C:\path\to\lua5.1.exe"
+        pwsh tests/run.ps1 -KitDev     # the ..\WowTestKit working copy, not the pin
 #>
 
 param(
-    [string]$Lua = "C:\Program Files (x86)\Lua\5.1\lua.exe"
+    [string]$Lua = "C:\Program Files (x86)\Lua\5.1\lua.exe",
+    [switch]$KitDev
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,12 +68,15 @@ try {
     }
 
     $failed = 0
-    Get-ChildItem (Join-Path $PSScriptRoot "test_*.lua") | Sort-Object Name | ForEach-Object {
-        Write-Host "── $($_.Name) ──────────────────────────────" -ForegroundColor Cyan
-        & $Lua $_.FullName
-        if ($LASTEXITCODE -ne 0) { $failed++ }
-        Write-Host ""
+    # The Lua tests: WowTestKit's runner, against the pinned kit (or -KitDev).
+    . (Join-Path $PSScriptRoot "kit.ps1")
+    $kit = Get-WowTestKit -RepoRoot $RepoRoot -KitDev:$KitDev
+    $plugins = Get-ChildItem "Plugins" -Recurse -Filter "*.lua" | ForEach-Object {
+        [IO.Path]::GetRelativePath($RepoRoot, $_.FullName)
     }
+    & (Join-Path $kit "scripts\run.ps1") -RepoRoot $RepoRoot -Toc "AltStable.toc" -Extra $plugins -Lua $Lua
+    if ($LASTEXITCODE -ne 0) { $failed++ }
+    Write-Host ""
     # The manifest writer's enhanced-texture attachment rule
     # (PORTRAIT-CONTRACT.md section 3). Pure PowerShell on temp files: no
     # Python, no client.

@@ -342,5 +342,4 @@ use(R); before = snap(R)
 receive(R, A, payloadFrom(A))
 expectDiffs("  and a resend of everything it holds changes nothing", before, snap(R), {})
 
-print(("test_warband_sync: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_warband_sync", passed, failed)

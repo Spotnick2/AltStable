@@ -102,8 +102,8 @@ local before = { cfg = deepcopy(AltStableConfig), db = deepcopy(AltStableDB), wb
 local errors = {}
 local function fire(ev, ...)
     for _, f in ipairs(frames) do
-        if f["_ev_" .. ev] and f._script_OnEvent then
-            local ok, err = pcall(f._script_OnEvent, f, ev, ...)
+        if f._events[ev] and f._scripts.OnEvent then
+            local ok, err = pcall(f._scripts.OnEvent, f, ev, ...)
             if not ok then errors[#errors + 1] = ev .. ": " .. tostring(err) end
         end
     end
@@ -190,5 +190,4 @@ check("the Warband store keeps the orphan (A4) and the record's inventory",
 check("the scan wrote the current character, and only it, into the database",
       AltStableDB[me] ~= nil and AltStableDB[me].name == "Example Surname")
 
-print(("test_login_migrations: %d passed, %d failed"):format(passed, failed))
-if failed > 0 then os.exit(1) end
+WoW.finish("test_login_migrations", passed, failed)
