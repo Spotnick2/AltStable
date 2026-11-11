@@ -683,20 +683,29 @@ AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 -- not make a realm RP. A realm we cannot read is Unknown - never Normal, which
 -- would put a character on a ruleset it may not be on.
 --
+-- RP-PvP is a ruleset of its own (added on live, 2026-11): a realm whose name
+-- has both RP and PvP is neither RP nor PvP, and lumping it with either would
+-- show the Warband tab items held on realms its characters cannot reach. The
+-- name it goes by is not measured yet, so "RP-PvP", "RPPvP", "RP PvP" and
+-- "Roleplay PvP" all read as RP-PvP.
+--
 -- In the core rather than a plugin: the Warband tab filters by it and the
 -- Roster's camp list marks each character with it (#170), and either can be
 -- loaded without the other.
 ------------------------------------------------------------
 
-AltStable.RULESETS = { "Normal", "PvP", "RP", "Hardcore" }
+AltStable.RULESETS = { "Normal", "PvP", "RP", "RPPvP", "Hardcore" }
 
 function AltStable.RulesetOf(realm)
     if type(realm) ~= "string" or not realm:find("%S") then return "Unknown" end
     local words = " " .. (realm:lower():gsub("[^%w]", " ")) .. " "
     if words:find(" hardcore ", 1, true) or words:find(" hc ", 1, true) then return "Hardcore" end
-    if words:find(" rp ", 1, true) or words:find(" roleplay ", 1, true)
-       or words:find(" rppvp ", 1, true) then return "RP" end
-    if words:find("pvp", 1, true) then return "PvP" end
+    if words:find(" rppvp ", 1, true) then return "RPPvP" end
+    local pvp = words:find("pvp", 1, true) ~= nil
+    if words:find(" rp ", 1, true) or words:find(" roleplay ", 1, true) then
+        return pvp and "RPPvP" or "RP"
+    end
+    if pvp then return "PvP" end
     return "Normal"
 end
 
@@ -708,6 +717,7 @@ local RULESET_BADGE = {
     Normal   = { "PvE", "|cff8fd18f", "PvE" },
     PvP      = { "PvP", "|cffff6b6b", "PvP" },
     RP       = { "RP",  "|cffc79bff", "Roleplay" },
+    RPPvP    = { "RP-PvP", "|cffe88ad6", "Roleplay PvP" },
     Hardcore = { "HC",  "|cffff9a3c", "Hardcore" },
 }
 
