@@ -4725,4 +4725,69 @@ do
     end
 end
 
+------------------------------------------------------------
+-- Options: settings that need another one sit under it, greyed while it is off
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local panel = T.optionsPanel
+    local cam, toasts, profs = T.OptCamera, T.OptToasts, T.OptProfChecks
+    local held = { AltStableConfig.enableWorldCameraPresentation, AltStableConfig.worldCameraContinuousOrbit,
+                   AltStableConfig.enableWorldCameraSalute, AltStableConfig.toastsEnabled }
+    local function X(o) local _, _, _, x = o:GetPoint(1); return x or 0 end
+    local function Live(o) return o:IsEnabled() and (o.label:GetAlpha() or 1) == 1 end
+
+    check("orbit sits indented under the camera", X(cam.orbit) > X(cam.camera))
+    check("  and the salute", X(cam.salute) > X(cam.camera))
+    check("each profession sits indented under the toasts", X(profs.Tailoring) > X(toasts))
+
+    AltStableConfig.enableWorldCameraPresentation = true
+    AltStableConfig.worldCameraContinuousOrbit = true
+    AltStableConfig.enableWorldCameraSalute = false
+    panel:GetScript("OnShow")(panel)
+    check("camera on: orbit can be changed", Live(cam.orbit))
+    check("  and the salute", Live(cam.salute))
+
+    cam.camera:SetChecked(false); cam.camera:GetScript("OnClick")(cam.camera)
+    check("camera off: orbit is greyed and cannot be clicked", not cam.orbit:IsEnabled())
+    check("  its label dimmed", cam.orbit.label:GetAlpha() < 1)
+    check("  the salute too", not cam.salute:IsEnabled())
+    eq("  orbit keeps its own setting", AltStableConfig.worldCameraContinuousOrbit, true)
+    check("  and still shows it", cam.orbit:GetChecked() == true)
+    cam.camera:SetChecked(true); cam.camera:GetScript("OnClick")(cam.camera)
+    check("camera back on: orbit is live again", Live(cam.orbit) and Live(cam.salute))
+
+    AltStableConfig.enableWorldCameraPresentation = false
+    panel:GetScript("OnShow")(panel)
+    check("opening Options with the camera off greys them", not cam.orbit:IsEnabled())
+    AltStableConfig.enableWorldCameraPresentation = true
+    panel:GetScript("OnShow")(panel)
+
+    AltStableConfig.toastsEnabled = true
+    panel:GetScript("OnShow")(panel)
+    check("toasts on: each profession can be changed", Live(profs.Tailoring) and Live(profs.Alchemy))
+    toasts:SetChecked(false); toasts:GetScript("OnClick")(toasts)
+    check("toasts off: the professions are greyed", not profs.Tailoring:IsEnabled() and not profs.Alchemy:IsEnabled())
+    toasts:SetChecked(true); toasts:GetScript("OnClick")(toasts)
+    check("  and back", Live(profs.Tailoring))
+
+    -- Settings sync rides the Battle.net channel to your own accounts.
+    local bnet, ss = T.OptBnet, T.OptSyncSettings
+    local heldB = AltStableConfig.bnetSync
+    check("settings sync sits indented under Battle.net", X(ss) > X(bnet))
+    bnet:SetChecked(false); bnet:GetScript("OnClick")(bnet)
+    check("Battle.net off: settings sync is greyed", not ss:IsEnabled())
+    bnet:SetChecked(true); bnet:GetScript("OnClick")(bnet)
+    check("  and back", Live(ss))
+    AltStableConfig.bnetSync = heldB
+
+    -- Only children are greyed: an unrelated box is never disabled by this.
+    check("a box with no parent stays live", T.OptItemCounts:IsEnabled())
+
+    AltStableConfig.enableWorldCameraPresentation, AltStableConfig.worldCameraContinuousOrbit,
+        AltStableConfig.enableWorldCameraSalute, AltStableConfig.toastsEnabled = held[1], held[2], held[3], held[4]
+    panel:GetScript("OnShow")(panel)
+end
+
 WoW.finish("test_sheetui", passed, failed)
