@@ -3903,6 +3903,15 @@ function AltStable.IsPluginEnabled(key)
                 and AltStableConfig.plugins[key] == false)
 end
 
+-- Whether a plugin's addon is loaded this session, by its key: Options says
+-- which tabs are on now and which change only after a /reload.
+function AltStable.IsPluginLoaded(key)
+    for _, p in ipairs(AltStable.LOD_PLUGINS) do
+        if p.key == key then return IsPluginLoaded(p.addon) and true or false end
+    end
+    return false
+end
+
 -- Load every enabled plugin that isn't already loaded. Called at login.
 function AltStable.LoadEnabledPlugins()
     AltStableConfig = AltStableConfig or {}
