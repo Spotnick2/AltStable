@@ -1128,6 +1128,19 @@ do
     tt:Show(); tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
     local g = AltStable._test.TooltipState().g
     check("the material is built on the tooltip", g and g.top)
+
+    -- A BACKING under the glass: the popup body alone let the Warband grid's
+    -- icons read through an item tooltip (2026-11-12). Glass UI's window floor,
+    -- as on any surface that opens over other UI.
+    local b = g and g.backing
+    local c = b and b._colorTexture
+    check("our tooltip has a backing under its glass", b ~= nil)
+    check("  near-opaque, Glass UI's window floor",
+          c and math.abs(c[4] - 0.93) < 0.001, c and tostring(c[4]))
+    check("  shown while the tooltip is ours", b and b:IsShown())
+    tt:SetOwner(theirs, "ANCHOR_RIGHT")
+    check("  and gone the moment it is somebody else's", b and not b:IsShown())
+    tt:SetOwner(ours, "ANCHOR_RIGHT"); AltStable.ReconcileTooltip()
     if g and g.top then
         tt:Hide()
         tt:SetFrameLevel(tt:GetFrameLevel() + 40)     -- somebody raises it
