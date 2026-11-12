@@ -354,6 +354,7 @@ never for conversion, from the same `AltStable.lua`:
 | `AltStableDB[guid].gearAt` | number (epoch seconds), armory only | `lastUpdate` alone |
 | `AltStableDB[guid].gearid_<key>`, `hidehelm`, `hidecloak` | numbers, armory only | the old estimate (section 4) |
 | `AltStableDB[guid].lookAt` | number (epoch seconds), armory only | appearance not compared |
+| `AltStableDB[guid].gearReadAt` | number (epoch seconds), armory only | `lastUpdate` |
 | `AltStableConfig.hiddenCharacters` | table, guid → true | nobody is hidden |
 
 A roster table that is missing or malformed makes characters ineligible for
@@ -443,8 +444,16 @@ date won, which swapped sharp, enhanced captures for renders of the same look).
      first recorded after the capture counts as changed: the safe way to be wrong.
 3. **Not changed:** the capture.
 4. **Changed:** the render, if it shows the change: `Last-Modified` minus 7 hours is
-   at least the change's time, that is `gearAt` for gear and `lookAt` for appearance
-   (the later of the two when both changed). Until then the capture stays.
+   at least the change's time, the latest of those that apply:
+   - an item differs: `gearAt` (when the worn items last changed);
+   - only a helm or cloak's visibility differs (`h` against its item id): no field
+     records when that changed, because `gearAt` moves only with the items. Use
+     `gearReadAt` (the last time the gear was read, in the character's latest
+     session; `lastUpdate` when it is missing), so the render must come from the
+     latest session. It can wait one session too many, never pass early;
+   - appearance: `lookAt`.
+
+   Until then the capture stays.
 5. **Cannot tell** (the capture record has no `look`, or the roster has no gear for
    the character): the old estimate. The capture wins when its `epoch` is at least
    the render's `Last-Modified` minus 7 hours.
