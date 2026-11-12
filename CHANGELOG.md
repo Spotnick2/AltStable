@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.2.0 - 2026-11-11
+
+Your gold and your items, in the game's own tooltips: hover the gold in your bags for every
+character's gold, and item tooltips now show who holds how many without having to switch it on.
+Measured on client 1.60.1.70888, the live build. Nothing in the sync changed: v1.2.0 syncs with
+everything v1.1.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.1.0** is still the current version. A coming Companion release can take a
+character's portrait from the Forever armory's own picture of it, which updates by itself a few
+hours after you play. v1.2.0 is ready for it: for a character whose portrait comes from the armory,
+a gear change no longer asks for a new capture (from level 10, where the armory has the character).
+
+### New
+
+- **Every character's gold when you hover your gold**
+  ([#307](https://github.com/Spotnick2/AltStable/pull/307)). Hover the gold in the game's bag
+  window: the tooltip shows the total across your characters, then each character's gold, richest
+  first. It's the same total as the sheet's footer: hidden characters are left out, and a
+  character whose gold can't be read is shown as "?" with a note that the total leaves it out.
+  Bagnon and Baganator replace that window and have their own gold tooltip.
+
+### Changed
+
+- **Item tooltips show who holds how many, on by default**
+  ([#306](https://github.com/Spotnick2/AltStable/pull/306)). Hover an item anywhere (your bags,
+  merchants, links) to see the total and each character's bags and bank. This used to be off
+  until ticked in the Warband tab. It's now on, unless Bagnon, Baganator or Altoholic is
+  installed, since they show their own counts. If you already ticked or unticked it, your choice
+  stays. The checkbox is now in Options too.
+- **The rested XP tooltip says what 150% means**
+  ([#300](https://github.com/Spotnick2/AltStable/pull/300)). Rested XP is shown as a share of a
+  level, and 150% (a level and a half) is the most a character can store. The tooltip now says so,
+  and how long the character needs offline to fill it.
+
 ## v1.1.0 - 2026-11-10
 
 AltStable now knows the new RP-PvP realms, and the description is rewritten around what it helps

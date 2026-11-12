@@ -33,9 +33,10 @@ current ruleset, a chosen ruleset, or only the character you are on.
 *The Warband tab, Combined view: everyone's trade goods, consumables and equipment in one place.
 Hover any item to see who holds it.*
 
-Tick **Show character counts in tooltips** in the Warband tab and item tooltips everywhere in the
-game (your bags, merchants, links) show the same counts. It's off by default, so it doesn't
-double up with another inventory addon's counts.
+Item tooltips everywhere in the game (your bags, merchants, links) show the same counts: the
+total, then who holds how many. It's on unless Bagnon, Baganator or Altoholic is installed, since
+they show their own counts; **Show character counts in tooltips**, in Options or the Warband tab,
+turns it on or off either way.
 
 Bags are read as you play. A bank is only readable while it's open, so its count is from your
 last visit, and the tooltip warns when that is more than a week old. Equipped gear appears on the
@@ -77,6 +78,9 @@ reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and w
 played. Sort by any column. Rested XP keeps counting up while you're away, worked out from where
 the character logged out.
 
+Hover the gold in the game's bag window to see the total across your characters and how much
+each one holds, richest first. (Bagnon and Baganator replace that window and have their own.)
+
 ![The sheet's gear view: the item level of every equipped slot for each character, coloured by quality](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-gear.jpg)
 
 *Gear: the item level in every slot, for every character.*
@@ -108,8 +112,8 @@ and it doesn't try to match every Altoholic feature.
   for the expiring-mail warning, the mailbox. See [Quick start](#quick-start).
 - **Not recorded:** what's in the mailbox (AltStable keeps only a short summary for the expiry
   warning), auction house listings, currencies and quests.
-- **Running both:** AltStable's item tooltip counts are off by default, so an existing inventory
-  addon's counts don't appear twice.
+- **Running both:** AltStable's item tooltip counts start off when Altoholic is installed, so its
+  counts don't appear twice.
 
 ## Quick start
 
