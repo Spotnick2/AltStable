@@ -79,8 +79,9 @@ characters, plus anyone else who holds a lockout.
 
 The **sheet** has one row per character: level, item level and gear in every slot, professions,
 reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
-played. Sort by any column. Rested XP keeps counting up while you're away, worked out from where
-the character logged out.
+played. Sort by any column, and group the rows by ruleset, by faction or both (**Group**, in
+Options); hover a ruleset's header to see its server. Rested XP keeps counting up while you're
+away, worked out from where the character logged out.
 
 Hover the gold in the game's bag window to see the total across your characters and how much
 each one holds, richest first. (Bagnon and Baganator replace that window and have their own.)
@@ -214,7 +215,8 @@ Switch HD models back on before `/alts portrait` if you want HD portraits.
 With **Glass UI** installed, AltStable wears the Glass suite's look: its Pearl glass, its
 tint and its accent. Turn that off for AltStable on Glass UI's page ("Use Glass UI
 appearance") to get your own skin back; AltStable keeps it saved meanwhile. A change made
-in Glass UI shows in AltStable after a `/reload`.
+in Glass UI shows in AltStable after a `/reload`. Options (Appearance) shows the look in use
+and opens Glass UI.
 
 ## Updating
 
