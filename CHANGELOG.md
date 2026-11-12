@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.4.0 - 2026-11-12
+
+Group the sheet by ruleset, by faction or both, and a new Options window: six pages instead of
+one long scroll. Measured on client 1.60.1.70888, the live build. v1.4.0 syncs with everything
+v1.3.0 does. With settings sync on, the new faction grouping travels with the other sheet
+settings; an older client ignores it.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.3** is the current version.
+
+### New
+
+- **Group the sheet by ruleset, by faction, or both**
+  ([#317](https://github.com/Spotnick2/AltStable/pull/317),
+  [#321](https://github.com/Spotnick2/AltStable/pull/321)). **Group** in Options (General) has
+  four choices: None, Ruleset, Faction, and Ruleset & faction.
+  - A ruleset group's header says Normal, PvP, RP, RP-PvP or Hardcore, and hovering it names its
+    server.
+  - Grouped by faction too, the faction comes first: "Alliance · PvP".
+  - Without ruleset groups, a Ruleset column shows where each character is.
+  - Your current grouping carries over.
+- **A new Options window**
+  ([#318](https://github.com/Spotnick2/AltStable/pull/318) to
+  [#327](https://github.com/Spotnick2/AltStable/pull/327)). Six pages with buttons down the
+  left: General, Appearance, Characters, Notifications, Accounts & sync, and Modules. Every
+  setting is still there.
+  - **Readable:** the pages sit on a solid surface, so the world behind the window no longer
+    shows through.
+  - **Short labels:** each with a line under it where it helps.
+  - **Dependent settings:** a setting that only matters while another is on sits under it, and is
+    greyed out while that one is off: the camera's orbit and salute, each profession's toasts, and
+    settings sync under Battle.net sync. Its choice is kept.
+  - **Following Glass UI:** the Appearance page shows the look in use and a button to open Glass
+    UI, in place of AltStable's own look settings.
+  - **Modules:** each tab shows whether it is on, off after a `/reload`, or not loaded.
+
+### Fixed
+
+- **The mailbox box in Options showed unticked while mail was being tracked**
+  ([#319](https://github.com/Spotnick2/AltStable/pull/319)). Tracking was on all along; only the
+  box was wrong. It is now **Track mailbox items** on the General page.
+
 ## v1.3.0 - 2026-11-12
 
 Your mailboxes join the Warband: search finds an item waiting in another character's mail, and
