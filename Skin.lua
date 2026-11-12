@@ -905,6 +905,12 @@ local TIP_PART_KEYS = { "shadow", "backing", "tint", "grain", "wash", "top" }
 -- the ~50% this replaces.
 AltStable.TOOLTIP_BACKING = { 0.04, 0.05, 0.07, 0.93 }
 
+-- THE OPTIONS PAGES' SURFACE. Opaque: at the tooltip's 0.93 a city's huge
+-- nameplates still read through the settings (#327 screenshots). The
+-- tooltip's colour was near black once opaque, so a lighter charcoal of the
+-- same cool cast, closer to the Pearl glass around it.
+AltStable.OPTIONS_BACKING = { 0.10, 0.11, 0.13, 1 }
+
 local function ForEachTipPart(g, fn)
     if not g then return end
     for i = 1, #TIP_PART_KEYS do

@@ -48,6 +48,7 @@ AltStable.C = {
 
     -- Text hierarchy
     TEXT_DIM     = { 0.50, 0.50, 0.50 },        -- secondary, inactive
+    TEXT_HELP    = { 0.66, 0.66, 0.66 },        -- helper text that is live (Options); dim = inactive
     TEXT_NORM    = { 0.82, 0.82, 0.82 },        -- body text
     TEXT_BRIGHT  = { 1.00, 1.00, 1.00 },        -- headers, selected
 
