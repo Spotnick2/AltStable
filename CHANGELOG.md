@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.3.0 - 2026-11-12
+
+Your mailboxes join the Warband: search finds an item waiting in another character's mail, and
+item tooltips count it. Item tooltips over AltStable's windows are now solid. Measured on client
+1.60.1.70888, the live build. v1.3.0 syncs with everything v1.2.0 does; mail shows only between
+v1.3.0 clients, and an older one keeps working without it.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.3** is the current version. It can take a character's portrait from the Forever
+armory's own picture of it, which updates by itself a few hours after you play: your own capture
+stays the portrait until the character changes, then the armory's picture takes over once it shows
+the change.
+
+### New
+
+- **Mailbox items in the Warband**
+  ([#313](https://github.com/Spotnick2/AltStable/pull/313)). What waits in each character's
+  mailbox now shows in the Warband tab and its search, and item tooltips count it, e.g.
+  `17=4[bag]+6[bank]+7[mail]`. A mailbox can only be read while it's open, so each character's
+  mail is from its last visit, and the tooltip says when that is more than a week old, or when the
+  mailbox held more than the 50 mails the game shows at a time. Mail you send or return to one of
+  your own characters counts for it as soon as the game confirms it, until that character next
+  opens its mailbox. The Professions tab's reagent counts leave mail out, since an item in the
+  mail can't be crafted with until it's taken. **Include mailbox items in the Warband and item
+  counts**, in Options, is on; untick it to leave mail out, and nothing about mail is read or
+  synced.
+
+### Fixed
+
+- **Item tooltips over AltStable's windows are solid**
+  ([#314](https://github.com/Spotnick2/AltStable/pull/314)). Over the Warband grid, the item icons
+  showed through the tooltip's text. The tooltip's glass now has a near-opaque backing, as
+  Glass UI gives any window that opens over other UI.
+
 ## v1.2.0 - 2026-11-11
 
 Your gold and your items, in the game's own tooltips: hover the gold in your bags for every
