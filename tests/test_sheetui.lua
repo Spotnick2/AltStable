@@ -4705,9 +4705,10 @@ do
     local back = T.optBacking
     check("on glass the pages have a backing", back ~= nil)
     if back then
-        local c, want = back._colorTexture, AltStable.TOOLTIP_BACKING
-        check("  in the suite's backing colour, opaque", c and c[1] == want[1] and c[2] == want[2]
+        local c, want = back._colorTexture, AltStable.OPTIONS_BACKING
+        check("  an opaque charcoal", c and c[1] == want[1] and c[2] == want[2]
               and c[3] == want[3] and c[4] == 1, c and tostring(c[4]) or "nil")
+        check("  lighter than the tooltip's near black", want[1] > AltStable.TOOLTIP_BACKING[1])
         local _, rel, relPoint = back:GetPoint(1)
         check("  under the page buttons' column too", rel == T.optionsPanel and relPoint == "TOPLEFT")
     end
@@ -4880,6 +4881,15 @@ do
         local d = row.desc and row.desc:GetText() or ""
         check("no helper line starts with a bare \"Off:\" (it reads as the state): " .. d, not d:find("^Off:"))
     end
+
+    -- Live helper text is a step brighter than the dim kept for what is off.
+    local function Tone(fs) local c = fs._textColor; return c and table.concat({ c[1], c[2], c[3] }, ",") end
+    local help, dim = table.concat(AltStable.C.TEXT_HELP, ","), table.concat(AltStable.C.TEXT_DIM, ",")
+    check("(helper text is brighter than dim)", AltStable.C.TEXT_HELP[1] > AltStable.C.TEXT_DIM[1])
+    eq("a helper line is in the helper tone", Tone(cam.camera.desc), help)
+    eq("  the grouping line too", Tone(T.OptGroupHint), help)
+    eq("  and a list's empty line", Tone(T.OptWlNone), help)
+    eq("the Glass UI card's note too", Tone(T.LookCard.note), help)
 
     -- Helper lines grey with their setting.
     local panel = T.optionsPanel

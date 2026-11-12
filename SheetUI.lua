@@ -3126,10 +3126,9 @@ local function CreateFrameIfNeeded()
         local back = optionsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
         back:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
         back:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", 0, 0)
-        -- Opaque: at the tooltip's 0.93 a city's huge nameplates were still
-        -- readable through the settings (screenshots, #327 review).
-        local c = AltStable.TOOLTIP_BACKING
-        back:SetColorTexture(c[1], c[2], c[3], 1)
+        -- Opaque, a lighter charcoal (Skin.lua, OPTIONS_BACKING).
+        local c = AltStable.OPTIONS_BACKING
+        back:SetColorTexture(c[1], c[2], c[3], c[4])
         AltStable.SkinClipTexture(optionsPanel, back, frame)
         AltStable._test.optBacking = back
     end
@@ -3431,7 +3430,7 @@ local function CreateFrameIfNeeded()
     -- One line, never wrapped: the reload line sits 24 below, with no room
     -- for a second (review of #220).
     optTintHint:SetJustifyH("LEFT"); optTintHint:SetWordWrap(false)
-    optTintHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optTintHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optTintHint:SetText("On the glass skins.")
     AltStable._test.tintBtns = tintBtns
 
@@ -3466,7 +3465,7 @@ local function CreateFrameIfNeeded()
     optLookHint:SetPoint("LEFT", lookBtns[2], "RIGHT", 14, 0)
     optLookHint:SetPoint("RIGHT", optionsFrame, "TOPRIGHT", -P, Y - 10)
     optLookHint:SetJustifyH("LEFT"); optLookHint:SetWordWrap(false)
-    optLookHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optLookHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optLookHint:SetText("Clean: thin rims, no grain.")
     AltStable._test.lookBtns = lookBtns
 
@@ -3505,7 +3504,7 @@ local function CreateFrameIfNeeded()
     optSkinReload:SetPoint("RIGHT", optSkinReloadBtn, "LEFT", -10, 0)
     optSkinReload:SetJustifyH("LEFT")
     optSkinReload:SetWordWrap(false)
-    optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optSkinReload:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     -- Through the secure prompt: ReloadUI() from our own click is blocked on
     -- this client (see AltStable.ShowReloadPrompt).
     optSkinReloadBtn:SetScript("OnClick", function()
@@ -3614,7 +3613,7 @@ local function CreateFrameIfNeeded()
     optThemeHint:SetPoint("LEFT", optClassBtn, "RIGHT", 14, 0)
     optThemeHint:SetPoint("RIGHT", OptRail(BTNY, BTN_H), "RIGHT", 0, 0)
     optThemeHint:SetJustifyH("LEFT"); optThemeHint:SetWordWrap(true)
-    optThemeHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optThemeHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optThemeHint:SetText("The highlight colour - the gold in the title, the "
         .. "selected tab and the totals.")
 
@@ -3667,7 +3666,7 @@ local function CreateFrameIfNeeded()
     optHint:SetPoint("TOPLEFT", P + 60, Y)
     optHint:SetPoint("TOPRIGHT", -P, Y)
     optHint:SetJustifyH("LEFT"); optHint:SetWordWrap(true)
-    optHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optHint:SetText("Character names and rows always use each character's own class "
         .. "colour, whichever accent is chosen.")
     AltStable._test.OptAccentFootnote = optHint
@@ -3687,7 +3686,7 @@ local function CreateFrameIfNeeded()
         card:SetPoint("TOPLEFT", P, top + 4)
         card:SetPoint("TOPRIGHT", -P, top + 4)
         card:SetHeight(80)
-        AltStable.ApplyBackdrop(card, 0.10, 0.12, 0.15, 0.9)
+        AltStable.ApplyBackdrop(card, 0.14, 0.16, 0.19, 1)   -- a step up from the page
         card:SetBackdropBorderColor(1, 1, 1, 0.14)
         -- Each line at its own offset from the card's top, the button on the
         -- right. The look and the note need a left and a right edge, both on
@@ -3720,7 +3719,7 @@ local function CreateFrameIfNeeded()
         note:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -58)
         note:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -58)
         note:SetJustifyH("LEFT"); note:SetWordWrap(true)
-        note:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        note:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         note:SetText("Change your look in Glass UI. To choose one here, turn off its "
             .. "\"Use Glass UI appearance\" for AltStable. Character names and rows keep "
             .. "each character's class colour.")
@@ -3876,7 +3875,7 @@ local function CreateFrameIfNeeded()
         d:SetPoint("TOPLEFT", (x or P) + 22, (y or Y) - 18)
         d:SetPoint("TOPRIGHT", -P, (y or Y) - 18)
         d:SetJustifyH("LEFT"); d:SetWordWrap(true)
-        d:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        d:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         d:SetText(text)
         cb.desc = d
         return d
@@ -3969,7 +3968,7 @@ local function CreateFrameIfNeeded()
         optPluginsHint:SetPoint("TOPRIGHT", -P, Y - 2)
         optPluginsHint:SetJustifyH("LEFT")
         optPluginsHint:SetWordWrap(true)
-        optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        optPluginsHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         -- Not "Both": the count is whatever is registered.
         optPluginsHint:SetText("Enabling loads the tab immediately; disabling takes effect after /reload. (They must also stay enabled in the game's AddOns list.)")
         Y = Y - 34
@@ -4009,7 +4008,7 @@ local function CreateFrameIfNeeded()
         optModelDebugHint:SetPoint("TOPRIGHT", -P, Y - 16)
         optModelDebugHint:SetJustifyH("LEFT")
         optModelDebugHint:SetWordWrap(true)
-        optModelDebugHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        optModelDebugHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         optModelDebugHint:SetText("Shows preview mode diagnostics (live model vs static render vs card) and opens the Roster debug text window.")
 
         Y = Y - 42
@@ -4086,7 +4085,7 @@ local function CreateFrameIfNeeded()
     optAutoPortraitHint:SetPoint("TOPRIGHT", -P, Y)
     optAutoPortraitHint:SetJustifyH("LEFT")
     optAutoPortraitHint:SetWordWrap(true)
-    optAutoPortraitHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAutoPortraitHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optAutoPortraitHint:SetText("A toast above the chat counts down 5 minutes; close it to skip that look. "
         .. AltStable.COMPANION_NEEDED_PLAIN)
     AltStable._test = AltStable._test or {}
@@ -4259,7 +4258,7 @@ local function CreateFrameIfNeeded()
         hint:SetPoint("TOPLEFT", P + 60, Y - 26)
         hint:SetPoint("TOPRIGHT", -P, Y - 26)
         hint:SetJustifyH("LEFT"); hint:SetWordWrap(true)
-        hint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        hint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
 
         local btns = {}
         local function Current()
@@ -4415,7 +4414,7 @@ local function CreateFrameIfNeeded()
     optAcctHint:SetPoint("LEFT", optAcctBox, "RIGHT", 12, 0)
     optAcctHint:SetPoint("RIGHT", OptRail(Y + 4, 22), "RIGHT", 0, 0)
     optAcctHint:SetJustifyH("LEFT")
-    optAcctHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAcctHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optAcctHint:SetText("Tags this client's data on next scan/sync.")
     Y = Y - 30
 
@@ -4459,7 +4458,7 @@ local function CreateFrameIfNeeded()
     optWlHint:SetPoint("TOPLEFT", P, Y)
     optWlHint:SetPoint("TOPRIGHT", -P, Y)
     optWlHint:SetJustifyH("LEFT"); optWlHint:SetWordWrap(true)
-    optWlHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optWlHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optWlHint:SetText("Whisper sync targets. Add character names (with realm if needed: Name-Realm).")
     Y = Y - 24
 
@@ -4504,7 +4503,7 @@ local function CreateFrameIfNeeded()
     end
     local optWlNone = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optWlNone:SetPoint("TOPLEFT", P + 4, Y)
-    optWlNone:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optWlNone:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optWlNone:SetText("No sync peers yet.")
     AltStable._test.OptWlNone = optWlNone
     Y = Y - (OPT_WL_ROWS * 18) - 6
@@ -4513,7 +4512,7 @@ local function CreateFrameIfNeeded()
     -- complete. On the last row's own line, so it takes no extra room.
     local optWlMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optWlMore:SetPoint("LEFT", optWlRows[OPT_WL_ROWS].removeBtn, "RIGHT", 12, 0)
-    optWlMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optWlMore:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     AltStable._test.OptWlMore = optWlMore
 
     local function OptRefreshWhitelist()
@@ -4567,7 +4566,7 @@ local function CreateFrameIfNeeded()
     optAuthHint:SetPoint("TOPLEFT", P, Y)
     optAuthHint:SetPoint("TOPRIGHT", -P, Y)
     optAuthHint:SetJustifyH("LEFT"); optAuthHint:SetWordWrap(true)
-    optAuthHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAuthHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optAuthHint:SetText("Who may sync with you. Forget goes back to the whitelist, or to asking. "
         .. "Allowing someone does not add them to the list above.")
     Y = Y - 30
@@ -4600,14 +4599,14 @@ local function CreateFrameIfNeeded()
     end
     local optAuthNone = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optAuthNone:SetPoint("TOPLEFT", P + 4, Y)
-    optAuthNone:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAuthNone:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optAuthNone:SetText("No requests or answers yet.")
     AltStable._test.OptAuthNone = optAuthNone
     Y = Y - (OPT_AUTH_ROWS * 18)
     local optAuthFlow = optFlow.Mark(OPT_AUTH_ROWS, 18)
     local optAuthMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optAuthMore:SetPoint("TOPLEFT", P + 4, Y)
-    optAuthMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optAuthMore:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     Y = Y - 20
 
     local AUTH_STATE = {
@@ -4727,7 +4726,7 @@ local function CreateFrameIfNeeded()
     optHideHint:SetPoint("TOPLEFT", P, Y)
     optHideHint:SetPoint("TOPRIGHT", -P, Y)
     optHideHint:SetJustifyH("LEFT"); optHideHint:SetWordWrap(true)
-    optHideHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optHideHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optHideHint:SetText("Right-click a name on the sheet to hide it. Hidden characters keep "
         .. "syncing; they are only left out of the grid and the totals.")
     Y = Y - 32
@@ -4763,7 +4762,7 @@ local function CreateFrameIfNeeded()
     -- Anchored to the list's own rows, which move with the lists above it;
     -- re-anchored on every refresh, so the flow leaves it alone.
     optFlow.skip[optHiddenNote] = true
-    optHiddenNote:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optHiddenNote:SetTextColor(unpack(AltStable.C.TEXT_HELP))
 
     Y = Y - (OPT_HIDDEN_ROWS * 18) - 6
     local optHiddenFlow = optFlow.Mark(OPT_HIDDEN_ROWS, 18)
@@ -4840,7 +4839,7 @@ local function CreateFrameIfNeeded()
     optStaleHint:SetPoint("TOPLEFT", P, Y)
     optStaleHint:SetPoint("TOPRIGHT", -P, Y)
     optStaleHint:SetJustifyH("LEFT"); optStaleHint:SetWordWrap(true)
-    optStaleHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optStaleHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     optStaleHint:SetText("Nobody has played these in that long: deleted, or left behind by a "
         .. "transfer. Untick any to keep. One played again comes back on its own.")
     Y = Y - 32
@@ -4887,7 +4886,7 @@ local function CreateFrameIfNeeded()
     end
     local optStaleNone = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optStaleNone:SetPoint("TOPLEFT", P + 4, Y)
-    optStaleNone:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optStaleNone:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     Y = Y - (OPT_STALE_ROWS * 18) - 6
     local optStaleFlow = optFlow.Mark(OPT_STALE_ROWS, 18)
 
@@ -4908,7 +4907,7 @@ local function CreateFrameIfNeeded()
 
     local optStaleMore = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optStaleMore:SetPoint("LEFT", optStalePage, "RIGHT", 12, 0)
-    optStaleMore:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    optStaleMore:SetTextColor(unpack(AltStable.C.TEXT_HELP))
     Y = Y - 30
 
     local function StaleSelected()
