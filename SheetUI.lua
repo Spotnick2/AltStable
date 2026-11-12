@@ -3945,27 +3945,71 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptRememberSort = optRememberSortCheck
     Y = Y - 22
 
-    -- Ruleset (realm) groups on the sheet. Off, with the faction groups off
-    -- too: one list, in the sort order alone.
-    local optGroupRealmCheck = MakeOptCheckRow("sheetGroupByRealm",
-        "Group characters by ruleset", Y,
-        function(checked)
-            AltStable.SetConfigValue("sheetGroupByRealm", checked)
-            AltStable.RefreshSheet()
-        end)
-    AltStable._test.OptGroupRealm = optGroupRealmCheck
-    Y = Y - 22
+    -- How the sheet groups its characters: one choice of four, over the two
+    -- settings it has always been (sheetGroupByRealm, on unless turned off;
+    -- sheetGroupByFaction, off unless turned on), so nothing saved or synced
+    -- changes shape. A row of choice buttons, as Skin, Glass, Look and Accent.
+    do
+        local MODES = {
+            { id = "none",    label = "None",              realm = false, faction = false, w = 72,
+              hint = "One list, in the sort order alone; a Ruleset column says where each character is." },
+            { id = "ruleset", label = "Ruleset",           realm = true,  faction = false, w = 72,
+              hint = "A header per ruleset (Normal, PvP, RP, RP-PvP, Hardcore); hover it for its servers." },
+            { id = "faction", label = "Faction",           realm = false, faction = true,  w = 72,
+              hint = "A header per faction, across rulesets; a Ruleset column says where each character is." },
+            { id = "both",    label = "Ruleset & faction", realm = true,  faction = true,  w = 120,
+              hint = "A header per faction and ruleset, faction first: Alliance \194\183 PvP." },
+        }
+        local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        lbl:SetPoint("TOPLEFT", P, Y)
+        lbl:SetText("Group")
+        lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        local hint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        hint:SetPoint("TOPLEFT", P + 60, Y - 26)
+        hint:SetPoint("TOPRIGHT", -P, Y - 26)
+        hint:SetJustifyH("LEFT"); hint:SetWordWrap(true)
+        hint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
 
-    -- Faction groups: alone, an Alliance and a Horde header; with the ruleset
-    -- groups, one header per ruleset and faction.
-    local optGroupFactionCheck = MakeOptCheckRow("sheetGroupByFaction",
-        "Group characters by faction", Y,
-        function(checked)
-            AltStable.SetConfigValue("sheetGroupByFaction", checked)
-            AltStable.RefreshSheet()
-        end, GroupsByFaction)
-    AltStable._test.OptGroupFaction = optGroupFactionCheck
-    Y = Y - 30
+        local btns = {}
+        local function Current()
+            local realm, faction = GroupsByRealm(), GroupsByFaction()
+            for _, m in ipairs(MODES) do
+                if m.realm == realm and m.faction == faction then return m end
+            end
+        end
+        local function RefreshGrouping()
+            local cur = Current()
+            for _, b in ipairs(btns) do SetChoiceBtnState(b, b.lbl, b.mode == cur) end
+            hint:SetText(cur and cur.hint or "")
+        end
+        for i, m in ipairs(MODES) do
+            local b = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+            b:SetSize(m.w, 22)
+            if i == 1 then b:SetPoint("TOPLEFT", P + 60, Y + 1)
+            else b:SetPoint("LEFT", btns[i - 1], "RIGHT", 8, 0) end
+            AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+            local l = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            l:SetAllPoints(); l:SetJustifyH("CENTER")
+            l:SetText(m.label)
+            b.mode, b.lbl = m, l
+            b:SetScript("OnClick", function()
+                AltStable.SetConfigValue("sheetGroupByRealm", m.realm)
+                AltStable.SetConfigValue("sheetGroupByFaction", m.faction)
+                RefreshGrouping()
+                AltStable.RefreshSheet()
+            end)
+            btns[i] = b
+        end
+        RefreshGrouping()
+        -- Options opening, the accent changing (the chosen button wears it),
+        -- and a synced setting arriving all repaint it.
+        optionsPanel.refreshers = optionsPanel.refreshers or {}
+        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshGrouping
+        AltStable.RegisterThemeCallback(RefreshGrouping)
+        AltStable._test.OptGroupBtns, AltStable._test.OptGroupHint = btns, hint
+        AltStable._test.OptGroupMode = function() local m = Current(); return m and m.id end
+    end
+    Y = Y - 58
 
     OptSection("ITEMS & MAIL")
     -- Character counts in item tooltips (#304): the Warband tab's checkbox too,
@@ -4888,6 +4932,7 @@ local function CreateFrameIfNeeded()
         for _, cb in ipairs(optionsPanel.checkRows) do
             cb:SetChecked(cb._getter() and true or false)
         end
+        for _, refresh in ipairs(optionsPanel.refreshers or {}) do refresh() end
         optFacingUpdating = true
         optFacingSlider:SetValue(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0)
         optFacingUpdating = false
