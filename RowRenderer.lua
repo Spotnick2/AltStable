@@ -1113,6 +1113,17 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
     local tipBtn = CreateFrame("Button", nil, row)
     tipBtn:SetAllPoints()
     tipBtn:SetScript("OnEnter", function()
+        -- A ruleset group's header names its servers.
+        local g = tipBtn.groupData
+        if not tipBtn.charData and g and g.realms and #g.realms > 0 then
+            AnchorRowTooltip(tipBtn)
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(AltStable.GroupLabel(g), 1, 1, 1)
+            GameTooltip:AddLine((#g.realms > 1 and "Servers: " or "Server: ")
+                .. table.concat(g.realms, ", "), 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+            return
+        end
         if not tipBtn.charData then return end
         local c = tipBtn.charData
         local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:2:0|t"
@@ -1179,7 +1190,7 @@ function AltStable.RenderFrozenGroupRow(row, item)
     -- row drew a CHARACTER a frame ago - collapsing a realm is enough. Leaving
     -- charData behind gave the realm header that character's tooltip, and since
     -- #21 a right-click on the header would have offered to hide it.
-    if row.nameTipBtn then row.nameTipBtn.charData = nil end
+    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = item end
 
     -- Apply the bordered-box backdrop the first time we render this button.
     -- Doing it here (not in CreateFrozenRow) keeps creation lean and lets
@@ -1199,12 +1210,13 @@ function AltStable.RenderFrozenGroupRow(row, item)
     row.nameLabel:ClearAllPoints()
     row.nameLabel:SetPoint("LEFT", row.collapseBtn, "RIGHT", 6, 0)
 
-    local key = item.key or item.realm
+    local key = item.key
     row.collapseBtn:SetScript("OnClick", function()
-        if AltStable.ToggleRealm then AltStable.ToggleRealm(key) end
+        if AltStable.ToggleGroup then AltStable.ToggleGroup(key) end
     end)
 
-    -- Group row shows just the realm name in white, bold-ish. The character
+    -- Group row shows just its name (the faction, the ruleset or both) in
+    -- white, bold-ish; the ruleset's servers are in its tooltip. The character
     -- count, total levels and total gold previously crammed into this label
     -- are already displayed in the totals bar — duplicating them here just
     -- made the row noisy and forced an unnecessary truncation in the
@@ -1220,16 +1232,19 @@ local FACTION_LABEL = {
     Horde    = { hex = "ffff6060", global = "FACTION_HORDE" },
 }
 
--- A group header's text: the realm, the faction, or both ("Forever PvP ·
--- Alliance"). The faction name is the client's localized one when it has it.
+-- A group header's text: the faction, the ruleset, or both, faction first
+-- ("Alliance · PvP"). The faction name is the client's localized one when it
+-- has it.
 function AltStable.GroupLabel(item)
     local parts = {}
-    if item.realm then parts[#parts + 1] = "|cffffffff" .. item.realm .. "|r" end
     if item.faction then
         local f = FACTION_LABEL[item.faction]
         local name = f and rawget(_G, f.global)
         if type(name) ~= "string" or name == "" then name = item.faction end
         parts[#parts + 1] = "|c" .. (f and f.hex or "ffaaaaaa") .. name .. "|r"
+    end
+    if item.ruleset then
+        parts[#parts + 1] = "|cffffffff" .. AltStable.RulesetGroupName(item.ruleset) .. "|r"
     end
     return table.concat(parts, "|cffaaaaaa · |r")
 end
@@ -1259,7 +1274,7 @@ function AltStable.HideFrozenRow(row)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Hide()
     row.nameLabel:SetText("")
-    if row.nameTipBtn then row.nameTipBtn.charData = nil end
+    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil end
     row:Hide()
 end
 
@@ -1277,6 +1292,6 @@ function AltStable.RenderFrozenFillerRow(row, index)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Hide()
     row.nameLabel:SetText("")
-    if row.nameTipBtn then row.nameTipBtn.charData = nil end
+    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil end
     row:Show()
 end

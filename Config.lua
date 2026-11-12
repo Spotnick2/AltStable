@@ -717,19 +717,27 @@ end
 -- No ruleset art exists in the client (its UI source has the words, not
 -- pictures), so a small coloured badge: what kind of realm the character is on.
 -- One table for the Roster's camp list (#170) and the sheet's Ruleset column.
--- The third entry is the tooltip's spelled-out name.
+-- The third entry is the tooltip's spelled-out name, the fourth the sheet's
+-- ruleset group header.
 local RULESET_BADGE = {
-    Normal   = { "PvE", "|cff8fd18f", "PvE" },
-    PvP      = { "PvP", "|cffff6b6b", "PvP" },
-    RP       = { "RP",  "|cffc79bff", "Roleplay" },
-    RPPvP    = { "RP-PvP", "|cffe88ad6", "Roleplay PvP" },
-    Hardcore = { "HC",  "|cffff9a3c", "Hardcore" },
+    Normal   = { "PvE", "|cff8fd18f", "PvE", "Normal" },
+    PvP      = { "PvP", "|cffff6b6b", "PvP", "PvP" },
+    RP       = { "RP",  "|cffc79bff", "Roleplay", "RP" },
+    RPPvP    = { "RP-PvP", "|cffe88ad6", "Roleplay PvP", "RP-PvP" },
+    Hardcore = { "HC",  "|cffff9a3c", "Hardcore", "Hardcore" },
 }
 
 -- The coloured badge for a realm, or "" for one we cannot read.
 function AltStable.RulesetBadge(realm)
     local b = RULESET_BADGE[AltStable.RulesetOf(realm)]
     return b and (b[2] .. b[1] .. "|r") or ""
+end
+
+-- A ruleset group's header (a RulesetOf key): Normal, PvP, RP, RP-PvP,
+-- Hardcore, and Unknown for a character with no realm stored.
+function AltStable.RulesetGroupName(ruleset)
+    local b = RULESET_BADGE[ruleset]
+    return b and b[4] or "Unknown"
 end
 
 -- The ruleset as a player calls it ("PvE", "Roleplay"), or nil when unknown.

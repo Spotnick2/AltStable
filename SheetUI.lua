@@ -1001,18 +1001,23 @@ local function BuildDisplayList()
     end
 
     -- Groups come in the order their first character sorts, as the realms
-    -- always have. The key is what a collapse is remembered by: the realm's
-    -- name alone when grouped by realm only, so a collapse made before the
-    -- faction option existed still holds.
+    -- always have. A ruleset group holds every realm of that ruleset; its
+    -- realms are named in the header's tooltip.
     local groupOrder, groupChars, groupOf = {}, {}, {}
     for _, char in ipairs(allChars) do
-        local realm   = byRealm and (char.realm or "Unknown") or nil
+        local ruleset = byRealm and AltStable.RulesetOf(char.realm) or nil
         local faction = byFaction and FactionGroupOf(char) or nil
-        local key = realm and faction and (realm .. "\031" .. faction) or realm or faction
-        if not groupChars[key] then
-            groupChars[key] = {}
-            groupOf[key] = { realm = realm, faction = faction }
+        local key = ruleset and faction and (faction .. "\031" .. ruleset) or ruleset or faction
+        local g = groupOf[key]
+        if not g then
+            g = { ruleset = ruleset, faction = faction, realms = {}, seen = {} }
+            groupOf[key], groupChars[key] = g, {}
             table.insert(groupOrder, key)
+        end
+        local realm = char.realm
+        if ruleset and type(realm) == "string" and realm ~= "" and not g.seen[realm] then
+            g.seen[realm] = true
+            g.realms[#g.realms + 1] = realm
         end
         table.insert(groupChars[key], char)
     end
@@ -1021,7 +1026,7 @@ local function BuildDisplayList()
         for _, c in ipairs(chars) do
             sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)   -- nil = unreadable; the footer counts those
         end
-        -- Which accounts this realm's characters came from.
+        -- Which accounts this group's characters came from.
         --
         -- The group header has always printed "(Account: Default)" because the
         -- item never carried an account at all - `item.account` was nil for
@@ -1030,8 +1035,10 @@ local function BuildDisplayList()
         --
         -- A SET, not one value: a realm can hold characters from more than one
         -- account, which is the entire point of the sync feature.
+        local g = groupOf[key]
+        table.sort(g.realms)
         table.insert(displayList,{kind="group",key=key,
-            realm=groupOf[key].realm,faction=groupOf[key].faction,count=#chars,
+            ruleset=g.ruleset,realms=g.ruleset and g.realms or nil,faction=g.faction,count=#chars,
             accounts=CollectAccounts(chars),
             sumLevel=sumLvl,sumGold=sumGold,collapsed=collapsed[key]})
         if not collapsed[key] then
@@ -5510,9 +5517,9 @@ function AltStable.EnsureSheetVisible()
     if not frame:IsShown() then frame:Show(); Refresh() end
 end
 
--- Takes the group's key (the item's `key`): the realm's name when grouped by
--- ruleset only, as before the faction groups.
-function AltStable.ToggleRealm(key)
+-- Takes the group's key (the item's `key`): the ruleset ("PvP") or the
+-- faction alone, or "<faction>\031<ruleset>" with both.
+function AltStable.ToggleGroup(key)
     collapsed[key]=not collapsed[key]
     BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
     ResizeFrameToContent()
