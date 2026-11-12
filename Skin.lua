@@ -890,7 +890,20 @@ end
 -- a missing region would have hidden the walk itself - leaving g.top, which
 -- carries the rim, drawn over somebody else's tooltip. The per-part guards
 -- below say nils are expected; ipairs made them unreachable.
-local TIP_PART_KEYS = { "shadow", "tint", "grain", "wash", "top" }
+local TIP_PART_KEYS = { "shadow", "backing", "tint", "grain", "wash", "top" }
+
+-- THE TOOLTIP'S BACKING. The material alone is the popup body (0.55 on clear),
+-- and the stock body it replaces is opaque (SharedTooltip_SetBackdropStyle
+-- sets the NineSlice centre to alpha 1). Over the world that reads; over the
+-- Warband grid, bright item icons and their counts read straight through the
+-- item's name and the per-character lines (the owner's screenshot, 2026-11-12).
+-- A tooltip opens over other UI as a rule, so it takes Glass UI's answer for
+-- exactly that case: the suite's backing colour (Suite.BACKING) at the window
+-- floor (Theme.WINDOW_BACKING, 0.93, set after RestedXP's guide text read
+-- through the merchant), under the glass's own tint, wash and rim. Not the
+-- quest tracker's 0.35: that one sits over the world, and with the tint it is
+-- the ~50% this replaces.
+AltStable.TOOLTIP_BACKING = { 0.04, 0.05, 0.07, 0.93 }
 
 local function ForEachTipPart(g, fn)
     if not g then return end
@@ -958,7 +971,20 @@ local function ApplyTooltip(tt)
     if type(ns) ~= "table" then return end
     if type(ns.SetAlpha) ~= "function" or type(ns.GetAlpha) ~= "function" then return end
 
-    if not tip.g then tip.g = AltStable.SkinWindow(tt, "small") end
+    if not tip.g then
+        local g = AltStable.SkinWindow(tt, "small")
+        -- BACKGROUND -7: over the material's shadow (-8), under its tint (-6),
+        -- masked to the glass's rounded corners. See TOOLTIP_BACKING.
+        if g and type(tt.CreateTexture) == "function" then
+            local b = tt:CreateTexture(nil, "BACKGROUND", nil, -7)
+            b:SetAllPoints(tt)
+            if g.mask and b.AddMaskTexture then b:AddMaskTexture(g.mask) end
+            local c = AltStable.TOOLTIP_BACKING
+            b:SetColorTexture(c[1], c[2], c[3], c[4])
+            g.backing = b
+        end
+        tip.g = g
+    end
     if not tip.g then return end
     -- Recorded FIRST, and the flag with it: everything after this point is
     -- undoable even if it does not finish.
