@@ -3572,20 +3572,25 @@ local function CreateFrameIfNeeded()
         card:SetHeight(top - Y - 14)
         AltStable.ApplyBackdrop(card, 0.10, 0.12, 0.15, 0.9)
         local title = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        -- Each line at its own offset from the card's top. The note needs a
+        -- left and a right edge to wrap, and both on the same horizontal:
+        -- TOPLEFT + RIGHT would pin its middle to the card's and leave it no
+        -- height at all (docs/forever-api-notes.md, "Two conflicting anchors
+        -- beat an explicit SetHeight"; Codex on #323).
         title:SetPoint("TOPLEFT", 14, -14)
         title:SetText("|cff7fd4ffFollows Glass UI|r")
         local what = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-        what:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
+        what:SetPoint("TOPLEFT", 14, -40)
         local open = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
         open:SetSize(120, 22)
-        open:SetPoint("TOPLEFT", what, "BOTTOMLEFT", 0, -14)
+        open:SetPoint("TOPLEFT", 14, -72)
         open:SetText("Open Glass UI")
         open:SetScript("OnClick", function()
             if not AltStable.OpenGlassUI() then AltStable.SuiteRefuse() end
         end)
         local note = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        note:SetPoint("TOPLEFT", open, "BOTTOMLEFT", 0, -12)
-        note:SetPoint("RIGHT", card, "RIGHT", -14, 0)
+        note:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -106)
+        note:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -106)
         note:SetJustifyH("LEFT"); note:SetWordWrap(true)
         note:SetTextColor(unpack(AltStable.C.TEXT_DIM))
         note:SetText("Change it in Glass UI, or turn off its \"Use Glass UI appearance\" for AltStable "
@@ -3602,7 +3607,7 @@ local function CreateFrameIfNeeded()
                     Cap(SUITE_TINT_TEXT[look.tint] or look.tint), Cap(look.accent)))
             end
         end
-        AltStable._test.LookCard = { card = card, what = what, open = open, rows = rows }
+        AltStable._test.LookCard = { card = card, what = what, open = open, note = note, rows = rows }
     end
     RefreshSkinRow()
 

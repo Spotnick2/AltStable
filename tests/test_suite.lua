@@ -306,6 +306,14 @@ do
     check("  and no reload line", not T.SkinReloadButton():IsShown())
     C.open:GetScript("OnClick")(C.open)
     check("  its button opens Glass UI", S.opened == true)
+    -- The note wraps between a left and a right edge on ONE horizontal: a
+    -- RIGHT anchor would pin its middle to the card's and give it no height.
+    local p1, r1, rp1, _, y1 = C.note:GetPoint(1)
+    local p2, r2, rp2, _, y2 = C.note:GetPoint(2)
+    eq("  the note's edges: top-left and top-right", (p1 or "") .. "," .. (p2 or ""), "TOPLEFT,TOPRIGHT")
+    check("  on one line, both to the card", r1 == C.card and r2 == C.card and y1 == y2
+          and rp1 == "TOPLEFT" and rp2 == "TOPRIGHT", tostring(y1) .. " vs " .. tostring(y2))
+    check("  inside the card", -y1 < C.card:GetHeight() - 30, tostring(y1) .. " in " .. tostring(C.card:GetHeight()))
 
     -- Back to our own look: the rows are ours again.
     fakeSuite({})
