@@ -73,8 +73,8 @@ GetInboxItem = function(i, a)
 end
 
 local function openMailbox()
-    T.OnMailShow()
-    T.OnMailInboxUpdate()
+    WoW.fire("MAIL_SHOW")
+    WoW.fire("MAIL_INBOX_UPDATE")
     WoW.flushTimers()
 end
 local function mine() return AltStableWarbandDB[ME] or {} end
@@ -88,11 +88,11 @@ inbox = {
     { sender = "Elegia Moon",   items = { { 2318, 3 }, { 4306, 2 }, { 99999, 40, true } } },
     { sender = "Someone Else",  items = {} },
 }
-T.OnMailInboxUpdate(); WoW.flushTimers()
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
 eq("an inbox update with no mailbox open reads nothing", mine().mail, nil)
-T.OnMailShow(); T.ScanMail()
+WoW.fire("MAIL_SHOW"); T.ScanMail()
 eq("a mailbox whose contents have not arrived is not read", mine().mail, nil)
-T.OnMailInboxUpdate(); WoW.flushTimers()
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
 eq("once they arrive, the attachments are summed by item", mine().mail and mine().mail[2318], 8)
 eq("  every item", mine().mail[4306], 2)
 eq("  but not currency", mine().mail[99999], nil)
@@ -103,35 +103,60 @@ eq("  nothing held back", mine().mailMore, 0)
 -- Unchanged: no new stamp, so a mailbox visit doesn't churn the sync.
 local first = WoW.now
 WoW.now = WoW.now + 60
-T.OnMailInboxUpdate(); WoW.flushTimers()
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
 eq("an unchanged read is not recorded again", mine().mailStamp, first)
 
 -- An attachment taken: the bags change while the mailbox is open.
 inbox[1].items = {}
-T.OnBagUpdate(0); WoW.flushTimers()
+WoW.fire("BAG_UPDATE", 0); WoW.flushTimers()
 eq("taking an attachment rereads the inbox", mine().mail[2318], 3)
 eq("  and stamps it", mine().mailStamp, WoW.now)
 
 -- An attachment whose count can't be read yet: keep the last good read.
 inbox[2].items[1] = { 2318, nil }
 WoW.now = WoW.now + 60
-T.OnMailInboxUpdate(); WoW.flushTimers()
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
 eq("a half-loaded attachment leaves the last read alone", mine().mail[2318], 3)
 inbox[2].items[1] = { 2318, 3 }
 
 -- More mail than the game shows.
 inboxTotal = 62
-T.OnMailInboxUpdate(); WoW.flushTimers()
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
 eq("mail past what the game shows is counted as unread", mine().mailMore, 62 - 3)
 inboxTotal = nil
 
 -- Closing reads once more, then nothing is read until the next visit.
 inbox[2].items = { { 2318, 1 } }
-T.OnMailClosed()
+WoW.fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 17)
 eq("closing the mailbox reads it one last time", mine().mail[2318], 1)
 inbox[2].items = {}
-T.OnMailInboxUpdate(); WoW.flushTimers()
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
 eq("  and after that nothing is read", mine().mail[2318], 1)
+WoW.fire("BAG_UPDATE", 0); WoW.flushTimers()
+eq("  nor on a bag change away from the mailbox", mine().mail[2318], 1)
+
+-- The close is the interaction's HIDE (17), and nothing else's.
+inbox[2].items = { { 2318, 2 } }
+WoW.fire("MAIL_SHOW"); WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("a new visit reads again", mine().mail[2318], 2)
+WoW.fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 5)   -- a merchant, say
+inbox[2].items = { { 2318, 4 } }
+WoW.fire("BAG_UPDATE", 0); WoW.flushTimers()
+eq("another window's close leaves the mailbox open", mine().mail[2318], 4)
+-- A scan queued in the visit, then the close: the queued scan reads nothing.
+inbox[2].items = { { 2318, 6 } }
+WoW.fire("MAIL_INBOX_UPDATE")
+WoW.fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 17)
+eq("the close reads the last time", mine().mail[2318], 6)
+inbox[2].items = {}
+WoW.flushTimers()
+eq("  and a scan queued before it reads nothing after", mine().mail[2318], 6)
+-- MAIL_CLOSED never fires on Forever; if a later build sends it, it closes too.
+WoW.fire("MAIL_SHOW"); WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+WoW.fire("MAIL_CLOSED")
+inbox[2].items = { { 2318, 9 } }
+WoW.fire("BAG_UPDATE", 0); WoW.flushTimers()
+eq("MAIL_CLOSED closes it as well", mine().mail[2318] or 0, 0)
 
 ------------------------------------------------------------
 -- Who a mail is for
@@ -165,7 +190,7 @@ end
 draft = { { 2318, 20 }, nil, { 2318, 5 }, { 4306, 1 } }
 SendMail("Elegia Moon", "mats", "")
 eq("a send is not counted before the server confirms it", mine().outbox, nil)
-T.OnMailSendSuccess()
+WoW.fire("MAIL_SEND_SUCCESS")
 local box = mine().outbox
 eq("a confirmed send to one of ours is kept on the sender's record", box and #box, 1)
 eq("  addressed to the recipient", box and box[1].to, B)
@@ -178,21 +203,21 @@ local total, holders = T.CountItem(2318)
 eq("the items count for the recipient, in its mail", total, 25)
 eq("  under the recipient", holders[1] and holders[1].guid, B)
 eq("  as mail", holders[1] and holders[1].mail, 25)
-T.OnMailSendSuccess()
+WoW.fire("MAIL_SEND_SUCCESS")
 eq("a second success with no send in between adds nothing", #mine().outbox, 1)
 
 SendMail("Kalizo Sun", "x", "")
-T.OnMailFailed()
-T.OnMailSendSuccess()
+WoW.fire("MAIL_FAILED")
+WoW.fire("MAIL_SEND_SUCCESS")
 eq("a failed send counts nothing", #mine().outbox, 1)
 
 SendMail("Stranger Person", "x", "")
-T.OnMailSendSuccess()
+WoW.fire("MAIL_SEND_SUCCESS")
 eq("a send to a stranger counts nothing", #mine().outbox, 1)
 
 draft = {}
 SendMail("Kalizo Sun", "gold only", "")
-T.OnMailSendSuccess()
+WoW.fire("MAIL_SEND_SUCCESS")
 eq("a send without items counts nothing", #mine().outbox, 1)
 
 -- The recipient reads its inbox: what arrived is in its own mail now.
@@ -213,6 +238,37 @@ eq("a read with a send pending is recorded even if the inbox looks the same",
    AltStableWarbandDB[B].mailStamp, WoW.now)
 eq("  and the send no longer counts", (T.CountItem(2318)), 0)
 
+-- THE SEND ARRIVES AFTER THE READ (Codex review of #313). B's inbox was empty
+-- at its last read; A sends from another account; B takes the item before its
+-- scan, so B's inbox reads empty again - unchanged - and B knows of no pending
+-- send yet. That read must still be recorded, or the send, synced later,
+-- counts as unread mail on top of the item in B's bags.
+resetDB()
+local sentAt = WoW.now
+AltStableWarbandDB[B] = { mail = {}, mailStamp = sentAt - 100, mailMore = 0 }
+WoW.now = sentAt + 100
+WoW.player.guid = B
+inbox = {}
+WoW.fire("MAIL_SHOW"); WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("a visit's first read is recorded even when nothing changed", AltStableWarbandDB[B].mailStamp, WoW.now)
+-- And its close, for a send that arrived and was taken during the visit.
+WoW.now = WoW.now + 50
+local midVisitSend = WoW.now - 10
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("  an unchanged read mid-visit is not", AltStableWarbandDB[B].mailStamp, WoW.now - 50)
+WoW.fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 17)
+eq("  its close is", AltStableWarbandDB[B].mailStamp, WoW.now)
+WoW.player.guid = realGuid
+T.DeserializePlayer(ME, ("v1|s=%d|kt=0|b=|k=|mt=0|mm=0|m=|ot=%d|o=%s@%d:2318,4/%s@%d:2318,1")
+    :format(midVisitSend, midVisitSend, B, sentAt, B, midVisitSend))
+eq("the sends, synced after those reads, count nothing", (T.CountItem(2318)), 0)
+
+resetDB()
+WoW.now = sentAt
+draft = { { 2318, 20 }, { 2318, 5 } }
+SendMail("Elegia Moon", "mats", "")
+WoW.fire("MAIL_SEND_SUCCESS")
+
 -- Thirty days on, unopened mail has been returned or deleted.
 AltStableWarbandDB[B] = nil
 WoW.now = mine().outbox[1].at + 30 * 86400 + 1
@@ -221,7 +277,7 @@ eq("a send older than 30 days no longer counts", (T.CountItem(2318)), 0)
 -- The next send prunes what no longer counts.
 draft = { { 4306, 2 } }
 SendMail("Kalizo Sun", "ore", "")
-T.OnMailSendSuccess()
+WoW.fire("MAIL_SEND_SUCCESS")
 eq("a new send drops entries that no longer count", #mine().outbox, 1)
 eq("  keeping the new one", mine().outbox[1].to, C)
 
@@ -338,11 +394,11 @@ eq("mail is on by default", T.MailOn(), true)
 AltStableConfig.warbandMail = false
 inbox = { { sender = "Auction House", items = { { 2318, 5 } } } }
 openMailbox()
-T.OnMailClosed()
+WoW.fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 17)
 eq("off, the inbox is not read", mine().mail, nil)
 draft = { { 2318, 1 } }
 SendMail("Elegia Moon", "x", "")
-T.OnMailSendSuccess()
+WoW.fire("MAIL_SEND_SUCCESS")
 eq("  sends are not recorded", mine().outbox, nil)
 AltStableWarbandDB[ME] = { bags = { [2318] = 1 }, mail = { [2318] = 7 }, mailStamp = WoW.now, stamp = WoW.now,
                            outbox = { { to = B, at = WoW.now, items = { [2318] = 2 } } }, outboxStamp = WoW.now }

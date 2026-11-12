@@ -257,6 +257,15 @@ end
 -- (the first MAIL_INBOX_UPDATE after MAIL_SHOW), again whenever it changes
 -- while open (an attachment taken: MAIL_INBOX_UPDATE, a bag update), and once
 -- at close. Each read replaces the whole map, so what was taken or deleted goes.
+-- The close is PLAYER_INTERACTION_MANAGER_FRAME_HIDE with MailInfo (17):
+-- MAIL_CLOSED never fired on Forever in about ten closes and a logout at the
+-- mailbox (GlassMail docs/FOREVER-PROBE.md, session 2; Codex review of #313).
+--
+-- Every visit is recorded at least twice, at its first read and at its close,
+-- even when the inbox looks the same: the read's time is what tells a send that
+-- the recipient has seen it (below), and the send may only reach this account
+-- after the read, from another one. Between those, an unchanged read is not
+-- recorded, so a visit doesn't churn the sync (Codex review of #313).
 --
 -- The game shows 50 mails at a time; GetInboxNumItems' second return is how
 -- many there are. The rest can't be read until some are cleared, so a read
@@ -290,6 +299,7 @@ local function MailOn()
 end
 
 local isMailOpen, inboxReady, mailPending = false, false, false
+local visitStamped = false   -- this visit's first read is recorded
 local pendingSend   -- { to = guid, items = map }, from the SendMail post-hook
 
 -- Attachments of one mail, summed by item id into `map`. False when one can't
@@ -369,38 +379,27 @@ local function Incoming()
     return out
 end
 
-local function PendingFor(guid, since)
-    local now = time()
-    for _, wb in pairs(AltStableWarbandDB) do
-        if type(wb) == "table" and type(wb.outbox) == "table" then
-            for _, e in ipairs(wb.outbox) do
-                if e.to == guid and (e.at or 0) > since and now - e.at <= OUTBOX_TTL then return true end
-            end
-        end
-    end
-    return false
-end
-
 local function Touch(guid)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
     if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
 end
 
--- A read that changed nothing is not recorded (it would churn the sync), unless
--- mail on its way to this character is pending: the read has seen whatever
--- arrived, so it must stop those entries counting, or a taken item would count
--- twice, in the bags and still "in the mail".
-local function ScanMail()
+-- A read is recorded when it changed something, or when it is the visit's
+-- first or its last (`final`, the close): each must stop the sends it has seen
+-- counting, or a taken item would count twice, in the bags and still "in the
+-- mail". A send taken mid-visit with nothing else changed counts until the close.
+local function ScanMail(final)
     if not MailOn() or not isMailOpen or not inboxReady then return end
     local guid = UnitGUID("player")
     if not guid then return end
     local map, more = ReadInbox()
     if not map then return end
     local db = GetDB(guid)
-    if db.mailStamp and mapsEqual(db.mail, map) and (db.mailMore or 0) == more
-       and not PendingFor(guid, db.mailStamp) then
+    if visitStamped and not final and db.mailStamp
+       and mapsEqual(db.mail, map) and (db.mailMore or 0) == more then
         return
     end
+    visitStamped = true
     db.mail, db.mailMore, db.mailStamp = map, more, time()
     Restamp(db)
     Touch(guid)
@@ -413,7 +412,7 @@ local function ScheduleMail()
 end
 
 local function OnMailShow()
-    isMailOpen, inboxReady = true, false
+    isMailOpen, inboxReady, visitStamped = true, false, false
 end
 
 local function OnMailInboxUpdate()
@@ -422,9 +421,16 @@ local function OnMailInboxUpdate()
     ScheduleMail()
 end
 
+-- Idempotent: a scan queued for this visit finds the mailbox closed and reads
+-- nothing.
 local function OnMailClosed()
-    if isMailOpen and inboxReady then ScanMail() end
+    if isMailOpen and inboxReady then ScanMail(true) end
     isMailOpen, inboxReady = false, false
+end
+
+local function OnInteractionHide(kind)
+    local mailInfo = (Enum and Enum.PlayerInteractionType and Enum.PlayerInteractionType.MailInfo) or 17
+    if kind == mailInfo then OnMailClosed() end
 end
 
 -- Entries the recipient has since read, or the game has since returned or
@@ -2308,7 +2314,8 @@ frame:RegisterEvent("BANK_TABS_CHANGED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("MAIL_SHOW")
 frame:RegisterEvent("MAIL_INBOX_UPDATE")
-frame:RegisterEvent("MAIL_CLOSED")
+frame:RegisterEvent("MAIL_CLOSED")          -- never seen on Forever; the HIDE below closes
+frame:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
 frame:RegisterEvent("MAIL_SEND_SUCCESS")
 frame:RegisterEvent("MAIL_FAILED")
 frame:SetScript("OnEvent", function(self, event, arg1, arg2)
@@ -2318,6 +2325,8 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         OnMailInboxUpdate()
     elseif event == "MAIL_CLOSED" then
         OnMailClosed()
+    elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
+        OnInteractionHide(arg1)
     elseif event == "MAIL_SEND_SUCCESS" then
         OnMailSendSuccess()
     elseif event == "MAIL_FAILED" then
