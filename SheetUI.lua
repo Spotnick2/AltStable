@@ -3136,6 +3136,12 @@ local function CreateFrameIfNeeded()
         local scroll = CreateFrame("ScrollFrame", nil, optionsPanel, "UIPanelScrollFrameTemplate")
         scroll:SetPoint("TOPLEFT", optNav, "TOPRIGHT", 0, 0)
         scroll:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -26, 0)  -- room for the scrollbar
+        -- The template's own switch: no scroll bar while the page fits, back
+        -- when a list grows or the window shrinks (ScrollFrame_OnScrollRangeChanged,
+        -- SecureScrollTemplates.lua). The wheel goes through the bar's value,
+        -- clamped to the range, so it does nothing while there is nothing to
+        -- scroll. The bar's 26px stay reserved, so nothing moves sideways.
+        scroll.scrollBarHideable = true
         local page = CreateFrame("Frame", nil, scroll)
         page:SetSize(1, 1)
         scroll:SetScrollChild(page)
@@ -3752,7 +3758,9 @@ local function CreateFrameIfNeeded()
                 elseif loaded then
                     fs:SetText("|cffffcc00Off after a /reload|r")
                 elseif on then
-                    fs:SetText("|cffff7777Not loaded: enable it in the game's AddOns list|r")
+                    -- Disabled in the AddOns list, not installed, or an error
+                    -- while loading (Core.lua says which in chat).
+                    fs:SetText("|cffff7777Not loaded: check AddOns, or the error in chat|r")
                 else
                     fs:SetText("|cff888888Off|r")
                 end
