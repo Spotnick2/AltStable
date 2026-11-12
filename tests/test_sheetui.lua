@@ -4650,6 +4650,9 @@ do
     btns[5]:GetScript("OnClick")(btns[5])
     eq("a page button opens its page, and only it", Visible(), "sync")
     eq("  and is the active one", T.OptActivePage(), "sync")
+    for id, page in pairs(pages) do
+        check("the " .. id .. " page's scroll bar hides while it fits", page.scroll.scrollBarHideable == true)
+    end
     T.ShowOptPage("nowhere")
     eq("an unknown page changes nothing", Visible(), "sync")
     T.ShowOptPage("general")
@@ -4811,8 +4814,8 @@ do
     eq("unticked and not loaded: Off", Plain(st.warband:GetText()), "Off")
     AltStableConfig.plugins.warband = true
     panel:GetScript("OnShow")(panel)
-    check("ticked but not loaded: says where to look",
-          Plain(st.warband:GetText()):find("AddOns list", 1, true) ~= nil, Plain(st.warband:GetText()))
+    eq("ticked but not loaded: says where to look", Plain(st.warband:GetText()),
+       "Not loaded: check AddOns, or the error in chat")
     box:SetChecked(true); box:GetScript("OnClick")(box)
     eq("ticking loads it, and it reads On", Plain(st.warband:GetText()), "On")
     eq("the status is on the Modules page", st.warband:GetParent(), T.OptPages.modules)
