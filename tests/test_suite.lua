@@ -315,6 +315,9 @@ do
     eq("  the rows below close up to just under it", C.flow.used, h + 10)
     local _, _, _, bx = C.open:GetPoint(1)
     check("  its button on the right", (C.open:GetPoint(1)) == "TOPRIGHT" and bx < 0)
+    eq("  a neutral button, as Reset and Add", C.open.lbl and C.open.lbl:GetText(), "Open Glass UI")
+    check("  with a soft rim, as is the card's", C.open._backdropBorder and C.open._backdropBorder[4] < 0.3
+          and C.card._backdropBorder and C.card._backdropBorder[4] < 0.3)
     local _, _, _, wx = C.what:GetPoint(2)
     check("  the look line stops short of it", wx <= -(14 + 120), tostring(wx))
     -- A narrow window wraps the note onto more lines: the card grows with it.

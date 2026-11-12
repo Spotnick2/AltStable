@@ -3126,8 +3126,10 @@ local function CreateFrameIfNeeded()
         local back = optionsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
         back:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
         back:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", 0, 0)
+        -- Opaque: at the tooltip's 0.93 a city's huge nameplates were still
+        -- readable through the settings (screenshots, #327 review).
         local c = AltStable.TOOLTIP_BACKING
-        back:SetColorTexture(c[1], c[2], c[3], c[4])
+        back:SetColorTexture(c[1], c[2], c[3], 1)
         AltStable.SkinClipTexture(optionsPanel, back, frame)
         AltStable._test.optBacking = back
     end
@@ -3143,6 +3145,14 @@ local function CreateFrameIfNeeded()
         -- clamped to the range, so it does nothing while there is nothing to
         -- scroll. The bar's 26px stay reserved, so nothing moves sideways.
         scroll.scrollBarHideable = true
+        -- Set after the template's OnLoad, which already showed the bar's
+        -- disabled arrows; and a page that always fits never changes its
+        -- range, so the template never looks again. Ask it each time the page
+        -- shows: it hides the bar, arrows and thumb at a range of 0.
+        scroll:HookScript("OnShow", function(self)
+            local check = rawget(_G, "ScrollFrame_OnScrollRangeChanged")
+            if check then check(self) end
+        end)
         local page = CreateFrame("Frame", nil, scroll)
         page:SetSize(1, 1)
         scroll:SetScrollChild(page)
@@ -3678,6 +3688,7 @@ local function CreateFrameIfNeeded()
         card:SetPoint("TOPRIGHT", -P, top + 4)
         card:SetHeight(80)
         AltStable.ApplyBackdrop(card, 0.10, 0.12, 0.15, 0.9)
+        card:SetBackdropBorderColor(1, 1, 1, 0.14)
         -- Each line at its own offset from the card's top, the button on the
         -- right. The look and the note need a left and a right edge, both on
         -- the same horizontal: TOPLEFT + RIGHT would pin a middle to the
@@ -3686,10 +3697,18 @@ local function CreateFrameIfNeeded()
         local title = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         title:SetPoint("TOPLEFT", 14, -12)
         title:SetText("|cff7fd4ffFollows Glass UI|r")
-        local open = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+        -- Neutral, as Reset and Add: the stock red button was the loudest
+        -- thing on the page.
+        local open = CreateFrame("Button", nil, card, "BackdropTemplate")
         open:SetSize(120, 22)
         open:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -20)
-        open:SetText("Open Glass UI")
+        AltStable.ApplyBackdrop(open, 0.12, 0.12, 0.12, 1)
+        open:SetBackdropBorderColor(1, 1, 1, 0.14)
+        local openLbl = open:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        openLbl:SetAllPoints(); openLbl:SetJustifyH("CENTER"); openLbl:SetText("Open Glass UI")
+        open.lbl = openLbl
+        open:SetScript("OnEnter", function() open:SetBackdropColor(0.18, 0.18, 0.18, 1) end)
+        open:SetScript("OnLeave", function() open:SetBackdropColor(0.12, 0.12, 0.12, 1) end)
         open:SetScript("OnClick", function()
             if not AltStable.OpenGlassUI() then AltStable.SuiteRefuse() end
         end)
@@ -4316,7 +4335,7 @@ local function CreateFrameIfNeeded()
         GameTooltip:Show()
     end)
     optMailCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    OptDesc(optMailCheck, "Off: no mail is read, shown or synced.")
+    OptDesc(optMailCheck, "When disabled: no mail is read, shown or synced.")
     AltStable._test.OptWarbandMail = optMailCheck
     Y = Y - 44
 
@@ -4403,7 +4422,7 @@ local function CreateFrameIfNeeded()
     local optSendAllCheck = MakeOptCheckRow("sendAllAccounts",
         "Share all known accounts", Y, nil,
         function() return AltStableConfig and AltStableConfig.sendAllAccounts == true end)
-    OptDesc(optSendAllCheck, "Off: only this account's characters are shared.")
+    OptDesc(optSendAllCheck, "When disabled: only this account's characters are shared.")
     Y = Y - 38
 
     -- #58: your own other accounts, found and synced through Battle.net -
@@ -4434,11 +4453,7 @@ local function CreateFrameIfNeeded()
 
 
     -- ── Whitelist (sync peers) ────────────────────────────
-    local optWlHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optWlHdr:SetPoint("TOPLEFT", P, Y)
-    optWlHdr:SetText("SYNC PEERS")
-    optWlHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 18
+    OptSection("SYNC PEERS", 18)
 
     local optWlHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optWlHint:SetPoint("TOPLEFT", P, Y)
@@ -4546,11 +4561,7 @@ local function CreateFrameIfNeeded()
     -- Everyone who has asked and not been answered, and every stored answer.
     -- The whitelist above is who WE ask; this is who may ask US, and the two
     -- are separate on purpose.
-    local optAuthHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optAuthHdr:SetPoint("TOPLEFT", P, Y)
-    optAuthHdr:SetText("REQUESTS AND ANSWERS")
-    optAuthHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 18
+    OptSection("REQUESTS AND ANSWERS", 18)
 
     local optAuthHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optAuthHint:SetPoint("TOPLEFT", P, Y)
@@ -4665,11 +4676,7 @@ local function CreateFrameIfNeeded()
 
     -- ── Notifications page ────────────────────────────────
     OptPage("notifications")
-    local optToastHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optToastHdr:SetPoint("TOPLEFT", P, Y)
-    optToastHdr:SetText("TOASTS")
-    optToastHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 22
+    OptSection("TOASTS", 22)
 
     local optToastsCheck = MakeOptCheckRow("toastsEnabled",
         "Show profession toasts", Y)
@@ -4703,11 +4710,7 @@ local function CreateFrameIfNeeded()
     Y = Y - 12
 
     -- ── Mail section ──────────────────────────────────────
-    local optMailHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optMailHdr:SetPoint("TOPLEFT", P, Y)
-    optMailHdr:SetText("MAIL")
-    optMailHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 22
+    OptSection("MAIL", 22)
 
     local optMailAlertsCheck = MakeOptCheckRow("mailAlertsEnabled",
         "Warn at login about mail expiring soon", Y)
@@ -4718,11 +4721,7 @@ local function CreateFrameIfNeeded()
     -- ── Characters page: hidden and old characters ────────
     OptPage("characters")
     Y = Y - 8
-    local optHideHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optHideHdr:SetPoint("TOPLEFT", P, Y)
-    optHideHdr:SetText("HIDDEN CHARACTERS")
-    optHideHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 18
+    OptSection("HIDDEN CHARACTERS", 18)
 
     local optHideHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optHideHint:SetPoint("TOPLEFT", P, Y)
@@ -4835,11 +4834,7 @@ local function CreateFrameIfNeeded()
     -- Only the rows on screen are ever forgotten - a tick nobody could see is
     -- not a choice anybody made - so past the reserve the list pages, eight
     -- at a time, and an untick holds on every page.
-    local optStaleHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optStaleHdr:SetPoint("TOPLEFT", P, Y)
-    optStaleHdr:SetText("OLD CHARACTERS")
-    optStaleHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 18
+    OptSection("OLD CHARACTERS", 18)
 
     local optStaleHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optStaleHint:SetPoint("TOPLEFT", P, Y)

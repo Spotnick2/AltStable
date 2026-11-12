@@ -4650,9 +4650,18 @@ do
     btns[5]:GetScript("OnClick")(btns[5])
     eq("a page button opens its page, and only it", Visible(), "sync")
     eq("  and is the active one", T.OptActivePage(), "sync")
+    -- The template hides the bar on a range change; set after its OnLoad, and
+    -- with a page whose range never changes, it has to be asked on show.
+    local asked = {}
+    local realCheck = rawget(_G, "ScrollFrame_OnScrollRangeChanged")
+    _G.ScrollFrame_OnScrollRangeChanged = function(sf) asked[sf] = true end
     for id, page in pairs(pages) do
         check("the " .. id .. " page's scroll bar hides while it fits", page.scroll.scrollBarHideable == true)
+        T.ShowOptPage(id)
+        check("  showing " .. id .. " asks the template to check its bar", asked[page.scroll] == true)
     end
+    _G.ScrollFrame_OnScrollRangeChanged = realCheck
+    T.ShowOptPage("sync")
     T.ShowOptPage("nowhere")
     eq("an unknown page changes nothing", Visible(), "sync")
     T.ShowOptPage("general")
@@ -4697,8 +4706,8 @@ do
     check("on glass the pages have a backing", back ~= nil)
     if back then
         local c, want = back._colorTexture, AltStable.TOOLTIP_BACKING
-        check("  in the suite's backing colour, near opaque", c and c[1] == want[1] and c[4] == want[4]
-              and c[4] >= 0.9, c and tostring(c[4]) or "nil")
+        check("  in the suite's backing colour, opaque", c and c[1] == want[1] and c[2] == want[2]
+              and c[3] == want[3] and c[4] == 1, c and tostring(c[4]) or "nil")
         local _, rel, relPoint = back:GetPoint(1)
         check("  under the page buttons' column too", rel == T.optionsPanel and relPoint == "TOPLEFT")
     end
@@ -4866,7 +4875,11 @@ do
     check("sharing keeps its meaning under the short label",
           (T.OptSyncSettings.desc and T.OptSyncSettings.desc:GetText() or ""):find("latest change wins") ~= nil)
     eq("mailbox tracking's label", T.OptWarbandMail.label:GetText(), "Track mailbox items")
-    check("  says what off means", (T.OptWarbandMail.desc:GetText() or ""):find("Off: no mail") ~= nil)
+    check("  says what turning it off does", (T.OptWarbandMail.desc:GetText() or ""):find("^When disabled: no mail") ~= nil)
+    for _, row in ipairs(T.optionsPanel.checkRows) do
+        local d = row.desc and row.desc:GetText() or ""
+        check("no helper line starts with a bare \"Off:\" (it reads as the state): " .. d, not d:find("^Off:"))
+    end
 
     -- Helper lines grey with their setting.
     local panel = T.optionsPanel
@@ -4902,6 +4915,13 @@ do
         end
     end
     check("Appearance's headings have rules", rules >= 1, tostring(rules))
+    -- Every heading on every page, not only the ones built first.
+    local want = { general = 3, appearance = 1, characters = 4, notifications = 2, sync = 2 }
+    for id, n in pairs(want) do
+        local got = 0
+        for _, r in ipairs({ T.OptPages[id]:GetRegions() }) do if r.rule then got = got + 1 end end
+        check("every heading on " .. id .. " has its rule", got >= n, got .. " of " .. n)
+    end
 
     -- Choice buttons: the chosen one keeps a full accent border; the others a soft one.
     local chosen, other
