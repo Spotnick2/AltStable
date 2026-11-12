@@ -1031,6 +1031,9 @@ C_TooltipInfo = {
     end,
 }
 ENCHANTED_TOOLTIP_LINE = "Enchanted: %s"
+-- GlobalStrings: the faction names, as the enUS client has them.
+FACTION_ALLIANCE = "Alliance"
+FACTION_HORDE = "Horde"
 
 ------------------------------------------------------------
 -- C_Item  (tuple returns, Classic order)

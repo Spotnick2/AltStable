@@ -3934,7 +3934,7 @@ do
     local function Shape()
         local out = {}
         for _, it in ipairs(T.DisplayList()) do
-            out[#out + 1] = it.kind == "group" and ("[" .. it.realm .. "]") or it.data.guid
+            out[#out + 1] = it.kind == "group" and ("[" .. it.ruleset .. "]") or it.data.guid
         end
         return table.concat(out, ",")
     end
@@ -3957,7 +3957,7 @@ do
         return table.concat(out, ",")
     end
 
-    eq("grouped by default: each realm under its header", Shape(), "[Forever PvP],b,[Forever Hardcore],c,a")
+    eq("grouped by default: each ruleset under its header", Shape(), "[PvP],b,[Hardcore],c,a")
     eq("  and no Ruleset column: the header says where they are", Fields(), "class,race,level,ilvl")
 
     local cb = T.OptGroupRealm
@@ -3972,15 +3972,15 @@ do
     -- A collapsed realm hides nobody once the groups are gone.
     AltStableConfig.sheetGroupByRealm = true
     AltStable.RefreshSheet()
-    AltStable.ToggleRealm("Forever Hardcore")
-    eq("a collapsed realm keeps only its header", Shape(), "[Forever PvP],b,[Forever Hardcore]")
+    AltStable.ToggleGroup("Hardcore")
+    eq("a collapsed ruleset keeps only its header", Shape(), "[PvP],b,[Hardcore]")
     cb:SetChecked(false); cb:GetScript("OnClick")(cb)
     eq("off, every character is listed", Shape(), "b,c,a")
 
     cb:SetChecked(true); cb:GetScript("OnClick")(cb)
-    eq("back on, the groups return, the collapse kept", Shape(), "[Forever PvP],b,[Forever Hardcore]")
+    eq("back on, the groups return, the collapse kept", Shape(), "[PvP],b,[Hardcore]")
     eq("  and the Ruleset column goes", Fields(), "class,race,level,ilvl")
-    AltStable.ToggleRealm("Forever Hardcore")
+    AltStable.ToggleGroup("Hardcore")
 
     -- Switched FROM the Options tab, which has no columns: a refresh there
     -- threw (ipairs on its nil fields) on every Options checkbox that
@@ -3995,6 +3995,132 @@ do
     eq("  and back on the table, the Ruleset column is there", Fields(), "class,race,ruleset,level")
     AltStableConfig.sheetGroupByRealm = true
 
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
+end
+
+------------------------------------------------------------
+-- Faction groups: alone, or one group per ruleset and faction
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    AltStable.EnsureSheetVisible()
+    local savedDB = AltStableDB
+    AltStableDB = {
+        a = { guid = "a", name = "Alpha", realm = "Forever Hardcore", level = 10, faction = "Alliance" },
+        b = { guid = "b", name = "Beta",  realm = "Forever PvP",      level = 30, faction = "Horde" },
+        c = { guid = "c", name = "Gamma", realm = "Forever Hardcore", level = 20, faction = "Horde" },
+        d = { guid = "d", name = "Delta", realm = "Forever PvP",      level = 5 },   -- before factions were stored
+    }
+    AltStableConfig.sheetSort = nil
+    AltStableConfig.sheetGroupByRealm = true
+    AltStableConfig.sheetGroupByFaction = nil
+    T.ForgetSessionSorts()
+    AltStable.RefreshSheet()
+
+    local function Shape()
+        local out = {}
+        for _, it in ipairs(T.DisplayList()) do
+            if it.kind == "group" then
+                out[#out + 1] = "[" .. (it.ruleset or "") .. "/" .. (it.faction or "") .. "]"
+            else
+                out[#out + 1] = it.data.guid
+            end
+        end
+        return table.concat(out, ",")
+    end
+    local function Fields()
+        local cols = T.ColumnLayout()
+        local out = {}
+        for i = 1, math.min(4, #cols) do out[i] = cols[i].field end
+        return table.concat(out, ",")
+    end
+    local function Plain(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+
+    local cb = T.OptGroupFaction
+    check("Options has the faction groups box", cb ~= nil)
+    check("  unticked when never set", cb._getter() == false)
+    eq("by ruleset only, as before", Shape(), "[PvP/],b,d,[Hardcore/],c,a")
+    eq("  each group keyed by its ruleset", T.DisplayList()[1].key, "PvP")
+
+    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+    eq("ticked is saved", AltStableConfig.sheetGroupByFaction, true)
+    eq("  and both: one group per ruleset and faction, in sort order", Shape(),
+       "[PvP/Horde],b,[Hardcore/Horde],c,[Hardcore/Alliance],a,[PvP/Unknown],d")
+    eq("  the ruleset groups still say where: no Ruleset column", Fields(), "class,race,level,ilvl")
+
+    local rg = T.OptGroupRealm
+    rg:SetChecked(false); rg:GetScript("OnClick")(rg)
+    eq("by faction alone: across rulesets", Shape(), "[/Horde],b,c,[/Alliance],a,[/Unknown],d")
+    eq("  with the Ruleset column, since no header names it", Fields(), "class,race,ruleset,level")
+
+    -- A collapse is the group's own.
+    AltStable.ToggleGroup("Horde")
+    eq("a collapsed faction keeps only its header", Shape(), "[/Horde],[/Alliance],a,[/Unknown],d")
+    rg:SetChecked(true); rg:GetScript("OnClick")(rg)
+    eq("  and is not a ruleset and faction group's", Shape(),
+       "[PvP/Horde],b,[Hardcore/Horde],c,[Hardcore/Alliance],a,[PvP/Unknown],d")
+    AltStable.ToggleGroup("Horde")
+
+    -- The header: faction, then ruleset, the faction in the client's own words.
+    local row = AltStable.CreateFrozenRow(UIParent, 20, 160)
+    local item = T.DisplayList()[1]
+    AltStable.RenderFrozenGroupRow(row, item)
+    eq("the header names both, faction first", Plain(row.nameLabel:GetText()), "Horde · PvP")
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("  its tooltip names the server", Plain(WoW.tooltipLines[2] or ""), "Server: Forever PvP")
+    row.collapseBtn:GetScript("OnClick")()
+    eq("  and its button collapses that group", Shape(),
+       "[PvP/Horde],[Hardcore/Horde],c,[Hardcore/Alliance],a,[PvP/Unknown],d")
+    row.collapseBtn:GetScript("OnClick")()
+    _G.FACTION_ALLIANCE = "Allianz"
+    eq("the client's localized faction name", Plain(AltStable.GroupLabel({ faction = "Alliance" })), "Allianz")
+    _G.FACTION_ALLIANCE = nil
+    eq("  else the tag", Plain(AltStable.GroupLabel({ faction = "Alliance" })), "Alliance")
+    _G.FACTION_ALLIANCE = "Alliance"
+    local names = {}
+    for _, r in ipairs({ "Normal", "PvP", "RP", "RPPvP", "Hardcore", "Unknown" }) do
+        names[#names + 1] = Plain(AltStable.GroupLabel({ ruleset = r }))
+    end
+    eq("the ruleset headers", table.concat(names, ","), "Normal,PvP,RP,RP-PvP,Hardcore,Unknown")
+
+    -- A ruleset group holds all its realms, and the tooltip names them.
+    rg:SetChecked(true); rg:GetScript("OnClick")(rg)
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    AltStableDB.e = { guid = "e", name = "Echo", realm = "Another PvP", level = 1 }
+    AltStable.RefreshSheet()
+    eq("two PvP realms are one PvP group", Shape(), "[PvP/],b,d,e,[Hardcore/],c,a")
+    AltStable.RenderFrozenGroupRow(row, T.DisplayList()[1])
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("  its tooltip names both servers", Plain(WoW.tooltipLines[2] or ""), "Servers: Another PvP, Forever PvP")
+    AltStableDB.e = nil
+    AltStable.RefreshSheet()
+
+    -- A faction header names no server; a character row on the same pooled row
+    -- shows the character again.
+    AltStable.RenderFrozenGroupRow(row, { kind = "group", key = "Horde", faction = "Horde", count = 1 })
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("a faction header has no tooltip", #WoW.tooltipLines, 0)
+    AltStable.RenderFrozenGroupRow(row, T.DisplayList()[1])
+    AltStable.RenderFrozenCharRow(row, AltStableDB.b, 1)
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("  a character row after a header shows the character", Plain(WoW.tooltipLines[1] or ""), "Beta")
+    row.nameTipBtn:GetScript("OnLeave")()
+    AltStable.RenderFrozenGroupRow(row, T.DisplayList()[1])
+    AltStable.RenderFrozenFillerRow(row, 2)
+    WoW.tooltipLines = {}
+    row.nameTipBtn:GetScript("OnEnter")()
+    eq("  and a filler row after a header shows nothing", #WoW.tooltipLines, 0)
+
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    eq("unticked: by ruleset only", Shape(), "[PvP/],b,d,[Hardcore/],c,a")
+
+    AltStableConfig.sheetGroupByFaction = nil
     AltStableDB = savedDB
     AltStable.RefreshSheet()
 end
