@@ -261,7 +261,7 @@ friend's** game account id. Our two WoW accounts live under one Battle.net accou
 measure (2026-09-30):** "cannot friend itself" was never the question - the question is whether
 the server delivers game data to your OWN other game account, by id, with both online. Nothing
 measured says no. Overlord Forever (`C:\Projects\WoW\References\Addons\PvP\Overlord`, read for
-technique only - All Rights Reserved; read at 1.3.2, unchanged in 2.0.7) bridges Horde and Alliance this way through Battle.net
+technique only - All Rights Reserved; read at 1.3.2; the reference copy is now 2.5.0, see below) bridges Horde and Alliance this way through Battle.net
 FRIENDS, whose clients relay. `/fp as bnet me` / `send <id>` (`/asprobe bnet` at the time) measure the own-account case. If it
 delivers, it crosses rulesets AND factions, which nothing else here does.
 
@@ -285,12 +285,20 @@ Overlord also answers two practical questions for the channel half: it joins wit
 `JoinChannelByName(name, nil, 0, 0)` - frame id 0, so no chat window lists it - through
 `securecall`, to keep the chat system untainted; and it waits until the client's General channel
 holds slot /1 before joining (up to ~30 s), because joining first moved General to /2 every session
-and players reported it. Both still hold in 2.0.7, and would apply as they stand to a channel of
-ours (none ships today: see the note at the top). 2.0.7 adds a third: when the server answers the
+and players reported it. Both still hold in 2.5.0 (Sync.lua:834; the join is now also spaced from its other channel operations), and would apply as they stand to a channel of
+ours (none ships today: see the note at the top). 2.0.7 added a third: when the server answers the
 join with `CHANNEL_PASSWORD_REQUEST` (the name is taken, with a password), the client opens a
 password dialog that takes the keyboard, once per try, so Overlord stops joining for the session
 (the next try is a login, a `/reload` or leaving an instance, never its timer). A password-keyed
 household channel (below) faces the same thing if someone else holds its name.
+
+Overlord's report, not our measurement (2.5.0, `Overlord/SyncGuild.lua:1-12`): since the launch
+(2026-11-04) the server refuses addon messages on custom channels. `SendAddonMessage` returns 0,
+then a `NOT_ALLOWED_IN_CHANNEL` notice that the chat frames do not show for a channel they do not
+display (SyncGuild.lua ~125), or code 7 straight away (~215). Overlord then falls back to the
+GUILD addon chat type for presence and captures, plus whispers between the neighbours that
+answer, and reads the channel's member list to find catch-up partners (`SyncDirectory.lua:1-20`).
+So a channel of ours would receive nothing; AltStable already dropped its channel (#206).
 
 **Shipped as #58** (PR #142): our own other game accounts, found by walking the local ids and synced with no whitelist across rulesets and factions. Separate Battle.net accounts that are friends: #143, deferred until there is a tester.
 
@@ -304,6 +312,11 @@ characters of the other account. Battle.net game data does cross (above, #58).
 **Guild.** Only reaches alts guilded with you. Closed for the general case; still the cheapest path
 for anyone whose alts *are* guilded together, so the login-announce handshake stays worth copying
 if that ever becomes the common setup.
+
+Overlord (2.5.0, `SyncGuild.lua:13-18`) reports that guild addon messages may scroll the chat
+frame of every guild member (measured on the beta by another addon's author), and one report of
+later messages being dropped with a result of 0 after many were sent (US forum, launch day, cause
+unknown). Their report, not ours.
 
 **Reading the other account's SavedVariables.** The client only loads the current account's files.
 Closed at the client level, fixed or not (#23 changes nothing here).
