@@ -3970,10 +3970,17 @@ do
     eq("grouped by default: each ruleset under its header", Shape(), "[PvP],b,[Hardcore],c,a")
     eq("  and no Ruleset column: the header says where they are", Fields(), "class,race,level,ilvl")
 
-    local cb = T.OptGroupRealm
-    check("the option shows grouping on by default", cb._getter() == true)
-    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
-    eq("off is saved", AltStableConfig.sheetGroupByRealm, false)
+    -- The General page's grouping selector: a click on one of its four.
+    local function Pick(id)
+        for _, b in ipairs(T.OptGroupBtns) do
+            if b.mode.id == id then return b:GetScript("OnClick")(b) end
+        end
+        error("no grouping button " .. id)
+    end
+    eq("the selector shows Ruleset by default", T.OptGroupMode(), "ruleset")
+    Pick("none")
+    eq("None saves the ruleset groups off", AltStableConfig.sheetGroupByRealm, false)
+    eq("  and the faction groups off", AltStableConfig.sheetGroupByFaction, false)
     eq("  and the sheet is one list in level order, realms interleaved", Shape(), "b,c,a")
     eq("  with a Ruleset column after Race instead", Fields(), "class,race,ruleset,level")
     eq("  showing each character's ruleset", RulesetCells(), "PvP,HC")
@@ -3984,10 +3991,10 @@ do
     AltStable.RefreshSheet()
     AltStable.ToggleGroup("Hardcore")
     eq("a collapsed ruleset keeps only its header", Shape(), "[PvP],b,[Hardcore]")
-    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    Pick("none")
     eq("off, every character is listed", Shape(), "b,c,a")
 
-    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+    Pick("ruleset")
     eq("back on, the groups return, the collapse kept", Shape(), "[PvP],b,[Hardcore]")
     eq("  and the Ruleset column goes", Fields(), "class,race,level,ilvl")
     AltStable.ToggleGroup("Hardcore")
@@ -3998,8 +4005,7 @@ do
     local nav = {}
     for _, b in ipairs(T.sidebarBtns or {}) do nav[b.sectionId] = b end
     nav.options:GetScript("OnClick")(nav.options)
-    cb:SetChecked(false)
-    local ok, err = pcall(cb:GetScript("OnClick"), cb)
+    local ok, err = pcall(Pick, "none")
     check("a refresh on the Options tab is no error", ok, tostring(err))
     nav.summary:GetScript("OnClick")(nav.summary)
     eq("  and back on the table, the Ruleset column is there", Fields(), "class,race,ruleset,level")
@@ -4048,27 +4054,33 @@ do
     end
     local function Plain(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
 
-    local cb = T.OptGroupFaction
-    check("Options has the faction groups box", cb ~= nil)
-    check("  unticked when never set", cb._getter() == false)
+    -- The General page's grouping selector: a click on one of its four.
+    local function Pick(id)
+        for _, b in ipairs(T.OptGroupBtns) do
+            if b.mode.id == id then return b:GetScript("OnClick")(b) end
+        end
+        error("no grouping button " .. id)
+    end
+    check("Options has the grouping selector", T.OptGroupBtns ~= nil)
+    eq("  on Ruleset when faction grouping was never set", T.OptGroupMode(), "ruleset")
     eq("by ruleset only, as before", Shape(), "[PvP/],b,d,[Hardcore/],c,a")
     eq("  each group keyed by its ruleset", T.DisplayList()[1].key, "PvP")
 
-    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
-    eq("ticked is saved", AltStableConfig.sheetGroupByFaction, true)
+    Pick("both")
+    eq("Ruleset & faction saves faction grouping", AltStableConfig.sheetGroupByFaction, true)
+    eq("  and keeps the ruleset groups", AltStableConfig.sheetGroupByRealm, true)
     eq("  and both: one group per ruleset and faction, in sort order", Shape(),
        "[PvP/Horde],b,[Hardcore/Horde],c,[Hardcore/Alliance],a,[PvP/Unknown],d")
     eq("  the ruleset groups still say where: no Ruleset column", Fields(), "class,race,level,ilvl")
 
-    local rg = T.OptGroupRealm
-    rg:SetChecked(false); rg:GetScript("OnClick")(rg)
+    Pick("faction")
     eq("by faction alone: across rulesets", Shape(), "[/Horde],b,c,[/Alliance],a,[/Unknown],d")
     eq("  with the Ruleset column, since no header names it", Fields(), "class,race,ruleset,level")
 
     -- A collapse is the group's own.
     AltStable.ToggleGroup("Horde")
     eq("a collapsed faction keeps only its header", Shape(), "[/Horde],[/Alliance],a,[/Unknown],d")
-    rg:SetChecked(true); rg:GetScript("OnClick")(rg)
+    Pick("both")
     eq("  and is not a ruleset and faction group's", Shape(),
        "[PvP/Horde],b,[Hardcore/Horde],c,[Hardcore/Alliance],a,[PvP/Unknown],d")
     AltStable.ToggleGroup("Horde")
@@ -4097,8 +4109,7 @@ do
     eq("the ruleset headers", table.concat(names, ","), "Normal,PvP,RP,RP-PvP,Hardcore,Unknown")
 
     -- A ruleset group holds all its realms, and the tooltip names them.
-    rg:SetChecked(true); rg:GetScript("OnClick")(rg)
-    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    Pick("ruleset")
     AltStableDB.e = { guid = "e", name = "Echo", realm = "Another PvP", level = 1 }
     AltStable.RefreshSheet()
     eq("two PvP realms are one PvP group", Shape(), "[PvP/],b,d,e,[Hardcore/],c,a")
@@ -4127,8 +4138,37 @@ do
     row.nameTipBtn:GetScript("OnEnter")()
     eq("  and a filler row after a header shows nothing", #WoW.tooltipLines, 0)
 
-    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
-    eq("unticked: by ruleset only", Shape(), "[PvP/],b,d,[Hardcore/],c,a")
+    Pick("ruleset")
+    eq("back to Ruleset: by ruleset only", Shape(), "[PvP/],b,d,[Hardcore/],c,a")
+
+    -- The selector itself: four choices, the chosen one lit, a line saying
+    -- what it does, and a setting changed elsewhere shown when Options opens.
+    local labels = {}
+    for i, b in ipairs(T.OptGroupBtns) do labels[i] = b.lbl:GetText() end
+    eq("four choices, in order", table.concat(labels, ","), "None,Ruleset,Faction,Ruleset & faction")
+    eq("the grouping selector is on General", T.OptGroupBtns[1]:GetParent(), T.OptPages.general)
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    local function Lit()
+        local out = {}
+        for _, b in ipairs(T.OptGroupBtns) do
+            local c = b.lbl._textColor
+            if c and c[1] == ar and c[2] == ag and c[3] == ab then out[#out + 1] = b.mode.id end
+        end
+        return table.concat(out, ",")
+    end
+    for _, id in ipairs({ "none", "ruleset", "faction", "both" }) do
+        Pick(id)
+        eq("  " .. id .. ": that one lit, alone", Lit(), id)
+    end
+    Pick("none")
+    check("  None's line names the Ruleset column", (T.OptGroupHint:GetText() or ""):find("Ruleset column") ~= nil)
+    Pick("ruleset")
+    check("  Ruleset's says to hover for servers", (T.OptGroupHint:GetText() or ""):find("hover") ~= nil)
+    AltStableConfig.sheetGroupByRealm, AltStableConfig.sheetGroupByFaction = false, true
+    T.optionsPanel:GetScript("OnShow")(T.optionsPanel)
+    eq("  a setting changed elsewhere shows when Options opens", T.OptGroupMode(), "faction")
+    eq("  lit as well", Lit(), "faction")
+    AltStableConfig.sheetGroupByRealm = true
 
     AltStableConfig.sheetGroupByFaction = nil
     AltStableDB = savedDB
@@ -4641,7 +4681,7 @@ do
 
     -- Where each setting went.
     local function On(o) return o and o:GetParent() end
-    eq("grouping is on General", On(T.OptGroupRealm), pages.general)
+    eq("grouping is on General", On(T.OptGroupBtns[1]), pages.general)
     eq("  with the sort order", On(T.OptRememberSort), pages.general)
     eq("  the item counts", On(T.OptItemCounts), pages.general)
     eq("  and mail tracking", On(T.OptWarbandMail), pages.general)
