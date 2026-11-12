@@ -352,6 +352,8 @@ never for conversion, from the same `AltStable.lua`:
 | `AltStableDB[guid].level` | number | not eligible |
 | `AltStableDB[guid].lastUpdate` | number (epoch seconds) | the record counts as oldest |
 | `AltStableDB[guid].gearAt` | number (epoch seconds), armory only | `lastUpdate` alone |
+| `AltStableDB[guid].gearid_<key>`, `hidehelm`, `hidecloak` | numbers, armory only | the old estimate (section 4) |
+| `AltStableDB[guid].lookAt` | number (epoch seconds), armory only | appearance not compared |
 | `AltStableConfig.hiddenCharacters` | table, guid → true | nobody is hidden |
 
 A roster table that is missing or malformed makes characters ineligible for
@@ -417,19 +419,47 @@ applies when naming a new capture, because `Enhanced\<base>` serves both. So a
 character's capture and render share one base, and the first capture of a
 character that only had a render takes the render's base.
 
-**Which one the entry names.** When a character has both, `file` points at the
-newer of the two by this estimate: a render shows the character as of
-`Last-Modified` minus 7 hours, and the capture wins when its `epoch` is at least
-that. A new capture therefore wins until a render from later play arrives. It is an
-estimate: a capture taken within minutes of a session's end can be ordered wrongly
-either way, and the next capture or render corrects it. An entry that points at a
-render:
+**Which one the entry names.** A capture is sharper than a render (a render's
+figure is about half a capture's height) and may have an enhanced picture, so **a
+capture stays the portrait for as long as it still shows the character**. A render
+replaces it only when the character changed since the capture, and only once the
+render shows that change (amended 2026-11-11; before, the newer of the two by
+date won, which swapped sharp, enhanced captures for renders of the same look).
+
+1. **No converted capture:** the render, when there is one.
+2. **Changed since the capture?** Either of these, from the roster (section 3's
+   "reads" table, every account's file):
+   - **Gear.** The capture record's `look` (section 1) against the worn gear:
+     `AltStableDB[guid].gearid_<key>` for each slot in both, with `0` for an empty
+     slot and `h` when `hidehelm` / `hidecloak` is `1` and the helm or cloak is
+     equipped. The slots are 1 head, 3 shoulder, 5 chest, 6 waist, 7 legs, 8 feet,
+     9 wrist, 10 hands, 15 back, 16 main hand, 17 off hand (keys as in
+     `AltStable.GEAR_SLOTS`). The shirt (4) and tabard (19) are not in the roster, so
+     they are not compared. Compare slot by slot, as the addon does: a slot one side
+     lacks is not a change.
+   - **Appearance.** `AltStableDB[guid].lookAt` (when the barber appearance last
+     changed; recorded only in the barber's chair) is later than the capture's
+     `epoch`. The first recording also sets it, so a character whose appearance was
+     first recorded after the capture counts as changed: the safe way to be wrong.
+3. **Not changed:** the capture.
+4. **Changed:** the render, if it shows the change: `Last-Modified` minus 7 hours is
+   at least the change's time, that is `gearAt` for gear and `lookAt` for appearance
+   (the later of the two when both changed). Until then the capture stays.
+5. **Cannot tell** (the capture record has no `look`, or the roster has no gear for
+   the character): the old estimate. The capture wins when its `epoch` is at least
+   the render's `Last-Modified` minus 7 hours.
+
+A new capture shows the character as they are, so it wins again until the next
+change. An entry that points at a render:
 
 - keeps the newest converted capture's `epoch` (section 2), or none if the character was never captured;
 - has no `nativeW`/`nativeH`, which are a fraction of a screen the render was not shot on.
 
 **Enhanced pictures** follow whichever primary the entry names. Section 3 is
-unchanged; `sourceHash` is that primary's hash. The companion limits how often an
+unchanged; `sourceHash` is that primary's hash. With the rule above, a capture's
+enhanced picture is dropped only when the character changed, which is when it is
+out of date anyway. While a new one waits (the limit below), the plain render is
+drawn; that is a normal state, not a problem to warn about. The companion limits how often an
 updated render can cost a new enhanced picture (a setting, in days). Its
 `<guid>.attempts.json` records gain `source` (`"capture"` or `"armory"`; missing
 means a capture) and `confirmed` (the player asked for it; missing means false).
