@@ -23,9 +23,9 @@ doesn't move it anywhere, and whether you can pass it on still depends on the ga
 
 ### Which alt has my materials?
 
-The **Warband** tab lays out every item in all your characters' bags and banks like a warband
-bank, with tabs you can arrange yourself. Show one tab at a time, or three side by side. Hover an
-item to see who holds how many, split between bags and bank. You can show everyone on your
+The **Warband** tab lays out every item in all your characters' bags, banks and mailboxes like a
+warband bank, with tabs you can arrange yourself. Show one tab at a time, or three side by side.
+Hover an item to see who holds how many, split between bags, bank and mail. You can show everyone on your
 current ruleset, a chosen ruleset, or only the character you are on.
 
 ![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset menu and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
@@ -39,8 +39,12 @@ they show their own counts; **Show character counts in tooltips**, in Options or
 turns it on or off either way.
 
 Bags are read as you play. A bank is only readable while it's open, so its count is from your
-last visit, and the tooltip warns when that is more than a week old. Equipped gear appears on the
-sheet rather than in these counts.
+last visit, and the tooltip warns when that is more than a week old. A mailbox works the same way:
+its items are from that character's last visit to a mailbox, and a mailbox shows 50 mails at a
+time, so the tooltip says when some weren't read yet. Mail you send or return to one of your own
+characters counts for it right away, until it next opens its mailbox. **Include mailbox items in
+the Warband and item counts**, in Options, leaves mail out. Equipped gear appears on the sheet
+rather than in these counts.
 
 ### Who knows this recipe?
 
@@ -108,10 +112,9 @@ and it doesn't try to match every Altoholic feature.
 
 - **No import.** AltStable can't read Altoholic's or DataStore's saved data. It builds its own
   record as you play, starting from scratch.
-- **What to visit once per character:** log in, open the bank, open each profession window and,
-  for the expiring-mail warning, the mailbox. See [Quick start](#quick-start).
-- **Not recorded:** what's in the mailbox (AltStable keeps only a short summary for the expiry
-  warning), auction house listings, currencies and quests.
+- **What to visit once per character:** log in, open the bank and the mailbox, and open each
+  profession window. See [Quick start](#quick-start).
+- **Not recorded:** auction house listings, currencies and quests.
 - **Running both:** AltStable's item tooltip counts start off when Altoholic is installed, so its
   counts don't appear twice.
 
@@ -125,8 +128,8 @@ and it doesn't try to match every Altoholic feature.
 3. **Log in on each character once.** AltStable can only read the character you are playing. It
    records it at login and keeps it up to date while you play. A character you haven't logged
    into since installing isn't there yet.
-4. **Open your bank once** on each character for the Warband tab. The game only lets an addon
-   read a bank while it's open. Bags are read without asking.
+4. **Open your bank and a mailbox once** on each character for the Warband tab. The game only
+   lets an addon read them while they're open. Bags are read without asking.
 5. **Open each profession window once** for the Professions tab to know its recipes. Until then,
    the profession shows as "not scanned".
 
