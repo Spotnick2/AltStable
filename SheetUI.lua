@@ -3115,6 +3115,22 @@ local function CreateFrameIfNeeded()
         line:SetColorTexture(unpack(AltStable.C.SEP))
     end
 
+    -- A reading surface under the pages, on glass: the scene behind - the
+    -- city's nameplates above all - read straight through the settings (the
+    -- owner's screenshot). The tooltip's answer, Glass UI's backing colour at
+    -- the window floor (Skin.lua, TOOLTIP_BACKING), over the material and
+    -- under the controls. The button column, the title band and the frame
+    -- keep the glass. Clipped: it owns the window's bottom-right corner.
+    if AltStable.SkinIsGlass() then
+        local back = optionsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
+        back:SetPoint("TOPLEFT", optNav, "TOPRIGHT", 0, 0)
+        back:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", 0, 0)
+        local c = AltStable.TOOLTIP_BACKING
+        back:SetColorTexture(c[1], c[2], c[3], c[4])
+        AltStable.SkinClipTexture(optionsPanel, back, frame)
+        AltStable._test.optBacking = back
+    end
+
     local optPages = {}
     for _, def in ipairs(OPT_PAGES) do
         local scroll = CreateFrame("ScrollFrame", nil, optionsPanel, "UIPanelScrollFrameTemplate")
@@ -4830,6 +4846,13 @@ local function CreateFrameIfNeeded()
         lbl:SetText(def.label)
         b.pageId, b.lbl = def.id, lbl
         b:SetScript("OnClick", function() ShowOptPage(def.id) end)
+        -- Hover: lighter, white label; the open page keeps its accent.
+        b:SetScript("OnEnter", function()
+            if b.pageId == optActivePage then return end
+            b:SetBackdropColor(0.20, 0.20, 0.20, 1)
+            lbl:SetTextColor(1, 1, 1)
+        end)
+        b:SetScript("OnLeave", RefreshOptNav)
         optNavBtns[i] = b
     end
     ShowOptPage(optActivePage)

@@ -4585,6 +4585,31 @@ do
     eq("an unknown page changes nothing", Visible(), "sync")
     T.ShowOptPage("general")
 
+    -- Hover: a button lights up, and goes back as it was when the mouse leaves.
+    local b2 = btns[2]
+    local before = b2._backdropColor and b2._backdropColor[1]
+    b2:GetScript("OnEnter")(b2)
+    check("hovering a page button lights it", b2._backdropColor[1] > before, tostring(b2._backdropColor[1]))
+    b2:GetScript("OnLeave")(b2)
+    eq("  and leaving puts it back", b2._backdropColor[1], before)
+    local b1 = btns[1]
+    local active = table.concat(b1.lbl._textColor, ",", 1, 3)
+    b1:GetScript("OnEnter")(b1)
+    eq("the open page's button keeps its accent on hover",
+       table.concat(b1.lbl._textColor, ",", 1, 3), active)
+    b1:GetScript("OnLeave")(b1)
+
+    -- On glass, the pages sit on a near-opaque backing; the button column not.
+    local back = T.optBacking
+    check("on glass the pages have a backing", back ~= nil)
+    if back then
+        local c, want = back._colorTexture, AltStable.TOOLTIP_BACKING
+        check("  in the suite's backing colour, near opaque", c and c[1] == want[1] and c[4] == want[4]
+              and c[4] >= 0.9, c and tostring(c[4]) or "nil")
+        local _, rel, relPoint = back:GetPoint(1)
+        check("  starting right of the page buttons", rel == btns[1]:GetParent() and relPoint == "TOPRIGHT")
+    end
+
     -- Where each setting went.
     local function On(o) return o and o:GetParent() end
     eq("grouping is on General", On(T.OptGroupRealm), pages.general)
