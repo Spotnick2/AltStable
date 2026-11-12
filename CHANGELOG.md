@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The mail column reads your mailbox through **LibMailbox**, a small library AltStable now shares
+  with Glass Mail, so both count your mail the same way. The numbers don't change. A mailbox the
+  game couldn't read in full no longer clears what the column showed: it keeps the last full read.
+
 ## v1.4.0 - 2026-11-12
 
 Group the sheet by ruleset, by faction or both, and a new Options window: six pages instead of

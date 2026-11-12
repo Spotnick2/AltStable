@@ -42,7 +42,8 @@ $dest = Join-Path $AddOnsPath "AltStable"
 $pkgmeta = Get-Content -LiteralPath (Join-Path $RepoRoot ".pkgmeta")
 $libs = @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS; EnvName = "LIBGLASS" },
           @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE; EnvName = "LIBSHOWCASE" },
-          @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC; EnvName = "LIBACCOUNTSYNC" })
+          @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC; EnvName = "LIBACCOUNTSYNC" },
+          @{ Name = "LibMailbox"; Major = "LibMailbox-1.0"; Env = $env:LIBMAILBOX; EnvName = "LIBMAILBOX" })
 foreach ($lib in $libs) {
     $lib.Root = if ($lib.Env) { $lib.Env } else { Join-Path (Split-Path -Parent $RepoRoot) $lib.Name }
     if (-not (Test-Path -LiteralPath (Join-Path $lib.Root "Tools\deploy.ps1"))) {

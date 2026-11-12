@@ -2921,6 +2921,15 @@ AltStable.RequestLockouts = function() if RequestRaidInfo then RequestRaidInfo()
 --
 -- Caveat: data is only as fresh as each alt's last mailbox visit — inherent
 -- to the API (there's no background mail poll). CheckMailAlerts is login-only.
+--
+-- The inbox is read through the embedded LibMailbox-1.0 (shared with
+-- GlassMail, GlassMail docs/PLAN.md "M3"), whose Summary over a live scan is
+-- the rule above exactly. Looked up when the scan runs, never captured: a
+-- newer copy another addon embeds replaces the functions on the same table.
+-- Nothing is written when the library isn't ready (a newer copy failed
+-- half-way) or the scan couldn't read every header (secret counts, a withheld
+-- header, a missing row): an unreadable inbox is not an empty one, so the
+-- fields, lastUpdate and the sheet stay as they were.
 ------------------------------------------------------------
 local MAIL_ALERT_DAYS = 7   -- warn on login about mail expiring within this window
 
@@ -2928,20 +2937,16 @@ local function ScanMail()
     local guid = UnitGUID("player")
     local char = guid and AltStableDB and AltStableDB[guid]
     if not char or not GetInboxNumItems or not GetInboxHeaderInfo then return end
+    local LM = LibStub and LibStub("LibMailbox-1.0", true)
+    if not (LM and LM.Ready()) then return end
+    local scan = LM.ScanInbox()
+    if not scan.headers then return end
 
-    local now = time()
+    -- Only mail with something to lose (attachments or gold) and days left:
+    -- { count, money, soonest } (soonest absolute, rounded to the minute), or nil.
+    local sum = LM.Summary(scan.mails, time())
     local count, money, soonest = 0, 0, nil
-    for i = 1, GetInboxNumItems() do
-        local _, _, _, _, mMoney, _, daysLeft, itemCount = GetInboxHeaderInfo(i)
-        -- Only mail with something to lose (attachments or gold) is worth tracking.
-        local hasStuff = (itemCount and itemCount > 0) or (mMoney and mMoney > 0)
-        if hasStuff and daysLeft and daysLeft > 0 then
-            count = count + 1
-            money = money + (mMoney or 0)
-            local expiresAt = math.floor((now + daysLeft * 86400) / 60) * 60
-            if not soonest or expiresAt < soonest then soonest = expiresAt end
-        end
-    end
+    if sum then count, money, soonest = sum.count, sum.money, sum.soonest end
 
     local changed = false
     local function set(k, v)

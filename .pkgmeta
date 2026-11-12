@@ -10,7 +10,8 @@ enable-nolib-creation: no
 #
 # LibGlass-1.0, the glass material shared by the Glass addons (#184),
 # LibShowcase-1.0, the camera showcase extracted from SheetUI.lua, and
-# LibAccountSync-1.0, the own-account sync extracted from Core.lua (#198), are the
+# LibAccountSync-1.0, the own-account sync extracted from Core.lua (#198), and
+# LibMailbox-1.0, the mailbox reader shared with GlassMail (ScanMail), are the
 # externals: each pinned to a TAG, bumped only in a release made anyway.
 # Comments on their own lines only - the packager's YAML reader keeps an inline
 # "# ..." as part of the value (measured in GlassUnitFrames' migration).
@@ -24,6 +25,9 @@ externals:
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
     tag: r5
+  Libs/LibMailbox-1.0:
+    url: https://github.com/Spotnick2/LibMailbox
+    tag: r1
 
 # One CurseForge project, four addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
@@ -97,3 +101,11 @@ ignore:
   - Libs/LibAccountSync-1.0/AGENTS.md
   - Libs/LibAccountSync-1.0/CLAUDE.md
   - Libs/LibAccountSync-1.0/README.md
+  # The same for LibMailbox-1.0 (its LICENSE ships, and so does its LibStub/:
+  # its XML loads it).
+  - Libs/LibMailbox-1.0/tests
+  - Libs/LibMailbox-1.0/docs
+  - Libs/LibMailbox-1.0/Tools
+  - Libs/LibMailbox-1.0/AGENTS.md
+  - Libs/LibMailbox-1.0/CLAUDE.md
+  - Libs/LibMailbox-1.0/README.md
