@@ -701,6 +701,23 @@ end
 -- Build scrollable column list for a section
 ------------------------------------------------------------
 
+-- The sheet's groups (Options): by ruleset, i.e. realm - on Forever each realm
+-- is a ruleset - on unless turned off; by faction, off unless turned on.
+local function GroupsByRealm()
+    return not (AltStableConfig and AltStableConfig.sheetGroupByRealm == false)
+end
+local function GroupsByFaction()
+    return (AltStableConfig and AltStableConfig.sheetGroupByFaction) == true
+end
+
+-- A character's faction as the groups use it: the scanner's English tag
+-- (UnitFactionGroup), or "Unknown" for a record from before it was stored.
+local function FactionGroupOf(char)
+    local f = char and char.faction
+    if f == "Alliance" or f == "Horde" then return f end
+    return "Unknown"
+end
+
 local function BuildScrollableColsForSection(section)
     wipe(scrollableCols)
     local fields = section.fields
@@ -710,8 +727,9 @@ local function BuildScrollableColsForSection(section)
         for _, f in ipairs(AltStable.RepFieldsInUse(GetCharacterStore())) do fields[#fields+1] = f end
     end
     -- With the realm groups off, nothing says where a character is: the
-    -- Ruleset column goes in after Race, on every tab.
-    local ungrouped = AltStableConfig and AltStableConfig.sheetGroupByRealm == false
+    -- Ruleset column goes in after Race, on every tab. Faction groups don't
+    -- say it either.
+    local ungrouped = not GroupsByRealm()
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
         if col then scrollableCols[#scrollableCols+1] = col end
@@ -971,23 +989,35 @@ local function BuildDisplayList()
     table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc))
 
     -- Grouped by realm unless the player turned it off (Options, "Group
-    -- characters by realm"): then one list, in the sort order alone, with no
-    -- headers - and no collapsed realm hiding anyone.
-    if AltStableConfig and AltStableConfig.sheetGroupByRealm == false then
+    -- characters by realm"), and by faction when they turned that on. Both:
+    -- one header per realm and faction. Neither: one list, in the sort order
+    -- alone, with no headers - and no collapsed group hiding anyone.
+    local byRealm, byFaction = GroupsByRealm(), GroupsByFaction()
+    if not byRealm and not byFaction then
         for _, char in ipairs(allChars) do
             table.insert(displayList, { kind = "char", data = char })
         end
         return
     end
 
-    local realmOrder, realmChars = {}, {}
+    -- Groups come in the order their first character sorts, as the realms
+    -- always have. The key is what a collapse is remembered by: the realm's
+    -- name alone when grouped by realm only, so a collapse made before the
+    -- faction option existed still holds.
+    local groupOrder, groupChars, groupOf = {}, {}, {}
     for _, char in ipairs(allChars) do
-        local realm = char.realm or "Unknown"
-        if not realmChars[realm] then realmChars[realm]={}; table.insert(realmOrder,realm) end
-        table.insert(realmChars[realm], char)
+        local realm   = byRealm and (char.realm or "Unknown") or nil
+        local faction = byFaction and FactionGroupOf(char) or nil
+        local key = realm and faction and (realm .. "\031" .. faction) or realm or faction
+        if not groupChars[key] then
+            groupChars[key] = {}
+            groupOf[key] = { realm = realm, faction = faction }
+            table.insert(groupOrder, key)
+        end
+        table.insert(groupChars[key], char)
     end
-    for _, realm in ipairs(realmOrder) do
-        local chars=realmChars[realm]; local sumLvl=0; local sumGold=0
+    for _, key in ipairs(groupOrder) do
+        local chars=groupChars[key]; local sumLvl=0; local sumGold=0
         for _, c in ipairs(chars) do
             sumLvl=sumLvl+(c.level or 0); sumGold=sumGold+(c.money or 0)   -- nil = unreadable; the footer counts those
         end
@@ -1000,10 +1030,11 @@ local function BuildDisplayList()
         --
         -- A SET, not one value: a realm can hold characters from more than one
         -- account, which is the entire point of the sync feature.
-        table.insert(displayList,{kind="group",realm=realm,count=#chars,
+        table.insert(displayList,{kind="group",key=key,
+            realm=groupOf[key].realm,faction=groupOf[key].faction,count=#chars,
             accounts=CollectAccounts(chars),
-            sumLevel=sumLvl,sumGold=sumGold,collapsed=collapsed[realm]})
-        if not collapsed[realm] then
+            sumLevel=sumLvl,sumGold=sumGold,collapsed=collapsed[key]})
+        if not collapsed[key] then
             for _, char in ipairs(chars) do
                 table.insert(displayList,{kind="char",data=char})
             end
@@ -3870,14 +3901,26 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptRememberSort = optRememberSortCheck
     Y = Y - 22
 
-    -- Realm groups on the sheet. Off: one list, in the sort order alone.
+    -- Ruleset (realm) groups on the sheet. Off, with the faction groups off
+    -- too: one list, in the sort order alone.
     local optGroupRealmCheck = MakeOptCheckRow("sheetGroupByRealm",
-        "Group characters by realm", Y,
+        "Group characters by ruleset", Y,
         function(checked)
             AltStable.SetConfigValue("sheetGroupByRealm", checked)
             AltStable.RefreshSheet()
         end)
     AltStable._test.OptGroupRealm = optGroupRealmCheck
+    Y = Y - 22
+
+    -- Faction groups: alone, an Alliance and a Horde header; with the ruleset
+    -- groups, one header per ruleset and faction.
+    local optGroupFactionCheck = MakeOptCheckRow("sheetGroupByFaction",
+        "Group characters by faction", Y,
+        function(checked)
+            AltStable.SetConfigValue("sheetGroupByFaction", checked)
+            AltStable.RefreshSheet()
+        end, GroupsByFaction)
+    AltStable._test.OptGroupFaction = optGroupFactionCheck
     Y = Y - 30
 
     -- ── Account & Sync section ────────────────────────────
@@ -4722,6 +4765,7 @@ local function CreateFrameIfNeeded()
         optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
         optRememberSortCheck:SetChecked(optRememberSortCheck._getter())
         optGroupRealmCheck:SetChecked(optGroupRealmCheck._getter())
+        optGroupFactionCheck:SetChecked(optGroupFactionCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
         optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
         optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)
@@ -5466,8 +5510,10 @@ function AltStable.EnsureSheetVisible()
     if not frame:IsShown() then frame:Show(); Refresh() end
 end
 
-function AltStable.ToggleRealm(realm)
-    collapsed[realm]=not collapsed[realm]
+-- Takes the group's key (the item's `key`): the realm's name when grouped by
+-- ruleset only, as before the faction groups.
+function AltStable.ToggleRealm(key)
+    collapsed[key]=not collapsed[key]
     BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
     ResizeFrameToContent()
 end

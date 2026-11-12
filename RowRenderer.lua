@@ -1199,9 +1199,9 @@ function AltStable.RenderFrozenGroupRow(row, item)
     row.nameLabel:ClearAllPoints()
     row.nameLabel:SetPoint("LEFT", row.collapseBtn, "RIGHT", 6, 0)
 
-    local realm = item.realm
+    local key = item.key or item.realm
     row.collapseBtn:SetScript("OnClick", function()
-        if AltStable.ToggleRealm then AltStable.ToggleRealm(realm) end
+        if AltStable.ToggleRealm then AltStable.ToggleRealm(key) end
     end)
 
     -- Group row shows just the realm name in white, bold-ish. The character
@@ -1209,8 +1209,29 @@ function AltStable.RenderFrozenGroupRow(row, item)
     -- are already displayed in the totals bar — duplicating them here just
     -- made the row noisy and forced an unnecessary truncation in the
     -- frozen Name column.
-    row.nameLabel:SetText("|cffffffff"..(item.realm or "").."|r")
+    row.nameLabel:SetText(AltStable.GroupLabel(item))
     row:Show()
+end
+
+-- Faction names in the faction's colour, brighter than the client's
+-- PLAYER_FACTION_COLORS so they read on the dark group band.
+local FACTION_LABEL = {
+    Alliance = { hex = "ff6f9bff", global = "FACTION_ALLIANCE" },
+    Horde    = { hex = "ffff6060", global = "FACTION_HORDE" },
+}
+
+-- A group header's text: the realm, the faction, or both ("Forever PvP ·
+-- Alliance"). The faction name is the client's localized one when it has it.
+function AltStable.GroupLabel(item)
+    local parts = {}
+    if item.realm then parts[#parts + 1] = "|cffffffff" .. item.realm .. "|r" end
+    if item.faction then
+        local f = FACTION_LABEL[item.faction]
+        local name = f and rawget(_G, f.global)
+        if type(name) ~= "string" or name == "" then name = item.faction end
+        parts[#parts + 1] = "|c" .. (f and f.hex or "ffaaaaaa") .. name .. "|r"
+    end
+    return table.concat(parts, "|cffaaaaaa · |r")
 end
 
 function AltStable.RenderFrozenCharRow(row, char, index)

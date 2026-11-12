@@ -337,6 +337,11 @@ local function EnsureDefaults()
     if AltStableConfig.sheetGroupByRealm == nil then
         AltStableConfig.sheetGroupByRealm = true
     end
+    -- And by faction: off unless turned on. With both, one group per realm
+    -- and faction.
+    if AltStableConfig.sheetGroupByFaction == nil then
+        AltStableConfig.sheetGroupByFaction = false
+    end
     if AltStableConfig.sidebarCompact == nil then
         AltStableConfig.sidebarCompact = false
     end
@@ -1247,6 +1252,7 @@ local PREF_GROUPS = {
         { key = "rosterPets",        kind = "bool", default = false },
         { key = "rosterEnchants",    kind = "bool", default = false },
         { key = "sheetGroupByRealm", kind = "bool", default = true },
+        { key = "sheetGroupByFaction", kind = "bool", default = false },
     } },
 }
 local PREF_KEYS, PREF_GROUP = {}, {}

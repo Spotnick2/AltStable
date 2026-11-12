@@ -3950,6 +3950,9 @@ do
     eq(AltStableConfig.prefsStamps.alerts, 8100, "  a toast profession, the alerts")
     AltStable.SetConfigValue("sheetGroupByRealm", false)
     eq(AltStableConfig.prefsStamps.sheet, 8100, "  the realm groups, the sheet")
+    AltStableConfig.prefsStamps.sheet = nil
+    AltStable.SetConfigValue("sheetGroupByFaction", true)
+    eq(AltStableConfig.prefsStamps.sheet, 8100, "  the faction groups too")
     AltStable.SetConfigValue("worldCameraEnterDuration", 2)
     AltStable.SetConfigValue("bnetSync", false)
     local groups = 0

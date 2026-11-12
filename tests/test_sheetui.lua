@@ -4000,6 +4000,94 @@ do
 end
 
 ------------------------------------------------------------
+-- Faction groups: alone, or one group per ruleset and faction
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    AltStable.EnsureSheetVisible()
+    local savedDB = AltStableDB
+    AltStableDB = {
+        a = { guid = "a", name = "Alpha", realm = "Forever Hardcore", level = 10, faction = "Alliance" },
+        b = { guid = "b", name = "Beta",  realm = "Forever PvP",      level = 30, faction = "Horde" },
+        c = { guid = "c", name = "Gamma", realm = "Forever Hardcore", level = 20, faction = "Horde" },
+        d = { guid = "d", name = "Delta", realm = "Forever PvP",      level = 5 },   -- before factions were stored
+    }
+    AltStableConfig.sheetSort = nil
+    AltStableConfig.sheetGroupByRealm = true
+    AltStableConfig.sheetGroupByFaction = nil
+    T.ForgetSessionSorts()
+    AltStable.RefreshSheet()
+
+    local function Shape()
+        local out = {}
+        for _, it in ipairs(T.DisplayList()) do
+            if it.kind == "group" then
+                out[#out + 1] = "[" .. (it.realm or "") .. "/" .. (it.faction or "") .. "]"
+            else
+                out[#out + 1] = it.data.guid
+            end
+        end
+        return table.concat(out, ",")
+    end
+    local function Fields()
+        local cols = T.ColumnLayout()
+        local out = {}
+        for i = 1, math.min(4, #cols) do out[i] = cols[i].field end
+        return table.concat(out, ",")
+    end
+    local function Plain(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+
+    local cb = T.OptGroupFaction
+    check("Options has the faction groups box", cb ~= nil)
+    check("  unticked when never set", cb._getter() == false)
+    eq("by ruleset only, as before", Shape(), "[Forever PvP/],b,d,[Forever Hardcore/],c,a")
+    eq("  each group remembered by its realm's name", T.DisplayList()[1].key, "Forever PvP")
+
+    cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+    eq("ticked is saved", AltStableConfig.sheetGroupByFaction, true)
+    eq("  and both: one group per ruleset and faction, in sort order", Shape(),
+       "[Forever PvP/Horde],b,[Forever Hardcore/Horde],c,[Forever Hardcore/Alliance],a,[Forever PvP/Unknown],d")
+    eq("  the ruleset groups still say where: no Ruleset column", Fields(), "class,race,level,ilvl")
+
+    local rg = T.OptGroupRealm
+    rg:SetChecked(false); rg:GetScript("OnClick")(rg)
+    eq("by faction alone: across rulesets", Shape(), "[/Horde],b,c,[/Alliance],a,[/Unknown],d")
+    eq("  with the Ruleset column, since no header names it", Fields(), "class,race,ruleset,level")
+
+    -- A collapse is the group's own.
+    AltStable.ToggleRealm("Horde")
+    eq("a collapsed faction keeps only its header", Shape(), "[/Horde],[/Alliance],a,[/Unknown],d")
+    rg:SetChecked(true); rg:GetScript("OnClick")(rg)
+    eq("  and is not a ruleset and faction group's", Shape(),
+       "[Forever PvP/Horde],b,[Forever Hardcore/Horde],c,[Forever Hardcore/Alliance],a,[Forever PvP/Unknown],d")
+    AltStable.ToggleRealm("Horde")
+
+    -- The header: realm and faction, the faction in the client's own words.
+    local row = AltStable.CreateFrozenRow(UIParent, 20, 160)
+    local item = T.DisplayList()[1]
+    AltStable.RenderFrozenGroupRow(row, item)
+    eq("the header names both", Plain(row.nameLabel:GetText()), "Forever PvP · Horde")
+    row.collapseBtn:GetScript("OnClick")()
+    eq("  and its button collapses that group", Shape(),
+       "[Forever PvP/Horde],[Forever Hardcore/Horde],c,[Forever Hardcore/Alliance],a,[Forever PvP/Unknown],d")
+    row.collapseBtn:GetScript("OnClick")()
+    _G.FACTION_ALLIANCE = "Allianz"
+    eq("the client's localized faction name", Plain(AltStable.GroupLabel({ faction = "Alliance" })), "Allianz")
+    _G.FACTION_ALLIANCE = nil
+    eq("  else the tag", Plain(AltStable.GroupLabel({ faction = "Alliance" })), "Alliance")
+    _G.FACTION_ALLIANCE = "Alliance"
+    eq("a realm alone, as before", Plain(AltStable.GroupLabel({ realm = "Forever PvP" })), "Forever PvP")
+
+    cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+    eq("unticked: by ruleset only again", Shape(), "[Forever PvP/],b,d,[Forever Hardcore/],c,a")
+
+    AltStableConfig.sheetGroupByFaction = nil
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
+end
+
+------------------------------------------------------------
 -- Syncing settings with your other accounts: off unless ticked
 ------------------------------------------------------------
 -- #304: the item-tooltip counts box in Options shows the setting in effect.
