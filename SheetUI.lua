@@ -3119,11 +3119,12 @@ local function CreateFrameIfNeeded()
     -- city's nameplates above all - read straight through the settings (the
     -- owner's screenshot). The tooltip's answer, Glass UI's backing colour at
     -- the window floor (Skin.lua, TOOLTIP_BACKING), over the material and
-    -- under the controls. The button column, the title band and the frame
-    -- keep the glass. Clipped: it owns the window's bottom-right corner.
+    -- under the controls, the page buttons' column included. The sidebar's
+    -- icon rail, the title band and the frame keep the glass. Clipped: it
+    -- owns the window's bottom-right corner. Not on flat, which is opaque.
     if AltStable.SkinIsGlass() then
         local back = optionsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
-        back:SetPoint("TOPLEFT", optNav, "TOPRIGHT", 0, 0)
+        back:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
         back:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", 0, 0)
         local c = AltStable.TOOLTIP_BACKING
         back:SetColorTexture(c[1], c[2], c[3], c[4])
@@ -3171,13 +3172,22 @@ local function CreateFrameIfNeeded()
         optionsFrame, Y = optPages[id], optPages[id].y
     end
 
-    -- A section's heading on its page: small, dim, capitals.
-    local function OptSection(text)
+    -- A section's heading on its page: small, dim, capitals, with a faint
+    -- rule running on to the page's right edge. Both of the rule's points are
+    -- TOP edges at one y (a TOPLEFT + RIGHT pair would pin its middle twice).
+    -- `step`: how far the cursor moves past it (20 unless said).
+    local function OptSection(text, step)
         local fs = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         fs:SetPoint("TOPLEFT", P, Y)
         fs:SetText(text)
         fs:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-        Y = Y - 20
+        local rule = optionsFrame:CreateTexture(nil, "ARTWORK")
+        rule:SetHeight(1)
+        rule:SetPoint("TOPLEFT", fs, "TOPRIGHT", 10, -6)
+        rule:SetPoint("TOPRIGHT", optionsFrame, "TOPRIGHT", -P, Y - 6)
+        rule:SetColorTexture(1, 1, 1, 0.10)
+        fs.rule = rule
+        Y = Y - (step or 20)
         return fs
     end
 
@@ -3199,6 +3209,95 @@ local function CreateFrameIfNeeded()
         fs:SetText(text)
         return fs
     end
+
+    -- ── Lists that take only the room they use (#151) ─────
+    -- (Defined before the pages are built: the Glass UI card on Appearance
+    -- uses it too, to close up the rows it replaces.)
+    --
+    -- The three lists below - sync peers, requests and answers, hidden
+    -- characters - each reserve a fixed number of rows, and everything under
+    -- them is laid out by the cursor, at a fixed height, once. An empty list
+    -- left its whole reserve as a blank gap, and the page read as broken.
+    --
+    -- So each list notes what exists when it ends (Mark); at the end of the
+    -- layout everything created AFTER a list is recorded with its anchors
+    -- (Finish); and whenever a list refreshes it says how many rows it is
+    -- really using (Use), and everything below moves up by the rest. Only
+    -- anchors to the page itself move, and only their TOP edges: what is
+    -- anchored to a sibling follows it. Rather than re-anchoring two dozen
+    -- controls by hand, which is what the alternative was.
+    -- `skip`: what anchors itself again on every refresh, so must not be put
+    -- back where it was at Finish.
+    -- Per page: a list moves only what is below it on its own page, and sets
+    -- only its own page's height.
+    local optFlow = { lists = {}, items = nil, heights = nil, skip = {} }
+    function optFlow.Mark(reserved, rowH)
+        local seen = {}
+        for _, o in ipairs({ optionsFrame:GetChildren() }) do seen[o] = true end
+        for _, o in ipairs({ optionsFrame:GetRegions() }) do seen[o] = true end
+        local list = { seen = seen, reserved = reserved, used = reserved, rowH = rowH or 18, gap = 0,
+                       page = optionsFrame }
+        optFlow.lists[#optFlow.lists + 1] = list
+        return list
+    end
+    -- order: the pages, in their order; heights: page -> its full height.
+    function optFlow.Finish(order, heights)
+        optFlow.heights = heights
+        optFlow.items = {}
+        for _, page in ipairs(order) do
+            local all = { page:GetChildren() }
+            for _, o in ipairs({ page:GetRegions() }) do all[#all + 1] = o end
+            for _, o in ipairs(all) do
+                local below = {}
+                for _, list in ipairs(optFlow.lists) do
+                    if list.page == page and not list.seen[o] then below[#below + 1] = list end
+                end
+                if #below > 0 and not optFlow.skip[o] then
+                    local points = {}
+                    for i = 1, (o:GetNumPoints() or 0) do points[i] = { o:GetPoint(i) } end
+                    optFlow.items[#optFlow.items + 1] = { o = o, page = page, below = below,
+                                                          points = points, applied = 0 }
+                end
+            end
+        end
+        optFlow.Apply()
+    end
+    -- Page anchors are moved by where they are measured FROM - the relative
+    -- point - which is always the page's top edge here (see OptRail).
+    function optFlow.Apply()
+        if not optFlow.items then return end      -- still being laid out
+        for _, it in ipairs(optFlow.items) do
+            local shift = 0
+            for _, list in ipairs(it.below) do shift = shift + list.gap end
+            -- Only what actually moves: one list changing leaves everything
+            -- above it, and everything whose total did not change, alone.
+            if shift ~= it.applied then
+                it.applied = shift
+                it.o:ClearAllPoints()
+                for _, p in ipairs(it.points) do
+                    local point, rel, relPoint, x, y = p[1], p[2], p[3], p[4], p[5]
+                    if rel == it.page then y = (y or 0) + shift end
+                    it.o:SetPoint(point, rel, relPoint, x or 0, y or 0)
+                end
+            end
+        end
+        for page, height in pairs(optFlow.heights) do
+            local unused = 0
+            for _, list in ipairs(optFlow.lists) do
+                if list.page == page then unused = unused + list.gap end
+            end
+            page:SetHeight(height - unused)
+        end
+    end
+    -- How many rows a list is showing - at least one, for its "none" line.
+    function optFlow.Use(list, rows)
+        rows = math.max(1, math.min(rows, list.reserved))
+        if list.used == rows then return end
+        list.used = rows
+        list.gap = (list.reserved - rows) * list.rowH
+        optFlow.Apply()
+    end
+    AltStable._test.OptFlow = optFlow
 
     -- Each page's title, in the accent, over a thin divider.
     do
@@ -3239,8 +3338,10 @@ local function CreateFrameIfNeeded()
             btn:SetBackdropBorderColor(ar, ag, ab, 1)
             lbl:SetTextColor(ar, ag, ab)
         else
+            -- A soft edge for the ones not chosen; the chosen one keeps its
+            -- full accent border, so which is chosen still reads at a glance.
             btn:SetBackdropColor(0.12, 0.12, 0.12, 1)
-            btn:SetBackdropBorderColor(0, 0, 0, 1)
+            btn:SetBackdropBorderColor(1, 1, 1, 0.14)
             lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
         end
     end
@@ -3575,33 +3676,50 @@ local function CreateFrameIfNeeded()
         local card = CreateFrame("Frame", nil, optionsFrame, "BackdropTemplate")
         card:SetPoint("TOPLEFT", P, top + 4)
         card:SetPoint("TOPRIGHT", -P, top + 4)
-        card:SetHeight(top - Y - 14)
+        card:SetHeight(80)
         AltStable.ApplyBackdrop(card, 0.10, 0.12, 0.15, 0.9)
+        -- Each line at its own offset from the card's top, the button on the
+        -- right. The look and the note need a left and a right edge, both on
+        -- the same horizontal: TOPLEFT + RIGHT would pin a middle to the
+        -- card's and leave it no height (docs/forever-api-notes.md, "Two
+        -- conflicting anchors beat an explicit SetHeight"; Codex on #323).
         local title = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        -- Each line at its own offset from the card's top. The note needs a
-        -- left and a right edge to wrap, and both on the same horizontal:
-        -- TOPLEFT + RIGHT would pin its middle to the card's and leave it no
-        -- height at all (docs/forever-api-notes.md, "Two conflicting anchors
-        -- beat an explicit SetHeight"; Codex on #323).
-        title:SetPoint("TOPLEFT", 14, -14)
+        title:SetPoint("TOPLEFT", 14, -12)
         title:SetText("|cff7fd4ffFollows Glass UI|r")
-        local what = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-        what:SetPoint("TOPLEFT", 14, -40)
         local open = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
         open:SetSize(120, 22)
-        open:SetPoint("TOPLEFT", 14, -72)
+        open:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -20)
         open:SetText("Open Glass UI")
         open:SetScript("OnClick", function()
             if not AltStable.OpenGlassUI() then AltStable.SuiteRefuse() end
         end)
+        local what = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+        what:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -30)
+        what:SetPoint("TOPRIGHT", card, "TOPRIGHT", -148, -30)   -- clear of the button
+        what:SetJustifyH("LEFT"); what:SetWordWrap(false)
         local note = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        note:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -106)
-        note:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -106)
+        note:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -58)
+        note:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -58)
         note:SetJustifyH("LEFT"); note:SetWordWrap(true)
         note:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-        note:SetText("Change it in Glass UI, or turn off its \"Use Glass UI appearance\" for AltStable "
-            .. "there to choose a look here. Character names and rows keep each character's class colour.")
+        note:SetText("Change your look in Glass UI. To choose one here, turn off its "
+            .. "\"Use Glass UI appearance\" for AltStable. Character names and rows keep "
+            .. "each character's class colour.")
         card:Hide()
+
+        -- The rows it stands in for are closed up while it shows: what is below
+        -- (Scale, the camera) moves up to just under the card. The card is as
+        -- tall as its note wraps, measured, so a narrow window's third line
+        -- still fits; measured again whenever its width changes.
+        local area = top - Y
+        local lookFlow = optFlow.Mark(area, 1)
+        local function Fit()
+            if not card:IsShown() then return end
+            local h = 58 + math.max(note:GetStringHeight() or 0, 12) + 12
+            card:SetHeight(h)
+            optFlow.Use(lookFlow, h + 10)
+        end
+        card:SetScript("OnSizeChanged", Fit)
 
         local function Cap(t) t = tostring(t or ""); return (t:gsub("^%l", string.upper)) end
         optionsPanel.setLookCard = function(look)
@@ -3611,9 +3729,13 @@ local function CreateFrameIfNeeded()
                 what:SetText(("%s  \194\183  %s glass  \194\183  %s accent"):format(
                     look.preset == "pearl" and "Pearl" or Cap(look.preset),
                     Cap(SUITE_TINT_TEXT[look.tint] or look.tint), Cap(look.accent)))
+                Fit()
+            else
+                optFlow.Use(lookFlow, area)
             end
         end
-        AltStable._test.LookCard = { card = card, what = what, open = open, note = note, rows = rows }
+        AltStable._test.LookCard = { card = card, what = what, open = open, note = note, rows = rows,
+                                     flow = lookFlow, area = area, fit = Fit }
     end
     RefreshSkinRow()
 
@@ -3628,10 +3750,12 @@ local function CreateFrameIfNeeded()
     -- on the same baseline. The current numeric value is shown via tooltip
     -- on the slider, not as a floating label that collides with .Low at
     -- smaller UI scales.
-    local optScaleLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optScaleLabel:SetPoint("TOPLEFT", P, Y)
-    optScaleLabel:SetText("Scale")
-    optScaleLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    do -- (scoped: the builder is at Lua 5.1's 200 locals)
+        local optScaleLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        optScaleLabel:SetPoint("TOPLEFT", P, Y)
+        optScaleLabel:SetText("Scale")
+        optScaleLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    end
 
     local optScaleSlider = CreateFrame("Slider", nil, optionsFrame, "OptionsSliderTemplate")
     optScaleSlider:SetPoint("TOPLEFT", P + 60, Y + 4)
@@ -3644,10 +3768,12 @@ local function CreateFrameIfNeeded()
     if optScaleSlider.High then optScaleSlider.High:SetText("1.25") end
 
     -- 1.00 mid-tick on the same baseline as Low/High
-    local optScaleMid = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    optScaleMid:SetPoint("TOP", optScaleSlider, "BOTTOM", 0, 2)
-    optScaleMid:SetText("1.00")
-    optScaleMid:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    do -- (scoped: the builder is at Lua 5.1's 200 locals)
+        local optScaleMid = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        optScaleMid:SetPoint("TOP", optScaleSlider, "BOTTOM", 0, 2)
+        optScaleMid:SetText("1.00")
+        optScaleMid:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    end
 
     local optScaleReset = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
     optScaleReset:SetSize(58, 20)
@@ -3699,12 +3825,42 @@ local function CreateFrameIfNeeded()
             child:SetEnabled(on)
             child.label:SetTextColor(unpack(on and child.labelColor or AltStable.C.TEXT_DIM))
             child.label:SetAlpha(on and 1 or 0.5)
+            if child.desc then child.desc:SetAlpha(on and 1 or 0.5) end
         end
     end
+    -- And a very faint guide down the left of the indented ones, from under
+    -- the parent to the last child (indentation and the greying do the work;
+    -- this only ties them together). Both of its points are LEFT edges at one
+    -- x, from the two rows' own page offsets.
     local function OptDependsOn(child, parent)
         child.parentRow = parent
         child.labelColor = child.labelColor or AltStable.C.TEXT_NORM
         optionsPanel.dependents[#optionsPanel.dependents + 1] = child
+        local _, _, _, px = parent:GetPoint(1)
+        local _, _, _, cx = child:GetPoint(1)
+        local above = parent.lastChild or parent
+        local _, _, _, ax = above:GetPoint(1)
+        local guide = optionsFrame:CreateTexture(nil, "ARTWORK")
+        guide:SetWidth(1)
+        guide:SetPoint("TOPLEFT", above, "BOTTOMLEFT", (cx or 0) - (ax or 0) - 10, -2)
+        guide:SetPoint("BOTTOMLEFT", child, "BOTTOMLEFT", -10, child.desc and -16 or 0)
+        guide:SetColorTexture(1, 1, 1, 0.07)
+        child.guide = guide
+        parent.lastChild = child
+    end
+    -- A line under a setting saying what it does, where the label alone would
+    -- not: dim, small, wrapping between the row's indent and the page edge
+    -- (TOPLEFT + TOPRIGHT at one y). The caller leaves room for it.
+    local function OptDesc(cb, text)
+        local _, _, _, x, y = cb:GetPoint(1)
+        local d = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        d:SetPoint("TOPLEFT", (x or P) + 22, (y or Y) - 18)
+        d:SetPoint("TOPRIGHT", -P, (y or Y) - 18)
+        d:SetJustifyH("LEFT"); d:SetWordWrap(true)
+        d:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        d:SetText(text)
+        cb.desc = d
+        return d
     end
     optionsPanel.refreshDependents = OptRefreshDependents
     local function MakeOptCheckRow(savedKey, label, anchorY, onClick, getter, indent)
@@ -3779,7 +3935,7 @@ local function CreateFrameIfNeeded()
                     return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
                 end)
             local fs = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            fs:SetPoint("LEFT", optPluginChecks[key], "LEFT", 150, 0)
+            fs:SetPoint("LEFT", optPluginChecks[key], "LEFT", 120, 0)
             fs:SetJustifyH("LEFT")
             status[key] = fs
             Y = Y - 22
@@ -3846,22 +4002,24 @@ local function CreateFrameIfNeeded()
     OptSection("CAMERA & ANIMATION")
 
     local optCameraCheck = MakeOptCheckRow("enableWorldCameraPresentation",
-        "World camera presentation when AltStable opens", Y)
-    Y = Y - 22
+        "World camera presentation", Y)
+    OptDesc(optCameraCheck, "Frames your character when AltStable opens.")
+    Y = Y - 36
 
     local optOrbitCheck = MakeOptCheckRow("worldCameraContinuousOrbit",
-        "Keep the world slowly rotating around your character while open", Y, nil, nil, 22)
+        "Slowly orbit your character", Y, nil, nil, 22)
     OptDependsOn(optOrbitCheck, optCameraCheck)
     Y = Y - 22
 
     local optSaluteCheck = MakeOptCheckRow("enableWorldCameraSalute",
-        "Salute after the camera finishes moving (visible emote)", Y, nil, nil, 22)
+        "Salute after the camera settles", Y, nil, nil, 22)
+    OptDesc(optSaluteCheck, "Other players see the emote.")
     OptDependsOn(optSaluteCheck, optCameraCheck)
-    Y = Y - 22
+    Y = Y - 36
     AltStable._test.OptCamera = { camera = optCameraCheck, orbit = optOrbitCheck, salute = optSaluteCheck }
 
     local optOpenAnimCheck = MakeOptCheckRow("enableOpenAnimation",
-        "Play fade-in animation when AltStable opens", Y)
+        "Fade in when AltStable opens", Y)
     Y = Y - 22
 
     -- ── Characters page: the Roster and portraits ─────────
@@ -3871,17 +4029,18 @@ local function CreateFrameIfNeeded()
     -- Off unless asked for (#75), so the getter is "== true", not the helper's
     -- "~= false".
     local optPetsCheck = MakeOptCheckRow("rosterPets",
-        "Show hunter pets and warlock demons in the Roster scene", Y,
+        "Show pets and demons", Y,
         function(checked)
             AltStable.SetConfigValue("rosterPets", checked)
             if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         end,
         function() return AltStableConfig and AltStableConfig.rosterPets == true end)
-    Y = Y - 22
+    OptDesc(optPetsCheck, "Hunter pets and warlock demons, in the Roster scene.")
+    Y = Y - 36
 
     -- Off unless asked for (#94): words over the figure are clutter to some.
     local optEnchantsCheck = MakeOptCheckRow("rosterEnchants",
-        "Show enchants beside the gear slots on a Roster character", Y,
+        "Show enchants beside gear slots", Y,
         function(checked)
             AltStable.SetConfigValue("rosterEnchants", checked)
             if AltStable.RefreshSheet then AltStable.RefreshSheet() end
@@ -3917,10 +4076,12 @@ local function CreateFrameIfNeeded()
 
     -- The portrait capture angle (#149): what `/alts portrait facing` sets, as
     -- a slider. 0, the default, faces you straight on.
-    local optFacingLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optFacingLabel:SetPoint("TOPLEFT", P, Y - 6)
-    optFacingLabel:SetText("Portrait angle")
-    optFacingLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    do -- (scoped: the builder is at Lua 5.1's 200 locals)
+        local optFacingLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        optFacingLabel:SetPoint("TOPLEFT", P, Y - 6)
+        optFacingLabel:SetText("Portrait angle")
+        optFacingLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    end
     local optFacingSlider = CreateFrame("Slider", nil, optionsFrame, "OptionsSliderTemplate")
     optFacingSlider:SetPoint("TOPLEFT", P + 120, Y - 2)
     optFacingSlider:SetWidth(220); optFacingSlider:SetHeight(16)
@@ -3928,10 +4089,12 @@ local function CreateFrameIfNeeded()
     optFacingSlider:SetValueStep(5)
     if optFacingSlider.Low  then optFacingSlider.Low:SetText("-45\194\176")  end
     if optFacingSlider.High then optFacingSlider.High:SetText("45\194\176") end
-    local optFacingMid = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    optFacingMid:SetPoint("TOP", optFacingSlider, "BOTTOM", 0, 2)
-    optFacingMid:SetText("0\194\176")
-    optFacingMid:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    do -- (scoped: the builder is at Lua 5.1's 200 locals)
+        local optFacingMid = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        optFacingMid:SetPoint("TOP", optFacingSlider, "BOTTOM", 0, 2)
+        optFacingMid:SetText("0\194\176")
+        optFacingMid:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    end
     local function FacingTip(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(("Portrait angle: %d\194\176"):format(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0), 1, 1, 1)
@@ -3989,7 +4152,7 @@ local function CreateFrameIfNeeded()
     OptSection("WINDOW")
 
     local optMinimapCheck = MakeOptCheckRow(nil,
-        "Show minimap button (left-click toggle, right-click options, drag to move)", Y,
+        "Show minimap button", Y,
         function(checked)
             if AltStable.SetMinimapButtonShown then
                 AltStable.SetMinimapButtonShown(checked)
@@ -3999,10 +4162,11 @@ local function CreateFrameIfNeeded()
             return not (AltStableConfig and AltStableConfig.minimapButton
                         and AltStableConfig.minimapButton.hide)
         end)
-    Y = Y - 30
+    OptDesc(optMinimapCheck, "Left-click opens, right-click for options, drag to move.")
+    Y = Y - 44
 
     local optRememberPositionCheck = MakeOptCheckRow("rememberWindowPosition",
-        "Remember AltStable window position", Y,
+        "Remember window position", Y,
         function(checked)
             AltStable.SetConfigValue("rememberWindowPosition", checked)
             if checked then
@@ -4016,10 +4180,12 @@ local function CreateFrameIfNeeded()
     optResetPosition:SetSize(92, 20)
     optResetPosition:SetPoint("LEFT", optRememberPositionCheck, "RIGHT", 260, 0)
     AltStable.ApplyBackdrop(optResetPosition, 0.12, 0.12, 0.12, 1)
-    local optResetPositionLbl = optResetPosition:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    optResetPositionLbl:SetAllPoints()
-    optResetPositionLbl:SetJustifyH("CENTER")
-    optResetPositionLbl:SetText("Reset Position")
+    do -- (scoped: the builder is at Lua 5.1's 200 locals)
+        local optResetPositionLbl = optResetPosition:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        optResetPositionLbl:SetAllPoints()
+        optResetPositionLbl:SetJustifyH("CENTER")
+        optResetPositionLbl:SetText("Reset Position")
+    end
     optResetPosition:SetScript("OnClick", function()
         ResetWindowPosition()
     end)
@@ -4136,7 +4302,7 @@ local function CreateFrameIfNeeded()
     -- Mailbox items in the Warband tab and the item counts (#312): on unless
     -- switched off. Off, no mail is read, recorded, shown or synced.
     local optMailCheck = MakeOptCheckRow("warbandMail",
-        "Include mailbox items in the Warband and item counts", Y,
+        "Track mailbox items", Y,
         function(checked)
             AltStable.SetConfigValue("warbandMail", checked)
             if AltStable.RefreshSheet then AltStable.RefreshSheet() end
@@ -4150,17 +4316,20 @@ local function CreateFrameIfNeeded()
         GameTooltip:Show()
     end)
     optMailCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    OptDesc(optMailCheck, "Off: no mail is read, shown or synced.")
     AltStable._test.OptWarbandMail = optMailCheck
-    Y = Y - 30
+    Y = Y - 44
 
     -- ── Accounts & sync page ──────────────────────────────
     OptPage("sync")
 
     -- Account number row
-    local optAcctLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optAcctLabel:SetPoint("TOPLEFT", P, Y)
-    optAcctLabel:SetText("Account #")
-    optAcctLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    do -- (scoped: the builder is at Lua 5.1's 200 locals)
+        local optAcctLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        optAcctLabel:SetPoint("TOPLEFT", P, Y)
+        optAcctLabel:SetText("Account #")
+        optAcctLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    end
 
     local optAcctBox = CreateFrame("EditBox", "AltStableOptAcctBox", optionsFrame, "InputBoxTemplate")
     optAcctBox:SetSize(60, 22)
@@ -4232,125 +4401,37 @@ local function CreateFrameIfNeeded()
     Y = Y - 30
 
     local optSendAllCheck = MakeOptCheckRow("sendAllAccounts",
-        "Share all known accounts (uncheck to share only this account's data)", Y, nil,
+        "Share all known accounts", Y, nil,
         function() return AltStableConfig and AltStableConfig.sendAllAccounts == true end)
-    Y = Y - 24
+    OptDesc(optSendAllCheck, "Off: only this account's characters are shared.")
+    Y = Y - 38
 
     -- #58: your own other accounts, found and synced through Battle.net -
     -- any ruleset, any faction, nothing to type. Off clears what was found.
     local optBnetCheck = MakeOptCheckRow("bnetSync",
-        "Sync with your other accounts through Battle.net (any ruleset, any faction)", Y,
+        "Sync with your other accounts through Battle.net", Y,
         function(checked)
             AltStable.SetConfigValue("bnetSync", checked)
             if AltStable.RescanOwnAccounts then AltStable.RescanOwnAccounts() end
         end)
-    Y = Y - 24
+    OptDesc(optBnetCheck, "Any ruleset, any faction; nothing to type.")
+    Y = Y - 38
 
     -- Settings and the forgotten list, to and from your own other accounts.
     -- Off unless asked for: each account keeps its own look until then. They
     -- go only to your own accounts over Battle.net (Core.lua, OwnBNetPeer),
     -- so the box sits under the Battle.net one.
     local optSyncSettingsCheck = MakeOptCheckRow("syncSettings",
-        "Sync settings and forgotten characters with your other accounts", Y, nil,
+        "Sync settings and forgotten characters", Y, nil,
         function() return AltStableConfig and AltStableConfig.syncSettings == true end, 22)
+    OptDesc(optSyncSettingsCheck, "Tick it on each account. Appearance, toasts and mail, the sheet "
+        .. "options, hidden and favourite characters: the latest change wins.")
     OptDependsOn(optSyncSettingsCheck, optBnetCheck)
     AltStable._test.OptSyncSettings, AltStable._test.OptBnet = optSyncSettingsCheck, optBnetCheck
-    Y = Y - 18
-    local optSyncSettingsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optSyncSettingsHint:SetPoint("TOPLEFT", P + 44, Y)
-    optSyncSettingsHint:SetPoint("TOPRIGHT", -P, Y)
-    optSyncSettingsHint:SetJustifyH("LEFT"); optSyncSettingsHint:SetWordWrap(true)
-    optSyncSettingsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    optSyncSettingsHint:SetText("Tick it on each account. Appearance, toasts and mail, the sheet "
-        .. "options, hidden and favourite characters: the latest change wins.")
-    Y = Y - 30
+    -- Room for three lines: two at the usual width, three when the window is
+    -- squeezed to fit a narrow screen.
+    Y = Y - 58
 
-    -- ── Lists that take only the room they use (#151) ─────
-    --
-    -- The three lists below - sync peers, requests and answers, hidden
-    -- characters - each reserve a fixed number of rows, and everything under
-    -- them is laid out by the cursor, at a fixed height, once. An empty list
-    -- left its whole reserve as a blank gap, and the page read as broken.
-    --
-    -- So each list notes what exists when it ends (Mark); at the end of the
-    -- layout everything created AFTER a list is recorded with its anchors
-    -- (Finish); and whenever a list refreshes it says how many rows it is
-    -- really using (Use), and everything below moves up by the rest. Only
-    -- anchors to the page itself move, and only their TOP edges: what is
-    -- anchored to a sibling follows it. Rather than re-anchoring two dozen
-    -- controls by hand, which is what the alternative was.
-    -- `skip`: what anchors itself again on every refresh, so must not be put
-    -- back where it was at Finish.
-    -- Per page: a list moves only what is below it on its own page, and sets
-    -- only its own page's height.
-    local optFlow = { lists = {}, items = nil, heights = nil, skip = {} }
-    function optFlow.Mark(reserved, rowH)
-        local seen = {}
-        for _, o in ipairs({ optionsFrame:GetChildren() }) do seen[o] = true end
-        for _, o in ipairs({ optionsFrame:GetRegions() }) do seen[o] = true end
-        local list = { seen = seen, reserved = reserved, used = reserved, rowH = rowH or 18, gap = 0,
-                       page = optionsFrame }
-        optFlow.lists[#optFlow.lists + 1] = list
-        return list
-    end
-    -- order: the pages, in their order; heights: page -> its full height.
-    function optFlow.Finish(order, heights)
-        optFlow.heights = heights
-        optFlow.items = {}
-        for _, page in ipairs(order) do
-            local all = { page:GetChildren() }
-            for _, o in ipairs({ page:GetRegions() }) do all[#all + 1] = o end
-            for _, o in ipairs(all) do
-                local below = {}
-                for _, list in ipairs(optFlow.lists) do
-                    if list.page == page and not list.seen[o] then below[#below + 1] = list end
-                end
-                if #below > 0 and not optFlow.skip[o] then
-                    local points = {}
-                    for i = 1, (o:GetNumPoints() or 0) do points[i] = { o:GetPoint(i) } end
-                    optFlow.items[#optFlow.items + 1] = { o = o, page = page, below = below,
-                                                          points = points, applied = 0 }
-                end
-            end
-        end
-        optFlow.Apply()
-    end
-    -- Page anchors are moved by where they are measured FROM - the relative
-    -- point - which is always the page's top edge here (see OptRail).
-    function optFlow.Apply()
-        if not optFlow.items then return end      -- still being laid out
-        for _, it in ipairs(optFlow.items) do
-            local shift = 0
-            for _, list in ipairs(it.below) do shift = shift + list.gap end
-            -- Only what actually moves: one list changing leaves everything
-            -- above it, and everything whose total did not change, alone.
-            if shift ~= it.applied then
-                it.applied = shift
-                it.o:ClearAllPoints()
-                for _, p in ipairs(it.points) do
-                    local point, rel, relPoint, x, y = p[1], p[2], p[3], p[4], p[5]
-                    if rel == it.page then y = (y or 0) + shift end
-                    it.o:SetPoint(point, rel, relPoint, x or 0, y or 0)
-                end
-            end
-        end
-        for page, height in pairs(optFlow.heights) do
-            local unused = 0
-            for _, list in ipairs(optFlow.lists) do
-                if list.page == page then unused = unused + list.gap end
-            end
-            page:SetHeight(height - unused)
-        end
-    end
-    -- How many rows a list is showing - at least one, for its "none" line.
-    function optFlow.Use(list, rows)
-        rows = math.max(1, math.min(rows, list.reserved))
-        if list.used == rows then return end
-        list.used = rows
-        list.gap = (list.reserved - rows) * list.rowH
-        optFlow.Apply()
-    end
-    AltStable._test.OptFlow = optFlow
 
     -- ── Whitelist (sync peers) ────────────────────────────
     local optWlHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -4987,8 +5068,27 @@ local function CreateFrameIfNeeded()
     -- The page buttons, down the left. Which page is open lasts the session.
     -- In a block of its own: this function is at Lua 5.1's 200 locals.
     local optNavBtns, optActivePage = {}, "general"
+    -- Quiet rows rather than boxed buttons: a thin divider under each, and
+    -- the open page marked by a bar on its left, a faint fill and its label,
+    -- all in the current accent. Hover: a faint white fill and a white label.
+    local function PaintNav(b, hover)
+        local on = b.pageId == optActivePage
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        b.marker:SetShown(on)
+        b.marker:SetColorTexture(ar, ag, ab, 1)
+        if on then
+            b.fill:SetColorTexture(ar, ag, ab, 0.12); b.fill:Show()
+            b.lbl:SetTextColor(ar, ag, ab)
+        elseif hover then
+            b.fill:SetColorTexture(1, 1, 1, 0.06); b.fill:Show()
+            b.lbl:SetTextColor(1, 1, 1)
+        else
+            b.fill:Hide()
+            b.lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        end
+    end
     local function RefreshOptNav()
-        for _, b in ipairs(optNavBtns) do SetChoiceBtnState(b, b.lbl, b.pageId == optActivePage) end
+        for _, b in ipairs(optNavBtns) do PaintNav(b, false) end
     end
     local function ShowOptPage(id)
         if not optPages[id] then return end
@@ -4997,23 +5097,29 @@ local function CreateFrameIfNeeded()
         RefreshOptNav()
     end
     for i, def in ipairs(OPT_PAGES) do
-        local b = CreateFrame("Button", nil, optNav, "BackdropTemplate")
-        b:SetHeight(24)
-        b:SetPoint("TOPLEFT", optNav, "TOPLEFT", 8, -12 - (i - 1) * 30)
-        b:SetPoint("TOPRIGHT", optNav, "TOPRIGHT", -8, -12 - (i - 1) * 30)
-        AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
-        local lbl = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        lbl:SetPoint("LEFT", 10, 0); lbl:SetPoint("RIGHT", -6, 0); lbl:SetJustifyH("LEFT")
+        local b = CreateFrame("Button", nil, optNav)
+        b:SetHeight(28)
+        b:SetPoint("TOPLEFT", optNav, "TOPLEFT", 6, -10 - (i - 1) * 30)
+        b:SetPoint("TOPRIGHT", optNav, "TOPRIGHT", -6, -10 - (i - 1) * 30)
+        local fill = b:CreateTexture(nil, "BACKGROUND")
+        fill:SetAllPoints()
+        fill:Hide()
+        local marker = b:CreateTexture(nil, "ARTWORK")
+        marker:SetWidth(3)
+        marker:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
+        marker:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+        local rule = b:CreateTexture(nil, "ARTWORK")
+        rule:SetHeight(1)
+        rule:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, -1)
+        rule:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, -1)
+        rule:SetColorTexture(1, 1, 1, 0.08)
+        local lbl = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        lbl:SetPoint("LEFT", 12, 0); lbl:SetPoint("RIGHT", -6, 0); lbl:SetJustifyH("LEFT")
         lbl:SetText(def.label)
-        b.pageId, b.lbl = def.id, lbl
+        b.pageId, b.lbl, b.fill, b.marker = def.id, lbl, fill, marker
         b:SetScript("OnClick", function() ShowOptPage(def.id) end)
-        -- Hover: lighter, white label; the open page keeps its accent.
-        b:SetScript("OnEnter", function()
-            if b.pageId == optActivePage then return end
-            b:SetBackdropColor(0.20, 0.20, 0.20, 1)
-            lbl:SetTextColor(1, 1, 1)
-        end)
-        b:SetScript("OnLeave", RefreshOptNav)
+        b:SetScript("OnEnter", function() PaintNav(b, true) end)
+        b:SetScript("OnLeave", function() PaintNav(b, false) end)
         optNavBtns[i] = b
     end
     ShowOptPage(optActivePage)

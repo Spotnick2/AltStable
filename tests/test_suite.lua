@@ -306,6 +306,27 @@ do
     check("  and no reload line", not T.SkinReloadButton():IsShown())
     C.open:GetScript("OnClick")(C.open)
     check("  its button opens Glass UI", S.opened == true)
+
+    -- Compact: the card is as tall as its note wraps, and what is below it
+    -- (the camera rows, Scale) moves up into the room the rows left.
+    local camY = select(5, T.OptCamera.camera:GetPoint(1))
+    local h = C.card:GetHeight()
+    check("  the card is compact", h < C.area - 40, h .. " of " .. C.area)
+    eq("  the rows below close up to just under it", C.flow.used, h + 10)
+    local _, _, _, bx = C.open:GetPoint(1)
+    check("  its button on the right", (C.open:GetPoint(1)) == "TOPRIGHT" and bx < 0)
+    local _, _, _, wx = C.what:GetPoint(2)
+    check("  the look line stops short of it", wx <= -(14 + 120), tostring(wx))
+    -- A narrow window wraps the note onto more lines: the card grows with it.
+    local realH = C.note.GetStringHeight
+    C.note.GetStringHeight = function() return 40 end
+    C.card:GetScript("OnSizeChanged")(C.card)
+    eq("  a note on more lines makes the card taller", C.card:GetHeight(), 58 + 40 + 12)
+    eq("  and moves the rows below down with it", C.flow.used, 58 + 40 + 12 + 10)
+    local camY2 = select(5, T.OptCamera.camera:GetPoint(1))
+    eq("  by exactly the difference", camY - camY2, (58 + 40 + 12) - h)
+    C.note.GetStringHeight = realH
+    C.fit()
     -- The note wraps between a left and a right edge on ONE horizontal: a
     -- RIGHT anchor would pin its middle to the card's and give it no height.
     local p1, r1, rp1, _, y1 = C.note:GetPoint(1)
@@ -313,13 +334,14 @@ do
     eq("  the note's edges: top-left and top-right", (p1 or "") .. "," .. (p2 or ""), "TOPLEFT,TOPRIGHT")
     check("  on one line, both to the card", r1 == C.card and r2 == C.card and y1 == y2
           and rp1 == "TOPLEFT" and rp2 == "TOPRIGHT", tostring(y1) .. " vs " .. tostring(y2))
-    check("  inside the card", -y1 < C.card:GetHeight() - 30, tostring(y1) .. " in " .. tostring(C.card:GetHeight()))
+    check("  its first line inside the card", -y1 + 12 < C.card:GetHeight(), tostring(y1) .. " in " .. tostring(C.card:GetHeight()))
 
     -- Back to our own look: the rows are ours again.
     fakeSuite({})
     session(SAVED)
     T.RefreshSkinRow()
     check("not following, no card", not C.card:IsShown())
+    eq("  the rows keep their full room", C.flow.used, C.area)
     check("  the rows are back", T.skinBtns[1]:IsShown() and C.rows[1]:IsShown())
     eq("  and the button reloads again", T.SkinReloadButton():GetText(), "Reload")
     local cb = T.lookBtns[2]

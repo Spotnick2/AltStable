@@ -42,8 +42,8 @@ Bags are read as you play. A bank is only readable while it's open, so its count
 last visit, and the tooltip warns when that is more than a week old. A mailbox works the same way:
 its items are from that character's last visit to a mailbox, and a mailbox shows 50 mails at a
 time, so the tooltip says when some weren't read yet. Mail you send or return to one of your own
-characters counts for it right away, until it next opens its mailbox. **Include mailbox items in
-the Warband and item counts**, in Options, leaves mail out. Equipped gear appears on the sheet
+characters counts for it right away, until it next opens its mailbox. Unticking **Track mailbox items**
+(Options, General) leaves mail out. Equipped gear appears on the sheet
 rather than in these counts.
 
 ### Who knows this recipe?

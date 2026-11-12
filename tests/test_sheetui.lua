@@ -3304,7 +3304,7 @@ do
     local flow = T.OptFlow
     local optPanel = T.optionsPanel
     check("the Options page records what sits below its lists", flow.items and #flow.items > 0)
-    eq("four lists flow: peers, requests, hidden, old characters", #flow.lists, 4)
+    eq("five lists flow: the Glass UI card, peers, requests, hidden, old characters", #flow.lists, 5)
 
     local saved = { AltStableConfig.whitelist, AltStable.SyncAuthList,
                     AltStable.PendingSyncRequests, AltStable.HiddenCharacterList,
@@ -3322,7 +3322,7 @@ do
     end
     local function Expected(it)
         local s = 0
-        for _, list in ipairs(it.below) do s = s + (list.reserved - list.used) * 18 end
+        for _, list in ipairs(it.below) do s = s + (list.reserved - list.used) * list.rowH end
         return s
     end
     -- Every recorded anchor: a TOP edge on the page itself moves by the gaps
@@ -3347,7 +3347,7 @@ do
     -- Everything empty: each list keeps one row, for its "none" line.
     AltStableConfig.whitelist = {}
     optPanel:GetScript("OnShow")(optPanel)
-    local wl, au, hd = flow.lists[1], flow.lists[2], flow.lists[3]
+    local wl, au, hd = flow.lists[2], flow.lists[3], flow.lists[4]
     eq("an empty peer list uses one row", wl.used, 1)
     eq("  and so do the answers", au.used, 1)
     eq("  and the hidden list", hd.used, 1)
@@ -3368,7 +3368,7 @@ do
     -- Accounts & sync page, the hidden and old characters the Characters page.
     local child, chars = wl.page, hd.page
     eq("the sync lists share a page", au.page, child)
-    check("  the character lists another", chars ~= child and flow.lists[4].page == chars)
+    check("  the character lists another", chars ~= child and flow.lists[5].page == chars)
     for _, it in ipairs(flow.items) do
         for _, l in ipairs(it.below) do
             if l.page ~= it.o:GetParent() then check("a list moves only its own page", false); break end
@@ -4657,21 +4657,42 @@ do
     eq("an unknown page changes nothing", Visible(), "sync")
     T.ShowOptPage("general")
 
-    -- Hover: a button lights up, and goes back as it was when the mouse leaves.
-    local b2 = btns[2]
-    local before = b2._backdropColor and b2._backdropColor[1]
+    -- Quiet rows: the open page has the accent bar, fill and label; the rest
+    -- none, until the mouse is over one.
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    local function Rgb(c) return c and table.concat({ c[1], c[2], c[3] }, ",") or "nil" end
+    local accent = Rgb({ ar, ag, ab })
+    local b1, b2 = btns[1], btns[2]
+    check("the open page's button has its bar", b1.marker:IsShown())
+    eq("  in the accent", Rgb(b1.marker._colorTexture), accent)
+    eq("  its label in the accent", Rgb(b1.lbl._textColor), accent)
+    check("  and a fill", b1.fill:IsShown())
+    check("another page's button: no bar", not b2.marker:IsShown())
+    check("  no fill", not b2.fill:IsShown())
     b2:GetScript("OnEnter")(b2)
-    check("hovering a page button lights it", b2._backdropColor[1] > before, tostring(b2._backdropColor[1]))
+    check("hovering it fills it", b2.fill:IsShown())
+    eq("  with a white label", Rgb(b2.lbl._textColor), "1,1,1")
     b2:GetScript("OnLeave")(b2)
-    eq("  and leaving puts it back", b2._backdropColor[1], before)
-    local b1 = btns[1]
-    local active = table.concat(b1.lbl._textColor, ",", 1, 3)
+    check("  and leaving clears it", not b2.fill:IsShown())
     b1:GetScript("OnEnter")(b1)
-    eq("the open page's button keeps its accent on hover",
-       table.concat(b1.lbl._textColor, ",", 1, 3), active)
+    eq("the open page's button keeps its accent on hover", Rgb(b1.lbl._textColor), accent)
     b1:GetScript("OnLeave")(b1)
+    T.ShowOptPage("sync")
+    check("opening another page moves the bar", btns[5].marker:IsShown() and not b1.marker:IsShown())
+    T.ShowOptPage("general")
 
-    -- On glass, the pages sit on a near-opaque backing; the button column not.
+    -- The accent, whichever it is: with the class-colour accent, the class colour.
+    local heldTheme = AltStableConfig.theme
+    AltStable.SetConfigValue("theme", "class")
+    AltStable.ApplyTheme()
+    local cr, cg, cb = AltStable.GetAccentRGB()
+    check("  (the class accent differs from gold here)", Rgb({ cr, cg, cb }) ~= accent)
+    eq("with the class accent, the bar and label follow it", Rgb(b1.lbl._textColor), Rgb({ cr, cg, cb }))
+    eq("  the bar too", Rgb(b1.marker._colorTexture), Rgb({ cr, cg, cb }))
+    AltStable.SetConfigValue("theme", heldTheme or "dark")
+    AltStable.ApplyTheme()
+
+    -- On glass, the pages and their buttons sit on a near-opaque backing.
     local back = T.optBacking
     check("on glass the pages have a backing", back ~= nil)
     if back then
@@ -4679,7 +4700,7 @@ do
         check("  in the suite's backing colour, near opaque", c and c[1] == want[1] and c[4] == want[4]
               and c[4] >= 0.9, c and tostring(c[4]) or "nil")
         local _, rel, relPoint = back:GetPoint(1)
-        check("  starting right of the page buttons", rel == btns[1]:GetParent() and relPoint == "TOPRIGHT")
+        check("  under the page buttons' column too", rel == T.optionsPanel and relPoint == "TOPLEFT")
     end
 
     -- Where each setting went.
@@ -4821,6 +4842,74 @@ do
     eq("the status is on the Modules page", st.warband:GetParent(), T.OptPages.modules)
     AltStableConfig.plugins, WoW.loaded.AltStableWarband = heldPlugins, heldLoaded
     panel:GetScript("OnShow")(panel)
+end
+
+------------------------------------------------------------
+-- Options polish: helper lines, faint guides, heading rules, soft borders
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local cam = T.OptCamera
+    local function Plain(s) return ((s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+
+    -- Short labels, with a line underneath where it explains a consequence.
+    eq("the camera's label is short", cam.camera.label:GetText(), "World camera presentation")
+    check("  with a line under it", cam.camera.desc and (cam.camera.desc:GetText() or ""):find("Frames") ~= nil)
+    local _, _, _, cx, cy = cam.camera:GetPoint(1)
+    local _, _, _, dx, dy = cam.camera.desc:GetPoint(1)
+    check("  the line sits under the label", dy < cy and dx > cx, ("%s,%s vs %s,%s"):format(cx, cy, dx, dy))
+    local p1, _, _, _, y1 = cam.camera.desc:GetPoint(1)
+    local p2, _, _, _, y2 = cam.camera.desc:GetPoint(2)
+    check("  and wraps between two top edges on one line", p1 == "TOPLEFT" and p2 == "TOPRIGHT" and y1 == y2)
+    eq("orbit needs no line", cam.orbit.desc, nil)
+    check("sharing keeps its meaning under the short label",
+          (T.OptSyncSettings.desc and T.OptSyncSettings.desc:GetText() or ""):find("latest change wins") ~= nil)
+    eq("mailbox tracking's label", T.OptWarbandMail.label:GetText(), "Track mailbox items")
+    check("  says what off means", (T.OptWarbandMail.desc:GetText() or ""):find("Off: no mail") ~= nil)
+
+    -- Helper lines grey with their setting.
+    local panel = T.optionsPanel
+    local held = AltStableConfig.enableWorldCameraPresentation
+    AltStableConfig.enableWorldCameraPresentation = false
+    panel:GetScript("OnShow")(panel)
+    check("a greyed setting's line greys too", cam.salute.desc:GetAlpha() < 1)
+    AltStableConfig.enableWorldCameraPresentation = held
+    panel:GetScript("OnShow")(panel)
+
+    -- A very faint guide down the left of each indented setting.
+    for name, child in pairs({ orbit = cam.orbit, salute = cam.salute, sync = T.OptSyncSettings,
+                               tailoring = T.OptProfChecks.Tailoring }) do
+        local g = child.guide
+        check(name .. " has a guide", g ~= nil)
+        if g then
+            local c = g._colorTexture
+            check("  very faint", c and c[4] <= 0.1, c and tostring(c[4]) or "nil")
+            local _, _, _, gx = g:GetPoint(2)
+            check("  left of the box", gx < 0, tostring(gx))
+        end
+    end
+    check("a box with no parent has no guide", T.OptItemCounts.guide == nil)
+
+    -- Section headings carry a rule on to the page's right edge.
+    local rules = 0
+    for _, r in ipairs({ T.OptPages.appearance:GetRegions() }) do
+        if r.rule then
+            rules = rules + 1
+            local a = r.rule:GetPoint(1)
+            local b = r.rule:GetPoint(2)
+            check("a heading's rule: two top edges", a == "TOPLEFT" and b == "TOPRIGHT")
+        end
+    end
+    check("Appearance's headings have rules", rules >= 1, tostring(rules))
+
+    -- Choice buttons: the chosen one keeps a full accent border; the others a soft one.
+    local chosen, other
+    for _, b in ipairs(T.OptGroupBtns) do
+        if T.OptGroupMode() == b.mode.id then chosen = b else other = other or b end
+    end
+    eq("the chosen button's border is solid", chosen._backdropBorder[4], 1)
+    check("  the others' soft", other._backdropBorder[4] < 0.3, tostring(other._backdropBorder[4]))
 end
 
 WoW.finish("test_sheetui", passed, failed)
