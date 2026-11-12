@@ -3617,9 +3617,13 @@ local function CreateFrameIfNeeded()
 
     Y = Y - 44   -- a bit more room for the mid-tick baseline below the slider
 
-    -- Shared builder for the checkbox rows on every page.
+    -- Shared builder for the checkbox rows on every page. Each one shows its
+    -- setting whenever Options opens (OnShow, below): a list of them kept by
+    -- hand missed the mail box (#313), which then always opened unticked.
+    optionsPanel.checkRows = {}
     local function MakeOptCheckRow(savedKey, label, anchorY, onClick, getter)
         local cb = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
+        optionsPanel.checkRows[#optionsPanel.checkRows + 1] = cb
         cb:SetSize(18, 18)
         cb:SetPoint("TOPLEFT", P - 2, anchorY + 2)
         cb._getter = getter or function()
@@ -4062,7 +4066,8 @@ local function CreateFrameIfNeeded()
     Y = Y - 30
 
     local optSendAllCheck = MakeOptCheckRow("sendAllAccounts",
-        "Share all known accounts (uncheck to share only this account's data)", Y)
+        "Share all known accounts (uncheck to share only this account's data)", Y, nil,
+        function() return AltStableConfig and AltStableConfig.sendAllAccounts == true end)
     Y = Y - 24
 
     -- #58: your own other accounts, found and synced through Battle.net -
@@ -4856,31 +4861,14 @@ local function CreateFrameIfNeeded()
         if optModelDebugCheck then
             optModelDebugCheck:SetChecked(rosterDebug and true or false)
         end
-        for key, cb in pairs(optPluginChecks) do
-            cb:SetChecked(cb._getter())
+        -- Every checkbox row, from its own getter.
+        for _, cb in ipairs(optionsPanel.checkRows) do
+            cb:SetChecked(cb._getter() and true or false)
         end
-        optCameraCheck:SetChecked(optCameraCheck._getter())
-        optOrbitCheck:SetChecked(optOrbitCheck._getter())
-        optSaluteCheck:SetChecked(optSaluteCheck._getter())
-        optOpenAnimCheck:SetChecked(optOpenAnimCheck._getter())
-        optPetsCheck:SetChecked(optPetsCheck._getter())
-        optEnchantsCheck:SetChecked(optEnchantsCheck._getter())
-        optItemCountsCheck:SetChecked(optItemCountsCheck._getter())
-        optAutoPortraitCheck:SetChecked(optAutoPortraitCheck._getter())
         optFacingUpdating = true
         optFacingSlider:SetValue(AltStable.GetPortraitFacing and AltStable.GetPortraitFacing() or 0)
         optFacingUpdating = false
-        optMinimapCheck:SetChecked(optMinimapCheck._getter())
-        optRememberPositionCheck:SetChecked(optRememberPositionCheck._getter())
-        optRememberSortCheck:SetChecked(optRememberSortCheck._getter())
-        optGroupRealmCheck:SetChecked(optGroupRealmCheck._getter())
-        optGroupFactionCheck:SetChecked(optGroupFactionCheck._getter())
         optAcctBox:SetText(tostring(AltStable.GetAccountNumber() or ""))
-        optSendAllCheck:SetChecked(AltStableConfig.sendAllAccounts and true or false)
-        optBnetCheck:SetChecked(AltStableConfig.bnetSync ~= false)
-        optSyncSettingsCheck:SetChecked(optSyncSettingsCheck._getter())
-        optToastsCheck:SetChecked(AltStableConfig.toastsEnabled ~= false)
-        optMailAlertsCheck:SetChecked(AltStableConfig.mailAlertsEnabled ~= false)
         AltStableConfig.toastProfessions = AltStableConfig.toastProfessions or {}
         for profKey, cb in pairs(optProfChecks) do
             cb:SetChecked(AltStableConfig.toastProfessions[profKey] ~= false)
