@@ -13,9 +13,10 @@ The Roster's character portraits come from **AltStable Companion**, a free Windo
 your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
 Without it, the scene has no one to show, and a capture is only two screenshots. Get it from
 [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
-**Companion v1.1.0** is still the current version. A coming Companion release can take a
-character's portrait from the Forever armory's own picture of it, which updates by itself a few
-hours after you play. v1.2.0 is ready for it: for a character whose portrait comes from the armory,
+**Companion v1.2.3** is the current version. It can take a character's portrait from the Forever
+armory's own picture of it, which updates by itself a few hours after you play: your own capture
+stays the portrait until the character changes, then the armory's picture takes over once it shows
+the change. v1.2.0 is ready for it: for a character whose portrait comes from the armory,
 a gear change no longer asks for a new capture (from level 10, where the armory has the character).
 
 ### New
