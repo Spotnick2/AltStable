@@ -4174,7 +4174,36 @@ do
         check("  and shows off", cb._getter() == false)
         cb:SetChecked(true); cb:GetScript("OnClick")(cb)
         eq("  ticking saves true", AltStableConfig.warbandMail, true)
+
+        -- Opening Options shows it: it always opened unticked, the setting on.
+        local panel = AltStable._test.optionsPanel
+        AltStableConfig.warbandMail = nil
+        cb:SetChecked(false)
+        panel:GetScript("OnShow")(panel)
+        check("  opening Options shows it ticked when on", cb:GetChecked() == true)
+        AltStableConfig.warbandMail = false
+        panel:GetScript("OnShow")(panel)
+        check("  and unticked when off", not cb:GetChecked())
         AltStableConfig.warbandMail = held
+
+        -- Every checkbox row shows its own setting on open, both ways.
+        local rows = panel.checkRows or {}
+        check("  every checkbox row is listed", #rows >= 20, tostring(#rows))
+        for _, want in ipairs({ true, false }) do
+            local wrong = 0
+            for _, row in ipairs(rows) do
+                row._realGetter = row._realGetter or row._getter
+                row._getter = function() return want end
+                row:SetChecked(not want)
+            end
+            panel:GetScript("OnShow")(panel)
+            for _, row in ipairs(rows) do
+                if (row:GetChecked() and true or false) ~= want then wrong = wrong + 1 end
+            end
+            eq("  every box opens " .. (want and "ticked" or "unticked") .. " from its setting", wrong, 0)
+        end
+        for _, row in ipairs(rows) do row._getter, row._realGetter = row._realGetter, nil end
+        panel:GetScript("OnShow")(panel)
     end
 end
 
