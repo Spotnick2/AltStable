@@ -3218,6 +3218,7 @@ local function CreateFrameIfNeeded()
 
     -- ── Appearance page: the look ─────────────────────────
     OptPage("appearance")
+    optionsFrame.lookTop = Y   -- where the Glass UI card goes (below)
 
     -- The pressed state both choice rows use. Hoisted out of the Theme row so
     -- the Skin row above can wear it too: one selected look, not two that drift.
@@ -3405,32 +3406,21 @@ local function CreateFrameIfNeeded()
     AltStable._test.SkinReloadButton = function() return optSkinReloadBtn end
     AltStable._test.SkinReloadText = function() return optSkinReload end
 
-    -- Following Glass UI (#261): the rows show what the window is wearing,
-    -- dimmed, since none of them is ours to change, and the reload line says
-    -- who sets it, with a button to Glass UI. The saved choices wait, unshown.
+    -- Following Glass UI (#261): the card below says what the window is
+    -- wearing, with a button to Glass UI. The saved choices wait, unshown.
     local SUITE_TINT_TEXT = { clear = "clear", smoked = "smoked", class = "class-coloured" }
-    local appearanceBtns = {}
-    for _, list in ipairs({ skinBtns, tintBtns, lookBtns }) do
-        for _, b in ipairs(list) do appearanceBtns[#appearanceBtns + 1] = b end
-    end
+    -- Following, the rows give way to a card saying so (built under the
+    -- accent row, below): none of them is ours to change.
     local function ShowFollowing(look)
-        for _, b in ipairs(skinBtns) do SetChoiceBtnState(b, b.lbl, b.skinName == AltStable.SkinName()) end
-        for _, b in ipairs(tintBtns) do SetChoiceBtnState(b, b.lbl, b.classTint == AltStable.SkinClassTint()) end
-        -- Pearl is neither Classic nor Clean.
-        for _, b in ipairs(lookBtns) do SetChoiceBtnState(b, b.lbl, false) end
-        for _, b in ipairs(appearanceBtns) do b:SetAlpha(0.45) end
-        optSkinReload:SetText(("|cff7fd4ffSet in Glass UI|r: %s, %s glass, %s accent"):format(
-            look.preset == "pearl" and "Pearl" or look.preset,
-            SUITE_TINT_TEXT[look.tint] or look.tint, look.accent))
-        optSkinReloadBtn:SetText("Glass UI")
-        optSkinReload:Show()
-        optSkinReloadBtn:Show()
+        optSkinReload:Hide()
+        optSkinReloadBtn:Hide()
+        if optionsPanel.setLookCard then optionsPanel.setLookCard(look) end
     end
 
     RefreshSkinRow = function()
         local look = AltStable.SuiteFollowing() and AltStable.SuiteLook()
         if look then return ShowFollowing(look) end
-        for _, b in ipairs(appearanceBtns) do b:SetAlpha(1) end
+        if optionsPanel.setLookCard then optionsPanel.setLookCard(nil) end
         optSkinReloadBtn:SetText("Reload")
         local pending = AltStable.PendingSkinName()
         for _, b in ipairs(skinBtns) do
@@ -3566,6 +3556,61 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptAccentFootnote = optHint
     Y = Y - 30
 
+    -- Following Glass UI (#261), a card stands where the rows above were:
+    -- what the window is wearing, a button to Glass UI, and where to change
+    -- it. The rows stay built, and come back when AltStable has its own look.
+    do
+        local rows = { optSkinLabel, optTintLabel, optTintHint, optLookLabel, optLookHint,
+                       optThemeLabel, optDarkBtn, optClassBtn, optThemeHint, optHint }
+        for _, list in ipairs({ skinBtns, tintBtns, lookBtns }) do
+            for _, b in ipairs(list) do rows[#rows + 1] = b end
+        end
+        local top = optionsFrame.lookTop
+        local card = CreateFrame("Frame", nil, optionsFrame, "BackdropTemplate")
+        card:SetPoint("TOPLEFT", P, top + 4)
+        card:SetPoint("TOPRIGHT", -P, top + 4)
+        card:SetHeight(top - Y - 14)
+        AltStable.ApplyBackdrop(card, 0.10, 0.12, 0.15, 0.9)
+        local title = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        -- Each line at its own offset from the card's top. The note needs a
+        -- left and a right edge to wrap, and both on the same horizontal:
+        -- TOPLEFT + RIGHT would pin its middle to the card's and leave it no
+        -- height at all (docs/forever-api-notes.md, "Two conflicting anchors
+        -- beat an explicit SetHeight"; Codex on #323).
+        title:SetPoint("TOPLEFT", 14, -14)
+        title:SetText("|cff7fd4ffFollows Glass UI|r")
+        local what = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+        what:SetPoint("TOPLEFT", 14, -40)
+        local open = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+        open:SetSize(120, 22)
+        open:SetPoint("TOPLEFT", 14, -72)
+        open:SetText("Open Glass UI")
+        open:SetScript("OnClick", function()
+            if not AltStable.OpenGlassUI() then AltStable.SuiteRefuse() end
+        end)
+        local note = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        note:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -106)
+        note:SetPoint("TOPRIGHT", card, "TOPRIGHT", -14, -106)
+        note:SetJustifyH("LEFT"); note:SetWordWrap(true)
+        note:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        note:SetText("Change it in Glass UI, or turn off its \"Use Glass UI appearance\" for AltStable "
+            .. "there to choose a look here. Character names and rows keep each character's class colour.")
+        card:Hide()
+
+        local function Cap(t) t = tostring(t or ""); return (t:gsub("^%l", string.upper)) end
+        optionsPanel.setLookCard = function(look)
+            for _, r in ipairs(rows) do r:SetShown(not look) end
+            card:SetShown(look and true or false)
+            if look then
+                what:SetText(("%s  \194\183  %s glass  \194\183  %s accent"):format(
+                    look.preset == "pearl" and "Pearl" or Cap(look.preset),
+                    Cap(SUITE_TINT_TEXT[look.tint] or look.tint), Cap(look.accent)))
+            end
+        end
+        AltStable._test.LookCard = { card = card, what = what, open = open, note = note, rows = rows }
+    end
+    RefreshSkinRow()
+
     -- ── Scale row ─────────────────────────────────────────
     -- Layout target:
     --   Scale       0.75 ──────●────── 1.25      Reset
@@ -3693,6 +3738,26 @@ local function CreateFrameIfNeeded()
     OptPage("modules")
     local optPluginChecks = {}
     if #(AltStable.LOD_PLUGINS or {}) > 0 then
+        -- Beside each tab, where it stands this session: a box unticked while
+        -- the tab is still loaded changes nothing until a /reload, and a
+        -- ticked one the game would not load needs its AddOns list. The
+        -- checkbox alone said neither.
+        local status = {}
+        local function RefreshPluginStatus()
+            for key, fs in pairs(status) do
+                local on = AltStable.IsPluginEnabled(key)
+                local loaded = AltStable.IsPluginLoaded and AltStable.IsPluginLoaded(key)
+                if on and loaded then
+                    fs:SetText("|cff66cc66On|r")
+                elseif loaded then
+                    fs:SetText("|cffffcc00Off after a /reload|r")
+                elseif on then
+                    fs:SetText("|cffff7777Not loaded: enable it in the game's AddOns list|r")
+                else
+                    fs:SetText("|cff888888Off|r")
+                end
+            end
+        end
         for _, p in ipairs(AltStable.LOD_PLUGINS) do
             local key = p.key
             optPluginChecks[key] = MakeOptCheckRow(nil, p.label, Y,
@@ -3700,12 +3765,21 @@ local function CreateFrameIfNeeded()
                     if AltStable.SetPluginEnabled then
                         AltStable.SetPluginEnabled(key, checked)
                     end
+                    RefreshPluginStatus()
                 end,
                 function()
                     return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
                 end)
+            local fs = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("LEFT", optPluginChecks[key], "LEFT", 150, 0)
+            fs:SetJustifyH("LEFT")
+            status[key] = fs
             Y = Y - 22
         end
+        RefreshPluginStatus()
+        optionsPanel.refreshers = optionsPanel.refreshers or {}
+        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshPluginStatus
+        AltStable._test.OptPluginStatus = status
 
         local optPluginsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         optPluginsHint:SetPoint("TOPLEFT", P, Y - 2)

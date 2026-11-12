@@ -294,22 +294,34 @@ do
     savedUntouched("the skin, glass and look buttons do not write while following")
 
     T.RefreshSkinRow()
-    local line = T.SkinReloadText():GetText() or ""
-    check("the row says Glass UI sets it", line:find("Set in Glass UI", 1, true) ~= nil, line)
-    check("  naming what it is wearing", line:find("Pearl", 1, true) and line:find("smoked", 1, true)
-          and line:find("ice", 1, true), line)
-    eq("  the button goes to Glass UI", T.SkinReloadButton():GetText(), "Glass UI")
-    local btn = T.SkinReloadButton()
-    btn:GetScript("OnClick")(btn)
-    check("  and opens it", S.opened == true)
-    eq("  the buttons are dimmed", T.skinBtns[1]:GetAlpha(), 0.45)
+    local C = T.LookCard
+    check("following, a card says so", C.card:IsShown())
+    local what = C.what:GetText() or ""
+    check("  naming what the window is wearing", what:find("Pearl", 1, true) and what:find("Smoked", 1, true)
+          and what:find("Ice", 1, true), what)
+    local hiddenRows = 0
+    for _, r in ipairs(C.rows) do if not r:IsShown() then hiddenRows = hiddenRows + 1 end end
+    eq("  in place of the skin, glass, look and accent rows", hiddenRows, #C.rows)
+    check("  the skin buttons among them", not T.skinBtns[1]:IsShown())
+    check("  and no reload line", not T.SkinReloadButton():IsShown())
+    C.open:GetScript("OnClick")(C.open)
+    check("  its button opens Glass UI", S.opened == true)
+    -- The note wraps between a left and a right edge on ONE horizontal: a
+    -- RIGHT anchor would pin its middle to the card's and give it no height.
+    local p1, r1, rp1, _, y1 = C.note:GetPoint(1)
+    local p2, r2, rp2, _, y2 = C.note:GetPoint(2)
+    eq("  the note's edges: top-left and top-right", (p1 or "") .. "," .. (p2 or ""), "TOPLEFT,TOPRIGHT")
+    check("  on one line, both to the card", r1 == C.card and r2 == C.card and y1 == y2
+          and rp1 == "TOPLEFT" and rp2 == "TOPRIGHT", tostring(y1) .. " vs " .. tostring(y2))
+    check("  inside the card", -y1 < C.card:GetHeight() - 30, tostring(y1) .. " in " .. tostring(C.card:GetHeight()))
 
-    -- Back to our own look: the row is ours again.
+    -- Back to our own look: the rows are ours again.
     fakeSuite({})
     session(SAVED)
     T.RefreshSkinRow()
-    eq("not following, the button reloads again", T.SkinReloadButton():GetText(), "Reload")
-    eq("  and the buttons are bright", T.skinBtns[1]:GetAlpha(), 1)
+    check("not following, no card", not C.card:IsShown())
+    check("  the rows are back", T.skinBtns[1]:IsShown() and C.rows[1]:IsShown())
+    eq("  and the button reloads again", T.SkinReloadButton():GetText(), "Reload")
     local cb = T.lookBtns[2]
     cb:GetScript("OnClick")(cb)
     eq("  and they write", AltStableConfig.skinClean, true)

@@ -4790,4 +4790,34 @@ do
     panel:GetScript("OnShow")(panel)
 end
 
+------------------------------------------------------------
+-- Options, Modules: beside each tab, where it stands this session
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local panel, st, box = T.optionsPanel, T.OptPluginStatus, T.OptPluginChecks.warband
+    local function Plain(s) return ((s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local heldPlugins = AltStableConfig.plugins
+    local heldLoaded = WoW.loaded.AltStableWarband
+    AltStableConfig.plugins = {}
+    WoW.loaded.AltStableWarband = true
+    panel:GetScript("OnShow")(panel)
+    eq("a loaded, ticked tab reads On", Plain(st.warband:GetText()), "On")
+    box:SetChecked(false); box:GetScript("OnClick")(box)
+    eq("unticked while loaded: off after a reload", Plain(st.warband:GetText()), "Off after a /reload")
+    WoW.loaded.AltStableWarband = false
+    panel:GetScript("OnShow")(panel)
+    eq("unticked and not loaded: Off", Plain(st.warband:GetText()), "Off")
+    AltStableConfig.plugins.warband = true
+    panel:GetScript("OnShow")(panel)
+    check("ticked but not loaded: says where to look",
+          Plain(st.warband:GetText()):find("AddOns list", 1, true) ~= nil, Plain(st.warband:GetText()))
+    box:SetChecked(true); box:GetScript("OnClick")(box)
+    eq("ticking loads it, and it reads On", Plain(st.warband:GetText()), "On")
+    eq("the status is on the Modules page", st.warband:GetParent(), T.OptPages.modules)
+    AltStableConfig.plugins, WoW.loaded.AltStableWarband = heldPlugins, heldLoaded
+    panel:GetScript("OnShow")(panel)
+end
+
 WoW.finish("test_sheetui", passed, failed)
