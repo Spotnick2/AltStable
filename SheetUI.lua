@@ -3636,12 +3636,31 @@ local function CreateFrameIfNeeded()
     -- Shared builder for the checkbox rows on every page. Each one shows its
     -- setting whenever Options opens (OnShow, below): a list of them kept by
     -- hand missed the mail box (#313), which then always opened unticked.
-    optionsPanel.checkRows = {}
-    local function MakeOptCheckRow(savedKey, label, anchorY, onClick, getter)
+    --
+    -- A setting that only matters while another is on (OptDependsOn) sits
+    -- indented under it, and is greyed out and cannot be clicked while it is
+    -- off: orbit and salute need the camera, each profession needs the toasts.
+    -- The saved value is kept, so turning the parent back on brings it back.
+    optionsPanel.checkRows, optionsPanel.dependents = {}, {}
+    local function OptRefreshDependents()
+        for _, child in ipairs(optionsPanel.dependents) do
+            local on = child.parentRow:GetChecked() and true or false
+            child:SetEnabled(on)
+            child.label:SetTextColor(unpack(on and child.labelColor or AltStable.C.TEXT_DIM))
+            child.label:SetAlpha(on and 1 or 0.5)
+        end
+    end
+    local function OptDependsOn(child, parent)
+        child.parentRow = parent
+        child.labelColor = child.labelColor or AltStable.C.TEXT_NORM
+        optionsPanel.dependents[#optionsPanel.dependents + 1] = child
+    end
+    optionsPanel.refreshDependents = OptRefreshDependents
+    local function MakeOptCheckRow(savedKey, label, anchorY, onClick, getter, indent)
         local cb = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
         optionsPanel.checkRows[#optionsPanel.checkRows + 1] = cb
         cb:SetSize(18, 18)
-        cb:SetPoint("TOPLEFT", P - 2, anchorY + 2)
+        cb:SetPoint("TOPLEFT", P - 2 + (indent or 0), anchorY + 2)
         cb._getter = getter or function()
             return AltStableConfig and AltStableConfig[savedKey] ~= false
         end
@@ -3653,11 +3672,13 @@ local function CreateFrameIfNeeded()
             else
                 AltStable.SetConfigValue(savedKey, checked)
             end
+            OptRefreshDependents()
         end)
         local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
         lbl:SetText(label)
         lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        cb.label = lbl
         return cb
     end
 
@@ -3747,12 +3768,15 @@ local function CreateFrameIfNeeded()
     Y = Y - 22
 
     local optOrbitCheck = MakeOptCheckRow("worldCameraContinuousOrbit",
-        "Keep the world slowly rotating around your character while open", Y)
+        "Keep the world slowly rotating around your character while open", Y, nil, nil, 22)
+    OptDependsOn(optOrbitCheck, optCameraCheck)
     Y = Y - 22
 
     local optSaluteCheck = MakeOptCheckRow("enableWorldCameraSalute",
-        "Salute after the camera finishes moving (visible emote)", Y)
+        "Salute after the camera finishes moving (visible emote)", Y, nil, nil, 22)
+    OptDependsOn(optSaluteCheck, optCameraCheck)
     Y = Y - 22
+    AltStable._test.OptCamera = { camera = optCameraCheck, orbit = optOrbitCheck, salute = optSaluteCheck }
 
     local optOpenAnimCheck = MakeOptCheckRow("enableOpenAnimation",
         "Play fade-in animation when AltStable opens", Y)
@@ -4141,14 +4165,17 @@ local function CreateFrameIfNeeded()
     Y = Y - 24
 
     -- Settings and the forgotten list, to and from your own other accounts.
-    -- Off unless asked for: each account keeps its own look until then.
+    -- Off unless asked for: each account keeps its own look until then. They
+    -- go only to your own accounts over Battle.net (Core.lua, OwnBNetPeer),
+    -- so the box sits under the Battle.net one.
     local optSyncSettingsCheck = MakeOptCheckRow("syncSettings",
         "Sync settings and forgotten characters with your other accounts", Y, nil,
-        function() return AltStableConfig and AltStableConfig.syncSettings == true end)
-    AltStable._test.OptSyncSettings = optSyncSettingsCheck
+        function() return AltStableConfig and AltStableConfig.syncSettings == true end, 22)
+    OptDependsOn(optSyncSettingsCheck, optBnetCheck)
+    AltStable._test.OptSyncSettings, AltStable._test.OptBnet = optSyncSettingsCheck, optBnetCheck
     Y = Y - 18
     local optSyncSettingsHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optSyncSettingsHint:SetPoint("TOPLEFT", P + 22, Y)
+    optSyncSettingsHint:SetPoint("TOPLEFT", P + 44, Y)
     optSyncSettingsHint:SetPoint("TOPRIGHT", -P, Y)
     optSyncSettingsHint:SetJustifyH("LEFT"); optSyncSettingsHint:SetWordWrap(true)
     optSyncSettingsHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
@@ -4483,6 +4510,7 @@ local function CreateFrameIfNeeded()
 
     local optToastsCheck = MakeOptCheckRow("toastsEnabled",
         "Show profession toasts", Y)
+    AltStable._test.OptToasts = optToastsCheck
     Y = Y - 22
 
     local PROFESSION_KEYS = { "Tailoring", "Alchemy" }
@@ -4501,7 +4529,9 @@ local function CreateFrameIfNeeded()
         local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
         lbl:SetText(profKey)
-        lbl:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        lbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        cb.label = lbl
+        OptDependsOn(cb, optToastsCheck)
         optProfChecks[profKey] = cb
         Y = Y - 18
     end
@@ -4941,6 +4971,7 @@ local function CreateFrameIfNeeded()
         for profKey, cb in pairs(optProfChecks) do
             cb:SetChecked(AltStableConfig.toastProfessions[profKey] ~= false)
         end
+        optionsPanel.refreshDependents()
         OptRefreshWhitelist()
         OptRefreshSyncAuth()
         OptRefreshHidden()
