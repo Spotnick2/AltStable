@@ -3353,21 +3353,31 @@ do
     eq("  and the hidden list", hd.used, 1)
     check("  each saying so", T.OptWlNone:IsShown() and T.OptAuthNone:IsShown())
     check("everything below moved up by the rows not used", AllWhereExpected())
-    -- Below BOTH sync lists (Toasts, Mail, Hidden): up by both gaps.
+    -- Below BOTH sync lists (the answers' overflow line): up by both gaps.
     local deepest
     for _, it in ipairs(flow.items) do
-        if #it.below == 2 and it.points[1] and it.points[1][2] == it.o:GetParent() then deepest = it; break end
+        if #it.below == 2 and it.below[1] == wl and it.points[1] and it.points[1][2] == it.o:GetParent() then
+            deepest = it; break
+        end
     end
     check("there is something below both sync lists", deepest ~= nil)
     if deepest then
         eq("  and it moved up by both gaps", ShiftOf(deepest), (4 + 5) * 18)
     end
-    local fullH = flow.height
+    -- Each list is on its page, and moves only that page: the sync lists the
+    -- Accounts & sync page, the hidden and old characters the Characters page.
+    local child, chars = wl.page, hd.page
+    eq("the sync lists share a page", au.page, child)
+    check("  the character lists another", chars ~= child and flow.lists[4].page == chars)
+    for _, it in ipairs(flow.items) do
+        for _, l in ipairs(it.below) do
+            if l.page ~= it.o:GetParent() then check("a list moves only its own page", false); break end
+        end
+    end
+    local shown = flow.heights[child] - (4 + 5) * 18
+    eq("  the sync page's height drops by the rows not used", child:GetHeight(), shown)
     -- The old-characters list is empty too: seven of its eight rows unused.
-    local shown = (fullH - (4 + 5 + 5 + 7) * 18)
-    -- The page's own height follows: read it from the scroll child.
-    local child = flow.items[1].o:GetParent()
-    eq("  the page height drops by the rows not used", child:GetHeight(), shown)
+    eq("  and the Characters page's by its own", chars:GetHeight(), flow.heights[chars] - (5 + 7) * 18)
 
     -- Three peers: three rows, the note goes, and the rest moves back down.
     AltStableConfig.whitelist = { "A", "B", "C" }
@@ -4545,6 +4555,79 @@ do
         check("  and a lift is a no-op", pcall(AltStable.LiftAboveHiddenUI, CreateFrame("Frame"), true))
         check("  the CVar popup suppressor is still callable", pcall(AltStable.SuppressExperimentalCVarPopup))
         LibStub.libs[major], LibStub.minors[major], lib.ready = lib, minor, ready
+    end
+end
+
+------------------------------------------------------------
+-- Options pages: a button per page, each setting on its page
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local pages, btns = T.OptPages, T.OptNavBtns
+    local order = {}
+    for i, b in ipairs(btns or {}) do order[i] = b.lbl:GetText() end
+    eq("Options has six page buttons, in order", table.concat(order, ","),
+       "General,Appearance,Characters,Notifications,Accounts & sync,Modules")
+
+    local function Visible()
+        local out = {}
+        for id, page in pairs(pages) do if page.scroll:IsShown() then out[#out + 1] = id end end
+        table.sort(out)
+        return table.concat(out, ",")
+    end
+    T.ShowOptPage("general")
+    eq("one page at a time: General", Visible(), "general")
+    btns[5]:GetScript("OnClick")(btns[5])
+    eq("a page button opens its page, and only it", Visible(), "sync")
+    eq("  and is the active one", T.OptActivePage(), "sync")
+    T.ShowOptPage("nowhere")
+    eq("an unknown page changes nothing", Visible(), "sync")
+    T.ShowOptPage("general")
+
+    -- Where each setting went.
+    local function On(o) return o and o:GetParent() end
+    eq("grouping is on General", On(T.OptGroupRealm), pages.general)
+    eq("  with the sort order", On(T.OptRememberSort), pages.general)
+    eq("  the item counts", On(T.OptItemCounts), pages.general)
+    eq("  and mail tracking", On(T.OptWarbandMail), pages.general)
+    eq("the skin is on Appearance", On(T.skinBtns[1]), pages.appearance)
+    eq("  with the accent's note", On(T.OptAccentFootnote), pages.appearance)
+    eq("the portrait angle is on Characters", On(T.FacingSlider), pages.characters)
+    eq("  with the portrait note", On(T.optAutoPortraitHint), pages.characters)
+    eq("  and old characters", On(T.OptStale.box), pages.characters)
+    eq("profession toasts are on Notifications", On(T.OptProfChecks.Tailoring), pages.notifications)
+    eq("settings sync is on Accounts & sync", On(T.OptSyncSettings), pages.sync)
+    eq("  with the sync peers", On(T.OptWlNone), pages.sync)
+    eq("  and the account number", On(T.AccountBox), pages.sync)
+    eq("the modules are on Modules", On(T.OptPluginChecks.warband), pages.modules)
+
+    -- Each page has its own cursor: nothing on a page is laid out at the
+    -- same spot as something else (the "none" lines sit on their list's first
+    -- row by design), and nothing below the page's height.
+    for id, page in pairs(pages) do
+        local all = { page:GetChildren() }
+        for _, r in ipairs({ page:GetRegions() }) do all[#all + 1] = r end
+        local seen, clash, below = {}, nil, nil
+        for _, o in ipairs(all) do
+            local point, rel, _, x, y = o:GetPoint(1)
+            if point == "TOPLEFT" and rel == page and o ~= T.OptWlNone and o ~= T.OptAuthNone then
+                local key = tostring(x) .. "," .. tostring(y)
+                if seen[key] then clash = key end
+                seen[key] = true
+                if (y or 0) < -page:GetHeight() then below = y end
+            end
+        end
+        -- The first thing under the title sits at the page's top, not where
+        -- the page built before it ended.
+        local top = -math.huge
+        for key in pairs(seen) do
+            local y = tonumber(key:match(",(.+)$"))
+            if y and y < -30 and y > top then top = y end
+        end
+        check("the page starts at its top: " .. id, top > -80, tostring(top))
+        check("nothing overlaps on " .. id, clash == nil, tostring(clash))
+        check("  nor sits below its height", below == nil, tostring(below))
     end
 end
 

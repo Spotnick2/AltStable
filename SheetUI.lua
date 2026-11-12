@@ -3090,23 +3090,74 @@ local function CreateFrameIfNeeded()
     -- clipping to the window outline, not replacing.
     AltStable.SkinClipTexture(optionsPanel, optBG, frame)
 
-    local optionsScroll = CreateFrame("ScrollFrame", nil, optionsPanel, "UIPanelScrollFrameTemplate")
-    optionsScroll:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
-    optionsScroll:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -26, 0)  -- room for the scrollbar
+    -- ── Pages ──────────────────────────────────────────────
+    -- A column of page buttons on the left, and beside it one page per
+    -- category, each its own scroll frame, so each keeps its own scroll
+    -- position. One long page had camera, Roster and portrait settings under
+    -- one heading and the sync settings in three places.
+    local OPT_PAGES = {
+        { id = "general",       label = "General" },
+        { id = "appearance",    label = "Appearance" },
+        { id = "characters",    label = "Characters" },
+        { id = "notifications", label = "Notifications" },
+        { id = "sync",          label = "Accounts & sync" },
+        { id = "modules",       label = "Modules" },
+    }
+    local optNav = CreateFrame("Frame", nil, optionsPanel)
+    optNav:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, 0)
+    optNav:SetPoint("BOTTOMLEFT", optionsPanel, "BOTTOMLEFT", 0, 0)
+    optNav:SetWidth(140)
+    do
+        local line = optNav:CreateTexture(nil, "ARTWORK")
+        line:SetWidth(1)
+        line:SetPoint("TOPRIGHT", optNav, "TOPRIGHT", 0, -8)
+        line:SetPoint("BOTTOMRIGHT", optNav, "BOTTOMRIGHT", 0, 8)
+        line:SetColorTexture(unpack(AltStable.C.SEP))
+    end
 
-    local optionsFrame = CreateFrame("Frame", nil, optionsScroll)
-    optionsFrame:SetSize(1, 1)
-    optionsScroll:SetScrollChild(optionsFrame)
-    -- Keep the content as wide as the viewport so the panel reflows on resize.
-    optionsScroll:SetScript("OnSizeChanged", function(self, w)
-        if w and w > 0 then optionsFrame:SetWidth(w) end
-    end)
+    local optPages = {}
+    for _, def in ipairs(OPT_PAGES) do
+        local scroll = CreateFrame("ScrollFrame", nil, optionsPanel, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", optNav, "TOPRIGHT", 0, 0)
+        scroll:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -26, 0)  -- room for the scrollbar
+        local page = CreateFrame("Frame", nil, scroll)
+        page:SetSize(1, 1)
+        scroll:SetScrollChild(page)
+        -- Keep the content as wide as the viewport so the page reflows on resize.
+        scroll:SetScript("OnSizeChanged", function(_, w)
+            if w and w > 0 then page:SetWidth(w) end
+        end)
+        scroll:Hide()
+        page.pageId, page.scroll = def.id, scroll
+        optPages[def.id] = page
+    end
 
     -- ── Layout ──────────────────────────────────────────────
     -- We build everything at fixed offsets from TOPLEFT so
     -- nothing can overflow or go off-screen.
     local P = 18   -- left/right padding inside the options panel
     local Y = -12  -- current Y cursor (negative = down from top)
+
+    -- The page every control below is built on, and its cursor. OptPage moves
+    -- to another page, keeping each page's cursor, so a section can go to its
+    -- page wherever it is built. Only for building: nothing that runs later
+    -- may read `optionsFrame`, since it names the last page built.
+    local optionsFrame = optPages.general
+    for _, page in pairs(optPages) do page.y = Y end
+    local function OptPage(id)
+        optionsFrame.y = Y
+        optionsFrame, Y = optPages[id], optPages[id].y
+    end
+
+    -- A section's heading on its page: small, dim, capitals.
+    local function OptSection(text)
+        local fs = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", P, Y)
+        fs:SetText(text)
+        fs:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        Y = Y - 20
+        return fs
+    end
 
     -- EVERY anchor to this page is measured from its TOP (#151, #158 review):
     -- its height changes as the lists below grow and shrink, so an anchor to
@@ -3127,30 +3178,30 @@ local function CreateFrameIfNeeded()
         return fs
     end
 
-    -- Title
-    local optTitle = MakeLabel("Options", "GameFontNormal")
+    -- Each page's title, in the accent, over a thin divider.
+    do
+    local optTitles = {}
+    for _, def in ipairs(OPT_PAGES) do
+        OptPage(def.id)
+        optTitles[#optTitles + 1] = MakeLabel(def.label, "GameFontNormal")
+        Y = Y - 22
+        local div = optionsFrame:CreateTexture(nil, "ARTWORK")
+        div:SetHeight(1)
+        div:SetPoint("TOPLEFT",  optionsFrame, "TOPLEFT",  0, Y)
+        div:SetPoint("TOPRIGHT", optionsFrame, "TOPRIGHT", 0, Y)
+        div:SetColorTexture(unpack(AltStable.C.SEP))
+        Y = Y - 16
+    end
     local function SyncTitleColor()
         local r, g, b = AltStable.GetAccentRGB()
-        optTitle:SetTextColor(r, g, b)
+        for _, t in ipairs(optTitles) do t:SetTextColor(r, g, b) end
     end
     SyncTitleColor()
     AltStable.RegisterThemeCallback(SyncTitleColor)
-    Y = Y - 22
+    end
 
-    -- Thin divider
-    local optDiv1 = optionsFrame:CreateTexture(nil, "ARTWORK")
-    optDiv1:SetHeight(1)
-    optDiv1:SetPoint("TOPLEFT",  optionsFrame, "TOPLEFT",  0,     Y)
-    optDiv1:SetPoint("TOPRIGHT", optionsFrame, "TOPRIGHT", 0,     Y)
-    optDiv1:SetColorTexture(unpack(AltStable.C.SEP))
-    Y = Y - 16
-
-    -- ── Appearance section ────────────────────────────────
-    local optSectionHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optSectionHdr:SetPoint("TOPLEFT", P, Y)
-    optSectionHdr:SetText("APPEARANCE")
-    optSectionHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 20
+    -- ── Appearance page: the look ─────────────────────────
+    OptPage("appearance")
 
     -- The pressed state both choice rows use. Hoisted out of the Theme row so
     -- the Skin row above can wear it too: one selected look, not two that drift.
@@ -3293,8 +3344,9 @@ local function CreateFrameIfNeeded()
     -- ON ITS OWN ROW, and measured rather than guessed.
     --
     -- Beside the buttons is where this was, to avoid holding a line open in the
-    -- state where nothing is pending - but the OPTIONS VIEWPORT is not the 820
-    -- the tab asks for: the sidebar and the scrollbar take it to about 563, the
+    -- state where nothing is pending - but the OPTIONS VIEWPORT is not the width
+    -- the tab asks for (960 since the pages; 820 then): the sidebar, the page
+    -- buttons and the scrollbar take it to about 563, the
     -- three choices already end near 382, and what was left could not hold the
     -- message, let alone the button after it. The Reload button was pushed off
     -- the right edge, in a panel that scrolls vertically only, so the one
@@ -3565,51 +3617,7 @@ local function CreateFrameIfNeeded()
 
     Y = Y - 44   -- a bit more room for the mid-tick baseline below the slider
 
-    -- ── Roster section (developer-only) ─────────────────────
-    -- "Preview debug mode" is a developer diagnostic (live model vs static
-    -- render vs card, plus the Roster debug text window) that normal users
-    -- should never see. Gate the whole block behind a dev flag; enable with
-    --   /run AltStableConfig.devMode = true; ReloadUI()
-    -- When the flag is off nothing renders and Y is untouched, so the options
-    -- below simply move up. Issue #4.
-    if AltStableConfig and AltStableConfig.devMode then
-        local optCharsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        optCharsHdr:SetPoint("TOPLEFT", P, Y)
-        optCharsHdr:SetText("ROSTER (DEV)")
-        optCharsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-        Y = Y - 20
-
-        optModelDebugCheck = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
-        optModelDebugCheck:SetSize(18, 18)
-        optModelDebugCheck:SetPoint("TOPLEFT", P - 2, Y + 2)
-        optModelDebugCheck:SetChecked(AltStableRosterDB and AltStableRosterDB._debugModelStatus and true or false)
-        optModelDebugCheck:SetScript("OnClick", function(self)
-            AltStableRosterDB = AltStableRosterDB or AltStableAltsDB or {}
-            AltStableAltsDB = AltStableRosterDB
-            AltStableRosterDB._debugModelStatus = self:GetChecked() and true or false
-            if AltStable.RefreshSheet then
-                AltStable.RefreshSheet()
-            end
-        end)
-
-        local optModelDebugLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        optModelDebugLabel:SetPoint("LEFT", optModelDebugCheck, "RIGHT", 4, 0)
-        optModelDebugLabel:SetText("Preview debug mode (AltStable Roster)")
-        optModelDebugLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
-
-        local optModelDebugHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        optModelDebugHint:SetPoint("TOPLEFT", P, Y - 16)
-        optModelDebugHint:SetPoint("TOPRIGHT", -P, Y - 16)
-        optModelDebugHint:SetJustifyH("LEFT")
-        optModelDebugHint:SetWordWrap(true)
-        optModelDebugHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-        optModelDebugHint:SetText("Shows preview mode diagnostics (live model vs static render vs card) and opens the Roster debug text window.")
-
-        Y = Y - 42
-    end
-
-    -- Shared builder for the checkbox rows below (plugins, presentation,
-    -- toasts). Defined here so the Plugins section can use it too.
+    -- Shared builder for the checkbox rows on every page.
     local function MakeOptCheckRow(savedKey, label, anchorY, onClick, getter)
         local cb = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
         cb:SetSize(18, 18)
@@ -3641,14 +3649,9 @@ local function CreateFrameIfNeeded()
     -- The whole section is skipped when no plugins are registered, otherwise
     -- the heading and hint render above empty space. LOD_PLUGINS holds Warband
     -- and Raids; Recipes (#14) and Roster (#15) are still to come.
+    OptPage("modules")
     local optPluginChecks = {}
     if #(AltStable.LOD_PLUGINS or {}) > 0 then
-        local optPluginsHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        optPluginsHdr:SetPoint("TOPLEFT", P, Y)
-        optPluginsHdr:SetText("PLUGINS")
-        optPluginsHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-        Y = Y - 20
-
         for _, p in ipairs(AltStable.LOD_PLUGINS) do
             local key = p.key
             optPluginChecks[key] = MakeOptCheckRow(nil, p.label, Y,
@@ -3673,51 +3676,51 @@ local function CreateFrameIfNeeded()
         optPluginsHint:SetText("Enabling loads the tab immediately; disabling takes effect after /reload. (They must also stay enabled in the game's AddOns list.)")
         Y = Y - 34
     end
+    AltStable._test.OptPluginChecks = optPluginChecks
 
-    -- Character counts in item tooltips (#304): the Warband tab's checkbox too,
-    -- here where players look for settings. Shows the setting in effect; a click
-    -- makes it the player's own choice (Core.lua, ItemTooltipCountsOn).
-    local optItemCountsCheck = MakeOptCheckRow("warbandItemTooltips",
-        "Show character counts in item tooltips", Y, nil,
-        function() return AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn() or false end)
-    optItemCountsCheck:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        AltStable.ItemTooltipCountsHelp(GameTooltip)
-        GameTooltip:Show()
-    end)
-    optItemCountsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    AltStable._test.OptItemCounts = optItemCountsCheck
-    Y = Y - 22
+    -- ── Roster section (developer-only) ─────────────────────
+    -- "Preview debug mode" is a developer diagnostic (live model vs static
+    -- render vs card, plus the Roster debug text window) that normal users
+    -- should never see. Gate the whole block behind a dev flag; enable with
+    --   /run AltStableConfig.devMode = true; ReloadUI()
+    -- When the flag is off nothing renders and Y is untouched, so the options
+    -- below simply move up. Issue #4. On the Modules page, after the modules.
+    if AltStableConfig and AltStableConfig.devMode then
+        OptSection("ROSTER (DEV)")
 
-    -- Mailbox items in the Warband tab and the item counts (#312): on unless
-    -- switched off. Off, no mail is read, recorded, shown or synced.
-    local optMailCheck = MakeOptCheckRow("warbandMail",
-        "Include mailbox items in the Warband and item counts", Y,
-        function(checked)
-            AltStable.SetConfigValue("warbandMail", checked)
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        optModelDebugCheck = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
+        optModelDebugCheck:SetSize(18, 18)
+        optModelDebugCheck:SetPoint("TOPLEFT", P - 2, Y + 2)
+        optModelDebugCheck:SetChecked(AltStableRosterDB and AltStableRosterDB._debugModelStatus and true or false)
+        optModelDebugCheck:SetScript("OnClick", function(self)
+            AltStableRosterDB = AltStableRosterDB or AltStableAltsDB or {}
+            AltStableAltsDB = AltStableRosterDB
+            AltStableRosterDB._debugModelStatus = self:GetChecked() and true or false
+            if AltStable.RefreshSheet then
+                AltStable.RefreshSheet()
+            end
         end)
-    optMailCheck:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Mailbox items", 1, 1, 1)
-        GameTooltip:AddLine("Each character's mail is read when it opens a mailbox, so it is as recent as its last visit. "
-            .. "Mail you send or return to your own characters counts as soon as it leaves.", nil, nil, nil, true)
-        GameTooltip:AddLine("Off: no mail is read, shown or synced.", nil, nil, nil, true)
-        GameTooltip:Show()
-    end)
-    optMailCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    AltStable._test.OptWarbandMail = optMailCheck
-    Y = Y - 30
 
-    -- ── Presentation section ──────────────────────────────
-    -- Camera presentation, frame shift, continuous orbit, open animation,
-    -- and the minimap-button toggle all live here so users find them in
-    -- the same place they configure scale/theme.
-    local optPresHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optPresHdr:SetPoint("TOPLEFT", P, Y)
-    optPresHdr:SetText("PRESENTATION")
-    optPresHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    Y = Y - 20
+        local optModelDebugLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        optModelDebugLabel:SetPoint("LEFT", optModelDebugCheck, "RIGHT", 4, 0)
+        optModelDebugLabel:SetText("Preview debug mode (AltStable Roster)")
+        optModelDebugLabel:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+
+        local optModelDebugHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        optModelDebugHint:SetPoint("TOPLEFT", P, Y - 16)
+        optModelDebugHint:SetPoint("TOPRIGHT", -P, Y - 16)
+        optModelDebugHint:SetJustifyH("LEFT")
+        optModelDebugHint:SetWordWrap(true)
+        optModelDebugHint:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+        optModelDebugHint:SetText("Shows preview mode diagnostics (live model vs static render vs card) and opens the Roster debug text window.")
+
+        Y = Y - 42
+    end
+
+
+    -- ── Appearance page: camera and animation ─────────────
+    OptPage("appearance")
+    OptSection("CAMERA & ANIMATION")
 
     local optCameraCheck = MakeOptCheckRow("enableWorldCameraPresentation",
         "World camera presentation when AltStable opens", Y)
@@ -3734,6 +3737,10 @@ local function CreateFrameIfNeeded()
     local optOpenAnimCheck = MakeOptCheckRow("enableOpenAnimation",
         "Play fade-in animation when AltStable opens", Y)
     Y = Y - 22
+
+    -- ── Characters page: the Roster and portraits ─────────
+    OptPage("characters")
+    OptSection("ROSTER")
 
     -- Off unless asked for (#75), so the getter is "== true", not the helper's
     -- "~= false".
@@ -3755,6 +3762,9 @@ local function CreateFrameIfNeeded()
         end,
         function() return AltStableConfig and AltStableConfig.rosterEnchants == true end)
     Y = Y - 22
+
+    Y = Y - 8
+    OptSection("PORTRAITS")
 
     -- Off unless asked for (#124): it takes a picture on its own.
     local optAutoPortraitCheck = MakeOptCheckRow("portraitAuto",
@@ -3848,6 +3858,10 @@ local function CreateFrameIfNeeded()
     AltStable._test.FacingReset = optFacingReset
     Y = Y - 44
 
+    -- ── General page ──────────────────────────────────────
+    OptPage("general")
+    OptSection("WINDOW")
+
     local optMinimapCheck = MakeOptCheckRow(nil,
         "Show minimap button (left-click toggle, right-click options, drag to move)", Y,
         function(checked)
@@ -3891,6 +3905,9 @@ local function CreateFrameIfNeeded()
     end)
     Y = Y - 22
 
+    Y = Y - 8
+    OptSection("CHARACTER LIST")
+
     -- Each tab's sort, kept across logouts (#160). Turning it off forgets the
     -- saved sorts; the tabs keep theirs for the rest of the session.
     local optRememberSortCheck = MakeOptCheckRow("rememberSortOrder",
@@ -3930,12 +3947,44 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptGroupFaction = optGroupFactionCheck
     Y = Y - 30
 
-    -- ── Account & Sync section ────────────────────────────
-    local optSyncHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    optSyncHdr:SetPoint("TOPLEFT", P, Y)
-    optSyncHdr:SetText("ACCOUNT & SYNC")
-    optSyncHdr:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    OptSection("ITEMS & MAIL")
+    -- Character counts in item tooltips (#304): the Warband tab's checkbox too,
+    -- here where players look for settings. Shows the setting in effect; a click
+    -- makes it the player's own choice (Core.lua, ItemTooltipCountsOn).
+    local optItemCountsCheck = MakeOptCheckRow("warbandItemTooltips",
+        "Show character counts in item tooltips", Y, nil,
+        function() return AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn() or false end)
+    optItemCountsCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        AltStable.ItemTooltipCountsHelp(GameTooltip)
+        GameTooltip:Show()
+    end)
+    optItemCountsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptItemCounts = optItemCountsCheck
     Y = Y - 22
+
+    -- Mailbox items in the Warband tab and the item counts (#312): on unless
+    -- switched off. Off, no mail is read, recorded, shown or synced.
+    local optMailCheck = MakeOptCheckRow("warbandMail",
+        "Include mailbox items in the Warband and item counts", Y,
+        function(checked)
+            AltStable.SetConfigValue("warbandMail", checked)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end)
+    optMailCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Mailbox items", 1, 1, 1)
+        GameTooltip:AddLine("Each character's mail is read when it opens a mailbox, so it is as recent as its last visit. "
+            .. "Mail you send or return to your own characters counts as soon as it leaves.", nil, nil, nil, true)
+        GameTooltip:AddLine("Off: no mail is read, shown or synced.", nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    optMailCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptWarbandMail = optMailCheck
+    Y = Y - 30
+
+    -- ── Accounts & sync page ──────────────────────────────
+    OptPage("sync")
 
     -- Account number row
     local optAcctLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -4058,29 +4107,36 @@ local function CreateFrameIfNeeded()
     -- controls by hand, which is what the alternative was.
     -- `skip`: what anchors itself again on every refresh, so must not be put
     -- back where it was at Finish.
-    local optFlow = { lists = {}, items = nil, height = nil, skip = {} }
+    -- Per page: a list moves only what is below it on its own page, and sets
+    -- only its own page's height.
+    local optFlow = { lists = {}, items = nil, heights = nil, skip = {} }
     function optFlow.Mark(reserved, rowH)
         local seen = {}
         for _, o in ipairs({ optionsFrame:GetChildren() }) do seen[o] = true end
         for _, o in ipairs({ optionsFrame:GetRegions() }) do seen[o] = true end
-        local list = { seen = seen, reserved = reserved, used = reserved, rowH = rowH or 18, gap = 0 }
+        local list = { seen = seen, reserved = reserved, used = reserved, rowH = rowH or 18, gap = 0,
+                       page = optionsFrame }
         optFlow.lists[#optFlow.lists + 1] = list
         return list
     end
-    function optFlow.Finish(height)
-        optFlow.height = height
+    -- order: the pages, in their order; heights: page -> its full height.
+    function optFlow.Finish(order, heights)
+        optFlow.heights = heights
         optFlow.items = {}
-        local all = { optionsFrame:GetChildren() }
-        for _, o in ipairs({ optionsFrame:GetRegions() }) do all[#all + 1] = o end
-        for _, o in ipairs(all) do
-            local below = {}
-            for _, list in ipairs(optFlow.lists) do
-                if not list.seen[o] then below[#below + 1] = list end
-            end
-            if #below > 0 and not optFlow.skip[o] then
-                local points = {}
-                for i = 1, (o:GetNumPoints() or 0) do points[i] = { o:GetPoint(i) } end
-                optFlow.items[#optFlow.items + 1] = { o = o, below = below, points = points, applied = 0 }
+        for _, page in ipairs(order) do
+            local all = { page:GetChildren() }
+            for _, o in ipairs({ page:GetRegions() }) do all[#all + 1] = o end
+            for _, o in ipairs(all) do
+                local below = {}
+                for _, list in ipairs(optFlow.lists) do
+                    if list.page == page and not list.seen[o] then below[#below + 1] = list end
+                end
+                if #below > 0 and not optFlow.skip[o] then
+                    local points = {}
+                    for i = 1, (o:GetNumPoints() or 0) do points[i] = { o:GetPoint(i) } end
+                    optFlow.items[#optFlow.items + 1] = { o = o, page = page, below = below,
+                                                          points = points, applied = 0 }
+                end
             end
         end
         optFlow.Apply()
@@ -4099,14 +4155,18 @@ local function CreateFrameIfNeeded()
                 it.o:ClearAllPoints()
                 for _, p in ipairs(it.points) do
                     local point, rel, relPoint, x, y = p[1], p[2], p[3], p[4], p[5]
-                    if rel == optionsFrame then y = (y or 0) + shift end
+                    if rel == it.page then y = (y or 0) + shift end
                     it.o:SetPoint(point, rel, relPoint, x or 0, y or 0)
                 end
             end
         end
-        local unused = 0
-        for _, list in ipairs(optFlow.lists) do unused = unused + list.gap end
-        optionsFrame:SetHeight(optFlow.height - unused)
+        for page, height in pairs(optFlow.heights) do
+            local unused = 0
+            for _, list in ipairs(optFlow.lists) do
+                if list.page == page then unused = unused + list.gap end
+            end
+            page:SetHeight(height - unused)
+        end
     end
     -- How many rows a list is showing - at least one, for its "none" line.
     function optFlow.Use(list, rows)
@@ -4213,7 +4273,7 @@ local function CreateFrameIfNeeded()
 
     -- `/alts whitelist` changes the list too, with Options possibly open.
     AltStable.RefreshOptionsWhitelist = function()
-        if optionsFrame:IsVisible() then OptRefreshWhitelist() end
+        if optionsPanel:IsVisible() then OptRefreshWhitelist() end
     end
 
     optWlAddBtn:SetScript("OnClick", function()
@@ -4344,11 +4404,12 @@ local function CreateFrameIfNeeded()
             and ("+" .. extra .. " more - |cffffff00/alts auth|r") or "")
     end
     AltStable.RefreshSyncAnswers = function()
-        if optionsFrame:IsVisible() then OptRefreshSyncAuth() end
+        if optionsPanel:IsVisible() then OptRefreshSyncAuth() end
     end
     AltStable._test.SyncAuthRows = optAuthRows
 
-    -- ── Toasts section ────────────────────────────────────
+    -- ── Notifications page ────────────────────────────────
+    OptPage("notifications")
     local optToastHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optToastHdr:SetPoint("TOPLEFT", P, Y)
     optToastHdr:SetText("TOASTS")
@@ -4396,7 +4457,9 @@ local function CreateFrameIfNeeded()
 
     Y = Y - 12
 
-    -- ── Hidden characters (#21) ───────────────────────────
+    -- ── Characters page: hidden and old characters ────────
+    OptPage("characters")
+    Y = Y - 8
     local optHideHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     optHideHdr:SetPoint("TOPLEFT", P, Y)
     optHideHdr:SetText("HIDDEN CHARACTERS")
@@ -4733,9 +4796,48 @@ local function CreateFrameIfNeeded()
         reset = function() staleKept = {}; staleOffset = 0 end,
     }
 
-    -- Content height is known once the layout cursor has run; the scroll range
-    -- derives from it, less whatever the lists are not using (OptFlow).
-    optFlow.Finish(math.abs(Y) + 24)
+    -- Each page's height is known once the layout cursor has run; its scroll
+    -- range derives from it, less whatever its lists are not using (OptFlow).
+    OptPage(optionsFrame.pageId)
+    do
+    local optOrder, optHeights = {}, {}
+    for i, def in ipairs(OPT_PAGES) do
+        local page = optPages[def.id]
+        optOrder[i], optHeights[page] = page, math.abs(page.y) + 24
+    end
+    optFlow.Finish(optOrder, optHeights)
+
+    -- The page buttons, down the left. Which page is open lasts the session.
+    -- In a block of its own: this function is at Lua 5.1's 200 locals.
+    local optNavBtns, optActivePage = {}, "general"
+    local function RefreshOptNav()
+        for _, b in ipairs(optNavBtns) do SetChoiceBtnState(b, b.lbl, b.pageId == optActivePage) end
+    end
+    local function ShowOptPage(id)
+        if not optPages[id] then return end
+        optActivePage = id
+        for pid, page in pairs(optPages) do page.scroll:SetShown(pid == id) end
+        RefreshOptNav()
+    end
+    for i, def in ipairs(OPT_PAGES) do
+        local b = CreateFrame("Button", nil, optNav, "BackdropTemplate")
+        b:SetHeight(24)
+        b:SetPoint("TOPLEFT", optNav, "TOPLEFT", 8, -12 - (i - 1) * 30)
+        b:SetPoint("TOPRIGHT", optNav, "TOPRIGHT", -8, -12 - (i - 1) * 30)
+        AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+        local lbl = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbl:SetPoint("LEFT", 10, 0); lbl:SetPoint("RIGHT", -6, 0); lbl:SetJustifyH("LEFT")
+        lbl:SetText(def.label)
+        b.pageId, b.lbl = def.id, lbl
+        b:SetScript("OnClick", function() ShowOptPage(def.id) end)
+        optNavBtns[i] = b
+    end
+    ShowOptPage(optActivePage)
+    AltStable.RegisterThemeCallback(RefreshOptNav)
+    AltStable._test.OptPages, AltStable._test.OptNavBtns = optPages, optNavBtns
+    AltStable._test.ShowOptPage = ShowOptPage
+    AltStable._test.OptActivePage = function() return optActivePage end
+    end
 
     -- OnShow: safely refresh all controls from saved config.
     -- Bound to the panel, not the content: the scroll child is always shown, so an
@@ -4811,14 +4913,14 @@ local function CreateFrameIfNeeded()
             icon  = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\")
                     .. "Icons\\options.tga",
             _isPlugin  = true,
-            preferW = 820,
+            preferW = 960,
             preferH = 760,
             OnActivate = function(f)
                 f.bodyScroll:Hide(); f.frozenScroll:Hide()
                 f.headerScroll:Hide(); f.frozenHeader:Hide()
                 f.hScrollBar:Hide(); f.totalsBar:Hide()
                 optionsPanel:Show()
-                ResizeFrame(820, 760)
+                ResizeFrame(960, 760)
             end,
             OnDeactivate = function(f)
                 optionsPanel:Hide()
