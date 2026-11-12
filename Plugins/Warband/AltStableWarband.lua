@@ -1,5 +1,5 @@
 ------------------------------------------------------------
--- AltStableWarband — consolidated cross-alt bag + bank inventory (P3).
+-- AltStableWarband — consolidated cross-alt bag + bank + mail inventory (P3, #312).
 --
 -- A single "Warband bank"-style grid of every item across all tracked
 -- characters (bags + bank), each unique item shown once as a stack with its
@@ -13,8 +13,12 @@
 --   AltStableWarbandDB[guid] = {
 --       bags = { [itemID] = count },   -- summed across the carried bags + keyring
 --       bank = { [itemID] = count },   -- summed across the purchased bank tabs
---       bagsStamp, bankStamp,          -- when each section last changed
---       stamp = max(bagsStamp,bankStamp)  -- drives the delta watermark
+--       mail = { [itemID] = count },   -- the inbox at the last mailbox visit (#312)
+--       mailMore,                      -- mails the game held back (50 shown at a time)
+--       outbox = { { to = guid, at = time, items = { [itemID] = count } } },
+--                                      -- mail sent/returned to our own characters
+--       bagsStamp, bankStamp, mailStamp, outboxStamp,  -- when each section last changed
+--       stamp = max of those           -- drives the delta watermark
 --   }
 -- bags and bank are SEPARATE maps: bags refresh live on BAG_UPDATE, but the
 -- bank is only readable while its frame is open, so a bag rescan must never
@@ -175,6 +179,11 @@ local function GetDB(guid)
     return AltStableWarbandDB[guid]
 end
 
+-- The record's watermark is the newest of its sections.
+local function Restamp(db)
+    db.stamp = math.max(db.bagsStamp or 0, db.bankStamp or 0, db.mailStamp or 0, db.outboxStamp or 0)
+end
+
 -- Commit a freshly-built section map for the current player, but only if it
 -- actually changed — otherwise cosmetic BAG_UPDATEs would churn the sync.
 local function ApplyScan(sectionKey, stampKey, newMap)
@@ -186,7 +195,7 @@ local function ApplyScan(sectionKey, stampKey, newMap)
 
     db[sectionKey] = newMap
     db[stampKey]   = time()
-    db.stamp       = math.max(db.bagsStamp or 0, db.bankStamp or 0)
+    Restamp(db)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
     if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
 end
@@ -241,10 +250,267 @@ local function ScheduleBank()
 end
 
 ------------------------------------------------------------
+-- Mail (#312): what waits in each character's mailbox
+--
+-- The inbox is readable only while a mailbox is open, so a character's mail is
+-- as old as its last visit, like its bank. It is read once the inbox arrives
+-- (the first MAIL_INBOX_UPDATE after MAIL_SHOW), again whenever it changes
+-- while open (an attachment taken: MAIL_INBOX_UPDATE, a bag update), and once
+-- at close. Each read replaces the whole map, so what was taken or deleted goes.
+-- The close is PLAYER_INTERACTION_MANAGER_FRAME_HIDE with MailInfo (17):
+-- MAIL_CLOSED never fired on Forever in about ten closes and a logout at the
+-- mailbox (GlassMail docs/FOREVER-PROBE.md, session 2; Codex review of #313).
+--
+-- Every visit is recorded at least twice, at its first read and at its close,
+-- even when the inbox looks the same: the read's time is what tells a send that
+-- the recipient has seen it (below), and the send may only reach this account
+-- after the read, from another one. Between those, an unchanged read is not
+-- recorded, so a visit doesn't churn the sync (Codex review of #313).
+--
+-- The game shows 50 mails at a time; GetInboxNumItems' second return is how
+-- many there are. The rest can't be read until some are cleared, so a read
+-- keeps how many it could not see (mailMore) and the tooltip says so.
+--
+-- Mail sent or returned to one of your own characters counts as soon as it
+-- leaves: players mostly fill an alt's mailbox from another alt, and without
+-- this the items would vanish from search until the alt's next visit. It is
+-- kept on the SENDER's record (outbox), never written into the recipient's:
+-- each character writes only its own record, which sync ownership relies on.
+-- An entry counts for its recipient while it is newer than that character's
+-- last inbox read (the read sees the mail itself) and less than 30 days old
+-- (by then unopened mail has been returned or deleted).
+--
+-- Measured on Forever (References PORTING-TBC-TO-FOREVER.md, "Mail"): the send
+-- draft is still filled at the SendMail post-hook and cleared by
+-- MAIL_SEND_SUCCESS, so the attachments are read in the hook and committed on
+-- success; a ReturnInboxItem post-hook still finds the mail at its index. A
+-- recipient is "First Surname" (a first name alone is refused by the server).
+--
+-- warbandMail (Options): on unless set to false. Off reads, records, shows and
+-- sends no mail; what is held stays, for when it is switched back on.
+------------------------------------------------------------
+
+local INBOX_ATTACHMENTS = 16          -- ATTACHMENTS_MAX_RECEIVE (Blizzard_MailFrame)
+local SEND_ATTACHMENTS  = 12          -- ATTACHMENTS_MAX_SEND
+local OUTBOX_TTL        = 30 * 86400
+
+local function MailOn()
+    return not (AltStableConfig and AltStableConfig.warbandMail == false)
+end
+
+local isMailOpen, inboxReady, mailPending = false, false, false
+local visitStamped = false   -- this visit's first read is recorded
+local pendingSend   -- { to = guid, items = map }, from the SendMail post-hook
+
+-- Attachments of one mail, summed by item id into `map`. False when one can't
+-- be read yet (an id without a count), so a half-loaded inbox is not recorded.
+local function AddMailItems(index, map)
+    for a = 1, INBOX_ATTACHMENTS do
+        local _, id, _, count, _, _, isCurrency = GetInboxItem(index, a)
+        id = tonumber(id)
+        if id and id > 0 and not isCurrency then
+            count = tonumber(count)
+            if not count or count < 1 then return false end
+            map[id] = (map[id] or 0) + count
+        end
+    end
+    return true
+end
+
+-- The shown mails' attachments as { [itemID] = count }, and how many mails the
+-- game holds back; nil when the inbox can't be read (yet).
+local function ReadInbox()
+    if not GetInboxNumItems or not GetInboxItem then return nil end
+    local shown, total = GetInboxNumItems()
+    shown = tonumber(shown) or 0
+    local map = {}
+    for i = 1, shown do
+        local itemCount = GetInboxHeaderInfo and select(8, GetInboxHeaderInfo(i))
+        if itemCount == nil or (tonumber(itemCount) or 0) > 0 then
+            if not AddMailItems(i, map) then return nil end
+        end
+    end
+    return map, math.max(0, (tonumber(total) or shown) - shown)
+end
+
+-- One of our characters, from a mail's "First Surname" or "First Surname-Realm".
+-- Names are unique region-wide on Forever, so the name decides; the realm only
+-- settles a tie a database could still hold. nil when it is no one of ours.
+local function OwnCharacterGuid(who)
+    if type(who) ~= "string" then return nil end
+    local name, realm = who:match("^%s*([^%-]-)%s*%-%s*(.-)%s*$")
+    if not name then name, realm = who:match("^%s*(.-)%s*$"), "" end
+    if name == "" then return nil end
+    name = name:lower()
+    local function norm(s) return (tostring(s or ""):gsub("[%s%-']", "")):lower() end
+    local found, n = nil, 0
+    for guid, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and type(c.name) == "string" and c.name:lower() == name then
+            if realm ~= "" and norm(c.realm) == norm(realm) then return guid end
+            found, n = guid, n + 1
+        end
+    end
+    return n == 1 and found or nil
+end
+
+-- An outbox entry still counts for its recipient: newer than the recipient's
+-- last inbox read, and not yet returned or deleted by the game.
+local function EntryLive(e, now)
+    if type(e) ~= "table" or not e.to or not e.at then return false end
+    local to = AltStableWarbandDB[e.to]
+    local read = (type(to) == "table" and to.mailStamp) or 0
+    return e.at > read and now - e.at <= OUTBOX_TTL
+end
+
+-- Items on their way to each character: { [guid] = { [itemID] = count } }.
+local function Incoming()
+    local out, now = {}, time()
+    for _, wb in pairs(AltStableWarbandDB) do
+        if type(wb) == "table" and type(wb.outbox) == "table" then
+            for _, e in ipairs(wb.outbox) do
+                if EntryLive(e, now) then
+                    local m = out[e.to] or {}
+                    out[e.to] = m
+                    for id, n in pairs(e.items or {}) do m[id] = (m[id] or 0) + n end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function Touch(guid)
+    if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
+    if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+end
+
+-- A read is recorded when it changed something, or when it is the visit's
+-- first or its last (`final`, the close): each must stop the sends it has seen
+-- counting, or a taken item would count twice, in the bags and still "in the
+-- mail". A send taken mid-visit with nothing else changed counts until the close.
+local function ScanMail(final)
+    if not MailOn() or not isMailOpen or not inboxReady then return end
+    local guid = UnitGUID("player")
+    if not guid then return end
+    local map, more = ReadInbox()
+    if not map then return end
+    local db = GetDB(guid)
+    if visitStamped and not final and db.mailStamp
+       and mapsEqual(db.mail, map) and (db.mailMore or 0) == more then
+        return
+    end
+    visitStamped = true
+    db.mail, db.mailMore, db.mailStamp = map, more, time()
+    Restamp(db)
+    Touch(guid)
+end
+
+local function ScheduleMail()
+    if mailPending then return end
+    mailPending = true
+    C_Timer.After(0.5, function() mailPending = false; ScanMail() end)
+end
+
+local function OnMailShow()
+    isMailOpen, inboxReady, visitStamped = true, false, false
+end
+
+local function OnMailInboxUpdate()
+    if not isMailOpen then return end
+    inboxReady = true
+    ScheduleMail()
+end
+
+-- Idempotent: a scan queued for this visit finds the mailbox closed and reads
+-- nothing.
+local function OnMailClosed()
+    if isMailOpen and inboxReady then ScanMail(true) end
+    isMailOpen, inboxReady = false, false
+end
+
+local function OnInteractionHide(kind)
+    local mailInfo = (Enum and Enum.PlayerInteractionType and Enum.PlayerInteractionType.MailInfo) or 17
+    if kind == mailInfo then OnMailClosed() end
+end
+
+-- Entries the recipient has since read, or the game has since returned or
+-- deleted, go when the sender's outbox next changes.
+local function PruneOutbox(db, now)
+    if type(db.outbox) ~= "table" then return end
+    local keep = {}
+    for _, e in ipairs(db.outbox) do
+        if EntryLive(e, now) and AltStableDB and AltStableDB[e.to] then keep[#keep + 1] = e end
+    end
+    db.outbox = (#keep > 0) and keep or nil
+end
+
+-- Callers have checked the mail setting.
+local function RecordOutgoing(to, items)
+    if not to or not next(items) then return end
+    local guid = UnitGUID("player")
+    if not guid or guid == to then return end
+    local db, now = GetDB(guid), time()
+    PruneOutbox(db, now)
+    db.outbox = db.outbox or {}
+    db.outbox[#db.outbox + 1] = { to = to, at = now, items = items }
+    db.outboxStamp = now
+    Restamp(db)
+    Touch(guid)
+end
+
+local function OnSendMail(recipient)
+    pendingSend = nil
+    if not MailOn() or not GetSendMailItem then return end
+    local to = OwnCharacterGuid(recipient)
+    if not to then return end
+    local items = {}
+    for i = 1, SEND_ATTACHMENTS do
+        local _, id, _, count = GetSendMailItem(i)
+        id, count = tonumber(id), tonumber(count)
+        if id and id > 0 and count and count > 0 then items[id] = (items[id] or 0) + count end
+    end
+    if next(items) then pendingSend = { to = to, items = items } end
+end
+
+local function OnMailSendSuccess()
+    local p = pendingSend
+    pendingSend = nil
+    if p then RecordOutgoing(p.to, p.items) end
+end
+
+local function OnMailFailed()
+    pendingSend = nil
+end
+
+-- Returning a mail sends it back to whoever sent it.
+local function OnReturnInboxItem(index)
+    if not MailOn() or not GetInboxHeaderInfo or not GetInboxItem then return end
+    local _, _, sender = GetInboxHeaderInfo(index)
+    local to = OwnCharacterGuid(sender)
+    if not to then return end
+    local items = {}
+    if AddMailItems(index, items) then RecordOutgoing(to, items) end
+end
+
+local function InstallMailHooks()
+    if AT_WB._mailHooked then return end
+    AT_WB._mailHooked = true
+    -- Post-hooks: an error here must never surface from Blizzard's own send.
+    if type(SendMail) == "function" then
+        hooksecurefunc("SendMail", function(recipient) pcall(OnSendMail, recipient) end)
+    end
+    if type(ReturnInboxItem) == "function" then
+        hooksecurefunc("ReturnInboxItem", function(index) pcall(OnReturnInboxItem, index) end)
+    end
+end
+
+------------------------------------------------------------
 -- Event routing
 ------------------------------------------------------------
 
 local function OnBagUpdate(bag)
+    -- An attachment taken lands in the bags while the mailbox is open.
+    if isMailOpen and inboxReady then ScheduleMail() end
     bag = tonumber(bag)
     if bag and IsBankContainer(bag) then
         if isBankOpen then ScheduleBank() end   -- bank-tab change while open
@@ -282,6 +548,13 @@ end
 -- Sync — compact, single-line, no "\n". Only itemID+count integers ride the
 -- wire (item links are reconstructed client-side, like the core gear scan).
 --   v1|s=<stamp>|kt=<bankStamp>|b=id,count;id,count|k=id,count;...
+--     [|mt=<mailStamp>|mm=<mails unread>|m=id,count;...|ot=<outboxStamp>|o=<guid>@<at>:id,count;.../...]
+--
+-- The mail fields (#312) come last and only while the sender's mail setting is
+-- on. A client without them reads s=, kt=, b= and k= by their first match, all
+-- of which sit before them, so it takes the rest of the blob and ignores the
+-- mail. The new fields are matched with their leading "|", so "|m=" never
+-- matches inside "|mm=" or "|mt=".
 ------------------------------------------------------------
 
 local function EncodeMap(map)
@@ -307,6 +580,34 @@ local function ParseMap(s)
     return map
 end
 
+-- The outbox: "<guid>@<at>:<map>" entries joined by "/", oldest first.
+local function EncodeOutbox(list)
+    local entries = {}
+    for _, e in ipairs(type(list) == "table" and list or {}) do
+        if e.to and e.at then entries[#entries + 1] = e end
+    end
+    table.sort(entries, function(a, b)
+        if a.at ~= b.at then return a.at < b.at end
+        return tostring(a.to) < tostring(b.to)
+    end)
+    local parts = {}
+    for _, e in ipairs(entries) do parts[#parts + 1] = e.to .. "@" .. e.at .. ":" .. EncodeMap(e.items) end
+    return table.concat(parts, "/")
+end
+
+-- nil on any malformed entry, as ParseMap.
+local function ParseOutbox(s)
+    local list = {}
+    if not s or s == "" then return list end
+    for entry in s:gmatch("[^/]+") do
+        local to, at, items = entry:match("^([%w%-]+)@(%d+):(.*)$")
+        items = items and ParseMap(items)
+        if not to or not items or not next(items) then return nil end
+        list[#list + 1] = { to = to, at = tonumber(at), items = items }
+    end
+    return list
+end
+
 local function SerializePlayer(guid, sinceTS)
     local db = AltStableWarbandDB[guid]
     if not db then return "" end
@@ -315,11 +616,20 @@ local function SerializePlayer(guid, sinceTS)
     -- (resend-on-equality is idempotent), so skipping at equality would drop a
     -- same-second change permanently once the watermark reaches it.
     if sinceTS and sinceTS > 0 and stamp < sinceTS then return "" end
-    return BLOB_VERSION
+    local blob = BLOB_VERSION
         .. "|s=" .. stamp
         .. "|kt=" .. (db.bankStamp or 0)
         .. "|b=" .. EncodeMap(db.bags)
         .. "|k=" .. EncodeMap(db.bank)
+    if MailOn() then
+        blob = blob
+            .. "|mt=" .. (db.mailStamp or 0)
+            .. "|mm=" .. (db.mailMore or 0)
+            .. "|m=" .. EncodeMap(db.mail)
+            .. "|ot=" .. (db.outboxStamp or 0)
+            .. "|o=" .. EncodeOutbox(db.outbox)
+    end
+    return blob
 end
 
 local function DeserializePlayer(guid, blob)
@@ -356,13 +666,33 @@ local function DeserializePlayer(guid, blob)
         bank, bankStamp = existing.bank, existing.bankStamp
     end
 
+    -- Mail (#312) and the outbox, each by its own stamp. Absent (an older
+    -- client, a relay through one, or the sender's mail switched off), never
+    -- read (0), older than what is held, or malformed: what is held stays.
+    local mail, mailStamp, mailMore = existing and existing.mail, existing and existing.mailStamp,
+                                      existing and existing.mailMore
+    local mt, mailStr = tonumber(rest:match("|mt=(%d+)")), rest:match("|m=([^|]*)")
+    if mt and mt > 0 and mailStr and mt >= (mailStamp or 0) then
+        local m = ParseMap(mailStr)
+        if m then mail, mailStamp, mailMore = m, mt, tonumber(rest:match("|mm=(%d+)")) or 0 end
+    end
+    local outbox, outboxStamp = existing and existing.outbox, existing and existing.outboxStamp
+    local ot, outStr = tonumber(rest:match("|ot=(%d+)")), rest:match("|o=([^|]*)")
+    if ot and ot > 0 and outStr and ot >= (outboxStamp or 0) then
+        local o = ParseOutbox(outStr)
+        if o then outbox, outboxStamp = (#o > 0) and o or nil, ot end
+    end
+
     -- Nothing new: a full response re-sends every character, and the sheet is
     -- redrawn per character while the panel is open - each redraw rebuilds the
     -- whole aggregate, its buckets and its rows. Compare what we would store,
     -- not just the stamp, so an unchanged record costs nothing.
     if existing and (existing.stamp or 0) == incomingStamp
        and (existing.bankStamp or 0) == bankStamp
-       and mapsEqual(existing.bags, bags) and mapsEqual(existing.bank, bank) then
+       and mapsEqual(existing.bags, bags) and mapsEqual(existing.bank, bank)
+       and existing.mailStamp == mailStamp and existing.mailMore == mailMore
+       and mapsEqual(existing.mail, mail)
+       and existing.outboxStamp == outboxStamp and EncodeOutbox(existing.outbox) == EncodeOutbox(outbox) then
         return
     end
 
@@ -372,6 +702,8 @@ local function DeserializePlayer(guid, blob)
     db.stamp = incomingStamp
     db.bagsStamp = incomingStamp
     db.bankStamp = bankStamp
+    db.mail, db.mailStamp, db.mailMore = mail, mailStamp, mailMore
+    db.outbox, db.outboxStamp = outbox, outboxStamp
     if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
 end
 
@@ -411,32 +743,45 @@ local function Included(guid, c, filter)
     return true
 end
 
+-- One character's counts by item: { [itemID] = { bags, bank, mail } }. Mail is
+-- its last inbox read plus what is on its way to it (`incoming`), both only
+-- while the mail setting is on.
+local function PerItem(guid, wb, incoming, mailOn)
+    local per = {}
+    local function add(map, key)
+        if type(map) ~= "table" then return end
+        for id, n in pairs(map) do
+            local p = per[id]
+            if not p then p = { bags = 0, bank = 0, mail = 0 }; per[id] = p end
+            p[key] = p[key] + n
+        end
+    end
+    if wb then add(wb.bags, "bags"); add(wb.bank, "bank") end
+    if mailOn then
+        if wb then add(wb.mail, "mail") end
+        add(incoming[guid], "mail")
+    end
+    return per
+end
+
 local function gather(filter)
     AltStableDB = AltStableDB or {}
+    local mailOn = MailOn()
+    local incoming = mailOn and Incoming() or {}
     local agg = {}
     for guid, c in pairs(AltStableDB) do
         if type(c) == "table" and c.name and Included(guid, c, filter) then
             local wb = AltStableWarbandDB[guid]
-            if type(wb) == "table" then
-                local per = {}
-                if wb.bags then
-                    for id, n in pairs(wb.bags) do per[id] = { bags = n, bank = 0 } end
-                end
-                if wb.bank then
-                    for id, n in pairs(wb.bank) do
-                        per[id] = per[id] or { bags = 0, bank = 0 }
-                        per[id].bank = n
-                    end
-                end
-                for id, v in pairs(per) do
-                    local a = agg[id]
-                    if not a then a = { total = 0, holders = {} }; agg[id] = a end
-                    a.total = a.total + v.bags + v.bank
-                    a.holders[#a.holders + 1] = {
-                        name = c.name, class = c.class, realm = c.realm,
-                        bags = v.bags, bank = v.bank, bankStamp = wb.bankStamp,
-                    }
-                end
+            if type(wb) ~= "table" then wb = nil end
+            for id, v in pairs(PerItem(guid, wb, incoming, mailOn)) do
+                local a = agg[id]
+                if not a then a = { total = 0, holders = {} }; agg[id] = a end
+                a.total = a.total + v.bags + v.bank + v.mail
+                a.holders[#a.holders + 1] = {
+                    name = c.name, class = c.class, realm = c.realm,
+                    bags = v.bags, bank = v.bank, bankStamp = wb and wb.bankStamp,
+                    mail = v.mail, mailStamp = wb and wb.mailStamp, mailMore = wb and wb.mailMore,
+                }
             end
         end
     end
@@ -502,6 +847,7 @@ end
 
 local BAG_ICON  = "|TInterface\\Icons\\INV_Misc_Bag_08:12:12:0:0|t"
 local BANK_ICON = "|TInterface\\Minimap\\Tracking\\Banker:13:13:0:0|t"
+local MAIL_ICON = "|TInterface\\Icons\\INV_Letter_15:12:12:0:0|t"
 
 -- Inline class-icon texture escape for a tooltip line (empty if unknown).
 local function ClassIconMarkup(class)
@@ -513,28 +859,36 @@ local function ClassIconMarkup(class)
         math.floor(t[3] * 256), math.floor(t[4] * 256))
 end
 
--- Sum one itemID across every tracked character's bags+bank (for the global
--- item-tooltip hook). Returns total + a holders list shaped like gather()'s.
--- Unfiltered on purpose: a tooltip on an item anywhere in the game answers
--- "who has this", whatever the Warband tab happens to be showing. The guid and
--- bankStale ride along for the Professions plugin's reagent counts (#268),
--- which leaves hidden alts out and says when a bank count is old.
+-- Sum one itemID across every tracked character's bags, bank and mail (for the
+-- global item-tooltip hook). Returns total + a holders list shaped like
+-- gather()'s. Unfiltered on purpose: a tooltip on an item anywhere in the game
+-- answers "who has this", whatever the Warband tab happens to be showing. The
+-- guid and bankStale ride along for the Professions plugin's reagent counts
+-- (#268), which leaves hidden alts out, says when a bank count is old, and
+-- counts bags + bank only: an item in the mail can't be crafted with.
 local function CountItem(itemID)
     local total, holders, now = 0, {}, time()
+    local mailOn = MailOn()
+    local incoming = mailOn and Incoming() or {}
     for guid, c in pairs(AltStableDB or {}) do
         if type(c) == "table" and c.name then
             local wb = AltStableWarbandDB[guid]
-            if type(wb) == "table" then
-                local bags = (wb.bags and wb.bags[itemID]) or 0
-                local bank = (wb.bank and wb.bank[itemID]) or 0
-                if bags + bank > 0 then
-                    total = total + bags + bank
-                    holders[#holders + 1] = {
-                        guid = guid, name = c.name, class = c.class, realm = c.realm,
-                        bags = bags, bank = bank, bankStamp = wb.bankStamp,
-                        bankStale = bank > 0 and wb.bankStamp ~= nil and (now - wb.bankStamp) > BANK_STALE,
-                    }
-                end
+            if type(wb) ~= "table" then wb = nil end
+            local bags = (wb and wb.bags and wb.bags[itemID]) or 0
+            local bank = (wb and wb.bank and wb.bank[itemID]) or 0
+            local mail = 0
+            if mailOn then
+                mail = ((wb and wb.mail and wb.mail[itemID]) or 0)
+                     + ((incoming[guid] and incoming[guid][itemID]) or 0)
+            end
+            if bags + bank + mail > 0 then
+                total = total + bags + bank + mail
+                holders[#holders + 1] = {
+                    guid = guid, name = c.name, class = c.class, realm = c.realm,
+                    bags = bags, bank = bank, bankStamp = wb and wb.bankStamp,
+                    bankStale = bank > 0 and wb.bankStamp ~= nil and (now - wb.bankStamp) > BANK_STALE,
+                    mail = mail, mailStamp = wb and wb.mailStamp, mailMore = wb and wb.mailMore,
+                }
             end
         end
     end
@@ -554,7 +908,7 @@ local function AppendBreakdown(tt, total, holders)
     for _, h in ipairs(holders) do list[#list + 1] = h end
     table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
 
-    local now, stale = time(), false
+    local now, stale, mailStale, mailMore = time(), false, false, false
     for _, h in ipairs(list) do
         local cc = (h.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[h.class]) or { r = .9, g = .9, b = .9 }
         local nm = ClassIconMarkup(h.class) .. (h.name or "?")
@@ -565,15 +919,22 @@ local function AppendBreakdown(tt, total, holders)
             parts[#parts + 1] = h.bank .. BANK_ICON
             if h.bankStamp and (now - h.bankStamp) > BANK_STALE then stale = true end
         end
+        if (h.mail or 0) > 0 then
+            parts[#parts + 1] = h.mail .. MAIL_ICON
+            if h.mailStamp and (now - h.mailStamp) > BANK_STALE then mailStale = true end
+        end
+        if (h.mailMore or 0) > 0 then mailMore = true end
         -- Bagnon-style right cell: single location shows just "N[icon]"; a split
         -- shows the per-character total then the breakdown, e.g. "63=17[bag]+46[bank]".
         local right = parts[1] or ""
         if #parts > 1 then
-            right = ((h.bags or 0) + (h.bank or 0)) .. "=" .. table.concat(parts, "+")
+            right = ((h.bags or 0) + (h.bank or 0) + (h.mail or 0)) .. "=" .. table.concat(parts, "+")
         end
         tt:AddDoubleLine(nm, right, cc.r, cc.g, cc.b, 1, 1, 1)
     end
     if stale then tt:AddLine("Bank data may be out of date", .55, .55, .55) end
+    if mailStale then tt:AddLine("Mail data may be out of date", .55, .55, .55) end
+    if mailMore then tt:AddLine("Some mail not read yet: a mailbox shows 50 at a time", .55, .55, .55) end
     tt:Show()
 end
 
@@ -1545,10 +1906,12 @@ local function StatusText()
         and ("Tabs " .. w.first .. "-" .. (w.first + w.width - 1) .. " of " .. #w.pages .. "  ·  ") or ""
     if Scope() == "personal" then
         local me = AltStableDB and UnitGUID and AltStableDB[UnitGUID("player")]
-        return paging .. ((me and me.name) or "This character") .. "  ·  Bags + bank  ·  Read-only"
+        return paging .. ((me and me.name) or "This character")
+            .. (MailOn() and "  ·  Bags, bank + mail" or "  ·  Bags + bank") .. "  ·  Read-only"
     end
     local r = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName())
-    return paging .. "Bags + banks  ·  " .. (r or "All rulesets") .. "  ·  Read-only"
+    return paging .. (MailOn() and "Bags, banks + mail  ·  " or "Bags + banks  ·  ")
+        .. (r or "All rulesets") .. "  ·  Read-only"
 end
 
 AT_WB.StatusText = function() return StatusText() end
@@ -1871,6 +2234,7 @@ local function BootstrapPlugin()
         return
     end
     EnsureTooltipHook()   -- install now so the global item-tooltip option works pre-panel
+    InstallMailHooks()    -- mail sent or returned to your own characters (#312)
     -- Who holds an item, for other plugins (Professions' reagents, #268). Set
     -- only while this plugin is loaded: absent means "not counted", never "none".
     AltStable.ItemHolders = CountItem
@@ -1907,6 +2271,10 @@ local function BootstrapPlugin()
             InvalidateTabCache = InvalidateTabCache, BootstrapPlugin = BootstrapPlugin,
             OnBankTabsChanged = OnBankTabsChanged,
             ScanContainerSet = ScanContainerSet, EnsureTooltipHook = EnsureTooltipHook,
+            ScanMail = ScanMail, OnMailShow = OnMailShow, OnMailInboxUpdate = OnMailInboxUpdate,
+            OnMailClosed = OnMailClosed, OnMailSendSuccess = OnMailSendSuccess, OnMailFailed = OnMailFailed,
+            OwnCharacterGuid = OwnCharacterGuid, Incoming = Incoming, MailOn = MailOn,
+            EncodeOutbox = EncodeOutbox, ParseOutbox = ParseOutbox, AppendBreakdown = AppendBreakdown,
         },
     })
 
@@ -1944,8 +2312,26 @@ frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 frame:RegisterEvent("BANK_TABS_CHANGED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+frame:RegisterEvent("MAIL_SHOW")
+frame:RegisterEvent("MAIL_INBOX_UPDATE")
+frame:RegisterEvent("MAIL_CLOSED")          -- never seen on Forever; the HIDE below closes
+frame:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
+frame:RegisterEvent("MAIL_SEND_SUCCESS")
+frame:RegisterEvent("MAIL_FAILED")
 frame:SetScript("OnEvent", function(self, event, arg1, arg2)
-    if event == "PLAYER_LOGIN" then
+    if event == "MAIL_SHOW" then
+        OnMailShow()
+    elseif event == "MAIL_INBOX_UPDATE" then
+        OnMailInboxUpdate()
+    elseif event == "MAIL_CLOSED" then
+        OnMailClosed()
+    elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
+        OnInteractionHide(arg1)
+    elseif event == "MAIL_SEND_SUCCESS" then
+        OnMailSendSuccess()
+    elseif event == "MAIL_FAILED" then
+        OnMailFailed()
+    elseif event == "PLAYER_LOGIN" then
         C_Timer.After(1, BootstrapPlugin)
     elseif event == "BAG_UPDATE" then
         OnBagUpdate(arg1)

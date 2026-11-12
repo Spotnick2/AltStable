@@ -613,10 +613,11 @@ local function holdersStub(item)
     for guid, items in pairs(held) do
         local h = items[item]
         if h then
-            total = total + (h.bags or 0) + (h.bank or 0)
+            total = total + (h.bags or 0) + (h.bank or 0) + (h.mail or 0)
             out[#out + 1] = { guid = guid, name = AltStableDB[guid] and AltStableDB[guid].name,
                               class = AltStableDB[guid] and AltStableDB[guid].class,
-                              bags = h.bags or 0, bank = h.bank or 0, bankStale = h.bankStale }
+                              bags = h.bags or 0, bank = h.bank or 0, bankStale = h.bankStale,
+                              mail = h.mail or 0 }
         end
     end
     return total, out
@@ -669,6 +670,15 @@ AltStableDB[U] = { guid = U, name = "Umber", class = "ROGUE" }
 plan = T.ReagentPlan(2329, { owner(A) })
 eq("holders are sorted most first", plan.reagents[2].holders[1].name, "Umber")
 eq("  and the one to ask is the one with the most", plan.crafters[1].short[1].from.name, "Umber")
+held[U] = nil
+
+-- Mail (#312): Warband counts it, but a reagent in the mail can't be crafted
+-- with, so a holder with nothing else is no holder here.
+held[U] = { [765] = { mail = 9 } }
+plan = T.ReagentPlan(2329, { owner(A) })
+eq("a reagent only in the mail does not count", plan.reagents[2].total, 5)
+check("  and its holder is not listed", plan.reagents[2].holders[1].name ~= "Umber"
+      and #plan.reagents[2].holders == 1, tostring(#plan.reagents[2].holders))
 held[U] = nil
 
 -- The tooltip lines.
