@@ -807,6 +807,11 @@ function GetPhysicalScreenSize() return WoW.screenW, WoW.screenH end
 function GetScreenWidth() return WoW.screenW / 2 end
 function GetScreenHeight() return WoW.screenH / 2 end
 
+-- The mail actions the Warband plugin post-hooks (#312). They do nothing here:
+-- the server's answer is the test's to fire (MAIL_SEND_SUCCESS, MAIL_FAILED).
+function SendMail(recipient, subject, body) end
+function ReturnInboxItem(index) end
+
 -- A REAL post-hook: it wraps the global so the hook actually runs afterwards.
 -- An inert stub would have made the Alt+Z-during-capture path untestable, which
 -- is the path that had the bug.
@@ -1868,6 +1873,9 @@ for _, n in ipairs({ "NUM_BANKGENERIC_SLOTS", "WOW_PROJECT_ID", "WOW_PROJECT_MAI
 -- Blizzard's bag frames (#305): test_goldtooltip builds them itself, and drops
 -- one to pin that a client without it is handled.
 for _, n in ipairs({ "ContainerFrame1", "ContainerFrameCombinedBags" }) do allowNil[n] = true end
+-- The mail getters (#312): nil unless a test fills an inbox or a send draft,
+-- like GetInboxNumItems and GetInboxHeaderInfo above.
+for _, n in ipairs({ "GetInboxItem", "GetSendMailItem" }) do allowNil[n] = true end
 Kit.strict(allowNil)
 
 return WoW

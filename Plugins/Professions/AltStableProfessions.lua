@@ -730,8 +730,10 @@ local function Holders(item, cache)
     if not ok or type(list) ~= "table" then return nil end
     local total, out = 0, {}
     for _, h in ipairs(list) do
-        if not IsHidden(h.guid) then
-            local n = (h.bags or 0) + (h.bank or 0)
+        -- Bags and bank only: an item in the mail can't be crafted with until it
+        -- is taken (#312), so a holder with nothing else is no holder here.
+        local n = (h.bags or 0) + (h.bank or 0)
+        if not IsHidden(h.guid) and n > 0 then
             total = total + n
             out[#out + 1] = { guid = h.guid, name = h.name, class = h.class, n = n, bankStale = h.bankStale }
         end

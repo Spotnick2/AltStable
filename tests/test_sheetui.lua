@@ -4025,6 +4025,23 @@ do
     end
 end
 
+-- #312: mailbox items, on unless switched off.
+do
+    local cb = AltStable._test.OptWarbandMail
+    check("Options has the mailbox items box", cb ~= nil)
+    if cb then
+        local held = AltStableConfig.warbandMail
+        AltStableConfig.warbandMail = nil
+        check("  never chosen: on", cb._getter() == true)
+        cb:SetChecked(false); cb:GetScript("OnClick")(cb)
+        eq("  unticking saves false", AltStableConfig.warbandMail, false)
+        check("  and shows off", cb._getter() == false)
+        cb:SetChecked(true); cb:GetScript("OnClick")(cb)
+        eq("  ticking saves true", AltStableConfig.warbandMail, true)
+        AltStableConfig.warbandMail = held
+    end
+end
+
 do
     local T = AltStable._test
     local cb = T.OptSyncSettings

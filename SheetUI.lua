@@ -3649,6 +3649,26 @@ local function CreateFrameIfNeeded()
     end)
     optItemCountsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
     AltStable._test.OptItemCounts = optItemCountsCheck
+    Y = Y - 22
+
+    -- Mailbox items in the Warband tab and the item counts (#312): on unless
+    -- switched off. Off, no mail is read, recorded, shown or synced.
+    local optMailCheck = MakeOptCheckRow("warbandMail",
+        "Include mailbox items in the Warband and item counts", Y,
+        function(checked)
+            AltStable.SetConfigValue("warbandMail", checked)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end)
+    optMailCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Mailbox items", 1, 1, 1)
+        GameTooltip:AddLine("Each character's mail is read when it opens a mailbox, so it is as recent as its last visit. "
+            .. "Mail you send or return to your own characters counts as soon as it leaves.", nil, nil, nil, true)
+        GameTooltip:AddLine("Off: no mail is read, shown or synced.", nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    optMailCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptWarbandMail = optMailCheck
     Y = Y - 30
 
     -- ── Presentation section ──────────────────────────────
