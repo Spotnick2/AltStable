@@ -119,10 +119,13 @@ Lua is first on `PATH`).
   driven via the exported `WoW` table (`WoW.reset()`, `WoW.flushTimers()`, `WoW.sentMessages()`,
   …). A test `dofile`s the stubs, sets up SavedVariable globals, `loadfile`s the module under
   test, asserts with its own `check`/`eq`, and ends with `WoW.finish(name, passed, failed)` (the
-  kit's stray-`|` check, then the result line). Reading a global the stub doesn't define is an
-  error: stub it from the dump, or add it to the stub's `allowNil` groups with its reason.
-  `test_methods` checks every widget method the addon calls exists in the pinned build, and
-  `test_toc` runs the kit's TOC checks.
+  kit's stray-`|` check, its no-swallowed-secret check, then the result line; a test that touches
+  a secret on purpose checks `WoW.secretBlocked` and clears it). Reading a global the stub
+  doesn't define is an error: stub it from the dump, or add it to the stub's `allowNil` groups
+  with its reason. A method the build lacks reads as `nil` (kit API 2), as on the client: one a
+  Blizzard mixin adds in Lua (Backdrop, the tooltip's setters) is allowed in the stub with
+  `Kit.allowMethods`, before anything loads. `test_methods` checks every widget method the addon
+  calls exists in the pinned build, and `test_toc` runs the kit's TOC checks.
 - **The stubs must model Forever, not Classic.** A stub that returns the old tuple where the
   live client returns a struct makes a broken port pass. When a stub shape is in question,
   check it against `docs/forever-api-notes.md` — that file is measured on the live client — and

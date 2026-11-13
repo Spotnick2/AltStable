@@ -301,6 +301,12 @@ do
     check("  nor a boolean", API2.IsSecretValue(false) == false)
     check("  nor a numeric string", API2.IsSecretValue("42") == false)
 
+    -- The probe is a secret touch its pcall catches: on a build without the
+    -- predicate, each is a taint.log line. Expected here, so counted and
+    -- cleared (WoW.finish fails on any left).
+    check("  the fallback's probe is a caught secret touch", (WoW.secretBlocked or 0) > 0)
+    WoW.secretBlocked, WoW.secretBlockedFirst = 0, nil
+
     issecretvalue = realPredicate
     dofile("Compat.lua")
 end

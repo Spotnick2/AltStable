@@ -36,6 +36,22 @@ local luaPrint = print
 dofile("tests/kit.lua")
 local Methods = WoW.Methods
 
+-- Methods a Blizzard mixin adds in Lua, which the dump's widget walk can't see
+-- (wow-ui-source). Allowed before anything loads: on the kit's API 2 a method
+-- the build lacks reads as nil, so a call fails where it is made - silently
+-- inside a pcall (#311). Kit.checkMethods accepts them too (test_methods).
+do
+    local BACKDROP = "BackdropTemplateMixin (Blizzard_SharedXML/Backdrop.lua), from BackdropTemplate"
+    local TOOLTIP = "TooltipDataHandler's accessors, added in Lua (Blizzard_SharedXMLGame/Tooltip/TooltipDataHandler.lua)"
+    Kit.allowMethods({
+        ["Button:SetBackdrop"] = BACKDROP, ["Button:SetBackdropColor"] = BACKDROP,
+        ["Button:SetBackdropBorderColor"] = BACKDROP,
+        ["Frame:SetBackdrop"] = BACKDROP, ["Frame:SetBackdropColor"] = BACKDROP,
+        ["Frame:SetBackdropBorderColor"] = BACKDROP,
+        ["GameTooltip:SetHyperlink"] = TOOLTIP, ["GameTooltip:SetInventoryItem"] = TOOLTIP,
+    })
+end
+
 -- AltStable's state, on the kit's WoW table.
 for k, v in pairs({
     items       = {},   -- [itemID] = { name=, quality=, ilvl=, ... }; absent = cache miss
@@ -141,6 +157,13 @@ function WoW.finish(name, passed, failed)
     if #strays == 0 then passed = passed + 1 else
         failed = failed + 1
         io.write("  FAIL: no stray | in any printed line: " .. strays[1] .. "\n")
+    end
+    -- As the kit's done(): a secret touch a pcall caught is still a taint.log
+    -- line on the client (WowTestKit #13; WoW.reset clears the count).
+    if (WoW.secretBlocked or 0) == 0 then passed = passed + 1 else
+        failed = failed + 1
+        io.write("  FAIL: no operation on a secret was blocked and caught by a pcall: "
+                 .. tostring(WoW.secretBlockedFirst) .. "\n")
     end
     io.write(string.format("%s: %d passed, %d failed\n", name, passed, failed))
     io.flush()
@@ -523,14 +546,8 @@ end
 function Methods.SetAlpha(self, a) self._GetAlpha = a; return self end
 function Methods.GetAlpha(self) return self._GetAlpha or 1 end
 
--- Attributes are STORED: a secure button with no action must not look
--- configured.
-function Methods.SetAttribute(self, k, v)
-    self._attributes = self._attributes or {}
-    self._attributes[k] = v
-    return self
-end
-function Methods.GetAttribute(self, k) return self._attributes and self._attributes[k] end
+-- Attributes are the kit's (stored, refused on a protected frame in combat),
+-- which the kit's secure click reads.
 -- Which buttons a Button actually listens for: LEFT only until
 -- RegisterForClicks says otherwise.
 function Methods.RegisterForClicks(self, ...) self._clicks = { ... }; return self end
@@ -590,11 +607,6 @@ do
     function CreateFrame(kind, name, parent, template, ...)
         local f = kitCreateFrame(kind, name, parent, template, ...)
         f._mouse = (kind == "Button" or kind == "CheckButton")
-        -- WowTestKit #22: the kit answers every capitalised key, so a method
-        -- Forever lacks can't read as absent. PlayerModel has no GetModel on
-        -- this client, and Scanner feature-detects it: a raw false reads as
-        -- "not a function", as the client's nil does.
-        if kind == "PlayerModel" or kind == "DressUpModel" then rawset(f, "GetModel", false) end
         return f
     end
 end
