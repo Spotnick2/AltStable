@@ -78,7 +78,7 @@ characters, plus anyone else who holds a lockout.
 ### How much gold, rested XP and progression does each character have?
 
 The **sheet** has one row per character: level, item level and gear in every slot, professions,
-reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
+Merchant's Favor, reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
 played. Sort by any column, and group the rows by ruleset, by faction or both (**Group**, in
 Options); hover a ruleset's header to see its server. Rested XP keeps counting up while you're
 away, worked out from where the character logged out.
@@ -115,7 +115,7 @@ and it doesn't try to match every Altoholic feature.
   record as you play, starting from scratch.
 - **What to visit once per character:** log in, open the bank and the mailbox, and open each
   profession window. See [Quick start](#quick-start).
-- **Not recorded:** auction house listings, currencies and quests.
+- **Not recorded:** auction house listings, quests, and currencies other than Merchant's Favor.
 - **Running both:** AltStable's item tooltip counts start off when Altoholic is installed, so its
   counts don't appear twice.
 
@@ -159,7 +159,8 @@ installed and need to be **online at the same time**.
 
 The **Roster** tab shows your characters as character cards, or standing together around a
 campfire in **camps** of four, each camp with its own backdrop. Click a character for its paper
-doll and stats.
+doll, stats and talents. **View** opens its talents in the game's own talent frame, read-only,
+as they were when it was last played.
 
 ![The Roster's character cards: one full-length portrait per character with its level, and a plain card with the class icon for characters without a portrait yet](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-cards.jpg)
 

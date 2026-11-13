@@ -1,16 +1,30 @@
 # Changelog
 
-## Unreleased
+## v1.5.0 - 2026-11-13
+
+Every alt's talents in the Roster, and each alt's Merchant's Favor on the sheet. Measured on client
+1.60.1.70938, the live build. v1.5.0 syncs with everything v1.4.1 does. An older version ignores
+the talents and the Favor it receives.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.3** is the current version.
+
+### New
 
 - **Every alt's talents, in the Roster**
-  ([#273](https://github.com/Spotnick2/AltStable/issues/273)). A character's page in the Roster
+  ([#334](https://github.com/Spotnick2/AltStable/pull/334)). A character's page in the Roster
   has a **Talents** section: its three trees with the points in each, and the other spec's split
-  when it has two. **View** opens that character's talents in the game's own talent frame,
-  read-only, as they were when it was last played. Talents are read when you log in and whenever
-  they change, and sync between your accounts like the rest of a character's record. A character
-  shows them after its first login with this version.
+  when it has two.
+  - **View** opens that character's talents in the game's own talent frame, read-only, as they
+    were when it was last played. Closing it brings you back to AltStable, on the same page.
+  - Talents are read when you log in and whenever they change, and sync between your accounts.
+  - A character shows them after its first login with this version.
 - **Each alt's Merchant's Favor**
-  ([#270](https://github.com/Spotnick2/AltStable/issues/270)). The Skills tab has a Merchant's
+  ([#335](https://github.com/Spotnick2/AltStable/pull/335)). The Skills tab has a Merchant's
   Favor column after Riding, so you can see which alt can buy the Favor recipe another one needs.
   It updates as you earn or spend it, and syncs between your accounts. A character shows its Favor
   after its first login with this version.
