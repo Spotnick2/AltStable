@@ -1,15 +1,33 @@
 # Changelog
 
-## Unreleased
+## v1.4.1 - 2026-11-13
 
-- The mail column reads your mailbox through **LibMailbox**, a small library AltStable now shares
-  with Glass Mail, so both count your mail the same way. The numbers don't change. A mailbox the
-  game couldn't read in full no longer clears what the column showed: it keeps the last full read.
-- The Warband's mail items are read through LibMailbox too
-  ([#326](https://github.com/Spotnick2/AltStable/issues/326)), and a mailbox the game hides any
-  part of is skipped, keeping the last full read.
-- Professions: Enchant Gloves - Holy Power and Arcane Power are listed, and five Tailoring
-  recipes show the cloth they take on client 1.60.1.70938 (one more each).
+Measured on client 1.60.1.70938, the live build. The mail column and the Warband's mail now read
+the mailbox the same way Glass Mail does, and the Professions recipes match the new build.
+v1.4.1 syncs with everything v1.4.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.3** is the current version.
+
+### Changed
+
+- **Mail is read through LibMailbox**, a small library AltStable now shares with Glass Mail, so
+  both count your mail the same way
+  ([#329](https://github.com/Spotnick2/AltStable/pull/329),
+  [#330](https://github.com/Spotnick2/AltStable/pull/330)). The mail column and the Warband's
+  mail items show the same numbers as before.
+
+### Fixed
+
+- **A mailbox the game couldn't read in full no longer replaces the last full read.** When the
+  game hides part of a mailbox, the mail column and the Warband keep what they showed.
+- **Professions:** Enchant Gloves - Holy Power and Arcane Power are listed with the other glove
+  enchants, and five Tailoring recipes show the cloth they take on client 1.60.1.70938 (one more
+  each) ([#331](https://github.com/Spotnick2/AltStable/pull/331)).
 
 ## v1.4.0 - 2026-11-12
 
