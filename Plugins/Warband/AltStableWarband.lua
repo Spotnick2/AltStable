@@ -271,6 +271,14 @@ end
 -- many there are. The rest can't be read until some are cleared, so a read
 -- keeps how many it could not see (mailMore) and the tooltip says so.
 --
+-- The inbox is read through LibMailbox-1.0 (embedded by AltStable, shared with
+-- GlassMail; #326), looked up each time, never captured: a newer copy another
+-- addon embeds replaces the functions on the same table. A read is taken only
+-- when the library is ready and its scan is whole: every header row back,
+-- nothing withheld as a secret, every attachment with its link (GlassMail's
+-- probe saw a link for every attachment, cached or not). Anything less keeps
+-- the last good read. Currency attachments are not items.
+--
 -- Mail sent or returned to one of your own characters counts as soon as it
 -- leaves: players mostly fill an alt's mailbox from another alt, and without
 -- this the items would vanish from search until the alt's next visit. It is
@@ -290,7 +298,6 @@ end
 -- sends no mail; what is held stays, for when it is switched back on.
 ------------------------------------------------------------
 
-local INBOX_ATTACHMENTS = 16          -- ATTACHMENTS_MAX_RECEIVE (Blizzard_MailFrame)
 local SEND_ATTACHMENTS  = 12          -- ATTACHMENTS_MAX_SEND
 local OUTBOX_TTL        = 30 * 86400
 
@@ -302,14 +309,21 @@ local isMailOpen, inboxReady, mailPending = false, false, false
 local visitStamped = false   -- this visit's first read is recorded
 local pendingSend   -- { to = guid, items = map }, from the SendMail post-hook
 
--- Attachments of one mail, summed by item id into `map`. False when one can't
--- be read yet (an id without a count), so a half-loaded inbox is not recorded.
-local function AddMailItems(index, map)
-    for a = 1, INBOX_ATTACHMENTS do
-        local _, id, _, count, _, _, isCurrency = GetInboxItem(index, a)
-        id = tonumber(id)
-        if id and id > 0 and not isCurrency then
-            count = tonumber(count)
+-- The library, or nil when it isn't there or a newer copy failed half-way.
+local function Mailbox()
+    local stub = rawget(_G, "LibStub")
+    local LM = stub and stub("LibMailbox-1.0", true)
+    if LM and LM.Ready and LM.Ready() then return LM end
+end
+
+-- A scanned mail's attachments, summed by item id into `map`. False when the
+-- mail can't be counted: withheld, not read whole, or a count that isn't one.
+local function AddMailItems(m, map)
+    if m.secret or not m.resolved then return false end
+    for _, it in ipairs(m.items) do
+        local id = tonumber(it.itemID)
+        if id and id > 0 and not it.isCurrency then
+            local count = tonumber(it.count)
             if not count or count < 1 then return false end
             map[id] = (map[id] or 0) + count
         end
@@ -317,20 +331,19 @@ local function AddMailItems(index, map)
     return true
 end
 
--- The shown mails' attachments as { [itemID] = count }, and how many mails the
--- game holds back; nil when the inbox can't be read (yet).
+-- The loaded mails' attachments as { [itemID] = count }, and how many mails the
+-- game holds back; nil when the inbox can't be read whole (yet).
 local function ReadInbox()
-    if not GetInboxNumItems or not GetInboxItem then return nil end
-    local shown, total = GetInboxNumItems()
-    shown = tonumber(shown) or 0
+    local LM = Mailbox()
+    if not LM then return nil end
+    local scan = LM.ScanInbox()
+    -- resolved: every row back, none withheld, every attachment with its link.
+    if not scan.resolved then return nil end
     local map = {}
-    for i = 1, shown do
-        local itemCount = GetInboxHeaderInfo and select(8, GetInboxHeaderInfo(i))
-        if itemCount == nil or (tonumber(itemCount) or 0) > 0 then
-            if not AddMailItems(i, map) then return nil end
-        end
+    for _, m in ipairs(scan.mails) do
+        if not AddMailItems(m, map) then return nil end
     end
-    return map, math.max(0, (tonumber(total) or shown) - shown)
+    return map, math.max(0, (tonumber(scan.total) or 0) - (tonumber(scan.loaded) or 0))
 end
 
 -- One of our characters, from a mail's "First Surname" or "First Surname-Realm".
@@ -482,14 +495,21 @@ local function OnMailFailed()
     pendingSend = nil
 end
 
--- Returning a mail sends it back to whoever sent it.
+-- Returning a mail sends it back to whoever sent it. The post-hook still finds
+-- the mail at its index (measured); the library has no one-mail read, so this
+-- scans the inbox, a click at a time.
 local function OnReturnInboxItem(index)
-    if not MailOn() or not GetInboxHeaderInfo or not GetInboxItem then return end
-    local _, _, sender = GetInboxHeaderInfo(index)
-    local to = OwnCharacterGuid(sender)
-    if not to then return end
-    local items = {}
-    if AddMailItems(index, items) then RecordOutgoing(to, items) end
+    if not MailOn() then return end
+    local LM = Mailbox()
+    if not LM then return end
+    for _, m in ipairs(LM.ScanInbox().mails) do
+        if m.index == index then
+            local to = OwnCharacterGuid(m.sender)
+            local items = {}
+            if to and AddMailItems(m, items) then RecordOutgoing(to, items) end
+            return
+        end
+    end
 end
 
 local function InstallMailHooks()

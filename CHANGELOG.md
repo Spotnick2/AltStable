@@ -5,6 +5,9 @@
 - The mail column reads your mailbox through **LibMailbox**, a small library AltStable now shares
   with Glass Mail, so both count your mail the same way. The numbers don't change. A mailbox the
   game couldn't read in full no longer clears what the column showed: it keeps the last full read.
+- The Warband's mail items are read through LibMailbox too
+  ([#326](https://github.com/Spotnick2/AltStable/issues/326)), and a mailbox the game hides any
+  part of is skipped, keeping the last full read.
 
 ## v1.4.0 - 2026-11-12
 

@@ -5,8 +5,10 @@
 --   * the inbox is read only while a mailbox is open and its contents have
 --     arrived, summed by item id, replaced whole on each read, and recorded only
 --     when something changed (or mail on its way to this character is pending);
---   * a half-loaded attachment aborts the read; currency attachments are not
---     items; mail the game holds back past 50 is counted as unread;
+--   * the inbox is read through LibMailbox-1.0 (#326): a scan it can't read
+--     whole (a link not there, a secret, a missing row) or a count of nothing
+--     aborts the read, and a library that isn't ready reads nothing; currency
+--     attachments are not items; mail the game holds back is counted as unread;
 --   * mail sent or returned to one of our characters is kept on the SENDER's
 --     record and counts for the recipient until the recipient's next inbox read
 --     or 30 days; only once the server confirms a send; a stranger is nobody;
@@ -36,6 +38,9 @@ dofile("Theme.lua")
 dofile("Skin.lua")
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
+-- The inbox is read through the LibMailbox-1.0 AltStable embeds (#326).
+dofile("tests/libmailbox.lua")
+local LM = LoadMailbox()
 dofile("Plugins/Warband/WarbandTabs.lua")
 dofile("Plugins/Warband/AltStableWarband.lua")
 WoW.flushTimers()
@@ -59,17 +64,23 @@ end
 resetDB()
 
 -- A mailbox, as the client reads it: mails of { sender, items = { {id, count, currency} } }.
+-- A mail with `missing` has no header row yet; an item with `nolink` no link.
 local inbox, inboxTotal = {}, nil
 GetInboxNumItems = function() return #inbox, inboxTotal or #inbox end
 GetInboxHeaderInfo = function(i)
     local m = inbox[i]
-    if not m then return nil end
+    if not m or m.missing then return nil end
     return nil, nil, m.sender, "subject", 0, 0, 30, #m.items
 end
 GetInboxItem = function(i, a)
     local it = inbox[i] and inbox[i].items[a]
     if not it then return nil end
     return "item " .. it[1], it[1], 134400, it[2], 1, true, it[3] or false
+end
+GetInboxItemLink = function(i, a)
+    local it = inbox[i] and inbox[i].items[a]
+    if not it or it.nolink then return nil end
+    return "|Hitem:" .. it[1] .. "::::::::16:1485|h[item]|h"
 end
 
 local function openMailbox()
@@ -112,11 +123,28 @@ WoW.fire("BAG_UPDATE", 0); WoW.flushTimers()
 eq("taking an attachment rereads the inbox", mine().mail[2318], 3)
 eq("  and stamps it", mine().mailStamp, WoW.now)
 
--- An attachment whose count can't be read yet: keep the last good read.
-inbox[2].items[1] = { 2318, nil }
+-- An inbox the library can't read whole: keep the last good read.
 WoW.now = WoW.now + 60
+inbox[2].items[1] = { 2318, 3, nolink = true }
 WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
-eq("a half-loaded attachment leaves the last read alone", mine().mail[2318], 3)
+eq("an attachment without its link leaves the last read alone", mine().mail[2318], 3)
+inbox[2].items[1] = { 2318, WoW.secret(3) }
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("  so does a secret count", mine().mail[2318], 3)
+inbox[2].items[1] = { 2318, 3 }
+inbox[2].missing = true
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("  and a header row that didn't come back", mine().mail[2318], 3)
+inbox[2].missing = nil
+eq("  none of them stamped", mine().mailStamp, WoW.now - 60)
+inbox[2].items[2] = { 4306, 0 }
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("  and a count of nothing", mine().mail[4306], 2)
+inbox[2].items[2] = { 4306, 2 }
+-- A count the library takes as one (it can't tell missing from 1).
+inbox[2].items[1] = { 2318, nil }
+WoW.fire("MAIL_INBOX_UPDATE"); WoW.flushTimers()
+eq("an attachment without a count counts one (the library's rule)", mine().mail[2318], 1)
 inbox[2].items[1] = { 2318, 3 }
 
 -- More mail than the game shows.
@@ -291,6 +319,18 @@ eq("  with its items", box and box[1] and box[1].items[2589], 12)
 inbox = { { sender = "Stranger Person", items = { { 2589, 1 } } } }
 ReturnInboxItem(1)
 eq("a mail returned to a stranger counts nothing", #mine().outbox, 1)
+inbox = { { sender = "Stranger Person", items = { { 765, 1 } } },
+          { sender = "Elegia Moon", items = { { 2589, 4 } } } }
+ReturnInboxItem(2)
+eq("the returned mail is the one at its index", mine().outbox[2] and mine().outbox[2].items[2589], 4)
+eq("  to its sender", mine().outbox[2] and mine().outbox[2].to, B)
+eq("  and nothing of the mail before it", mine().outbox[2] and mine().outbox[2].items[765], nil)
+inbox = { { sender = "Elegia Moon", items = { { 2589, 4, nolink = true } } } }
+ReturnInboxItem(1)
+eq("a returned mail that can't be read whole counts nothing", #mine().outbox, 2)
+inbox = { { sender = "Elegia Moon", items = { { 2589, 4 }, { 765, 0 } } } }
+ReturnInboxItem(1)
+eq("  nor one with a count of nothing (not even its other items)", #mine().outbox, 2)
 
 ------------------------------------------------------------
 -- What is shown
@@ -400,6 +440,9 @@ draft = { { 2318, 1 } }
 SendMail("Elegia Moon", "x", "")
 WoW.fire("MAIL_SEND_SUCCESS")
 eq("  sends are not recorded", mine().outbox, nil)
+inbox = { { sender = "Elegia Moon", items = { { 2318, 5 } } } }
+ReturnInboxItem(1)
+eq("  nor returns", mine().outbox, nil)
 AltStableWarbandDB[ME] = { bags = { [2318] = 1 }, mail = { [2318] = 7 }, mailStamp = WoW.now, stamp = WoW.now,
                            outbox = { { to = B, at = WoW.now, items = { [2318] = 2 } } }, outboxStamp = WoW.now }
 eq("  held mail is not counted", (T.CountItem(2318)), 1)
@@ -413,5 +456,26 @@ eq("back on, it counts again", (T.CountItem(2318)), 1 + 7 + 2)
 
 -- The Options checkbox (SheetUI's) saves the setting; checked by default.
 AltStableConfig.warbandMail = nil
+
+------------------------------------------------------------
+-- A newer LibMailbox copy (another addon's) that failed half-way. Last: the
+-- library stays not ready for the rest of the session.
+------------------------------------------------------------
+
+resetDB()
+local src = assert(io.open(LibMailboxRoot() .. "/LibMailbox.lua", "rb"))
+local text = src:read("*a")
+src:close()
+text = text:gsub('local MAJOR, MINOR = "LibMailbox%-1%.0", (%d+)', function(n)
+    return 'local MAJOR, MINOR = "LibMailbox-1.0", ' .. (tonumber(n) + 1)
+end):gsub("\nlib%.ready = MINOR", '\nerror("half-loaded")\nlib.ready = MINOR')
+check("a newer LibMailbox copy fails half-way", not pcall(assert(loadstring(text, "=half"))))
+check("  and isn't ready", not LM.Ready())
+inbox = { { sender = "Elegia Moon", items = { { 2318, 5 } } } }
+openMailbox()
+WoW.fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 17)
+eq("then the inbox is not read", mine().mail, nil)
+ReturnInboxItem(1)
+eq("  nor a return recorded", mine().outbox, nil)
 
 WoW.finish("test_warband_mail", passed, failed)
