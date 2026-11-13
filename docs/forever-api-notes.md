@@ -534,6 +534,16 @@ Blizzard's own frame (`Blizzard_PlayerSpells/Camelot/ClassTalents`) reads the ta
 - **Not measured:** the events when a point is spent or the spec group changes (the step was skipped),
   and a second spec group.
 
+## Merchant's Favor: currency 3402, read as a struct (measured, 1.60.1.70938, #270)
+
+Measured 2026-11-13 with `/dump C_CurrencyInfo.GetCurrencyInfo(3402)` (the ID from Wowhead's search,
+"Merchant's Favor", type currency) on a character holding none. One table, Retail's shape:
+`name = "Merchant's Favor"`, `currencyID = 3402`, `quantity = 0`, `iconFileID = 135725`, `quality = 2`,
+`isAccountWide = false` (each character has its own), `discovered = false`, `maxQuantity = 0`,
+`canEarnPerWeek = false`. The description names the Durotar Supply and Logistics and the Azeroth
+Commerce Authority. A nonzero `quantity` and the update event are unmeasured; AltStable reads it at
+the scan and on `CURRENCY_DISPLAY_UPDATE` (with the currency ID, or nil for a full refresh).
+
 ## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 still broken (fixed two builds later, in 70009)
 
 The client bumped from 69913 (built Sep 17) to 69977 (built Sep 22). The dump was regenerated

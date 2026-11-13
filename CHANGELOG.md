@@ -9,6 +9,11 @@
   read-only, as they were when it was last played. Talents are read when you log in and whenever
   they change, and sync between your accounts like the rest of a character's record. A character
   shows them after its first login with this version.
+- **Each alt's Merchant's Favor**
+  ([#270](https://github.com/Spotnick2/AltStable/issues/270)). The Skills tab has a Merchant's
+  Favor column after Riding, so you can see which alt can buy the Favor recipe another one needs.
+  It updates as you earn or spend it, and syncs between your accounts. A character shows its Favor
+  after its first login with this version.
 
 ## v1.4.1 - 2026-11-13
 

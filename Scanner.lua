@@ -783,6 +783,9 @@ function AltStable.ScanCharacter()
 
     char.money = plain(GetMoney())
 
+    -- Merchant's Favor (#270): Forever's profession currency, per character.
+    char.favor = API.CurrencyQuantity(AltStable.FAVOR_CURRENCY)
+
     --------------------------------------------------------
     -- Rested XP
     --

@@ -114,6 +114,10 @@ AltStable.Columns = {
     prof("Fishing",       "fishing",             "fishingMax",             "Interface\\Icons\\Trade_Fishing"),
     prof("First Aid",     "firstAid",            "firstAidMax",            "Interface\\Icons\\Spell_Holy_SealOfSacrifice"),
     prof("Riding",        "riding",              "ridingMax",              "Interface\\Icons\\Ability_Mount_RidingHorse"),
+    -- Merchant's Favor (#270), beside the professions it buys recipes for. Its
+    -- header is the currency's own icon (iconFileID, measured on 70938).
+    { label="Merchant's Favor", field="favor", width=38, align="RIGHT", type="favor",
+      profIcon=135725, group="prof", headerIconSize=20 },
 
     -- Reputations: appended below from AltStable.REPUTATIONS
 }

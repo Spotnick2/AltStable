@@ -60,6 +60,7 @@ for k, v in pairs({
     factionByID = {},   -- [factionID] = struct (may hold ids not in `factions`)
     containers  = {},   -- [bagID] = { name=, size=, [slot] = itemStruct }
     bankTabs    = {},   -- purchased CHARACTER bank tab ids
+    currencies  = {},   -- [currencyID] = quantity (C_CurrencyInfo)
     accountTabs = {},   -- purchased ACCOUNT bank tab ids (should never be scanned)
     tooltipPostCalls = {},  -- [Enum.TooltipDataType.X] = { fn, ... }
     loaded      = {},
@@ -88,6 +89,7 @@ for k, v in pairs({
 WoW.onReset[#WoW.onReset + 1] = function()
     WoW.items, WoW.skillLines, WoW.factions, WoW.factionByID = {}, {}, {}, {}
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
+    WoW.currencies = {}
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.sent = {}, {}, {}
     -- Tickers are NOT cleared: they are registered once at load, like the
@@ -1174,6 +1176,16 @@ TooltipDataProcessor = {
     AddTooltipPostCall = function(dataType, fn)
         WoW.tooltipPostCalls[dataType] = WoW.tooltipPostCalls[dataType] or {}
         table.insert(WoW.tooltipPostCalls[dataType], fn)
+    end,
+}
+
+-- The struct measured on 70938 (Compat.lua, "Currencies"). WoW.currencies[id]
+-- is the quantity; an id not in it reads as a currency the character has none of.
+C_CurrencyInfo = {
+    GetCurrencyInfo = function(id)
+        if type(id) ~= "number" then error("Usage: C_CurrencyInfo.GetCurrencyInfo(type)") end
+        local q = WoW.currencies[id]
+        return { currencyID = id, quantity = q or 0, discovered = q ~= nil, isAccountWide = false }
     end,
 }
 
