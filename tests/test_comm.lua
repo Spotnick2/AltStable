@@ -1818,6 +1818,55 @@ GetXPExhaustion = realExh
 WoW.reset()
 
 ------------------------------------------------------------
+-- Merchant's Favor (#270)
+------------------------------------------------------------
+-- Read on CURRENCY_DISPLAY_UPDATE like money on PLAYER_MONEY, synced like any
+-- field, and cleared when an accepted record no longer carries it.
+WoW.reset()
+do
+    check(T.frame:IsEventRegistered("CURRENCY_DISPLAY_UPDATE"), "the core listens for currency updates")
+    local guid = UnitGUID("player")
+    AltStableDB = { [guid] = { guid = guid, name = "Live", class = "MAGE", favor = 5, lastUpdate = 1 } }
+    WoW.currencies[3402] = 9
+    onEvent(T.frame, "CURRENCY_DISPLAY_UPDATE", 3402)
+    eq(AltStableDB[guid].favor, 9, "a Favor change is read at once")
+    WoW.currencies[3402] = 11
+    onEvent(T.frame, "CURRENCY_DISPLAY_UPDATE", 1792)
+    eq(AltStableDB[guid].favor, 9, "  another currency's update leaves it alone")
+    onEvent(T.frame, "CURRENCY_DISPLAY_UPDATE")
+    eq(AltStableDB[guid].favor, 11, "  a full refresh (no currency) reads it")
+    WoW.currencies[3402] = WoW.secret(3)
+    check(pcall(onEvent, T.frame, "CURRENCY_DISPLAY_UPDATE", 3402), "  a secret amount does not throw")
+    eq(AltStableDB[guid].favor, 11, "  and keeps the known amount")
+
+    -- A change reaches a peer through a DELTA reply, which selects characters
+    -- by lastUpdate: a peer whose watermark is past this character's last scan
+    -- must still get the new balance.
+    AltStableDB[guid].lastUpdate = WoW.now - 500
+    local watermark = WoW.now - 100
+    check(not T.SerializeFullDB(false, watermark):find("favor:", 1, true),
+          "a character older than the watermark is not in the delta")
+    WoW.currencies[3402] = 4
+    onEvent(T.frame, "CURRENCY_DISPLAY_UPDATE", 3402)
+    check(T.SerializeFullDB(false, watermark):find("favor:4", 1, true) ~= nil,
+          "  until its Favor changes: then the delta carries the new balance")
+
+    local wire = T.SerializeChar({ guid = "Player-Fav-2", name = "Fav", class = "MAGE", level = 30,
+                                   favor = 17, lastUpdate = 100 })
+    check(wire:find("favor:17", 1, true) ~= nil, "Favor rides the wire")
+    eq(T.DeserializeChar(wire).favor, 17, "  and arrives as a number")
+
+    AltStableDB = { ["Player-Fav-2"] = { guid = "Player-Fav-2", name = "Fav", class = "MAGE",
+                                         level = 30, favor = 17, lastUpdate = 100 } }
+    T.DeserializeFullDB(T.SerializeChar(
+        { guid = "Player-Fav-2", name = "Fav", class = "MAGE", level = 30, lastUpdate = 200 }
+    ) .. "\n" .. T.CHAR_SEP, "Peer")
+    eq(AltStableDB["Player-Fav-2"].lastUpdate, 200, "a newer record without Favor is accepted")
+    eq(AltStableDB["Player-Fav-2"].favor, nil, "  and the old amount doesn't linger")
+end
+WoW.reset()
+
+------------------------------------------------------------
 -- Retired fields (#8)
 ------------------------------------------------------------
 -- Nothing reads them any more. Stored records still hold them, so they must

@@ -1395,6 +1395,9 @@ local function ClearSyncedStateFields(t)
     -- on the word of a scan that peer can no longer confirm. Absent means "shown", which is
     -- the safe direction to fail.
     t.hidehelm = nil; t.hidecloak = nil
+    -- Merchant's Favor (#270): an older peer's record has none, and a scan that
+    -- couldn't read it sends none. Either way, the last number must not linger.
+    t.favor = nil
     -- When the gear last changed (#281): an older peer's record has none, and
     -- the stamp of a gear set no longer on the record must not linger. Nor
     -- the time it was read.
@@ -3014,6 +3017,7 @@ frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UNIT_PET")               -- a pet came out: record it for the Roster scene (#75)
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("PLAYER_MONEY")
+frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")   -- Merchant's Favor (#270)
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 frame:RegisterEvent("PLAYER_XP_UPDATE")
 frame:RegisterEvent("UPDATE_INSTANCE_INFO")   -- saved raid lockouts
@@ -3671,6 +3675,26 @@ frame:SetScript("OnEvent", function(self, event, ...)
     -- (e.g. looting, selling, buying, mailing).  A full ScanCharacter
     -- is not needed — just overwrite the money field directly.
     --------------------------------------------------------
+
+    -- Merchant's Favor changed (or any currency: the event's first argument is
+    -- the currency, but nil on a full refresh). Read it like money, in place.
+    if event == "CURRENCY_DISPLAY_UPDATE" then
+        local id = ...
+        local guid = UnitGUID("player")
+        if (id == nil or id == AltStable.FAVOR_CURRENCY) and guid and AltStableDB[guid] then
+            local favor = AltStable.API.CurrencyQuantity(AltStable.FAVOR_CURRENCY)
+            if favor ~= nil and favor ~= AltStableDB[guid].favor then
+                AltStableDB[guid].favor = favor
+                -- Stamped, unlike money: a delta reply selects characters by
+                -- lastUpdate, so a peer whose watermark is already past this
+                -- character's last scan would keep the old balance (Codex
+                -- review of #335). Favor changes rarely; money never stops.
+                if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
+                if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            end
+        end
+        return
+    end
 
     if event == "PLAYER_MONEY" then
         local guid = UnitGUID("player")

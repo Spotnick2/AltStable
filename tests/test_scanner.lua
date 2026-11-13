@@ -1617,4 +1617,55 @@ do
 end
 
 
+------------------------------------------------------------
+-- Merchant's Favor (#270)
+------------------------------------------------------------
+-- C_CurrencyInfo.GetCurrencyInfo returns a struct, the amount in `quantity`
+-- (measured on 70938). Per character: the scan stores it as `favor`.
+do
+    WoW.reset()
+    local API = AltStable.API
+    eq("the currency is Wowhead's 3402", AltStable.FAVOR_CURRENCY, 3402)
+    WoW.currencies[3402] = 12
+    eq("the quantity is read from the struct", API.CurrencyQuantity(3402), 12)
+    eq("  a currency the character never earned reads as 0", API.CurrencyQuantity(9999), 0)
+    WoW.currencies[3402] = WoW.secret(7)
+    eq("  a secret quantity reads as unknown, not as a number", API.CurrencyQuantity(3402), nil)
+    local realGet = API.GetCurrencyInfo
+    API.GetCurrencyInfo = function() error("boom") end
+    eq("  a call that throws reads as unknown", API.CurrencyQuantity(3402), nil)
+    API.GetCurrencyInfo = function() return nil end
+    eq("  and so does no struct", API.CurrencyQuantity(3402), nil)
+    API.GetCurrencyInfo = nil
+    eq("  and a client without the call", API.CurrencyQuantity(3402), nil)
+    API.GetCurrencyInfo = realGet
+
+    WoW.currencies[3402] = 40
+    AltStableDB = {}
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("the scan stores the character's Favor", c and c.favor, 40)
+
+    -- The column: on the Skills tab, after Riding, blank at none.
+    local col
+    for _, x in ipairs(AltStable.Columns) do if x.field == "favor" then col = x end end
+    check("a Merchant's Favor column exists", col ~= nil)
+    check("  in the professions' group, with the currency's icon",
+          col and col.group == "prof" and col.profIcon == 135725)
+    check("  on the Skills tab, after Riding",
+          io.open("SheetUI.lua"):read("*a"):find('"riding","favor"', 1, true) ~= nil)
+    if col then
+        local row = AltStable.CreateRow(nil, 20, { col })
+        AltStable.RenderRow(row, { guid = "Player-Fav-1", name = "F", favor = 25 }, 1, { col })
+        eq("  a character with Favor shows the amount", row.cells[1]:GetText(), "25")
+        AltStable.RenderRow(row, { guid = "Player-Fav-1", name = "F", favor = 0 }, 1, { col })
+        eq("  none is blank, not a column of zeros", row.cells[1]:GetText(), "")
+        AltStable.RenderRow(row, { guid = "Player-Fav-1", name = "F" }, 1, { col })
+        eq("  and so is never read", row.cells[1]:GetText(), "")
+    end
+    AltStableDB = {}
+    WoW.reset()
+end
+
+
 WoW.finish("test_scanner", passed, failed)

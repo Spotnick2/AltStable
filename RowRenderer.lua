@@ -1014,6 +1014,11 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line2, tip.line3, tip.cdLines = nil, nil, nil
             end
         elseif col.type=="money"        then value = FormatMoney(char[col.field])
+        elseif col.type=="favor"        then
+            -- Blank at none, like an unlearned profession: a column of zeros
+            -- for every alt that never earned any says nothing.
+            local n = tonumber(char[col.field])
+            value = (n and n > 0) and tostring(n) or ""
         elseif col.type=="rep"          then
             local standing = char[col.field]
             value = FormatReputation(standing)

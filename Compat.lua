@@ -291,6 +291,30 @@ function API.GetCharacterBankTabIDs()
 end
 
 ----------------------------------------------------------------------------
+-- Currencies
+----------------------------------------------------------------------------
+
+-- A STRUCT, not a tuple: C_CurrencyInfo.GetCurrencyInfo(id) returns one table,
+-- the amount in `quantity`. Measured on 1.60.1.70938 for Merchant's Favor
+-- (3402, #270): { quantity = 0, isAccountWide = false, discovered = false, ... }
+-- on a character holding none. nil when the call, the struct or a plain amount
+-- is missing - unknown, never 0.
+API.GetCurrencyInfo = need(C_CurrencyInfo, "C_CurrencyInfo", "GetCurrencyInfo")
+
+-- Merchant's Favor, spent at the profession quartermasters on Forever-only
+-- recipes (#270). Wowhead's currency 3402; the client names it the same. Here,
+-- not in Scanner: Core's event handler and the column read it too.
+AltStable.FAVOR_CURRENCY = 3402
+
+function API.CurrencyQuantity(id)
+    local get = API.GetCurrencyInfo
+    if not get then return nil end
+    local ok, info = pcall(get, id)
+    if not ok or type(info) ~= "table" then return nil end
+    return API.PlainNumber(info.quantity)
+end
+
+----------------------------------------------------------------------------
 -- Addon loading
 ----------------------------------------------------------------------------
 

@@ -102,7 +102,7 @@ local SECTIONS = {
             "prof_Alchemy","prof_Blacksmithing","prof_Enchanting","prof_Engineering",
             "prof_Leatherworking","prof_Tailoring",
             "prof_Herbalism","prof_Mining","prof_Skinning",
-            "cooking","fishing","firstAid","riding",
+            "cooking","fishing","firstAid","riding","favor",
         },
     },
     {
