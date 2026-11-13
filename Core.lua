@@ -3685,6 +3685,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local favor = AltStable.API.CurrencyQuantity(AltStable.FAVOR_CURRENCY)
             if favor ~= nil and favor ~= AltStableDB[guid].favor then
                 AltStableDB[guid].favor = favor
+                -- Stamped, unlike money: a delta reply selects characters by
+                -- lastUpdate, so a peer whose watermark is already past this
+                -- character's last scan would keep the old balance (Codex
+                -- review of #335). Favor changes rarely; money never stops.
+                if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
                 if AltStable.RefreshSheet then AltStable.RefreshSheet() end
             end
         end

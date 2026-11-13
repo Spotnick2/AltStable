@@ -1839,6 +1839,18 @@ do
     check(pcall(onEvent, T.frame, "CURRENCY_DISPLAY_UPDATE", 3402), "  a secret amount does not throw")
     eq(AltStableDB[guid].favor, 11, "  and keeps the known amount")
 
+    -- A change reaches a peer through a DELTA reply, which selects characters
+    -- by lastUpdate: a peer whose watermark is past this character's last scan
+    -- must still get the new balance.
+    AltStableDB[guid].lastUpdate = WoW.now - 500
+    local watermark = WoW.now - 100
+    check(not T.SerializeFullDB(false, watermark):find("favor:", 1, true),
+          "a character older than the watermark is not in the delta")
+    WoW.currencies[3402] = 4
+    onEvent(T.frame, "CURRENCY_DISPLAY_UPDATE", 3402)
+    check(T.SerializeFullDB(false, watermark):find("favor:4", 1, true) ~= nil,
+          "  until its Favor changes: then the delta carries the new balance")
+
     local wire = T.SerializeChar({ guid = "Player-Fav-2", name = "Fav", class = "MAGE", level = 30,
                                    favor = 17, lastUpdate = 100 })
     check(wire:find("favor:17", 1, true) ~= nil, "Favor rides the wire")
