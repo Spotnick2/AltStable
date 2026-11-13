@@ -2246,8 +2246,14 @@ do
     local r = f.reload
     eq("its Reload button runs a macro", r:GetAttribute("type"), "macro")
     eq("  the /reload macro", r:GetAttribute("macrotext"), "/reload")
-    eq("  and has no click handler of ours, which would make the click ours",
-       r:GetScript("OnClick"), nil)
+    -- Its OnClick is the template's secure action (the kit's, as on the
+    -- client); a script of ours around it would make the click ours.
+    check("  and has no click script of ours, which would make the click ours",
+          r:GetScript("PreClick") == nil and r:GetScript("PostClick") == nil)
+    WoW.secureActions = {}
+    WoW.click(r, "LeftButton", true); WoW.click(r, "LeftButton", false)
+    eq("  a click (press and release) runs the macro once", #WoW.secureActions, 1)
+    eq("  the /reload macro", WoW.secureActions[1] and WoW.secureActions[1].macrotext, "/reload")
     check("  and answers the press as well as the release",
           (function()
               local up, down = false, false

@@ -63,17 +63,13 @@ try(AltStable.ShowSheet)
 exercise()
 exercise()
 
--- Methods a Blizzard mixin adds in Lua, which the dump's widget walk can't see
--- (wow-ui-source, 70862).
-local BACKDROP = "BackdropTemplateMixin (Blizzard_SharedXML/Backdrop.lua), from BackdropTemplate"
-local TOOLTIP = "TooltipDataHandler's accessors, added in Lua (Blizzard_SharedXMLGame/Tooltip/TooltipDataHandler.lua)"
-local recorded = Kit.checkMethods({ allow = {
-    ["Button:SetBackdrop"] = BACKDROP, ["Button:SetBackdropColor"] = BACKDROP,
-    ["Button:SetBackdropBorderColor"] = BACKDROP,
-    ["Frame:SetBackdrop"] = BACKDROP, ["Frame:SetBackdropColor"] = BACKDROP,
-    ["Frame:SetBackdropBorderColor"] = BACKDROP,
-    ["GameTooltip:SetHyperlink"] = TOOLTIP, ["GameTooltip:SetInventoryItem"] = TOOLTIP,
-} })
+-- Methods a Blizzard mixin adds in Lua (Backdrop, the tooltip's setters) are
+-- allowed in the stub, before anything loads (Kit.allowMethods, #311).
+-- Reached, not just allowed: unallowed, the setter reads as nil and the
+-- tooltips' pcalls fail silently.
+check(WoW.methodsCalled["GameTooltip:SetHyperlink"] == true,
+      "the exercise reached a tooltip's SetHyperlink")
+local recorded = Kit.checkMethods()
 -- The floor: what loading and the exercise record today, rounded down, so the
 -- exercise can't quietly shrink.
 check(recorded >= 230, "the exercise reached the windows (" .. recorded .. " recorded)")
