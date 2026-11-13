@@ -323,8 +323,10 @@ through `tests/libmailbox.lua`). Its `Summary` over a live scan is ScanMail's ol
 - **Looked up when ScanMail runs**, never captured: a newer copy another addon embeds replaces
   the functions on the same table. Nothing is written when `LM.Ready()` is false (a newer copy
   failed half-way) or `scan.headers` isn't true (an unreadable inbox is not an empty one).
-- The Warband plugin's `ReadInbox` still reads the inbox itself: its rules differ (currencies,
-  missing counts), so adopting the library is its own change.
+- The Warband plugin's `ReadInbox` and its `ReturnInboxItem` hook read through it too (#326), on
+  the same terms (looked up, `Ready()`), and take a read only when `scan.resolved` (every row
+  back, none withheld, every attachment linked). Currencies are left out; a count below 1 refuses
+  the read. A missing count is the library's 1.
 
 ## Own-account sync (LibAccountSync)
 
