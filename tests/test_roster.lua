@@ -5004,10 +5004,30 @@ do
         b:GetScript("OnClick")(b)
         check("viewing: the game closes the sheet as its talent frame opens",
               talentsFrame:IsShown() and not sheet:IsShown())
+        -- Escape: CloseWindows hides the centre panel, then every special
+        -- window in the same pass. The sheet comes back after that pass.
+        WoW.timers = {}
         talentsFrame:Hide()
-        check("  closing the talent frame brings the sheet back", sheet:IsShown())
-        sheet:Hide(); talentsFrame:Show(); talentsFrame:Hide()
+        sheet:Hide()                                  -- CloseSpecialWindows, same pass
+        check("  not inside the close pass", not sheet:IsShown())
+        WoW.flushTimers()
+        check("  closing the talent frame brings the sheet back, after Escape's pass", sheet:IsShown())
+        sheet:Hide(); talentsFrame:Show(); talentsFrame:Hide(); WoW.flushTimers()
         check("  but not after the player's own talent frame (N)", not sheet:IsShown())
+
+        -- Alt+Z: hiding the talent frame's parent fires its OnHide while it is
+        -- still shown. Not a close: the sheet stays away, and the return waits.
+        local uiParent = CreateFrame("Frame")
+        talentsFrame:SetParent(uiParent)
+        sheet:Show()
+        b:GetScript("OnClick")(b)
+        WoW.timers = {}
+        uiParent:Hide()
+        WoW.flushTimers()
+        check("a parent's hide (Alt+Z) does not bring the sheet back", not sheet:IsShown())
+        uiParent:Show()
+        talentsFrame:Hide(); WoW.flushTimers()
+        check("  and the real close afterwards still does", sheet:IsShown())
         AltStable.EnsureSheetVisible, PlayerSpellsUtil.InspectLoadout = savedEnsure, savedInspect
         AltStableSheet, PlayerSpellsFrame = nil, nil
     end

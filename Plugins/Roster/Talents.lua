@@ -294,10 +294,19 @@ end
 -- trip instead: closing the talent frame we opened brings the sheet back, on the
 -- page it was showing (hiding the sheet doesn't leave the Roster's tab).
 local returning, hooked
-local function ReturnToSheet()
+local function ReturnToSheet(frame)
     if not returning then return end
+    -- A parent's hide is not a close: Alt+Z hides UIParent, firing this OnHide
+    -- while the talent frame is still shown. The return stays pending for the
+    -- real close (the sheet's own OnHide tells the same two apart).
+    if frame and frame:IsShown() then return end
     returning = nil
-    if AltStable.EnsureSheetVisible then AltStable.EnsureSheetVisible() end
+    -- After the close pass, not inside it: Escape's CloseWindows hides the
+    -- centre panel first and then every special window, so a sheet shown from
+    -- here would be closed again in the same pass (Codex review of #334).
+    C_Timer.After(0, function()
+        if AltStable.EnsureSheetVisible then AltStable.EnsureSheetVisible() end
+    end)
 end
 
 function T.View(guid)
