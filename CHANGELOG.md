@@ -8,6 +8,8 @@
 - The Warband's mail items are read through LibMailbox too
   ([#326](https://github.com/Spotnick2/AltStable/issues/326)), and a mailbox the game hides any
   part of is skipped, keeping the last full read.
+- Professions: Enchant Gloves - Holy Power and Arcane Power are listed, and five Tailoring
+  recipes show the cloth they take on client 1.60.1.70938 (one more each).
 
 ## v1.4.0 - 2026-11-12
 

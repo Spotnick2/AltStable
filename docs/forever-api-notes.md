@@ -957,6 +957,47 @@ character, rested).
 
 **Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
 
+## Build 1.60.1.70938 (2026-11-12) — HasNoReagentCost, transmog slot state gains an option, none we use
+
+Dumped (`forever-api-1.60.1.70938.md`, client built Nov 12 2026) and compared with
+`Compare-Dumps.ps1` against 70888:
+
+```
+Documented functions - +3 -2     + C_TradeSkillUI.HasNoReagentCost(recipeID) -> hasNoReagentCost
+                                   ~ C_TransmogOutfitInfo.Get/SetSecondarySlotState gain
+                                     option:TransmogOutfitSlotOption after slot
+Documented events - no change (1816)
+Documented tables - no change (801)
+Widget methods - no change (7530)
+Namespace functions - +1 -0      + C_TradeSkillUI.HasNoReagentCost
+Global functions - +31 -0 (walks _G: addon noise, not listed)
+Namespace candidates - +226 -79 (walks _G: addon noise, not listed)
+```
+
+Nothing AltStable, its stubs or its embedded libraries use is among them (no `.lua` hit under
+`C:\Projects\WoW` for the three names outside Blizzard's own UI code). The `_G` walk's one new
+name past the addon prefixes, `GetMinimapShape`, is another addon's (it defines it), not the
+client's.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 5400 102 -1 8 table`, all as expected (rested).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+**Client tables.** SkillLineAbility, TradeSkillCategory and SpellReagents are saved at 70938
+(`References\Forever\db`). Against 70888, TradeSkillCategory is unchanged and SkillLineAbility
+changes only its trivial ranks (`TrivialSkillLineRankHigh` on 26 rows, `Low` on one), which the
+recipe generator doesn't read.
+
+The generator uses the newest build that has all three tables, and SpellReagents had only been
+saved at 70532, so `RecipeData.lua` had been built from 70532's tables all along (the 70888
+check above compared the wrong pair). Against 70532, two things the generator reads changed:
+- Enchant Gloves - Holy Power (1213622) and Arcane Power (1213626) moved from Season of
+  Discovery to Glove Enchants (by 70862), so they are recipes now;
+- five Tailoring recipes take one more cloth (3758, 6688, 6693, 6695, 12079; SpellReagents).
+
+`RecipeData.lua` is regenerated at 70938 from those and the cached Wowhead pages (nothing
+fetched). From here, every build's check re-gets all three tables.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk

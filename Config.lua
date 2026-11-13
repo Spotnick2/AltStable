@@ -1744,7 +1744,7 @@ end
 -- someone would have noticed.
 ------------------------------------------------------------
 
-local MEASURED_ON_BUILD = "70888"
+local MEASURED_ON_BUILD = "70938"
 AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
 
 -- A development copy, not a release: deploy.ps1 stamps "dev-<sha>" (or "dev"),
