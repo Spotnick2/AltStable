@@ -270,8 +270,8 @@ AltStable's own code is MIT — see
 
 The libraries under `Libs/` are **not** covered by it. Each is redistributed
 under its own terms and stays the work of its authors: LibStub (public domain),
-LibDeflate (zlib), LibGlass-1.0, LibShowcase-1.0 and LibAccountSync-1.0 (MIT, fetched at
-build time), and ChatThrottleLib (no stated licence — embedded by convention). The same note
+LibDeflate (zlib), LibGlass-1.0, LibShowcase-1.0, LibAccountSync-1.0 and LibMailbox-1.0 (MIT,
+fetched at build time), and ChatThrottleLib (no stated licence — embedded by convention). The same note
 travels in `LICENSE`, which ships inside the addon; this file does not.
 
 ---

@@ -1523,14 +1523,28 @@ local mguid = UnitGUID("player")   -- the stub player's GUID (WoW.player.guid)
 AltStableDB = { [mguid] = { guid = mguid, name = "Mailer", lastUpdate = 0 } }
 AltStableConfig = { peerWatermarks = {} }
 
+-- ScanMail reads the inbox through the embedded LibMailbox-1.0 (looked up
+-- when it runs), which also reads each attachment of a mail with items.
+dofile("tests/libmailbox.lua")
+local LM = LoadMailbox()
 local inbox = {}
 local stubInboxNum, stubInboxHeader = GetInboxNumItems, GetInboxHeaderInfo
+local stubInboxItem, stubInboxLink = rawget(_G, "GetInboxItem"), rawget(_G, "GetInboxItemLink")
 _G.GetInboxNumItems = function() return #inbox end
 _G.GetInboxHeaderInfo = function(i)
     local e = inbox[i]
-    if not e then return end
+    if not e or e.missing then return end
     -- packageIcon, stationeryIcon, sender, subject, money, CODAmount, daysLeft, itemCount
     return nil, nil, "Sender", "Subj", e.money or 0, 0, e.daysLeft, e.itemCount or 0
+end
+-- name, itemID, texture, count, quality, canUse, isCurrency: one item per counted slot.
+_G.GetInboxItem = function(i, a)
+    local e = inbox[i]
+    if e and a <= (e.itemCount or 0) then return "Copper Ore", 2770, 134, 1, 1, true, false end
+end
+_G.GetInboxItemLink = function(i, a)
+    local e = inbox[i]
+    if e and a <= (e.itemCount or 0) then return "|Hitem:2770::::::::16:1485|h[Copper Ore]|h" end
 end
 
 inbox = {
@@ -1552,7 +1566,54 @@ inbox = {}
 T.ScanMail()
 check(AltStableDB[mguid].mail_count == nil and AltStableDB[mguid].mail_expiry == nil,
       "mail: emptying the mailbox clears the mail_ summary")
+-- So does a mailbox of only mail with nothing to lose, or no days left.
+inbox = { { daysLeft = 5, itemCount = 2 } }
+T.ScanMail()
+inbox = { { daysLeft = 5, itemCount = 0, money = 0 }, { daysLeft = 0, itemCount = 1 }, { itemCount = 1 } }
+T.ScanMail()
+check(AltStableDB[mguid].mail_count == nil and AltStableDB[mguid].mail_money == nil,
+      "mail: only a plain letter, zero days, no days: the mail_ summary cleared")
+-- One second left still counts, its expiry rounded down (the old rule, exactly).
+inbox = { { daysLeft = 1 / 86400, itemCount = 0, money = 7 } }
+T.ScanMail()
+eq(AltStableDB[mguid].mail_count, 1, "mail: one second left still counts")
+eq(AltStableDB[mguid].mail_expiry, math.floor((100000 + 1) / 60) * 60, "  its expiry rounded down to the minute")
+eq(AltStableDB[mguid].mail_money, 7, "  and its money")
+
+-- An inbox that can't be read whole writes nothing: not an empty one.
+local refreshes, prevRefresh = 0, AltStable.RefreshSheet
+AltStable.RefreshSheet = function() refreshes = refreshes + 1 end
+inbox = { { daysLeft = 3, itemCount = 1 } }
+T.ScanMail()
+local held = { AltStableDB[mguid].mail_count, AltStableDB[mguid].mail_expiry, AltStableDB[mguid].mail_money }
+local stamp = AltStableDB[mguid].lastUpdate
+refreshes = 0
+WoW.now = WoW.now + 600
+inbox = { { daysLeft = 3, itemCount = 1 }, { missing = true }, { daysLeft = 9, itemCount = 0, money = 1 } }
+T.ScanMail()
+eq(AltStableDB[mguid].mail_count, held[1], "mail: a header row that didn't come back: the fields stay")
+eq(AltStableDB[mguid].mail_expiry, held[2], "  the expiry")
+eq(AltStableDB[mguid].mail_money, held[3], "  the money")
+eq(AltStableDB[mguid].lastUpdate, stamp, "  lastUpdate untouched")
+eq(refreshes, 0, "  no refresh")
+-- A newer copy of the library (another addon's) that failed half-way.
+local src = assert(io.open(LibMailboxRoot() .. "/LibMailbox.lua", "rb"))
+local text = src:read("*a")
+src:close()
+text = text:gsub('local MAJOR, MINOR = "LibMailbox%-1%.0", (%d+)', function(n)
+    return 'local MAJOR, MINOR = "LibMailbox-1.0", ' .. (tonumber(n) + 1)
+end):gsub("\nlib%.ready = MINOR", '\nerror("half-loaded")\nlib.ready = MINOR')
+check(not pcall(assert(loadstring(text, "=half"))), "mail: a newer LibMailbox copy fails half-way")
+check(not LM.Ready(), "  and isn't ready")
+inbox = {}
+T.ScanMail()
+eq(AltStableDB[mguid].mail_count, held[1], "  ScanMail then writes nothing, not even on an empty inbox")
+eq(AltStableDB[mguid].lastUpdate, stamp, "  lastUpdate untouched")
+eq(refreshes, 0, "  no refresh")
+AltStable.RefreshSheet = prevRefresh
 GetInboxNumItems, GetInboxHeaderInfo = stubInboxNum, stubInboxHeader
+rawset(_G, "GetInboxItem", stubInboxItem)
+rawset(_G, "GetInboxItemLink", stubInboxLink)
 
 ------------------------------------------------------------
 -- 34. Mail alerts: login warning respects window + toggle

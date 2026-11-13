@@ -212,6 +212,7 @@ check("Professions moves to its own folder",
     dofile("tests/libglass.lua")
     dofile("tests/libshowcase.lua")
     dofile("tests/libaccountsync.lua")
+    dofile("tests/libmailbox.lua")
     -- Line by line: a pattern that eats the newline on both sides skips every
     -- other entry.
     local function entries(block)
@@ -228,7 +229,8 @@ check("Professions moves to its own folder",
     -- to a tag (never `latest`: the packager would pick by creation date).
     for _, lib in ipairs({ { "LibGlass", "LibGlass-1.0", LibGlassRoot },
                            { "LibShowcase", "LibShowcase-1.0", LibShowcaseRoot },
-                           { "LibAccountSync", "LibAccountSync-1.0", LibAccountSyncRoot } }) do
+                           { "LibAccountSync", "LibAccountSync-1.0", LibAccountSyncRoot },
+                           { "LibMailbox", "LibMailbox-1.0", LibMailboxRoot } }) do
         local name, major, root = lib[1], lib[2], lib[3]
         local libPkg = read(root() .. "/.pkgmeta") or ""
         local libIgnore = libPkg:match("ignore:%s*\n(.*)$") or ""
@@ -269,6 +271,11 @@ do
     check("the TOC loads LibAccountSync's XML", accountSync ~= nil)
     check("  before the addon's own files", accountSync ~= nil and order["Compat.lua"] ~= nil
           and accountSync < order["Compat.lua"] and accountSync < order["Core.lua"])
+    -- Core.lua's ScanMail reads the inbox through LibMailbox.
+    local mailbox = order[ [[Libs\LibMailbox-1.0\LibMailbox-1.0.xml]] ]
+    check("the TOC loads LibMailbox's XML", mailbox ~= nil)
+    check("  before the addon's own files", mailbox ~= nil and order["Compat.lua"] ~= nil
+          and mailbox < order["Compat.lua"] and mailbox < order["Core.lua"])
 end
 
 check("CHANGELOG.md exists", read("CHANGELOG.md") ~= nil)

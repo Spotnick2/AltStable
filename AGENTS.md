@@ -52,7 +52,8 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 `.lua` file must be added there in the right position):
 
 `Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs\LibShowcase-1.0\LibShowcase-1.0.xml` →
-`Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml` → `Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
+`Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml` → `Libs\LibMailbox-1.0\LibMailbox-1.0.xml` →
+`Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
 `RowRenderer.lua` → `CharacterMenu.lua` → `Appearance.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `PublicAPI.lua` → `Export.lua`.
@@ -100,8 +101,9 @@ Lua is first on `PATH`).
 - **Run all tests:** `pwsh tests/run.ps1` (override the interpreter with `-Lua <path>`; it
   defaults to the path above). It runs every `tests/test_*.lua` from the repo root and exits
   non-zero on failure. The tests need a **LibGlass checkout** (`$env:LIBGLASS`, else
-  `..\LibGlass`), a **LibShowcase checkout** (`$env:LIBSHOWCASE`, else `..\LibShowcase`) and a
-  **LibAccountSync checkout** (`$env:LIBACCOUNTSYNC`, else `..\LibAccountSync`), and fail loudly
+  `..\LibGlass`), a **LibShowcase checkout** (`$env:LIBSHOWCASE`, else `..\LibShowcase`), a
+  **LibAccountSync checkout** (`$env:LIBACCOUNTSYNC`, else `..\LibAccountSync`) and a **LibMailbox
+  checkout** (`$env:LIBMAILBOX`, else `..\LibMailbox`), and fail loudly
   without them; `run.ps1` warns when one is not at its `.pkgmeta`
   pin. It also runs the cutout manifest's self-test and the Python suites (skipped without Python).
 - **The test scaffolding is WowTestKit** (`C:\Projects\WoW\WowTestKit`; its README is the
@@ -310,6 +312,19 @@ after LibGlass's, deployed through its own `Tools\deploy.ps1`, tests load it thr
   the sheet then opens without a showcase. The crash self-heal capture rides in
   `AltStableConfig.LibShowcaseCapture` while a presentation is up. The experimental-CVar popup,
   once suppressed, stays off until `/reload` (re-registering it was measured to taint).
+
+## The mailbox (LibMailbox)
+
+`Core.lua`'s `ScanMail` (the synced `mail_count` / `mail_expiry` / `mail_money`) reads the inbox
+through **LibMailbox-1.0** (`..\LibMailbox`, github.com/Spotnick2/LibMailbox, shared with GlassMail;
+embedded like the others: `.pkgmeta` external `tag: r1`, its non-dot ignores repeated, gitignored,
+its XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests load it
+through `tests/libmailbox.lua`). Its `Summary` over a live scan is ScanMail's old rule exactly.
+- **Looked up when ScanMail runs**, never captured: a newer copy another addon embeds replaces
+  the functions on the same table. Nothing is written when `LM.Ready()` is false (a newer copy
+  failed half-way) or `scan.headers` isn't true (an unreadable inbox is not an empty one).
+- The Warband plugin's `ReadInbox` still reads the inbox itself: its rules differ (currencies,
+  missing counts), so adopting the library is its own change.
 
 ## Own-account sync (LibAccountSync)
 

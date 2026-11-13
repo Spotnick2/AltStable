@@ -51,6 +51,11 @@ terms and remains the work of its authors:
                            repository. It bundles its own copies of
                            LibStub and ChatThrottleLib.
 
+  Libs/LibMailbox-1.0      LibMailbox-1.0, copyright (c) 2026 Spotnick2.
+                           MIT License; its own LICENSE ships beside it.
+                           Fetched at build time, not kept in this
+                           repository. It bundles its own copy of LibStub.
+
   Libs/ChatThrottleLib     ChatThrottleLib, by Mikk.
                            Carries no licence header. It is embedded in a
                            great many addons by long-standing convention
