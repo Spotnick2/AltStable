@@ -764,8 +764,9 @@ function AltStable.ScanCharacter()
     char.guild = guild or ""
 
     -- No spec: GetNumTalentTabs / GetTalentTabInfo are gone on Forever, so the
-    -- old talent-tab scan wrote "" for every character. Which of
-    -- C_SpecializationInfo / C_ClassTalents returns Vanilla trees is unresolved.
+    -- old talent-tab scan wrote "" for every character. The talents are read
+    -- through C_Traits by the Roster plugin instead (Plugins/Roster/Talents.lua,
+    -- #273), into its own store and sync line.
 
     --------------------------------------------------------
     -- Item level

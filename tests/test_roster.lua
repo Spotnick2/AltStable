@@ -60,9 +60,14 @@ dofile("CharacterMenu.lua")
 WoW.timers = {}
 dofile("Plugins/Roster/AltStableRoster.lua")
 dofile("Plugins/Roster/CampList.lua")      -- the camp list, after it, as the .toc loads them (#152)
+-- A reading for a character the core doesn't know: the bootstrap prunes it.
+AltStableRosterDB = { talents = { orphan = { stamp = 1 } } }
+dofile("Plugins/Roster/Talents.lua")       -- the talents, last in the .toc (#273)
 check("loading after login schedules its own bootstrap", #WoW.timers > 0,
       "no timer scheduled - the plugin is waiting for a PLAYER_LOGIN that already fired")
 WoW.flushTimers()
+check("  which starts the talents: an orphan reading is pruned",
+      AltStableRosterDB.talents.orphan == nil)
 
 local registered
 for _, p in ipairs(AltStable.plugins or {}) do
@@ -1855,7 +1860,7 @@ do
     -- the row was ported - the question is whether it is in the definition.
     local defined = {}
     for _, g in ipairs(T.CHAR_STAT_GROUPS) do
-        for _, d in ipairs(g.defs) do defined[d.key] = true end
+        for _, d in ipairs(g.defs) do if d.key then defined[d.key] = true end end
     end
     check("haste is not in the table at all", not defined.stat_haste)
     check("  nor resilience", not defined.stat_resilience)
@@ -4760,6 +4765,321 @@ do
     AltStableConfig.rosterView = nil
     p.GetWidth, p.GetHeight = heldW, heldH
     AltStableDB, AltStableCutoutManifest, AltStablePortraits = savedDB, savedManifest, savedStore
+    pcall(AltStable.RosterPlugin.Refresh)
+end
+
+------------------------------------------------------------
+-- Talents (#273)
+------------------------------------------------------------
+-- Measured on 70938 (docs/forever-api-notes.md, Talents): one C_Traits tree per
+-- class, the three classic trees as node groups, a tree with no points has no
+-- currency entry, and PlayerSpellsUtil.InspectLoadout opens the game's frame on
+-- a build string. The stubs below answer the way the client did for the
+-- level 25 mage the probe read.
+
+do
+    local TL = AltStable.RosterPlugin.Talents
+    check("Talents.lua loads into the Roster", type(TL) == "table")
+    check("  and the plugin carries its sync hooks",
+          type(registered.OnSerialize) == "function" and type(registered.OnDeserialize) == "function"
+          and registered.independentStamp == true)
+    check("  and forgets with the core", type(registered.OnForget) == "function"
+          and type(registered.OnCleanup) == "function")
+
+    local MAGE_BUILD = "CocBa4lXwG/uhPtZpvfHj+nHTAGMGcBDAAAAAMA"
+    local api = { spec = 1482, groups = 1, active = 1, build = { MAGE_BUILD },
+                  spent = { [1] = { [11582] = 2, [11601] = 14 } } }
+    local saved = { PlayerUtil = rawget(_G, "PlayerUtil"), C_ClassTalents = rawget(_G, "C_ClassTalents"),
+                    C_Traits = rawget(_G, "C_Traits"), C_SpecializationInfo = rawget(_G, "C_SpecializationInfo"),
+                    GetNumSpecGroups = rawget(_G, "GetNumSpecGroups"),
+                    PlayerSpellsUtil = rawget(_G, "PlayerSpellsUtil") }
+    local viewed = {}
+    PlayerUtil = { GetCurrentSpecID = function() return api.spec end }
+    C_ClassTalents = { GetTraitTreeForSpec = function(spec) return spec == 1482 and 1112 or nil end }
+    C_SpecializationInfo = {
+        GetActiveSpecGroup = function() return api.active end,
+        GetCombatConfigIDForSpecGroup = function(g) return g <= api.groups and (650750 + g) or nil end,
+    }
+    GetNumSpecGroups = function() return api.groups end
+    C_Traits = {
+        -- Out of display order on purpose: the reading sorts by orderIndex.
+        GetGroupDisplayInfoByTreeID = function()
+            return { { groupID = 11601, displayName = "Frost", icon = 135846, orderIndex = 2 },
+                     { groupID = 11582, displayName = "Arcane", icon = 135932, orderIndex = 0 },
+                     { groupID = 11594, displayName = "Fire", icon = 135810, orderIndex = 1 } }
+        end,
+        GetGroupCurrencyInfo = function(config, ids)
+            local out = {}
+            local spent = api.spent[config - 650750] or {}
+            for _, id in ipairs(ids) do
+                if spent[id] then
+                    out[#out + 1] = { traitNodeGroupID = id, currencyInfos = { { spent = spent[id] } } }
+                end
+            end
+            return out
+        end,
+        GenerateImportString = function(config) return api.build[config - 650750] end,
+    }
+    PlayerSpellsUtil = { InspectLoadout = function(link) viewed[#viewed + 1] = link end }
+
+    local guid = WoW.player.guid
+    local savedDB, savedLevel = AltStableDB, WoW.level
+    WoW.level = 25
+    AltStableDB = { [guid] = { guid = guid, name = "Drak Uza", class = "MAGE", realm = "R",
+                               level = 25, race = "Troll", raceName = "Troll", lastUpdate = 100 } }
+    AltStableRosterDB = {}
+
+    ----------------------------------------------------------
+    -- Reading
+    ----------------------------------------------------------
+    local r = TL.Read()
+    check("the reading has three trees", r and #r.trees == 3)
+    eq("  in the game's order, not the API's", r and (r.trees[1].name .. "/" .. r.trees[2].name .. "/" .. r.trees[3].name),
+       "Arcane/Fire/Frost")
+    eq("  each with its icon", r and r.trees[3].icon, 135846)
+    eq("  the points per tree, a tree with no entry read as 0",
+       r and table.concat(r.specs[1].pts, "/"), "2/0/14")
+    eq("  the build string", r and r.specs[1].build, MAGE_BUILD)
+    eq("  the spec and level", r and (r.spec .. ":" .. r.lv), "1482:25")
+    eq("  one spec group, the active one", r and (r.active .. ":" .. tostring(r.specs[2])), "1:nil")
+    -- An entry with no spent count reads as 0 too, not as a hole in the split.
+    local realCurrency = C_Traits.GetGroupCurrencyInfo
+    C_Traits.GetGroupCurrencyInfo = function(config, ids)
+        local out = realCurrency(config, ids)
+        out[#out + 1] = { traitNodeGroupID = 11594, currencyInfos = {} }
+        return out
+    end
+    r = TL.Read()
+    eq("  and an entry with no spent count reads as 0", r and table.concat(r.specs[1].pts, "/"), "2/0/14")
+    C_Traits.GetGroupCurrencyInfo = realCurrency
+
+    api.spec = 999
+    eq("no tree for the spec: no reading, nothing claimed", TL.Read(), nil)
+    api.spec = 1482
+
+    ----------------------------------------------------------
+    -- Storing: a change bumps the stamp and touches the core record
+    ----------------------------------------------------------
+    check("the first scan stores the reading", TL.Scan() == true)
+    local e = TL.Get(guid)
+    check("  under the character's GUID", e and e.stamp ~= nil)
+    check("  and touches the core record, so sync sends it", AltStableDB[guid].lastUpdate > 100)
+    local stamp = e and e.stamp
+    AltStableDB[guid].lastUpdate = 100
+    check("a scan that finds the same reading changes nothing", TL.Scan() == false)
+    eq("  the stamp stays", TL.Get(guid).stamp, stamp)
+    eq("  and the core record is left alone", AltStableDB[guid].lastUpdate, 100)
+    api.spent[1][11594] = 1
+    check("a point spent is a change", TL.Scan() == true)
+    check("  with a strictly newer stamp, even within the second", TL.Get(guid).stamp > stamp)
+    eq("  and the new split", table.concat(TL.Get(guid).specs[1].pts, "/"), "2/1/14")
+
+    ----------------------------------------------------------
+    -- Events schedule one scan
+    ----------------------------------------------------------
+    TL._test.ResetPending()
+    WoW.timers = {}
+    WoW.fire("TRAIT_CONFIG_UPDATED", 650751)
+    WoW.fire("PLAYER_TALENT_UPDATE")
+    eq("a burst of talent events schedules one scan", #WoW.timers, 1)
+    api.spent[1][11594] = 2
+    WoW.flushTimers()
+    eq("  which reads the change", table.concat(TL.Get(guid).specs[1].pts, "/"), "2/2/14")
+    for _, ev in ipairs({ "PLAYER_TALENT_UPDATE", "TRAIT_CONFIG_UPDATED", "ACTIVE_TALENT_GROUP_CHANGED" }) do
+        local found = false
+        for _, x in ipairs(TL._test.EVENTS) do if x == ev then found = true end end
+        check("  listens to " .. ev, found)
+    end
+
+    ----------------------------------------------------------
+    -- Sync
+    ----------------------------------------------------------
+    local blob = registered.OnSerialize(guid)
+    check("the Roster's sync line carries the talents", blob:find("^v1|s=%d+|sp=1482|lv=25|a=1|") ~= nil, blob)
+    check("  with no newline (the core's line format)", not blob:find("\n"))
+    eq("  and nothing for a character never read", registered.OnSerialize("nobody"), "")
+    local parsed = TL.Parse(blob)
+    eq("  that parses back to the same split", parsed and table.concat(parsed.specs[1].pts, "/"), "2/2/14")
+    eq("  the same build", parsed and parsed.specs[1].build, MAGE_BUILD)
+    eq("  and the same trees", parsed and (parsed.trees[1].name .. "," .. parsed.trees[1].icon), "Arcane,135932")
+
+    local peer = "Player-1-PEER"
+    AltStableDB[peer] = { guid = peer, name = "Peer Alt", class = "MAGE", realm = "R", level = 25 }
+    registered.OnDeserialize(peer, blob)
+    check("a peer's line is stored", TL.Get(peer) ~= nil)
+    local older = blob:gsub("|s=(%d+)|", function(s) return "|s=" .. (tonumber(s) - 5) .. "|" end, 1)
+    older = older:gsub("2,2,14", "9,9,9", 1)
+    registered.OnDeserialize(peer, older)
+    eq("  an older line does not replace it", table.concat(TL.Get(peer).specs[1].pts, "/"), "2/2/14")
+    registered.OnDeserialize(peer, blob)
+    eq("  nor does the same one again (an echo)", table.concat(TL.Get(peer).specs[1].pts, "/"), "2/2/14")
+    registered.OnDeserialize(peer, (blob:gsub("2,2,14", "7,7,7", 1)))
+    eq("  nor a different one under the same stamp", table.concat(TL.Get(peer).specs[1].pts, "/"), "2/2/14")
+    local newer = blob:gsub("|s=(%d+)|", function(s) return "|s=" .. (tonumber(s) + 5) .. "|" end, 1)
+    newer = newer:gsub("2,2,14", "3,2,14", 1)
+    registered.OnDeserialize(peer, newer)
+    eq("  a newer one does", table.concat(TL.Get(peer).specs[1].pts, "/"), "3/2/14")
+    local held = TL.Get(peer).stamp
+    for name, bad in pairs({
+        ["a newer format"] = newer:gsub("^v1", "v2"),
+        ["two trees"] = newer:gsub("|t=[^;]*;", "|t=", 1),
+        -- A ':' would split the "spec:level:build" link the frame is opened with.
+        ["a build with a ':' in it"] = newer:gsub(MAGE_BUILD:sub(1, 6), "Co:Ba4", 1),
+        ["the active spec missing"] = newer:gsub("|a=1|", "|a=2|", 1),
+        ["three spec groups"] = newer .. ";1,1,1,X",
+        ["a non-number point"] = newer:gsub("3,2,14", "x,2,14", 1),
+    }) do
+        local bumped = bad:gsub("|s=(%d+)|", function(s) return "|s=" .. (tonumber(s) + 50) .. "|" end, 1)
+        registered.OnDeserialize(peer, bumped)
+        eq("  a malformed line is ignored: " .. name, TL.Get(peer).stamp, held)
+    end
+    registered.OnDeserialize(peer, "")
+    eq("  and an empty one too", TL.Get(peer).stamp, held)
+
+    -- A name carrying the blob's separators can't break the line.
+    eq("separators are cleaned out of a tree name", TL._test.Clean("A|b;c,d:e"), "A b c d e")
+
+    -- Two spec groups: both splits travel, and the active one is marked.
+    api.groups, api.active = 2, 2
+    api.build[2] = "CocBa4lXwG/uhPtZpvfHj+nHTAGMGcBDAAAAAMB"
+    api.spent[2] = { [11594] = 31, [11601] = 5 }
+    TL.Scan()
+    local two = TL.Parse(registered.OnSerialize(guid))
+    eq("two specs round-trip", two and (table.concat(two.specs[1].pts, "/") .. " + " .. table.concat(two.specs[2].pts, "/")),
+       "2/2/14 + 0/31/5")
+    eq("  with the second active", two and two.active, 2)
+
+    ----------------------------------------------------------
+    -- The detail pane
+    ----------------------------------------------------------
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    AltStableConfig.rosterView = "grid"
+    T.Activate(main)
+    T.Refresh()
+    T.DrillDown(guid)
+    T.DetailFrame():SetWidth(1400)
+    T.DetailFrame():SetHeight(800)
+    T.Refresh()
+    T.DrillDown(guid)
+    local stats = table.concat(T.DetailStats(), " | ")
+    check("the pane has a Talents section", stats:find("Talents", 1, true) ~= nil, stats)
+    check("  naming the active spec's trees, with their points",
+          stats:find("|T135932:0|t Arcane=0", 1, true) ~= nil and stats:find("|T135810:0|t Fire=31", 1, true) ~= nil
+          and stats:find("|T135846:0|t Frost=5", 1, true) ~= nil, stats)
+    check("  and the other spec's split", stats:find("Other spec=2/2/14", 1, true) ~= nil, stats)
+
+    local function Button()
+        for _, y in ipairs(T.DetailStatRowYs()) do end   -- the walk includes it (bounds tests)
+        for _, child in ipairs({ T.DetailFrame():GetChildren() }) do
+            if child.GetText and child:GetText() == "View" then return child end
+        end
+    end
+    local b = Button()
+    check("  a View button beside it", b ~= nil and b:IsShown())
+    if b then
+        b:GetScript("OnClick")(b)
+        eq("  which opens the game's frame on the active build",
+           viewed[#viewed], "1482:25:" .. api.build[2])
+        local before = #viewed
+        WoW.combat = true
+        b:GetScript("OnClick")(b)
+        eq("  and does nothing in combat", #viewed, before)
+        WoW.combat = false
+
+        -- The round trip. Showing the talent frame runs the game's CloseWindows,
+        -- which hides the sheet (it is in UISpecialFrames); closing the talent
+        -- frame we opened brings the sheet back.
+        local sheet = CreateFrame("Frame", "AltStableSheet")
+        sheet:Show()
+        local talentsFrame = CreateFrame("Frame", "PlayerSpellsFrame")
+        talentsFrame:Hide()
+        local savedEnsure, savedInspect = AltStable.EnsureSheetVisible, PlayerSpellsUtil.InspectLoadout
+        AltStable.EnsureSheetVisible = function() sheet:Show() end
+        PlayerSpellsUtil.InspectLoadout = function(link)
+            viewed[#viewed + 1] = link
+            sheet:Hide(); talentsFrame:Show()
+        end
+        b:GetScript("OnClick")(b)
+        check("viewing: the game closes the sheet as its talent frame opens",
+              talentsFrame:IsShown() and not sheet:IsShown())
+        -- Escape: CloseWindows hides the centre panel, then every special
+        -- window in the same pass. The sheet comes back after that pass.
+        WoW.timers = {}
+        talentsFrame:Hide()
+        sheet:Hide()                                  -- CloseSpecialWindows, same pass
+        check("  not inside the close pass", not sheet:IsShown())
+        WoW.flushTimers()
+        check("  closing the talent frame brings the sheet back, after Escape's pass", sheet:IsShown())
+        sheet:Hide(); talentsFrame:Show(); talentsFrame:Hide(); WoW.flushTimers()
+        check("  but not after the player's own talent frame (N)", not sheet:IsShown())
+
+        -- Alt+Z: hiding the talent frame's parent fires its OnHide while it is
+        -- still shown. Not a close: the sheet stays away, and the return waits.
+        local uiParent = CreateFrame("Frame")
+        talentsFrame:SetParent(uiParent)
+        sheet:Show()
+        b:GetScript("OnClick")(b)
+        WoW.timers = {}
+        uiParent:Hide()
+        WoW.flushTimers()
+        check("a parent's hide (Alt+Z) does not bring the sheet back", not sheet:IsShown())
+        uiParent:Show()
+        talentsFrame:Hide(); WoW.flushTimers()
+        check("  and the real close afterwards still does", sheet:IsShown())
+        AltStable.EnsureSheetVisible, PlayerSpellsUtil.InspectLoadout = savedEnsure, savedInspect
+        AltStableSheet, PlayerSpellsFrame = nil, nil
+    end
+
+    -- With one spec there is no "Other spec" row.
+    api.groups, api.active = 1, 1
+    TL.Scan()
+    T.DrillDown(guid)
+    stats = table.concat(T.DetailStats(), " | ")
+    check("one spec: no Other spec row", stats:find("Other spec", 1, true) == nil, stats)
+
+    -- A character never read has no section and no button.
+    AltStableDB.unread = { guid = "unread", name = "Never Read", class = "ROGUE", realm = "R", level = 20,
+                           race = "Human", raceName = "Human", lastUpdate = 100, money = 5 }
+    T.Refresh()
+    T.DrillDown("unread")
+    stats = table.concat(T.DetailStats(), " | ")
+    check("a character never read has no Talents section", stats:find("Talents", 1, true) == nil, stats)
+    b = Button()
+    check("  and no View button", not (b and b:IsShown()))
+
+    -- No build string (the client didn't give one): the split shows, the button doesn't.
+    api.build[1] = nil
+    TL.Scan()
+    T.DrillDown(guid)
+    b = Button()
+    check("no build string: no View button", not (b and b:IsShown()))
+    check("  but the split still shows", table.concat(T.DetailStats(), " | "):find("Fire=2", 1, true) ~= nil)
+    api.build[1] = MAGE_BUILD
+    TL.Scan()
+
+    -- The game's helper missing: no button rather than a dead one.
+    PlayerSpellsUtil = nil
+    T.DrillDown(guid)
+    b = Button()
+    check("no InspectLoadout on the client: no View button", not (b and b:IsShown()))
+
+    ----------------------------------------------------------
+    -- Housekeeping
+    ----------------------------------------------------------
+    registered.OnForget(peer)
+    eq("forgetting a character drops its talents", TL.Get(peer), nil)
+    AltStableRosterDB.talents.ghost = { stamp = 1 }
+    TL.PruneOrphans()
+    eq("a reading whose character the core no longer knows is pruned", TL.Get("ghost"), nil)
+    check("  while a known one stays", TL.Get(guid) ~= nil)
+    registered.OnCleanup("keep-none")
+    eq("a cleanup keeps only the given character", next(AltStableRosterDB.talents), nil)
+
+    T.Back()
+    AltStableDB, WoW.level = savedDB, savedLevel
+    for k, v in pairs(saved) do _G[k] = v end
     pcall(AltStable.RosterPlugin.Refresh)
 end
 

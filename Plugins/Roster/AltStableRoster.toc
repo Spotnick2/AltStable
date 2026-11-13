@@ -7,6 +7,8 @@
 ## Dependencies: AltStable
 ## LoadOnDemand: 1
 ## X-AltStable-Enhanced: 1
+## SavedVariables: AltStableRosterDB
 
 AltStableRoster.lua
 CampList.lua
+Talents.lua

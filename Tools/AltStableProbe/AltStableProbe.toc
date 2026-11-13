@@ -18,3 +18,4 @@ Scene.lua
 WhatIcon.lua
 Professions.lua
 Enchants.lua
+Talents.lua

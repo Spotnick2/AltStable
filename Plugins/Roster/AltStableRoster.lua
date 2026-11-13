@@ -643,6 +643,13 @@ local CHAR_STAT_GROUPS = {
           allowZero = true, hideAtCap = true },
         { label = "Last Online", key = "lastUpdate",  kind = "lastseen", allowZero = true },
     } },
+    -- The three trees of the active spec and their points, then the other
+    -- spec's split when there are two (#273). Names, values and whether a row
+    -- shows come from Talents.lua: the trees are the class's own.
+    { header = "Talents", talents = true, defs = {
+        { talent = 1 }, { talent = 2 }, { talent = 3 },
+        { label = "Other spec", talentOther = true },
+    } },
     { header = "Resources", defs = {
         { label = "Health", key = "stat_hp",    kind = "int" },
         { label = "Mana",   key = "stat_mana",  kind = "int" },
@@ -688,6 +695,9 @@ local GEAR_SLOTS = AltStable.GEAR_SLOTS
 -- whether a row is drawn at all.
 local function FormatStatValue(char, def)
     if not char then return "-" end
+    if def.talent or def.talentOther then
+        return Roster.Talents and Roster.Talents.Value(char, def) or "-"
+    end
     local value = char[def.key]
     if value == nil then return "-" end
     if def.kind == "money" then
@@ -716,6 +726,9 @@ end
 -- noise; but zero gold is a real answer and has to survive.
 local function HasStatValue(char, def)
     if not char then return false end
+    if def.talent or def.talentOther then
+        return Roster.Talents and Roster.Talents.HasRow(char, def) or false
+    end
     local value = char[def.key]
     if value == nil then return false end
     -- At the level cap there is no XP bar, and the scanner writes a literal 0
@@ -2125,6 +2138,7 @@ local function BuildDetail()
             row.value:SetTextColor(unpack(AltStable.C.TEXT_VALUE))
             g.rows[#g.rows + 1] = row
         end
+        if group.talents and Roster.Talents then g.button = Roster.Talents.MakeButton(detail) end
         detailRows[#detailRows + 1] = g
     end
 
@@ -2654,6 +2668,7 @@ local function RenderDetail(char)
         -- just above, reached by running out of panel instead of out of stats.
         if not any or not onChar or (y - headH - rowH) < floorY then
             group.header:Hide()
+            if group.button then group.button:Hide() end
             for _, row in ipairs(group.rows) do
                 if any and onChar and HasStatValue(char, row.def) then
                     hidden = hidden + 1
@@ -2664,6 +2679,7 @@ local function RenderDetail(char)
             group.header:ClearAllPoints()
             group.header:SetPoint("TOPLEFT", detail, "TOPLEFT", x, y)
             group.header:Show()
+            if group.button then Roster.Talents.PlaceButton(group.button, char.guid, x + COLUMN_W, y) end
             y = y - headH
             for _, row in ipairs(group.rows) do
                 if not HasStatValue(char, row.def) then
@@ -2676,6 +2692,7 @@ local function RenderDetail(char)
                     row.label:SetPoint("TOPLEFT", detail, "TOPLEFT", x + 6, y)
                     row.value:ClearAllPoints()
                     row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
+                    if row.def.talent then row.label:SetText(Roster.Talents.Label(char, row.def)) end
                     row.value:SetText(FormatStatValue(char, row.def))
                     row.label:Show(); row.value:Show()
                     y = y - rowH
@@ -3148,6 +3165,10 @@ local DETAIL_TEST = {
                 out[#out + 1] = { select(5, group.header:GetPoint(1)) }
                 out[#out].h = group.header:GetHeight()
             end
+            if group.button and group.button:IsShown() then
+                out[#out + 1] = { select(5, group.button:GetPoint(1)) }
+                out[#out].h = group.button:GetHeight()
+            end
             for _, row in ipairs(group.rows) do
                 if row.label:IsShown() then
                     local e = { select(5, row.label:GetPoint(1)) }
@@ -3250,7 +3271,7 @@ local DETAIL_TEST = {
             if g.header:IsShown() then out[#out + 1] = g.header:GetText() end
             for _, r in ipairs(g.rows) do
         if r.value:IsShown() then
-            out[#out + 1] = r.def.label .. "=" .. (r.value:GetText() or "")
+            out[#out + 1] = (r.def.label or r.label:GetText() or "") .. "=" .. (r.value:GetText() or "")
         end
             end
         end
@@ -3291,6 +3312,14 @@ function Roster._Bootstrap()
             Roster.Refresh()
         end,
         OnDeactivate = function(mainFrame) Roster.Deactivate(mainFrame) end,
+        -- The talents (#273), on the Roster's own sync line. They carry their
+        -- own stamp, so the core hands them over even when it keeps its own
+        -- copy of the character record.
+        independentStamp = true,
+        OnSerialize   = function(g) return Roster.Talents and Roster.Talents.Serialize(g) or "" end,
+        OnDeserialize = function(g, b) if Roster.Talents then Roster.Talents.Deserialize(g, b) end end,
+        OnCleanup     = function(keep) if Roster.Talents then Roster.Talents.Cleanup(keep) end end,
+        OnForget      = function(g) if Roster.Talents then Roster.Talents.Forget(g) end end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             EffectiveTexture = EffectiveTexture,
@@ -3359,6 +3388,7 @@ function Roster._Bootstrap()
             return DETAIL_TEST[k]
         end }),
     })
+    if Roster.Talents then Roster.Talents.Start() end
 end
 
 local eventFrame = CreateFrame("Frame")
