@@ -497,6 +497,43 @@ Not yet measured: `NEW_RECIPE_LEARNED` (no recipe was learned while the probe li
 
 ---
 
+## Talents: one trait tree per class, with the classic trees as groups (measured, 1.60.1.70938, #273)
+
+Measured 2026-11-13 with `/fp steps as talents` (`Tools/AltStableProbe/Talents.lua`) on a level 10
+druid and a level 25 mage. The legacy talent-tab API (`GetNumTalentTabs`, `GetTalentTabInfo`) is gone.
+Blizzard's own frame (`Blizzard_PlayerSpells/Camelot/ClassTalents`) reads the talents through
+`C_Traits`, and so can we:
+
+- **One tree per class.** Each class has a single spec ID (1482 mage, 1484 druid, ... 1491 warrior),
+  and `PlayerUtil.GetCurrentSpecID()` returns it. `C_ClassTalents.GetTraitTreeForSpec(specID)` gives
+  the class's tree (druid 1089, mage 1112).
+- **The three classic trees are node groups.** `C_Traits.GetGroupDisplayInfoByTreeID(treeID)` returns
+  three `{ groupID, displayName, icon, orderIndex, skillLineID, treeID }`, in display order
+  ("Balance", "Feral Combat", "Restoration"; "Arcane", "Fire", "Frost").
+- **Points per tree.** `C_Traits.GetGroupCurrencyInfo(configID, groupIDs)` gives each tree's points as
+  `currencyInfos[1].spent`. **A tree with no points spent has no entry, so read a missing entry as 0.**
+  The values matched the talent frame (owner, by eye).
+- **Dual spec is two configs.** `C_SpecializationInfo.GetCombatConfigIDForSpecGroup(1 | 2)`. Both
+  characters had one spec group (`GetNumSpecGroups()` 1), so the second group is unmeasured.
+- **Every node is readable.** `C_Traits.GetTreeNodes(treeID)` lists 52 (druid) or 53 (mage) nodes, all
+  visible. `GetNodeInfo(configID, nodeID)` gives `posX`/`posY`, `ranksPurchased`, `maxRanks` and
+  `visibleEdges`. A node's `groupIDs` holds more groups than its tree (the mage's ranks spread over
+  four group IDs), so add up a tree's points from the group currency, not from the nodes.
+- **A whole build is one short string.** `C_Traits.GenerateImportString(configID)` returned 36
+  characters (druid, 1 point) and 39 (mage, 16 points). `C_Traits.GetLoadoutSerializationVersion()`
+  is 2.
+- **Blizzard's frame shows a stored build, any class.** Called from addon code out of combat,
+  `PlayerSpellsUtil.InspectLoadout(specID .. ":" .. level .. ":" .. importString)` opens the talent
+  frame as "Linked Talents (Druid Druid)", read-only, with that build's trees and points. It worked
+  for the druid's own build, and for the druid's build viewed from the mage. Nothing was blocked
+  (`ADDON_ACTION_BLOCKED` / `FORBIDDEN` never fired), and the player's own frame (N) was normal
+  afterwards. This is the path a talent-build chat link takes.
+- **Readable at login.** At `PLAYER_LOGIN` (and entering the world, +2 s, +10 s) the active config and
+  its points were already there. `PLAYER_TALENT_UPDATE`, `TRAIT_TREE_CHANGED` and
+  `TRAIT_CONFIG_LIST_UPDATED` fire before `PLAYER_LOGIN`.
+- **Not measured:** the events when a point is spent or the spec group changes (the step was skipped),
+  and a second spec group.
+
 ## Build 1.60.1.69977 (2026-09-22) — API unchanged, #23 still broken (fixed two builds later, in 70009)
 
 The client bumped from 69913 (built Sep 17) to 69977 (built Sep 22). The dump was regenerated

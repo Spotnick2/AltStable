@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Every alt's talents, in the Roster**
+  ([#273](https://github.com/Spotnick2/AltStable/issues/273)). A character's page in the Roster
+  has a **Talents** section: its three trees with the points in each, and the other spec's split
+  when it has two. **View** opens that character's talents in the game's own talent frame,
+  read-only, as they were when it was last played. Talents are read when you log in and whenever
+  they change, and sync between your accounts like the rest of a character's record. A character
+  shows them after its first login with this version.
+
 ## v1.4.1 - 2026-11-13
 
 Measured on client 1.60.1.70938, the live build. The mail column and the Warband's mail now read
