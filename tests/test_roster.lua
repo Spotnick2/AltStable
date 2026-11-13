@@ -4987,6 +4987,29 @@ do
         b:GetScript("OnClick")(b)
         eq("  and does nothing in combat", #viewed, before)
         WoW.combat = false
+
+        -- The round trip. Showing the talent frame runs the game's CloseWindows,
+        -- which hides the sheet (it is in UISpecialFrames); closing the talent
+        -- frame we opened brings the sheet back.
+        local sheet = CreateFrame("Frame", "AltStableSheet")
+        sheet:Show()
+        local talentsFrame = CreateFrame("Frame", "PlayerSpellsFrame")
+        talentsFrame:Hide()
+        local savedEnsure, savedInspect = AltStable.EnsureSheetVisible, PlayerSpellsUtil.InspectLoadout
+        AltStable.EnsureSheetVisible = function() sheet:Show() end
+        PlayerSpellsUtil.InspectLoadout = function(link)
+            viewed[#viewed + 1] = link
+            sheet:Hide(); talentsFrame:Show()
+        end
+        b:GetScript("OnClick")(b)
+        check("viewing: the game closes the sheet as its talent frame opens",
+              talentsFrame:IsShown() and not sheet:IsShown())
+        talentsFrame:Hide()
+        check("  closing the talent frame brings the sheet back", sheet:IsShown())
+        sheet:Hide(); talentsFrame:Show(); talentsFrame:Hide()
+        check("  but not after the player's own talent frame (N)", not sheet:IsShown())
+        AltStable.EnsureSheetVisible, PlayerSpellsUtil.InspectLoadout = savedEnsure, savedInspect
+        AltStableSheet, PlayerSpellsFrame = nil, nil
     end
 
     -- With one spec there is no "Other spec" row.

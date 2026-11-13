@@ -287,11 +287,34 @@ function T.CanView(guid)
     return type(util) == "table" and type(util.InspectLoadout) == "function"
 end
 
+-- The game's panel manager closes AltStable as the talent frame opens: showing
+-- a centre panel runs CloseWindows, which hides every frame in UISpecialFrames,
+-- and the sheet is there so Escape closes it. The sheet can't simply stay up
+-- either: it is DIALOG strata and would cover the talent frame. So it is a round
+-- trip instead: closing the talent frame we opened brings the sheet back, on the
+-- page it was showing (hiding the sheet doesn't leave the Roster's tab).
+local returning, hooked
+local function ReturnToSheet()
+    if not returning then return end
+    returning = nil
+    if AltStable.EnsureSheetVisible then AltStable.EnsureSheetVisible() end
+end
+
 function T.View(guid)
     if InCombatLockdown() or not T.CanView(guid) then return false end
     local e = T.Get(guid)
     local s = e.specs[e.active]
+    local sheet = rawget(_G, "AltStableSheet")
+    local fromSheet = sheet and sheet:IsShown()
     local ok = pcall(PlayerSpellsUtil.InspectLoadout, ("%d:%d:%s"):format(e.spec, e.lv, s.build))
+    local talents = rawget(_G, "PlayerSpellsFrame")
+    if ok and fromSheet and talents and talents:IsShown() then
+        returning = true
+        if not hooked then
+            talents:HookScript("OnHide", ReturnToSheet)
+            hooked = true
+        end
+    end
     return ok
 end
 
