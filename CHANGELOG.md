@@ -2,8 +2,10 @@
 
 ## v1.7.0 - 2026-11-14
 
-Each character's bag space on the sheet. Measured on client 1.60.1.70938, the live build. v1.7.0
-syncs with everything v1.6.0 does. An older version ignores the bag space it receives.
+Each character's bag space on the sheet. Built for client 1.60.1.70938, the live build: the Bags
+column was checked in game there, but a quiver, a soul bag, a reagent bag and the bank's tab count
+haven't been seen yet. v1.7.0 syncs with everything v1.6.0 does. An older version ignores the bag
+space it receives.
 
 ### AltStable Companion
 
