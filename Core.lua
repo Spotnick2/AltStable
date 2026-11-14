@@ -3474,8 +3474,12 @@ function LibSync.OnMessage(payload, sender)
         -- would never speak first, and it heard nothing from us until our own
         -- next reload. Forgotten, LibSync.Ping asks it afresh once it is back.
         local was = LibSync.peers[key]
-        if was and was.guid == guid then LibSync.peers[key] = nil end
+        local removed = was ~= nil and was.guid == guid
+        if removed then LibSync.peers[key] = nil end
         LibSync.pinged[guid], LibSync.asked[key] = nil, nil
+        -- Off the own-account list: said, as any departure is (Codex, #338).
+        -- LibSync.Peer cannot say it later - the entry is already gone.
+        if removed then LibSync.PeersChanged() end
         return
     end
     -- An AltStable message, so they run it: from now on, the library to them.

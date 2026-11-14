@@ -451,6 +451,21 @@ L.Peer(BEE)
 flush()
 eq("the library stops listing it: OwnAccountPeersChanged", seen.OwnAccountPeersChanged, 1)
 
+-- A bye (a /reload, Last Online #338) takes it off the list: said once, as any
+-- departure (Codex, #338). A bye from one we never heard changes nothing.
+reset()
+proveBee()
+flush()
+seen = {}
+fromBee(L.MSG_BYE .. "|" .. BEE_GUID)
+flush()
+eq("a bye: OwnAccountPeersChanged", seen.OwnAccountPeersChanged, 1)
+eq("  and it is off the list", #AltStable.GetOwnAccountPeers(), 0)
+seen = {}
+fromBee(L.MSG_BYE .. "|" .. BEE_GUID)
+flush()
+eq("  a second bye: no callback", seen.OwnAccountPeersChanged, nil)
+
 -- Refused, and the refusal taken back (Codex, #282): the list changes with the
 -- same binding, so nothing from them would say so.
 reset()
