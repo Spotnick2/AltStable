@@ -3923,6 +3923,28 @@ do
     f = T.SortState()
     eq("its column gone, the sort falls back to level", f, "level")
 
+    -- The Bags column (#346): on Account Summary unless the option turns it off.
+    local function HasColumn(field)
+        local cols = T.ColumnLayout()
+        for _, c in ipairs(cols) do if c.field == field then return true end end
+        return false
+    end
+    AltStableDB.a.bags_slots, AltStableDB.a.bags_free = 28, 20
+    Open("summary")
+    check("the Bags column shows by default", HasColumn("bags_free"))
+    check("  the option shows it checked", T.OptBagsColumn:GetChecked())
+    Click("bags_free")
+    eq("  it sorts", (T.SortState()), "bags_free")
+    local ob = T.OptBagsColumn
+    ob:SetChecked(false); ob:GetScript("OnClick")(ob)
+    eq("turned off, it is saved off", AltStableConfig.sheetBagsColumn, false)
+    check("  the column goes at once", not HasColumn("bags_free"))
+    eq("  and its sort falls back to level", (T.SortState()), "level")
+    check("  the other columns stay", HasColumn("money") and HasColumn("lastUpdate"))
+    ob:SetChecked(true); ob:GetScript("OnClick")(ob)
+    check("back on, it is back", HasColumn("bags_free") and AltStableConfig.sheetBagsColumn == true)
+    AltStableConfig.sheetBagsColumn = nil
+
     AltStableDB = savedDB
     AltStableConfig.sheetSort = nil
     T.ForgetSessionSorts()
@@ -4723,6 +4745,7 @@ do
     local function On(o) return o and o:GetParent() end
     eq("grouping is on General", On(T.OptGroupBtns[1]), pages.general)
     eq("  with the sort order", On(T.OptRememberSort), pages.general)
+    eq("  the Bags column", On(T.OptBagsColumn), pages.general)
     eq("  the item counts", On(T.OptItemCounts), pages.general)
     eq("  and mail tracking", On(T.OptWarbandMail), pages.general)
     eq("the skin is on Appearance", On(T.skinBtns[1]), pages.appearance)

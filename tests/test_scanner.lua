@@ -1668,4 +1668,173 @@ do
 end
 
 
+------------------------------------------------------------
+-- Bag space (#346)
+------------------------------------------------------------
+-- The carried bags (backpack + the four slots) that take anything are counted;
+-- a special bag (a family, or the reagent bag) is listed but not counted. The
+-- bank is read only while it is open. Every field is flat, so it syncs.
+do
+    WoW.reset()
+    local function full(n) local b = { size = n }; for i = 1, n do b[i] = { itemID = 1 } end; return b end
+    local function setBags()
+        WoW.containers = {
+            [0] = { size = 16, [1] = { itemID = 1 }, [2] = { itemID = 2 } },   -- 14 free
+            [1] = { size = 6 },                                                -- Linen Bag, 6 free
+            [3] = { size = 8, family = 1 },                                    -- a quiver: not counted
+            [4] = full(6),                                                     -- Linen Bag, full
+        }
+        WoW.equipped[31] = "item:4245"; WoW.equipped[33] = "item:2101"; WoW.equipped[34] = "item:4245"
+        WoW.equipped[32] = nil; WoW.equipped[35] = nil
+    end
+    setBags()
+    local s = AltStable.ReadBagSpace()
+    check("the bags are read", s ~= nil)
+    if s then
+        eq("  the counted slots: backpack and the ordinary bags", s.slots, 28)
+        eq("  and their free slots", s.free, 20)
+        eq("  the backpack has no item", s.bags[0], "0,16,0")
+        eq("  a bag: its item, slots and family", s.bags[1], "4245,6,0")
+        eq("  an empty bag slot", s.bags[2], "0,0,0")
+        eq("  a special bag keeps its family", s.bags[3], "2101,8,1")
+        eq("  no reagent bag: nothing for it", s.bags[5], nil)
+    end
+    WoW.containers[5] = { size = 12, family = 0 }; WoW.equipped[35] = "item:9000"
+    s = AltStable.ReadBagSpace()
+    eq("a reagent bag is listed", s and s.bags[5], "9000,12,0")
+    eq("  and not counted", s and s.slots, 28)
+    WoW.containers[5] = nil; WoW.equipped[35] = nil
+
+    WoW.containers[1] = nil
+    eq("a bag whose size has not arrived: the read is unknown", AltStable.ReadBagSpace(), nil)
+    setBags(); WoW.containers[0].size = 0
+    eq("  and so is a backpack of no slots", AltStable.ReadBagSpace(), nil)
+    setBags()
+
+    local char = { bag_5 = "9000,12,0" }
+    check("a first read changes the record", AltStable.ScanBagSpace(char))
+    eq("  the counted slots", char.bags_slots, 28)
+    eq("  the free ones", char.bags_free, 20)
+    eq("  each bag", char.bag_1, "4245,6,0")
+    eq("  a bag taken off goes", char.bag_5, nil)
+    check("  a second read of the same bags changes nothing", not AltStable.ScanBagSpace(char))
+    WoW.containers[1][1] = { itemID = 7 }
+    check("  a looted item changes it", AltStable.ScanBagSpace(char))
+    eq("  one free slot fewer", char.bags_free, 19)
+    WoW.containers[1] = nil
+    check("an unknown read writes nothing", not AltStable.ScanBagSpace(char))
+    eq("  and keeps the last", char.bags_free, 19)
+    setBags()
+
+    -- The bank: its purchased tabs, each with its slots.
+    WoW.bankTabs = { 6, 7 }
+    WoW.containers[6] = { size = 48, [1] = { itemID = 1 } }
+    WoW.containers[7] = { size = 48 }
+    local b = {}
+    check("the bank is read", AltStable.ScanBankSpace(b))
+    eq("  its tabs", b.bank_tabs, 2)
+    eq("  their slots", b.bank_slots, 96)
+    eq("  and the free ones", b.bank_free, 95)
+    eq("  as of now", b.bank_at, time())
+    WoW.containers[7] = { size = 0 }
+    local b2 = {}
+    check("a tab whose slots have not arrived: nothing is written", not AltStable.ScanBankSpace(b2))
+    eq("  no tabs", b2.bank_tabs, nil)
+    WoW.containers[7] = { size = 48 }
+
+    -- The scan writes the bags (not the bank: it waits for a visit).
+    AltStableDB = {}
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("the scan stores the bag space", c and c.bags_free, 20)
+    eq("  not the bank", c and c.bank_tabs, nil)
+
+    -- The column: on the Account Summary tab, after Gold.
+    local col
+    for _, x in ipairs(AltStable.Columns) do if x.field == "bags_free" then col = x end end
+    check("a Bags column exists", col ~= nil and col.type == "bags")
+    check("  on the Account Summary tab, after Gold",
+          io.open("SheetUI.lua"):read("*a"):find('"money","bags_free","lastUpdate"', 1, true) ~= nil)
+    eq("the cell: free of total", AltStable.FormatBagSpace({ bags_slots = 72, bags_free = 14 }), "14/72")
+    eq("  orange with a tenth or less left", AltStable.FormatBagSpace({ bags_slots = 72, bags_free = 7 }),
+       "|cffff88007/72|r")
+    eq("  red when full", AltStable.FormatBagSpace({ bags_slots = 72, bags_free = 0 }), "|cffff20200/72|r")
+    eq("  blank before it is read", AltStable.FormatBagSpace({}), "")
+    if col then
+        local row = AltStable.CreateRow(nil, 20, { col })
+        AltStable.RenderRow(row, c, 1, { col })
+        eq("  a row shows it", row.cells[1]:GetText(), "20/28")
+        check("  with a tooltip", row.cellTips[1] ~= nil and row.cellTips[1].line1 == "Bags: 20 free of 28")
+    end
+
+    -- The tooltip: the bags in slot order, the bank, the spare bags.
+    WoW.items[4245] = { name = "Linen Bag", classID = 1, subType = "Bag" }
+    WoW.items[2101] = { name = "Light Quiver", classID = 11, subType = "Quiver" }
+    WoW.items[2589] = { name = "Linen Cloth", classID = 7, subType = "Cloth" }
+    WoW.items[856]  = { classID = 1, subType = "Bag" }   -- known class, name not cached
+    c.bank_tabs, c.bank_slots, c.bank_free, c.bank_at = 2, 96, 95, time() - 120
+    local heldMaps = AltStable.ItemMapsFor
+    AltStable.ItemMapsFor = function(guid)
+        if guid ~= c.guid then return nil end
+        return { bags = { [4245] = 2, [2589] = 5 }, bank = { [4245] = 1, [856] = 1 } }
+    end
+    WoW.itemLoadRequests = {}
+    local title, lines = AltStable.BagSpaceTooltip(c)
+    eq("the tooltip's title", title, "Bags: 20 free of 28")
+    local text = table.concat(lines, "|")
+    eq("  the bags in slot order", table.concat({ lines[1], lines[2], lines[3], lines[4], lines[5] }, "|"),
+       "Backpack: 16 slots|Linen Bag: 6 slots||cff888888Empty bag slot|r"
+       .. "|Light Quiver: 8 slots |cff888888(Quiver, not counted)|r|Linen Bag: 6 slots")
+    check("  the bank: tabs of the most, free of its slots",
+          text:find("Bank: 2 of 9 tabs, 95 free of 96", 1, true) ~= nil, text)
+    check("  and when it was seen", text:find("Last visit:|r |cff88ff882m ago|r", 1, true) ~= nil, text)
+    check("  the spare bags, carried", text:find("  Linen Bag x2 |cff888888(carried)|r", 1, true) ~= nil, text)
+    check("  and in the bank", text:find("  Linen Bag |cff888888(in the bank)|r", 1, true) ~= nil, text)
+    check("  a bag not cached yet by its id", text:find("  item 856 |cff888888(in the bank)|r", 1, true) ~= nil, text)
+    eq("  whose name is asked for", WoW.itemLoadRequests[1], 856)
+    check("  cloth is not a bag", not text:find("Linen Cloth", 1, true))
+    AltStable.ItemMapsFor = nil
+    _, lines = AltStable.BagSpaceTooltip(c)
+    check("without the Warband plugin, no spare bags", not table.concat(lines, "|"):find("Spare", 1, true))
+    _, lines = AltStable.BagSpaceTooltip({ bags_slots = 20, bags_free = 3 })
+    check("a bank never visited says so",
+          table.concat(lines, "|"):find("Bank: not visited with this version yet", 1, true) ~= nil)
+    AltStable.ItemMapsFor = heldMaps
+
+    -- Live: after each batch of bag updates, and the bank while it is open.
+    local frame = AltStable._test.frame
+    local onEvent = frame:GetScript("OnEvent")
+    for _, e in ipairs({ "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "BANK_TABS_CHANGED" }) do
+        check("the core listens for " .. e, frame:IsEventRegistered(e))
+    end
+    c.lastUpdate = 1
+    WoW.containers[0][3] = { itemID = 3 }
+    onEvent(frame, "BAG_UPDATE_DELAYED")
+    eq("a bag update is read at once", c.bags_free, 19)
+    check("  and stamps the record", c.lastUpdate > 1)
+    c.lastUpdate = 1
+    onEvent(frame, "BAG_UPDATE_DELAYED")
+    eq("  nothing changed: no stamp", c.lastUpdate, 1)
+    c.bank_tabs, c.bank_at = nil, nil
+    onEvent(frame, "BAG_UPDATE_DELAYED")
+    eq("  the bank shut: it is not read", c.bank_tabs, nil)
+    onEvent(frame, "BANKFRAME_OPENED")
+    eq("opening the bank reads it", c.bank_tabs, 2)
+    WoW.bankTabs = { 6, 7, 8 }; WoW.containers[8] = { size = 48 }
+    onEvent(frame, "BANK_TABS_CHANGED", Enum.BankType.Account)
+    eq("  the account bank's tabs are not ours", c.bank_tabs, 2)
+    onEvent(frame, "BANK_TABS_CHANGED", Enum.BankType.Character)
+    eq("  a tab bought is", c.bank_tabs, 3)
+    WoW.containers[6][2] = { itemID = 2 }
+    onEvent(frame, "BAG_UPDATE_DELAYED")
+    eq("  an item put in the bank", c.bank_free, 142)
+    onEvent(frame, "BANKFRAME_CLOSED")
+    WoW.containers[6][3] = { itemID = 3 }
+    onEvent(frame, "BAG_UPDATE_DELAYED")
+    eq("  shut again, it keeps the last visit", c.bank_free, 142)
+
+    AltStableDB = {}
+    WoW.reset()
+end
+
 WoW.finish("test_scanner", passed, failed)

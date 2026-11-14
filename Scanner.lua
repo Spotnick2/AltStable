@@ -650,6 +650,101 @@ local function ReadPet(classFile)
 end
 AltStable.ReadPet = ReadPet
 
+------------------------------------------------------------
+-- Bag space (#346)
+--
+-- Flat fields on the record, so they sync like any other:
+--   bag_<container> = "itemID,slots,family" for the backpack (itemID 0), the
+--                     four bag slots ("0,0,0" when a slot is empty) and the
+--                     reagent bag when it has one
+--   bags_slots, bags_free   the bags that take anything: backpack and the
+--                     four slots, family 0. A quiver, a soul bag or the
+--                     reagent bag holds only some items, so it is listed
+--                     but not counted.
+--   bank_tabs, bank_slots, bank_free, bank_at   the bank at its last visit:
+--                     it can only be read while it is open.
+-- The keyring is left out.
+------------------------------------------------------------
+
+local function BagRead(bag, backpack)
+    local slots = plain(API.GetContainerNumSlots(bag))
+    if not slots then return nil end
+    local ok, free, family = pcall(API.GetContainerNumFreeSlots, bag)
+    if not ok then return nil end
+    free, family = plain(free), plain(family) or 0
+    local item = 0
+    if bag ~= backpack then
+        local okInv, inv = pcall(API.ContainerIDToInventoryID, bag)
+        if not okInv then return nil end
+        item = (inv and GetInventoryItemID("player", inv)) or 0
+    end
+    -- A bag whose size has not arrived yet (the login can be early) is not an
+    -- empty slot: the whole read is unknown, and the last one stays.
+    if (slots == 0 and (item ~= 0 or bag == backpack)) or (slots > 0 and not free) then
+        return nil
+    end
+    return item, slots, free or 0, family
+end
+
+-- { bags = { [container] = "itemID,slots,family" }, slots, free }, or nil when
+-- any bag can't be read.
+function AltStable.ReadBagSpace()
+    if not (API.GetContainerNumSlots and API.GetContainerNumFreeSlots and API.ContainerIDToInventoryID) then
+        return nil
+    end
+    local ids = API.GetCarriedBagIDs()
+    if not ids then return nil end
+    local E = Enum.BagIndex   -- GetCarriedBagIDs read the ids from it
+    local out = { bags = {}, slots = 0, free = 0 }
+    for _, bag in ipairs(ids) do
+        local item, slots, free, family = BagRead(bag, E.Backpack)
+        if not item then return nil end
+        if bag ~= E.ReagentBag or slots > 0 then
+            out.bags[bag] = item .. "," .. slots .. "," .. family
+        end
+        if bag ~= E.ReagentBag and family == 0 then
+            out.slots, out.free = out.slots + slots, out.free + free
+        end
+    end
+    return out
+end
+
+-- Writes the carried bags onto the record. True when anything changed.
+function AltStable.ScanBagSpace(char)
+    local space = char and AltStable.ReadBagSpace()
+    if not space then return false end
+    local changed = char.bags_slots ~= space.slots or char.bags_free ~= space.free
+    for k in pairs(char) do
+        if type(k) == "string" and k:find("^bag_") and space.bags[tonumber(k:sub(5)) or false] == nil then
+            char[k] = nil; changed = true
+        end
+    end
+    for bag, v in pairs(space.bags) do
+        if char["bag_" .. bag] ~= v then char["bag_" .. bag] = v; changed = true end
+    end
+    char.bags_slots, char.bags_free = space.slots, space.free
+    return changed
+end
+
+-- The bank, while it is open: its purchased tabs (Character only, Compat.lua),
+-- each of which must have its slots. Nothing is written otherwise.
+function AltStable.ScanBankSpace(char)
+    if not (char and API.GetContainerNumSlots and API.GetContainerNumFreeSlots) then return false end
+    local tabs = API.GetCharacterBankTabIDs()
+    if not tabs then return false end
+    local slots, free = 0, 0
+    for _, tab in ipairs(tabs) do
+        local n = plain(API.GetContainerNumSlots(tab))
+        local ok, f = pcall(API.GetContainerNumFreeSlots, tab)
+        f = ok and plain(f) or nil
+        if not n or n <= 0 or not f then return false end   -- not loaded yet
+        slots, free = slots + n, free + f
+    end
+    char.bank_tabs, char.bank_slots, char.bank_free = #tabs, slots, free
+    char.bank_at = time()   -- the visit's time is news even when nothing moved
+    return true
+end
+
 function AltStable.ScanCharacter()
 
     AltStableDB = AltStableDB or {}
@@ -785,6 +880,9 @@ function AltStable.ScanCharacter()
 
     -- Merchant's Favor (#270): Forever's profession currency, per character.
     char.favor = API.CurrencyQuantity(AltStable.FAVOR_CURRENCY)
+
+    -- Bag space (#346): the carried bags. The bank waits for a visit.
+    AltStable.ScanBagSpace(char)
 
     --------------------------------------------------------
     -- Rested XP

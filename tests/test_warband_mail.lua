@@ -451,8 +451,16 @@ check("  nor sent", not T.SerializePlayer(ME):find("|m=", 1, true), T.SerializeP
 check("  and the status line leaves it out", not plugin._wb.StatusText():find("mail", 1, true),
       plugin._wb.StatusText())
 eq("  but it is kept", AltStableWarbandDB[ME].mail[2318], 7)
+-- The core's Bags tooltip (#346) reads the maps through ItemMapsFor: the
+-- mail only with the setting on, as everywhere here.
+local maps = AltStable.ItemMapsFor(ME)
+check("  the Bags tooltip gets the bags", maps and maps.bags and maps.bags[2318] == 1)
+eq("  but not the mail", maps and maps.mail, nil)
 AltStableConfig.warbandMail = true
 eq("back on, it counts again", (T.CountItem(2318)), 1 + 7 + 2)
+maps = AltStable.ItemMapsFor(ME)
+eq("  and the Bags tooltip gets the mail", maps and maps.mail and maps.mail[2318], 7)
+eq("  a character with no inventory here: nothing", AltStable.ItemMapsFor("Player-0-None"), nil)
 
 -- The Options checkbox (SheetUI's) saves the setting; checked by default.
 AltStableConfig.warbandMail = nil

@@ -916,6 +916,15 @@ local function CountItem(itemID)
 end
 AT_WB.CountItem = CountItem
 
+-- What a character holds, for the core's Bags tooltip (#346): the stored maps,
+-- { [itemID] = count }, read-only. The mail only while the mail option is on,
+-- as everywhere else here.
+local function ItemMapsFor(guid)
+    local wb = guid and AltStableWarbandDB[guid]
+    if type(wb) ~= "table" then return nil end
+    return { bags = wb.bags, bank = wb.bank, mail = MailOn() and wb.mail or nil }
+end
+
 -- The cross-alt breakdown block: "Total: N", then one line per character —
 -- class icon + class-coloured name on the left, the per-location counts with
 -- inline bag/bank icons on the right (e.g. "17[bag] +46[bank]").
@@ -2258,6 +2267,7 @@ local function BootstrapPlugin()
     -- Who holds an item, for other plugins (Professions' reagents, #268). Set
     -- only while this plugin is loaded: absent means "not counted", never "none".
     AltStable.ItemHolders = CountItem
+    AltStable.ItemMapsFor = ItemMapsFor
     AltStable.RegisterPlugin({
         id            = ADDON_ID,
         label         = "Warband",

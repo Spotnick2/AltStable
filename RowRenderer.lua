@@ -281,6 +281,128 @@ function AltStable.FormatLastOnlineFor(char)
 end
 
 ------------------------------------------------------------
+-- Bag space (#346): the Bags cell and its tooltip
+------------------------------------------------------------
+
+-- "14/72": free of total in the bags that take anything. Red when full, orange
+-- with a tenth or less left. Blank until the character's first scan with it.
+function AltStable.FormatBagSpace(char)
+    local slots, free = tonumber(char.bags_slots), tonumber(char.bags_free)
+    if not slots or not free or slots <= 0 then return "" end
+    local text = free .. "/" .. slots
+    if free <= 0 then return "|cffff2020" .. text .. "|r" end
+    if free <= slots / 10 then return "|cffff8800" .. text .. "|r" end
+    return text
+end
+
+-- A bag's name from the client, asked for once when not cached yet (the next
+-- hover has it).
+local bagNameAsked = {}
+local function BagItemName(id)
+    local n
+    if C_Item and C_Item.GetItemNameByID then
+        local ok, v = pcall(C_Item.GetItemNameByID, id); if ok then n = v end
+    end
+    if type(n) == "string" and n ~= "" then return n end
+    if not bagNameAsked[id] and C_Item and C_Item.RequestLoadItemDataByID then
+        bagNameAsked[id] = true
+        pcall(C_Item.RequestLoadItemDataByID, id)
+    end
+    return nil
+end
+
+-- The item's class and its subtype in words ("Quiver", "Soul Bag"), which need
+-- no item cache.
+local function ItemClass(id)
+    local get = AltStable.API.GetItemInfoInstant
+    if not get then return nil end
+    local ok, _, _, subType, _, _, classID = pcall(get, id)
+    if not ok then return nil end
+    return classID, subType
+end
+
+local CONTAINER_CLASS, QUIVER_CLASS = 1, 11   -- Enum.ItemClass.Container, .Quiver
+
+local function MaxBankTabs()
+    if not (C_Bank and C_Bank.FetchMaxNumBankTabs and Enum and Enum.BankType) then return nil end
+    local ok, n = pcall(C_Bank.FetchMaxNumBankTabs, Enum.BankType.Character)
+    n = ok and AltStable.API.PlainNumber(n) or nil
+    return (n and n > 0) and n or nil
+end
+
+local SPARE_WHERE = { bags = "carried", bank = "in the bank", mail = "in the mail" }
+
+-- The cell's tooltip: a title and ready-coloured lines. The carried bags in
+-- slot order, the bank at its last visit, and the spare bags the Warband
+-- plugin knows of (when it is loaded).
+function AltStable.BagSpaceTooltip(char)
+    local slots, free = tonumber(char.bags_slots), tonumber(char.bags_free)
+    local title = (slots and free) and ("Bags: " .. free .. " free of " .. slots) or "Bags: not read yet"
+    local lines = {}
+    local E = (Enum and Enum.BagIndex) or {}
+
+    local order = {}
+    for k, v in pairs(char) do
+        local bag = type(k) == "string" and tonumber(k:match("^bag_(%-?%d+)$"))
+        if bag and type(v) == "string" then order[#order + 1] = bag end
+    end
+    table.sort(order)
+    for _, bag in ipairs(order) do
+        local item, n, family = char["bag_" .. bag]:match("^(%d+),(%d+),(%d+)$")
+        item, n, family = tonumber(item), tonumber(n), tonumber(family)
+        if item and item == 0 and bag ~= E.Backpack then
+            lines[#lines + 1] = "|cff888888Empty bag slot|r"
+        elseif item then
+            local name = (bag == E.Backpack and "Backpack") or BagItemName(item) or (n .. "-slot bag")
+            local line = name .. ": " .. n .. " slots"
+            if bag == E.ReagentBag or family ~= 0 then
+                local _, subType = ItemClass(item)
+                line = line .. " |cff888888(" .. (subType or "special") .. ", not counted)|r"
+            end
+            lines[#lines + 1] = line
+        end
+    end
+
+    lines[#lines + 1] = " "
+    local tabs, bankSlots, bankFree = tonumber(char.bank_tabs), tonumber(char.bank_slots), tonumber(char.bank_free)
+    if tabs and bankSlots and bankFree then
+        local max = MaxBankTabs()
+        local t = max and (tabs .. " of " .. max .. " tabs") or (tabs .. (tabs == 1 and " tab" or " tabs"))
+        lines[#lines + 1] = "Bank: " .. t .. ", " .. bankFree .. " free of " .. bankSlots
+        lines[#lines + 1] = "|cff888888Last visit:|r " .. FormatLastOnline(tonumber(char.bank_at), false)
+    else
+        lines[#lines + 1] = "|cff888888Bank: not visited with this version yet|r"
+    end
+
+    local ok, maps = false, nil
+    if AltStable.ItemMapsFor then ok, maps = pcall(AltStable.ItemMapsFor, char.guid) end
+    if ok and type(maps) == "table" then
+        local spare = {}
+        for _, where in ipairs({ "bags", "bank", "mail" }) do
+            for id, count in pairs(type(maps[where]) == "table" and maps[where] or {}) do
+                local class = ItemClass(id)
+                if class == CONTAINER_CLASS or class == QUIVER_CLASS then
+                    spare[#spare + 1] = { name = BagItemName(id) or ("item " .. id), count = count, where = where }
+                end
+            end
+        end
+        if #spare > 0 then
+            table.sort(spare, function(a, b)
+                if a.name ~= b.name then return a.name < b.name end
+                return a.where < b.where
+            end)
+            lines[#lines + 1] = " "
+            lines[#lines + 1] = "Spare bags:"
+            for _, s in ipairs(spare) do
+                lines[#lines + 1] = "  " .. s.name .. ((tonumber(s.count) or 1) > 1 and (" x" .. s.count) or "")
+                                    .. " |cff888888(" .. SPARE_WHERE[s.where] .. ")|r"
+            end
+        end
+    end
+    return title, lines
+end
+
+------------------------------------------------------------
 -- Gear slot coloring — standard WoW item quality colors
 --   0 Poor      : grey
 --   1 Common    : white
@@ -633,7 +755,7 @@ function AltStable.CreateRow(parent, height, columns)
         -- General tooltip button for classIcon, raceIcon, ruleset, level, restPercent, profSkill
         if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
         or col.field=="level" or col.type=="restXP"
-        or col.field=="restPercent" or col.type=="profSkill" then
+        or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags" then
             local tip = CreateFrame("Button", nil, row)
             tip:SetSize(col.width, height)
             tip:SetScript("OnEnter", function()
@@ -1024,6 +1146,12 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line2, tip.line3, tip.cdLines = nil, nil, nil
             end
         elseif col.type=="money"        then value = FormatMoney(char[col.field])
+        elseif col.type=="bags"         then
+            value = AltStable.FormatBagSpace(char)
+            if tip then
+                tip.line1, tip.cdLines = AltStable.BagSpaceTooltip(char)
+                tip.line2, tip.line3 = nil, nil
+            end
         elseif col.type=="favor"        then
             -- Blank at none, like an unlearned profession: a column of zeros
             -- for every alt that never earned any says nothing.

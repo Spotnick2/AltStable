@@ -1416,7 +1416,8 @@ local function ClearSyncedStateFields(t)
         or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
         or k:find("^stat_")                      -- the stat snapshot: a stat that went unreadable must not linger
         or k:find("^rep_")                       -- reputations: a standing dropped at the source goes here too
-        or k:find("^pet_") then                  -- the pet (#75): the owner's scan keeps the last one seen, so absent means none
+        or k:find("^pet_")                       -- the pet (#75): the owner's scan keeps the last one seen, so absent means none
+        or k:find("^bag_") or k:find("^bags_") or k:find("^bank_") then   -- bag space (#346): absent from an older peer = unknown
             t[k] = nil
         end
     end
@@ -3141,6 +3142,10 @@ frame:RegisterEvent("UNIT_PET")               -- a pet came out: record it for t
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("PLAYER_MONEY")
 frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")   -- Merchant's Favor (#270)
+frame:RegisterEvent("BAG_UPDATE_DELAYED")        -- bag space (#346)
+frame:RegisterEvent("BANKFRAME_OPENED")
+frame:RegisterEvent("BANKFRAME_CLOSED")
+frame:RegisterEvent("BANK_TABS_CHANGED")
 frame:RegisterEvent("PLAYER_LOGOUT")             -- Last Online is when you left
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 frame:RegisterEvent("PLAYER_XP_UPDATE")
@@ -3866,6 +3871,35 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 if AltStable.RefreshSheet then AltStable.RefreshSheet() end
             end
         end
+        return
+    end
+
+    -- Bag space (#346): the bags after each batch of bag updates, and the bank
+    -- while it is open - on opening, again a second later (its tabs' slots may
+    -- not have arrived yet), and after every change made in it.
+    if event == "BAG_UPDATE_DELAYED" or event == "BANKFRAME_OPENED"
+    or event == "BANKFRAME_CLOSED" or event == "BANK_TABS_CHANGED" then
+        if event == "BANKFRAME_CLOSED" then frame._bankOpen = false; return end
+        if event == "BANK_TABS_CHANGED" then
+            local bankType = ...
+            if Enum and Enum.BankType and bankType ~= nil and bankType ~= Enum.BankType.Character then return end
+        end
+        local function update()
+            local guid = UnitGUID("player")
+            local char = guid and AltStableDB[guid]
+            if not char or not AltStable.ScanBagSpace then return end
+            local changed = AltStable.ScanBagSpace(char)
+            if frame._bankOpen and AltStable.ScanBankSpace(char) then changed = true end
+            if changed then
+                if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
+                if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            end
+        end
+        if event == "BANKFRAME_OPENED" then
+            frame._bankOpen = true
+            C_Timer.After(1, function() if frame._bankOpen then update() end end)
+        end
+        update()
         return
     end
 

@@ -1264,6 +1264,7 @@ local PREF_GROUPS = {
         { key = "rosterEnchants",    kind = "bool", default = false },
         { key = "sheetGroupByRealm", kind = "bool", default = true },
         { key = "sheetGroupByFaction", kind = "bool", default = false },
+        { key = "sheetBagsColumn",   kind = "bool", default = true },    -- #346
     } },
 }
 local PREF_KEYS, PREF_GROUP = {}, {}

@@ -72,7 +72,7 @@ local SECTIONS = {
         preferH = 400,
         fields = {
             "class","race","level","ilvl",
-            "guild","restPercent","money","lastUpdate",
+            "guild","restPercent","money","bags_free","lastUpdate",
         },
     },
     {
@@ -709,6 +709,11 @@ end
 local function GroupsByFaction()
     return (AltStableConfig and AltStableConfig.sheetGroupByFaction) == true
 end
+-- The Bags column (#346, Options): on unless turned off. Off only hides it;
+-- the bag space is still read and synced, so it is current when turned back on.
+local function BagsColumnOn()
+    return not (AltStableConfig and AltStableConfig.sheetBagsColumn == false)
+end
 
 -- A character's faction as the groups use it: the scanner's English tag
 -- (UnitFactionGroup), or "Unknown" for a record from before it was stored.
@@ -730,9 +735,10 @@ local function BuildScrollableColsForSection(section)
     -- Ruleset column goes in after Race, on every tab. Faction groups don't
     -- say it either.
     local ungrouped = not GroupsByRealm()
+    local bags = BagsColumnOn()
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
-        if col then scrollableCols[#scrollableCols+1] = col end
+        if col and (bags or col.type ~= "bags") then scrollableCols[#scrollableCols+1] = col end
         if field == "race" and ungrouped then
             scrollableCols[#scrollableCols+1] = ColumnFor("ruleset")
         end
@@ -4235,6 +4241,24 @@ local function CreateFrameIfNeeded()
             end
         end)
     AltStable._test.OptRememberSort = optRememberSortCheck
+    Y = Y - 22
+
+    -- The Bags column on Account Summary (#346): on unless turned off.
+    local optBagsCheck = MakeOptCheckRow("sheetBagsColumn",
+        "Show the Bags column", Y,
+        function(checked)
+            AltStable.SetConfigValue("sheetBagsColumn", checked)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end)
+    optBagsCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Bags column", 1, 1, 1)
+        GameTooltip:AddLine("Each character's free and total bag slots on Account Summary; hover a cell for "
+            .. "their bags, bank tabs and spare bags.", nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    optBagsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptBagsColumn = optBagsCheck
     Y = Y - 22
 
     -- How the sheet groups its characters: one choice of four, over the two
