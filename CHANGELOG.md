@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.5.1 - 2026-11-14
+
+A fix to the sheet's **Last Online** column. Measured on client 1.60.1.70938, the live build.
+v1.5.1 syncs with everything v1.5.0 does. An older version still syncs, but its characters don't
+show as Online on your other account.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.3** is the current version.
+
+### Fixed
+
+- **Last Online tells the truth**
+  ([#337](https://github.com/Spotnick2/AltStable/pull/337),
+  [#338](https://github.com/Spotnick2/AltStable/pull/338)). It used to show when a character's
+  data last changed, so the character you were playing could read "9m ago" and one that had just
+  logged off could read "15m ago".
+  - The character you're playing always reads **Online**.
+  - A character logged in on your other account reads **Online** too. While the sheet is open,
+    AltStable asks your other account who it's playing (when the sheet opens, then every 20
+    seconds). When that character leaves, it reads the last time it answered: at once after a
+    `/reload`, within about a minute after a logout.
+  - Logging out records the time, and the next sync carries it to your other account.
+  - "Xm ago" keeps counting while the sheet stays open, and sorting by Last Online puts the
+    characters online at the top.
+  - The row tooltip and the Roster show the same thing.
+  - Nothing is sent while the sheet is closed.
+
 ## v1.5.0 - 2026-11-13
 
 Every alt's talents in the Roster, and each alt's Merchant's Favor on the sheet. Measured on client
