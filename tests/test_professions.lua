@@ -47,7 +47,8 @@ AltStableRecipeData = { source = "test", recipes = {
     [2330] = { skill = { 171 }, learn = 15,  colors = { 15, 60, 80, 100 }, makes = 118, src = { 6 } },
     [2331] = { skill = { 171 }, learn = 50,  colors = { 50, 80, 100, 120 }, makes = 2455, src = { 2 },
                reagents = { 785, 2, 3371, 1 } },
-    [2332] = { skill = { 171 }, learn = 125, colors = { 125, 150, 170, 190 }, makes = 2456, src = { 5, 6 } },
+    [2332] = { skill = { 171 }, learn = 125, colors = { 125, 150, 170, 190 }, makes = 2456, src = { 5, 6 },
+               favor = 90 },                                     -- a quartermaster's, for Favor (#270)
     [2333] = { skill = { 171 } },                                -- requirement unknown (9999 on Wowhead)
     [3100] = { skill = { 164 }, learn = 1,   makes = 2862, src = { 6 } },
     [3101] = { skill = { 164 }, learn = 30,  makes = 2863 },     -- source unknown
@@ -578,6 +579,17 @@ eq("Missing, focused on an unscanned alt: nothing is claimed",
    ids(T.BuildRows({ line = 171, filter = "missing", focus = U })), "")
 eq("Not from a trainer: anything with another source", ids(T.BuildRows({ line = 171, onlyDrops = true })), "2331,2332")
 
+-- Merchant's Favor (#270): the price where "Vendor" would be, and a filter.
+eq("Favor: only what a quartermaster sells for it", ids(T.BuildRows({ line = 171, onlyFavor = true })), "2332")
+eq("  with Missing and an alt in focus: what that alt could buy",
+   ids(T.BuildRows({ line = 171, onlyFavor = true, filter = "missing", focus = B })), "2332")
+eq("  and with Known, what it already has", ids(T.BuildRows({ line = 171, onlyFavor = true, filter = "known", focus = B })), "")
+eq("a Favor recipe's source says its price", T.SourceText(AltStableRecipeData.recipes[2332]), "90 Favor, Trainer")
+eq("  another vendor's says Vendor", T.SourceText({ src = { 5 } }), "Vendor")
+eq("  a price with no other source is still said", T.SourceText({ favor = 30 }), "30 Favor")
+eq("  so is one whose sources lack a vendor", T.SourceText({ src = { 2 }, favor = 30 }), "30 Favor, Drop")
+eq("  and unknown is still unknown", T.SourceText({}), "?")
+
 local rows = T.BuildRows({ line = 171, filter = "nobody" })
 eq("with an unscanned owner, nobody-knows is only 'recorded'", rows[1] and rows[1].nobody, "Nobody recorded")
 AltStableDB[U] = nil
@@ -967,6 +979,21 @@ do
     calls = {}
     plugin.OnResize()
     eq("a resize asks for the floor again", calls[1] and calls[1]:sub(1, 5), "floor")
+    -- The Favor checkbox (#270) drives the same filter BuildRows takes.
+    check("the Favor checkbox is built", AT.favorCheck ~= nil)
+    if AT.favorCheck then
+        AT.favorCheck:SetChecked(true)
+        AT.favorCheck:GetScript("OnClick")(AT.favorCheck)
+        check("  ticking it filters on Favor", AT.onlyFavor == true)
+        local heldLine = AT.line
+        AT.line = 171
+        AT.Refresh()
+        eq("  and the tab shows only what Favor buys", ids(AT.rows or {}), "2332")
+        AT.line = heldLine
+        AT.favorCheck:SetChecked(false)
+        AT.favorCheck:GetScript("OnClick")(AT.favorCheck)
+        check("  and unticking it lets everything back", AT.onlyFavor == false)
+    end
     plugin.OnDeactivate(main)
     AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin
 end

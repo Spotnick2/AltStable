@@ -73,6 +73,20 @@ listing carries them too, and is the fallback for a recipe the table lacks (27 o
 1.60.1.70532). Where both have a recipe they agreed on every one (2177); a
 disagreement is logged, and the client's wins.
 
+Merchant's Favor (#270). Forever's profession quartermasters sell recipes for its
+currency 3402, and which ones is on Wowhead's currency page alone ("Currency for",
+with each item's price): the client's ItemExtendedCost holds the prices but not
+which item each belongs to, and the item listings carry no cost. That page is
+served only as HTML, so the owner saves it and the shared Wowhead tool ingests it:
+
+    python C:\Projects\WoW\References\Tools\Wowhead\wowhead.py ingest "<saved page>.html"
+
+This reads it from the tool's store (`wowhead.py list`, offline), links its recipe
+items to recipes exactly as a listing's (by name, ITEM_OVERRIDES first - which also
+picks up an item newer than the listings), and writes each recipe's price as
+`favor` (the lowest, when two items teach it). A missing page fails the run: a
+rerun must not quietly drop every price.
+
 Wowhead source codes seen on these pages (kept as numbers; the plugin labels the
 ones it knows and shows anything else as "other"):
   1 crafted  2 drop  3 pvp  4 quest  5 vendor  6 trainer  7 discovery
@@ -85,6 +99,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -95,6 +110,9 @@ OUT = os.path.join(HERE, "..", "..", "Plugins", "Professions", "RecipeData.lua")
 REFERENCES = r"C:\Projects\WoW\References\Forever\recipes"
 CLIENT_DB = r"C:\Projects\WoW\References\Forever\db"
 SEASON_CATEGORY = "SEASON OF DISCOVERY"
+WOWHEAD_TOOL = r"C:\Projects\WoW\References\Tools\Wowhead\wowhead.py"
+FAVOR_CURRENCY = 3402
+FAVOR_URL = "https://www.wowhead.com/forever/currency=3402/merchants-favor"
 BASE = "https://www.wowhead.com/forever"
 USER_AGENT = "AltStable recipe data generator (github.com/Spotnick2/AltStable)"
 DELAY = 1.5
@@ -143,6 +161,10 @@ ITEM_OVERRIDES = {
     251434: 1252331, # Plans: Sentinel's Wristguard -> Sentinel's Wristguards
     251435: 1252332, # Plans: Warder's Wristguard -> Warder's Wristguards
     251436: 1252333, # Plans: Prefect's Wristguard -> Prefect's Wristguards
+    # Sold for Merchant's Favor (#270, 2026-11-14): Season of Discovery's Lesser
+    # Arcane Elixir (439960, dropped later) shares the name; Forever's is the
+    # vendor one at 125.
+    250378: 1250791, # Recipe: Lesser Arcane Elixir -> Lesser Arcane Elixir (Forever's)
 }
 _ITEM_PREFIX = re.compile(r"^(recipe|pattern|plans|schematic|formula|manual|design|blueprint)\s*:\s*", re.I)
 SOURCE_LABELS = {1: "crafted", 2: "drop", 3: "pvp", 4: "quest", 5: "vendor", 6: "trainer",
@@ -365,6 +387,61 @@ def link_items(recipes, names, items, skill_line, subclass=None, overrides=None)
     return linked, unmatched, ambiguous
 
 
+def favor_cost(row):
+    """An item row's price in Merchant's Favor, or None. Wowhead's `cost` is a
+    list of [money, [[currency, count], ...], [[item, count], ...]]."""
+    for entry in row.get("cost") or []:
+        currencies = entry[1] if isinstance(entry, list) and len(entry) > 1 else []
+        for pair in currencies or []:
+            if len(pair) == 2 and int(pair[0]) == FAVOR_CURRENCY:
+                return int(pair[1])
+    return None
+
+
+def apply_favor(recipes, names, rows):
+    """Price the recipes the Merchant's Favor page sells (#270). Its recipe items
+    are linked as a listing's (one profession at a time, overrides first), then
+    each recipe an item teaches gets `favor`, the lowest price when several do.
+    Returns (priced items, unlinked item IDs)."""
+    for subclass, skill_line in RECIPE_ITEM_PAGES:
+        link_items(recipes, names, rows, skill_line, subclass, ITEM_OVERRIDES)
+    by_item = {}
+    for sid, r in recipes.items():
+        for item in r.get("items", []):
+            by_item.setdefault(item, []).append(sid)
+    priced, unlinked = 0, []
+    for row in rows:
+        cost = favor_cost(row)
+        if row.get("classs") != RECIPE_CLASS or cost is None:
+            continue
+        sids = by_item.get(int(row["id"]))
+        if not sids:
+            unlinked.append(int(row["id"]))
+            continue
+        for sid in sids:
+            recipes[sid]["favor"] = min(recipes[sid].get("favor", cost), cost)
+        priced += 1
+    return priced, sorted(unlinked)
+
+
+def favor_rows(tool=WOWHEAD_TOOL, run=subprocess.run):
+    """The Merchant's Favor page's items, from the shared Wowhead tool's store.
+    Fails when the page was never ingested: without it every price would go."""
+    proc = run([sys.executable, tool, "list", FAVOR_URL, "--listview", "items", "--limit", "100000"],
+               capture_output=True, text=True, encoding="utf-8")
+    try:
+        doc = json.loads(proc.stdout)
+    except ValueError:
+        raise DataError("wowhead.py list gave no JSON (exit %s): %s" % (proc.returncode, (proc.stderr or "")[-300:]))
+    results = doc.get("results") or []
+    rows = results[0].get("rows") if results else None
+    if not rows:
+        why = results[0].get("error") if results else doc.get("error")
+        raise DataError("Merchant's Favor page not in the Wowhead store (%s): save %s and run "
+                        "wowhead.py ingest on it" % (why, FAVOR_URL))
+    return rows
+
+
 def check_page(records, skill_line, path):
     if not records:
         raise DataError("%s: no rows" % path)
@@ -542,6 +619,7 @@ def render_lua(recipes, source):
         "--                      makes = crafted item or nil (enchants make none),",
         "--                      src = Wowhead source codes or nil (unknown),",
         "--                      items = recipe items that teach it, or nil (matched by name),",
+        "--                      favor = its price in Merchant's Favor (currency 3402), or nil,",
         "--                      reagents = {item, count, item, count, ...} for one craft, or nil }",
         "-- Source codes: 1 crafted 2 drop 3 pvp 4 quest 5 vendor 6 trainer 7 discovery",
         "--               16 fished 21 pickpocketed; anything else is shown as \"other\".",
@@ -564,6 +642,8 @@ def render_lua(recipes, source):
             fields.append("src=%s" % _lua_list(r["src"]))
         if r.get("items"):
             fields.append("items=%s" % _lua_list(r["items"]))
+        if "favor" in r:
+            fields.append("favor=%d" % r["favor"])
         if r.get("reagents"):
             # Flat (item, count, item, count...): a table per pair cost the client
             # 670 KB more than the file without reagents, flat 330 KB.
@@ -592,7 +672,10 @@ def source_line(text):
 # ---------------------------------------------------------------------------
 
 def _sources(recipe):
-    return ", ".join(SOURCE_LABELS.get(c, "code %d" % c) for c in recipe.get("src", []))
+    out = ", ".join(SOURCE_LABELS.get(c, "code %d" % c) for c in recipe.get("src", []))
+    if "favor" in recipe:
+        out += "%s%d Merchant's Favor" % (", " if out else "", recipe["favor"])
+    return out
 
 
 def reference_rows(recipes, meta):
@@ -703,7 +786,7 @@ def fetch(url, refresh, parse):
     return parsed
 
 
-def build(refresh, log, meta=None):
+def build(refresh, log, meta=None, favor=None):
     """All recipes, merged across pages, with the recipe items that teach them.
     `meta`, when given, collects each kept recipe's name, profession and Wowhead
     change status for the reference."""
@@ -740,6 +823,13 @@ def build(refresh, log, meta=None):
         log("%-30s %4d items, %4d linked, %3d unmatched, %2d ambiguous"
             % ("items=9.%d (%s)" % (subclass, PROFESSION_NAMES[skill_line]), len(items),
                linked, unmatched, ambiguous))
+    rows = favor if favor is not None else favor_rows()
+    priced, unlinked = apply_favor(recipes, names, rows)
+    log("%-30s %4d items, %4d recipe items priced, %d unlinked%s"
+        % ("currency=3402 (Favor)", len(rows), priced, len(unlinked),
+           (": %s" % unlinked) if unlinked else ""))
+    # An override may name an item only the Favor page lists (newer than the listings).
+    seen_items.update(int(r["id"]) for r in rows if r.get("classs") == RECIPE_CLASS)
     stale = sorted(set(ITEM_OVERRIDES) - seen_items)
     if stale:
         raise DataError("ITEM_OVERRIDES names items no listing has any more: %s" % stale)

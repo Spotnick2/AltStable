@@ -81,7 +81,8 @@ local function CoreSkill(char, line)
     return (v and v > 0) and v or nil
 end
 
-local AT = { isActive = false, search = "", filter = "all", onlyDrops = false, rowsPool = {}, cards = {} }
+local AT = { isActive = false, search = "", filter = "all", onlyDrops = false, onlyFavor = false,
+             rowsPool = {}, cards = {} }
 
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable Professions]|r " .. msg)
@@ -623,10 +624,22 @@ end
 local SOURCE_LABELS = { [1] = "Crafted", [2] = "Drop", [3] = "PvP", [4] = "Quest", [5] = "Vendor",
                         [6] = "Trainer", [7] = "Discovery", [16] = "Fished", [21] = "Pickpocket" }
 
+-- A recipe a quartermaster sells for Merchant's Favor (#270) says its price
+-- where "Vendor" would be: the price is what an alt has to save up.
 local function SourceText(r)
-    if not r or not r.src then return "?" end
+    if not r then return "?" end
+    local favor = r.favor and (r.favor .. " Favor")
+    if not r.src then return favor or "?" end
     local t = {}
-    for _, c in ipairs(r.src) do t[#t + 1] = SOURCE_LABELS[c] or "Other" end
+    for _, c in ipairs(r.src) do
+        if c == 5 and favor then
+            t[#t + 1] = favor
+            favor = nil
+        else
+            t[#t + 1] = SOURCE_LABELS[c] or "Other"
+        end
+    end
+    if favor then table.insert(t, 1, favor) end
     return table.concat(t, ", ")
 end
 
@@ -853,7 +866,7 @@ local function ReagentLines(id, knowers)
 end
 
 -- Builds the list the panel shows. Pure: state in, rows out, so tests drive it.
---   state = { line, search, filter ("all"|"known"|"missing"|"nobody"), onlyDrops,
+--   state = { line, search, filter ("all"|"known"|"missing"|"nobody"), onlyDrops, onlyFavor,
 --             focus (guid), owners (from AllOwners, optional) }
 local function BuildRows(state)
     local lines = {}
@@ -877,6 +890,7 @@ local function BuildRows(state)
             local name = RecipeName(id)
             local keep = search == "" or (name and name:lower():find(search, 1, true))
             if keep and state.onlyDrops and not HasNonTrainerSource(r) then keep = false end
+            if keep and state.onlyFavor and not (r and r.favor) then keep = false end
             if keep then
                 local knownBy = {}
                 for _, o in ipairs(owners) do if o.known[id] then knownBy[#knownBy + 1] = o end end
@@ -1330,7 +1344,8 @@ function AT.Refresh()
     for _, c in ipairs(AT.cardData) do if c.owner.guid == AT.focus then stillThere = true end end
     if not stillThere then AT.focus = nil end
     AT.rows = BuildRows({ line = AT.line, search = AT.search, filter = AT.filter,
-                          onlyDrops = AT.onlyDrops, focus = AT.focus, owners = ownersBy })
+                          onlyDrops = AT.onlyDrops, onlyFavor = AT.onlyFavor, focus = AT.focus,
+                          owners = ownersBy })
     LayoutPicker(ownersBy)
     LayoutCards()
     for key, b in pairs(AT.filterButtons) do b.sel:SetShown(AT.filter == key) end
@@ -1459,11 +1474,23 @@ local function BuildPanel(mainFrame)
     dropsLbl:SetText("Not from a trainer")
     dropsLbl:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
 
+    -- Bought with Merchant's Favor (#270): with Missing and an alt in focus,
+    -- what that alt could buy at a quartermaster.
+    local favor = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    favor:SetSize(18, 18)
+    favor:SetPoint("LEFT", dropsLbl, "RIGHT", 16, 0)
+    favor:SetScript("OnClick", function(self) AT.onlyFavor = self:GetChecked() and true or false; AT.scrollRow = 0; AT.Refresh() end)
+    AT.favorCheck = favor
+    local favorLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    favorLbl:SetPoint("LEFT", favor, "RIGHT", 2, 0)
+    favorLbl:SetText("Favor")
+    favorLbl:SetTextColor(unpack(C("TEXT_DIM", { 0.7, 0.7, 0.7 })))
+
     -- The item-tooltip lines, on by default; the one setting this plugin has,
     -- kept in its panel as Warband keeps its own.
     local tips = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     tips:SetSize(18, 18)
-    tips:SetPoint("LEFT", dropsLbl, "RIGHT", 16, 0)
+    tips:SetPoint("LEFT", favorLbl, "RIGHT", 16, 0)
     tips:SetChecked(TooltipsOn())
     tips:SetScript("OnClick", function(self)
         AltStable.SetConfigValue("professionsTooltips", self:GetChecked() and true or false)
@@ -1533,11 +1560,12 @@ local GRID_PARTS = { "bodyScroll", "frozenScroll", "headerScroll", "frozenHeader
 -- at all, so it took whatever the tab before it left. The recipe row needs
 -- about 700 (name 210, skill, source, then the "known by" names from 400 on),
 -- and the toolbar - twelve profession buttons and the search box - about 570.
--- The filter row needs about 700 since Craftable made it five buttons (#268):
--- the two checkboxes and the status text on its right would overlap below that.
+-- The filter row needs about 700 since Craftable made it five buttons (#268),
+-- and 740 since the Favor checkbox (#270): the three checkboxes and the status
+-- text on its right would overlap below that.
 -- Below the floor's height there is no room for rows under the cards.
 local PREFERRED_PANEL_W = 760
-local MIN_PANEL_W, MIN_PANEL_H = 700, 400
+local MIN_PANEL_W, MIN_PANEL_H = 740, 400
 AT.PREFERRED_PANEL_W, AT.MIN_PANEL_W, AT.MIN_PANEL_H = PREFERRED_PANEL_W, MIN_PANEL_W, MIN_PANEL_H
 
 -- The floor as a window size: the panel sits beside the sidebar, under the
@@ -1606,6 +1634,7 @@ local function BootstrapPlugin()
             CooldownLabel = CooldownLabel,
             Owners = Owners, AllOwners = AllOwners, Catalogue = Catalogue, BuildRows = BuildRows, Cards = Cards,
             MeetsSkill = MeetsSkill, DifficultyColor = DifficultyColor, HasNonTrainerSource = HasNonTrainerSource,
+            SourceText = SourceText,
             RecipeName = RecipeName, OnSpellData = OnSpellData,
             TooltipLines = TooltipLines, EnsureTooltipHook = EnsureTooltipHook,
             PruneOrphans = PruneOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
