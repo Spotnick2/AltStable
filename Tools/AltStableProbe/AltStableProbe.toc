@@ -19,3 +19,4 @@ WhatIcon.lua
 Professions.lua
 Enchants.lua
 Talents.lua
+Online.lua
