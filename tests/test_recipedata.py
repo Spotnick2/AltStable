@@ -176,6 +176,90 @@ check("an override to a recipe that is not there is an error",
 check("every shipped override names a different item",
       len(set(gen.ITEM_OVERRIDES)) == len(gen.ITEM_OVERRIDES))
 
+# ---------------------------------------------------------------------------
+# Merchant's Favor (#270): the currency page's items, priced onto their recipes
+# ---------------------------------------------------------------------------
+
+# Trimmed from the ingested /forever/currency=3402 page, rows as wowhead.py list gives them.
+check("a Favor price is read from Wowhead's cost",
+      gen.favor_cost({"cost": [[0, [[3402, 180]], []]]}) == 180)
+check("  another currency is not a Favor price",
+      gen.favor_cost({"cost": [[0, [[1792, 50]], []]]}) is None)
+check("  nor is gold alone, or no cost at all",
+      gen.favor_cost({"cost": [[5000, [], []]]}) is None and gen.favor_cost({}) is None)
+check("  a cost in Favor beside another currency still counts",
+      gen.favor_cost({"cost": [[0, [[1792, 5], [3402, 30]], []]]}) == 30)
+
+frec = {
+    2335: {"skill": [171], "learn": 60},
+    3230: {"skill": [171], "learn": 1},
+    500: {"skill": [171], "learn": 100},
+    501: {"skill": [171], "learn": 200},
+    700: {"skill": [197], "learn": 1},
+}
+fnames = {2335: "Swiftness Potion", 3230: "Elixir of Minor Agility", 500: "Twin", 501: "Twin",
+          700: "Bolt of Cloth"}
+frows = [
+    {"id": 2556, "classs": 9, "subclass": 6, "name": "Recipe: Swiftness Potion", "cost": [[0, [[3402, 45]], []]]},
+    {"id": 2555, "classs": 9, "subclass": 6, "name": "Recipe: Swiftness Potion", "cost": [[0, [[3402, 90]], []]]},
+    {"id": 7000, "classs": 9, "subclass": 6, "name": "Recipe: Twin", "cost": [[0, [[3402, 15]], []]]},
+    {"id": 7100, "classs": 9, "subclass": 2, "name": "Pattern: Bolt of Cloth", "cost": [[0, [[3402, 30]], []]]},
+    {"id": 7200, "classs": 9, "subclass": 6, "name": "Recipe: Elixir of Minor Agility", "cost": [[5000, [], []]]},
+    {"id": 262766, "classs": 15, "subclass": 5, "name": "Reins of the Pack Kodo", "cost": [[0, [[3402, 6000]], []]]},
+]
+priced, unlinked = gen.apply_favor(frec, fnames, frows)
+check("a recipe sold for Favor gets its price, and its item is linked",
+      frec[2335].get("favor") == 45 and frec[2335].get("items") == [2555, 2556], repr(frec[2335]))
+check("  two items teaching one recipe: the lower price", frec[2335].get("favor") == 45)
+check("  each profession's items link to that profession's recipes only",
+      frec[700].get("favor") == 30 and frec[700].get("items") == [7100], repr(frec[700]))
+check("an item naming two recipes prices neither (and is reported)",
+      "favor" not in frec[500] and "favor" not in frec[501] and 7000 in unlinked, repr(unlinked))
+check("an item bought with gold gives no Favor price", "favor" not in frec[3230], repr(frec[3230]))
+check("a non-recipe item (a mount) is neither priced nor reported", 262766 not in unlinked)
+check("the counts add up", (priced, unlinked) == (3, [7000]), repr((priced, unlinked)))
+
+# The override list reaches the currency page too (an item newer than the listings).
+orec = {1250791: {"skill": [171], "learn": 125}, 439960: {"skill": [171], "learn": 210}}
+orows = [{"id": 250378, "classs": 9, "subclass": 6, "name": "Recipe: Lesser Arcane Elixir",
+          "cost": [[0, [[3402, 45]], []]]}]
+gen.apply_favor(orec, {1250791: "Lesser Arcane Elixir", 439960: "Lesser Arcane Elixir"}, orows)
+check("an override settles a name two recipes share",
+      orec[1250791].get("favor") == 45 and "favor" not in orec[439960], repr(orec))
+
+# Reading the page from the shared tool's store.
+class Done(object):
+    def __init__(self, out, code=0, err=""):
+        self.stdout, self.returncode, self.stderr = out, code, err
+called = []
+def fake_run(rows=None, error=None, raw=None):
+    def run(argv, **kw):
+        called.append(argv)
+        if raw is not None:
+            return Done(raw, 1, "boom")
+        res = {"url": gen.FAVOR_URL, "listview": "items", "outcome": "cached" if rows else "missing"}
+        if rows is not None:
+            res["rows"] = rows
+        if error:
+            res["error"] = error
+        return Done(json.dumps({"ok": bool(rows), "results": [res]}))
+    return run
+import json
+got = gen.favor_rows("tool.py", fake_run(rows=frows))
+check("the page's rows come from wowhead.py list", got == frows)
+check("  asked for the currency page's items, all of them",
+      gen.FAVOR_URL in called[-1] and "items" in called[-1] and "--limit" in called[-1], repr(called[-1]))
+check("a page never ingested fails the run (a rerun must not drop every price)",
+      raises(lambda: gen.favor_rows("tool.py", fake_run(error="no ingested listview"))))
+check("  and so does a tool that gives no JSON",
+      raises(lambda: gen.favor_rows("tool.py", fake_run(raw="Traceback ..."))))
+
+ftext = gen.render_lua({2335: {"skill": [171], "learn": 60, "items": [2555], "favor": 45}}, "x")
+check("the price is written after the items", "[2335]={skill={171},learn=60,items={2555},favor=45}," in ftext, ftext)
+check("  and the header says what it is", "favor = its price in Merchant's Favor" in ftext)
+check("the reference names the price", gen._sources({"src": [5], "favor": 90}) == "vendor, 90 Merchant's Favor",
+      gen._sources({"src": [5], "favor": 90}))
+
 good = [{"id": i, "classs": 9, "subclass": 6} for i in range(40)]
 check("a listing of the profession's recipe items passes",
       not raises(lambda: gen.check_item_page(good, 6, "p")))
