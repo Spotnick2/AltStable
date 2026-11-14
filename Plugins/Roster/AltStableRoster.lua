@@ -709,13 +709,10 @@ local function FormatStatValue(char, def)
     elseif def.kind == "percent2" then
         return string.format("%.2f%%", tonumber(value) or 0)
     elseif def.kind == "lastseen" then
-        -- The second argument is "is this the character you are logged in as",
-        -- and it decides whether a recent timestamp reads "Online" or "0m ago".
-        -- Passing a flat false meant your OWN character - the one whose row is
-        -- guaranteed fresh - was the single character that could never say
-        -- Online, which is how RowRenderer's tooltip already calls it.
-        return AltStable.FormatLastSeen
-            and AltStable.FormatLastSeen(value, char.guid == UnitGUID("player"))
+        -- The grid's own rule: Online while played (here or on our other
+        -- account), else when last seen - never a second copy of it.
+        return AltStable.FormatLastOnlineFor
+            and AltStable.FormatLastOnlineFor(char)
             or tostring(value)
     end
     return tostring(value)

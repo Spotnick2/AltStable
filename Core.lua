@@ -2432,6 +2432,64 @@ function AltStable.SyncChannelFor(name)
     return "BNET"
 end
 
+------------------------------------------------------------
+-- Who is online now (Last Online)
+--
+-- lastUpdate moves when a scan changes something, not while a character is
+-- played, so on its own it said "9m ago" about the character being played
+-- and "15m ago" about one logged off two minutes before. Online is the
+-- character played here and our other accounts' current characters, as the
+-- library lists them (Battle.net presence, rescanned on its events and every
+-- minute). Each sighting is kept for the session, and a character that drops
+-- off the list is stamped when we notice: its own logout stamp (PLAYER_LOGOUT,
+-- below) only arrives with that account's next sync.
+------------------------------------------------------------
+local onlineSeen, onlineNow = {}, {}   -- [guid] = last seen online; [guid] = true as of the last check
+
+local function ListedOnline()
+    local set, inst = {}, LibSync.inst
+    if inst and type(inst.Peers) == "function" and BNetEnabled() then
+        local ok, listed = pcall(inst.Peers)
+        if ok and type(listed) == "table" then
+            for _, p in ipairs(listed) do
+                if type(p) == "table" and type(p.guid) == "string" then set[p.guid] = true end
+            end
+        end
+    end
+    return set
+end
+
+function AltStable.IsCharacterOnline(guid)
+    if not guid then return false end
+    local online = guid == UnitGUID("player") or ListedOnline()[guid] == true
+    if online then onlineSeen[guid] = time() end
+    return online
+end
+
+-- What Last Online shows and sorts by: now while online, else the later of the
+-- record's own stamp and the last time this session saw it online.
+function AltStable.LastOnline(char)
+    if type(char) ~= "table" then return nil end
+    if AltStable.IsCharacterOnline(char.guid) then return time() end
+    local stamp, seen = tonumber(char.lastUpdate), char.guid and onlineSeen[char.guid]
+    if seen and (not stamp or seen > stamp) then return seen end
+    return stamp
+end
+
+-- The ticker's half: notice who came and who went, and redraw when it changed.
+local function NoteWhoIsOnline()
+    local now, set, changed = time(), ListedOnline(), false
+    for guid in pairs(set) do
+        onlineSeen[guid] = now
+        if not onlineNow[guid] then changed = true end
+    end
+    for guid in pairs(onlineNow) do
+        if not set[guid] then onlineSeen[guid] = now; changed = true end
+    end
+    onlineNow = set
+    if changed and AltStable.RefreshSheet then AltStable.RefreshSheet() end
+end
+
 local function ScanOwnAccounts()
     AltStable._bnetLastScan = time()
     -- The library follows the same switch (the Options toggle rescans) - told
@@ -2444,9 +2502,10 @@ local function ScanOwnAccounts()
     end
     if not BNetEnabled() then
         LibSync.Forget()
-        return
+    else
+        LibSync.Ping()
     end
-    LibSync.Ping()
+    NoteWhoIsOnline()
 end
 AltStable.RescanOwnAccounts = ScanOwnAccounts
 
@@ -3018,6 +3077,7 @@ frame:RegisterEvent("UNIT_PET")               -- a pet came out: record it for t
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("PLAYER_MONEY")
 frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")   -- Merchant's Favor (#270)
+frame:RegisterEvent("PLAYER_LOGOUT")             -- Last Online is when you left
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 frame:RegisterEvent("PLAYER_XP_UPDATE")
 frame:RegisterEvent("UPDATE_INSTANCE_INFO")   -- saved raid lockouts
@@ -3477,6 +3537,14 @@ end
 ------------------------------------------------------------
 
 frame:SetScript("OnEvent", function(self, event, ...)
+
+    -- Last Online: the moment the character was left, written with the
+    -- SavedVariables and carried by the next sync. Only the stamp - the
+    -- rested-XP note below says why nothing is READ here.
+    if event == "PLAYER_LOGOUT" then
+        AltStable.TouchCharacter(UnitGUID("player"))
+        return
+    end
 
     if event == "UPDATE_INSTANCE_INFO" then
         ScanSavedInstances()
@@ -4649,6 +4717,7 @@ local function ResetSyncState()
     autoRetryCounts = {}
     lastRequestedAt = {}
     syncWatch       = {}
+    onlineSeen, onlineNow = {}, {}
 end
 
 ------------------------------------------------------------

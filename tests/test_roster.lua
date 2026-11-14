@@ -1789,6 +1789,15 @@ do
         local own = table.concat(T.DetailStats(), " | ")
         check("your own character reads Online, not '0m ago'",
               own:find("Last Online=|cff00ff00Online", 1, true) ~= nil, own)
+        -- However long since anything changed: the game was in front of the
+        -- player, reading "9m ago" about itself (the owner's screenshot).
+        AltStableDB[mine].lastUpdate = time() - 540
+        T.Refresh()
+        T.DrillDown(mine)
+        own = table.concat(T.DetailStats(), " | ")
+        check("  even when its stamp is nine minutes old",
+              own:find("Last Online=|cff00ff00Online", 1, true) ~= nil, own)
+        AltStableDB[mine].lastUpdate = time() - 5
         -- And a different character with the same fresh timestamp does NOT,
         -- or "Online" would just mean "recent".
         AltStableDB.fresh = { guid = "fresh", name = "Fresh One", class = "MAGE",

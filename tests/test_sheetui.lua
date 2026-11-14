@@ -4948,4 +4948,29 @@ do
     check("  the others' soft", other._backdropBorder[4] < 0.3, tostring(other._backdropBorder[4]))
 end
 
+-- Last Online in the grid: Online is the character played here whatever its
+-- stamp says, and the column sorts by what it shows (online = now).
+do
+    local col
+    for _, x in ipairs(AltStable.Columns) do if x.field == "lastUpdate" then col = x end end
+    local me = UnitGUID("player")
+    local mine  = { guid = me, name = "Me", lastUpdate = time() - 540 }
+    local other = { guid = "Player-Off-1", name = "Off", lastUpdate = time() - 900 }
+    WoW.now = WoW.now + 3600       -- past any sighting earlier in this file
+    mine.lastUpdate, other.lastUpdate = time() - 540, time() - 900
+    eq("the column sorts the played character as now, asked before it is drawn",
+       col.sortValue(mine), time())
+    local row = AltStable.CreateRow(nil, 20, { col })
+    AltStable.RenderRow(row, mine, 1, { col })
+    eq("the character played here reads Online with a nine-minute-old stamp",
+       row.cells[1]:GetText(), "|cff00ff00Online|r")
+    AltStable.RenderRow(row, other, 1, { col })
+    check("  another character reads its stamp", row.cells[1]:GetText():find("15m ago", 1, true) ~= nil,
+          row.cells[1]:GetText())
+    eq("the column sorts the played character as now", col.sortValue(mine), time())
+    eq("  and another by its stamp", col.sortValue(other), time() - 900)
+    eq("FormatLastSeen: online reads Online whatever the stamp",
+       AltStable.FormatLastSeen(time() - 540, true), "|cff00ff00Online|r")
+end
+
 WoW.finish("test_sheetui", passed, failed)

@@ -98,7 +98,9 @@ AltStable.Columns = {
       sortValue=RestedSortValue },
     { label="Gold",        field="money",       width=150, align="RIGHT", type="money",      group="always" },
     { label="Last Online", field="lastUpdate",  width=85,  align="RIGHT", type="lastOnline", group="always",
-      orderWords={ "oldest first", "most recent first" } },
+      orderWords={ "oldest first", "most recent first" },
+      -- What it shows: online counts as now, a logoff seen this session as then.
+      sortValue=function(c) return AltStable.LastOnline and AltStable.LastOnline(c) or c.lastUpdate end },
 
     -- Professions
     prof("Alchemy",       "prof_Alchemy",        "profmax_Alchemy",        "Interface\\Icons\\Trade_Alchemy"),
