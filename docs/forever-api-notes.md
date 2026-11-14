@@ -2248,3 +2248,15 @@ under one Battle.net account, both Horde, the sheet open on one; Last Online, #3
   /reload, nothing passed for a minute: the other side still had us as known and never spoke
   first. So a bye also drops the sender's handshake, and the next ping asks it afresh.
 - Answers came back within 1 s of each question.
+
+## Bag space: free slots, bag families, the bank's tabs — UNMEASURED (#346)
+
+The Bags column reads, all in the 1.60.1.70938 dump and none yet confirmed in game:
+`C_Container.GetContainerNumFreeSlots(bag)` (free slots, and the bag's family: 0 for a bag that
+takes anything), `C_Container.ContainerIDToInventoryID(bag)` with `GetInventoryItemID` (which bag
+sits in a slot; Retail numbers bag 1 as inventory slot 31, never assumed here), and
+`C_Bank.FetchMaxNumBankTabs(Enum.BankType.Character)` (9 expected, as the bank UI's padlocks say).
+Read on `BAG_UPDATE_DELAYED`, and for the bank on `BANKFRAME_OPENED` (again a second later),
+`BANK_TABS_CHANGED` and every bag update while it is open. To confirm: the free count follows
+looting, a bag swap shows, a quiver or soul bag reports a nonzero family, the bank's tabs read on
+opening, and whether Forever has reagent bags at all.

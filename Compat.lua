@@ -204,6 +204,11 @@ API.GetContainerItemInfo  = need(C_Container, "C_Container", "GetContainerItemIn
 API.GetContainerItemLink  = need(C_Container, "C_Container", "GetContainerItemLink")
 API.GetContainerItemID    = need(C_Container, "C_Container", "GetContainerItemID")
 API.GetBagName            = need(C_Container, "C_Container", "GetBagName")
+-- Bag space (#346). Both in the 70938 dump: GetContainerNumFreeSlots returns
+-- the free slots and the bag's family (0 for a bag that takes anything);
+-- ContainerIDToInventoryID the inventory slot a bag sits in, for its item.
+API.GetContainerNumFreeSlots = need(C_Container, "C_Container", "GetContainerNumFreeSlots")
+API.ContainerIDToInventoryID = need(C_Container, "C_Container", "ContainerIDToInventoryID")
 
 ----------------------------------------------------------------------------
 -- Container identity

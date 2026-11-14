@@ -1818,6 +1818,34 @@ GetXPExhaustion = realExh
 WoW.reset()
 
 ------------------------------------------------------------
+-- Bag space (#346)
+------------------------------------------------------------
+-- Flat fields: they ride the wire, and an accepted record without them (an
+-- older peer's) clears the ones held.
+WoW.reset()
+do
+    local rec = { guid = "Player-Bag-1", name = "Bags", class = "MAGE", level = 30, lastUpdate = 100,
+                  bags_slots = 28, bags_free = 20, bag_0 = "0,16,0", bag_1 = "4245,6,0",
+                  bank_tabs = 2, bank_slots = 96, bank_free = 95, bank_at = 90 }
+    local got = T.DeserializeChar(T.SerializeChar(rec))
+    eq(got.bags_free, 20, "the free bag slots ride the wire")
+    eq(got.bag_1, "4245,6,0", "  each bag as its text")
+    eq(got.bank_tabs, 2, "  and the bank")
+    eq(got.bank_at, 90, "  with the time it was seen")
+
+    AltStableDB = { ["Player-Bag-1"] = rec }
+    T.DeserializeFullDB(T.SerializeChar(
+        { guid = "Player-Bag-1", name = "Bags", class = "MAGE", level = 30, lastUpdate = 200 }
+    ) .. "\n" .. T.CHAR_SEP, "Peer")
+    local c = AltStableDB["Player-Bag-1"]
+    eq(c.lastUpdate, 200, "a newer record without bag space is accepted")
+    eq(c.bags_free, nil, "  and the old free slots don't linger")
+    eq(c.bag_1, nil, "  nor the bags")
+    eq(c.bank_tabs, nil, "  nor the bank")
+end
+WoW.reset()
+
+------------------------------------------------------------
 -- Merchant's Favor (#270)
 ------------------------------------------------------------
 -- Read on CURRENCY_DISPLAY_UPDATE like money on PLAYER_MONEY, synced like any
@@ -4063,6 +4091,9 @@ do
     AltStableConfig.prefsStamps.sheet = nil
     AltStable.SetConfigValue("sheetGroupByFaction", true)
     eq(AltStableConfig.prefsStamps.sheet, 8100, "  the faction groups too")
+    AltStableConfig.prefsStamps.sheet = nil
+    AltStable.SetConfigValue("sheetBagsColumn", false)
+    eq(AltStableConfig.prefsStamps.sheet, 8100, "  and the Bags column (#346)")
     AltStable.SetConfigValue("worldCameraEnterDuration", 2)
     AltStable.SetConfigValue("bnetSync", false)
     local groups = 0

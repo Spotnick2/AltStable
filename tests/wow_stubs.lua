@@ -1163,6 +1163,21 @@ C_Container = {
         local b = WoW.containers[bag]
         return b and b[slot] and b[slot].itemID or nil
     end,
+    -- Bag space (#346): the slots no item fills, and the bag's family (a
+    -- container's `family`, 0 for a bag that takes anything).
+    GetContainerNumFreeSlots = function(bag)
+        local b = WoW.containers[bag]
+        if not b then return 0, 0 end
+        local free = 0
+        for slot = 1, b.size or 0 do if b[slot] == nil then free = free + 1 end end
+        return free, b.family or 0
+    end,
+    -- Retail's numbering (bag 1 sits in inventory slot 31). Unmeasured on
+    -- Forever; the code only ever asks, so nothing depends on the numbers.
+    ContainerIDToInventoryID = function(bag)
+        if type(bag) ~= "number" or bag < 1 or bag > 5 then error("Usage: C_Container.ContainerIDToInventoryID(containerID)") end
+        return 30 + bag
+    end,
 }
 
 ------------------------------------------------------------
@@ -1199,6 +1214,7 @@ C_Bank = {
         return #(C_Bank.FetchPurchasedBankTabIDs(bankType))
     end,
     CanViewBank = function(bankType) return bankType == Enum.BankType.Character end,
+    FetchMaxNumBankTabs = function(bankType) return bankType == Enum.BankType.Character and 9 or 0 end,
     FetchViewableBankTypes = function() return { Enum.BankType.Character } end,
 }
 

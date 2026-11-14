@@ -97,6 +97,9 @@ AltStable.Columns = {
     { label="Rested XP",   field="restPercent", width=70,  align="RIGHT", type="restXP",     group="always",
       sortValue=RestedSortValue },
     { label="Gold",        field="money",       width=150, align="RIGHT", type="money",      group="always" },
+    -- Bag space (#346): free / total in the bags that take anything. Sorted by
+    -- the free slots, so the fullest bags come first or last.
+    { label="Bags",        field="bags_free",   width=55,  align="RIGHT", type="bags",       group="always" },
     { label="Last Online", field="lastUpdate",  width=85,  align="RIGHT", type="lastOnline", group="always",
       orderWords={ "oldest first", "most recent first" },
       -- What it shows: online counts as now, a logoff seen this session as then.
