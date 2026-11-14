@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.6.0 - 2026-11-14
+
+The recipes Merchant's Favor buys, in the Professions tab. Measured on client 1.60.1.70938, the
+live build. v1.6.0 syncs with everything v1.5.1 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.3** is the current version.
+
+### New
+
+- **Merchant's Favor recipes in the Professions tab**
+  ([#340](https://github.com/Spotnick2/AltStable/pull/340)). The 313 recipes the profession
+  quartermasters sell for Merchant's Favor show their price as their source ("90 Favor"), in the
+  list and in the recipe's tooltip.
+  - A **Favor** filter lists only them. With an alt picked and **Missing**, it shows what that alt
+    could buy. How much Favor each alt holds is on the sheet's Skills tab.
+  - The prices come from Wowhead's Merchant's Favor page, read on 2026-11-14.
+
+### Changed
+
+- **Forgetting a character also forgets its portrait captures**
+  ([#344](https://github.com/Spotnick2/AltStable/pull/344)). AltStable Companion went on showing
+  a portrait for a character you had forgotten. Captures of characters forgotten before this
+  version are cleared at your next login.
+- **LibAccountSync r6**, the library that syncs your accounts through Battle.net
+  ([#342](https://github.com/Spotnick2/AltStable/pull/342)). When it is full, a sync from an
+  account Battle.net names comes first: one from an account it can't name may be dropped,
+  never received in part. Nothing changes in what syncs.
+
 ## v1.5.1 - 2026-11-14
 
 A fix to the sheet's **Last Online** column. Measured on client 1.60.1.70938, the live build.
