@@ -2472,6 +2472,8 @@ local function CreateFrameIfNeeded()
         if AltStableCameraPresentation and AltStableCameraPresentation.Enter then
             AltStableCameraPresentation:Enter()
         end
+        -- Last Online: who is on our other account, asked now that it shows.
+        if AltStable.AskWhoIsOnline then AltStable.AskWhoIsOnline() end
         if AltStable._PlayOpenAnimation then
             AltStable._PlayOpenAnimation(frame)
         end

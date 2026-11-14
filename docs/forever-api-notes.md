@@ -2228,3 +2228,23 @@ Seen in game on 1.60.1.70450 (night elf, the Appearance panel): option names are
 "Winged", "Hoops", "Both") and empty for Face and most colours, which carry a swatch instead;
 Hair Color 9 is named "New 30", a placeholder in the client's own data. So number + name-or-swatch,
 as the barber shows them, is the right display.
+
+## Who is in game on our other account: ask, don't look — MEASURED
+
+Measured on 1.60.1.70938 (`/fp steps as online`, `Tools/AltStableProbe/Online.lua`, two accounts
+under one Battle.net account, both Horde, the sheet open on one; Last Online, #337/#338):
+
+- **LibAccountSync's peer list is routing, not presence.** For an account Battle.net shows blank,
+  the library keeps the last binding while that account is online at all (`GameFor`, learned
+  branch). Taking "online" from it read a character Online after it logged off to another one.
+- **The library's sender lags a character switch.** A message from the new character arrived
+  attributed to the old one 13 s after the switch. Who is playing comes from the message itself:
+  `HERE8|?|<guid>` / `HERE8|!|<guid>` / `BYE8|<guid>` name their character.
+- **A bye sent at `PLAYER_LOGOUT` arrives on a `/reload` and is lost on a logout to the character
+  list.** Three tries: two /reloads delivered within 1 s, one logout never arrived (the library
+  had taken it). The 50 s silence ends a character that left without one.
+- **Discovery is one-sided.** The account that stayed in game never found the other in Battle.net's
+  game accounts (it is learned only when it speaks), while the other saw it at once. After a
+  /reload, nothing passed for a minute: the other side still had us as known and never spoke
+  first. So a bye also drops the sender's handshake, and the next ping asks it afresh.
+- Answers came back within 1 s of each question.

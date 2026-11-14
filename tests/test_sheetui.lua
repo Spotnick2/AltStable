@@ -4973,4 +4973,16 @@ do
        AltStable.FormatLastSeen(time() - 540, true), "|cff00ff00Online|r")
 end
 
+-- Opening the sheet asks our other account who is online (Core: only while shown).
+do
+    local sheet = rawget(_G, "AltStableSheet")
+    local real, asked = AltStable.AskWhoIsOnline, 0
+    AltStable.AskWhoIsOnline = function() asked = asked + 1 end
+    if sheet and sheet:IsShown() then sheet:Hide() end
+    AltStable.ShowSheet()
+    check("opening the sheet asks who is online", asked == 1, tostring(asked))
+    AltStable.AskWhoIsOnline = real
+    if sheet and sheet:IsShown() then sheet:Hide() end
+end
+
 WoW.finish("test_sheetui", passed, failed)
