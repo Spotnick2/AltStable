@@ -24,7 +24,7 @@ externals:
     tag: r4
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
-    tag: r5
+    tag: r6
   Libs/LibMailbox-1.0:
     url: https://github.com/Spotnick2/LibMailbox
     tag: r1
