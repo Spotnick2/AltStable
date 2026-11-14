@@ -1764,7 +1764,9 @@ do
         local row = AltStable.CreateRow(nil, 20, { col })
         AltStable.RenderRow(row, c, 1, { col })
         eq("  a row shows it", row.cells[1]:GetText(), "20/28")
-        check("  with a tooltip", row.cellTips[1] ~= nil and row.cellTips[1].line1 == "Bags: 20 free of 28")
+        local t = row.cellTips[1]
+        if t then t:GetScript("OnEnter")(t) end
+        check("  with a tooltip", t ~= nil and t.line1 == "Bags: 20 free of 28")
     end
 
     -- The tooltip: the bags in slot order, the bank, the spare bags.
@@ -1793,6 +1795,28 @@ do
     check("  a bag not cached yet by its id", text:find("  item 856 |cff888888(in the bank)|r", 1, true) ~= nil, text)
     eq("  whose name is asked for", WoW.itemLoadRequests[1], 856)
     check("  cloth is not a bag", not text:find("Linen Cloth", 1, true))
+    -- Built on hover, from the data as it is then (Codex review of #347): the
+    -- plugin's map and a bag's name can arrive after the row was drawn.
+    local bcol
+    for _, x in ipairs(AltStable.Columns) do if x.field == "bags_free" then bcol = x end end
+    local brow = AltStable.CreateRow(nil, 20, { bcol })
+    AltStable.RenderRow(brow, c, 1, { bcol })
+    local btip = brow.cellTips[1]
+    local function Hover()
+        btip:GetScript("OnEnter")(btip)
+        return table.concat(btip.cdLines or {}, "|")
+    end
+    check("a hover shows the spare bags", Hover():find("  item 856 |cff888888(in the bank)|r", 1, true) ~= nil)
+    WoW.items[856].name = "Small Brown Pouch"
+    AltStable.ItemMapsFor = function() return { bags = { [4245] = 3 } } end
+    local after = Hover()
+    check("  a name loaded since is shown at the next hover", not after:find("item 856", 1, true), after)
+    check("  and the plugin's newer map", after:find("  Linen Bag x3 |cff888888(carried)|r", 1, true) ~= nil, after)
+    c.bags_free = 5
+    btip:GetScript("OnEnter")(btip)
+    eq("  and the record as it is", btip.line1, "Bags: 5 free of 28")
+    c.bags_free = 20
+
     AltStable.ItemMapsFor = nil
     _, lines = AltStable.BagSpaceTooltip(c)
     check("without the Warband plugin, no spare bags", not table.concat(lines, "|"):find("Spare", 1, true))

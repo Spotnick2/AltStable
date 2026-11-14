@@ -918,11 +918,23 @@ AT_WB.CountItem = CountItem
 
 -- What a character holds, for the core's Bags tooltip (#346): the stored maps,
 -- { [itemID] = count }, read-only. The mail only while the mail option is on,
--- as everywhere else here.
+-- and with what our own characters sent it since its last mailbox visit, as
+-- CountItem counts it - also for a character with no inventory recorded yet.
 local function ItemMapsFor(guid)
-    local wb = guid and AltStableWarbandDB[guid]
-    if type(wb) ~= "table" then return nil end
-    return { bags = wb.bags, bank = wb.bank, mail = MailOn() and wb.mail or nil }
+    if not guid then return nil end
+    local wb = AltStableWarbandDB[guid]
+    if type(wb) ~= "table" then wb = nil end
+    local mail
+    if MailOn() then
+        local incoming = Incoming()[guid]
+        if (wb and wb.mail) or incoming then
+            mail = {}
+            for id, n in pairs(wb and wb.mail or {}) do mail[id] = n end
+            for id, n in pairs(incoming or {}) do mail[id] = (mail[id] or 0) + n end
+        end
+    end
+    if not wb and not mail then return nil end
+    return { bags = wb and wb.bags, bank = wb and wb.bank, mail = mail }
 end
 
 -- The cross-alt breakdown block: "Total: N", then one line per character —

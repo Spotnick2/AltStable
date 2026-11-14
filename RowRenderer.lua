@@ -758,7 +758,16 @@ function AltStable.CreateRow(parent, height, columns)
         or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags" then
             local tip = CreateFrame("Button", nil, row)
             tip:SetSize(col.width, height)
+            -- The Bags tooltip (#346) is built on hover, not at render: the
+            -- Warband plugin's bag scan lands a second after the bag update
+            -- that redrew the row, and bag names load from the item cache.
+            if col.type == "bags" then
+                tip.refresh = function(t)
+                    if t.bagsChar then t.line1, t.cdLines = AltStable.BagSpaceTooltip(t.bagsChar) end
+                end
+            end
             tip:SetScript("OnEnter", function()
+                if tip.refresh then tip.refresh(tip) end
                 GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
                 GameTooltip:ClearLines()
                 if tip.line1 then GameTooltip:AddLine(tip.line1, 1,1,1) end
@@ -1149,7 +1158,7 @@ function AltStable.RenderRow(row, char, index, columns)
         elseif col.type=="bags"         then
             value = AltStable.FormatBagSpace(char)
             if tip then
-                tip.line1, tip.cdLines = AltStable.BagSpaceTooltip(char)
+                tip.bagsChar = char   -- the lines come at hover (CreateRow)
                 tip.line2, tip.line3 = nil, nil
             end
         elseif col.type=="favor"        then

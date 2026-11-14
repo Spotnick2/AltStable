@@ -461,6 +461,19 @@ eq("back on, it counts again", (T.CountItem(2318)), 1 + 7 + 2)
 maps = AltStable.ItemMapsFor(ME)
 eq("  and the Bags tooltip gets the mail", maps and maps.mail and maps.mail[2318], 7)
 eq("  a character with no inventory here: nothing", AltStable.ItemMapsFor("Player-0-None"), nil)
+-- Mail sent to our own character counts as its mail before it opens a mailbox
+-- (Codex review of #347), even with no inventory of its own recorded yet.
+check("  the recipient has no inventory here", AltStableWarbandDB[B] == nil)
+maps = AltStable.ItemMapsFor(B)
+eq("  a bag mailed to it is in its mail", maps and maps.mail and maps.mail[2318], 2)
+AltStableWarbandDB[B] = { bags = {}, mail = { [2318] = 1 }, mailStamp = WoW.now - 10, stamp = WoW.now - 10 }
+maps = AltStable.ItemMapsFor(B)
+eq("  added to what its last visit found", maps and maps.mail and maps.mail[2318], 1 + 2)
+eq("  which is left as it was", AltStableWarbandDB[B].mail[2318], 1)
+AltStableWarbandDB[B] = nil
+AltStableConfig.warbandMail = false
+eq("  with mail off, nothing in the mail", AltStable.ItemMapsFor(B), nil)
+AltStableConfig.warbandMail = true
 
 -- The Options checkbox (SheetUI's) saves the setting; checked by default.
 AltStableConfig.warbandMail = nil
