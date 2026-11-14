@@ -624,10 +624,11 @@ end
 -- whole pair at a time, since both halves carry it, so no other character's
 -- pair is split. A forget can arrive by sync in the middle of a capture: the
 -- mark the abort truncates back to moves down with what went before it.
--- Returns how many records went.
+-- Returns how many records went. A newer AltStable's store is not ours to
+-- edit, as for a capture or the facing (Codex, #344): left as it is.
 function AltStable.DropPortraitRecords(guid)
     local renders = type(AltStablePortraits) == "table" and AltStablePortraits.renders
-    if not guid or type(renders) ~= "table" then return 0 end
+    if not guid or type(renders) ~= "table" or StoreTooNew() then return 0 end
     local n = 0
     for i = #renders, 1, -1 do
         local r = renders[i]

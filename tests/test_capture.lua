@@ -148,6 +148,12 @@ do
     eq("  nor without a GUID", AltStable.DropPortraitRecords(nil), 0)
     AltStablePortraits = nil
     eq("  nor with no store at all", AltStable.DropPortraitRecords(Y), 0)
+
+    -- A newer AltStable's store (a downgrade) is not ours to edit (Codex, #344).
+    AltStablePortraits = { version = T.STORE_VERSION + 1, renders = { rec(X, 1, 10), rec(X, 2, 11) } }
+    eq("a newer version's store: nothing is dropped", AltStable.DropPortraitRecords(X), 0)
+    eq("  and its records stay", #renders(), 2)
+    AltStablePortraits = nil
 end
 
 -- And the leftovers of forgets from before #343, swept at the first loading
@@ -174,6 +180,12 @@ do
     eq("  once a session, not at every loading screen", #renders(), 5)
     eq("  and with nothing forgotten, nothing goes", (function()
         AltStableConfig = {}; return AltStable.PruneForgottenPortraits() end)(), 0)
+    -- Nor from a newer version's store (Codex, #344).
+    AltStableConfig = { forgottenCharacters = { [X] = { at = 1 } } }
+    AltStablePortraits = { version = T.STORE_VERSION + 1, renders = { { guid = X, shot = 1, epoch = 50 },
+                                                                    { guid = X, shot = 2, epoch = 51 } } }
+    eq("  the sweep leaves a newer version's store as it is", AltStable.PruneForgottenPortraits(), 0)
+    eq("  records and all", #renders(), 2)
     AltStableConfig, AltStable.IsCharacterForgotten = heldConfig, heldIs
     WoW.timers = {}
 end
