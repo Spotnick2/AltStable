@@ -4150,6 +4150,29 @@ do
        "a bad guid and a missing stamp are refused")
     eq(AltStableConfig.forgottenCharacters["Player-4613-5"].name, nil, "  a missing name is no name")
 
+    -- A forget takes the character's portrait captures with it (#343), the
+    -- player's and one received by sync - the latter with no record here.
+    do
+        local dropped = {}
+        local realDrop = AltStable.DropPortraitRecords
+        AltStable.DropPortraitRecords = function(guid) dropped[#dropped + 1] = guid; return 0 end
+        forgot("Player-4613-9,f,900,Nine")
+        eq(dropped[1], "Player-4613-9", "a forget received with no record here drops its captures")
+        AltStableDB["Player-4613-10"] = { guid = "Player-4613-10", name = "Ten", lastUpdate = 50 }
+        check(AltStable.ForgetCharacter("Player-4613-10"), "  the player's forget is taken")
+        eq(dropped[2], "Player-4613-10", "  and drops its captures")
+        AltStableDB["Player-4613-11"] = { guid = "Player-4613-11", name = "Eleven", lastUpdate = 50 }
+        forgot("Player-4613-11,f,900,Eleven")
+        eq(dropped[3], "Player-4613-11", "  as does a forget received over a record here")
+        local before = #dropped
+        forgot(WoW.player.guid .. ",f,950,Me")
+        check(not AltStable.ForgetCharacter(WoW.player.guid), "  the character being played is refused")
+        eq(#dropped, before, "  and keeps its captures")
+        forgot("Player-4613-1,f,400,Old")
+        eq(#dropped, before, "  so does a refused forget")
+        AltStable.DropPortraitRecords = realDrop
+    end
+
     -- Three accounts (#229 review): an unforget that arrives before its
     -- forget ever did is kept, so the older forget from a third account
     -- cannot win when it comes.

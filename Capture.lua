@@ -616,6 +616,31 @@ local function AbandonCapture(message, restoreUI)
 end
 
 ------------------------------------------------------------
+-- A forgotten character's captures go with it (#343)
+------------------------------------------------------------
+-- AltStable Companion reads these records from every account's file, so a
+-- character forgotten here went on getting a portrait AltStable no longer
+-- tracked: "disappeared in the void". Every record naming the GUID goes - a
+-- whole pair at a time, since both halves carry it, so no other character's
+-- pair is split. A forget can arrive by sync in the middle of a capture: the
+-- mark the abort truncates back to moves down with what went before it.
+-- Returns how many records went.
+function AltStable.DropPortraitRecords(guid)
+    local renders = type(AltStablePortraits) == "table" and AltStablePortraits.renders
+    if not guid or type(renders) ~= "table" then return 0 end
+    local n = 0
+    for i = #renders, 1, -1 do
+        local r = renders[i]
+        if type(r) == "table" and r.guid == guid then
+            table.remove(renders, i)
+            n = n + 1
+            if i <= renderMark then renderMark = renderMark - 1 end
+        end
+    end
+    return n
+end
+
+------------------------------------------------------------
 -- After the shots: the record is only on disk after a reload
 ------------------------------------------------------------
 -- SavedVariables are written on /reload and on logout, never in between. A

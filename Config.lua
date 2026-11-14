@@ -503,6 +503,9 @@ function AltStable.MarkCharacterForgotten(guid, when, name, seen)
         name        = name or (type(prev) == "table" and prev.name) or nil,
     }
     AltStable.SetConfigValue("forgottenCharacters", copy)
+    -- Its portrait captures too (#343): the player's forget and one received
+    -- by sync both come through here, the latter even with no record left.
+    if AltStable.DropPortraitRecords then AltStable.DropPortraitRecords(guid) end
     -- Forgotten again: the newer decision is this one.
     if (AltStableConfig.unforgottenCharacters or {})[guid] then
         local back = {}

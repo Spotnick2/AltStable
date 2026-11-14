@@ -130,6 +130,51 @@ eq("  and the interface was never touched", WoW.uiVisible, true)
 eq("  and no record was written", #renders(), 0)
 
 ------------------------------------------------------------
+-- A forgotten character's captures go with it (#343)
+------------------------------------------------------------
+-- Every record with its GUID, both shots of each pair; everyone else's stay,
+-- in order.
+do
+    local X, Y = "Player-1-0000AAAA", "Player-1-0000BBBB"
+    local function rec(guid, shot, epoch) return { guid = guid, shot = shot, epoch = epoch } end
+    AltStablePortraits = { version = 1, renders = {
+        rec(X, 1, 10), rec(X, 2, 11), rec(Y, 1, 20), rec(Y, 2, 21), rec(X, 1, 30), rec(X, 2, 31), rec(Y, 1, 40),
+    } }
+    eq("forgetting a character drops every record naming it", AltStable.DropPortraitRecords(X), 4)
+    local left = {}
+    for _, r in ipairs(renders()) do left[#left + 1] = r.guid == Y and (r.shot .. "@" .. r.epoch) or "X" end
+    eq("  and keeps everyone else's, in order", table.concat(left, ","), "1@20,2@21,1@40")
+    eq("  a character with none: nothing goes", AltStable.DropPortraitRecords(X), 0)
+    eq("  nor without a GUID", AltStable.DropPortraitRecords(nil), 0)
+    AltStablePortraits = nil
+    eq("  nor with no store at all", AltStable.DropPortraitRecords(Y), 0)
+end
+
+-- A forget can arrive by sync while a capture runs. The abort truncates back
+-- to the count from before the capture, so that count moves down with what
+-- went before it: the pair being taken still goes, and nobody else's does.
+do
+    local X = "Player-1-0000AAAA"
+    resetCapture()
+    AltStablePortraits = { version = 1, renders = {
+        { guid = X, shot = 1, epoch = 10 }, { guid = X, shot = 2, epoch = 11 },
+        { guid = "Player-1-0000BBBB", shot = 1, epoch = 20 }, { guid = "Player-1-0000BBBB", shot = 2, epoch = 21 },
+    } }
+    T.Capture()
+    check("a capture starts over four records", T.capturing() and T.renderMark() == 4, tostring(T.renderMark()))
+    runChain(function(_, shots) return #shots >= 1 end)   -- the first shot is on record
+    eq("  its first shot is written", #renders(), 5)
+    AltStable.DropPortraitRecords(X)
+    eq("  a forget mid-capture moves the mark down with what went", T.renderMark(), 2)
+    T.AbandonCapture(nil, true)
+    local guids = {}
+    for _, r in ipairs(renders()) do guids[#guids + 1] = r.guid end
+    eq("  abandoned, it takes only its own record", table.concat(guids, ","),
+       "Player-1-0000BBBB,Player-1-0000BBBB")
+    resetCapture()
+end
+
+------------------------------------------------------------
 -- The whole capture, start to finish
 ------------------------------------------------------------
 -- The records are what a converter reads to know WHOSE screenshots these are,
