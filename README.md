@@ -85,6 +85,10 @@ played. Sort by any column, and group the rows by ruleset, by faction or both (*
 Options); hover a ruleset's header to see its server. Rested XP keeps counting up while you're
 away, worked out from where the character logged out.
 
+The **Bags** column shows each character's free and total bag slots, to see who needs a bigger
+bag. Hover it for that character's bags, its bank tabs (as of its last bank visit) and the spare
+bags it carries or keeps in the bank or the mail. **Show the Bags column**, in Options, hides it.
+
 Hover the gold in the game's bag window to see the total across your characters and how much
 each one holds, richest first. (Bagnon and Baganator replace that window and have their own.)
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.7.0 - 2026-11-14
+
+Each character's bag space on the sheet. Built for client 1.60.1.70938, the live build: the Bags
+column was checked in game there, but a quiver, a soul bag, a reagent bag and the bank's tab count
+haven't been seen yet. v1.7.0 syncs with everything v1.6.0 does. An older version ignores the bag
+space it receives.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.5** is the current version.
+
+### New
+
+- **A Bags column on the sheet** ([#346](https://github.com/Spotnick2/AltStable/issues/346),
+  asked for on CurseForge). Account Summary shows each character's free and total bag slots,
+  orange when a tenth or less is left and red when full, so you can see who needs the next bag.
+  - Hover it for the character's bags and their sizes, any empty bag slot, and its bank: how many
+    tabs it has bought, how full they are, and when it was last at the bank.
+  - A quiver, a soul bag or a reagent bag is listed but not counted: it only holds some items.
+  - The spare bags the character carries, keeps in the bank or has in the mail are listed too
+    (with the Warband plugin on), including bags your other characters mailed it.
+  - It updates as you loot, and the bank as you use it. It syncs between your accounts.
+  - **Show the Bags column** (Options, General) turns it off. It's on by default.
+  - A character shows its bags after its first login with this version, and its bank after its
+    next bank visit.
+
 ## v1.6.0 - 2026-11-14
 
 The recipes Merchant's Favor buys, in the Professions tab. Measured on client 1.60.1.70938, the
