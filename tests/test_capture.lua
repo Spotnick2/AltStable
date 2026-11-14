@@ -150,6 +150,34 @@ do
     eq("  nor with no store at all", AltStable.DropPortraitRecords(Y), 0)
 end
 
+-- And the leftovers of forgets from before #343, swept at the first loading
+-- screen: every character forgotten now, never the one being played.
+do
+    local X, me = "Player-1-0000AAAA", WoW.player.guid
+    AltStablePortraits = { version = 1, renders = {
+        { guid = X, shot = 1, epoch = 10 }, { guid = X, shot = 2, epoch = 11 },
+        { guid = me, shot = 1, epoch = 20 }, { guid = me, shot = 2, epoch = 21 },
+        { guid = "Player-1-0000CCCC", shot = 1, epoch = 30 }, { guid = "Player-1-0000CCCC", shot = 2, epoch = 31 },
+    } }
+    local heldConfig = AltStableConfig
+    AltStableConfig = { forgottenCharacters = { [X] = { at = 1 }, [me] = { at = 1 },
+                                                ["Player-1-0000CCCC"] = { at = 1 } } }
+    local heldIs = AltStable.IsCharacterForgotten
+    AltStable.IsCharacterForgotten = function(guid) return guid ~= "Player-1-0000CCCC" end   -- C unforgotten since
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_ENTERING_WORLD")
+    local guids = {}
+    for _, r in ipairs(renders()) do guids[#guids + 1] = r.guid == me and "me" or r.guid:sub(-4) end
+    eq("the first loading screen sweeps a forgotten character's captures", table.concat(guids, ","),
+       "me,me,CCCC,CCCC")
+    AltStablePortraits.renders[#AltStablePortraits.renders + 1] = { guid = X, shot = 1, epoch = 40 }
+    T.events:GetScript("OnEvent")(T.events, "PLAYER_ENTERING_WORLD")
+    eq("  once a session, not at every loading screen", #renders(), 5)
+    eq("  and with nothing forgotten, nothing goes", (function()
+        AltStableConfig = {}; return AltStable.PruneForgottenPortraits() end)(), 0)
+    AltStableConfig, AltStable.IsCharacterForgotten = heldConfig, heldIs
+    WoW.timers = {}
+end
+
 -- A forget can arrive by sync while a capture runs. The abort truncates back
 -- to the count from before the capture, so that count moves down with what
 -- went before it: the pair being taken still goes, and nobody else's does.
