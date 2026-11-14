@@ -724,9 +724,9 @@ check("  and asks it for its data back", count(T.MSG_REQUEST_V .. "|", true) >= 
 ------------------------------------------------------------
 -- Last Online: who is online now
 ------------------------------------------------------------
--- The character played here always; our other account's current character
--- while the library lists it; and one that drops off the list is last online
--- when that was noticed, until its own logout stamp arrives by sync.
+-- The character played here always. Our other account's character while we
+-- have heard from it lately - asked only while the sheet is shown, answered
+-- whether or not theirs is - and never because the library still lists it.
 reset()
 do
     local me = UnitGUID("player")
@@ -734,52 +734,110 @@ do
         [me]       = { guid = me, name = "Me", lastUpdate = WoW.now - 900 },
         [BEE_GUID] = { guid = BEE_GUID, name = BEE, lastUpdate = WoW.now - 900 },
     }
-    -- Asked first, before anything has sighted it this session.
     eq("the character played here is last online now, however old its stamp",
        AltStable.LastOnline(AltStableDB[me]), WoW.now)
     check("  and is online", AltStable.IsCharacterOnline(me))
-    check("an alt on our other account is not online before the library lists it",
+
+    -- What Drakuza did: the library kept the binding after the logoff.
+    listBee()
+    AltStable.RescanOwnAccounts()
+    check("listed by the library but never heard from: not online",
           not AltStable.IsCharacterOnline(BEE_GUID))
     eq("  and reads its own stamp", AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now - 900)
 
     local realRefresh, redraws = AltStable.RefreshSheet, 0
     AltStable.RefreshSheet = function() redraws = redraws + 1 end
-    listBee()
-    AltStable.RescanOwnAccounts()
-    check("listed by the library: online", AltStable.IsCharacterOnline(BEE_GUID))
-    eq("  its Last Online is now", AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now)
+    local t0 = WoW.now
+    fromBee(L.MSG_CAP)
+    check("any message from them: online", AltStable.IsCharacterOnline(BEE_GUID))
+    eq("  last online now", AltStable.LastOnline(AltStableDB[BEE_GUID]), t0)
     eq("  and the sheet is redrawn for it", redraws, 1)
-    AltStable.RescanOwnAccounts()
-    eq("  once, not on every rescan", redraws, 1)
+
+    -- Asked only while the sheet is shown.
+    local sheet = CreateFrame("Frame")
+    rawset(_G, "AltStableSheet", sheet)
+    sheet:Hide()
+    fake.sent = {}
+    AltStable.AskWhoIsOnline()
+    L.OnlineTick()
+    eq("the sheet closed: nobody is asked", count(L.MSG_HERE), 0)
+    sheet:Show()
+    AltStable.AskWhoIsOnline()
+    eq("the sheet opening asks our other account", count(L.MSG_HERE), 1)
+    eq("  to its GUID", fake.sent[#fake.sent].guid, BEE_GUID)
+    AltStable.AskWhoIsOnline()
+    eq("  not again at once", count(L.MSG_HERE), 1)
+    WoW.now = t0 + 10; L.OnlineTick()
+    eq("  nor on the tick before HERE_EVERY", count(L.MSG_HERE), 1)
+    -- Through Core's own 10 s ticker, the one the handshake runs on.
+    local ticks = 0
+    WoW.now = t0 + 20
+    for _, e in ipairs(WoW.tickers) do
+        if e.delay == 10 then e.fn(); ticks = ticks + 1 end
+    end
+    check("  Core runs a 10 s ticker", ticks >= 1, tostring(ticks))
+    eq("  then every HERE_EVERY while it shows", count(L.MSG_HERE), 2)
+
+    -- Their answer keeps it online; silence ends it.
+    WoW.now = t0 + 30
+    fromBee(L.MSG_HERE .. "|1")
+    eq("an answer is not answered", count(L.MSG_HERE .. "|1"), 0)
+    eq("  and redraws nothing while nothing changed", redraws, 1)
+    WoW.now = t0 + 30 + L.HERE_TIMEOUT
+    L.OnlineTick()
+    check("still online HERE_TIMEOUT after the last answer", AltStable.IsCharacterOnline(BEE_GUID))
+    WoW.now = t0 + 31 + L.HERE_TIMEOUT
+    L.OnlineTick()
+    check("  not a second later", not AltStable.IsCharacterOnline(BEE_GUID))
+    eq("  last online when last heard, not its older stamp",
+       AltStable.LastOnline(AltStableDB[BEE_GUID]), t0 + 30)
+    eq("  and the tick redraws it", redraws, 2)
+
+    -- Their question is answered, sheet open or not, at most every 5 s.
+    sheet:Hide()
+    fake.sent = {}
+    fromBee(L.MSG_HERE)
+    eq("asked by them: answered with the sheet closed", count(L.MSG_HERE .. "|1"), 1)
+    check("  and they are online (their sheet is open)", AltStable.IsCharacterOnline(BEE_GUID))
+    fromBee(L.MSG_HERE)
+    eq("  not answered twice within 5 s", count(L.MSG_HERE .. "|1"), 1)
+    WoW.now = WoW.now + 5
+    fromBee(L.MSG_HERE)
+    eq("  answered again after", count(L.MSG_HERE .. "|1"), 2)
+
+    -- A bye ends it at once; anything after it starts again.
+    local before = redraws
+    WoW.now = WoW.now + 3
+    local byeAt = WoW.now
+    fromBee(L.MSG_BYE)
+    check("a bye: offline at once", not AltStable.IsCharacterOnline(BEE_GUID))
+    eq("  last online when it said bye", AltStable.LastOnline(AltStableDB[BEE_GUID]), byeAt)
+    eq("  redrawn", redraws, before + 1)
     WoW.now = WoW.now + 30
-    eq("  still listed between rescans: last online is now, not the last rescan",
-       AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now)
+    fromBee(L.MSG_CAP)
+    check("  back online with their next message", AltStable.IsCharacterOnline(BEE_GUID))
+    AltStableDB[BEE_GUID].lastUpdate = WoW.now + 5      -- a later stamp, arrived by sync
+    WoW.now = WoW.now + 3600
+    eq("a later stamp from its own account wins over when last heard",
+       AltStable.LastOnline(AltStableDB[BEE_GUID]), AltStableDB[BEE_GUID].lastUpdate)
 
-    WoW.now = WoW.now + 120
-    fake.peers = {}
-    AltStable.RescanOwnAccounts()
-    check("dropped off the list: not online", not AltStable.IsCharacterOnline(BEE_GUID))
-    eq("  last online when that was noticed, not its older stamp",
-       AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now)
-    eq("  and redrawn", redraws, 2)
-    local left = WoW.now
-    WoW.now = WoW.now + 300
-    eq("the sighting does not move with the clock", AltStable.LastOnline(AltStableDB[BEE_GUID]), left)
-    AltStableDB[BEE_GUID].lastUpdate = left + 5     -- its logout stamp, arrived by sync
-    eq("  a later stamp from its own account wins", AltStable.LastOnline(AltStableDB[BEE_GUID]), left + 5)
-
+    fromBee(L.MSG_CAP)
     AltStableConfig.bnetSync = false
-    listBee()
     check("with Battle.net sync off, nobody else is online", not AltStable.IsCharacterOnline(BEE_GUID))
     AltStableConfig.bnetSync = nil
-    fake.peers = {}
-    AltStable.RefreshSheet = realRefresh
 
+    -- Logging out: the stamp, and a bye to our other account.
+    fake.sent = {}
     AltStableDB[me].lastUpdate = WoW.now - 900
     check("PLAYER_LOGOUT is registered", T.frame:IsEventRegistered("PLAYER_LOGOUT"))
     T.frame:GetScript("OnEvent")(T.frame, "PLAYER_LOGOUT")
     eq("  and logging out stamps the character's Last Online", AltStableDB[me].lastUpdate, WoW.now)
+    eq("  says bye to our other account", count(L.MSG_BYE), 1)
     eq("  only the stamp: nothing else is read at logout", AltStableDB[me].money, nil)
+
+    rawset(_G, "AltStableSheet", nil)
+    AltStable.RefreshSheet = realRefresh
+    fake.peers = {}
 end
 
 ------------------------------------------------------------

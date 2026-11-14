@@ -2436,58 +2436,100 @@ end
 -- Who is online now (Last Online)
 --
 -- lastUpdate moves when a scan changes something, not while a character is
--- played, so on its own it said "9m ago" about the character being played
--- and "15m ago" about one logged off two minutes before. Online is the
--- character played here and our other accounts' current characters, as the
--- library lists them (Battle.net presence, rescanned on its events and every
--- minute). Each sighting is kept for the session, and a character that drops
--- off the list is stamped when we notice: its own logout stamp (PLAYER_LOGOUT,
--- below) only arrives with that account's next sync.
+-- played, so on its own it said "9m ago" about the character being played and
+-- "15m ago" about one logged off two minutes before.
+--
+-- Online is the character played here, and a character on our other account
+-- that we have HEARD from lately. Asked only while it can be seen: while the
+-- sheet is shown (its grid, row tooltips and the Roster pane are all in it),
+-- "HERE8" goes to our own accounts that run AltStable when it opens and every
+-- HERE_EVERY after; each answers "HERE8|1", sheet open or not. Any message
+-- from them counts, and "BYE8" at logout ends it at once (best effort - a
+-- crash says nothing, so the silence does).
+-- Not the library's peer list: that is where a message can go, and for a
+-- character Battle.net shows blank (another realm or faction) it keeps the
+-- last binding while that account is online at all - at the character
+-- screen, or on another character. Drakuza read Online after logging off.
+--
+-- When last heard is kept for the session; the character's own logout stamp
+-- (PLAYER_LOGOUT, below) arrives with that account's next sync.
+-- HERE8 and BYE8 are new commands: an older AltStable drops them unread
+-- (LibSync.OnMessage ignores what it does not know).
 ------------------------------------------------------------
-local onlineSeen, onlineNow = {}, {}   -- [guid] = last seen online; [guid] = true as of the last check
+LibSync.MSG_HERE = "HERE" .. PROTOCOL_VERSION   -- a question; "|1" is the answer
+LibSync.MSG_BYE  = "BYE"  .. PROTOCOL_VERSION
+LibSync.HERE_EVERY, LibSync.HERE_TIMEOUT = 20, 50   -- one lost answer is not a logoff
+local heardAt, leftAt, onlineNow, answeredHere = {}, {}, {}, {}   -- [guid]
+local askedHereAt = 0
 
-local function ListedOnline()
-    local set, inst = {}, LibSync.inst
-    if inst and type(inst.Peers) == "function" and BNetEnabled() then
-        local ok, listed = pcall(inst.Peers)
-        if ok and type(listed) == "table" then
-            for _, p in ipairs(listed) do
-                if type(p) == "table" and type(p.guid) == "string" then set[p.guid] = true end
-            end
-        end
-    end
-    return set
+local function SheetShown()
+    local f = rawget(_G, "AltStableSheet")
+    return f ~= nil and f:IsShown() and true or false
 end
 
 function AltStable.IsCharacterOnline(guid)
     if not guid then return false end
-    local online = guid == UnitGUID("player") or ListedOnline()[guid] == true
-    if online then onlineSeen[guid] = time() end
-    return online
+    if guid == UnitGUID("player") then return true end
+    local at = heardAt[guid]
+    return at ~= nil and not leftAt[guid] and (time() - at) <= LibSync.HERE_TIMEOUT
+        and BNetEnabled()
 end
 
 -- What Last Online shows and sorts by: now while online, else the later of the
--- record's own stamp and the last time this session saw it online.
+-- record's own stamp and the last time this session heard from it.
 function AltStable.LastOnline(char)
     if type(char) ~= "table" then return nil end
     if AltStable.IsCharacterOnline(char.guid) then return time() end
-    local stamp, seen = tonumber(char.lastUpdate), char.guid and onlineSeen[char.guid]
-    if seen and (not stamp or seen > stamp) then return seen end
+    local stamp, heard = tonumber(char.lastUpdate), char.guid and heardAt[char.guid]
+    if heard and (not stamp or heard > stamp) then return heard end
     return stamp
 end
 
--- The ticker's half: notice who came and who went, and redraw when it changed.
-local function NoteWhoIsOnline()
-    local now, set, changed = time(), ListedOnline(), false
-    for guid in pairs(set) do
-        onlineSeen[guid] = now
-        if not onlineNow[guid] then changed = true end
+-- Who is online as of now, and a redraw when that changed: an account that
+-- stopped answering is noticed here, on the ticker.
+function LibSync.NoteOnline()
+    local set, changed = {}, false
+    for guid in pairs(heardAt) do
+        if AltStable.IsCharacterOnline(guid) then
+            set[guid] = true
+            if not onlineNow[guid] then changed = true end
+        end
     end
     for guid in pairs(onlineNow) do
-        if not set[guid] then onlineSeen[guid] = now; changed = true end
+        if not set[guid] then changed = true end
     end
     onlineNow = set
     if changed and AltStable.RefreshSheet then AltStable.RefreshSheet() end
+end
+
+-- A message from them (the library proved the sender ours): alive, or leaving.
+function LibSync.Heard(guid, leaving)
+    heardAt[guid] = time()
+    leftAt[guid] = leaving or nil
+    LibSync.NoteOnline()
+end
+
+-- `msg` to the own accounts that run AltStable, less any refused for good
+-- (LibSync.ExtPeers, the set the sync and the public channel use).
+function LibSync.SendToPeers(msg)
+    for _, p in ipairs(LibSync.ExtPeers()) do LibSync.SendGuid(p.guid, msg) end
+end
+
+-- The question, while the sheet is shown: at most every `gap` seconds (the
+-- ticker passes HERE_EVERY; the sheet opening asks again after a few).
+function AltStable.AskWhoIsOnline(gap)
+    if not SheetShown() then return end
+    local now = time()
+    if now - askedHereAt < (gap or 5) then return end
+    askedHereAt = now
+    LibSync.SendToPeers(LibSync.MSG_HERE)
+end
+
+-- Every 10 s (the handshake's ticker): ask, and notice who went quiet.
+function LibSync.OnlineTick()
+    if not SheetShown() then return end
+    AltStable.AskWhoIsOnline(LibSync.HERE_EVERY)
+    LibSync.NoteOnline()
 end
 
 local function ScanOwnAccounts()
@@ -2502,10 +2544,9 @@ local function ScanOwnAccounts()
     end
     if not BNetEnabled() then
         LibSync.Forget()
-    else
-        LibSync.Ping()
+        return
     end
-    NoteWhoIsOnline()
+    LibSync.Ping()
 end
 AltStable.RescanOwnAccounts = ScanOwnAccounts
 
@@ -3397,6 +3438,11 @@ function LibSync.OnMessage(payload, sender)
     local name, guid = sender.name, sender.guid
     local key = AuthKey(name)
     if not key or type(guid) ~= "string" or not BNetEnabled() then return end
+    -- Whatever it says, they are in game (Last Online). A bye says no more:
+    -- not a peer to ask for data on its way out.
+    local leaving = payload:match("^([^|]*)") == LibSync.MSG_BYE
+    LibSync.Heard(guid, leaving)
+    if leaving then return end
     -- An AltStable message, so they run it: from now on, the library to them.
     -- The realm name, when the library has none, is the database's for a
     -- character synced before.
@@ -3433,6 +3479,14 @@ function LibSync.OnMessage(payload, sender)
         if body == "" and (not last or (time() - last) >= 5)
             and LibSync.SendGuid(guid, LibSync.MSG_CAP .. "|1") then
             LibSync.answered[guid] = time()
+        end
+    elseif cmd == LibSync.MSG_HERE then
+        -- Asked who is online (their sheet is open): answered, sheet open or
+        -- not, at most every 5 s; an answer is not answered.
+        local last = answeredHere[guid]
+        if body == "" and (not last or (time() - last) >= 5)
+            and LibSync.SendGuid(guid, LibSync.MSG_HERE .. "|1") then
+            answeredHere[guid] = time()
         end
     elseif cmd == MSG_REQUEST_V then
         -- Every gate of the whisper path (never, consent, a pending request);
@@ -3529,7 +3583,13 @@ do
     -- prove an account at any moment, with no event of ours to notice it.
     -- Every 10 s, so a question it refused (no nonce yet) is asked again soon;
     -- one it took waits PING_EVERY.
-    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(10, function() LibSync.Ping() end) end
+    -- The same tick asks who is online, while the sheet is shown.
+    if C_Timer and C_Timer.NewTicker then
+        C_Timer.NewTicker(10, function()
+            LibSync.Ping()
+            LibSync.OnlineTick()
+        end)
+    end
 end
 
 ------------------------------------------------------------
@@ -3543,6 +3603,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     -- rested-XP note below says why nothing is READ here.
     if event == "PLAYER_LOGOUT" then
         AltStable.TouchCharacter(UnitGUID("player"))
+        LibSync.SendToPeers(LibSync.MSG_BYE)   -- may not leave in time; the silence will do
         return
     end
 
@@ -4717,7 +4778,7 @@ local function ResetSyncState()
     autoRetryCounts = {}
     lastRequestedAt = {}
     syncWatch       = {}
-    onlineSeen, onlineNow = {}, {}
+    heardAt, leftAt, onlineNow, answeredHere, askedHereAt = {}, {}, {}, {}, 0
 end
 
 ------------------------------------------------------------
