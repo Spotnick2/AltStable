@@ -29,7 +29,8 @@ Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStabl
   - "Xm ago" keeps counting while the sheet stays open, and sorting by Last Online puts the
     characters online at the top.
   - The row tooltip and the Roster show the same thing.
-  - Nothing is sent while the sheet is closed.
+  - Closing the sheet stops the asking. AltStable still answers your other account when its sheet
+    is open, and says when you log out.
 
 ## v1.5.0 - 2026-11-13
 
