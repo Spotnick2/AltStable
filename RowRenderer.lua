@@ -255,11 +255,13 @@ end
 function AltStable.FormatMoney(copper)     return FormatMoney(copper) end
 function AltStable.FormatMoneyShort(copper) return FormatMoneySmall(copper) end
 
-local function FormatLastOnline(ts, isCurrentPlayer)
+local function FormatLastOnline(ts, online)
+    -- Online is a fact about now (AltStable.IsCharacterOnline), not about how
+    -- recent the stamp is: the character played here went on reading "9m ago"
+    -- once nothing had changed for five minutes.
+    if online then return "|cff00ff00Online|r" end
     if not ts or ts==0 then return "|cff888888--|r" end
-    local diff = time()-ts
-    -- Only show "Online" for the character we're actually logged in as
-    if isCurrentPlayer and diff<300 then return "|cff00ff00Online|r" end
+    local diff = math.max(0, time()-ts)
     if     diff<3600     then return "|cff88ff88"..math.floor(diff/60).."m ago|r"
     elseif diff<86400    then return "|cffffff88"..math.floor(diff/3600).."h ago|r"
     elseif diff<86400*7  then local d=math.floor(diff/86400);      return "|cffaaaaaa"..d..(d==1 and " day"  or " days") .."|r"
@@ -268,6 +270,15 @@ local function FormatLastOnline(ts, isCurrentPlayer)
     end
 end
 AltStable.FormatLastSeen = FormatLastOnline
+
+-- The one call for a character: online now, or when it was last seen (Core).
+function AltStable.FormatLastOnlineFor(char)
+    if type(char) ~= "table" then return FormatLastOnline(nil, false) end
+    if not AltStable.LastOnline then
+        return FormatLastOnline(char.lastUpdate, char.guid == UnitGUID("player"))
+    end
+    return FormatLastOnline(AltStable.LastOnline(char), AltStable.IsCharacterOnline(char.guid))
+end
 
 ------------------------------------------------------------
 -- Gear slot coloring — standard WoW item quality colors
@@ -1005,8 +1016,7 @@ function AltStable.RenderRow(row, char, index, columns)
                 end
             end
         elseif col.field=="lastUpdate"  then
-            local isMe = char.guid == UnitGUID("player")
-            value = FormatLastOnline(char.lastUpdate, isMe)
+            value = AltStable.FormatLastOnlineFor(char)
         elseif col.type=="ruleset"      then
             value = AltStable.RulesetBadge(char.realm)
             if tip then
@@ -1151,8 +1161,7 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
             -- at "d ago" where the column already counted weeks, so the same
             -- character read differently in the grid and in its own tooltip.
             GameTooltip:AddLine(
-                "Last seen: " .. AltStable.FormatLastSeen(c.lastUpdate,
-                    c.guid == UnitGUID("player")),
+                "Last seen: " .. AltStable.FormatLastOnlineFor(c),
                 0.7, 0.7, 0.7)
         end
         GameTooltip:Show()

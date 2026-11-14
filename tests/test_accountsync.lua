@@ -722,6 +722,67 @@ check("/alts cleanup pushes to a library-only peer", count(L.MSG_DB .. "|", true
 check("  and asks it for its data back", count(T.MSG_REQUEST_V .. "|", true) >= 1)
 
 ------------------------------------------------------------
+-- Last Online: who is online now
+------------------------------------------------------------
+-- The character played here always; our other account's current character
+-- while the library lists it; and one that drops off the list is last online
+-- when that was noticed, until its own logout stamp arrives by sync.
+reset()
+do
+    local me = UnitGUID("player")
+    AltStableDB = {
+        [me]       = { guid = me, name = "Me", lastUpdate = WoW.now - 900 },
+        [BEE_GUID] = { guid = BEE_GUID, name = BEE, lastUpdate = WoW.now - 900 },
+    }
+    -- Asked first, before anything has sighted it this session.
+    eq("the character played here is last online now, however old its stamp",
+       AltStable.LastOnline(AltStableDB[me]), WoW.now)
+    check("  and is online", AltStable.IsCharacterOnline(me))
+    check("an alt on our other account is not online before the library lists it",
+          not AltStable.IsCharacterOnline(BEE_GUID))
+    eq("  and reads its own stamp", AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now - 900)
+
+    local realRefresh, redraws = AltStable.RefreshSheet, 0
+    AltStable.RefreshSheet = function() redraws = redraws + 1 end
+    listBee()
+    AltStable.RescanOwnAccounts()
+    check("listed by the library: online", AltStable.IsCharacterOnline(BEE_GUID))
+    eq("  its Last Online is now", AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now)
+    eq("  and the sheet is redrawn for it", redraws, 1)
+    AltStable.RescanOwnAccounts()
+    eq("  once, not on every rescan", redraws, 1)
+    WoW.now = WoW.now + 30
+    eq("  still listed between rescans: last online is now, not the last rescan",
+       AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now)
+
+    WoW.now = WoW.now + 120
+    fake.peers = {}
+    AltStable.RescanOwnAccounts()
+    check("dropped off the list: not online", not AltStable.IsCharacterOnline(BEE_GUID))
+    eq("  last online when that was noticed, not its older stamp",
+       AltStable.LastOnline(AltStableDB[BEE_GUID]), WoW.now)
+    eq("  and redrawn", redraws, 2)
+    local left = WoW.now
+    WoW.now = WoW.now + 300
+    eq("the sighting does not move with the clock", AltStable.LastOnline(AltStableDB[BEE_GUID]), left)
+    AltStableDB[BEE_GUID].lastUpdate = left + 5     -- its logout stamp, arrived by sync
+    eq("  a later stamp from its own account wins", AltStable.LastOnline(AltStableDB[BEE_GUID]), left + 5)
+
+    AltStableConfig.bnetSync = false
+    listBee()
+    check("with Battle.net sync off, nobody else is online", not AltStable.IsCharacterOnline(BEE_GUID))
+    AltStableConfig.bnetSync = nil
+    fake.peers = {}
+    AltStable.RefreshSheet = realRefresh
+
+    AltStableDB[me].lastUpdate = WoW.now - 900
+    check("PLAYER_LOGOUT is registered", T.frame:IsEventRegistered("PLAYER_LOGOUT"))
+    T.frame:GetScript("OnEvent")(T.frame, "PLAYER_LOGOUT")
+    eq("  and logging out stamps the character's Last Online", AltStableDB[me].lastUpdate, WoW.now)
+    eq("  only the stamp: nothing else is read at logout", AltStableDB[me].money, nil)
+end
+
+------------------------------------------------------------
 -- The saved off switch holds from the start (Codex, #204)
 ------------------------------------------------------------
 -- r5 reads store.enabled whenever nothing set it this session, and absent
