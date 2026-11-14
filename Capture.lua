@@ -616,6 +616,48 @@ local function AbandonCapture(message, restoreUI)
 end
 
 ------------------------------------------------------------
+-- A forgotten character's captures go with it (#343)
+------------------------------------------------------------
+-- AltStable Companion reads these records from every account's file, so a
+-- character forgotten here went on getting a portrait AltStable no longer
+-- tracked: "disappeared in the void". Every record naming the GUID goes - a
+-- whole pair at a time, since both halves carry it, so no other character's
+-- pair is split. A forget can arrive by sync in the middle of a capture: the
+-- mark the abort truncates back to moves down with what went before it.
+-- Returns how many records went. A newer AltStable's store is not ours to
+-- edit, as for a capture or the facing (Codex, #344): left as it is.
+function AltStable.DropPortraitRecords(guid)
+    local renders = type(AltStablePortraits) == "table" and AltStablePortraits.renders
+    if not guid or type(renders) ~= "table" or StoreTooNew() then return 0 end
+    local n = 0
+    for i = #renders, 1, -1 do
+        local r = renders[i]
+        if type(r) == "table" and r.guid == guid then
+            table.remove(renders, i)
+            n = n + 1
+            if i <= renderMark then renderMark = renderMark - 1 end
+        end
+    end
+    return n
+end
+
+-- And the ones left behind by a forget from before #343 (or from an older
+-- AltStable, whose synced forget reached here without them): every character
+-- forgotten now, once per session. Never the one being played. Returns how
+-- many records went.
+function AltStable.PruneForgottenPortraits()
+    local gone = type(AltStableConfig) == "table" and AltStableConfig.forgottenCharacters
+    if type(gone) ~= "table" then return 0 end
+    local me = UnitGUID and UnitGUID("player")
+    local n = 0
+    for guid in pairs(gone) do
+        local still = AltStable.IsCharacterForgotten == nil or AltStable.IsCharacterForgotten(guid)
+        if guid ~= me and still then n = n + AltStable.DropPortraitRecords(guid) end
+    end
+    return n
+end
+
+------------------------------------------------------------
 -- After the shots: the record is only on disk after a reload
 ------------------------------------------------------------
 -- SavedVariables are written on /reload and on logout, never in between. A
@@ -825,9 +867,14 @@ events:RegisterEvent("PLAYER_LOGOUT")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 local STATUS_SETTLE, EQUIP_SETTLE = 8, 2
-local equipTimer, worldTimer
+local equipTimer, worldTimer, prunedForgotten
 events:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_ENTERING_WORLD" then
+        -- The first one: the stores are loaded (#343's leftovers).
+        if not prunedForgotten then
+            prunedForgotten = true
+            pcall(AltStable.PruneForgottenPortraits)
+        end
         -- Every loading screen fires this: one pending look, not one per zone.
         if worldTimer then worldTimer:Cancel() end
         worldTimer = C_Timer.NewTimer(STATUS_SETTLE, function()

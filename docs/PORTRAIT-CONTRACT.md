@@ -105,7 +105,11 @@ shortly, do not treat it as data.
   happen.
 - Newest capture per character wins, ordered by **`epoch`**. `stamp` is local time
   and repeats an hour when the clocks go back; do not order by it.
-- `renders` is append-only. Older captures stay in it.
+- `renders` is append-only. Older captures stay in it. One exception (#343):
+  forgetting a character, here or on another account by the settings sync,
+  removes every record with its `guid`, both shots of each pair. Other characters'
+  records keep their order. A reader must not treat a capture that vanished as
+  an error: the character was forgotten.
 
 **`look`** (optional, since #128) is `slot:itemID` for the slots a portrait shows,
 separated by `;` (not `,`), `0` for an empty slot and `h` for a helm or cloak that is
