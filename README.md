@@ -50,7 +50,9 @@ rather than in these counts.
 
 The **Professions** tab shows which character knows which recipe, the skill it needs and where
 it comes from (trainer, vendor, quest or drop). Filter for the recipes you know, the ones you're
-missing, or the ones nobody has yet.
+missing, or the ones nobody has yet. Recipes the profession quartermasters sell for Merchant's
+Favor show their price, and the **Favor** filter lists them: with an alt picked and **Missing**,
+it's what that alt could buy.
 
 ![The Professions tab for Cooking: each recipe with its skill level, its source and which characters know it, a progress card per cook, and a recipe tooltip listing its reagents](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/professions.jpg)
 
