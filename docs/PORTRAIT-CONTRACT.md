@@ -424,7 +424,10 @@ character that only had a render takes the render's base.
 figure is about half a capture's height) and may have an enhanced picture, so **a
 capture stays the portrait for as long as it still shows the character**. A render
 replaces it only when the character changed since the capture, and only once the
-render shows that change (amended 2026-11-11; before, the newer of the two by
+render is newer than the capture (amended 2026-11-14, the owner's decision: from
+2026-11-11 the render also had to show the latest change, and a character still
+being geared changed again before each render landed, so it kept the old capture,
+or flipped back to it at each change. Before 2026-11-11, the newer of the two by
 date won, which swapped sharp, enhanced captures for renders of the same look).
 
 1. **No converted capture:** the render, when there is one.
@@ -443,17 +446,22 @@ date won, which swapped sharp, enhanced captures for renders of the same look).
      `epoch`. The first recording also sets it, so a character whose appearance was
      first recorded after the capture counts as changed: the safe way to be wrong.
 3. **Not changed:** the capture.
-4. **Changed:** the render, if it shows the change: `Last-Modified` minus 7 hours is
-   at least the change's time, the latest of those that apply:
+4. **Changed:** the render, if it is newer than the capture: `Last-Modified` minus 7
+   hours is later than the capture's `epoch` (the same comparison as case 5). It need
+   not show the latest change: a character still being geared changes again before
+   each render lands, and a render newer than the capture is closer to them than the
+   capture is, so it stays the portrait through later changes instead of going back
+   to the capture at each one. A difference counts as a change only when it is dated
+   after the capture's `epoch`, by the time that applies:
    - an item differs: `gearAt` (when the worn items last changed);
-   - only a helm or cloak's visibility differs (`h` against its item id): no field
-     records when that changed, because `gearAt` moves only with the items. Use
-     `gearReadAt` (the last time the gear was read, in the character's latest
-     session; `lastUpdate` when it is missing), so the render must come from the
-     latest session. It can wait one session too many, never pass early;
+   - only a helm or cloak's visibility differs (`h` against its item id):
+     `gearReadAt` (`lastUpdate` when it is missing), since `gearAt` moves only with
+     the items;
    - appearance: `lookAt`.
 
-   Until then the capture stays.
+   A difference dated at or before the capture's `epoch` is no change: the capture
+   read the gear itself. Until a render newer than the capture lands, the capture
+   stays.
 5. **Cannot tell** (the capture record has no `look`, or the roster has no gear for
    the character): the old estimate. The capture wins when its `epoch` is at least
    the render's `Last-Modified` minus 7 hours.
@@ -469,7 +477,7 @@ unchanged; `sourceHash` is that primary's hash. With the rule above, a capture's
 enhanced picture is dropped only when the character changed, which is when it is
 out of date anyway. While a new one waits (the limit below), the plain render is
 drawn; that is a normal state, not a problem to warn about. The companion limits how often an
-updated render can cost a new enhanced picture (a setting, in days). Its
+updated render can cost a new enhanced picture (a setting, in hours or days). Its
 `<guid>.attempts.json` records gain `source` (`"capture"` or `"armory"`; missing
 means a capture) and `confirmed` (the player asked for it; missing means false).
 
