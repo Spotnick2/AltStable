@@ -83,7 +83,8 @@ The **sheet** has one row per character: level, item level and gear in every slo
 Merchant's Favor, reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
 played. Sort by any column, and group the rows by ruleset, by faction or both (**Group**, in
 Options); hover a ruleset's header to see its server. Rested XP keeps counting up while you're
-away, worked out from where the character logged out.
+away, worked out from where the character logged out, and faster and higher with the Well Rested
+talent.
 
 The **Bags** column shows each character's free and total bag slots, to see who needs a bigger
 bag. Hover it for that character's bags, its bank tabs (as of its last bank visit) and the spare
