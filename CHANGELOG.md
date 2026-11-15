@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.7.1 - 2026-11-15
+
+Rested XP with the Well Rested talent. Built for client 1.60.1.70938, the live build. The talent
+itself hasn't been seen in game yet: the 180% cap below comes from its description. v1.7.1 syncs
+with everything v1.7.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.5** is the current version.
+
+### Fixed
+
+- **Rested XP counts the Well Rested talent** ([#352](https://github.com/Spotnick2/AltStable/issues/352),
+  asked on CurseForge). The Legacy talent fills rested XP 20% faster and raises its cap by 20%.
+  AltStable assumed 150% for everyone.
+  - A character with it now fills 20% faster while you're away and stops at 180%, and its
+    tooltip says "max 180%" and the right time to fill.
+  - A character seen above 150% counts as having it, and a higher value seen in game is kept.
+  - A character above 150% no longer shows a broken cell (`9aff00180%`) instead of its rested XP.
+  - A character shows the talent after its first login with this version.
+
 ## v1.7.0 - 2026-11-14
 
 Each character's bag space on the sheet. Built for client 1.60.1.70938, the live build: the Bags
