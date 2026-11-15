@@ -745,6 +745,10 @@ function AltStable.ScanBankSpace(char)
     return true
 end
 
+-- The Well Rested Legacy talent (#352): its tooltip and the client's SpellEffect
+-- table give 20% faster rested accrual and a 20% higher rested cap.
+local WELL_RESTED_SPELL = 1225478
+
 function AltStable.ScanCharacter()
 
     AltStableDB = AltStableDB or {}
@@ -903,7 +907,14 @@ function AltStable.ScanCharacter()
     --                  the same as lastUpdate but kept separate
     --                  so we can always trust it for the
     --                  offline extrapolation math.
+    --   wellRested   : 1 with the Well Rested Legacy talent (#352,
+    --                  spell 1225478: 20% faster, 20% higher cap), else 0.
+    --                  A number so it syncs as one. Absent = unknown.
     --------------------------------------------------------
+
+    if AltStable.API.IsPlayerSpell then
+        char.wellRested = AltStable.API.IsPlayerSpell(WELL_RESTED_SPELL) and 1 or 0
+    end
 
     -- A maximum of 0 can't be divided by (and 0 is truthy, so `or 1` never
     -- caught it). At the cap it is real: there is no next level, so the

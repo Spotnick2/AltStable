@@ -486,6 +486,23 @@ if gear and avg and rested then
     eq("open world, as synced: the string \"false\" is not rested", (rested(alt(59, "false"))), 1)
     eq("open world, as scanned", (rested(alt(59, false))), 1)
 
+    -- Well Rested (#352): 20% faster, and a cap of 180% (assumed) instead of 150%.
+    -- 80h in an inn: 50% base, 60% with the talent.
+    local function wr(pct, talent, hours)
+        return { guid = "Player-Alt-1", level = 30, restPercent = pct, wellRested = talent,
+                 restTimestamp = now - hours * 3600, restedArea = true }
+    end
+    eq("without the talent, 80h in an inn adds 50%", (rested(wr(0, 0, 80))), 50)
+    eq("with it, 20% faster: 60%", (rested(wr(0, 1, 80))), 60)
+    eq("  also as synced (the string \"1\")", (rested(wr(0, "1", 80))), 60)
+    eq("without it, the cap is 150%", (rested(wr(140, 0, 400))), 150)
+    eq("with it, the cap is 180%", (rested(wr(140, 1, 400))), 180)
+    eq("a stored value above 150% proves a raised cap, whatever the scan said",
+       (rested(wr(160, nil, 400))), 180)
+    eq("  and a stored value above 180% is never clamped down", (rested(wr(190, nil, 400))), 190)
+    eq("RestedCap: 150 without the talent", AltStable.RestedCap(wr(0, 0, 0)), 150)
+    eq("RestedCap: 180 with it", AltStable.RestedCap(wr(0, 1, 0)), 180)
+
     -- The current character reads the live API; UnitXPMax 0 must not divide.
     WoW.xpMax, WoW.restXP = 0, 100
     local live = rested({ guid = UnitGUID("player"), level = 59 })
@@ -1207,6 +1224,20 @@ eq("  and the snapshot time it extrapolates from", c and c.restTimestamp, 123)
 c = scanXP(59, 400, nil)
 eq("a real maximum still scans: 100 of 400 rested", c and c.restPercent, 25)
 eq("  and 50 of 400 through the level", c and c.xpPercent, 12)
+-- The Well Rested Legacy talent (#352) is recorded as a number, so it syncs as one.
+eq("no Well Rested talent scans as 0", c and c.wellRested, 0)
+do
+    WoW.reset()
+    WoW.playerSpells[1225478] = true
+    AltStableDB = {}
+    pcall(AltStable.ScanCharacter)
+    local w = AltStableDB[UnitGUID("player")]
+    eq("the Well Rested talent (spell 1225478) scans as 1", w and w.wellRested, 1)
+    WoW.playerSpells[1225478] = nil
+    w.wellRested = 1
+    pcall(AltStable.ScanCharacter)
+    eq("  and unlearning it scans back to 0", w.wellRested, 0)
+end
 WoW.reset()
 
 -- The gem audit's quality setting is RETIRED, and a profile that already has it

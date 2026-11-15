@@ -2260,3 +2260,14 @@ Read on `BAG_UPDATE_DELAYED`, and for the bank on `BANKFRAME_OPENED` (again a se
 `BANK_TABS_CHANGED` and every bag update while it is open. To confirm: the free count follows
 looting, a bag swap shows, a quiver or soul bag reports a nonzero family, the bank's tabs read on
 opening, and whether Forever has reagent bags at all.
+
+## Well Rested: a talent that raises the rested cap — UNMEASURED (#352)
+
+The Legacy talent **Well Rested** is spell 1225478: "Your rested experience accumulates $s1% faster
+and your rested experience cap is increased by $s2%." In `SpellEffect` (70862) its three effects
+(auras 386, 4 and 656) all carry 20; Wowhead's tooltip (2026-11-15) reads 20% and 20%. The scan
+records it with `IsPlayerSpell(1225478)` (in the dump's `_G` walk, undocumented). The Rested XP
+column then takes the cap as 180% (150 x 1.2) and the rate as 1.2 times the base; a stored value
+above 150% also counts as the talent. To confirm: the full value on a character with the talent
+(180%, or 170% if the 20% is added), that `IsPlayerSpell` is true for it, and whether a Legacy
+talent is per character or account-wide.

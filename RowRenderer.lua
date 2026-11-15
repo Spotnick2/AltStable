@@ -8,6 +8,11 @@ AltStable = AltStable or {}
 --   * 5% of a level per 32 hours while in the open world
 -- Cap is 150% of a level.
 --
+-- The Well Rested Legacy talent (spell 1225478, #352) adds 20% to both:
+-- "accumulates 20% faster and your rested experience cap is increased by 20%".
+-- The cap with it is UNMEASURED: 180% (150 x 1.2) is assumed, and a stored
+-- value above it wins, so a measured one is never clamped down.
+--
 -- We store at scan time: restXP (raw), xpMax (so % is recomputable),
 -- restedArea (was the char in a rested zone at logout?), and
 -- restTimestamp (when the snapshot was taken).
@@ -23,6 +28,29 @@ AltStable = AltStable or {}
 local function InRestedArea(char)
     return char.restedArea == true or char.restedArea == "true"
 end
+
+local BASE_CAP, WELL_RESTED_CAP, WELL_RESTED_RATE = 150, 180, 1.2
+
+-- The scan stores wellRested as 1/0 (a number, so it syncs as one). A stored
+-- rested % above the base cap proves a raised cap even when the scan could not
+-- tell, e.g. a record from a version before #352.
+local function HasWellRested(char)
+    return tonumber(char.wellRested) == 1 or (tonumber(char.restPercent) or 0) > BASE_CAP
+end
+
+local function RestedCap(char)
+    if not HasWellRested(char) then return BASE_CAP end
+    return math.max(WELL_RESTED_CAP, tonumber(char.restPercent) or 0)
+end
+
+-- Accrual, % of a level per hour: 5% per 8h in a rested area, per 32h outside.
+local function RestedPerHour(char)
+    local perHour = InRestedArea(char) and 0.625 or 0.15625
+    if HasWellRested(char) then perHour = perHour * WELL_RESTED_RATE end
+    return perHour
+end
+
+AltStable.RestedCap = RestedCap
 
 local function ComputeLiveRestedPercent(char)
     if not char then return 0, 0 end
@@ -55,14 +83,11 @@ local function ComputeLiveRestedPercent(char)
 
     local storedPercent = char.restPercent or 0
 
-    -- Accrual rate (% of a level per hour)
-    --   rested area: 5% per 8h  = 0.625 %/h
-    --   open world:  5% per 32h = 0.15625 %/h
-    local perHour = InRestedArea(char) and 0.625 or 0.15625
-    local addedPercent = (elapsed / 3600) * perHour
+    local addedPercent = (elapsed / 3600) * RestedPerHour(char)
 
     local live = storedPercent + addedPercent
-    if live > 150 then live = 150 end
+    local cap  = RestedCap(char)
+    if live > cap then live = cap end
 
     return math.floor(live + 0.5), addedPercent
 end
@@ -1033,34 +1058,39 @@ function AltStable.RenderRow(row, char, index, columns)
                 -- placeholder rather than a red 0%, which reads like an error.
                 value = "|cff888888—|r"
             else
-                -- Gradient: 0%=red, 75%=yellow, 150%=green
+                -- Gradient: 0%=red, half the cap=yellow, the cap=green. Clamped:
+                -- the logged-in character reads the live value, which can pass
+                -- the cap we assume, and a negative red would print as ffffffff
+                -- and break the colour code (#352).
+                local half = RestedCap(char) / 2
                 local r, g
-                if p <= 75 then
-                    local t = p / 75
-                    r = 1; g = t
+                if p <= half then
+                    r = 1; g = p / half
                 else
-                    local t = (p - 75) / 75
-                    r = 1 - t; g = 1
+                    r = 1 - math.min(1, (p - half) / half); g = 1
                 end
                 value = string.format("|cff%02x%02x00%d%%|r", math.floor(r*255), math.floor(g*255), p)
             end
-            -- The 150% needs saying: it's the cap (1.5 levels of XP), and a
-            -- bare "to reach 150%" read like a strange target (asked by a user).
+            -- The cap needs saying (1.5 levels of XP, more with Well Rested),
+            -- and a bare "to reach 150%" read like a strange target (asked by a user).
+            local cap = RestedCap(char)
             if tip and not atCap then
-                if p >= 150 then
+                if p >= cap then
                     tip.line1 = "Rested XP: " .. p .. "% (full)"
-                    tip.line2 = "150% is the most: 1.5 levels of XP"
+                    tip.line2 = string.format("%d%% is the most%s: %s levels of XP", cap,
+                        HasWellRested(char) and " with Well Rested" or "",
+                        (string.format("%.2f", cap / 100):gsub("%.?0+$", "")))
                     tip.line3 = nil
                 elseif p > 0 then
-                    local needed  = 150 - p
+                    local needed  = cap - p
                     -- Time to full depends on whether the character
                     -- logged out in a rested zone.
-                    local perHour = InRestedArea(char) and 0.625 or 0.15625
+                    local perHour = RestedPerHour(char)
                     local hours   = math.ceil(needed / perHour)
                     local days    = math.floor(hours / 24)
                     local remHour = hours % 24
                     local timeStr = days > 0 and (days.."d "..remHour.."h") or (hours.."h")
-                    tip.line1 = "Rested XP: " .. p .. "% of a level (max 150%)"
+                    tip.line1 = "Rested XP: " .. p .. "% of a level (max " .. cap .. "%)"
                     if InRestedArea(char) then
                         tip.line2 = "~" .. timeStr .. " offline to fill it (in inn/city)"
                     else
@@ -1068,7 +1098,7 @@ function AltStable.RenderRow(row, char, index, columns)
                     end
                     tip.line3 = nil
                 else
-                    tip.line1 = "Rested XP: 0% of a level (max 150%)"
+                    tip.line1 = "Rested XP: 0% of a level (max " .. cap .. "%)"
                     tip.line2 = "Log off in an inn to accumulate faster"
                     tip.line3 = nil
                 end
