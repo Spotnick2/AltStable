@@ -3,9 +3,9 @@
 -- through Battle.net game data?
 --
 -- Channels and whispers stop at the ruleset and the faction (measured,
--- 70124). C_BattleNet.SendGameData crosses both - it is how Overlord relays
--- between Horde and Alliance ("Battle.net bridges") - but its target is a
--- game account id, and Overlord only ever targets a FRIEND's. The owner's two
+-- 70124). C_BattleNet.SendGameData crosses both - another addon relays
+-- between Horde and Alliance with it ("Battle.net bridges") - but its target
+-- is a game account id, and that addon only ever targets a FRIEND's. The owner's two
 -- WoW accounts sit under one Battle.net account, which cannot friend itself;
 -- SYNC-DISCOVERY recorded that as closed without measuring it. The question:
 -- will the server deliver game data to your OWN other game account?
@@ -64,7 +64,7 @@ local function Me()
     else
         Log("  |cffff5555no game account id found for this character|r")
     end
-    -- For the record: friends online in WoW (Overlord's bridges are these).
+    -- For the record: friends online in WoW (Battle.net bridges go through these).
     local n = Call("BNGetNumFriends()", BNGetNumFriends)
     Log(("  friends: %s"):format(tostring(n)))
 end
