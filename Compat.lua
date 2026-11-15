@@ -335,6 +335,10 @@ API.GetAddOnMetadata = need(C_AddOns, "C_AddOns", "GetAddOnMetadata")
 -- Vanilla defense skill genuinely exists on this client.
 API.UnitDefenseSkill = needGlobal("UnitDefenseSkill")
 
+-- Whether the character has a spell, talents and passives included: the Well
+-- Rested Legacy talent (#352). In the dump's _G walk, undocumented.
+API.IsPlayerSpell = needGlobal("IsPlayerSpell")
+
 -- MAX_PLAYER_LEVEL is nil here; GetMaxPlayerLevel() returns 60. Reading it
 -- rather than hardcoding means the level cap follows the client through
 -- content patches instead of needing a code change.

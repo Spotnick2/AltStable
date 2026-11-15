@@ -69,6 +69,7 @@ for k, v in pairs({
     sent        = {},
     maxLevel    = 60,
     level = 1, xp = 0, xpMax = 400, resting = false,   -- restXP nil: measured "not rested"
+    playerSpells = {},  -- [spellID] = true for IsPlayerSpell
     faction = "Horde",  -- UnitFactionGroup's tag
     defense     = { 1, 0 },
     chatOut     = {},   -- captured DEFAULT_CHAT_FRAME output
@@ -102,6 +103,7 @@ WoW.onReset[#WoW.onReset + 1] = function()
     if UIParent then UIParent:Show() end
     WoW.maxLevel = 60
     WoW.level, WoW.xp, WoW.xpMax, WoW.restXP, WoW.resting = 1, 0, 400, nil, false
+    WoW.playerSpells = {}
     WoW.faction = "Horde"
     WoW.defense = { 1, 0 }
     WoW.chatOut = {}
@@ -1572,6 +1574,8 @@ function GetXPExhaustion() return WoW.restXP end
 function UnitXPMax() return WoW.xpMax end
 function UnitXP() return WoW.xp end
 function IsResting() return WoW.resting end
+-- WoW.playerSpells: set of spell ids the character has (talents included).
+function IsPlayerSpell(id) return WoW.playerSpells[id] == true end
 
 -- nil for a path the client doesn't have. WoW.textures: set of known paths;
 -- nil (the default) means every path resolves.

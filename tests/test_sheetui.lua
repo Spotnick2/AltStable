@@ -3796,6 +3796,41 @@ do
         check("  and when full, why it stops there", full:find("(full)", 1, true) ~= nil
               and full:find("1.5 levels", 1, true) ~= nil, full)
         check("no wording says 'to reach 150%' any more", not (low .. out .. none .. full):find("reach 150", 1, true))
+
+        -- Well Rested (#352): the cap is 180% and it fills 20% faster.
+        -- 179% at 0.625 x 1.2 = 0.75%/h = 239h = 9d 23h.
+        local wlow = tipFor({ name = "WLow", level = 5, restPercent = 1, wellRested = 1,
+                              restedArea = true, restTimestamp = now })
+        check("with Well Rested the tooltip says max 180%", wlow:find("max 180%", 1, true) ~= nil, wlow)
+        check("  and the wait is at the faster rate: 9d 23h",
+              wlow:find("~9d 23h offline to fill it", 1, true) ~= nil, wlow)
+        local wnone = tipFor({ name = "WNone", level = 5, restPercent = 0, wellRested = 1, restTimestamp = now })
+        check("  at 0% too", wnone:find("max 180%", 1, true) ~= nil, wnone)
+        local w150 = tipFor({ name = "W150", level = 5, restPercent = 150, wellRested = 1, restTimestamp = now })
+        check("  150% with the talent is not full", w150:find("(full)", 1, true) == nil
+              and w150:find("max 180%", 1, true) ~= nil, w150)
+        local wfull = tipFor({ name = "WFull", level = 5, restPercent = 180, wellRested = 1, restTimestamp = now })
+        check("  full at 180%, and says why", wfull:find("(full)", 1, true) ~= nil
+              and wfull:find("180% is the most with Well Rested: 1.8 levels", 1, true) ~= nil, wfull)
+        check("  without it, the full line does not name the talent",
+              not full:find("Well Rested", 1, true) and full:find("150% is the most: 1.5 levels", 1, true), full)
+
+        -- The cell's colour: the live value can pass the cap we assume, and a
+        -- negative red printed as ffffffff and broke the colour code.
+        local function cellFor(char)
+            AltStable.RenderRow(row, char, 1, cols)
+            return row.cells[1]:GetText() or ""
+        end
+        WoW.level, WoW.xpMax, WoW.restXP = 5, 1000, 2000
+        local over = cellFor({ guid = UnitGUID("player"), name = "Me", level = 5, restPercent = 40 })
+        eq("a live 200% shows green, not a broken colour code", over, "|cff00ff00200%|r")
+        WoW.level, WoW.xpMax, WoW.restXP = 1, 400, nil
+        eq("150% without the talent is green", cellFor({ name = "F", level = 5, restPercent = 150,
+            restTimestamp = now }), "|cff00ff00150%|r")
+        eq("150% with it is not green yet", cellFor({ name = "W", level = 5, restPercent = 150,
+            wellRested = 1, restTimestamp = now }), "|cff55ff00150%|r")
+        eq("half the cap is yellow", cellFor({ name = "H", level = 5, restPercent = 90,
+            wellRested = 1, restTimestamp = now }), "|cffffff0090%|r")
     end
 
     -- Many rows with gaps, both ways: table.sort raises "invalid order
