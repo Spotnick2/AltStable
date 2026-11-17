@@ -1101,13 +1101,23 @@ local function BuildRows(state)
                     if Wants(o.guid, id) then wantedBy[#wantedBy + 1] = o end
                 end
                 local f = state.filter or "all"
+                -- A card is selected, but its alt has no `line`: a search spans
+                -- every line. It is still the one asked about, never everyone,
+                -- so this line has nothing of its (#363). A recipe on two lines
+                -- shows on the alt's own one.
+                local elsewhere = state.focus and not focus
                 if f == "known" then
-                    if focus then keep = focus.known[id] and true or false else keep = #knownBy > 0 end
+                    if focus then keep = focus.known[id] and true or false
+                    elseif elsewhere then keep = false
+                    else keep = #knownBy > 0 end
                 elseif f == "missing" then
                     -- Missing is a claim about what someone does NOT know: only
-                    -- ever made for an alt with a complete scan.
+                    -- ever made for an alt with a complete scan - and never for
+                    -- a profession it does not have.
                     if focus then
                         keep = focus.state == "full" and not focus.known[id]
+                    elseif elsewhere then
+                        keep = false
                     else
                         keep = false
                         for _, o in ipairs(owners) do
@@ -1120,7 +1130,9 @@ local function BuildRows(state)
                     -- Someone (the focused alt, if one is) knows it, and the
                     -- stable holds enough of every reagent for one craft. Not
                     -- counted (no Warband) keeps nothing: it is not a yes.
-                    local knows = focus and focus.known[id] or (not focus and #knownBy > 0)
+                    local knows
+                    if focus then knows = focus.known[id]
+                    elseif not elsewhere then knows = #knownBy > 0 end
                     local plan = knows and ReagentPlan(id, nil, reagentCache)
                     keep = plan and plan.enough or false
                 elseif f == "wishlist" then

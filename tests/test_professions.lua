@@ -670,6 +670,43 @@ AltStableProfessionsDB[B].profs[171].known[2329] = nil
 eq("  and once she doesn't, nothing for her", ids(T.BuildRows({ line = 171, filter = "craftable", focus = B })), "")
 AltStableProfessionsDB[B].profs[171].known[2329] = true
 
+-- A search spans every profession, and the selected alt stays the one asked
+-- about on those it does not have (#363): Birch has no Blacksmithing, Smith
+-- knows the recipe and holds what it takes.
+do
+    local SMITH = "Player-Smith"
+    AltStableDB[SMITH] = { guid = SMITH, name = "Smith", class = "WARRIOR" }
+    AltStableProfessionsDB[SMITH] = { stamp = 1,
+        profs = { [164] = { rank = 40, max = 75, full = 1, known = { [3100] = true } } } }
+    local heldNames, heldRecipe = WoW.spellNames, AltStableRecipeData.recipes[3100].reagents
+    AltStableRecipeData.recipes[3100].reagents = { 2449, 1 }
+    WoW.spellNames = { [2329] = "Copper Tonic", [2331] = "Copper Elixir", [3100] = "Copper Bracers",
+                       [3101] = "Rough Copper Vest" }
+    for k in pairs(T.names) do T.names[k] = nil end
+    local function search(filter, focus)
+        return ids(T.BuildRows({ line = 171, search = "copper", filter = filter, focus = focus }))
+    end
+    eq("searching with Birch selected, Known is Birch's only", search("known", B), "2329")
+    eq("  with nobody selected, everyone's", search("known"), "3100,2329,2331")
+    eq("  Missing: only in her own professions", search("missing", B), "2331")
+    eq("    with nobody selected, any full owner's", search("missing"), "3101,2331")
+    eq("  Craftable: what she knows and has the reagents for", search("craftable", B), "2329")
+    eq("    with nobody selected, anyone's", search("craftable"), "3100,2329")
+    -- A recipe on two lines (Leatherworking and Tailoring): Birch knows it as a
+    -- Tailor, so it shows once, on her Tailoring row.
+    WoW.spellNames[7000] = "Copper Belt"
+    for k in pairs(T.names) do T.names[k] = nil end
+    AltStableProfessionsDB[B].profs[197] = { rank = 60, max = 75, full = 1, known = { [7000] = true } }
+    local rows2 = T.BuildRows({ line = 171, search = "copper", filter = "known", focus = B })
+    local where = {}
+    for _, r in ipairs(rows2) do if r.id == 7000 then where[#where + 1] = r.line end end
+    eq("  a two-line recipe she knows shows once, on her own line", table.concat(where, ","), "197")
+    AltStableProfessionsDB[B].profs[197] = nil
+    WoW.spellNames, AltStableRecipeData.recipes[3100].reagents = heldNames, heldRecipe
+    for k in pairs(T.names) do T.names[k] = nil end
+    AltStableDB[SMITH], AltStableProfessionsDB[SMITH] = nil, nil
+end
+
 -- Hidden alts: their bags are out of the counts, as they are out of the list.
 AltStable.IsCharacterHidden = function(guid) return guid == B end
 plan = T.ReagentPlan(2329, { owner(A) })
