@@ -1045,6 +1045,33 @@ check above compared the wrong pair). Against 70532, two things the generator re
 `RecipeData.lua` is regenerated at 70938 from those and the cached Wowhead pages (nothing
 fetched). From here, every build's check re-gets all three tables.
 
+## Build 1.60.1.70959 (2026-11-17) — C_Mail.IsCODEnabled, none we use
+
+Dumped (`forever-api-1.60.1.70959.md`, client built Nov 13 2026) and compared with
+`Compare-Dumps.ps1` against 70938:
+
+```
+Documented functions - +1 -0     + C_Mail.IsCODEnabled() -> isCODEnabled:bool
+Documented events - no change (1816)
+Documented tables - no change (801)
+Widget methods - no change (7530)
+Namespace functions - +1 -0      + C_Mail.IsCODEnabled
+Global functions - +8 -0 (walks _G: addon noise, not listed)
+Namespace candidates - +52 -658 (walks _G: addon noise, not listed)
+```
+
+AltStable, its stubs and its embedded libraries (LibMailbox included) don't call it: no `C_Mail`
+use at all outside Blizzard's own code.
+
+**Behaviour**, the RUNBOOK step-3 line: `60 400 600 -1 5 table`, all as expected (a level-1
+character, rested).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+**Client tables.** SkillLineAbility, TradeSkillCategory and SpellReagents are saved at 70959 and
+are byte-identical to 70938's. `gen-recipes.py --check` against them: 2211 recipes, 0 added,
+0 removed, 0 changed.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk
