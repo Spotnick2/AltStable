@@ -1270,6 +1270,24 @@ AltStableProfessionsDB[B].wish = { [2331] = true, [2332] = true }
 eq("Wishlist: what anyone wants", ids(T.BuildRows({ line = 171, filter = "wishlist" })), "2331,2332")
 eq("  focused on Alder, only Alder's", ids(T.BuildRows({ line = 171, filter = "wishlist", focus = A })), "2332")
 eq("  focused on Umber, nothing", ids(T.BuildRows({ line = 171, filter = "wishlist", focus = U })), "")
+-- A search spans every profession, also ones the selected alt does not have:
+-- there the selected alt is still the one whose stars are listed.
+do
+    local SMITH = "Player-Smith"
+    AltStableDB[SMITH] = { guid = SMITH, name = "Smith", class = "WARRIOR" }
+    AltStableProfessionsDB[SMITH] = { stamp = 1, wish = { [3101] = true },
+        profs = { [164] = { rank = 40, max = 75, full = 1, known = { [3100] = true } } } }
+    local heldNames = WoW.spellNames
+    WoW.spellNames = { [2332] = "Copper Elixir", [3101] = "Rough Copper Vest" }
+    for k in pairs(T.names) do T.names[k] = nil end
+    eq("a search with Alder selected lists Alder's stars only, across professions",
+       ids(T.BuildRows({ line = 171, search = "copper", filter = "wishlist", focus = A })), "2332")
+    eq("  with nobody selected, everyone's", ids(T.BuildRows({ line = 171, search = "copper", filter = "wishlist" })),
+       "3101,2332")
+    WoW.spellNames = heldNames
+    for k in pairs(T.names) do T.names[k] = nil end
+    AltStableDB[SMITH], AltStableProfessionsDB[SMITH] = nil, nil
+end
 local wrows = {}
 for _, r in ipairs(T.BuildRows({ line = 171 })) do wrows[r.id] = r end
 local function names(list) local t = {} for _, o in ipairs(list or {}) do t[#t + 1] = o.name end return table.concat(t, ",") end

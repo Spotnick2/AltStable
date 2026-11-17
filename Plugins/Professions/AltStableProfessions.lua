@@ -1124,8 +1124,11 @@ local function BuildRows(state)
                     local plan = knows and ReagentPlan(id, nil, reagentCache)
                     keep = plan and plan.enough or false
                 elseif f == "wishlist" then
-                    -- The focused alt's stars, or everyone's.
-                    if focus then keep = Wants(focus.guid, id) else keep = #wantedBy > 0 end
+                    -- The focused alt's stars, or everyone's. By the selected
+                    -- card, not this line's owner: a search spans lines the
+                    -- alt does not have, and there "no focus" is not "nobody
+                    -- selected" (Codex review of #362).
+                    if state.focus then keep = Wants(state.focus, id) else keep = #wantedBy > 0 end
                 end
                 if keep then
                     rows[#rows + 1] = { id = id, line = line, name = name, recipe = r, knownBy = knownBy,
