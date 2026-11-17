@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.8.0 - 2026-11-17
+
+A recipe wishlist and a recipe detail pane in the Professions tab. Built for client 1.60.1.70959,
+the live build. The stars were checked in game there, but the detail pane hasn't been seen yet.
+v1.8.0 syncs with everything v1.7.2 does. An older version ignores the stars it receives.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.5** is the current version.
+
+### New
+
+- **A recipe wishlist** ([#271](https://github.com/Spotnick2/AltStable/issues/271)). Star a recipe
+  for an alt in the Professions tab, and the **Wishlist** filter lists what that alt wants (with no
+  card picked, what any alt wants). With no card picked, the stars are the character you're
+  playing.
+  - A recipe item's tooltip (at a vendor, in the auction house) says who wants it, above who knows
+    it. **Show who wants a recipe on its tooltip** (Options, General) turns that line off.
+  - A star goes away once the alt learns the recipe.
+  - Stars sync to your other accounts. Each alt's stars are set on its own account: another
+    account's alt shows them, and its card says where to change them.
+- **A recipe detail pane** ([#269](https://github.com/Spotnick2/AltStable/issues/269)). Click a
+  recipe in the Professions tab and a pane opens beside the list:
+  - the crafted item, in its quality colour (shift-click links it), and the level it needs, in red
+    if the picked alt is too low;
+  - the skill to learn it and the orange, yellow, green and grey thresholds, with where the picked
+    alt stands;
+  - where it comes from, and the recipe item that teaches it;
+  - who wants it, who knows it, who has the skill to learn it, whose skill is too low;
+  - its reagents and how many your alts hold.
+
+  Click the recipe again, or the pane's **x**, to close it. A long recipe scrolls with the mouse
+  wheel over the pane.
+- **The reagents follow the profession window**
+  ([#348](https://github.com/Spotnick2/AltStable/issues/348)). When you open a profession window,
+  any recipe whose reagents there differ from AltStable's own list takes the window's, so a game
+  patch that changes a recipe shows right away. None differ today.
+
+### Fixed
+
+- **Known, Missing and Craftable keep the picked alt during a search**
+  ([#363](https://github.com/Spotnick2/AltStable/issues/363)). A search spans every profession, and
+  on one the picked alt doesn't have, these filters fell back to every alt. They now stay on the
+  picked alt.
+
 ## v1.7.2 - 2026-11-17
 
 Sync between your accounts, made more reliable. Built for client 1.60.1.70938, the live build.
