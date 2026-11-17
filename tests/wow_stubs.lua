@@ -1562,8 +1562,7 @@ function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 -- including C's __DATE__ padding: a single-digit day is space-padded
 -- ("Oct  5 2026", two spaces), as the dump header shows it.
 function GetBuildInfo() return "1.60.1", "70959", "Nov 13 2026", 16001 end
--- GetLocale() -> localeName (forever-api-1.60.1.70205.md). WoW.locale to test another.
-function GetLocale() return WoW.locale or "enUS" end
+-- GetLocale() comes from the kit (WowTestKit #62): WoW.locale, "enUS" until a test sets it.
 -- Client string alias (in the dump's _G walk); LibStub's version check uses it.
 strmatch = string.match
 
