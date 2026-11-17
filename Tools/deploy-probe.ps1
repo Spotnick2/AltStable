@@ -17,9 +17,14 @@
 
     The client is the live one now (_forever_, the owner's own install), so the
     dev tools go in only when a question needs them and come out after:
-    -Remove deletes AltStableProbe and ForeverAPIDump, and the ForeverProbe host
-    too unless another project's probe still depends on it. Their saved logs in
-    WTF\ stay. restore-release.ps1 runs -Remove as well.
+    -Remove deletes AltStableProbe, and the ForeverProbe host too unless another
+    project's probe still depends on it. Their saved logs in WTF\ stay.
+    restore-release.ps1 runs -Remove as well.
+
+    The API dump addon is not ours any more: it is shared, in
+    C:\Projects\WoW\References\Tools\ForeverAPIDump, with its own deploy.ps1
+    (the forever-api-dump skill). -Remove still deletes a ForeverAPIDump folder,
+    so one that an older run of this script installed comes out too.
 #>
 
 param(
@@ -72,20 +77,16 @@ if (-not (Test-Path -LiteralPath (Join-Path $ForeverProbe "Tools\deploy.ps1"))) 
 & pwsh -NoProfile -File (Join-Path $ForeverProbe "Tools\deploy.ps1") -AddOnsPath $AddOnsPath
 if ($LASTEXITCODE -ne 0) { Write-Error "ForeverProbe deploy refused; AltStableProbe was not touched"; exit 1 }
 
-# /MIR: we own these folders wholesale, so stale files get purged.
+# /MIR: we own this folder wholesale, so stale files get purged.
 # SavedVariables live in WTF\, not here, so purging is safe.
 # robocopy exit codes 0-7 are success; 8+ is an error.
 # (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
 # settings from loading, and after the fix only overwrote the player's own.)
-foreach ($name in @("AltStableProbe", "ForeverAPIDump")) {
-    $from = Join-Path $RepoRoot "Tools\$name"
-    if (-not (Test-Path $from)) { continue }
-    $to = Join-Path $AddOnsPath $name
-    Write-Host "Deploying $name ..." -ForegroundColor Cyan
-    robocopy $from $to /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $name (code $LASTEXITCODE)" }
-    $dest = $to
-}
+$from = Join-Path $RepoRoot "Tools\AltStableProbe"
+$dest = Join-Path $AddOnsPath "AltStableProbe"
+Write-Host "Deploying AltStableProbe ..." -ForegroundColor Cyan
+robocopy $from $dest /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed for AltStableProbe (code $LASTEXITCODE)" }
 
 # Retired tools: remove what an older run installed, or it keeps loading - the
 # retired AltStableDevConfig re-seeded a whitelist the player had emptied

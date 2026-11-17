@@ -13,7 +13,7 @@ override, and they are not the same flag:
 | Script | Override |
 |---|---|
 | `Tools/deploy.ps1`, `Tools/deploy-probe.ps1`, `Tools/restore-release.ps1` | `-AddOnsPath "<...>\Interface\AddOns"` |
-| `Tools/ForeverAPIDump/Convert-Dump.ps1` | `-WtfAccountPath "<...>\WTF\Account"`, and `-OutDir` for where the artifact lands |
+| `C:\Projects\WoW\References\Tools\ForeverAPIDump\Convert-Dump.ps1` (shared) | `-WtfAccountPath "<...>\WTF\Account"`, and `-OutDir` for where the artifact lands |
 | `tests/run.ps1` | `-Lua "<path to lua5.1.exe>"` (no client involved) |
 
 ---
@@ -272,13 +272,13 @@ and the probe reports it only for completeness.
 To check persistence on a new build:
 
 ```
-pwsh Tools/deploy-probe.ps1     # deploys ForeverProbe (the host), AltStableProbe, ForeverAPIDump
+pwsh Tools/deploy-probe.ps1     # deploys ForeverProbe (the host), then AltStableProbe
 ```
 
 **The probe goes in on demand only.** This is the live client and the owner's play install. Deploy
 it for the question at hand, then take it out again with `pwsh Tools/deploy-probe.ps1 -Remove`. That
-removes AltStableProbe and ForeverAPIDump, plus the ForeverProbe host when no other project's probe
-still depends on it. The saved logs in `WTF\` stay.
+removes AltStableProbe, plus the ForeverProbe host when no other project's probe still depends on
+it, and a ForeverAPIDump folder an older run of it installed. The saved logs in `WTF\` stay.
 
 The probe is a ForeverProbe module (#240): its lines go to the `/fp` console and to
 `AltStableProbeDB.log`, never to chat. It keeps a counter in each store and checks at
@@ -306,11 +306,17 @@ The build number is in the launcher under the Play button. AltStable warns at lo
 other than `MEASURED_ON_BUILD` in `Config.lua`, because a stale API dump reads exactly as
 authoritatively as a current one.
 
-1. **Regenerate the dump.** `/apidump`, then `/reload`, then
-   `pwsh Tools/ForeverAPIDump/Convert-Dump.ps1`. It writes
-   `C:\Projects\WoW\References\Forever\api\forever-api-<version>.<build>.md` and says so when the build changed.
+Steps 1 and 2 are the shared `forever-api-dump` skill
+(`C:\Projects\WoW\.claude\skills\forever-api-dump\SKILL.md`). Its tooling lives in
+`C:\Projects\WoW\References\Tools\ForeverAPIDump\` and runs from here by full path:
+
+1. **Regenerate the dump.** `pwsh C:\Projects\WoW\References\Tools\ForeverAPIDump\deploy.ps1`,
+   then in game `/reload`, `/apidump`, `/reload`, then
+   `pwsh C:\Projects\WoW\References\Tools\ForeverAPIDump\Convert-Dump.ps1`. It writes
+   `C:\Projects\WoW\References\Forever\api\forever-api-<version>.<build>.md` and says so when the
+   build changed. Take the addon out again with that `deploy.ps1 -Remove`.
 2. **Diff the documented surfaces** against the previous file -
-   `pwsh Tools/ForeverAPIDump/Compare-Dumps.ps1` does it: documented functions, events, enums
+   `pwsh C:\Projects\WoW\References\Tools\ForeverAPIDump\Compare-Dumps.ps1` does it: documented functions, events, enums
    and structures, widget methods, namespace functions. Ignore the global-functions and
    namespace-candidates sections — those pick up whatever addons were loaded when the dump ran.
 3. **Re-measure the behaviours**, because the dump proves shape, not behaviour:
