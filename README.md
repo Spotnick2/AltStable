@@ -62,12 +62,24 @@ Recipe items in the game (at a vendor, in the auction house) can also show who a
 them, who has the skill to learn them and whose skill is too low. Crafted items show who can make
 them.
 
+Click a recipe for its details in a pane beside the list: the crafted item and the level it needs,
+the skill thresholds, where the recipe comes from, who knows it and its reagents.
+
+### Which recipes do my alts still want?
+
+Star a recipe for an alt in the Professions tab, and the **Wishlist** filter lists what it wants.
+The recipe item's tooltip then says who wants it, until that alt learns it. Stars sync to your
+other accounts, and each alt's stars are set on the account it's played on.
+
 ### Do my characters already have the reagents?
 
 Hover a recipe in the Professions tab to see its reagents and how many your alts hold in their
 bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
 **Craftable** filter lists the recipes an alt knows and has the reagents for somewhere among
 your alts.
+
+When you open a profession window, any recipe whose reagents there differ from AltStable's own list
+takes the window's, so a game patch that changes a recipe shows right away.
 
 Profession cooldowns are tracked too, and a notification tells you when one is ready.
 
