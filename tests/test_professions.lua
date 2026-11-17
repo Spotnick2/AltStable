@@ -88,8 +88,10 @@ local function fresh()
     WoW.now = 1700000000
     AltStableDB = { [ME] = { guid = ME, name = "Me", class = "MAGE", level = 60, lastUpdate = 1, scannedHere = true } }
     AltStableProfessionsDB = {}
+    AltStableProfessionsReagents = {}
     T.ResetState()
     T.scan.open, T.scan.gen, T.scan.retries = false, T.scan.gen + 1, 0
+    T.scan.reagentsLine = nil
     for k in pairs(T.names) do T.names[k] = nil end
     for k in pairs(T.requested) do T.requested[k] = nil end
 end
@@ -764,6 +766,115 @@ AltStable.ItemHolders = nil
 held = {}
 WoW.items[765] = nil
 readModelState()   -- the sections below expect the shared fixture as it was
+
+------------------------------------------------------------
+-- The window's reagents win where they differ (#348)
+------------------------------------------------------------
+
+local function flat(t) return t and table.concat(t, ",") or "nil" end
+
+-- Reading one schematic, in the shape measured on 70959.
+fresh()
+setAlchemy({ [2329] = { name = "Elixir of Lion's Strength", learned = true, reagents = { 2449, 1, 765, 1, 3371, 1 } } })
+eq("the window's reagents read as a flat list", flat(T.SchematicReagents(2329)), "2449,1,765,1,3371,1")
+local function slot(items, n, kind, required)
+    local r = {}
+    for i, it in ipairs(items) do r[i] = it end
+    return { reagents = r, quantityRequired = n, reagentType = kind or 1, required = required ~= false }
+end
+WoW.tradeSkill.recipes[2329].slots = { slot({ { itemID = 2449 } }, 2), slot({ { itemID = 9999 } }, 1, 1, false),
+                                       slot({ { itemID = 8888 } }, 1, 2) }
+eq("  only required Basic slots count (optional and finishing are left out)", flat(T.SchematicReagents(2329)), "2449,2")
+WoW.tradeSkill.recipes[2329].slots = { slot({ { itemID = 2449 }, { itemID = 2450 } }, 1) }
+eq("  a slot of alternatives can't be read as one list", T.SchematicReagents(2329), nil)
+WoW.tradeSkill.recipes[2329].slots = { slot({ { currencyID = 3402 } }, 5) }
+eq("  nor a currency", T.SchematicReagents(2329), nil)
+WoW.tradeSkill.recipes[2329].slots = {}
+eq("  and an empty answer is not taken as 'takes nothing'", T.SchematicReagents(2329), nil)
+WoW.tradeSkill.recipes[2329].slots = nil
+WoW.tradeSkill.recipes[2329].schematicError = true
+eq("  a call that throws reads as nothing", T.SchematicReagents(2329), nil)
+
+check("same items and amounts in another order are the same", T.SameReagents({ 1, 2, 3, 4 }, { 3, 4, 1, 2 }))
+check("  one more reagent in the window is a difference", not T.SameReagents({ 1, 2, 3, 4 }, { 1, 2 }))
+check("  and one more in the data is too", not T.SameReagents({ 1, 2 }, { 1, 2, 3, 4 }))
+check("  another amount is", not T.SameReagents({ 1, 2 }, { 1, 3 }))
+check("  and so is a list against none", not T.SameReagents({ 1, 2 }, nil))
+
+-- A scan: the window agrees on 2329, takes one more of 785 for 2331, and has
+-- reagents for 2333, which RecipeData has none for.
+fresh()
+setAlchemy({ [2329] = { name = "Elixir of Lion's Strength", learned = true, reagents = { 765, 1, 2449, 1, 3371, 1 } },
+             [2331] = { name = "Elixir of Lesser Agility", learned = true, reagents = { 785, 3, 3371, 1 } },
+             [2333] = { name = "Unknown", learned = true, reagents = { 3356, 1 } },
+             [2332] = { name = "Not learned", learned = false, reagents = { 1, 1 } } })
+T.OnShow()
+WoW.flushTimers()
+local store = AltStableProfessionsReagents
+eq("a recipe the window agrees on keeps no entry (order aside)", store[2329], nil)
+eq("one it disagrees on is kept, with the window's amounts", store[2331] and flat(store[2331].reagents), "785,3,3371,1")
+eq("  stamped with the build", store[2331] and store[2331].build, "70959")
+eq("  and the time", store[2331] and store[2331].at, WoW.now)
+eq("one RecipeData has no reagents for takes the window's", store[2333] and flat(store[2333].reagents), "3356,1")
+eq("an unlearned recipe is not read", store[2332], nil)
+local list, fromWindow = T.Reagents(2331)
+eq("the window's list is the one used", flat(list), "785,3,3371,1")
+check("  and says so", fromWindow == true)
+list, fromWindow = T.Reagents(2329)
+eq("elsewhere RecipeData's", flat(list), "2449,1,765,1,3371,1")
+check("  and says so", fromWindow == false)
+AltStable.ItemHolders = holdersStub
+held = { [ME] = { [785] = { bags = 2 }, [3371] = { bags = 1 } } }
+plan = T.ReagentPlan(2331, {})
+eq("the plan needs the window's amount", plan and plan.reagents[1].need, 3)
+check("  so two in the bags is no longer enough", plan and not plan.enough)
+lines = T.ReagentLines(2331, {})
+check("the tooltip flags the window's amounts", lines[1] and lines[1][2] ~= nil
+      and lines[1][2]:find("profession window", 1, true) ~= nil, lines[1] and tostring(lines[1][2]))
+eq("  under the usual heading", lines[1] and lines[1][1], "Reagents")
+eq("  in the window's amount", lines[2] and lines[2][1], "3 x item 785")
+lines = T.ReagentLines(2329, {})
+eq("a recipe the window agreed on has no flag", lines[1] and lines[1][2], nil)
+AltStable.ItemHolders, held = nil, {}
+
+-- Once per opening: a re-scan after a craft does not read them again.
+WoW.tradeSkill.recipes[2331].reagents = { 785, 4, 3371, 1 }
+T.ScheduleScan()
+WoW.flushTimers()
+eq("a re-scan in the same opening keeps what it read", flat(store[2331].reagents), "785,3,3371,1")
+T.OnClose()
+T.OnShow()
+WoW.flushTimers()
+eq("the next opening reads them again", flat(store[2331].reagents), "785,4,3371,1")
+
+-- A read that fails keeps what is held; agreement drops it.
+WoW.tradeSkill.recipes[2331].schematicError = true
+T.OnClose(); T.OnShow(); WoW.flushTimers()
+eq("a read that throws keeps the entry", store[2331] and flat(store[2331].reagents), "785,4,3371,1")
+WoW.tradeSkill.recipes[2331].schematicError = nil
+WoW.tradeSkill.recipes[2331].reagents = { 3371, 1, 785, 2 }
+T.OnClose(); T.OnShow(); WoW.flushTimers()
+eq("once the window agrees with RecipeData again, the entry goes", store[2331], nil)
+eq("  and the data's amounts are back", flat((T.Reagents(2331))), "785,2,3371,1")
+
+-- Account-wide and never synced: the character's snapshot and its stamp don't move.
+fresh()
+setAlchemy({ [2331] = { name = "Elixir of Lesser Agility", learned = true } })
+T.OnShow(); WoW.flushTimers()
+local blob, stampBefore, touchedBefore = T.SerializePlayer(ME), AltStableProfessionsDB[ME].stamp, AltStableDB[ME].lastUpdate
+WoW.now = WoW.now + 10
+WoW.tradeSkill.recipes[2331].reagents = { 785, 3, 3371, 1 }
+T.OnClose(); T.OnShow(); WoW.flushTimers()
+check("a reagent difference is kept", AltStableProfessionsReagents[2331] ~= nil)
+eq("  without a new snapshot stamp", AltStableProfessionsDB[ME].stamp, stampBefore)
+eq("  or a touch of the character (which would sync it)", AltStableDB[ME].lastUpdate, touchedBefore)
+-- The blob's `full` is the scan's time and moves on every scan; nothing else may.
+local function noFull(b) return (b:gsub(":%d+:([%d,]*)$", ":-:%1")) end
+eq("  or anything new in the synced blob", noFull(T.SerializePlayer(ME)), noFull(blob))
+
+local tocText = io.open("Plugins/Professions/AltStableProfessions.toc"):read("*a")
+check("the TOC saves the reagents store", tocText:match("## SavedVariables:[^\n]*AltStableProfessionsReagents") ~= nil)
+readModelState()   -- the shared fixture again, for the sections below
 
 -- A spell the client does not have: asked for once, and a failed answer does
 -- not come back as a redraw.

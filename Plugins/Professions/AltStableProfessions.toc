@@ -6,7 +6,7 @@
 ## Version: @project-version@
 ## Dependencies: AltStable
 ## LoadOnDemand: 1
-## SavedVariables: AltStableProfessionsDB
+## SavedVariables: AltStableProfessionsDB, AltStableProfessionsReagents
 
 RecipeData.lua
 AltStableProfessions.lua
