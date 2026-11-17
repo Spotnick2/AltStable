@@ -31,9 +31,15 @@
 -- Craft cooldowns go on the CORE record as cd_<Profession>@<label>, the field
 -- the grid's profession tooltip and the login toast already read, so the core
 -- syncs and clears them like any other field.
+--
+-- Reagents the open window disagrees with (#348), account-wide and never synced:
+--   AltStableProfessionsReagents[spellID] = { reagents = { item, count, ... },
+--                                            at = time(), build = "70959" }
+-- An entry exists only while the window's amounts differ from RecipeData's.
 ------------------------------------------------------------
 
 AltStableProfessionsDB = AltStableProfessionsDB or {}
+AltStableProfessionsReagents = AltStableProfessionsReagents or {}
 
 local ADDON_ID     = "professions"
 local BLOB_VERSION = "v1"
@@ -130,6 +136,93 @@ end
 local function LineRecipes(line)
     BuildIndexes()
     return lineIndex[line] or {}
+end
+
+------------------------------------------------------------
+-- Reagents: the profession window's where it disagrees (#348), else RecipeData's
+--
+-- RecipeData's reagents come from the client's SpellReagents table, but the
+-- server decides what a craft takes. At 70938 five Tailoring recipes went up by
+-- a cloth in the table, and a change on the server alone would never reach it.
+-- So the open window is read too, and where it differs, it wins.
+------------------------------------------------------------
+
+local function Overrides()
+    if type(AltStableProfessionsReagents) ~= "table" then AltStableProfessionsReagents = {} end
+    return AltStableProfessionsReagents
+end
+
+-- One craft's reagents, flat { item, count, ... }, and true when they are the
+-- window's rather than the generated data's. nil when neither has any.
+local function Reagents(id)
+    local o = Overrides()[id]
+    if type(o) == "table" and type(o.reagents) == "table" and o.reagents[1] then return o.reagents, true end
+    local r = Data()[id]
+    if r and type(r.reagents) == "table" and r.reagents[1] then return r.reagents, false end
+    return nil
+end
+
+-- The window's reagents for one recipe, flat, from GetRecipeSchematic. Measured
+-- on 70959 (Elixir of Lion's Strength): one slot per reagent, reagentType 1
+-- (Basic), required = true, one item each, quantityRequired the count. Only
+-- required Basic slots are what one craft takes. nil when the answer cannot be
+-- read that way: a slot of alternatives or a currency has no place in a flat
+-- list, and an empty answer is not trusted to mean "takes nothing".
+local BASIC_REAGENT = 1
+local function SchematicReagents(id)
+    local ok, s = Try(TS().GetRecipeSchematic, id, false)
+    if not ok or type(s) ~= "table" or type(s.reagentSlotSchematics) ~= "table" then return nil end
+    local out = {}
+    for _, slot in ipairs(s.reagentSlotSchematics) do
+        if type(slot) ~= "table" then return nil end
+        if slot.reagentType == BASIC_REAGENT and slot.required == true then
+            local items, n = slot.reagents, tonumber(slot.quantityRequired)
+            if type(items) ~= "table" or #items ~= 1 or type(items[1]) ~= "table" then return nil end
+            local item = tonumber(items[1].itemID)
+            if not item or not n or n <= 0 then return nil end
+            out[#out + 1] = item
+            out[#out + 1] = n
+        end
+    end
+    return out[1] and out or nil
+end
+
+-- Same items in the same amounts, in any order (the window's order need not be
+-- the table's).
+local function SameReagents(a, b)
+    local function tally(t)
+        local m = {}
+        if type(t) == "table" then
+            for i = 1, #t - 1, 2 do m[t[i]] = (m[t[i]] or 0) + t[i + 1] end
+        end
+        return m
+    end
+    local ma, mb = tally(a), tally(b)
+    for k, v in pairs(ma) do if mb[k] ~= v then return false end end
+    for k in pairs(mb) do if ma[k] == nil then return false end end
+    return true
+end
+
+-- seen = { [spellID] = flat reagents } from one window. Keeps an entry for each
+-- recipe the window disagrees on and drops one it agrees on again (RecipeData
+-- regenerated, or the server changed back). Returns true if anything changed.
+local function ApplyWindowReagents(seen)
+    local store, data, changed = Overrides(), Data(), false
+    local okb, _, build = pcall(GetBuildInfo)
+    build = okb and build or nil
+    for id, w in pairs(seen) do
+        local r = data[id]
+        if SameReagents(w, r and r.reagents) then
+            if store[id] ~= nil then store[id] = nil; changed = true end
+        else
+            local held = store[id]
+            if not (type(held) == "table" and SameReagents(held.reagents, w)) then
+                store[id] = { reagents = w, at = time(), build = build }
+                changed = true
+            end
+        end
+    end
+    return changed
 end
 
 ------------------------------------------------------------
@@ -358,8 +451,16 @@ local function Candidate()
             end
         end
     end
+    -- The learned recipes' reagents (#348), once per profession per opening:
+    -- a scan re-runs after every craft, and the amounts don't change between.
+    -- A recipe whose answer can't be read is left out, keeping what we hold.
+    local reagents
+    if scan.reagentsLine ~= line then
+        reagents = {}
+        for id in pairs(known) do reagents[id] = SchematicReagents(id) end
+    end
     return { line = line, rank = tonumber(base.skillLevel) or 0, max = tonumber(base.maxSkillLevel) or 0,
-             known = known, cds = cds, labels = labels, cdOk = cdOk }
+             known = known, cds = cds, labels = labels, cdOk = cdOk, reagents = reagents }
 end
 
 local function Commit(c)
@@ -383,6 +484,12 @@ local function Commit(c)
     -- A cooldown alone must reach peers too: the core only sends a character
     -- whose lastUpdate moved, and no recipe changed.
     if changed or cdChanged then Changed(guid) end
+    -- Not a change of the character's: the store is account-wide and never
+    -- synced, so only the tab redraws.
+    if c.reagents then
+        scan.reagentsLine = c.line
+        if ApplyWindowReagents(c.reagents) and AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
+    end
 end
 
 local function RunScan(gen)
@@ -404,7 +511,7 @@ local function ScheduleScan()
     C_Timer.After(0.5, function() RunScan(gen) end)
 end
 
-local function OnShow()   scan.open = true;  ScheduleScan() end
+local function OnShow()   scan.open = true; scan.reagentsLine = nil; ScheduleScan() end
 local function OnClose()  scan.open = false; scan.gen = scan.gen + 1 end
 local function OnChanging() scan.gen = scan.gen + 1 end
 
@@ -768,12 +875,12 @@ end
 --   crafters = for each of `knowers`: { owner, short = { { item, need, have, from } } },
 --              `from` the other alt holding the most; an empty `short` is "has it all"
 local function ReagentPlan(id, knowers, cache)
-    local r = Data()[id]
-    if not (r and r.reagents and r.reagents[1]) then return nil, "none" end
+    local list = Reagents(id)
+    if not list then return nil, "none" end
     if not ReagentsCounted() then return nil, "absent" end
     local plan = { reagents = {}, enough = true, crafters = {} }
-    for i = 1, #r.reagents - 1, 2 do
-        local item, need = r.reagents[i], r.reagents[i + 1]
+    for i = 1, #list - 1, 2 do
+        local item, need = list[i], list[i + 1]
         local h = Holders(item, cache)
         if not h then return nil, "failed" end
         plan.reagents[#plan.reagents + 1] = { item = item, need = need, total = h.total, holders = h.list }
@@ -814,13 +921,16 @@ local CRAFTERS_SHOWN = 4
 -- The reagent block of a recipe row's tooltip, as { left, right, lr, lg, lb, rr, rg, rb }
 -- lines (a nil right is a single line). Pure, so tests read it.
 local function ReagentLines(id, knowers)
-    local r = Data()[id]
-    if not (r and r.reagents and r.reagents[1]) then return {} end
-    local out = { { "Reagents", nil, 1, 0.82, 0 } }
+    local list, fromWindow = Reagents(id)
+    if not list then return {} end
+    -- Flagged (#348): these amounts are the profession window's, because
+    -- AltStable's own data says otherwise.
+    local out = { fromWindow and { "Reagents", "as the profession window showed", 1, 0.82, 0, 0.6, 0.6, 0.6 }
+                  or { "Reagents", nil, 1, 0.82, 0 } }
     local plan, why = ReagentPlan(id, knowers)
     if not plan then
-        for i = 1, #r.reagents - 1, 2 do
-            out[#out + 1] = { r.reagents[i + 1] .. " x " .. ItemName(r.reagents[i]), nil, 1, 1, 1 }
+        for i = 1, #list - 1, 2 do
+            out[#out + 1] = { list[i + 1] .. " x " .. ItemName(list[i]), nil, 1, 1, 1 }
         end
         out[#out + 1] = { why == "failed" and "The counts across your alts could not be read."
                           or "Turn on the Warband plugin to count them across your alts.", nil, 0.6, 0.6, 0.6 }
@@ -1642,6 +1752,8 @@ local function BootstrapPlugin()
             ResetState = function() pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil end,
             Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
             ReagentPlan = ReagentPlan, ReagentLines = ReagentLines, ReagentsCounted = ReagentsCounted,
+            Reagents = Reagents, SchematicReagents = SchematicReagents, SameReagents = SameReagents,
+            ApplyWindowReagents = ApplyWindowReagents,
             ItemName = ItemName, itemRequested = itemRequested,
         },
     })

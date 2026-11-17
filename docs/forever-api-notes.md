@@ -495,6 +495,27 @@ event; the raw log is `AltStableProbeDB.prof` / `.profEvents`.
 Not yet measured: `NEW_RECIPE_LEARNED` (no recipe was learned while the probe listened),
 `GetRecipeCooldown` (no cooldown recipe known).
 
+### A recipe's reagents from the window: `GetRecipeSchematic` (1.60.1.70959, 2026-11-17, #348)
+
+With the Alchemy window open, for Elixir of Lion's Strength (2329, learned), printing each
+`reagentSlotSchematics` slot's `reagentType, quantityRequired, required, #reagents, reagents[1].itemID`:
+
+```
+/run local s=C_TradeSkillUI.GetRecipeSchematic(2329,false) for _,r in ipairs(s.reagentSlotSchematics) do local g=r.reagents[1] print(r.reagentType,r.quantityRequired,r.required,#r.reagents,g and g.itemID) end
+1 1 true 1 2449
+1 1 true 1 765
+1 1 true 1 3371
+```
+
+The Retail struct, filled for a Classic-style recipe: one slot per reagent, each Basic
+(`Enum.CraftingReagentType` 1), required, one item, and the count in `quantityRequired`. It matches
+`RecipeData.lua` (`2449,1,765,1,3371,1`, from `SpellReagents`). The Professions plugin reads it for
+learned recipes while the window is open, and keeps the window's amounts where they differ.
+
+Not measured: the call with the window closed, for an unlearned recipe, and a recipe with optional
+or alternative reagents. The plugin doesn't need the first two, and the reader leaves out
+anything that isn't a required Basic slot with one item.
+
 ---
 
 ## Talents: one trait tree per class, with the classic trees as groups (measured, 1.60.1.70938, #273)

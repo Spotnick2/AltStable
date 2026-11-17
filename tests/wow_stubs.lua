@@ -1758,6 +1758,33 @@ C_TradeSkillUI = {
         if r and r.cooldown and r.cooldown > 0 then return r.cooldown, false, 0, 0 end
         return nil
     end,
+    -- Measured on 70959 with the Alchemy window open (Elixir of Lion's Strength,
+    -- 2329): one slot per reagent, each reagentType 1 (Basic), required = true,
+    -- one item, quantityRequired its count. A recipe's `reagents` here is flat
+    -- { item, count, ... } and builds those slots; `slots` replaces them raw,
+    -- for the shapes not measured (alternatives, optional slots). `schematicError`
+    -- makes the call throw. Not measured with the window closed: the plugin
+    -- reads it only while one is open.
+    GetRecipeSchematic = function(id, isRecraft)
+        local r = WoW.tradeSkill.recipes[id]
+        if r and r.schematicError then error("schematic") end
+        local slots = r and r.slots
+        if not slots then
+            slots = {}
+            local flat = r and r.reagents or {}
+            for i = 1, #flat - 1, 2 do
+                slots[#slots + 1] = { reagents = { { itemID = flat[i] } }, reagentType = 1,
+                                      quantityRequired = flat[i + 1], required = true,
+                                      variableQuantities = {}, dataSlotType = 1,
+                                      dataSlotIndex = #slots + 1, slotIndex = #slots + 1,
+                                      hiddenInCraftingForm = false }
+            end
+        end
+        return { recipeID = id, icon = 134400, quantityMin = 1, quantityMax = 1,
+                 name = r and r.name or ("Spell " .. tostring(id)), recipeType = 1,
+                 reagentSlotSchematics = slots, isRecraft = isRecraft and true or false,
+                 hasCraftingOperationInfo = false }
+    end,
     GetProfessionInfoByRecipeID = function(id)
         local line = WoW.recipeLines and WoW.recipeLines[id]
         if not line then return { professionID = 0, parentProfessionID = 0, professionName = "" } end
@@ -1892,7 +1919,7 @@ local allowNil = {}
 -- addon, its plugins and probe, the frames it looks up by name before making
 -- them, and the Companion's manifest (a separate addon folder).
 for _, n in ipairs({ "AltStable", "AltStableDB", "AltStableConfig", "AltStablePortraits", "AltStableAltsDB", "AltStableRosterDB" }) do allowNil[n] = true end
-for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
+for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableProfessionsReagents", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
 for _, n in ipairs({ "AltStableCopyPrompt", "AltStableForgetPrompt", "AltStableSyncAskPrompt", "AltStableProbe", "AltStableProbeCharDB", "AltStableProbeMachineDB" }) do allowNil[n] = true end
 -- Libraries, before their file creates them.
 for _, n in ipairs({ "LibStub", "ChatThrottleLib" }) do allowNil[n] = true end
