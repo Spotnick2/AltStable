@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.7.2 - 2026-11-17
+
+Sync between your accounts, made more reliable. Built for client 1.60.1.70938, the live build.
+v1.7.2 syncs with everything v1.7.1 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.5** is the current version.
+
+### Fixed
+
+- **Last Online after a logout to the character list.** The other account now marks the character
+  as gone as soon as you leave, instead of after almost a minute of silence.
+- **A character switch can't credit the new character's data to the old one.** Each message is
+  now proven to come from the character that sent it, not taken from Battle.net's list, which
+  lags a relog.
+- Both come from LibAccountSync r8, the library AltStable syncs your accounts with. After a
+  `/reload` on one account, sync may wait a few seconds longer before it resumes.
+
 ## v1.7.1 - 2026-11-15
 
 Rested XP with the Well Rested talent. Built for client 1.60.1.70938, the live build. The talent
