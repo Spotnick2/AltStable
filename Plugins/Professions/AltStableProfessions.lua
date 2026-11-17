@@ -18,7 +18,9 @@
 --   AltStableProfessionsDB[guid] = {
 --     stamp = owner's time, strictly increasing (so two snapshots never share one),
 --     profs = { [skillLine] = { rank, max, known = { [spellID] = true },
---                               full = time of the last COMPLETE scan, or nil } }
+--                               full = time of the last COMPLETE scan, or nil } },
+--     wish  = { [spellID] = true } or nil: the recipes it wants (#271), starred
+--             on the account that plays it, cleared as it learns them
 --   }
 --   no entry for a guid        -> never scanned: nothing is claimed about it
 --   profs[line], known empty   -> owned, window never opened ("not scanned")
@@ -255,6 +257,73 @@ local function setsEqual(a, b)
 end
 
 ------------------------------------------------------------
+-- The wishlist (#271): the recipes an alt wants, on its own snapshot, so it
+-- syncs with the alt. Only the account that plays the alt writes it
+-- (scannedHere): every other client adopts that account's snapshots whole, so
+-- a star set there would be overwritten, and the core does not send another
+-- account's characters anyway.
+------------------------------------------------------------
+
+local function KnowsAnywhere(e, id)
+    for _, p in pairs(e.profs or {}) do
+        if type(p) == "table" and p.known and p.known[id] then return true end
+    end
+    return false
+end
+
+-- Wants it and does not know it yet: a snapshot from before the alt learned it
+-- (or from a client that does not clear) never shows a star on a known recipe.
+local function Wants(guid, id)
+    local e = AltStableProfessionsDB[guid]
+    return type(e) == "table" and type(e.wish) == "table" and e.wish[id] == true
+        and not KnowsAnywhere(e, id) or false
+end
+
+-- A snapshot of our own to write to: never one the plugin has not made yet,
+-- since an entry is a claim about the alt's professions (an empty one says
+-- "has none").
+local function CanWish(guid)
+    local c = AltStableDB and AltStableDB[guid]
+    local e = AltStableProfessionsDB[guid]
+    return type(c) == "table" and c.scannedHere and type(e) == "table" and e.stamp and true or false
+end
+
+-- Drops the stars of recipes the alt knows now. Whether any went.
+local function ClearLearnedWishes(e)
+    if type(e.wish) ~= "table" then e.wish = nil; return false end
+    local changed = false
+    for id in pairs(e.wish) do
+        if KnowsAnywhere(e, id) then e.wish[id] = nil; changed = true end
+    end
+    if not next(e.wish) then e.wish = nil end
+    return changed
+end
+
+-- Star (on) or unstar a recipe for an alt. Whether anything changed.
+local function SetWish(guid, id, on)
+    id = tonumber(id)
+    if not id or not CanWish(guid) then return false end
+    local e = AltStableProfessionsDB[guid]
+    on = on and true or nil
+    if on and KnowsAnywhere(e, id) then return false end
+    if type(e.wish) ~= "table" then e.wish = nil end
+    if (e.wish and e.wish[id] or nil) == on then return false end
+    e.wish = e.wish or {}
+    e.wish[id] = on
+    if not next(e.wish) then e.wish = nil end
+    Bump(e)
+    -- Only the character being played is touched: lastUpdate is its Last
+    -- Online, and an alt starred from another one has not been online. Its
+    -- snapshot goes out with its record, the next time that is sent.
+    if guid == (UnitGUID and UnitGUID("player")) then
+        Changed(guid)
+    elseif AT.isActive and AT.RequestRefresh then
+        AT.RequestRefresh()
+    end
+    return true
+end
+
+------------------------------------------------------------
 -- Cooldowns: cd_<Profession>@<label> on the core record
 ------------------------------------------------------------
 
@@ -476,6 +545,7 @@ local function Commit(c)
         p.known, p.rank, p.max = c.known, c.rank, c.max
         changed = true
     end
+    if ClearLearnedWishes(e) then changed = true end
     p.full = time()   -- "last verified", whether or not anything moved
     if changed then Bump(e) end
     local cdChanged = c.cdOk
@@ -538,14 +608,18 @@ local function OnRecipeLearned(recipeID)
     if not p then p = { known = {} }; e.profs[line] = p end
     if p.known[recipeID] then return end
     p.known[recipeID] = true
+    ClearLearnedWishes(e)
     Bump(e)
     Changed(guid)
 end
 
 ------------------------------------------------------------
 -- Sync
---   v1|s=<stamp>|p=<line>:<rank>:<max>:<full or ->:<id,id,...>;...
+--   v1|s=<stamp>[|w=<id,id,...>]|p=<line>:<rank>:<max>:<full or ->:<id,id,...>;...
 -- `p=` present and empty = "no professions". Missing = malformed.
+-- `w=` is the wishlist (#271), only when there is one. Still v1: every parser
+-- reads s= at the start and p= at the end, so an older one skips w= and keeps
+-- the rest. No w= = no wishes.
 ------------------------------------------------------------
 
 local function SerializePlayer(guid)
@@ -566,7 +640,23 @@ local function SerializePlayer(guid)
         parts[#parts + 1] = string.format("%d:%d:%d:%s:%s", line, p.rank or 0, p.max or 0,
             p.full and tostring(p.full) or "-", table.concat(ids, ","))
     end
-    return BLOB_VERSION .. "|s=" .. e.stamp .. "|p=" .. table.concat(parts, ";")
+    local wish = {}
+    for id in pairs(type(e.wish) == "table" and e.wish or {}) do
+        if tonumber(id) then wish[#wish + 1] = id end
+    end
+    table.sort(wish)
+    local w = #wish > 0 and ("|w=" .. table.concat(wish, ",")) or ""
+    return BLOB_VERSION .. "|s=" .. e.stamp .. w .. "|p=" .. table.concat(parts, ";")
+end
+
+-- The w= field, or nil for none; false when malformed.
+local function ParseWish(rest)
+    local s = rest:match("|w=([^|]*)|")
+    if not s then return nil end
+    if not s:match("^[%d,]*$") then return false end
+    local wish = {}
+    for id in s:gmatch("%d+") do wish[tonumber(id)] = true end
+    return next(wish) and wish or nil
 end
 
 -- Lines this build does not know (a newer peer's) are skipped, not stored: a
@@ -608,7 +698,9 @@ local function DeserializePlayer(guid, blob)
     if type(held) == "table" and (held.stamp or 0) >= stamp then return end
     local profs = ParseProfs(profStr)
     if not profs then return end                        -- malformed: keep what we have
-    AltStableProfessionsDB[guid] = { stamp = stamp, profs = profs }
+    local wish = ParseWish(rest)
+    if wish == false then return end
+    AltStableProfessionsDB[guid] = { stamp = stamp, profs = profs, wish = wish }
     -- No TouchCharacter: receiving is not a change of ours, and a relay that
     -- moved lastUpdate would make every peer re-send it forever.
     if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
@@ -976,7 +1068,8 @@ local function ReagentLines(id, knowers)
 end
 
 -- Builds the list the panel shows. Pure: state in, rows out, so tests drive it.
---   state = { line, search, filter ("all"|"known"|"missing"|"nobody"), onlyDrops, onlyFavor,
+--   state = { line, search, filter ("all"|"known"|"missing"|"nobody"|"craftable"|"wishlist"),
+--             onlyDrops, onlyFavor,
 --             focus (guid), owners (from AllOwners, optional) }
 local function BuildRows(state)
     local lines = {}
@@ -1002,8 +1095,11 @@ local function BuildRows(state)
             if keep and state.onlyDrops and not HasNonTrainerSource(r) then keep = false end
             if keep and state.onlyFavor and not (r and r.favor) then keep = false end
             if keep then
-                local knownBy = {}
-                for _, o in ipairs(owners) do if o.known[id] then knownBy[#knownBy + 1] = o end end
+                local knownBy, wantedBy = {}, {}
+                for _, o in ipairs(owners) do
+                    if o.known[id] then knownBy[#knownBy + 1] = o end
+                    if Wants(o.guid, id) then wantedBy[#wantedBy + 1] = o end
+                end
                 local f = state.filter or "all"
                 if f == "known" then
                     if focus then keep = focus.known[id] and true or false else keep = #knownBy > 0 end
@@ -1027,10 +1123,13 @@ local function BuildRows(state)
                     local knows = focus and focus.known[id] or (not focus and #knownBy > 0)
                     local plan = knows and ReagentPlan(id, nil, reagentCache)
                     keep = plan and plan.enough or false
+                elseif f == "wishlist" then
+                    -- The focused alt's stars, or everyone's.
+                    if focus then keep = Wants(focus.guid, id) else keep = #wantedBy > 0 end
                 end
                 if keep then
                     rows[#rows + 1] = { id = id, line = line, name = name, recipe = r, knownBy = knownBy,
-                                        owners = owners, focus = focus,
+                                        wantedBy = wantedBy, owners = owners, focus = focus,
                                         nobody = #knownBy == 0 and nobodyText or nil }
                 end
             end
@@ -1074,6 +1173,7 @@ end
 --
 -- On a recipe item (RecipeData's `items`, matched by name - an item that
 -- matched no recipe or several has no line at all):
+--   Wanted by      alts that starred it (#271), unless turned off
 --   Known by       alts that know it
 --   Meets skill    complete scan, the skill, not known - skill ONLY
 --   Skill too low  complete scan, not known, under the requirement
@@ -1086,6 +1186,11 @@ end
 -- the best of them - knowing it through Tailoring is knowing it, whatever the
 -- Leatherworking skill (review of #133).
 local VERDICT_RANK = { known = 5, meets = 4, low = 3, unknown = 2, unscanned = 1 }
+
+-- The "Wanted by" line, on unless turned off in Options (#271).
+local function WishTooltipOn()
+    return not (AltStableConfig and AltStableConfig.professionsWishTooltip == false)
+end
 
 -- The lines for one item, as { { label, text }, ... }. Pure, so tests read it.
 local function TooltipLines(itemID)
@@ -1131,6 +1236,13 @@ local function TooltipLines(itemID)
             for _, line in ipairs(r.skill or {}) do if BY_LINE[line] then names[#names + 1] = BY_LINE[line].label end end
             out[#out + 1] = { "|cff888888AltStable|r", "|cff888888No alt has " ..
                 (#names > 0 and table.concat(names, " or ") or "this profession") .. "|r" }
+        end
+        if WishTooltipOn() then
+            local wanted = {}
+            for _, guid in ipairs(order) do
+                if Wants(guid, id) then wanted[#wanted + 1] = best[guid].o end
+            end
+            if #wanted > 0 then out[#out + 1] = { "Wanted by", NameList(wanted) } end
         end
         if #groups.known > 0 then out[#out + 1] = { "Known by", NameList(groups.known) } end
         if #groups.meets > 0 then
@@ -1191,7 +1303,7 @@ end
 ------------------------------------------------------------
 
 local panel, emptyFS, statusFS, searchBox, strip
-local PAD, ROW_H, ICON = 10, 20, 16
+local PAD, ROW_H, ICON, STAR = 10, 20, 16, 14
 local PICK = 26
 local CARD_W, CARD_H = 150, 46
 local TOP_PICK = 8
@@ -1238,6 +1350,9 @@ local function RowOnEnter(self)
     GameTooltip:AddLine(" ")
     GameTooltip:AddDoubleLine("Requires", r and r.learn and tostring(r.learn) or "unknown", 1, 0.82, 0, 1, 1, 1)
     GameTooltip:AddDoubleLine("Source", SourceText(r), 1, 0.82, 0, 1, 1, 1)
+    if #(row.wantedBy or {}) > 0 then
+        GameTooltip:AddDoubleLine("Wanted by", NameList(row.wantedBy), 1, 0.82, 0, 1, 1, 1)
+    end
     if #row.knownBy > 0 then
         GameTooltip:AddLine("Known by", 1, 0.82, 0)
         for _, o in ipairs(row.knownBy) do
@@ -1273,17 +1388,71 @@ end
 
 local function RowOnLeave() GameTooltip:Hide() end
 
+-- A row's star (#271): what it shows, and whether a click stars or unstars.
+--   "on"   wanted - by the alt in focus, or (no focus) by anyone
+--   "off"  the alt in focus could star it: our own, and it does not know it
+--   nil    nothing to show
+-- Without an alt in focus, nobody is the one wanting it: nothing to click.
+local function StarState(row)
+    local f = row.focus
+    if f then
+        local can = CanWish(f.guid) and not f.known[row.id]
+        if Wants(f.guid, row.id) then return "on", can end
+        if can then return "off", true end
+        return nil, false
+    end
+    return #(row.wantedBy or {}) > 0 and "on" or nil, false
+end
+
+-- SetWish refuses what may not be starred: another account's alt, a known recipe.
+local function StarOnClick(self)
+    local row = self:GetParent().row
+    if not (row and row.focus) then return end
+    if SetWish(row.focus.guid, row.id, not Wants(row.focus.guid, row.id)) then AT.Refresh() end
+end
+
+local function StarOnEnter(self)
+    local row = self:GetParent().row
+    if not row then return end
+    local state, can = StarState(row)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Wishlist", 1, 1, 1)
+    if #(row.wantedBy or {}) > 0 then
+        GameTooltip:AddDoubleLine("Wanted by", NameList(row.wantedBy), 1, 0.82, 0, 1, 1, 1)
+    end
+    local f = row.focus
+    if not f then
+        GameTooltip:AddLine("Pick an alt's card above to star recipes for it.", 0.7, 0.7, 0.7, true)
+    elseif can then
+        GameTooltip:AddLine((state == "on" and "Click: no longer wanted by " or "Click: wanted by ") .. ColorName(f),
+            0.7, 0.7, 0.7, true)
+    elseif f.known[row.id] then
+        GameTooltip:AddLine(ColorName(f) .. " knows it.", 0.7, 0.7, 0.7, true)
+    else
+        GameTooltip:AddLine(ColorName(f) .. " is played on another account: star it there.", 0.7, 0.7, 0.7, true)
+    end
+    GameTooltip:Show()
+end
+
 local function GetRow(i)
     local row = AT.rowsPool[i]
     if row then return row end
     row = CreateFrame("Button", nil, panel)
     row:SetHeight(ROW_H)
+    row.star = CreateFrame("Button", nil, row)
+    row.star:SetSize(STAR, STAR)
+    row.star:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.star.tex = row.star:CreateTexture(nil, "ARTWORK")
+    row.star.tex:SetAllPoints()
+    row.star:SetScript("OnClick", StarOnClick)
+    row.star:SetScript("OnEnter", StarOnEnter)
+    row.star:SetScript("OnLeave", RowOnLeave)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetSize(ICON, ICON)
-    row.icon:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.icon:SetPoint("LEFT", row, "LEFT", STAR + 2, 0)
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-    row.name:SetWidth(210)
+    row.name:SetWidth(210 - STAR - 2)
     row.name:SetJustifyH("LEFT")
     row.skill = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.skill:SetPoint("LEFT", row, "LEFT", 240, 0)
@@ -1336,6 +1505,15 @@ function AT.Layout()
         w:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(TOP_ROWS + (slot - 1) * ROW_H))
         w:SetPoint("RIGHT", panel, "RIGHT", -PAD - 12, 0)
         w.row = r
+        local star, can = StarState(r)
+        if star then
+            w.star.tex:SetAtlas(star == "on" and "auctionhouse-icon-favorite" or "auctionhouse-icon-favorite-off")
+            w.star.tex:SetAlpha((star == "on" and can) and 1 or (star == "on" and 0.7 or 0.45))
+            w.star.tex:Show()
+        else
+            -- The button stays, to hover: its tooltip says how to star.
+            w.star.tex:Hide()
+        end
         w.icon:SetTexture(RecipeIcon(r.id))
         local label = r.name or ("#" .. r.id)
         if (AT.search or "") ~= "" then label = label .. "  |cff888888" .. BY_LINE[r.line].label .. "|r" end
@@ -1497,7 +1675,7 @@ function AT.OnWheel(delta, overCards)
 end
 
 local FILTERS = { { "all", "All" }, { "known", "Known" }, { "missing", "Missing" }, { "nobody", "Nobody" },
-                  { "craftable", "Craftable" } }
+                  { "craftable", "Craftable" }, { "wishlist", "Wishlist" } }
 
 local function BuildPanel(mainFrame)
     if panel then return end
@@ -1672,10 +1850,11 @@ local GRID_PARTS = { "bodyScroll", "frozenScroll", "headerScroll", "frozenHeader
 -- and the toolbar - twelve profession buttons and the search box - about 570.
 -- The filter row needs about 700 since Craftable made it five buttons (#268),
 -- and 740 since the Favor checkbox (#270): the three checkboxes and the status
--- text on its right would overlap below that.
+-- text on its right would overlap below that. Wishlist made it six (#271),
+-- 62 more.
 -- Below the floor's height there is no room for rows under the cards.
-local PREFERRED_PANEL_W = 760
-local MIN_PANEL_W, MIN_PANEL_H = 740, 400
+local PREFERRED_PANEL_W = 820
+local MIN_PANEL_W, MIN_PANEL_H = 802, 400
 AT.PREFERRED_PANEL_W, AT.MIN_PANEL_W, AT.MIN_PANEL_H = PREFERRED_PANEL_W, MIN_PANEL_W, MIN_PANEL_H
 
 -- The floor as a window size: the panel sits beside the sidebar, under the
@@ -1708,6 +1887,15 @@ end
 -- Bootstrap + events
 ------------------------------------------------------------
 
+-- The wishlist's test exports (#271), added here: BootstrapPlugin is at Lua
+-- 5.1's 60 upvalues.
+local function WishExports(t)
+    t.Wants, t.CanWish, t.SetWish, t.ClearLearnedWishes = Wants, CanWish, SetWish, ClearLearnedWishes
+    t.ParseWish, t.StarState, t.StarOnClick, t.StarOnEnter = ParseWish, StarState, StarOnClick, StarOnEnter
+    t.WishTooltipOn, t.FILTERS = WishTooltipOn, FILTERS
+    return t
+end
+
 local function BootstrapPlugin()
     if not AltStable or not AltStable.RegisterPlugin then
         Print("AltStable not found - make sure it is installed and enabled.")
@@ -1736,7 +1924,7 @@ local function BootstrapPlugin()
         OnCleanup     = function(keepGuid) Cleanup(keepGuid) end,
         OnForget      = function(guid) if guid then AltStableProfessionsDB[guid] = nil end end,
         _at           = AT,
-        _test = {
+        _test = WishExports({
             SerializePlayer = SerializePlayer, DeserializePlayer = DeserializePlayer, ParseProfs = ParseProfs,
             Candidate = Candidate, Commit = Commit, RunScan = RunScan, ScheduleScan = ScheduleScan,
             OnShow = OnShow, OnClose = OnClose, OnChanging = OnChanging, OnRecipeLearned = OnRecipeLearned,
@@ -1755,7 +1943,7 @@ local function BootstrapPlugin()
             Reagents = Reagents, SchematicReagents = SchematicReagents, SameReagents = SameReagents,
             ApplyWindowReagents = ApplyWindowReagents,
             ItemName = ItemName, itemRequested = itemRequested,
-        },
+        }),
     })
 
     EnsureTooltipHook()
