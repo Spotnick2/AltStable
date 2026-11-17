@@ -71,6 +71,13 @@ local AT = plugin._at
 -- is installed once, at bootstrap - before the tab is ever opened.
 local ttCalls = WoW.tooltipPostCalls[Enum.TooltipDataType.Item]
 check("the item-tooltip hook is installed at bootstrap", ttCalls ~= nil and #ttCalls == 1)
+-- The plugin's event frame, captured now for the same reason (#269 calls it
+-- with GET_ITEM_INFO_RECEIVED).
+local eventFrame
+for _, w in ipairs(WoW.frames) do
+    if w._events and w._events.GET_ITEM_INFO_RECEIVED and w._events.TRADE_SKILL_SHOW then eventFrame = w end
+end
+check("the plugin listens for items it asked the client to load (#269)", eventFrame ~= nil)
 
 local listed = false
 for _, p in ipairs(AltStable.LOD_PLUGINS) do if p.key == "professions" and p.addon == "AltStableProfessions" then listed = true end end
@@ -1496,6 +1503,228 @@ do
     AT.focus = nil
     plugin.OnDeactivate(main)
     AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin
+end
+
+------------------------------------------------------------
+-- The detail pane (#269)
+------------------------------------------------------------
+
+do
+    readModelState()
+    AltStableDB[A].level, AltStableDB[B].level = 40, 10
+    local savedRecipe = AltStableRecipeData.recipes[2331]
+    AltStableRecipeData.recipes[2331] = { skill = { 171 }, learn = 50, colors = { 50, 80, 100, 120 }, makes = 2455,
+                                          src = { 2 }, items = { 3396 }, reagents = { 785, 2, 3371, 1 } }
+    WoW.items[2455] = { name = "Elixir of Lesser Agility", quality = 2, minLevel = 15, icon = 134830 }
+    WoW.items[3396] = { name = "Recipe: Elixir of Lesser Agility", quality = 2 }
+    WoW.spellNames = { [2331] = "Elixir of Lesser Agility" }
+    for k in pairs(T.names) do T.names[k] = nil end
+    local plain = function(x) return (tostring(x):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local function detail(focus, id)
+        for _, r in ipairs(T.BuildRows({ line = 171, focus = focus })) do
+            if r.id == (id or 2331) then return T.DetailLines(r), r end
+        end
+    end
+    local function field(d, label)
+        for _, l in ipairs(d.lines) do if plain(l[1]) == label then return l[2] and plain(l[2]) or "" end end
+    end
+    local function has(d, text)
+        for _, l in ipairs(d.lines) do
+            if plain(l[1]):find(text, 1, true) or (l[2] and plain(l[2]):find(text, 1, true)) then return true end
+        end
+        return false
+    end
+
+    local d = detail(B)
+    eq("the pane names what it makes, in its quality's colour", d.title, "|cff1eff00Elixir of Lesser Agility|r")
+    check("  with its link, to shift-click into chat", d.link and d.link:find("item:2455", 1, true))
+    eq("  and its icon", d.icon, 134830)
+    eq("the level to use it, against the alt in focus: Birch is below it", field(d, "Use"), "level 15  (Birch is 10)")
+    check("  in red", (d.lines[1][2] or ""):find("|cffff4040", 1, true))
+    eq("  Alder is not: just the level", field(detail(A), "Use"), "level 15")
+    eq("  with nobody in focus: just the level", field(detail(nil), "Use"), "level 15")
+    eq("the skill to learn it", field(d, "Requires"), "50")
+    eq("the colour thresholds", field(d, "Difficulty"), "50  80  100  120")
+    eq("where the focused alt stands", field(d, "Birch"), "60, orange")
+    eq("  Alder", field(detail(A), "Alder"), "120, grey")
+    eq("  nothing without a focus", field(detail(nil), "Alder"), nil)
+    eq("where it comes from", field(d, "Source"), "Drop")
+    eq("the recipe item that teaches it", field(d, "Recipe"), "Recipe: Elixir of Lesser Agility")
+    eq("who knows it, in full", field(d, "Known by"), "Alder")
+    eq("who meets the skill", field(d, "Meets skill"), "Birch (60)")
+    eq("whom it cannot speak for", field(d, "Not scanned"), "Umber")
+    check("  and that only the skill is checked", has(d, "Specialisation, reputation and quest"))
+    check("its reagents", has(d, "Reagents"))
+    eq("nobody wants it: no line", field(d, "Wanted by"), nil)
+    AltStableProfessionsDB[B].wish = { [2331] = true }
+    eq("who wants it (#271)", field(detail(B), "Wanted by"), "Birch")
+    AltStableProfessionsDB[B].wish = nil
+    local low = detail(U)
+    check("an unscanned focus gets no verdict of its own", low ~= nil)
+    WoW.items[2455].minLevel = 1
+    eq("an item anyone can use has no level line", field(detail(B), "Use"), nil)
+    WoW.items[2455].minLevel = 15
+    local d2 = detail(nil, 2332)
+    eq("a recipe nobody knows says so", has(d2, "Nobody recorded"), true)
+
+    -- Not in the client's cache yet: asked for once, and said to be loading.
+    WoW.items[2455] = nil
+    WoW.itemLoadRequests = {}
+    for k in pairs(T.itemInfoAsked) do T.itemInfoAsked[k] = nil end
+    d = detail(B)
+    eq("an item the client has not loaded: loading", field(d, "Use"), "loading...")
+    eq("  the name falls back to the recipe's", plain(d.title), "Elixir of Lesser Agility")
+    eq("  no link to offer", d.link, nil)
+    detail(B)
+    local asked = 0
+    for _, id in ipairs(WoW.itemLoadRequests) do if id == 2455 then asked = asked + 1 end end
+    eq("  its load asked for once, not on every redraw", asked, 1)
+    WoW.items[2455] = { name = "Elixir of Lesser Agility", quality = 2, minLevel = 15, icon = 134830 }
+
+    -- In the tab: a click opens it, the list gives up its last two columns.
+    local heldReq, heldMin = AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize
+    AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = nil, nil
+    plugin.OnActivate(main)
+    AT.line, AT.focus, AT.search, AT.filter, AT.onlyDrops, AT.onlyFavor = 171, B, "", "all", false, false
+    AT.selected = nil
+    AT.Refresh()
+    local pane = T.Pane()
+    check("the pane is built, closed", pane ~= nil and not pane:IsShown())
+    local function shownRow(id)
+        for _, w in ipairs(AT.rowsPool) do if w:IsShown() and w.row and w.row.id == id then return w end end
+    end
+    local w = shownRow(2331)
+    check("  the list has its Source and Known-by columns", w and w.source:IsShown() and w.known:IsShown())
+    w:GetScript("OnClick")(w)
+    check("a click on a row opens the pane", pane:IsShown())
+    eq("  on that recipe", plain(pane.title:GetText()), "Elixir of Lesser Agility")
+    w = shownRow(2331)
+    check("  the row is marked", w and w.sel:IsShown())
+    check("  another is not", shownRow(2329) and not shownRow(2329).sel:IsShown())
+    check("  the list drops Source and Known by", w and not w.source:IsShown() and not w.known:IsShown())
+    local _, rel = w:GetPoint(2)
+    eq("  and ends where the pane starts", rel, pane)
+    local lineTexts = {}
+    for _, p in ipairs(pane.lines) do if p.l:IsShown() then lineTexts[#lineTexts + 1] = plain(p.l:GetText()) end end
+    check("  its lines are drawn", table.concat(lineTexts, ","):find("Requires", 1, true) ~= nil, table.concat(lineTexts, ","))
+
+    -- Longer than the pane: at the tab's 400 px floor its body is 206 px
+    -- (400 - 134 above the rows - 10 below - 46 header - 4), and every line
+    -- must still be reachable, by the wheel over the pane (Codex review of #367).
+    do
+        local VIEW = AT.MIN_PANEL_H - 134 - 10 - 46 - 4
+        eq("  (the floor this case stands for)", VIEW, 206)
+        local body = pane.body
+        body.GetHeight = function() return VIEW end
+        local lineH = 13   -- the stubs' 10 px strings, and the 3 px gap
+        AT.paneOffset = 0
+        AT.Refresh()
+        local function topOf(i) local _, _, _, _, y = pane.lines[i].l:GetPoint(1); return -y end
+        local last = 0
+        for i, p in ipairs(pane.lines) do if p.l:IsShown() then last = i end end
+        check("a long recipe at the floor runs past the pane", AT.paneMax and AT.paneMax > 0, tostring(AT.paneMax))
+        check("  its last line starts out of view", topOf(last) > VIEW - lineH, tostring(topOf(last)))
+        check("  and a bar says there is more", pane.thumb:IsShown())
+        local wheel = pane:GetParent():GetScript("OnMouseWheel")
+        local heldOver = pane.IsMouseOver
+        pane.IsMouseOver = function() return true end
+        AT.scrollRow = 0
+        wheel(pane:GetParent(), -1)
+        check("the wheel over the pane scrolls it", AT.paneOffset > 0 and topOf(1) < 0, tostring(AT.paneOffset))
+        eq("  not the list", AT.scrollRow, 0)
+        for _ = 1, 50 do wheel(pane:GetParent(), -1) end
+        eq("  as far as there is, no further", AT.paneOffset, AT.paneMax)
+        check("  where its last line is in view", topOf(last) >= 0 and topOf(last) <= VIEW - lineH,
+              tostring(topOf(last)))
+        local _, _, _, _, ty = pane.thumb:GetPoint(1)
+        check("  the bar at the bottom", ty < 0)
+        AT.Refresh()
+        eq("a redraw keeps the place", AT.paneOffset, AT.paneMax)
+        for _ = 1, 50 do wheel(pane:GetParent(), 1) end
+        eq("back up, to the top and no further", AT.paneOffset, 0)
+        eq("  the first line at the top", topOf(1), 0)
+        pane.IsMouseOver = function() return false end
+        wheel(pane:GetParent(), -1)
+        eq("the wheel elsewhere scrolls the list, not the pane", AT.paneOffset, 0)
+        pane.IsMouseOver = heldOver
+        body.GetHeight = function() return 40 end   -- so short that any recipe overflows
+        AT.paneOffset = 30
+        AT.Refresh()
+        eq("  (scrolled down)", AT.paneOffset, 30)
+        local other = shownRow(2329)
+        other:GetScript("OnClick")(other)
+        check("  (the other one overflows too)", AT.paneMax > 30, tostring(AT.paneMax))
+        eq("another recipe opens at its top", AT.paneOffset, 0)
+        shownRow(2331):GetScript("OnClick")(shownRow(2331))
+        body.GetHeight = function() return 5000 end
+        AT.Refresh()
+        check("one that fits: no bar", not pane.thumb:IsShown() and AT.paneMax == 0)
+        body.GetHeight = nil
+    end
+
+    -- Shift-click on the name: the game's own handler, with the item's link.
+    local linked
+    local heldHandle = rawget(_G, "HandleModifiedItemClick")
+    rawset(_G, "HandleModifiedItemClick", function(link) linked = link end)
+    pane.head:GetScript("OnClick")(pane.head)
+    check("a click on the name hands its link to the game (shift-click links it)",
+          linked and linked:find("item:2455", 1, true), tostring(linked))
+    rawset(_G, "HandleModifiedItemClick", heldHandle)
+    WoW.tooltipLines = {}
+    pane.head:GetScript("OnEnter")(pane.head)
+    check("hovering it shows the item", WoW.tooltipShown)
+
+    -- The pane's star stars it for the alt in focus, as the row's does.
+    AltStableDB[A].scannedHere = true
+    AT.focus = A; AT.Refresh()
+    AltStableProfessionsDB[A].profs[171].known[2331] = nil
+    AT.Refresh()
+    check("the pane's star can be clicked for Alder", pane.star.tex:IsShown()
+          and pane.star.tex._atlas == "auctionhouse-icon-favorite-off", tostring(pane.star.tex._atlas))
+    pane.star:GetScript("OnClick")(pane.star)
+    check("  and stars it", AltStableProfessionsDB[A].wish and AltStableProfessionsDB[A].wish[2331])
+    eq("  lit", pane.star.tex._atlas, "auctionhouse-icon-favorite")
+    check("  and the pane stays open on it", pane:IsShown() and AT.selected and AT.selected.id == 2331)
+
+    -- An item the pane asked for arrives: it redraws. One it never asked for does not.
+    local refreshes = 0
+    local heldRR = AT.RequestRefresh
+    AT.RequestRefresh = function() refreshes = refreshes + 1 end
+    T.itemInfoAsked[777001] = true
+    eventFrame._scripts.OnEvent(eventFrame, "GET_ITEM_INFO_RECEIVED", 777001, true)
+    eq("an item the pane asked for redraws it", refreshes, 1)
+    eventFrame._scripts.OnEvent(eventFrame, "GET_ITEM_INFO_RECEIVED", 777002, true)
+    eq("  one it did not, nothing", refreshes, 1)
+    AT.selected = nil
+    eventFrame._scripts.OnEvent(eventFrame, "GET_ITEM_INFO_RECEIVED", 777001, true)
+    eq("  nor with the pane closed", refreshes, 1)
+    AT.selected = { id = 2331, line = 171 }
+    AT.RequestRefresh = heldRR
+    T.itemInfoAsked[777001] = nil
+    AT.Refresh()
+
+    -- Closing: the same row again, the close button, or a filter that drops it.
+    w = shownRow(2331)
+    w:GetScript("OnClick")(w)
+    check("a second click on the row closes it", not pane:IsShown() and AT.selected == nil)
+    w = shownRow(2331)
+    check("  and the columns come back", w and w.source:IsShown() and w.known:IsShown() and not w.sel:IsShown())
+    w:GetScript("OnClick")(w)
+    pane.close:GetScript("OnClick")(pane.close)
+    check("the close button closes it", not pane:IsShown() and AT.selected == nil)
+    w = shownRow(2331)
+    w:GetScript("OnClick")(w)
+    shownRow(2329):GetScript("OnClick")(shownRow(2329))
+    eq("a click on another row moves it there", AT.selected and AT.selected.id, 2329)
+    AT.filter = "nobody"; AT.Refresh()
+    check("a filter that drops the open recipe closes it", not pane:IsShown() and AT.selected == nil)
+    AT.filter = "all"
+    AT.focus = nil
+    plugin.OnDeactivate(main)
+    AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin
+    AltStableRecipeData.recipes[2331] = savedRecipe
+    WoW.items[2455], WoW.items[3396] = nil, nil
+    for k in pairs(T.names) do T.names[k] = nil end
 end
 
 ------------------------------------------------------------
