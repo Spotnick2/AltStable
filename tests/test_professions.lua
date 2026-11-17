@@ -1608,6 +1608,60 @@ do
     for _, p in ipairs(pane.lines) do if p.l:IsShown() then lineTexts[#lineTexts + 1] = plain(p.l:GetText()) end end
     check("  its lines are drawn", table.concat(lineTexts, ","):find("Requires", 1, true) ~= nil, table.concat(lineTexts, ","))
 
+    -- Longer than the pane: at the tab's 400 px floor its body is 206 px
+    -- (400 - 134 above the rows - 10 below - 46 header - 4), and every line
+    -- must still be reachable, by the wheel over the pane (Codex review of #367).
+    do
+        local VIEW = AT.MIN_PANEL_H - 134 - 10 - 46 - 4
+        eq("  (the floor this case stands for)", VIEW, 206)
+        local body = pane.body
+        body.GetHeight = function() return VIEW end
+        local lineH = 13   -- the stubs' 10 px strings, and the 3 px gap
+        AT.paneOffset = 0
+        AT.Refresh()
+        local function topOf(i) local _, _, _, _, y = pane.lines[i].l:GetPoint(1); return -y end
+        local last = 0
+        for i, p in ipairs(pane.lines) do if p.l:IsShown() then last = i end end
+        check("a long recipe at the floor runs past the pane", AT.paneMax and AT.paneMax > 0, tostring(AT.paneMax))
+        check("  its last line starts out of view", topOf(last) > VIEW - lineH, tostring(topOf(last)))
+        check("  and a bar says there is more", pane.thumb:IsShown())
+        local wheel = pane:GetParent():GetScript("OnMouseWheel")
+        local heldOver = pane.IsMouseOver
+        pane.IsMouseOver = function() return true end
+        AT.scrollRow = 0
+        wheel(pane:GetParent(), -1)
+        check("the wheel over the pane scrolls it", AT.paneOffset > 0 and topOf(1) < 0, tostring(AT.paneOffset))
+        eq("  not the list", AT.scrollRow, 0)
+        for _ = 1, 50 do wheel(pane:GetParent(), -1) end
+        eq("  as far as there is, no further", AT.paneOffset, AT.paneMax)
+        check("  where its last line is in view", topOf(last) >= 0 and topOf(last) <= VIEW - lineH,
+              tostring(topOf(last)))
+        local _, _, _, _, ty = pane.thumb:GetPoint(1)
+        check("  the bar at the bottom", ty < 0)
+        AT.Refresh()
+        eq("a redraw keeps the place", AT.paneOffset, AT.paneMax)
+        for _ = 1, 50 do wheel(pane:GetParent(), 1) end
+        eq("back up, to the top and no further", AT.paneOffset, 0)
+        eq("  the first line at the top", topOf(1), 0)
+        pane.IsMouseOver = function() return false end
+        wheel(pane:GetParent(), -1)
+        eq("the wheel elsewhere scrolls the list, not the pane", AT.paneOffset, 0)
+        pane.IsMouseOver = heldOver
+        body.GetHeight = function() return 40 end   -- so short that any recipe overflows
+        AT.paneOffset = 30
+        AT.Refresh()
+        eq("  (scrolled down)", AT.paneOffset, 30)
+        local other = shownRow(2329)
+        other:GetScript("OnClick")(other)
+        check("  (the other one overflows too)", AT.paneMax > 30, tostring(AT.paneMax))
+        eq("another recipe opens at its top", AT.paneOffset, 0)
+        shownRow(2331):GetScript("OnClick")(shownRow(2331))
+        body.GetHeight = function() return 5000 end
+        AT.Refresh()
+        check("one that fits: no bar", not pane.thumb:IsShown() and AT.paneMax == 0)
+        body.GetHeight = nil
+    end
+
     -- Shift-click on the name: the game's own handler, with the item's link.
     local linked
     local heldHandle = rawget(_G, "HandleModifiedItemClick")

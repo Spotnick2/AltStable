@@ -1473,7 +1473,7 @@ end
 -- says both in full.
 ------------------------------------------------------------
 
-local PANE_W, PANE_LABEL_W = 300, 84
+local PANE_W, PANE_LABEL_W, PANE_HEAD = 300, 84, 8 + 28 + 10
 local QUALITY_HEX = { [0] = "9d9d9d", [1] = "ffffff", [2] = "1eff00", [3] = "0070dd", [4] = "a335ee",
                       [5] = "ff8000", [6] = "e6cc80", [7] = "00ccff" }
 
@@ -1633,6 +1633,18 @@ local function BuildPane()
     pane.close.text:SetText("x")
     pane.close:SetScript("OnClick", function() AT.CloseRecipe() end)
 
+    -- The body under the header scrolls on its own (the wheel over the pane):
+    -- at the tab's 400 px floor it has about 200 px, and a recipe's lines,
+    -- names in full and reagents run well past that (Codex review of #367).
+    -- A slim bar on its right says where it is, when there is more to see.
+    pane.body = CreateFrame("Frame", nil, pane)
+    pane.body:SetPoint("TOPLEFT", pane, "TOPLEFT", 0, -PANE_HEAD)
+    pane.body:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", 0, 4)
+    if pane.body.SetClipsChildren then pane.body:SetClipsChildren(true) end
+    pane.thumb = pane.body:CreateTexture(nil, "OVERLAY")
+    pane.thumb:SetWidth(3)
+    pane.thumb:SetColorTexture(1, 1, 1, 0.28)
+    pane.thumb:Hide()
     pane.lines = {}
     pane:Hide()
 end
@@ -1656,24 +1668,23 @@ local function LayoutPane(row)
     pane.title:SetText(d.title)
     pane.link = d.link
     DrawStar(pane.star.tex, row)
-    local y, inner = 8 + 28 + 10, PANE_W - 16
+    -- Text and width first, to measure the wrapped heights; then the places,
+    -- once the scroll offset is clamped to what there is.
+    local inner, tops, y = PANE_W - 20, {}, 0
     for i, l in ipairs(d.lines) do
         local p = pane.lines[i]
         if not p then
-            p = { l = pane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"),
-                  r = pane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall") }
+            p = { l = pane.body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"),
+                  r = pane.body:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall") }
             p.l:SetJustifyH("LEFT"); p.r:SetJustifyH("LEFT")
             p.l:SetWordWrap(true); p.r:SetWordWrap(true)
             pane.lines[i] = p
         end
-        p.l:ClearAllPoints(); p.r:ClearAllPoints()
-        p.l:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -y)
         p.l:SetText(l[1] or "")
         p.l:SetTextColor(l[3] or 1, l[4] or 0.82, l[5] or 0)
         local h
         if l[2] then
             p.l:SetWidth(PANE_LABEL_W)
-            p.r:SetPoint("TOPLEFT", pane, "TOPLEFT", 8 + PANE_LABEL_W + 6, -y)
             p.r:SetWidth(inner - PANE_LABEL_W - 6)
             p.r:SetText(l[2])
             p.r:SetTextColor(l[6] or 1, l[7] or 1, l[8] or 1)
@@ -1685,10 +1696,39 @@ local function LayoutPane(row)
             h = tonumber(p.l:GetStringHeight()) or 12
         end
         p.l:Show()
+        tops[i] = y
         y = y + h + 3
     end
     for i = #d.lines + 1, #pane.lines do pane.lines[i].l:Hide(); pane.lines[i].r:Hide() end
+
+    local view = tonumber(pane.body:GetHeight()) or 0
+    local maxOff = math.max(0, y - view)
+    AT.paneMax = maxOff
+    AT.paneOffset = math.max(0, math.min(AT.paneOffset or 0, maxOff))
+    local off = AT.paneOffset
+    for i = 1, #d.lines do
+        local p = pane.lines[i]
+        p.l:ClearAllPoints(); p.r:ClearAllPoints()
+        p.l:SetPoint("TOPLEFT", pane.body, "TOPLEFT", 8, -(tops[i] - off))
+        p.r:SetPoint("TOPLEFT", pane.body, "TOPLEFT", 8 + PANE_LABEL_W + 6, -(tops[i] - off))
+    end
+    if maxOff > 0 and view > 0 then
+        local th = math.max(12, view * view / y)
+        pane.thumb:ClearAllPoints()
+        pane.thumb:SetHeight(th)
+        pane.thumb:SetPoint("TOPRIGHT", pane.body, "TOPRIGHT", -3, -((view - th) * off / maxOff))
+        pane.thumb:Show()
+    else
+        pane.thumb:Hide()
+    end
     pane:Show()
+end
+
+-- The wheel over the open pane scrolls its body, three lines a notch.
+function AT.ScrollPane(delta)
+    if not (pane and pane:IsShown() and pane.row) then return end
+    AT.paneOffset = (AT.paneOffset or 0) - delta * 3 * 14
+    LayoutPane(pane.row)
 end
 
 -- A click on a row opens it; on the open one, closes it.
@@ -1700,6 +1740,7 @@ function AT.ToggleRecipe(row)
     else
         AT.selected = { id = row.id, line = row.line }
     end
+    AT.paneOffset = 0   -- another recipe starts at its top
     AT.Refresh()
 end
 
@@ -1964,10 +2005,12 @@ end
 -- cards sideways, anywhere else it scrolls the list. (A second wheel-enabled
 -- frame for the strip sat under the panel and never got the wheel; review of
 -- #132.)
-function AT.OnWheel(delta, overCards)
+function AT.OnWheel(delta, overCards, overPane)
     if overCards then
         ScrollCards(delta)
         LayoutCards()
+    elseif overPane then
+        AT.ScrollPane(delta)
     else
         AT.scrollRow = math.max(0, (AT.scrollRow or 0) - delta * 3)
         AT.Layout()
@@ -2105,7 +2148,7 @@ local function BuildPanel(mainFrame)
 
     panel:EnableMouseWheel(true)
     panel:SetScript("OnMouseWheel", function(_, delta)
-        AT.OnWheel(delta, strip:IsMouseOver())
+        AT.OnWheel(delta, strip:IsMouseOver(), pane and pane:IsShown() and pane:IsMouseOver())
     end)
 
     -- Built last, as in Warband: the expendable part goes at the end.
