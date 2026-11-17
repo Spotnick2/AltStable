@@ -4343,6 +4343,24 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptItemCounts = optItemCountsCheck
     Y = Y - 22
 
+    -- The Professions tab's wishlist on recipe tooltips (#271): on unless
+    -- turned off. The stars themselves stay either way. (Scoped: the builder
+    -- is at Lua 5.1's 200 locals.)
+    do
+        local optWishTipCheck = MakeOptCheckRow("professionsWishTooltip",
+            "Show who wants a recipe on its tooltip", Y)
+        optWishTipCheck:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("Wanted by", 1, 1, 1)
+            GameTooltip:AddLine("On a recipe's tooltip, the alts that starred it in the Professions tab, "
+                .. "until they learn it.", nil, nil, nil, true)
+            GameTooltip:Show()
+        end)
+        optWishTipCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        AltStable._test.OptWishTooltip = optWishTipCheck
+    end
+    Y = Y - 22
+
     -- Mailbox items in the Warband tab and the item counts (#312): on unless
     -- switched off. Off, no mail is read, recorded, shown or synced.
     local optMailCheck = MakeOptCheckRow("warbandMail",

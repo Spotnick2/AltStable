@@ -1110,6 +1110,314 @@ do
 end
 
 ------------------------------------------------------------
+-- The wishlist (#271): a star per alt, on its own snapshot
+------------------------------------------------------------
+
+-- Alder is ours (scanned here), Birch is played on another account, Umber
+-- was never scanned by the plugin.
+local function wishState()
+    readModelState()
+    AltStableDB[A].scannedHere, AltStableDB[A].lastUpdate = true, 50
+    AltStableDB[U].scannedHere = true
+    AltStableProfessionsDB[A].stamp = 10
+    AltStableProfessionsDB[A].profs[171].known = { [2329] = true }
+end
+local function wishes(guid)
+    local e = AltStableProfessionsDB[guid]
+    local t = {}
+    for id in pairs(e and e.wish or {}) do t[#t + 1] = id end
+    table.sort(t)
+    return table.concat(t, ",")
+end
+
+wishState()
+WoW.now = 1700000000
+check("our own alt can be starred for", T.CanWish(A))
+check("  not one played on another account", not T.CanWish(B))
+check("  nor one the plugin has no snapshot of (an entry would say 'has no professions')", not T.CanWish(U))
+check("starring a recipe it lacks", T.SetWish(A, 2332, true))
+eq("  stores it on its snapshot", wishes(A), "2332")
+eq("  under a new stamp, so peers take it", AltStableProfessionsDB[A].stamp, 1700000000)
+check("  and it wants it", T.Wants(A, 2332))
+eq("  without touching its Last Online: Alder is not the one being played", AltStableDB[A].lastUpdate, 50)
+check("starring it again changes nothing", not T.SetWish(A, 2332, true))
+eq("  not even the stamp", AltStableProfessionsDB[A].stamp, 1700000000)
+check("a recipe it knows cannot be starred", not T.SetWish(A, 2329, true))
+eq("  and is not stored", wishes(A), "2332")
+check("a recipe on another account's alt cannot be starred here", not T.SetWish(B, 2332, true))
+eq("  so its snapshot is untouched", AltStableProfessionsDB[B].wish, nil)
+eq("  stamp included", AltStableProfessionsDB[B].stamp, 1)
+check("nor one for an alt with no snapshot", not T.SetWish(U, 2332, true))
+eq("  which gets none", AltStableProfessionsDB[U], nil)
+AltStableProfessionsDB[U] = { profs = {} }   -- an entry not yet stamped is not a snapshot
+check("  nor an entry without a stamp (stamping it would say 'has no professions')",
+      not T.CanWish(U) and not T.SetWish(U, 2332, true))
+eq("  which stays unstamped", AltStableProfessionsDB[U].stamp, nil)
+AltStableProfessionsDB[U] = nil
+check("a bad id is refused", not T.SetWish(A, "x", true))
+WoW.now = 1700000005
+check("unstarring", T.SetWish(A, 2332, false))
+eq("  leaves no empty list behind", AltStableProfessionsDB[A].wish, nil)
+eq("  and moves the stamp too", AltStableProfessionsDB[A].stamp, 1700000005)
+check("unstarring what is not starred changes nothing", not T.SetWish(A, 2332, false))
+eq("  not even the stamp", AltStableProfessionsDB[A].stamp, 1700000005)
+T.SetWish(A, 2331, false)
+eq("  with others starred neither", wishes(A), "")
+
+-- The character being played: its record has to move, or the star never
+-- rides a delta.
+AltStableDB[ME] = { guid = ME, name = "Me", class = "MAGE", lastUpdate = 7, scannedHere = true }
+AltStableProfessionsDB[ME] = { stamp = 3, profs = { [171] = { rank = 60, max = 75, full = 3, known = {} } } }
+WoW.now = 1700000100
+T.SetWish(ME, 2330, true)
+eq("starring for the character being played marks it for the next sync", AltStableDB[ME].lastUpdate, 1700000100)
+
+-- A snapshot that still holds a star on a known recipe (one from before it
+-- was learned) shows no star.
+AltStableProfessionsDB[B].wish = { [2329] = true, [2330] = true }
+check("a starred recipe the alt knows is not wanted", not T.Wants(B, 2329))
+check("  one it does not know is", T.Wants(B, 2330))
+check("  one not starred is not", not T.Wants(B, 2331))
+check("  nor anything for an alt with no snapshot", not T.Wants(U, 2330))
+AltStableProfessionsDB[B].wish = { [7000] = true }
+AltStableProfessionsDB[B].profs[197] = { rank = 50, max = 75, full = 1, known = { [7000] = true } }
+check("  known through another of its professions counts too", not T.Wants(B, 7000))
+AltStableProfessionsDB[B].profs[197] = nil
+
+-- Cleared once learned: by a scan and by NEW_RECIPE_LEARNED.
+fresh()
+setAlchemy({ [2329] = { name = "A", learned = true }, [2330] = { name = "B", learned = false },
+             [2331] = { name = "C", learned = false } })
+T.RefreshOwnership()
+T.OnShow(); WoW.flushTimers()
+local mine = AltStableProfessionsDB[ME]
+WoW.now = WoW.now + 10
+check("a recipe it does not know yet is starred", T.SetWish(ME, 2330, true) and T.SetWish(ME, 2331, true))
+WoW.tradeSkill.recipes[2330].learned = true
+WoW.now = WoW.now + 10
+local before = mine.stamp
+T.ScheduleScan(); WoW.flushTimers()
+eq("a scan that finds it learned clears its star", wishes(ME), "2331")
+check("  under a new stamp", mine.stamp > before)
+-- A star on a known recipe the store holds (an older client's snapshot of our
+-- own alt): the next scan clears it, and that alone is a change.
+mine.wish[2329] = true
+WoW.now = WoW.now + 10
+before = mine.stamp
+T.ScheduleScan(); WoW.flushTimers()
+eq("a scan with nothing new still clears a star on a known recipe", wishes(ME), "2331")
+check("  and stamps it, so peers drop it too", mine.stamp > before)
+T.OnClose()
+T.OnRecipeLearned(2331)
+eq("learning it with the window shut clears it too", mine.wish, nil)
+check("  and it is known", mine.profs[171].known[2331])
+mine.wish = { [2330] = true }
+T.OnRecipeLearned(2331)
+eq("a learned event for a recipe already known changes nothing", wishes(ME), "2330")
+
+-- Sync: w= sits before p=, which every parser reads from the end.
+fresh()
+AltStableDB = { [ALT] = { guid = ALT, name = "Brewer" } }
+AltStableProfessionsDB = { [ALT] = { stamp = 40, wish = { [2331] = true, [2330] = true },
+    profs = { [171] = { rank = 60, max = 75, full = 40, known = { [2329] = true } } } } }
+local wblob = T.SerializePlayer(ALT)
+eq("the wishlist goes out, sorted, before p=", wblob, "v1|s=40|w=2330,2331|p=171:60:75:40:2329")
+AltStableProfessionsDB[ALT].wish = {}
+eq("an empty one is not sent at all", T.SerializePlayer(ALT), "v1|s=40|p=171:60:75:40:2329")
+-- What a build before #271 makes of it: the same patterns its DeserializePlayer
+-- and ParseProfs used. It reads the stamp and the recipes, and skips w=.
+do
+    local rest = wblob:match("^v1|(.*)$")
+    eq("an older parser still reads the stamp", tonumber(rest:match("^s=(%d+)")), 40)
+    local profStr = rest:match("|p=([^|]*)$")
+    eq("  and the recipes", profStr, "171:60:75:40:2329")
+    check("  which parse as before", T.ParseProfs(profStr) and T.ParseProfs(profStr)[171].known[2329])
+end
+AltStableProfessionsDB = {}
+T.DeserializePlayer(ALT, wblob)
+eq("received, the wishlist is stored", wishes(ALT), "2330,2331")
+check("  with the recipes", AltStableProfessionsDB[ALT].profs[171].known[2329])
+T.DeserializePlayer(ALT, "v1|s=41|p=171:60:75:41:2329")
+eq("a newer snapshot without w= has no wishes: the owner unstarred them", AltStableProfessionsDB[ALT].wish, nil)
+T.DeserializePlayer(ALT, "v1|s=42|w=|p=171:60:75:42:2329")
+eq("an empty w= is no wishes", AltStableProfessionsDB[ALT].wish, nil)
+eq("  and the snapshot is taken", AltStableProfessionsDB[ALT].stamp, 42)
+T.DeserializePlayer(ALT, "v1|s=43|w=2330,x|p=171:60:75:43:2329")
+eq("a malformed w= keeps what we have", AltStableProfessionsDB[ALT].stamp, 42)
+T.DeserializePlayer(ALT, "v1|s=44|w=0x10|p=171:60:75:44:2329")
+eq("  hex included", AltStableProfessionsDB[ALT].stamp, 42)
+T.DeserializePlayer(ALT, "v1|s=45|w=2332|p=171:60:75:45:2329")
+eq("a valid one after it is taken", wishes(ALT), "2332")
+eq("ParseWish: none", T.ParseWish("s=1|p="), nil)
+
+-- Through the core, both ways, and a relay hop.
+ownerState(100, 1000, { [2329] = true })
+AltStableProfessionsDB[ALT].wish = { [2331] = true }
+local wA = send(0)
+local wbDB, wbPDB = {}, {}
+receive(wA, wbDB, wbPDB)
+eq("through the core, the alt's wishlist arrives", wbPDB[ALT] and wbPDB[ALT].wish and wbPDB[ALT].wish[2331], true)
+AltStableDB, AltStableProfessionsDB = wbDB, wbPDB
+local wB = send(500)
+local wcDB, wcPDB = {}, {}
+receive(wB, wcDB, wcPDB)
+eq("  and one relay hop later", wcPDB[ALT] and wcPDB[ALT].wish and wcPDB[ALT].wish[2331], true)
+
+-- The rows: who wants each, the Wishlist filter, the star.
+wishState()
+AltStableProfessionsDB[A].wish = { [2332] = true }
+AltStableProfessionsDB[B].wish = { [2331] = true, [2332] = true }
+eq("Wishlist: what anyone wants", ids(T.BuildRows({ line = 171, filter = "wishlist" })), "2331,2332")
+eq("  focused on Alder, only Alder's", ids(T.BuildRows({ line = 171, filter = "wishlist", focus = A })), "2332")
+eq("  focused on Umber, nothing", ids(T.BuildRows({ line = 171, filter = "wishlist", focus = U })), "")
+-- A search spans every profession, also ones the selected alt does not have:
+-- there the selected alt is still the one whose stars are listed.
+do
+    local SMITH = "Player-Smith"
+    AltStableDB[SMITH] = { guid = SMITH, name = "Smith", class = "WARRIOR" }
+    AltStableProfessionsDB[SMITH] = { stamp = 1, wish = { [3101] = true },
+        profs = { [164] = { rank = 40, max = 75, full = 1, known = { [3100] = true } } } }
+    local heldNames = WoW.spellNames
+    WoW.spellNames = { [2332] = "Copper Elixir", [3101] = "Rough Copper Vest" }
+    for k in pairs(T.names) do T.names[k] = nil end
+    eq("a search with Alder selected lists Alder's stars only, across professions",
+       ids(T.BuildRows({ line = 171, search = "copper", filter = "wishlist", focus = A })), "2332")
+    eq("  with nobody selected, everyone's", ids(T.BuildRows({ line = 171, search = "copper", filter = "wishlist" })),
+       "3101,2332")
+    WoW.spellNames = heldNames
+    for k in pairs(T.names) do T.names[k] = nil end
+    AltStableDB[SMITH], AltStableProfessionsDB[SMITH] = nil, nil
+end
+local wrows = {}
+for _, r in ipairs(T.BuildRows({ line = 171 })) do wrows[r.id] = r end
+local function names(list) local t = {} for _, o in ipairs(list or {}) do t[#t + 1] = o.name end return table.concat(t, ",") end
+eq("each row says who wants it", names(wrows[2332].wantedBy), "Alder,Birch")
+eq("  one nobody wants, nobody", names(wrows[2330].wantedBy), "")
+local fr = {}
+for _, r in ipairs(T.BuildRows({ line = 171, focus = A })) do fr[r.id] = r end
+local function star(r) local s, c = T.StarState(r); return tostring(s) .. "/" .. tostring(c) end
+eq("Alder in focus, a recipe it wants: a lit star it can clear", star(fr[2332]), "on/true")
+eq("  one it lacks: an unlit star to click", star(fr[2330]), "off/true")
+eq("  one it knows: no star", star(fr[2329]), "nil/false")
+local br = {}
+for _, r in ipairs(T.BuildRows({ line = 171, focus = B })) do br[r.id] = r end
+eq("Birch (another account) in focus, a recipe it wants: lit, not clickable", star(br[2331]), "on/false")
+eq("  one it lacks: nothing to click here", star(br[2330]), "nil/false")
+eq("no focus, a recipe someone wants: lit, not clickable", star(wrows[2331]), "on/false")
+eq("  one nobody wants: no star", star(wrows[2330]), "nil/false")
+
+-- Clicking: through the button's script, as the client calls it.
+local function starButton(r) return { GetParent = function() return { row = r } end } end
+T.StarOnClick(starButton(fr[2330]))
+eq("a click on an unlit star stars it for the alt in focus", wishes(A), "2330,2332")
+T.StarOnClick(starButton(fr[2332]))
+eq("a click on a lit one clears it", wishes(A), "2330")
+T.StarOnClick(starButton(br[2331]))
+eq("a click on another account's alt's star does nothing", wishes(B), "2331,2332")
+T.StarOnClick(starButton(wrows[2331]))
+eq("  nor one with nobody in focus", wishes(A) .. ";" .. wishes(B), "2330;2331,2332")
+T.StarOnClick(starButton(fr[2329]))
+eq("  nor one on a known recipe", wishes(A), "2330")
+local okNil = pcall(T.StarOnClick, starButton(nil))
+check("  nor a button with no row", okNil)
+
+local function hover(r)
+    WoW.tooltipLines = {}
+    T.StarOnEnter(starButton(r))
+    return (table.concat(WoW.tooltipLines, " / "):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+end
+check("the star's tooltip says who wants it", hover(wrows[2332]):find("Wanted by|Alder, Birch", 1, true), hover(wrows[2332]))
+check("  and, with nobody in focus, how to star", hover(wrows[2330]):find("Pick an alt's card", 1, true))
+check("  with an alt of ours in focus, what a click does", hover(fr[2332]):find("Click: wanted by Alder", 1, true),
+      hover(fr[2332]))
+check("  and on one it starred, that a click clears it",
+      hover(fr[2330]):find("Click: no longer wanted by Alder", 1, true), hover(fr[2330]))
+check("  on another account's alt, where to star it", hover(br[2330]):find("another account", 1, true))
+check("  on a known recipe, that it is known", hover(fr[2329]):find("Alder knows it", 1, true))
+
+-- The item tooltip: Wanted by, above Known by.
+do
+    local savedData2 = AltStableRecipeData
+    AltStableRecipeData = { source = "wish tooltip test", recipes = {
+        [2331] = { skill = { 171 }, learn = 50, makes = 2455, items = { 3396 } },
+    } }
+    T.ResetState()
+    wishState()
+    AltStableProfessionsDB[A].profs[171].known[2331] = nil
+    AltStableProfessionsDB[A].wish = { [2331] = true }
+    AltStableProfessionsDB[B].wish = { [2331] = true }
+    local plain = function(x) return (x:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local function labels()
+        local t = {}
+        for _, l in ipairs(T.TooltipLines(3396)) do t[#t + 1] = plain(l[1]) .. "=" .. plain(l[2]) end
+        return table.concat(t, "; ")
+    end
+    check("a recipe item says who wants it", labels():find("Wanted by=Alder, Birch", 1, true), labels())
+    check("  above Known by and the skill lines", labels():find("^Wanted by="), labels())
+    AltStableProfessionsDB[B].profs[171].known[2331] = true
+    check("  never naming an alt that knows it", labels():find("Wanted by=Alder;", 1, true), labels())
+    local realHidden3 = AltStable.IsCharacterHidden
+    AltStable.IsCharacterHidden = function(guid) return guid == A end
+    check("  nor a hidden one", not labels():find("Wanted by", 1, true), labels())
+    AltStable.IsCharacterHidden = realHidden3
+    check("the option is on by default", T.WishTooltipOn())
+    AltStable.SetConfigValue("professionsWishTooltip", false)
+    check("turned off, the line goes", not labels():find("Wanted by", 1, true), labels())
+    check("  and the rest stays", labels():find("Known by=Birch", 1, true), labels())
+    AltStable.SetConfigValue("professionsWishTooltip", nil)
+    AltStableRecipeData = savedData2
+    T.ResetState()
+end
+
+-- In the tab: the Wishlist button, the stars drawn, and the row's tooltip.
+do
+    wishState()
+    AltStableProfessionsDB[A].wish = { [2332] = true }
+    local hasWish = false
+    for _, f in ipairs(T.FILTERS) do if f[1] == "wishlist" then hasWish = f[2] == "Wishlist" end end
+    check("there is a Wishlist filter", hasWish)
+    local heldReq, heldMin = AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize
+    AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = nil, nil
+    plugin.OnActivate(main)
+    AT.line, AT.focus, AT.search, AT.filter, AT.onlyDrops, AT.onlyFavor = 171, A, "", "all", false, false
+    AT.Refresh()
+    local b = AT.filterButtons.wishlist
+    check("  as a button in the tab", b ~= nil)
+    if b then
+        b:GetScript("OnClick")(b)
+        eq("  which filters on it", ids(AT.rows or {}), "2332")
+    end
+    local w = AT.rowsPool[1]
+    check("the row draws a lit star", w and w.star and w.star.tex:IsShown()
+          and w.star.tex._atlas == "auctionhouse-icon-favorite", w and w.star and tostring(w.star.tex._atlas))
+    eq("  at full strength, since a click clears it", w and w.star.tex:GetAlpha(), 1)
+    AT.filter = "all"; AT.Refresh()
+    local drawn = {}
+    for _, row in ipairs(AT.rowsPool) do
+        if row:IsShown() and row.row then drawn[row.row.id] = row end
+    end
+    check("an unlit star where one could be clicked", drawn[2330] and drawn[2330].star.tex:IsShown()
+          and drawn[2330].star.tex._atlas == "auctionhouse-icon-favorite-off")
+    check("  none on a known recipe", drawn[2329] and not drawn[2329].star.tex:IsShown())
+    if drawn[2330] then
+        drawn[2330].star:GetScript("OnClick")(drawn[2330].star)
+        eq("clicking the drawn star stars it", wishes(A), "2330,2332")
+        local again = {}
+        for _, row in ipairs(AT.rowsPool) do if row:IsShown() and row.row then again[row.row.id] = row end end
+        check("  and the tab redraws it lit", again[2330] and again[2330].star.tex._atlas == "auctionhouse-icon-favorite")
+    end
+    if drawn[2332] then
+        WoW.tooltipLines = {}
+        drawn[2332]:GetScript("OnEnter")(drawn[2332])
+        local text = (table.concat(WoW.tooltipLines, " / "):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+        check("the row's tooltip says who wants it", text:find("Wanted by|Alder", 1, true), text)
+    end
+    AT.focus = nil
+    plugin.OnDeactivate(main)
+    AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin
+end
+
+------------------------------------------------------------
 -- Forget / cleanup
 ------------------------------------------------------------
 

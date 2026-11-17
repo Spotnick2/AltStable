@@ -3980,6 +3980,17 @@ do
     check("back on, it is back", HasColumn("bags_free") and AltStableConfig.sheetBagsColumn == true)
     AltStableConfig.sheetBagsColumn = nil
 
+    -- Who wants a recipe, on its tooltip (#271): on unless turned off.
+    local ow = T.OptWishTooltip
+    check("the wishlist tooltip option shows checked by default", ow and ow:GetChecked())
+    if ow then
+        ow:SetChecked(false); ow:GetScript("OnClick")(ow)
+        eq("  turned off, it is saved off", AltStableConfig.professionsWishTooltip, false)
+        ow:SetChecked(true); ow:GetScript("OnClick")(ow)
+        eq("  and back on", AltStableConfig.professionsWishTooltip, true)
+    end
+    AltStableConfig.professionsWishTooltip = nil
+
     AltStableDB = savedDB
     AltStableConfig.sheetSort = nil
     T.ForgetSessionSorts()
@@ -4782,6 +4793,7 @@ do
     eq("  with the sort order", On(T.OptRememberSort), pages.general)
     eq("  the Bags column", On(T.OptBagsColumn), pages.general)
     eq("  the item counts", On(T.OptItemCounts), pages.general)
+    eq("  the wishlist on recipe tooltips", On(T.OptWishTooltip), pages.general)
     eq("  and mail tracking", On(T.OptWarbandMail), pages.general)
     eq("the skin is on Appearance", On(T.skinBtns[1]), pages.appearance)
     eq("  with the accent's note", On(T.OptAccentFootnote), pages.appearance)
