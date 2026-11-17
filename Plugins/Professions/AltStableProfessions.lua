@@ -896,15 +896,16 @@ local function NameList(list, fmt)
 end
 
 -- The same colours the game uses, for the focused alt's skill.
+-- The fourth return names it, for the detail pane (#269); nil when unknown.
 local function DifficultyColor(r, rank)
     if not r or not rank then return 1, 1, 1 end
-    if r.learn and rank < r.learn then return 0.9, 0.2, 0.2 end
+    if r.learn and rank < r.learn then return 0.9, 0.2, 0.2, "too low" end
     local c = r.colors
     if not c then return 1, 1, 1 end
-    if rank < c[2] then return 1, 0.5, 0.25 end
-    if rank < c[3] then return 1, 1, 0 end
-    if rank < c[4] then return 0.25, 0.75, 0.25 end
-    return 0.5, 0.5, 0.5
+    if rank < c[2] then return 1, 0.5, 0.25, "orange" end
+    if rank < c[3] then return 1, 1, 0, "yellow" end
+    if rank < c[4] then return 0.25, 0.75, 0.25, "green" end
+    return 0.5, 0.5, 0.5, "grey"
 end
 
 -- Owners of every line, computed once per redraw and shared by the picker, the
@@ -1465,11 +1466,259 @@ local function StarOnEnter(self)
     GameTooltip:Show()
 end
 
+------------------------------------------------------------
+-- The detail pane (#269): a recipe's whole story beside the list, open while
+-- a row is selected (a click on it; again, or the pane's close, shuts it).
+-- While it is open the list drops its Source and Known-by columns: the pane
+-- says both in full.
+------------------------------------------------------------
+
+local PANE_W, PANE_LABEL_W = 300, 84
+local QUALITY_HEX = { [0] = "9d9d9d", [1] = "ffffff", [2] = "1eff00", [3] = "0070dd", [4] = "a335ee",
+                      [5] = "ff8000", [6] = "e6cc80", [7] = "00ccff" }
+
+local function Hex(r, g, b)
+    return string.format("|cff%02x%02x%02x", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5),
+                         math.floor(b * 255 + 0.5))
+end
+
+-- What the client holds about an item, or nil until it has it. A cache miss
+-- returns nothing at all (forever-api-notes, "Items"), so the load is asked for
+-- once and GET_ITEM_INFO_RECEIVED redraws.
+local itemInfoAsked = {}
+local function ItemInfo(item)
+    item = tonumber(item)
+    if not item then return nil end
+    local ok, name, link, quality, _, minLevel, _, _, _, _, icon = pcall(AltStable.API.GetItemInfo, item)
+    if ok and name then
+        return { name = name, link = link, quality = quality, minLevel = tonumber(minLevel) or 0, icon = icon }
+    end
+    if not itemInfoAsked[item] and C_Item and C_Item.RequestLoadItemDataByID then
+        itemInfoAsked[item] = true
+        pcall(C_Item.RequestLoadItemDataByID, item)
+    end
+end
+
+local function QualityName(info, fallback)
+    local hex = info and QUALITY_HEX[info.quality]
+    local name = info and info.name or fallback
+    return hex and ("|cff" .. hex .. name .. "|r") or name
+end
+
+local function Names(list, fmt)
+    local parts = {}
+    for _, o in ipairs(list) do parts[#parts + 1] = ColorName(o) .. (fmt and fmt(o) or "") end
+    return table.concat(parts, ", ")
+end
+
+-- What the pane shows for a row: { icon, title, link, lines }, the lines in
+-- ReagentLines' shape ({ left, right, lr, lg, lb, rr, rg, rb }; no right = one
+-- line across). Pure, so tests read it.
+local function DetailLines(row)
+    local id, r, f = row.id, row.recipe, row.focus
+    local info = r and r.makes and ItemInfo(r.makes)
+    local d = { icon = info and info.icon or RecipeIcon(id), link = info and info.link,
+                title = QualityName(info, row.name or RecipeName(id) or ("Recipe " .. id)), lines = {} }
+    local lines = d.lines
+    local function add(left, right) lines[#lines + 1] = { left, right, 1, 0.82, 0, 1, 1, 1 } end
+    local function note(text) lines[#lines + 1] = { text, nil, 0.6, 0.6, 0.6 } end
+
+    -- The level to use what it makes, against the alt in focus.
+    if info and info.minLevel > 1 then
+        local c = f and AltStableDB and AltStableDB[f.guid]
+        local lvl = c and tonumber(c.level)
+        if lvl and lvl < info.minLevel then
+            add("Use", "|cffff4040level " .. info.minLevel .. "|r  (" .. ColorName(f) .. " is " .. lvl .. ")")
+        else
+            add("Use", "level " .. info.minLevel)
+        end
+    elseif r and r.makes and not info then
+        add("Use", "|cff888888loading...|r")
+    end
+
+    -- The skill: to learn it, the colour thresholds, and where the focused alt is.
+    add("Requires", r and r.learn and tostring(r.learn) or "unknown")
+    if r and r.colors then
+        local c = r.colors
+        add("Difficulty", Hex(1, 0.5, 0.25) .. c[1] .. "|r  " .. Hex(1, 1, 0) .. c[2] .. "|r  "
+            .. Hex(0.25, 0.75, 0.25) .. c[3] .. "|r  " .. Hex(0.5, 0.5, 0.5) .. c[4] .. "|r")
+    end
+    if f then
+        local cr, cg, cb, word = DifficultyColor(r, f.rank)
+        add(ColorName(f), Hex(cr, cg, cb) .. f.rank .. (word and (", " .. word) or "") .. "|r")
+    end
+
+    -- Where it comes from, and the recipe items that teach it.
+    add("Source", SourceText(r))
+    for _, item in ipairs(r and r.items or {}) do
+        add("Recipe", QualityName(ItemInfo(item), "item " .. item))
+    end
+
+    -- Who wants it, knows it, could learn it - the Verdict rule.
+    lines[#lines + 1] = { " " }
+    if #(row.wantedBy or {}) > 0 then add("Wanted by", Names(row.wantedBy)) end
+    local groups = { known = {}, meets = {}, low = {}, unknown = {}, unscanned = {} }
+    for _, o in ipairs(row.owners or {}) do table.insert(groups[Verdict(o, id)], o) end
+    if #groups.known > 0 then add("Known by", Names(groups.known)) end
+    if #groups.meets > 0 then
+        add("Meets skill", Names(groups.meets, function(o) return " (" .. o.rank .. ")" end))
+    end
+    if #groups.low > 0 then
+        add("Skill too low", Names(groups.low, function(o) return " (" .. o.rank .. ")" end))
+    end
+    if #groups.unknown > 0 then add("Req. unknown", Names(groups.unknown)) end
+    if #groups.unscanned > 0 then add("Not scanned", Names(groups.unscanned)) end
+    if #groups.known == 0 and row.nobody then note(row.nobody) end
+    if #groups.meets > 0 then note("Specialisation, reputation and quest requirements are not checked.") end
+
+    -- Reagents, with the counts across the alts (#268).
+    local reagents = ReagentLines(id, row.knownBy or {})
+    if #reagents > 0 then lines[#lines + 1] = { " " } end
+    for _, l in ipairs(reagents) do lines[#lines + 1] = l end
+    return d
+end
+
+local pane
+local function PaneOnLeave() GameTooltip:Hide() end
+
+local function BuildPane()
+    pane = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    pane:SetWidth(PANE_W)
+    pane:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD - 12, -TOP_ROWS)
+    pane:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD - 12, PAD)
+    pane:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    pane:SetBackdropColor(1, 1, 1, 0.04)
+    pane:SetBackdropBorderColor(1, 0.82, 0, 0.25)
+    if pane.SetClipsChildren then pane:SetClipsChildren(true) end
+
+    -- Icon and name: hover for the item, shift-click to link it.
+    pane.head = CreateFrame("Button", nil, pane)
+    pane.head:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -8)
+    pane.head:SetPoint("RIGHT", pane, "RIGHT", -48, 0)
+    pane.head:SetHeight(28)
+    pane.icon = pane.head:CreateTexture(nil, "ARTWORK")
+    pane.icon:SetSize(28, 28)
+    pane.icon:SetPoint("LEFT", pane.head, "LEFT", 0, 0)
+    pane.title = pane.head:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pane.title:SetPoint("LEFT", pane.icon, "RIGHT", 6, 0)
+    pane.title:SetPoint("RIGHT", pane.head, "RIGHT", 0, 0)
+    pane.title:SetJustifyH("LEFT")
+    pane.head:SetScript("OnClick", function()
+        local handle = rawget(_G, "HandleModifiedItemClick")
+        if pane.link and handle then handle(pane.link) end
+    end)
+    pane.head:SetScript("OnEnter", function(self)
+        if not pane.link then return end
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        pcall(GameTooltip.SetHyperlink, GameTooltip, pane.link)
+        GameTooltip:Show()
+    end)
+    pane.head:SetScript("OnLeave", PaneOnLeave)
+
+    -- The wishlist star (#271): the same as the row's, reading pane.row.
+    pane.star = CreateFrame("Button", nil, pane)
+    pane.star:SetSize(STAR + 2, STAR + 2)
+    pane.star:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -28, -14)
+    pane.star.tex = pane.star:CreateTexture(nil, "ARTWORK")
+    pane.star.tex:SetAllPoints()
+    pane.star:SetScript("OnClick", StarOnClick)
+    pane.star:SetScript("OnEnter", StarOnEnter)
+    pane.star:SetScript("OnLeave", PaneOnLeave)
+
+    pane.close = CreateFrame("Button", nil, pane)
+    pane.close:SetSize(16, 16)
+    pane.close:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -6, -14)
+    pane.close.text = pane.close:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pane.close.text:SetAllPoints()
+    pane.close.text:SetText("x")
+    pane.close:SetScript("OnClick", function() AT.CloseRecipe() end)
+
+    pane.lines = {}
+    pane:Hide()
+end
+
+-- The same star a row draws, on a texture.
+local function DrawStar(tex, row)
+    local star, can = StarState(row)
+    if star then
+        tex:SetAtlas(star == "on" and "auctionhouse-icon-favorite" or "auctionhouse-icon-favorite-off")
+        tex:SetAlpha((star == "on" and can) and 1 or (star == "on" and 0.7 or 0.45))
+        tex:Show()
+    else
+        tex:Hide()
+    end
+end
+
+local function LayoutPane(row)
+    pane.row = row
+    local d = DetailLines(row)
+    pane.icon:SetTexture(d.icon)
+    pane.title:SetText(d.title)
+    pane.link = d.link
+    DrawStar(pane.star.tex, row)
+    local y, inner = 8 + 28 + 10, PANE_W - 16
+    for i, l in ipairs(d.lines) do
+        local p = pane.lines[i]
+        if not p then
+            p = { l = pane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"),
+                  r = pane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall") }
+            p.l:SetJustifyH("LEFT"); p.r:SetJustifyH("LEFT")
+            p.l:SetWordWrap(true); p.r:SetWordWrap(true)
+            pane.lines[i] = p
+        end
+        p.l:ClearAllPoints(); p.r:ClearAllPoints()
+        p.l:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -y)
+        p.l:SetText(l[1] or "")
+        p.l:SetTextColor(l[3] or 1, l[4] or 0.82, l[5] or 0)
+        local h
+        if l[2] then
+            p.l:SetWidth(PANE_LABEL_W)
+            p.r:SetPoint("TOPLEFT", pane, "TOPLEFT", 8 + PANE_LABEL_W + 6, -y)
+            p.r:SetWidth(inner - PANE_LABEL_W - 6)
+            p.r:SetText(l[2])
+            p.r:SetTextColor(l[6] or 1, l[7] or 1, l[8] or 1)
+            p.r:Show()
+            h = math.max(tonumber(p.l:GetStringHeight()) or 12, tonumber(p.r:GetStringHeight()) or 12)
+        else
+            p.l:SetWidth(inner)
+            p.r:Hide()
+            h = tonumber(p.l:GetStringHeight()) or 12
+        end
+        p.l:Show()
+        y = y + h + 3
+    end
+    for i = #d.lines + 1, #pane.lines do pane.lines[i].l:Hide(); pane.lines[i].r:Hide() end
+    pane:Show()
+end
+
+-- A click on a row opens it; on the open one, closes it.
+function AT.ToggleRecipe(row)
+    if not row then return end
+    local sel = AT.selected
+    if sel and sel.id == row.id and sel.line == row.line then
+        AT.selected = nil
+    else
+        AT.selected = { id = row.id, line = row.line }
+    end
+    AT.Refresh()
+end
+
+function AT.CloseRecipe()
+    AT.selected = nil
+    AT.Refresh()
+end
+
+local function RowOnClick(self) AT.ToggleRecipe(self.row) end
+
 local function GetRow(i)
     local row = AT.rowsPool[i]
     if row then return row end
     row = CreateFrame("Button", nil, panel)
     row:SetHeight(ROW_H)
+    row.sel = row:CreateTexture(nil, "BACKGROUND")
+    row.sel:SetAllPoints()
+    row.sel:SetColorTexture(1, 0.82, 0, 0.12)
+    row.sel:Hide()
     row.star = CreateFrame("Button", nil, row)
     row.star:SetSize(STAR, STAR)
     row.star:SetPoint("LEFT", row, "LEFT", 0, 0)
@@ -1499,6 +1748,7 @@ local function GetRow(i)
     row.known:SetJustifyH("LEFT")
     row:SetScript("OnEnter", RowOnEnter)
     row:SetScript("OnLeave", RowOnLeave)
+    row:SetScript("OnClick", RowOnClick)
     AT.rowsPool[i] = row
     return row
 end
@@ -1527,6 +1777,7 @@ function AT.Layout()
         end
     end
     local n = 0
+    local open = pane and pane:IsShown() and AT.selected
     for slot = 1, visible do
         local r = rows[AT.scrollRow + slot]
         if not r then break end
@@ -1534,17 +1785,17 @@ function AT.Layout()
         local w = GetRow(n)
         w:ClearAllPoints()
         w:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -(TOP_ROWS + (slot - 1) * ROW_H))
-        w:SetPoint("RIGHT", panel, "RIGHT", -PAD - 12, 0)
-        w.row = r
-        local star, can = StarState(r)
-        if star then
-            w.star.tex:SetAtlas(star == "on" and "auctionhouse-icon-favorite" or "auctionhouse-icon-favorite-off")
-            w.star.tex:SetAlpha((star == "on" and can) and 1 or (star == "on" and 0.7 or 0.45))
-            w.star.tex:Show()
+        if open then
+            w:SetPoint("RIGHT", pane, "LEFT", -8, 0)
         else
-            -- The button stays, to hover: its tooltip says how to star.
-            w.star.tex:Hide()
+            w:SetPoint("RIGHT", panel, "RIGHT", -PAD - 12, 0)
         end
+        w.row = r
+        -- With no star, the button stays to hover: its tooltip says how to star.
+        DrawStar(w.star.tex, r)
+        w.sel:SetShown(open and open.id == r.id and open.line == r.line or false)
+        w.source:SetShown(not open)
+        w.known:SetShown(not open)
         w.icon:SetTexture(RecipeIcon(r.id))
         local label = r.name or ("#" .. r.id)
         if (AT.search or "") ~= "" then label = label .. "  |cff888888" .. BY_LINE[r.line].label .. "|r" end
@@ -1671,6 +1922,18 @@ function AT.Refresh()
     AT.rows = BuildRows({ line = AT.line, search = AT.search, filter = AT.filter,
                           onlyDrops = AT.onlyDrops, onlyFavor = AT.onlyFavor, focus = AT.focus,
                           owners = ownersBy })
+    -- The open recipe, if it is still listed; a filter or another profession
+    -- that drops it closes the pane.
+    local selRow
+    if AT.selected then
+        for _, r in ipairs(AT.rows) do
+            if r.id == AT.selected.id and r.line == AT.selected.line then selRow = r; break end
+        end
+        if not selRow then AT.selected = nil end
+    end
+    if pane then
+        if selRow then LayoutPane(selRow) else pane:Hide() end
+    end
     LayoutPicker(ownersBy)
     LayoutCards()
     for key, b in pairs(AT.filterButtons) do b.sel:SetShown(AT.filter == key) end
@@ -1867,6 +2130,7 @@ local function BuildPanel(mainFrame)
         AT.Layout()
     end)
     bar:Hide()
+    BuildPane()
 end
 
 local function HookRefresh()
@@ -1930,6 +2194,8 @@ local function WishExports(t)
     t.Wants, t.CanWish, t.SetWish, t.ClearLearnedWishes = Wants, CanWish, SetWish, ClearLearnedWishes
     t.ParseWish, t.StarState, t.StarOnClick, t.StarOnEnter = ParseWish, StarState, StarOnClick, StarOnEnter
     t.WishTooltipOn, t.FILTERS = WishTooltipOn, FILTERS
+    t.DetailLines, t.ItemInfo, t.itemInfoAsked = DetailLines, ItemInfo, itemInfoAsked
+    t.Pane = function() return pane end
     return t
 end
 
@@ -2019,12 +2285,18 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if arg1 == "player" and scan.open then ScheduleScan() end
     elseif event == "SPELL_DATA_LOAD_RESULT" then
         OnSpellData(arg1, arg2)
+    elseif event == "GET_ITEM_INFO_RECEIVED" then
+        -- An item the open pane asked for (its own, or a reagent's name).
+        local id = tonumber(arg1)
+        if id and AT.isActive and AT.selected and (itemInfoAsked[id] or itemRequested[id]) then
+            AT.RequestRefresh()
+        end
     end
 end)
 for _, ev in ipairs({ "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE",
                       "TRADE_SKILL_DATA_SOURCE_CHANGED", "TRADE_SKILL_DATA_SOURCE_CHANGING",
                       "TRADE_SKILL_CLOSE", "NEW_RECIPE_LEARNED", "SKILL_LINES_CHANGED",
-                      "SPELL_DATA_LOAD_RESULT" }) do
+                      "SPELL_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED" }) do
     frame:RegisterEvent(ev)
 end
 -- The player's casts only: registered for every unit, each party, raid and
