@@ -657,7 +657,7 @@ re-measured here.
 ## Builds 1.60.1.70058 (2026-09-25) and 70124 (2026-09-29) — API unchanged, persistence holds
 
 Both were dumped (`forever-api-1.60.1.70058.md`, `forever-api-1.60.1.70124.md`) and compared with
-`Tools/ForeverAPIDump/Compare-Dumps.ps1`:
+`Compare-Dumps.ps1` (now shared, in `C:\Projects\WoW\References\Tools\ForeverAPIDump\`):
 
 ```
 70009 -> 70058   documented functions, events, tables, widget methods, namespace functions: no change

@@ -155,8 +155,8 @@ The default target is the **live** client's `_forever_` (from 2026-11-04). The b
 `_classic_beta_` is gone, and `_forever_` is the only deploy path. It is also the owner's play
 install, with CurseForge's release in it. So `deploy.ps1` first keeps an installed release in
 `Interface\AddOns-release\AltStable`, and `pwsh Tools/restore-release.ps1` puts it back at any
-time (`-Tag latest` fetches it from GitHub when nothing was kept). The probe and ForeverAPIDump are
-**on demand only**: `deploy-probe.ps1` when a question needs them, `deploy-probe.ps1 -Remove` once
+time (`-Tag latest` fetches it from GitHub when nothing was kept). The probe is
+**on demand only**: `deploy-probe.ps1` when a question needs it, `deploy-probe.ps1 -Remove` once
 it is answered.
 
 `@project-version@` is substituted in every deployed `.toc`, in the **deployed copy only**. Never
@@ -391,8 +391,10 @@ XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests 
   For a live declaration check, use `/api search <name>`, `/api system list`, or
   `/api <system> list`; the Battle.net developer portal documents REST APIs, not the Lua API.
 - **The API dump is build-stamped — regenerate it when the client bumps.**
-  When `GetBuildInfo()` changes: deploy, `/apidump`, `/reload`, then
-  `Tools/ForeverAPIDump/Convert-Dump.ps1`. `MEASURED_ON_BUILD` in `Config.lua` is the record of
+  When `GetBuildInfo()` changes, follow the shared `forever-api-dump` skill: its tooling lives in
+  `C:\Projects\WoW\References\Tools\ForeverAPIDump\` (`deploy.ps1`, `/apidump`, `/reload`, then
+  `Convert-Dump.ps1`, all run by full path), then the `client-update` skill for the bump.
+  `MEASURED_ON_BUILD` in `Config.lua` is the record of
   which build the notes describe, and the addon says so at login when the two differ.
 
 ## Cost control & model usage

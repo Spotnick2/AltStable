@@ -23,8 +23,9 @@ already caught a session. If the two ever disagree, fix the RUNBOOK and this fil
 ## 1-2. Dump, convert, diff
 
 Run the shared `forever-api-dump` skill first. It owns the dump, the conversion, the diff and
-their traps. The tooling still lives here (`Tools/ForeverAPIDump/`) and serves every project, so a
-change to it is a change for all of them. When it reaches its impact step, grep `*.lua`,
+their traps. The tooling is shared, in `C:\Projects\WoW\References\Tools\ForeverAPIDump\` (run
+by full path, never copied here), and serves every project, so a change to it is a change for all
+of them. When it reaches its impact step, grep `*.lua`,
 `tests/wow_stubs.lua` and `docs/forever-api-notes.md`.
 
 ## 3. Behaviour (the dump proves shape, not behaviour)
