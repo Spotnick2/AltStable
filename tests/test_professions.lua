@@ -1372,6 +1372,37 @@ check("  and on one it starred, that a click clears it",
 check("  on another account's alt, where to star it", hover(br[2330]):find("another account", 1, true))
 check("  on a known recipe, that it is known", hover(fr[2329]):find("Alder knows it", 1, true))
 
+-- With no card selected, the star is the played character's where it has the
+-- profession (#365); elsewhere it only shows that someone wants the recipe.
+do
+    local heldDB, heldPDB = {}, {}
+    for k, v in pairs(AltStableDB) do heldDB[k] = v end
+    for k, v in pairs(AltStableProfessionsDB) do heldPDB[k] = v end
+    AltStableDB[ME] = { guid = ME, name = "Mira", class = "MAGE", scannedHere = true, lastUpdate = 1 }
+    AltStableProfessionsDB[ME] = { stamp = 5, profs = { [171] = { rank = 30, max = 75, full = 5,
+        known = { [2329] = true, [2331] = true } } } }
+    AltStableProfessionsDB[A].wish = { [2331] = true }
+    local mr = {}
+    for _, r in ipairs(T.BuildRows({ line = 171 })) do mr[r.id] = r end
+    eq("no card selected: a recipe the played character lacks has a star to click", star(mr[2330]), "off/true")
+    T.StarOnClick(starButton(mr[2330]))
+    eq("  and the click stars it for that character", wishes(ME), "2330")
+    eq("  which lights it", star(mr[2330]), "on/true")
+    check("  its tooltip says for whom", hover(mr[2330]):find("Click: no longer wanted by Mira", 1, true), hover(mr[2330]))
+    eq("  one it knows that someone else wants still shows lit, not clickable", star(mr[2331]), "on/false")
+    eq("  one it knows that nobody wants, no star", star(mr[2329]), "nil/false")
+    local sr = {}
+    for _, r in ipairs(T.BuildRows({ line = 171, search = "", focus = B })) do sr[r.id] = r end
+    eq("a card selected: its alt's star, not the played character's", star(sr[2330]), "nil/false")
+    -- A search with a card selected reaches lines its alt lacks: no star there,
+    -- not the played character's, not anyone's.
+    local other = { id = 3101, owners = { { guid = ME, known = {} } }, wantedBy = { { name = "X" } }, selected = B }
+    eq("  on a line its alt lacks, nothing", star(other), "nil/false")
+    T.StarOnClick(starButton(other))
+    eq("  and a click there stars nothing", wishes(ME), "2330")
+    AltStableDB, AltStableProfessionsDB = heldDB, heldPDB
+end
+
 -- The item tooltip: Wanted by, above Known by.
 do
     local savedData2 = AltStableRecipeData
@@ -1449,6 +1480,19 @@ do
         local text = (table.concat(WoW.tooltipLines, " / "):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
         check("the row's tooltip says who wants it", text:find("Wanted by|Alder", 1, true), text)
     end
+    -- The selected card says where another account's alt is starred (#365).
+    local function cardText(guid)
+        for _, c in ipairs(AT.cards) do
+            if c:IsShown() and c.data and c.data.owner.guid == guid then return c.l3:GetText() or "" end
+        end
+    end
+    AT.focus = B; AT.Refresh()
+    check("another account's alt, selected: its card says stars are set there",
+          (cardText(B) or ""):find("Stars: on its own account", 1, true), tostring(cardText(B)))
+    eq("  ours, selected, says nothing of the sort", cardText(A), "")
+    AT.focus = A; AT.Refresh()
+    eq("  nor theirs once it is not selected", cardText(B), "")
+    eq("  nor ours selected", cardText(A), "")
     AT.focus = nil
     plugin.OnDeactivate(main)
     AltStable.RequestPluginSize, AltStable.EnsureWindowMinSize = heldReq, heldMin

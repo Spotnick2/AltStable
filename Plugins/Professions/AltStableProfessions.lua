@@ -1145,6 +1145,7 @@ local function BuildRows(state)
                 if keep then
                     rows[#rows + 1] = { id = id, line = line, name = name, recipe = r, knownBy = knownBy,
                                         wantedBy = wantedBy, owners = owners, focus = focus,
+                                        selected = state.focus,
                                         nobody = #knownBy == 0 and nobodyText or nil }
                 end
             end
@@ -1408,22 +1409,37 @@ local function RowOnLeave() GameTooltip:Hide() end
 --   "off"  the alt in focus could star it: our own, and it does not know it
 --   nil    nothing to show
 -- Without an alt in focus, nobody is the one wanting it: nothing to click.
-local function StarState(row)
-    local f = row.focus
-    if f then
-        local can = CanWish(f.guid) and not f.known[row.id]
-        if Wants(f.guid, row.id) then return "on", can end
-        if can then return "off", true end
-        return nil, false
+-- Whom a row's star is for: the alt in focus, or with no card selected, the
+-- character being played where it has the row's profession (#365). Nil when a
+-- card is selected whose alt lacks this profession (a search spans them all).
+local function StarTarget(row)
+    if row.focus then return row.focus end
+    if row.selected then return nil end
+    local me = UnitGUID and UnitGUID("player")
+    for _, o in ipairs(row.owners or {}) do
+        if o.guid == me then return o end
     end
+end
+
+local function StarState(row)
+    local t = StarTarget(row)
+    if t then
+        local can = CanWish(t.guid) and not t.known[row.id]
+        if Wants(t.guid, row.id) then return "on", can end
+        if can then return "off", true end
+    end
+    -- A selected card speaks for its alt alone. Only with none does a star
+    -- the played character can't use still show that someone wants it.
+    if row.selected then return nil, false end
     return #(row.wantedBy or {}) > 0 and "on" or nil, false
 end
 
 -- SetWish refuses what may not be starred: another account's alt, a known recipe.
 local function StarOnClick(self)
     local row = self:GetParent().row
-    if not (row and row.focus) then return end
-    if SetWish(row.focus.guid, row.id, not Wants(row.focus.guid, row.id)) then AT.Refresh() end
+    local t = row and StarTarget(row)
+    if not t then return end
+    if SetWish(t.guid, row.id, not Wants(t.guid, row.id)) then AT.Refresh() end
 end
 
 local function StarOnEnter(self)
@@ -1435,7 +1451,7 @@ local function StarOnEnter(self)
     if #(row.wantedBy or {}) > 0 then
         GameTooltip:AddDoubleLine("Wanted by", NameList(row.wantedBy), 1, 0.82, 0, 1, 1, 1)
     end
-    local f = row.focus
+    local f = StarTarget(row)
     if not f then
         GameTooltip:AddLine("Pick an alt's card above to star recipes for it.", 0.7, 0.7, 0.7, true)
     elseif can then
@@ -1603,7 +1619,13 @@ local function LayoutCards()
             else
                 card.l2:SetText(data.known .. "/" .. data.total .. " known")
             end
-            if data.cooldown then
+            -- Selected, but played on another account: its stars are set
+            -- there, and a row shows none to click (#365). Said while it is
+            -- selected, before a cooldown.
+            local char = AltStableDB and AltStableDB[o.guid]
+            if focused and not (type(char) == "table" and char.scannedHere) then
+                card.l3:SetText("|cff888888Stars: on its own account|r")
+            elseif data.cooldown then
                 local cd = data.cooldown
                 card.l3:SetText(cd.label .. ": " .. (cd.left <= 0 and "|cff1eff00ready|r" or Countdown(cd.left)))
             else
