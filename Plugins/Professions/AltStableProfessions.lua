@@ -962,8 +962,9 @@ end
 
 -- What stops one alt mailing another (#386): "faction", "ruleset", or nil when
 -- nothing does. Mail to the other faction fails ("Target is unfriendly.",
--- measured, PORTING-TBC-TO-FOREVER.md); the rulesets are separate realms, as
--- the Warband tab's ruleset filter treats them. What isn't known (a record from
+-- measured, PORTING-TBC-TO-FOREVER.md), and mail doesn't cross rulesets either
+-- (the owner, from play, 2026-11-19), as the Warband tab's ruleset filter
+-- already assumed. What isn't known (a record from
 -- before the faction was stored, a realm name that can't be read) stops
 -- nothing: no claim is made from nothing.
 local function Barrier(fromGuid, toGuid)
