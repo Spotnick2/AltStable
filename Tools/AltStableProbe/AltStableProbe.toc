@@ -21,3 +21,4 @@ Enchants.lua
 Talents.lua
 Online.lua
 Legacy.lua
+Quests.lua
