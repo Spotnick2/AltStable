@@ -861,31 +861,53 @@ end
 -- Wide captures are the short, stocky races, so it hit precisely the ones
 -- RelativeFigureSize had just measured.
 
+-- Fitted against the NEIGHBOURS (xs: each figure's centre), with some overlap
+-- allowed and a floor: one wide tauren no longer draws the whole camp at half
+-- size (owner, in game).
+local function near(a, b) return math.abs(a - b) < 1e-9 end
+
 do
     eq("nothing overflowing means nothing scaled",
-       T.FitScale({ { 50, 200 }, { 60, 210 } }, 100), 1)
+       T.FitScale({ { 50, 200 }, { 60, 210 } }, { 0, 100 }), 1)
 
-    -- One figure over the slot pulls EVERYONE down by the same factor.
-    local fit = T.FitScale({ { 200, 300 }, { 50, 400 } }, 100)
-    eq("the worst overflow sets the scale", fit, 0.5)
+    -- Too wide for the gap between them pulls EVERYONE down by one factor.
+    -- need = (300 + 300)/2 - 0.3 * 300 = 210 for a gap of 189.
+    local fit = T.FitScale({ { 300, 300 }, { 300, 400 } }, { 0, 189 })
+    check("a pair too wide for their gap scales the cast", near(fit, 0.9), tostring(fit))
 
-    local wideH  = 300 * fit
-    local narrowH = 400 * fit
-    check("the tall narrow figure is still the taller one", narrowH > wideH)
+    local wideH, narrowH = 300 * fit, 400 * fit
+    check("  the taller figure is still the taller one", narrowH > wideH)
     check("  and the ratio between them is untouched",
-          math.abs((narrowH / wideH) - (400 / 300)) < 1e-9,
-          ("%.6f"):format(narrowH / wideH))
+          near(narrowH / wideH, 400 / 300), ("%.6f"):format(narrowH / wideH))
 
-    -- The old per-figure clamp, for contrast: it would have left the wide one
-    -- at 300 * (100/200) = 150 and the narrow one at 400, a ratio of 2.67.
-    check("  which the per-figure clamp did not preserve",
-          math.abs((400 / 150) - (400 / 300)) > 1,
-          "the fixture must actually distinguish the two")
+    -- A wide figure beside a slim one: the slim one leaves it room. Against a
+    -- 100 slot this cast was halved; beside a 40-wide neighbour 100 away it
+    -- needs (200 + 40)/2 - 12 = 108, so 100/108.
+    fit = T.FitScale({ { 200, 300 }, { 40, 400 } }, { 0, 100 })
+    check("a wide figure beside a slim one barely scales", near(fit, 100 / 108), tostring(fit))
 
-    eq("the worst of several overflows wins",
-       T.FitScale({ { 400, 100 }, { 200, 100 } }, 100), 0.25)
-    eq("an unmeasured slot scales nothing", T.FitScale({ { 400, 100 } }, 0), 1)
-    eq("an empty cast scales nothing", T.FitScale({}, 100), 1)
+    -- The floor: past it they overlap more instead.
+    eq("the cast never drops below the floor",
+       T.FitScale({ { 400, 100 }, { 400, 100 } }, { 0, 100 }), 0.85)
+
+    -- The camp in the owner's screenshot (Karazhan, camp 2): step 251, the
+    -- orc 186 wide and the tauren 500 at full size, the outermost on the right.
+    -- Against the slot it was 251 / 500 = 0.50.
+    fit = T.FitScale({ { 120, 0 }, { 120, 0 }, { 186, 0 }, { 500, 0 } }, { 0, 251, 604, 855 })
+    check("the owner's tauren camp is drawn near full size", fit >= 0.85 and fit > 251 / 500 + 0.3,
+          tostring(fit))
+
+    -- A figure with no art is skipped: its neighbours face each other.
+    eq("an empty seat between two figures is skipped",
+       T.FitScale({ { 300, 0 }, { 0, 0 }, { 300, 0 } }, { 0, 100, 300 }), 1)
+    eq("no positions scales nothing", T.FitScale({ { 400, 100 } }, nil), 1)
+    eq("an empty cast scales nothing", T.FitScale({}, {}), 1)
+
+    -- Kept inside the frame (2% margin on a 1000 panel = 20).
+    eq("a figure inside the frame stays put", T.InsideEdge(500, 200, 1000), 500)
+    eq("  one over the right edge slides in", T.InsideEdge(950, 200, 1000), 880)
+    eq("  and over the left edge", T.InsideEdge(30, 200, 1000), 120)
+    eq("  one wider than the frame is centred", T.InsideEdge(30, 990, 1000), 500)
 end
 
 ------------------------------------------------------------
@@ -3501,6 +3523,85 @@ do
     eq("  and in the scene", drawn, PLAIN)
 
     AltStableConfig.rosterView = nil
+    AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
+end
+
+------------------------------------------------------------
+-- A wide figure doesn't shrink the camp
+------------------------------------------------------------
+-- The owner's camp: two elves, an orc and a tauren holding a mug out, the
+-- tauren outermost on the right. Against a fixed slot the tauren's width drew
+-- everyone at about half size; now the others keep at least SCENE_MIN_FIT of
+-- the size they have beside a slim tauren, and nobody leaves the frame.
+do
+    local savedDB, savedManifest = AltStableDB, AltStableCutoutManifest
+    AltStableDB = {
+        ["w-elf1"] = { guid = "w-elf1", name = "Elf One", class = "DRUID", level = 30,
+                       race = "NightElf", gender = "Female", sexID = 1 },
+        ["w-elf2"] = { guid = "w-elf2", name = "Elf Two", class = "HUNTER", level = 29,
+                       race = "NightElf", gender = "Female", sexID = 1 },
+        ["w-orc"]  = { guid = "w-orc", name = "Orc Three", class = "WARLOCK", level = 28,
+                       race = "Orc", gender = "Female", sexID = 1 },
+        ["w-tau"]  = { guid = "w-tau", name = "Tauren Four", class = "WARRIOR", level = 1,
+                       race = "Tauren", gender = "Male", sexID = 0 },
+    }
+    local function manifest(tauW)
+        AltStableCutoutManifest = {
+            ["elf-one"]     = { file = "e1.tga", w = 100, h = 512, texw = 128, texh = 512 },
+            ["elf-two"]     = { file = "e2.tga", w = 100, h = 512, texw = 128, texh = 512 },
+            ["orc-three"]   = { file = "o3.tga", w = 110, h = 512, texw = 128, texh = 512 },
+            ["tauren-four"] = { file = "t4.tga", w = tauW, h = 512, texw = 512, texh = 512 },
+        }
+    end
+
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 800 end
+    T.Activate(main)
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil
+    AltStableConfig.rosterView = "scene"
+    AltStableConfig.rosterPets = nil
+
+    local function drawn()
+        local out = {}
+        for _, card in ipairs(T.Cards()) do
+            if card:IsShown() and card.char then out[card.char.guid] = card end
+        end
+        return out
+    end
+
+    -- A real scene's size: the stub's panel is 100 wide, where nothing overflows.
+    local panel = T.Panel()
+    local realW, realH = panel.GetWidth, panel.GetHeight
+    panel.GetWidth = function() return 1100 end
+    panel.GetHeight = function() return 700 end
+
+    manifest(100)
+    T.Refresh()
+    local slim = drawn()
+    local elfH = slim["w-elf1"] and slim["w-elf1"].figure:GetHeight()
+    check("the camp is drawn", elfH ~= nil and slim["w-tau"] ~= nil)
+
+    manifest(400)   -- the mug held out: about 0.8 of its height
+    T.Refresh()
+    local wide = drawn()
+    if elfH and wide["w-elf1"] and wide["w-tau"] then
+        local ratio = wide["w-elf1"].figure:GetHeight() / elfH
+        check("a wide tauren leaves the others near their size", ratio >= 0.85 - 1e-9, tostring(ratio))
+        check("  and still stands taller than them",
+              wide["w-tau"].figure:GetHeight() > wide["w-elf1"].figure:GetHeight())
+        -- The scene ends where the camp list begins.
+        local pw = T.Panel():GetWidth() - AltStable.RosterPlugin.SceneInset()
+        for who, card in pairs(wide) do
+            local cx, w = select(4, card:GetPoint()), card.figure:GetWidth()
+            check(who .. ": inside the frame", cx - w / 2 >= -1e-6 and cx + w / 2 <= pw + 1e-6,
+                  ("%.1f..%.1f of %.1f"):format(cx - w / 2, cx + w / 2, pw))
+        end
+    end
+
+    panel.GetWidth, panel.GetHeight = realW, realH
+    AltStableConfig.rosterView = nil
+    AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = nil, nil
     AltStableDB, AltStableCutoutManifest = savedDB, savedManifest
 end
 
