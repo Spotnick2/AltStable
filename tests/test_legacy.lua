@@ -573,8 +573,8 @@ WoW.skillLines = {}
 eq("a skill list that does not read keeps the saved skill", L.Me(liveAlts).rec.prof_Tailoring, 146)
 -- A collapsed Professions header (Codex on #383): the list reads, but without
 -- Tailoring, so the saved 146 stays and a starred Tailoring row still shows.
-WoW.skillLines = { { name = "Professions", isHeader = true, isCollapsed = true },
-                   { name = "Secondary Skills", isHeader = true },
+WoW.skillLines = { { name = "Professions", isHeader = true, isCollapsed = true, skillID = 11 },
+                   { name = "Secondary Skills", isHeader = true, skillID = 9 },
                    { name = "Cooking", isHeader = false, rank = 40, maxRank = 75, skillID = 185 } }
 local collapsedMe = L.Me(liveAlts)
 eq("a collapsed Professions header keeps the saved skill", collapsedMe.rec.prof_Tailoring, 146)
