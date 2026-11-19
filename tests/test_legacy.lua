@@ -207,6 +207,15 @@ WoW.legacy.categories = {}
 check("  (an empty one, from nothing, stays nothing)", L.Read(nil) == nil)
 WoW.legacy.categories = cats
 
+-- Losing just one category is no read either (Codex on #381): its earned
+-- challenges would drop out, and the section would read 0 / 0.
+local fewer = {}
+for _, c in ipairs(cats) do if c.id ~= 15593 then fewer[#fewer + 1] = c end end
+WoW.legacy.categories = fewer
+check("a read that lost one category keeps the last", L.Read(s) == s)
+WoW.legacy.categories = cats
+check("  and the full list reads again", L.Read(s) ~= s)
+
 ------------------------------------------------------------
 -- The alts and the grids
 ------------------------------------------------------------
@@ -258,6 +267,14 @@ eq("Blacksmithing: nobody", states(craftRow("Blacksmithing")), "none,none,none")
 eq("Enchanting: earned, then 150 of 225", states(craftRow("Enchanting")), "done,progress,later")
 eq("crafts earned", m.craftDone, 1)
 
+-- Hovering a row lists every own alt behind it, highest first.
+local tailors = craftRow("Tailoring").others
+eq("a craft's row knows every alt with it", #tailors, 1)
+eq("  with its skill", tailors[1] and tailors[1].value, 146)
+eq("a class's row knows every alt of it", #classRow("PRIEST").others, 1)
+eq("  with its level", classRow("PRIEST").others[1].value, 30)
+eq("  and none for a class nobody plays", #classRow("ROGUE").others, 0)
+
 -- A skill the game reports below an alt's own: the game's figure wins. Every
 -- tier's criterion carries the same best (measured: Enchanting 150 on both).
 local function tailoring(q)
@@ -302,6 +319,22 @@ eq("big numbers get commas", L.Number(1234567), "1,234,567")
 eq("  small ones none", L.Number(150), "150")
 check("no Other section when nothing is left over", section("other") == nil)
 
+-- A closed section says where its progress is.
+eq("Dungeons names the challenge being worked on", section("dungeons").focus and section("dungeons").focus.id, 62031)
+eq("  with its count", L.FocusText(section("dungeons")), "Novice Spelunker \194\183 5/6 dungeons")
+check("Raids, with nothing started, names nothing", section("raids").focus == nil)
+eq("  and says nothing", L.FocusText(section("raids")), "")
+
+-- Two columns only for a long list of plain parts in a wide panel.
+local plain = {}
+for i = 1, 13 do plain[i] = { text = "Boss " .. i, req = 1 } end
+eq("13 bosses in a wide panel: two columns", L.CritColumns(plain, 900), 2)
+eq("  in a narrow one: one", L.CritColumns(plain, 500), 1)
+eq("6 dungeons: one", L.CritColumns(spel.parts, 900), 1)
+local counted = {}
+for i = 1, 9 do counted[i] = { text = "Part " .. i, q = 1, req = 20 } end
+eq("parts with counts keep one, for their numbers", L.CritColumns(counted, 900), 1)
+
 -- Explorer: per character, the most complete one seen.
 AltStableLegacyDB = { explore = {
     ["G-hunter"] = { parts = { { name = "Explore Eastern Kingdoms", done = 3, n = 23 },
@@ -315,6 +348,20 @@ check("Explorer is per character", ex.perChar)
 eq("  the most complete one named", ex.char, "Karuzo")
 eq("  13 of 43 areas", ex.have, 13)
 eq("  its continents listed", #ex.parts, 2)
+eq("  everyone seen, furthest first", ex.seen and #ex.seen, 2)
+
+-- Seen, but nobody has explored anything: no name beside 0 (it would look
+-- like a choice).
+AltStableLegacyDB.explore = {
+    ["G-hunter"] = { parts = { { name = "Explore Eastern Kingdoms", done = 0, n = 23 },
+                               { name = "Explore Kalimdor", done = 0, n = 20 } } },
+}
+local ex0 = L.ChallengeRow(s.challenges[62382], "adventure")
+check("nothing explored yet: nobody named", ex0.char == nil)
+eq("  but the total is known", ex0.total, 43)
+AltStableLegacyDB.explore = {}
+local exNone = L.ChallengeRow(s.challenges[62382], "adventure")
+check("no character seen: no total either", exNone.char == nil and exNone.total == nil)
 
 -- Reading Explore Azeroth keeps this character's.
 local me = UnitGUID("player")
@@ -373,10 +420,47 @@ check("  and the points to the next reward", right:find("10 points to go", 1, tr
 eq("  a tick per reward", L.foot and #L.foot.bar.ticks, 4)
 
 -- Opening a section draws its rows; collapsing it takes them away again.
-AltStableLegacyDB.open = { dungeons = true }
-L.expanded[62031] = true
+AltStableLegacyDB.open = { dungeons = true, raids = true }
+AltStableLegacyDB.expanded = { [62031] = true }
 ok, err = pcall(L.Render)
 check("an open section with an expanded challenge draws", ok, tostring(err))
+check("the table has an opaque backing under glass", L.backing ~= nil
+    and (L.backing:IsShown() == (AltStable.SkinIsGlass and AltStable.SkinIsGlass() or false)))
+
+-- Closing the sheet on this tab calls no OnDeactivate: no reading while it
+-- is hidden, and a catch-up when it shows again (Codex on #381).
+local reads, realRead = 0, L.Read
+L.Read = function(...) reads = reads + 1; return realRead(...) end
+main:Hide()
+check("a closed sheet's tab is not on screen", not L.Visible())
+L.RequestRefresh(0)
+for _ = 1, 3 do WoW.flushTimers() end
+eq("  a refresh asked for meanwhile reads nothing", reads, 0)
+check("  but is remembered", L.dirty == true)
+main:Show()
+eq("  and done when the sheet shows again", reads, 1)
+check("  once", not L.dirty)
+L.Read = realRead
+
+-- The reward's name, loaded on request, redraws the footer when it arrives.
+local evFrame
+for _, w in ipairs(WoW.frames) do
+    if w._events and w._events.ITEM_DATA_LOAD_RESULT and w._events.CRITERIA_UPDATE then evFrame = w end
+end
+check("the plugin listens for the item loads it asks for", evFrame ~= nil)
+if evFrame then
+    local drawn, realFoot = 0, L.RenderFooter
+    L.RenderFooter = function() drawn = drawn + 1 end
+    L.wantItem = 276236
+    local on = evFrame:GetScript("OnEvent")
+    on(evFrame, "ITEM_DATA_LOAD_RESULT", 276236, true)
+    eq("  a load that succeeded redraws the footer", drawn, 1)
+    on(evFrame, "ITEM_DATA_LOAD_RESULT", 276236, false)
+    eq("  a failed one does not", drawn, 1)
+    on(evFrame, "ITEM_DATA_LOAD_RESULT", 1, true)
+    eq("  nor another item's", drawn, 1)
+    L.RenderFooter = realFoot
+end
 
 ok, err = pcall(plugin.OnDeactivate, main)
 check("the tab closes", ok, tostring(err))

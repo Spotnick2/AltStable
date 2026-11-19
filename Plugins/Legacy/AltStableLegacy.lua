@@ -69,6 +69,7 @@ local function DB()
     local db = AltStableLegacyDB
     if type(db.explore) ~= "table" then db.explore = {} end
     if type(db.open) ~= "table" then db.open = {} end
+    if type(db.expanded) ~= "table" then db.expanded = {} end
     return db
 end
 
@@ -183,8 +184,17 @@ function L.Read(prev)
             end
         end
     end
-    if #s.order == 0 or (prev and #s.order < #prev.order / 2) then return prev, "partial list" end
+    if #s.order == 0 then return prev, "empty list" end
     s.pool = (s.inB > s.inA) and "B" or "A"
+    -- Every challenge of the last complete read, in the same pool, must be
+    -- here again: a read that lost even one category (a skipped Dungeons)
+    -- would otherwise drop its earned challenges and show it as 0 / 0 (Codex
+    -- on #381). A list that grew is fine; a new pool is a new list.
+    if prev and prev.pool == s.pool then
+        for _, id in ipairs(prev.order) do
+            if not s.challenges[id] then return prev, "partial list" end
+        end
+    end
     local okR, level = Try(Api("C_MajorFactions", "GetCurrentRenownLevel"), D.FACTION)
     s.points = (okR and tonumber(level)) or (prev and prev.points) or nil
     local okM, max = Try(Api("C_Traits", "GetMaxAvailableTraitCurrency"), D.CURRENCY, false)
@@ -276,20 +286,32 @@ function L.ChallengeRow(c, secKey)
     local r = { ch = c, id = c.id, done = c.completed, sec = secKey, parts = {} }
     local crit = c.criteria
     if crit and #crit == 1 and crit[1].type == 8 and crit[1].asset == D.EXPLORE_AZEROTH then
-        -- Explorer: per character, the most complete one we have seen.
+        -- Explorer: per character. The one named is the furthest along of
+        -- the characters seen here (each one's own reading, never a sum),
+        -- and only once someone has explored anything at all: a name beside
+        -- 0/43 would look like a choice.
         r.perChar = true
+        r.seen = {}
         local bestDone, bestN, best
         for guid, e in pairs(DB().explore) do
             local rec = AltStableDB and AltStableDB[guid]
             local d, n = 0, 0
             for _, p in ipairs(e.parts or {}) do d = d + (p.done or 0); n = n + (p.n or 0) end
-            if type(rec) == "table" and rec.name and n > 0 and (not best or d > bestDone) then
-                best, bestDone, bestN = { rec = rec, e = e }, d, n
+            if type(rec) == "table" and rec.name and n > 0 then
+                r.seen[#r.seen + 1] = { name = rec.name, class = rec.class, value = d, total = n }
+                if not best or d > bestDone or (d == bestDone and rec.name < best.rec.name) then
+                    best, bestDone, bestN = { rec = rec, e = e }, d, n
+                end
             end
         end
-        if best then
+        table.sort(r.seen, function(a, b)
+            if a.value ~= b.value then return a.value > b.value end
+            return a.name < b.name
+        end)
+        r.total = best and bestN or nil
+        r.have = best and bestDone or nil
+        if best and bestDone > 0 then
             r.char, r.charClass = best.rec.name, best.rec.class
-            r.have, r.total = bestDone, bestN
             for _, p in ipairs(best.e.parts) do
                 r.parts[#r.parts + 1] = { text = p.name, done = p.done >= p.n, q = p.done, req = p.n }
             end
@@ -336,6 +358,31 @@ function L.ChallengeRow(c, secKey)
     return r
 end
 
+-- Where a section's progress is: the open challenge furthest along (by
+-- share done), for its collapsed line. Nothing when nothing has started.
+function L.Focus(rows)
+    local best, bestShare
+    for _, r in ipairs(rows) do
+        if not r.done and r.have and r.total and r.total > 0 and r.have > 0 then
+            local share = r.have / r.total
+            if not best or share > bestShare then best, bestShare = r, share end
+        end
+    end
+    return best
+end
+
+local UNITS = { dungeons = " dungeons", raids = " bosses" }
+
+-- "Experienced Spelunker · 2/10 dungeons"
+function L.FocusText(sec)
+    local r = sec.focus
+    if not r then return "" end
+    if r.numeric then
+        return ("%s \194\183 %s / %s"):format(r.ch.name, L.Number(r.have), L.Number(r.total))
+    end
+    return ("%s \194\183 %d/%d%s"):format(r.ch.name, r.have, r.total, UNITS[sec.key] or "")
+end
+
 function L.Model(s, alts)
     local m = { classes = {}, crafts = {}, sections = {}, read = s ~= nil, pool = s and s.pool }
     local byKey = {}
@@ -353,7 +400,13 @@ function L.Model(s, alts)
             if a.class == class and (not best or a.level > best.level) then best = a end
         end
         local cells, done, total = Cells(byKey, "class", class, best and best.level)
-        m.classes[#m.classes + 1] = { key = class, label = D.CLASS_NAMES[class], best = best, cells = cells }
+        local others = {}
+        for _, a in ipairs(alts) do
+            if a.class == class then others[#others + 1] = { name = a.name, class = a.class, value = a.level } end
+        end
+        table.sort(others, function(x, y) return x.value > y.value end)
+        m.classes[#m.classes + 1] = { key = class, label = D.CLASS_NAMES[class], best = best, cells = cells,
+                                      others = others }
         m.classDone, m.classTotal = m.classDone + done, m.classTotal + total
     end
 
@@ -379,7 +432,14 @@ function L.Model(s, alts)
             end
         end
         local cells, done, total = Cells(byKey, "craft", craft, skill)
-        m.crafts[#m.crafts + 1] = { key = craft, label = craft, skill = skill, crafter = crafter, cells = cells }
+        local others = {}
+        for _, a in ipairs(alts) do
+            local v = tonumber(a.rec["prof_" .. craft])
+            if v and v > 0 then others[#others + 1] = { name = a.name, class = a.class, value = v } end
+        end
+        table.sort(others, function(x, y) return x.value > y.value end)
+        m.crafts[#m.crafts + 1] = { key = craft, label = craft, skill = skill, crafter = crafter, cells = cells,
+                                    others = others }
         m.craftDone, m.craftTotal = m.craftDone + done, m.craftTotal + total
     end
 
@@ -396,7 +456,8 @@ function L.Model(s, alts)
             end
         end
         if #rows > 0 or sec.key ~= "other" then
-            m.sections[#m.sections + 1] = { key = sec.key, label = sec.label, rows = rows, done = done }
+            m.sections[#m.sections + 1] = { key = sec.key, label = sec.label, rows = rows, done = done,
+                                            focus = L.Focus(rows) }
         end
     end
     return m
@@ -515,9 +576,36 @@ local function MakeGridHead()
     return f
 end
 
+-- A grid row's tooltip: every own alt behind it, with its level or skill,
+-- so the one named is never a mystery among several.
+local function GridRowOnEnter(self)
+    local r = self.r
+    if not r then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(r.label, 1, 1, 1)
+    if r.kind == "craft" and r.skill and r.skill > 0 then
+        GameTooltip:AddLine(("Highest skill on the account: %d"):format(r.skill), 1, 0.82, 0)
+    end
+    if #r.others == 0 then
+        GameTooltip:AddLine(r.noneText or "Nobody on your accounts yet.", 0.7, 0.7, 0.7)
+    else
+        for _, o in ipairs(r.others) do
+            GameTooltip:AddDoubleLine(ClassHex(o.class) .. o.name .. "|r",
+                (r.kind == "class" and "level " or "") .. o.value, 1, 1, 1, 0.8, 0.8, 0.8)
+        end
+    end
+    if r.kind == "craft" and r.skill and r.skill > 0 and not r.crafter then
+        GameTooltip:AddLine("None of the alts AltStable knows has that skill.", 0.5, 0.5, 0.5, true)
+    end
+    GameTooltip:Show()
+end
+
 local function MakeGridRow()
     local f = CreateFrame("Frame", nil, content)
     f:SetHeight(ROW_H)
+    f:EnableMouse(true)
+    f:SetScript("OnEnter", GridRowOnEnter)
+    f:SetScript("OnLeave", HideTip)
     f.bg = f:CreateTexture(nil, "BACKGROUND")
     f.bg:SetAllPoints()
     f.icon = f:CreateTexture(nil, "ARTWORK")
@@ -559,7 +647,7 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     h.name:SetPoint("LEFT", h, "LEFT", 8, 0)
     h.name:SetText(kind == "class" and "Class" or "Trade")
     h.alt:SetPoint("LEFT", h, "LEFT", altX, 0)
-    h.alt:SetText(kind == "class" and "Highest-level alt" or "Crafter")
+    h.alt:SetText(kind == "class" and "Highest-level alt" or "Highest skill")
     for i, tier in ipairs(D.TIERS[kind]) do
         h.tiers[i]:SetPoint("CENTER", h, "LEFT", cellsX + (i - 0.5) * CELL_W, 0)
         h.tiers[i]:SetText(tostring(tier))
@@ -571,6 +659,7 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
         local f = Acquire("gridRow", MakeGridRow)
         f:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
         f:SetWidth(w)
+        f.r, r.kind = r, kind
         f.alt:ClearAllPoints()
         f.alt:SetPoint("LEFT", f, "LEFT", altX, 0)
         f.alt:SetWidth(math.max(40, cellsX - altX - 6))
@@ -638,6 +727,11 @@ local function MakeSection()
     b.label:SetPoint("LEFT", b.arrow, "RIGHT", 8, 0)
     b.count = FS(b, "GameFontHighlight")
     b.count:SetPoint("LEFT", b.label, "RIGHT", 10, 0)
+    -- Where the progress is, so a closed section still says why to open it.
+    b.focus = FS(b, "GameFontHighlight")
+    b.focus:SetPoint("LEFT", b.count, "RIGHT", 24, 0)
+    b.focus:SetPoint("RIGHT", b, "RIGHT", -8, 0)
+    b.focus:SetWordWrap(false)
     b:SetScript("OnClick", SectionOnClick)
     return b
 end
@@ -645,7 +739,10 @@ end
 local function RowOnClick(self)
     local r = self.r
     if not r or #r.parts == 0 then return end
-    L.expanded[r.id] = not L.expanded[r.id] or nil
+    -- Remembered: a list opened stays open, and a finished one the owner
+    -- never opened stays folded.
+    local e = DB().expanded
+    e[r.id] = not e[r.id] or nil
     L.Render()
 end
 
@@ -658,7 +755,12 @@ local function RowOnEnter(self)
     if r.done then
         GameTooltip:AddLine("Earned" .. (r.ch.date and (" on " .. r.ch.date) or ""), 0.4, 1, 0.4)
     elseif r.perChar then
-        GameTooltip:AddLine("Explored per character: the most complete one seen on this account.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("Explored per character. Named: the furthest along of the characters "
+            .. "logged in on this WoW account since Legacy was installed.", 0.7, 0.7, 0.7, true)
+        for _, o in ipairs(r.seen or {}) do
+            GameTooltip:AddDoubleLine(ClassHex(o.class) .. o.name .. "|r", ("%d / %d"):format(o.value, o.total),
+                1, 1, 1, 0.8, 0.8, 0.8)
+        end
     elseif r.char == "Account" then
         GameTooltip:AddLine("Counted for the whole Battle.net account.", 0.7, 0.7, 0.7)
     end
@@ -702,6 +804,16 @@ local function MakeCritRow()
     return f
 end
 
+-- One column, or two for a long list of plain parts in a wide panel. Parts
+-- that carry a count (Explorer's continents) keep one, with their numbers.
+function L.CritColumns(parts, w)
+    if #parts < 8 or w < 640 then return 1 end
+    for _, p in ipairs(parts) do
+        if p.req and p.req > 1 then return 1 end
+    end
+    return 2
+end
+
 -- The columns of a checklist row, as fractions of the width.
 local function Columns(w)
     return math.floor(w * 0.40), math.floor(w * 0.60), math.floor(w * 0.60) + 110
@@ -719,6 +831,7 @@ function L.DrawSection(sec, y, w)
     b.arrow:SetTexture(open and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
     b.label:SetText(sec.label)
     b.count:SetText(("%d / %d"):format(sec.done, #sec.rows))
+    b.focus:SetText(sec.focus and ("|cffaaaaaa" .. L.FocusText(sec) .. "|r") or "")
     y = y + SECTION_H
     if not open then return y end
 
@@ -737,7 +850,7 @@ function L.DrawSection(sec, y, w)
         f:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
         f:SetWidth(w)
         f.r = row
-        local expanded = L.expanded[row.id] and true or false
+        local expanded = DB().expanded[row.id] and true or false
         f.bg:SetColorTexture(1, 1, 1, expanded and 0.06 or 0.0)
         if #row.parts > 0 then
             f.arrow:SetTexture(expanded and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
@@ -756,7 +869,11 @@ function L.DrawSection(sec, y, w)
         elseif row.char then
             f.char:SetText(ClassHex(row.charClass) .. row.char .. "|r")
         else
-            f.char:SetText(row.perChar and "|cff999999Not seen yet|r" or "")
+            -- Explorer with nobody named: seen but nothing explored, or no
+            -- character seen at all. Never a name beside 0.
+            f.char:SetText(not row.perChar and ""
+                or (row.total and "|cff999999No exploration recorded|r")
+                or "|cff999999No character seen yet|r")
         end
         f.prog:ClearAllPoints()
         f.prog:SetPoint("LEFT", f, "LEFT", progX, 0)
@@ -767,20 +884,28 @@ function L.DrawSection(sec, y, w)
         f.action:SetText(row.action and ("|cffffd100" .. row.action .. "|r") or "")
         y = y + ROW_H
         if expanded then
-            for _, p in ipairs(row.parts) do
+            -- A long list of plain parts (bosses, dungeons) in two columns
+            -- when the width allows, read down the first then the second.
+            local cols = L.CritColumns(row.parts, w)
+            local perCol = math.ceil(#row.parts / cols)
+            local colW = math.floor(w / cols)
+            for i, p in ipairs(row.parts) do
+                local col = math.floor((i - 1) / perCol)
+                local line = (i - 1) % perCol
                 local cr = Acquire("critRow", MakeCritRow)
-                cr:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
-                cr:SetWidth(w)
+                cr:SetPoint("TOPLEFT", content, "TOPLEFT", col * (colW - 34), -(y + line * CRIT_H))
+                cr:SetWidth(cols == 1 and w or colW)
                 cr.mark:Show()
                 cr.mark:SetTexture(p.done and "Interface\\RAIDFRAME\\ReadyCheck-Ready"
                     or "Interface\\Buttons\\UI-CheckBox-Up")
-                cr.mark:SetAlpha(p.done and 1 or 0.6)
+                cr.mark:SetAlpha(p.done and 1 or 0.9)
                 cr.text:SetText(p.done and ("|cffaaaaaa" .. tostring(p.text) .. "|r") or tostring(p.text))
                 cr.qty:ClearAllPoints()
                 cr.qty:SetPoint("LEFT", cr, "LEFT", progX, 0)
-                cr.qty:SetText((p.req and p.req > 1) and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
-                y = y + CRIT_H
+                cr.qty:SetText((cols == 1 and p.req and p.req > 1)
+                    and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
             end
+            y = y + perCol * CRIT_H
         end
     end
     return y
@@ -825,6 +950,18 @@ function L.Render()
     for _, sec in ipairs(m.sections) do y = L.DrawSection(sec, y, w) end
     content:SetHeight(math.max(1, y + PAD))
     L.UpdateScrollBar()
+end
+
+function L.ApplyTheme()
+    local tex = L.backing
+    if not tex then return end
+    local glass = AltStable.SkinIsGlass and AltStable.SkinIsGlass()
+    if glass and AltStable.SkinDataColor then
+        tex:SetColorTexture(unpack(AltStable.SkinDataColor()))
+        tex:Show()
+    else
+        tex:Hide()
+    end
 end
 
 function L.BuildPanel(mainFrame)
@@ -876,6 +1013,19 @@ function L.BuildPanel(mainFrame)
     content:SetSize(1, 1)
     scroll:SetScrollChild(content)
 
+    -- The table is somewhere to read, as the sheet's own (SheetUI's dataBG):
+    -- under glass, an opaque reading surface behind the rows, so the world
+    -- never shows through a boss name or an empty checkbox. The title band
+    -- above it stays glass. The flat look's panel fill is opaque already.
+    L.backing = panel:CreateTexture(nil, "BACKGROUND", nil, -3)
+    L.backing:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -HEADER_H + 4)
+    L.backing:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    L.ApplyTheme()
+    if AltStable.RegisterThemeCallback and not L._themeHooked then
+        AltStable.RegisterThemeCallback(function() L.ApplyTheme() end)
+        L._themeHooked = true
+    end
+
     emptyFS = FS(content, "GameFontHighlightSmall")
     emptyFS:SetPoint("TOPLEFT", content, "TOPLEFT", 4, -2)
     emptyFS:SetText("|cff888888The Legacy Challenges have not been read yet.|r")
@@ -897,6 +1047,11 @@ function L.BuildPanel(mainFrame)
     bar:SetThumbTexture(thumb)
     bar:SetScript("OnValueChanged", function(_, value) scroll:SetVerticalScroll(value or 0) end)
     bar:Hide()
+
+    -- The sheet opened again on this tab: catch up on what changed meanwhile.
+    panel:SetScript("OnShow", function()
+        if L.dirty and L.isActive then L.Refresh() end
+    end)
 
     panel:EnableMouseWheel(true)
     panel:SetScript("OnMouseWheel", function(_, delta)
@@ -1044,6 +1199,7 @@ end
 ------------------------------------------------------------
 
 function L.Refresh()
+    L.dirty = nil
     L.state = L.Read(L.state)
     L.model = L.Model(L.state, L.OwnAlts())
     L.Render()
@@ -1051,11 +1207,24 @@ function L.Refresh()
 end
 
 local refreshTimer
+-- Whether the tab is on screen. Closing the sheet hides the window without
+-- calling OnDeactivate (SheetUI's OnHide), so isActive alone would keep a
+-- hidden tab re-reading on every burst of CRITERIA_UPDATE (Codex on #381).
+function L.Visible()
+    return L.isActive and panel ~= nil and panel:IsVisible() and true or false
+end
+
+-- A refresh asked for while the tab is not on screen is remembered and done
+-- when it shows again (the panel's OnShow).
 function L.RequestRefresh(delay)
+    if not L.Visible() then
+        if L.isActive then L.dirty = true end
+        return
+    end
     if refreshTimer then return end
     refreshTimer = C_Timer.NewTimer(delay or 1, function()
         refreshTimer = nil
-        if L.isActive then L.Refresh() end
+        if L.Visible() then L.Refresh() elseif L.isActive then L.dirty = true end
     end)
 end
 
@@ -1135,14 +1304,18 @@ function L.Bootstrap()
 end
 
 local frame = CreateFrame("Frame")
-frame:SetScript("OnEvent", function(_, event, arg1)
+frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         C_Timer.After(1, L.Bootstrap)
     elseif event == "ACHIEVEMENT_EARNED" then
         C_Timer.After(1, L.ReadExplore)
         L.RequestRefresh(1)
-    elseif event == "GET_ITEM_INFO_RECEIVED" then
-        if L.isActive and L.wantItem and tonumber(arg1) == L.wantItem then L.RenderFooter() end
+    elseif event == "GET_ITEM_INFO_RECEIVED" or event == "ITEM_DATA_LOAD_RESULT" then
+        -- The reward's name, asked for with RequestLoadItemDataByID: the load
+        -- answers with ITEM_DATA_LOAD_RESULT (itemID, success), which may be
+        -- the only one to come (Codex on #381).
+        local ok = event == "GET_ITEM_INFO_RECEIVED" or arg2
+        if ok and L.isActive and L.wantItem and tonumber(arg1) == L.wantItem then L.RenderFooter() end
     else
         -- CRITERIA_UPDATE fires on every kill: debounced, and only read while
         -- the tab shows.
@@ -1150,7 +1323,8 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     end
 end)
 for _, ev in ipairs({ "PLAYER_LOGIN", "ACHIEVEMENT_EARNED", "CRITERIA_UPDATE", "RECEIVED_ACHIEVEMENT_LIST",
-                      "MAJOR_FACTION_RENOWN_LEVEL_CHANGED", "GET_ITEM_INFO_RECEIVED" }) do
+                      "MAJOR_FACTION_RENOWN_LEVEL_CHANGED", "GET_ITEM_INFO_RECEIVED",
+                      "ITEM_DATA_LOAD_RESULT" }) do
     frame:RegisterEvent(ev)
 end
 
