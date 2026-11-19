@@ -126,6 +126,8 @@ local function client()
     add(15594, 684, { name = "Conqueror of the Lair", criteria = {} })
     add(15598, 62046, { name = "Master of Alterac Valley",
         criteria = { { text = "Reach exalted reputation with the Frostwolf Clan", type = 243, q = 0, req = 42000 } } })
+    add(15620, 63340, { name = "Field of Honor: Week 4",
+        criteria = { { text = "Complete Field of Honor: Week 4", type = 27, q = 0, req = 1 } } })
     add(15596, 62382, { name = "Explorer", criteria = { { text = "Explorer", type = 8, asset = 62053, q = 0, req = 1 } } })
     add(15596, 62054, { name = "Lord Valthalak Laid to Rest", criteria = {} })
     -- Not a challenge: worth no points.
@@ -143,7 +145,7 @@ local function client()
     local points = {}
     for id in pairs(ach) do points[id] = 0 end
     for id in pairs(D.GRID) do if D.GRID[id][4] == "A" then points[id] = 1 end end
-    for _, id in ipairs({ 62031, 684, 62046, 62382, 62054 }) do points[id] = 1 end
+    for _, id in ipairs({ 62031, 684, 62046, 63340, 62382, 62054 }) do points[id] = 1 end
     WoW.legacy = { categories = cats, achievements = ach, points = points, renown = 5, max = 65,
                    rewards = { [15] = 276236, [25] = 277714, [40] = 277717, [55] = 277718 } }
 end
@@ -168,7 +170,7 @@ rawset(_G, "C_Traits", {
 client()
 local s = L.Read(nil)
 check("a read finds the challenges", s ~= nil)
-eq("  the 45 milestones and 5 checklists, not the pointless one", s and #s.order, 50)
+eq("  the 45 milestones and 6 checklists, not the pointless one", s and #s.order, 51)
 eq("  from set A", s and s.pool, "A")
 eq("  the points are the renown", s and s.points, 5)
 eq("  out of the max", s and s.max, 65)
@@ -289,9 +291,15 @@ eq("  for the whole account", spel.char, "Account")
 check("the Lair has no criteria: open, no progress", row("raids", 684).nocrit)
 local av = row("pvp", 62046)
 check("a reputation is a number, not a checklist", av.numeric)
-eq("  0 of 42000", L.ProgressText(av), "0 / 42000")
+eq("  0 of 42,000", L.ProgressText(av), "0 / 42,000")
 check("  and no 'finish' for it", av.action == nil)
-eq("PvP holds the battleground reputations", #section("pvp").rows, 1)
+eq("  nor a part list repeating it", #av.parts, 0)
+local foh = row("pvp", 63340)
+check("one plain criterion is the challenge itself: open, no 0/1", foh.nocrit)
+check("  no part list and no 'Complete ...' repeating its name", #foh.parts == 0 and foh.action == nil)
+eq("PvP holds the reputations and the Field of Honor weeks", #section("pvp").rows, 2)
+eq("big numbers get commas", L.Number(1234567), "1,234,567")
+eq("  small ones none", L.Number(150), "150")
 check("no Other section when nothing is left over", section("other") == nil)
 
 -- Explorer: per character, the most complete one seen.

@@ -96,6 +96,13 @@ end
 
 local function HideTip() GameTooltip:Hide() end
 
+-- 42000 as 42,000.
+function L.Number(n)
+    local s = tostring(math.floor(tonumber(n) or 0))
+    local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return (out:gsub("^,", ""))
+end
+
 ------------------------------------------------------------
 -- Reading the client
 ------------------------------------------------------------
@@ -296,13 +303,20 @@ function L.ChallengeRow(c, secKey)
     else
         r.char = "Account"
         if #crit == 1 and (crit[1].req or 0) > 1 then
+            -- One counted criterion (a reputation): the number is the row;
+            -- a part list would only repeat it.
             r.numeric = true
             r.have, r.total = math.min(crit[1].q or 0, crit[1].req), crit[1].req
-        else
-            local d = 0
-            for _, x in ipairs(crit) do if x.done then d = d + 1 end end
-            r.have, r.total = d, #crit
+            return r
+        elseif #crit == 1 then
+            -- One plain criterion (a Field of Honor week) is the challenge
+            -- itself: "0/1" and "Complete <its name>" would say nothing more.
+            r.nocrit = true
+            return r
         end
+        local d = 0
+        for _, x in ipairs(crit) do if x.done then d = d + 1 end end
+        r.have, r.total = d, #crit
         for _, x in ipairs(crit) do
             r.parts[#r.parts + 1] = { text = x.text, done = x.done, q = x.q, req = x.req }
         end
@@ -420,7 +434,7 @@ function L.ProgressText(r)
     if r.unknown then return "|cff888888Not read yet|r" end
     if r.nocrit then return DASH end
     if not r.total then return "|cff888888?|r" end
-    if r.numeric then return ("%d / %d"):format(r.have, r.total) end
+    if r.numeric then return L.Number(r.have) .. " / " .. L.Number(r.total) end
     local pct = r.total > 0 and math.floor(100 * r.have / r.total + 0.5) or 0
     return ("%d/%d \194\183 %d%%"):format(r.have, r.total, pct)
 end
@@ -537,7 +551,7 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     y = y + TITLE_ROW
 
     local cellsX = w - 3 * CELL_W - 4
-    local altX = 128
+    local altX = 116
     local h = Acquire("gridHead", MakeGridHead)
     h:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
     h:SetWidth(w)
@@ -764,7 +778,7 @@ function L.DrawSection(sec, y, w)
                 cr.text:SetText(p.done and ("|cffaaaaaa" .. tostring(p.text) .. "|r") or tostring(p.text))
                 cr.qty:ClearAllPoints()
                 cr.qty:SetPoint("LEFT", cr, "LEFT", progX, 0)
-                cr.qty:SetText((p.req and p.req > 1) and ("%d / %d"):format(math.min(p.q or 0, p.req), p.req) or "")
+                cr.qty:SetText((p.req and p.req > 1) and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
                 y = y + CRIT_H
             end
         end
