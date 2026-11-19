@@ -31,6 +31,9 @@
 -- AltStableLegacyDB (this WoW account only, never synced):
 --   explore[guid] = { parts = { { name, done, n } }, done, at }
 --   open[sectionKey] = true   -- a section the owner expanded
+--   expanded[achievementID] = true   -- a checklist the owner opened
+--   stars[pool][achievementID] = true   -- the Bucket List, per ID set
+--   view = "challenges" | "bucket", thisChar = true   -- the last view, filter
 --
 -- LoadOnDemand: registers on PLAYER_LOGIN, or right away when enabled later.
 ------------------------------------------------------------
@@ -70,6 +73,7 @@ local function DB()
     if type(db.explore) ~= "table" then db.explore = {} end
     if type(db.open) ~= "table" then db.open = {} end
     if type(db.expanded) ~= "table" then db.expanded = {} end
+    if type(db.stars) ~= "table" then db.stars = {} end
     return db
 end
 
@@ -496,6 +500,252 @@ function L.GroupMilestones(rows)
     return out
 end
 
+------------------------------------------------------------
+-- The Bucket List: starred challenges, and what each still needs
+------------------------------------------------------------
+
+-- The stars of one pool (an ID set): a set's IDs never mean the other's.
+function L.Stars(pool)
+    local stars = DB().stars
+    pool = pool or (L.state and L.state.pool) or "A"
+    if type(stars[pool]) ~= "table" then stars[pool] = {} end
+    return stars[pool]
+end
+
+function L.IsStarred(id)
+    return id ~= nil and L.Stars()[id] == true
+end
+
+function L.ToggleStar(id)
+    if not id then return end
+    local s = L.Stars()
+    s[id] = not s[id] or nil
+    L.Render()
+end
+
+-- The highest skill the game reports for a craft, across its tiers' one
+-- criterion each (the account's best); `c`'s own when there is no read.
+function L.CraftBest(s, craft, c)
+    local best
+    local function take(ch)
+        local crit = ch and ch.criteria and ch.criteria[1]
+        if crit and crit.q and (not best or crit.q > best) then best = crit.q end
+    end
+    if s then
+        for id, g in pairs(D.GRID) do
+            if g[1] == "craft" and g[2] == craft then take(s.challenges[id]) end
+        end
+    end
+    take(c)
+    return best
+end
+
+local function SectionKeyOf(cat)
+    for _, sec in ipairs(D.SECTIONS) do if sec.cats[cat] then return sec.key end end
+    return "other"
+end
+
+local function Plural(n, one, many) return n == 1 and one or many end
+
+-- One starred challenge as a Bucket List row: who can advance it, how far
+-- along, and what is left - in words a player can act on. With `me` (the
+-- "This character" filter), only what that character can advance, with its
+-- own level, skill or exploration; nil when it cannot.
+function L.BucketItem(c, alts, me, s)
+    local it = { id = c.id, ch = c, done = c.completed }
+    local g = D.GRID[c.id]
+    if g and g[1] == "class" then
+        local class, need = g[2], g[3]
+        local who
+        if me then
+            if me.class ~= class then return nil end
+            who = me
+        else
+            for _, a in ipairs(alts) do
+                if a.class == class and (not who or a.level > who.level) then who = a end
+            end
+        end
+        it.kind, it.need = "class", need
+        if who then it.char, it.charClass, it.have = who.name, who.class, math.min(who.level, need) end
+        if it.done then
+            it.left = "Earned"
+        elseif not who then
+            it.left = "No known " .. D.CLASS_NAMES[class]:lower()
+        elseif who.level >= need then
+            it.left = "Reached; the game has not counted it"
+        else
+            local n = need - who.level
+            it.left = ("Gain %d %s"):format(n, Plural(n, "level", "levels"))
+        end
+        return it
+    end
+    if g and g[1] == "craft" then
+        local craft, need = g[2], g[3]
+        local skill, who
+        if me then
+            skill = tonumber(me.rec["prof_" .. craft])
+            if not skill or skill <= 0 then return nil end
+            who = me
+        else
+            -- The game's figure (the account's best) first, from every tier of
+            -- the craft as the grid reads it (Codex on #383: a tier whose
+            -- criterion did not read must not hand the answer to an alt's
+            -- stored skill); the alts' own skills only when none has one.
+            skill = L.CraftBest(s, craft, c)
+            if not skill then
+                for _, a in ipairs(alts) do
+                    local v = tonumber(a.rec["prof_" .. craft])
+                    if v and v > 0 and (not skill or v > skill) then skill = v end
+                end
+            end
+            if skill and skill > 0 then
+                for _, a in ipairs(alts) do
+                    if tonumber(a.rec["prof_" .. craft]) == skill then who = a; break end
+                end
+            end
+        end
+        it.kind, it.need = "craft", need
+        if skill and skill > 0 then it.have = math.min(skill, need) end
+        if who then
+            it.char, it.charClass = who.name, who.class
+        elseif skill and skill > 0 then
+            it.char = "Crafter unknown"
+        end
+        if it.done then
+            it.left = "Earned"
+        elseif not skill or skill <= 0 then
+            it.left = "No known " .. (D.CRAFT_NOUNS[craft] or craft:lower())
+        elseif skill >= need then
+            it.left = "Reached; the game has not counted it"
+        else
+            local n = need - skill
+            it.left = ("Gain %d %s skill %s"):format(n, craft, Plural(n, "point", "points"))
+        end
+        return it
+    end
+
+    local sec = SectionKeyOf(c.cat)
+    local r = L.ChallengeRow(c, sec)
+    it.kind, it.parts = "list", r.parts
+    if r.perChar then
+        it.kind = "explore"
+        if me then
+            local e = DB().explore[me.guid]
+            local d, n = 0, 0
+            for _, p in ipairs(e and e.parts or {}) do d = d + (p.done or 0); n = n + (p.n or 0) end
+            it.char, it.charClass = me.name, me.class
+            if n > 0 then
+                it.have, it.need = d, n
+                it.parts = {}
+                for _, p in ipairs(e.parts) do
+                    it.parts[#it.parts + 1] = { text = p.name, done = p.done >= p.n, q = p.done, req = p.n }
+                end
+            end
+        else
+            it.char, it.charClass, it.have, it.need = r.char, r.charClass, r.have, r.total
+        end
+        if it.done then
+            it.left = "Earned"
+        elseif it.need then
+            local n = it.need - (it.have or 0)
+            it.left = ("Explore %d more %s"):format(n, Plural(n, "area", "areas"))
+        else
+            it.left = "Log in a character to read its exploration"
+        end
+        return it
+    end
+    it.char = r.char
+    it.have, it.need, it.numeric, it.nocrit, it.unknown = r.have, r.total, r.numeric, r.nocrit, r.unknown
+    if it.done then
+        it.left = "Earned"
+    elseif r.unknown then
+        it.left = "Not read yet"
+    elseif r.nocrit then
+        it.left = c.desc
+    elseif r.numeric then
+        it.left = ("Gain %s reputation"):format(L.Number(r.total - r.have))
+    elseif r.action then
+        it.left = r.action
+    else
+        local n = r.total - r.have
+        local unit = (sec == "dungeons" and Plural(n, "dungeon", "dungeons"))
+            or (sec == "raids" and Plural(n, "boss", "bosses")) or Plural(n, "part", "parts")
+        it.left = ("%d %s left"):format(n, unit)
+    end
+    return it
+end
+
+-- The starred challenges as rows: not earned first, the closest to done on
+-- top; earned ones last. `me` filters to what that character can advance.
+function L.BucketItems(s, alts, me, stars)
+    local items = {}
+    if not s then return items end
+    for id in pairs(stars or {}) do
+        local c = s.challenges[id]
+        local it = c and L.BucketItem(c, alts, me, s)
+        if it then items[#items + 1] = it end
+    end
+    local function share(it)
+        if not it.have or not it.need or it.need <= 0 then return -1 end
+        return it.have / it.need
+    end
+    table.sort(items, function(a, b)
+        if a.done ~= b.done then return not a.done end
+        local sa, sb = share(a), share(b)
+        if sa ~= sb then return sa > sb end
+        return tostring(a.ch.name) < tostring(b.ch.name)
+    end)
+    return items
+end
+
+-- The character playing, as one of our alts; before its first scan, as the
+-- client describes it (no professions known yet).
+-- Its level and skills are read live (Codex on #383: the saved record lags
+-- until the next full scan, so "Gain 4" stayed after a level or a skill
+-- point): the level from UnitLevel, the skills through the scanner's own
+-- reading. A live figure replaces the saved one craft by craft, so a craft
+-- the live list leaves out keeps its saved skill: an empty list, or one whose
+-- Professions header is collapsed in the Skills panel (Blizzard's list hides a
+-- collapsed header's lines; Codex on #383). A craft dropped this session
+-- stays until the next full scan.
+function L.Me(alts)
+    local guid = UnitGUID("player")
+    local saved
+    for _, a in ipairs(alts) do if a.guid == guid then saved = a end end
+    local me = { guid = guid, name = saved and saved.name or UnitName("player"),
+                 class = saved and saved.class or select(2, UnitClass("player")),
+                 level = tonumber(UnitLevel("player")) or (saved and saved.level) or 0, rec = {} }
+    local live = {}
+    if AltStable.ScanSkills then pcall(AltStable.ScanSkills, live) end
+    for _, source in ipairs({ (saved and saved.rec) or {}, live }) do
+        for k, v in pairs(source) do
+            if type(k) == "string" and k:find("^prof_") then me.rec[k] = v end
+        end
+    end
+    return me
+end
+
+-- Which view shows: the last one picked, Challenges at first.
+function L.View()
+    return DB().view == "bucket" and "bucket" or "challenges"
+end
+
+function L.SetView(view)
+    DB().view = (view == "bucket") and "bucket" or nil
+    if L.scrollBar then L.scrollBar:SetValue(0) end
+    L.Render()
+end
+
+-- How many stars this pool holds that the read knows: the tab's count.
+function L.StarCount()
+    local n = 0
+    local s = L.state
+    for id in pairs(L.Stars()) do
+        if not s or s.challenges[id] then n = n + 1 end
+    end
+    return n
+end
+
 -- The footer: points earned, out of the account's maximum, and the next
 -- reward. The account's total, whatever a view filters.
 function L.FooterModel(s)
@@ -564,6 +814,46 @@ local function FS(parent, template, justify)
     return f
 end
 
+-- The Professions wishlist's star (#271): filled when on the Bucket List; a
+-- dim outline where one could be added (`offer`); nothing otherwise.
+local function SetStar(tex, starred, offer)
+    if starred then
+        tex:SetAtlas("auctionhouse-icon-favorite")
+        tex:SetAlpha(1)
+        tex:Show()
+    elseif offer then
+        tex:SetAtlas("auctionhouse-icon-favorite-off")
+        tex:SetAlpha(0.35)
+        tex:Show()
+    else
+        tex:Hide()
+    end
+end
+
+-- The Bucket List line a starrable thing's tooltip ends with.
+local function StarHint(id, done)
+    if L.IsStarred(id) then
+        GameTooltip:AddLine("Click to take it off your Bucket List.", 0.5, 0.5, 0.5)
+    elseif not done then
+        GameTooltip:AddLine("Click to add it to your Bucket List.", 0.5, 0.5, 0.5)
+    end
+end
+
+-- A click on a cell, a step or a row's star: earned challenges can be taken
+-- off the list but not put on it.
+local function StarClick(id, done)
+    if not id then return end
+    if done and not L.IsStarred(id) then return end
+    L.ToggleStar(id)
+end
+
+L.StarClick = StarClick
+
+local function CellOnClick(self)
+    local c = self.cell and self.cell.ch
+    if c then StarClick(c.id, c.completed) end
+end
+
 -- A grid cell's tooltip: the challenge, then where it stands.
 local function CellOnEnter(self)
     local cell, row = self.cell, self.row
@@ -585,6 +875,7 @@ local function CellOnEnter(self)
     elseif st == "unknown" then
         GameTooltip:AddLine("Not read yet.", 0.7, 0.7, 0.7)
     end
+    if c then StarHint(c.id, c.completed) end
     GameTooltip:Show()
 end
 
@@ -656,8 +947,13 @@ local function MakeGridRow()
         b:SetSize(CELL_W, ROW_H)
         b.text = FS(b, "GameFontHighlight", "CENTER")
         b.text:SetAllPoints()
+        b.star = b:CreateTexture(nil, "OVERLAY")
+        b.star:SetSize(11, 11)
+        b.star:SetPoint("RIGHT", b, "RIGHT", 0, 0)
+        b.star:Hide()
         b:SetScript("OnEnter", CellOnEnter)
         b:SetScript("OnLeave", HideTip)
+        b:SetScript("OnClick", CellOnClick)
         f.cells[i] = b
     end
     return f
@@ -739,6 +1035,7 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
             b:SetPoint("LEFT", f, "LEFT", cellsX + (k - 1) * CELL_W, 0)
             b.cell, b.row = cell, r
             b.text:SetText(L.CellText(cell))
+            SetStar(b.star, cell.ch and L.IsStarred(cell.ch.id), false)
         end
         y = y + ROW_H
     end
@@ -841,6 +1138,26 @@ local function MakeChallengeRow()
     b.prog = FS(b)
     b.action = FS(b, "GameFontHighlight")
     b.action:SetWordWrap(false)
+    -- Its own button: the row's click opens the checklist, the star's puts
+    -- the challenge on the Bucket List.
+    b.starBtn = CreateFrame("Button", nil, b)
+    b.starBtn:SetSize(13, 13)
+    b.starBtn:SetPoint("LEFT", b, "LEFT", 0, 0)
+    b.starBtn.tex = b.starBtn:CreateTexture(nil, "OVERLAY")
+    b.starBtn.tex:SetAllPoints()
+    b.starBtn:SetScript("OnClick", function(self)
+        local r = self:GetParent().r
+        if r then StarClick(r.id, r.done) end
+    end)
+    b.starBtn:SetScript("OnEnter", function(self)
+        local r = self:GetParent().r
+        if not r then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(r.ch.name, 1, 1, 1)
+        StarHint(r.id, r.done)
+        GameTooltip:Show()
+    end)
+    b.starBtn:SetScript("OnLeave", HideTip)
     b:SetScript("OnClick", RowOnClick)
     b:SetScript("OnEnter", RowOnEnter)
     b:SetScript("OnLeave", HideTip)
@@ -886,7 +1203,13 @@ local function StepOnEnter(self)
     else
         GameTooltip:AddLine("Not earned yet.", 0.7, 0.7, 0.7)
     end
+    StarHint(st.ch.id, st.done)
     GameTooltip:Show()
+end
+
+local function StepOnClick(self)
+    local st = self.step
+    if st then StarClick(st.ch.id, st.done) end
 end
 
 local MAX_STEPS = 6
@@ -939,8 +1262,13 @@ local function MakeMilestoneRow()
         b:SetSize(STEP_W, ROW_H)
         b.text = FS(b, "GameFontHighlight", "LEFT")
         b.text:SetAllPoints()
+        b.star = b:CreateTexture(nil, "OVERLAY")
+        b.star:SetSize(11, 11)
+        b.star:SetPoint("RIGHT", b, "RIGHT", -2, 0)
+        b.star:Hide()
         b:SetScript("OnEnter", StepOnEnter)
         b:SetScript("OnLeave", HideTip)
+        b:SetScript("OnClick", StepOnClick)
         f.steps[i] = b
     end
     return f
@@ -967,6 +1295,7 @@ function L.DrawMilestones(row, y, w, startX)
             b:SetWidth(stepW)
             b:SetPoint("TOPLEFT", f, "TOPLEFT", pos[i].x, -pos[i].line * ROW_H)
             b.text:SetText(st.done and (CHECK .. " |cff9fe09f" .. st.short .. "|r") or ("|cff9a9a9a" .. st.short .. "|r"))
+            SetStar(b.star, L.IsStarred(st.ch.id), false)
             b:Show()
         else
             b:Hide()
@@ -1018,6 +1347,9 @@ function L.DrawSection(sec, y, w)
         else
             f.arrow:Hide()
         end
+        local starred = L.IsStarred(row.id)
+        f.starBtn:SetShown(starred or not row.done)
+        SetStar(f.starBtn.tex, starred, not row.done)
         f.icon:SetTexture(row.ch.icon)
         f.name:SetText(row.done and ("|cff9fe09f" .. row.ch.name .. "|r") or row.ch.name)
         f.name:SetWidth(math.max(60, charX - 60))
@@ -1043,31 +1375,230 @@ function L.DrawSection(sec, y, w)
         f.action:SetPoint("RIGHT", f, "RIGHT", -6, 0)
         f.action:SetText(row.action and ("|cffffd100" .. row.action .. "|r") or "")
         y = y + ROW_H
-        if expanded then
-            -- A long list of plain parts (bosses, dungeons) in two columns
-            -- when the width allows, read down the first then the second.
-            local cols = L.CritColumns(row.parts, w)
-            local perCol = math.ceil(#row.parts / cols)
-            local colW = math.floor(w / cols)
-            for i, p in ipairs(row.parts) do
-                local col = math.floor((i - 1) / perCol)
-                local line = (i - 1) % perCol
-                local cr = Acquire("critRow", MakeCritRow)
-                cr:SetPoint("TOPLEFT", content, "TOPLEFT", col * (colW - 34), -(y + line * CRIT_H))
-                cr:SetWidth(cols == 1 and w or colW)
-                cr.mark:Show()
-                cr.mark:SetTexture(p.done and "Interface\\RAIDFRAME\\ReadyCheck-Ready"
-                    or "Interface\\Buttons\\UI-CheckBox-Up")
-                cr.mark:SetAlpha(p.done and 1 or 0.9)
-                cr.text:SetText(p.done and ("|cffaaaaaa" .. tostring(p.text) .. "|r") or tostring(p.text))
-                cr.qty:ClearAllPoints()
-                cr.qty:SetPoint("LEFT", cr, "LEFT", progX, 0)
-                cr.qty:SetText((cols == 1 and p.req and p.req > 1)
-                    and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
-            end
-            y = y + perCol * CRIT_H
+        if expanded then y = L.DrawParts(row.parts, y, w, progX) end
         end
+    end
+    return y
+end
+
+-- A checklist's parts under its row, missing first. A long list of plain
+-- parts (bosses, dungeons) in two columns when the width allows, read down
+-- the first then the second; counted parts keep one, with their numbers at
+-- qtyX.
+function L.DrawParts(parts, y, w, qtyX)
+    local cols = L.CritColumns(parts, w)
+    local perCol = math.ceil(#parts / cols)
+    local colW = math.floor(w / cols)
+    for i, p in ipairs(parts) do
+        local col = math.floor((i - 1) / perCol)
+        local line = (i - 1) % perCol
+        local cr = Acquire("critRow", MakeCritRow)
+        cr:SetPoint("TOPLEFT", content, "TOPLEFT", col * (colW - 34), -(y + line * CRIT_H))
+        cr:SetWidth(cols == 1 and w or colW)
+        cr.mark:Show()
+        cr.mark:SetTexture(p.done and "Interface\\RAIDFRAME\\ReadyCheck-Ready"
+            or "Interface\\Buttons\\UI-CheckBox-Up")
+        cr.mark:SetAlpha(p.done and 1 or 0.9)
+        cr.text:SetText(p.done and ("|cffaaaaaa" .. tostring(p.text) .. "|r") or tostring(p.text))
+        cr.qty:ClearAllPoints()
+        cr.qty:SetPoint("LEFT", cr, "LEFT", qtyX, 0)
+        cr.qty:SetText((cols == 1 and p.req and p.req > 1)
+            and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
+    end
+    return y + perCol * CRIT_H
+end
+
+------------------------------------------------------------
+-- The Bucket List view
+------------------------------------------------------------
+
+-- The columns of a Bucket List row: character, progress bar, what's left.
+local function BucketColumns(w)
+    local charX = math.floor(w * 0.34)
+    local barX = math.floor(w * 0.54)
+    local barW = math.max(80, math.min(160, math.floor(w * 0.18)))
+    return charX, barX, barW, barX + barW + 14
+end
+
+local function BucketRowOnClick(self)
+    local it = self.it
+    if not it or not it.parts or #it.parts == 0 then return end
+    local e = DB().expanded
+    e[it.id] = not e[it.id] or nil
+    L.Render()
+end
+
+-- The lines a Bucket List row's tooltip adds under the challenge: the whole
+-- instruction, which a narrow column may cut (Codex on #383).
+function L.BucketTooltipLines(it)
+    local lines = {}
+    if it.done then
+        lines[#lines + 1] = { "Earned" .. (it.ch.date and (" on " .. it.ch.date) or ""), 0.4, 1, 0.4 }
+    elseif it.left and it.left ~= it.ch.desc then
+        lines[#lines + 1] = { "What's left: " .. it.left, 1, 0.82, 0 }
+    end
+    if it.char then lines[#lines + 1] = { "Character: " .. it.char, 0.8, 0.8, 0.8 } end
+    if it.parts and #it.parts > 0 then lines[#lines + 1] = { "Click to list its parts.", 0.5, 0.5, 0.5 } end
+    return lines
+end
+
+local function BucketRowOnEnter(self)
+    local it = self.it
+    if not it then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(it.ch.name, 1, 1, 1)
+    if it.ch.desc then GameTooltip:AddLine(it.ch.desc, 0.8, 0.8, 0.8, true) end
+    for _, l in ipairs(L.BucketTooltipLines(it)) do GameTooltip:AddLine(l[1], l[2], l[3], l[4], true) end
+    GameTooltip:Show()
+end
+
+local function MakeBucketHead()
+    local f = CreateFrame("Frame", nil, content)
+    f:SetHeight(ROW_H)
+    f.bg = f:CreateTexture(nil, "BACKGROUND")
+    f.bg:SetAllPoints()
+    f.cols = {}
+    for i = 1, 4 do f.cols[i] = FS(f, "GameFontNormalSmall") end
+    return f
+end
+
+local function MakeBucketRow()
+    local b = CreateFrame("Button", nil, content)
+    b:SetHeight(ROW_H + 4)
+    b.bg = b:CreateTexture(nil, "BACKGROUND")
+    b.bg:SetAllPoints()
+    b.starBtn = CreateFrame("Button", nil, b)
+    b.starBtn:SetSize(14, 14)
+    b.starBtn:SetPoint("LEFT", b, "LEFT", 4, 0)
+    b.starBtn.tex = b.starBtn:CreateTexture(nil, "OVERLAY")
+    b.starBtn.tex:SetAllPoints()
+    b.starBtn:SetScript("OnClick", function(self)
+        local it = self:GetParent().it
+        if it then L.ToggleStar(it.id) end
+    end)
+    b.starBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Click to take it off your Bucket List.", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    b.starBtn:SetScript("OnLeave", HideTip)
+    b.arrow = b:CreateTexture(nil, "ARTWORK")
+    b.arrow:SetSize(12, 12)
+    b.arrow:SetPoint("LEFT", b, "LEFT", 22, 0)
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetSize(18, 18)
+    b.icon:SetPoint("LEFT", b, "LEFT", 38, 0)
+    b.name = FS(b)
+    b.name:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
+    b.name:SetWordWrap(false)
+    b.char = FS(b)
+    b.char:SetWordWrap(false)
+    b.bar = CreateFrame("Frame", nil, b)
+    b.bar:SetHeight(14)
+    b.bar.bg = b.bar:CreateTexture(nil, "BACKGROUND")
+    b.bar.bg:SetAllPoints()
+    b.bar.bg:SetColorTexture(0, 0, 0, 0.5)
+    b.bar.fill = b.bar:CreateTexture(nil, "ARTWORK")
+    b.bar.fill:SetPoint("TOPLEFT")
+    b.bar.fill:SetPoint("BOTTOMLEFT")
+    b.bar.text = FS(b.bar, "GameFontHighlightSmall", "CENTER")
+    b.bar.text:SetAllPoints()
+    b.left = FS(b, "GameFontHighlight")
+    b.left:SetWordWrap(false)
+    b:SetScript("OnClick", BucketRowOnClick)
+    b:SetScript("OnEnter", BucketRowOnEnter)
+    b:SetScript("OnLeave", HideTip)
+    return b
+end
+
+-- The progress bar's words: the numbers it stands for.
+function L.BucketProgressText(it)
+    if it.done then return CHECK end
+    if it.nocrit or it.unknown or not it.need or not it.have then return DASH end
+    if it.kind == "list" and not it.numeric then
+        local pct = it.need > 0 and math.floor(100 * it.have / it.need + 0.5) or 0
+        return ("%d/%d \194\183 %d%%"):format(it.have, it.need, pct)
+    end
+    return L.Number(it.have) .. " / " .. L.Number(it.need)
+end
+
+function L.RenderBucket(w, items)
+    local charX, barX, barW, leftX = BucketColumns(w)
+    local y = 0
+    local h = Acquire("bucketHead", MakeBucketHead)
+    h:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    h:SetWidth(w)
+    h.bg:SetColorTexture(1, 1, 1, 0.05)
+    local heads = { { 40, "Challenge" }, { charX, "Character" }, { barX, "Progress" }, { leftX, "What's left" } }
+    for i, c in ipairs(heads) do
+        h.cols[i]:ClearAllPoints()
+        h.cols[i]:SetPoint("LEFT", h, "LEFT", c[1], 0)
+        h.cols[i]:SetText(c[2])
+    end
+    y = y + ROW_H
+    local ar, ag, ab = 0.25, 0.75, 0.25
+    for i, it in ipairs(items) do
+        local f = Acquire("bucketRow", MakeBucketRow)
+        f:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+        f:SetWidth(w)
+        f.it = it
+        local expanded = DB().expanded[it.id] and it.parts and #it.parts > 0
+        local cr, cg, cb = 1, 1, 1
+        if it.kind == "class" and it.charClass and AltStable.GetClassRGB then
+            cr, cg, cb = AltStable.GetClassRGB(it.charClass)
+            f.bg:SetColorTexture(cr, cg, cb, (Color("CLASS_TINT_ALPHA", 0.08)) + 0.04)
+        else
+            f.bg:SetColorTexture(1, 1, 1, expanded and 0.06 or ((i % 2 == 0) and 0.03 or 0))
         end
+        SetStar(f.starBtn.tex, true, false)
+        if it.parts and #it.parts > 0 then
+            f.arrow:SetTexture(expanded and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
+            f.arrow:Show()
+        else
+            f.arrow:Hide()
+        end
+        f.icon:SetTexture(it.ch.icon)
+        f.name:SetText(it.done and ("|cff9fe09f" .. it.ch.name .. "|r") or it.ch.name)
+        f.name:SetWidth(math.max(60, charX - 70))
+        f.char:ClearAllPoints()
+        f.char:SetPoint("LEFT", f, "LEFT", charX, 0)
+        f.char:SetWidth(barX - charX - 10)
+        if it.char == "Account" or it.char == "Crafter unknown" then
+            f.char:SetText("|cff999999" .. it.char .. "|r")
+        elseif it.char then
+            f.char:SetText(ClassHex(it.charClass) .. it.char .. "|r")
+        else
+            f.char:SetText("")
+        end
+        f.bar:ClearAllPoints()
+        f.bar:SetPoint("LEFT", f, "LEFT", barX, 0)
+        f.bar:SetWidth(barW)
+        local share = it.done and 1 or ((it.have and it.need and it.need > 0) and math.min(1, it.have / it.need) or 0)
+        if share > 0 then
+            f.bar.fill:SetWidth(math.max(1, barW * share))
+            f.bar.fill:SetColorTexture(ar, ag, ab, 0.85)
+            f.bar.fill:Show()
+        else
+            f.bar.fill:Hide()
+        end
+        f.bar.text:SetText(L.BucketProgressText(it))
+        f.left:ClearAllPoints()
+        f.left:SetPoint("LEFT", f, "LEFT", leftX, 0)
+        f.left:SetPoint("RIGHT", f, "RIGHT", -6, 0)
+        f.left:SetText(it.done and ("|cff9fe09f" .. it.left .. "|r") or ("|cffffd100" .. tostring(it.left) .. "|r"))
+        y = y + ROW_H + 4
+        if expanded then y = L.DrawParts(it.parts, y, w, barX) end
+    end
+    if #items == 0 then
+        local r = Acquire("critRow", MakeCritRow)
+        r:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(y + 6))
+        r:SetWidth(w)
+        r.mark:Hide()
+        r.qty:SetText("")
+        r.text:SetText(DB().thisChar
+            and "|cff888888Nothing on your Bucket List that this character can work on.|r"
+            or "|cff888888Star a challenge on the Challenges tab to put it on your Bucket List.|r")
+        y = y + CRIT_H + 12
     end
     return y
 end
@@ -1096,8 +1627,17 @@ function L.Render()
     content:SetWidth(w)
     poolFS:SetText(m.pool == "B" and "|cff999999Pool B|r" or "")
     emptyFS:SetShown(not m.read)
+    L.UpdateTabs()
 
     local y = m.read and 0 or 22
+    if L.View() == "bucket" then
+        local alts = L.alts or {}
+        local me = DB().thisChar and L.Me(alts) or nil
+        y = L.RenderBucket(w, L.BucketItems(L.state, alts, me, L.Stars()))
+        content:SetHeight(math.max(1, y + PAD))
+        L.UpdateScrollBar()
+        return
+    end
     local side = w >= 2 * GRID_MIN_W + GAP
     local gw = side and math.floor((w - GAP) / 2) or w
     local y1 = L.DrawGrid("Classes", m.classes, "class", 0, y, gw, m.classDone, m.classTotal)
@@ -1111,6 +1651,28 @@ function L.Render()
     for _, sec in ipairs(m.sections) do y = L.DrawSection(sec, y, w) end
     content:SetHeight(math.max(1, y + PAD))
     L.UpdateScrollBar()
+end
+
+-- The tabs: the underline under the view showing, the Bucket List's count,
+-- and the filter, which belongs to the Bucket List only.
+function L.UpdateTabs()
+    local t = L.tabs
+    if not t then return end
+    local view = L.View()
+    for key, tab in pairs(t) do
+        local on = key == view
+        tab.sel:SetShown(on)
+        tab.text:SetTextColor(on and 1 or 0.7, on and 1 or 0.7, on and 1 or 0.7)
+    end
+    t.bucket.text:SetText(("Bucket List (%d)"):format(L.StarCount()))
+    t.bucket:SetWidth((t.bucket.text:GetStringWidth() or 90) + 34)
+    local check = L.thisCharCheck
+    if check then
+        local show = view == "bucket"
+        check:SetShown(show)
+        check.label:SetShown(show)
+        check:SetChecked(DB().thisChar and true or false)
+    end
 end
 
 function L.ApplyTheme()
@@ -1148,24 +1710,49 @@ function L.BuildPanel(mainFrame)
     titleFS:SetText("Legacy")
     titleFS:SetTextColor(unpack(Color("TEXT_BRIGHT", { 1, 1, 1 })))
 
-    -- The view tab, with the sheet's gold underline. One view for now; the
-    -- Bucket List joins it.
-    local tab = CreateFrame("Button", nil, panel)
-    tab:SetHeight(24)
-    tab:SetPoint("LEFT", titleFS, "RIGHT", 28, 0)
-    tab.text = FS(tab, "GameFontHighlight", "CENTER")
-    tab.text:SetPoint("CENTER")
-    tab.text:SetText("Challenges")
-    tab:SetWidth(96)
-    tab.sel = tab:CreateTexture(nil, "OVERLAY")
-    tab.sel:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", 0, -4)
-    tab.sel:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 0, -4)
-    tab.sel:SetHeight(2)
-    tab.sel:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 1)
-    L.tab = tab
+    -- The two views, with the sheet's gold underline under the one showing.
+    local function MakeTab(key, label, anchor, gap)
+        local tab = CreateFrame("Button", nil, panel)
+        tab:SetHeight(24)
+        tab:SetPoint("LEFT", anchor, "RIGHT", gap, 0)
+        tab.text = FS(tab, "GameFontHighlight", "CENTER")
+        tab.text:SetPoint("CENTER", tab, "CENTER", key == "bucket" and 8 or 0, 0)
+        tab.text:SetText(label)
+        tab.sel = tab:CreateTexture(nil, "OVERLAY")
+        tab.sel:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", 0, -4)
+        tab.sel:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 0, -4)
+        tab.sel:SetHeight(2)
+        tab.sel:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 1)
+        tab:SetScript("OnClick", function() L.SetView(key) end)
+        return tab
+    end
+    L.tabs = {}
+    L.tabs.challenges = MakeTab("challenges", "Challenges", titleFS, 28)
+    L.tabs.challenges:SetWidth(96)
+    L.tabs.bucket = MakeTab("bucket", "Bucket List", L.tabs.challenges, 12)
+    L.tabs.bucket.star = L.tabs.bucket:CreateTexture(nil, "OVERLAY")
+    L.tabs.bucket.star:SetSize(14, 14)
+    L.tabs.bucket.star:SetPoint("RIGHT", L.tabs.bucket.text, "LEFT", -4, 0)
+    L.tabs.bucket.star:SetAtlas("auctionhouse-icon-favorite")
+    L.tab = L.tabs.challenges
 
-    poolFS = FS(panel, "GameFontHighlightSmall", "RIGHT")
-    poolFS:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD - 4, -16)
+    poolFS = FS(panel, "GameFontHighlightSmall")
+    poolFS:SetPoint("LEFT", L.tabs.bucket, "RIGHT", 16, 0)
+
+    -- "This character": the Bucket List narrowed to what the character
+    -- playing can advance, with its own level, skill and exploration.
+    local mine = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    mine:SetSize(18, 18)
+    mine:SetScript("OnClick", function(self)
+        DB().thisChar = self:GetChecked() and true or nil
+        L.Render()
+    end)
+    mine.label = FS(panel, "GameFontNormalSmall")
+    mine.label:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD - 4, -16)
+    mine.label:SetText("This character")
+    mine.label:SetTextColor(unpack(Color("TEXT_DIM", { 0.7, 0.7, 0.7 })))
+    mine:SetPoint("RIGHT", mine.label, "LEFT", -2, 0)
+    L.thisCharCheck = mine
 
     scroll = CreateFrame("ScrollFrame", nil, panel)
     scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -HEADER_H)
@@ -1210,8 +1797,10 @@ function L.BuildPanel(mainFrame)
     bar:Hide()
 
     -- The sheet opened again on this tab: catch up on what changed meanwhile.
+    -- Always, not only after a missed refresh: exploration and the live
+    -- level move without an event this tab listens to (Codex on #383).
     panel:SetScript("OnShow", function()
-        if L.dirty and L.isActive then L.Refresh() end
+        if L.isActive then L.Refresh() end
     end)
 
     panel:EnableMouseWheel(true)
@@ -1361,8 +1950,12 @@ end
 
 function L.Refresh()
     L.dirty = nil
+    -- This character's exploration first: an area explored moves Explorer
+    -- without any achievement earned (Codex on #383).
+    L.ReadExplore()
     L.state = L.Read(L.state)
-    L.model = L.Model(L.state, L.OwnAlts())
+    L.alts = L.OwnAlts()
+    L.model = L.Model(L.state, L.alts)
     L.Render()
     L.RenderFooter()
 end

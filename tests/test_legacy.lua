@@ -37,6 +37,8 @@ AltStableConfig = {}
 dofile("Compat.lua")
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
+-- The scanner's own skill reading, which "This character" uses live.
+dofile("Scanner.lua")
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
@@ -460,6 +462,142 @@ check("a challenge no section claims goes to Other", other ~= nil and #other.row
 table.remove(WoW.legacy.categories)
 
 ------------------------------------------------------------
+-- The Bucket List (PR 3 of #373)
+------------------------------------------------------------
+
+L.state = s
+local function alt(name) for _, a in ipairs(alts) do if a.name == name then return a end end end
+local hunter25, priest45 = gridID("class", "HUNTER", 25), gridID("class", "PRIEST", 45)
+local paladin25, rogue25 = gridID("class", "PALADIN", 25), gridID("class", "ROGUE", 25)
+local tailor150, smith150 = gridID("craft", "Tailoring", 150), gridID("craft", "Blacksmithing", 150)
+
+-- Stars, per pool: set A's IDs never mean set B's.
+L.ToggleStar(hunter25)
+check("a star goes on", L.IsStarred(hunter25))
+check("  in the pool read (A)", AltStableLegacyDB.stars.A[hunter25] == true)
+check("  and not in the other", L.Stars("B")[hunter25] == nil)
+L.ToggleStar(hunter25)
+check("  and comes off again", not L.IsStarred(hunter25))
+L.StarClick(novMage, true)
+check("an earned challenge cannot be put on the list", not L.IsStarred(novMage))
+L.Stars()[novMage] = true
+L.StarClick(novMage, true)
+check("  but one already on it can be taken off", not L.IsStarred(novMage))
+
+-- What's left, in words a player can act on.
+local function item(id, me) return L.BucketItem(s.challenges[id], alts, me, s) end
+local it = item(hunter25)
+eq("Hunter 25: the best hunter", it.char, "Kaleidria")
+eq("  21 of 25", it.have .. "/" .. it.need, "21/25")
+eq("  what's left", it.left, "Gain 4 levels")
+eq("Priest 45: from 30", item(priest45).left, "Gain 15 levels")
+eq("Paladin 25, reached and still open: no 'gain 0'", item(paladin25).left, "Reached; the game has not counted it")
+eq("Rogue 25 with nobody: says so", item(rogue25).left, "No known rogue")
+eq("Tailoring 150: the game's best", item(tailor150).left, "Gain 4 Tailoring skill points")
+eq("  the crafter whose skill matches", item(tailor150).char, "Karuzo")
+eq("Blacksmithing with nobody", item(smith150).left, "No known smith")
+-- The game's figure wins over an alt's stored skill, as in the grid.
+local lowTailor = L.BucketItem({ id = tailor150, cat = 15592, name = "Journeyman Tailor", completed = false,
+    criteria = { { text = "150 Tailoring Skill", type = 7, q = 140, req = 150 } } }, alts)
+eq("the game's best, not an alt's higher stored one", lowTailor.have, 140)
+eq("  so nobody matches: crafter unknown", lowTailor.char, "Crafter unknown")
+eq("an earned one", item(novMage).left, "Earned")
+eq("Spelunker, one dungeon left: named", item(62031).left, "Finish Shadowfang Keep")
+eq("  across the account", item(62031).char, "Account")
+eq("a reputation: how much is left", item(62046).left, "Gain 42,000 reputation")
+eq("  its progress as numbers", L.BucketProgressText(item(62046)), "0 / 42,000")
+eq("a challenge with nothing to count: its description", item(684).left, s.challenges[684].desc)
+local twoLeft = L.BucketItem({ id = 99, cat = 15593, name = "Test", completed = false, criteria = {
+    { text = "A", done = true }, { text = "B", done = false }, { text = "C", done = false } } }, alts)
+eq("several dungeons left: counted", twoLeft.left, "2 dungeons left")
+AltStableLegacyDB.explore = {
+    ["G-priest"] = { parts = { { name = "Explore Eastern Kingdoms", done = 9, n = 23 },
+                               { name = "Explore Kalimdor", done = 4, n = 20 } } },
+    ["G-hunter"] = { parts = { { name = "Explore Eastern Kingdoms", done = 3, n = 23 },
+                               { name = "Explore Kalimdor", done = 0, n = 20 } } },
+}
+eq("Explorer: the furthest along", item(62382).char, "Karuzo")
+eq("  how many areas are left", item(62382).left, "Explore 30 more areas")
+
+-- This character: only what it can advance, with its own progress.
+local hunter, priest = alt("Kaleidria"), alt("Karuzo")
+check("a priest cannot advance Hunter 25", item(hunter25, priest) == nil)
+eq("  but its own class, from its own level", item(priest45, priest).left, "Gain 15 levels")
+check("a hunter without Tailoring cannot advance it", item(tailor150, hunter) == nil)
+eq("  the priest can, with its own skill", item(tailor150, priest).have, 146)
+eq("a dungeon list stays for any character", item(62031, hunter).left, "Finish Shadowfang Keep")
+eq("Explorer with the character's own exploration", item(62382, hunter).left, "Explore 40 more areas")
+eq("  named as that character", item(62382, hunter).char, "Kaleidria")
+
+-- The list: open ones first, closest to done on top; earned ones last.
+local stars = { [hunter25] = true, [priest45] = true, [62031] = true, [novMage] = true, [99999] = true }
+local items = L.BucketItems(s, alts, nil, stars)
+eq("a star on a challenge the read does not know is left out", #items, 4)
+eq("  closest to done first: Hunter 21/25 (84%)", items[1].id, hunter25)
+eq("  then Spelunker 5/6 (83%)", items[2].id, 62031)
+eq("  then Priest 30/45", items[3].id, priest45)
+eq("  the earned one last", items[4].id, novMage)
+local mine = L.BucketItems(s, alts, priest, stars)
+local ids = {}
+for _, x in ipairs(mine) do ids[x.id] = true end
+check("This character: the priest's list leaves Hunter 25 out", not ids[hunter25] and ids[priest45] and ids[62031])
+check("no read, no rows", #L.BucketItems(nil, alts, nil, stars) == 0)
+
+-- The crafts' best from every tier, as in the grid (Codex on #383): the
+-- starred tier's criterion did not read, a sibling's says 146, an alt has 120.
+local tierS = { challenges = {}, order = {} }
+for _, t in ipairs(D.TIERS.craft) do
+    local id = gridID("craft", "Tailoring", t)
+    tierS.challenges[id] = { id = id, cat = 15592, name = "Tailoring " .. t, completed = false,
+        criteria = t == 225 and { { text = "225 Tailoring Skill", type = 7, q = 146, req = 225 } } or nil }
+end
+local lowAlts = { { guid = "G-t", name = "Low", class = "MAGE", level = 30, rec = { prof_Tailoring = 120 } } }
+local tierItem = L.BucketItem(tierS.challenges[tailor150], lowAlts, nil, tierS)
+eq("a tier that did not read takes its sibling's figure", tierItem.have, 146)
+eq("  not the alt's stored 120", tierItem.left, "Gain 4 Tailoring skill points")
+
+-- "This character" reads the playing character live (Codex on #383): its
+-- saved record says 30 and Tailoring 146; it is now 31 with 148.
+AltStableDB[WoW.player.guid] = { name = "Playing", class = "PRIEST", level = 30, scannedHere = true,
+                                 prof_Tailoring = 146 }
+local liveAlts = L.OwnAlts()
+local savedLevel = WoW.level
+WoW.level = 31
+WoW.skillLines = { { name = "Professions", isHeader = true },
+                   { name = "Tailoring", isHeader = false, rank = 148, maxRank = 150, skillID = 197 } }
+local live = L.Me(liveAlts)
+eq("the playing character's level, live", live.level, 31)
+eq("  its skill, live", live.rec.prof_Tailoring, 148)
+eq("  so what's left is current", L.BucketItem(s.challenges[priest45], liveAlts, live, s).left, "Gain 14 levels")
+WoW.skillLines = {}
+eq("a skill list that does not read keeps the saved skill", L.Me(liveAlts).rec.prof_Tailoring, 146)
+-- A collapsed Professions header (Codex on #383): the list reads, but without
+-- Tailoring, so the saved 146 stays and a starred Tailoring row still shows.
+WoW.skillLines = { { name = "Professions", isHeader = true, isCollapsed = true, skillID = 11 },
+                   { name = "Secondary Skills", isHeader = true, skillID = 9 },
+                   { name = "Cooking", isHeader = false, rank = 40, maxRank = 75, skillID = 185 } }
+local collapsedMe = L.Me(liveAlts)
+eq("a collapsed Professions header keeps the saved skill", collapsedMe.rec.prof_Tailoring, 146)
+check("  the starred Tailoring row stays under This character",
+      L.BucketItem(s.challenges[tailor150], liveAlts, collapsedMe, s) ~= nil)
+-- Then a gear swap rescans the saved record with the header still collapsed
+-- (Codex on #383): the scanner keeps Tailoring, so the row still shows.
+AltStable.ScanSkills(AltStableDB[WoW.player.guid])
+eq("a rescan under the collapsed header keeps the saved skill", AltStableDB[WoW.player.guid].prof_Tailoring, 146)
+local rescanMe = L.Me(L.OwnAlts())
+check("  and the starred Tailoring row still shows under This character",
+      L.BucketItem(s.challenges[tailor150], L.OwnAlts(), rescanMe, s) ~= nil)
+WoW.level = savedLevel
+AltStableDB[WoW.player.guid] = nil
+
+-- The full instruction is in the row's tooltip, whatever the column cuts.
+local tipItem = item(paladin25)
+local tipText = ""
+for _, l in ipairs(L.BucketTooltipLines(tipItem)) do tipText = tipText .. l[1] .. " | " end
+check("a row's tooltip carries the whole instruction",
+      tipText:find("What's left: Reached; the game has not counted it", 1, true) ~= nil, tipText)
+
+------------------------------------------------------------
 -- The footer
 ------------------------------------------------------------
 
@@ -502,6 +640,28 @@ AltStableLegacyDB.open = { dungeons = true, raids = true }
 AltStableLegacyDB.expanded = { [62031] = true }
 ok, err = pcall(L.Render)
 check("an open section with an expanded challenge draws", ok, tostring(err))
+-- The Bucket List view: drawn, counted on its tab, and remembered.
+AltStableLegacyDB.stars = { A = { [gridID("class", "HUNTER", 25)] = true, [62031] = true } }
+AltStableLegacyDB.expanded[62031] = true
+ok, err = pcall(L.SetView, "bucket")
+check("the Bucket List draws", ok, tostring(err))
+eq("  the view is remembered", AltStableLegacyDB.view, "bucket")
+eq("  its tab counts the stars", L.tabs.bucket.text:GetText(), "Bucket List (2)")
+check("  its filter shows on it", L.thisCharCheck:IsShown())
+check("  the underline is under it", L.tabs.bucket.sel:IsShown() and not L.tabs.challenges.sel:IsShown())
+L.thisCharCheck:SetChecked(true)
+ok, err = pcall(L.thisCharCheck:GetScript("OnClick"), L.thisCharCheck)
+check("  'This character' draws", ok, tostring(err))
+check("  and is remembered", AltStableLegacyDB.thisChar == true)
+AltStableLegacyDB.stars = { A = {} }
+ok, err = pcall(L.Render)
+check("an empty Bucket List draws its hint", ok, tostring(err))
+ok, err = pcall(L.tabs.challenges:GetScript("OnClick"))
+check("back to Challenges", ok and L.View() == "challenges", tostring(err))
+check("  the filter hides there", not L.thisCharCheck:IsShown())
+check("  and the view is remembered as Challenges", AltStableLegacyDB.view == nil)
+AltStableLegacyDB.thisChar = nil
+
 check("the table has an opaque backing under glass", L.backing ~= nil
     and (L.backing:IsShown() == (AltStable.SkinIsGlass and AltStable.SkinIsGlass() or false)))
 
@@ -519,6 +679,16 @@ main:Show()
 eq("  and done when the sheet shows again", reads, 1)
 check("  once", not L.dirty)
 L.Read = realRead
+
+-- Every refresh re-reads this character's exploration first (Codex on #383:
+-- an area explored moves Explorer without an achievement).
+local explores, realExplore = 0, L.ReadExplore
+L.ReadExplore = function(...) explores = explores + 1; return realExplore(...) end
+L.Refresh()
+eq("a refresh re-reads the exploration", explores, 1)
+main:Hide(); main:Show()
+eq("  and so does showing the sheet again on this tab", explores, 2)
+L.ReadExplore = realExplore
 
 -- The reward's name, loaded on request, redraws the footer when it arrives.
 local evFrame

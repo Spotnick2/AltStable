@@ -167,6 +167,53 @@ eq("an English profession under an unexpected ID still counts", odd.prof1, "Mini
 eq("  its twin is not counted again", odd.prof2, "Alchemy")
 eq("  and the next profession is the second", odd.prof_Alchemy, 20)
 
+-- A collapsed header hides its lines from the list (Codex on #383). The
+-- record scanned above as "twins" (Enchanting 3, Tailoring 32, Cooking 3)
+-- is rescanned with Professions collapsed: the professions stay, and the
+-- lines still listed update.
+local function collapsed(h) h.isCollapsed = true return h end
+WoW.skillLines = {
+    header("Class Skills", 7), line("Discipline", 613, 1, 1),
+    collapsed(header("Professions", 11)),
+    header("Secondary Skills", 9),
+    line("Cooking", 185, 9, 75), line("First Aid", 129, 1, 75), line("Fishing", 356, 1, 75),
+}
+AltStable.ScanSkills(twins)
+eq("collapsed Professions: the professions stay", tostring(twins.prof_Enchanting) .. "/" .. tostring(twins.prof_Tailoring), "3/32")
+eq("  their maxima", twins.profmax_Tailoring, 75)
+eq("  and the two slots", tostring(twins.prof1) .. "+" .. tostring(twins.prof2) .. " " .. twins.prof2Skill, "Enchanting+Tailoring 32")
+eq("  a listed line still updates", twins.cooking, 9)
+-- Secondary Skills collapsed instead: the secondaries stay, a profession updates.
+WoW.skillLines = {
+    header("Professions", 11), line("Enchanting", 333, 4, 75), line("Tailoring", 197, 33, 75),
+    collapsed(header("Secondary Skills", 9)),
+}
+AltStable.ScanSkills(twins)
+eq("collapsed Secondary Skills: the secondaries stay",
+   twins.cooking .. "/" .. twins.firstAid .. "/" .. twins.fishing .. "/" .. twins.cookingMax, "9/1/1/75")
+eq("  the professions update", tostring(twins.prof_Enchanting) .. "/" .. tostring(twins.prof_Tailoring), "4/33")
+-- Still Secondary Skills collapsed, Tailoring unlearned for Alchemy (Codex on
+-- #383): the expanded Professions header is read as it is.
+WoW.skillLines = {
+    header("Professions", 11), line("Enchanting", 333, 4, 75), line("Alchemy", 171, 1, 75),
+    collapsed(header("Secondary Skills", 9)),
+}
+AltStable.ScanSkills(twins)
+check("an unlearned profession under an expanded header clears",
+      twins.prof_Tailoring == nil and twins.profmax_Tailoring == nil)
+eq("  the slots are the two listed", twins.prof1 .. "+" .. twins.prof2, "Enchanting+Alchemy")
+eq("  the hidden secondaries still stay", twins.cooking .. "/" .. twins.fishing, "9/1")
+-- A collapsed header that holds none of these (Weapon Skills) restores nothing.
+WoW.skillLines = { header("Professions", 11), line("Enchanting", 333, 4, 75),
+                   collapsed(header("Weapon Skills", 6)) }
+AltStable.ScanSkills(twins)
+check("a collapsed Weapon Skills header: Alchemy, gone, clears", twins.prof_Alchemy == nil and twins.prof2 == "")
+eq("  and the secondaries, unlisted, reset as before", twins.cooking, 0)
+-- Nothing collapsed: a profession that is gone is cleared, as before.
+WoW.skillLines = { header("Professions", 11), line("Enchanting", 333, 4, 75) }
+AltStable.ScanSkills(twins)
+check("nothing collapsed: an unlearned profession is cleared", twins.prof_Tailoring == nil and twins.prof2 == "")
+
 ------------------------------------------------------------
 -- Reputations (#8): keyed by faction ID, "met" = in the character's list
 ------------------------------------------------------------

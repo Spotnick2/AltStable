@@ -457,6 +457,23 @@ local function ResetCharacter(char)
 
 end
 
+-- The secondaries by the canonical name the loop sees, and the fields each fills.
+local SECONDARY_FIELDS = {
+    ["Fishing"]   = { "fishing", "fishingMax" },
+    ["Cooking"]   = { "cooking", "cookingMax" },
+    ["First Aid"] = { "firstAid", "firstAidMax" },
+    ["Riding"]    = { "riding", "ridingMax" },
+}
+local SKILL_FIELD_SET = {}
+for _, f in pairs(SECONDARY_FIELDS) do SKILL_FIELD_SET[f[1]], SKILL_FIELD_SET[f[2]] = true, true end
+local PROF_SLOT_FIELDS = { "prof1", "prof1Skill", "prof1Max", "prof2", "prof2Skill", "prof2Max" }
+-- The headers by their skill ID, which is their lines' skillLineCategoryID
+-- (docs/forever-api-notes.md: a Class Skills line has category 7; the list
+-- test_scanner keeps "as measured" for #177 has Class Skills 7, Professions 11,
+-- Secondary Skills 9). Riding is taken to sit under Secondary Skills, as on the
+-- French list there. A wrong ID only means no restore: the scan as before.
+local PROFESSIONS_HEADER, SECONDARY_HEADER = 11, 9
+
 -- Skill lines: secondary skills, riding, and the primary professions.
 --
 -- Split out of ScanCharacter so it can be driven directly in tests. All of
@@ -468,6 +485,26 @@ function AltStable.ScanSkills(char)
     -- A2), and the reset below runs only once the list is there.
     local n = GetNumSkillLines()
     if not n or n == 0 then return end
+
+    -- A collapsed header hides its lines from this list: Blizzard's Skills
+    -- panel builds its rows from the same list and never checks isCollapsed
+    -- (SkillsFrame.lua, 70959; Codex on #383). Under a collapsed header the
+    -- read cannot tell a hidden skill from an unlearned one, so the skills of
+    -- THAT header which it did not see keep their saved values (restored after
+    -- the loop); an expanded header's skills are read as they are.
+    local hidden, old = {}, nil
+    for i = 1, n do
+        local info = GetSkillLineInfo(i)
+        if info and info.isHeader and info.isCollapsed
+           and (info.skillID == PROFESSIONS_HEADER or info.skillID == SECONDARY_HEADER) then
+            hidden[info.skillID], old = true, {}
+        end
+    end
+    if old then
+        for k, v in pairs(char) do
+            if type(k) == "string" and (k:find("^prof") or SKILL_FIELD_SET[k]) then old[k] = v end
+        end
+    end
 
     -- primary professions (legacy fields kept for compat)
     char.prof1 = ""
@@ -565,6 +602,25 @@ function AltStable.ScanSkills(char)
                     char.prof2Max = maxRank or 0
                 end
             end
+        end
+    end
+
+    if hidden[PROFESSIONS_HEADER] then
+        for _, name in ipairs(ALL_PROFESSIONS) do
+            if not seen[name] then
+                char["prof_"..name], char["profmax_"..name] = old["prof_"..name], old["profmax_"..name]
+            end
+        end
+        -- The two slots come from the same header: none listed, the saved ones stay.
+        if primaryCount == 0 then
+            for _, k in ipairs(PROF_SLOT_FIELDS) do
+                if old[k] ~= nil then char[k] = old[k] end
+            end
+        end
+    end
+    if hidden[SECONDARY_HEADER] then
+        for name, f in pairs(SECONDARY_FIELDS) do
+            if not seen[name] then char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0 end
         end
     end
 end
