@@ -446,9 +446,10 @@ local function SceneLayout(panelW, panelH, count, entry)
     -- figures runs out of room first, and matching it is what keeps the
     -- outermost inside the frame.
     -- Dividing by the COUNT, not count - 0.5, is what keeps the outermost
-    -- figure on the panel. Every figure is scaled to fit within one step (see
-    -- FitScale), so the outermost reaches half a step past its own centre;
-    -- leaving room only up to that centre clips it against the frame.
+    -- figure on the panel. A figure of a step's width reaches half a step past
+    -- its own centre, and leaving room only up to that centre clips it against
+    -- the frame. A wider one (FitScale lets it overlap a neighbour) is slid in
+    -- from the edge by InsideEdge.
     local edge = panelW * SCENE_EDGE
     local step
     if nLeft > 0 then
@@ -1100,17 +1101,45 @@ end
 --
 -- Scaling EVERYONE by the worst overflow keeps the relative heights intact,
 -- which is the entire point of having measured them.
-local function FitScale(sizes, slot)
-    if not slot or slot <= 0 then return 1 end
-    local worst = 1
-    for _, wh in ipairs(sizes) do
-        local w = tonumber(wh[1]) or 0
-        if w > slot then
-            local over = w / slot
-            if over > worst then worst = over end
+--
+-- Measured against the real NEIGHBOURS, not a fixed slot: a wide figure beside
+-- a slim one fits where two wide ones would not, and neighbours may overlap a
+-- little (SCENE_OVERLAP), the nearer one drawn in front (spot.level), which
+-- reads as one standing behind the other. Against the slot, one tauren with a
+-- mug held out needed twice its seat and drew the whole camp at half size
+-- (owner, in game). SCENE_MIN_FIT is the floor: past it the wide one overlaps
+-- more rather than everyone shrinking, and the draw slides an outermost figure
+-- in from the frame's edge (InsideEdge).
+--
+-- xs: each figure's centre x, in cast order (sorted left to right). A figure
+-- with no art (width 0) is skipped, so its neighbours face each other.
+local SCENE_OVERLAP = 0.3    -- of the narrower neighbour's width
+local SCENE_MIN_FIT = 0.85
+local function FitScale(sizes, xs)
+    if type(xs) ~= "table" then return 1 end
+    local k, prev = 1, nil
+    for i, wh in ipairs(sizes) do
+        local w, x = tonumber(wh[1]) or 0, tonumber(xs[i])
+        if w > 0 and x then
+            if prev then
+                local need = (prev.w + w) / 2 - SCENE_OVERLAP * math.min(prev.w, w)
+                local gap = math.abs(x - prev.x)
+                if need > 0 and need * k > gap then k = gap / need end
+            end
+            prev = { w = w, x = x }
         end
     end
-    return 1 / worst
+    return math.max(SCENE_MIN_FIT, k)
+end
+
+-- A figure's centre x, moved in just enough that it stays inside the panel's
+-- edge margin. Only the outermost ever moves, and only when SCENE_MIN_FIT left
+-- it wider than the room outside its spot.
+local function InsideEdge(x, w, panelW)
+    local edge = (panelW or 0) * SCENE_EDGE
+    local half = (w or 0) / 2
+    if half * 2 > panelW - 2 * edge then return panelW / 2 end
+    return math.max(edge + half, math.min(panelW - edge - half, x))
 end
 
 -- Seeding the first camp (#152) ranks characters with a portrait: a class card
@@ -1476,7 +1505,8 @@ end
 
 -- One pet per seated owner that has one, after the cast is drawn. Refresh
 -- has hidden them all first, so a pet not placed here stays hidden.
-local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, panelW, panelH, slot)
+-- ownerXs: where RenderScene drew each owner (OwnerX, kept inside the frame).
+local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, panelW, panelH, ownerXs)
     if not PetsEnabled() then HidePets(); return 0 end
     local drawn = 0
     for i = 1, #(Roster.cards or {}) do
@@ -1489,7 +1519,7 @@ local function RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, p
             local y = spot.y + panelH * (outer and outer.lift or PET_LIFT)
             f._want = {
                 char = char, side = ps.side, yaw = ps.yaw,
-                ownerX = OwnerX(char, spot, slot, ps), ownerW = sizes[i][1] * fit,
+                ownerX = ownerXs[i], ownerW = sizes[i][1] * fit,
                 panelW = panelW,
                 outer = ps.outer,
                 y = y,
@@ -1526,6 +1556,7 @@ end
 -- The pets' test seam, apart from the plugin's: see its __index.
 local PET_TEST = {
     PetUnits = PetUnits, PetSides = PetSides, PetX = PetX, PetAspect = PetAspect, OuterRoom = OuterRoom,
+    InsideEdge = InsideEdge,   -- the scene's, here for the upvalue limit
     ReadBox = ReadBox, PET_HEIGHT = PET_HEIGHT, PET_LAYOUT = PET_LAYOUT,
     SCENE_CAST_WITH_PETS = SCENE_CAST_WITH_PETS,
     Pets = function() return Roster.pets or {} end,
@@ -1559,8 +1590,17 @@ local function RenderScene(camp)
     local tallest = TallestRace(cast)
 
     local sizes = MeasureCast(cast, CutoutFor, spots, tallest, figureH)
-    local fit = FitScale(sizes, slot)
     local petSides = PetSides(spots, (FireAnchor(pw, ph, entry)))
+    -- Where each one stands (off-centre beside a pet), fitted against those
+    -- positions, then kept inside the frame. The pets take the same x.
+    local xs = {}
+    for i, char in ipairs(cast) do
+        if spots[i] then xs[i] = OwnerX(char, spots[i], slot, petSides[i]) end
+    end
+    local fit = FitScale(sizes, xs)
+    for i in pairs(xs) do
+        xs[i] = InsideEdge(xs[i], (tonumber(sizes[i] and sizes[i][1]) or 0) * fit, pw)
+    end
     local withArt = 0
 
     for i, card in ipairs(Roster.cards) do
@@ -1576,7 +1616,7 @@ local function RenderScene(camp)
             card._spotLevel = spot.level
 
             card:ClearAllPoints()
-            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", OwnerX(char, spot, slot, petSides[i]), spot.y - NAME_H - 4)
+            card:SetPoint("BOTTOM", panel, "BOTTOMLEFT", xs[i], spot.y - NAME_H - 4)
             card:SetSize(math.max(slot, w), h + NAME_H + 4)
 
             card.plate:Hide()
@@ -1610,7 +1650,7 @@ local function RenderScene(camp)
     end
 
     Roster.sceneSlot = slot
-    RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, pw, ph, slot)
+    RenderPets(cast, spots, sizes, fit, figureH, tallest, petSides, pw, ph, xs)
 
     -- How many stand at the fire, and who in the camp does not and why.
     return withArt, info
