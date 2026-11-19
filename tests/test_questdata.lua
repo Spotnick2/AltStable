@@ -80,6 +80,13 @@ eq("every counted quest points at a row, reference-only ones at none", dangling,
 eq("masks are whole and in range", badMask, 0)
 check("  race masks wider than 32 bits are kept (Forever's new races)", wide > 0)
 eq("flags are 0-3", badFlag, 0)
+-- Race bits are QuestieDB's, not 2^(raceID-1): Forever's Skyborne are bits 32 and 33, and the
+-- probe measured race 95 on an Alliance character (forever-api-notes.md).
+eq("race 1 is bit 0", D.RACE_MASK and D.RACE_MASK[1], 1)
+eq("race 95 (High Order Skyborne) is bit 32", D.RACE_MASK and D.RACE_MASK[95], 2 ^ 32)
+eq("race 96 (Windshaper Skyborne) is bit 33", D.RACE_MASK and D.RACE_MASK[96], 2 ^ 33)
+check("  95 is in the Alliance mask", D.FACTION_MASK and math.floor(D.FACTION_MASK.Alliance / 2 ^ 32) % 2 == 1)
+check("  96 is in the Horde mask", D.FACTION_MASK and math.floor(D.FACTION_MASK.Horde / 2 ^ 33) % 2 == 1)
 check("the version is the body's hash", type(D.VERSION) == "string" and #D.VERSION == 8)
 check("the source is recorded", D.SOURCE and D.SOURCE.questiedb and D.SOURCE.commit and D.SOURCE.build)
 

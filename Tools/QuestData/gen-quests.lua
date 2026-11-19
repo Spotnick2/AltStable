@@ -188,7 +188,7 @@ local function Serialize(v)
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
-local zoneTables, qdbVersion, qdbCommit, factionMasks
+local zoneTables, qdbVersion, qdbCommit, factionMasks, raceMasks
 
 local function ReadProfile(faction, class)
     local ns = Loader.Load(QDB, "Libs/LibDeflate/LibDeflate.lua",
@@ -216,6 +216,8 @@ local function ReadProfile(faction, class)
         zoneTables = { sub = sub, a2m = a2m, dungeons = p.dungeons, alt = alt }
         qdbVersion, qdbCommit = ns.tocMeta.Version, ns.tocMeta["X-BUILD-COMMIT"]
         factionMasks = { Alliance = ns.Enum.factionRaceMasks.Alliance, Horde = ns.Enum.factionRaceMasks.Horde }
+        raceMasks = {}
+        for raceID, mask in pairs(ns.Enum.raceMaskById) do raceMasks[raceID] = mask end
     end
     return out, ids
 end
@@ -542,7 +544,9 @@ local header = ([[
 --   hordeLinks (only where the Horde read differs, for a quest both factions take): a table of
 --   fields 9-15 as Horde sees them, which a Horde character uses instead.
 --   flags: 1 unsure (no known starter: counts only once done), 2 reference-only (a quest the
---   rules look at, never counted). Masks: bit 2^(raceID-1) / 2^(classID-1), 0 = any.
+--   rules look at, never counted). Masks: 0 = any. A race's bit is D.RACE_MASK[raceID] (NOT
+--   2^(raceID-1): Forever's Skyborne, races 95 and 96, are bits 32 and 33); a class's bit is
+--   2^(classID-1). D.FACTION_MASK is every race of a faction.
 --   preQuestGroup entries are signed: a negative ID means exactly that quest is required.
 
 local D = {}
@@ -550,6 +554,15 @@ AltStable.LoremasterData = D
 D.SOURCE = { questiedb = %q, commit = %q, build = %q }
 D.CLASS_KEY = -9999
 ]]):format(qdbVersion, qdbCommit, FOREVER_BUILD, qdbVersion, qdbCommit, FOREVER_BUILD)
+
+-- QuestieDB's race bits and faction masks, as the masks above use them.
+local raceIds = {}
+for id in pairs(raceMasks) do raceIds[#raceIds + 1] = id end
+table.sort(raceIds)
+local raceParts = {}
+for _, id in ipairs(raceIds) do raceParts[#raceParts + 1] = ("[%d]=%.0f"):format(id, raceMasks[id]) end
+body = ("D.RACE_MASK={%s}\nD.FACTION_MASK={Alliance=%.0f,Horde=%.0f}\n"):format(table.concat(raceParts, ","),
+    factionMasks.Alliance, factionMasks.Horde) .. body
 
 local text = header .. ("D.VERSION = %q\n"):format(Hash(body)) .. body
 

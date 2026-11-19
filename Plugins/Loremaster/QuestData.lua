@@ -14,14 +14,18 @@
 --   hordeLinks (only where the Horde read differs, for a quest both factions take): a table of
 --   fields 9-15 as Horde sees them, which a Horde character uses instead.
 --   flags: 1 unsure (no known starter: counts only once done), 2 reference-only (a quest the
---   rules look at, never counted). Masks: bit 2^(raceID-1) / 2^(classID-1), 0 = any.
+--   rules look at, never counted). Masks: 0 = any. A race's bit is D.RACE_MASK[raceID] (NOT
+--   2^(raceID-1): Forever's Skyborne, races 95 and 96, are bits 32 and 33); a class's bit is
+--   2^(classID-1). D.FACTION_MASK is every race of a faction.
 --   preQuestGroup entries are signed: a negative ID means exactly that quest is required.
 
 local D = {}
 AltStable.LoremasterData = D
 D.SOURCE = { questiedb = "1.1.1", commit = "4dbb82440a27856f8dccf57094a5d792cdc7cc9b", build = "1.60.1.70959" }
 D.CLASS_KEY = -9999
-D.VERSION = "2a5858f2"
+D.VERSION = "9b0a9380"
+D.RACE_MASK={[1]=1,[2]=2,[3]=4,[4]=8,[5]=16,[6]=32,[7]=64,[8]=128,[9]=256,[10]=512,[11]=1024,[22]=2097152,[24]=8388608,[25]=16777216,[26]=33554432,[95]=4294967296,[96]=8589934592}
+D.FACTION_MASK={Alliance=4294967373,Horde=8589934770}
 D.ZONES={
 [36]={"zone","EK",1416,"Alterac Mountains",1},
 [45]={"zone","EK",1417,"Arathi Highlands",2},
