@@ -2391,10 +2391,9 @@ Horde, level 30).
   `IsQuestFlaggedCompleted` on Drakuza and `true` for `IsQuestFlaggedCompletedOnAccount`. So the
   completed list is the character's, and the `OnAccount` variant is account-wide (870, done on
   the Horde character, read `true` for it on the Alliance one).
-- **Shared without explanation:** Drakuza's list also holds 92460, 92461 and 93552, three Zephras
-  Isle starter quests. Drazuka turned in 93552 during the probe, and Drakuza (Horde Orc) logged
-  in a minute later with it listed. Either Drakuza did them once, or Forever credits some of them
-  to the whole account. Not settled yet.
+- **Shared quests are real ones.** Drakuza's list also holds 92460, 92461 and 93552, three Zephras
+  Isle starter quests: he did them himself, in a group (the owner, 2026-11-19), not by account
+  credit. No sign of account-wide quest credit in the completed list.
 - **`QUEST_TURNED_IN` comes first:** inside the handler, the quest is **not yet** in
   `GetAllCompletedQuestIDs()` and `IsQuestFlaggedCompleted` is `false`; 0.5 s later both are
   true. Re-read after a short delay, never inside the handler.
