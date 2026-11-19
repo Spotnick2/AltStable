@@ -991,8 +991,9 @@ end
 --   ready    = one of the crafters can gather every reagent (#386)
 --   crafters = for each of `knowers`: { owner, ready, short = { { item, need, have, from,
 --              away, wall } } }, `from` the alt holding the most that can mail it;
---              when none can, `away` the one holding the most that can't, `wall`
---              why ("faction" or "ruleset"). An empty `short` is "has it all"
+--              when what can be mailed falls short, `away` the one holding the most
+--              that can't, `wall` why ("faction" or "ruleset"). An empty `short` is
+--              "has it all"
 local function ReagentPlan(id, knowers, cache)
     local list = Reagents(id)
     if not list then return nil, "none" end
@@ -1026,8 +1027,11 @@ local function ReagentPlan(id, knowers, cache)
             g.reach = math.max(g.reach or 0, reach)
             if reach < g.need then ready = false end
             if have < g.need then
+                -- The blocked holder is named whenever what can be mailed
+                -- falls short, even beside one who can (Codex review of #388).
+                local blocked = reach < g.need
                 short[#short + 1] = { item = g.item, need = g.need, have = have, from = from,
-                                      away = not from and away or nil, wall = not from and wall or nil }
+                                      away = blocked and away or nil, wall = blocked and wall or nil }
             end
         end
         if ready then plan.ready = true end
@@ -1085,12 +1089,17 @@ local function ReagentLines(id, knowers)
                 parts[#parts + 1] = "+" .. (#g.holders - 3)
             end
         end
-        -- Green when it can reach a crafter (#386): enough held only on the
-        -- other faction is not enough. Without crafters, the stable's total.
-        local ok
-        if #plan.crafters > 0 then ok = (g.reach or 0) >= g.need else ok = g.total >= g.need end
+        -- With crafters, what one of them can gather (#386), and the stable's
+        -- total beside it when that is more: enough held only on the other
+        -- faction is not enough. Without crafters, the stable's total.
+        local shown, ofTotal = g.total, ""
+        if #plan.crafters > 0 then
+            shown = g.reach or 0
+            if shown < g.total then ofTotal = " |cff999999of " .. g.total .. "|r" end
+        end
+        local ok = shown >= g.need
         out[#out + 1] = { g.need .. " x " .. ItemName(g.item),
-                          (ok and "|cff40ff40" or "|cffff4040") .. g.total .. "|r" ..
+                          (ok and "|cff40ff40" or "|cffff4040") .. shown .. "|r" .. ofTotal ..
                           (#parts > 0 and ("  " .. table.concat(parts, ", ")) or ""),
                           1, 1, 1, 1, 1, 1 }
     end
@@ -1105,15 +1114,13 @@ local function ReagentLines(id, knowers)
             right = "|cff40ff40has the reagents|r"
         else
             local s = c.short[1]
-            local who
-            if s.from then
-                who = " (" .. ColorName(s.from) .. " has " .. s.from.n .. ")"
-            elseif s.away then
-                -- Held, but by an alt who can't mail it (#386).
-                who = " (" .. ColorName(s.away) .. " has " .. s.away.n .. ", other " .. s.wall .. ")"
-            else
-                who = " (nobody has it)"
+            -- Who can mail it, and who holds it but can't (#386).
+            local whoParts = {}
+            if s.from then whoParts[#whoParts + 1] = ColorName(s.from) .. " has " .. s.from.n end
+            if s.away then
+                whoParts[#whoParts + 1] = ColorName(s.away) .. " has " .. s.away.n .. ", other " .. s.wall
             end
+            local who = #whoParts > 0 and (" (" .. table.concat(whoParts, "; ") .. ")") or " (nobody has it)"
             right = "needs " .. (s.need - s.have) .. " " .. ItemName(s.item) .. who ..
                 (#c.short > 1 and (" +" .. (#c.short - 1)) or "")
         end

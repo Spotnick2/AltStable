@@ -770,7 +770,8 @@ do
     eq("  Birch knows it too, but lacks what Alder holds: nobody is ready",
        ids(T.BuildRows({ line = 171, filter = "craftable" })), "")
     local t = text(T.ReagentLines(2329, { owner(A) }))
-    check("the tooltip shows the total in red: Alder can't reach it", t:find("|cffff40405|r", 1, true) ~= nil, t)
+    check("the tooltip shows what Alder can gather, in red, and the stable's total",
+          t:find("|cffff40400|r |cff999999of 5|r", 1, true) ~= nil, t)
     check("  and says Birch has it on the other faction", t:find(" has 5, other faction)", 1, true) ~= nil, t)
     check("  never that nobody has it", not t:find("nobody has it", 1, true), t)
     -- A third alt on Alder's side with Silverleaf: she is the one to ask.
@@ -780,6 +781,28 @@ do
     eq("an alt on his side is asked, though Birch holds more", plan.crafters[1].short[1].from.name, "Umber")
     eq("  and no one is named apart then", plan.crafters[1].short[1].away, nil)
     check("  so he is ready", plan.ready)
+    -- Mixed, and still short (Codex review of #388): 2 Mageroyal needed,
+    -- Umber can mail 1, Birch holds 10 across the line.
+    WoW.items[785] = { name = "Mageroyal" }
+    held[U] = { [785] = { bags = 1 } }
+    local heldBirch = held[B][785]
+    held[B][785] = { bags = 10 }
+    plan = T.ReagentPlan(2331, { owner(A) })
+    local s = plan.crafters[1].short[1]
+    eq("  1 reachable of the 2 needed: Alder can gather 1", plan.reagents[1].reach, 1)
+    eq("    Umber is the one to ask", s.from and s.from.name, "Umber")
+    eq("    and Birch is named beside her, out of reach", s.away and s.away.name, "Birch")
+    t = text(T.ReagentLines(2331, { owner(A) }))
+    check("    the tooltip: 1 in red, of the stable's 11", t:find("|cffff40401|r |cff999999of 11|r", 1, true) ~= nil, t)
+    check("    and both holders on Alder's line",
+          t:find("Umber|r has 1; ", 1, true) ~= nil and t:find(" has 10, other faction)", 1, true) ~= nil, t)
+    held[U][785].bags = 2
+    plan = T.ReagentPlan(2331, { owner(A) })
+    check("  with a second one on his side, he is ready", plan.ready)
+    eq("    and Birch is no longer named", plan.crafters[1].short[1].away, nil)
+    t = text(T.ReagentLines(2331, { owner(A) }))
+    check("    the tooltip: 2 in green, of 12", t:find("|cff40ff402|r |cff999999of 12|r", 1, true) ~= nil, t)
+    held[B][785], WoW.items[785] = heldBirch, nil
     held[U], AltStableDB[U] = nil, nil
 
     AltStableDB[B].faction, AltStableDB[B].realm = "Alliance", "Forever PvP"
