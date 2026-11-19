@@ -703,7 +703,11 @@ end
 -- Its level and skills are read live (Codex on #383: the saved record lags
 -- until the next full scan, so "Gain 4" stayed after a level or a skill
 -- point): the level from UnitLevel, the skills through the scanner's own
--- reading. A skill list that does not read leaves the saved skills.
+-- reading. A live figure replaces the saved one craft by craft, so a craft
+-- the live list leaves out keeps its saved skill: an empty list, or one whose
+-- Professions header is collapsed in the Skills panel (Blizzard's list hides a
+-- collapsed header's lines; Codex on #383). A craft dropped this session
+-- stays until the next full scan.
 function L.Me(alts)
     local guid = UnitGUID("player")
     local saved
@@ -713,10 +717,10 @@ function L.Me(alts)
                  level = tonumber(UnitLevel("player")) or (saved and saved.level) or 0, rec = {} }
     local live = {}
     if AltStable.ScanSkills then pcall(AltStable.ScanSkills, live) end
-    -- ScanSkills resets prof1 only once the list is there: that says it read.
-    local source = (live.prof1 ~= nil) and live or (saved and saved.rec) or {}
-    for k, v in pairs(source) do
-        if type(k) == "string" and k:find("^prof_") then me.rec[k] = v end
+    for _, source in ipairs({ (saved and saved.rec) or {}, live }) do
+        for k, v in pairs(source) do
+            if type(k) == "string" and k:find("^prof_") then me.rec[k] = v end
+        end
     end
     return me
 end
