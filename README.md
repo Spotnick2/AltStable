@@ -50,9 +50,9 @@ rather than in these counts.
 
 The **Professions** tab shows which character knows which recipe, the skill it needs and where
 it comes from (trainer, vendor, quest or drop). Filter for the recipes you know, the ones you're
-missing, or the ones nobody has yet. Recipes the profession quartermasters sell for Merchant's
-Favor show their price, and the **Favor** filter lists them: with an alt picked and **Missing**,
-it's what that alt could buy.
+missing, or the ones nobody has yet; the tab opens on the filter you last picked. Recipes the
+profession quartermasters sell for Merchant's Favor show their price, and the **Favor** filter
+lists them: with an alt picked and **Missing**, it's what that alt could buy.
 
 ![The Professions tab for Cooking: each recipe with its skill level, its source and which characters know it, a progress card per cook, and a recipe tooltip listing its reagents](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/professions.jpg)
 
@@ -75,8 +75,9 @@ other accounts, and each alt's stars are set on the account it's played on.
 
 Hover a recipe in the Professions tab to see its reagents and how many your alts hold in their
 bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
-**Craftable** filter lists the recipes an alt knows and has the reagents for somewhere among
-your alts.
+**Craftable** filter lists the recipes an alt knows and has the reagents for among the alts that
+can mail them to it. An alt of the other faction can't, and one on another ruleset is counted as
+out of reach too.
 
 When you open a profession window, any recipe whose reagents there differ from AltStable's own list
 takes the window's, so a game patch that changes a recipe shows right away.
@@ -88,6 +89,32 @@ Profession cooldowns are tracked too, and a notification tells you when one is r
 The **Raids** tab shows who is saved to which raid, how many bosses each has killed, and when
 each lockout resets. Hover a cell for the boss-by-boss detail. It lists your level-60
 characters, plus anyone else who holds a lockout.
+
+### How far along are my Legacy Challenges?
+
+The **Legacy** tab shows Forever's Legacy Challenges for your whole Battle.net account: their
+progress is shared by every character on it, so any of them shows the same.
+
+- **Classes** and **Tradeskills**: each class's level 25, 45 and 60 challenges with your highest
+  alt of that class, and each profession's 150, 225 and 300 with your best skill and who has it.
+- **Dungeons, Raids, PvP and Adventure**: each challenge's progress. Click one to list its parts,
+  the missing ones first.
+- **Legacy Points** along the bottom: your total, a bar coloured by reward, and the next reward
+  with the points still to go.
+
+![The Legacy tab: a Classes grid and a Tradeskills grid with each tier's progress, the Dungeons and Raids challenges with their parts, and the Legacy Points bar along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/legacy.jpg)
+
+*The Legacy tab: the challenges, the alt closest to each one, and the points along the bottom.*
+
+Star the challenges you're after (click a grid cell, or the star on a row), and the **Bucket
+List** view lists them with the character closest to each, a progress bar and what's left ("Gain
+4 levels", "Finish Shadowfang Keep"). **This character** keeps what the character you're playing
+can move forward. Right-click a row and pick Remove to take it off. The stars stay on the WoW
+account you set them on.
+
+Class progress comes from the alts AltStable knows, your other accounts' included once they've
+synced. Explorer counts each character's own exploration, for the characters played on this WoW
+account.
 
 ### How much gold, rested XP and progression does each character have?
 
@@ -101,6 +128,9 @@ talent.
 The **Bags** column shows each character's free and total bag slots, to see who needs a bigger
 bag. Hover it for that character's bags, its bank tabs (as of its last bank visit) and the spare
 bags it carries or keeps in the bank or the mail. **Show the Bags column**, in Options, hides it.
+
+The **Hearthstone** column shows the inn each character is bound to. **Show the Hearthstone
+column**, in Options, hides it.
 
 Hover the gold in the game's bag window to see the total across your characters and how much
 each one holds, richest first. (Bagnon and Baganator replace that window and have their own.)
@@ -142,7 +172,7 @@ and it doesn't try to match every Altoholic feature.
 
 1. **Install** AltStable from [CurseForge](https://www.curseforge.com/wow/addons/altstable),
    either with the CurseForge app or by unzipping it into the `Interface\AddOns` folder inside
-   your Forever game folder. The download contains five folders (`AltStable` and its four tabs);
+   your Forever game folder. The download contains six folders (`AltStable` and its five tabs);
    keep all of them. Then start the game, or restart it if it was running.
 2. **Open it** by typing `/alts` or clicking the minimap button.
 3. **Log in on each character once.** AltStable can only read the character you are playing. It
