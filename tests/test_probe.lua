@@ -346,7 +346,7 @@ if legacyProc and L then
 
     local S = legacyProc.steps
     local READ, SEARCH, COMPARE = 1, 3, 5
-    check("  the steps are where this test reads them", S[READ].auto and S[SEARCH].run and S[COMPARE].auto,
+    check("  the steps are where this test reads them", S[READ].auto and S[SEARCH].run and S[COMPARE].wait,
           "renumber the test")
     local savedName = WoW.player.name
 
@@ -371,8 +371,12 @@ if legacyProc and L then
     -- earner, one more dungeon.
     view = { completed = { [61499] = true }, mine = {}, dungeons = 4 }
     WoW.player.name = "Second"
+    -- The procedure resumes at PLAYER_LOGIN, before the +10 s reading: the
+    -- compare waits for it instead of throwing (Bugsy, 2026-11-19).
+    check("  the compare waits while this character has no reading", not (S[COMPARE].wait()))
     L.Read("login+10s")
-    local diffCompleted, diffCriteria = S[COMPARE].run()
+    local ready, diffCompleted, diffCriteria = S[COMPARE].wait()
+    check("  and runs once it has one", ready == true)
     eq("the completed sets match", diffCompleted, 0)
     eq("  one challenge's criteria differ", diffCriteria, 1)
     check("  the comparison names both characters", (S[COMPARE].check()))

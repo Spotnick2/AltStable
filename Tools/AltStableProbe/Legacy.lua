@@ -455,7 +455,7 @@ end
 
 Probe:Steps("legacy", {
     title = "Legacy Challenges: what the client gives, per character and per account (#373)",
-    rev = 1,
+    rev = 2,
     { text = "Reading this character's Legacy Challenges: which ID set is listed, completed / earned by me, "
           .. "every criterion, renown, the reward track.",
       auto = true,
@@ -488,14 +488,20 @@ Probe:Steps("legacy", {
     { text = "Clear the search and close the Legacy window. Log out and log in ANOTHER character on this "
           .. "account, ideally one that has done different dungeons or explored different zones. "
           .. "The procedure resumes there. Wait 10 s after login, then press Next." },
-    { text = "Comparing this character's reading with the first one's: the list, completed, earned by me, "
-          .. "criteria, renown, Explore Azeroth.",
-      auto = true,
-      run = function()
+    -- A wait, not an auto run: the procedure resumes at PLAYER_LOGIN, before
+    -- the +10 s reading exists, and a run that threw there went to the error
+    -- handler (seen in Bugsy, 2026-11-19). It also waits for THIS session's
+    -- reading, never an older one of the same character.
+    { text = "Comparing this character's reading with the first one's, once it is taken 10 s after login: "
+          .. "the list, completed, earned by me, criteria, renown, Explore Azeroth.",
+      timeout = 60,
+      wait = function()
           local x, y = Other(), Mine()
-          if not y then error("no reading yet: wait 10 s after login, then Retry", 0) end
-          if not x then error("no reading of another character on this account", 0) end
-          return Compare(x, y)
+          if not (y and session.uptimeAtLogin and (y.uptime or 0) >= session.uptimeAtLogin) then
+              return false, "waiting for this login's reading (+10 s)"
+          end
+          if not x then return false, "no reading of another character on this account" end
+          return true, Compare(x, y)
       end,
       check = function()
           local x, y = Other(), Mine()
