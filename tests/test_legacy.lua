@@ -263,6 +263,23 @@ eq("crafts: Leatherworking at 91 starts the crafters at 131", L.NameColumnX("cra
 eq("classes: Warlock at 50, at 90", L.NameColumnX("class", 50), 90)
 eq("  a width not measured yet keeps the fixed 150", L.NameColumnX("craft", 0), 150)
 eq("  never past it either", L.NameColumnX("class", 200), 116)
+
+-- A craft tier is wider than a class tier: "150/225" (about 51) and its star
+-- (12) did not fit 58 (owner's screenshot: "150/2...").
+eq("class tiers stay 58", L.CellWidth("class"), 58)
+eq("craft tiers are 66", L.CellWidth("craft"), 66)
+
+-- Side by side, each grid gets what it needs and half the rest; short of
+-- room, its share. The owner's screenshot: about 867 wide, the classes need
+-- about 389 and the crafts 460.
+local ga, gb = L.SplitGrids(867, 389, 460)
+eq("just room (855 for 849): each its need, plus half of 6", ga .. "+" .. gb, "392+463")
+ga, gb = L.SplitGrids(1012, 389, 460)
+eq("room to spare: need plus half the rest", ga .. "+" .. gb, "464+536")
+ga, gb = L.SplitGrids(800, 389, 460)
+eq("short of room (788): shared by need", ga .. "+" .. gb, "361+427")
+ga, gb = L.SplitGrids(812, 0, 0)
+eq("nothing measured: halves", ga .. "+" .. gb, "400+400")
 eq("  named", classRow("HUNTER").best.name, "Kaleidria")
 eq("Priest: earned, then 30 of 45", states(classRow("PRIEST")), "done,progress,later")
 eq("Mage: an own-account alt counts", classRow("MAGE").best and classRow("MAGE").best.name, "Drakuza")
@@ -773,6 +790,30 @@ for i = 1, L.pools.gridHead.used do
     heads[#heads + 1] = hx
 end
 eq("  both grids' name columns fit their names", table.concat(heads, ","), "80,80")
+local cellW = {}
+for i = 1, L.pools.gridRow.used do
+    local rw = L.pools.gridRow.list[i]
+    cellW[rw.r.kind] = rw.cells[1]:GetWidth()
+end
+eq("  drawn: class tiers 58, craft tiers 66", tostring(cellW.class) .. "/" .. tostring(cellW.craft), "58/66")
+-- Side by side, the grids split by need: here the crafts need 24 more (their
+-- tiers), and with room to spare both get the same extra. The stub's scroll
+-- frame is 100 wide (stacked), so it is widened for this one render.
+local gridScroll = L.pools.gridTitle.list[1]:GetParent():GetParent()
+local scrollW = gridScroll:GetWidth()
+gridScroll:SetWidth(1000)
+L.Render()
+local titles = {}
+for i = 1, L.pools.gridTitle.used do
+    local t = L.pools.gridTitle.list[i]
+    titles[t.title:GetText()] = t:GetWidth()
+end
+check("  the grids sit side by side here", L.pools.gridTitle.used == 2 and titles.Classes and titles.Tradeskills)
+local _, needC = L.GridLayout(L.model.classes, "class")
+local _, needT = L.GridLayout(L.model.crafts, "craft")
+eq("  the crafts' grid is wider by what it needs more", titles.Tradeskills - titles.Classes, needT - needC)
+gridScroll:SetWidth(scrollW)
+L.Render()
 AltStableLegacyDB.stars = { A = {} }
 
 -- A Bucket List row listens for the right button too.
