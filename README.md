@@ -75,9 +75,10 @@ other accounts, and each alt's stars are set on the account it's played on.
 
 Hover a recipe in the Professions tab to see its reagents and how many your alts hold in their
 bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
-**Craftable** filter lists the recipes an alt knows and has the reagents for, counting its own and
-those of the alts that can mail them to it. An alt known to be of the other faction, or on another
-ruleset, is left out.
+**Craftable** filter lists the recipes an alt knows and has the reagents for. It counts the alt's
+own reagents and every other alt's, except an alt known to be of the other faction or on another
+ruleset, since mail can't reach it. An alt whose faction or realm AltStable hasn't recorded still
+counts.
 
 When you open a profession window, any recipe whose reagents there differ from AltStable's own list
 takes the window's, so a game patch that changes a recipe shows right away.

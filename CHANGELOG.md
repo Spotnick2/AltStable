@@ -43,12 +43,13 @@ Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStabl
 
 ### Fixed
 
-- **Reagents count only on alts that can mail them**
+- **Reagents no longer count on the other faction or another ruleset**
   ([#386](https://github.com/Spotnick2/AltStable/issues/386)). The reagent counts and the
   **Craftable** filter added up every alt, the other faction's included. They now count the
-  crafter's own reagents and those of alts that can mail them: an alt known to be of the other
-  faction, or on another ruleset, is left out. A reagent held only out of reach says so ("Birch
-  has 5, other faction"). Whether mail crosses rulesets on Forever hasn't been checked.
+  crafter's own reagents and every other alt's, except an alt known to be of the other faction or
+  on another ruleset. An alt whose faction or realm AltStable hasn't recorded still counts. A
+  reagent held only out of reach says so ("Birch has 5, other faction"). Whether mail crosses
+  rulesets on Forever hasn't been checked.
 - **One wide character no longer shrinks a Roster camp**
   ([#376](https://github.com/Spotnick2/AltStable/issues/376)). A Tauren holding a mug out drew the
   whole camp at half size. It now overlaps its neighbour a little instead.
