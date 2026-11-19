@@ -31,7 +31,10 @@ All read in place from `C:\Projects\WoW\References`, nothing copied here:
   can't bring to 100%, or a quest that isn't there, gets a line in it.
 
 Then check the report: every row with its quest count, `UNMAPPED` areas, and fields that
-differ between faction or class reads (`profile difference`). Commit the regenerated file with
+differ between faction or class reads (`profile difference`). A quest both factions take whose
+links differ on Horde ships them as its own field (`hordeLinks`), so those aren't reported. A
+difference checked and accepted goes in `overrides.lua`'s `knownDifferences`, so the report
+stays empty until something new appears. Commit the regenerated file with
 the change that caused it. Its `D.VERSION` changes with the content, and synced counts carry
 it.
 

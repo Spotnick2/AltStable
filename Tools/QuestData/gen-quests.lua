@@ -171,6 +171,13 @@ local FIELDS = { "name", "requiredLevel", "requiredRaces", "requiredClasses", "z
                  "preQuestSingle", "preQuestGroup", "exclusiveTo", "breadcrumbForQuestId", "nextQuestInChain",
                  "parentQuest", "requiredMaxLevel", "availableUntilCompleted", "startedBy" }
 
+-- The fields a runtime rule follows; for a quest both factions take, a Horde read that
+-- differs in any of them ships its own copy.
+local LINKS = { "exclusiveTo", "preQuestSingle", "preQuestGroup", "breadcrumbForQuestId", "nextQuestInChain",
+                "parentQuest", "availableUntilCompleted" }
+local LINK_SET = {}
+for _, f in ipairs(LINKS) do LINK_SET[f] = true end
+
 local function Serialize(v)
     if type(v) ~= "table" then return tostring(v) end
     local keys = {}
@@ -338,18 +345,30 @@ for _, id in ipairs(allIds) do
                 if hordeKey == key then hordeKey = nil end
             end
         end
+        -- Faction-dependent links (Codex on #394: 1198's breadcrumb and follow-up are 1200 for
+        -- Alliance, none for Horde): the Horde read's links ship as their own field.
+        local horde
+        if not FactionOf(q.requiredRaces or 0) then
+            local h = profiles["Horde/" .. class][id]
+            for _, f in ipairs(LINKS) do
+                if Serialize(h[f]) ~= Serialize(q[f]) then horde = h end
+            end
+        end
         -- Differences between profiles in anything else are reported, not guessed at.
         for pkey, data in pairs(profiles) do
             local other = data[id]
+            local sameFaction = pkey:sub(1, #faction) == faction
             for _, f in ipairs({ "requiredLevel", "requiredRaces", "requiredClasses", "exclusiveTo",
-                                 "preQuestSingle", "preQuestGroup", "breadcrumbForQuestId", "parentQuest" }) do
-                if Serialize(other[f]) ~= Serialize(q[f]) then
+                                 "preQuestSingle", "preQuestGroup", "breadcrumbForQuestId", "parentQuest",
+                                 "nextQuestInChain", "availableUntilCompleted" }) do
+                local handled = (horde and LINK_SET[f] and not sameFaction) or OVR.knownDifferences[id] == f
+                if not handled and Serialize(other[f]) ~= Serialize((not sameFaction and horde or q)[f]) then
                     Report("profile difference: quest %d field %s in %s (%s vs %s)", id, f, pkey,
                         Serialize(other[f]), Serialize(q[f]))
                 end
             end
         end
-        quests[id] = { q = q, key = key, hordeKey = hordeKey, group = group }
+        quests[id] = { q = q, key = key, hordeKey = hordeKey, group = group, horde = horde }
         rows[key] = rows[key] or { group = group, n = 0, area = q.zoneOrSort }
         rows[key].n = rows[key].n + 1
         if hordeKey then
@@ -367,11 +386,12 @@ local function Ref(id)
     if id and id ~= 0 and not quests[id] and BASE[id] then refs[id] = true end
 end
 for _, e in pairs(quests) do
-    local q = e.q
-    for _, x in ipairs(Ids(q.exclusiveTo) or {}) do Ref(x) end
-    for _, x in ipairs(Ids(q.preQuestSingle) or {}) do Ref(x) end
-    for _, x in ipairs(q.preQuestGroup or {}) do Ref(x) end
-    Ref(q.breadcrumbForQuestId); Ref(q.nextQuestInChain); Ref(q.parentQuest); Ref(q.availableUntilCompleted)
+    for _, q in ipairs({ e.q, e.horde or e.q }) do
+        for _, x in ipairs(Ids(q.exclusiveTo) or {}) do Ref(x) end
+        for _, x in ipairs(Ids(q.preQuestSingle) or {}) do Ref(x) end
+        for _, x in ipairs(q.preQuestGroup or {}) do Ref(x) end
+        Ref(q.breadcrumbForQuestId); Ref(q.nextQuestInChain); Ref(q.parentQuest); Ref(q.availableUntilCompleted)
+    end
 end
 
 -- Row metadata.
@@ -428,23 +448,28 @@ end
 
 -- Flags: 1 unsure (counts only once done), 2 reference-only (never counted).
 local lines = {}
-local function Row(id, e, flags)
-    local q = e and e.q or BASE[id]
-    local maxLevel = OVR.maxLevel[id] or q.requiredMaxLevel or 0
+-- A quest's links, fields 9-15 (and the Horde ones, field 16): exclusiveTo, preSingle,
+-- preGroup (signed), breadcrumbFor, next, parent, until.
+local function Links(q)
     local preGroup = nil
     if type(q.preQuestGroup) == "table" then
         preGroup = {}
         for _, v in ipairs(q.preQuestGroup) do preGroup[#preGroup + 1] = v end
         if #preGroup == 0 then preGroup = nil end
     end
+    return ("%s,%s,%s,%d,%d,%d,%d"):format(List(Ids(q.exclusiveTo)), List(Ids(q.preQuestSingle)), List(preGroup),
+        q.breadcrumbForQuestId or 0, q.nextQuestInChain or 0, q.parentQuest or 0, q.availableUntilCompleted or 0)
+end
+
+local function Row(id, e, flags)
+    local q = e and e.q or BASE[id]
+    local maxLevel = OVR.maxLevel[id] or q.requiredMaxLevel or 0
     -- { key, hordeKey, reqLevel, races, classes, flags, name, maxLevel, exclusiveTo,
-    --   preSingle, preGroup, breadcrumbFor, next, parent, until }
-    lines[#lines + 1] = ("[%d]={%s,%s,%d,%.0f,%d,%d,%q,%d,%s,%s,%s,%d,%d,%d,%d},"):format(
+    --   preSingle, preGroup, breadcrumbFor, next, parent, until, hordeLinks? }
+    lines[#lines + 1] = ("[%d]={%s,%s,%d,%.0f,%d,%d,%q,%d,%s%s},"):format(
         id, e and tostring(e.key) or "nil", e and e.hordeKey and tostring(e.hordeKey) or "nil",
         q.requiredLevel or 0, q.requiredRaces or 0, q.requiredClasses or 0, flags, q.name or "",
-        maxLevel, List(Ids(q.exclusiveTo)), List(Ids(q.preQuestSingle)), List(preGroup),
-        q.breadcrumbForQuestId or 0, q.nextQuestInChain or 0, q.parentQuest or 0,
-        q.availableUntilCompleted or 0)
+        maxLevel, Links(q), e and e.horde and (",{" .. Links(e.horde) .. "}") or "")
 end
 
 local ids = {}
@@ -513,7 +538,9 @@ local header = ([[
 --   Battlegrounds row, -9999 the Class quests row, 0 quests QuestieDB files nowhere.
 -- D.QUESTS[questID] = { key, hordeKey, reqLevel, raceMask, classMask, flags, name, maxLevel,
 --   exclusiveTo, preQuestSingle, preQuestGroup, breadcrumbFor, nextQuestInChain, parentQuest,
---   availableUntilCompleted }
+--   availableUntilCompleted, hordeLinks }
+--   hordeLinks (only where the Horde read differs, for a quest both factions take): a table of
+--   fields 9-15 as Horde sees them, which a Horde character uses instead.
 --   flags: 1 unsure (no known starter: counts only once done), 2 reference-only (a quest the
 --   rules look at, never counted). Masks: bit 2^(raceID-1) / 2^(classID-1), 0 = any.
 --   preQuestGroup entries are signed: a negative ID means exactly that quest is required.

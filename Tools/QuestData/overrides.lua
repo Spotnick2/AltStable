@@ -33,6 +33,8 @@ return {
         [2597] = true, -- Alterac Valley
         [3277] = true, -- Warsong Gulch
         [3358] = true, -- Arathi Basin
+        [16606] = true, -- Darkspear Islands: a PvP instance like the two above (AreaTable map 2997,
+                         -- instance type PvP in the 70888 Map table; Codex on #394)
     },
 
     -- Instances QuestieDB lists as dungeons that are places in a zone, and their continent.
@@ -49,6 +51,18 @@ return {
     -- them, or whether they can be done again. Zoneless quests (0) are always unsure.
     unsureAreas = {
         [16941] = true, -- Craftsman's Writs
+    },
+
+    -- Profile differences checked and accepted, so the report shows only new ones. These quests
+    -- have a class-dependent follow-up (nextQuestInChain): harmless, since a follow-up can only
+    -- be done after the quest, so the closure rule never fires wrongly.
+    knownDifferences = {
+        [8315] = "nextQuestInChain", -- The Calling (AQ)
+        [8977] = "nextQuestInChain", -- dungeon set quests (Dungeon Set 1 / 2 chains)
+        [8978] = "nextQuestInChain",
+        [8997] = "nextQuestInChain",
+        [8998] = "nextQuestInChain",
+        [9015] = "nextQuestInChain",
     },
 
     -- Zone names the client's AreaTable lacks or spells differently (area ID -> English name).

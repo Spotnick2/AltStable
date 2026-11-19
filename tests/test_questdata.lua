@@ -25,8 +25,8 @@ local D = AltStable.LoremasterData
 check("the table is published on AltStable", D ~= nil and D.ZONES ~= nil and D.QUESTS ~= nil)
 
 -- Field positions, as the header documents them.
-local KEY, HKEY, REQ, RACES, CLASSES, FLAGS, NAME, MAXLVL, EXCL, PRESINGLE, PREGROUP, BREAD, NEXT, PARENT, UNTIL =
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+local KEY, HKEY, REQ, RACES, CLASSES, FLAGS, NAME, MAXLVL, EXCL, PRESINGLE, PREGROUP, BREAD, NEXT, PARENT, UNTIL, HORDE =
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
 
 ------------------------------------------------------------
 -- Invariants
@@ -49,7 +49,7 @@ local orderOk = true
 for i, o in ipairs(orders) do if o ~= i then orderOk = false end end
 check("the row orders are 1..n", orderOk)
 
-local counted, refOnly, dangling, badMask, badFlag, wide = 0, 0, 0, 0, 0, 0
+local counted, refOnly, dangling, badMask, badFlag, wide, hordeRows, badHorde = 0, 0, 0, 0, 0, 0, 0, 0
 for id, q in pairs(D.QUESTS) do
     local isRef = q[FLAGS] % 4 >= 2
     if isRef then
@@ -65,7 +65,15 @@ for id, q in pairs(D.QUESTS) do
     end
     if q[RACES] >= 2 ^ 32 then wide = wide + 1 end
     if q[FLAGS] < 0 or q[FLAGS] > 3 then badFlag = badFlag + 1 end
+    -- Horde links: fields 9-15 again, numbers where those are numbers.
+    local h = q[HORDE]
+    if h ~= nil then
+        hordeRows = hordeRows + 1
+        for i = 4, 7 do if type(h[i]) ~= "number" then badHorde = badHorde + 1 end end
+    end
 end
+eq("Horde links have the shape of fields 9-15", badHorde, 0)
+check("  some quests carry them", hordeRows > 0)
 check("thousands of quests counted", counted > 4000, tostring(counted))
 check("some reference-only rows", refOnly > 0)
 eq("every counted quest points at a row, reference-only ones at none", dangling, 0)
@@ -97,6 +105,17 @@ check("the Ashenvale Hunt copies each keep their own row",
 check("  and their exclusive partners", Q[235] and Q[235][EXCL] and #Q[235][EXCL] == 2)
 -- Missed windows: the override's level cap, and the data's own.
 eq("Darkspear Islands Clash 30-39 is capped at 39 (override)", Q[98895] and Q[98895][MAXLVL], 39)
+-- Darkspear Islands is a PvP instance: its quests are Battlegrounds quests (Codex on #394).
+eq("  and counts in Battlegrounds", Q[98895] and Q[98895][KEY], -25)
+check("  Darkspear Islands has no zone row", D.ZONES[16606] == nil)
+-- Faction-dependent links (Codex on #394): In Search of Thaelrid leads to 1200 for the
+-- Alliance only.
+eq("In Search of Thaelrid: Alliance breadcrumb 1200", Q[1198] and Q[1198][BREAD], 1200)
+eq("  Alliance follow-up 1200", Q[1198] and Q[1198][NEXT], 1200)
+check("  Horde has its own links", Q[1198] and type(Q[1198][HORDE]) == "table")
+eq("  Horde: no breadcrumb", Q[1198] and Q[1198][HORDE] and Q[1198][HORDE][4], 0)
+eq("  Horde: no follow-up", Q[1198] and Q[1198][HORDE] and Q[1198][HORDE][5], 0)
+check("a quest whose links match carries no Horde copy", Q[7] and Q[7][HORDE] == nil)
 eq("The Battle for Arathi Basin! caps at 29", Q[8168] and Q[8168][MAXLVL], 29)
 -- Signed pre-quests stay signed.
 local signed = false
