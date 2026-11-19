@@ -239,6 +239,9 @@ local EVENTS = { "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "QUEST_TURNED_IN", "QU
 local NOISY = { QUEST_LOG_UPDATE = true }
 
 local session = { events = {}, counts = {}, login = {} }
+-- This load's own token: a turn-in record from an earlier session, saved account-wide, never
+-- matches it.
+session.id = ("%d-%.3f-%s"):format(time(), GetTime(), tostring(session))
 local loginAt
 
 local function Since() return loginAt and ("%.1f"):format(GetTime() - loginAt) or "pre" end
@@ -248,9 +251,13 @@ local function Mark(key)
     session.login[key] = { t = Since(), reading = ok and s or { error = tostring(s) } }
 end
 
--- One turn-in: is the quest completed inside the handler, and later?
+-- One turn-in: is the quest completed inside the handler, and later? Each one is numbered in
+-- this session and carries its character, so the step can tell a new turn-in from one an
+-- earlier run left in the account-wide SavedVariables (Codex on #392).
 local function TurnIn(questID)
-    local r = { id = questID, at = Since(), title = Title(questID) }
+    session.turnSeq = (session.turnSeq or 0) + 1
+    local r = { id = questID, at = Since(), title = Title(questID), seq = session.turnSeq,
+                char = UnitName("player"), session = session.id }
     local function look(key)
         local _, set = Completed()
         r[key] = ("list %s, flagged %s"):format(set[questID] and "yes" or "no", Describe(Flagged(questID)))
@@ -335,6 +342,22 @@ Probe:Command("questmaps", function()
     Out(("%d zone maps, %d dungeon maps; zones: %s"):format(m.numZones, m.numDungeons, m.zones))
 end, ": the zone and dungeon map names, localized (#374)")
 
+-- The turn-in step's baseline (see its wait) and the newest turn-in after it, by this
+-- character, in this session.
+local turnBaseline
+local function NewTurnIn()
+    local list = DB().turnIns
+    local r = list[#list]
+    if not r or r.char ~= UnitName("player") or r.session ~= session.id then return nil end
+    if (r.seq or 0) <= (turnBaseline or math.huge) then return nil end
+    return r
+end
+
+-- A reading that got the completed list (a count, zero included), not an error.
+local function ReadOk(t)
+    return t ~= nil and t.completed ~= nil and t.completed.error == nil and type(t.completed.count) == "number"
+end
+
 Probe:Steps("quests", {
     title = "Quest progress: what the client gives, per character (#374, #372)",
     rev = 1,
@@ -384,17 +407,19 @@ Probe:Steps("quests", {
           .. "The step goes on by itself 2 s after the turn-in.",
       timeout = 900,
       wait = function()
-          local list = DB().turnIns
-          local r = list[#list]
-          if not (r and r.plus2s and session.uptimeAtLogin) then return false, "waiting for a turn-in" end
-          return true, ("%s: handler %s; +0.5 s %s; +2 s %s"):format(tostring(r.id), r.handler,
-              tostring(r.plus05s), r.plus2s)
+          -- Only a turn-in made after this step came up counts: the first poll notes where
+          -- this session's numbering stands, and leaving the step forgets it.
+          if turnBaseline == nil then turnBaseline = session.turnSeq or 0 end
+          local r = NewTurnIn()
+          if not (r and r.plus2s) then return false, "waiting for a turn-in" end
+          return true, ("%s: handler %s; +0.5 s %s; +2 s %s"):format(tostring(r.id), tostring(r.handler),
+              tostring(r.plus05s), tostring(r.plus2s))
       end,
+      leave = function() turnBaseline = nil end,
       check = function()
-          local list = DB().turnIns
-          local r = list[#list]
+          local r = NewTurnIn()
           return r ~= nil and r.plus2s ~= nil and r.plus2s:find("list yes", 1, true) ~= nil,
-              r and ("handler: " .. tostring(r.handler)) or "no turn-in"
+              r and ("handler: " .. tostring(r.handler)) or "no turn-in in this run"
       end },
     { text = "Log out and log in ANOTHER character on this account, ideally one that has done "
           .. "different quests. The procedure resumes there. Wait 10 s after login, then press Next." },
@@ -407,11 +432,21 @@ Probe:Steps("quests", {
               return false, "waiting for this login's reading (+10 s)"
           end
           if not x then return false, "no reading of another character on this account" end
+          -- A failed read is an empty list, not evidence (Codex on #392): compare only two
+          -- readings that both got the list, an empty one included.
+          if not (ReadOk(x) and ReadOk(y)) then
+              DB().lastCompare = { failed = true, first = x.name, second = y.name,
+                                   why = ("%s: %s; %s: %s"):format(tostring(x.name), tostring(x.completed and x.completed.error),
+                                       tostring(y.name), tostring(y.completed and y.completed.error)) }
+              Out("comparison skipped, a reading failed: " .. DB().lastCompare.why)
+              return true, "a reading failed"
+          end
           local r = Compare(x, y)
           return true, r.both, r.onlyFirst, r.flaggedHere, r.accountHere
       end,
       check = function()
           local r = DB().lastCompare
+          if r and r.failed then return false, "a reading failed: " .. tostring(r.why) end
           return r ~= nil and r.onlyFirst > 0,
               r and ("%d only on %s; flagged here %d, on account %d"):format(r.onlyFirst, r.first,
                   r.flaggedHere, r.accountHere) or "no comparison"
@@ -422,4 +457,4 @@ Probe:Steps("quests", {
 -- The test seam, on the namespace, never on _G.
 NS.quests = { SAMPLES = SAMPLES, Read = Read, Completed = Completed, Compare = Compare, TurnIn = TurnIn,
               Titles = Titles, Maps = Maps, Identity = Identity, Mine = Mine, Other = Other,
-              session = session }
+              NewTurnIn = NewTurnIn, ReadOk = ReadOk, session = session }
