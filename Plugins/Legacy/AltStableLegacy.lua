@@ -51,7 +51,8 @@ local ROW_H      = 22
 local TITLE_ROW  = 24     -- a grid's title line
 local SECTION_H  = 24
 local CRIT_H     = 18
-local CELL_W     = 58
+local CELL_W     = 58     -- a class tier: "21/45"
+local CRAFT_W    = 66     -- a craft tier: "150/225" (about 51) beside its star (12)
 local STAR_GAP   = 12   -- a grid cell's star (11) and a hair, kept clear of its text
 local GAP        = 12
 local GRID_MIN_W = 400    -- two grids side by side from 2 x this
@@ -976,6 +977,76 @@ function L.NameColumnX(kind, widest)
     return math.min(fixed, math.ceil(NAME_LEAD + widest + NAME_GAP))
 end
 
+function L.CellWidth(kind)
+    return kind == "class" and CELL_W or CRAFT_W
+end
+
+-- A grid row's second column: the alt or crafter named, or who is missing.
+-- Sets the row's tooltip words (`who`, `noneText`) on the way.
+function L.GridAltText(r, kind)
+    local dim = Color("TEXT_DIM", { 0.6, 0.6, 0.6 })
+    local dimHex = ("|cff%02x%02x%02x"):format(dim[1] * 255, dim[2] * 255, dim[3] * 255)
+    if kind == "class" then
+        r.noneText = "No known " .. r.label:lower() .. " on your accounts."
+        if r.best then
+            r.who = r.best.name .. " (level " .. r.best.level .. ")"
+            return ClassHex(r.key) .. r.best.name .. "|r"
+        end
+        return dimHex .. "No known " .. r.label:lower() .. "|r"
+    end
+    local noun = D.CRAFT_NOUNS[r.key] or r.key:lower()
+    r.noneText = "No known " .. noun .. " on your accounts."
+    if r.crafter then
+        r.who = r.crafter.name .. ", the best " .. r.key .. " on the account"
+        return ClassHex(r.crafter.class) .. r.crafter.name .. "|r"
+    elseif r.skill and r.skill > 0 then
+        r.who = "Best " .. r.key .. " on the account"
+        return "|cff999999Crafter unknown|r"
+    end
+    return dimHex .. "No known " .. noun .. "|r"
+end
+
+local function TextWidth(text)
+    if not L.measure then
+        L.measure = FS(content)
+        L.measure:Hide()
+    end
+    L.measure:SetText(text)
+    return tonumber(L.measure:GetStringWidth()) or 0
+end
+
+-- A grid's name column start, measured from its widest name (GPT-Astra on
+-- #389: five of six crafters were cut), and the width the grid needs to show
+-- every name and alt whole: names, alts, a gap, the three tiers.
+function L.GridLayout(rows, kind)
+    local widestName, widestAlt = 0, 0
+    for _, r in ipairs(rows) do
+        widestName = math.max(widestName, TextWidth(r.label))
+        widestAlt = math.max(widestAlt, TextWidth(L.GridAltText(r, kind)))
+    end
+    local altX = L.NameColumnX(kind, widestName)
+    return altX, math.ceil(altX + widestAlt + 6 + 3 * L.CellWidth(kind) + 4)
+end
+
+-- Two grids side by side in `w`: each gets what it needs and half of what is
+-- left; short of room, each gets its share of it. The classes have room to
+-- spare and the crafts' names and wider tiers do not, so an even split cut
+-- the crafters (owner's screenshot) while the classes' column stood half empty.
+function L.SplitGrids(w, needA, needB)
+    local avail = w - GAP
+    if needA + needB <= 0 then
+        local half = math.floor(avail / 2)
+        return half, avail - half
+    end
+    local a
+    if needA + needB <= avail then
+        a = needA + math.floor((avail - needA - needB) / 2)
+    else
+        a = math.floor(avail * needA / (needA + needB))
+    end
+    return a, avail - a
+end
+
 -- One grid: its title, column heads and rows, from (x, y) at width w.
 -- Returns the y below it.
 function L.DrawGrid(title, rows, kind, x, y, w, done, total)
@@ -986,19 +1057,9 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     t.count:SetText(total > 0 and ("%d / %d"):format(done, total) or "")
     y = y + TITLE_ROW
 
-    local cellsX = w - 3 * CELL_W - 4
-    -- The name column takes its longest name, measured, and the names beside
-    -- it get the rest (GPT-Astra on #389: five of six crafters were cut).
-    local widest = 0
-    if not L.measure then
-        L.measure = FS(content)
-        L.measure:Hide()
-    end
-    for _, r in ipairs(rows) do
-        L.measure:SetText(r.label)
-        widest = math.max(widest, tonumber(L.measure:GetStringWidth()) or 0)
-    end
-    local altX = L.NameColumnX(kind, widest)
+    local cw = L.CellWidth(kind)
+    local cellsX = w - 3 * cw - 4
+    local altX = L.GridLayout(rows, kind)
     local h = Acquire("gridHead", MakeGridHead)
     h:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
     h:SetWidth(w)
@@ -1008,12 +1069,11 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     h.alt:SetPoint("LEFT", h, "LEFT", altX, 0)
     h.alt:SetText(kind == "class" and "Highest-level alt" or "Highest skill")
     for i, tier in ipairs(D.TIERS[kind]) do
-        h.tiers[i]:SetPoint("CENTER", h, "LEFT", cellsX + (i - 0.5) * CELL_W, 0)
+        h.tiers[i]:SetPoint("CENTER", h, "LEFT", cellsX + (i - 0.5) * cw, 0)
         h.tiers[i]:SetText(tostring(tier))
     end
     y = y + ROW_H
 
-    local dim = Color("TEXT_DIM", { 0.6, 0.6, 0.6 })
     for i, r in ipairs(rows) do
         local f = Acquire("gridRow", MakeGridRow)
         f:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
@@ -1031,37 +1091,20 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
             f.bg:SetColorTexture(cr, cg, cb, (Color("CLASS_TINT_ALPHA", 0.08)) + 0.04)
             f.icon:SetTexture("Interface\\Icons\\ClassIcon_" .. r.label)
             f.name:SetText(ClassHex(r.key) .. r.label .. "|r")
-            if r.best then
-                f.alt:SetText(ClassHex(r.key) .. r.best.name .. "|r")
-                r.who = r.best.name .. " (level " .. r.best.level .. ")"
-            else
-                f.alt:SetText(("|cff%02x%02x%02xNo known %s|r"):format(dim[1] * 255, dim[2] * 255, dim[3] * 255,
-                    r.label:lower()))
-            end
-            r.noneText = "No known " .. r.label:lower() .. " on your accounts."
         else
             f.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.04 or 0.015)
             f.icon:SetTexture(D.CRAFT_ICONS[r.key])
             f.name:SetText(r.label)
-            local noun = D.CRAFT_NOUNS[r.key] or r.key:lower()
-            if r.crafter then
-                f.alt:SetText(ClassHex(r.crafter.class) .. r.crafter.name .. "|r")
-                r.who = r.crafter.name .. ", the best " .. r.key .. " on the account"
-            elseif r.skill and r.skill > 0 then
-                f.alt:SetText("|cff999999Crafter unknown|r")
-                r.who = "Best " .. r.key .. " on the account"
-            else
-                f.alt:SetText(("|cff%02x%02x%02xNo known %s|r"):format(dim[1] * 255, dim[2] * 255, dim[3] * 255, noun))
-            end
-            r.noneText = "No known " .. noun .. " on your accounts."
         end
+        f.alt:SetText(L.GridAltText(r, kind))
         for k, cell in ipairs(r.cells) do
             local b = f.cells[k]
             b:ClearAllPoints()
-            b:SetPoint("LEFT", f, "LEFT", cellsX + (k - 1) * CELL_W, 0)
+            b:SetWidth(cw)
+            b:SetPoint("LEFT", f, "LEFT", cellsX + (k - 1) * cw, 0)
             b.cell, b.row = cell, r
             -- A starred cell centres its text left of the star: "150/225"
-            -- (about 43 of the cell's 58) ran under it (owner's screenshot).
+            -- ran under it, then was cut beside it (owner's screenshots).
             local starred = cell.ch and L.IsStarred(cell.ch.id)
             b.text:SetText(L.CellText(cell, starred))
             b.text:ClearAllPoints()
@@ -1709,10 +1752,15 @@ function L.Render()
         return
     end
     local side = w >= 2 * GRID_MIN_W + GAP
-    local gw = side and math.floor((w - GAP) / 2) or w
+    local gw, tw = w, w
+    if side then
+        local _, classNeed = L.GridLayout(m.classes, "class")
+        local _, craftNeed = L.GridLayout(m.crafts, "craft")
+        gw, tw = L.SplitGrids(w, classNeed, craftNeed)
+    end
     local y1 = L.DrawGrid("Classes", m.classes, "class", 0, y, gw, m.classDone, m.classTotal)
     if side then
-        local y2 = L.DrawGrid("Tradeskills", m.crafts, "craft", gw + GAP, y, gw, m.craftDone, m.craftTotal)
+        local y2 = L.DrawGrid("Tradeskills", m.crafts, "craft", gw + GAP, y, tw, m.craftDone, m.craftTotal)
         y = math.max(y1, y2)
     else
         y = L.DrawGrid("Tradeskills", m.crafts, "craft", 0, y1 + GAP, gw, m.craftDone, m.craftTotal)
