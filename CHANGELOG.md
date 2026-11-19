@@ -20,15 +20,18 @@ Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStabl
   character on your Battle.net account, so every one of them shows the same.
   - **Classes:** each class's level 25, 45 and 60 challenges, with your highest alt of that class
     and its level.
-  - **Tradeskills:** each profession's 150, 225 and 300 challenges, with your best skill and the
-    alt who has it.
+  - **Tradeskills:** the 150, 225 and 300 challenges of the six crafts that have them (Alchemy,
+    Blacksmithing, Enchanting, Engineering, Leatherworking and Tailoring), with your best skill
+    and the alt who has it.
   - **Dungeons, Raids, PvP and Adventure:** each challenge's progress. Click one to list its parts,
     the missing ones first. Explorer counts each character's own exploration.
   - **The Bucket List:** star the challenges you're after (click a grid cell, or the star on a
     row). The **Bucket List** view then lists them with their best character, a progress bar and
-    what's left ("Gain 4 levels", "Finish Shadowfang Keep"). **This character** keeps what the
-    character you're playing can move forward. Right-click a row for **Remove from Bucket List**.
-    The stars stay on this WoW account; they don't sync.
+    what's left ("Gain 4 levels", "Finish Shadowfang Keep"). Earned ones stay at the bottom until
+    you remove them: right-click a row for **Remove from Bucket List**. **This character** narrows
+    the class and profession goals to the character you're playing, with its own level and skill;
+    the dungeon, raid and other account-wide goals stay. The stars stay on this WoW account; they
+    don't sync.
   - **Legacy Points** along the bottom: your total out of 65, a bar coloured by reward (common,
     uncommon, rare, epic, legendary), and the next reward with the points still to go.
 - **A Hearthstone column** on the sheet ([#371](https://github.com/Spotnick2/AltStable/issues/371)):
@@ -42,9 +45,10 @@ Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStabl
 
 - **Reagents count only on alts that can mail them**
   ([#386](https://github.com/Spotnick2/AltStable/issues/386)). The reagent counts and the
-  **Craftable** filter added up every alt, the other faction's included. A reagent held only out
-  of reach now says so ("Birch has 5, other faction"). Characters on another ruleset count as out
-  of reach too; whether mail crosses rulesets on Forever hasn't been checked.
+  **Craftable** filter added up every alt, the other faction's included. They now count the
+  crafter's own reagents and those of alts that can mail them: an alt known to be of the other
+  faction, or on another ruleset, is left out. A reagent held only out of reach says so ("Birch
+  has 5, other faction"). Whether mail crosses rulesets on Forever hasn't been checked.
 - **One wide character no longer shrinks a Roster camp**
   ([#376](https://github.com/Spotnick2/AltStable/issues/376)). A Tauren holding a mug out drew the
   whole camp at half size. It now overlaps its neighbour a little instead.

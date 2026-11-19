@@ -75,9 +75,9 @@ other accounts, and each alt's stars are set on the account it's played on.
 
 Hover a recipe in the Professions tab to see its reagents and how many your alts hold in their
 bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
-**Craftable** filter lists the recipes an alt knows and has the reagents for among the alts that
-can mail them to it. An alt of the other faction can't, and one on another ruleset is counted as
-out of reach too.
+**Craftable** filter lists the recipes an alt knows and has the reagents for, counting its own and
+those of the alts that can mail them to it. An alt known to be of the other faction, or on another
+ruleset, is left out.
 
 When you open a profession window, any recipe whose reagents there differ from AltStable's own list
 takes the window's, so a game patch that changes a recipe shows right away.
@@ -96,7 +96,9 @@ The **Legacy** tab shows Forever's Legacy Challenges for your whole Battle.net a
 progress is shared by every character on it, so any of them shows the same.
 
 - **Classes** and **Tradeskills**: each class's level 25, 45 and 60 challenges with your highest
-  alt of that class, and each profession's 150, 225 and 300 with your best skill and who has it.
+  alt of that class, and the 150, 225 and 300 challenges of the six crafts that have them
+  (Alchemy, Blacksmithing, Enchanting, Engineering, Leatherworking and Tailoring) with your best
+  skill and who has it.
 - **Dungeons, Raids, PvP and Adventure**: each challenge's progress. Click one to list its parts,
   the missing ones first.
 - **Legacy Points** along the bottom: your total, a bar coloured by reward, and the next reward
@@ -108,9 +110,10 @@ progress is shared by every character on it, so any of them shows the same.
 
 Star the challenges you're after (click a grid cell, or the star on a row), and the **Bucket
 List** view lists them with the character closest to each, a progress bar and what's left ("Gain
-4 levels", "Finish Shadowfang Keep"). **This character** keeps what the character you're playing
-can move forward. Right-click a row and pick Remove to take it off. The stars stay on the WoW
-account you set them on.
+4 levels", "Finish Shadowfang Keep"). Earned ones stay at the bottom until you remove them:
+right-click a row and pick Remove. **This character** narrows the class and profession goals to the
+character you're playing, with its own level and skill; the dungeon, raid and other account-wide
+goals stay. The stars stay on the WoW account you set them on.
 
 Class progress comes from the alts AltStable knows, your other accounts' included once they've
 synced. Explorer counts each character's own exploration, for the characters played on this WoW
