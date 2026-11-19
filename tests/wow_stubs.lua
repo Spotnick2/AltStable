@@ -91,6 +91,7 @@ WoW.onReset[#WoW.onReset + 1] = function()
     WoW.items, WoW.skillLines, WoW.factions, WoW.factionByID = {}, {}, {}, {}
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.currencies = {}
+    WoW.bindLocation = nil
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.sent = {}, {}, {}
     -- Tickers are NOT cleared: they are registered once at load, like the
@@ -1450,6 +1451,9 @@ SortUtil = {
 function UnitFactionGroup() return WoW.faction or "Horde", WoW.faction or "Horde" end
 function IsLoggedIn() return WoW.loggedIn ~= false end
 function GetMoney() return 0 end
+-- The hearthstone's inn (#371): WoW.bindLocation, a string; nil is the
+-- client's empty answer.
+function GetBindLocation() return WoW.bindLocation or "" end
 function IsInGuild() return false end
 
 SlashCmdList = {}

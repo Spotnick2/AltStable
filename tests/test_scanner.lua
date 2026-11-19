@@ -1649,6 +1649,54 @@ end
 
 
 ------------------------------------------------------------
+-- Hearthstone (#371)
+------------------------------------------------------------
+-- GetBindLocation() names the inn. The scan stores it as `bind`, and keeps
+-- the last one while the client has no answer (early login).
+do
+    WoW.reset()
+    WoW.bindLocation = "Thunderbrew Distillery"
+    local API = AltStable.API
+    eq("the inn is read", API.BindLocation(), "Thunderbrew Distillery")
+    WoW.bindLocation = nil
+    eq("  an empty answer is unknown", API.BindLocation(), nil)
+    WoW.bindLocation = WoW.secret("Somewhere")
+    eq("  so is a secret one", API.BindLocation(), nil)
+    WoW.bindLocation = "Two\nLines"
+    eq("  a line break can't split the wire line", API.BindLocation(), "Two Lines")
+    local real = GetBindLocation
+    GetBindLocation = function() error("boom") end
+    eq("  a call that throws is unknown", API.BindLocation(), nil)
+    GetBindLocation = real
+
+    AltStableDB = {}
+    WoW.bindLocation = "Gallows' End Tavern"
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("the scan stores the inn", c and c.bind, "Gallows' End Tavern")
+    WoW.bindLocation = nil
+    pcall(AltStable.ScanCharacter)
+    eq("  and keeps it when the client has no answer yet", c and c.bind, "Gallows' End Tavern")
+
+    -- The column: on Account Summary, before Last Online, sorted as text.
+    local col
+    for _, x in ipairs(AltStable.Columns) do if x.field == "bind" then col = x end end
+    check("a Hearthstone column exists", col ~= nil)
+    check("  sorted as text, with its option", col and col.sortText and col.option == "sheetHearthColumn")
+    check("  on Account Summary, after Bags",
+          io.open("SheetUI.lua"):read("*a"):find('"bags_free","bind","lastUpdate"', 1, true) ~= nil)
+    if col then
+        local row = AltStable.CreateRow(nil, 20, { col })
+        AltStable.RenderRow(row, { guid = "Player-Hs-1", name = "H", bind = "The Crossroads" }, 1, { col })
+        eq("  it shows the inn", row.cells[1]:GetText(), "The Crossroads")
+        AltStable.RenderRow(row, { guid = "Player-Hs-1", name = "H" }, 1, { col })
+        eq("  and is blank before the first read", row.cells[1]:GetText(), "")
+    end
+    AltStableDB = {}
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Merchant's Favor (#270)
 ------------------------------------------------------------
 -- C_CurrencyInfo.GetCurrencyInfo returns a struct, the amount in `quantity`
@@ -1785,7 +1833,7 @@ do
     for _, x in ipairs(AltStable.Columns) do if x.field == "bags_free" then col = x end end
     check("a Bags column exists", col ~= nil and col.type == "bags")
     check("  on the Account Summary tab, after Gold",
-          io.open("SheetUI.lua"):read("*a"):find('"money","bags_free","lastUpdate"', 1, true) ~= nil)
+          io.open("SheetUI.lua"):read("*a"):find('"money","bags_free",', 1, true) ~= nil)
     eq("the cell: free of total", AltStable.FormatBagSpace({ bags_slots = 72, bags_free = 14 }), "14/72")
     eq("  orange with a tenth or less left", AltStable.FormatBagSpace({ bags_slots = 72, bags_free = 7 }),
        "|cffff88007/72|r")

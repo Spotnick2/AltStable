@@ -1398,6 +1398,8 @@ local function ClearSyncedStateFields(t)
     -- Merchant's Favor (#270): an older peer's record has none, and a scan that
     -- couldn't read it sends none. Either way, the last number must not linger.
     t.favor = nil
+    -- Hearthstone (#371): absent from an older peer's record = unknown.
+    t.bind = nil
     -- When the gear last changed (#281): an older peer's record has none, and
     -- the stamp of a gear set no longer on the record must not linger. Nor
     -- the time it was read.
@@ -3143,6 +3145,7 @@ frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("PLAYER_MONEY")
 frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")   -- Merchant's Favor (#270)
 frame:RegisterEvent("BAG_UPDATE_DELAYED")        -- bag space (#346)
+frame:RegisterEvent("HEARTHSTONE_BOUND")         -- the hearthstone was set (#371)
 frame:RegisterEvent("BANKFRAME_OPENED")
 frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("BANK_TABS_CHANGED")
@@ -3853,6 +3856,20 @@ frame:SetScript("OnEvent", function(self, event, ...)
     -- (e.g. looting, selling, buying, mailing).  A full ScanCharacter
     -- is not needed — just overwrite the money field directly.
     --------------------------------------------------------
+
+    -- The hearthstone was set at an inn (#371). Stamped like Favor, so a
+    -- delta reply carries it.
+    if event == "HEARTHSTONE_BOUND" then
+        local guid = UnitGUID("player")
+        local char = guid and AltStableDB[guid]
+        local bind = char and AltStable.API.BindLocation()
+        if bind and bind ~= char.bind then
+            char.bind = bind
+            if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end
+        return
+    end
 
     -- Merchant's Favor changed (or any currency: the event's first argument is
     -- the currency, but nil on a full refresh). Read it like money, in place.
