@@ -739,6 +739,65 @@ check("  and its holder is not listed", plan.reagents[2].holders[1].name ~= "Umb
       and #plan.reagents[2].holders == 1, tostring(#plan.reagents[2].holders))
 held[U] = nil
 
+-- Faction and ruleset (#386): a reagent only counts for a crafter who can be
+-- mailed it. Alder (Alliance) lacks the Silverleaf Birch holds.
+do
+    WoW.items[765] = { name = "Silverleaf" }
+    local function text(ls)
+        local t = {}
+        for _, l in ipairs(ls) do t[#t + 1] = l[1] .. "|" .. tostring(l[2]) end
+        return table.concat(t, "\n")
+    end
+    AltStableDB[A].faction, AltStableDB[A].realm = "Alliance", "Forever PvE"
+    AltStableDB[B].faction, AltStableDB[B].realm = "Alliance", "Forever PvE"
+    eq("the same faction and ruleset: nothing in the way", T.Barrier(B, A), nil)
+    plan = T.ReagentPlan(2329, { owner(A) })
+    check("  so Alder can gather it all", plan.ready and plan.crafters[1].ready)
+    eq("Craftable, focused on Alder: Birch can mail him the rest",
+       ids(T.BuildRows({ line = 171, filter = "craftable", focus = A })), "2329")
+
+    AltStableDB[B].faction = "Horde"
+    eq("the other faction is in the way", T.Barrier(B, A), "faction")
+    plan = T.ReagentPlan(2329, { owner(A) })
+    eq("  the stable's total still counts Birch", plan.reagents[2].total, 5)
+    eq("  but not what Alder can gather", plan.reagents[2].reach, 0)
+    check("  so Alder is not ready", not plan.ready and not plan.crafters[1].ready)
+    eq("  nobody he can ask", plan.crafters[1].short[1].from, nil)
+    eq("  and Birch named apart", plan.crafters[1].short[1].away and plan.crafters[1].short[1].away.name, "Birch")
+    eq("  for her faction", plan.crafters[1].short[1].wall, "faction")
+    eq("Craftable, focused on Alder: not with Birch's Silverleaf",
+       ids(T.BuildRows({ line = 171, filter = "craftable", focus = A })), "")
+    eq("  Birch knows it too, but lacks what Alder holds: nobody is ready",
+       ids(T.BuildRows({ line = 171, filter = "craftable" })), "")
+    local t = text(T.ReagentLines(2329, { owner(A) }))
+    check("the tooltip shows the total in red: Alder can't reach it", t:find("|cffff40405|r", 1, true) ~= nil, t)
+    check("  and says Birch has it on the other faction", t:find(" has 5, other faction)", 1, true) ~= nil, t)
+    check("  never that nobody has it", not t:find("nobody has it", 1, true), t)
+    -- A third alt on Alder's side with Silverleaf: she is the one to ask.
+    AltStableDB[U] = { guid = U, name = "Umber", class = "ROGUE", faction = "Alliance", realm = "Forever PvE" }
+    held[U] = { [765] = { bags = 1 } }
+    plan = T.ReagentPlan(2329, { owner(A) })
+    eq("an alt on his side is asked, though Birch holds more", plan.crafters[1].short[1].from.name, "Umber")
+    eq("  and no one is named apart then", plan.crafters[1].short[1].away, nil)
+    check("  so he is ready", plan.ready)
+    held[U], AltStableDB[U] = nil, nil
+
+    AltStableDB[B].faction, AltStableDB[B].realm = "Alliance", "Forever PvP"
+    eq("another ruleset is in the way", T.Barrier(B, A), "ruleset")
+    t = text(T.ReagentLines(2329, { owner(A) }))
+    check("  and the tooltip says so", t:find(" has 5, other ruleset)", 1, true) ~= nil, t)
+
+    AltStableDB[B].faction, AltStableDB[B].realm = nil, nil
+    eq("a record with no faction or realm stops nothing", T.Barrier(B, A), nil)
+    AltStableDB[B].faction, AltStableDB[B].realm = "Horde", "Forever PvP"
+    eq("an alt's own reagents are never out of reach", T.Barrier(A, A), nil)
+    plan = T.ReagentPlan(2329, {})
+    check("without crafters, enough is still the stable's total", plan.enough and not plan.ready)
+    AltStableDB[A].faction, AltStableDB[A].realm = nil, nil
+    AltStableDB[B].faction, AltStableDB[B].realm = nil, nil
+    WoW.items[765] = nil
+end
+
 -- The tooltip lines.
 WoW.items[765] = { name = "Silverleaf" }
 lines = T.ReagentLines(2329, { owner(A), owner(B) })
