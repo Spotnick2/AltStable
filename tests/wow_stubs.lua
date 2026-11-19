@@ -164,7 +164,9 @@ function WoW.finish(name, passed, failed)
         io.write("  FAIL: no stray | in any printed line: " .. strays[1] .. "\n")
     end
     -- As the kit's done(): a secret touch a pcall caught is still a taint.log
-    -- line on the client (WowTestKit #13; WoW.reset clears the count).
+    -- line on the client. The kit counts it (WoW.secretBlocked, cleared by
+    -- WoW.reset); a file ending in its own report checks it here, as the kit's
+    -- MIGRATING.md asks of WoW.finish.
     if (WoW.secretBlocked or 0) == 0 then passed = passed + 1 else
         failed = failed + 1
         io.write("  FAIL: no operation on a secret was blocked and caught by a pcall: "
@@ -1362,17 +1364,6 @@ function securecallfunction(fn, ...)
     if not r[1] then geterrorhandler()(r[2]); return end
     return unpack(r, 2, table.maxn(r))
 end
--- WoW's xpcall passes its extra arguments to the function - Blizzard's own
--- code relies on it (FunctionUtil: xpcall(script, CallErrorHandler, frame, ...))
--- and so does ChatThrottleLib v32. Stock Lua 5.1 drops them, and the send it
--- wraps then ran with no arguments at all.
-do
-    local rawXpcall = xpcall
-    function xpcall(fn, handler, ...)
-        local n, args = select("#", ...), { ... }
-        return rawXpcall(function() return fn(unpack(args, 1, n)) end, handler)
-    end
-end
 -- The global form survives only as a deprecated alias (Blizzard_DeprecatedChatInfo).
 SendChatMessage = function(...) return C_ChatInfo.SendChatMessage(...) end
 -- The client's handler REPORTS and returns; it does not raise. Raising from a
@@ -1566,7 +1557,6 @@ function UnitDefenseSkill() return WoW.defense[1], WoW.defense[2] end
 -- including C's __DATE__ padding: a single-digit day is space-padded
 -- ("Oct  5 2026", two spaces), as the dump header shows it.
 function GetBuildInfo() return "1.60.1", "70959", "Nov 13 2026", 16001 end
--- GetLocale() comes from the kit (WowTestKit #62): WoW.locale, "enUS" until a test sets it.
 -- Client string alias (in the dump's _G walk); LibStub's version check uses it.
 strmatch = string.match
 
@@ -1828,7 +1818,6 @@ local function PetReset()
     WoW.currentSpells = {}
     WoW.creatureDisplays = {}
     WoW.modelBoxes = {}
-    WoW.actors = {}
 end
 PetReset()
 local resetBeforePets = WoW.reset
@@ -1862,20 +1851,12 @@ C_Spell.IsCurrentSpell = function(id) return WoW.currentSpells[id] == true end
 -- ModelScene hands out actors whose box is the six-number form.
 -- As Methods, so the methods check sees them: PlayerModel and DressUpModel
 -- (SetCreature, SetDisplayInfo, ClearModel, GetDisplayInfo), ModelScene
--- (SetPaused, CreateActor) and its ModelSceneActor.
+-- (SetPaused) and its ModelSceneActor (the kit's CreateActor makes one).
 function Methods.SetCreature(self, npc) self._display = WoW.creatureDisplays[npc] or 0; return self end
 function Methods.SetDisplayInfo(self, id) self._display = id; return self end
 function Methods.ClearModel(self) self._display = nil; return self end
 function Methods.GetDisplayInfo(self) return self._display or 0 end
 function Methods.SetPaused(self, paused, global) self._paused, self._globalPause = paused, global end
-function Methods.CreateActor(self)
-    local a = newWidget("ModelSceneActor", self)
-    a._scale = 1
-    self._actors = self._actors or {}
-    self._actors[#self._actors + 1] = a
-    WoW.actors[#WoW.actors + 1] = a
-    return a
-end
 function Methods.SetModelByCreatureDisplayID(self, id) self._display = id; return true end
 function Methods.GetActiveBoundingBox(self)
     local b = self._display and WoW.modelBoxes[self._display]
