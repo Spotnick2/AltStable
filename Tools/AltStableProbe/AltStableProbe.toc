@@ -20,3 +20,4 @@ Professions.lua
 Enchants.lua
 Talents.lua
 Online.lua
+Legacy.lua
