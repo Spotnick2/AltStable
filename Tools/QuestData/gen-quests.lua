@@ -543,6 +543,8 @@ if CHECK then
     local f = io.open(OUT, "rb")
     local old = f and f:read("*a")
     if f then f:close() end
+    -- A Windows checkout (core.autocrlf) has CRLF line ends; the content is what counts.
+    if old then old = old:gsub("\r\n", "\n") end
     if old ~= text then
         io.stderr:write(OUT .. " is out of date: run lua Tools/QuestData/gen-quests.lua\n")
         os.exit(1)
