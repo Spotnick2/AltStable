@@ -891,6 +891,22 @@ end
 
 local MAX_STEPS = 6
 local STEP_W = 76
+local NAME_END = 140    -- where a milestone row's own name has ended
+
+-- Where a row's steps start and how wide each is, so the last one ends
+-- inside the width (Codex on #382: at the panel's minimum width, Rank 14
+-- started past the edge, its tooltip out of reach). Steps take what is left
+-- after startX, up to STEP_W each; when that is less than the widest label
+-- needs, they start earlier instead, never before the row's name ends.
+function L.StepLayout(n, w, startX, minW)
+    if n <= 0 then return startX, STEP_W end
+    local stepW = math.min(STEP_W, math.floor((w - startX - 8) / n))
+    if stepW < minW then
+        stepW = minW
+        startX = math.max(NAME_END, w - 8 - n * stepW)
+    end
+    return startX, stepW
+end
 
 local function MakeMilestoneRow()
     local f = CreateFrame("Frame", nil, content)
@@ -921,12 +937,17 @@ function L.DrawMilestones(row, y, w, startX)
     f:SetWidth(w)
     f.icon:SetTexture(row.icon)
     f.name:SetText(row.done and ("|cff9fe09f" .. row.label .. "|r") or row.label)
+    -- "[check] 14" needs about 44; "[check] Week 10" about 84.
+    local minW = 44
+    for _, st in ipairs(row.steps) do if #st.short > 2 then minW = 84 end end
+    local x0, stepW = L.StepLayout(math.min(#row.steps, MAX_STEPS), w, startX, minW)
     for i, b in ipairs(f.steps) do
         local st = row.steps[i]
         b.step = st
         if st then
             b:ClearAllPoints()
-            b:SetPoint("LEFT", f, "LEFT", startX + (i - 1) * STEP_W, 0)
+            b:SetWidth(stepW)
+            b:SetPoint("LEFT", f, "LEFT", x0 + (i - 1) * stepW, 0)
             b.text:SetText(st.done and (CHECK .. " |cff9fe09f" .. st.short .. "|r") or ("|cff9a9a9a" .. st.short .. "|r"))
             b:Show()
         else

@@ -345,6 +345,19 @@ local late = L.GroupMilestones({
     { ch = { cat = 15620, name = "Field of Honor: Week 7" }, done = true },
 })
 check("  a later step earned does not make the row earned", late[1].done == false)
+
+-- Every step inside the width, down to the panel's minimum (Codex on #382:
+-- a 426-wide viewport put Rank 14 past the edge).
+for _, case in ipairs({ { n = 5, minW = 44, label = "5 ranks" }, { n = 3, minW = 84, label = "3 weeks" } }) do
+    for _, w in ipairs({ 426, 600, 900 }) do
+        local startX = math.floor(w * 0.40)
+        local x0, stepW = L.StepLayout(case.n, w, startX, case.minW)
+        local lastEnd = x0 + case.n * stepW
+        check(("%s at %d: the last step ends inside (%d)"):format(case.label, w, lastEnd), lastEnd <= w)
+        check(("  each step wide enough for its label (%d)"):format(stepW), stepW >= case.minW)
+        check("  and they start after the row's name", x0 >= 140)
+    end
+end
 eq("big numbers get commas", L.Number(1234567), "1,234,567")
 eq("  small ones none", L.Number(150), "150")
 check("no Other section when nothing is left over", section("other") == nil)
