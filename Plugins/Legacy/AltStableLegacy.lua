@@ -523,6 +523,23 @@ function L.ToggleStar(id)
     L.Render()
 end
 
+-- The highest skill the game reports for a craft, across its tiers' one
+-- criterion each (the account's best); `c`'s own when there is no read.
+function L.CraftBest(s, craft, c)
+    local best
+    local function take(ch)
+        local crit = ch and ch.criteria and ch.criteria[1]
+        if crit and crit.q and (not best or crit.q > best) then best = crit.q end
+    end
+    if s then
+        for id, g in pairs(D.GRID) do
+            if g[1] == "craft" and g[2] == craft then take(s.challenges[id]) end
+        end
+    end
+    take(c)
+    return best
+end
+
 local function SectionKeyOf(cat)
     for _, sec in ipairs(D.SECTIONS) do if sec.cats[cat] then return sec.key end end
     return "other"
@@ -534,7 +551,7 @@ local function Plural(n, one, many) return n == 1 and one or many end
 -- along, and what is left - in words a player can act on. With `me` (the
 -- "This character" filter), only what that character can advance, with its
 -- own level, skill or exploration; nil when it cannot.
-function L.BucketItem(c, alts, me)
+function L.BucketItem(c, alts, me, s)
     local it = { id = c.id, ch = c, done = c.completed }
     local g = D.GRID[c.id]
     if g and g[1] == "class" then
@@ -570,10 +587,11 @@ function L.BucketItem(c, alts, me)
             if not skill or skill <= 0 then return nil end
             who = me
         else
-            -- The game's figure (the account's best) first, as the grid does;
-            -- the alts' own skills only when it has none.
-            local crit = c.criteria and c.criteria[1]
-            skill = crit and crit.q
+            -- The game's figure (the account's best) first, from every tier of
+            -- the craft as the grid reads it (Codex on #383: a tier whose
+            -- criterion did not read must not hand the answer to an alt's
+            -- stored skill); the alts' own skills only when none has one.
+            skill = L.CraftBest(s, craft, c)
             if not skill then
                 for _, a in ipairs(alts) do
                     local v = tonumber(a.rec["prof_" .. craft])
@@ -664,7 +682,7 @@ function L.BucketItems(s, alts, me, stars)
     if not s then return items end
     for id in pairs(stars or {}) do
         local c = s.challenges[id]
-        local it = c and L.BucketItem(c, alts, me)
+        local it = c and L.BucketItem(c, alts, me, s)
         if it then items[#items + 1] = it end
     end
     local function share(it)
@@ -682,11 +700,25 @@ end
 
 -- The character playing, as one of our alts; before its first scan, as the
 -- client describes it (no professions known yet).
+-- Its level and skills are read live (Codex on #383: the saved record lags
+-- until the next full scan, so "Gain 4" stayed after a level or a skill
+-- point): the level from UnitLevel, the skills through the scanner's own
+-- reading. A skill list that does not read leaves the saved skills.
 function L.Me(alts)
     local guid = UnitGUID("player")
-    for _, a in ipairs(alts) do if a.guid == guid then return a end end
-    return { guid = guid, name = UnitName("player"), class = select(2, UnitClass("player")),
-             level = tonumber(UnitLevel("player")) or 0, rec = {} }
+    local saved
+    for _, a in ipairs(alts) do if a.guid == guid then saved = a end end
+    local me = { guid = guid, name = saved and saved.name or UnitName("player"),
+                 class = saved and saved.class or select(2, UnitClass("player")),
+                 level = tonumber(UnitLevel("player")) or (saved and saved.level) or 0, rec = {} }
+    local live = {}
+    if AltStable.ScanSkills then pcall(AltStable.ScanSkills, live) end
+    -- ScanSkills resets prof1 only once the list is there: that says it read.
+    local source = (live.prof1 ~= nil) and live or (saved and saved.rec) or {}
+    for k, v in pairs(source) do
+        if type(k) == "string" and k:find("^prof_") then me.rec[k] = v end
+    end
+    return me
 end
 
 -- Which view shows: the last one picked, Challenges at first.
@@ -1392,16 +1424,27 @@ local function BucketRowOnClick(self)
     L.Render()
 end
 
+-- The lines a Bucket List row's tooltip adds under the challenge: the whole
+-- instruction, which a narrow column may cut (Codex on #383).
+function L.BucketTooltipLines(it)
+    local lines = {}
+    if it.done then
+        lines[#lines + 1] = { "Earned" .. (it.ch.date and (" on " .. it.ch.date) or ""), 0.4, 1, 0.4 }
+    elseif it.left and it.left ~= it.ch.desc then
+        lines[#lines + 1] = { "What's left: " .. it.left, 1, 0.82, 0 }
+    end
+    if it.char then lines[#lines + 1] = { "Character: " .. it.char, 0.8, 0.8, 0.8 } end
+    if it.parts and #it.parts > 0 then lines[#lines + 1] = { "Click to list its parts.", 0.5, 0.5, 0.5 } end
+    return lines
+end
+
 local function BucketRowOnEnter(self)
     local it = self.it
     if not it then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(it.ch.name, 1, 1, 1)
     if it.ch.desc then GameTooltip:AddLine(it.ch.desc, 0.8, 0.8, 0.8, true) end
-    if it.done then
-        GameTooltip:AddLine("Earned" .. (it.ch.date and (" on " .. it.ch.date) or ""), 0.4, 1, 0.4)
-    end
-    if it.parts and #it.parts > 0 then GameTooltip:AddLine("Click to list its parts.", 0.5, 0.5, 0.5) end
+    for _, l in ipairs(L.BucketTooltipLines(it)) do GameTooltip:AddLine(l[1], l[2], l[3], l[4], true) end
     GameTooltip:Show()
 end
 
@@ -1750,8 +1793,10 @@ function L.BuildPanel(mainFrame)
     bar:Hide()
 
     -- The sheet opened again on this tab: catch up on what changed meanwhile.
+    -- Always, not only after a missed refresh: exploration and the live
+    -- level move without an event this tab listens to (Codex on #383).
     panel:SetScript("OnShow", function()
-        if L.dirty and L.isActive then L.Refresh() end
+        if L.isActive then L.Refresh() end
     end)
 
     panel:EnableMouseWheel(true)
@@ -1901,6 +1946,9 @@ end
 
 function L.Refresh()
     L.dirty = nil
+    -- This character's exploration first: an area explored moves Explorer
+    -- without any achievement earned (Codex on #383).
+    L.ReadExplore()
     L.state = L.Read(L.state)
     L.alts = L.OwnAlts()
     L.model = L.Model(L.state, L.alts)

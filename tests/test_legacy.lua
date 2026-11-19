@@ -37,6 +37,8 @@ AltStableConfig = {}
 dofile("Compat.lua")
 assert(loadfile("Core.lua"))()
 dofile("Config.lua")
+-- The scanner's own skill reading, which "This character" uses live.
+dofile("Scanner.lua")
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
@@ -483,7 +485,7 @@ L.StarClick(novMage, true)
 check("  but one already on it can be taken off", not L.IsStarred(novMage))
 
 -- What's left, in words a player can act on.
-local function item(id, me) return L.BucketItem(s.challenges[id], alts, me) end
+local function item(id, me) return L.BucketItem(s.challenges[id], alts, me, s) end
 local it = item(hunter25)
 eq("Hunter 25: the best hunter", it.char, "Kaleidria")
 eq("  21 of 25", it.have .. "/" .. it.need, "21/25")
@@ -540,6 +542,44 @@ local ids = {}
 for _, x in ipairs(mine) do ids[x.id] = true end
 check("This character: the priest's list leaves Hunter 25 out", not ids[hunter25] and ids[priest45] and ids[62031])
 check("no read, no rows", #L.BucketItems(nil, alts, nil, stars) == 0)
+
+-- The crafts' best from every tier, as in the grid (Codex on #383): the
+-- starred tier's criterion did not read, a sibling's says 146, an alt has 120.
+local tierS = { challenges = {}, order = {} }
+for _, t in ipairs(D.TIERS.craft) do
+    local id = gridID("craft", "Tailoring", t)
+    tierS.challenges[id] = { id = id, cat = 15592, name = "Tailoring " .. t, completed = false,
+        criteria = t == 225 and { { text = "225 Tailoring Skill", type = 7, q = 146, req = 225 } } or nil }
+end
+local lowAlts = { { guid = "G-t", name = "Low", class = "MAGE", level = 30, rec = { prof_Tailoring = 120 } } }
+local tierItem = L.BucketItem(tierS.challenges[tailor150], lowAlts, nil, tierS)
+eq("a tier that did not read takes its sibling's figure", tierItem.have, 146)
+eq("  not the alt's stored 120", tierItem.left, "Gain 4 Tailoring skill points")
+
+-- "This character" reads the playing character live (Codex on #383): its
+-- saved record says 30 and Tailoring 146; it is now 31 with 148.
+AltStableDB[WoW.player.guid] = { name = "Playing", class = "PRIEST", level = 30, scannedHere = true,
+                                 prof_Tailoring = 146 }
+local liveAlts = L.OwnAlts()
+local savedLevel = WoW.level
+WoW.level = 31
+WoW.skillLines = { { name = "Professions", isHeader = true },
+                   { name = "Tailoring", isHeader = false, rank = 148, maxRank = 150, skillID = 197 } }
+local live = L.Me(liveAlts)
+eq("the playing character's level, live", live.level, 31)
+eq("  its skill, live", live.rec.prof_Tailoring, 148)
+eq("  so what's left is current", L.BucketItem(s.challenges[priest45], liveAlts, live, s).left, "Gain 14 levels")
+WoW.skillLines = {}
+eq("a skill list that does not read keeps the saved skill", L.Me(liveAlts).rec.prof_Tailoring, 146)
+WoW.level = savedLevel
+AltStableDB[WoW.player.guid] = nil
+
+-- The full instruction is in the row's tooltip, whatever the column cuts.
+local tipItem = item(paladin25)
+local tipText = ""
+for _, l in ipairs(L.BucketTooltipLines(tipItem)) do tipText = tipText .. l[1] .. " | " end
+check("a row's tooltip carries the whole instruction",
+      tipText:find("What's left: Reached; the game has not counted it", 1, true) ~= nil, tipText)
 
 ------------------------------------------------------------
 -- The footer
@@ -623,6 +663,16 @@ main:Show()
 eq("  and done when the sheet shows again", reads, 1)
 check("  once", not L.dirty)
 L.Read = realRead
+
+-- Every refresh re-reads this character's exploration first (Codex on #383:
+-- an area explored moves Explorer without an achievement).
+local explores, realExplore = 0, L.ReadExplore
+L.ReadExplore = function(...) explores = explores + 1; return realExplore(...) end
+L.Refresh()
+eq("a refresh re-reads the exploration", explores, 1)
+main:Hide(); main:Show()
+eq("  and so does showing the sheet again on this tab", explores, 2)
+L.ReadExplore = realExplore
 
 -- The reward's name, loaded on request, redraws the footer when it arrives.
 local evFrame
