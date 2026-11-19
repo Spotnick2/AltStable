@@ -348,16 +348,32 @@ check("  a later step earned does not make the row earned", late[1].done == fals
 
 -- Every step inside the width, down to the panel's minimum (Codex on #382:
 -- a 426-wide viewport put Rank 14 past the edge).
+-- And below it, where the sheet fits a small display (Codex's follow-up: a
+-- 768 UI at 1.25 with the full sidebar leaves about 309): the steps wrap
+-- under the name rather than run off the edge.
 for _, case in ipairs({ { n = 5, minW = 44, label = "5 ranks" }, { n = 3, minW = 84, label = "3 weeks" } }) do
-    for _, w in ipairs({ 426, 600, 900 }) do
+    for _, w in ipairs({ 260, 309, 426, 600, 900 }) do
         local startX = math.floor(w * 0.40)
-        local x0, stepW = L.StepLayout(case.n, w, startX, case.minW)
-        local lastEnd = x0 + case.n * stepW
-        check(("%s at %d: the last step ends inside (%d)"):format(case.label, w, lastEnd), lastEnd <= w)
-        check(("  each step wide enough for its label (%d)"):format(stepW), stepW >= case.minW)
-        check("  and they start after the row's name", x0 >= 140)
+        local pos, stepW, lines = L.StepLayout(case.n, w, startX, case.minW)
+        eq(("%s at %d: every step placed"):format(case.label, w), #pos, case.n)
+        local inside, clearOfName, overlap = true, true, false
+        for i, p in ipairs(pos) do
+            if p.x < 0 or p.x + stepW > w then inside = false end
+            if p.line == 0 and p.x < 140 then clearOfName = false end
+            for j = i + 1, #pos do
+                local q = pos[j]
+                if q.line == p.line and math.abs(q.x - p.x) < stepW then overlap = true end
+            end
+        end
+        check(("  each one inside the width (%d wide, %d line(s))"):format(stepW, lines), inside)
+        check("  wide enough for its label", stepW >= case.minW)
+        check("  clear of the row's name on its line", clearOfName)
+        check("  and none on top of another", not overlap)
+        if w >= 426 then eq("  on one line where there is room", lines, 1) end
     end
 end
+local _, _, narrowLines = L.StepLayout(3, 309, 123, 84)
+check("at 309 the weeks wrap under the name", narrowLines > 1)
 eq("big numbers get commas", L.Number(1234567), "1,234,567")
 eq("  small ones none", L.Number(150), "150")
 check("no Other section when nothing is left over", section("other") == nil)

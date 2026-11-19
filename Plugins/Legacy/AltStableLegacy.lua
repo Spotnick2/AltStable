@@ -893,19 +893,35 @@ local MAX_STEPS = 6
 local STEP_W = 76
 local NAME_END = 140    -- where a milestone row's own name has ended
 
--- Where a row's steps start and how wide each is, so the last one ends
--- inside the width (Codex on #382: at the panel's minimum width, Rank 14
--- started past the edge, its tooltip out of reach). Steps take what is left
--- after startX, up to STEP_W each; when that is less than the widest label
--- needs, they start earlier instead, never before the row's name ends.
+local WRAP_X = 54       -- where wrapped steps start, under the row's name
+
+-- Where each of a row's n steps goes, so every one ends inside the width
+-- (Codex on #382: Rank 14 went past the edge at the panel's minimum, and
+-- again where the sheet fits a small display below that minimum). Returns
+-- { x, line } per step, the step width, and the number of lines.
+--   * Beside the name: what is left after startX, up to STEP_W each.
+--   * Too little for the widest label: start earlier, but not before the
+--     name ends.
+--   * Still too little: wrap onto lines under the name, as many per line as
+--     fit.
 function L.StepLayout(n, w, startX, minW)
-    if n <= 0 then return startX, STEP_W end
+    local out = {}
+    if n <= 0 then return out, STEP_W, 1 end
     local stepW = math.min(STEP_W, math.floor((w - startX - 8) / n))
-    if stepW < minW then
-        stepW = minW
-        startX = math.max(NAME_END, w - 8 - n * stepW)
+    if stepW >= minW then
+        for i = 1, n do out[i] = { x = startX + (i - 1) * stepW, line = 0 } end
+        return out, stepW, 1
     end
-    return startX, stepW
+    if w - 8 - n * minW >= NAME_END then
+        local x0 = w - 8 - n * minW
+        for i = 1, n do out[i] = { x = x0 + (i - 1) * minW, line = 0 } end
+        return out, minW, 1
+    end
+    local perLine = math.max(1, math.floor((w - 8 - WRAP_X) / minW))
+    for i = 1, n do
+        out[i] = { x = WRAP_X + ((i - 1) % perLine) * minW, line = 1 + math.floor((i - 1) / perLine) }
+    end
+    return out, minW, 1 + math.ceil(n / perLine)
 end
 
 local function MakeMilestoneRow()
@@ -913,7 +929,8 @@ local function MakeMilestoneRow()
     f:SetHeight(ROW_H)
     f.icon = f:CreateTexture(nil, "ARTWORK")
     f.icon:SetSize(16, 16)
-    f.icon:SetPoint("LEFT", f, "LEFT", 32, 0)
+    -- On the first line: a wrapped row is taller, its name stays on top.
+    f.icon:SetPoint("TOPLEFT", f, "TOPLEFT", 32, -(ROW_H - 16) / 2)
     f.name = FS(f)
     f.name:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
     f.steps = {}
@@ -940,21 +957,22 @@ function L.DrawMilestones(row, y, w, startX)
     -- "[check] 14" needs about 44; "[check] Week 10" about 84.
     local minW = 44
     for _, st in ipairs(row.steps) do if #st.short > 2 then minW = 84 end end
-    local x0, stepW = L.StepLayout(math.min(#row.steps, MAX_STEPS), w, startX, minW)
+    local pos, stepW, lines = L.StepLayout(math.min(#row.steps, MAX_STEPS), w, startX, minW)
+    f:SetHeight(ROW_H * lines)
     for i, b in ipairs(f.steps) do
         local st = row.steps[i]
         b.step = st
-        if st then
+        if st and pos[i] then
             b:ClearAllPoints()
             b:SetWidth(stepW)
-            b:SetPoint("LEFT", f, "LEFT", x0 + (i - 1) * stepW, 0)
+            b:SetPoint("TOPLEFT", f, "TOPLEFT", pos[i].x, -pos[i].line * ROW_H)
             b.text:SetText(st.done and (CHECK .. " |cff9fe09f" .. st.short .. "|r") or ("|cff9a9a9a" .. st.short .. "|r"))
             b:Show()
         else
             b:Hide()
         end
     end
-    return y + ROW_H
+    return y + ROW_H * lines
 end
 
 function L.DrawSection(sec, y, w)
