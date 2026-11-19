@@ -781,6 +781,20 @@ AltStableLegacyDB.stars = { A = { [62031] = true } }
 L.Render()
 local clicks = L.pools.bucketRow and L.pools.bucketRow.list[1]._clicks or {}
 check("a Bucket List row takes right-clicks", clicks[2] == "RightButtonUp", table.concat(clicks, ","))
+-- Its star too (Codex on #389): a right-click there opens the row's menu, a
+-- left one still removes.
+local row1 = L.pools.bucketRow.list[1]
+local starBtn = row1.starBtn
+check("  and its star takes right-clicks", WoW.handlesClick(starBtn, "RightButton"),
+      table.concat(WoW.registeredClicks(starBtn), ","))
+starBtn:GetScript("OnClick")(starBtn, "RightButton")
+check("  a right-click on the star opens the menu", AltStable._test.MenuIsShown())
+check("    and keeps the star", L.IsStarred(62031))
+eq("    the menu is the row's", table.concat(AltStable._test.MenuLabels(), " | "),
+   row1.it.ch.name .. " | Remove from Bucket List")
+AltStable.CloseCharacterMenu()
+starBtn:GetScript("OnClick")(starBtn, "LeftButton")
+check("  a left click on the star removes it", not L.IsStarred(62031))
 L.SetView("challenges")
 AltStableLegacyDB.stars = { A = {} }
 AltStableLegacyDB.thisChar = nil

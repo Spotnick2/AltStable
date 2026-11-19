@@ -1531,9 +1531,18 @@ local function MakeBucketRow()
     b.starBtn:SetPoint("LEFT", b, "LEFT", 4, 0)
     b.starBtn.tex = b.starBtn:CreateTexture(nil, "OVERLAY")
     b.starBtn.tex:SetAllPoints()
-    b.starBtn:SetScript("OnClick", function(self)
+    -- The star takes the mouse, so a right-click on it never reaches the row:
+    -- it opens the row's menu itself, and a left click still removes (Codex
+    -- on #389).
+    b.starBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b.starBtn:SetScript("OnClick", function(self, button)
         local it = self:GetParent().it
-        if it then L.ToggleStar(it.id) end
+        if not it then return end
+        if button == "RightButton" then
+            L.BucketRowClick(it, button)
+        else
+            L.ToggleStar(it.id)
+        end
     end)
     b.starBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
