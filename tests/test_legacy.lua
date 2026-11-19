@@ -813,16 +813,14 @@ local _, needC = L.GridLayout(L.model.classes, "class")
 local _, needT = L.GridLayout(L.model.crafts, "craft")
 eq("  the crafts' grid is wider by what it needs more", titles.Tradeskills - titles.Classes, needT - needC)
 eq("    24 here: its tiers", titles.Tradeskills - titles.Classes, 24)
--- A longer crafter name (Codex on #390): one crafter measures 100, not 40,
--- so the crafts' grid asks 60 more and, with room to spare, gets it.
-local classTexts = {}
-for _, r in ipairs(L.model.classes) do classTexts[L.GridAltText(r, "class")] = true end
-local longText
-for _, r in ipairs(L.model.crafts) do
-    local t = L.GridAltText(r, "craft")
-    if not classTexts[t] then longText = t end
-end
-check("    a crafter's text no class row shares", longText ~= nil)
+-- A longer crafter name (Codex on #390): a NAMED crafter of its own (a new
+-- table, so no class row shares it) measures 100, not 40, so the crafts'
+-- grid asks 60 more and, with room to spare, gets it.
+local longRow = L.model.crafts[1]
+local savedCrafter = longRow.crafter
+longRow.crafter = { name = "Longcraftername", class = "MAGE" }
+local longText = L.GridAltText(longRow, "craft")
+check("    the long text is a named crafter's", longText:find("Longcraftername", 1, true) ~= nil, longText)
 local realWidth = L.measure.GetStringWidth
 local measuring
 L.measure.SetText = function(self, t) measuring = t end
@@ -834,6 +832,7 @@ for i = 1, L.pools.gridTitle.used do
 end
 eq("    a crafter measured 60 longer widens the crafts' grid by 60", titles.Tradeskills - titles.Classes, 84)
 L.measure.SetText, L.measure.GetStringWidth = nil, nil
+longRow.crafter = savedCrafter
 check("    (the stub's own methods back)", L.measure.GetStringWidth == realWidth)
 gridScroll:SetWidth(scrollW)
 L.Render()
