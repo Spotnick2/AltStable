@@ -1209,6 +1209,81 @@ C_CurrencyInfo = {
     end,
 }
 
+-- Legacy Challenges (#373): the shapes measured on 70959 (forever-api-notes.md,
+-- "Legacy Challenges"). Nothing set: the client lists no categories.
+--   WoW.legacy = {
+--     categories   = { { id, title, parent, ids = { achievementID, ... } } },
+--     achievements = { [id] = { name, completed, month, day, year, desc, icon,
+--                               criteria = { { text, type, done, q, req, asset, id } } } },
+--     points = { [id] = 1 }   -- C_Traits.GetTraitCurrencyForAchievement(4225, id)
+--     renown = 4, max = 65, rewards = { [level] = itemID },
+--   }
+-- GetAchievementInfo has 15 returns; wasEarnedByMe (13th) is true for every
+-- completed one and earnedBy (14th) is "", as measured. A criterion has 13.
+local function legacyAch(id)
+    local L = WoW.legacy
+    return L and L.achievements and L.achievements[id]
+end
+function GetCategoryList()
+    local out = {}
+    for _, c in ipairs(WoW.legacy and WoW.legacy.categories or {}) do out[#out + 1] = c.id end
+    return out
+end
+local function legacyCat(id)
+    for _, c in ipairs(WoW.legacy and WoW.legacy.categories or {}) do if c.id == id then return c end end
+end
+function GetCategoryInfo(id)
+    local c = legacyCat(id)
+    if c then return c.title, c.parent or -1, 0 end
+end
+function GetCategoryNumAchievements(id)
+    local c = legacyCat(id)
+    if not c then return 0, 0, 0 end
+    local done = 0
+    for _, a in ipairs(c.ids) do if (legacyAch(a) or {}).completed then done = done + 1 end end
+    return #c.ids, done, #c.ids - done
+end
+function GetAchievementInfo(a, b)
+    local id = a
+    if b then
+        local c = legacyCat(a)
+        id = c and c.ids[b]
+    end
+    local t = id and legacyAch(id)
+    if not t then return end
+    local done = t.completed and true or false
+    return id, t.name, 0, done, done and t.month or nil, done and t.day or nil, done and t.year or nil,
+           t.desc or "", 134349824, t.icon or 0, "Earn 1 Legacy Point.", false, done, "", false
+end
+function GetAchievementNumCriteria(id)
+    local t = legacyAch(id)
+    return t and #(t.criteria or {}) or 0
+end
+function GetAchievementCriteriaInfo(id, i)
+    local t = legacyAch(id)
+    local c = t and t.criteria and t.criteria[i]
+    if not c then error("GetAchievementCriteriaInfo: no criterion " .. tostring(i)) end
+    return c.text, c.type or 0, c.done and true or false, c.q or (c.done and 1 or 0), c.req or 1, nil,
+           0, c.asset or 0, tostring(c.q or 0), c.id or 0, true, 0, 0
+end
+C_MajorFactions = {
+    GetCurrentRenownLevel = function(id) return WoW.legacy and id == 2802 and WoW.legacy.renown or 0 end,
+    GetRenownLevels = function(id)
+        local out = {}
+        if WoW.legacy and id == 2802 then
+            local levels = {}
+            for level in pairs(WoW.legacy.rewards or {}) do levels[#levels + 1] = level end
+            table.sort(levels)
+            for _, level in ipairs(levels) do out[#out + 1] = { level = level, locked = false } end
+        end
+        return out
+    end,
+    GetRenownRewardsForLevel = function(id, level)
+        local item = WoW.legacy and id == 2802 and (WoW.legacy.rewards or {})[level]
+        return item and { { itemID = item, isAccountUnlock = false } } or {}
+    end,
+}
+
 C_Bank = {
     FetchPurchasedBankTabIDs = function(bankType)
         if bankType == Enum.BankType.Character then return WoW.bankTabs end
@@ -1903,7 +1978,7 @@ local allowNil = {}
 -- addon, its plugins and probe, the frames it looks up by name before making
 -- them, and the Companion's manifest (a separate addon folder).
 for _, n in ipairs({ "AltStable", "AltStableDB", "AltStableConfig", "AltStablePortraits", "AltStableAltsDB", "AltStableRosterDB" }) do allowNil[n] = true end
-for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableProfessionsReagents", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
+for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableProfessionsReagents", "AltStableLegacyDB", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
 for _, n in ipairs({ "AltStableCopyPrompt", "AltStableForgetPrompt", "AltStableSyncAskPrompt", "AltStableProbe", "AltStableProbeCharDB", "AltStableProbeMachineDB" }) do allowNil[n] = true end
 -- Libraries, before their file creates them.
 for _, n in ipairs({ "LibStub", "ChatThrottleLib" }) do allowNil[n] = true end

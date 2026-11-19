@@ -29,7 +29,7 @@ externals:
     url: https://github.com/Spotnick2/LibMailbox
     tag: r1
 
-# One CurseForge project, four addon folders. WoW only discovers addons as
+# One CurseForge project, six addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
 # inside AltStable/ - the packager moves them out.
 #
@@ -47,6 +47,7 @@ move-folders:
   AltStable/Plugins/Instances: AltStableInstances
   AltStable/Plugins/Roster: AltStableRoster
   AltStable/Plugins/Professions: AltStableProfessions
+  AltStable/Plugins/Legacy: AltStableLegacy
 
 manual-changelog:
   filename: CHANGELOG.md

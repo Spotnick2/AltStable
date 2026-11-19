@@ -162,7 +162,7 @@ jobs:
           # count below is derived from this list rather than written out as a
           # number: this check hardcoded "3" and a fourth addon made it fail for
           # being right.
-          addons="AltStable AltStableWarband AltStableInstances AltStableRoster AltStableProfessions"
+          addons="AltStable AltStableWarband AltStableInstances AltStableRoster AltStableProfessions AltStableLegacy"
 
           for f in AltStable/AltStable.toc \
                    AltStable/Core.lua \
@@ -178,7 +178,11 @@ jobs:
                    AltStableRoster/AltStableRoster.lua \
                    AltStableProfessions/AltStableProfessions.toc \
                    AltStableProfessions/AltStableProfessions.lua \
-                   AltStableProfessions/RecipeData.lua; do
+                   AltStableProfessions/RecipeData.lua \
+                   AltStableLegacy/AltStableLegacy.toc \
+                   AltStableLegacy/LegacyData.lua \
+                   AltStableLegacy/AltStableLegacy.lua \
+                   AltStable/Media/Icons/legacy.tga; do
             grep -qx "$f" files.txt || { echo "MISSING from the package: $f"; fail=1; }
           done
 

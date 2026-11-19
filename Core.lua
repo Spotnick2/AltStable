@@ -4127,6 +4127,7 @@ AltStable.LOD_PLUGINS = {
     { key = "instances", addon = "AltStableInstances", label = "Raids" },
     { key = "roster", addon = "AltStableRoster", label = "Roster" },
     { key = "professions", addon = "AltStableProfessions", label = "Professions" },
+    { key = "legacy", addon = "AltStableLegacy", label = "Legacy" },
 }
 
 -- Client-compat wrappers: the classic globals exist in 2.5.5, but fall
