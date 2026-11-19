@@ -596,6 +596,20 @@ local tipText = ""
 for _, l in ipairs(L.BucketTooltipLines(tipItem)) do tipText = tipText .. l[1] .. " | " end
 check("a row's tooltip carries the whole instruction",
       tipText:find("What's left: Reached; the game has not counted it", 1, true) ~= nil, tipText)
+check("  and says a right-click takes it off", tipText:find("Right-click to take it off", 1, true) ~= nil, tipText)
+
+-- A right-click on a row takes it off the list; a left one only opens it.
+local rcStars = L.Stars()
+rcStars[62031] = true
+local rcItem = item(62031)
+L.BucketRowClick(rcItem, "LeftButton")
+check("a left click keeps the star", L.IsStarred(62031))
+eq("  and opens the row's parts", AltStableLegacyDB.expanded[62031], true)
+L.BucketRowClick(rcItem, "RightButton")
+check("a right click takes it off the Bucket List", not L.IsStarred(62031))
+L.BucketRowClick(rcItem, "RightButton")
+check("  a second right click does not put it back", not L.IsStarred(62031))
+AltStableLegacyDB.expanded[62031] = nil
 
 ------------------------------------------------------------
 -- The footer
@@ -660,6 +674,32 @@ ok, err = pcall(L.tabs.challenges:GetScript("OnClick"))
 check("back to Challenges", ok and L.View() == "challenges", tostring(err))
 check("  the filter hides there", not L.thisCharCheck:IsShown())
 check("  and the view is remembered as Challenges", AltStableLegacyDB.view == nil)
+
+-- A starred grid cell keeps its text clear of the star (owner's screenshot:
+-- "150/225" ran under it); an unstarred one centres across the whole cell.
+local h25 = gridID("class", "HUNTER", 25)
+AltStableLegacyDB.stars = { A = { [h25] = true } }
+L.Render()
+local starredInset, plainInset
+for i = 1, L.pools.gridRow.used do
+    for _, b in ipairs(L.pools.gridRow.list[i].cells) do
+        local _, _, _, x = b.text:GetPoint(2)
+        if b.cell and b.cell.ch and b.cell.ch.id == h25 then starredInset = x
+        elseif b.cell and b.cell.ch then plainInset = x end
+    end
+end
+eq("a starred cell's text stops short of the star", starredInset, -12)
+eq("  an unstarred cell's spans it", plainInset, 0)
+AltStableLegacyDB.stars = { A = {} }
+
+-- A Bucket List row listens for the right button too.
+L.SetView("bucket")
+AltStableLegacyDB.stars = { A = { [62031] = true } }
+L.Render()
+local clicks = L.pools.bucketRow and L.pools.bucketRow.list[1]._clicks or {}
+check("a Bucket List row takes right-clicks", clicks[2] == "RightButtonUp", table.concat(clicks, ","))
+L.SetView("challenges")
+AltStableLegacyDB.stars = { A = {} }
 AltStableLegacyDB.thisChar = nil
 
 check("the table has an opaque backing under glass", L.backing ~= nil

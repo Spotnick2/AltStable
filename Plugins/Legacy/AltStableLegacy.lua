@@ -52,6 +52,7 @@ local TITLE_ROW  = 24     -- a grid's title line
 local SECTION_H  = 24
 local CRIT_H     = 18
 local CELL_W     = 58
+local STAR_GAP   = 12   -- a grid cell's star (11) and a hair, kept clear of its text
 local GAP        = 12
 local GRID_MIN_W = 400    -- two grids side by side from 2 x this
 local PREFERRED_PANEL_W = 900
@@ -789,6 +790,7 @@ end
 ------------------------------------------------------------
 
 local pools = {}
+L.pools = pools   -- read by the tests: what a render drew
 
 local function Acquire(kind, make)
     local p = pools[kind]
@@ -1035,7 +1037,13 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
             b:SetPoint("LEFT", f, "LEFT", cellsX + (k - 1) * CELL_W, 0)
             b.cell, b.row = cell, r
             b.text:SetText(L.CellText(cell))
-            SetStar(b.star, cell.ch and L.IsStarred(cell.ch.id), false)
+            -- A starred cell centres its text left of the star: "150/225"
+            -- (about 43 of the cell's 58) ran under it (owner's screenshot).
+            local starred = cell.ch and L.IsStarred(cell.ch.id)
+            b.text:ClearAllPoints()
+            b.text:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
+            b.text:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", starred and -STAR_GAP or 0, 0)
+            SetStar(b.star, starred, false)
         end
         y = y + ROW_H
     end
@@ -1420,12 +1428,23 @@ local function BucketColumns(w)
     return charX, barX, barW, barX + barW + 14
 end
 
-local function BucketRowOnClick(self)
-    local it = self.it
-    if not it or not it.parts or #it.parts == 0 then return end
+-- A click on a Bucket List row: the right button takes it off the list (the
+-- owner, on the first look: the 14-pixel star alone is easy to miss); the
+-- left one opens or closes its parts.
+function L.BucketRowClick(it, button)
+    if not it then return end
+    if button == "RightButton" then
+        if L.IsStarred(it.id) then L.ToggleStar(it.id) end
+        return
+    end
+    if not it.parts or #it.parts == 0 then return end
     local e = DB().expanded
     e[it.id] = not e[it.id] or nil
     L.Render()
+end
+
+local function BucketRowOnClick(self, button)
+    L.BucketRowClick(self.it, button)
 end
 
 -- The lines a Bucket List row's tooltip adds under the challenge: the whole
@@ -1439,6 +1458,7 @@ function L.BucketTooltipLines(it)
     end
     if it.char then lines[#lines + 1] = { "Character: " .. it.char, 0.8, 0.8, 0.8 } end
     if it.parts and #it.parts > 0 then lines[#lines + 1] = { "Click to list its parts.", 0.5, 0.5, 0.5 } end
+    lines[#lines + 1] = { "Right-click to take it off your Bucket List.", 0.5, 0.5, 0.5 }
     return lines
 end
 
@@ -1505,6 +1525,8 @@ local function MakeBucketRow()
     b.bar.text:SetAllPoints()
     b.left = FS(b, "GameFontHighlight")
     b.left:SetWordWrap(false)
+    -- A Button fires OnClick for the left button only, unless asked.
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     b:SetScript("OnClick", BucketRowOnClick)
     b:SetScript("OnEnter", BucketRowOnEnter)
     b:SetScript("OnLeave", HideTip)
