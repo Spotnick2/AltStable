@@ -1157,8 +1157,22 @@ T.ResetState()
 local besideSidebar
 AltStable.AnchorBesideSidebar = function(region) besideSidebar = region; return false end
 readModelState()
+-- The filter last picked comes back when the tab is built (#385).
+eq("no saved filter is All", T.SavedFilter(), "all")
+AltStableConfig.professionsFilter = "nonsense"
+eq("  nor is one the tab doesn't have", T.SavedFilter(), "all")
+AltStableConfig.professionsFilter = "known"
 local main = CreateFrame("Frame", nil, UIParent)
 local ok, err = pcall(function() plugin.OnActivate(main) end)
+eq("a saved Known opens the tab on Known (#385)", AT.filter, "known")
+eq("  and lists only what the alts know", ids(AT.rows or {}), "2329,2330,2331")
+AT.filterButtons.all:GetScript("OnClick")(AT.filterButtons.all)
+eq("picking All saves it", AltStableConfig.professionsFilter, "all")
+eq("  and shows it", AT.filter, "all")
+AT.filterButtons.missing:GetScript("OnClick")(AT.filterButtons.missing)
+eq("picking another filter saves that one", AltStableConfig.professionsFilter, "missing")
+AT.filterButtons.all:GetScript("OnClick")(AT.filterButtons.all)
+AltStableConfig.professionsFilter = nil
 check("the panel anchors beside the sidebar's edge (#150)", besideSidebar ~= nil)
 check("  and re-lays out when the window changes size", type(plugin.OnResize) == "function")
 AltStable.AnchorBesideSidebar = nil
