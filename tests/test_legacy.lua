@@ -42,6 +42,7 @@ dofile("Scanner.lua")
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
+dofile("CharacterMenu.lua")   -- the right-click menu frame the Bucket List reuses
 
 AltStable.plugins = {}
 dofile("Plugins/Legacy/LegacyData.lua")
@@ -596,19 +597,32 @@ local tipText = ""
 for _, l in ipairs(L.BucketTooltipLines(tipItem)) do tipText = tipText .. l[1] .. " | " end
 check("a row's tooltip carries the whole instruction",
       tipText:find("What's left: Reached; the game has not counted it", 1, true) ~= nil, tipText)
-check("  and says a right-click takes it off", tipText:find("Right-click to take it off", 1, true) ~= nil, tipText)
+check("  and says a right-click has options", tipText:find("Right-click for options.", 1, true) ~= nil, tipText)
 
--- A right-click on a row takes it off the list; a left one only opens it.
+-- A right-click opens the row's menu, on the character menu's frame: its
+-- name, then Remove (the owner: the only option for now). A left click only
+-- opens the row's parts.
 local rcStars = L.Stars()
 rcStars[62031] = true
 local rcItem = item(62031)
 L.BucketRowClick(rcItem, "LeftButton")
 check("a left click keeps the star", L.IsStarred(62031))
 eq("  and opens the row's parts", AltStableLegacyDB.expanded[62031], true)
+check("  and opens no menu", not AltStable._test.MenuIsShown())
 L.BucketRowClick(rcItem, "RightButton")
-check("a right click takes it off the Bucket List", not L.IsStarred(62031))
+check("a right click opens the menu", AltStable._test.MenuIsShown())
+check("  and removes nothing yet", L.IsStarred(62031))
+eq("  its entries: the challenge, then Remove", table.concat(AltStable._test.MenuLabels(), " | "),
+   rcItem.ch.name .. " | Remove from Bucket List")
+check("Remove takes it off the Bucket List", AltStable._test.MenuClick("remove") and not L.IsStarred(62031))
+check("  and closes the menu", not AltStable._test.MenuIsShown())
+L.BucketMenuPick(rcItem, "remove")
+check("  a second Remove does not put it back", not L.IsStarred(62031))
+rcStars[62031] = true
 L.BucketRowClick(rcItem, "RightButton")
-check("  a second right click does not put it back", not L.IsStarred(62031))
+AltStable._test.MenuClickOutside()
+check("a click outside closes the menu and keeps the star", not AltStable._test.MenuIsShown() and L.IsStarred(62031))
+rcStars[62031] = nil
 AltStableLegacyDB.expanded[62031] = nil
 
 ------------------------------------------------------------

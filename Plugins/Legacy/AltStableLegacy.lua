@@ -1428,13 +1428,28 @@ local function BucketColumns(w)
     return charX, barX, barW, barX + barW + 14
 end
 
--- A click on a Bucket List row: the right button takes it off the list (the
--- owner, on the first look: the 14-pixel star alone is easy to miss); the
--- left one opens or closes its parts.
+-- A Bucket List row's right-click menu: the challenge, then what can be done
+-- with it (the owner: only Remove for now).
+function L.BucketMenuEntries(it)
+    return {
+        { id = "title", title = true, text = it.ch.name or "" },
+        { id = "remove", text = "Remove from Bucket List" },
+    }
+end
+
+function L.BucketMenuPick(it, id)
+    if id == "remove" and L.IsStarred(it.id) then L.ToggleStar(it.id) end
+end
+
+-- A click on a Bucket List row: the right button opens its menu (the owner, on
+-- the first look: the 14-pixel star alone is easy to miss), on the frame the
+-- character menu uses; the left one opens or closes its parts.
 function L.BucketRowClick(it, button)
     if not it then return end
     if button == "RightButton" then
-        if L.IsStarred(it.id) then L.ToggleStar(it.id) end
+        if AltStable.ShowMenu then
+            AltStable.ShowMenu(L.BucketMenuEntries(it), function(id) L.BucketMenuPick(it, id) end)
+        end
         return
     end
     if not it.parts or #it.parts == 0 then return end
@@ -1458,7 +1473,7 @@ function L.BucketTooltipLines(it)
     end
     if it.char then lines[#lines + 1] = { "Character: " .. it.char, 0.8, 0.8, 0.8 } end
     if it.parts and #it.parts > 0 then lines[#lines + 1] = { "Click to list its parts.", 0.5, 0.5, 0.5 } end
-    lines[#lines + 1] = { "Right-click to take it off your Bucket List.", 0.5, 0.5, 0.5 }
+    lines[#lines + 1] = { "Right-click for options.", 0.5, 0.5, 0.5 }
     return lines
 end
 
