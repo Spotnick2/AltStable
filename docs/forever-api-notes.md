@@ -2345,7 +2345,10 @@ one, realm 1; a mage 30 and a druid 14 on the other, realm 7; all Normal realms)
   credit to show.
 - **Criteria are Battle.net-account-wide too.** Every list read the same on all four characters
   (Novice Spelunker 6/6, Experienced Spelunker 2/10, Conqueror lists 0/13 and 0/8), though a druid
-  of 14 has not done Gnomeregan. A **craft** challenge has one criterion (type 7, asset = the
+  of 14 has not done Gnomeregan. Checked criterion by criterion from the saved readings: all 145
+  values (each criterion's done flag, quantity and requirement by `criteriaID`, and each
+  challenge's completion) matched across the four characters. The probe's first comparison only
+  counted done rows; it compares by `criteriaID` and quantity since (review of #380). A **craft** challenge has one criterion (type 7, asset = the
   skill line, flags 1, `quantityString` "48 / 150") whose quantity is the **account's best skill
   in that craft**: Alchemy 48, Blacksmithing 78, Engineering 89, Leatherworking 60, Tailoring 114
   on every character, the highest values AltStable holds across the alts of both accounts. A
@@ -2363,9 +2366,13 @@ one, realm 1; a mage 30 and a druid 14 on the other, realm 7; all Normal realms)
   (Replica Ironforge Air Rifle; its name was nil until the item cached), 25 item 277714 Spectral
   Bear Cub, 40 item 277717 Spectral Bear Tabard, 55 item 277718 Reins of the Spectral Bear.
   `GetMajorFactionData(2802)` names it "Legacy Track", `maxLevel` 90.
-- **Readiness.** The whole list, completion, criteria and renown read correctly **at
-  `PLAYER_LOGIN`** (t = 0), after a full exit and after a `/reload` alike, before
-  `RECEIVED_ACHIEVEMENT_LIST` (~2 s) and without Blizzard's Legacy UI loaded. Typing in the Legacy
-  window's search box (`ACHIEVEMENT_SEARCH_UPDATED`) changed nothing the category calls return.
+- **Readiness.** The list of 65, the completion of each and renown read correctly **at
+  `PLAYER_LOGIN`** (t = 0), on a warm start, before `RECEIVED_ACHIEVEMENT_LIST` (~2 s) and without
+  Blizzard's Legacy UI loaded. The cold start (full exit) was checked at +10 s only, and so were
+  the **criteria**: the timeline's samples at login, +1 and +3 s did not read them, so whether
+  criteria are readable before `RECEIVED_ACHIEVEMENT_LIST` is not measured (the probe's timeline
+  samples them since). The plugin keeps the last good criteria and re-reads on the achievement
+  events, so it does not depend on the answer. Typing in the Legacy window's search box
+  (`ACHIEVEMENT_SEARCH_UPDATED`) changed nothing the category calls return.
 - **Not measured:** Hardcore (set B, and whether a Hardcore earn counts for Normal); a live earn
   (when renown and `ACHIEVEMENT_EARNED` arrive); a second Battle.net account.

@@ -159,9 +159,13 @@ local function ById()
         local okV, v = Try(valid, id)
         local a = Ach(id)
         local n = select(2, Criteria(id))
-        out[id] = { set = set, valid = okV and v or nil, named = a and a.name ~= nil or false,
-                    completed = a and a.completed or nil, mine = a and a.wasEarnedByMe or nil,
+        -- A successful false is kept as false; only a failed read is missing
+        -- (`x and false or nil` would turn it into nil: Codex on #380).
+        local e = { set = set, named = a and a.name ~= nil or false,
                     legacy = Points(id), numCriteria = type(n) == "number" and n or nil }
+        if okV then e.valid = v else e.validError = tostring(v) end
+        if a then e.completed, e.mine = a.completed, a.wasEarnedByMe end
+        out[id] = e
     end
     for _, id in ipairs(SET_A) do one(id, "A") end
     for _, id in ipairs(SET_B) do one(id, "B") end
@@ -228,7 +232,8 @@ local function Mode()
     local okP, preset = Try(Api("C_GameRules", "GetForeverExperiencePreset"))
     m.preset = okP and Describe(preset) or tostring(preset)
     local okH, hc = Try(Api("C_GameRules", "IsHardcoreActive"))
-    m.hardcore = okH and hc or ("n/a: " .. tostring(hc))
+    -- false on a Normal realm is an answer, not "n/a" (Codex on #380).
+    if okH then m.hardcore = hc else m.hardcore = "n/a: " .. tostring(hc) end
     local realm = rawget(_G, "GetRealmName")
     m.realm = realm and realm() or nil
     local consts = rawget(_G, "Constants")
@@ -241,24 +246,33 @@ local function LegacyUILoaded()
     return ok and loaded or false
 end
 
--- A cheap reading for the login timeline: is the list there yet, and renown?
+-- A cheap reading for the login timeline: is the list there yet, renown,
+-- and the criteria too - how many read, how many done - so the timeline
+-- says when THEY are readable, not only the list (Codex on #380: the first
+-- run sampled criteria at +10 s only).
 local function Quick()
-    local e = Enumerate(false)
-    local done, mine = 0, 0
+    local e = Enumerate(true)
+    local done, mine, crit, critDone = 0, 0, 0, 0
     for _, a in pairs(e.challenges) do
         if a.completed then done = done + 1 end
         if a.wasEarnedByMe then mine = mine + 1 end
+        for _, c in ipairs(a.criteria or {}) do
+            crit = crit + 1
+            if c.done then critDone = critDone + 1 end
+        end
     end
     local ok, lvl = Try(Api("C_MajorFactions", "GetCurrentRenownLevel"), FACTION)
     return { found = #e.order, inA = e.inA, inB = e.inB, done = done, mine = mine,
+             crit = crit, critDone = critDone,
              renown = ok and lvl or nil, cats = e.numCategories, ui = LegacyUILoaded() }
 end
 
 local function QuickText(q)
     if type(q) ~= "table" then return "-" end
-    return ("%d challenges (A %d, B %d), %d completed, %d mine, renown %s, %s categories, Legacy UI %s"):format(
-        q.found or 0, q.inA or 0, q.inB or 0, q.done or 0, q.mine or 0, tostring(q.renown),
-        tostring(q.cats), q.ui and "loaded" or "not loaded")
+    return ("%d challenges (A %d, B %d), %d completed, %d mine, %s criteria (%s done), renown %s, "
+        .. "%s categories, Legacy UI %s"):format(
+        q.found or 0, q.inA or 0, q.inB or 0, q.done or 0, q.mine or 0, tostring(q.crit),
+        tostring(q.critDone), tostring(q.renown), tostring(q.cats), q.ui and "loaded" or "not loaded")
 end
 
 local function Read(label)
@@ -317,6 +331,33 @@ end
 
 -- Two characters' readings side by side: the same list? the same completed
 -- set? who earned what? the same criteria?
+-- The first criterion that differs between two lists, keyed by criteriaID
+-- (else position), as text; nil when every one matches.
+local function CritDiff(xs, ys)
+    local function index(list)
+        local t = {}
+        for i, c in ipairs(list or {}) do
+            local k = (c.id and c.id ~= 0) and c.id or ("#" .. i)
+            t[k] = c
+        end
+        return t
+    end
+    local a, b = index(xs), index(ys)
+    for k, c in pairs(a) do
+        local d = b[k]
+        if not d then return ("%s only on the first"):format(tostring(c.text or k)) end
+        if (c.done and true or false) ~= (d.done and true or false) or c.q ~= d.q or c.req ~= d.req then
+            return ("%s %s %s/%s vs %s %s/%s"):format(tostring(c.text or k),
+                c.done and "done" or "open", tostring(c.q), tostring(c.req),
+                d.done and "done" or "open", tostring(d.q), tostring(d.req))
+        end
+    end
+    for k, d in pairs(b) do
+        if not a[k] then return ("%s only on the second"):format(tostring(d.text or k)) end
+    end
+    return nil
+end
+
 local function Compare(x, y)
     local lines = {}
     local function add(s) lines[#lines + 1] = s; Out("  " .. s) end
@@ -334,11 +375,11 @@ local function Compare(x, y)
             if (a.completed and true or false) ~= (b.completed and true or false) then compDiff[#compDiff + 1] = id end
             if a.wasEarnedByMe then mineX[#mineX + 1] = id end
             if b.wasEarnedByMe then mineY[#mineY + 1] = id end
-            local da, na = DoneOf(a.criteria)
-            local db, nb = DoneOf(b.criteria)
-            if da ~= db or na ~= nb then
-                critDiff[#critDiff + 1] = ("%s %d/%d vs %d/%d"):format(tostring(a.name), da, na, db, nb)
-            end
+            -- Each criterion by its ID: done AND quantity. Counting done rows
+            -- would call two different 2/10 dungeon lists, or two crafts at
+            -- 48/150 and 78/150, the same (Codex on #380).
+            local diff = CritDiff(a.criteria, b.criteria)
+            if diff then critDiff[#critDiff + 1] = tostring(a.name) .. ": " .. diff end
         end
     end
     add(("completed differs on %d challenge(s)%s"):format(#compDiff,
@@ -520,5 +561,5 @@ Probe:Steps("legacy", {
 })
 
 -- The test seam, on the namespace, never on _G.
-NS.legacy = { SET_A = SET_A, SET_B = SET_B, Read = Read, Quick = Quick, Compare = Compare,
+NS.legacy = { SET_A = SET_A, SET_B = SET_B, Read = Read, Quick = Quick, Compare = Compare, CritDiff = CritDiff,
               Mine = Mine, Other = Other, session = session }

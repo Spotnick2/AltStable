@@ -384,6 +384,22 @@ if legacyProc and L then
     check("  and is saved", cmp ~= nil and cmp.first == "First" and cmp.second == "Second")
     check("  earned by me differs: 1 vs 0", logText():find("earned by me: 1 on the first, 0 on the second", 1, true) ~= nil)
 
+    -- Criteria compared by ID and quantity, not by how many are done (Codex
+    -- on #380): two different 2/10 lists, and two crafts at 48 and 78 of
+    -- 150, are differences.
+    local function list(doneSet, q)
+        local out = {}
+        for i = 1, 10 do out[i] = { id = 100 + i, text = "D" .. i, done = doneSet[i] or false, q = q or 0, req = 1 } end
+        return out
+    end
+    check("two 2/10 lists with different dungeons differ",
+          L.CritDiff(list({ true, true }), list({ [3] = true, [4] = true })) ~= nil)
+    check("  the same list does not", L.CritDiff(list({ true, true }), list({ true, true })) == nil)
+    local function craft(q) return { { id = 111540, text = "150 Alchemy Skill", done = false, q = q, req = 150 } } end
+    check("two crafts at 48 and 78 of 150 differ", L.CritDiff(craft(48), craft(78)) ~= nil)
+    -- A successful false is kept, not dropped (Codex on #380).
+    eq("a challenge read as not completed keeps false", first and first.byId[61500] and first.byId[61500].completed, false)
+
     -- The login timeline.
     fireProbeEvent("PLAYER_LOGIN")
     for _ = 1, 3 do WoW.flushTimers() end
