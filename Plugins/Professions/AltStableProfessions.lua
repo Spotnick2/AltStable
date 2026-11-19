@@ -960,18 +960,46 @@ local function Holders(item, cache)
     return res
 end
 
+-- What stops one alt mailing another (#386): "faction", "ruleset", or nil when
+-- nothing does. Mail to the other faction fails ("Target is unfriendly.",
+-- measured, PORTING-TBC-TO-FOREVER.md), and mail doesn't cross rulesets either
+-- (the owner, from play, 2026-11-19), as the Warband tab's ruleset filter
+-- already assumed. What isn't known (a record from
+-- before the faction was stored, a realm name that can't be read) stops
+-- nothing: no claim is made from nothing.
+local function Barrier(fromGuid, toGuid)
+    if fromGuid == toGuid then return nil end
+    local a, b = AltStableDB and AltStableDB[fromGuid], AltStableDB and AltStableDB[toGuid]
+    if type(a) ~= "table" or type(b) ~= "table" then return nil end
+    local function faction(c) return (c.faction == "Alliance" or c.faction == "Horde") and c.faction or nil end
+    local fa, fb = faction(a), faction(b)
+    if fa and fb and fa ~= fb then return "faction" end
+    local rulesetOf = AltStable.RulesetOf
+    if rulesetOf then
+        local ra, rb = rulesetOf(a.realm), rulesetOf(b.realm)
+        if ra ~= "Unknown" and rb ~= "Unknown" and ra ~= rb then return "ruleset" end
+    end
+    return nil
+end
+
 -- What the stable can do about one recipe, or nil and why when nothing can be
 -- said: "none" (no reagent data), "absent" (no Warband to count with), "failed"
 -- (a count could not be read - nothing is claimed then either). Pure over the stores:
---   reagents = { { item, need, total, holders } } for one craft
+--   reagents = { { item, need, total, holders, reach } } for one craft; `reach`
+--              the most any one crafter can gather of it (its own and what can
+--              be mailed to it), nil without crafters
 --   enough   = every reagent's total across the stable covers one craft
---   crafters = for each of `knowers`: { owner, short = { { item, need, have, from } } },
---              `from` the other alt holding the most; an empty `short` is "has it all"
+--   ready    = one of the crafters can gather every reagent (#386)
+--   crafters = for each of `knowers`: { owner, ready, short = { { item, need, have, from,
+--              away, wall } } }, `from` the alt holding the most that can mail it;
+--              when what can be mailed falls short, `away` the one holding the most
+--              that can't, `wall` why ("faction" or "ruleset"). An empty `short` is
+--              "has it all"
 local function ReagentPlan(id, knowers, cache)
     local list = Reagents(id)
     if not list then return nil, "none" end
     if not ReagentsCounted() then return nil, "absent" end
-    local plan = { reagents = {}, enough = true, crafters = {} }
+    local plan = { reagents = {}, enough = true, ready = false, crafters = {} }
     for i = 1, #list - 1, 2 do
         local item, need = list[i], list[i + 1]
         local h = Holders(item, cache)
@@ -980,15 +1008,35 @@ local function ReagentPlan(id, knowers, cache)
         if h.total < need then plan.enough = false end
     end
     for _, o in ipairs(knowers or {}) do
-        local short = {}
+        local short, ready = {}, true
         for _, g in ipairs(plan.reagents) do
-            local have, from = 0, nil
+            local have, reach, from, away, wall = 0, 0, nil, nil, nil
             for _, h in ipairs(g.holders) do
-                if h.guid == o.guid then have = h.n elseif not from then from = h end
+                if h.guid == o.guid then
+                    have = h.n
+                    reach = reach + h.n
+                else
+                    local w = Barrier(h.guid, o.guid)
+                    if not w then
+                        reach = reach + h.n
+                        from = from or h
+                    elseif not away then
+                        away, wall = h, w
+                    end
+                end
             end
-            if have < g.need then short[#short + 1] = { item = g.item, need = g.need, have = have, from = from } end
+            g.reach = math.max(g.reach or 0, reach)
+            if reach < g.need then ready = false end
+            if have < g.need then
+                -- The blocked holder is named whenever what can be mailed
+                -- falls short, even beside one who can (Codex review of #388).
+                local blocked = reach < g.need
+                short[#short + 1] = { item = g.item, need = g.need, have = have, from = from,
+                                      away = blocked and away or nil, wall = blocked and wall or nil }
+            end
         end
-        plan.crafters[#plan.crafters + 1] = { owner = o, short = short }
+        if ready then plan.ready = true end
+        plan.crafters[#plan.crafters + 1] = { owner = o, short = short, ready = ready }
     end
     return plan
 end
@@ -1042,9 +1090,17 @@ local function ReagentLines(id, knowers)
                 parts[#parts + 1] = "+" .. (#g.holders - 3)
             end
         end
-        local ok = g.total >= g.need
+        -- With crafters, what one of them can gather (#386), and the stable's
+        -- total beside it when that is more: enough held only on the other
+        -- faction is not enough. Without crafters, the stable's total.
+        local shown, ofTotal = g.total, ""
+        if #plan.crafters > 0 then
+            shown = g.reach or 0
+            if shown < g.total then ofTotal = " |cff999999of " .. g.total .. "|r" end
+        end
+        local ok = shown >= g.need
         out[#out + 1] = { g.need .. " x " .. ItemName(g.item),
-                          (ok and "|cff40ff40" or "|cffff4040") .. g.total .. "|r" ..
+                          (ok and "|cff40ff40" or "|cffff4040") .. shown .. "|r" .. ofTotal ..
                           (#parts > 0 and ("  " .. table.concat(parts, ", ")) or ""),
                           1, 1, 1, 1, 1, 1 }
     end
@@ -1059,8 +1115,14 @@ local function ReagentLines(id, knowers)
             right = "|cff40ff40has the reagents|r"
         else
             local s = c.short[1]
-            right = "needs " .. (s.need - s.have) .. " " .. ItemName(s.item) ..
-                (s.from and (" (" .. ColorName(s.from) .. " has " .. s.from.n .. ")") or " (nobody has it)") ..
+            -- Who can mail it, and who holds it but can't (#386).
+            local whoParts = {}
+            if s.from then whoParts[#whoParts + 1] = ColorName(s.from) .. " has " .. s.from.n end
+            if s.away then
+                whoParts[#whoParts + 1] = ColorName(s.away) .. " has " .. s.away.n .. ", other " .. s.wall
+            end
+            local who = #whoParts > 0 and (" (" .. table.concat(whoParts, "; ") .. ")") or " (nobody has it)"
+            right = "needs " .. (s.need - s.have) .. " " .. ItemName(s.item) .. who ..
                 (#c.short > 1 and (" +" .. (#c.short - 1)) or "")
         end
         out[#out + 1] = { ColorName(c.owner), right, 1, 1, 1, 1, 1, 1 }
@@ -1128,14 +1190,15 @@ local function BuildRows(state)
                 elseif f == "nobody" then
                     keep = #knownBy == 0
                 elseif f == "craftable" then
-                    -- Someone (the focused alt, if one is) knows it, and the
-                    -- stable holds enough of every reagent for one craft. Not
-                    -- counted (no Warband) keeps nothing: it is not a yes.
-                    local knows
-                    if focus then knows = focus.known[id]
-                    elseif not elsewhere then knows = #knownBy > 0 end
-                    local plan = knows and ReagentPlan(id, nil, reagentCache)
-                    keep = plan and plan.enough or false
+                    -- Someone (the focused alt, if one is) knows it, and can
+                    -- gather every reagent for one craft: its own, and what its
+                    -- other alts can mail it - not the other faction's (#386).
+                    -- Not counted (no Warband) keeps nothing: it is not a yes.
+                    local crafters
+                    if focus then crafters = focus.known[id] and { focus } or nil
+                    elseif not elsewhere and #knownBy > 0 then crafters = knownBy end
+                    local plan = crafters and ReagentPlan(id, crafters, reagentCache)
+                    keep = plan and plan.ready or false
                 elseif f == "wishlist" then
                     -- The focused alt's stars, or everyone's. By the selected
                     -- card, not this line's owner: a search spans lines the
@@ -2304,6 +2367,7 @@ local function BootstrapPlugin()
             ResetState = function() pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil end,
             Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
             ReagentPlan = ReagentPlan, ReagentLines = ReagentLines, ReagentsCounted = ReagentsCounted,
+            Barrier = Barrier,
             Reagents = Reagents, SchematicReagents = SchematicReagents, SameReagents = SameReagents,
             ApplyWindowReagents = ApplyWindowReagents,
             ItemName = ItemName, itemRequested = itemRequested,
