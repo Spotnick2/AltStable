@@ -1905,30 +1905,84 @@ function L.BuildFooter(mainFrame)
     f.reward:SetScript("OnEnter", RewardOnEnter)
     f.reward:SetScript("OnLeave", HideTip)
 
-    local bar = CreateFrame("StatusBar", nil, f)
+    -- A plain frame, not a StatusBar: the fill is drawn stretch by stretch.
+    local bar = CreateFrame("Frame", nil, f)
     bar:SetHeight(8)
     bar:SetPoint("LEFT", f.left, "RIGHT", 12, 0)
     bar:SetPoint("RIGHT", f.reward, "LEFT", -12, 0)
-    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints()
     bar.bg:SetColorTexture(0, 0, 0, 0.45)
-    bar:SetMinMaxValues(0, 1)
-    bar.ticks = {}
+    bar.ticks, bar.segs = {}, {}
     bar:EnableMouse(true)
     bar:SetScript("OnEnter", BarOnEnter)
     bar:SetScript("OnLeave", HideTip)
-    bar:SetScript("OnSizeChanged", function() L.PlaceTicks() end)
+    bar:SetScript("OnSizeChanged", function() L.PlaceBar() end)
     f.bar = bar
     L.foot = f
 end
 
-function L.PlaceTicks()
+-- The bar in stretches: one up to each reward, then the rest up to the max.
+-- Each takes the next item quality, Common first (the owner: the gear
+-- colours), so a reward the game adds later adds a stretch and the colours
+-- follow the rewards, never fixed point values. `fill` is the points earned
+-- inside the stretch.
+local LAST_QUALITY = 7   -- Heirloom; any stretch past it stays Heirloom
+function L.BarSegments(m)
+    local out, from = {}, 0
+    local function add(to)
+        if to <= from then return end
+        out[#out + 1] = { from = from, to = to, quality = math.min(#out + 1, LAST_QUALITY),
+                          fill = math.max(0, math.min(m.points, to) - from) }
+        from = to
+    end
+    for _, r in ipairs(m.rewards) do add(math.min(r.level, m.max)) end
+    add(m.max)
+    return out
+end
+
+local function QualityColor(q)
+    if AltStable.QualityRGB then return AltStable.QualityRGB(q) end
+    return 1, 1, 1
+end
+
+-- Lays the stretches and the reward ticks out along the bar's current width.
+function L.PlaceBar()
     local f, m = L.foot, L.footModel
-    if not (f and m and not m.unread) then return end
+    if not f then return end
     local bar = f.bar
+    local segs = (m and not m.unread and m.max > 0) and L.BarSegments(m) or {}
     local w = bar:GetWidth() or 0
-    for i, r in ipairs(m.rewards) do
+    for i, s in ipairs(segs) do
+        local t = bar.segs[i]
+        if not t then
+            t = { track = bar:CreateTexture(nil, "BORDER"), fill = bar:CreateTexture(nil, "ARTWORK") }
+            t.fill:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+            bar.segs[i] = t
+        end
+        local r, g, b = QualityColor(s.quality)
+        local x = w * s.from / m.max
+        -- What is still to come shows faintly in its colour; what is earned, full.
+        t.track:ClearAllPoints()
+        t.track:SetPoint("TOPLEFT", bar, "TOPLEFT", x, 0)
+        t.track:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", x, 0)
+        t.track:SetWidth(math.max(1, w * (s.to - s.from) / m.max))
+        t.track:SetColorTexture(r, g, b, 0.18)
+        t.track:Show()
+        t.fill:ClearAllPoints()
+        t.fill:SetPoint("TOPLEFT", bar, "TOPLEFT", x, 0)
+        t.fill:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", x, 0)
+        t.fill:SetWidth(math.max(1, w * s.fill / m.max))
+        t.fill:SetVertexColor(r, g, b, 0.95)
+        t.fill:SetShown(s.fill > 0)
+    end
+    for i = #segs + 1, #bar.segs do
+        bar.segs[i].track:Hide()
+        bar.segs[i].fill:Hide()
+    end
+
+    local rewards = (m and not m.unread) and m.rewards or {}
+    for i, r in ipairs(rewards) do
         local t = bar.ticks[i]
         if not t then
             t = bar:CreateTexture(nil, "OVERLAY")
@@ -1936,12 +1990,19 @@ function L.PlaceTicks()
             bar.ticks[i] = t
         end
         t:ClearAllPoints()
-        t:SetPoint("CENTER", bar, "LEFT", (m.max > 0 and w * r.level / m.max or 0), 0)
-        local got = m.points >= r.level
-        t:SetColorTexture(got and GOLD[1] or 0.8, got and GOLD[2] or 0.8, got and GOLD[3] or 0.8, got and 1 or 0.7)
+        t:SetPoint("CENTER", bar, "LEFT", (m.max > 0 and w * math.min(r.level, m.max) / m.max or 0), 0)
+        -- A reward reached lights its tick in the colour of the stretch it opens.
+        local opens
+        for _, s in ipairs(segs) do if s.from == r.level then opens = s end end
+        if m.points >= r.level then
+            local cr, cg, cb = QualityColor(opens and opens.quality or LAST_QUALITY)
+            t:SetColorTexture(cr, cg, cb, 1)
+        else
+            t:SetColorTexture(0.8, 0.8, 0.8, 0.7)
+        end
         t:Show()
     end
-    for i = #m.rewards + 1, #bar.ticks do bar.ticks[i]:Hide() end
+    for i = #rewards + 1, #bar.ticks do bar.ticks[i]:Hide() end
 end
 
 function L.RenderFooter()
@@ -1953,16 +2014,14 @@ function L.RenderFooter()
     if AltStable.GetAccentRGB then ar, ag, ab = AltStable.GetAccentRGB() end
     if m.unread then
         f.left:SetText("|cff888888Legacy Points: not read yet|r")
-        f.bar:SetValue(0)
         f.reward.text:SetText("")
         f.reward.icon:Hide()
         f.reward.reward = nil
+        L.PlaceBar()   -- an empty bar, never the last read's
         return
     end
     local hex = ("|cff%02x%02x%02x"):format(ar * 255, ag * 255, ab * 255)
     f.left:SetText(("%s%d|r |cffaaaaaa/ %d Legacy Points|r"):format(hex, m.points, m.max))
-    f.bar:SetStatusBarColor(ar, ag, ab, 0.9)
-    f.bar:SetValue(m.max > 0 and math.min(1, m.points / m.max) or 0)
     local r = m.nextReward
     if r then
         local name = r.name or L.ItemName(r.itemID) or "next reward"
@@ -1978,7 +2037,7 @@ function L.RenderFooter()
         f.reward.reward = nil
     end
     f.reward:SetWidth((f.reward.text:GetStringWidth() or 100) + 22)
-    L.PlaceTicks()
+    L.PlaceBar()
 end
 
 ------------------------------------------------------------

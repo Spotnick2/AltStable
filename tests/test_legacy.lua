@@ -43,6 +43,7 @@ dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
 dofile("CharacterMenu.lua")   -- the right-click menu frame the Bucket List reuses
+dofile("RowRenderer.lua")     -- the gear palette (AltStable.QualityRGB) the points bar uses
 
 AltStable.plugins = {}
 dofile("Plugins/Legacy/LegacyData.lua")
@@ -662,6 +663,44 @@ check("  5 / 65 Legacy Points", text:find("5|r |cffaaaaaa/ 65 Legacy Points", 1,
 local right = L.foot and L.foot.reward.text:GetText() or ""
 check("  and the points to the next reward", right:find("10 points to go", 1, true) ~= nil, right)
 eq("  a tick per reward", L.foot and #L.foot.bar.ticks, 4)
+
+-- The points bar in item-quality stretches (the owner): one per reward, then
+-- the rest, Common first. At 5 of 65 with rewards at 15/25/40/55: five
+-- stretches, the Common one a third filled, the others not yet.
+local segs = L.BarSegments({ points = 5, max = 65, rewards = { { level = 15 }, { level = 25 }, { level = 40 }, { level = 55 } } })
+local shape = {}
+for _, sg in ipairs(segs) do shape[#shape + 1] = ("%d-%d q%d f%d"):format(sg.from, sg.to, sg.quality, sg.fill) end
+eq("the stretches, their qualities and fills", table.concat(shape, ", "),
+   "0-15 q1 f5, 15-25 q2 f0, 25-40 q3 f0, 40-55 q4 f0, 55-65 q5 f0")
+local later = L.BarSegments({ points = 70, max = 90, rewards = { { level = 15 }, { level = 25 }, { level = 40 },
+    { level = 55 }, { level = 65 }, { level = 75 }, { level = 85 } } })
+eq("rewards the game adds later add stretches: Artifact, Heirloom, then Heirloom again",
+   later[6].quality .. "/" .. later[7].quality .. "/" .. later[8].quality, "6/7/7")
+eq("  filled up to the points (70: 5 into 65-75)", later[6].fill .. "/" .. later[7].fill .. "/" .. later[8].fill, "5/0/0")
+eq("a last reward at the max adds no empty stretch", #L.BarSegments({ points = 0, max = 55,
+   rewards = { { level = 15 }, { level = 55 } } }), 2)
+local bar = L.foot.bar
+eq("  drawn: one stretch per segment", #bar.segs, 5)
+local c = bar.segs[1].fill._vertexColor
+eq("  the earned part in Common white, from the gear palette", c and (c[1] .. "," .. c[2] .. "," .. c[3]), "1,1,1")
+check("  a stretch not started has no fill", not bar.segs[2].fill:IsShown())
+local tr = bar.segs[2].track._colorTexture
+eq("  but shows faintly in Uncommon green", tr and (tr[1] .. "," .. tr[2] .. "," .. tr[3]),
+   table.concat(AltStable.QUALITY_RGB[2], ","))
+local tk = bar.ticks[1]._colorTexture
+eq("  a reward not reached: a grey tick", tk and tk[1], 0.8)
+local savedModel = L.footModel
+L.footModel = { points = 20, max = 65, rewards = savedModel.rewards }
+L.PlaceBar()
+tk = bar.ticks[1]._colorTexture
+eq("  a reward reached: its tick in the colour of the stretch it opens (Uncommon)",
+   tk and (tk[1] .. "," .. tk[2] .. "," .. tk[3]), table.concat(AltStable.QUALITY_RGB[2], ","))
+check("  and the Uncommon stretch fills", bar.segs[2].fill:IsShown())
+L.footModel = { unread = true }
+L.PlaceBar()
+check("an unread total draws no stretch", not bar.segs[1].track:IsShown() and not bar.segs[1].fill:IsShown())
+L.footModel = savedModel
+L.PlaceBar()
 
 -- Opening a section draws its rows; collapsing it takes them away again.
 AltStableLegacyDB.open = { dungeons = true, raids = true }
