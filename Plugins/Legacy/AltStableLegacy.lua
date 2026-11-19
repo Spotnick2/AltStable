@@ -458,11 +458,42 @@ function L.Model(s, alts)
             end
         end
         if #rows > 0 or sec.key ~= "other" then
-            m.sections[#m.sections + 1] = { key = sec.key, label = sec.label, rows = rows, done = done,
-                                            focus = L.Focus(rows) }
+            m.sections[#m.sections + 1] = { key = sec.key, label = sec.label, rows = L.GroupMilestones(rows),
+                                            done = done, total = #rows, focus = L.Focus(rows) }
         end
     end
     return m
+end
+
+-- "Rank 3" -> "3", "Field of Honor: Week 4" -> "Week 4".
+function L.ShortName(name)
+    name = tostring(name or "")
+    return name:match("(Week %d+)$") or name:match("(%d+)$") or name
+end
+
+-- A sequence of milestones with nothing to count (the PvP ranks, the Field
+-- of Honor weeks) reads as one row of steps, as a class reads as one row of
+-- levels; each step keeps its own earned state and tooltip. Rows of other
+-- categories pass through, in place.
+function L.GroupMilestones(rows)
+    local out, byCat = {}, {}
+    for _, r in ipairs(rows) do
+        local label = D.MILESTONES[r.ch.cat]
+        if label then
+            local g = byCat[r.ch.cat]
+            if not g then
+                g = { milestone = true, id = "m" .. r.ch.cat, label = label, icon = r.ch.icon,
+                      steps = {}, parts = {}, done = true }
+                byCat[r.ch.cat] = g
+                out[#out + 1] = g
+            end
+            g.steps[#g.steps + 1] = { ch = r.ch, done = r.done, short = L.ShortName(r.ch.name) }
+            g.done = g.done and r.done and true or false
+        else
+            out[#out + 1] = r
+        end
+    end
+    return out
 end
 
 -- The footer: points earned, out of the account's maximum, and the next
@@ -496,7 +527,8 @@ function L.ProgressText(r)
     if r.done then return CHECK end
     if r.unknown then return "|cff888888Not read yet|r" end
     if r.nocrit then return DASH end
-    if not r.total then return "|cff888888?|r" end
+    -- Explorer with no character seen: nothing captured, so no 0/43 either.
+    if not r.total then return r.perChar and DASH or "|cff888888?|r" end
     if r.numeric then return L.Number(r.have) .. " / " .. L.Number(r.total) end
     local pct = r.total > 0 and math.floor(100 * r.have / r.total + 0.5) or 0
     return ("%d/%d \194\183 %d%%"):format(r.have, r.total, pct)
@@ -615,6 +647,7 @@ local function MakeGridRow()
     f.icon:SetPoint("LEFT", f, "LEFT", 6, 0)
     f.name = FS(f)
     f.name:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
+    f.name:SetWordWrap(false)
     f.alt = FS(f)
     f.alt:SetWordWrap(false)
     f.cells = {}
@@ -667,6 +700,9 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
         f.alt:ClearAllPoints()
         f.alt:SetPoint("LEFT", f, "LEFT", altX, 0)
         f.alt:SetWidth(math.max(40, cellsX - altX - 6))
+        -- A guaranteed gap before the next column: a name too long for its
+        -- cell shortens with an ellipsis instead of running into the alt.
+        f.name:SetWidth(altX - 34)
         if kind == "class" then
             local cr, cg, cb = 1, 1, 1
             if AltStable.GetClassRGB then cr, cg, cb = AltStable.GetClassRGB(r.key) end
@@ -838,6 +874,68 @@ local function Columns(w)
     return math.floor(w * 0.40), math.floor(w * 0.60), math.floor(w * 0.60) + 110
 end
 
+-- One step of a milestone row: its challenge, and whether it is earned.
+local function StepOnEnter(self)
+    local st = self.step
+    if not st then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(st.ch.name, 1, 1, 1)
+    if st.ch.desc then GameTooltip:AddLine(st.ch.desc, 0.8, 0.8, 0.8, true) end
+    if st.done then
+        GameTooltip:AddLine("Earned" .. (st.ch.date and (" on " .. st.ch.date) or ""), 0.4, 1, 0.4)
+    else
+        GameTooltip:AddLine("Not earned yet.", 0.7, 0.7, 0.7)
+    end
+    GameTooltip:Show()
+end
+
+local MAX_STEPS = 6
+local STEP_W = 76
+
+local function MakeMilestoneRow()
+    local f = CreateFrame("Frame", nil, content)
+    f:SetHeight(ROW_H)
+    f.icon = f:CreateTexture(nil, "ARTWORK")
+    f.icon:SetSize(16, 16)
+    f.icon:SetPoint("LEFT", f, "LEFT", 32, 0)
+    f.name = FS(f)
+    f.name:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
+    f.steps = {}
+    for i = 1, MAX_STEPS do
+        local b = CreateFrame("Button", nil, f)
+        b:SetSize(STEP_W, ROW_H)
+        b.text = FS(b, "GameFontHighlight", "LEFT")
+        b.text:SetAllPoints()
+        b:SetScript("OnEnter", StepOnEnter)
+        b:SetScript("OnLeave", HideTip)
+        f.steps[i] = b
+    end
+    return f
+end
+
+-- A sequence as one row: "PvP rank   [check] 3   7   10   13   14", a step
+-- earned in green with its check, one not earned yet dim.
+function L.DrawMilestones(row, y, w, startX)
+    local f = Acquire("milestoneRow", MakeMilestoneRow)
+    f:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    f:SetWidth(w)
+    f.icon:SetTexture(row.icon)
+    f.name:SetText(row.done and ("|cff9fe09f" .. row.label .. "|r") or row.label)
+    for i, b in ipairs(f.steps) do
+        local st = row.steps[i]
+        b.step = st
+        if st then
+            b:ClearAllPoints()
+            b:SetPoint("LEFT", f, "LEFT", startX + (i - 1) * STEP_W, 0)
+            b.text:SetText(st.done and (CHECK .. " |cff9fe09f" .. st.short .. "|r") or ("|cff9a9a9a" .. st.short .. "|r"))
+            b:Show()
+        else
+            b:Hide()
+        end
+    end
+    return y + ROW_H
+end
+
 function L.DrawSection(sec, y, w)
     local open = DB().open[sec.key] and true or false
     local b = Acquire("section", MakeSection)
@@ -849,8 +947,9 @@ function L.DrawSection(sec, y, w)
     b.line:SetColorTexture(sep[1], sep[2], sep[3], sep[4] or 1)
     b.arrow:SetTexture(open and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
     b.label:SetText(sec.label)
-    b.count:SetText(("%d / %d"):format(sec.done, #sec.rows))
-    b.focus:SetText(sec.focus and ("|cffaaaaaa" .. L.FocusText(sec) .. "|r") or "")
+    b.count:SetText(("%d / %d"):format(sec.done, sec.total or #sec.rows))
+    -- Closed only: open, the rows below say the same thing.
+    b.focus:SetText((not open and sec.focus) and ("|cffaaaaaa" .. L.FocusText(sec) .. "|r") or "")
     y = y + SECTION_H
     if not open then return y end
 
@@ -865,6 +964,9 @@ function L.DrawSection(sec, y, w)
         return y + CRIT_H
     end
     for _, row in ipairs(sec.rows) do
+        if row.milestone then
+            y = L.DrawMilestones(row, y, w, charX)
+        else
         local f = Acquire("challengeRow", MakeChallengeRow)
         f:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
         f:SetWidth(w)
@@ -925,6 +1027,7 @@ function L.DrawSection(sec, y, w)
                     and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
             end
             y = y + perCol * CRIT_H
+        end
         end
     end
     return y
