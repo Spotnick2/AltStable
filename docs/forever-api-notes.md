@@ -2319,3 +2319,61 @@ column then takes the cap as 180% (150 x 1.2) and the rate as 1.2 times the base
 above 150% also counts as the talent. To confirm: the full value on a character with the talent
 (180%, or 170% if the 20% is added), that `IsPlayerSpell` is true for it, and whether a Legacy
 talent is per character or account-wide.
+
+## Legacy Challenges: one state per Battle.net account — MEASURED (#373)
+
+Measured on 1.60.1.70959, 2026-11-19, with `/fp steps as legacy` (`Tools/AltStableProbe/Legacy.lua`):
+four characters on two WoW accounts of **one Battle.net account** (a hunter 21 and a priest 30 on
+one, realm 1; a mage 30 and a druid 14 on the other, realm 7; all Normal realms).
+
+- **The list.** `GetCategoryList()` has 29 categories. Walking them with
+  `GetCategoryNumAchievements(cat, true)` and `GetAchievementInfo(cat, i)`, and keeping the
+  achievements with `C_Traits.GetTraitCurrencyForAchievement(4225, id) > 0`, gives exactly **65
+  challenges, all from ID set A** (61499-62054, 684, 62382, 63340-63342; flag 0x8000000). Set B
+  (63969-64033) resolves by ID (valid, named, readable) but is worth 0 points here and is never
+  listed: the listed set is the pool. (Set B is presumably Hardcore; no Hardcore character yet.)
+  Categories: classes 15577-15585 (parent 15568), crafts 15587-15592 (parent 15586), PvP
+  "Ranks" 15597, "Reputations" 15598 and "Season Journey" 15620 (parent 15595), and top-level
+  "Dungeons" 15593, "Raids" 15594, "Adventure" 15596. `GetCategoryNumAchievements` with and
+  without `includeAll` gave the same counts.
+- **Credit is Battle.net-account-wide, not WoW-account-wide.** All four characters, on both WoW
+  accounts, read the same 4 challenges `completed`, with the same dates: Novice Mage (earned on
+  the second account's mage), Novice Priest (the first account's priest), Journeyman Enchanter,
+  Novice Spelunker. Blizzard's window showed "Legacy Points 4 / 65" on both accounts.
+- **`wasEarnedByMe` (13th return) is true on every character** for every completed challenge, and
+  `earnedBy` (14th) is an empty string. Neither says who earned it: there is no per-character
+  credit to show.
+- **Criteria are Battle.net-account-wide too.** Every list read the same on all four characters
+  (Novice Spelunker 6/6, Experienced Spelunker 2/10, Conqueror lists 0/13 and 0/8), though a druid
+  of 14 has not done Gnomeregan. Checked criterion by criterion from the saved readings: all 145
+  values (each criterion's done flag, quantity and requirement by `criteriaID`, and each
+  challenge's completion) matched across the four characters. The probe's first comparison only
+  counted done rows; it compares by `criteriaID` and quantity since (review of #380). A **craft** challenge has one criterion (type 7, asset = the
+  skill line, flags 1, `quantityString` "48 / 150") whose quantity is the **account's best skill
+  in that craft**: Alchemy 48, Blacksmithing 78, Engineering 89, Leatherworking 60, Tailoring 114
+  on every character, the highest values AltStable holds across the alts of both accounts. A
+  **BG reputation** challenge has one criterion (type 243, asset = faction ID, req 42000).
+  **Field of Honor** has one (type 27, a quest). **Class**, **PvP rank**, **Valthalak** and
+  **Lair** challenges have no criteria at all. A dungeon criterion is type 0 (creature, asset =
+  NPC ID), 165 (encounter, Stratholme: Live) or 78 ("Ragefire Chasm or Hall of Thanes", asset 0).
+  Every criterion has a non-zero `criteriaID` (10th return); 13 returns.
+- **Explorer is the per-character exception.** Its one criterion (type 8) is Explore Azeroth,
+  62053, whose criteria are Explore Eastern Kingdoms (62353, 23 parts) and Explore Kalimdor (62355,
+  20 parts). Those counts differed between characters (0/23 vs 1/23, 0/20 vs 1/20).
+- **Points.** `C_MajorFactions.GetCurrentRenownLevel(2802)` = 4 = the count of completed
+  challenges, and `GetMaxAvailableTraitCurrency(4225, false)` = 65 (with `true`: 16, the
+  per-character spending cap). Renown track (`GetRenownLevels(2802)`: 4 levels): 15 item 276236
+  (Replica Ironforge Air Rifle; its name was nil until the item cached), 25 item 277714 Spectral
+  Bear Cub, 40 item 277717 Spectral Bear Tabard, 55 item 277718 Reins of the Spectral Bear.
+  `GetMajorFactionData(2802)` names it "Legacy Track", `maxLevel` 90.
+- **Readiness.** At **`PLAYER_LOGIN`** (t = 0), on a warm start, before
+  `RECEIVED_ACHIEVEMENT_LIST` (~2 s) and without Blizzard's Legacy UI loaded, the timeline read the
+  list (65, all set A), the **count** completed (4) and renown (4), the same as at +10 s. It kept
+  counts, not each challenge's flag, so it shows the count matched, not which four. The cold start (full exit) was checked at +10 s only, and so were
+  the **criteria**: the timeline's samples at login, +1 and +3 s did not read them, so whether
+  criteria are readable before `RECEIVED_ACHIEVEMENT_LIST` is not measured (the probe's timeline
+  samples them since). The plugin keeps the last good criteria and re-reads on the achievement
+  events, so it does not depend on the answer. Typing in the Legacy window's search box
+  (`ACHIEVEMENT_SEARCH_UPDATED`) changed nothing the category calls return.
+- **Not measured:** Hardcore (set B, and whether a Hardcore earn counts for Normal); a live earn
+  (when renown and `ACHIEVEMENT_EARNED` arrive); a second Battle.net account.

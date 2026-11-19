@@ -296,4 +296,128 @@ if gearProc then
     check("  a ping delivered while refused fails", not ok(REFUSEDCHECK))
 end
 
+------------------------------------------------------------
+-- /fp steps as legacy (#373): the readings and the comparison of two
+-- characters, against a stand-in for the achievement API
+------------------------------------------------------------
+-- What has to hold: with no achievement API (the sweep above, the login
+-- reading) nothing throws; with one, the reading finds the 65 challenges of
+-- one set and says which; two characters' readings are compared on completed,
+-- earned-by-me and criteria; the procedure ends with a /reload.
+local legacyProc = FP.procedures and FP.procedures["AltStableProbe/legacy"]
+check("/fp steps as legacy is defined", legacyProc ~= nil)
+check("  and ends with a /reload", legacyProc ~= nil and legacyProc.steps[#legacyProc.steps].reload == true)
+check("/fp as legacy and legacytime exist", P.commands.legacy ~= nil and P.commands.legacytime ~= nil)
+local L = ns.legacy
+check("the legacy seam is on the namespace", L ~= nil and rawget(_G, "legacy") == nil)
+if legacyProc and L then
+    -- Each character's view: what is completed, earned by it, and its
+    -- Spelunker criteria (6 dungeons).
+    local view
+    local SPELUNKER = 62031
+    local function info(id)
+        local done = view.completed[id] or false
+        return id, "Challenge " .. id, 0, done, done and 11 or nil, done and 19 or nil, done and 26 or nil,
+               "desc", 0x08020400, 1, "Earn 1 Legacy Point.", false, view.mine[id] or false, nil, false
+    end
+    rawset(_G, "GetCategoryList", function() return { 15585, 92 } end)
+    rawset(_G, "GetCategoryInfo", function(cat) return "Cat " .. cat, -1, 0 end)
+    rawset(_G, "GetCategoryNumAchievements", function(cat) return cat == 15585 and #L.SET_A or 1, 0, 0 end)
+    rawset(_G, "GetAchievementInfo", function(a, b)
+        if b then return info(a == 15585 and L.SET_A[b] or 6) end
+        return info(a)
+    end)
+    rawset(_G, "GetAchievementNumCriteria", function(id) return id == SPELUNKER and 6 or 0 end)
+    rawset(_G, "GetAchievementCriteriaInfo", function(id, i)
+        return "Dungeon " .. i, 0, i <= view.dungeons, 0, 1, "", 0, 1000 + i, "", 2000 + i, true, 0, 0
+    end)
+    local traits = rawget(_G, "C_Traits") or {}
+    rawset(_G, "C_Traits", traits)
+    local IN_SET_A = {}
+    for _, id in ipairs(L.SET_A) do IN_SET_A[id] = true end
+    traits.GetTraitCurrencyForAchievement = function(_, id) return IN_SET_A[id] and 1 or 0 end
+    traits.GetMaxAvailableTraitCurrency = function() return 65 end
+    rawset(_G, "C_MajorFactions", {
+        GetCurrentRenownLevel = function() return 1 end,
+        GetMajorFactionData = function() return { renownLevel = 1 } end,
+        GetRenownLevels = function() return { { level = 1 }, { level = 15 } } end,
+        GetRenownRewardsForLevel = function(_, level) return level == 15 and { { itemID = 276236 } } or {} end,
+    })
+
+    local S = legacyProc.steps
+    local READ, SEARCH, COMPARE = 1, 3, 5
+    check("  the steps are where this test reads them", S[READ].auto and S[SEARCH].run and S[COMPARE].wait,
+          "renumber the test")
+    local savedName = WoW.player.name
+
+    view = { completed = { [61499] = true }, mine = { [61499] = true }, dungeons = 3 }
+    WoW.player.name = "First"
+    S[READ].run()
+    check("one set listed, all 65: the first step passes", (S[READ].check()))
+    local first = L.Mine()
+    eq("  65 challenges listed", first and #first.enum.order, 65)
+    eq("  all from set A", first and first.enum.inA, 65)
+    eq("  the other category's achievement is not a challenge", first and first.enum.other, 0)
+    eq("  renown read", first and first.renown.level, 1)
+    eq("  max read", first and first.renown.max, 65)
+    eq("  the reward on the track", first and first.renown.rewards[1] and first.renown.rewards[1].itemID, 276236)
+    eq("  set B read by ID too", first and first.byId[63969] and first.byId[63969].set, "B")
+    check("  a search that changes nothing passes", (S[SEARCH].check()))
+    first.enum.inB = 3                              -- both sets listed at once
+    check("  both sets listed fails the first step", not (S[READ].check()))
+    first.enum.inB = 0
+
+    -- The second character: the same account-level completed set, not its
+    -- earner, one more dungeon.
+    view = { completed = { [61499] = true }, mine = {}, dungeons = 4 }
+    WoW.player.name = "Second"
+    -- The procedure resumes at PLAYER_LOGIN, before the +10 s reading: the
+    -- compare waits for it instead of throwing (Bugsy, 2026-11-19).
+    check("  the compare waits while this character has no reading", not (S[COMPARE].wait()))
+    L.Read("login+10s")
+    local ready, diffCompleted, diffCriteria = S[COMPARE].wait()
+    check("  and runs once it has one", ready == true)
+    eq("the completed sets match", diffCompleted, 0)
+    eq("  one challenge's criteria differ", diffCriteria, 1)
+    check("  the comparison names both characters", (S[COMPARE].check()))
+    local cmp = AltStableProbeDB.legacy.lastCompare
+    check("  and is saved", cmp ~= nil and cmp.first == "First" and cmp.second == "Second")
+    check("  earned by me differs: 1 vs 0", logText():find("earned by me: 1 on the first, 0 on the second", 1, true) ~= nil)
+
+    -- Criteria compared by ID and quantity, not by how many are done (Codex
+    -- on #380): two different 2/10 lists, and two crafts at 48 and 78 of
+    -- 150, are differences.
+    local function list(doneSet, q)
+        local out = {}
+        for i = 1, 10 do out[i] = { id = 100 + i, text = "D" .. i, done = doneSet[i] or false, q = q or 0, req = 1 } end
+        return out
+    end
+    check("two 2/10 lists with different dungeons differ",
+          L.CritDiff(list({ true, true }), list({ [3] = true, [4] = true })) ~= nil)
+    check("  the same list does not", L.CritDiff(list({ true, true }), list({ true, true })) == nil)
+    local function craft(q) return { { id = 111540, text = "150 Alchemy Skill", done = false, q = q, req = 150 } } end
+    check("two crafts at 48 and 78 of 150 differ", L.CritDiff(craft(48), craft(78)) ~= nil)
+    -- A successful false is kept, not dropped (Codex on #380).
+    eq("a challenge read as not completed keeps false", first and first.byId[61500] and first.byId[61500].completed, false)
+
+    -- The count is there before the rows (Codex on #380): every row call
+    -- throws. The timeline must show failures, not six criteria all open.
+    local realRow = GetAchievementCriteriaInfo
+    rawset(_G, "GetAchievementCriteriaInfo", function() error("not ready") end)
+    local early = L.Quick()
+    eq("rows that throw are not counted as read", early.crit, 0)
+    eq("  they are counted as failed", early.critFailed, 6)
+    rawset(_G, "GetAchievementCriteriaInfo", realRow)
+    local later = L.Quick()
+    eq("once they read, they count", later.crit, 6)
+    eq("  and none failed", later.critFailed, 0)
+
+    -- The login timeline.
+    fireProbeEvent("PLAYER_LOGIN")
+    for _ = 1, 3 do WoW.flushTimers() end
+    check("the login timeline reaches +30 s", L.session.login.plus30s ~= nil)
+    check("  and +10 s found the 65", L.session.login.plus10s and L.session.login.plus10s.reading.found == 65)
+    WoW.player.name = savedName
+end
+
 WoW.finish("test_probe", passed, failed)
