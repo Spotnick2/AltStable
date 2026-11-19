@@ -5292,15 +5292,24 @@ local function CreateFrameIfNeeded()
     totLine:SetPoint("BOTTOMLEFT",totalsBar,"TOPLEFT",0,0)
     totLine:SetPoint("BOTTOMRIGHT",totalsBar,"TOPRIGHT",0,0)
     totLine:SetColorTexture(unpack(AltStable.C.SEP))
-    totalsBar.left=totalsBar:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    totalsBar.left:SetPoint("LEFT",10,0)
+    -- Everything the core shows in the footer hangs off one child (#373), so a
+    -- plugin that puts its own content in the footer (Legacy's points bar)
+    -- hides this one frame and shows its own sibling, then hands it back in its
+    -- OnDeactivate. The bar itself, its fill and its top line stay the core's.
+    -- The hidden-characters button goes with the labels: hidden, it takes no
+    -- clicks either.
+    local totCore = CreateFrame("Frame", nil, totalsBar)
+    totCore:SetAllPoints(totalsBar)
+    totalsBar.core = totCore
+    totalsBar.left=totCore:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    totalsBar.left:SetPoint("LEFT",totCore,"LEFT",10,0)
     totalsBar.left:SetTextColor(unpack(AltStable.C.TEXT_NORM))
-    totalsBar.mid=totalsBar:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    totalsBar.mid:SetPoint("CENTER",totalsBar,"CENTER",0,0)
+    totalsBar.mid=totCore:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    totalsBar.mid:SetPoint("CENTER",totCore,"CENTER",0,0)
     totalsBar.mid:SetJustifyH("CENTER")
     totalsBar.mid:SetTextColor(unpack(AltStable.C.TEXT_DIM))
-    totalsBar.right=totalsBar:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    totalsBar.right:SetPoint("RIGHT",-10,0); totalsBar.right:SetJustifyH("RIGHT")
+    totalsBar.right=totCore:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    totalsBar.right:SetPoint("RIGHT",totCore,"RIGHT",-10,0); totalsBar.right:SetJustifyH("RIGHT")
     totalsBar.right:SetTextColor(unpack(AltStable.C.TEXT_NORM))
 
     -- "(N hidden)" is its OWN button rather than a run of text inside
@@ -5318,7 +5327,7 @@ local function CreateFrameIfNeeded()
     -- The panel stops above the footer now, and test_roster pins both the gap
     -- and the visibility - being shown underneath an opaque panel looks exactly
     -- like being shown.
-    totalsBar.hiddenBtn = CreateFrame("Button", nil, totalsBar)
+    totalsBar.hiddenBtn = CreateFrame("Button", nil, totCore)
     totalsBar.hiddenBtn:SetHeight(16)
     totalsBar.hiddenBtn:SetPoint("RIGHT", totalsBar.right, "LEFT", -4, 0)
     totalsBar.hiddenBtn.label = totalsBar.hiddenBtn:CreateFontString(

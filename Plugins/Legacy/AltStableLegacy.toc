@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: AltStable Legacy
+## Notes: Forever's Legacy Challenges for every alt: which class and craft milestones, dungeons and raids are left, and the next reward
+## IconTexture: 8197123
+## Author: Spotnick
+## Version: @project-version@
+## Dependencies: AltStable
+## LoadOnDemand: 1
+## SavedVariables: AltStableLegacyDB
+
+LegacyData.lua
+AltStableLegacy.lua

@@ -2869,6 +2869,16 @@ do
     check("the Options panel follows the sidebar", optRel == sidebar, tostring(optPt))
     local _, totRel = f.totalsBar:GetPoint(1)
     check("so does the totals bar", totRel == sidebar)
+    -- The footer's content is one child (#373): a plugin hides it and shows its
+    -- own, and the hidden-characters button must go with the labels, or it
+    -- would take clicks under the plugin's footer.
+    local core = f.totalsBar.core
+    check("the totals bar's content hangs off one child", core ~= nil and core:GetParent() == f.totalsBar)
+    if core then
+        check("  the labels are on it", f.totalsBar.left:GetParent() == core
+            and f.totalsBar.mid:GetParent() == core and f.totalsBar.right:GetParent() == core)
+        check("  and so is the hidden-characters button", f.totalsBar.hiddenBtn:GetParent() == core)
+    end
     local _, fhRel, _, _, fhY = f.frozenHeader:GetPoint(1)
     check("and the Name column header, at the same height as before",
           fhRel == sidebar and fhY == -4, tostring(fhY))

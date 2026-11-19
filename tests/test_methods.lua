@@ -26,12 +26,12 @@ local function loadToc(toc, dir)
     end
 end
 loadToc("AltStable.toc", "")
-for _, p in ipairs({ "Warband", "Instances", "Roster", "Professions" }) do
+for _, p in ipairs({ "Warband", "Instances", "Roster", "Professions", "Legacy" }) do
     loadToc("AltStable" .. p .. ".toc", "Plugins/" .. p .. "/")
 end
 
 -- The login: ADDON_LOADED per folder, then every registered event once.
-for _, a in ipairs({ "AltStable", "AltStableWarband", "AltStableInstances", "AltStableRoster", "AltStableProfessions" }) do
+for _, a in ipairs({ "AltStable", "AltStableWarband", "AltStableInstances", "AltStableRoster", "AltStableProfessions", "AltStableLegacy" }) do
     try(WoW.fire, "ADDON_LOADED", a)
 end
 try(WoW.fire, "PLAYER_LOGIN")
