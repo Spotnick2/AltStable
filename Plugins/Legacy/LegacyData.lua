@@ -57,6 +57,10 @@ D.SECTIONS = {
     { key = "other",     label = "Other",            cats = {} },
 }
 
+-- Categories whose challenges are steps of one sequence with nothing to
+-- count: shown as one row of steps (rank 3, 7, 10, 13, 14; week 4, 7, 10).
+D.MILESTONES = { [15597] = "PvP rank", [15620] = "Field of Honor" }
+
 D.GRID = {
     -- Set A
     [61502] = { "class", "DRUID", 25, "A" },

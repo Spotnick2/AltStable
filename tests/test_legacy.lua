@@ -311,10 +311,69 @@ check("a reputation is a number, not a checklist", av.numeric)
 eq("  0 of 42,000", L.ProgressText(av), "0 / 42,000")
 check("  and no 'finish' for it", av.action == nil)
 eq("  nor a part list repeating it", #av.parts, 0)
-local foh = row("pvp", 63340)
+local foh = L.ChallengeRow(s.challenges[63340], "pvp")
 check("one plain criterion is the challenge itself: open, no 0/1", foh.nocrit)
 check("  no part list and no 'Complete ...' repeating its name", #foh.parts == 0 and foh.action == nil)
+check("  and no 'Account', as on the rank rows: nothing to attribute", foh.char == nil)
 eq("PvP holds the reputations and the Field of Honor weeks", #section("pvp").rows, 2)
+
+-- The Field of Honor weeks read as one row of steps, as a class reads as one
+-- row of levels; each step keeps its own state.
+local weeks = row("pvp", "m15620")
+check("the Field of Honor weeks are one row", weeks ~= nil and weeks.milestone)
+eq("  labelled as the sequence", weeks and weeks.label, "Field of Honor")
+eq("  one step per week", weeks and #weeks.steps, 1)
+eq("  named short", weeks and weeks.steps[1].short, "Week 4")
+check("  not earned", weeks and weeks.steps[1].done == false and weeks.done == false)
+eq("the section still counts every challenge", section("pvp").total, 2)
+eq("rank names shorten to their number", L.ShortName("Rank 13"), "13")
+eq("  week names to the week", L.ShortName("Field of Honor: Week 10"), "Week 10")
+
+-- Several steps, some earned: the row is earned only when all are.
+local g = L.GroupMilestones({
+    { ch = { cat = 15597, name = "Rank 3", icon = 1 }, done = true },
+    { ch = { cat = 15598, name = "Master of Alterac Valley" }, done = false },
+    { ch = { cat = 15597, name = "Rank 7" }, done = false },
+})
+eq("ranks group into one row, in place, around other rows", #g, 2)
+eq("  the steps in order", g[1].steps[1].short .. "," .. g[1].steps[2].short, "3,7")
+check("  earned, then not", g[1].steps[1].done and not g[1].steps[2].done)
+check("  so the row is not earned", g[1].done == false)
+eq("  the other row kept after it", g[2].ch.name, "Master of Alterac Valley")
+local late = L.GroupMilestones({
+    { ch = { cat = 15620, name = "Field of Honor: Week 4" }, done = false },
+    { ch = { cat = 15620, name = "Field of Honor: Week 7" }, done = true },
+})
+check("  a later step earned does not make the row earned", late[1].done == false)
+
+-- Every step inside the width, down to the panel's minimum (Codex on #382:
+-- a 426-wide viewport put Rank 14 past the edge).
+-- And below it, where the sheet fits a small display (Codex's follow-up: a
+-- 768 UI at 1.25 with the full sidebar leaves about 309): the steps wrap
+-- under the name rather than run off the edge.
+for _, case in ipairs({ { n = 5, minW = 44, label = "5 ranks" }, { n = 3, minW = 84, label = "3 weeks" } }) do
+    for _, w in ipairs({ 260, 309, 426, 600, 900 }) do
+        local startX = math.floor(w * 0.40)
+        local pos, stepW, lines = L.StepLayout(case.n, w, startX, case.minW)
+        eq(("%s at %d: every step placed"):format(case.label, w), #pos, case.n)
+        local inside, clearOfName, overlap = true, true, false
+        for i, p in ipairs(pos) do
+            if p.x < 0 or p.x + stepW > w then inside = false end
+            if p.line == 0 and p.x < 140 then clearOfName = false end
+            for j = i + 1, #pos do
+                local q = pos[j]
+                if q.line == p.line and math.abs(q.x - p.x) < stepW then overlap = true end
+            end
+        end
+        check(("  each one inside the width (%d wide, %d line(s))"):format(stepW, lines), inside)
+        check("  wide enough for its label", stepW >= case.minW)
+        check("  clear of the row's name on its line", clearOfName)
+        check("  and none on top of another", not overlap)
+        if w >= 426 then eq("  on one line where there is room", lines, 1) end
+    end
+end
+local _, _, narrowLines = L.StepLayout(3, 309, 123, 84)
+check("at 309 the weeks wrap under the name", narrowLines > 1)
 eq("big numbers get commas", L.Number(1234567), "1,234,567")
 eq("  small ones none", L.Number(150), "150")
 check("no Other section when nothing is left over", section("other") == nil)
@@ -379,6 +438,8 @@ eq("  but the total is known", ex0.total, 43)
 AltStableLegacyDB.explore = {}
 local exNone = L.ChallengeRow(s.challenges[62382], "adventure")
 check("no character seen: no total either", exNone.char == nil and exNone.total == nil)
+eq("  and a dash for progress, not 0/43 or ?", L.ProgressText(exNone), "|cff666666\226\128\148|r")
+eq("seen with nothing explored: 0/43 is the fact", L.ProgressText(ex0), "0/43 \194\183 0%")
 
 -- Reading Explore Azeroth keeps this character's.
 local me = UnitGUID("player")

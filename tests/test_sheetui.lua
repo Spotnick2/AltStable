@@ -2822,6 +2822,26 @@ do
     local savedAnim = AltStableConfig.enableOpenAnimation
     AltStableConfig.enableOpenAnimation = false
 
+    -- The grid's horizontal scrollbar stays hidden under a plugin tab, even
+    -- when a refresh finds the grid too wide (#373: it showed over Legacy's
+    -- panel, which stops above the footer, as Roster's does).
+    do
+        local body = f.bodyScroll
+        local realW = body.GetWidth
+        body.GetWidth = function() return 10 end      -- every grid is too wide now
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        AltStable.RefreshSheet()
+        check("a grid too wide shows its scrollbar on a sheet tab", f.hScrollBar:IsShown())
+        pbtn:GetScript("OnClick")(pbtn)
+        AltStable.RefreshSheet()
+        check("  but not under a plugin tab, refresh or not", not f.hScrollBar:IsShown())
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        AltStable.RefreshSheet()
+        check("  and it is back on the sheet tab", f.hScrollBar:IsShown())
+        body.GetWidth = realW
+        AltStable.RefreshSheet()
+    end
+
     -- A display change that resizes the window re-lays the open plugin tab out
     -- (Codex, #191): it places its contents from the panel's size, and the
     -- refit alone re-laid out only a maximized window.

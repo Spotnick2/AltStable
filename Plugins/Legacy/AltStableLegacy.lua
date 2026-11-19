@@ -333,7 +333,9 @@ function L.ChallengeRow(c, secKey)
         elseif #crit == 1 then
             -- One plain criterion (a Field of Honor week) is the challenge
             -- itself: "0/1" and "Complete <its name>" would say nothing more.
-            r.nocrit = true
+            -- No "Account" either, as on the rank rows beside it: there is no
+            -- progress to attribute to anyone.
+            r.nocrit, r.char = true, nil
             return r
         end
         local d = 0
@@ -456,11 +458,42 @@ function L.Model(s, alts)
             end
         end
         if #rows > 0 or sec.key ~= "other" then
-            m.sections[#m.sections + 1] = { key = sec.key, label = sec.label, rows = rows, done = done,
-                                            focus = L.Focus(rows) }
+            m.sections[#m.sections + 1] = { key = sec.key, label = sec.label, rows = L.GroupMilestones(rows),
+                                            done = done, total = #rows, focus = L.Focus(rows) }
         end
     end
     return m
+end
+
+-- "Rank 3" -> "3", "Field of Honor: Week 4" -> "Week 4".
+function L.ShortName(name)
+    name = tostring(name or "")
+    return name:match("(Week %d+)$") or name:match("(%d+)$") or name
+end
+
+-- A sequence of milestones with nothing to count (the PvP ranks, the Field
+-- of Honor weeks) reads as one row of steps, as a class reads as one row of
+-- levels; each step keeps its own earned state and tooltip. Rows of other
+-- categories pass through, in place.
+function L.GroupMilestones(rows)
+    local out, byCat = {}, {}
+    for _, r in ipairs(rows) do
+        local label = D.MILESTONES[r.ch.cat]
+        if label then
+            local g = byCat[r.ch.cat]
+            if not g then
+                g = { milestone = true, id = "m" .. r.ch.cat, label = label, icon = r.ch.icon,
+                      steps = {}, parts = {}, done = true }
+                byCat[r.ch.cat] = g
+                out[#out + 1] = g
+            end
+            g.steps[#g.steps + 1] = { ch = r.ch, done = r.done, short = L.ShortName(r.ch.name) }
+            g.done = g.done and r.done and true or false
+        else
+            out[#out + 1] = r
+        end
+    end
+    return out
 end
 
 -- The footer: points earned, out of the account's maximum, and the next
@@ -494,7 +527,8 @@ function L.ProgressText(r)
     if r.done then return CHECK end
     if r.unknown then return "|cff888888Not read yet|r" end
     if r.nocrit then return DASH end
-    if not r.total then return "|cff888888?|r" end
+    -- Explorer with no character seen: nothing captured, so no 0/43 either.
+    if not r.total then return r.perChar and DASH or "|cff888888?|r" end
     if r.numeric then return L.Number(r.have) .. " / " .. L.Number(r.total) end
     local pct = r.total > 0 and math.floor(100 * r.have / r.total + 0.5) or 0
     return ("%d/%d \194\183 %d%%"):format(r.have, r.total, pct)
@@ -613,6 +647,7 @@ local function MakeGridRow()
     f.icon:SetPoint("LEFT", f, "LEFT", 6, 0)
     f.name = FS(f)
     f.name:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
+    f.name:SetWordWrap(false)
     f.alt = FS(f)
     f.alt:SetWordWrap(false)
     f.cells = {}
@@ -639,7 +674,9 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     y = y + TITLE_ROW
 
     local cellsX = w - 3 * CELL_W - 4
-    local altX = 116
+    -- The name column takes its longest name: "Leatherworking" ran into
+    -- the crafter beside it at the classes' width.
+    local altX = (kind == "class") and 116 or 150
     local h = Acquire("gridHead", MakeGridHead)
     h:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
     h:SetWidth(w)
@@ -663,6 +700,9 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
         f.alt:ClearAllPoints()
         f.alt:SetPoint("LEFT", f, "LEFT", altX, 0)
         f.alt:SetWidth(math.max(40, cellsX - altX - 6))
+        -- A guaranteed gap before the next column: a name too long for its
+        -- cell shortens with an ellipsis instead of running into the alt.
+        f.name:SetWidth(altX - 34)
         if kind == "class" then
             local cr, cg, cb = 1, 1, 1
             if AltStable.GetClassRGB then cr, cg, cb = AltStable.GetClassRGB(r.key) end
@@ -834,6 +874,107 @@ local function Columns(w)
     return math.floor(w * 0.40), math.floor(w * 0.60), math.floor(w * 0.60) + 110
 end
 
+-- One step of a milestone row: its challenge, and whether it is earned.
+local function StepOnEnter(self)
+    local st = self.step
+    if not st then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(st.ch.name, 1, 1, 1)
+    if st.ch.desc then GameTooltip:AddLine(st.ch.desc, 0.8, 0.8, 0.8, true) end
+    if st.done then
+        GameTooltip:AddLine("Earned" .. (st.ch.date and (" on " .. st.ch.date) or ""), 0.4, 1, 0.4)
+    else
+        GameTooltip:AddLine("Not earned yet.", 0.7, 0.7, 0.7)
+    end
+    GameTooltip:Show()
+end
+
+local MAX_STEPS = 6
+local STEP_W = 76
+local NAME_END = 140    -- where a milestone row's own name has ended
+
+local WRAP_X = 54       -- where wrapped steps start, under the row's name
+
+-- Where each of a row's n steps goes, so every one ends inside the width
+-- (Codex on #382: Rank 14 went past the edge at the panel's minimum, and
+-- again where the sheet fits a small display below that minimum). Returns
+-- { x, line } per step, the step width, and the number of lines.
+--   * Beside the name: what is left after startX, up to STEP_W each.
+--   * Too little for the widest label: start earlier, but not before the
+--     name ends.
+--   * Still too little: wrap onto lines under the name, as many per line as
+--     fit.
+function L.StepLayout(n, w, startX, minW)
+    local out = {}
+    if n <= 0 then return out, STEP_W, 1 end
+    local stepW = math.min(STEP_W, math.floor((w - startX - 8) / n))
+    if stepW >= minW then
+        for i = 1, n do out[i] = { x = startX + (i - 1) * stepW, line = 0 } end
+        return out, stepW, 1
+    end
+    if w - 8 - n * minW >= NAME_END then
+        local x0 = w - 8 - n * minW
+        for i = 1, n do out[i] = { x = x0 + (i - 1) * minW, line = 0 } end
+        return out, minW, 1
+    end
+    local perLine = math.max(1, math.floor((w - 8 - WRAP_X) / minW))
+    for i = 1, n do
+        out[i] = { x = WRAP_X + ((i - 1) % perLine) * minW, line = 1 + math.floor((i - 1) / perLine) }
+    end
+    return out, minW, 1 + math.ceil(n / perLine)
+end
+
+local function MakeMilestoneRow()
+    local f = CreateFrame("Frame", nil, content)
+    f:SetHeight(ROW_H)
+    f.icon = f:CreateTexture(nil, "ARTWORK")
+    f.icon:SetSize(16, 16)
+    -- On the first line: a wrapped row is taller, its name stays on top.
+    f.icon:SetPoint("TOPLEFT", f, "TOPLEFT", 32, -(ROW_H - 16) / 2)
+    f.name = FS(f)
+    f.name:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
+    f.steps = {}
+    for i = 1, MAX_STEPS do
+        local b = CreateFrame("Button", nil, f)
+        b:SetSize(STEP_W, ROW_H)
+        b.text = FS(b, "GameFontHighlight", "LEFT")
+        b.text:SetAllPoints()
+        b:SetScript("OnEnter", StepOnEnter)
+        b:SetScript("OnLeave", HideTip)
+        f.steps[i] = b
+    end
+    return f
+end
+
+-- A sequence as one row: "PvP rank   [check] 3   7   10   13   14", a step
+-- earned in green with its check, one not earned yet dim.
+function L.DrawMilestones(row, y, w, startX)
+    local f = Acquire("milestoneRow", MakeMilestoneRow)
+    f:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    f:SetWidth(w)
+    f.icon:SetTexture(row.icon)
+    f.name:SetText(row.done and ("|cff9fe09f" .. row.label .. "|r") or row.label)
+    -- "[check] 14" needs about 44; "[check] Week 10" about 84.
+    local minW = 44
+    for _, st in ipairs(row.steps) do if #st.short > 2 then minW = 84 end end
+    local pos, stepW, lines = L.StepLayout(math.min(#row.steps, MAX_STEPS), w, startX, minW)
+    f:SetHeight(ROW_H * lines)
+    for i, b in ipairs(f.steps) do
+        local st = row.steps[i]
+        b.step = st
+        if st and pos[i] then
+            b:ClearAllPoints()
+            b:SetWidth(stepW)
+            b:SetPoint("TOPLEFT", f, "TOPLEFT", pos[i].x, -pos[i].line * ROW_H)
+            b.text:SetText(st.done and (CHECK .. " |cff9fe09f" .. st.short .. "|r") or ("|cff9a9a9a" .. st.short .. "|r"))
+            b:Show()
+        else
+            b:Hide()
+        end
+    end
+    return y + ROW_H * lines
+end
+
 function L.DrawSection(sec, y, w)
     local open = DB().open[sec.key] and true or false
     local b = Acquire("section", MakeSection)
@@ -845,8 +986,9 @@ function L.DrawSection(sec, y, w)
     b.line:SetColorTexture(sep[1], sep[2], sep[3], sep[4] or 1)
     b.arrow:SetTexture(open and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
     b.label:SetText(sec.label)
-    b.count:SetText(("%d / %d"):format(sec.done, #sec.rows))
-    b.focus:SetText(sec.focus and ("|cffaaaaaa" .. L.FocusText(sec) .. "|r") or "")
+    b.count:SetText(("%d / %d"):format(sec.done, sec.total or #sec.rows))
+    -- Closed only: open, the rows below say the same thing.
+    b.focus:SetText((not open and sec.focus) and ("|cffaaaaaa" .. L.FocusText(sec) .. "|r") or "")
     y = y + SECTION_H
     if not open then return y end
 
@@ -861,6 +1003,9 @@ function L.DrawSection(sec, y, w)
         return y + CRIT_H
     end
     for _, row in ipairs(sec.rows) do
+        if row.milestone then
+            y = L.DrawMilestones(row, y, w, charX)
+        else
         local f = Acquire("challengeRow", MakeChallengeRow)
         f:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
         f:SetWidth(w)
@@ -921,6 +1066,7 @@ function L.DrawSection(sec, y, w)
                     and (L.Number(math.min(p.q or 0, p.req)) .. " / " .. L.Number(p.req)) or "")
             end
             y = y + perCol * CRIT_H
+        end
         end
     end
     return y
