@@ -580,6 +580,13 @@ local collapsedMe = L.Me(liveAlts)
 eq("a collapsed Professions header keeps the saved skill", collapsedMe.rec.prof_Tailoring, 146)
 check("  the starred Tailoring row stays under This character",
       L.BucketItem(s.challenges[tailor150], liveAlts, collapsedMe, s) ~= nil)
+-- Then a gear swap rescans the saved record with the header still collapsed
+-- (Codex on #383): the scanner keeps Tailoring, so the row still shows.
+AltStable.ScanSkills(AltStableDB[WoW.player.guid])
+eq("a rescan under the collapsed header keeps the saved skill", AltStableDB[WoW.player.guid].prof_Tailoring, 146)
+local rescanMe = L.Me(L.OwnAlts())
+check("  and the starred Tailoring row still shows under This character",
+      L.BucketItem(s.challenges[tailor150], L.OwnAlts(), rescanMe, s) ~= nil)
 WoW.level = savedLevel
 AltStableDB[WoW.player.guid] = nil
 

@@ -462,12 +462,39 @@ end
 -- Split out of ScanCharacter so it can be driven directly in tests. All of
 -- ScanCharacter needs ~30 stubbed APIs; this needs two, and it is where the
 -- tuple-to-struct change actually bites.
+-- The secondaries by the canonical name the loop sees, and the fields each fills.
+local SECONDARY_FIELDS = {
+    ["Fishing"]   = { "fishing", "fishingMax" },
+    ["Cooking"]   = { "cooking", "cookingMax" },
+    ["First Aid"] = { "firstAid", "firstAidMax" },
+    ["Riding"]    = { "riding", "ridingMax" },
+}
+local SKILL_FIELD_SET = {}
+for _, f in pairs(SECONDARY_FIELDS) do SKILL_FIELD_SET[f[1]], SKILL_FIELD_SET[f[2]] = true, true end
+local PROF_SLOT_FIELDS = { "prof1", "prof1Skill", "prof1Max", "prof2", "prof2Skill", "prof2Max" }
+
 function AltStable.ScanSkills(char)
     -- An empty list is "not readable", not "no skills": a character always has
     -- header lines. The stored values stay, as reputations' do (docs/AUDIT.md,
     -- A2), and the reset below runs only once the list is there.
     local n = GetNumSkillLines()
     if not n or n == 0 then return end
+
+    -- A collapsed header hides its lines from this list: Blizzard's Skills
+    -- panel builds its rows from the same list and never checks isCollapsed
+    -- (SkillsFrame.lua, 70959; Codex on #383). With one collapsed, the read
+    -- cannot tell a hidden skill from an unlearned one, so whatever it did not
+    -- see keeps its saved value (restored after the loop).
+    local old
+    for i = 1, n do
+        local info = GetSkillLineInfo(i)
+        if info and info.isHeader and info.isCollapsed then old = {} break end
+    end
+    if old then
+        for k, v in pairs(char) do
+            if type(k) == "string" and (k:find("^prof") or SKILL_FIELD_SET[k]) then old[k] = v end
+        end
+    end
 
     -- primary professions (legacy fields kept for compat)
     char.prof1 = ""
@@ -564,6 +591,23 @@ function AltStable.ScanSkills(char)
                     char.prof2Skill = rank or 0
                     char.prof2Max = maxRank or 0
                 end
+            end
+        end
+    end
+
+    if old then
+        for _, name in ipairs(ALL_PROFESSIONS) do
+            if not seen[name] then
+                char["prof_"..name], char["profmax_"..name] = old["prof_"..name], old["profmax_"..name]
+            end
+        end
+        for name, f in pairs(SECONDARY_FIELDS) do
+            if not seen[name] then char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0 end
+        end
+        -- The primaries sit under one header: none seen means it is the one collapsed.
+        if primaryCount == 0 then
+            for _, k in ipairs(PROF_SLOT_FIELDS) do
+                if old[k] ~= nil then char[k] = old[k] end
             end
         end
     end
