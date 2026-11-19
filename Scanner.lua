@@ -888,6 +888,9 @@ function AltStable.ScanCharacter()
     -- Bag space (#346): the carried bags. The bank waits for a visit.
     AltStable.ScanBagSpace(char)
 
+    -- Hearthstone (#371): the inn. Kept when it can't be read (early login).
+    char.bind = API.BindLocation() or char.bind
+
     --------------------------------------------------------
     -- Rested XP
     --

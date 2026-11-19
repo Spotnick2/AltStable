@@ -320,6 +320,21 @@ function API.CurrencyQuantity(id)
 end
 
 ----------------------------------------------------------------------------
+-- Hearthstone (#371)
+----------------------------------------------------------------------------
+
+-- GetBindLocation() (global, in the 70959 dump) names the inn's subzone in the
+-- client's language ("Thunderbrew Distillery"). nil when the client has no
+-- answer (empty, secret, or the call failed), so the caller keeps the last one.
+function API.BindLocation()
+    local ok, v = pcall(GetBindLocation)
+    if not ok or type(v) ~= "string" or API.IsSecretValue(v) then return nil end
+    v = v:gsub("[\r\n]", " ")   -- one line on the wire
+    if v == "" then return nil end
+    return v
+end
+
+----------------------------------------------------------------------------
 -- Addon loading
 ----------------------------------------------------------------------------
 

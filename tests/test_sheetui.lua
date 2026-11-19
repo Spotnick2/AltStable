@@ -3980,6 +3980,23 @@ do
     check("back on, it is back", HasColumn("bags_free") and AltStableConfig.sheetBagsColumn == true)
     AltStableConfig.sheetBagsColumn = nil
 
+    -- The Hearthstone column (#371): the same, with its own option.
+    AltStableDB.a.bind = "The Crossroads"
+    Open("summary")
+    check("the Hearthstone column shows by default", HasColumn("bind"))
+    check("  the option shows it checked", T.OptHearthColumn:GetChecked())
+    Click("bind")
+    eq("  it sorts", (T.SortState()), "bind")
+    local oh = T.OptHearthColumn
+    oh:SetChecked(false); oh:GetScript("OnClick")(oh)
+    eq("turned off, it is saved off", AltStableConfig.sheetHearthColumn, false)
+    check("  the column goes at once", not HasColumn("bind"))
+    eq("  and its sort falls back to level", (T.SortState()), "level")
+    check("  Bags stays", HasColumn("bags_free"))
+    oh:SetChecked(true); oh:GetScript("OnClick")(oh)
+    check("back on, it is back", HasColumn("bind") and AltStableConfig.sheetHearthColumn == true)
+    AltStableConfig.sheetHearthColumn = nil
+
     -- Who wants a recipe, on its tooltip (#271): on unless turned off.
     local ow = T.OptWishTooltip
     check("the wishlist tooltip option shows checked by default", ow and ow:GetChecked())
@@ -4792,6 +4809,7 @@ do
     eq("grouping is on General", On(T.OptGroupBtns[1]), pages.general)
     eq("  with the sort order", On(T.OptRememberSort), pages.general)
     eq("  the Bags column", On(T.OptBagsColumn), pages.general)
+    eq("  the Hearthstone column", On(T.OptHearthColumn), pages.general)
     eq("  the item counts", On(T.OptItemCounts), pages.general)
     eq("  the wishlist on recipe tooltips", On(T.OptWishTooltip), pages.general)
     eq("  and mail tracking", On(T.OptWarbandMail), pages.general)

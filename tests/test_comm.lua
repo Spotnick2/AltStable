@@ -1895,6 +1895,44 @@ end
 WoW.reset()
 
 ------------------------------------------------------------
+-- Hearthstone (#371)
+------------------------------------------------------------
+-- Read on HEARTHSTONE_BOUND, stamped so a delta carries it, synced as text,
+-- and cleared when an accepted record no longer carries it.
+WoW.reset()
+do
+    check(T.frame:IsEventRegistered("HEARTHSTONE_BOUND"), "the core listens for the hearthstone being set")
+    local guid = UnitGUID("player")
+    AltStableDB = { [guid] = { guid = guid, name = "Live", class = "MAGE", bind = "Old Inn",
+                               lastUpdate = WoW.now - 500 } }
+    local watermark = WoW.now - 100
+    check(not T.SerializeFullDB(false, watermark):find("bind:", 1, true),
+          "a character older than the watermark is not in the delta")
+    WoW.bindLocation = "Bloodhoof Village"
+    onEvent(T.frame, "HEARTHSTONE_BOUND")
+    eq(AltStableDB[guid].bind, "Bloodhoof Village", "a new hearth is read at once")
+    check(T.SerializeFullDB(false, watermark):find("bind:Bloodhoof Village", 1, true) ~= nil,
+          "  and the delta carries it")
+    WoW.bindLocation = nil
+    onEvent(T.frame, "HEARTHSTONE_BOUND")
+    eq(AltStableDB[guid].bind, "Bloodhoof Village", "  an empty answer keeps the known inn")
+
+    local wire = T.SerializeChar({ guid = "Player-Hs-2", name = "Hs", class = "MAGE", level = 30,
+                                   bind = "Gallows' End Tavern", lastUpdate = 100 })
+    check(wire:find("bind:Gallows' End Tavern", 1, true) ~= nil, "the inn rides the wire")
+    eq(T.DeserializeChar(wire).bind, "Gallows' End Tavern", "  and arrives as text")
+
+    AltStableDB = { ["Player-Hs-2"] = { guid = "Player-Hs-2", name = "Hs", class = "MAGE",
+                                        level = 30, bind = "Gallows' End Tavern", lastUpdate = 100 } }
+    T.DeserializeFullDB(T.SerializeChar(
+        { guid = "Player-Hs-2", name = "Hs", class = "MAGE", level = 30, lastUpdate = 200 }
+    ) .. "\n" .. T.CHAR_SEP, "Peer")
+    eq(AltStableDB["Player-Hs-2"].lastUpdate, 200, "a newer record without the inn is accepted")
+    eq(AltStableDB["Player-Hs-2"].bind, nil, "  and the old inn doesn't linger")
+end
+WoW.reset()
+
+------------------------------------------------------------
 -- Retired fields (#8)
 ------------------------------------------------------------
 -- Nothing reads them any more. Stored records still hold them, so they must

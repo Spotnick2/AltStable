@@ -72,7 +72,7 @@ local SECTIONS = {
         preferH = 400,
         fields = {
             "class","race","level","ilvl",
-            "guild","restPercent","money","bags_free","lastUpdate",
+            "guild","restPercent","money","bags_free","bind","lastUpdate",
         },
     },
     {
@@ -709,10 +709,11 @@ end
 local function GroupsByFaction()
     return (AltStableConfig and AltStableConfig.sheetGroupByFaction) == true
 end
--- The Bags column (#346, Options): on unless turned off. Off only hides it;
--- the bag space is still read and synced, so it is current when turned back on.
-local function BagsColumnOn()
-    return not (AltStableConfig and AltStableConfig.sheetBagsColumn == false)
+-- A column with an option (Bags #346, Hearthstone #371): on unless turned
+-- off. Off only hides it; the data is still read and synced, so it is current
+-- when turned back on.
+local function ColumnOn(col)
+    return not (col.option and AltStableConfig and AltStableConfig[col.option] == false)
 end
 
 -- A character's faction as the groups use it: the scanner's English tag
@@ -735,10 +736,9 @@ local function BuildScrollableColsForSection(section)
     -- Ruleset column goes in after Race, on every tab. Faction groups don't
     -- say it either.
     local ungrouped = not GroupsByRealm()
-    local bags = BagsColumnOn()
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
-        if col and (bags or col.type ~= "bags") then scrollableCols[#scrollableCols+1] = col end
+        if col and ColumnOn(col) then scrollableCols[#scrollableCols+1] = col end
         if field == "race" and ungrouped then
             scrollableCols[#scrollableCols+1] = ColumnFor("ruleset")
         end
@@ -4259,6 +4259,24 @@ local function CreateFrameIfNeeded()
     end)
     optBagsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
     AltStable._test.OptBagsColumn = optBagsCheck
+    Y = Y - 22
+
+    -- The Hearthstone column on Account Summary (#371): on unless turned off.
+    local optHearthCheck = MakeOptCheckRow("sheetHearthColumn",
+        "Show the Hearthstone column", Y,
+        function(checked)
+            AltStable.SetConfigValue("sheetHearthColumn", checked)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end)
+    optHearthCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Hearthstone column", 1, 1, 1)
+        GameTooltip:AddLine("Where each character's hearthstone takes them, on Account Summary. "
+            .. "Read when they log in and when they set it at an inn.", nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    optHearthCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptHearthColumn = optHearthCheck
     Y = Y - 22
 
     -- How the sheet groups its characters: one choice of four, over the two
