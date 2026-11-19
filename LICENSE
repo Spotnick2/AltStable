@@ -65,3 +65,8 @@ terms and remains the work of its authors:
 Media/ contains artwork generated for this addon and textures referenced by
 file id from the game client; the latter are Blizzard's and are not
 redistributed here.
+
+Plugins/Loremaster (shipped as the AltStableLoremaster addon) is NOT covered by
+the MIT License above. It is licensed under the GNU General Public License,
+version 3 or later: its quest table is derived from QuestieDB and Questie
+(GPLv3). Its own LICENSE.md and NOTICE.md ship beside it.

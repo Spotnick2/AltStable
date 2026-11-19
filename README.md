@@ -328,6 +328,11 @@ LibDeflate (zlib), LibGlass-1.0, LibShowcase-1.0, LibAccountSync-1.0 and LibMail
 fetched at build time), and ChatThrottleLib (no stated licence — embedded by convention). The same note
 travels in `LICENSE`, which ships inside the addon; this file does not.
 
+The **Loremaster** plugin (`Plugins/Loremaster`, the `AltStableLoremaster` folder) is the exception:
+it is **GPL-3.0-or-later**, because its quest table is derived from
+[QuestieDB](https://github.com/Questie/QuestieDB) and [Questie](https://github.com/Questie/Questie)
+(GPLv3). Its `LICENSE.md` and `NOTICE.md` ship with it.
+
 ---
 
 *For addon authors: what other addons can read from AltStable is in

@@ -139,6 +139,7 @@ WoW.onReset[#WoW.onReset + 1] = function()
         WoW.player.name = "Example Surname"
         WoW.player.realm, WoW.player.normalizedRealm = "Classic Beta PvE", "ClassicBetaPvE"
         WoW.player.class, WoW.player.classLocalized, WoW.player.race = "PRIEST", "Priest", "Scourge"
+        WoW.player.classID, WoW.player.raceID = 5, 5
     end
 end
 
@@ -1465,7 +1466,8 @@ function GetFramerate() return 60 end
 -- disagreeing is a real trap.
 WoW.player = { name = "Example Surname", realm = "Classic Beta PvE",
                normalizedRealm = "ClassicBetaPvE", guid = "Player-1234-0000AAAA",
-               class = "PRIEST", classLocalized = "Priest", race = "Scourge" }
+               class = "PRIEST", classLocalized = "Priest", race = "Scourge",
+               classID = 5, raceID = 5 }
 
 -- SURNAMES ARE SPLIT ACROSS TWO RETURNS on 1.60.1.70009: "Example Surname"
 -- arrives as ("Example", "Surname"), where through 69977 it was one string.
@@ -1492,8 +1494,11 @@ function GetPlayerInfoByGUID()
 end
 function GetRealmName() return WoW.player.realm end
 function GetNormalizedRealmName() return WoW.player.normalizedRealm end
-function UnitClass(unit) if unit == "player" then return WoW.player.classLocalized, WoW.player.class end end
-function UnitRace(unit) if unit == "player" then return "Undead", WoW.player.race end end
+-- The third returns are the IDs: UnitClass -> className, classFile, classID and
+-- UnitRace -> raceName, raceFile, raceID (the 70959 dump; Skyborne measured as
+-- race 95, forever-api-notes.md "Completed quests").
+function UnitClass(unit) if unit == "player" then return WoW.player.classLocalized, WoW.player.class, WoW.player.classID end end
+function UnitRace(unit) if unit == "player" then return "Undead", WoW.player.race, WoW.player.raceID end end
 function UnitSex() return 3 end
 
 -- Mainline FrameXML's text compare (Blizzard_SharedXML/SortUtil.lua, build
@@ -1978,7 +1983,7 @@ local allowNil = {}
 -- addon, its plugins and probe, the frames it looks up by name before making
 -- them, and the Companion's manifest (a separate addon folder).
 for _, n in ipairs({ "AltStable", "AltStableDB", "AltStableConfig", "AltStablePortraits", "AltStableAltsDB", "AltStableRosterDB" }) do allowNil[n] = true end
-for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableProfessionsReagents", "AltStableLegacyDB", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
+for _, n in ipairs({ "AltStableWarbandDB", "AltStableWarbandModel", "AltStableProfessionsDB", "AltStableProfessionsReagents", "AltStableLegacyDB", "AltStableLoremasterDB", "AltStableCutoutManifest", "AltStableSheet", "AltStableBodyScrollScrollBar" }) do allowNil[n] = true end
 for _, n in ipairs({ "AltStableCopyPrompt", "AltStableForgetPrompt", "AltStableSyncAskPrompt", "AltStableProbe", "AltStableProbeCharDB", "AltStableProbeMachineDB" }) do allowNil[n] = true end
 -- Libraries, before their file creates them.
 for _, n in ipairs({ "LibStub", "ChatThrottleLib" }) do allowNil[n] = true end

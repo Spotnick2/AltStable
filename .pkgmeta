@@ -48,6 +48,9 @@ move-folders:
   AltStable/Plugins/Roster: AltStableRoster
   AltStable/Plugins/Professions: AltStableProfessions
   AltStable/Plugins/Legacy: AltStableLegacy
+  # GPL-3, unlike the rest (its quest table is derived from QuestieDB): its
+  # LICENSE.md and NOTICE.md travel with it.
+  AltStable/Plugins/Loremaster: AltStableLoremaster
 
 manual-changelog:
   filename: CHANGELOG.md
@@ -71,9 +74,6 @@ ignore:
   - README.md
   - CHANGELOG.md
   - Media/Raids/README.md
-  # The Loremaster plugin (#374) is being built in steps: its quest table lands
-  # before its TOC. Until the plugin itself does, nothing of it ships.
-  - Plugins/Loremaster
   # Scene documentation. The .tga files beside these DO ship - they are what the
   # client loads - but how the art was made is repository business, not a
   # download. The PNG masters and the reference screenshots are gitignored

@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: AltStable Loremaster
+## Notes: Quest progress by zone for every alt: quests done out of those each character can do, zone by zone, and its class quests
+## IconTexture: 8197123
+## Author: Spotnick
+## Version: @project-version@
+## Dependencies: AltStable
+## LoadOnDemand: 1
+## SavedVariables: AltStableLoremasterDB
+## X-License: GPL-3.0-or-later
+
+QuestData.lua
+Loremaster.lua
+AltStableLoremaster.lua
