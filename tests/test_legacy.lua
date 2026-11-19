@@ -252,6 +252,17 @@ end
 
 eq("Hunter: the next tier shows the best hunter's level", states(classRow("HUNTER")), "progress,later,later")
 eq("  21 of 25", L.CellText(classRow("HUNTER").cells[1]), "21/25")
+-- A starred later tier shows its own progress, beside its star (GPT-Astra on #389).
+eq("  the 45 tier: a dash", L.CellText(classRow("HUNTER").cells[2]), L.CellText({ state = "none" }))
+eq("  but starred, 21/45", L.CellText(classRow("HUNTER").cells[2], true), "21/45")
+eq("  a starred tier nobody can advance stays a dash", L.CellText(classRow("WARRIOR").cells[1], true),
+   L.CellText({ state = "none" }))
+
+-- The name column fits its widest name (GPT-Astra on #389: the crafters were cut).
+eq("crafts: Leatherworking at 91 starts the crafters at 131", L.NameColumnX("craft", 91), 131)
+eq("classes: Warlock at 50, at 90", L.NameColumnX("class", 50), 90)
+eq("  a width not measured yet keeps the fixed 150", L.NameColumnX("craft", 0), 150)
+eq("  never past it either", L.NameColumnX("class", 200), 116)
 eq("  named", classRow("HUNTER").best.name, "Kaleidria")
 eq("Priest: earned, then 30 of 45", states(classRow("PRIEST")), "done,progress,later")
 eq("Mage: an own-account alt counts", classRow("MAGE").best and classRow("MAGE").best.name, "Drakuza")
@@ -743,6 +754,25 @@ for i = 1, L.pools.gridRow.used do
 end
 eq("a starred cell's text stops short of the star", starredInset, -12)
 eq("  an unstarred cell's spans it", plainInset, 0)
+
+-- Drawn: a starred later tier carries its progress, and both grids' second
+-- columns start where the measured names end (the stub measures 40: 28+40+12).
+local h45 = gridID("class", "HUNTER", 45)
+AltStableLegacyDB.stars = { A = { [h45] = true } }
+L.Render()
+local laterText
+for i = 1, L.pools.gridRow.used do
+    for _, b in ipairs(L.pools.gridRow.list[i].cells) do
+        if b.cell and b.cell.ch and b.cell.ch.id == h45 then laterText = b.text:GetText() end
+    end
+end
+check("a starred later tier is drawn with its progress", laterText and laterText:find("/45", 1, true) ~= nil, tostring(laterText))
+local heads = {}
+for i = 1, L.pools.gridHead.used do
+    local _, _, _, hx = L.pools.gridHead.list[i].alt:GetPoint(1)
+    heads[#heads + 1] = hx
+end
+eq("  both grids' name columns fit their names", table.concat(heads, ","), "80,80")
 AltStableLegacyDB.stars = { A = {} }
 
 -- A Bucket List row listens for the right button too.

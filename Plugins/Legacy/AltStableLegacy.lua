@@ -765,10 +765,14 @@ end
 -- Words
 ------------------------------------------------------------
 
-function L.CellText(cell)
+-- A starred later tier shows its own progress, so the star sits on the goal
+-- the Bucket List names ("89/225" beside it, not a dash; GPT-Astra on #389).
+function L.CellText(cell, starred)
     local st = cell.state
     if st == "done" then return CHECK end
-    if st == "progress" then return ("%d/%d"):format(cell.have, cell.need) end
+    if st == "progress" or (st == "later" and starred) then
+        return ("%d/%d"):format(cell.have, cell.need)
+    end
     if st == "credit" then return "|cffffd100~|r" end
     if st == "unknown" then return "|cff888888?|r" end
     return DASH
@@ -961,6 +965,17 @@ local function MakeGridRow()
     return f
 end
 
+-- Where a grid's second column starts: after the icon (28), the widest name
+-- and a 12-unit gap. Never past the fixed widths it replaces ("Leatherworking"
+-- ran into the crafter at the classes' 116, so crafts had 150): a width the
+-- client has not measured yet (0) keeps those.
+local NAME_LEAD, NAME_GAP = 28, 12
+function L.NameColumnX(kind, widest)
+    local fixed = (kind == "class") and 116 or 150
+    if not widest or widest <= 0 then return fixed end
+    return math.min(fixed, math.ceil(NAME_LEAD + widest + NAME_GAP))
+end
+
 -- One grid: its title, column heads and rows, from (x, y) at width w.
 -- Returns the y below it.
 function L.DrawGrid(title, rows, kind, x, y, w, done, total)
@@ -972,9 +987,18 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     y = y + TITLE_ROW
 
     local cellsX = w - 3 * CELL_W - 4
-    -- The name column takes its longest name: "Leatherworking" ran into
-    -- the crafter beside it at the classes' width.
-    local altX = (kind == "class") and 116 or 150
+    -- The name column takes its longest name, measured, and the names beside
+    -- it get the rest (GPT-Astra on #389: five of six crafters were cut).
+    local widest = 0
+    if not L.measure then
+        L.measure = FS(content)
+        L.measure:Hide()
+    end
+    for _, r in ipairs(rows) do
+        L.measure:SetText(r.label)
+        widest = math.max(widest, tonumber(L.measure:GetStringWidth()) or 0)
+    end
+    local altX = L.NameColumnX(kind, widest)
     local h = Acquire("gridHead", MakeGridHead)
     h:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
     h:SetWidth(w)
@@ -1036,10 +1060,10 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
             b:ClearAllPoints()
             b:SetPoint("LEFT", f, "LEFT", cellsX + (k - 1) * CELL_W, 0)
             b.cell, b.row = cell, r
-            b.text:SetText(L.CellText(cell))
             -- A starred cell centres its text left of the star: "150/225"
             -- (about 43 of the cell's 58) ran under it (owner's screenshot).
             local starred = cell.ch and L.IsStarred(cell.ch.id)
+            b.text:SetText(L.CellText(cell, starred))
             b.text:ClearAllPoints()
             b.text:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
             b.text:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", starred and -STAR_GAP or 0, 0)
