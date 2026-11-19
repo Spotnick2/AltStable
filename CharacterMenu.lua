@@ -182,7 +182,10 @@ end
 -- The frame
 ------------------------------------------------------------
 
-local root, panel, catcher, entries, subject
+-- `pick` is what a chosen entry does: the character's actions here, or the
+-- caller's own for a menu opened through AltStable.ShowMenu (the Legacy
+-- Bucket List's). One frame for every right-click menu, so they cannot drift.
+local root, panel, catcher, entries, pick
 
 -- Cursor position is in PHYSICAL pixels; frame offsets are in the frame's own
 -- scaled units. Dividing by the effective scale is not optional - skip it and
@@ -270,13 +273,13 @@ local function EntryButton(index)
     end)
     b:SetScript("OnClick", function(self)
         if self._disabled then return end
-        local id, char = self._id, subject
+        local id, fn = self._id, pick
         -- Closed BEFORE the action runs. Forget raises a confirmation, and a
         -- menu still sitting on screen underneath it - with a full-screen
         -- catcher swallowing the first click at the dialog - is the same bug
         -- as an invisible confirmation, wearing the other hat.
         AltStable.CloseCharacterMenu()
-        AltStable.CharacterMenuInvoke(id, char)
+        if fn then fn(id) end
     end)
 
     entries[index] = b
@@ -392,7 +395,7 @@ end
 
 function AltStable.CloseCharacterMenu()
     if not root then return end
-    subject = nil
+    pick = nil
     -- Let the list stop marking the row.
     --
     -- After the `if not root then return end` above, not before it - which is
@@ -409,18 +412,35 @@ function AltStable.CloseCharacterMenu()
     root:Hide()
 end
 
+local Open
+
 function AltStable.ShowCharacterMenu(char)
     if type(char) ~= "table" or not char.guid then return false end
     Build()
 
     local list = AltStable.CharacterMenuEntries(char)
     if #list == 0 then return false end
-    subject = char
+    AltStable.CloseCharacterMenu()   -- whatever menu was open gives way
+    pick = function(id) AltStable.CharacterMenuInvoke(id, char) end
     -- Mark the row this menu belongs to. Set AFTER the empty-list bail, so a
     -- menu that never opens does not leave a row lit with nothing to explain
     -- it.
     if AltStable.SetMenuSubject then AltStable.SetMenuSubject(char.guid) end
+    return Open(list)
+end
 
+-- Any other right-click menu, on the same frame: `list` takes the entries'
+-- shape above ({ id, text, title?, disabled?, why?, danger? }), and
+-- onPick(id) runs once the menu has closed.
+function AltStable.ShowMenu(list, onPick)
+    if type(list) ~= "table" or #list == 0 then return false end
+    Build()
+    AltStable.CloseCharacterMenu()
+    pick = onPick
+    return Open(list)
+end
+
+Open = function(list)
     local width, y = MIN_W, -PAD
     for i, e in ipairs(list) do
         local b = EntryButton(i)

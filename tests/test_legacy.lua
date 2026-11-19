@@ -42,6 +42,8 @@ dofile("Scanner.lua")
 dofile("tests/libglass.lua"); LoadGlass("AltStable")
 dofile("Theme.lua")
 dofile("Skin.lua")
+dofile("CharacterMenu.lua")   -- the right-click menu frame the Bucket List reuses
+dofile("RowRenderer.lua")     -- the gear palette (AltStable.QualityRGB) the points bar uses
 
 AltStable.plugins = {}
 dofile("Plugins/Legacy/LegacyData.lua")
@@ -250,6 +252,17 @@ end
 
 eq("Hunter: the next tier shows the best hunter's level", states(classRow("HUNTER")), "progress,later,later")
 eq("  21 of 25", L.CellText(classRow("HUNTER").cells[1]), "21/25")
+-- A starred later tier shows its own progress, beside its star (GPT-Astra on #389).
+eq("  the 45 tier: a dash", L.CellText(classRow("HUNTER").cells[2]), L.CellText({ state = "none" }))
+eq("  but starred, 21/45", L.CellText(classRow("HUNTER").cells[2], true), "21/45")
+eq("  a starred tier nobody can advance stays a dash", L.CellText(classRow("WARRIOR").cells[1], true),
+   L.CellText({ state = "none" }))
+
+-- The name column fits its widest name (GPT-Astra on #389: the crafters were cut).
+eq("crafts: Leatherworking at 91 starts the crafters at 131", L.NameColumnX("craft", 91), 131)
+eq("classes: Warlock at 50, at 90", L.NameColumnX("class", 50), 90)
+eq("  a width not measured yet keeps the fixed 150", L.NameColumnX("craft", 0), 150)
+eq("  never past it either", L.NameColumnX("class", 200), 116)
 eq("  named", classRow("HUNTER").best.name, "Kaleidria")
 eq("Priest: earned, then 30 of 45", states(classRow("PRIEST")), "done,progress,later")
 eq("Mage: an own-account alt counts", classRow("MAGE").best and classRow("MAGE").best.name, "Drakuza")
@@ -596,6 +609,33 @@ local tipText = ""
 for _, l in ipairs(L.BucketTooltipLines(tipItem)) do tipText = tipText .. l[1] .. " | " end
 check("a row's tooltip carries the whole instruction",
       tipText:find("What's left: Reached; the game has not counted it", 1, true) ~= nil, tipText)
+check("  and says a right-click has options", tipText:find("Right-click for options.", 1, true) ~= nil, tipText)
+
+-- A right-click opens the row's menu, on the character menu's frame: its
+-- name, then Remove (the owner: the only option for now). A left click only
+-- opens the row's parts.
+local rcStars = L.Stars()
+rcStars[62031] = true
+local rcItem = item(62031)
+L.BucketRowClick(rcItem, "LeftButton")
+check("a left click keeps the star", L.IsStarred(62031))
+eq("  and opens the row's parts", AltStableLegacyDB.expanded[62031], true)
+check("  and opens no menu", not AltStable._test.MenuIsShown())
+L.BucketRowClick(rcItem, "RightButton")
+check("a right click opens the menu", AltStable._test.MenuIsShown())
+check("  and removes nothing yet", L.IsStarred(62031))
+eq("  its entries: the challenge, then Remove", table.concat(AltStable._test.MenuLabels(), " | "),
+   rcItem.ch.name .. " | Remove from Bucket List")
+check("Remove takes it off the Bucket List", AltStable._test.MenuClick("remove") and not L.IsStarred(62031))
+check("  and closes the menu", not AltStable._test.MenuIsShown())
+L.BucketMenuPick(rcItem, "remove")
+check("  a second Remove does not put it back", not L.IsStarred(62031))
+rcStars[62031] = true
+L.BucketRowClick(rcItem, "RightButton")
+AltStable._test.MenuClickOutside()
+check("a click outside closes the menu and keeps the star", not AltStable._test.MenuIsShown() and L.IsStarred(62031))
+rcStars[62031] = nil
+AltStableLegacyDB.expanded[62031] = nil
 
 ------------------------------------------------------------
 -- The footer
@@ -635,6 +675,44 @@ local right = L.foot and L.foot.reward.text:GetText() or ""
 check("  and the points to the next reward", right:find("10 points to go", 1, true) ~= nil, right)
 eq("  a tick per reward", L.foot and #L.foot.bar.ticks, 4)
 
+-- The points bar in item-quality stretches (the owner): one per reward, then
+-- the rest, Common first. At 5 of 65 with rewards at 15/25/40/55: five
+-- stretches, the Common one a third filled, the others not yet.
+local segs = L.BarSegments({ points = 5, max = 65, rewards = { { level = 15 }, { level = 25 }, { level = 40 }, { level = 55 } } })
+local shape = {}
+for _, sg in ipairs(segs) do shape[#shape + 1] = ("%d-%d q%d f%d"):format(sg.from, sg.to, sg.quality, sg.fill) end
+eq("the stretches, their qualities and fills", table.concat(shape, ", "),
+   "0-15 q1 f5, 15-25 q2 f0, 25-40 q3 f0, 40-55 q4 f0, 55-65 q5 f0")
+local later = L.BarSegments({ points = 70, max = 90, rewards = { { level = 15 }, { level = 25 }, { level = 40 },
+    { level = 55 }, { level = 65 }, { level = 75 }, { level = 85 } } })
+eq("rewards the game adds later add stretches: Artifact, Heirloom, then Heirloom again",
+   later[6].quality .. "/" .. later[7].quality .. "/" .. later[8].quality, "6/7/7")
+eq("  filled up to the points (70: 5 into 65-75)", later[6].fill .. "/" .. later[7].fill .. "/" .. later[8].fill, "5/0/0")
+eq("a last reward at the max adds no empty stretch", #L.BarSegments({ points = 0, max = 55,
+   rewards = { { level = 15 }, { level = 55 } } }), 2)
+local bar = L.foot.bar
+eq("  drawn: one stretch per segment", #bar.segs, 5)
+local c = bar.segs[1].fill._vertexColor
+eq("  the earned part in Common white, from the gear palette", c and (c[1] .. "," .. c[2] .. "," .. c[3]), "1,1,1")
+check("  a stretch not started has no fill", not bar.segs[2].fill:IsShown())
+local tr = bar.segs[2].track._colorTexture
+eq("  but shows faintly in Uncommon green", tr and (tr[1] .. "," .. tr[2] .. "," .. tr[3]),
+   table.concat(AltStable.QUALITY_RGB[2], ","))
+local tk = bar.ticks[1]._colorTexture
+eq("  a reward not reached: a grey tick", tk and tk[1], 0.8)
+local savedModel = L.footModel
+L.footModel = { points = 20, max = 65, rewards = savedModel.rewards }
+L.PlaceBar()
+tk = bar.ticks[1]._colorTexture
+eq("  a reward reached: its tick in the colour of the stretch it opens (Uncommon)",
+   tk and (tk[1] .. "," .. tk[2] .. "," .. tk[3]), table.concat(AltStable.QUALITY_RGB[2], ","))
+check("  and the Uncommon stretch fills", bar.segs[2].fill:IsShown())
+L.footModel = { unread = true }
+L.PlaceBar()
+check("an unread total draws no stretch", not bar.segs[1].track:IsShown() and not bar.segs[1].fill:IsShown())
+L.footModel = savedModel
+L.PlaceBar()
+
 -- Opening a section draws its rows; collapsing it takes them away again.
 AltStableLegacyDB.open = { dungeons = true, raids = true }
 AltStableLegacyDB.expanded = { [62031] = true }
@@ -660,6 +738,65 @@ ok, err = pcall(L.tabs.challenges:GetScript("OnClick"))
 check("back to Challenges", ok and L.View() == "challenges", tostring(err))
 check("  the filter hides there", not L.thisCharCheck:IsShown())
 check("  and the view is remembered as Challenges", AltStableLegacyDB.view == nil)
+
+-- A starred grid cell keeps its text clear of the star (owner's screenshot:
+-- "150/225" ran under it); an unstarred one centres across the whole cell.
+local h25 = gridID("class", "HUNTER", 25)
+AltStableLegacyDB.stars = { A = { [h25] = true } }
+L.Render()
+local starredInset, plainInset
+for i = 1, L.pools.gridRow.used do
+    for _, b in ipairs(L.pools.gridRow.list[i].cells) do
+        local _, _, _, x = b.text:GetPoint(2)
+        if b.cell and b.cell.ch and b.cell.ch.id == h25 then starredInset = x
+        elseif b.cell and b.cell.ch then plainInset = x end
+    end
+end
+eq("a starred cell's text stops short of the star", starredInset, -12)
+eq("  an unstarred cell's spans it", plainInset, 0)
+
+-- Drawn: a starred later tier carries its progress, and both grids' second
+-- columns start where the measured names end (the stub measures 40: 28+40+12).
+local h45 = gridID("class", "HUNTER", 45)
+AltStableLegacyDB.stars = { A = { [h45] = true } }
+L.Render()
+local laterText
+for i = 1, L.pools.gridRow.used do
+    for _, b in ipairs(L.pools.gridRow.list[i].cells) do
+        if b.cell and b.cell.ch and b.cell.ch.id == h45 then laterText = b.text:GetText() end
+    end
+end
+check("a starred later tier is drawn with its progress", laterText and laterText:find("/45", 1, true) ~= nil, tostring(laterText))
+local heads = {}
+for i = 1, L.pools.gridHead.used do
+    local _, _, _, hx = L.pools.gridHead.list[i].alt:GetPoint(1)
+    heads[#heads + 1] = hx
+end
+eq("  both grids' name columns fit their names", table.concat(heads, ","), "80,80")
+AltStableLegacyDB.stars = { A = {} }
+
+-- A Bucket List row listens for the right button too.
+L.SetView("bucket")
+AltStableLegacyDB.stars = { A = { [62031] = true } }
+L.Render()
+local clicks = L.pools.bucketRow and L.pools.bucketRow.list[1]._clicks or {}
+check("a Bucket List row takes right-clicks", clicks[2] == "RightButtonUp", table.concat(clicks, ","))
+-- Its star too (Codex on #389): a right-click there opens the row's menu, a
+-- left one still removes.
+local row1 = L.pools.bucketRow.list[1]
+local starBtn = row1.starBtn
+check("  and its star takes right-clicks", WoW.handlesClick(starBtn, "RightButton"),
+      table.concat(WoW.registeredClicks(starBtn), ","))
+starBtn:GetScript("OnClick")(starBtn, "RightButton")
+check("  a right-click on the star opens the menu", AltStable._test.MenuIsShown())
+check("    and keeps the star", L.IsStarred(62031))
+eq("    the menu is the row's", table.concat(AltStable._test.MenuLabels(), " | "),
+   row1.it.ch.name .. " | Remove from Bucket List")
+AltStable.CloseCharacterMenu()
+starBtn:GetScript("OnClick")(starBtn, "LeftButton")
+check("  a left click on the star removes it", not L.IsStarred(62031))
+L.SetView("challenges")
+AltStableLegacyDB.stars = { A = {} }
 AltStableLegacyDB.thisChar = nil
 
 check("the table has an opaque backing under glass", L.backing ~= nil

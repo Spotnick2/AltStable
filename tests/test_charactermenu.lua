@@ -666,4 +666,30 @@ do
     AltStable.CloseCharacterMenu()
 end
 
+------------------------------------------------------------
+-- Another menu on the same frame (the Legacy Bucket List's): its own entries
+-- and its own action, and a character menu opened after it does the
+-- character's, not the earlier menu's.
+------------------------------------------------------------
+
+do
+    local picked
+    check("ShowMenu opens", AltStable.ShowMenu({ { id = "title", title = true, text = "Novice Spelunker" },
+                                                 { id = "remove", text = "Remove from Bucket List" } },
+                                               function(id) picked = id end))
+    eq("  with its own entries", labels(), "Novice Spelunker|Remove from Bucket List")
+    check("  choosing one runs its action", T.MenuClick("remove") and picked == "remove")
+    check("  and closes it", not T.MenuIsShown())
+    check("an empty one does not open", not AltStable.ShowMenu({}, function() end) and not T.MenuIsShown())
+
+    picked = nil
+    AltStable.ShowMenu({ { id = "favourite", text = "Not a character" } }, function(id) picked = id end)
+    AltStable.ShowCharacterMenu(OTHER)
+    local before = AltStable.IsCharacterFavourite("other")
+    T.MenuClick(before and "unfavourite" or "favourite")
+    check("a character menu after it does the character's action",
+          picked == nil and AltStable.IsCharacterFavourite("other") == not before)
+    AltStable.CloseCharacterMenu()
+end
+
 WoW.finish("test_charactermenu", passed, failed)

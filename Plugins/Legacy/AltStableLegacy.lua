@@ -52,6 +52,7 @@ local TITLE_ROW  = 24     -- a grid's title line
 local SECTION_H  = 24
 local CRIT_H     = 18
 local CELL_W     = 58
+local STAR_GAP   = 12   -- a grid cell's star (11) and a hair, kept clear of its text
 local GAP        = 12
 local GRID_MIN_W = 400    -- two grids side by side from 2 x this
 local PREFERRED_PANEL_W = 900
@@ -764,10 +765,14 @@ end
 -- Words
 ------------------------------------------------------------
 
-function L.CellText(cell)
+-- A starred later tier shows its own progress, so the star sits on the goal
+-- the Bucket List names ("89/225" beside it, not a dash; GPT-Astra on #389).
+function L.CellText(cell, starred)
     local st = cell.state
     if st == "done" then return CHECK end
-    if st == "progress" then return ("%d/%d"):format(cell.have, cell.need) end
+    if st == "progress" or (st == "later" and starred) then
+        return ("%d/%d"):format(cell.have, cell.need)
+    end
     if st == "credit" then return "|cffffd100~|r" end
     if st == "unknown" then return "|cff888888?|r" end
     return DASH
@@ -789,6 +794,7 @@ end
 ------------------------------------------------------------
 
 local pools = {}
+L.pools = pools   -- read by the tests: what a render drew
 
 local function Acquire(kind, make)
     local p = pools[kind]
@@ -959,6 +965,17 @@ local function MakeGridRow()
     return f
 end
 
+-- Where a grid's second column starts: after the icon (28), the widest name
+-- and a 12-unit gap. Never past the fixed widths it replaces ("Leatherworking"
+-- ran into the crafter at the classes' 116, so crafts had 150): a width the
+-- client has not measured yet (0) keeps those.
+local NAME_LEAD, NAME_GAP = 28, 12
+function L.NameColumnX(kind, widest)
+    local fixed = (kind == "class") and 116 or 150
+    if not widest or widest <= 0 then return fixed end
+    return math.min(fixed, math.ceil(NAME_LEAD + widest + NAME_GAP))
+end
+
 -- One grid: its title, column heads and rows, from (x, y) at width w.
 -- Returns the y below it.
 function L.DrawGrid(title, rows, kind, x, y, w, done, total)
@@ -970,9 +987,18 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     y = y + TITLE_ROW
 
     local cellsX = w - 3 * CELL_W - 4
-    -- The name column takes its longest name: "Leatherworking" ran into
-    -- the crafter beside it at the classes' width.
-    local altX = (kind == "class") and 116 or 150
+    -- The name column takes its longest name, measured, and the names beside
+    -- it get the rest (GPT-Astra on #389: five of six crafters were cut).
+    local widest = 0
+    if not L.measure then
+        L.measure = FS(content)
+        L.measure:Hide()
+    end
+    for _, r in ipairs(rows) do
+        L.measure:SetText(r.label)
+        widest = math.max(widest, tonumber(L.measure:GetStringWidth()) or 0)
+    end
+    local altX = L.NameColumnX(kind, widest)
     local h = Acquire("gridHead", MakeGridHead)
     h:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
     h:SetWidth(w)
@@ -1034,8 +1060,14 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
             b:ClearAllPoints()
             b:SetPoint("LEFT", f, "LEFT", cellsX + (k - 1) * CELL_W, 0)
             b.cell, b.row = cell, r
-            b.text:SetText(L.CellText(cell))
-            SetStar(b.star, cell.ch and L.IsStarred(cell.ch.id), false)
+            -- A starred cell centres its text left of the star: "150/225"
+            -- (about 43 of the cell's 58) ran under it (owner's screenshot).
+            local starred = cell.ch and L.IsStarred(cell.ch.id)
+            b.text:SetText(L.CellText(cell, starred))
+            b.text:ClearAllPoints()
+            b.text:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
+            b.text:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", starred and -STAR_GAP or 0, 0)
+            SetStar(b.star, starred, false)
         end
         y = y + ROW_H
     end
@@ -1420,12 +1452,38 @@ local function BucketColumns(w)
     return charX, barX, barW, barX + barW + 14
 end
 
-local function BucketRowOnClick(self)
-    local it = self.it
-    if not it or not it.parts or #it.parts == 0 then return end
+-- A Bucket List row's right-click menu: the challenge, then what can be done
+-- with it (the owner: only Remove for now).
+function L.BucketMenuEntries(it)
+    return {
+        { id = "title", title = true, text = it.ch.name or "" },
+        { id = "remove", text = "Remove from Bucket List" },
+    }
+end
+
+function L.BucketMenuPick(it, id)
+    if id == "remove" and L.IsStarred(it.id) then L.ToggleStar(it.id) end
+end
+
+-- A click on a Bucket List row: the right button opens its menu (the owner, on
+-- the first look: the 14-pixel star alone is easy to miss), on the frame the
+-- character menu uses; the left one opens or closes its parts.
+function L.BucketRowClick(it, button)
+    if not it then return end
+    if button == "RightButton" then
+        if AltStable.ShowMenu then
+            AltStable.ShowMenu(L.BucketMenuEntries(it), function(id) L.BucketMenuPick(it, id) end)
+        end
+        return
+    end
+    if not it.parts or #it.parts == 0 then return end
     local e = DB().expanded
     e[it.id] = not e[it.id] or nil
     L.Render()
+end
+
+local function BucketRowOnClick(self, button)
+    L.BucketRowClick(self.it, button)
 end
 
 -- The lines a Bucket List row's tooltip adds under the challenge: the whole
@@ -1439,6 +1497,7 @@ function L.BucketTooltipLines(it)
     end
     if it.char then lines[#lines + 1] = { "Character: " .. it.char, 0.8, 0.8, 0.8 } end
     if it.parts and #it.parts > 0 then lines[#lines + 1] = { "Click to list its parts.", 0.5, 0.5, 0.5 } end
+    lines[#lines + 1] = { "Right-click for options.", 0.5, 0.5, 0.5 }
     return lines
 end
 
@@ -1472,9 +1531,18 @@ local function MakeBucketRow()
     b.starBtn:SetPoint("LEFT", b, "LEFT", 4, 0)
     b.starBtn.tex = b.starBtn:CreateTexture(nil, "OVERLAY")
     b.starBtn.tex:SetAllPoints()
-    b.starBtn:SetScript("OnClick", function(self)
+    -- The star takes the mouse, so a right-click on it never reaches the row:
+    -- it opens the row's menu itself, and a left click still removes (Codex
+    -- on #389).
+    b.starBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b.starBtn:SetScript("OnClick", function(self, button)
         local it = self:GetParent().it
-        if it then L.ToggleStar(it.id) end
+        if not it then return end
+        if button == "RightButton" then
+            L.BucketRowClick(it, button)
+        else
+            L.ToggleStar(it.id)
+        end
     end)
     b.starBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1505,6 +1573,8 @@ local function MakeBucketRow()
     b.bar.text:SetAllPoints()
     b.left = FS(b, "GameFontHighlight")
     b.left:SetWordWrap(false)
+    -- A Button fires OnClick for the left button only, unless asked.
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     b:SetScript("OnClick", BucketRowOnClick)
     b:SetScript("OnEnter", BucketRowOnEnter)
     b:SetScript("OnLeave", HideTip)
@@ -1868,30 +1938,84 @@ function L.BuildFooter(mainFrame)
     f.reward:SetScript("OnEnter", RewardOnEnter)
     f.reward:SetScript("OnLeave", HideTip)
 
-    local bar = CreateFrame("StatusBar", nil, f)
+    -- A plain frame, not a StatusBar: the fill is drawn stretch by stretch.
+    local bar = CreateFrame("Frame", nil, f)
     bar:SetHeight(8)
     bar:SetPoint("LEFT", f.left, "RIGHT", 12, 0)
     bar:SetPoint("RIGHT", f.reward, "LEFT", -12, 0)
-    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints()
     bar.bg:SetColorTexture(0, 0, 0, 0.45)
-    bar:SetMinMaxValues(0, 1)
-    bar.ticks = {}
+    bar.ticks, bar.segs = {}, {}
     bar:EnableMouse(true)
     bar:SetScript("OnEnter", BarOnEnter)
     bar:SetScript("OnLeave", HideTip)
-    bar:SetScript("OnSizeChanged", function() L.PlaceTicks() end)
+    bar:SetScript("OnSizeChanged", function() L.PlaceBar() end)
     f.bar = bar
     L.foot = f
 end
 
-function L.PlaceTicks()
+-- The bar in stretches: one up to each reward, then the rest up to the max.
+-- Each takes the next item quality, Common first (the owner: the gear
+-- colours), so a reward the game adds later adds a stretch and the colours
+-- follow the rewards, never fixed point values. `fill` is the points earned
+-- inside the stretch.
+local LAST_QUALITY = 7   -- Heirloom; any stretch past it stays Heirloom
+function L.BarSegments(m)
+    local out, from = {}, 0
+    local function add(to)
+        if to <= from then return end
+        out[#out + 1] = { from = from, to = to, quality = math.min(#out + 1, LAST_QUALITY),
+                          fill = math.max(0, math.min(m.points, to) - from) }
+        from = to
+    end
+    for _, r in ipairs(m.rewards) do add(math.min(r.level, m.max)) end
+    add(m.max)
+    return out
+end
+
+local function QualityColor(q)
+    if AltStable.QualityRGB then return AltStable.QualityRGB(q) end
+    return 1, 1, 1
+end
+
+-- Lays the stretches and the reward ticks out along the bar's current width.
+function L.PlaceBar()
     local f, m = L.foot, L.footModel
-    if not (f and m and not m.unread) then return end
+    if not f then return end
     local bar = f.bar
+    local segs = (m and not m.unread and m.max > 0) and L.BarSegments(m) or {}
     local w = bar:GetWidth() or 0
-    for i, r in ipairs(m.rewards) do
+    for i, s in ipairs(segs) do
+        local t = bar.segs[i]
+        if not t then
+            t = { track = bar:CreateTexture(nil, "BORDER"), fill = bar:CreateTexture(nil, "ARTWORK") }
+            t.fill:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+            bar.segs[i] = t
+        end
+        local r, g, b = QualityColor(s.quality)
+        local x = w * s.from / m.max
+        -- What is still to come shows faintly in its colour; what is earned, full.
+        t.track:ClearAllPoints()
+        t.track:SetPoint("TOPLEFT", bar, "TOPLEFT", x, 0)
+        t.track:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", x, 0)
+        t.track:SetWidth(math.max(1, w * (s.to - s.from) / m.max))
+        t.track:SetColorTexture(r, g, b, 0.18)
+        t.track:Show()
+        t.fill:ClearAllPoints()
+        t.fill:SetPoint("TOPLEFT", bar, "TOPLEFT", x, 0)
+        t.fill:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", x, 0)
+        t.fill:SetWidth(math.max(1, w * s.fill / m.max))
+        t.fill:SetVertexColor(r, g, b, 0.95)
+        t.fill:SetShown(s.fill > 0)
+    end
+    for i = #segs + 1, #bar.segs do
+        bar.segs[i].track:Hide()
+        bar.segs[i].fill:Hide()
+    end
+
+    local rewards = (m and not m.unread) and m.rewards or {}
+    for i, r in ipairs(rewards) do
         local t = bar.ticks[i]
         if not t then
             t = bar:CreateTexture(nil, "OVERLAY")
@@ -1899,12 +2023,19 @@ function L.PlaceTicks()
             bar.ticks[i] = t
         end
         t:ClearAllPoints()
-        t:SetPoint("CENTER", bar, "LEFT", (m.max > 0 and w * r.level / m.max or 0), 0)
-        local got = m.points >= r.level
-        t:SetColorTexture(got and GOLD[1] or 0.8, got and GOLD[2] or 0.8, got and GOLD[3] or 0.8, got and 1 or 0.7)
+        t:SetPoint("CENTER", bar, "LEFT", (m.max > 0 and w * math.min(r.level, m.max) / m.max or 0), 0)
+        -- A reward reached lights its tick in the colour of the stretch it opens.
+        local opens
+        for _, s in ipairs(segs) do if s.from == r.level then opens = s end end
+        if m.points >= r.level then
+            local cr, cg, cb = QualityColor(opens and opens.quality or LAST_QUALITY)
+            t:SetColorTexture(cr, cg, cb, 1)
+        else
+            t:SetColorTexture(0.8, 0.8, 0.8, 0.7)
+        end
         t:Show()
     end
-    for i = #m.rewards + 1, #bar.ticks do bar.ticks[i]:Hide() end
+    for i = #rewards + 1, #bar.ticks do bar.ticks[i]:Hide() end
 end
 
 function L.RenderFooter()
@@ -1916,16 +2047,14 @@ function L.RenderFooter()
     if AltStable.GetAccentRGB then ar, ag, ab = AltStable.GetAccentRGB() end
     if m.unread then
         f.left:SetText("|cff888888Legacy Points: not read yet|r")
-        f.bar:SetValue(0)
         f.reward.text:SetText("")
         f.reward.icon:Hide()
         f.reward.reward = nil
+        L.PlaceBar()   -- an empty bar, never the last read's
         return
     end
     local hex = ("|cff%02x%02x%02x"):format(ar * 255, ag * 255, ab * 255)
     f.left:SetText(("%s%d|r |cffaaaaaa/ %d Legacy Points|r"):format(hex, m.points, m.max))
-    f.bar:SetStatusBarColor(ar, ag, ab, 0.9)
-    f.bar:SetValue(m.max > 0 and math.min(1, m.points / m.max) or 0)
     local r = m.nextReward
     if r then
         local name = r.name or L.ItemName(r.itemID) or "next reward"
@@ -1941,7 +2070,7 @@ function L.RenderFooter()
         f.reward.reward = nil
     end
     f.reward:SetWidth((f.reward.text:GetStringWidth() or 100) + 22)
-    L.PlaceTicks()
+    L.PlaceBar()
 end
 
 ------------------------------------------------------------
