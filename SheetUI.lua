@@ -1413,7 +1413,10 @@ local function UpdateScroll()
     -- Horizontal scrollbar visibility
     hScrollBar:SetMinMaxValues(0, maxH)
     hScrollBar:SetValue(0)
-    if needsH then hScrollBar:Show() else hScrollBar:Hide() end
+    -- Not while a plugin owns the body: a refresh (a sync, a scan) re-ran
+    -- this and showed the grid's scrollbar over the plugin's panel, just above
+    -- the footer - Roster's and Legacy's panels stop there (#373).
+    if needsH and not activeSection._isPlugin then hScrollBar:Show() else hScrollBar:Hide() end
 
     -- Reset scroll positions
     headerScroll:SetHorizontalScroll(0)

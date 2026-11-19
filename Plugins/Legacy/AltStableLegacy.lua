@@ -333,7 +333,9 @@ function L.ChallengeRow(c, secKey)
         elseif #crit == 1 then
             -- One plain criterion (a Field of Honor week) is the challenge
             -- itself: "0/1" and "Complete <its name>" would say nothing more.
-            r.nocrit = true
+            -- No "Account" either, as on the rank rows beside it: there is no
+            -- progress to attribute to anyone.
+            r.nocrit, r.char = true, nil
             return r
         end
         local d = 0
@@ -639,7 +641,9 @@ function L.DrawGrid(title, rows, kind, x, y, w, done, total)
     y = y + TITLE_ROW
 
     local cellsX = w - 3 * CELL_W - 4
-    local altX = 116
+    -- The name column takes its longest name: "Leatherworking" ran into
+    -- the crafter beside it at the classes' width.
+    local altX = (kind == "class") and 116 or 150
     local h = Acquire("gridHead", MakeGridHead)
     h:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
     h:SetWidth(w)
