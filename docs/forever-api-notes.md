@@ -2366,9 +2366,10 @@ one, realm 1; a mage 30 and a druid 14 on the other, realm 7; all Normal realms)
   (Replica Ironforge Air Rifle; its name was nil until the item cached), 25 item 277714 Spectral
   Bear Cub, 40 item 277717 Spectral Bear Tabard, 55 item 277718 Reins of the Spectral Bear.
   `GetMajorFactionData(2802)` names it "Legacy Track", `maxLevel` 90.
-- **Readiness.** The list of 65, the completion of each and renown read correctly **at
-  `PLAYER_LOGIN`** (t = 0), on a warm start, before `RECEIVED_ACHIEVEMENT_LIST` (~2 s) and without
-  Blizzard's Legacy UI loaded. The cold start (full exit) was checked at +10 s only, and so were
+- **Readiness.** At **`PLAYER_LOGIN`** (t = 0), on a warm start, before
+  `RECEIVED_ACHIEVEMENT_LIST` (~2 s) and without Blizzard's Legacy UI loaded, the timeline read the
+  list (65, all set A), the **count** completed (4) and renown (4), the same as at +10 s. It kept
+  counts, not each challenge's flag, so it shows the count matched, not which four. The cold start (full exit) was checked at +10 s only, and so were
   the **criteria**: the timeline's samples at login, +1 and +3 s did not read them, so whether
   criteria are readable before `RECEIVED_ACHIEVEMENT_LIST` is not measured (the probe's timeline
   samples them since). The plugin keeps the last good criteria and re-reads on the achievement

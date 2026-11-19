@@ -252,27 +252,35 @@ end
 -- run sampled criteria at +10 s only).
 local function Quick()
     local e = Enumerate(true)
-    local done, mine, crit, critDone = 0, 0, 0, 0
+    local done, mine, crit, critDone, critFailed = 0, 0, 0, 0, 0
     for _, a in pairs(e.challenges) do
         if a.completed then done = done + 1 end
         if a.wasEarnedByMe then mine = mine + 1 end
+        -- Only rows that read count as read: a call that threw is a failed
+        -- row, so "the count is there before the rows are" shows as failures,
+        -- not as criteria all open (Codex on #380).
         for _, c in ipairs(a.criteria or {}) do
-            crit = crit + 1
-            if c.done then critDone = critDone + 1 end
+            if c.error then
+                critFailed = critFailed + 1
+            else
+                crit = crit + 1
+                if c.done then critDone = critDone + 1 end
+            end
         end
     end
     local ok, lvl = Try(Api("C_MajorFactions", "GetCurrentRenownLevel"), FACTION)
     return { found = #e.order, inA = e.inA, inB = e.inB, done = done, mine = mine,
-             crit = crit, critDone = critDone,
+             crit = crit, critDone = critDone, critFailed = critFailed,
              renown = ok and lvl or nil, cats = e.numCategories, ui = LegacyUILoaded() }
 end
 
 local function QuickText(q)
     if type(q) ~= "table" then return "-" end
-    return ("%d challenges (A %d, B %d), %d completed, %d mine, %s criteria (%s done), renown %s, "
-        .. "%s categories, Legacy UI %s"):format(
+    return ("%d challenges (A %d, B %d), %d completed, %d mine, %s criteria read (%s done, %s failed), "
+        .. "renown %s, %s categories, Legacy UI %s"):format(
         q.found or 0, q.inA or 0, q.inB or 0, q.done or 0, q.mine or 0, tostring(q.crit),
-        tostring(q.critDone), tostring(q.renown), tostring(q.cats), q.ui and "loaded" or "not loaded")
+        tostring(q.critDone), tostring(q.critFailed), tostring(q.renown), tostring(q.cats),
+        q.ui and "loaded" or "not loaded")
 end
 
 local function Read(label)

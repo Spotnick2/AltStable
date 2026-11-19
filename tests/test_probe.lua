@@ -400,6 +400,18 @@ if legacyProc and L then
     -- A successful false is kept, not dropped (Codex on #380).
     eq("a challenge read as not completed keeps false", first and first.byId[61500] and first.byId[61500].completed, false)
 
+    -- The count is there before the rows (Codex on #380): every row call
+    -- throws. The timeline must show failures, not six criteria all open.
+    local realRow = GetAchievementCriteriaInfo
+    rawset(_G, "GetAchievementCriteriaInfo", function() error("not ready") end)
+    local early = L.Quick()
+    eq("rows that throw are not counted as read", early.crit, 0)
+    eq("  they are counted as failed", early.critFailed, 6)
+    rawset(_G, "GetAchievementCriteriaInfo", realRow)
+    local later = L.Quick()
+    eq("once they read, they count", later.crit, 6)
+    eq("  and none failed", later.critFailed, 0)
+
     -- The login timeline.
     fireProbeEvent("PLAYER_LOGIN")
     for _ = 1, 3 do WoW.flushTimers() end
