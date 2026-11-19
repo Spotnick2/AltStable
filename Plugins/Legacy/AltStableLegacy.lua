@@ -746,25 +746,40 @@ local function RowOnClick(self)
     L.Render()
 end
 
+-- A checklist row's tooltip, as lines: { left, right or nil, r, g, b }.
+function L.RowTooltipLines(r)
+    local lines = { { r.ch.name, nil, 1, 1, 1 } }
+    if r.ch.desc then lines[#lines + 1] = { r.ch.desc, nil, 0.8, 0.8, 0.8 } end
+    if r.done then
+        lines[#lines + 1] = { "Earned" .. (r.ch.date and (" on " .. r.ch.date) or ""), nil, 0.4, 1, 0.4 }
+    end
+    -- Explorer's breakdown shows earned or not: the row still names a
+    -- character beside the check, and should say why (Codex on #381).
+    if r.perChar then
+        lines[#lines + 1] = { "Explored per character. Named: the furthest along of the characters "
+            .. "logged in on this WoW account since Legacy was installed.", nil, 0.7, 0.7, 0.7 }
+        for _, o in ipairs(r.seen or {}) do
+            lines[#lines + 1] = { ClassHex(o.class) .. o.name .. "|r", ("%d / %d"):format(o.value, o.total),
+                                  1, 1, 1 }
+        end
+    elseif r.char == "Account" then
+        lines[#lines + 1] = { "Counted for the whole Battle.net account.", nil, 0.7, 0.7, 0.7 }
+    end
+    if #r.parts > 0 then lines[#lines + 1] = { "Click to list its parts.", nil, 0.5, 0.5, 0.5 } end
+    return lines
+end
+
 local function RowOnEnter(self)
     local r = self.r
     if not r then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine(r.ch.name, 1, 1, 1)
-    if r.ch.desc then GameTooltip:AddLine(r.ch.desc, 0.8, 0.8, 0.8, true) end
-    if r.done then
-        GameTooltip:AddLine("Earned" .. (r.ch.date and (" on " .. r.ch.date) or ""), 0.4, 1, 0.4)
-    elseif r.perChar then
-        GameTooltip:AddLine("Explored per character. Named: the furthest along of the characters "
-            .. "logged in on this WoW account since Legacy was installed.", 0.7, 0.7, 0.7, true)
-        for _, o in ipairs(r.seen or {}) do
-            GameTooltip:AddDoubleLine(ClassHex(o.class) .. o.name .. "|r", ("%d / %d"):format(o.value, o.total),
-                1, 1, 1, 0.8, 0.8, 0.8)
+    for _, l in ipairs(L.RowTooltipLines(r)) do
+        if l[2] then
+            GameTooltip:AddDoubleLine(l[1], l[2], l[3], l[4], l[5], 0.8, 0.8, 0.8)
+        else
+            GameTooltip:AddLine(l[1], l[3], l[4], l[5], true)
         end
-    elseif r.char == "Account" then
-        GameTooltip:AddLine("Counted for the whole Battle.net account.", 0.7, 0.7, 0.7)
     end
-    if #r.parts > 0 then GameTooltip:AddLine("Click to list its parts.", 0.5, 0.5, 0.5) end
     GameTooltip:Show()
 end
 

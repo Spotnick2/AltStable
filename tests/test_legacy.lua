@@ -350,6 +350,23 @@ eq("  13 of 43 areas", ex.have, 13)
 eq("  its continents listed", #ex.parts, 2)
 eq("  everyone seen, furthest first", ex.seen and #ex.seen, 2)
 
+-- Earned or not, the tooltip says why a character is named and lists each
+-- one seen (Codex on #381: an earned Explorer lost its breakdown).
+local function tipHas(lines, word)
+    for _, l in ipairs(lines) do
+        if tostring(l[1]):find(word, 1, true) or tostring(l[2]):find(word, 1, true) then return true end
+    end
+    return false
+end
+local earnedEx = {}
+for k, v in pairs(ex) do earnedEx[k] = v end
+earnedEx.done = true
+earnedEx.ch = { name = "Explorer", date = "2026-11-19" }
+local tip = L.RowTooltipLines(earnedEx)
+check("an earned Explorer's tooltip says when", tipHas(tip, "Earned on 2026-11-19"))
+check("  and still why a character is named", tipHas(tip, "furthest along"))
+check("  and each one seen", tipHas(tip, "Karuzo") and tipHas(tip, "13 / 43"))
+
 -- Seen, but nobody has explored anything: no name beside 0 (it would look
 -- like a choice).
 AltStableLegacyDB.explore = {
