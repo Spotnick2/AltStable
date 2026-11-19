@@ -2020,8 +2020,26 @@ end
 local FILTERS = { { "all", "All" }, { "known", "Known" }, { "missing", "Missing" }, { "nobody", "Nobody" },
                   { "craftable", "Craftable" }, { "wishlist", "Wishlist" } }
 
+-- The filter last picked (#385), so a player who only wants what their alts
+-- know picks Known once. Per account and not synced, like the tooltip
+-- switches: an unknown or missing value is All.
+local function SavedFilter()
+    local f = AltStableConfig and AltStableConfig.professionsFilter
+    for _, def in ipairs(FILTERS) do
+        if def[1] == f then return f end
+    end
+    return "all"
+end
+
+local function PickFilter(key)
+    AT.filter, AT.scrollRow = key, 0
+    if AltStable.SetConfigValue then AltStable.SetConfigValue("professionsFilter", key) end
+    AT.Refresh()
+end
+
 local function BuildPanel(mainFrame)
     if panel then return end
+    AT.filter = SavedFilter()
     local sidebarW = (AltStable.LAYOUT and AltStable.LAYOUT.SIDEBAR_WIDTH) or 230
     local titleH   = (AltStable.LAYOUT and AltStable.LAYOUT.TITLE_H) or 30
     panel = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
@@ -2092,7 +2110,7 @@ local function BuildPanel(mainFrame)
         b.sel = b:CreateTexture(nil, "BACKGROUND")
         b.sel:SetAllPoints()
         b.sel:SetColorTexture(1, 0.82, 0, 0.18)
-        b:SetScript("OnClick", function() AT.filter = key; AT.scrollRow = 0; AT.Refresh() end)
+        b:SetScript("OnClick", function() PickFilter(key) end)
         AT.filterButtons[key] = b
         x = x + 62
     end
@@ -2289,6 +2307,7 @@ local function BootstrapPlugin()
             Reagents = Reagents, SchematicReagents = SchematicReagents, SameReagents = SameReagents,
             ApplyWindowReagents = ApplyWindowReagents,
             ItemName = ItemName, itemRequested = itemRequested,
+            SavedFilter = SavedFilter,
         }),
     })
 
