@@ -375,6 +375,18 @@ do
     check("both boxes, This side: the line names both",
           has("Total:|3") and not has("Birch") and not has("Cedar") and has("+12 on another faction or ruleset"), t)
 
+    -- #404 review: what is left out keeps its warnings. Only Birch (Horde)
+    -- has bank stock, eight days old; Birch is not listed, the warning is.
+    AltStableWarbandDB[HORDE] = { bags = {}, bank = { [2318] = 4 }, bankStamp = WoW.now - 8 * 86400 }
+    AltStable.SetConfigValue("tooltipSameRuleset", false)
+    t, has = shown()
+    check("This side: a stale bank left out still warns",
+          has("+4 on the other faction") and has("Bank data may be out of date") and not has("Birch"), t)
+    AltStableWarbandDB[HORDE] = { bags = { [2318] = 4 } }
+    t, has = shown()
+    check("  and a fresh one does not", not has("out of date"), t)
+    AltStable.SetConfigValue("tooltipSameRuleset", true)
+
     -- A record whose faction or realm can't be read stops nothing.
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = nil, nil
     t, has = shown()

@@ -4440,22 +4440,28 @@ local function CreateFrameIfNeeded()
         end
         Y = Y - 22
 
-        -- The items left out, read-only here: /alts tooltip changes them.
+        -- The items left out, read-only here: /alts tooltip changes them. The
+        -- rows below sit at fixed offsets, so the line is bounded (#404
+        -- review): the first IGNORED_SHOWN names, then "+N more", as the
+        -- whitelist does, and never more than two lines.
+        local IGNORED_SHOWN = 3
         local ignored = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         ignored:SetPoint("TOPLEFT", P + 42, Y)
         ignored:SetPoint("TOPRIGHT", -P, Y)
         ignored:SetJustifyH("LEFT"); ignored:SetWordWrap(true)
+        ignored:SetMaxLines(2)
         ignored:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         local function RefreshIgnored()
+            local list = AltStable.TooltipIgnoredList and AltStable.TooltipIgnoredList() or {}
             local names = {}
-            for _, id in ipairs(AltStable.TooltipIgnoredList and AltStable.TooltipIgnoredList() or {}) do
-                local name = AltStable.API.GetItemInfo(id)
-                names[#names + 1] = name or ("item " .. id)
+            for i = 1, math.min(#list, IGNORED_SHOWN) do
+                local name = AltStable.API.GetItemInfo(list[i])
+                names[#names + 1] = name or ("item " .. list[i])
             end
-            ignored:SetText(#names == 0
+            if #list > IGNORED_SHOWN then names[#names + 1] = "+" .. (#list - IGNORED_SHOWN) .. " more" end
+            ignored:SetText(#list == 0
                 and "No counts for an item: |cffffff00/alts tooltip ignore|r <item>"
-                or ("No counts for: " .. table.concat(names, ", ")
-                    .. " (|cffffff00/alts tooltip unignore|r <item>)"))
+                or ("No counts for: " .. table.concat(names, ", ") .. " - |cffffff00/alts tooltip|r"))
         end
         RefreshIgnored()
         optionsPanel.refreshers = optionsPanel.refreshers or {}

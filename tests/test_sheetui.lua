@@ -4334,6 +4334,13 @@ do
         F.refresh()
         check("  an item left out is named",
               (F.ignored:GetText() or ""):find("No counts for: ", 1, true) ~= nil, F.ignored:GetText())
+        -- #404 review: the rows below sit at fixed offsets, so a long list is cut.
+        AltStableConfig.tooltipIgnore = {}
+        for id = 1, 9 do AltStableConfig.tooltipIgnore[id] = true end
+        F.refresh()
+        local txt = F.ignored:GetText() or ""
+        check("  a long list shows three and \"+6 more\"", txt:find("+6 more", 1, true) ~= nil
+              and select(2, txt:gsub(", ", "")) == 3, txt)
         AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset, AltStableConfig.tooltipIgnore =
             held[1], held[2], held[3]
     end

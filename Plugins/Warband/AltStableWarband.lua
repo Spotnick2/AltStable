@@ -942,27 +942,29 @@ end
 -- (e.g. "17[bag] +46[bank]"). `why[h]`, when there, follows the name in grey
 -- (the faction or ruleset an Elsewhere holder is on, #403). `all` is every
 -- holder, for telling apart two characters of one name. Returns the notes seen.
+-- What a holder's counts say about their freshness, into `notes`: an old bank
+-- or mail snapshot, a mailbox not read to the end.
+local function NoteFreshness(h, notes, now)
+    if (h.bank or 0) > 0 and h.bankStamp and (now - h.bankStamp) > BANK_STALE then notes.stale = true end
+    if (h.mail or 0) > 0 and h.mailStamp and (now - h.mailStamp) > BANK_STALE then notes.mailStale = true end
+    if (h.mailMore or 0) > 0 then notes.mailMore = true end
+end
+
 local function HolderLines(tt, holders, all, why, notes)
     local list = {}
     for _, h in ipairs(holders) do list[#list + 1] = h end
     table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
     local now = time()
     for _, h in ipairs(list) do
+        NoteFreshness(h, notes, now)
         local cc = (h.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[h.class]) or { r = .9, g = .9, b = .9 }
         local nm = ClassIconMarkup(h.class) .. (h.name or "?")
         if h.realm and DupName(all, h.name) then nm = nm .. "-" .. h.realm end
         if why and why[h] and why[h] ~= "" then nm = nm .. " |cff888888(" .. why[h] .. ")|r" end
         local parts = {}
         if (h.bags or 0) > 0 then parts[#parts + 1] = h.bags .. BAG_ICON end
-        if (h.bank or 0) > 0 then
-            parts[#parts + 1] = h.bank .. BANK_ICON
-            if h.bankStamp and (now - h.bankStamp) > BANK_STALE then notes.stale = true end
-        end
-        if (h.mail or 0) > 0 then
-            parts[#parts + 1] = h.mail .. MAIL_ICON
-            if h.mailStamp and (now - h.mailStamp) > BANK_STALE then notes.mailStale = true end
-        end
-        if (h.mailMore or 0) > 0 then notes.mailMore = true end
+        if (h.bank or 0) > 0 then parts[#parts + 1] = h.bank .. BANK_ICON end
+        if (h.mail or 0) > 0 then parts[#parts + 1] = h.mail .. MAIL_ICON end
         -- Bagnon-style right cell: single location shows just "N[icon]"; a split
         -- shows the per-character total then the breakdown, e.g. "63=17[bag]+46[bank]".
         local right = parts[1] or ""
@@ -994,6 +996,9 @@ local function AppendBreakdown(tt, total, holders, split)
             HolderLines(tt, split.side, holders, nil, notes)
         end
         tt:AddLine(leftLine, .55, .55, .55)
+        -- The left-out count is theirs too, so are its warnings (#404 review).
+        local now = time()
+        for _, h in ipairs(split.away) do NoteFreshness(h, notes, now) end
     elseif away then
         tt:AddLine(" ")
         if split.sideTotal > 0 then
