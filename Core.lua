@@ -5026,7 +5026,7 @@ function AltStable.ItemTooltipCountsHelp(tt)
     if other and v == nil then
         tt:AddLine(other .. " already shows its own counts, so this starts off.", 1, .82, 0, true)
     end
-    tt:AddLine("Only your faction or ruleset, and items with no counts: Options, Items & Mail.", .6, .6, .6, true)
+    tt:AddLine("Your faction or ruleset apart, and items with no counts: Options, Items & Mail.", .6, .6, .6, true)
 end
 
 -- What stands between two characters (#386, #403): whether they are on
@@ -5052,15 +5052,34 @@ function AltStable.Barriers(fromGuid, toGuid)
     return otherFaction, otherRuleset
 end
 
--- Which characters the item tooltips list (#403): every one, unless the player
--- asked for only the current character's faction (`tooltipSameFaction`)
--- and/or ruleset (`tooltipSameRuleset`) - two options, both off unless chosen.
--- Returns the holders kept, their total, and what was left out (the count).
--- `holders` is CountItem's list (Warband): { guid, bags, bank, mail, ... }.
-function AltStable.FilterTooltipHolders(holders, playerGuid)
+-- Which characters the item tooltips list (#403). "This side" is the current
+-- character's faction (`tooltipSameFaction`) and/or ruleset
+-- (`tooltipSameRuleset`), two boxes, both off unless chosen: with both off,
+-- everyone is on this side. `tooltipScope` picks what the tooltip shows:
+-- "both" (default: this side, then everyone else under Elsewhere), "side"
+-- (this side only, and one grey line for the rest) or "all" (one list, as
+-- before the boxes existed).
+AltStable.TOOLTIP_SCOPES = { both = true, side = true, all = true }
+function AltStable.TooltipScope()
+    local v = AltStableConfig and AltStableConfig.tooltipScope
+    return AltStable.TOOLTIP_SCOPES[v] and v or "both"
+end
+
+-- This side's header: what the boxes ask for.
+function AltStable.TooltipSideLabel()
+    local cfg = AltStableConfig or {}
+    local f, r = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
+    return (f and r) and "Same faction & ruleset" or f and "Same faction" or r and "Same ruleset" or "Everyone"
+end
+
+-- Splits CountItem's holders (Warband: { guid, realm, bags, bank, mail, ... })
+-- into this side and elsewhere. Returns side, sideTotal, away, awayTotal, and
+-- for each away holder why it is ("Horde", "PvP", "Horde, PvP"), keyed by the
+-- holder. A record whose faction or realm can't be read stays on this side.
+function AltStable.SplitTooltipHolders(holders, playerGuid)
     local cfg = AltStableConfig or {}
     local sameFaction, sameRuleset = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
-    local kept, total, left = {}, 0, 0
+    local side, away, why, sideTotal, awayTotal = {}, {}, {}, 0, 0
     playerGuid = playerGuid or (UnitGUID and UnitGUID("player"))
     for _, h in ipairs(holders or {}) do
         local n = (h.bags or 0) + (h.bank or 0) + (h.mail or 0)
@@ -5068,17 +5087,24 @@ function AltStable.FilterTooltipHolders(holders, playerGuid)
         if sameFaction or sameRuleset then
             otherFaction, otherRuleset = AltStable.Barriers(h.guid, playerGuid)
         end
-        if (sameFaction and otherFaction) or (sameRuleset and otherRuleset) then
-            left = left + n
+        otherFaction, otherRuleset = sameFaction and otherFaction, sameRuleset and otherRuleset
+        if otherFaction or otherRuleset then
+            away[#away + 1] = h
+            awayTotal = awayTotal + n
+            local c = AltStableDB and AltStableDB[h.guid] or {}
+            local tags = {}
+            if otherFaction then tags[#tags + 1] = c.faction end
+            if otherRuleset and AltStable.RulesetOf then tags[#tags + 1] = AltStable.RulesetOf(c.realm) end
+            why[h] = table.concat(tags, ", ")
         else
-            kept[#kept + 1] = h
-            total = total + n
+            side[#side + 1] = h
+            sideTotal = sideTotal + n
         end
     end
-    return kept, total, left
+    return side, sideTotal, away, awayTotal, why
 end
 
--- The grey line under a filtered breakdown, naming what the options left out.
+-- The grey line under "this side only", naming what the boxes left out.
 function AltStable.TooltipLeftOutLine(left)
     if not left or left <= 0 then return nil end
     local cfg = AltStableConfig or {}

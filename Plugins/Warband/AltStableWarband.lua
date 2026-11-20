@@ -937,44 +937,32 @@ local function ItemMapsFor(guid)
     return { bags = wb and wb.bags, bank = wb and wb.bank, mail = mail }
 end
 
--- The cross-alt breakdown block: "Total: N", then one line per character —
--- class icon + class-coloured name on the left, the per-location counts with
--- inline bag/bank icons on the right (e.g. "17[bag] +46[bank]").
--- `leftOut`: what the item tooltips' faction / ruleset options left out
--- (#403), one grey line under the list - alone when nothing else is left.
-local function AppendBreakdown(tt, total, holders, leftOut)
-    local leftLine = AltStable.TooltipLeftOutLine and AltStable.TooltipLeftOutLine(leftOut)
-    if not total or total <= 0 or not holders or #holders == 0 then
-        if leftLine then
-            tt:AddLine(" ")
-            tt:AddLine(leftLine, .55, .55, .55)
-            tt:Show()
-        end
-        return
-    end
-    tt:AddLine(" ")
-    tt:AddDoubleLine("Total:", tostring(total), 1, 0.82, 0, 1, 1, 1)
-
+-- One line per character, sorted by name: class icon + class-coloured name on
+-- the left, the per-location counts with inline bag/bank icons on the right
+-- (e.g. "17[bag] +46[bank]"). `why[h]`, when there, follows the name in grey
+-- (the faction or ruleset an Elsewhere holder is on, #403). `all` is every
+-- holder, for telling apart two characters of one name. Returns the notes seen.
+local function HolderLines(tt, holders, all, why, notes)
     local list = {}
     for _, h in ipairs(holders) do list[#list + 1] = h end
     table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
-
-    local now, stale, mailStale, mailMore = time(), false, false, false
+    local now = time()
     for _, h in ipairs(list) do
         local cc = (h.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[h.class]) or { r = .9, g = .9, b = .9 }
         local nm = ClassIconMarkup(h.class) .. (h.name or "?")
-        if h.realm and DupName(list, h.name) then nm = nm .. "-" .. h.realm end
+        if h.realm and DupName(all, h.name) then nm = nm .. "-" .. h.realm end
+        if why and why[h] and why[h] ~= "" then nm = nm .. " |cff888888(" .. why[h] .. ")|r" end
         local parts = {}
         if (h.bags or 0) > 0 then parts[#parts + 1] = h.bags .. BAG_ICON end
         if (h.bank or 0) > 0 then
             parts[#parts + 1] = h.bank .. BANK_ICON
-            if h.bankStamp and (now - h.bankStamp) > BANK_STALE then stale = true end
+            if h.bankStamp and (now - h.bankStamp) > BANK_STALE then notes.stale = true end
         end
         if (h.mail or 0) > 0 then
             parts[#parts + 1] = h.mail .. MAIL_ICON
-            if h.mailStamp and (now - h.mailStamp) > BANK_STALE then mailStale = true end
+            if h.mailStamp and (now - h.mailStamp) > BANK_STALE then notes.mailStale = true end
         end
-        if (h.mailMore or 0) > 0 then mailMore = true end
+        if (h.mailMore or 0) > 0 then notes.mailMore = true end
         -- Bagnon-style right cell: single location shows just "N[icon]"; a split
         -- shows the per-character total then the breakdown, e.g. "63=17[bag]+46[bank]".
         local right = parts[1] or ""
@@ -983,10 +971,47 @@ local function AppendBreakdown(tt, total, holders, leftOut)
         end
         tt:AddDoubleLine(nm, right, cc.r, cc.g, cc.b, 1, 1, 1)
     end
-    if stale then tt:AddLine("Bank data may be out of date", .55, .55, .55) end
-    if mailStale then tt:AddLine("Mail data may be out of date", .55, .55, .55) end
-    if mailMore then tt:AddLine("Some mail not read yet: a mailbox shows 50 at a time", .55, .55, .55) end
-    if leftLine then tt:AddLine(leftLine, .55, .55, .55) end
+end
+
+local function Header(tt, label, n)
+    tt:AddDoubleLine(label, tostring(n), 1, 0.82, 0, 1, 1, 1)
+end
+
+-- The cross-alt breakdown block: "Total: N", then one line per character.
+-- `split` (#403), from AltStable.SplitTooltipHolders, when the item tooltips'
+-- faction / ruleset boxes put some holders elsewhere: { side, sideTotal, away,
+-- awayTotal, why, scope }. Scope "both" lists this side, then Elsewhere, then
+-- the Total; "side" lists this side and one grey line for the rest (alone when
+-- nobody is on this side). No split, or nobody elsewhere: one list, as before.
+local function AppendBreakdown(tt, total, holders, split)
+    local notes = {}
+    local away = split and split.awayTotal > 0 and split.scope ~= "all"
+    if away and split.scope == "side" then
+        local leftLine = AltStable.TooltipLeftOutLine(split.awayTotal)
+        tt:AddLine(" ")
+        if split.sideTotal > 0 then
+            Header(tt, "Total:", split.sideTotal)
+            HolderLines(tt, split.side, holders, nil, notes)
+        end
+        tt:AddLine(leftLine, .55, .55, .55)
+    elseif away then
+        tt:AddLine(" ")
+        if split.sideTotal > 0 then
+            Header(tt, AltStable.TooltipSideLabel() .. ":", split.sideTotal)
+            HolderLines(tt, split.side, holders, nil, notes)
+        end
+        Header(tt, "Elsewhere:", split.awayTotal)
+        HolderLines(tt, split.away, holders, split.why, notes)
+        Header(tt, "Total:", total)
+    else
+        if not total or total <= 0 or not holders or #holders == 0 then return end
+        tt:AddLine(" ")
+        Header(tt, "Total:", total)
+        HolderLines(tt, holders, holders, nil, notes)
+    end
+    if notes.stale then tt:AddLine("Bank data may be out of date", .55, .55, .55) end
+    if notes.mailStale then tt:AddLine("Mail data may be out of date", .55, .55, .55) end
+    if notes.mailMore then tt:AddLine("Some mail not read yet: a mailbox shows 50 at a time", .55, .55, .55) end
     tt:Show()
 end
 
@@ -1023,11 +1048,13 @@ local function EnsureTooltipHook()
         if id and not (AltStable.TooltipIgnored and AltStable.TooltipIgnored(id)) then
             local total, holders = CountItem(id)
             if total > 0 then
-                local left = 0
-                if AltStable.FilterTooltipHolders then
-                    holders, total, left = AltStable.FilterTooltipHolders(holders)
+                local split
+                if AltStable.SplitTooltipHolders then
+                    local side, sideTotal, away, awayTotal, why = AltStable.SplitTooltipHolders(holders)
+                    split = { side = side, sideTotal = sideTotal, away = away, awayTotal = awayTotal,
+                              why = why, scope = AltStable.TooltipScope() }
                 end
-                AppendBreakdown(tt, total, holders, left)
+                AppendBreakdown(tt, total, holders, split)
             end
         end
     end)

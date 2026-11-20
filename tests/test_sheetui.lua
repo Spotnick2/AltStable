@@ -4315,6 +4315,17 @@ do
         eq("  ruleset is its own option", AltStableConfig.tooltipSameRuleset, true)
         check("  both hang under the counts box", F.faction.parentRow == AltStable._test.OptItemCounts
               and F.ruleset.parentRow == AltStable._test.OptItemCounts)
+        local heldScope = AltStableConfig.tooltipScope
+        AltStableConfig.tooltipScope = nil
+        eq("  Show has three choices", #F.scopeBtns, 3)
+        F.scopeBtns[2]:GetScript("OnClick")(F.scopeBtns[2])
+        eq("  This side saves \"side\"", AltStableConfig.tooltipScope, "side")
+        check("    and its hint shows", (F.scopeHint:GetText() or ""):find("grey line", 1, true) ~= nil, F.scopeHint:GetText())
+        F.scopeBtns[3]:GetScript("OnClick")(F.scopeBtns[3])
+        eq("  Everyone saves \"all\"", AltStableConfig.tooltipScope, "all")
+        F.scopeBtns[1]:GetScript("OnClick")(F.scopeBtns[1])
+        eq("  Both saves \"both\"", AltStableConfig.tooltipScope, "both")
+        AltStableConfig.tooltipScope = heldScope
         AltStableConfig.tooltipIgnore = nil
         F.refresh()
         check("  no items left out: the line says how",

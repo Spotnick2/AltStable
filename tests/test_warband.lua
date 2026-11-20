@@ -320,28 +320,60 @@ do
         return t, has
     end
     AltStable.SetConfigValue("warbandItemTooltips", true)
+    eq("Show is Both unless chosen", AltStable.TooltipScope(), "both")
     local t, has = shown()
-    check("both options off: every character, whatever their faction or ruleset",
-          has("Total:|15") and has("Birch") and has("Cedar"), t)
+    check("both boxes off: one list of everyone, as before",
+          has("Total:|15") and has("Birch") and has("Cedar") and not has("Elsewhere"), t)
     check("  and no left-out line", not has("+"), t)
 
+    -- Both (the default): this side, then Elsewhere, then the Total.
     AltStable.SetConfigValue("tooltipSameFaction", true)
     t, has = shown()
-    check("same faction: the Horde alt is left out of the list and the total",
-          has("Total:|11") and not has("Birch") and has("Cedar"), t)
+    check("same faction, Both: this side first, under its name", has("Same faction:|11")
+          and t:find("Same faction:", 1, true) < t:find("Elsewhere", 1, true), t)
+    check("  then Elsewhere with the Horde alt, tagged",
+          has("Elsewhere:|4") and has("Birch |cff888888(Horde)|r"), t)
+    check("  the Horde alt is listed once, after the header",
+          select(2, t:gsub("Birch", "")) == 1 and t:find("Elsewhere", 1, true) < t:find("Birch", 1, true), t)
+    check("  the PvP alt stays on this side, untagged", has("Cedar|") and not has("Cedar |cff"), t)
+    check("  and everyone's Total last", t:find("Total:|15", 1, true) ~= nil
+          and t:find("Total:|15", 1, true) > t:find("Elsewhere", 1, true), t)
+
+    -- This side only.
+    AltStable.SetConfigValue("tooltipScope", "side")
+    t, has = shown()
+    check("same faction, This side: the Horde alt is left out of the list and the total",
+          has("Total:|11") and not has("Birch") and has("Cedar") and not has("Elsewhere"), t)
     check("  and one grey line says how many", has("+4 on the other faction"), t)
 
+    -- Everyone: the boxes don't matter.
+    AltStable.SetConfigValue("tooltipScope", "all")
+    t, has = shown()
+    check("Everyone: one list, whatever the boxes say",
+          has("Total:|15") and has("Birch|") and not has("Elsewhere") and not has("+"), t)
+    AltStable.SetConfigValue("tooltipScope", "bogus")
+    eq("an unknown Show value is Both", AltStable.TooltipScope(), "both")
+
+    AltStable.SetConfigValue("tooltipScope", "side")
     AltStable.SetConfigValue("tooltipSameFaction", false)
     AltStable.SetConfigValue("tooltipSameRuleset", true)
     t, has = shown()
     check("same ruleset alone: the PvP alt is left out, the Horde one stays",
           has("Total:|7") and has("Birch") and not has("Cedar"), t)
     check("  and the line names the ruleset", has("+8 on another ruleset"), t)
+    AltStable.SetConfigValue("tooltipScope", "both")
+    t, has = shown()
+    check("  Both: the PvP alt Elsewhere, tagged with its ruleset",
+          has("Same ruleset:|7") and has("Cedar |cff888888(" .. AltStable.RulesetOf("Forever PvP") .. ")|r"), t)
 
     AltStable.SetConfigValue("tooltipSameFaction", true)
     t, has = shown()
-    check("both: only the same faction and ruleset", has("Total:|3") and not has("Birch") and not has("Cedar"), t)
-    check("  the line names both", has("+12 on another faction or ruleset"), t)
+    check("both boxes, Both: only the same faction and ruleset on this side",
+          has("Same faction & ruleset:|3") and has("Elsewhere:|12"), t)
+    AltStable.SetConfigValue("tooltipScope", "side")
+    t, has = shown()
+    check("both boxes, This side: the line names both",
+          has("Total:|3") and not has("Birch") and not has("Cedar") and has("+12 on another faction or ruleset"), t)
 
     -- A record whose faction or realm can't be read stops nothing.
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = nil, nil
@@ -349,10 +381,15 @@ do
     check("an unknown faction or realm is listed, not left out", has("Birch") and has("Cedar") and not has("+"), t)
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = "Horde", "Forever PvP"
 
-    -- Nobody in reach: the left-out line alone, so the tooltip still says why.
+    -- Nobody on this side: This side shows only the left-out line, Both only Elsewhere.
     AltStableWarbandDB[GUID], AltStableWarbandDB[ALLY] = nil, nil
     t, has = shown()
-    check("nobody in reach: no Total, only the left-out line", not has("Total:") and has("+12 on another"), t)
+    check("nobody on this side, This side: no Total, only the left-out line",
+          not has("Total:") and has("+12 on another"), t)
+    AltStable.SetConfigValue("tooltipScope", "both")
+    t, has = shown()
+    check("  Both: no empty header, Elsewhere and the Total",
+          not has("Same faction") and has("Elsewhere:|12") and has("Total:|12"), t)
     AltStableWarbandDB[GUID], AltStableWarbandDB[ALLY] = { bags = { [2318] = 1 } }, { bags = { [2318] = 2 } }
 
     -- The Warband tab's own cells still list everyone.
@@ -361,6 +398,7 @@ do
 
     AltStable.SetConfigValue("tooltipSameFaction", false)
     AltStable.SetConfigValue("tooltipSameRuleset", false)
+    AltStable.SetConfigValue("tooltipScope", nil)
 
     -- Items with no counts.
     eq("an item is not ignored unless chosen", AltStable.TooltipIgnored(2318), false)
