@@ -424,17 +424,27 @@ for key, r in pairs(rows) do
     -- (QuestieDB's dungeon table holds the entrance zone).
     local pinMap, pinX, pinY = uiMapID, nil, nil
     local dungeon = key > 0 and zoneTables.dungeons[key]
-    if (r.group == "dungeon" or r.group == "raid") and dungeon and dungeon[3] then
-        local m = zoneTables.a2m[dungeon[3]]
-        if m and m ~= 0 then pinMap = m end
+    if (r.group == "dungeon" or r.group == "raid") and dungeon then
+        local function MapOf(area)
+            local m = area and zoneTables.a2m[area]
+            return m ~= 0 and m or nil
+        end
+        local parent = MapOf(dungeon[3])
         -- The entrance, in percent of the entrance zone's map (QuestieDB keeps
-        -- these in Forever's frame): the first one on that map.
+        -- these in Forever's frame). Map and point come from one entrance
+        -- record: the first in the declared parent zone, else the first with a
+        -- map at all (Naxxramas: parent 65 has no map, its entrance is in
+        -- Eastern Plaguelands; Codex on #400).
+        local first
         for _, loc in ipairs(dungeon[4] or {}) do
-            if type(loc) == "table" and zoneTables.a2m[loc[1]] == pinMap and tonumber(loc[2]) then
-                pinX, pinY = loc[2], loc[3]
-                break
+            local m = type(loc) == "table" and tonumber(loc[2]) and tonumber(loc[3]) and MapOf(loc[1])
+            if m then
+                if m == parent then first = { m, loc[2], loc[3] }; break end
+                first = first or { m, loc[2], loc[3] }
             end
         end
+        if first then pinMap, pinX, pinY = first[1], first[2], first[3]
+        elseif parent then pinMap = parent end
     end
     zoneRows[key] = { group = r.group, continent = continent, uiMapID = uiMapID, name = name, n = r.n,
                       pinMap = pinMap, pinX = pinX, pinY = pinY }

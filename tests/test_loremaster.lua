@@ -483,6 +483,27 @@ for _ = 1, 20 do if not L.MapTick(0.1) then break end end
 WoW.sounds = {}
 L.Render()
 check("a redraw keeps the camera still", L.cam.t == 1 and #WoW.sounds == 0)
+-- The player's pin follows the player while the map shows (Codex on #400).
+local function mePoint() local _, _, _, x, y = mf.me:GetPoint(1); return x, y end
+check("the player is pinned at rest", mf.me:IsShown())
+local x1 = mePoint()
+C_Map.GetPlayerMapPosition = function() return { GetXY = function() return 0.9, 0.66 end } end
+mf.top._scripts.OnUpdate(mf.top, 0.1)
+eq("  not re-read every frame", (mePoint()), x1)
+mf.top._scripts.OnUpdate(mf.top, 0.2)
+near("  re-read a few times a second: it moves", (mePoint()), x1 + (0.9 - 0.42) * 310)
+C_Map.GetBestMapForUnit = function() return 1415 end
+mf.top._scripts.OnUpdate(mf.top, 0.3)
+check("  and goes once the player leaves the zone shown", not mf.me:IsShown())
+C_Map.GetBestMapForUnit = function() return 1429 end
+-- No character counted: the empty-state message takes the header row (Codex on #400).
+local heldChars = M.DB().chars
+M.DB().chars = {}
+L.Render()
+check("no character: the Zone heading hides", not L.zoneHdr:IsShown())
+M.DB().chars = heldChars
+L.Render()
+check("  and shows again with characters", L.zoneHdr:IsShown())
 C_Map.GetPlayerMapPosition = function() return { GetXY = function() error("secret") end } end
 eq("a position the client keeps secret is no pin", L.PlayerPin(1429), nil)
 rawset(_G, "C_Map", nil)

@@ -727,6 +727,7 @@ function L.LayMap()
     local clip = mapFrame.clip
     local w, h = clip:GetWidth() or 0, clip:GetHeight() or 0
     if not cam or w <= 0 or h <= 0 then
+        if cam then cam.rect = nil end
         HidePool(mapFrame.tiles); HidePool(mapFrame.back)
         mapFrame.pin:Hide(); mapFrame.me:Hide(); mapFrame.shadow:Hide()
         return
@@ -764,15 +765,36 @@ function L.LayMap()
     LayTiles(mapFrame.tiles, mapFrame.zone, "ARTWORK", art, zw / art.w, zh / art.h, zx, zy, 1)
     mapFrame.zone:SetAlpha(alpha)
 
-    local function put(tex, at)
-        if not at then tex:Hide(); return end
-        tex:ClearAllPoints()
-        tex:SetPoint("CENTER", clip, "TOPLEFT", zx + at.x * zw, -(zy + at.y * zh))
-        tex:SetAlpha(alpha)
-        tex:Show()
-    end
-    put(mapFrame.pin, cam.place.pin)
-    put(mapFrame.me, not cam.place.dim and cam.place.me or nil)
+    cam.rect = { x = zx, y = zy, w = zw, h = zh, alpha = alpha }
+    L.PutPin(mapFrame.pin, cam.place.pin)
+    L.PutPin(mapFrame.me, not cam.place.dim and cam.place.me or nil)
+end
+
+-- A pin at a point of the zone shown (0-1), where the camera has it now.
+function L.PutPin(tex, at)
+    local r = L.cam and L.cam.rect
+    if not at or not r then tex:Hide(); return end
+    tex:ClearAllPoints()
+    tex:SetPoint("CENTER", mapFrame.clip, "TOPLEFT", r.x + at.x * r.w, -(r.y + at.y * r.h))
+    tex:SetAlpha(r.alpha)
+    tex:Show()
+end
+
+-- The player moves while the map shows (Codex on #400): read where it stands
+-- again, a few times a second, and drop the pin once it leaves the zone shown.
+local PLAYER_EVERY = 0.25
+function L.RefreshPlayer()
+    local cam = L.cam
+    if not mapFrame or not cam then return end
+    cam.place.me = not cam.place.dim and L.PlayerPin(cam.place.map) or nil
+    L.PutPin(mapFrame.me, cam.place.me)
+end
+
+local function PlayerOnUpdate(self, elapsed)
+    self.since = (self.since or 0) + (elapsed or 0)
+    if self.since < PLAYER_EVERY then return end
+    self.since = 0
+    L.RefreshPlayer()
 end
 
 -- One step of the camera; true while it still moves.
@@ -851,6 +873,8 @@ function L.BuildMap()
     mapFrame.top = CreateFrame("Frame", nil, mapFrame.clip)
     mapFrame.top:SetAllPoints()
     mapFrame.top:SetFrameLevel(mapFrame.clip:GetFrameLevel() + 2)
+    -- Runs only while the map shows (OnUpdate stops with the frame hidden).
+    mapFrame.top:SetScript("OnUpdate", PlayerOnUpdate)
     mapFrame.tiles = {}
     -- A soft shadow lifts the zone off the darkened continent.
     mapFrame.shadow = mapFrame.zone:CreateTexture(nil, "BACKGROUND")
@@ -1197,6 +1221,8 @@ function L.Render()
     if L.zoneHdr then
         L.zoneHdr:ClearAllPoints()
         L.zoneHdr:SetPoint("LEFT", panel, "TOPLEFT", PAD + 14, -(L.colHdrTop + COLHDR_H / 2))
+        -- No characters: the empty-state message takes the header row (Codex on #400).
+        L.zoneHdr:SetShown(#cols > 0)
     end
 
     -- The selection: a character shown, and a row it can see.
