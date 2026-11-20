@@ -120,6 +120,34 @@ Class progress comes from the alts AltStable knows, your other accounts' include
 synced. Explorer counts each character's own exploration, for the characters played on this WoW
 account.
 
+### How many quests are left in each zone?
+
+The **Loremaster** tab counts each character's quests zone by zone: what it has done out of all it
+can ever do there, for its faction, race and class, at any level.
+
+- **One row per zone,** grouped by continent, then Dungeons, Raids, Battlegrounds, Class,
+  Professions and Other, and **one column per character.** A cell reads "27/30", gold once
+  complete. The filter shows one group, and the search box finds a zone.
+- **Class quests** have their own row, each character's own class. Along the bottom: the selected
+  character's total, and its class quests with how many are at or below its level, the done ones
+  included (click them to jump to the row).
+- **Click a row** for its card and its map. The map zooms in from the continent to the zone. A
+  dungeon or raid shows its entrance zone with the entrance pinned, and a white pin shows where you
+  stand when you're in the zone shown.
+- **Hover a cell, or click View quests,** for the quests themselves: still to do (greyed above the
+  character's level), done, and missed.
+
+![The Loremaster tab: a map zoomed into the Wetlands with Excavation Site's entrance pinned, a card with 5 of 5 quests done, and a grid of dungeons with each character's progress](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/loremaster.jpg)
+
+*The Loremaster tab: a dungeon's entrance on the map, its card, and every character's progress.*
+
+Zone, dungeon, raid, battleground and profession quests count, breadcrumbs included. Repeatable
+quests, holiday quests and quests not in the game don't. A quest a character can no longer take
+(it picked the other quest of a choice, or outlevelled it) leaves its total, so 100% is always
+within reach. The counts are taken at login and after every quest turned in or level gained, so a
+character shows up once it has logged in with this version. The quest lists show for the characters
+played on this WoW account; a character on another account shows its counts once it has synced.
+
 ### How much gold, rested XP and progression does each character have?
 
 The **sheet** has one row per character: level, item level and gear in every slot, professions,
@@ -176,7 +204,7 @@ and it doesn't try to match every Altoholic feature.
 
 1. **Install** AltStable from [CurseForge](https://www.curseforge.com/wow/addons/altstable),
    either with the CurseForge app or by unzipping it into the `Interface\AddOns` folder inside
-   your Forever game folder. The download contains six folders (`AltStable` and its five tabs);
+   your Forever game folder. The download contains seven folders (`AltStable` and its six tabs);
    keep all of them. Then start the game, or restart it if it was running.
 2. **Open it** by typing `/alts` or clicking the minimap button.
 3. **Log in on each character once.** AltStable can only read the character you are playing. It
