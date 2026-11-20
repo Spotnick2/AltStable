@@ -96,6 +96,12 @@ eq("the version is the one the counted snapshots carry", D.VERSION, "9b0a9380")
 check("the version is the body's hash", type(D.VERSION) == "string" and #D.VERSION == 8)
 check("the source is recorded", D.SOURCE and D.SOURCE.questiedb and D.SOURCE.commit and D.SOURCE.build)
 
+-- The map panel's entrance: map and point from one entrance record. Naxxramas's
+-- parent area (65) has no map; its entrance is in Eastern Plaguelands (Codex on #400).
+local naxx = D.ZONES[3456]
+eq("Naxxramas pins its entrance zone, Eastern Plaguelands", naxx and naxx[6], 1423)
+check("  at the entrance", naxx and naxx[7] == 34.25 and naxx[8] == 19.45)
+
 ------------------------------------------------------------
 -- The plan's rules, on quests that show them
 ------------------------------------------------------------

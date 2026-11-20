@@ -385,47 +385,133 @@ for _, line in ipairs(lines or {}) do if line.text:find("^Done") then hasDone = 
 check("  with a Done section (1361, 1362, 1365 ... are done)", hasDone)
 check("another account's character has no list", L.ListLines({ guid = OTHER, snap = { stamp = 1, c = {} } }, 405) == nil)
 
--- The map, against a stand-in C_Map: Elwynn's rect on Azeroth, its continent's
--- rect, and a highlight on the continent.
+-- The map (#398, the owner: zoom to the zone): a zone shows its own map; an
+-- instance its entrance zone with the entrance pinned; the Class row Azeroth,
+-- dimmed; the player pinned where it stands in the zone shown.
+local place = L.Placement(12)
+eq("Elwynn shows its own map", place and place.map, 1429)
+check("  with no pin of its own", place and place.pin == nil)
+place = L.Placement(1176)
+eq("Zul'Farrak shows Tanaris, its entrance zone", place and place.map, 1446)
+near("  the entrance pinned (x)", place and place.pin and place.pin.x, 0.387)
+near("  (y)", place and place.pin and place.pin.y, 0.201)
+place = L.Placement(D.CLASS_KEY)
+check("the Class row shows Azeroth, dimmed", place and place.map == 947 and place.dim)
+
+-- Elwynn (1429) sits in the Eastern Kingdoms (1415), at x 0.40-0.50, y 0.70-0.80.
+local MAPINFO = {
+    [1429] = { mapID = 1429, name = "Elwynn Forest", mapType = 3, parentMapID = 1415 },
+    [1415] = { mapID = 1415, name = "Eastern Kingdoms", mapType = 2, parentMapID = 947 },
+    [947]  = { mapID = 947, name = "Azeroth", mapType = 1, parentMapID = 946 },
+}
 rawset(_G, "C_Map", {
-    GetMapRectOnMap = function(map, top)
-        if map == 1429 and top == 947 then return 0.6, 0.7, 0.2, 0.4 end
-        if map == 1415 and top == 947 then return 0.5, 1.0, 0.0, 1.0 end
-        if map == 1429 and top == 1415 then return 0.2, 0.4, 0.2, 0.4 end
-    end,
-    GetMapInfo = function(map) if map == 1429 then return { name = "Elwynn Forest", parentMapID = 1415 } end end,
-    GetMapHighlightInfoAtPosition = function(map, x, y)
-        if map == 1415 and math.abs(x - 0.3) < 1e-9 and math.abs(y - 0.3) < 1e-9 then
-            return 12345, nil, 0.8, 0.6, 0.1, 0.2, 0.25, 0.2
+    GetMapArtLayers = function(map)
+        if map == 1429 or map == 947 or map == 1415 then
+            return { { layerWidth = 1000, layerHeight = 600, tileWidth = 256, tileHeight = 256 } }
         end
     end,
-    GetMapArtLayers = function() return { { layerWidth = 1000, layerHeight = 600, tileWidth = 256, tileHeight = 256 } } end,
-    GetMapArtLayerTextures = function()
+    GetMapArtLayerTextures = function(map)
+        if map ~= 1429 and map ~= 947 and map ~= 1415 then return nil end
         local t = {} for i = 1, 12 do t[i] = 9000 + i end return t
+    end,
+    GetMapInfo = function(map) return MAPINFO[map] end,
+    GetMapRectOnMap = function(map, top)
+        if map == 1429 and top == 1415 then return 0.40, 0.50, 0.70, 0.80 end
+    end,
+    GetBestMapForUnit = function() return 1429 end,
+    GetPlayerMapPosition = function(map)
+        if map == 1429 then return { GetXY = function() return 0.42, 0.66 end } end
     end,
 })
 L.ResetMapCache()
-local place = L.Placement(12)
-check("Elwynn is placed on Azeroth", place ~= nil)
-if place then
-    near("  its pin at its rect's centre (x)", place.x, 0.65)
-    near("  (y)", place.y, 0.3)
-    check("  with the highlight from its continent", place.hl ~= nil and place.hl.fileID == 12345)
-    if place.hl then
-        near("  moved onto Azeroth (x)", place.hl.x, 0.625)
-        near("  (y)", place.hl.y, 0.2)
-        near("  its width scaled by the continent's", place.hl.w, 0.05)
-        near("  its height", place.hl.h, 0.2)
-    end
-end
-eq("the Class row has no place", L.Placement(D.CLASS_KEY), nil)
-check("the art reads", L.MapArt() ~= nil and L.MapArt().w == 1000)
+check("a zone's art reads", L.MapArt(1429) ~= nil and L.MapArt(1429).w == 1000)
+local me = L.PlayerPin(1429)
+check("the player is pinned in the zone it stands in", me ~= nil and me.x == 0.42 and me.y == 0.66)
+eq("  not in another", L.PlayerPin(1446), nil)
+L.Select(1176)
+eq("a zone without art falls back to Azeroth", L.shownMap, 947)
+L.Select(12)
+eq("  a zone with art shows itself", L.shownMap, 1429)
+
+-- The zoom (#398, the owner: "like if we actually zoomed the map", with the
+-- world map's open/close sounds): from the whole continent into the zone.
+local mf = L.mapFrame
+mf.clip:SetSize(600, 186)
+L.ResetMapCache()
+L.Select(1176)                                  -- Azeroth, still
+WoW.sounds = {}
+L.Select(12)
+check("a zone zooms in from its continent", L.cam and L.cam.zoom and L.cam.zoom.cont == 1415)
+eq("  starting on the whole continent", L.cam and L.cam.t, 0)
+eq("  with the map's open sound", WoW.sounds[#WoW.sounds], 844)
+check("  the camera runs", mf._scripts.OnUpdate ~= nil)
+eq("  the zone faded out at first", mf.zone:GetAlpha(), 0)
+L.MapTick(0.2)
+check("  partway in, the zone shows", L.cam.t > 0 and L.cam.t < 1 and mf.zone:GetAlpha() > 0)
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+eq("  the zoom ends", L.cam.t, 1)
+eq("  the zone whole", mf.zone:GetAlpha(), 1)
+-- At rest the zone is fitted and centred: 1000x600 in 600x186, scale 0.31.
+local _, _, _, tx, ty = mf.tiles[1]:GetPoint(1)
+near("  its first tile centred (x)", tx, (600 - 310) / 2)
+near("  (y)", ty, 0)
+-- The continent behind is zoomed so Elwynn's rect lands on the zone:
+-- 310 px for a tenth of the continent, its tiles 256 * 3.1.
+near("  the continent zoomed with it", mf.back[1]:GetWidth(), 256 * 3.1)
+local _, _, _, bx = mf.back[1]:GetPoint(1)
+near("  and aligned (Elwynn's left edge on the zone's)", bx + 0.40 * 1000 * 3.1, (600 - 310) / 2)
+mf._scripts.OnUpdate(mf, 0.1)
+check("  the camera stops", mf._scripts.OnUpdate == nil)
+-- Another place zooms out first, with the close sound.
+WoW.sounds = {}
+L.Select(1176)
+eq("another place zooms out first", L.cam.next and L.cam.next.map, 947)
+eq("  with the map's close sound", WoW.sounds[1], 845)
+eq("  the old zone still drawn", L.cam.place.map, 1429)
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+check("  then shows the new place", L.cam.place.map == 947 and L.cam.next == nil and L.cam.zoom == nil)
+-- Back to the zone mid-zoom-out: the camera turns round.
+L.Select(12)
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+L.Select(1176); L.MapTick(0.1)
+WoW.sounds = {}
+L.Select(12)
+check("back mid-zoom-out: it turns round", L.cam.next == nil and L.cam.place.map == 1429 and L.cam.t > 0)
+eq("  opening again", WoW.sounds[1], 844)
+-- A redraw of the same zone does not zoom again.
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+WoW.sounds = {}
+L.Render()
+check("a redraw keeps the camera still", L.cam.t == 1 and #WoW.sounds == 0)
+-- The player's pin follows the player while the map shows (Codex on #400).
+local function mePoint() local _, _, _, x, y = mf.me:GetPoint(1); return x, y end
+check("the player is pinned at rest", mf.me:IsShown())
+local x1 = mePoint()
+C_Map.GetPlayerMapPosition = function() return { GetXY = function() return 0.9, 0.66 end } end
+mf.top._scripts.OnUpdate(mf.top, 0.1)
+eq("  not re-read every frame", (mePoint()), x1)
+mf.top._scripts.OnUpdate(mf.top, 0.2)
+near("  re-read a few times a second: it moves", (mePoint()), x1 + (0.9 - 0.42) * 310)
+C_Map.GetBestMapForUnit = function() return 1415 end
+mf.top._scripts.OnUpdate(mf.top, 0.3)
+check("  and goes once the player leaves the zone shown", not mf.me:IsShown())
+C_Map.GetBestMapForUnit = function() return 1429 end
+-- No character counted: the empty-state message takes the header row (Codex on #400).
+local heldChars = M.DB().chars
+M.DB().chars = {}
+L.Render()
+check("no character: the Zone heading hides", not L.zoneHdr:IsShown())
+M.DB().chars = heldChars
+L.Render()
+check("  and shows again with characters", L.zoneHdr:IsShown())
+C_Map.GetPlayerMapPosition = function() return { GetXY = function() error("secret") end } end
+eq("a position the client keeps secret is no pin", L.PlayerPin(1429), nil)
 rawset(_G, "C_Map", nil)
 L.ResetMapCache()
-eq("no map API: no art, and no error", L.MapArt(), nil)
-eq("  no place either", L.Placement(12), nil)
+eq("no map API: no art, and no error", L.MapArt(1429), nil)
 local okR = pcall(L.Render)
 check("  the tab still draws", okR)
+eq("  and shows no map", L.shownMap, nil)
 
 -- Hide map, and the jump to Class quests.
 M.DB().hideMap = true
@@ -453,6 +539,23 @@ L.SetFilter("class")
 L.JumpToClass()
 eq("  a Class filter stays", M.DB().filter, "class")
 L.SetFilter("all")
+
+-- Seen in game (#398): the font has no triangle glyphs, so the arrows are drawn;
+-- the columns share the width; the buttons are the mockup's, not the game's red.
+L.Render()
+local foot = L.foot.class.text:GetText() or ""
+check("the footer's jump has no glyph the font lacks", not foot:find("\226\150", 1, true), foot)
+check("  its arrow is drawn", L.foot.class.arrow ~= nil)
+
+check("the columns are at least the narrowest width", (L.colW or 0) >= 64)
+check("  and at most the widest", (L.colW or 0) <= 160)
+local btn = L.Button(UIParent, 80, 24, "Try")
+eq("a Loremaster button carries its text", btn:GetText(), "Try")
+btn:Disable()
+btn:Paint(false)
+local r = btn.label:GetTextColor()
+check("  dimmed when disabled", r < 0.5)
+check("the Zone header is there", L.zoneHdr ~= nil and L.zoneHdr:GetText() == "Zone")
 
 -- A snapshot counted before this update keeps its quest list (Codex on #399:
 -- the version is what the counting reads, not display fields).

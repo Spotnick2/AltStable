@@ -422,14 +422,32 @@ for key, r in pairs(rows) do
     end
     -- Where the map panel pins the row: its own zone map, or an instance's parent zone
     -- (QuestieDB's dungeon table holds the entrance zone).
-    local pinMap = uiMapID
+    local pinMap, pinX, pinY = uiMapID, nil, nil
     local dungeon = key > 0 and zoneTables.dungeons[key]
-    if (r.group == "dungeon" or r.group == "raid") and dungeon and dungeon[3] then
-        local m = zoneTables.a2m[dungeon[3]]
-        if m and m ~= 0 then pinMap = m end
+    if (r.group == "dungeon" or r.group == "raid") and dungeon then
+        local function MapOf(area)
+            local m = area and zoneTables.a2m[area]
+            return m ~= 0 and m or nil
+        end
+        local parent = MapOf(dungeon[3])
+        -- The entrance, in percent of the entrance zone's map (QuestieDB keeps
+        -- these in Forever's frame). Map and point come from one entrance
+        -- record: the first in the declared parent zone, else the first with a
+        -- map at all (Naxxramas: parent 65 has no map, its entrance is in
+        -- Eastern Plaguelands; Codex on #400).
+        local first
+        for _, loc in ipairs(dungeon[4] or {}) do
+            local m = type(loc) == "table" and tonumber(loc[2]) and tonumber(loc[3]) and MapOf(loc[1])
+            if m then
+                if m == parent then first = { m, loc[2], loc[3] }; break end
+                first = first or { m, loc[2], loc[3] }
+            end
+        end
+        if first then pinMap, pinX, pinY = first[1], first[2], first[3]
+        elseif parent then pinMap = parent end
     end
     zoneRows[key] = { group = r.group, continent = continent, uiMapID = uiMapID, name = name, n = r.n,
-                      pinMap = pinMap }
+                      pinMap = pinMap, pinX = pinX, pinY = pinY }
 end
 
 -- Sort names for the negative keys (Professions, Other).
@@ -530,7 +548,8 @@ for i, k in ipairs(keys) do
         r.continent and ("%q"):format(r.continent) or "nil", r.uiMapID and tostring(r.uiMapID) or "nil",
         r.name or ("Area " .. k), i)
     versionLines[#versionLines + 1] = five .. "},"
-    zoneLines[#zoneLines + 1] = five .. "," .. (r.pinMap and tostring(r.pinMap) or "nil") .. "},"
+    zoneLines[#zoneLines + 1] = five .. "," .. (r.pinMap and tostring(r.pinMap) or "nil")
+        .. (r.pinX and ("," .. r.pinX .. "," .. r.pinY) or "") .. "},"
 end
 
 local body = "D.ZONES={\n" .. table.concat(zoneLines, "\n") .. "\n}\nD.QUESTS={\n" .. table.concat(lines, "\n") .. "\n}\n"
@@ -554,8 +573,9 @@ local header = ([[
 -- holiday lists; zone names and continents from the WoW Forever client tables (wago.tools, %s).
 -- QuestieDB and Questie are GPLv3 (see NOTICE.md); so is this file and the Loremaster plugin.
 --
--- D.ZONES[key] = { group, continent, uiMapID, englishName, order, pinMap }
---   pinMap: the zone map the map panel pins this row on (an instance's entrance zone).
+-- D.ZONES[key] = { group, continent, uiMapID, englishName, order, pinMap, pinX, pinY }
+--   pinMap: the zone map the map panel shows for this row (an instance's entrance zone);
+--   pinX, pinY (instances): the entrance on it, in percent. Display only: D.VERSION ignores them.
 --   key: an area ID (zone, dungeon, raid), a QuestSort ID (< 0: professions, other), -25 the
 --   Battlegrounds row, -9999 the Class quests row, 0 quests QuestieDB files nowhere.
 -- D.QUESTS[questID] = { key, hordeKey, reqLevel, raceMask, classMask, flags, name, maxLevel,

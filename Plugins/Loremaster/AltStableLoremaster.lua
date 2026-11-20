@@ -4,9 +4,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later (see NOTICE.md).
 --
 -- The tab, top to bottom:
---   * the map panel (#398): Azeroth (uiMap 947) from the client's own map art,
---     desaturated and tinted teal (the owner's glass look), with the selected
---     row's zone pinned and outlined in gold. Hidden with "Hide map";
+--   * the map panel (#398): the selected zone's own map from the client's own
+--     art, desaturated and tinted teal (the owner's glass look); an instance
+--     shows its entrance zone with the entrance pinned; where the character
+--     playing stands in the zone shown, a pin. Hidden with "Hide map";
 --   * beside it the zone card: the selected zone and character, its count, a
 --     bar, what is left; "View quests" turns the card into the zone's quest
 --     list (to do by level, done, missed);
@@ -21,15 +22,18 @@
 -- AltStableLoremasterDB.chars, one per character, from its own last login or
 -- from sync. A character never scanned has no column, never a row of zeros.
 --
--- The map, from the 70959 API (not yet measured live; every call is guarded,
--- so a map that does not read leaves the panel blank, never an error):
---   * art: C_Map.GetMapArtLayers(947)[1] and GetMapArtLayerTextures(947, 1),
---     the tile grid the world map draws (as Blizzard's MapCanvas does);
---   * pin: the centre of C_Map.GetMapRectOnMap(pinMap, 947);
---   * outline: C_Map.GetMapHighlightInfoAtPosition(continent, x, y), the
---     texture the world map shows on hovering a zone, placed as Blizzard's
---     MapHighlightDataProvider places it, moved onto 947 through the
---     continent's own rect there.
+-- The map, from the 70959 API (seen in game on 70959: Azeroth's tiles load;
+-- every call is guarded, so a map that does not read leaves the panel blank,
+-- never an error):
+--   * art: C_Map.GetMapArtLayers(map)[1] and GetMapArtLayerTextures(map, 1),
+--     the tile grid the world map draws (as Blizzard's MapCanvas does), the
+--     whole map fitted in the panel;
+--   * the zoom: C_Map.GetMapInfo's parents up to the continent, and
+--     C_Map.GetMapRectOnMap(zone, continent), where the zone's art sits on the
+--     continent's. The camera flies from the whole continent into the zone;
+--     a map without a continent shows still;
+--   * the entrance of an instance: QuestieDB's, in percent of the entrance
+--     zone's map; the player: C_Map.GetPlayerMapPosition in the zone shown.
 --
 -- LoadOnDemand: registers on PLAYER_LOGIN, or right away when enabled later.
 ------------------------------------------------------------
@@ -50,7 +54,8 @@ local COLHDR_H  = 24      -- the characters' names
 local ROW_H     = 20
 local GROUP_H   = 22
 local NAME_W    = 200
-local COL_W     = 64
+local COL_W     = 64      -- the narrowest a character column gets
+local MAX_COL_W = 160     -- and the widest, when there is room to spread
 local HBAR_H    = 12
 local MAX_TIP   = 20      -- open quests listed in a tooltip
 local LIST_LINE = 15
@@ -59,7 +64,10 @@ local MIN_PANEL_W, MIN_PANEL_H = 560, 420
 local AZEROTH   = 947
 
 local GOLD = { 1, 0.82, 0 }
-local TEAL = { 0.42, 0.80, 0.82 }    -- the map's glass tint
+-- The map's glass tint, multiplied over the desaturated art: light enough that
+-- land (the art's lighter half) and water (its darker) still part (seen in game:
+-- at 0.42/0.80/0.82 under a 30% wash, both were one murky teal).
+local TEAL = { 0.66, 0.94, 0.96 }
 
 -- The groups, in order. A zone's group is its continent's.
 L.GROUPS = {
@@ -124,6 +132,64 @@ local function FS(parent, template, justify)
     f:SetJustifyH(justify or "LEFT")
     if AltStable.SkinText then AltStable.SkinText(f) end
     return f
+end
+
+-- A small arrow, drawn: the game font has no triangle glyphs (seen in game, an
+-- empty box). `dir` "right" or "down".
+local ARROW = "Interface\\ChatFrame\\ChatFrameExpandArrow"
+local function Arrow(parent, dir, size)
+    local t = parent:CreateTexture(nil, "OVERLAY")
+    t:SetSize(size or 12, size or 12)
+    t:SetTexture(ARROW)
+    if dir == "down" and t.SetRotation then t:SetRotation(-math.pi / 2) end
+    t:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
+    return t
+end
+
+-- The owner's mockup's buttons: a dark well, a thin accent edge, gold text,
+-- lighter on hover, dim when disabled. Not the game's red panel button.
+function L.Button(parent, w, h, text)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(w, h)
+    b.bg = b:CreateTexture(nil, "BACKGROUND")
+    b.bg:SetAllPoints()
+    b.edges = {}
+    for _, side in ipairs({ "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
+        local e = b:CreateTexture(nil, "BORDER")
+        if side == "TOP" or side == "BOTTOM" then
+            e:SetHeight(1)
+            e:SetPoint(side .. "LEFT", b, side .. "LEFT", 0, 0)
+            e:SetPoint(side .. "RIGHT", b, side .. "RIGHT", 0, 0)
+        else
+            e:SetWidth(1)
+            e:SetPoint("TOP" .. side, b, "TOP" .. side, 0, 0)
+            e:SetPoint("BOTTOM" .. side, b, "BOTTOM" .. side, 0, 0)
+        end
+        b.edges[#b.edges + 1] = e
+    end
+    local fs = FS(b, "GameFontNormal", "CENTER")
+    fs:SetPoint("CENTER", b, "CENTER", 0, 0)
+    b:SetFontString(fs)
+    b.label = fs
+    local function paint(self, hover)
+        local r, g, bl, a = 0.03, 0.03, 0.04, 1
+        if AltStable.SkinWellColor then r, g, bl, a = AltStable.SkinWellColor() end
+        if hover and self:IsEnabled() then r, g, bl = r + 0.08, g + 0.08, bl + 0.08 end
+        self.bg:SetColorTexture(r, g, bl, a)
+        local ar, ag, ab = GOLD[1], GOLD[2], GOLD[3]
+        if AltStable.GetAccentRGB then ar, ag, ab = AltStable.GetAccentRGB() end
+        for _, e in ipairs(self.edges) do e:SetColorTexture(ar, ag, ab, self:IsEnabled() and 0.55 or 0.2) end
+        if self:IsEnabled() then self.label:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
+        else self.label:SetTextColor(0.45, 0.45, 0.45) end
+    end
+    b.Paint = paint
+    b:SetScript("OnEnter", function(self) paint(self, true) end)
+    b:SetScript("OnLeave", function(self) paint(self, false); GameTooltip:Hide() end)
+    b:SetScript("OnEnable", function(self) paint(self, false) end)
+    b:SetScript("OnDisable", function(self) paint(self, false) end)
+    if text then b:SetText(text) end
+    paint(b, false)
+    return b
 end
 
 local function Pct(done, total)
@@ -515,95 +581,97 @@ end
 -- The map panel
 ------------------------------------------------------------
 
--- Where a row sits on Azeroth: its pin (0-1 on 947) and the outline's rect and
--- texture, or nil for rows with no map (Class, Professions, Other). Memoized:
--- the map does not move during a session.
-local placeCache = {}
+-- What the map panel shows for a row (#398, the owner: "zoom to a zone when
+-- selecting a zone"): { map = uiMapID, pin = { x, y } (0-1) or nil, dim }.
+--   * a zone: its own map, whole; no outline needed, the map IS the zone;
+--   * a dungeon or raid: its entrance zone's map, the entrance pinned
+--     (QuestieDB's entrance, in percent, carried in the quest table);
+--   * Class, Professions, Other: Azeroth, dimmed.
 function L.Placement(key)
-    if placeCache[key] ~= nil then return placeCache[key] or nil end
     local z = D.ZONES[key]
-    local pinMap = z and (z[6] or z[3])
-    local place = false
-    local rectOn = Api("C_Map", "GetMapRectOnMap")
-    if pinMap then
-        local ok, x0, x1, y0, y1 = Call(rectOn, pinMap, AZEROTH)
-        if ok and tonumber(x0) and tonumber(x1) and x1 > x0 and y1 > y0 then
-            place = { x = (x0 + x1) / 2, y = (y0 + y1) / 2 }
-            -- The outline: the zone's highlight on its continent map, moved
-            -- onto Azeroth through the continent's own rect there.
-            local okI, info = Call(Api("C_Map", "GetMapInfo"), pinMap)
-            local cont = okI and type(info) == "table" and info.parentMapID
-            if cont and cont ~= AZEROTH and cont ~= 0 and z[1] == "zone" then
-                local okC, cx0, cx1, cy0, cy1 = Call(rectOn, cont, AZEROTH)
-                local okZ, zx0, zx1, zy0, zy1 = Call(rectOn, pinMap, cont)
-                if okC and okZ and tonumber(cx0) and tonumber(zx0) and cx1 > cx0 and cy1 > cy0 then
-                    local okH, fileID, atlas, pctX, pctY, texX, texY, scX, scY =
-                        Call(Api("C_Map", "GetMapHighlightInfoAtPosition"), cont, (zx0 + zx1) / 2, (zy0 + zy1) / 2)
-                    if okH and ((tonumber(fileID) and fileID > 0) or atlas) and tonumber(texX) and texX > 0 then
-                        local cw, ch = cx1 - cx0, cy1 - cy0
-                        place.hl = { fileID = fileID, atlas = atlas, pctX = pctX or 1, pctY = pctY or 1,
-                                     x = cx0 + (scX or 0) * cw, y = cy0 + (scY or 0) * ch,
-                                     w = texX * cw, h = (texY or texX) * ch }
-                    end
-                end
-            end
-        end
-    end
-    placeCache[key] = place
-    return place or nil
+    local map = z and (z[6] or z[3])
+    if not map then return { map = AZEROTH, dim = true } end
+    local place = { map = map }
+    if tonumber(z[7]) and tonumber(z[8]) then place.pin = { x = z[7] / 100, y = z[8] / 100 } end
+    return place
 end
 
--- Forget what was read of the map (tests; a client whose map loads late).
+-- Where the character playing stands, when it stands in the map shown. Live,
+-- never cached; a position the client keeps secret (an instance) is no pin.
+function L.PlayerPin(map)
+    local okB, here = Call(Api("C_Map", "GetBestMapForUnit"), "player")
+    if not okB or here ~= map then return nil end
+    local ok, pos = Call(Api("C_Map", "GetPlayerMapPosition"), map, "player")
+    if not ok or type(pos) ~= "table" or not pos.GetXY then return nil end
+    local okXY, x, y = pcall(function()
+        local px, py = pos:GetXY()
+        if px and py and px > 0 and py > 0 and px < 1 and py < 1 then return px, py end
+    end)
+    if okXY and x then return { x = x, y = y } end
+    return nil
+end
+
+-- Forget what was read of the maps (tests; a client whose map loads late).
 function L.ResetMapCache()
-    placeCache = {}
-    L.mapArt = nil
+    L.mapArts, L.zooms, L.cam = {}, {}, nil
 end
 
--- The art: Azeroth's tiles, read once.
-function L.MapArt()
-    if L.mapArt ~= nil then return L.mapArt or nil end
-    L.mapArt = false
-    local okL, layers = Call(Api("C_Map", "GetMapArtLayers"), AZEROTH)
+-- A map's art: its first layer's tiles, read once per map.
+function L.MapArt(map)
+    map = map or AZEROTH
+    L.mapArts = L.mapArts or {}
+    if L.mapArts[map] ~= nil then return L.mapArts[map] or nil end
+    L.mapArts[map] = false
+    local okL, layers = Call(Api("C_Map", "GetMapArtLayers"), map)
     local layer = okL and type(layers) == "table" and layers[1]
-    local okT, tiles = Call(Api("C_Map", "GetMapArtLayerTextures"), AZEROTH, 1)
+    local okT, tiles = Call(Api("C_Map", "GetMapArtLayerTextures"), map, 1)
     if layer and okT and type(tiles) == "table" and #tiles > 0 and tonumber(layer.layerWidth)
        and tonumber(layer.tileWidth) and layer.layerWidth > 0 and layer.tileWidth > 0 then
-        L.mapArt = { w = layer.layerWidth, h = layer.layerHeight, tw = layer.tileWidth, th = layer.tileHeight,
-                     tiles = tiles }
+        L.mapArts[map] = { w = layer.layerWidth, h = layer.layerHeight, tw = layer.tileWidth, th = layer.tileHeight,
+                           tiles = tiles }
     end
-    return L.mapArt or nil
+    return L.mapArts[map] or nil
 end
 
-local function GlassTile(t)
+-- Where a map sits on its continent, for the zoom: { cont = uiMapID, art,
+-- x0, x1, y0, y1 } (0-1 of the continent), or nil (no continent, no art, or
+-- the client does not place it: the map then shows still). Read once per map.
+function L.ZoomFrom(map)
+    L.zooms = L.zooms or {}
+    if L.zooms[map] ~= nil then return L.zooms[map] or nil end
+    L.zooms[map] = false
+    local okI, info = Call(Api("C_Map", "GetMapInfo"), map)
+    local parent = okI and type(info) == "table" and info.parentMapID
+    for _ = 1, 6 do
+        if not tonumber(parent) or parent <= 0 then break end
+        local okP, pinfo = Call(Api("C_Map", "GetMapInfo"), parent)
+        if not okP or type(pinfo) ~= "table" then break end
+        -- 2 = Enum.UIMapType.Continent, 1 = World: the first one up the chain.
+        if tonumber(pinfo.mapType) and pinfo.mapType <= 2 then
+            local art = L.MapArt(parent)
+            local okR, x0, x1, y0, y1 = Call(Api("C_Map", "GetMapRectOnMap"), map, parent)
+            if art and okR and tonumber(x0) and tonumber(x1) and tonumber(y0) and tonumber(y1)
+               and x1 > x0 and y1 > y0 then
+                L.zooms[map] = { cont = parent, art = art, x0 = x0, x1 = x1, y0 = y0, y1 = y1 }
+            end
+            break
+        end
+        parent = pinfo.parentMapID
+    end
+    return L.zooms[map] or nil
+end
+
+local function GlassTile(t, shade)
     -- The owner's glass look from the client's own art: no colour of its own,
-    -- then the teal of the Pearl glass.
+    -- then the teal of the Pearl glass (darker for the continent behind).
     if t.SetDesaturated then t:SetDesaturated(true) end
-    t:SetVertexColor(TEAL[1], TEAL[2], TEAL[3], 1)
+    shade = shade or 1
+    t:SetVertexColor(TEAL[1] * shade, TEAL[2] * shade, TEAL[3] * shade, 1)
 end
 
-function L.RenderMap(key)
-    if not mapFrame then return end
-    local art = L.MapArt()
-    local clip = mapFrame.clip
-    local w, h = clip:GetWidth() or 0, clip:GetHeight() or 0
-    local place = key and L.Placement(key)
-    mapFrame.none:SetShown(not art)
-    if not art or w <= 0 or h <= 0 then
-        mapFrame.pin:Hide(); mapFrame.hl:Hide()
-        for _, t in ipairs(mapFrame.tiles) do t:Hide() end
-        return
-    end
-    -- Cover the panel's width; the art's spare height scrolls to keep the pin
-    -- in view.
-    local s = w / art.w
-    local fullH = art.h * s
-    local offY = 0
-    if fullH > h then
-        local py = place and place.y * fullH or fullH / 2
-        offY = math.max(0, math.min(fullH - h, py - h / 2))
-    else
-        offY = -(h - fullH) / 2
-    end
+-- Lays a map's tiles: sx, sy panel pixels per art pixel, x, y the art's
+-- top-left in the panel.
+local function LayTiles(pool, parent, layer, art, sx, sy, x, y, shade)
     local cols = math.ceil(art.w / art.tw)
     local rows = math.ceil(art.h / art.th)
     local i = 0
@@ -612,61 +680,218 @@ function L.RenderMap(key)
             local file = art.tiles[(r - 1) * cols + c]
             if file then
                 i = i + 1
-                local t = mapFrame.tiles[i]
+                local t = pool[i]
                 if not t then
-                    t = clip:CreateTexture(nil, "ARTWORK")
-                    mapFrame.tiles[i] = t
+                    t = parent:CreateTexture(nil, layer)
+                    pool[i] = t
                 end
-                t:SetTexture(file)
-                GlassTile(t)
-                t:SetSize(art.tw * s, art.th * s)
+                if t._file ~= file then t:SetTexture(file); t._file = file end
+                GlassTile(t, shade)
+                t:SetSize(art.tw * sx, art.th * sy)
                 t:ClearAllPoints()
-                t:SetPoint("TOPLEFT", clip, "TOPLEFT", (c - 1) * art.tw * s, -((r - 1) * art.th * s - offY))
+                t:SetPoint("TOPLEFT", mapFrame.clip, "TOPLEFT", x + (c - 1) * art.tw * sx, -(y + (r - 1) * art.th * sy))
                 t:Show()
             end
         end
     end
-    for j = i + 1, #mapFrame.tiles do mapFrame.tiles[j]:Hide() end
+    for j = i + 1, #pool do pool[j]:Hide() end
+end
 
-    -- A row with no map: the art stays, dimmed, and nothing is pinned.
-    clip:SetAlpha(place and 1 or 0.45)
-    if not place then mapFrame.pin:Hide(); mapFrame.hl:Hide(); return end
-    local px, py = place.x * art.w * s, place.y * fullH - offY
-    mapFrame.pin:ClearAllPoints()
-    mapFrame.pin:SetPoint("CENTER", clip, "TOPLEFT", px, -py)
-    mapFrame.pin:Show()
-    local hl = place.hl
-    if hl then
-        local tex = mapFrame.hl
-        if hl.atlas and tex.SetAtlas then tex:SetAtlas(hl.atlas) else tex:SetTexture(hl.fileID) end
-        tex:SetTexCoord(0, hl.pctX, 0, hl.pctY)
-        tex:SetSize(hl.w * art.w * s, hl.h * fullH)
-        tex:ClearAllPoints()
-        tex:SetPoint("TOPLEFT", clip, "TOPLEFT", hl.x * art.w * s, -(hl.y * fullH - offY))
-        tex:Show()
-    else
-        mapFrame.hl:Hide()
+local function HidePool(pool) for _, t in ipairs(pool) do t:Hide() end end
+
+local ZOOM_IN, ZOOM_OUT = 0.55, 0.35   -- seconds
+local function Ease(t) return t * t * (3 - 2 * t) end
+
+-- The camera (#398, the owner: "like if we actually zoomed the map"): t = 0
+-- is the whole continent, t = 1 the zone filling the panel, the continent
+-- zoomed with it and darkened behind. A new zone zooms out (t back to 0),
+-- changes continent if it must, then zooms in.
+-- The world map's own sounds (Blizzard_WorldMap.lua: open on show, close on
+-- hide), as the zoom opens and closes.
+local function MapSound(open)
+    local kit = rawget(_G, "SOUNDKIT")
+    local id = kit and kit[open and "IG_QUEST_LOG_OPEN" or "IG_QUEST_LOG_CLOSE"]
+    local play = rawget(_G, "PlaySound")
+    if id and play then pcall(play, id) end
+end
+
+local function NewCam(place)
+    local zoom = not place.dim and L.ZoomFrom(place.map) or nil
+    if zoom then MapSound(true) end
+    return { place = place, art = L.MapArt(place.map), zoom = zoom, t = zoom and 0 or 1 }
+end
+
+-- Draws the camera where it is now.
+function L.LayMap()
+    local cam = L.cam
+    local clip = mapFrame.clip
+    local w, h = clip:GetWidth() or 0, clip:GetHeight() or 0
+    if not cam or w <= 0 or h <= 0 then
+        if cam then cam.rect = nil end
+        HidePool(mapFrame.tiles); HidePool(mapFrame.back)
+        mapFrame.pin:Hide(); mapFrame.me:Hide(); mapFrame.shadow:Hide()
+        return
     end
+    local art, zoom = cam.art, cam.zoom
+    -- The zone at rest: whole, fitted inside the panel and centred.
+    local s = math.min(w / art.w, h / art.h)
+    local zx, zy, zw, zh = (w - art.w * s) / 2, (h - art.h * s) / 2, art.w * s, art.h * s
+    local alpha = cam.place.dim and 0.45 or 1
+    if zoom then
+        local ca = zoom.art
+        local e = Ease(cam.t)
+        -- The continent: whole at t = 0, zoomed so the zone's rect lands on
+        -- the zone at rest at t = 1. Zoom by ratio, centre in a line.
+        local s0 = math.min(w / ca.w, h / ca.h)
+        local s1 = zw / ((zoom.x1 - zoom.x0) * ca.w)
+        local c1x = (w / 2 - (zx - zoom.x0 * ca.w * s1)) / (ca.w * s1)
+        local c1y = (h / 2 - (zy - zoom.y0 * ca.h * s1)) / (ca.h * s1)
+        local sc = s0 * (s1 / s0) ^ e
+        local cx, cy = 0.5 + (c1x - 0.5) * e, 0.5 + (c1y - 0.5) * e
+        local ox, oy = w / 2 - cx * ca.w * sc, h / 2 - cy * ca.h * sc
+        LayTiles(mapFrame.back, clip, "BORDER", ca, sc, sc, ox, oy, 1 - 0.6 * e)
+        -- The zone rides on the continent, where its art sits.
+        zx, zy = ox + zoom.x0 * ca.w * sc, oy + zoom.y0 * ca.h * sc
+        zw, zh = (zoom.x1 - zoom.x0) * ca.w * sc, (zoom.y1 - zoom.y0) * ca.h * sc
+        alpha = math.min(1, e * 1.6)
+        mapFrame.shadow:ClearAllPoints()
+        mapFrame.shadow:SetPoint("TOPLEFT", clip, "TOPLEFT", zx - 4, -(zy - 4))
+        mapFrame.shadow:SetSize(zw + 8, zh + 8)
+        mapFrame.shadow:Show()
+    else
+        HidePool(mapFrame.back)
+        mapFrame.shadow:Hide()
+    end
+    LayTiles(mapFrame.tiles, mapFrame.zone, "ARTWORK", art, zw / art.w, zh / art.h, zx, zy, 1)
+    mapFrame.zone:SetAlpha(alpha)
+
+    cam.rect = { x = zx, y = zy, w = zw, h = zh, alpha = alpha }
+    L.PutPin(mapFrame.pin, cam.place.pin)
+    L.PutPin(mapFrame.me, not cam.place.dim and cam.place.me or nil)
+end
+
+-- A pin at a point of the zone shown (0-1), where the camera has it now.
+function L.PutPin(tex, at)
+    local r = L.cam and L.cam.rect
+    if not at or not r then tex:Hide(); return end
+    tex:ClearAllPoints()
+    tex:SetPoint("CENTER", mapFrame.clip, "TOPLEFT", r.x + at.x * r.w, -(r.y + at.y * r.h))
+    tex:SetAlpha(r.alpha)
+    tex:Show()
+end
+
+-- The player moves while the map shows (Codex on #400): read where it stands
+-- again, a few times a second, and drop the pin once it leaves the zone shown.
+local PLAYER_EVERY = 0.25
+function L.RefreshPlayer()
+    local cam = L.cam
+    if not mapFrame or not cam then return end
+    cam.place.me = not cam.place.dim and L.PlayerPin(cam.place.map) or nil
+    L.PutPin(mapFrame.me, cam.place.me)
+end
+
+local function PlayerOnUpdate(self, elapsed)
+    self.since = (self.since or 0) + (elapsed or 0)
+    if self.since < PLAYER_EVERY then return end
+    self.since = 0
+    L.RefreshPlayer()
+end
+
+-- One step of the camera; true while it still moves.
+function L.MapTick(elapsed)
+    local cam = L.cam
+    if not cam then return false end
+    if cam.next then
+        cam.t = cam.zoom and math.max(0, cam.t - elapsed / ZOOM_OUT) or 0
+        if cam.t <= 0 then
+            L.cam = NewCam(cam.next)
+            cam = L.cam
+        end
+    elseif cam.t < 1 then
+        cam.t = math.min(1, cam.t + elapsed / ZOOM_IN)
+    end
+    if mapFrame then L.LayMap() end
+    return cam.next ~= nil or cam.t < 1
+end
+
+local function MapOnUpdate(_, elapsed)
+    if not L.MapTick(elapsed or 0) then mapFrame:SetScript("OnUpdate", nil) end
+end
+
+function L.RenderMap(key)
+    if not mapFrame then return end
+    local place = key and L.Placement(key) or { map = AZEROTH, dim = true }
+    local art = L.MapArt(place.map)
+    if not art and place.map ~= AZEROTH then
+        -- A zone without art of its own: Azeroth, dimmed, rather than nothing.
+        place = { map = AZEROTH, dim = true }
+        art = L.MapArt(AZEROTH)
+    end
+    L.shownMap = art and place.map or nil
+    mapFrame.none:SetShown(not art)
+    if not art then
+        L.cam = nil
+        mapFrame:SetScript("OnUpdate", nil)
+        L.LayMap()
+        return
+    end
+    place.me = not place.dim and L.PlayerPin(place.map) or nil
+    local cam = L.cam
+    local same = cam and cam.place.map == place.map and (cam.place.dim or false) == (place.dim or false)
+    if not cam then
+        L.cam = NewCam(place)
+    elseif same then
+        -- The same map (a redraw, or two instances in one entrance zone): the
+        -- pins move, the camera stays (or turns back to it mid-zoom).
+        if cam.next and cam.zoom then MapSound(true) end
+        cam.place, cam.next = place, nil
+    elseif cam.zoom and cam.t > 0 then
+        if not cam.next then MapSound(false) end
+        cam.next = place
+    else
+        L.cam = NewCam(place)
+    end
+    L.LayMap()
+    if L.cam.next or L.cam.t < 1 then mapFrame:SetScript("OnUpdate", MapOnUpdate) end
 end
 
 function L.BuildMap()
     mapFrame = CreateFrame("Frame", nil, panel)
+    L.mapFrame = mapFrame   -- tests
     mapFrame.bg = mapFrame:CreateTexture(nil, "BACKGROUND")
     mapFrame.bg:SetAllPoints()
     mapFrame.clip = CreateFrame("Frame", nil, mapFrame)
     mapFrame.clip:SetPoint("TOPLEFT", mapFrame, "TOPLEFT", 2, -2)
     mapFrame.clip:SetPoint("BOTTOMRIGHT", mapFrame, "BOTTOMRIGHT", -2, 2)
     mapFrame.clip:SetClipsChildren(true)
+    -- Three layers in the clip: the continent behind (its tiles), the zone
+    -- over it (a frame, so it fades as one), and the glass and pins on top.
+    mapFrame.back = {}
+    mapFrame.zone = CreateFrame("Frame", nil, mapFrame.clip)
+    mapFrame.zone:SetAllPoints()
+    mapFrame.zone:SetFrameLevel(mapFrame.clip:GetFrameLevel() + 1)
+    mapFrame.top = CreateFrame("Frame", nil, mapFrame.clip)
+    mapFrame.top:SetAllPoints()
+    mapFrame.top:SetFrameLevel(mapFrame.clip:GetFrameLevel() + 2)
+    -- Runs only while the map shows (OnUpdate stops with the frame hidden).
+    mapFrame.top:SetScript("OnUpdate", PlayerOnUpdate)
     mapFrame.tiles = {}
+    -- A soft shadow lifts the zone off the darkened continent.
+    mapFrame.shadow = mapFrame.zone:CreateTexture(nil, "BACKGROUND")
+    mapFrame.shadow:SetColorTexture(0, 0, 0, 0.55)
+    mapFrame.shadow:Hide()
     -- The glass: a teal wash over the art and a light rim.
-    mapFrame.wash = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, -1)
+    mapFrame.wash = mapFrame.top:CreateTexture(nil, "OVERLAY", nil, -1)
     mapFrame.wash:SetAllPoints()
-    mapFrame.wash:SetColorTexture(0.02, 0.18, 0.20, 0.30)
-    mapFrame.hl = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 1)
-    mapFrame.hl:SetBlendMode("ADD")
-    mapFrame.hl:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 0.9)
-    mapFrame.hl:Hide()
-    mapFrame.pin = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 2)
+    mapFrame.wash:SetColorTexture(0.04, 0.22, 0.24, 0.14)
+    -- Where the character playing stands, in the zone shown (white, under the
+    -- gold entrance pin).
+    mapFrame.me = mapFrame.top:CreateTexture(nil, "OVERLAY", nil, 1)
+    mapFrame.me:SetSize(16, 16)
+    mapFrame.me:SetTexture("Interface\\WorldMap\\WorldMapPartyIcon")
+    mapFrame.me:SetVertexColor(1, 1, 1, 1)
+    mapFrame.me:Hide()
+    mapFrame.pin = mapFrame.top:CreateTexture(nil, "OVERLAY", nil, 2)
     mapFrame.pin:SetSize(18, 18)
     mapFrame.pin:SetTexture("Interface\\WorldMap\\WorldMapPartyIcon")
     mapFrame.pin:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
@@ -729,24 +954,25 @@ function L.BuildCard()
     card.bar:SetMinMaxValues(0, 1)
     card.bar.bg = card.bar:CreateTexture(nil, "BACKGROUND")
     card.bar.bg:SetAllPoints()
-    card.bar.bg:SetColorTexture(0, 0, 0, 0.5)
+    -- A light track, so an empty bar still reads as a bar on the dark card
+    -- (seen in game: at 0% the black track vanished).
+    card.bar.bg:SetColorTexture(1, 1, 1, 0.10)
     card.pct = FS(card, "GameFontHighlight", "RIGHT")
     card.pct:SetPoint("LEFT", card.bar, "RIGHT", 6, 0)
     card.pct:SetPoint("RIGHT", card, "RIGHT", -12, 0)
     card.left = FS(card, "GameFontHighlightSmall")
     card.left:SetPoint("TOPLEFT", card.bar, "BOTTOMLEFT", 0, -6)
-    card.view = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-    card.view:SetSize(120, 22)
+    card.bar:SetStatusBarColor(GOLD[1], GOLD[2], 0.1, 1)
+    card.view = L.Button(card, 130, 24, "View quests")
     card.view:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 12)
-    card.view:SetText("View quests")
     card.view:SetScript("OnClick", function() L.cardMode = "list"; L.listScroll = 0; L.RenderCard() end)
     card.view:SetScript("OnEnter", function(self)
+        self:Paint(true)
         if self:IsEnabled() then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("The quest list shows for characters played here.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
-    card.view:SetScript("OnLeave", HideTip)
 
     -- The list mode: the zone's quests for the selected character.
     card.list = CreateFrame("ScrollFrame", nil, card)
@@ -762,10 +988,8 @@ function L.BuildCard()
         self:SetVerticalScroll(L.listScroll)
     end)
     card.lines = {}
-    card.back = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-    card.back:SetSize(80, 22)
+    card.back = L.Button(card, 80, 24, "Back")
     card.back:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 12)
-    card.back:SetText("Back")
     card.back:SetScript("OnClick", function() L.cardMode = "summary"; L.RenderCard() end)
 end
 
@@ -865,6 +1089,7 @@ function L.RenderCard()
         card.left:SetText("")
     end
     card.view:SetEnabled(row ~= nil and L.ListsFor(col) ~= nil)
+    card.view:Paint(false)   -- not left to OnEnable/OnDisable alone
 end
 
 ------------------------------------------------------------
@@ -874,17 +1099,19 @@ end
 function L.BuildToolbar()
     toolbar = CreateFrame("Frame", nil, panel)
     toolbar:SetHeight(TOOLBAR_H)
-    toolbar.filter = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    toolbar.filter:SetSize(130, 22)
+    toolbar.filter = L.Button(toolbar, 140, 24)
     toolbar.filter:SetPoint("LEFT", toolbar, "LEFT", 0, 0)
+    toolbar.filter.label:ClearAllPoints()
+    toolbar.filter.label:SetPoint("LEFT", toolbar.filter, "LEFT", 12, 0)
+    toolbar.filter.arrow = Arrow(toolbar.filter, "down", 12)
+    toolbar.filter.arrow:SetPoint("RIGHT", toolbar.filter, "RIGHT", -10, 0)
     toolbar.filter:SetScript("OnClick", function()
         if not AltStable.ShowMenu then return end
         local list = {}
         for _, f in ipairs(L.FILTERS) do list[#list + 1] = { id = f.id, text = f.text } end
         AltStable.ShowMenu(list, function(id) L.SetFilter(id) end)
     end)
-    toolbar.hide = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    toolbar.hide:SetSize(90, 22)
+    toolbar.hide = L.Button(toolbar, 100, 24)
     toolbar.hide:SetPoint("RIGHT", toolbar, "RIGHT", 0, 0)
     toolbar.hide:SetScript("OnClick", function()
         M.DB().hideMap = (not M.DB().hideMap) and true or nil
@@ -986,6 +1213,17 @@ function L.Render()
     local maxOffset = math.max(0, #cols - nVis)
     L.colOffset = math.min(L.colOffset or 0, maxOffset)
     local x0 = NAME_W
+    -- The columns share the width (seen in game: at a fixed 64 they bunched up
+    -- on the left of a wide window).
+    local avail = (panel:GetWidth() or PREFERRED_PANEL_W) - 2 * PAD - 14 - NAME_W
+    local colW = nVis > 0 and math.max(COL_W, math.min(MAX_COL_W, math.floor(avail / nVis))) or COL_W
+    L.colW = colW
+    if L.zoneHdr then
+        L.zoneHdr:ClearAllPoints()
+        L.zoneHdr:SetPoint("LEFT", panel, "TOPLEFT", PAD + 14, -(L.colHdrTop + COLHDR_H / 2))
+        -- No characters: the empty-state message takes the header row (Codex on #400).
+        L.zoneHdr:SetShown(#cols > 0)
+    end
 
     -- The selection: a character shown, and a row it can see.
     local sel = L.SelectedColumn(cols)
@@ -998,7 +1236,8 @@ function L.Render()
         local col = cols[L.colOffset + i]
         local h = Acquire("header", MakeHeader)
         h:ClearAllPoints()
-        h:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD + x0 + (i - 1) * COL_W, -L.colHdrTop)
+        h:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD + x0 + (i - 1) * colW, -L.colHdrTop)
+        h:SetSize(colW, COLHDR_H)
         h.text:SetText(ClassHex(col.class) .. names[L.colOffset + i] .. "|r")
         h.col = col
         h.sel:SetShown(col.guid == L.selGuid)
@@ -1017,7 +1256,7 @@ function L.Render()
 
     local rows = L.DisplayRows(cols)
     local y = 0
-    local width = x0 + nVis * COL_W
+    local width = x0 + nVis * colW
     L.rowY = {}
     local C = AltStable.C or {}
     local accent = C.ACCENT or GOLD
@@ -1057,7 +1296,8 @@ function L.Render()
                 local row = col.snap.c and col.snap.c[r.key]
                 local cell = Acquire("cell", MakeCell)
                 cell:ClearAllPoints()
-                cell:SetPoint("TOPLEFT", content, "TOPLEFT", x0 + (i - 1) * COL_W, -y)
+                cell:SetPoint("TOPLEFT", content, "TOPLEFT", x0 + (i - 1) * colW, -y)
+                cell:SetSize(colW, ROW_H)
                 cell.rowKey, cell.guid = r.key, col.guid
                 if row then
                     cell.text:SetText(("%d/%d"):format(row[1], row[2]))
@@ -1098,7 +1338,7 @@ function L.Render()
     if thisCheck then thisCheck:SetChecked(db.thisChar and true or false) end
     if toolbar then
         local f = FILTER_BY_ID[db.filter or "all"] or FILTER_BY_ID.all
-        toolbar.filter:SetText(f.text .. "  \226\150\190")
+        toolbar.filter:SetText(f.text)
         toolbar.hide:SetText(db.hideMap and "Show map" or "Hide map")
     end
     L.ApplyColors()
@@ -1182,6 +1422,9 @@ function L.BuildPanel(mainFrame)
 
     emptyFS = FS(panel, "GameFontHighlightSmall")
     emptyFS:Hide()
+    L.zoneHdr = FS(panel, "GameFontNormal")
+    L.zoneHdr:SetText("Zone")
+    L.zoneHdr:SetTextColor(unpack(Color("TEXT_BRIGHT", { 1, 1, 1 })))
 
     vbar = CreateFrame("Slider", nil, panel)
     vbar:SetWidth(10)
@@ -1246,7 +1489,9 @@ function L.BuildFooter(mainFrame)
     f.class:SetHeight(18)
     f.class:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     f.class.text = FS(f.class, "GameFontHighlightSmall", "RIGHT")
-    f.class.text:SetPoint("RIGHT", f.class, "RIGHT", 0, 0)
+    f.class.arrow = Arrow(f.class, "right", 12)
+    f.class.arrow:SetPoint("RIGHT", f.class, "RIGHT", 0, 0)
+    f.class.text:SetPoint("RIGHT", f.class.arrow, "LEFT", -4, 0)
     f.class:SetScript("OnClick", function() L.JumpToClass() end)
     f.right = f.class.text   -- the name the tests read
     L.foot = f
@@ -1299,9 +1544,9 @@ function L.RenderFooter()
     f.left:SetText(("%s%s|r |cffaaaaaa\194\183|r %s/%s quests |cffaaaaaa\194\183 %d%%|r"):format(
         hex, who, Number(done), Number(total), Pct(done, total)))
     local cls = snap.cls or {}
-    f.class.text:SetText(("|cffaaaaaaClass quests|r %d/%d |cffaaaaaa(%d at this level)|r  %s\226\150\184|r"):format(
-        cls.done or 0, cls.total or 0, cls.now or 0, hex))
-    f.class:SetWidth((f.class.text:GetStringWidth() or 160) + 4)
+    f.class.text:SetText(("|cffaaaaaaClass quests|r %d/%d |cffaaaaaa(%d at this level)|r"):format(
+        cls.done or 0, cls.total or 0, cls.now or 0))
+    f.class:SetWidth((f.class.text:GetStringWidth() or 160) + 20)
 end
 
 ------------------------------------------------------------

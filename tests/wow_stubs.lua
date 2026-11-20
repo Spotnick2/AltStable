@@ -804,7 +804,7 @@ function ReloadUI() WoW.reloaded = WoW.reloaded + 1 end
 -- entries the addon uses are here, with the values from the client's own
 -- Mainline SoundKitConstants.lua (1.60.1.70009).
 WoW.sounds = {}
-SOUNDKIT = { REPORT_SCREENSHOT_CAMERA = 230810 }
+SOUNDKIT = { REPORT_SCREENSHOT_CAMERA = 230810, IG_QUEST_LOG_OPEN = 844, IG_QUEST_LOG_CLOSE = 845 }
 function PlaySound(id) table.insert(WoW.sounds, id); return true end
 
 -- What the player is wearing, by slot. The probe fingerprints this to decide
