@@ -4328,6 +4328,7 @@ AltStable.HELP_LINES = {
     "|cffffff00/alts favourite|r / |cffffff00unfavourite|r <name> - pin to the top of the Roster grid",
     "|cffffff00/alts forget|r / |cffffff00unforget|r <name>, |cffffff00/alts forgotten|r - characters that no longer exist",
     "|cffffff00/alts stale|r [days] - characters not played in that long (90 unless set in Options)",
+    "|cffffff00/alts tooltip|r [ignore / unignore <item>] - items whose tooltips get no character counts",
     "|cffffff00/alts account|r <n> - this account's number in the sheet",
     "|cffffff00/alts export|r - every character as a spreadsheet",
     "|cffffff00/alts config|r - options",
@@ -4722,6 +4723,38 @@ SlashCmdList["ALTSTABLE"] = function(args)
         if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         return
     end
+    -- Items whose tooltips get no character counts (#403): shift-click the
+    -- item into the line, or type its ID. Bare, it lists them.
+    if cmd == "tooltip" then
+        local sub, rest = AltStable.ParseSlashArgs(target)
+        local function label(id)
+            local name, link = GetItemInfo(id)
+            return (link or name or ("item " .. id)) .. " |cff888888(" .. id .. ")|r"
+        end
+        if sub == "ignore" or sub == "unignore" then
+            local id = AltStable.ItemIDFromArg(rest)
+            if not id then
+                Print("Usage: |cffffff00/alts tooltip " .. sub .. " <item>|r (shift-click the item, or type its ID)")
+                return
+            end
+            AltStable.SetTooltipIgnored(id, sub == "ignore")
+            if sub == "ignore" then
+                Print("Item tooltips no longer show character counts for " .. label(id) .. ".")
+            else
+                Print("Item tooltips show character counts for " .. label(id) .. " again.")
+            end
+            return
+        end
+        local list = AltStable.TooltipIgnoredList()
+        if #list == 0 then
+            Print("Every item tooltip shows character counts. "
+                .. "|cffffff00/alts tooltip ignore <item>|r leaves one out.")
+            return
+        end
+        Print("Item tooltips with no character counts (|cffffff00/alts tooltip unignore <item>|r):")
+        for _, id in ipairs(list) do Print("  " .. label(id)) end
+        return
+    end
     if cmd == "account" then
         if target == nil or target == "" then
             -- Bare "/alts account" answers the question people actually have,
@@ -4993,6 +5026,131 @@ function AltStable.ItemTooltipCountsHelp(tt)
     if other and v == nil then
         tt:AddLine(other .. " already shows its own counts, so this starts off.", 1, .82, 0, true)
     end
+    tt:AddLine("Your faction or ruleset apart, and items with no counts: Options, Items & Mail.", .6, .6, .6, true)
+end
+
+-- What stands between two characters (#386, #403): whether they are on
+-- different factions, and on different rulesets - each a boolean. Mail crosses
+-- neither: to the other faction it fails ("Target is unfriendly.", measured,
+-- PORTING-TBC-TO-FOREVER.md), and it doesn't cross rulesets (the owner, from
+-- play, 2026-11-19). What isn't known (a record from before the faction was
+-- stored, a realm name that can't be read) stops nothing: no claim is made
+-- from nothing. The Professions reagent counts and the item tooltips share it.
+function AltStable.Barriers(fromGuid, toGuid)
+    if fromGuid == nil or fromGuid == toGuid then return false, false end
+    local a, b = AltStableDB and AltStableDB[fromGuid], AltStableDB and AltStableDB[toGuid]
+    if type(a) ~= "table" or type(b) ~= "table" then return false, false end
+    local function faction(c) return (c.faction == "Alliance" or c.faction == "Horde") and c.faction or nil end
+    local fa, fb = faction(a), faction(b)
+    local otherFaction = (fa and fb and fa ~= fb) and true or false
+    local otherRuleset = false
+    local rulesetOf = AltStable.RulesetOf
+    if rulesetOf then
+        local ra, rb = rulesetOf(a.realm), rulesetOf(b.realm)
+        otherRuleset = (ra ~= "Unknown" and rb ~= "Unknown" and ra ~= rb) and true or false
+    end
+    return otherFaction, otherRuleset
+end
+
+-- Which characters the item tooltips list (#403). "This side" is the current
+-- character's faction (`tooltipSameFaction`) and/or ruleset
+-- (`tooltipSameRuleset`), two boxes, both off unless chosen: with both off,
+-- everyone is on this side. `tooltipScope` picks what the tooltip shows:
+-- "both" (default: this side, then everyone else under Elsewhere), "side"
+-- (this side only, and one grey line for the rest) or "all" (one list, as
+-- before the boxes existed).
+AltStable.TOOLTIP_SCOPES = { both = true, side = true, all = true }
+function AltStable.TooltipScope()
+    local v = AltStableConfig and AltStableConfig.tooltipScope
+    return AltStable.TOOLTIP_SCOPES[v] and v or "both"
+end
+
+-- This side's header: what the boxes ask for.
+function AltStable.TooltipSideLabel()
+    local cfg = AltStableConfig or {}
+    local f, r = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
+    return (f and r) and "Same faction & ruleset" or f and "Same faction" or r and "Same ruleset" or "Everyone"
+end
+
+-- Splits CountItem's holders (Warband: { guid, realm, bags, bank, mail, ... })
+-- into this side and elsewhere. Returns side, sideTotal, away, awayTotal, and
+-- for each away holder why it is ("Horde", "PvP", "Horde, PvP"), keyed by the
+-- holder. A record whose faction or realm can't be read stays on this side.
+function AltStable.SplitTooltipHolders(holders, playerGuid)
+    local cfg = AltStableConfig or {}
+    local sameFaction, sameRuleset = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
+    local side, away, why, sideTotal, awayTotal = {}, {}, {}, 0, 0
+    playerGuid = playerGuid or (UnitGUID and UnitGUID("player"))
+    for _, h in ipairs(holders or {}) do
+        local n = (h.bags or 0) + (h.bank or 0) + (h.mail or 0)
+        local otherFaction, otherRuleset = false, false
+        if sameFaction or sameRuleset then
+            otherFaction, otherRuleset = AltStable.Barriers(h.guid, playerGuid)
+        end
+        otherFaction, otherRuleset = sameFaction and otherFaction, sameRuleset and otherRuleset
+        if otherFaction or otherRuleset then
+            away[#away + 1] = h
+            awayTotal = awayTotal + n
+            local c = AltStableDB and AltStableDB[h.guid] or {}
+            local tags = {}
+            if otherFaction then tags[#tags + 1] = c.faction end
+            if otherRuleset and AltStable.RulesetOf then tags[#tags + 1] = AltStable.RulesetOf(c.realm) end
+            why[h] = table.concat(tags, ", ")
+        else
+            side[#side + 1] = h
+            sideTotal = sideTotal + n
+        end
+    end
+    return side, sideTotal, away, awayTotal, why
+end
+
+-- The grey line under "this side only", naming what the boxes left out.
+function AltStable.TooltipLeftOutLine(left)
+    if not left or left <= 0 then return nil end
+    local cfg = AltStableConfig or {}
+    local f, r = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
+    local where = (f and r) and "on another faction or ruleset"
+               or f and "on the other faction"
+               or "on another ruleset"
+    return ("+%d %s"):format(left, where)
+end
+
+-- Items whose tooltips get no character counts at all (#403), e.g. the
+-- Hearthstone every character carries: `tooltipIgnore` = { [itemID] = true },
+-- per account, not synced. Only the counts added to tooltips everywhere: the
+-- Warband tab's own cells still show who holds what.
+function AltStable.TooltipIgnored(itemID)
+    local t = AltStableConfig and AltStableConfig.tooltipIgnore
+    return type(t) == "table" and itemID ~= nil and t[tonumber(itemID)] == true
+end
+
+-- Adds (on) or removes an item; through the config seam like every write.
+function AltStable.SetTooltipIgnored(itemID, on)
+    itemID = tonumber(itemID)
+    if not itemID then return false end
+    local t = {}
+    for id, v in pairs((AltStableConfig and AltStableConfig.tooltipIgnore) or {}) do
+        if v == true then t[id] = true end
+    end
+    t[itemID] = on and true or nil
+    AltStable.SetConfigValue("tooltipIgnore", t)
+    return true
+end
+
+-- The ignored item IDs, sorted.
+function AltStable.TooltipIgnoredList()
+    local out = {}
+    for id, v in pairs((AltStableConfig and AltStableConfig.tooltipIgnore) or {}) do
+        if v == true and tonumber(id) then out[#out + 1] = tonumber(id) end
+    end
+    table.sort(out)
+    return out
+end
+
+-- An item from a slash argument: a link (shift-clicked into chat) or an ID.
+function AltStable.ItemIDFromArg(arg)
+    if not arg then return nil end
+    return tonumber(arg:match("item:(%d+)") or arg:match("^%s*(%d+)%s*$"))
 end
 
 local _seam = {

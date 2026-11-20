@@ -961,24 +961,12 @@ local function Holders(item, cache)
 end
 
 -- What stops one alt mailing another (#386): "faction", "ruleset", or nil when
--- nothing does. Mail to the other faction fails ("Target is unfriendly.",
--- measured, PORTING-TBC-TO-FOREVER.md), and mail doesn't cross rulesets either
--- (the owner, from play, 2026-11-19), as the Warband tab's ruleset filter
--- already assumed. What isn't known (a record from
--- before the faction was stored, a realm name that can't be read) stops
--- nothing: no claim is made from nothing.
+-- nothing does. The rule is the core's (AltStable.Barriers), shared with the
+-- item tooltips' faction and ruleset options (#403).
 local function Barrier(fromGuid, toGuid)
-    if fromGuid == toGuid then return nil end
-    local a, b = AltStableDB and AltStableDB[fromGuid], AltStableDB and AltStableDB[toGuid]
-    if type(a) ~= "table" or type(b) ~= "table" then return nil end
-    local function faction(c) return (c.faction == "Alliance" or c.faction == "Horde") and c.faction or nil end
-    local fa, fb = faction(a), faction(b)
-    if fa and fb and fa ~= fb then return "faction" end
-    local rulesetOf = AltStable.RulesetOf
-    if rulesetOf then
-        local ra, rb = rulesetOf(a.realm), rulesetOf(b.realm)
-        if ra ~= "Unknown" and rb ~= "Unknown" and ra ~= rb then return "ruleset" end
-    end
+    local otherFaction, otherRuleset = AltStable.Barriers(fromGuid, toGuid)
+    if otherFaction then return "faction" end
+    if otherRuleset then return "ruleset" end
     return nil
 end
 

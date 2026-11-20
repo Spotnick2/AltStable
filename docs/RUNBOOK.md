@@ -380,6 +380,9 @@ so the next reply has to be complete), and a peer that sends no clock is reset t
 | `/alts favourite <name>` | Pin to the top of the Roster grid (the scene shows camps, #152) |
 | `/alts unfavourite <name>` | Unpin |
 | `/alts favourite` | List them |
+| `/alts tooltip ignore <item>` | Item tooltips get no character counts for it (shift-click the item, or its ID), #403 |
+| `/alts tooltip unignore <item>` | Counts again |
+| `/alts tooltip` | List the items left out |
 | `/alts auth` | Who may ask us for the database, and who is waiting |
 | `/alts allow <name>` | Share with them from now on, and answer their pending request |
 | `/alts deny <name>` | Refuse for good, both directions — they are never told |

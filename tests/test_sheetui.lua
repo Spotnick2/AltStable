@@ -4299,6 +4299,53 @@ end
 ------------------------------------------------------------
 -- Syncing settings with your other accounts: off unless ticked
 ------------------------------------------------------------
+-- #403: only this character's faction / ruleset, under the counts box, and
+-- the items with no counts.
+do
+    local F = AltStable._test.OptTooltipFilter
+    check("Options has the faction and ruleset boxes", F ~= nil and F.faction ~= nil and F.ruleset ~= nil)
+    if F then
+        local held = { AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset, AltStableConfig.tooltipIgnore }
+        AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset = nil, nil
+        check("  both off unless chosen", F.faction._getter() == false and F.ruleset._getter() == false)
+        F.faction:SetChecked(true); F.faction:GetScript("OnClick")(F.faction)
+        eq("  ticking faction saves it", AltStableConfig.tooltipSameFaction, true)
+        eq("  and leaves ruleset alone", AltStableConfig.tooltipSameRuleset, nil)
+        F.ruleset:SetChecked(true); F.ruleset:GetScript("OnClick")(F.ruleset)
+        eq("  ruleset is its own option", AltStableConfig.tooltipSameRuleset, true)
+        check("  both hang under the counts box", F.faction.parentRow == AltStable._test.OptItemCounts
+              and F.ruleset.parentRow == AltStable._test.OptItemCounts)
+        local heldScope = AltStableConfig.tooltipScope
+        AltStableConfig.tooltipScope = nil
+        eq("  Show has three choices", #F.scopeBtns, 3)
+        F.scopeBtns[2]:GetScript("OnClick")(F.scopeBtns[2])
+        eq("  This side saves \"side\"", AltStableConfig.tooltipScope, "side")
+        check("    and its hint shows", (F.scopeHint:GetText() or ""):find("grey line", 1, true) ~= nil, F.scopeHint:GetText())
+        F.scopeBtns[3]:GetScript("OnClick")(F.scopeBtns[3])
+        eq("  Everyone saves \"all\"", AltStableConfig.tooltipScope, "all")
+        F.scopeBtns[1]:GetScript("OnClick")(F.scopeBtns[1])
+        eq("  Both saves \"both\"", AltStableConfig.tooltipScope, "both")
+        AltStableConfig.tooltipScope = heldScope
+        AltStableConfig.tooltipIgnore = nil
+        F.refresh()
+        check("  no items left out: the line says how",
+              (F.ignored:GetText() or ""):find("/alts tooltip ignore", 1, true) ~= nil, F.ignored:GetText())
+        AltStableConfig.tooltipIgnore = { [6948] = true }
+        F.refresh()
+        check("  an item left out is named",
+              (F.ignored:GetText() or ""):find("No counts for: ", 1, true) ~= nil, F.ignored:GetText())
+        -- #404 review: the rows below sit at fixed offsets, so a long list is cut.
+        AltStableConfig.tooltipIgnore = {}
+        for id = 1, 9 do AltStableConfig.tooltipIgnore[id] = true end
+        F.refresh()
+        local txt = F.ignored:GetText() or ""
+        check("  a long list shows three and \"+6 more\"", txt:find("+6 more", 1, true) ~= nil
+              and select(2, txt:gsub(", ", "")) == 3, txt)
+        AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset, AltStableConfig.tooltipIgnore =
+            held[1], held[2], held[3]
+    end
+end
+
 -- #304: the item-tooltip counts box in Options shows the setting in effect.
 do
     local T = AltStable._test
@@ -4841,6 +4888,7 @@ do
     eq("  the Bags column", On(T.OptBagsColumn), pages.general)
     eq("  the Hearthstone column", On(T.OptHearthColumn), pages.general)
     eq("  the item counts", On(T.OptItemCounts), pages.general)
+    eq("  with their faction and ruleset options", On(T.OptTooltipFilter.faction), pages.general)
     eq("  the wishlist on recipe tooltips", On(T.OptWishTooltip), pages.general)
     eq("  and mail tracking", On(T.OptWarbandMail), pages.general)
     eq("the skin is on Appearance", On(T.skinBtns[1]), pages.appearance)

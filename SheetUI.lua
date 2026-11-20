@@ -4364,6 +4364,113 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptItemCounts = optItemCountsCheck
     Y = Y - 22
 
+    -- Which characters they list (#403): "this side" is this character's
+    -- faction and/or ruleset (two boxes, both off unless chosen), and Show
+    -- picks Both (this side, then Elsewhere), This side, or Everyone. Only the
+    -- counts in tooltips everywhere: the Warband tab's own cells list everyone.
+    -- Then the items that get no counts at all (/alts tooltip).
+    -- (Scoped: the builder is at Lua 5.1's 200 locals.)
+    do
+        local SCOPES = {
+            { id = "both", label = "Both",      w = 64,
+              hint = "This side, then everyone else under Elsewhere." },
+            { id = "side", label = "This side", w = 84,
+              hint = "Only this side; one grey line says how many are elsewhere." },
+            { id = "all",  label = "Everyone",  w = 84,
+              hint = "One list of every character, as if the boxes below were off." },
+        }
+        local showLbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        showLbl:SetPoint("TOPLEFT", P + 20, Y)
+        showLbl:SetText("Show")
+        showLbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+        local scopeHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        scopeHint:SetPoint("TOPLEFT", P + 70, Y - 26)
+        scopeHint:SetPoint("TOPRIGHT", -P, Y - 26)
+        scopeHint:SetJustifyH("LEFT"); scopeHint:SetWordWrap(true)
+        scopeHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
+        local scopeBtns = {}
+        local function RefreshScope()
+            local cur = AltStable.TooltipScope()
+            for _, b in ipairs(scopeBtns) do
+                SetChoiceBtnState(b, b.lbl, b.scope.id == cur)
+                if b.scope.id == cur then scopeHint:SetText(b.scope.hint) end
+            end
+        end
+        for i, m in ipairs(SCOPES) do
+            local b = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+            b:SetSize(m.w, 22)
+            if i == 1 then b:SetPoint("TOPLEFT", P + 70, Y + 1)
+            else b:SetPoint("LEFT", scopeBtns[i - 1], "RIGHT", 8, 0) end
+            AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
+            local l = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            l:SetAllPoints(); l:SetJustifyH("CENTER")
+            l:SetText(m.label)
+            b.scope, b.lbl = m, l
+            b:SetScript("OnClick", function()
+                AltStable.SetConfigValue("tooltipScope", m.id)
+                RefreshScope()
+            end)
+            scopeBtns[i] = b
+        end
+        RefreshScope()
+        optionsPanel.refreshers = optionsPanel.refreshers or {}
+        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshScope
+        AltStable.RegisterThemeCallback(RefreshScope)
+        Y = Y - 50
+
+        local function own(key) return function() return AltStableConfig and AltStableConfig[key] == true end end
+        local faction = MakeOptCheckRow("tooltipSameFaction",
+            "This side: same faction", Y, nil, own("tooltipSameFaction"), 22)
+        OptDependsOn(faction, optItemCountsCheck)
+        Y = Y - 22
+        local ruleset = MakeOptCheckRow("tooltipSameRuleset",
+            "This side: same ruleset", Y, nil, own("tooltipSameRuleset"), 22)
+        OptDependsOn(ruleset, optItemCountsCheck)
+        local help = function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(self.label:GetText(), 1, 1, 1)
+            GameTooltip:AddLine("Item tooltips list the characters on this character's side apart from "
+                .. "the rest, as Show says. With both boxes off, everyone is on this side.", nil, nil, nil, true)
+            GameTooltip:AddLine("The Warband tab still shows everyone.", .8, .8, .8, true)
+            GameTooltip:Show()
+        end
+        for _, cb in ipairs({ faction, ruleset }) do
+            cb:SetScript("OnEnter", help)
+            cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+        Y = Y - 22
+
+        -- The items left out, read-only here: /alts tooltip changes them. The
+        -- rows below sit at fixed offsets, so the line is bounded (#404
+        -- review): the first IGNORED_SHOWN names, then "+N more", as the
+        -- whitelist does, and never more than two lines.
+        local IGNORED_SHOWN = 3
+        local ignored = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        ignored:SetPoint("TOPLEFT", P + 42, Y)
+        ignored:SetPoint("TOPRIGHT", -P, Y)
+        ignored:SetJustifyH("LEFT"); ignored:SetWordWrap(true)
+        ignored:SetMaxLines(2)
+        ignored:SetTextColor(unpack(AltStable.C.TEXT_HELP))
+        local function RefreshIgnored()
+            local list = AltStable.TooltipIgnoredList and AltStable.TooltipIgnoredList() or {}
+            local names = {}
+            for i = 1, math.min(#list, IGNORED_SHOWN) do
+                local name = AltStable.API.GetItemInfo(list[i])
+                names[#names + 1] = name or ("item " .. list[i])
+            end
+            if #list > IGNORED_SHOWN then names[#names + 1] = "+" .. (#list - IGNORED_SHOWN) .. " more" end
+            ignored:SetText(#list == 0
+                and "No counts for an item: |cffffff00/alts tooltip ignore|r <item>"
+                or ("No counts for: " .. table.concat(names, ", ") .. " - |cffffff00/alts tooltip|r"))
+        end
+        RefreshIgnored()
+        optionsPanel.refreshers = optionsPanel.refreshers or {}
+        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshIgnored
+        AltStable._test.OptTooltipFilter = { faction = faction, ruleset = ruleset, scopeBtns = scopeBtns,
+                                             scopeHint = scopeHint, ignored = ignored, refresh = RefreshIgnored }
+    end
+    Y = Y - 30
+
     -- The Professions tab's wishlist on recipe tooltips (#271): on unless
     -- turned off. The stars themselves stay either way. (Scoped: the builder
     -- is at Lua 5.1's 200 locals.)
