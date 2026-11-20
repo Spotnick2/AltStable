@@ -420,7 +420,16 @@ for key, r in pairs(rows) do
         end
         if not name then unmapped[#unmapped + 1] = key end
     end
-    zoneRows[key] = { group = r.group, continent = continent, uiMapID = uiMapID, name = name, n = r.n }
+    -- Where the map panel pins the row: its own zone map, or an instance's parent zone
+    -- (QuestieDB's dungeon table holds the entrance zone).
+    local pinMap = uiMapID
+    local dungeon = key > 0 and zoneTables.dungeons[key]
+    if (r.group == "dungeon" or r.group == "raid") and dungeon and dungeon[3] then
+        local m = zoneTables.a2m[dungeon[3]]
+        if m and m ~= 0 then pinMap = m end
+    end
+    zoneRows[key] = { group = r.group, continent = continent, uiMapID = uiMapID, name = name, n = r.n,
+                      pinMap = pinMap }
 end
 
 -- Sort names for the negative keys (Professions, Other).
@@ -510,9 +519,9 @@ end)
 local zoneLines = {}
 for i, k in ipairs(keys) do
     local r = zoneRows[k]
-    zoneLines[#zoneLines + 1] = ("[%d]={%q,%s,%s,%q,%d},"):format(k, r.group,
+    zoneLines[#zoneLines + 1] = ("[%d]={%q,%s,%s,%q,%d,%s},"):format(k, r.group,
         r.continent and ("%q"):format(r.continent) or "nil", r.uiMapID and tostring(r.uiMapID) or "nil",
-        r.name or ("Area " .. k), i)
+        r.name or ("Area " .. k), i, r.pinMap and tostring(r.pinMap) or "nil")
 end
 
 local body = "D.ZONES={\n" .. table.concat(zoneLines, "\n") .. "\n}\nD.QUESTS={\n" .. table.concat(lines, "\n") .. "\n}\n"
@@ -535,7 +544,8 @@ local header = ([[
 -- holiday lists; zone names and continents from the WoW Forever client tables (wago.tools, %s).
 -- QuestieDB and Questie are GPLv3 (see NOTICE.md); so is this file and the Loremaster plugin.
 --
--- D.ZONES[key] = { group, continent, uiMapID, englishName, order }
+-- D.ZONES[key] = { group, continent, uiMapID, englishName, order, pinMap }
+--   pinMap: the zone map the map panel pins this row on (an instance's entrance zone).
 --   key: an area ID (zone, dungeon, raid), a QuestSort ID (< 0: professions, other), -25 the
 --   Battlegrounds row, -9999 the Class quests row, 0 quests QuestieDB files nowhere.
 -- D.QUESTS[questID] = { key, hordeKey, reqLevel, raceMask, classMask, flags, name, maxLevel,
