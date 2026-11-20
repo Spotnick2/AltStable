@@ -26,7 +26,7 @@ Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStabl
     a choice, or outlevelled it) leaves the total, so 100% is always within reach.
   - **Class quests** ([#372](https://github.com/Spotnick2/AltStable/issues/372)): one row, each
     character's own class. Along the bottom, the selected character's total and its class quests,
-    with how many it can take at its level; click them to jump to the row.
+    with how many are at or below its level, the done ones included; click them to jump to the row.
   - **Click a row** for its card and its map
     ([#398](https://github.com/Spotnick2/AltStable/issues/398)). The map zooms in from the
     continent to the zone, the world map's sounds included. A dungeon or raid shows its entrance

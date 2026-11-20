@@ -129,8 +129,8 @@ can ever do there, for its faction, race and class, at any level.
   Professions and Other, and **one column per character.** A cell reads "27/30", gold once
   complete. The filter shows one group, and the search box finds a zone.
 - **Class quests** have their own row, each character's own class. Along the bottom: the selected
-  character's total, and its class quests with how many it can take at its level (click them to
-  jump to the row).
+  character's total, and its class quests with how many are at or below its level, the done ones
+  included (click them to jump to the row).
 - **Click a row** for its card and its map. The map zooms in from the continent to the zone. A
   dungeon or raid shows its entrance zone with the entrance pinned, and a white pin shows where you
   stand when you're in the zone shown.
