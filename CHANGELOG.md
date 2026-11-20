@@ -11,7 +11,9 @@ v1.9.0 does. An older version ignores the quest counts it receives.
 The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
 your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
 Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
-**Companion v1.2.5** is the current version.
+**Companion v1.3.0** is the current version. New in it: your characters in a Google Sheet in your
+own Google Drive, exported on its own after you play. It's off until you connect it in the
+Companion's Settings.
 
 ### New
 
