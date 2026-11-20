@@ -402,13 +402,18 @@ Probe:Steps("quests", {
           local t, m = DB().titles, DB().maps
           return t ~= nil and m ~= nil and m.numZones > 0,
               ("%s titles, %s zones"):format(tostring(t and t.cached), tostring(m and m.numZones))
-      end },
+      end,
+      -- The host runs this before it enters the turn-in step, so the baseline is set before
+      -- that step can see any event: a turn-in arriving between the step's entry and its
+      -- first poll counts (Codex on #392).
+      leave = function() turnBaseline = session.turnSeq or 0 end },
     { text = "Turn in any quest now (accept an easy one and finish it, or hand in one that is ready). "
           .. "The step goes on by itself 2 s after the turn-in.",
       timeout = 900,
       wait = function()
-          -- Only a turn-in made after this step came up counts: the first poll notes where
-          -- this session's numbering stands, and leaving the step forgets it.
+          -- Only a turn-in made after this step came up counts. The step before sets the
+          -- baseline as it is left; the first poll sets it only when the step was entered
+          -- some other way (resumed after a /reload, or by Back). Leaving forgets it.
           if turnBaseline == nil then turnBaseline = session.turnSeq or 0 end
           local r = NewTurnIn()
           if not (r and r.plus2s) then return false, "waiting for a turn-in" end

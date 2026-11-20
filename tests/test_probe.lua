@@ -499,6 +499,15 @@ if questsProc and Q then
     check("  the step completes", (S[TURNIN].wait()))
     check("  and passes", (S[TURNIN].check()))
     S[TURNIN].leave("done")
+    -- A turn-in between the step's entry and its first poll (Codex on #392):
+    -- the step before sets the baseline as the host leaves it, before the
+    -- turn-in step is entered, so that turn-in still counts.
+    S[TURNIN - 1].leave("done")
+    Q.TurnIn(3450)
+    done[3450] = true
+    WoW.flushTimers()
+    check("  a turn-in before the first poll still completes the step", (S[TURNIN].wait()))
+    S[TURNIN].leave("done")
 
     -- The second character: fewer quests; the first one's own are on the
     -- account but not flagged here.
