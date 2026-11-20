@@ -1,5 +1,50 @@
 # Changelog
 
+## v1.10.0 - 2026-11-20
+
+A **Loremaster** tab: every character's quest progress, zone by zone, with a map. Built for client
+1.60.1.70959, the live build, where the tab was checked in game. v1.10.0 syncs with everything
+v1.9.0 does. An older version ignores the quest counts it receives.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.2.5** is the current version.
+
+### New
+
+- **A Loremaster tab** ([#374](https://github.com/Spotnick2/AltStable/issues/374)): how many quests
+  each character has done in each zone, out of all it can ever do there.
+  - **One row per zone,** grouped by continent, then Dungeons, Raids, Battlegrounds, Class,
+    Professions and Other; **one column per character.** A cell reads "27/30", gold once complete.
+    The filter shows one group; the search box finds a zone.
+  - **What counts:** zone, dungeon, raid, battleground and profession quests, breadcrumbs included,
+    for the character's faction, race and class, at any level. Repeatable quests, holiday quests and
+    quests not in the game don't count. A quest you can no longer take (you picked the other one of
+    a choice, or outlevelled it) leaves the total, so 100% is always within reach.
+  - **Class quests** ([#372](https://github.com/Spotnick2/AltStable/issues/372)): one row, each
+    character's own class. Along the bottom, the selected character's total and its class quests,
+    with how many it can take at its level; click them to jump to the row.
+  - **Click a row** for its card and its map
+    ([#398](https://github.com/Spotnick2/AltStable/issues/398)). The map zooms in from the
+    continent to the zone, the world map's sounds included. A dungeon or raid shows its entrance
+    zone, the entrance pinned. A white pin shows where you stand when you're in the zone shown.
+    **Hide map** folds it away.
+  - **Hover a cell, or click View quests,** for the quests themselves: still to do (greyed above
+    the character's level), done and missed. They show for the characters played on this WoW
+    account. A character on another account shows its counts, synced like the rest.
+  - The counts are taken at login and after every quest turned in or level gained.
+  - The quest list comes from [QuestieDB](https://github.com/Questie/QuestieDB), so the Loremaster
+    plugin is GPL-3.0-or-later. The rest of AltStable stays MIT.
+
+### Changed
+
+- **LibShowcase r10**, the camera library behind the sheet's showcase: a group's pull countdown or a
+  battleground's start timer brings the game's UI back like a ready check does, and the camera's
+  orbit no longer speeds up or slows down with your camera turn speed.
+
 ## v1.9.0 - 2026-11-19
 
 A **Legacy** tab for Forever's Legacy Challenges, and a Hearthstone column on the sheet. Built for
