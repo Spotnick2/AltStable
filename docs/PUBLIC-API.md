@@ -44,6 +44,7 @@ if F and F.ownAccountChannel then ... end
 | `provenance` | #281 | `GetCharacterProvenance`, the `provenance*` fields on `GetCharacters`, `"ProvenanceChanged"` |
 | `ownAccountChannel` | #281 | `SendToOwnAccounts`, `RegisterOwnAccountHandler`, `GetOwnAccountPeers`, `"OwnAccountPeersChanged"` |
 | `gear` | #281 (AS-003) | `GetCharacterGear`, `"GearChanged"` |
+| `ruleset` | #405 | The `ruleset` and `rulesetName` fields on `GetCharacters` |
 
 An older AltStable has no table, or no flag. Treat that as "not available", not as an error.
 
@@ -69,6 +70,8 @@ you like, it is not AltStable's data.
 | `provenance` | string | Whose character it is: `"self"`, `"own-account"` or `"third-party"`. See `GetCharacterProvenance`. |
 | `provenanceAt` | number or nil | When that was established (`time()` on this client); nil when not known. |
 | `provenanceVia` | string or nil | For `"own-account"`, the name of the own account's character that said so. |
+| `ruleset` | string or nil | The realm's ruleset: `"Normal"`, `"PvP"`, `"RP"`, `"RPPvP"` or `"Hardcore"`. Compare these. nil when the realm can't be read. Since the `ruleset` flag. |
+| `rulesetName` | string or nil | The same, as a player says it: `"PvE"`, `"PvP"`, `"Roleplay"`, `"Roleplay PvP"`, `"Hardcore"`. For display only. nil with `ruleset`. Since the `ruleset` flag. |
 
 These are the characters AltStable's sheet lists: every one it has a record for. A character
 the player **forgot** has no record, so it is not here - unless the player has logged into it

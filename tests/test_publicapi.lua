@@ -105,6 +105,21 @@ eq("  account, always as a string", me.account, "2")
 eq("  lastUpdate", me.lastUpdate, 1700000000)
 eq("  guid", me.guid, ME)
 eq("internal fields do not", me.gearid_head, nil)
+-- #405: the ruleset, as a key to compare and a name to show.
+eq("the feature flag says so", AltStable.PUBLIC_API_FEATURES.ruleset, true)
+eq("  ruleset is RulesetOf's key", me.ruleset, AltStable.RulesetOf("Classic Beta PvE"))
+eq("  rulesetName is the player's word", me.rulesetName, "PvE")
+AltStableDB[ME].realm = "Forever PvP"
+local pvp
+for _, c in ipairs(AltStable.GetCharacters()) do if c.guid == ME then pvp = c end end
+eq("  a PvP realm", pvp.ruleset, "PvP")
+eq("    named PvP", pvp.rulesetName, "PvP")
+AltStableDB[ME].realm = nil
+for _, c in ipairs(AltStable.GetCharacters()) do if c.guid == ME then pvp = c end end
+eq("  no realm: ruleset nil, never \"Unknown\"", pvp.ruleset, nil)
+eq("    and no name", pvp.rulesetName, nil)
+AltStableDB[ME].realm = "Classic Beta PvE"
+
 eq("the logged-in character is marked current", me.current, true)
 eq("  and nobody else is", by["Bank Alt"].current, false)
 
