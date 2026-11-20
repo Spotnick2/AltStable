@@ -1018,6 +1018,7 @@ function L.Render()
     local rows = L.DisplayRows(cols)
     local y = 0
     local width = x0 + nVis * COL_W
+    L.rowY = {}
     local C = AltStable.C or {}
     local accent = C.ACCENT or GOLD
     local gr, gg, gb, ga = 1, 1, 1, 0.06
@@ -1037,6 +1038,7 @@ function L.Render()
             y = y + GROUP_H
         else
             local selected = r.key == L.selKey
+            L.rowY[r.key] = y
             if selected then
                 local band = Acquire("band", MakeBand)
                 band:ClearAllPoints()
@@ -1250,17 +1252,29 @@ function L.BuildFooter(mainFrame)
     L.foot = f
 end
 
--- "Class quests ▸": the Class row, selected, its group open and shown.
+-- The scrollbars (tests).
+function L.Bars() return vbar, hbar end
+
+-- Scroll the grid so a row is in view, from where Render drew it.
+function L.ScrollToRow(key)
+    local y = L.rowY and L.rowY[key]
+    if not y or not vbar or not vbar:IsShown() then return end
+    local _, max = vbar:GetMinMaxValues()
+    local viewH = scroll and scroll:GetHeight() or 0
+    vbar:SetValue(math.max(0, math.min(max or 0, y - math.max(0, viewH - ROW_H) / 2)))
+end
+
+-- "Class quests ▸": the Class row, selected and IN VIEW (Codex on #399): a
+-- search or a filter that hides it gives way, its group opens, and the grid
+-- scrolls to the row itself, not to the end.
 function L.JumpToClass()
     local db = M.DB()
     db.collapsed.class = nil
     if db.filter and db.filter ~= "class" then db.filter = nil end
+    if toolbar and toolbar.search and (toolbar.search:GetText() or "") ~= "" then toolbar.search:SetText("") end
+    L.search = nil
     L.Select(D.CLASS_KEY)
-    -- Scroll it into view: the Class group sits near the end.
-    if vbar and vbar:IsShown() then
-        local _, max = vbar:GetMinMaxValues()
-        vbar:SetValue(max or 0)
-    end
+    L.ScrollToRow(D.CLASS_KEY)
 end
 
 function L.RenderFooter()

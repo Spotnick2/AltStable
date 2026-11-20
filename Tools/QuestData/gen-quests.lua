@@ -517,14 +517,24 @@ table.sort(keys, function(a, b)
     return a < b
 end)
 local zoneLines = {}
+-- D.VERSION is what a snapshot is counted against: a character's quest lists
+-- are shown only for a snapshot of the same version. So it hashes what the
+-- counting reads - the quests, the masks and the zone rows' first five fields,
+-- exactly what it hashed when snapshots were first written - and never a field
+-- that is only for show, like pinMap (Codex on #399: adding pinMap changed the
+-- version and hid every local alt's lists until it logged in again).
+local versionLines = {}
 for i, k in ipairs(keys) do
     local r = zoneRows[k]
-    zoneLines[#zoneLines + 1] = ("[%d]={%q,%s,%s,%q,%d,%s},"):format(k, r.group,
+    local five = ("[%d]={%q,%s,%s,%q,%d"):format(k, r.group,
         r.continent and ("%q"):format(r.continent) or "nil", r.uiMapID and tostring(r.uiMapID) or "nil",
-        r.name or ("Area " .. k), i, r.pinMap and tostring(r.pinMap) or "nil")
+        r.name or ("Area " .. k), i)
+    versionLines[#versionLines + 1] = five .. "},"
+    zoneLines[#zoneLines + 1] = five .. "," .. (r.pinMap and tostring(r.pinMap) or "nil") .. "},"
 end
 
 local body = "D.ZONES={\n" .. table.concat(zoneLines, "\n") .. "\n}\nD.QUESTS={\n" .. table.concat(lines, "\n") .. "\n}\n"
+local versionBody = "D.ZONES={\n" .. table.concat(versionLines, "\n") .. "\n}\nD.QUESTS={\n" .. table.concat(lines, "\n") .. "\n}\n"
 
 -- A small, stable hash of the body (sync tells two tables apart by it).
 local function Hash(s)
@@ -571,10 +581,12 @@ for id in pairs(raceMasks) do raceIds[#raceIds + 1] = id end
 table.sort(raceIds)
 local raceParts = {}
 for _, id in ipairs(raceIds) do raceParts[#raceParts + 1] = ("[%d]=%.0f"):format(id, raceMasks[id]) end
-body = ("D.RACE_MASK={%s}\nD.FACTION_MASK={Alliance=%.0f,Horde=%.0f}\n"):format(table.concat(raceParts, ","),
-    factionMasks.Alliance, factionMasks.Horde) .. body
+local masks = ("D.RACE_MASK={%s}\nD.FACTION_MASK={Alliance=%.0f,Horde=%.0f}\n"):format(table.concat(raceParts, ","),
+    factionMasks.Alliance, factionMasks.Horde)
+body = masks .. body
+versionBody = masks .. versionBody
 
-local text = header .. ("D.VERSION = %q\n"):format(Hash(body)) .. body
+local text = header .. ("D.VERSION = %q\n"):format(Hash(versionBody)) .. body
 
 -- The report.
 Report("quests in QuestieDB: %d; counted %d (unsure %d), reference-only %d", counts.total,
@@ -587,7 +599,7 @@ for _, k in ipairs(keys) do
     Report("  %-12s %-8s %6d  %-32s %d quests", r.group, r.continent or "", k, r.name or "?", r.n)
 end
 for _, k in ipairs(unmapped) do Report("UNMAPPED area %d", k) end
-Report("size: %d bytes, version %s", #text, Hash(body))
+Report("size: %d bytes, version %s", #text, Hash(versionBody))
 
 if CHECK then
     local f = io.open(OUT, "rb")

@@ -87,6 +87,12 @@ eq("race 95 (High Order Skyborne) is bit 32", D.RACE_MASK and D.RACE_MASK[95], 2
 eq("race 96 (Windshaper Skyborne) is bit 33", D.RACE_MASK and D.RACE_MASK[96], 2 ^ 33)
 check("  95 is in the Alliance mask", D.FACTION_MASK and math.floor(D.FACTION_MASK.Alliance / 2 ^ 32) % 2 == 1)
 check("  96 is in the Horde mask", D.FACTION_MASK and math.floor(D.FACTION_MASK.Horde / 2 ^ 33) % 2 == 1)
+-- The version snapshots were counted against. Characters' quest lists show only
+-- for a snapshot of this version, so a change hides every local alt's lists
+-- until it logs in again (Codex on #399). If this fails because the COUNTING
+-- data changed (quests, masks, rows), update the pin. If only a display field
+-- changed (pinMap and the like), the generator must leave the version alone.
+eq("the version is the one the counted snapshots carry", D.VERSION, "9b0a9380")
 check("the version is the body's hash", type(D.VERSION) == "string" and #D.VERSION == 8)
 check("the source is recorded", D.SOURCE and D.SOURCE.questiedb and D.SOURCE.commit and D.SOURCE.build)
 

@@ -24,7 +24,7 @@ local D = {}
 AltStable.LoremasterData = D
 D.SOURCE = { questiedb = "1.1.1", commit = "4dbb82440a27856f8dccf57094a5d792cdc7cc9b", build = "1.60.1.70959" }
 D.CLASS_KEY = -9999
-D.VERSION = "bc7bfdb7"
+D.VERSION = "9b0a9380"
 D.RACE_MASK={[1]=1,[2]=2,[3]=4,[4]=8,[5]=16,[6]=32,[7]=64,[8]=128,[9]=256,[10]=512,[11]=1024,[22]=2097152,[24]=8388608,[25]=16777216,[26]=33554432,[95]=4294967296,[96]=8589934592}
 D.FACTION_MASK={Alliance=4294967373,Horde=8589934770}
 D.ZONES={

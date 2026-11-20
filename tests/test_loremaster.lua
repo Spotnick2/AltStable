@@ -432,10 +432,34 @@ M.DB().hideMap = true
 L.Render()
 eq("Hide map is remembered", M.DB().hideMap, true)
 M.DB().hideMap = nil
+-- The jump from a search and a filter that both hide the Class row (Codex on
+-- #399): they give way, the row is drawn, and the grid scrolls to it.
+check("the character playing has a Class row", M.DB().chars[ME].c[D.CLASS_KEY] ~= nil)
 M.DB().collapsed.class = true
+L.SetFilter("dungeon")
+L.search = "desol"
 L.JumpToClass()
 eq("Class quests: the Class row selected", L.selKey, D.CLASS_KEY)
 check("  its group opened", M.DB().collapsed.class == nil)
+eq("  the search cleared", L.search, nil)
+eq("  the filter that hid it cleared", M.DB().filter, nil)
+check("  the row is drawn", L.rowY and L.rowY[D.CLASS_KEY] ~= nil)
+local vb = L.Bars()
+if vb and vb:IsShown() then
+    local _, maxV = vb:GetMinMaxValues()
+    eq("  and scrolled to, not to the end", vb:GetValue(), math.min(maxV, L.rowY[D.CLASS_KEY]))
+end
+L.SetFilter("class")
+L.JumpToClass()
+eq("  a Class filter stays", M.DB().filter, "class")
+L.SetFilter("all")
+
+-- A snapshot counted before this update keeps its quest list (Codex on #399:
+-- the version is what the counting reads, not display fields).
+M.DB().chars[ME].ver = "9b0a9380"
+M.DB().done[ME].stamp = M.DB().chars[ME].stamp
+check("a pre-update snapshot with its done set still lists its quests",
+      L.ListsFor({ guid = ME, snap = M.DB().chars[ME] }) ~= nil)
 
 local okD = pcall(plugin.OnDeactivate, main)
 check("the tab closes", okD)
