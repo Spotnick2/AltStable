@@ -41,6 +41,7 @@ local TOCS = {
     { toc = "Plugins/Roster/AltStableRoster.toc",         dir = "Plugins/Roster/" },
     { toc = "Plugins/Professions/AltStableProfessions.toc", dir = "Plugins/Professions/" },
     { toc = "Plugins/Legacy/AltStableLegacy.toc",         dir = "Plugins/Legacy/" },
+    { toc = "Plugins/Loremaster/AltStableLoremaster.toc", dir = "Plugins/Loremaster/" },
 }
 
 for _, t in ipairs(TOCS) do
@@ -175,6 +176,8 @@ check("Professions moves to its own folder",
       pkg:find("AltStable/Plugins/Professions: AltStableProfessions", 1, true) ~= nil)
 check("Legacy moves to its own folder",
       pkg:find("AltStable/Plugins/Legacy: AltStableLegacy", 1, true) ~= nil)
+check("Loremaster moves to its own folder",
+      pkg:find("AltStable/Plugins/Loremaster: AltStableLoremaster", 1, true) ~= nil)
 
     -- The ignore list must be a YAML list. Markdown bullets parse as nothing,
     -- and the result is a published zip carrying the probe and the tests.
@@ -376,6 +379,7 @@ local ICON_FILES = {
     "Plugins/Roster/AltStableRoster.toc",
     "Plugins/Professions/AltStableProfessions.toc",
     "Plugins/Legacy/AltStableLegacy.toc",
+    "Plugins/Loremaster/AltStableLoremaster.toc",
     "Tools/AltStableProbe/AltStableProbe.toc",
     -- Not a TOC: the generator that WRITES one.
     "Tools/RenderCutout/Update-Cutouts.ps1",

@@ -12,6 +12,7 @@ for _, t in ipairs({
     { toc = "AltStableRoster.toc",         dir = "Plugins/Roster/" },
     { toc = "AltStableProfessions.toc",    dir = "Plugins/Professions/" },
     { toc = "AltStableLegacy.toc",         dir = "Plugins/Legacy/" },
+    { toc = "AltStableLoremaster.toc",     dir = "Plugins/Loremaster/" },
 }) do
     Kit.checkToc(t.toc, { dir = t.dir })
 end
