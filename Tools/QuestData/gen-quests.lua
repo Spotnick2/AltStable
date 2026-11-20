@@ -420,7 +420,16 @@ for key, r in pairs(rows) do
         end
         if not name then unmapped[#unmapped + 1] = key end
     end
-    zoneRows[key] = { group = r.group, continent = continent, uiMapID = uiMapID, name = name, n = r.n }
+    -- Where the map panel pins the row: its own zone map, or an instance's parent zone
+    -- (QuestieDB's dungeon table holds the entrance zone).
+    local pinMap = uiMapID
+    local dungeon = key > 0 and zoneTables.dungeons[key]
+    if (r.group == "dungeon" or r.group == "raid") and dungeon and dungeon[3] then
+        local m = zoneTables.a2m[dungeon[3]]
+        if m and m ~= 0 then pinMap = m end
+    end
+    zoneRows[key] = { group = r.group, continent = continent, uiMapID = uiMapID, name = name, n = r.n,
+                      pinMap = pinMap }
 end
 
 -- Sort names for the negative keys (Professions, Other).
@@ -508,14 +517,24 @@ table.sort(keys, function(a, b)
     return a < b
 end)
 local zoneLines = {}
+-- D.VERSION is what a snapshot is counted against: a character's quest lists
+-- are shown only for a snapshot of the same version. So it hashes what the
+-- counting reads - the quests, the masks and the zone rows' first five fields,
+-- exactly what it hashed when snapshots were first written - and never a field
+-- that is only for show, like pinMap (Codex on #399: adding pinMap changed the
+-- version and hid every local alt's lists until it logged in again).
+local versionLines = {}
 for i, k in ipairs(keys) do
     local r = zoneRows[k]
-    zoneLines[#zoneLines + 1] = ("[%d]={%q,%s,%s,%q,%d},"):format(k, r.group,
+    local five = ("[%d]={%q,%s,%s,%q,%d"):format(k, r.group,
         r.continent and ("%q"):format(r.continent) or "nil", r.uiMapID and tostring(r.uiMapID) or "nil",
         r.name or ("Area " .. k), i)
+    versionLines[#versionLines + 1] = five .. "},"
+    zoneLines[#zoneLines + 1] = five .. "," .. (r.pinMap and tostring(r.pinMap) or "nil") .. "},"
 end
 
 local body = "D.ZONES={\n" .. table.concat(zoneLines, "\n") .. "\n}\nD.QUESTS={\n" .. table.concat(lines, "\n") .. "\n}\n"
+local versionBody = "D.ZONES={\n" .. table.concat(versionLines, "\n") .. "\n}\nD.QUESTS={\n" .. table.concat(lines, "\n") .. "\n}\n"
 
 -- A small, stable hash of the body (sync tells two tables apart by it).
 local function Hash(s)
@@ -535,7 +554,8 @@ local header = ([[
 -- holiday lists; zone names and continents from the WoW Forever client tables (wago.tools, %s).
 -- QuestieDB and Questie are GPLv3 (see NOTICE.md); so is this file and the Loremaster plugin.
 --
--- D.ZONES[key] = { group, continent, uiMapID, englishName, order }
+-- D.ZONES[key] = { group, continent, uiMapID, englishName, order, pinMap }
+--   pinMap: the zone map the map panel pins this row on (an instance's entrance zone).
 --   key: an area ID (zone, dungeon, raid), a QuestSort ID (< 0: professions, other), -25 the
 --   Battlegrounds row, -9999 the Class quests row, 0 quests QuestieDB files nowhere.
 -- D.QUESTS[questID] = { key, hordeKey, reqLevel, raceMask, classMask, flags, name, maxLevel,
@@ -561,10 +581,12 @@ for id in pairs(raceMasks) do raceIds[#raceIds + 1] = id end
 table.sort(raceIds)
 local raceParts = {}
 for _, id in ipairs(raceIds) do raceParts[#raceParts + 1] = ("[%d]=%.0f"):format(id, raceMasks[id]) end
-body = ("D.RACE_MASK={%s}\nD.FACTION_MASK={Alliance=%.0f,Horde=%.0f}\n"):format(table.concat(raceParts, ","),
-    factionMasks.Alliance, factionMasks.Horde) .. body
+local masks = ("D.RACE_MASK={%s}\nD.FACTION_MASK={Alliance=%.0f,Horde=%.0f}\n"):format(table.concat(raceParts, ","),
+    factionMasks.Alliance, factionMasks.Horde)
+body = masks .. body
+versionBody = masks .. versionBody
 
-local text = header .. ("D.VERSION = %q\n"):format(Hash(body)) .. body
+local text = header .. ("D.VERSION = %q\n"):format(Hash(versionBody)) .. body
 
 -- The report.
 Report("quests in QuestieDB: %d; counted %d (unsure %d), reference-only %d", counts.total,
@@ -577,7 +599,7 @@ for _, k in ipairs(keys) do
     Report("  %-12s %-8s %6d  %-32s %d quests", r.group, r.continent or "", k, r.name or "?", r.n)
 end
 for _, k in ipairs(unmapped) do Report("UNMAPPED area %d", k) end
-Report("size: %d bytes, version %s", #text, Hash(body))
+Report("size: %d bytes, version %s", #text, Hash(versionBody))
 
 if CHECK then
     local f = io.open(OUT, "rb")

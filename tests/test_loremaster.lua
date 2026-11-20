@@ -30,6 +30,9 @@ end
 local function eq(name, got, want)
     check(name, got == want, "got " .. tostring(got) .. ", want " .. tostring(want))
 end
+local function near(name, got, want)
+    check(name, type(got) == "number" and math.abs(got - want) < 1e-9, "got " .. tostring(got) .. ", want " .. tostring(want))
+end
 
 AltStable = {}
 AltStableDB = {}
@@ -294,7 +297,9 @@ check("the tab opens", ok, tostring(err))
 check("  the grid it replaces is hidden", not main.bodyScroll:IsShown())
 check("  the core's totals hidden, ours shown", not main.totalsBar.core:IsShown() and L.foot and L.foot:IsShown())
 local foot = L.foot and L.foot.left:GetText() or ""
-check("  the footer says the character playing's total", foot:find("Loremaster", 1, true) ~= nil, foot)
+-- The selected character (the one playing, first) and its total, as in the owner's mockup.
+check("  the footer names the selected character", foot:find("Example", 1, true) ~= nil, foot)
+check("  with its quests done out of its total", foot:find("quests", 1, true) ~= nil and foot:find("/", 1, true) ~= nil, foot)
 
 local cols = L.Columns()
 eq("two columns: the hidden one is left out", #cols, 2)
@@ -337,6 +342,124 @@ check("a snapshot of a character the core forgot is pruned", M.DB().chars[HIDDEN
 check("  ours stays", M.DB().chars[ME] ~= nil)
 M.Cleanup(ME)
 check("cleanup keeps only the one asked", M.DB().chars[ME] ~= nil and M.DB().done[ME] ~= nil)
+
+------------------------------------------------------------
+-- #398: the toolbar, the selection, the map and the card
+------------------------------------------------------------
+
+-- The ME snapshot has Desolace (405, Kalimdor) at least; give it a dungeon too.
+local mySnap = M.DB().chars[ME]
+mySnap.c[1176] = { 2, 12 }            -- Zul'Farrak
+L.SetFilter("dungeon")
+local onlyDungeons = true
+for _, row in ipairs(L.DisplayRows(L.Columns())) do
+    if row.isGroup and row.key ~= "dungeon" then onlyDungeons = false end
+end
+check("the Dungeons filter shows only the dungeon group", onlyDungeons)
+L.SetFilter("all")
+eq("  All clears it", M.DB().filter, nil)
+L.SetFilter("nonsense")
+eq("  an unknown filter changes nothing", M.DB().filter, nil)
+
+M.DB().collapsed.KAL = true
+L.search = "desol"
+local found, others = false, 0
+for _, row in ipairs(L.DisplayRows(L.Columns())) do
+    if row.key == 405 then found = true elseif not row.isGroup then others = others + 1 end
+end
+check("a search finds Desolace, its collapsed group opened", found)
+eq("  and nothing else", others, 0)
+L.search = nil
+M.DB().collapsed.KAL = nil
+
+-- Selection: a row, a character. (The local done set back on the snapshot's
+-- stamp: a check above moved it off on purpose.)
+M.DB().done[ME].stamp = M.DB().chars[ME].stamp
+L.Select(405, ME)
+eq("selecting a row", L.selKey, 405)
+eq("  and a character", L.selGuid, ME)
+local lines = L.ListLines(L.SelectedColumn(), 405)
+check("the card's quest list for the character playing", lines ~= nil and #lines > 0)
+local hasDone = false
+for _, line in ipairs(lines or {}) do if line.text:find("^Done") then hasDone = true end end
+check("  with a Done section (1361, 1362, 1365 ... are done)", hasDone)
+check("another account's character has no list", L.ListLines({ guid = OTHER, snap = { stamp = 1, c = {} } }, 405) == nil)
+
+-- The map, against a stand-in C_Map: Elwynn's rect on Azeroth, its continent's
+-- rect, and a highlight on the continent.
+rawset(_G, "C_Map", {
+    GetMapRectOnMap = function(map, top)
+        if map == 1429 and top == 947 then return 0.6, 0.7, 0.2, 0.4 end
+        if map == 1415 and top == 947 then return 0.5, 1.0, 0.0, 1.0 end
+        if map == 1429 and top == 1415 then return 0.2, 0.4, 0.2, 0.4 end
+    end,
+    GetMapInfo = function(map) if map == 1429 then return { name = "Elwynn Forest", parentMapID = 1415 } end end,
+    GetMapHighlightInfoAtPosition = function(map, x, y)
+        if map == 1415 and math.abs(x - 0.3) < 1e-9 and math.abs(y - 0.3) < 1e-9 then
+            return 12345, nil, 0.8, 0.6, 0.1, 0.2, 0.25, 0.2
+        end
+    end,
+    GetMapArtLayers = function() return { { layerWidth = 1000, layerHeight = 600, tileWidth = 256, tileHeight = 256 } } end,
+    GetMapArtLayerTextures = function()
+        local t = {} for i = 1, 12 do t[i] = 9000 + i end return t
+    end,
+})
+L.ResetMapCache()
+local place = L.Placement(12)
+check("Elwynn is placed on Azeroth", place ~= nil)
+if place then
+    near("  its pin at its rect's centre (x)", place.x, 0.65)
+    near("  (y)", place.y, 0.3)
+    check("  with the highlight from its continent", place.hl ~= nil and place.hl.fileID == 12345)
+    if place.hl then
+        near("  moved onto Azeroth (x)", place.hl.x, 0.625)
+        near("  (y)", place.hl.y, 0.2)
+        near("  its width scaled by the continent's", place.hl.w, 0.05)
+        near("  its height", place.hl.h, 0.2)
+    end
+end
+eq("the Class row has no place", L.Placement(D.CLASS_KEY), nil)
+check("the art reads", L.MapArt() ~= nil and L.MapArt().w == 1000)
+rawset(_G, "C_Map", nil)
+L.ResetMapCache()
+eq("no map API: no art, and no error", L.MapArt(), nil)
+eq("  no place either", L.Placement(12), nil)
+local okR = pcall(L.Render)
+check("  the tab still draws", okR)
+
+-- Hide map, and the jump to Class quests.
+M.DB().hideMap = true
+L.Render()
+eq("Hide map is remembered", M.DB().hideMap, true)
+M.DB().hideMap = nil
+-- The jump from a search and a filter that both hide the Class row (Codex on
+-- #399): they give way, the row is drawn, and the grid scrolls to it.
+check("the character playing has a Class row", M.DB().chars[ME].c[D.CLASS_KEY] ~= nil)
+M.DB().collapsed.class = true
+L.SetFilter("dungeon")
+L.search = "desol"
+L.JumpToClass()
+eq("Class quests: the Class row selected", L.selKey, D.CLASS_KEY)
+check("  its group opened", M.DB().collapsed.class == nil)
+eq("  the search cleared", L.search, nil)
+eq("  the filter that hid it cleared", M.DB().filter, nil)
+check("  the row is drawn", L.rowY and L.rowY[D.CLASS_KEY] ~= nil)
+local vb = L.Bars()
+if vb and vb:IsShown() then
+    local _, maxV = vb:GetMinMaxValues()
+    eq("  and scrolled to, not to the end", vb:GetValue(), math.min(maxV, L.rowY[D.CLASS_KEY]))
+end
+L.SetFilter("class")
+L.JumpToClass()
+eq("  a Class filter stays", M.DB().filter, "class")
+L.SetFilter("all")
+
+-- A snapshot counted before this update keeps its quest list (Codex on #399:
+-- the version is what the counting reads, not display fields).
+M.DB().chars[ME].ver = "9b0a9380"
+M.DB().done[ME].stamp = M.DB().chars[ME].stamp
+check("a pre-update snapshot with its done set still lists its quests",
+      L.ListsFor({ guid = ME, snap = M.DB().chars[ME] }) ~= nil)
 
 local okD = pcall(plugin.OnDeactivate, main)
 check("the tab closes", okD)
