@@ -71,6 +71,9 @@ ignore:
   - README.md
   - CHANGELOG.md
   - Media/Raids/README.md
+  # The Loremaster plugin (#374) is being built in steps: its quest table lands
+  # before its TOC. Until the plugin itself does, nothing of it ships.
+  - Plugins/Loremaster
   # Scene documentation. The .tga files beside these DO ship - they are what the
   # client loads - but how the art was made is repository business, not a
   # download. The PNG masters and the reference screenshots are gitignored
