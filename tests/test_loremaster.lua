@@ -398,15 +398,25 @@ near("  (y)", place and place.pin and place.pin.y, 0.201)
 place = L.Placement(D.CLASS_KEY)
 check("the Class row shows Azeroth, dimmed", place and place.map == 947 and place.dim)
 
+-- Elwynn (1429) sits in the Eastern Kingdoms (1415), at x 0.40-0.50, y 0.70-0.80.
+local MAPINFO = {
+    [1429] = { mapID = 1429, name = "Elwynn Forest", mapType = 3, parentMapID = 1415 },
+    [1415] = { mapID = 1415, name = "Eastern Kingdoms", mapType = 2, parentMapID = 947 },
+    [947]  = { mapID = 947, name = "Azeroth", mapType = 1, parentMapID = 946 },
+}
 rawset(_G, "C_Map", {
     GetMapArtLayers = function(map)
-        if map == 1429 or map == 947 then
+        if map == 1429 or map == 947 or map == 1415 then
             return { { layerWidth = 1000, layerHeight = 600, tileWidth = 256, tileHeight = 256 } }
         end
     end,
     GetMapArtLayerTextures = function(map)
-        if map ~= 1429 and map ~= 947 then return nil end
+        if map ~= 1429 and map ~= 947 and map ~= 1415 then return nil end
         local t = {} for i = 1, 12 do t[i] = 9000 + i end return t
+    end,
+    GetMapInfo = function(map) return MAPINFO[map] end,
+    GetMapRectOnMap = function(map, top)
+        if map == 1429 and top == 1415 then return 0.40, 0.50, 0.70, 0.80 end
     end,
     GetBestMapForUnit = function() return 1429 end,
     GetPlayerMapPosition = function(map)
@@ -422,6 +432,57 @@ L.Select(1176)
 eq("a zone without art falls back to Azeroth", L.shownMap, 947)
 L.Select(12)
 eq("  a zone with art shows itself", L.shownMap, 1429)
+
+-- The zoom (#398, the owner: "like if we actually zoomed the map", with the
+-- world map's open/close sounds): from the whole continent into the zone.
+local mf = L.mapFrame
+mf.clip:SetSize(600, 186)
+L.ResetMapCache()
+L.Select(1176)                                  -- Azeroth, still
+WoW.sounds = {}
+L.Select(12)
+check("a zone zooms in from its continent", L.cam and L.cam.zoom and L.cam.zoom.cont == 1415)
+eq("  starting on the whole continent", L.cam and L.cam.t, 0)
+eq("  with the map's open sound", WoW.sounds[#WoW.sounds], 844)
+check("  the camera runs", mf._scripts.OnUpdate ~= nil)
+eq("  the zone faded out at first", mf.zone:GetAlpha(), 0)
+L.MapTick(0.2)
+check("  partway in, the zone shows", L.cam.t > 0 and L.cam.t < 1 and mf.zone:GetAlpha() > 0)
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+eq("  the zoom ends", L.cam.t, 1)
+eq("  the zone whole", mf.zone:GetAlpha(), 1)
+-- At rest the zone is fitted and centred: 1000x600 in 600x186, scale 0.31.
+local _, _, _, tx, ty = mf.tiles[1]:GetPoint(1)
+near("  its first tile centred (x)", tx, (600 - 310) / 2)
+near("  (y)", ty, 0)
+-- The continent behind is zoomed so Elwynn's rect lands on the zone:
+-- 310 px for a tenth of the continent, its tiles 256 * 3.1.
+near("  the continent zoomed with it", mf.back[1]:GetWidth(), 256 * 3.1)
+local _, _, _, bx = mf.back[1]:GetPoint(1)
+near("  and aligned (Elwynn's left edge on the zone's)", bx + 0.40 * 1000 * 3.1, (600 - 310) / 2)
+mf._scripts.OnUpdate(mf, 0.1)
+check("  the camera stops", mf._scripts.OnUpdate == nil)
+-- Another place zooms out first, with the close sound.
+WoW.sounds = {}
+L.Select(1176)
+eq("another place zooms out first", L.cam.next and L.cam.next.map, 947)
+eq("  with the map's close sound", WoW.sounds[1], 845)
+eq("  the old zone still drawn", L.cam.place.map, 1429)
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+check("  then shows the new place", L.cam.place.map == 947 and L.cam.next == nil and L.cam.zoom == nil)
+-- Back to the zone mid-zoom-out: the camera turns round.
+L.Select(12)
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+L.Select(1176); L.MapTick(0.1)
+WoW.sounds = {}
+L.Select(12)
+check("back mid-zoom-out: it turns round", L.cam.next == nil and L.cam.place.map == 1429 and L.cam.t > 0)
+eq("  opening again", WoW.sounds[1], 844)
+-- A redraw of the same zone does not zoom again.
+for _ = 1, 20 do if not L.MapTick(0.1) then break end end
+WoW.sounds = {}
+L.Render()
+check("a redraw keeps the camera still", L.cam.t == 1 and #WoW.sounds == 0)
 C_Map.GetPlayerMapPosition = function() return { GetXY = function() error("secret") end } end
 eq("a position the client keeps secret is no pin", L.PlayerPin(1429), nil)
 rawset(_G, "C_Map", nil)

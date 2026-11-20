@@ -28,6 +28,10 @@
 --   * art: C_Map.GetMapArtLayers(map)[1] and GetMapArtLayerTextures(map, 1),
 --     the tile grid the world map draws (as Blizzard's MapCanvas does), the
 --     whole map fitted in the panel;
+--   * the zoom: C_Map.GetMapInfo's parents up to the continent, and
+--     C_Map.GetMapRectOnMap(zone, continent), where the zone's art sits on the
+--     continent's. The camera flies from the whole continent into the zone;
+--     a map without a continent shows still;
 --   * the entrance of an instance: QuestieDB's, in percent of the entrance
 --     zone's map; the player: C_Map.GetPlayerMapPosition in the zone shown.
 --
@@ -609,7 +613,7 @@ end
 
 -- Forget what was read of the maps (tests; a client whose map loads late).
 function L.ResetMapCache()
-    L.mapArts = {}
+    L.mapArts, L.zooms, L.cam = {}, {}, nil
 end
 
 -- A map's art: its first layer's tiles, read once per map.
@@ -629,11 +633,167 @@ function L.MapArt(map)
     return L.mapArts[map] or nil
 end
 
-local function GlassTile(t)
+-- Where a map sits on its continent, for the zoom: { cont = uiMapID, art,
+-- x0, x1, y0, y1 } (0-1 of the continent), or nil (no continent, no art, or
+-- the client does not place it: the map then shows still). Read once per map.
+function L.ZoomFrom(map)
+    L.zooms = L.zooms or {}
+    if L.zooms[map] ~= nil then return L.zooms[map] or nil end
+    L.zooms[map] = false
+    local okI, info = Call(Api("C_Map", "GetMapInfo"), map)
+    local parent = okI and type(info) == "table" and info.parentMapID
+    for _ = 1, 6 do
+        if not tonumber(parent) or parent <= 0 then break end
+        local okP, pinfo = Call(Api("C_Map", "GetMapInfo"), parent)
+        if not okP or type(pinfo) ~= "table" then break end
+        -- 2 = Enum.UIMapType.Continent, 1 = World: the first one up the chain.
+        if tonumber(pinfo.mapType) and pinfo.mapType <= 2 then
+            local art = L.MapArt(parent)
+            local okR, x0, x1, y0, y1 = Call(Api("C_Map", "GetMapRectOnMap"), map, parent)
+            if art and okR and tonumber(x0) and tonumber(x1) and tonumber(y0) and tonumber(y1)
+               and x1 > x0 and y1 > y0 then
+                L.zooms[map] = { cont = parent, art = art, x0 = x0, x1 = x1, y0 = y0, y1 = y1 }
+            end
+            break
+        end
+        parent = pinfo.parentMapID
+    end
+    return L.zooms[map] or nil
+end
+
+local function GlassTile(t, shade)
     -- The owner's glass look from the client's own art: no colour of its own,
-    -- then the teal of the Pearl glass.
+    -- then the teal of the Pearl glass (darker for the continent behind).
     if t.SetDesaturated then t:SetDesaturated(true) end
-    t:SetVertexColor(TEAL[1], TEAL[2], TEAL[3], 1)
+    shade = shade or 1
+    t:SetVertexColor(TEAL[1] * shade, TEAL[2] * shade, TEAL[3] * shade, 1)
+end
+
+-- Lays a map's tiles: sx, sy panel pixels per art pixel, x, y the art's
+-- top-left in the panel.
+local function LayTiles(pool, parent, layer, art, sx, sy, x, y, shade)
+    local cols = math.ceil(art.w / art.tw)
+    local rows = math.ceil(art.h / art.th)
+    local i = 0
+    for r = 1, rows do
+        for c = 1, cols do
+            local file = art.tiles[(r - 1) * cols + c]
+            if file then
+                i = i + 1
+                local t = pool[i]
+                if not t then
+                    t = parent:CreateTexture(nil, layer)
+                    pool[i] = t
+                end
+                if t._file ~= file then t:SetTexture(file); t._file = file end
+                GlassTile(t, shade)
+                t:SetSize(art.tw * sx, art.th * sy)
+                t:ClearAllPoints()
+                t:SetPoint("TOPLEFT", mapFrame.clip, "TOPLEFT", x + (c - 1) * art.tw * sx, -(y + (r - 1) * art.th * sy))
+                t:Show()
+            end
+        end
+    end
+    for j = i + 1, #pool do pool[j]:Hide() end
+end
+
+local function HidePool(pool) for _, t in ipairs(pool) do t:Hide() end end
+
+local ZOOM_IN, ZOOM_OUT = 0.55, 0.35   -- seconds
+local function Ease(t) return t * t * (3 - 2 * t) end
+
+-- The camera (#398, the owner: "like if we actually zoomed the map"): t = 0
+-- is the whole continent, t = 1 the zone filling the panel, the continent
+-- zoomed with it and darkened behind. A new zone zooms out (t back to 0),
+-- changes continent if it must, then zooms in.
+-- The world map's own sounds (Blizzard_WorldMap.lua: open on show, close on
+-- hide), as the zoom opens and closes.
+local function MapSound(open)
+    local kit = rawget(_G, "SOUNDKIT")
+    local id = kit and kit[open and "IG_QUEST_LOG_OPEN" or "IG_QUEST_LOG_CLOSE"]
+    local play = rawget(_G, "PlaySound")
+    if id and play then pcall(play, id) end
+end
+
+local function NewCam(place)
+    local zoom = not place.dim and L.ZoomFrom(place.map) or nil
+    if zoom then MapSound(true) end
+    return { place = place, art = L.MapArt(place.map), zoom = zoom, t = zoom and 0 or 1 }
+end
+
+-- Draws the camera where it is now.
+function L.LayMap()
+    local cam = L.cam
+    local clip = mapFrame.clip
+    local w, h = clip:GetWidth() or 0, clip:GetHeight() or 0
+    if not cam or w <= 0 or h <= 0 then
+        HidePool(mapFrame.tiles); HidePool(mapFrame.back)
+        mapFrame.pin:Hide(); mapFrame.me:Hide(); mapFrame.shadow:Hide()
+        return
+    end
+    local art, zoom = cam.art, cam.zoom
+    -- The zone at rest: whole, fitted inside the panel and centred.
+    local s = math.min(w / art.w, h / art.h)
+    local zx, zy, zw, zh = (w - art.w * s) / 2, (h - art.h * s) / 2, art.w * s, art.h * s
+    local alpha = cam.place.dim and 0.45 or 1
+    if zoom then
+        local ca = zoom.art
+        local e = Ease(cam.t)
+        -- The continent: whole at t = 0, zoomed so the zone's rect lands on
+        -- the zone at rest at t = 1. Zoom by ratio, centre in a line.
+        local s0 = math.min(w / ca.w, h / ca.h)
+        local s1 = zw / ((zoom.x1 - zoom.x0) * ca.w)
+        local c1x = (w / 2 - (zx - zoom.x0 * ca.w * s1)) / (ca.w * s1)
+        local c1y = (h / 2 - (zy - zoom.y0 * ca.h * s1)) / (ca.h * s1)
+        local sc = s0 * (s1 / s0) ^ e
+        local cx, cy = 0.5 + (c1x - 0.5) * e, 0.5 + (c1y - 0.5) * e
+        local ox, oy = w / 2 - cx * ca.w * sc, h / 2 - cy * ca.h * sc
+        LayTiles(mapFrame.back, clip, "BORDER", ca, sc, sc, ox, oy, 1 - 0.6 * e)
+        -- The zone rides on the continent, where its art sits.
+        zx, zy = ox + zoom.x0 * ca.w * sc, oy + zoom.y0 * ca.h * sc
+        zw, zh = (zoom.x1 - zoom.x0) * ca.w * sc, (zoom.y1 - zoom.y0) * ca.h * sc
+        alpha = math.min(1, e * 1.6)
+        mapFrame.shadow:ClearAllPoints()
+        mapFrame.shadow:SetPoint("TOPLEFT", clip, "TOPLEFT", zx - 4, -(zy - 4))
+        mapFrame.shadow:SetSize(zw + 8, zh + 8)
+        mapFrame.shadow:Show()
+    else
+        HidePool(mapFrame.back)
+        mapFrame.shadow:Hide()
+    end
+    LayTiles(mapFrame.tiles, mapFrame.zone, "ARTWORK", art, zw / art.w, zh / art.h, zx, zy, 1)
+    mapFrame.zone:SetAlpha(alpha)
+
+    local function put(tex, at)
+        if not at then tex:Hide(); return end
+        tex:ClearAllPoints()
+        tex:SetPoint("CENTER", clip, "TOPLEFT", zx + at.x * zw, -(zy + at.y * zh))
+        tex:SetAlpha(alpha)
+        tex:Show()
+    end
+    put(mapFrame.pin, cam.place.pin)
+    put(mapFrame.me, not cam.place.dim and cam.place.me or nil)
+end
+
+-- One step of the camera; true while it still moves.
+function L.MapTick(elapsed)
+    local cam = L.cam
+    if not cam then return false end
+    if cam.next then
+        cam.t = cam.zoom and math.max(0, cam.t - elapsed / ZOOM_OUT) or 0
+        if cam.t <= 0 then
+            L.cam = NewCam(cam.next)
+            cam = L.cam
+        end
+    elseif cam.t < 1 then
+        cam.t = math.min(1, cam.t + elapsed / ZOOM_IN)
+    end
+    if mapFrame then L.LayMap() end
+    return cam.next ~= nil or cam.t < 1
+end
+
+local function MapOnUpdate(_, elapsed)
+    if not L.MapTick(elapsed or 0) then mapFrame:SetScript("OnUpdate", nil) end
 end
 
 function L.RenderMap(key)
@@ -646,73 +806,68 @@ function L.RenderMap(key)
         art = L.MapArt(AZEROTH)
     end
     L.shownMap = art and place.map or nil
-    local clip = mapFrame.clip
-    local w, h = clip:GetWidth() or 0, clip:GetHeight() or 0
     mapFrame.none:SetShown(not art)
-    if not art or w <= 0 or h <= 0 then
-        mapFrame.pin:Hide(); mapFrame.me:Hide()
-        for _, t in ipairs(mapFrame.tiles) do t:Hide() end
+    if not art then
+        L.cam = nil
+        mapFrame:SetScript("OnUpdate", nil)
+        L.LayMap()
         return
     end
-    -- The whole map, fitted inside the panel and centred.
-    local s = math.min(w / art.w, h / art.h)
-    local offX, offY = (w - art.w * s) / 2, (h - art.h * s) / 2
-    local cols = math.ceil(art.w / art.tw)
-    local rows = math.ceil(art.h / art.th)
-    local i = 0
-    for r = 1, rows do
-        for c = 1, cols do
-            local file = art.tiles[(r - 1) * cols + c]
-            if file then
-                i = i + 1
-                local t = mapFrame.tiles[i]
-                if not t then
-                    t = clip:CreateTexture(nil, "ARTWORK")
-                    mapFrame.tiles[i] = t
-                end
-                t:SetTexture(file)
-                GlassTile(t)
-                t:SetSize(art.tw * s, art.th * s)
-                t:ClearAllPoints()
-                t:SetPoint("TOPLEFT", clip, "TOPLEFT", offX + (c - 1) * art.tw * s, -(offY + (r - 1) * art.th * s))
-                t:Show()
-            end
-        end
+    place.me = not place.dim and L.PlayerPin(place.map) or nil
+    local cam = L.cam
+    local same = cam and cam.place.map == place.map and (cam.place.dim or false) == (place.dim or false)
+    if not cam then
+        L.cam = NewCam(place)
+    elseif same then
+        -- The same map (a redraw, or two instances in one entrance zone): the
+        -- pins move, the camera stays (or turns back to it mid-zoom).
+        if cam.next and cam.zoom then MapSound(true) end
+        cam.place, cam.next = place, nil
+    elseif cam.zoom and cam.t > 0 then
+        if not cam.next then MapSound(false) end
+        cam.next = place
+    else
+        L.cam = NewCam(place)
     end
-    for j = i + 1, #mapFrame.tiles do mapFrame.tiles[j]:Hide() end
-    clip:SetAlpha(place.dim and 0.45 or 1)
-
-    local function put(tex, at)
-        if not at then tex:Hide(); return end
-        tex:ClearAllPoints()
-        tex:SetPoint("CENTER", clip, "TOPLEFT", offX + at.x * art.w * s, -(offY + at.y * art.h * s))
-        tex:Show()
-    end
-    put(mapFrame.pin, place.pin)
-    put(mapFrame.me, not place.dim and L.PlayerPin(place.map) or nil)
+    L.LayMap()
+    if L.cam.next or L.cam.t < 1 then mapFrame:SetScript("OnUpdate", MapOnUpdate) end
 end
 
 function L.BuildMap()
     mapFrame = CreateFrame("Frame", nil, panel)
+    L.mapFrame = mapFrame   -- tests
     mapFrame.bg = mapFrame:CreateTexture(nil, "BACKGROUND")
     mapFrame.bg:SetAllPoints()
     mapFrame.clip = CreateFrame("Frame", nil, mapFrame)
     mapFrame.clip:SetPoint("TOPLEFT", mapFrame, "TOPLEFT", 2, -2)
     mapFrame.clip:SetPoint("BOTTOMRIGHT", mapFrame, "BOTTOMRIGHT", -2, 2)
     mapFrame.clip:SetClipsChildren(true)
+    -- Three layers in the clip: the continent behind (its tiles), the zone
+    -- over it (a frame, so it fades as one), and the glass and pins on top.
+    mapFrame.back = {}
+    mapFrame.zone = CreateFrame("Frame", nil, mapFrame.clip)
+    mapFrame.zone:SetAllPoints()
+    mapFrame.zone:SetFrameLevel(mapFrame.clip:GetFrameLevel() + 1)
+    mapFrame.top = CreateFrame("Frame", nil, mapFrame.clip)
+    mapFrame.top:SetAllPoints()
+    mapFrame.top:SetFrameLevel(mapFrame.clip:GetFrameLevel() + 2)
     mapFrame.tiles = {}
+    -- A soft shadow lifts the zone off the darkened continent.
+    mapFrame.shadow = mapFrame.zone:CreateTexture(nil, "BACKGROUND")
+    mapFrame.shadow:SetColorTexture(0, 0, 0, 0.55)
+    mapFrame.shadow:Hide()
     -- The glass: a teal wash over the art and a light rim.
-    mapFrame.wash = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, -1)
+    mapFrame.wash = mapFrame.top:CreateTexture(nil, "OVERLAY", nil, -1)
     mapFrame.wash:SetAllPoints()
     mapFrame.wash:SetColorTexture(0.04, 0.22, 0.24, 0.14)
     -- Where the character playing stands, in the zone shown (white, under the
     -- gold entrance pin).
-    mapFrame.me = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 1)
+    mapFrame.me = mapFrame.top:CreateTexture(nil, "OVERLAY", nil, 1)
     mapFrame.me:SetSize(16, 16)
     mapFrame.me:SetTexture("Interface\\WorldMap\\WorldMapPartyIcon")
     mapFrame.me:SetVertexColor(1, 1, 1, 1)
     mapFrame.me:Hide()
-    mapFrame.pin = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 2)
+    mapFrame.pin = mapFrame.top:CreateTexture(nil, "OVERLAY", nil, 2)
     mapFrame.pin:SetSize(18, 18)
     mapFrame.pin:SetTexture("Interface\\WorldMap\\WorldMapPartyIcon")
     mapFrame.pin:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
