@@ -420,4 +420,134 @@ if legacyProc and L then
     WoW.player.name = savedName
 end
 
+------------------------------------------------------------
+-- /fp steps as quests (#374): the completed list, a turn-in, and two
+-- characters compared, against a stand-in for C_QuestLog
+------------------------------------------------------------
+-- What has to hold: the reading counts the completed list and saves its IDs
+-- under the character; a turn-in is looked at in the handler and later; two
+-- characters' lists are compared and the first one's own IDs are asked about
+-- here; the procedure ends with a /reload.
+local questsProc = FP.procedures and FP.procedures["AltStableProbe/quests"]
+check("/fp steps as quests is defined", questsProc ~= nil)
+check("  and ends with a /reload", questsProc ~= nil and questsProc.steps[#questsProc.steps].reload == true)
+for _, cmd in ipairs({ "quests", "queststime", "questnames", "questmaps" }) do
+    check("  /fp as " .. cmd .. " exists", P.commands[cmd] ~= nil)
+end
+local Q = ns.quests
+check("the quests seam is on the namespace", Q ~= nil and rawget(_G, "quests") == nil)
+if questsProc and Q then
+    -- The Legacy block above fired PLAYER_LOGIN, which took a quests reading
+    -- too: start from an empty store so "the other character" is ours.
+    AltStableProbeDB.quests = nil
+    local done, account = {}, {}
+    rawset(_G, "C_QuestLog", {
+        GetAllCompletedQuestIDs = function()
+            local out = {}
+            for id in pairs(done) do out[#out + 1] = id end
+            return out
+        end,
+        IsQuestFlaggedCompleted = function(id) return done[id] == true end,
+        IsQuestFlaggedCompletedOnAccount = function(id) return account[id] == true end,
+        GetTitleForQuestID = function(id) return (id == 7 or id == 870) and ("Quest " .. id) or nil end,
+    })
+    local S = questsProc.steps
+    local READ, TURNIN, COMPARE = 1, 4, 6
+    check("  the steps are where this test reads them", S[READ].auto and S[TURNIN].wait and S[COMPARE].wait,
+          "renumber the test")
+    local savedName = WoW.player.name
+
+    done = { [7] = true, [783] = true, [870] = true }
+    account = { [7] = true, [783] = true, [870] = true }
+    WoW.player.name = "Questfirst"
+    S[READ].run()
+    check("a non-empty list passes the first step", (S[READ].check()))
+    local first = Q.Mine()
+    eq("  3 completed", first and first.completed.count, 3)
+    eq("  their IDs saved, sorted", first and first.ids, "7,783,870")
+    check("  the samples say which are flagged", first and first.samples:find("7:L/true/true", 1, true) ~= nil)
+    done = {}
+    S[READ].run()
+    check("  an empty list fails it", not (S[READ].check()))
+    done = { [7] = true, [783] = true, [870] = true }
+    S[READ].run()                                   -- the first character's reading back
+
+    -- A turn-in, completed only after the handler. An earlier run's turn-in,
+    -- left in the account-wide SavedVariables, must not pass the step (Codex
+    -- on #392): only one made after the step came up, by this character, in
+    -- this session.
+    Q.session.uptimeAtLogin = Q.session.uptimeAtLogin or 0
+    local turnIns = AltStableProbeDB.quests.turnIns
+    turnIns[#turnIns + 1] = { id = 1, plus2s = "list yes, flagged true", char = "Questfirst",
+                              session = "an earlier session", seq = 99 }
+    check("  an earlier run's turn-in does not complete the step", not (S[TURNIN].wait()))
+    check("  nor pass it", not (S[TURNIN].check()))
+    S[TURNIN].leave("back")
+    Q.session.turnSeq = nil                         -- a new session's numbering
+    check("  a fresh step still waits", not (S[TURNIN].wait()))
+    WoW.player.name = "Somebodyelse"
+    Q.TurnIn(4)
+    WoW.flushTimers()
+    WoW.player.name = "Questfirst"
+    check("  another character's turn-in does not complete it", not (S[TURNIN].wait()))
+    local r = Q.TurnIn(1361)
+    eq("  the handler sees it not done yet", r.handler, "list no, flagged false")
+    done[1361] = true
+    check("  the step waits for the +2 s look", not (S[TURNIN].wait()))
+    WoW.flushTimers()
+    eq("  +2 s sees it done", r.plus2s, "list yes, flagged true")
+    check("  the step completes", (S[TURNIN].wait()))
+    check("  and passes", (S[TURNIN].check()))
+    S[TURNIN].leave("done")
+    -- A turn-in between the step's entry and its first poll (Codex on #392):
+    -- the step before sets the baseline as the host leaves it, before the
+    -- turn-in step is entered, so that turn-in still counts.
+    S[TURNIN - 1].leave("done")
+    Q.TurnIn(3450)
+    done[3450] = true
+    WoW.flushTimers()
+    check("  a turn-in before the first poll still completes the step", (S[TURNIN].wait()))
+    S[TURNIN].leave("done")
+
+    -- The second character: fewer quests; the first one's own are on the
+    -- account but not flagged here.
+    done = { [7] = true }
+    WoW.player.name = "Questsecond"
+    check("  the compare waits while this character has no reading", not (S[COMPARE].wait()))
+    Q.Read("login+10s")
+    local ready, both, onlyFirst, flaggedHere, accountHere = S[COMPARE].wait()
+    check("  and runs once it has one", ready == true)
+    eq("one quest shared", both, 1)
+    eq("  two only on the first", onlyFirst, 2)
+    eq("  neither flagged here", flaggedHere, 0)
+    eq("  both on the account", accountHere, 2)
+    check("  the step passes", (S[COMPARE].check()))
+
+    -- A read that failed is not an empty list (Codex on #392): the step ends,
+    -- and fails, instead of counting every first-character quest as exclusive.
+    local api = C_QuestLog.GetAllCompletedQuestIDs
+    C_QuestLog.GetAllCompletedQuestIDs = function() error("not ready") end
+    Q.Read("login+10s")
+    check("  a failed reading is saved as an error", not Q.ReadOk(Q.Mine()))
+    check("  the compare still ends", (S[COMPARE].wait()))
+    check("  but fails", not (S[COMPARE].check()))
+    C_QuestLog.GetAllCompletedQuestIDs = function() return {} end
+    Q.Read("login+10s")
+    check("  an empty list is a good reading", Q.ReadOk(Q.Mine()))
+    C_QuestLog.GetAllCompletedQuestIDs = api
+
+    -- Names: only what the client holds, counted over the whole scan.
+    local t = Q.Titles()
+    eq("two titles held", t.cached, 2)
+    check("  the samples name them", t.samples:find("870=", 1, true) ~= nil)
+
+    -- The login timeline.
+    fireProbeEvent("PLAYER_LOGIN")
+    for _ = 1, 3 do WoW.flushTimers() end
+    check("the login timeline reaches +10 s", Q.session.login.plus10s ~= nil)
+    eq("  and read the list there", Q.session.login.plus10s and Q.session.login.plus10s.reading.count, 1)
+    rawset(_G, "C_QuestLog", nil)
+    WoW.player.name = savedName
+end
+
 WoW.finish("test_probe", passed, failed)

@@ -2377,3 +2377,33 @@ one, realm 1; a mage 30 and a druid 14 on the other, realm 7; all Normal realms)
   (`ACHIEVEMENT_SEARCH_UPDATED`) changed nothing the category calls return.
 - **Not measured:** Hardcore (set B, and whether a Hardcore earn counts for Normal); a live earn
   (when renown and `ACHIEVEMENT_EARNED` arrive); a second Battle.net account.
+
+## Completed quests: per character, ready at login — MEASURED (#374)
+
+`/fp steps as quests` (`Tools/AltStableProbe/Quests.lua`), build 1.60.1.70959, 2026-11-19, two
+characters of one WoW account (Drazuka: Skyborne mage, Alliance, level 3; Drakuza: Orc mage,
+Horde, level 30).
+
+- **`C_QuestLog.GetAllCompletedQuestIDs()`** returns a plain array of quest IDs (Drakuza 344,
+  IDs 2-99582; Drazuka 4), already complete at **`PLAYER_LOGIN`** (t = 0) and the same at
+  entering the world, +1, +3 and +10 s. Cost: about **3 ms** for 344 IDs.
+- **Per character.** The quest only Drazuka had done (92481) reads `false` for
+  `IsQuestFlaggedCompleted` on Drakuza and `true` for `IsQuestFlaggedCompletedOnAccount`. So the
+  completed list is the character's, and the `OnAccount` variant is account-wide (870, done on
+  the Horde character, read `true` for it on the Alliance one).
+- **Shared quests are real ones.** Drakuza's list also holds 92460, 92461 and 93552, three Zephras
+  Isle starter quests: he did them himself, in a group (the owner, 2026-11-19), not by account
+  credit. No sign of account-wide quest credit in the completed list.
+- **`QUEST_TURNED_IN` comes first:** inside the handler, the quest is **not yet** in
+  `GetAllCompletedQuestIDs()` and `IsQuestFlaggedCompleted` is `false`; 0.5 s later both are
+  true. Re-read after a short delay, never inside the handler.
+- **Titles are not cached.** `C_QuestLog.GetTitleForQuestID` returned a title for only 53 of IDs
+  1-100000 (431 ms for the scan), and none of the sample quests (done or not). A quest list needs
+  its own names. No `Request*` call was made.
+- **Races:** `UnitRace` gives Skyborne as race **95** ("High Order Skyborne", Alliance). The
+  client also knows **96** "Windshaper Skyborne", so bits 32 and 33 of a race mask are Forever's,
+  as in QuestieDB's masks. `C_CreatureInfo.GetRaceInfo` lists races up to 96, Retail's included.
+- **Zone names:** `C_Map.GetMapInfo` names 51 zone maps (type 3) in 1400-1470 and 2400-2800,
+  localized: the 47 Classic ones plus Mount Hyjal 2482, Zephras Isle 2521 (parent 947), Riverglades
+  2548 (parent 1415), Shen'dralas 2652 (parent 1414), and a second Zephras Isle 2665 (parent 0). No
+  dungeon maps (type 4) in those ranges.
