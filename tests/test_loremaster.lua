@@ -385,47 +385,51 @@ for _, line in ipairs(lines or {}) do if line.text:find("^Done") then hasDone = 
 check("  with a Done section (1361, 1362, 1365 ... are done)", hasDone)
 check("another account's character has no list", L.ListLines({ guid = OTHER, snap = { stamp = 1, c = {} } }, 405) == nil)
 
--- The map, against a stand-in C_Map: Elwynn's rect on Azeroth, its continent's
--- rect, and a highlight on the continent.
+-- The map (#398, the owner: zoom to the zone): a zone shows its own map; an
+-- instance its entrance zone with the entrance pinned; the Class row Azeroth,
+-- dimmed; the player pinned where it stands in the zone shown.
+local place = L.Placement(12)
+eq("Elwynn shows its own map", place and place.map, 1429)
+check("  with no pin of its own", place and place.pin == nil)
+place = L.Placement(1176)
+eq("Zul'Farrak shows Tanaris, its entrance zone", place and place.map, 1446)
+near("  the entrance pinned (x)", place and place.pin and place.pin.x, 0.387)
+near("  (y)", place and place.pin and place.pin.y, 0.201)
+place = L.Placement(D.CLASS_KEY)
+check("the Class row shows Azeroth, dimmed", place and place.map == 947 and place.dim)
+
 rawset(_G, "C_Map", {
-    GetMapRectOnMap = function(map, top)
-        if map == 1429 and top == 947 then return 0.6, 0.7, 0.2, 0.4 end
-        if map == 1415 and top == 947 then return 0.5, 1.0, 0.0, 1.0 end
-        if map == 1429 and top == 1415 then return 0.2, 0.4, 0.2, 0.4 end
-    end,
-    GetMapInfo = function(map) if map == 1429 then return { name = "Elwynn Forest", parentMapID = 1415 } end end,
-    GetMapHighlightInfoAtPosition = function(map, x, y)
-        if map == 1415 and math.abs(x - 0.3) < 1e-9 and math.abs(y - 0.3) < 1e-9 then
-            return 12345, nil, 0.8, 0.6, 0.1, 0.2, 0.25, 0.2
+    GetMapArtLayers = function(map)
+        if map == 1429 or map == 947 then
+            return { { layerWidth = 1000, layerHeight = 600, tileWidth = 256, tileHeight = 256 } }
         end
     end,
-    GetMapArtLayers = function() return { { layerWidth = 1000, layerHeight = 600, tileWidth = 256, tileHeight = 256 } } end,
-    GetMapArtLayerTextures = function()
+    GetMapArtLayerTextures = function(map)
+        if map ~= 1429 and map ~= 947 then return nil end
         local t = {} for i = 1, 12 do t[i] = 9000 + i end return t
+    end,
+    GetBestMapForUnit = function() return 1429 end,
+    GetPlayerMapPosition = function(map)
+        if map == 1429 then return { GetXY = function() return 0.42, 0.66 end } end
     end,
 })
 L.ResetMapCache()
-local place = L.Placement(12)
-check("Elwynn is placed on Azeroth", place ~= nil)
-if place then
-    near("  its pin at its rect's centre (x)", place.x, 0.65)
-    near("  (y)", place.y, 0.3)
-    check("  with the highlight from its continent", place.hl ~= nil and place.hl.fileID == 12345)
-    if place.hl then
-        near("  moved onto Azeroth (x)", place.hl.x, 0.625)
-        near("  (y)", place.hl.y, 0.2)
-        near("  its width scaled by the continent's", place.hl.w, 0.05)
-        near("  its height", place.hl.h, 0.2)
-    end
-end
-eq("the Class row has no place", L.Placement(D.CLASS_KEY), nil)
-check("the art reads", L.MapArt() ~= nil and L.MapArt().w == 1000)
+check("a zone's art reads", L.MapArt(1429) ~= nil and L.MapArt(1429).w == 1000)
+local me = L.PlayerPin(1429)
+check("the player is pinned in the zone it stands in", me ~= nil and me.x == 0.42 and me.y == 0.66)
+eq("  not in another", L.PlayerPin(1446), nil)
+L.Select(1176)
+eq("a zone without art falls back to Azeroth", L.shownMap, 947)
+L.Select(12)
+eq("  a zone with art shows itself", L.shownMap, 1429)
+C_Map.GetPlayerMapPosition = function() return { GetXY = function() error("secret") end } end
+eq("a position the client keeps secret is no pin", L.PlayerPin(1429), nil)
 rawset(_G, "C_Map", nil)
 L.ResetMapCache()
-eq("no map API: no art, and no error", L.MapArt(), nil)
-eq("  no place either", L.Placement(12), nil)
+eq("no map API: no art, and no error", L.MapArt(1429), nil)
 local okR = pcall(L.Render)
 check("  the tab still draws", okR)
+eq("  and shows no map", L.shownMap, nil)
 
 -- Hide map, and the jump to Class quests.
 M.DB().hideMap = true

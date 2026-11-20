@@ -4,9 +4,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later (see NOTICE.md).
 --
 -- The tab, top to bottom:
---   * the map panel (#398): Azeroth (uiMap 947) from the client's own map art,
---     desaturated and tinted teal (the owner's glass look), with the selected
---     row's zone pinned and outlined in gold. Hidden with "Hide map";
+--   * the map panel (#398): the selected zone's own map from the client's own
+--     art, desaturated and tinted teal (the owner's glass look); an instance
+--     shows its entrance zone with the entrance pinned; where the character
+--     playing stands in the zone shown, a pin. Hidden with "Hide map";
 --   * beside it the zone card: the selected zone and character, its count, a
 --     bar, what is left; "View quests" turns the card into the zone's quest
 --     list (to do by level, done, missed);
@@ -21,15 +22,14 @@
 -- AltStableLoremasterDB.chars, one per character, from its own last login or
 -- from sync. A character never scanned has no column, never a row of zeros.
 --
--- The map, from the 70959 API (not yet measured live; every call is guarded,
--- so a map that does not read leaves the panel blank, never an error):
---   * art: C_Map.GetMapArtLayers(947)[1] and GetMapArtLayerTextures(947, 1),
---     the tile grid the world map draws (as Blizzard's MapCanvas does);
---   * pin: the centre of C_Map.GetMapRectOnMap(pinMap, 947);
---   * outline: C_Map.GetMapHighlightInfoAtPosition(continent, x, y), the
---     texture the world map shows on hovering a zone, placed as Blizzard's
---     MapHighlightDataProvider places it, moved onto 947 through the
---     continent's own rect there.
+-- The map, from the 70959 API (seen in game on 70959: Azeroth's tiles load;
+-- every call is guarded, so a map that does not read leaves the panel blank,
+-- never an error):
+--   * art: C_Map.GetMapArtLayers(map)[1] and GetMapArtLayerTextures(map, 1),
+--     the tile grid the world map draws (as Blizzard's MapCanvas does), the
+--     whole map fitted in the panel;
+--   * the entrance of an instance: QuestieDB's, in percent of the entrance
+--     zone's map; the player: C_Map.GetPlayerMapPosition in the zone shown.
 --
 -- LoadOnDemand: registers on PLAYER_LOGIN, or right away when enabled later.
 ------------------------------------------------------------
@@ -577,63 +577,56 @@ end
 -- The map panel
 ------------------------------------------------------------
 
--- Where a row sits on Azeroth: its pin (0-1 on 947) and the outline's rect and
--- texture, or nil for rows with no map (Class, Professions, Other). Memoized:
--- the map does not move during a session.
-local placeCache = {}
+-- What the map panel shows for a row (#398, the owner: "zoom to a zone when
+-- selecting a zone"): { map = uiMapID, pin = { x, y } (0-1) or nil, dim }.
+--   * a zone: its own map, whole; no outline needed, the map IS the zone;
+--   * a dungeon or raid: its entrance zone's map, the entrance pinned
+--     (QuestieDB's entrance, in percent, carried in the quest table);
+--   * Class, Professions, Other: Azeroth, dimmed.
 function L.Placement(key)
-    if placeCache[key] ~= nil then return placeCache[key] or nil end
     local z = D.ZONES[key]
-    local pinMap = z and (z[6] or z[3])
-    local place = false
-    local rectOn = Api("C_Map", "GetMapRectOnMap")
-    if pinMap then
-        local ok, x0, x1, y0, y1 = Call(rectOn, pinMap, AZEROTH)
-        if ok and tonumber(x0) and tonumber(x1) and x1 > x0 and y1 > y0 then
-            place = { x = (x0 + x1) / 2, y = (y0 + y1) / 2 }
-            -- The outline: the zone's highlight on its continent map, moved
-            -- onto Azeroth through the continent's own rect there.
-            local okI, info = Call(Api("C_Map", "GetMapInfo"), pinMap)
-            local cont = okI and type(info) == "table" and info.parentMapID
-            if cont and cont ~= AZEROTH and cont ~= 0 and z[1] == "zone" then
-                local okC, cx0, cx1, cy0, cy1 = Call(rectOn, cont, AZEROTH)
-                local okZ, zx0, zx1, zy0, zy1 = Call(rectOn, pinMap, cont)
-                if okC and okZ and tonumber(cx0) and tonumber(zx0) and cx1 > cx0 and cy1 > cy0 then
-                    local okH, fileID, atlas, pctX, pctY, texX, texY, scX, scY =
-                        Call(Api("C_Map", "GetMapHighlightInfoAtPosition"), cont, (zx0 + zx1) / 2, (zy0 + zy1) / 2)
-                    if okH and ((tonumber(fileID) and fileID > 0) or atlas) and tonumber(texX) and texX > 0 then
-                        local cw, ch = cx1 - cx0, cy1 - cy0
-                        place.hl = { fileID = fileID, atlas = atlas, pctX = pctX or 1, pctY = pctY or 1,
-                                     x = cx0 + (scX or 0) * cw, y = cy0 + (scY or 0) * ch,
-                                     w = texX * cw, h = (texY or texX) * ch }
-                    end
-                end
-            end
-        end
-    end
-    placeCache[key] = place
-    return place or nil
+    local map = z and (z[6] or z[3])
+    if not map then return { map = AZEROTH, dim = true } end
+    local place = { map = map }
+    if tonumber(z[7]) and tonumber(z[8]) then place.pin = { x = z[7] / 100, y = z[8] / 100 } end
+    return place
 end
 
--- Forget what was read of the map (tests; a client whose map loads late).
+-- Where the character playing stands, when it stands in the map shown. Live,
+-- never cached; a position the client keeps secret (an instance) is no pin.
+function L.PlayerPin(map)
+    local okB, here = Call(Api("C_Map", "GetBestMapForUnit"), "player")
+    if not okB or here ~= map then return nil end
+    local ok, pos = Call(Api("C_Map", "GetPlayerMapPosition"), map, "player")
+    if not ok or type(pos) ~= "table" or not pos.GetXY then return nil end
+    local okXY, x, y = pcall(function()
+        local px, py = pos:GetXY()
+        if px and py and px > 0 and py > 0 and px < 1 and py < 1 then return px, py end
+    end)
+    if okXY and x then return { x = x, y = y } end
+    return nil
+end
+
+-- Forget what was read of the maps (tests; a client whose map loads late).
 function L.ResetMapCache()
-    placeCache = {}
-    L.mapArt = nil
+    L.mapArts = {}
 end
 
--- The art: Azeroth's tiles, read once.
-function L.MapArt()
-    if L.mapArt ~= nil then return L.mapArt or nil end
-    L.mapArt = false
-    local okL, layers = Call(Api("C_Map", "GetMapArtLayers"), AZEROTH)
+-- A map's art: its first layer's tiles, read once per map.
+function L.MapArt(map)
+    map = map or AZEROTH
+    L.mapArts = L.mapArts or {}
+    if L.mapArts[map] ~= nil then return L.mapArts[map] or nil end
+    L.mapArts[map] = false
+    local okL, layers = Call(Api("C_Map", "GetMapArtLayers"), map)
     local layer = okL and type(layers) == "table" and layers[1]
-    local okT, tiles = Call(Api("C_Map", "GetMapArtLayerTextures"), AZEROTH, 1)
+    local okT, tiles = Call(Api("C_Map", "GetMapArtLayerTextures"), map, 1)
     if layer and okT and type(tiles) == "table" and #tiles > 0 and tonumber(layer.layerWidth)
        and tonumber(layer.tileWidth) and layer.layerWidth > 0 and layer.tileWidth > 0 then
-        L.mapArt = { w = layer.layerWidth, h = layer.layerHeight, tw = layer.tileWidth, th = layer.tileHeight,
-                     tiles = tiles }
+        L.mapArts[map] = { w = layer.layerWidth, h = layer.layerHeight, tw = layer.tileWidth, th = layer.tileHeight,
+                           tiles = tiles }
     end
-    return L.mapArt or nil
+    return L.mapArts[map] or nil
 end
 
 local function GlassTile(t)
@@ -645,27 +638,25 @@ end
 
 function L.RenderMap(key)
     if not mapFrame then return end
-    local art = L.MapArt()
+    local place = key and L.Placement(key) or { map = AZEROTH, dim = true }
+    local art = L.MapArt(place.map)
+    if not art and place.map ~= AZEROTH then
+        -- A zone without art of its own: Azeroth, dimmed, rather than nothing.
+        place = { map = AZEROTH, dim = true }
+        art = L.MapArt(AZEROTH)
+    end
+    L.shownMap = art and place.map or nil
     local clip = mapFrame.clip
     local w, h = clip:GetWidth() or 0, clip:GetHeight() or 0
-    local place = key and L.Placement(key)
     mapFrame.none:SetShown(not art)
     if not art or w <= 0 or h <= 0 then
-        mapFrame.pin:Hide(); mapFrame.hl:Hide()
+        mapFrame.pin:Hide(); mapFrame.me:Hide()
         for _, t in ipairs(mapFrame.tiles) do t:Hide() end
         return
     end
-    -- Cover the panel's width; the art's spare height scrolls to keep the pin
-    -- in view.
-    local s = w / art.w
-    local fullH = art.h * s
-    local offY = 0
-    if fullH > h then
-        local py = place and place.y * fullH or fullH / 2
-        offY = math.max(0, math.min(fullH - h, py - h / 2))
-    else
-        offY = -(h - fullH) / 2
-    end
+    -- The whole map, fitted inside the panel and centred.
+    local s = math.min(w / art.w, h / art.h)
+    local offX, offY = (w - art.w * s) / 2, (h - art.h * s) / 2
     local cols = math.ceil(art.w / art.tw)
     local rows = math.ceil(art.h / art.th)
     local i = 0
@@ -683,32 +674,22 @@ function L.RenderMap(key)
                 GlassTile(t)
                 t:SetSize(art.tw * s, art.th * s)
                 t:ClearAllPoints()
-                t:SetPoint("TOPLEFT", clip, "TOPLEFT", (c - 1) * art.tw * s, -((r - 1) * art.th * s - offY))
+                t:SetPoint("TOPLEFT", clip, "TOPLEFT", offX + (c - 1) * art.tw * s, -(offY + (r - 1) * art.th * s))
                 t:Show()
             end
         end
     end
     for j = i + 1, #mapFrame.tiles do mapFrame.tiles[j]:Hide() end
+    clip:SetAlpha(place.dim and 0.45 or 1)
 
-    -- A row with no map: the art stays, dimmed, and nothing is pinned.
-    clip:SetAlpha(place and 1 or 0.45)
-    if not place then mapFrame.pin:Hide(); mapFrame.hl:Hide(); return end
-    local px, py = place.x * art.w * s, place.y * fullH - offY
-    mapFrame.pin:ClearAllPoints()
-    mapFrame.pin:SetPoint("CENTER", clip, "TOPLEFT", px, -py)
-    mapFrame.pin:Show()
-    local hl = place.hl
-    if hl then
-        local tex = mapFrame.hl
-        if hl.atlas and tex.SetAtlas then tex:SetAtlas(hl.atlas) else tex:SetTexture(hl.fileID) end
-        tex:SetTexCoord(0, hl.pctX, 0, hl.pctY)
-        tex:SetSize(hl.w * art.w * s, hl.h * fullH)
+    local function put(tex, at)
+        if not at then tex:Hide(); return end
         tex:ClearAllPoints()
-        tex:SetPoint("TOPLEFT", clip, "TOPLEFT", hl.x * art.w * s, -(hl.y * fullH - offY))
+        tex:SetPoint("CENTER", clip, "TOPLEFT", offX + at.x * art.w * s, -(offY + at.y * art.h * s))
         tex:Show()
-    else
-        mapFrame.hl:Hide()
     end
+    put(mapFrame.pin, place.pin)
+    put(mapFrame.me, not place.dim and L.PlayerPin(place.map) or nil)
 end
 
 function L.BuildMap()
@@ -724,12 +705,13 @@ function L.BuildMap()
     mapFrame.wash = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, -1)
     mapFrame.wash:SetAllPoints()
     mapFrame.wash:SetColorTexture(0.04, 0.22, 0.24, 0.14)
-    mapFrame.hl = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 1)
-    -- Drawn over the art in gold, not added to it: added, the soft highlight
-    -- all but vanished on the dark teal (seen in game).
-    mapFrame.hl:SetBlendMode("BLEND")
-    mapFrame.hl:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 0.6)
-    mapFrame.hl:Hide()
+    -- Where the character playing stands, in the zone shown (white, under the
+    -- gold entrance pin).
+    mapFrame.me = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 1)
+    mapFrame.me:SetSize(16, 16)
+    mapFrame.me:SetTexture("Interface\\WorldMap\\WorldMapPartyIcon")
+    mapFrame.me:SetVertexColor(1, 1, 1, 1)
+    mapFrame.me:Hide()
     mapFrame.pin = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 2)
     mapFrame.pin:SetSize(18, 18)
     mapFrame.pin:SetTexture("Interface\\WorldMap\\WorldMapPartyIcon")
