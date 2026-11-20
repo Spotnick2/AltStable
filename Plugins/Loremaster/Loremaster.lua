@@ -314,13 +314,22 @@ function M.Scan()
     return true
 end
 
-local pending
+-- One scan, SCAN_DELAY after the LAST event: each event re-arms the delay, so
+-- a turn-in that comes while a scan is pending still gets a scan after its
+-- completion lands (Codex on #397).
+local pendingTimer
 function M.ScheduleScan(delay)
-    if pending then return end
-    pending = true
-    C_Timer.After(delay or M.SCAN_DELAY, function() pending = nil; M.Scan() end)
+    if pendingTimer then pendingTimer:Cancel() end
+    pendingTimer = C_Timer.NewTimer(delay or M.SCAN_DELAY, function()
+        pendingTimer = nil
+        M.Scan()
+    end)
+    return pendingTimer
 end
-function M.ResetPending() pending = nil end
+function M.ResetPending()
+    if pendingTimer then pendingTimer:Cancel() end
+    pendingTimer = nil
+end
 
 ------------------------------------------------------------
 -- Sync: one line per character,
@@ -367,12 +376,18 @@ function M.Parse(blob)
         for item in (c .. ","):gmatch("([^,]*),") do
             local k, dn, tt = item:match("^(%-?%d+)%.(%d+)%.(%d+)$")
             if not k then return nil end
-            r.c[tonumber(k)] = { tonumber(dn), tonumber(tt) }
+            dn, tt = tonumber(dn), tonumber(tt)
+            -- Counts that can't be true are a bad line, not a new snapshot
+            -- (Codex on #397: done above total would show past 100%).
+            if dn > tt then return nil end
+            r.c[tonumber(k)] = { dn, tt }
         end
     end
     local classRow = r.c[D.CLASS_KEY]
     r.cls = { done = classRow and classRow[1] or 0, total = classRow and classRow[2] or 0,
               now = tonumber(f.n) or 0 }
+    -- "Now" is the done ones plus those open at its level: between the two.
+    if r.cls.now < r.cls.done or r.cls.now > r.cls.total then return nil end
     return r
 end
 

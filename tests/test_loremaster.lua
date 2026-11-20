@@ -201,6 +201,23 @@ eq("  a scheduled scan does not read at once", M.DB().chars[ME].stamp, before)
 WoW.flushTimers()
 check("  it reads after its delay", M.DB().chars[ME].stamp > before)
 check("the scan waits longer than the measured 0.5 s", M.SCAN_DELAY > 0.5)
+-- A turn-in while a scan is pending (Codex on #397): accepting a quest arms the
+-- scan, and a turn-in just before it fires must push it back, or the only scan
+-- reads the list before the completion lands.
+M.ResetPending()
+local first = M.ScheduleScan()
+local second = M.ScheduleScan()
+local stillFirst, hasSecond = false, false
+for _, e in ipairs(WoW.timers) do
+    if e == first then stillFirst = true end
+    if e == second then hasSecond = true end
+end
+check("  a second event cancels the pending scan", not stillFirst)
+check("  and arms a new one, the full delay from now", hasSecond and second.delay == M.SCAN_DELAY)
+completed[1367] = true                         -- the turn-in's completion lands
+before = M.DB().chars[ME].stamp
+WoW.flushTimers()
+check("  the one scan sees it", M.DB().chars[ME].stamp > before)
 local hasEvent = {}
 for _, ev in ipairs(M.EVENTS) do hasEvent[ev] = true end
 check("turn-ins and level-ups schedule a scan", hasEvent.QUEST_TURNED_IN and hasEvent.PLAYER_LEVEL_UP)
@@ -240,11 +257,19 @@ AltStableDB[OTHER] = { name = "Other Name", class = "MAGE", level = 12 }
 M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.5.10,-9999.1.4")
 eq("a received snapshot is kept", M.DB().chars[OTHER] and M.DB().chars[OTHER].c[12][1], 5)
 eq("  with its class row", M.DB().chars[OTHER].cls.done, 1)
-M.Deserialize(OTHER, "v1|s=90|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.9.10")
+M.Deserialize(OTHER, "v1|s=90|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=0|c=12.9.10")
 eq("an older one is ignored", M.DB().chars[OTHER].c[12][1], 5)
-M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.7.10")
+M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=0|c=12.7.10")
 eq("  so is one with the same stamp (our own echo)", M.DB().chars[OTHER].c[12][1], 5)
-M.Deserialize(OTHER, "v1|s=101|d=abc|f=A|r=95|k=8|lv=13|l=3|t=40|n=1|c=")
+-- Counts that can't be true leave the snapshot we hold (Codex on #397).
+M.Deserialize(OTHER, "v1|s=150|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.11.10,-9999.1.4")
+eq("a newer line with done above total is refused", M.DB().chars[OTHER].stamp, 100)
+M.Deserialize(OTHER, "v1|s=151|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=9|c=12.5.10,-9999.1.4")
+eq("  so is one whose class 'now' is above its total", M.DB().chars[OTHER].stamp, 100)
+M.Deserialize(OTHER, "v1|s=152|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=0|c=12.5.10,-9999.1.4")
+eq("  or below its done", M.DB().chars[OTHER].stamp, 100)
+eq("  the counts held are untouched", M.DB().chars[OTHER].c[12][1], 5)
+M.Deserialize(OTHER, "v1|s=101|d=abc|f=A|r=95|k=8|lv=13|l=3|t=40|n=0|c=")
 check("a newer one replaces it wholesale, an empty c= included", next(M.DB().chars[OTHER].c) == nil)
 M.Deserialize(OTHER, "v1|s=200|garbage")
 eq("  a malformed one keeps what we hold", M.DB().chars[OTHER].stamp, 101)
@@ -253,7 +278,7 @@ eq("  a malformed one keeps what we hold", M.DB().chars[OTHER].stamp, 101)
 -- The tab
 ------------------------------------------------------------
 
-M.Deserialize(OTHER, "v1|s=102|d=" .. D.VERSION .. "|f=A|r=95|k=8|lv=13|l=3|t=40|n=1|c=12.5.10")
+M.Deserialize(OTHER, "v1|s=102|d=" .. D.VERSION .. "|f=A|r=95|k=8|lv=13|l=3|t=40|n=0|c=12.5.10")
 local HIDDEN = "Player-9999-0000CCCC"
 AltStableDB[HIDDEN] = { name = "Hidden One", class = "ROGUE", level = 60 }
 M.Deserialize(HIDDEN, "v1|s=5|d=abc|f=A|r=1|k=4|lv=60|l=0|t=1|n=0|c=12.1.1")
