@@ -454,6 +454,23 @@ L.JumpToClass()
 eq("  a Class filter stays", M.DB().filter, "class")
 L.SetFilter("all")
 
+-- Seen in game (#398): the font has no triangle glyphs, so the arrows are drawn;
+-- the columns share the width; the buttons are the mockup's, not the game's red.
+L.Render()
+local foot = L.foot.class.text:GetText() or ""
+check("the footer's jump has no glyph the font lacks", not foot:find("\226\150", 1, true), foot)
+check("  its arrow is drawn", L.foot.class.arrow ~= nil)
+
+check("the columns are at least the narrowest width", (L.colW or 0) >= 64)
+check("  and at most the widest", (L.colW or 0) <= 160)
+local btn = L.Button(UIParent, 80, 24, "Try")
+eq("a Loremaster button carries its text", btn:GetText(), "Try")
+btn:Disable()
+btn:Paint(false)
+local r = btn.label:GetTextColor()
+check("  dimmed when disabled", r < 0.5)
+check("the Zone header is there", L.zoneHdr ~= nil and L.zoneHdr:GetText() == "Zone")
+
 -- A snapshot counted before this update keeps its quest list (Codex on #399:
 -- the version is what the counting reads, not display fields).
 M.DB().chars[ME].ver = "9b0a9380"

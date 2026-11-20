@@ -50,7 +50,8 @@ local COLHDR_H  = 24      -- the characters' names
 local ROW_H     = 20
 local GROUP_H   = 22
 local NAME_W    = 200
-local COL_W     = 64
+local COL_W     = 64      -- the narrowest a character column gets
+local MAX_COL_W = 160     -- and the widest, when there is room to spread
 local HBAR_H    = 12
 local MAX_TIP   = 20      -- open quests listed in a tooltip
 local LIST_LINE = 15
@@ -59,7 +60,10 @@ local MIN_PANEL_W, MIN_PANEL_H = 560, 420
 local AZEROTH   = 947
 
 local GOLD = { 1, 0.82, 0 }
-local TEAL = { 0.42, 0.80, 0.82 }    -- the map's glass tint
+-- The map's glass tint, multiplied over the desaturated art: light enough that
+-- land (the art's lighter half) and water (its darker) still part (seen in game:
+-- at 0.42/0.80/0.82 under a 30% wash, both were one murky teal).
+local TEAL = { 0.66, 0.94, 0.96 }
 
 -- The groups, in order. A zone's group is its continent's.
 L.GROUPS = {
@@ -124,6 +128,64 @@ local function FS(parent, template, justify)
     f:SetJustifyH(justify or "LEFT")
     if AltStable.SkinText then AltStable.SkinText(f) end
     return f
+end
+
+-- A small arrow, drawn: the game font has no triangle glyphs (seen in game, an
+-- empty box). `dir` "right" or "down".
+local ARROW = "Interface\\ChatFrame\\ChatFrameExpandArrow"
+local function Arrow(parent, dir, size)
+    local t = parent:CreateTexture(nil, "OVERLAY")
+    t:SetSize(size or 12, size or 12)
+    t:SetTexture(ARROW)
+    if dir == "down" and t.SetRotation then t:SetRotation(-math.pi / 2) end
+    t:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
+    return t
+end
+
+-- The owner's mockup's buttons: a dark well, a thin accent edge, gold text,
+-- lighter on hover, dim when disabled. Not the game's red panel button.
+function L.Button(parent, w, h, text)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(w, h)
+    b.bg = b:CreateTexture(nil, "BACKGROUND")
+    b.bg:SetAllPoints()
+    b.edges = {}
+    for _, side in ipairs({ "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
+        local e = b:CreateTexture(nil, "BORDER")
+        if side == "TOP" or side == "BOTTOM" then
+            e:SetHeight(1)
+            e:SetPoint(side .. "LEFT", b, side .. "LEFT", 0, 0)
+            e:SetPoint(side .. "RIGHT", b, side .. "RIGHT", 0, 0)
+        else
+            e:SetWidth(1)
+            e:SetPoint("TOP" .. side, b, "TOP" .. side, 0, 0)
+            e:SetPoint("BOTTOM" .. side, b, "BOTTOM" .. side, 0, 0)
+        end
+        b.edges[#b.edges + 1] = e
+    end
+    local fs = FS(b, "GameFontNormal", "CENTER")
+    fs:SetPoint("CENTER", b, "CENTER", 0, 0)
+    b:SetFontString(fs)
+    b.label = fs
+    local function paint(self, hover)
+        local r, g, bl, a = 0.03, 0.03, 0.04, 1
+        if AltStable.SkinWellColor then r, g, bl, a = AltStable.SkinWellColor() end
+        if hover and self:IsEnabled() then r, g, bl = r + 0.08, g + 0.08, bl + 0.08 end
+        self.bg:SetColorTexture(r, g, bl, a)
+        local ar, ag, ab = GOLD[1], GOLD[2], GOLD[3]
+        if AltStable.GetAccentRGB then ar, ag, ab = AltStable.GetAccentRGB() end
+        for _, e in ipairs(self.edges) do e:SetColorTexture(ar, ag, ab, self:IsEnabled() and 0.55 or 0.2) end
+        if self:IsEnabled() then self.label:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
+        else self.label:SetTextColor(0.45, 0.45, 0.45) end
+    end
+    b.Paint = paint
+    b:SetScript("OnEnter", function(self) paint(self, true) end)
+    b:SetScript("OnLeave", function(self) paint(self, false); GameTooltip:Hide() end)
+    b:SetScript("OnEnable", function(self) paint(self, false) end)
+    b:SetScript("OnDisable", function(self) paint(self, false) end)
+    if text then b:SetText(text) end
+    paint(b, false)
+    return b
 end
 
 local function Pct(done, total)
@@ -661,10 +723,12 @@ function L.BuildMap()
     -- The glass: a teal wash over the art and a light rim.
     mapFrame.wash = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, -1)
     mapFrame.wash:SetAllPoints()
-    mapFrame.wash:SetColorTexture(0.02, 0.18, 0.20, 0.30)
+    mapFrame.wash:SetColorTexture(0.04, 0.22, 0.24, 0.14)
     mapFrame.hl = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 1)
-    mapFrame.hl:SetBlendMode("ADD")
-    mapFrame.hl:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 0.9)
+    -- Drawn over the art in gold, not added to it: added, the soft highlight
+    -- all but vanished on the dark teal (seen in game).
+    mapFrame.hl:SetBlendMode("BLEND")
+    mapFrame.hl:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 0.6)
     mapFrame.hl:Hide()
     mapFrame.pin = mapFrame.clip:CreateTexture(nil, "OVERLAY", nil, 2)
     mapFrame.pin:SetSize(18, 18)
@@ -735,18 +799,17 @@ function L.BuildCard()
     card.pct:SetPoint("RIGHT", card, "RIGHT", -12, 0)
     card.left = FS(card, "GameFontHighlightSmall")
     card.left:SetPoint("TOPLEFT", card.bar, "BOTTOMLEFT", 0, -6)
-    card.view = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-    card.view:SetSize(120, 22)
+    card.bar:SetStatusBarColor(GOLD[1], GOLD[2], 0.1, 1)
+    card.view = L.Button(card, 130, 24, "View quests")
     card.view:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 12)
-    card.view:SetText("View quests")
     card.view:SetScript("OnClick", function() L.cardMode = "list"; L.listScroll = 0; L.RenderCard() end)
     card.view:SetScript("OnEnter", function(self)
+        self:Paint(true)
         if self:IsEnabled() then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("The quest list shows for characters played here.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
-    card.view:SetScript("OnLeave", HideTip)
 
     -- The list mode: the zone's quests for the selected character.
     card.list = CreateFrame("ScrollFrame", nil, card)
@@ -762,10 +825,8 @@ function L.BuildCard()
         self:SetVerticalScroll(L.listScroll)
     end)
     card.lines = {}
-    card.back = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-    card.back:SetSize(80, 22)
+    card.back = L.Button(card, 80, 24, "Back")
     card.back:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 12)
-    card.back:SetText("Back")
     card.back:SetScript("OnClick", function() L.cardMode = "summary"; L.RenderCard() end)
 end
 
@@ -865,6 +926,7 @@ function L.RenderCard()
         card.left:SetText("")
     end
     card.view:SetEnabled(row ~= nil and L.ListsFor(col) ~= nil)
+    card.view:Paint(false)   -- not left to OnEnable/OnDisable alone
 end
 
 ------------------------------------------------------------
@@ -874,17 +936,19 @@ end
 function L.BuildToolbar()
     toolbar = CreateFrame("Frame", nil, panel)
     toolbar:SetHeight(TOOLBAR_H)
-    toolbar.filter = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    toolbar.filter:SetSize(130, 22)
+    toolbar.filter = L.Button(toolbar, 140, 24)
     toolbar.filter:SetPoint("LEFT", toolbar, "LEFT", 0, 0)
+    toolbar.filter.label:ClearAllPoints()
+    toolbar.filter.label:SetPoint("LEFT", toolbar.filter, "LEFT", 12, 0)
+    toolbar.filter.arrow = Arrow(toolbar.filter, "down", 12)
+    toolbar.filter.arrow:SetPoint("RIGHT", toolbar.filter, "RIGHT", -10, 0)
     toolbar.filter:SetScript("OnClick", function()
         if not AltStable.ShowMenu then return end
         local list = {}
         for _, f in ipairs(L.FILTERS) do list[#list + 1] = { id = f.id, text = f.text } end
         AltStable.ShowMenu(list, function(id) L.SetFilter(id) end)
     end)
-    toolbar.hide = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    toolbar.hide:SetSize(90, 22)
+    toolbar.hide = L.Button(toolbar, 100, 24)
     toolbar.hide:SetPoint("RIGHT", toolbar, "RIGHT", 0, 0)
     toolbar.hide:SetScript("OnClick", function()
         M.DB().hideMap = (not M.DB().hideMap) and true or nil
@@ -986,6 +1050,15 @@ function L.Render()
     local maxOffset = math.max(0, #cols - nVis)
     L.colOffset = math.min(L.colOffset or 0, maxOffset)
     local x0 = NAME_W
+    -- The columns share the width (seen in game: at a fixed 64 they bunched up
+    -- on the left of a wide window).
+    local avail = (panel:GetWidth() or PREFERRED_PANEL_W) - 2 * PAD - 14 - NAME_W
+    local colW = nVis > 0 and math.max(COL_W, math.min(MAX_COL_W, math.floor(avail / nVis))) or COL_W
+    L.colW = colW
+    if L.zoneHdr then
+        L.zoneHdr:ClearAllPoints()
+        L.zoneHdr:SetPoint("LEFT", panel, "TOPLEFT", PAD + 14, -(L.colHdrTop + COLHDR_H / 2))
+    end
 
     -- The selection: a character shown, and a row it can see.
     local sel = L.SelectedColumn(cols)
@@ -998,7 +1071,8 @@ function L.Render()
         local col = cols[L.colOffset + i]
         local h = Acquire("header", MakeHeader)
         h:ClearAllPoints()
-        h:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD + x0 + (i - 1) * COL_W, -L.colHdrTop)
+        h:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD + x0 + (i - 1) * colW, -L.colHdrTop)
+        h:SetSize(colW, COLHDR_H)
         h.text:SetText(ClassHex(col.class) .. names[L.colOffset + i] .. "|r")
         h.col = col
         h.sel:SetShown(col.guid == L.selGuid)
@@ -1017,7 +1091,7 @@ function L.Render()
 
     local rows = L.DisplayRows(cols)
     local y = 0
-    local width = x0 + nVis * COL_W
+    local width = x0 + nVis * colW
     L.rowY = {}
     local C = AltStable.C or {}
     local accent = C.ACCENT or GOLD
@@ -1057,7 +1131,8 @@ function L.Render()
                 local row = col.snap.c and col.snap.c[r.key]
                 local cell = Acquire("cell", MakeCell)
                 cell:ClearAllPoints()
-                cell:SetPoint("TOPLEFT", content, "TOPLEFT", x0 + (i - 1) * COL_W, -y)
+                cell:SetPoint("TOPLEFT", content, "TOPLEFT", x0 + (i - 1) * colW, -y)
+                cell:SetSize(colW, ROW_H)
                 cell.rowKey, cell.guid = r.key, col.guid
                 if row then
                     cell.text:SetText(("%d/%d"):format(row[1], row[2]))
@@ -1098,7 +1173,7 @@ function L.Render()
     if thisCheck then thisCheck:SetChecked(db.thisChar and true or false) end
     if toolbar then
         local f = FILTER_BY_ID[db.filter or "all"] or FILTER_BY_ID.all
-        toolbar.filter:SetText(f.text .. "  \226\150\190")
+        toolbar.filter:SetText(f.text)
         toolbar.hide:SetText(db.hideMap and "Show map" or "Hide map")
     end
     L.ApplyColors()
@@ -1182,6 +1257,9 @@ function L.BuildPanel(mainFrame)
 
     emptyFS = FS(panel, "GameFontHighlightSmall")
     emptyFS:Hide()
+    L.zoneHdr = FS(panel, "GameFontNormal")
+    L.zoneHdr:SetText("Zone")
+    L.zoneHdr:SetTextColor(unpack(Color("TEXT_BRIGHT", { 1, 1, 1 })))
 
     vbar = CreateFrame("Slider", nil, panel)
     vbar:SetWidth(10)
@@ -1246,7 +1324,9 @@ function L.BuildFooter(mainFrame)
     f.class:SetHeight(18)
     f.class:SetPoint("RIGHT", f, "RIGHT", -10, 0)
     f.class.text = FS(f.class, "GameFontHighlightSmall", "RIGHT")
-    f.class.text:SetPoint("RIGHT", f.class, "RIGHT", 0, 0)
+    f.class.arrow = Arrow(f.class, "right", 12)
+    f.class.arrow:SetPoint("RIGHT", f.class, "RIGHT", 0, 0)
+    f.class.text:SetPoint("RIGHT", f.class.arrow, "LEFT", -4, 0)
     f.class:SetScript("OnClick", function() L.JumpToClass() end)
     f.right = f.class.text   -- the name the tests read
     L.foot = f
@@ -1299,9 +1379,9 @@ function L.RenderFooter()
     f.left:SetText(("%s%s|r |cffaaaaaa\194\183|r %s/%s quests |cffaaaaaa\194\183 %d%%|r"):format(
         hex, who, Number(done), Number(total), Pct(done, total)))
     local cls = snap.cls or {}
-    f.class.text:SetText(("|cffaaaaaaClass quests|r %d/%d |cffaaaaaa(%d at this level)|r  %s\226\150\184|r"):format(
-        cls.done or 0, cls.total or 0, cls.now or 0, hex))
-    f.class:SetWidth((f.class.text:GetStringWidth() or 160) + 4)
+    f.class.text:SetText(("|cffaaaaaaClass quests|r %d/%d |cffaaaaaa(%d at this level)|r"):format(
+        cls.done or 0, cls.total or 0, cls.now or 0))
+    f.class:SetWidth((f.class.text:GetStringWidth() or 160) + 20)
 end
 
 ------------------------------------------------------------
