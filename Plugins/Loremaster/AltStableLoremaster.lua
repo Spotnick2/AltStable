@@ -775,7 +775,9 @@ function L.BuildCard()
     card.bar:SetMinMaxValues(0, 1)
     card.bar.bg = card.bar:CreateTexture(nil, "BACKGROUND")
     card.bar.bg:SetAllPoints()
-    card.bar.bg:SetColorTexture(0, 0, 0, 0.5)
+    -- A light track, so an empty bar still reads as a bar on the dark card
+    -- (seen in game: at 0% the black track vanished).
+    card.bar.bg:SetColorTexture(1, 1, 1, 0.10)
     card.pct = FS(card, "GameFontHighlight", "RIGHT")
     card.pct:SetPoint("LEFT", card.bar, "RIGHT", 6, 0)
     card.pct:SetPoint("RIGHT", card, "RIGHT", -12, 0)
