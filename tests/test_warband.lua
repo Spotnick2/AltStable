@@ -281,15 +281,119 @@ local help = {}
 local htip = { AddLine = function(_, s) help[#help + 1] = s end }
 AltStable.ItemTooltipCountsHelp(htip)
 check("  and the checkbox's help explains why it starts off",
-      (help[#help] or ""):find("Bagnon already shows its own counts", 1, true) ~= nil, help[#help])
+      (help[3] or ""):find("Bagnon already shows its own counts", 1, true) ~= nil, help[3])
 AltStable.SetConfigValue("warbandItemTooltips", true)
 check("the player's own true wins over another addon", tipLines() > 0)
 help = {}
 AltStable.ItemTooltipCountsHelp(htip)
-eq("  and the help no longer says it starts off", #help, 2)
+eq("  and the help no longer says it starts off", #help, 3)
+check("  it points at the faction, ruleset and item options (#403)",
+      (help[3] or ""):find("Options, Items & Mail", 1, true) ~= nil, help[3])
 AltStable.SetConfigValue("warbandItemTooltips", false)
 WoW.loaded.Bagnon, WoW.loaded.BagBrother = nil, nil
 eq("the player's own false wins with nothing else loaded", tipLines(), 0)
+
+------------------------------------------------------------
+-- #403: only this character's faction and/or ruleset, and items with no counts
+------------------------------------------------------------
+do
+    local ALLY, HORDE, PVP = "Player-1-ALLY", "Player-1-HORDE", "Player-1-PVP"
+    AltStableDB = {
+        [GUID]  = { guid = GUID,  name = "Kaleid", class = "MAGE",    faction = "Alliance", realm = "Forever PvE" },
+        [ALLY]  = { guid = ALLY,  name = "Alder",  class = "WARRIOR", faction = "Alliance", realm = "Forever PvE" },
+        [HORDE] = { guid = HORDE, name = "Birch",  class = "ROGUE",   faction = "Horde",    realm = "Forever PvE" },
+        [PVP]   = { guid = PVP,   name = "Cedar",  class = "PRIEST",  faction = "Alliance", realm = "Forever PvP" },
+    }
+    AltStableWarbandDB = {
+        [GUID]  = { bags = { [2318] = 1 } },
+        [ALLY]  = { bags = { [2318] = 2 } },
+        [HORDE] = { bags = { [2318] = 4 } },
+        [PVP]   = { bags = { [2318] = 8 } },
+    }
+    check("the two test realms are different rulesets",
+          AltStable.RulesetOf("Forever PvE") ~= AltStable.RulesetOf("Forever PvP"))
+    local function shown()
+        lines = {}
+        for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+        local t = table.concat(lines, " / ")
+        local function has(n) return t:find(n, 1, true) ~= nil end
+        return t, has
+    end
+    AltStable.SetConfigValue("warbandItemTooltips", true)
+    local t, has = shown()
+    check("both options off: every character, whatever their faction or ruleset",
+          has("Total:|15") and has("Birch") and has("Cedar"), t)
+    check("  and no left-out line", not has("+"), t)
+
+    AltStable.SetConfigValue("tooltipSameFaction", true)
+    t, has = shown()
+    check("same faction: the Horde alt is left out of the list and the total",
+          has("Total:|11") and not has("Birch") and has("Cedar"), t)
+    check("  and one grey line says how many", has("+4 on the other faction"), t)
+
+    AltStable.SetConfigValue("tooltipSameFaction", false)
+    AltStable.SetConfigValue("tooltipSameRuleset", true)
+    t, has = shown()
+    check("same ruleset alone: the PvP alt is left out, the Horde one stays",
+          has("Total:|7") and has("Birch") and not has("Cedar"), t)
+    check("  and the line names the ruleset", has("+8 on another ruleset"), t)
+
+    AltStable.SetConfigValue("tooltipSameFaction", true)
+    t, has = shown()
+    check("both: only the same faction and ruleset", has("Total:|3") and not has("Birch") and not has("Cedar"), t)
+    check("  the line names both", has("+12 on another faction or ruleset"), t)
+
+    -- A record whose faction or realm can't be read stops nothing.
+    AltStableDB[HORDE].faction, AltStableDB[PVP].realm = nil, nil
+    t, has = shown()
+    check("an unknown faction or realm is listed, not left out", has("Birch") and has("Cedar") and not has("+"), t)
+    AltStableDB[HORDE].faction, AltStableDB[PVP].realm = "Horde", "Forever PvP"
+
+    -- Nobody in reach: the left-out line alone, so the tooltip still says why.
+    AltStableWarbandDB[GUID], AltStableWarbandDB[ALLY] = nil, nil
+    t, has = shown()
+    check("nobody in reach: no Total, only the left-out line", not has("Total:") and has("+12 on another"), t)
+    AltStableWarbandDB[GUID], AltStableWarbandDB[ALLY] = { bags = { [2318] = 1 } }, { bags = { [2318] = 2 } }
+
+    -- The Warband tab's own cells still list everyone.
+    local _, all = T.CountItem(2318)
+    eq("CountItem itself is unfiltered (the Warband grid's view)", #all, 4)
+
+    AltStable.SetConfigValue("tooltipSameFaction", false)
+    AltStable.SetConfigValue("tooltipSameRuleset", false)
+
+    -- Items with no counts.
+    eq("an item is not ignored unless chosen", AltStable.TooltipIgnored(2318), false)
+    AltStable.SetTooltipIgnored(2318, true)
+    eq("ignoring an item saves it in the config", AltStableConfig.tooltipIgnore[2318], true)
+    shown()
+    eq("  and its tooltip gets no counts", #lines, 0)
+    AltStableWarbandDB[GUID].bags[765] = 3
+    lines = {}
+    for _, fn in ipairs(ttCalls) do fn(tt, { id = 765 }) end
+    check("  other items still do", #lines > 0)
+    eq("the list is sorted IDs", table.concat(AltStable.TooltipIgnoredList(), ","), "2318")
+    AltStable.SetTooltipIgnored(2318, false)
+    check("unignoring brings the counts back", (shown()):find("Total:", 1, true) ~= nil)
+    eq("  and leaves an empty list", #AltStable.TooltipIgnoredList(), 0)
+
+    -- /alts tooltip: a shift-clicked link or an ID.
+    local link = "|cffffffff|Hitem:6948::::::::60:::::|h[Hearthstone]|h|r"
+    eq("an item link gives its ID", AltStable.ItemIDFromArg(link), 6948)
+    eq("  a bare ID too", AltStable.ItemIDFromArg(" 6948 "), 6948)
+    eq("  anything else nothing", AltStable.ItemIDFromArg("Hearthstone"), nil)
+    SlashCmdList.ALTSTABLE("tooltip ignore " .. link)
+    eq("/alts tooltip ignore <link> leaves the Hearthstone out", AltStable.TooltipIgnored(6948), true)
+    SlashCmdList.ALTSTABLE("tooltip")
+    SlashCmdList.ALTSTABLE("tooltip unignore 6948")
+    eq("/alts tooltip unignore <id> brings it back", AltStable.TooltipIgnored(6948), false)
+    SlashCmdList.ALTSTABLE("tooltip ignore")
+    eq("  with no item, nothing changes", #AltStable.TooltipIgnoredList(), 0)
+
+    AltStableDB = { [GUID] = { guid = GUID, name = "Kaleid", class = "MAGE" } }
+    AltStableWarbandDB = { [GUID] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, bankStamp = WoW.now } }
+    AltStable.SetConfigValue("warbandItemTooltips", false)
+end
 
 ------------------------------------------------------------
 -- Sync blob

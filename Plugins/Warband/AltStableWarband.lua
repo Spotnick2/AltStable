@@ -940,8 +940,18 @@ end
 -- The cross-alt breakdown block: "Total: N", then one line per character —
 -- class icon + class-coloured name on the left, the per-location counts with
 -- inline bag/bank icons on the right (e.g. "17[bag] +46[bank]").
-local function AppendBreakdown(tt, total, holders)
-    if not total or total <= 0 or not holders or #holders == 0 then return end
+-- `leftOut`: what the item tooltips' faction / ruleset options left out
+-- (#403), one grey line under the list - alone when nothing else is left.
+local function AppendBreakdown(tt, total, holders, leftOut)
+    local leftLine = AltStable.TooltipLeftOutLine and AltStable.TooltipLeftOutLine(leftOut)
+    if not total or total <= 0 or not holders or #holders == 0 then
+        if leftLine then
+            tt:AddLine(" ")
+            tt:AddLine(leftLine, .55, .55, .55)
+            tt:Show()
+        end
+        return
+    end
     tt:AddLine(" ")
     tt:AddDoubleLine("Total:", tostring(total), 1, 0.82, 0, 1, 1, 1)
 
@@ -976,6 +986,7 @@ local function AppendBreakdown(tt, total, holders)
     if stale then tt:AddLine("Bank data may be out of date", .55, .55, .55) end
     if mailStale then tt:AddLine("Mail data may be out of date", .55, .55, .55) end
     if mailMore then tt:AddLine("Some mail not read yet: a mailbox shows 50 at a time", .55, .55, .55) end
+    if leftLine then tt:AddLine(leftLine, .55, .55, .55) end
     tt:Show()
 end
 
@@ -1008,9 +1019,16 @@ local function EnsureTooltipHook()
         -- Global enrichment: on unless the player turned it off, or (never
         -- having chosen) another addon already shows counts (#304, Core.lua).
         if not (AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn()) then return end
-        if id then
+        -- Items the player left out, and only the characters they asked for (#403).
+        if id and not (AltStable.TooltipIgnored and AltStable.TooltipIgnored(id)) then
             local total, holders = CountItem(id)
-            if total > 0 then AppendBreakdown(tt, total, holders) end
+            if total > 0 then
+                local left = 0
+                if AltStable.FilterTooltipHolders then
+                    holders, total, left = AltStable.FilterTooltipHolders(holders)
+                end
+                AppendBreakdown(tt, total, holders, left)
+            end
         end
     end)
     if hooked then AT_WB._ttHooked = true end

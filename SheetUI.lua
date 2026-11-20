@@ -4364,6 +4364,58 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptItemCounts = optItemCountsCheck
     Y = Y - 22
 
+    -- Which characters they list (#403): two options, both off unless chosen,
+    -- and the items that get no counts at all (/alts tooltip). Only the counts
+    -- in tooltips everywhere: the Warband tab's own cells still list everyone.
+    -- (Scoped: the builder is at Lua 5.1's 200 locals.)
+    do
+        local function own(key) return function() return AltStableConfig and AltStableConfig[key] == true end end
+        local faction = MakeOptCheckRow("tooltipSameFaction",
+            "Only characters of this character's faction", Y, nil, own("tooltipSameFaction"), 22)
+        OptDependsOn(faction, optItemCountsCheck)
+        Y = Y - 22
+        local ruleset = MakeOptCheckRow("tooltipSameRuleset",
+            "Only characters on this character's ruleset", Y, nil, own("tooltipSameRuleset"), 22)
+        OptDependsOn(ruleset, optItemCountsCheck)
+        local help = function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(self.label:GetText(), 1, 1, 1)
+            GameTooltip:AddLine("Item tooltips list only the characters this one could mail. "
+                .. "One grey line says how many are left out.", nil, nil, nil, true)
+            GameTooltip:AddLine("The Warband tab still shows everyone.", .8, .8, .8, true)
+            GameTooltip:Show()
+        end
+        for _, cb in ipairs({ faction, ruleset }) do
+            cb:SetScript("OnEnter", help)
+            cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+        Y = Y - 22
+
+        -- The items left out, read-only here: /alts tooltip changes them.
+        local ignored = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        ignored:SetPoint("TOPLEFT", P + 42, Y)
+        ignored:SetPoint("TOPRIGHT", -P, Y)
+        ignored:SetJustifyH("LEFT"); ignored:SetWordWrap(true)
+        ignored:SetTextColor(unpack(AltStable.C.TEXT_HELP))
+        local function RefreshIgnored()
+            local names = {}
+            for _, id in ipairs(AltStable.TooltipIgnoredList and AltStable.TooltipIgnoredList() or {}) do
+                local name = AltStable.API.GetItemInfo(id)
+                names[#names + 1] = name or ("item " .. id)
+            end
+            ignored:SetText(#names == 0
+                and "No counts for an item: |cffffff00/alts tooltip ignore|r <item>"
+                or ("No counts for: " .. table.concat(names, ", ")
+                    .. " (|cffffff00/alts tooltip unignore|r <item>)"))
+        end
+        RefreshIgnored()
+        optionsPanel.refreshers = optionsPanel.refreshers or {}
+        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshIgnored
+        AltStable._test.OptTooltipFilter = { faction = faction, ruleset = ruleset,
+                                             ignored = ignored, refresh = RefreshIgnored }
+    end
+    Y = Y - 30
+
     -- The Professions tab's wishlist on recipe tooltips (#271): on unless
     -- turned off. The stars themselves stay either way. (Scoped: the builder
     -- is at Lua 5.1's 200 locals.)
