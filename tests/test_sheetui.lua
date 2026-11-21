@@ -4333,7 +4333,7 @@ do
         local t = pick(1)
         eq("One list saves \"all\"", AltStableConfig.tooltipScope, "all")
         check("  the preview lists all three together, Total 60",
-              has(t, "Karuzo Mistwalker|21") and has(t, "Kaleidria Kashmere|20") and has(t, "Kalizo Mistwalker|19")
+              has(t, "Jaina Proudmoore|21") and has(t, "Sylvanas Windrunner|20") and has(t, "Cairne Bloodhoof|19")
               and has(t, "Total:|60") and not has(t, "Other faction"), t)
         check("  the match boxes are kept but unused",
               AltStableConfig.tooltipSameFaction == true and not F.faction:IsEnabled() and not F.ruleset:IsEnabled())
@@ -4341,26 +4341,28 @@ do
 
         t = pick(2)
         eq("Separate groups saves \"both\"", AltStableConfig.tooltipScope, "both")
-        check("  Alliance" .. D .. "PvE with Karuzo's 21", has(t, "Alliance" .. D .. "PvE|21") and has(t, "Karuzo Mistwalker|21"), t)
+        check("  Alliance" .. D .. "PvE with Jaina's 21", has(t, "Alliance" .. D .. "PvE|21") and has(t, "Jaina Proudmoore|21"), t)
         check("  then Other faction" .. D .. "Horde with 39: 20 and 19",
-              has(t, "Other faction" .. D .. "Horde|39") and has(t, "Kaleidria Kashmere|20") and has(t, "Kalizo Mistwalker|19"), t)
+              has(t, "Other faction" .. D .. "Horde|39") and has(t, "Sylvanas Windrunner|20") and has(t, "Cairne Bloodhoof|19"), t)
         check("  untagged, the heading says why", not has(t, "(Horde)"), t)
+        check("  lore names, not a player's characters", not has(t, "Karuzo") and not has(t, "Kaleidria"), t)
+        eq("  the example character's line", F.who:GetText(), "Jaina Proudmoore \194\183 Alliance \194\183 PvE")
         check("  and the Total last, 60", has(t, "Total|60") and t:find("Total|60", 1, true) > t:find("Horde|39", 1, true), t)
         check("  the boxes are back in use", F.faction:IsEnabled() and F.ruleset:IsEnabled())
         check("    still ticked", F.faction:GetChecked() and F.ruleset:GetChecked())
 
         t = pick(3)
         eq("Summarize saves \"side\"", AltStableConfig.tooltipScope, "side")
-        check("  Karuzo's 21 and one muted line for the rest, Total 60",
-              has(t, "Karuzo Mistwalker|21") and has(t, "+39 on Horde characters") and has(t, "Total:|60")
-              and not has(t, "Kaleidria"), t)
+        check("  Jaina's 21 and one muted line for the rest, Total 60",
+              has(t, "Jaina Proudmoore|21") and has(t, "+39 on Horde characters") and has(t, "Total:|60")
+              and not has(t, "Sylvanas"), t)
 
         -- The main box off: the ordinary tooltip only, so the player sees what
         -- AltStable adds; the layout and the boxes grey out.
         F.main:SetChecked(false); F.main:GetScript("OnClick")(F.main)
         t = F.tipText()
         check("main box off: the item's own lines, no counts",
-              has(t, "Ice Cold Milk") and has(t, "Sell Price") and not has(t, "Total") and not has(t, "Karuzo"), t)
+              has(t, "Ice Cold Milk") and has(t, "Sell Price") and not has(t, "Total") and not has(t, "Jaina"), t)
         check("  and the layout can't be chosen", not F.radios[1]:IsEnabled() and not F.faction:IsEnabled())
         F.main:SetChecked(true); F.main:GetScript("OnClick")(F.main)
 
