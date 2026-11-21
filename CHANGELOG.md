@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.11.0 - 2026-11-20
+
+**Item tooltips your way:** one list, the characters that match yours apart from the others, or
+the others summed up in one line, with a live preview in Options. And a fix for the realm Forever
+stopped telling addons on 2026-11-20. Built for client 1.60.1.71037, the live build, where these
+were checked in game. v1.11.0 syncs with everything v1.10.0 does. An older version keeps the
+ruleset it receives without using it.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.0** is the current version.
+
+### New
+
+- **Item tooltips, your way** ([#403](https://github.com/Spotnick2/AltStable/issues/403), asked for
+  on CurseForge), in Options, General, Item tooltips:
+  - **Tooltip layout:** *One list* (everyone together, as before), *Separate groups* (the default:
+    the characters that match the one you're on, then the others) or *Summarize other characters*
+    (the matching ones by name, the rest as one line: "+39 on Horde characters").
+  - **Match my current character by** Faction and/or Ruleset. With both ticked, a character must
+    match both. With neither, everyone is together, so tooltips look as before until you tick one.
+  - Each group is named by what it shares ("Alliance · PvE", "Other faction · Horde"). Others with
+    different reasons are "Other characters", each with its own. The Total is always everyone's.
+  - **Sort characters** by name (the default) or by count.
+  - **A live preview** beside these settings (below them on a narrow window) shows exactly what
+    AltStable adds to a tooltip, with three example characters.
+  - Items in the Warband tab use the same layout. When the tooltip's Total isn't the count shown in
+    the tab, a grey line says how many the tab shows.
+- **Items with no counts:** `/alts tooltip ignore` and the item (shift-click it) leaves that item's
+  tooltip alone, like the Hearthstone every character carries. `/alts tooltip unignore` brings it
+  back, and `/alts tooltip` lists them. Hovering it in the Warband tab still shows who has it.
+
+### Changed
+
+- **Mailbox tracking** has its own heading in Options.
+
+### Fixed
+
+- **Characters under an "Unknown" ruleset** ([#408](https://github.com/Spotnick2/AltStable/issues/408),
+  [#412](https://github.com/Spotnick2/AltStable/issues/412)). Since a server change on 2026-11-20,
+  the game no longer tells addons a character's realm. AltStable now reads the ruleset from the
+  game's rules at login, keeps it with the character and syncs it, and a character keeps the realm
+  it had. The sheet's ruleset groups and badges, the Warband tab's "Current ruleset", the item
+  tooltips and the Craftable filter all use it. A character played only between that change and
+  this release shows under Unknown until its next login.
+
+### For addon authors
+
+- `AltStable.GetCharacters()` gives each character's `ruleset` and `rulesetName`
+  (`PUBLIC_API_FEATURES.ruleset`, [#405](https://github.com/Spotnick2/AltStable/issues/405)). A
+  realm the game no longer gives is `nil`, never `""`.
+
 ## v1.10.0 - 2026-11-20
 
 A **Loremaster** tab: every character's quest progress, zone by zone, with a map. Built for client

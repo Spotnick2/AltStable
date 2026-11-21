@@ -35,8 +35,19 @@ Hover any item to see who holds it.*
 
 Item tooltips everywhere in the game (your bags, merchants, links) show the same counts: the
 total, then who holds how many. It's on unless Bagnon, Baganator or Altoholic is installed, since
-they show their own counts; **Show character counts in tooltips**, in Options or the Warband tab,
-turns it on or off either way.
+they show their own counts. **Show who has this item and how many** in Options (**Show character
+counts in tooltips** in the Warband tab) turns it on or off either way.
+
+**Options, General, Item tooltips** decides how they look, with a live preview beside it:
+- **Tooltip layout:** *One list*, everyone together. *Separate groups*, the default: the characters
+  that match the one you're on, then the others, each group with its own count. *Summarize other
+  characters*: the matching ones by name, and the rest as one line ("+39 on Horde characters").
+- **Match my current character by** Faction and/or Ruleset. With both ticked, a character must
+  match both. With neither, everyone is together.
+- **Sort characters** by name or by count.
+
+To keep an item's tooltip as it is, like the Hearthstone every character carries, type
+`/alts tooltip ignore <item>` (shift-click the item). `/alts tooltip unignore` brings it back.
 
 Bags are read as you play. A bank is only readable while it's open, so its count is from your
 last visit, and the tooltip warns when that is more than a week old. A mailbox works the same way:
@@ -77,7 +88,7 @@ Hover a recipe in the Professions tab to see its reagents and how many your alts
 bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
 **Craftable** filter lists the recipes an alt knows and has the reagents for. It counts the alt's
 own reagents and every other alt's, except an alt known to be of the other faction or on another
-ruleset, since mail can't reach it. An alt whose faction or realm AltStable hasn't recorded still
+ruleset, since mail can't reach it. An alt whose faction or ruleset AltStable hasn't recorded still
 counts.
 
 When you open a profession window, any recipe whose reagents there differ from AltStable's own list
@@ -153,7 +164,9 @@ played on this WoW account; a character on another account shows its counts once
 The **sheet** has one row per character: level, item level and gear in every slot, professions,
 Merchant's Favor, reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
 played. Sort by any column, and group the rows by ruleset, by faction or both (**Group**, in
-Options); hover a ruleset's header to see its server. Rested XP keeps counting up while you're
+Options); hover a ruleset's header to see its servers. Since 2026-11-20 the game no longer tells
+addons a character's server, so the ruleset comes from the game's rules, and a character first
+seen since then has no server to show. Rested XP keeps counting up while you're
 away, worked out from where the character logged out, and faster and higher with the Well Rested
 talent.
 
@@ -196,7 +209,7 @@ and it doesn't try to match every Altoholic feature.
   record as you play, starting from scratch.
 - **What to visit once per character:** log in, open the bank and the mailbox, and open each
   profession window. See [Quick start](#quick-start).
-- **Not recorded:** auction house listings, quests, and currencies other than Merchant's Favor.
+- **Not recorded:** auction house listings and currencies other than Merchant's Favor.
 - **Running both:** AltStable's item tooltip counts start off when Altoholic is installed, so its
   counts don't appear twice.
 
@@ -326,6 +339,7 @@ The Companion has its own **Check for updates** under **Help → About**.
 | `/alts forget` / `unforget` &lt;name&gt;, `/alts forgotten` | Remove a character that no longer exists (or bring it back), and list the forgotten |
 | `/alts stale` [days] | Characters nobody has played in that long; forget them from Options, Old characters |
 | `/alts account` &lt;n&gt; | This account's number in the sheet |
+| `/alts tooltip` [ignore / unignore &lt;item&gt;] | Items whose tooltips get no counts (shift-click the item) |
 | `/alts export` | Every character as a spreadsheet |
 | `/alts config` | Options (also a right-click on the minimap button) |
 
