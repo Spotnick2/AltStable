@@ -401,6 +401,19 @@ do
     check("  and a fresh one does not", not has("out of date"), t)
     AltStable.SetConfigValue("tooltipSameRuleset", true)
 
+    -- #412: with the realm hidden, the records' stored rulesets do the work.
+    do
+        local heldRealms = {}
+        for g, c in pairs(AltStableDB) do heldRealms[g] = c.realm; c.ruleset = AltStable.RulesetOf(c.realm); c.realm = "" end
+        AltStable.SetConfigValue("tooltipScope", "both")
+        local t2, has2 = shown()
+        check("realm hidden, rulesets stored: named headings still",
+              has2("Alliance" .. D .. AltStable.RulesetName({ ruleset = "Normal" }) .. "|3")
+              and has2("Other characters|12") and has2("Cedar |cff888888(" .. pvp .. ")|r"), t2)
+        AltStable.SetConfigValue("tooltipScope", "side")
+        for g, c in pairs(AltStableDB) do c.realm = heldRealms[g]; c.ruleset = nil end
+    end
+
     -- A record whose faction or realm can't be read matches.
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = nil, nil
     t, has = shown()

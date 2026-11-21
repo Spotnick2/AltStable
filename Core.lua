@@ -5084,7 +5084,9 @@ local MIDDOT = " \194\183 "
 --   awaySummary       the others as one line: "+39 on Horde characters"
 --   why               per other character, its reason ("Horde"), only when
 --                     the header can't name one for all of them
--- A record whose faction or realm can't be read matches: no claim from nothing.
+-- A record whose faction or ruleset can't be read matches: no claim from nothing.
+-- The ruleset is the record's own (RulesetName reads its stored `ruleset`,
+-- then its realm: Forever hides the realm since 2026-11-20, #412).
 function AltStable.SplitItemHolders(holders, playerGuid, db)
     local cfg = AltStableConfig or {}
     local sameFaction, sameRuleset = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
@@ -5106,7 +5108,7 @@ function AltStable.SplitItemHolders(holders, playerGuid, db)
             r.awayTotal = r.awayTotal + n
             local c = db[h.guid] or {}
             local f = otherFaction and factionOf(c) or nil
-            local rs = otherRuleset and rulesetName(c.realm) or nil
+            local rs = otherRuleset and rulesetName(c) or nil
             reasons[h] = { f = f, r = rs }
             local key = (f or "") .. "|" .. (rs or "")
             if first == nil then first = key elseif first ~= key then uniform = false end
@@ -5116,7 +5118,7 @@ function AltStable.SplitItemHolders(holders, playerGuid, db)
             -- Kept with the matching ones when its faction or realm can't be
             -- read - but then nothing confirms the heading's name for them.
             local c = db[h.guid] or {}
-            if (sameFaction and not factionOf(c)) or (sameRuleset and not rulesetName(c.realm)) then
+            if (sameFaction and not factionOf(c)) or (sameRuleset and not rulesetName(c)) then
                 unverified = true
             end
         end
@@ -5132,7 +5134,7 @@ function AltStable.SplitItemHolders(holders, playerGuid, db)
         if factionOf(me) then parts[#parts + 1] = factionOf(me) else unverified = true end
     end
     if sameRuleset then
-        if rulesetName(me.realm) then parts[#parts + 1] = rulesetName(me.realm) else unverified = true end
+        if rulesetName(me) then parts[#parts + 1] = rulesetName(me) else unverified = true end
     end
     if unverified then
         r.sideLabel = "Matching characters"
