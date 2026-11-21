@@ -530,6 +530,47 @@ do
             AltStableDB[guid], AltStableConfig.raidEncounters = nil, nil
         end
 
+        -- The footer counts every save, not the rows drawn (#431): folded,
+        -- past the columns, past the Other rows.
+        do
+            local held = AltStableDB
+            AltStableDB = { ["Player-Foot-1"] = { guid = "Player-Foot-1", name = "Footer", class = "MAGE", level = 60,
+                                                  ["si_Molten Core@1"] = (WoW.now + 86400) .. "|3|10|40|Normal" } }
+            local function footer()
+                T.Refresh()
+                return T.StatsText() or ""
+            end
+            local open = footer()
+            check("#431: one save, 3/10 bosses", open:find("Active saves:|r 1 ", 1, true) ~= nil
+                  and open:find("3/10", 1, true) ~= nil, open)
+            T.toggleCollapse("vanilla")
+            local folded = footer()
+            T.toggleCollapse("vanilla")
+            check("  the same with its group folded", folded:find("Active saves:|r 1 ", 1, true) ~= nil
+                  and folded:find("3/10", 1, true) ~= nil, folded)
+            AltStableDB = {}
+            for i = 1, 41 do
+                local g = ("Player-Foot-%02d"):format(i)
+                AltStableDB[g] = { guid = g, name = "Footer" .. i, class = "MAGE", level = 60,
+                                   ["si_Molten Core@1"] = (WoW.now + 86400) .. "|1|10|40|Normal" }
+            end
+            local many = footer()
+            check("  41 saved characters, more than the columns: 41 saves", many:find("Active saves:|r 41 ", 1, true) ~= nil
+                  and many:find("41/410", 1, true) ~= nil, many)
+            AltStableDB = { ["Player-Foot-1"] = { guid = "Player-Foot-1", name = "Footer", class = "MAGE", level = 60 } }
+            for i = 1, 14 do
+                AltStableDB["Player-Foot-1"]["si_Zone " .. string.char(90 - i) .. "@1"] = (WoW.now + 86400) .. "|1|2|20|Normal"
+            end
+            local others = footer()
+            check("  14 Other lockouts, more than its rows: 14 saves", others:find("Active saves:|r 14 ", 1, true) ~= nil
+                  and others:find("14/28", 1, true) ~= nil, others)
+            AltStableDB["Player-Foot-1"]["si_Molten Core@1"] = (WoW.now - 60) .. "|5|10|40|Normal"
+            local expired = footer()
+            check("  an expired lockout is not counted", expired:find("Active saves:|r 14 ", 1, true) ~= nil, expired)
+            AltStableDB = held
+            T.Refresh()
+        end
+
         -- Hovering a raid's name lists its bosses: the achievement's list
         -- until a lockout teaches the client's own.
         do

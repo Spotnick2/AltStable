@@ -374,6 +374,21 @@ local function gather()
     return allChars, lookup
 end
 
+-- The footer's totals, from every lockout `gather` kept (one per raid per
+-- character, unexpired), not from the rows drawn: a folded group, a character
+-- past MAX_COLS or an Other row past MAX_OTHER_ROWS is still a save (#431).
+local function footerTotals(lookup)
+    local saves, prog, total = 0, 0, 0
+    for _, mine in pairs(lookup) do
+        for _, lk in pairs(mine) do
+            saves = saves + 1
+            prog  = prog + (lk.prog or 0)
+            total = total + (lk.total or 0)
+        end
+    end
+    return saves, prog, total
+end
+
 local function findLockout(mine, raid)
     return mine and mine[raid.apiName:lower()] or nil
 end
@@ -812,7 +827,7 @@ function AT_SI.Refresh()
     end
     hideFrom(AT_SI.headers, nCols + 1)
 
-    local activeSaves, sumProg, sumTotal = 0, 0, 0
+    local activeSaves, sumProg, sumTotal = footerTotals(lookup)
     local rr, gg, hl = 0, 0, 0        -- raid-row, group, h-line counters
     local yOff = rowTop               -- running offset from panel top (positive)
 
@@ -917,9 +932,6 @@ function AT_SI.Refresh()
                         size = lk.size, diffName = lk.diffName,
                         expires = lk.expires, lk = lk,
                     }
-                    activeSaves = activeSaves + 1
-                    sumProg  = sumProg + (lk.prog or 0)
-                    sumTotal = sumTotal + (lk.total or 0)
                     cell:Show()
                 else
                     cell.text:SetText("|cff555555\226\128\148|r")   -- dim em-dash
@@ -1226,6 +1238,8 @@ function AT_SI._Bootstrap()
             Groups   = function() return AT_SI.groups end,
             Cells    = function() return AT_SI.cells end,
             Refresh  = function() AT_SI.Refresh() end,
+            StatsText = function() return statsFS and statsFS:GetText() or nil end,
+            footerTotals = footerTotals,
             raidBossList = raidBossList, bossNames = bossNames,
             EmptyText = function() return emptyFS and emptyFS:IsShown() and emptyFS:GetText() or nil end,
         },
