@@ -4366,9 +4366,9 @@ local function CreateFrameIfNeeded()
 
     -- Which characters they list (#403): "this side" is this character's
     -- faction and/or ruleset (two boxes, both off unless chosen), and Show
-    -- picks Both (this side, then Elsewhere), This side, or Everyone. Only the
-    -- counts in tooltips everywhere: the Warband tab's own cells list everyone.
-    -- Then the items that get no counts at all (/alts tooltip).
+    -- picks Both (this side, then Elsewhere), This side, or Everyone, for the
+    -- counts in tooltips everywhere and the Warband tab's cells alike. Then the
+    -- items that get no counts at all (/alts tooltip; not in the tab's cells).
     -- (Scoped: the builder is at Lua 5.1's 200 locals.)
     do
         local SCOPES = {
@@ -4431,7 +4431,7 @@ local function CreateFrameIfNeeded()
             GameTooltip:AddLine(self.label:GetText(), 1, 1, 1)
             GameTooltip:AddLine("Item tooltips list the characters on this character's side apart from "
                 .. "the rest, as Show says. With both boxes off, everyone is on this side.", nil, nil, nil, true)
-            GameTooltip:AddLine("The Warband tab still shows everyone.", .8, .8, .8, true)
+            GameTooltip:AddLine("The Warband tab's cells follow it too, and say what the tab shows.", .8, .8, .8, true)
             GameTooltip:Show()
         end
         for _, cb in ipairs({ faction, ruleset }) do
