@@ -3937,6 +3937,70 @@ do
         check(AltStableDB["Player-Mine-58"] ~= nil, "  though their characters merge")
     end
 
+    -- An equal stamp with different contents (#428): the greater text wins on
+    -- both sides, so two accounts meet instead of refusing each other for good.
+    do
+        local function as(cfg, fn)
+            local held = AltStableConfig
+            AltStableConfig = cfg
+            local r = fn()
+            AltStableConfig = held
+            return r
+        end
+        local function lineOf(cfg, prefix)
+            for _, l in ipairs(as(cfg, AltStable.CampSyncLines)) do
+                if l:sub(1, #prefix) == prefix then return l end
+            end
+        end
+        local function swap(A, B, prefix)
+            local fromA, fromB = lineOf(A, prefix), lineOf(B, prefix)
+            local tookB = as(B, function() return AltStable.ApplyCampSyncLine(fromA) end)
+            local tookA = as(A, function() return AltStable.ApplyCampSyncLine(fromB) end)
+            return tookA, tookB
+        end
+        -- Camps from before the stamps: both at the synthetic 1.
+        local A = { rosterCamps = { { id = 1, name = "North", members = {} } } }
+        local B = { rosterCamps = { { id = 1, name = "South", members = {} } } }
+        eq(lineOf(A, "==CAMPS1=="), "==CAMPS1==:1;1,North,felwood", "#428: the camps line is unchanged on the wire")
+        local tookA, tookB = swap(A, B, "==CAMPS1==")
+        check(tookA and not tookB, "  North vs South at stamp 1: the greater text is taken, by one side only")
+        eq(A.rosterCamps[1].name .. "/" .. B.rosterCamps[1].name, "South/South", "  both end the same")
+        tookA, tookB = swap(A, B, "==CAMPS1==")
+        check(not tookA and not tookB, "  and the next exchange changes nothing")
+        -- The campless order, the same.
+        A = { rosterListOrder = { "Player-1-1", "Player-1-2" } }
+        B = { rosterListOrder = { "Player-1-2", "Player-1-1" } }
+        eq(lineOf(A, "==ORDER1=="), "==ORDER1==:1;Player-1-1,Player-1-2", "  the order line is unchanged on the wire")
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(tookA and not tookB, "  two orders at stamp 1: one side takes the other's")
+        eq(table.concat(A.rosterListOrder, ",") .. "/" .. table.concat(B.rosterListOrder, ","),
+           "Player-1-2,Player-1-1/Player-1-2,Player-1-1", "  both end the same")
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(not tookA and not tookB, "  and the next exchange changes nothing")
+        -- 501 entries against the same first 500: a receiver keeps 500, so
+        -- both compare those and agree there is nothing to do.
+        local long, short = {}, {}
+        for i = 1, 501 do long[i] = "Player-2-" .. i end
+        for i = 1, 500 do short[i] = long[i] end
+        A = { rosterListOrder = long, rosterListOrderStamp = 5 }
+        B = { rosterListOrder = short, rosterListOrderStamp = 5 }
+        local _, commas = lineOf(A, "==ORDER1=="):gsub(",", "")
+        eq(commas, 500, "  501 entries: all of them still go")
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(not tookA and not tookB, "  against the same first 500: equal, both ways")
+        eq(#A.rosterListOrder .. "/" .. #B.rosterListOrder, "501/500", "  and nothing is written")
+        -- Ours is compared as a receiver would hold it: a repeat, or a name
+        -- the parse cleans, is no difference to act on.
+        A = { rosterListOrder = { "Player-3-1", "Player-3-1", "Player-3-3" }, rosterListOrderStamp = 6 }
+        B = { rosterListOrder = { "Player-3-1", "Player-3-3" }, rosterListOrderStamp = 6 }
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(not tookA and not tookB, "  a repeated entry here is not a difference")
+        A = { rosterCamps = { { id = 1, name = "No	rth", members = {} } }, rosterCampsStamp = 6 }
+        B = { rosterCamps = { { id = 1, name = "North", members = {} } }, rosterCampsStamp = 6 }
+        tookA, tookB = swap(A, B, "==CAMPS1==")
+        check(not tookA and not tookB, "  nor a camp name the parse cleans")
+    end
+
     -- A player's change is stamped; an automatic one is not (#171).
     do
         AltStableConfig = {}
@@ -4200,7 +4264,7 @@ do
     AltStableConfig = { syncSettings = true, theme = "dark", scale = 1.1, skin = "flat",
                         prefsStamps = { appearance = 100 } }
     check(not AltStable.ApplyPrefsSyncLine(line("appearance", 100, "theme=class")),
-          "a group no newer than ours is refused")
+          "a group at our stamp, its text below ours (#428), is refused")
     eq(AltStableConfig.theme, "dark", "  and changes nothing")
     eq(AltStable.ApplyPrefsSyncLine(line("appearance", 200,
         "theme=class;skin=;scale=5;skinClassTint=yes;hiddenCharacters=Player-1;future=1")),
@@ -4211,6 +4275,35 @@ do
     eq(AltStableConfig.skinClassTint, nil, "  so is a flag that is not one")
     eq(AltStableConfig.hiddenCharacters, nil, "  and another group's key")
     eq(AltStableConfig.prefsStamps.appearance, 200, "  the stamp is the sender's")
+
+    -- An equal stamp with different contents (#428): the greater text wins on
+    -- both sides; equal contents are nothing to apply, and say nothing.
+    do
+        local heldCfg = AltStableConfig
+        local function as(cfg, fn)
+            AltStableConfig = cfg
+            local r = fn()
+            AltStableConfig = heldCfg
+            return r
+        end
+        local function prefsLine(cfg, gid)
+            for _, l in ipairs(as(cfg, AltStable.PrefsSyncLines)) do
+                if l:find("^==PREFS1==:" .. gid .. ":") then return l end
+            end
+        end
+        local A = { syncSettings = true, theme = "class", prefsStamps = { appearance = 7 } }
+        local B = { syncSettings = true, theme = "light", prefsStamps = { appearance = 7 } }
+        local function swap()
+            local fromA, fromB = prefsLine(A, "appearance"), prefsLine(B, "appearance")
+            return as(A, function() return AltStable.ApplyPrefsSyncLine(fromB) end),
+                   as(B, function() return AltStable.ApplyPrefsSyncLine(fromA) end)
+        end
+        local tookA, tookB = swap()
+        check(tookA == "appearance" and not tookB, "#428: two appearance groups at one stamp: one side takes the other's")
+        eq(A.theme .. "/" .. B.theme, "light/light", "  both end the same")
+        tookA, tookB = swap()
+        check(not tookA and not tookB, "  and the next exchange is nothing, so no \"Settings from\" line")
+    end
     -- The clean look (#230) travels with the appearance. A version from before
     -- it sends no such key, and ours stays.
     AltStableConfig.skinClean = true
