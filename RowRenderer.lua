@@ -67,7 +67,8 @@ local function ComputeLiveRestedPercent(char)
     if UnitGUID("player") == char.guid then
         -- Through the adapter: a secret here would throw on the divide and take
         -- out the row being drawn, not just one number.
-        local liveRest = AltStable.API.PlainNumber(GetXPExhaustion())
+        -- Not rested (a plain nil) is 0%, not the stored bonus (#425).
+        local liveRest = AltStable.API.RestedXP()
         local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player"))
         if liveRest and liveMax and liveMax > 0 then
             return math.floor((liveRest / liveMax) * 100 + 0.5), 0

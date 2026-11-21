@@ -1854,10 +1854,29 @@ GetMoney = realMoney
 local realExh = GetXPExhaustion
 GetXPExhaustion = function() return WoW.secret(120) end
 WoW.xpMax, WoW.level = 400, 20
+WoW.xp = 100
 local okXP = pcall(onEvent, T.frame, "PLAYER_XP_UPDATE")
 check(okXP, "a secret from GetXPExhaustion does not throw on an XP tick")
 eq(AltStableDB[liveGuid].restPercent, 40, "  and the stored rested % is kept")
+eq(AltStableDB[liveGuid].xpPercent, 25, "  but the XP % is written (#425)")
 GetXPExhaustion = realExh
+WoW.reset()
+
+-- Not rested (a plain nil) on an XP tick is written at once (#425), even
+-- right after a 40% snapshot: a logout next must not keep the old bonus.
+WoW.reset()
+AltStableDB = { [liveGuid] = { guid = liveGuid, name = "Live", class = "MAGE", restPercent = 40, restXP = 160,
+                               xpPercent = 5, restTimestamp = WoW.now, lastUpdate = 1 } }
+WoW.level, WoW.xp, WoW.xpMax, WoW.restXP = 20, 100, 400, nil
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+onEvent(T.frame, "PLAYER_LOGOUT")
+eq(AltStableDB[liveGuid].restXP, 0, "#425: not rested on an XP tick: the amount is 0 at once")
+eq(AltStableDB[liveGuid].restPercent, 0, "  and the %, also with a logout straight after")
+eq(AltStableDB[liveGuid].xpPercent, 25, "  and the XP % is written")
+WoW.restXP, WoW.xp = 100, 200
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+eq(AltStableDB[liveGuid].xpPercent, 50, "with a rested bonus, the XP % is written too")
+eq(AltStableDB[liveGuid].restPercent, 25, "  and the bonus")
 WoW.reset()
 
 ------------------------------------------------------------

@@ -4140,21 +4140,33 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if char then
             -- Same adapter as the scan: these fire on every XP tick, so a
             -- secret here would error constantly rather than once.
-            local liveRest = AltStable.API.PlainNumber(GetXPExhaustion())
+            -- The client's plain nil is "not rested" (0, notRested), a secret
+            -- is unknown (nil): API.RestedXP (#425).
+            local liveRest, notRested = AltStable.API.RestedXP()
             local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player")) or 0
             local lvl      = AltStable.API.PlainNumber(UnitLevel("player")) or 0
-            if liveRest == nil then return end   -- unreadable: keep the snapshot
+            local liveXP   = AltStable.API.PlainNumber(UnitXP("player"))
+            -- The XP %, whatever the rested read: this handler never wrote it,
+            -- so it went stale between scans (#425).
+            if liveMax > 0 and liveXP then
+                char.xpMax     = liveMax
+                char.xpPercent = math.floor((liveXP / liveMax) * 100)
+            end
+            if liveRest == nil then return end   -- a secret: keep the rested snapshot
             local atCap    = lvl >= AltStable.API.LevelCap()
 
             -- Suspicious-zero guard.  Only accept a zero read if we have
             -- a prior non-zero snapshot that is very recent; a fresh zero
             -- between resting-state flips is legit, but a zero right on
             -- PLAYER_XP_UPDATE when rested was previously e.g. 40% is
-            -- almost certainly a transient loading-screen read.
+            -- almost certainly a transient loading-screen read. A literal 0
+            -- only: the plain nil is the client saying "not rested", and is
+            -- written at once (#425) - a logout right after must not keep
+            -- the old bonus.
             local prevPct  = char.restPercent or 0
             local prevTime = char.restTimestamp or 0
             local elapsed  = time() - prevTime
-            local suspicious = (liveRest == 0) and (prevPct > 5) and (elapsed < 5) and not atCap
+            local suspicious = (liveRest == 0) and not notRested and (prevPct > 5) and (elapsed < 5) and not atCap
 
             -- A zero maximum (0 is truthy, so `or 1` never caught it): at the cap
             -- there is no next level and the snapshot is zero; below it the read
