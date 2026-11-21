@@ -417,15 +417,14 @@ function M.Cleanup(keepGuid)
     for guid in pairs(db.done) do if guid ~= keepGuid then db.done[guid] = nil end end
 end
 
--- Snapshots whose character the core no longer knows.
-function M.PruneOrphans()
+-- A snapshot whose character the core has no record of is kept, invisible
+-- (L.Columns reads through the named core record), until a forget or a
+-- cleanup: an older AltStable.lua must not take the quest history with it
+-- (#418). Only the orphans of forgotten characters go here, from both stores.
+function M.DropForgottenOrphans()
+    if not AltStable.DropForgottenOrphans then return 0 end
     local db = M.DB()
-    for _, store in ipairs({ db.chars, db.done }) do
-        for guid in pairs(store) do
-            local c = AltStableDB and AltStableDB[guid]
-            if type(c) ~= "table" or not c.name then store[guid] = nil end
-        end
-    end
+    return AltStable.DropForgottenOrphans(db.chars) + AltStable.DropForgottenOrphans(db.done)
 end
 
 -- The rows' English names for exports (the Companion reads SavedVariables
@@ -437,11 +436,14 @@ function M.WriteZoneNames()
 end
 
 -- At bootstrap: drop snapshots of forgotten characters, pull everything once
--- when there is nothing to build on, then read the character playing.
+-- when there is nothing to build on (orphans don't count), then read the
+-- character playing.
 function M.Start()
-    M.PruneOrphans()
+    M.DropForgottenOrphans()
     M.WriteZoneNames()
-    if AltStable.ResetPeerWatermarks and not next(M.DB().chars) then AltStable.ResetPeerWatermarks() end
+    if AltStable.ResetPeerWatermarks and AltStable.HoldsAttached and not AltStable.HoldsAttached(M.DB().chars) then
+        AltStable.ResetPeerWatermarks()
+    end
     M.ScheduleScan(1)
 end
 

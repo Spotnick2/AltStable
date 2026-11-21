@@ -710,11 +710,11 @@ end
 -- Housekeeping
 ------------------------------------------------------------
 
-local function PruneOrphans()
-    for guid in pairs(AltStableProfessionsDB) do
-        local c = AltStableDB and AltStableDB[guid]
-        if type(c) ~= "table" or not c.name then AltStableProfessionsDB[guid] = nil end
-    end
+-- A snapshot whose character the core has no record of is kept, invisible
+-- (every read goes through AltStableDB), until a forget or a cleanup (#418):
+-- its wishlist exists nowhere else.
+local function DropForgottenOrphans()
+    return AltStable.DropForgottenOrphans and AltStable.DropForgottenOrphans(AltStableProfessionsDB) or 0
 end
 
 local function Cleanup(keepGuid)
@@ -2350,7 +2350,7 @@ local function BootstrapPlugin()
             SourceText = SourceText,
             RecipeName = RecipeName, OnSpellData = OnSpellData,
             TooltipLines = TooltipLines, EnsureTooltipHook = EnsureTooltipHook,
-            PruneOrphans = PruneOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
+            DropForgottenOrphans = DropForgottenOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
             PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
             ResetState = function() pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil end,
             Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
@@ -2364,12 +2364,14 @@ local function BootstrapPlugin()
     })
 
     EnsureTooltipHook()
-    PruneOrphans()
-    -- A full pull from every peer when there is nothing to build on. Switching
+    DropForgottenOrphans()
+    -- A full pull from every peer when there is nothing to build on: no
+    -- snapshot of a character the core knows (orphans don't count). Switching
     -- the plugin on from Options is covered by the core (SetPluginEnabled resets
     -- the watermarks for any plugin it loads). NOT on "loaded on demand" - that
     -- is every login (see Warband's bootstrap).
-    if AltStable.ResetPeerWatermarks and not next(AltStableProfessionsDB) then
+    if AltStable.ResetPeerWatermarks and AltStable.HoldsAttached
+       and not AltStable.HoldsAttached(AltStableProfessionsDB) then
         AltStable.ResetPeerWatermarks()
     end
     C_Timer.After(4, RefreshOwnership)

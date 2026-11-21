@@ -613,6 +613,35 @@ check("  and a known character's too", AltStableWarbandDB[GUID] ~= nil)
 local total = T.CountItem(2318)
 eq("  an orphan is invisible to the counts", total, 8)
 
+-- #418: forgotten while Warband was off, so OnForget never ran: the next
+-- bootstrap drops it; an orphan with no tombstone still stays; and never the
+-- character being played.
+AltStableConfig = AltStableConfig or {}
+AltStableWarbandDB["Player-Forgot-1"] = { bags = { [2318] = 2 }, stamp = 100 }
+AltStableConfig.forgottenCharacters = {
+    ["Player-Forgot-1"] = { at = 1, forgottenAt = 1, name = "Forgot" },
+    [GUID] = { at = 1, forgottenAt = 1, name = "Kaleid" },
+}
+local meRec = AltStableDB[GUID]
+AltStableDB[GUID] = nil
+T.BootstrapPlugin()
+eq("#418: a forgotten character's orphan goes at the bootstrap", AltStableWarbandDB["Player-Forgot-1"], nil)
+check("  one with no tombstone stays", AltStableWarbandDB["Player-Gone-1"] ~= nil)
+check("  and so does the character being played", AltStableWarbandDB[GUID] ~= nil)
+AltStableDB[GUID] = meRec
+AltStableConfig.forgottenCharacters = nil
+
+-- #418: mail sent by an orphan is as invisible as the rest of it.
+do
+    local now = time()
+    AltStableWarbandDB["Player-Gone-1"].outbox = { { to = GUID, at = now, items = { [2318] = 4 } } }
+    eq("an orphan sender's mail is not on its way to anyone", T.Incoming()[GUID], nil)
+    AltStableDB["Player-Gone-1"] = { guid = "Player-Gone-1", name = "Gone", class = "ROGUE" }
+    eq("  until its record is back", T.Incoming()[GUID] and T.Incoming()[GUID][2318], 4)
+    AltStableDB["Player-Gone-1"] = nil
+    AltStableWarbandDB["Player-Gone-1"].outbox = nil
+end
+
 ------------------------------------------------------------
 -- The login pull
 ------------------------------------------------------------

@@ -342,4 +342,28 @@ use(R); before = snap(R)
 receive(R, A, payloadFrom(A))
 expectDiffs("  and a resend of everything it holds changes nothing", before, snap(R), {})
 
+------------------------------------------------------------
+-- R8 (#418): a nameless row's inventory rides with it and waits, invisible;
+-- the named row arriving later in a delta shows it, though the delta carries
+-- no inventory (its stamp is below B's watermark by then)
+------------------------------------------------------------
+do
+    local A2, B2 = side("Alpha2-Realm", X), side("Bravo2-Realm", Y)
+    local Z = "Player-1-0000Z001"
+    A2.db[Z] = { guid = Z, class = "MAGE", lastUpdate = 200 }      -- a first scan that read no name
+    A2.wb[Z] = { bags = { [2318] = 6 }, bank = {}, stamp = 100, bagsStamp = 100 }
+    receive(B2, A2, payloadFrom(A2, 0))
+    check("R8: B holds the nameless row's inventory", B2.wb[Z] and B2.wb[Z].bags[2318] == 6)
+    use(B2)
+    eq("  invisible while the row has no name", P.CountItem(2318), 0)
+    check("  and B's watermark for A passed its inventory's stamp", (T.GetPeerWatermark(A2.name) or 0) > 100,
+          tostring(T.GetPeerWatermark(A2.name)))
+    A2.db[Z].name, A2.db[Z].lastUpdate = "Zed", 300
+    local delta = payloadFrom(A2, T.GetPeerWatermark(A2.name))
+    check("  the named row's delta carries no inventory", not delta:find("plugin_warband", 1, true))
+    receive(B2, A2, delta)
+    use(B2)
+    eq("  and the inventory B kept is shown once the name arrives", P.CountItem(2318), 6)
+end
+
 WoW.finish("test_warband_sync", passed, failed)

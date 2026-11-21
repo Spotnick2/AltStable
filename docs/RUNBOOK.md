@@ -583,7 +583,12 @@ if you see a stall with no reason, the stream really was lost.
 ## Cleaning up
 
 - **`/alts cleanup`** keeps only the current character and re-pulls the rest in full. Plugins clear
-  their own stores with it.
+  their own stores with it, but only the **loaded** ones: a plugin switched off keeps its records,
+  which re-attach when the re-pull brings the characters back, and its stale-reject can then refuse a
+  peer's clean copy. To repair a plugin's data, switch it on first, then run the cleanup.
+- **Plugin records of a character the core has no record of** (an older or lost `AltStable.lua` next
+  to intact plugin files) are kept, invisible, and come back with the character on the next sync
+  (#418). Only a forget or a cleanup deletes them.
 - **Deleting SavedVariables by hand:** close the client first (it rewrites them on exit), then
   delete `WTF\Account\<id>\SavedVariables\AltStable*.lua`. Back them up if there is any chance the
   contents matter — they contain real character names and realms.

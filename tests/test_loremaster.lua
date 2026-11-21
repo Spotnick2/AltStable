@@ -336,10 +336,59 @@ AltStable.IsCharacterHidden = realHidden
 -- Forget, cleanup, orphans.
 M.Forget(OTHER)
 check("forgetting drops the snapshot", M.DB().chars[OTHER] == nil)
+local hiddenRec = AltStableDB[HIDDEN]
+M.DB().done[HIDDEN] = M.DB().done[HIDDEN] or { [92850] = true }
+local hiddenFn = AltStable.IsCharacterHidden
+AltStable.IsCharacterHidden = realHidden          -- shown, for the columns below
+local function hasCol(guid)
+    for _, c in ipairs(L.Columns()) do if c.guid == guid then return true end end
+    return false
+end
 AltStableDB[HIDDEN] = nil
-M.PruneOrphans()
-check("a snapshot of a character the core forgot is pruned", M.DB().chars[HIDDEN] == nil)
+M.DropForgottenOrphans()
+check("a snapshot whose core record is missing is kept (#418)", M.DB().chars[HIDDEN] ~= nil)
+check("  its quest history too", M.DB().done[HIDDEN] ~= nil)
+check("  and it is not a column", not hasCol(HIDDEN))
+AltStableDB[HIDDEN] = hiddenRec
+check("  it is a column again once the record is restored", hasCol(HIDDEN))
+check("  with its quest history", M.DB().done[HIDDEN] ~= nil)
+AltStable.IsCharacterHidden = hiddenFn
+AltStableDB[HIDDEN] = nil
+AltStableConfig.forgottenCharacters = { [HIDDEN] = { at = 1, forgottenAt = 1, name = "Hidden" } }
+M.DropForgottenOrphans()
+check("a forgotten character's orphan snapshot goes", M.DB().chars[HIDDEN] == nil)
+check("  from both stores", M.DB().done[HIDDEN] == nil)
 check("  ours stays", M.DB().chars[ME] ~= nil)
+-- A store of orphans is nothing to build on: the bootstrap asks for a full pull.
+do
+    local resets, realReset = 0, AltStable.ResetPeerWatermarks
+    AltStable.ResetPeerWatermarks = function() resets = resets + 1 end
+    local heldChars = M.DB().chars
+    M.DB().chars = { ["Player-orphan-1"] = { s = 1 } }
+    M.Start()
+    eq("a store of orphans asks for a full pull", resets, 1)
+    M.DB().chars = heldChars
+    M.Start()
+    eq("  one attached snapshot doesn't", resets, 1)
+    AltStable.ResetPeerWatermarks = realReset
+end
+AltStableConfig.forgottenCharacters = { [ME] = { at = 1, forgottenAt = 1, name = "Me" } }
+local meRec = AltStableDB[ME]
+AltStableDB[ME] = nil
+M.DropForgottenOrphans()
+check("  never the character being played, even forgotten and unrecorded", M.DB().chars[ME] ~= nil)
+-- The footer's fallback (no column selected) reads through the core record too.
+local savedSel, savedCols, savedOthers = L.selGuid, L.cols, {}
+L.selGuid, L.cols = nil, {}
+for guid, rec in pairs(AltStableDB) do savedOthers[guid] = rec end
+for guid in pairs(savedOthers) do AltStableDB[guid] = nil end
+L.RenderFooter()
+check("  the footer doesn't show the orphan snapshot of the character playing",
+      (L.foot.left:GetText() or ""):find("not counted yet") ~= nil, L.foot.left:GetText())
+for guid, rec in pairs(savedOthers) do AltStableDB[guid] = rec end
+L.selGuid, L.cols = savedSel, savedCols
+AltStableDB[ME] = meRec
+AltStableConfig.forgottenCharacters = nil
 M.Cleanup(ME)
 check("cleanup keeps only the one asked", M.DB().chars[ME] ~= nil and M.DB().done[ME] ~= nil)
 

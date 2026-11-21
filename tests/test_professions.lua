@@ -535,7 +535,56 @@ T.BootstrapPlugin()
 eq("an empty store asks for a full pull", resets, 1)
 AltStableProfessionsDB = { ["Player-gone"] = { stamp = 3, profs = {} } }
 T.BootstrapPlugin()
-eq("orphans are pruned first, so they do not count as data", resets, 2)
+eq("a store of orphans asks for a full pull: they do not count as data", resets, 2)
+check("  and the orphan is kept (#418)", AltStableProfessionsDB["Player-gone"] ~= nil)
+AltStableProfessionsDB = { ["Player-gone"] = { stamp = 3, profs = {} }, [ALT] = { stamp = 3, profs = {} } }
+T.BootstrapPlugin()
+eq("  an orphan next to an attached snapshot: no full pull", resets, 2)
+
+-- #418: an older AltStable.lua (the alt's record missing) next to an intact
+-- AltStableProfessions.lua. The login keeps the alt's snapshot and its stars;
+-- the record coming back by sync shows them again.
+do
+    local OLD = "Player-4618-OLD0001"
+    local rec = { guid = OLD, name = "Oldie", class = "MAGE", level = 30, realm = "Classic Beta PvE",
+                  lastUpdate = 500 }
+    AltStableDB = { [ALT] = { guid = ALT, name = "Brewer" } }
+    AltStableProfessionsDB = { [ALT] = { stamp = 3, profs = {} },
+        [OLD] = { stamp = 7, wish = { [2330] = true },
+                  profs = { [171] = { rank = 10, max = 75, full = 7, known = { [2329] = true } } } } }
+    T.BootstrapPlugin()
+    check("an older core save: the alt's snapshot survives the login", AltStableProfessionsDB[OLD] ~= nil)
+    check("  with its wishlist star", T.Wants(OLD, 2330))
+    local function owns(guid)
+        for _, o in ipairs((T.Owners(171))) do if o.guid == guid then return true end end
+        return false
+    end
+    check("  invisible while its record is missing", not owns(OLD))
+    -- The record arrives from a peer, as a sync would deliver it, with no plugin line.
+    Core.DeserializeFullDB(Core.SerializeChar(rec) .. "\n" .. Core.CHAR_SEP, "Peer")
+    check("  the record arrives by sync", AltStableDB[OLD] and AltStableDB[OLD].name == "Oldie")
+    check("  and the alt is an owner again", owns(OLD))
+    check("  still wishing for it", T.Wants(OLD, 2330))
+
+    -- Forgotten while the plugin was off: its next bootstrap drops it.
+    AltStableDB[OLD] = nil
+    AltStableConfig.forgottenCharacters = { [OLD] = { at = 1, forgottenAt = 1, name = "Oldie" } }
+    T.BootstrapPlugin()
+    eq("a forgotten character's orphan goes at the bootstrap", AltStableProfessionsDB[OLD], nil)
+    check("  the others stay", AltStableProfessionsDB[ALT] ~= nil)
+
+    -- A forget received for a character with no core record reaches a loaded plugin.
+    AltStableConfig.forgottenCharacters = nil
+    AltStableProfessionsDB[OLD] = { stamp = 7, profs = {} }
+    local wasOn = AltStableConfig.syncSettings
+    AltStableConfig.syncSettings = true
+    AltStable.ApplyPrefsSyncLine(AltStable.FORGOT_LINE .. ":" .. OLD .. ",f,10,Oldie")
+    AltStableConfig.syncSettings = wasOn
+    check("a synced forget for a character with no core record is recorded",
+          AltStable.IsCharacterForgotten(OLD))
+    eq("  and drops the loaded plugin's orphan at once", AltStableProfessionsDB[OLD], nil)
+    AltStableConfig.forgottenCharacters = nil
+end
 
 -- The core does it for any plugin it loads from Options: switched on after
 -- sessions without it, the peers' watermarks are ahead of what it never got.

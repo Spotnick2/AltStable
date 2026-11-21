@@ -226,12 +226,12 @@ function T.Cleanup(keepGuid)
     end
 end
 
--- Readings whose character the core no longer knows.
-function T.PruneOrphans()
-    for guid in pairs(Store()) do
-        local c = AltStableDB and AltStableDB[guid]
-        if type(c) ~= "table" or not c.name then Store()[guid] = nil end
-    end
+-- A reading whose character the core has no record of is kept, invisible
+-- (it is read by the GUID of a core record), until a forget or a cleanup:
+-- an older AltStable.lua must not take it with it (#418). Only the orphans of
+-- forgotten characters go here.
+function T.DropForgottenOrphans()
+    return AltStable.DropForgottenOrphans and AltStable.DropForgottenOrphans(Store()) or 0
 end
 
 ------------------------------------------------------------
@@ -359,10 +359,12 @@ end
 
 -- At the plugin's bootstrap: drop readings of forgotten characters, pull
 -- everything once when there is nothing to build on (the first login with this
--- version), then read the character being played.
+-- version; orphans don't count), then read the character being played.
 function T.Start()
-    T.PruneOrphans()
-    if AltStable.ResetPeerWatermarks and not next(Store()) then AltStable.ResetPeerWatermarks() end
+    T.DropForgottenOrphans()
+    if AltStable.ResetPeerWatermarks and AltStable.HoldsAttached and not AltStable.HoldsAttached(Store()) then
+        AltStable.ResetPeerWatermarks()
+    end
     T.ScheduleScan()
 end
 
