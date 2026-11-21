@@ -5093,7 +5093,7 @@ function AltStable.SplitItemHolders(holders, playerGuid, db)
     local r = { side = {}, away = {}, why = {}, sideTotal = 0, awayTotal = 0 }
     local rulesetName = AltStable.RulesetName or function() return nil end
     local function factionOf(c) return (c.faction == "Alliance" or c.faction == "Horde") and c.faction or nil end
-    local reasons, uniform, first = {}, true, nil
+    local reasons, uniform, first, unverified = {}, true, nil, false
     for _, h in ipairs(holders or {}) do
         local n = (h.bags or 0) + (h.bank or 0) + (h.mail or 0)
         local otherFaction, otherRuleset = false, false
@@ -5113,15 +5113,32 @@ function AltStable.SplitItemHolders(holders, playerGuid, db)
         else
             r.side[#r.side + 1] = h
             r.sideTotal = r.sideTotal + n
+            -- Kept with the matching ones when its faction or realm can't be
+            -- read - but then nothing confirms the heading's name for them.
+            local c = db[h.guid] or {}
+            if (sameFaction and not factionOf(c)) or (sameRuleset and not rulesetName(c.realm)) then
+                unverified = true
+            end
         end
     end
 
-    -- What the matching ones share, from the current character's record.
+    -- What the matching ones share, from the current character's record - named
+    -- only when every one of them is known to share it (#410 review): one whose
+    -- faction or realm can't be read stays in the group and the Total, under a
+    -- neutral heading. So does a current character that can't be read itself.
     local me = db[playerGuid] or {}
     local parts = {}
-    if sameFaction then parts[#parts + 1] = factionOf(me) or "Same faction" end
-    if sameRuleset then parts[#parts + 1] = rulesetName(me.realm) or "Same ruleset" end
-    r.sideLabel = #parts > 0 and table.concat(parts, MIDDOT) or "Everyone"
+    if sameFaction then
+        if factionOf(me) then parts[#parts + 1] = factionOf(me) else unverified = true end
+    end
+    if sameRuleset then
+        if rulesetName(me.realm) then parts[#parts + 1] = rulesetName(me.realm) else unverified = true end
+    end
+    if unverified then
+        r.sideLabel = "Matching characters"
+    else
+        r.sideLabel = #parts > 0 and table.concat(parts, MIDDOT) or "Everyone"
+    end
 
     local one = r.away[1] and reasons[r.away[1]]
     if uniform and one and (one.f or one.r) then

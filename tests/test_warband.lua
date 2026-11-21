@@ -405,6 +405,22 @@ do
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = nil, nil
     t, has = shown()
     check("an unknown faction or realm is listed, not summarized", has("Birch") and has("Cedar") and not has("+"), t)
+    -- #410 review: in Separate groups, nothing confirms they share this
+    -- character's faction and ruleset, so the heading doesn't say it does.
+    AltStable.SetConfigValue("tooltipScope", "both")
+    AltStableDB[PVP].realm = "Forever PvP"      -- Cedar elsewhere, so there are groups
+    t, has = shown()
+    check("Separate groups with an unknown faction among them: a neutral heading",
+          has("Matching characters|7") and not has("Alliance" .. D) and has("Birch"), t)
+    check("  still counted in the Total", has("Total|15"), t)
+    AltStableDB[HORDE].faction = "Horde"
+    AltStableDB[ALLY].realm = ""
+    t, has = shown()
+    check("  a blank realm among them: the same", has("Matching characters|3"), t)
+    AltStableDB[ALLY].realm = "Forever PvE"
+    t, has = shown()
+    check("  all known again: named", has("Alliance" .. D .. AltStable.RulesetName("Forever PvE") .. "|3"), t)
+    AltStable.SetConfigValue("tooltipScope", "side")
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = "Horde", "Forever PvP"
 
     -- Nobody matching: Summarize keeps the Total and the line, Separate groups
