@@ -354,7 +354,7 @@ check("  it is a column again once the record is restored", hasCol(HIDDEN))
 check("  with its quest history", M.DB().done[HIDDEN] ~= nil)
 AltStable.IsCharacterHidden = hiddenFn
 AltStableDB[HIDDEN] = nil
-AltStableConfig.forgottenCharacters = { [HIDDEN] = { at = 1, forgottenAt = 1, name = "Hidden" } }
+AltStableConfig.forgottenCharacters = { [HIDDEN] = { at = 1000, forgottenAt = 1000, name = "Hidden" } }
 M.DropForgottenOrphans()
 check("a forgotten character's orphan snapshot goes", M.DB().chars[HIDDEN] == nil)
 check("  from both stores", M.DB().done[HIDDEN] == nil)
@@ -372,7 +372,7 @@ do
     eq("  one attached snapshot doesn't", resets, 1)
     AltStable.ResetPeerWatermarks = realReset
 end
-AltStableConfig.forgottenCharacters = { [ME] = { at = 1, forgottenAt = 1, name = "Me" } }
+AltStableConfig.forgottenCharacters = { [ME] = { at = 1e10, forgottenAt = 1e10, name = "Me" } }
 local meRec = AltStableDB[ME]
 AltStableDB[ME] = nil
 M.DropForgottenOrphans()

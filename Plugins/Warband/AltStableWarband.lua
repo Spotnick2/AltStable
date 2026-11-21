@@ -2273,6 +2273,9 @@ local function BootstrapPlugin()
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
         OnCleanup     = function(keepGuid) CleanupWarbandDB(keepGuid) end,
+        DropForgottenOrphans = function()
+            return AltStable.DropForgottenOrphans and AltStable.DropForgottenOrphans(AltStableWarbandDB) or 0
+        end,
         -- #65: a forgotten character's bags and bank go with its record, or
         -- they sit in SavedVariables for good - for a character nothing shows.
         OnForget      = function(guid)

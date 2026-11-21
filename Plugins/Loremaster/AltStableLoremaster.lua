@@ -1644,6 +1644,7 @@ function L.Bootstrap()
         OnDeserialize = function(guid, blob) M.Deserialize(guid, blob) end,
         OnCleanup     = function(keep) M.Cleanup(keep) end,
         OnForget      = function(guid) M.Forget(guid) end,
+        DropForgottenOrphans = function() return M.DropForgottenOrphans() end,
         _test        = L,
     })
     M.Start()

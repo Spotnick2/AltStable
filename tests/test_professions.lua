@@ -568,7 +568,7 @@ do
 
     -- Forgotten while the plugin was off: its next bootstrap drops it.
     AltStableDB[OLD] = nil
-    AltStableConfig.forgottenCharacters = { [OLD] = { at = 1, forgottenAt = 1, name = "Oldie" } }
+    AltStableConfig.forgottenCharacters = { [OLD] = { at = 1000, forgottenAt = 1000, name = "Oldie" } }
     T.BootstrapPlugin()
     eq("a forgotten character's orphan goes at the bootstrap", AltStableProfessionsDB[OLD], nil)
     check("  the others stay", AltStableProfessionsDB[ALT] ~= nil)
@@ -583,6 +583,30 @@ do
     check("a synced forget for a character with no core record is recorded",
           AltStable.IsCharacterForgotten(OLD))
     eq("  and drops the loaded plugin's orphan at once", AltStableProfessionsDB[OLD], nil)
+    AltStableConfig.forgottenCharacters = nil
+
+    -- Codex review of #437: forgotten at 100 on another account, then played
+    -- here at 200 (its snapshot read then), then an older core save loaded.
+    -- The tombstone, kept or received again, must not delete that reading.
+    AltStableProfessionsDB[OLD] = { stamp = 200, wish = { [2330] = true }, profs = {} }
+    AltStableConfig.forgottenCharacters = { [OLD] = { at = 100, forgottenAt = 100, name = "Oldie" } }
+    T.BootstrapPlugin()
+    check("a reading made after the forget survives the bootstrap sweep", AltStableProfessionsDB[OLD] ~= nil)
+    AltStableConfig.forgottenCharacters = nil
+    AltStableConfig.syncSettings = true
+    AltStable.ApplyPrefsSyncLine(AltStable.FORGOT_LINE .. ":" .. OLD .. ",f,100,Oldie")
+    AltStableConfig.syncSettings = wasOn
+    check("  and a synced forget older than it", AltStableProfessionsDB[OLD] ~= nil)
+    -- The core record played since comes back: the forget is lifted, and the
+    -- star is there again.
+    local played = { guid = OLD, name = "Oldie", class = "MAGE", level = 30, realm = "Classic Beta PvE",
+                     lastUpdate = 200 }
+    local resetsBefore = resets
+    Core.DeserializeFullDB(Core.SerializeChar(played) .. "\n" .. Core.CHAR_SEP, "Peer")
+    check("  the record played since comes back", AltStableDB[OLD] and AltStableDB[OLD].name == "Oldie")
+    check("  with its star", T.Wants(OLD, 2330))
+    eq("  and lifting the forget asks for a full pull", resets, resetsBefore + 1)
+    resets = resetsBefore
     AltStableConfig.forgottenCharacters = nil
 end
 

@@ -2337,6 +2337,7 @@ local function BootstrapPlugin()
         OnSerialize   = function(g) return SerializePlayer(g) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
         OnCleanup     = function(keepGuid) Cleanup(keepGuid) end,
+        DropForgottenOrphans = function() return DropForgottenOrphans() end,
         OnForget      = function(guid) if guid then AltStableProfessionsDB[guid] = nil end end,
         _at           = AT,
         _test = WishExports({

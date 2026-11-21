@@ -619,8 +619,8 @@ eq("  an orphan is invisible to the counts", total, 8)
 AltStableConfig = AltStableConfig or {}
 AltStableWarbandDB["Player-Forgot-1"] = { bags = { [2318] = 2 }, stamp = 100 }
 AltStableConfig.forgottenCharacters = {
-    ["Player-Forgot-1"] = { at = 1, forgottenAt = 1, name = "Forgot" },
-    [GUID] = { at = 1, forgottenAt = 1, name = "Kaleid" },
+    ["Player-Forgot-1"] = { at = 1000, forgottenAt = 1000, name = "Forgot" },
+    [GUID] = { at = 1000, forgottenAt = 1000, name = "Kaleid" },
 }
 local meRec = AltStableDB[GUID]
 AltStableDB[GUID] = nil

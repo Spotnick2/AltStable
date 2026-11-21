@@ -3357,6 +3357,9 @@ function Roster._Bootstrap()
         OnDeserialize = function(g, b) if Roster.Talents then Roster.Talents.Deserialize(g, b) end end,
         OnCleanup     = function(keep) if Roster.Talents then Roster.Talents.Cleanup(keep) end end,
         OnForget      = function(g) if Roster.Talents then Roster.Talents.Forget(g) end end,
+        DropForgottenOrphans = function()
+            return Roster.Talents and Roster.Talents.DropForgottenOrphans() or 0
+        end,
         _test        = setmetatable({
             Slug = Slug, CutoutFor = CutoutFor, TexCoordsFor = TexCoordsFor,
             EffectiveTexture = EffectiveTexture,

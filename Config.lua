@@ -1541,8 +1541,9 @@ local function ApplyForgotLine(body)
                         else
                             AltStable.MarkCharacterForgotten(guid, stamp, name)
                             -- No core record, but a loaded plugin may still
-                            -- hold one (an orphan, #418): it goes now.
-                            if AltStable.ForgetPluginRecords then AltStable.ForgetPluginRecords(guid) end
+                            -- hold one (an orphan, #418): it goes now, unless
+                            -- it was read after this forget.
+                            if AltStable.DropForgottenPluginOrphans then AltStable.DropForgottenPluginOrphans() end
                         end
                         forgot = forgot + 1
                     end

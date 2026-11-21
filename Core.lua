@@ -1214,18 +1214,31 @@ end
 -- lifted before then (an unforget, an eviction) lets the records re-attach,
 -- which is what an unforget asks for. Never the character being played: its
 -- core record comes back with the scan a second later, and a tombstone of a
--- character played since is lifted only on receive. Returns how many went.
+-- character played since is lifted only on receive. Never a record made after
+-- the forget either (CameBackSince on the record's own stamp, every plugin
+-- record has one): the character was played since, and that reading may be
+-- the only one there is (Codex review of #437). Returns how many went.
 function AltStable.DropForgottenOrphans(store)
     if type(store) ~= "table" or not AltStable.IsCharacterForgotten then return 0 end
     local me = UnitGUID and UnitGUID("player")
     local gone = {}
-    for guid in pairs(store) do
-        if guid ~= me and not AltStable.HasNamedRecord(guid) and AltStable.IsCharacterForgotten(guid) then
+    for guid, entry in pairs(store) do
+        local stamp = type(entry) == "table" and tonumber(entry.stamp) or 0
+        if guid ~= me and not AltStable.HasNamedRecord(guid) and AltStable.IsCharacterForgotten(guid)
+           and not (AltStable.CameBackSince and AltStable.CameBackSince(guid, stamp)) then
             gone[#gone + 1] = guid
         end
     end
     for _, guid in ipairs(gone) do store[guid] = nil end
     return #gone
+end
+
+-- Every loaded plugin's sweep of forgotten orphans (its DropForgottenOrphans
+-- hook), for a forget received with no core record to hand ForgetCharacter.
+function AltStable.DropForgottenPluginOrphans()
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.DropForgottenOrphans then pcall(plugin.DropForgottenOrphans) end
+    end
 end
 
 -- Whether a plugin store holds anything to build on: a record of a character
@@ -4850,10 +4863,15 @@ SlashCmdList["ALTSTABLE"] = function(args)
         CleanupDB()
         Print("DB wiped — kept only your current character. Requesting fresh data from peers...")
         -- A plugin switched off isn't loaded, so its store couldn't be cleared
-        -- (#418): say so, with the way to repair it.
+        -- (#418): say so, with the way to repair it. Only one the player
+        -- switched off and that is installed: a plugin folder left out has
+        -- nothing to repair (Codex review of #437).
         local off = {}
         for _, p in ipairs(AltStable.LOD_PLUGINS) do
-            if not AltStable.IsPluginLoaded(p.key) then off[#off + 1] = p.label end
+            local installed = not (C_AddOns and C_AddOns.GetAddOnInfo) or C_AddOns.GetAddOnInfo(p.addon) ~= nil
+            if not AltStable.IsPluginEnabled(p.key) and not AltStable.IsPluginLoaded(p.key) and installed then
+                off[#off + 1] = p.label
+            end
         end
         if #off > 0 then
             Print("Not cleared, switched off: " .. table.concat(off, ", ")
