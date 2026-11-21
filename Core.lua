@@ -5026,7 +5026,7 @@ function AltStable.ItemTooltipCountsHelp(tt)
     if other and v == nil then
         tt:AddLine(other .. " already shows its own counts, so this starts off.", 1, .82, 0, true)
     end
-    tt:AddLine("Your faction or ruleset apart, and items with no counts: Options, Items & Mail.", .6, .6, .6, true)
+    tt:AddLine("Layout, matching characters and items with no counts: Options, Item tooltips.", .6, .6, .6, true)
 end
 
 -- What stands between two characters (#386, #403): whether they are on
@@ -5036,9 +5036,11 @@ end
 -- play, 2026-11-19). What isn't known (a record from before the faction was
 -- stored, a realm name that can't be read) stops nothing: no claim is made
 -- from nothing. The Professions reagent counts and the item tooltips share it.
-function AltStable.Barriers(fromGuid, toGuid)
+-- `db`: the records to read, AltStableDB unless given (the Options preview).
+function AltStable.Barriers(fromGuid, toGuid, db)
     if fromGuid == nil or fromGuid == toGuid then return false, false end
-    local a, b = AltStableDB and AltStableDB[fromGuid], AltStableDB and AltStableDB[toGuid]
+    db = db or AltStableDB
+    local a, b = db and db[fromGuid], db and db[toGuid]
     if type(a) ~= "table" or type(b) ~= "table" then return false, false end
     local function faction(c) return (c.faction == "Alliance" or c.faction == "Horde") and c.faction or nil end
     local fa, fb = faction(a), faction(b)
@@ -5052,67 +5054,228 @@ function AltStable.Barriers(fromGuid, toGuid)
     return otherFaction, otherRuleset
 end
 
--- Which characters the item tooltips list (#403). "This side" is the current
--- character's faction (`tooltipSameFaction`) and/or ruleset
--- (`tooltipSameRuleset`), two boxes, both off unless chosen: with both off,
--- everyone is on this side. `tooltipScope` picks what the tooltip shows:
--- "both" (default: this side, then everyone else under Elsewhere), "side"
--- (this side only, and one grey line for the rest) or "all" (one list, as
--- before the boxes existed).
+-- Which characters the item tooltips list (#403), and how. "Matching" is the
+-- current character's faction (`tooltipSameFaction`) and/or ruleset
+-- (`tooltipSameRuleset`): two boxes, both off unless chosen, a character
+-- matching every box ticked; with neither ticked, everyone matches.
+-- `tooltipScope` is the layout, its stored values older than its names:
+--   "all"  One list: every character together, whatever the boxes say
+--   "both" Separate groups (default): the matching ones, then the others
+--   "side" Summarize other characters: the matching ones by name, the rest
+--          as one line
+-- Every layout's Total is everyone's.
 AltStable.TOOLTIP_SCOPES = { both = true, side = true, all = true }
 function AltStable.TooltipScope()
     local v = AltStableConfig and AltStableConfig.tooltipScope
     return AltStable.TOOLTIP_SCOPES[v] and v or "both"
 end
 
--- This side's header: what the boxes ask for.
-function AltStable.TooltipSideLabel()
-    local cfg = AltStableConfig or {}
-    local f, r = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
-    return (f and r) and "Same faction & ruleset" or f and "Same faction" or r and "Same ruleset" or "Everyone"
-end
+local MIDDOT = " \194\183 "
 
--- Splits CountItem's holders (Warband: { guid, realm, bags, bank, mail, ... })
--- into this side and elsewhere. Returns side, sideTotal, away, awayTotal, and
--- for each away holder why it is ("Horde", "PvP", "Horde, PvP"), keyed by the
--- holder. A record whose faction or realm can't be read stays on this side.
-function AltStable.SplitTooltipHolders(holders, playerGuid)
+-- Splits CountItem's holders (Warband: { guid, name, class, realm, bags, bank,
+-- mail, ... }) for the layouts. `playerGuid` and `db` default to the logged-in
+-- character and AltStableDB; the Options preview gives its sample. Returns
+--   side, sideTotal   the matching characters
+--   away, awayTotal   the others
+--   sideLabel         what the matching ones share: "Alliance \194\183 PvE"
+--   awayLabel         the others' header: their faction or ruleset when that
+--                     is the whole reason ("Other faction \194\183 Horde"), else
+--                     "Other characters"
+--   awaySummary       the others as one line: "+39 on Horde characters"
+--   why               per other character, its reason ("Horde"), only when
+--                     the header can't name one for all of them
+-- A record whose faction or ruleset can't be read matches: no claim from nothing.
+-- The ruleset is the record's own (RulesetName reads its stored `ruleset`,
+-- then its realm: Forever hides the realm since 2026-11-20, #412).
+function AltStable.SplitItemHolders(holders, playerGuid, db)
     local cfg = AltStableConfig or {}
     local sameFaction, sameRuleset = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
-    local side, away, why, sideTotal, awayTotal = {}, {}, {}, 0, 0
+    db = db or AltStableDB or {}
     playerGuid = playerGuid or (UnitGUID and UnitGUID("player"))
+    local r = { side = {}, away = {}, why = {}, sideTotal = 0, awayTotal = 0 }
+    local rulesetName = AltStable.RulesetName or function() return nil end
+    local function factionOf(c) return (c.faction == "Alliance" or c.faction == "Horde") and c.faction or nil end
+    local reasons, uniform, first, unverified = {}, true, nil, false
     for _, h in ipairs(holders or {}) do
         local n = (h.bags or 0) + (h.bank or 0) + (h.mail or 0)
         local otherFaction, otherRuleset = false, false
         if sameFaction or sameRuleset then
-            otherFaction, otherRuleset = AltStable.Barriers(h.guid, playerGuid)
+            otherFaction, otherRuleset = AltStable.Barriers(h.guid, playerGuid, db)
         end
         otherFaction, otherRuleset = sameFaction and otherFaction, sameRuleset and otherRuleset
         if otherFaction or otherRuleset then
-            away[#away + 1] = h
-            awayTotal = awayTotal + n
-            local c = AltStableDB and AltStableDB[h.guid] or {}
-            local tags = {}
-            if otherFaction then tags[#tags + 1] = c.faction end
-            if otherRuleset and AltStable.RulesetOf then tags[#tags + 1] = AltStable.RulesetOf(c) end
-            why[h] = table.concat(tags, ", ")
+            r.away[#r.away + 1] = h
+            r.awayTotal = r.awayTotal + n
+            local c = db[h.guid] or {}
+            local f = otherFaction and factionOf(c) or nil
+            local rs = otherRuleset and rulesetName(c) or nil
+            reasons[h] = { f = f, r = rs }
+            local key = (f or "") .. "|" .. (rs or "")
+            if first == nil then first = key elseif first ~= key then uniform = false end
         else
-            side[#side + 1] = h
-            sideTotal = sideTotal + n
+            r.side[#r.side + 1] = h
+            r.sideTotal = r.sideTotal + n
+            -- Kept with the matching ones when its faction or realm can't be
+            -- read - but then nothing confirms the heading's name for them.
+            local c = db[h.guid] or {}
+            if (sameFaction and not factionOf(c)) or (sameRuleset and not rulesetName(c)) then
+                unverified = true
+            end
         end
     end
-    return side, sideTotal, away, awayTotal, why
+
+    -- What the matching ones share, from the current character's record - named
+    -- only when every one of them is known to share it (#410 review): one whose
+    -- faction or realm can't be read stays in the group and the Total, under a
+    -- neutral heading. So does a current character that can't be read itself.
+    local me = db[playerGuid] or {}
+    local parts = {}
+    if sameFaction then
+        if factionOf(me) then parts[#parts + 1] = factionOf(me) else unverified = true end
+    end
+    if sameRuleset then
+        if rulesetName(me) then parts[#parts + 1] = rulesetName(me) else unverified = true end
+    end
+    if unverified then
+        r.sideLabel = "Matching characters"
+    else
+        r.sideLabel = #parts > 0 and table.concat(parts, MIDDOT) or "Everyone"
+    end
+
+    local one = r.away[1] and reasons[r.away[1]]
+    if uniform and one and (one.f or one.r) then
+        if one.f and one.r then
+            r.awayLabel = one.f .. MIDDOT .. one.r
+            r.awaySummary = ("+%d on %s %s characters"):format(r.awayTotal, one.f, one.r)
+        elseif one.f then
+            r.awayLabel = "Other faction" .. MIDDOT .. one.f
+            r.awaySummary = ("+%d on %s characters"):format(r.awayTotal, one.f)
+        else
+            r.awayLabel = "Other ruleset" .. MIDDOT .. one.r
+            r.awaySummary = ("+%d on %s characters"):format(r.awayTotal, one.r)
+        end
+    else
+        r.awayLabel = "Other characters"
+        r.awaySummary = ("+%d on other characters"):format(r.awayTotal)
+        for h, why in pairs(reasons) do
+            local tags = {}
+            if why.f then tags[#tags + 1] = why.f end
+            if why.r then tags[#tags + 1] = why.r end
+            r.why[h] = table.concat(tags, ", ")
+        end
+    end
+    return r
 end
 
--- The grey line under "this side only", naming what the boxes left out.
-function AltStable.TooltipLeftOutLine(left)
-    if not left or left <= 0 then return nil end
-    local cfg = AltStableConfig or {}
-    local f, r = cfg.tooltipSameFaction == true, cfg.tooltipSameRuleset == true
-    local where = (f and r) and "on another faction or ruleset"
-               or f and "on the other faction"
-               or "on another ruleset"
-    return ("+%d %s"):format(left, where)
+-- How the counts look in a tooltip: one line per character, the icons for
+-- where its count is.
+AltStable.ITEM_STALE_AFTER = 7 * 86400   -- a bank or mail snapshot "may be out of date" past this
+local BAG_ICON  = "|TInterface\\Icons\\INV_Misc_Bag_08:12:12:0:0|t"
+local BANK_ICON = "|TInterface\\Minimap\\Tracking\\Banker:13:13:0:0|t"
+local MAIL_ICON = "|TInterface\\Icons\\INV_Letter_15:12:12:0:0|t"
+
+-- Inline class-icon texture escape for a tooltip line (empty if unknown).
+local function ClassIconMarkup(class)
+    local t = CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class]
+    if not t then return "" end
+    return string.format(
+        "|TInterface\\TargetingFrame\\UI-Classes-Circles:14:14:0:0:256:256:%d:%d:%d:%d|t ",
+        math.floor(t[1] * 256), math.floor(t[2] * 256),
+        math.floor(t[3] * 256), math.floor(t[4] * 256))
+end
+
+local function DupName(holders, name)
+    local c = 0
+    for _, h in ipairs(holders) do if h.name == name then c = c + 1 end end
+    return c > 1
+end
+
+-- What a holder's counts say about their freshness, into `notes`: an old bank
+-- or mail snapshot, a mailbox not read to the end.
+local function NoteFreshness(h, notes, now)
+    local stale = AltStable.ITEM_STALE_AFTER
+    if (h.bank or 0) > 0 and h.bankStamp and (now - h.bankStamp) > stale then notes.stale = true end
+    if (h.mail or 0) > 0 and h.mailStamp and (now - h.mailStamp) > stale then notes.mailStale = true end
+    if (h.mailMore or 0) > 0 then notes.mailMore = true end
+end
+
+-- One line per character, sorted by name: class icon + class-coloured name on
+-- the left, the per-location counts with inline bag/bank icons on the right
+-- (e.g. "17[bag]"). `why[h]`, when there, follows the name in grey. `all` is
+-- every holder, for telling apart two characters of one name.
+local function HolderLines(tt, holders, all, why, notes, now)
+    local list = {}
+    for _, h in ipairs(holders) do list[#list + 1] = h end
+    table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
+    for _, h in ipairs(list) do
+        NoteFreshness(h, notes, now)
+        local cc = (h.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[h.class]) or { r = .9, g = .9, b = .9 }
+        local nm = ClassIconMarkup(h.class) .. (h.name or "?")
+        if h.realm and DupName(all, h.name) then nm = nm .. "-" .. h.realm end
+        if why and why[h] and why[h] ~= "" then nm = nm .. " |cff888888(" .. why[h] .. ")|r" end
+        local parts = {}
+        if (h.bags or 0) > 0 then parts[#parts + 1] = h.bags .. BAG_ICON end
+        if (h.bank or 0) > 0 then parts[#parts + 1] = h.bank .. BANK_ICON end
+        if (h.mail or 0) > 0 then parts[#parts + 1] = h.mail .. MAIL_ICON end
+        -- Bagnon-style right cell: single location shows just "N[icon]"; a split
+        -- shows the per-character total then the breakdown, e.g. "63=17[bag]+46[bank]".
+        local right = parts[1] or ""
+        if #parts > 1 then
+            right = ((h.bags or 0) + (h.bank or 0) + (h.mail or 0)) .. "=" .. table.concat(parts, "+")
+        end
+        tt:AddDoubleLine(nm, right, cc.r, cc.g, cc.b, 1, 1, 1)
+    end
+end
+
+local function Header(tt, label, n)
+    tt:AddDoubleLine(label, tostring(n), 1, 0.82, 0, 1, 1, 1)
+end
+
+-- The counts block AltStable adds to an item tooltip, for the real tooltips
+-- (Warband) and the Options preview alike. `split` from SplitItemHolders, with
+-- `scope` (TooltipScope) added; nil is One list. `inTab`: a Warband cell's own
+-- count, said in grey when the Total differs. `now`: time(), unless given.
+--   One list, or nobody apart:  Total: N, then everyone
+--   Separate groups:            the matching ones under what they share, the
+--                               others under their header, then the Total
+--   Summarize:                  Total: N, the matching ones, then one grey
+--                               line for the others ("+39 on Horde characters")
+function AltStable.AppendItemCounts(tt, total, holders, split, inTab, now)
+    if not total or total <= 0 or not holders or #holders == 0 then return end
+    now = now or time()
+    local notes = {}
+    local apart = split and split.awayTotal > 0 and split.scope ~= "all"
+    tt:AddLine(" ")
+    if apart and split.scope == "side" then
+        Header(tt, "Total:", total)
+        HolderLines(tt, split.side, holders, nil, notes, now)
+        tt:AddLine(split.awaySummary, .55, .55, .55)
+        -- The summarized count is theirs too, so are its warnings (#404 review).
+        for _, h in ipairs(split.away) do NoteFreshness(h, notes, now) end
+    elseif apart then
+        if split.sideTotal > 0 then
+            Header(tt, split.sideLabel, split.sideTotal)
+            HolderLines(tt, split.side, holders, nil, notes, now)
+        end
+        Header(tt, split.awayLabel, split.awayTotal)
+        HolderLines(tt, split.away, holders, split.why, notes, now)
+        Header(tt, "Total", total)
+    else
+        Header(tt, "Total:", total)
+        HolderLines(tt, holders, holders, nil, notes, now)
+    end
+    if notes.stale then tt:AddLine("Bank data may be out of date", .55, .55, .55) end
+    if notes.mailStale then tt:AddLine("Mail data may be out of date", .55, .55, .55) end
+    if notes.mailMore then tt:AddLine("Some mail not read yet: a mailbox shows 50 at a time", .55, .55, .55) end
+    if inTab and inTab ~= total then tt:AddLine(inTab .. " shown in this tab", .55, .55, .55) end
+    tt:Show()
+end
+
+-- The whole block for one set of holders, as the settings ask.
+function AltStable.AppendItemCountsFor(tt, total, holders, inTab, playerGuid, db, now)
+    local split = AltStable.SplitItemHolders(holders, playerGuid, db)
+    split.scope = AltStable.TooltipScope()
+    AltStable.AppendItemCounts(tt, total, holders, split, inTab, now)
 end
 
 -- Items whose tooltips get no character counts at all (#403), e.g. the
