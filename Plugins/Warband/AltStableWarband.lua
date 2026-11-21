@@ -27,6 +27,8 @@
 -- What a received blob may and may not do (docs/AUDIT.md):
 --   * an older stamp is refused; an equal one applies only when the maps differ;
 --   * a bank the owner has never read (kt=0) leaves a held snapshot alone;
+--   * the blob is judged by these stamps alone (independentStamp), not by the
+--     record carrying it: a newer bank inside an older record still lands;
 --   * the bank has its own stamp (kt=): an older bank, or one with no kt=
 --     (unknown age, stored as 0), never replaces a dated one, whatever the
 --     overall stamp says (#420). Mixed versions: an older client still
@@ -2289,6 +2291,12 @@ local function BootstrapPlugin()
         OnDeactivate  = function(mf) AT_WB.Deactivate(mf) end,
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
+        -- Our blob is judged by its own stamps (the overall one, then the
+        -- bank's), so it is applied even when the record carrying it loses the
+        -- core merge (Codex review of #438): PC 1 reads the alt's bank at 100,
+        -- PC 2 (Warband off) plays it at 130, and a peer that heard PC 2 first
+        -- would otherwise refuse PC 1's bank with PC 1's older record, for good.
+        independentStamp = true,
         OnCleanup     = function(keepGuid) CleanupWarbandDB(keepGuid) end,
         DropForgottenOrphans = function()
             return AltStable.DropForgottenOrphans and AltStable.DropForgottenOrphans(AltStableWarbandDB) or 0

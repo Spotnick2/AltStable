@@ -386,11 +386,26 @@ do
     eq("  newer bags with an older bank: the record is taken", B2.db[Q].money, 600)
     eq("  the bags too", B2.wb[Q].bags[1], 2)
     eq("  and the bank is kept", B2.wb[Q].bank[2318], 20)
-    owner(99, 150, 150, 9, 9, 50)
+    owner(99, 99, 99, 9, 9, 50)
     receive(B2, A2, payloadFrom(A2, 0))
     eq("  an older core record is refused (#421)", B2.db[Q].money, 600)
-    eq("  and its inventory with it (Warband rides the core merge)", B2.wb[Q].bags[1], 2)
+    eq("  and an older inventory in it too, by Warband's own stamps", B2.wb[Q].bags[1], 2)
     eq("  bank included", B2.wb[Q].bank[2318], 20)
+
+    -- Codex review of #438: PC 1 read the alt's bank at 100; PC 2, with
+    -- Warband off, played it at 130 and was heard first. PC 1's record loses
+    -- the core merge, but its bank is the newest there is: it lands.
+    local C2 = side("Charlie3-Realm", Y)
+    local P2 = side("Papa3-Realm", X)
+    P2.db = { [Q] = { guid = Q, name = "Queue", class = "MAGE", lastUpdate = 130, money = 900 } }
+    receive(C2, P2, payloadFrom(P2, 0))
+    eq("a record heard first from a PC with Warband off", C2.db[Q] and C2.db[Q].money, 900)
+    eq("  brings no inventory", C2.wb[Q], nil)
+    owner(100, 100, 100, 4, 12, 500)
+    receive(C2, A2, payloadFrom(A2, 0))
+    eq("  the older record from the PC that read the bank is refused", C2.db[Q].money, 900)
+    eq("  but its bank lands, judged by its own stamp", C2.wb[Q] and C2.wb[Q].bank[2318], 12)
+    eq("  and its bags", C2.wb[Q] and C2.wb[Q].bags[1], 4)
 end
 
 WoW.finish("test_warband_sync", passed, failed)
