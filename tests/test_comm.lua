@@ -4438,4 +4438,178 @@ do
     check(not chatHas("Not cleared"), "  and says nothing when every plugin is on")
     C_AddOns.GetAddOnInfo = heldInfo
 end
+------------------------------------------------------------
+-- #422: a record changed here without being played rides the next delta
+--
+-- lastUpdate is the Last Online; changedAt is when the record last changed
+-- HERE, by our clock, and only picks what a delta sends. Set by a star on an
+-- offline alt (test_professions) and by received data that advances.
+------------------------------------------------------------
+
+do
+    -- Local only: never sent, never taken from a peer.
+    local wire = T.SerializeChar({ guid = "Player-CA-1", name = "Mark", class = "MAGE", lastUpdate = 1000,
+                                   changedAt = 5000 })
+    check(not wire:find("changedAt", 1, true), "#422: changedAt never goes on the wire")
+    local got = T.DeserializeChar("guid:Player-CA-1\nname:Mark\nchangedAt:99999")
+    eq(got and got.changedAt, nil, "  and a peer's changedAt is dropped")
+
+    -- Selection, and what the plugins are asked for.
+    local seen = {}
+    local fake = { id = "fake422", OnSerialize = function(g, since) seen[g] = since; return "x" end }
+    local heldPlugins = AltStable.plugins
+    AltStable.plugins = { fake }
+    WoW.reset(); WoW.now = 6000
+    AltStableConfig = { peerWatermarks = {} }
+    AltStableDB = {
+        ["Player-CA-1"] = { guid = "Player-CA-1", name = "Starred", class = "MAGE", lastUpdate = 1000, changedAt = 5000 },
+        ["Player-CA-2"] = { guid = "Player-CA-2", name = "Quiet", class = "MAGE", lastUpdate = 1000 },
+        ["Player-CA-3"] = { guid = "Player-CA-3", name = "Played", class = "MAGE", lastUpdate = 4800, changedAt = 100 },
+    }
+    local d = T.SerializeFullDB(false, 4700)
+    check(d:find("Player-CA-1", 1, true), "#422: a record changed here since the watermark is in the delta")
+    check(not d:find("Player-CA-2", 1, true), "  one changed neither way is not")
+    check(d:find("Player-CA-3", 1, true), "  one played since still is, by its Last Online")
+    eq(seen["Player-CA-1"], 0, "  the changed one's plugins send everything (their stamps are the origin's)")
+    eq(seen["Player-CA-3"], 4700, "  the played one's get the watermark, as before")
+    check(not T.SerializeFullDB(false, 5001):find("Player-CA-1", 1, true), "  and past the change it is left out")
+    seen = {}
+    T.SerializeFullDB(false, 4700, { ["Player-CA-1"] = true })
+    eq(seen["Player-CA-1"], 0, "  a camp member changed here gets the same on the camp branch")
+    AltStable.plugins = heldPlugins
+end
+
+do
+    -- What marks a received record: only a strict advance.
+    local stored = {}
+    local fake = { id = "fake422", independentStamp = true,
+                   OnDeserialize = function(g, blob) stored[#stored + 1] = blob; return blob == "newer" end }
+    local boom = { id = "boom422", independentStamp = true,
+                   OnDeserialize = function() error("boom") end }
+    local after = { id = "after422", independentStamp = true,
+                    OnDeserialize = function(g, blob) stored.after = blob; return false end }
+    local heldPlugins = AltStable.plugins
+    AltStable.plugins = { boom, fake, after }
+    local function rec(stamp, extra)
+        local c = { guid = "Player-RX-1", name = "Relayed", class = "MAGE", level = 40, lastUpdate = stamp }
+        for k, v in pairs(extra or {}) do c[k] = v end
+        return c
+    end
+    local function bulk(c, plugin)
+        local s = T.SerializeChar(c)
+        if plugin then
+            s = s .. "\nplugin_boom422:x\nplugin_fake422:" .. plugin .. "\nplugin_after422:" .. plugin
+        end
+        T.DeserializeFullDB(s .. "\n" .. T.CHAR_SEP, "Peer")
+    end
+
+    WoW.reset(); WoW.now = 5000
+    AltStableConfig = { peerWatermarks = {} }
+    AltStableDB = {}
+    bulk(rec(1000))
+    eq(AltStableDB["Player-RX-1"].changedAt, 5000, "#422: a record we did not have is marked, at our clock")
+    eq(AltStableDB["Player-RX-1"].lastUpdate, 1000, "  its Last Online untouched")
+    WoW.now = 6000
+    bulk(rec(1000))
+    eq(AltStableDB["Player-RX-1"].changedAt, 5000, "  the same record again marks nothing")
+    bulk(rec(1000, { level = 41 }))
+    eq(AltStableDB["Player-RX-1"].level, 41, "  an equal-stamp correction is merged")
+    eq(AltStableDB["Player-RX-1"].changedAt, 5000, "  but not marked (declared: it can't bounce between two peers)")
+    bulk(rec(999))
+    eq(AltStableDB["Player-RX-1"].changedAt, 5000, "  an older one, refused, marks nothing")
+    bulk(rec(999), "same")
+    eq(AltStableDB["Player-RX-1"].changedAt, 5000, "  nor its plugin blob when the plugin stored nothing newer")
+    eq(stored.after, "same", "  (every plugin gets its blob)")
+    stored.after = nil
+    WoW.now = 6500
+    bulk(rec(999), "newer")
+    eq(AltStableDB["Player-RX-1"].changedAt, 6500, "  but a losing record whose plugin stored a newer stamp is marked")
+    eq(stored[#stored], "newer", "  every plugin got its blob though one of them failed")
+    eq(stored.after, "newer", "  the ones after the one that stored something too")
+    WoW.now = 7000
+    bulk(rec(2000))
+    eq(AltStableDB["Player-RX-1"].changedAt, 7000, "  a newer Last Online is marked")
+
+    -- The single-record path shares the merge.
+    WoW.now = 8000
+    T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(rec(2000))), "Peer")
+    eq(AltStableDB["Player-RX-1"].changedAt, 7000, "  the CHAR path: the same record marks nothing")
+    T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(rec(3000))), "Peer")
+    eq(AltStableDB["Player-RX-1"].changedAt, 8000, "  a newer one is marked")
+
+    -- A first scan still waiting on an item is sent with no lastUpdate: new
+    -- to us, it is marked all the same, once (Codex round 8).
+    local pending = table.concat({ "guid:Player-RX-2", "name:Pending", "class:MAGE", T.CHAR_SEP }, "\n")
+    WoW.now = 9000
+    T.DeserializeFullDB(pending, "Peer")
+    eq(AltStableDB["Player-RX-2"] and AltStableDB["Player-RX-2"].changedAt, 9000,
+       "  a new record with no Last Online is marked")
+    WoW.now = 9500
+    T.DeserializeFullDB(pending, "Peer")
+    eq(AltStableDB["Player-RX-2"].changedAt, 9000, "  and only the first time")
+
+    -- A forgotten character is refused before anything is marked.
+    AltStableDB = {}
+    AltStableConfig.forgottenCharacters = { ["Player-RX-1"] = { at = 4000, forgottenAt = 4000, name = "Relayed" } }
+    bulk(rec(1000), "newer")
+    eq(AltStableDB["Player-RX-1"], nil, "  a forgotten character is refused, and nothing is marked")
+    AltStableConfig.forgottenCharacters = nil
+    AltStable.plugins = heldPlugins
+end
+
+do
+    -- The relay, through the real watermark: B pulls from us (A). X was played
+    -- on a third account long ago and reached us at 5000; B's watermark for us
+    -- is 4700.
+    local function ask(wm)
+        WoW.sent = {}
+        receive(T.MSG_REQUEST_V .. "|" .. wm, "Asker Surname")
+        flushAll()
+        return WoW.sentMessages()
+    end
+    local function decodeAs(wire, who)
+        local saved = AltStableDB
+        AltStableDB = {}
+        for _, m in ipairs(wire) do receive(m, who) end
+        local got = AltStableDB
+        AltStableDB = saved
+        return got
+    end
+    local X = { guid = "Player-RL-X", name = "Faraway", class = "MAGE", level = 20, lastUpdate = 1000 }
+
+    WoW.reset(); WoW.now = 5000
+    AltStableConfig = { peerWatermarks = {}, sendAllAccounts = true }
+    AltStableDB = {}
+    T.DeserializeFullDB(T.SerializeChar(X) .. "\n" .. T.CHAR_SEP, "Third Party")
+    AltStableDB["Player-RL-Y"] = { guid = "Player-RL-Y", name = "Busy", class = "MAGE", level = 60, lastUpdate = 5101 }
+
+    WoW.now = 5500
+    local got = decodeAs(ask(4700), "Pull Surname")
+    check(got["Player-RL-X"] ~= nil, "#422: a relayed record older than the puller's watermark reaches it")
+    local wm = AltStableConfig.peerWatermarks["Pull Surname"]
+    eq(wm, 5101, "  the puller's watermark moves to the newest Last Online it got")
+    WoW.now = 6000
+    got = decodeAs(ask(wm), "Pull Surname")
+    eq(got["Player-RL-X"], nil, "  and its next delta, past our mark, leaves it out")
+
+    -- With nothing newer in the reply, the puller stays where it was, and the
+    -- record comes again (the declared overlap).
+    AltStableDB["Player-RL-Y"] = nil
+    AltStableConfig.peerWatermarks["Lone Surname"] = 4700
+    WoW.now = 5500
+    got = decodeAs(ask(4700), "Lone Surname")
+    check(got["Player-RL-X"] ~= nil, "  alone in its reply,")
+    eq(AltStableConfig.peerWatermarks["Lone Surname"], 4700, "  it does not move the puller's watermark")
+    check(decodeAs(ask(4700), "Lone Surname")["Player-RL-X"] ~= nil, "  so the next delta carries it again")
+
+    -- A watermark beyond our own clock can't be one we capped: an older
+    -- client's, or our clock went back. It is answered in full.
+    WoW.now = 100000
+    AltStableDB = { ["Player-RL-O"] = { guid = "Player-RL-O", name = "Old", class = "MAGE", level = 1, lastUpdate = 500 } }
+    AltStableConfig.peerScopeGeneration = nil
+    check(decodeAs(ask(99701), "Pull Surname")["Player-RL-O"] ~= nil,
+          "#422: a watermark past our clock less the slack is answered in full")
+    eq(decodeAs(ask(99700), "Pull Surname")["Player-RL-O"], nil, "  one at the slack is a delta")
+end
+
 WoW.finish("test_comm", testsRun - failures, failures)

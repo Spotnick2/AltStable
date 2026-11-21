@@ -3354,7 +3354,7 @@ function Roster._Bootstrap()
         -- copy of the character record.
         independentStamp = true,
         OnSerialize   = function(g) return Roster.Talents and Roster.Talents.Serialize(g) or "" end,
-        OnDeserialize = function(g, b) if Roster.Talents then Roster.Talents.Deserialize(g, b) end end,
+        OnDeserialize = function(g, b) return Roster.Talents and Roster.Talents.Deserialize(g, b) or false end,
         OnCleanup     = function(keep) if Roster.Talents then Roster.Talents.Cleanup(keep) end end,
         OnForget      = function(g) if Roster.Talents then Roster.Talents.Forget(g) end end,
         DropForgottenOrphans = function()

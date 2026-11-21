@@ -405,10 +405,18 @@ do
     eq("a record heard first from a PC with Warband off", C2.db[Q] and C2.db[Q].money, 900)
     eq("  brings no inventory", C2.wb[Q], nil)
     owner(100, 100, 100, 4, 12, 500)
+    WoW.now = WoW.now + 20
     receive(C2, A2, payloadFrom(A2, 0))
     eq("  the older record from the PC that read the bank is refused", C2.db[Q].money, 900)
     eq("  but its bank lands, judged by its own stamp", C2.wb[Q] and C2.wb[Q].bank[2318], 12)
     eq("  and its bags", C2.wb[Q] and C2.wb[Q].bags[1], 4)
+    -- #422: what landed is newer than anything C's peers got from it, so the
+    -- record is marked for C's next deltas, though its Last Online is 130.
+    eq("  and the record is marked changed here (#422)", C2.db[Q].changedAt, time())
+    local marked = C2.db[Q].changedAt
+    WoW.now = WoW.now + 50
+    receive(C2, A2, payloadFrom(A2, 0))
+    eq("  the same inventory again marks nothing", C2.db[Q].changedAt, marked)
 end
 
 ------------------------------------------------------------
