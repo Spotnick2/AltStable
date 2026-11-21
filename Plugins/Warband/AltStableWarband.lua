@@ -196,25 +196,35 @@ end
 
 -- Commit a freshly-built section map for the current player, but only if it
 -- actually changed — otherwise cosmetic BAG_UPDATEs would churn the sync.
-local function ApplyScan(sectionKey, stampKey, newMap)
-    if not newMap then return end
+-- `confirm`: this read confirms the section (the session's first bag scan, a
+-- bank visit's first complete read), so even an unchanged map is restamped:
+-- the stamp then says when the map was last seen right, which is what lets it
+-- refuse an older reading from another PC (Codex review of #438) and what the
+-- freshness label reads (#432). Any other unchanged read is nothing to record,
+-- or cosmetic BAG_UPDATEs would churn the sync. A map with no stamp (a bank of
+-- unknown age received for our own character, #420) is dated by any read.
+local function ApplyScan(sectionKey, stampKey, newMap, confirm)
+    if not newMap then return false end
     local guid = UnitGUID("player")
-    if not guid then return end
+    if not guid then return false end
     local db = GetDB(guid)
-    -- An unchanged map with a stamp is nothing to record. One with no stamp
-    -- (a bank of unknown age received for our own character, #420) gets dated
-    -- by this read, once.
-    if mapsEqual(db[sectionKey], newMap) and (db[stampKey] or 0) > 0 then return end
+    if mapsEqual(db[sectionKey], newMap) and (db[stampKey] or 0) > 0 and not confirm then return true end
 
     db[sectionKey] = newMap
     db[stampKey]   = time()
     Restamp(db)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
     if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+    return true
 end
 
+local bagsConfirmed = false      -- this session's first bag read has confirmed them
+local bankConfirm = false        -- the open bank visit's first complete read is still to come
+
 local function ScanBags()
-    ApplyScan("bags", "bagsStamp", ScanContainerSet(CarriedBagIDs()))
+    if ApplyScan("bags", "bagsStamp", ScanContainerSet(CarriedBagIDs()), not bagsConfirmed) then
+        bagsConfirmed = true
+    end
 end
 
 -- Transactional bank scan. A genuinely emptied bank MUST be allowed to replace
@@ -238,7 +248,7 @@ local function ScanBank()
     end
     local candidate = ScanContainerSet(tabs)
     if not candidate then return end              -- malformed mid-transition: abort
-    ApplyScan("bank", "bankStamp", candidate)
+    if ApplyScan("bank", "bankStamp", candidate, bankConfirm) then bankConfirm = false end
 end
 
 local function ScheduleBags()
@@ -557,6 +567,7 @@ end
 
 local function OnBankOpened()
     isBankOpen = true
+    bankConfirm = true
     InvalidateTabCache()   -- a tab may have been bought since the last session
     bankGen = bankGen + 1
     ScanBank()          -- immediate...
@@ -675,14 +686,16 @@ local function DeserializePlayer(guid, blob)
 
     local incomingStamp = tonumber(rest:match("s=(%d+)"))
     if not incomingStamp then return end
-    -- Stale-reject: never let an older relayed record roll back fresher local
-    -- inventory. Equality is NOT stale, though: stamps come from time(), so two
-    -- item moves in the same second produce different maps under one stamp, and
-    -- the core deliberately re-sends records at the watermark. So a same-stamp
-    -- blob is applied when its contents actually differ (idempotent when they
-    -- don't), and only an older one is refused.
+    -- Stale-reject, per section: never let an older relayed record roll back
+    -- fresher local inventory, and never let one section's age decide
+    -- another's (Codex review of #438: held bags at 130 must not keep out a
+    -- bank read at 100 when the bank held is from 60). Equality is NOT stale:
+    -- stamps come from time(), so two item moves in the same second produce
+    -- different maps under one stamp, and the core deliberately re-sends
+    -- records at the watermark. So a same-stamp section is applied when its
+    -- contents differ (idempotent when they don't), and only an older one is
+    -- kept out.
     local existing = AltStableWarbandDB[guid]
-    if existing and (existing.stamp or 0) > incomingStamp then return end
 
     -- The fields must be PRESENT, not merely parseable: ParseMap(nil) is an
     -- empty map, so a truncated blob would silently blank the peer's inventory.
@@ -690,6 +703,16 @@ local function DeserializePlayer(guid, blob)
     if not bagsStr or not bankStr then return end
     local bags, bank = ParseMap(bagsStr), ParseMap(bankStr)
     if not bags or not bank then return end   -- malformed: keep existing good data
+
+    -- The bags, by the overall stamp: the wire carries no bags stamp, and the
+    -- overall one is the newest of the sender's sections, so it is no older
+    -- than its bags (declared: a sender whose mail is newer than its bags
+    -- dates its bags by its mail). Held bags newer than that stay.
+    local bagsStamp = incomingStamp
+    local heldBags = existing and (existing.bagsStamp or existing.stamp) or 0
+    if existing and existing.bags and heldBags > incomingStamp then
+        bags, bagsStamp = existing.bags, heldBags
+    end
 
     -- The bank's own stamp, the whole pipe-delimited field: "xkt=123" or
     -- "kt=123junk" is no stamp. Absent, the bank's age is unknown (0), never
@@ -731,7 +754,7 @@ local function DeserializePlayer(guid, blob)
     -- redrawn per character while the panel is open - each redraw rebuilds the
     -- whole aggregate, its buckets and its rows. Compare what we would store,
     -- not just the stamp, so an unchanged record costs nothing.
-    if existing and (existing.stamp or 0) == incomingStamp
+    if existing and (existing.bagsStamp or existing.stamp or 0) == bagsStamp
        and (existing.bankStamp or 0) == bankStamp
        and mapsEqual(existing.bags, bags) and mapsEqual(existing.bank, bank)
        and existing.mailStamp == mailStamp and existing.mailMore == mailMore
@@ -743,11 +766,11 @@ local function DeserializePlayer(guid, blob)
     local db = GetDB(guid)
     db.bags = bags
     db.bank = bank
-    db.stamp = incomingStamp
-    db.bagsStamp = incomingStamp
+    db.bagsStamp = bagsStamp
     db.bankStamp = bankStamp
     db.mail, db.mailStamp, db.mailMore = mail, mailStamp, mailMore
     db.outbox, db.outboxStamp = outbox, outboxStamp
+    Restamp(db)
     if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
 end
 
@@ -2312,6 +2335,7 @@ local function BootstrapPlugin()
             gather = gather, ScanBags = ScanBags, ScanBank = ScanBank, CountItem = CountItem,
             EncodeMap = EncodeMap, ParseMap = ParseMap, mapsEqual = mapsEqual,
             OnBagUpdate = OnBagUpdate, OnBankOpened = OnBankOpened, OnBankClosed = OnBankClosed,
+            NewSession = function() bagsConfirmed = false end,
             CarriedBagIDs = CarriedBagIDs, BankTabIDs = BankTabIDs, IsBankContainer = IsBankContainer,
             CleanupWarbandDB = CleanupWarbandDB,
             InvalidateTabCache = InvalidateTabCache, BootstrapPlugin = BootstrapPlugin,

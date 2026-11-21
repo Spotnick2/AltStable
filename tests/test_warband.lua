@@ -134,6 +134,33 @@ WoW.now = WoW.now + 5
 T.ScanBank()
 eq("  and an unchanged read of a dated bank leaves it", AltStableWarbandDB[GUID].bankStamp, dated)
 
+-- Codex review of #438: a visit's first complete read confirms the bank, and
+-- the session's first bag read the bags, even unchanged: the stamp says when
+-- each was last seen right (also #432's "over a week old" after a visit).
+T.OnBankClosed()
+WoW.now = WoW.now + 100
+T.OnBankOpened()
+eq("a visit's first read restamps an unchanged bank", AltStableWarbandDB[GUID].bankStamp, WoW.now)
+local visitStamp = WoW.now
+WoW.now = WoW.now + 5
+T.ScanBank()
+eq("  the visit's later unchanged reads don't", AltStableWarbandDB[GUID].bankStamp, visitStamp)
+T.NewSession()
+WoW.now = WoW.now + 5
+T.ScanBags()
+eq("the session's first bag read restamps unchanged bags", AltStableWarbandDB[GUID].bagsStamp, WoW.now)
+local sessionStamp = WoW.now
+WoW.now = WoW.now + 5
+T.ScanBags()
+eq("  later unchanged ones don't", AltStableWarbandDB[GUID].bagsStamp, sessionStamp)
+-- Confirmed, they refuse another PC's older reading of the same character.
+do
+    local heldBags, heldBank = AltStableWarbandDB[GUID].bags[2318], AltStableWarbandDB[GUID].bank[2318]
+    T.DeserializePlayer(GUID, ("v1|s=%d|kt=%d|b=2318,1|k=2318,1"):format(sessionStamp - 1, visitStamp - 1))
+    eq("  an older reading from another PC keeps the confirmed bags", AltStableWarbandDB[GUID].bags[2318], heldBags)
+    eq("  and the confirmed bank", AltStableWarbandDB[GUID].bank[2318], heldBank)
+end
+
 -- Slot counts arrive late: a tab that reports none is not "an empty bank".
 AltStableWarbandDB[GUID].bank = { [2318] = 13 }
 WoW.containers[6] = { size = 0 }
@@ -528,6 +555,7 @@ eq("  and their bank", got and got.bank[2318], 13)
 
 -- Stale reject: an OLDER blob carrying DIFFERENT data must not be applied.
 AltStableWarbandDB["Player-Peer-1"].stamp = 500
+AltStableWarbandDB["Player-Peer-1"].bagsStamp, AltStableWarbandDB["Player-Peer-1"].bankStamp = 500, 500
 local older = "v1|s=400|kt=400|b=2318,999|k=2318,999"
 T.DeserializePlayer("Player-Peer-1", older)
 eq("an older relayed blob does not roll back fresher data",
@@ -614,6 +642,15 @@ do
     T.DeserializePlayer(G, "v1|s=201|kt=150|b=1,1|k=2318,9")
     eq("  a confirmed bank with a lower kt but newer overall stamp replaces it", bank(), 9)
     eq("  dated", AltStableWarbandDB[G].bankStamp, 150)
+
+    -- Codex review of #438: newer bags held don't keep out a newer bank.
+    AltStableWarbandDB[G] = { bags = { [1] = 7 }, bank = { [2318] = 2 }, stamp = 130, bagsStamp = 130, bankStamp = 60 }
+    T.DeserializePlayer(G, "v1|s=100|kt=100|b=1,3|k=2318,11")
+    eq("held bags at 130, bank at 60; a blob at 100 with its bank at 100: the bank lands", bank(), 11)
+    eq("  dated 100", AltStableWarbandDB[G].bankStamp, 100)
+    eq("  and the newer bags stay", AltStableWarbandDB[G].bags[1], 7)
+    eq("  with their stamp", AltStableWarbandDB[G].bagsStamp, 130)
+    eq("  the overall stamp is the newest section", AltStableWarbandDB[G].stamp, 130)
     AltStableWarbandDB[G] = nil
 end
 

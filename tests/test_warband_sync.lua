@@ -386,7 +386,7 @@ do
     eq("  newer bags with an older bank: the record is taken", B2.db[Q].money, 600)
     eq("  the bags too", B2.wb[Q].bags[1], 2)
     eq("  and the bank is kept", B2.wb[Q].bank[2318], 20)
-    owner(99, 99, 99, 9, 9, 50)
+    owner(99, 99, 90, 9, 9, 50)
     receive(B2, A2, payloadFrom(A2, 0))
     eq("  an older core record is refused (#421)", B2.db[Q].money, 600)
     eq("  and an older inventory in it too, by Warband's own stamps", B2.wb[Q].bags[1], 2)
