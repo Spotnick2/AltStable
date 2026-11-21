@@ -607,6 +607,38 @@ do
     check("  with its star", T.Wants(OLD, 2330))
     eq("  and lifting the forget asks for a full pull", resets, resetsBefore + 1)
     resets = resetsBefore
+
+    -- Codex follow-up on #437: the same with a NAMELESS core row (at 80): it
+    -- is an orphan too, so the forget at 100 goes through the sweep, not the
+    -- plugins' unconditional OnForget, and the reading at 200 stays.
+    AltStableDB[OLD] = { guid = OLD, class = "MAGE", lastUpdate = 80 }
+    AltStableProfessionsDB[OLD] = { stamp = 200, wish = { [2330] = true }, profs = {} }
+    AltStableConfig.forgottenCharacters, AltStableConfig.unforgottenCharacters = nil, nil
+    AltStableConfig.syncSettings = true
+    AltStable.ApplyPrefsSyncLine(AltStable.FORGOT_LINE .. ":" .. OLD .. ",f,100,Oldie")
+    check("a synced forget over a nameless row keeps a later reading", AltStableProfessionsDB[OLD] ~= nil)
+    check("  and is recorded", AltStable.IsCharacterForgotten(OLD))
+    -- A newer forget (at 300) advances the tombstone: that reading is older
+    -- than it, so it goes now.
+    AltStable.ApplyPrefsSyncLine(AltStable.FORGOT_LINE .. ":" .. OLD .. ",f,300,Oldie")
+    AltStableConfig.syncSettings = wasOn
+    eq("  a newer forget sweeps it", AltStableProfessionsDB[OLD], nil)
+    AltStableConfig.forgottenCharacters, AltStableConfig.unforgottenCharacters = nil, nil
+    AltStableDB[OLD] = nil
+
+    -- And the name coming back after the forget at 100: the row played at
+    -- 200 arrives, the forget is lifted, the star shows.
+    AltStableDB[OLD] = { guid = OLD, class = "MAGE", lastUpdate = 80 }
+    AltStableProfessionsDB[OLD] = { stamp = 200, wish = { [2330] = true }, profs = {} }
+    AltStableConfig.syncSettings = true
+    AltStable.ApplyPrefsSyncLine(AltStable.FORGOT_LINE .. ":" .. OLD .. ",f,100,Oldie")
+    AltStableConfig.syncSettings = wasOn
+    resetsBefore = resets
+    Core.DeserializeFullDB(Core.SerializeChar(played) .. "\n" .. Core.CHAR_SEP, "Peer")
+    check("  the named row played since restores it", AltStableDB[OLD] and AltStableDB[OLD].name == "Oldie"
+          and T.Wants(OLD, 2330))
+    resets = resetsBefore
+    AltStableConfig.forgottenCharacters, AltStableConfig.unforgottenCharacters = nil, nil
     AltStableConfig.forgottenCharacters = nil
 end
 

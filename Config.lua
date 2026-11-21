@@ -1529,6 +1529,9 @@ local function ApplyForgotLine(body)
                             name        = (type(gone) == "table" and gone.name) or name,
                         }
                         AltStable.SetConfigValue("forgottenCharacters", copy)
+                        -- A newer forget: a plugin record kept past the older
+                        -- one may not be newer than this (Codex review of #437).
+                        if AltStable.DropForgottenPluginOrphans then AltStable.DropForgottenPluginOrphans() end
                     end
                 elseif state == "f" then
                     local rec = AltStableDB and AltStableDB[guid]
@@ -1536,13 +1539,15 @@ local function ApplyForgotLine(body)
                     -- the forget (it would only come back), nor the one we are.
                     if guid ~= me and stamp > UnforgetStamp(undone)
                        and not (type(rec) == "table" and (tonumber(rec.lastUpdate) or 0) > stamp) then
-                        if type(rec) == "table" and AltStable.ForgetCharacter then
+                        if type(rec) == "table" and rec.name and AltStable.ForgetCharacter then
                             AltStable.ForgetCharacter(guid, stamp)
                         else
+                            -- No named core record (none, or a nameless row,
+                            -- which the plugins treat as an orphan too), but a
+                            -- loaded plugin may still hold one (#418): it goes
+                            -- now, unless it was read after this forget.
+                            if type(rec) == "table" then AltStableDB[guid] = nil end
                             AltStable.MarkCharacterForgotten(guid, stamp, name)
-                            -- No core record, but a loaded plugin may still
-                            -- hold one (an orphan, #418): it goes now, unless
-                            -- it was read after this forget.
                             if AltStable.DropForgottenPluginOrphans then AltStable.DropForgottenPluginOrphans() end
                         end
                         forgot = forgot + 1
