@@ -939,7 +939,7 @@ WoW.flushTimers()
 local store = AltStableProfessionsReagents
 eq("a recipe the window agrees on keeps no entry (order aside)", store[2329], nil)
 eq("one it disagrees on is kept, with the window's amounts", store[2331] and flat(store[2331].reagents), "785,3,3371,1")
-eq("  stamped with the build", store[2331] and store[2331].build, "70959")
+eq("  stamped with the build", store[2331] and store[2331].build, select(2, GetBuildInfo()))
 eq("  and the time", store[2331] and store[2331].at, WoW.now)
 eq("one RecipeData has no reagents for takes the window's", store[2333] and flat(store[2333].reagents), "3356,1")
 eq("an unlearned recipe is not read", store[2332], nil)
