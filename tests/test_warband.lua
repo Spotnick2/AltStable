@@ -283,6 +283,49 @@ _, holders = T.CountItem(2318)
 eq("  a count with nothing in the bank never is", holders[1] and holders[1].bankStale, false)
 AltStableWarbandDB[GUID] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, bankStamp = WoW.now }
 
+-- Which of our own alts were never read (#423), by the section stamps: only
+-- they keep "nobody has it" from being said.
+do
+    local heldDB, heldWB = AltStableDB, AltStableWarbandDB
+    local function rec(g, extra)
+        local r = { guid = g, name = g, class = "MAGE" }
+        for k, v in pairs(extra or {}) do r[k] = v end
+        return r
+    end
+    AltStableDB = {
+        ["P-read"]    = rec("P-read", { scannedHere = true }),
+        ["P-none"]    = rec("P-none", { scannedHere = true }),
+        ["P-nobank"]  = rec("P-nobank", { provKind = "own-account" }),
+        ["P-bankonly"]= rec("P-bankonly", { scannedHere = true }),
+        ["P-friend"]  = rec("P-friend", { provKind = "third-party" }),
+        ["P-bt0"]     = rec("P-bt0", { scannedHere = true }),
+        ["P-kt0"]     = rec("P-kt0", { scannedHere = true }),
+    }
+    AltStableWarbandDB = {
+        ["P-read"]     = { bags = {}, bagsStamp = 100, bank = {}, bankStamp = 100, stamp = 100 },
+        ["P-nobank"]   = { bags = {}, bagsStamp = 100, stamp = 100 },
+        ["P-bankonly"] = { bank = {}, bankStamp = 100, stamp = 100 },
+    }
+    T.DeserializePlayer("P-bt0", "v1|s=200|bt=0|kt=200|b=|k=")
+    T.DeserializePlayer("P-kt0", "v1|s=200|bt=200|kt=0|b=|k=")
+    local _, _, unseen = T.CountItem(2318)
+    local set = {}
+    for _, g in ipairs(unseen or {}) do set[g] = true end
+    check("#423: an alt whose bags and bank were both read is not unseen", not set["P-read"])
+    check("  one with no Warband entry is", set["P-none"])
+    check("  our other account's, bank never visited, is", set["P-nobank"])
+    check("  a bank read first, bags never, is", set["P-bankonly"])
+    check("  a synced bt=0 (bags never read) is", set["P-bt0"])
+    check("  a synced kt=0 (bank never read) is", set["P-kt0"])
+    check("  a friend's is not ours to count", not set["P-friend"])
+    AltStableWarbandDB["P-bankonly"].bags, AltStableWarbandDB["P-bankonly"].bagsStamp = {}, 150
+    local _, _, after = T.CountItem(2318)
+    local still = false
+    for _, g in ipairs(after or {}) do if g == "P-bankonly" then still = true end end
+    check("  and once its bags are read, empty, it no longer is", not still)
+    AltStableDB, AltStableWarbandDB = heldDB, heldWB
+end
+
 AltStable.SetConfigValue("warbandItemTooltips", true)
 local lines = {}
 local tt = WoW.makeFrame()

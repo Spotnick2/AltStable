@@ -1006,8 +1006,14 @@ end
 -- guid and bankStale ride along for the Professions plugin's reagent counts
 -- (#268), which leaves hidden alts out, says when a bank count is old, and
 -- counts bags + bank only: an item in the mail can't be crafted with.
+--
+-- Third, `unseen` (#423): our own characters (scanned here, or our other
+-- account's) whose bags were never read or whose bank was never visited, so
+-- "nobody has it" can't be said for them. By the section stamps, not the
+-- maps: a synced bt=0 or kt=0 is an empty map dated 0, and the overall stamp
+-- dates the bags only beside a bags map, as the decoder reads it.
 local function CountItem(itemID)
-    local total, holders, now = 0, {}, time()
+    local total, holders, now, unseen = 0, {}, time(), {}
     local mailOn = MailOn()
     local incoming = mailOn and Incoming() or {}
     for guid, c in pairs(AltStableDB or {}) do
@@ -1021,6 +1027,11 @@ local function CountItem(itemID)
                 mail = ((wb and wb.mail and wb.mail[itemID]) or 0)
                      + ((incoming[guid] and incoming[guid][itemID]) or 0)
             end
+            if c.scannedHere or c.provKind == "own-account" then
+                local bagsSeen = wb and type(wb.bags) == "table" and (tonumber(wb.bagsStamp or wb.stamp) or 0) > 0
+                local bankSeen = wb and (tonumber(wb.bankStamp) or 0) > 0
+                if not (bagsSeen and bankSeen) then unseen[#unseen + 1] = guid end
+            end
             if bags + bank + mail > 0 then
                 total = total + bags + bank + mail
                 holders[#holders + 1] = {
@@ -1032,7 +1043,7 @@ local function CountItem(itemID)
             end
         end
     end
-    return total, holders
+    return total, holders, unseen
 end
 AT_WB.CountItem = CountItem
 
