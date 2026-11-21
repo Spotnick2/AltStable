@@ -1,4 +1,157 @@
-# Audit: what a sync receives and what a login rewrites
+# AltStable full-addon audit
+
+Reviewed on 2026-11-20 at commit `dd6b027f1aaa8af4fa66f32d8fd43e85e4f054db`. File and line references below identify the implementation at that commit. Findings describe that checkout, including code predating the module integrations.
+
+**Release recommendation.** Hold the release until login preserves intact plugin saves, a quick bank close preserves the last inventory movement, and out-of-order sync cannot replace newer character or bank data. A missing wishlist can be permanent. A wrong inventory count reaches both item tooltips and crafting advice. All 33 existing Lua test files passed on the reviewed checkout.
+
+**Verified 2026-11-21.** Claude traced every finding in the code. The plan was agreed with Codex in three rounds. All twelve findings hold, and finding 12 holds only in part. Each finding below names its issue (#418–#435) and adds a **Verified** note where the code differs from the audit's account. One more issue came from the in-game table: the TSV export is invisible while the game UI is hidden (#434). The other in-game checks get an issue only if one reproduces.
+
+The [historical issue #279 audit](#historical-audit-for-issue-279) follows this review. Its A1–A4 and B1 identifiers, mutation tests, and in-game procedure are still referenced from the scanner, Warband, tests, and probe.
+
+## Findings in fix order
+
+### 1. High · Login can delete intact recipe wishlists, talent snapshots, and quest history · #418
+
+**Trigger and impact.** Restore an older core `AltStable.lua`, or lose it while the separate plugin saves survive. Log in with Professions, Roster, and Loremaster enabled. Each deletes records whose GUID has no named core row. Core requests plugin loading before its delayed character scan and peer pull. An offline alt can be missing much longer. A later sync can restore only what another peer holds. Replaying the alt can reconstruct much of the game-derived data, but cannot reconstruct the player's recipe stars. This was established by tracing startup and the three deletion paths. [Core startup](../Core.lua#L3734) · [Professions deletion](../Plugins/Professions/AltStableProfessions.lua#L716) · [Professions bootstrap](../Plugins/Professions/AltStableProfessions.lua#L2367) · [Roster deletion](../Plugins/Roster/Talents.lua#L233) · [Loremaster deletion](../Plugins/Loremaster/Loremaster.lua#L426)
+
+**Fix and verification.** Follow Warband's recovery rule. Retain unattached records, omit them from display, and delete them on explicit forget, cleanup, or an applicable tombstone. Unattached data alone should not suppress a full peer backfill. Start with an older core fixture and intact plugin fixtures, then restore one GUID by sync. Its wishlist, talents, and completions should reappear. Also forget an alt while its plugin is disabled and check that re-enabling honors the tombstone. [Warband recovery rule](../Plugins/Warband/AltStableWarband.lua#L740)
+
+**Verified.** Whether a full pull repairs the loss depends on what survives. Any enabled plugin whose store ends up empty resets the shared watermarks: Professions, Talents and Warband, plus Loremaster, which checks only `chars`. An older core file usually leaves the stores non-empty, so no pull runs. A lost `AltStable.lua` also loses the whisper targets and watermarks. The prune is asserted by tests that must flip: `test_professions.lua:536`, `test_roster.lua:64` and `:5183`, `test_loremaster.lua:339`.
+
+### 2. High · Closing the bank quickly can double-count withdrawals or lose deposits · #419
+
+**Trigger and impact.** Withdraw 15 from a bank stack of 20 and close the bank within one second. Warband schedules the bank scan on the bag update. Closing invalidates the pending bank scan while the carried-bag scan can still complete. In the Lua reproduction the bank retained 20. Once the bags record 15, the tooltip and Professions can count 35. A deposit can undercount by the same mechanism. Switching characters or syncing propagates the inconsistent snapshot. [Bank update](../Plugins/Warband/AltStableWarband.lua#L536) · [Timer](../Plugins/Warband/AltStableWarband.lua#L248) · [Close](../Plugins/Warband/AltStableWarband.lua#L564) · [Crafting consumer](../Plugins/Professions/AltStableProfessions.lua#L948)
+
+**Fix and verification.** Capture the changed bank contents while the bank remains readable. Coalesce the aggregate redraw separately. Exercise both movement directions, immediately close, inspect the item on another alt, then sync to a peer. The combined quantity should stay 20. Repeat with a two-second pause to distinguish the timing failure from a container-ID error.
+
+**Verified.** Nobody has measured whether the bank can still be read inside the close handler on Forever, and the fix depends on it. `test_warband.lua:669` asserts that the stale-session scan is dropped.
+
+### 3. High · Out-of-order sync can roll back a character and its bank · #421 (core), #420 (bank)
+
+**Verified.** The 60-second grace is documented design (`Core.lua:1436`), and two tests cover it (`test_comm.lua:440`, `test_provenance.lua:211`). Its stated reason, a correction sent with the same stamp, only needs `>=` on the remote branch. The cache retry stamps `time()`, so keep an equal-stamp test. In Warband, a missing `kt=` falls back to the overall stamp (`AltStableWarband.lua:678`). Warband has no `independentStamp`, so test both fixes together through Core.
+
+| Store | Reproduced behavior | Fix and verification |
+|---|---|---|
+| Core character | A remotely held character accepts a snapshot up to 60 seconds older. Delivering stamp 1000 with 100 copper, then stamp 960 with 60 copper, left **stamp 960 and 60 copper**. Gear and other cleared-and-replaced fields follow the same merge. A locally scanned record correctly refused an older update. Identical replay preserves the values, but replay of an older snapshot after a newer one can reverse them. [Merge rule](../Core.lua#L1441) · [Bulk application](../Core.lua#L1558) · [Single-character application](../Core.lua#L2620) | Reject strictly older snapshots. Preserve the legitimate cache-completion case with equal-stamp enrichment or a new source revision on completion. Test newer → older → duplicate on both receive paths, including a slot whose item data finishes loading. |
+| Warband bank | The overall inventory stamp admits a blob even when its bank is older. A bank holding 20 at bank stamp 95 reverted to 3 at bank stamp 60 when the overall stamp rose from 100 to 101. The existing guard protects a bank stamp of zero only. This can occur when a second PC scans new bags while holding an older bank snapshot. [Admission](../Plugins/Warband/AltStableWarband.lua#L669) · [Zero-stamp guard](../Plugins/Warband/AltStableWarband.lua#L685) · [Replacement](../Plugins/Warband/AltStableWarband.lua#L721) | Compare the bank section's own stamp before replacing its map. Test newer bags accompanied by older, never-scanned, and newer-confirmed-empty banks. Only the last case should clear a known bank. |
+
+### 4. Medium · Routine sync can skip an offline alt's wishlist indefinitely · #422
+
+**Trigger and impact.** Star or unstar a recipe for an offline alt whose core record predates the peer watermark. Professions advances its own stamp and correctly preserves the alt's Last Online time. Core selects records by Last Online before consulting the plugin serializer. The changed GUID was absent from the reproduced delta. A forced full pull or inclusion as a camp member can mask the failure. With all-account sending enabled, a newly received third-party record can also miss a downstream delta if its original scan predates that downstream account's watermark. [Wishlist edit](../Plugins/Professions/AltStableProfessions.lua#L318) · [Record selection](../Core.lua#L1337) · [Plugin serialization](../Core.lua#L990)
+
+**Fix and verification.** Track when a record changed for transmission separately from when the character was online or scanned. Advance that revision for local plugin edits and genuinely different admitted data. Star an offline non-camp alt, pull twice, then replay identical data. The first pull should carry the change, Last Online should stay accurate, and the replay should not manufacture another change.
+
+**Verified.** The delay is acknowledged in a comment (`AltStableProfessions.lua:315`). `independentStamp` only acts on receive. "Indefinitely" overstates it: camp membership or a full pull carries the change. A new cursor on the wire would have to be additive, with a fallback for older peers.
+
+### 5. Medium · Professions reports “nobody has it” before inventory has been scanned · #423
+
+**Trigger and impact.** With a known crafter and an empty Warband store, the reproduced recipe tooltip showed three red zeroes and “nobody has it.” Warband omits characters without positive holdings. The caller receives no coverage information to distinguish an unvisited bank or unscanned bags from a confirmed empty scan. The disabled-after-reload case correctly says counts are unavailable. “Nobody has it” is also misleading when the crafter holds one of the two required items. [Holder lookup](../Plugins/Warband/AltStableWarband.lua#L885) · [Professions consumer](../Plugins/Professions/AltStableProfessions.lua#L940) · [Tooltip wording](../Plugins/Professions/AltStableProfessions.lua#L1112)
+
+**Fix and verification.** Carry coverage alongside the holder list, or say “none recorded” when a relevant source lacks a scan. Keep mailed items out of immediately craftable materials. Compare disabled Warband, an unvisited bank, a confirmed empty bank, and a partial stack.
+
+**Verified.** Mail is already left out of craftable materials (`AltStableProfessions.lua:946`), so that part needs no change.
+
+### 6. Medium · Mail expiry alerts stop after the first of several deadlines · #424
+
+**Trigger and impact.** Scan two valuable mails due on days one and four. Leave that mailbox alone and log into another character on day two. Core stores one count and the earliest deadline. Once that date passes, it drops the character from the alert despite the second mail expiring in two days. The data loss follows from a complete inbox read. A partially loaded inbox further limits what the summary can say. [Summary write](../Core.lua#L3076) · [Alert filter](../Core.lua#L3112)
+
+**Fix and verification.** Keep enough deadlines to select the next outstanding expiry, or warn that a mailbox with additional recorded mail needs another visit. Advance a fixture through both deadlines without rescanning. Also test a mailbox where the server reports more messages than the client has loaded.
+
+### 7. Medium · Rested XP, level, skills, and standing can remain at obsolete values · #425 (rested, XP %), #426 (level, skills, standing)
+
+**Verified, and wider than described.** Below the cap, when the player has no rested bonus, a full scan also never updates `xpPercent` or `xpMax` (`Scanner.lua:998`). The XP event never writes `xpPercent`, even while rested.
+
+**Rested XP.** Forever returns ordinary `nil` when the player has no rested bonus. The scanner, XP event handler, and renderer treat this like a withheld secret. I reproduced a no-bonus XP event leaving a prior 60% bonus and its old timestamp intact. The renderer and Companion can extrapolate further from that obsolete reading. Check the raw value for secrecy before interpreting an ordinary no-bonus result as zero. Verify plain nil, a secret, and a positive number separately. [Client measurement](forever-api-notes.md#L1841) · [Scanner](../Scanner.lua#L994) · [XP event](../Core.lua#L3965) · [Renderer](../RowRenderer.lua#L70) · Companion checkout, `src/AltStableCompanion.Core/SheetExport.cs:570`
+
+**Character progress.** The XP event updates rested fields but leaves `xpPercent` and `level` at their last full-scan values. A skill-up can update the Professions plugin's own rank while the core Skills grid and TSV keep the old rank. Reputation gains also wait for a full scan. A player can level, train, or earn standing, then switch characters without an equipment change or pet summon to trigger a rescan. Update the relevant fields on their own events and debounce skill and reputation reads. Verify level, skill, and standing changes without a gear rescan, then inspect the alt locally and on a peer. [Scanner level](../Scanner.lua#L921) · [Skills and reputation scans](../Scanner.lua#L1112) · [XP event](../Core.lua#L3958) · [Level cell](../RowRenderer.lua#L1024) · [Professions event](../Plugins/Professions/AltStableProfessions.lua#L2393)
+
+### 8. Medium · Camp sync can delete camps or leave accounts with different settings · #427 (cap), #428 (ties)
+
+**Verified.** Older receivers truncate too, so the sender must also hold back an oversized snapshot. Equal stamps also block the campless list order (`Config.lua:1251`).
+
+**Camp loss.** Local creation accepts a 51st camp. The receiver stops parsing at 50 and adopts the truncated list. I reproduced 51 on account A, sync to B, a rename of the first camp on B, and sync back to A. Both accounts ended with 50. Reject an over-limit snapshot atomically, align local creation with the supported wire limit, and preserve existing over-limit stores. Verify that round trip before changing the limit. [Creation](../Config.lua#L955) · [Truncation](../Config.lua#L1195) · [Adoption](../Config.lua#L1238)
+
+**Equal revisions.** Different customized pre-upgrade camps each synthesize stamp 1. Two accounts holding “North” and “South” rejected each other's snapshot in the reproduction. Legacy customized preference groups follow the same rule, and simultaneous edits can also tie. Add a deterministic tie-breaker for equal revisions with different contents. Exchange both ways twice and verify convergence and idempotence. [Camp stamp](../Config.lua#L1141) · [Camp comparison](../Config.lua#L1227) · [Preference stamp](../Config.lua#L1398) · [Preference comparison](../Config.lua#L1476)
+
+### 9. Medium · Loremaster counts quests the character cannot reach · #429
+
+**Trigger and impact.** The eligibility check follows prerequisite restrictions only one level back. Using the shipped data, a Human mage fails eligibility for *The Missing Scholar* (92850) because its predecessor (92849) is Skyborne-only. Yet its successor *Fillion's Mission* (99260) is counted as eligible. A player can chase an impossible completion and never close the gap in the zone total. [Eligibility check](../Plugins/Loremaster/Loremaster.lua#L134) · [Progress count](../Plugins/Loremaster/Loremaster.lua#L198) · [Predecessor data](../Plugins/Loremaster/QuestData.lua#L3874) · [Successor data](../Plugins/Loremaster/QuestData.lua#L5070)
+
+**Fix and verification.** Evaluate attainability through the chain, with memoization, cycle protection, and the existing treatment of completions, alternatives, and unknown prerequisites. Test the shipped IDs against both Human and eligible Skyborne profiles.
+
+### 10. Medium · Legacy misses partial exploration while its tab is closed · #430
+
+**Trigger and impact.** Discover a new area without earning an achievement, then switch characters without opening Legacy. The client fixture reported six discovered areas while the stored count stayed at five after the criteria event and queued timers. Achievement completion and tab activation reread exploration. Neither occurs in this sequence, and logout does not capture it. [Exploration read](../Plugins/Legacy/AltStableLegacy.lua#L216) · [Visibility gate](../Plugins/Legacy/AltStableLegacy.lua#L2151) · [Event routing](../Plugins/Legacy/AltStableLegacy.lua#L2242)
+
+**Fix and verification.** Save a debounced exploration read independently of repainting the achievement panel. Deliver a criteria change with the sheet closed, switch characters, and check the previous alt's count.
+
+### 11. Lower severity · Three displays give incorrect answers from usable data · #431 (Raids), #432 (bank), #433 (TSV)
+
+**Verified.** The Raids footer also leaves out characters beyond `MAX_COLS` and "Other" rows beyond `MAX_OTHER_ROWS`. For the bank label, the simplest fix is the mail precedent: the visit's first complete read refreshes `bankStamp` once.
+
+| Problem | Cause, fix, and verification |
+|---|---|
+| **Collapsing a Raids group makes active saves disappear from the footer.** | With one active Barrow Deeps save, folding its group changed the footer from 1 active save and 1/8 bosses to 0 active saves and no bosses. The data was unchanged. Aggregate from the lockout lookup before filtering rows for display. Verify totals across fold and unfold. [Group filter](../Plugins/Instances/AltStableInstances.lua#L431) · [Accumulator](../Plugins/Instances/AltStableInstances.lua#L920) · [Footer](../Plugins/Instances/AltStableInstances.lua#L996) |
+| **A bank can still be labeled over a week old immediately after a visit.** | Reading the same map returns before updating the stamp used for freshness. The stale flag remained after a successful unchanged scan nine days later. Record verification once per visit without churning the stamp on every cosmetic bag event. [Scan](../Plugins/Warband/AltStableWarband.lua#L194) · [Tooltip](../Core.lua#L5202) |
+| **TSV assigns Alliance to an old Skyborne record with no faction.** | An unrecognized race defaults to Alliance. I reproduced the exported A for Skyborne, a race on both sides. Leave ambiguous legacy factions blank and retain the fallback for unambiguous races. Test missing faction and both explicit factions. [TSV fallback](../Export.lua#L87) · [Scanner faction contract](../Scanner.lua#L865) |
+
+### 12. Performance · A single sync can cause many full panel rebuilds · #435
+
+**Verified in part.** The cost is bounded. An unchanged record returns early (`AltStableWarband.lua:710`), so Warband rebuilds once per changed inventory. Roster and Raids queue once per `RefreshSheet`, which runs after the batch. Warband and Raids check `IsShown()`, not `IsVisible()`. Roster only checks that its panel exists.
+
+**Trigger and impact.** While Warband is active, each changed character received causes a synchronous inventory rebuild across the roster. Core refreshes again after the batch. Roster and Raids queue a callback per refresh while selected. Closing the sheet leaves that selection in place. A child panel can remain individually shown under its hidden parent, so money, bag, and sync events can still schedule invisible layout work. Source inspection establishes the repeated work. Its frame-time cost needs a live roster. [Warband receiver](../Plugins/Warband/AltStableWarband.lua#L727) · [Inventory rebuild](../Plugins/Warband/AltStableWarband.lua#L1937) · [Core batch refresh](../Core.lua#L1580) · [Sheet close](../SheetUI.lua#L2491) · [Roster hook](../Plugins/Roster/AltStableRoster.lua#L3047) · [Raids hook](../Plugins/Instances/AltStableInstances.lua#L1162)
+
+**Fix and verification.** Allow one pending redraw per visible panel per frame. Mark hidden panels dirty and repaint once on show. Count redraws during a 40-character pull with the panel open, closed, and reopened. Legacy already uses a visibility-aware scheduler. [Legacy scheduler](../Plugins/Legacy/AltStableLegacy.lua#L2144)
+
+## Shipping inventory and validation
+
+**Client.** World of Warcraft: Forever 1.60.1, interface 16001, Lua 5.1, with Vanilla content on the Mainline UI codebase. The checkout declares measured build **71037**. Its matching reference is `C:\Projects\WoW\References\Forever\api\forever-api-1.60.1.71037.md`. The reviewed XP, level, skill, reputation, bank, and mailbox event declarations were checked there. The pinned WowTestKit fixture describes build **70959**. Runtime measurements, including the ordinary nil result for no rested XP, are recorded separately. [Core manifest](../AltStable.toc) · [Build constant](../Config.lua#L1803) · [Kit pin](../tests/kit.pin) · [Measured notes](forever-api-notes.md)
+
+**Packaging and module lifecycle.** Seven top-level addon folders ship. The six plugins each depend on AltStable and declare `LoadOnDemand`. Core requests enabled plugins at login so they can collect data before the player opens their windows. Enabling a plugin in Options loads it during the session. Disabling a loaded plugin takes effect on reload. A successful enable in Options resets peer watermarks for backfill. The development probe is excluded. [Package map](../.pkgmeta) · [Package assertions](../.github/workflows/package-check.yml#L165) · [Registry](../Core.lua#L4125) · [Enable and backfill](../Core.lua#L4187)
+
+**Executed during the review.** `pwsh tests/run.ps1` passed, including the Lua 5.1 syntax check of 36 files, all 33 Lua test files, 16 cutout-manifest checks, 45 Python cutout checks, and 130 recipe-data checks. The suite also passed with temporary exports of the exact package tags, LibGlass r11, LibShowcase r10, LibAccountSync r8, and LibMailbox r1. A separate in-memory first-open exercise loaded all six plugins together and opened Summary, Gear, Skills, Reputations, Warband, Raids, Roster, Professions, Legacy, Loremaster, and Options. All 11 calls completed without a Lua error. Targeted Lua reproductions are identified in the findings. There was no live WoW session or release-zip build in this review. [Test runner](../tests/run.ps1)
+
+### Cross-module contracts
+
+**From a bank or mailbox visit to another alt's tooltip.** Warband keeps bags, bank, inbox, and outgoing-mail state separately. A bank stamp of zero means never scanned. A positive stamp can accompany a confirmed empty map. Warband accepts resolved inbox reads, keeps the count of withheld mail separately, and compares outgoing attachments with the recipient's last mailbox read. Core's expiry summary requires readable headers and clears its summary after recording no valuable mail. Professions counts immediately craftable materials from bags and bank. Findings 2, 3, 5, and 6 identify where the timing, merge, or consumer loses those distinctions. [Inbox read](../Plugins/Warband/AltStableWarband.lua#L336) · [Outgoing mail](../Plugins/Warband/AltStableWarband.lua#L371) · [Core mail summary](../Core.lua#L3065)
+
+**Exports and external consumers.** GlassPanel uses public character copies and totals, including unknown balances. AltStableCompanion reads SavedVariables, selects character records by GUID and `lastUpdate`, and pairs portrait shots per store. Companion's spreadsheet exporter and the addon's in-game TSV are separate implementations. AltStableSync Link creates its own LibAccountSync instance and store. No direct use of AltStable's roster API was found in the accessible AltStableSync source. The sibling-checkout references are `GlassPanel/Plugins/AltStable/AltStable.lua:128`, `AltStableCompanion/src/AltStableCompanion.Core/SheetExport.cs:309`, `AltStableCompanion/src/AltStableCompanion.Core/CapturePairing.cs:48`, and `AltStableSync/Plugins/Link/Link.lua`. [Public character contract](../PublicAPI.lua#L77) · [Public API documentation](PUBLIC-API.md) · [Portrait contract](PORTRAIT-CONTRACT.md)
+
+## Needs in-game verification
+
+| Test | Observation needed |
+|---|---|
+| On build 71037, leave a known attachment in a mailbox, close it, switch characters, and hover its item. Repeat after taking the attachment immediately before close. | Confirm that attachment rows remain readable during the interaction-hide handler and a delayed callback cannot erase or duplicate them. The event declaration establishes neither property. [Close handler](../Plugins/Warband/AltStableWarband.lua#L439) |
+| Use copies of core and plugin saves from different dates. Start and fully exit the client, relaunch, and inspect an offline alt before playing it. | Use a wishlist and a quest snapshot as witnesses. This distinguishes data restored from disk from fields rebuilt by the login scan. |
+| Enable game-UI hiding, open the sheet, and invoke `/alts export` from a binding or macro. Start a portrait and interrupt it with combat. Complete a separate capture through Companion. | Check TSV visibility and focus, camera and UI restoration, screenshot format, and correct pairing of the two completed images. The export frame is parented to UIParent and raises itself; it is never lifted above the hidden UI (#434). [Export frame](../Export.lua#L171) · [Showcase adapter](../SheetUI.lua#L329) · [Capture recovery](../Capture.lua#L871) |
+| Compare a low-level Hardcore alt and high-level Normal alt of the same class against Blizzard's Hardcore milestone. Cold-open a Loremaster map after login and revisit after map data loads. | Determine the actual Hardcore credit pool. Check whether an early missing tile or parent stays missing until reload. [Legacy measurement gap](forever-api-notes.md#L2418) · [Map cache](../Plugins/Loremaster/AltStableLoremaster.lua#L624) |
+
+## Coverage checklist
+
+| Shipped module or subsystem | Reviewed paths and outstanding limits |
+|---|---|
+| Packaging, TOCs, XML, bindings | Seven folders, plugin dependencies, four external XML includes, vendored LibStub, LibDeflate and ChatThrottleLib, optional GlassUI, toggle binding, and package exclusions. Packaging-input tests passed. The published zip was outside this checkout review. |
+| Compat, Scanner, Reputations | API aliases, secrets, skill structs and collapsed headers, gear cache retries, bag and bank space, rulesets, reputation storage and scan triggers. Findings 7 and 11. |
+| Core, Config | Login order, defaults and migrations, ownership, forget guards, consent, whisper and own-account routes, watermarks, chunk reassembly, duplicate delivery, plugin dispatch, camps, settings, raid and mail collection. Findings 1, 3, 4, 6, 7, and 8. |
+| Glass, Theme, Skin, Prompt, Appearance | Library negotiation, optional suite integration, tooltip ownership, prompt lifecycle, theme/scale callbacks, barber read/apply/storage. Visual fidelity, protected interactions, and barber event order remain client checks. |
+| Columns, RowRenderer, CharacterMenu, SheetUI | Summary, Gear, Skills, Reputations, six Options pages, registration, sorting, grouping, layout, first build, character actions, hidden windows and refresh hooks. All sidebar sections opened in the combined fixture. |
+| Toasts, GoldTooltip | Login cooldown scan and deduplication, money-frame hooks, hidden characters, unknown balances and shared total calculation. Actual Blizzard-frame hover remains a client check. |
+| Capture, AutoCapture | Paired shots, metadata, gear-change offers, countdown, combat/death cancellation, screenshot-format restoration and Companion handoff. Automated suites passed. Real screenshots require the client. |
+| PublicAPI, Export | Copies, provenance, gear state, callbacks, totals, TSV ordering and fallback fields. Compared GlassPanel, Companion, and AltStableSync integration paths. Findings 3, 7, and 11 affect consumers. |
+| Warband · WarbandTabs, AltStableWarband | Tab defaults and filters, bags, bank, mailbox, outbox, section timestamps, item tooltips, sync and redraws. Findings 2, 3, 5, 11, and 12. |
+| Raids · AltStableInstances | Core lockout scan through expiry, boss masks, group collapse, footer totals and hidden refresh. Findings 11 and 12. |
+| Roster · AltStableRoster, CampList, Talents | First activation, camp membership and order, portraits and fallback cards, gear audit, talent scans and snapshots, cleanup and refresh. Findings 1, 8, and 12. |
+| Professions · RecipeData, AltStableProfessions | Catalogue, trade-window reads, ownership and loss confirmation, cooldowns, independent snapshot stamps, wishlists, Warband reagent planning and disable/re-enable behavior. Findings 1, 2, 4, 5, and 7. |
+| Legacy · LegacyData, AltStableLegacy | Achievement and exploration collection, per-alt storage, criteria events, first activation, footer and hidden-panel behavior. Finding 10. Hardcore credit needs a live comparison. |
+| Loremaster · QuestData, Loremaster, AltStableLoremaster | Generated quest data, eligibility and prerequisite links, completion snapshots, sync, deletion, zone totals, map cache and first activation. Findings 1 and 9. In-game map streaming remains unverified. |
+
+**Recommended work order.** Preserve plugin saves first, then repair bank-close capture and both stale-snapshot comparisons. Require those fixes for release. Next address delta selection, incomplete reagent counts, and mail expiry alerts. Follow with progress updates, camp convergence, and quest eligibility. The Raids footer, freshness label, TSV faction fallback, and redraw scheduling can be fixed independently.
+
+---
+
+## Historical audit for issue 279
+
+The following is the original audit of what a sync receives and what a login rewrites. Its build numbers, branch, line references, test results and pending live checks describe the earlier checkout.
 
 Issue #279, branch `audit/receive-migrations`, on `main` after v0.17.0's notes (7f9765f). Opus's
 cross-repo audit table, row #3: AltStable has never been audited, and it sits on the receiving side
