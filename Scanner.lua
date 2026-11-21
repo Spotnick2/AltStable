@@ -843,7 +843,11 @@ function AltStable.ScanCharacter()
     -- is invisible to the sheet and an orphan to the plugins' stores
     -- (docs/AUDIT.md, A3). Same rule as the faction below.
     char.name = name or char.name
-    char.realm = realm
+    -- So does a realm: GetRealmName() has returned "" for the logged-in
+    -- character (Karuzo, 2026-11-20 19:16), and storing it put the character
+    -- under the sheet's "Unknown" ruleset - and its tooltips' matching - until
+    -- the next good scan, and sent it to every peer.
+    if type(realm) == "string" and realm:find("%S") then char.realm = realm end
 
     -- Account number: set once with /alts account 1 (or 2, etc.)
     -- Stored globally so all chars on this client share the same value.

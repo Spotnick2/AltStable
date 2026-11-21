@@ -417,6 +417,27 @@ do
 end
 
 ------------------------------------------------------------
+-- A realm the client could not give keeps the stored one (live, 2026-11-20:
+-- GetRealmName() returned "" and the character fell under "Unknown").
+------------------------------------------------------------
+do
+    WoW.reset()
+    local me = UnitGUID("player")
+    AltStableDB = { [me] = { guid = me, realm = "CAMWOW US2 Realm 7 PvE" } }
+    local realRealm = GetRealmName
+    GetRealmName = function() return "" end
+    pcall(AltStable.ScanCharacter)
+    eq("an empty realm keeps the stored one", AltStableDB[me].realm, "CAMWOW US2 Realm 7 PvE")
+    GetRealmName = function() return nil end
+    pcall(AltStable.ScanCharacter)
+    eq("  so does none at all", AltStableDB[me].realm, "CAMWOW US2 Realm 7 PvE")
+    GetRealmName = realRealm
+    pcall(AltStable.ScanCharacter)
+    eq("a real one is stored", AltStableDB[me].realm, WoW.player.realm)
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- The scan stores the WHOLE name, surname included (#56)
 --
 -- Live symptom on 1.60.1.70009: the sheet listed "Kaleid" where every other
