@@ -40,8 +40,8 @@ local SKILL_BY_ID = {
     [356] = "Fishing",   [185] = "Cooking",        [129] = "First Aid",
     [762] = "Riding",
 }
-local KNOWN_SKILL = {}
-for _, name in pairs(SKILL_BY_ID) do KNOWN_SKILL[name] = true end
+local KNOWN_SKILL, ID_BY_SKILL = {}, {}
+for id, name in pairs(SKILL_BY_ID) do KNOWN_SKILL[name] = true; ID_BY_SKILL[name] = id end
 
 -- All trackable professions for flat field reset
 local ALL_PROFESSIONS = {
@@ -474,6 +474,69 @@ local PROF_SLOT_FIELDS = { "prof1", "prof1Skill", "prof1Max", "prof2", "prof2Ski
 -- French list there. A wrong ID only means no restore: the scan as before.
 local PROFESSIONS_HEADER, SECONDARY_HEADER = 11, 9
 
+-- A skill's rank by its ID, for one hidden under a collapsed header (#426):
+-- C_SkillInfo.GetSkillLineInfoByID is declared in 71037 but not measured on
+-- Forever, so an answer that isn't a plain positive rank is no answer, and
+-- the saved value stays as before.
+local function RankByID(name)
+    local id = ID_BY_SKILL[name]
+    local f = id and type(C_SkillInfo) == "table" and rawget(C_SkillInfo, "GetSkillLineInfoByID")
+    if type(f) ~= "function" then return nil end
+    local ok, info = pcall(f, id)
+    if not ok or type(info) ~= "table" then return nil end
+    local rank, max = API.PlainNumber(info.rank), API.PlainNumber(info.maxRank)
+    if rank and rank > 0 then return rank, max end
+end
+
+-- The canonical name of one skill line, as ScanSkills reads it: by ID, else the
+-- English name; nil for a header or anything else.
+local function SkillName(info)
+    if not info or info.isHeader then return nil end
+    return SKILL_BY_ID[info.skillID] or (KNOWN_SKILL[info.name] and info.name) or nil
+end
+
+-- A recorded skill's rank, written in its field and in the slot naming it.
+local function SetRank(char, name, rank, max)
+    local f = SECONDARY_FIELDS[name]
+    if f then
+        char[f[1]] = rank
+        if max then char[f[2]] = max end
+        return
+    end
+    char["prof_" .. name] = rank
+    if max then char["profmax_" .. name] = max end
+    for _, s in ipairs({ "prof1", "prof2" }) do
+        if char[s] == name then
+            char[s .. "Skill"] = rank
+            if max then char[s .. "Max"] = max end
+        end
+    end
+end
+local function Recorded(char, name)
+    local f = SECONDARY_FIELDS[name]
+    if f then return (tonumber(char[f[1]]) or 0) > 0 end
+    return (tonumber(char["prof_" .. name]) or 0) > 0
+end
+
+-- The ranks only, for the skills already recorded, by name (#426): what the
+-- logout reads when a skill change is still pending. A list torn down at
+-- logout may be partial, so this never adds a skill, removes one, or moves
+-- one between the prof1/prof2 slots: it can only move known ranks.
+function AltStable.UpdateSkillRanks(char)
+    local n = GetNumSkillLines()
+    if not n or n == 0 then return end
+    local seen = {}
+    for i = 1, n do
+        local info = GetSkillLineInfo(i)
+        local name = SkillName(info)
+        if name and not seen[name] then
+            seen[name] = true
+            local rank, max = API.PlainNumber(info.rank), API.PlainNumber(info.maxRank)
+            if rank and Recorded(char, name) then SetRank(char, name, rank, max) end
+        end
+    end
+end
+
 -- Skill lines: secondary skills, riding, and the primary professions.
 --
 -- Split out of ScanCharacter so it can be driven directly in tests. All of
@@ -605,6 +668,8 @@ function AltStable.ScanSkills(char)
         end
     end
 
+    -- A hidden skill that was recorded is then asked for by its ID (#426), so
+    -- a skill-up under a collapsed header still lands; no answer keeps it.
     if hidden[PROFESSIONS_HEADER] then
         for _, name in ipairs(ALL_PROFESSIONS) do
             if not seen[name] then
@@ -617,10 +682,22 @@ function AltStable.ScanSkills(char)
                 if old[k] ~= nil then char[k] = old[k] end
             end
         end
+        for _, name in ipairs(ALL_PROFESSIONS) do
+            if not seen[name] and Recorded(char, name) then
+                local rank, max = RankByID(name)
+                if rank then SetRank(char, name, rank, max) end
+            end
+        end
     end
     if hidden[SECONDARY_HEADER] then
         for name, f in pairs(SECONDARY_FIELDS) do
-            if not seen[name] then char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0 end
+            if not seen[name] then
+                char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0
+                if Recorded(char, name) then
+                    local rank, max = RankByID(name)
+                    if rank then SetRank(char, name, rank, max) end
+                end
+            end
         end
     end
 end
