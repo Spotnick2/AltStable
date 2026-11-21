@@ -4357,6 +4357,25 @@ do
               has(t, "Jaina Proudmoore|21") and has(t, "+39 on Horde characters") and has(t, "Total:|60")
               and not has(t, "Sylvanas"), t)
 
+        -- Sort characters: by name unless chosen (Cairne 19 before Sylvanas 20),
+        -- by count puts whoever holds the most first.
+        pick(2)
+        local heldSort = AltStableConfig.tooltipSort
+        AltStableConfig.tooltipSort = nil
+        F.refresh()
+        t = F.tipText()
+        eq("two sort choices", #F.sortRadios, 2)
+        check("  by name unless chosen", F.sortRadios[1]:GetChecked() and not F.sortRadios[2]:GetChecked())
+        check("    Cairne before Sylvanas", t:find("Cairne", 1, true) < t:find("Sylvanas", 1, true), t)
+        F.sortRadios[2]:GetScript("OnClick")(F.sortRadios[2])
+        eq("  By count saves \"count\"", AltStableConfig.tooltipSort, "count")
+        t = F.tipText()
+        check("    Sylvanas' 20 before Cairne's 19", t:find("Sylvanas", 1, true) < t:find("Cairne", 1, true), t)
+        F.sortRadios[1]:GetScript("OnClick")(F.sortRadios[1])
+        eq("  By name saves \"name\"", AltStableConfig.tooltipSort, "name")
+        AltStableConfig.tooltipSort = heldSort
+        F.refresh()
+
         -- The main box off: the ordinary tooltip only, so the player sees what
         -- AltStable adds; the layout and the boxes grey out.
         F.main:SetChecked(false); F.main:GetScript("OnClick")(F.main)

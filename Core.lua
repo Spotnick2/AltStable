@@ -5070,6 +5070,11 @@ function AltStable.TooltipScope()
     return AltStable.TOOLTIP_SCOPES[v] and v or "both"
 end
 
+-- How each group's characters are ordered: "name" (default) or "count".
+function AltStable.TooltipSort()
+    return (AltStableConfig and AltStableConfig.tooltipSort == "count") and "count" or "name"
+end
+
 local MIDDOT = " \194\183 "
 
 -- Splits CountItem's holders (Warband: { guid, name, class, realm, bags, bank,
@@ -5206,7 +5211,14 @@ end
 local function HolderLines(tt, holders, all, why, notes, now)
     local list = {}
     for _, h in ipairs(holders) do list[#list + 1] = h end
-    table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
+    -- By name unless the player chose by count (`tooltipSort`): then whoever
+    -- holds the most first, ties by name.
+    local byCount = AltStable.TooltipSort() == "count"
+    local function n(h) return (h.bags or 0) + (h.bank or 0) + (h.mail or 0) end
+    table.sort(list, function(a, b)
+        if byCount and n(a) ~= n(b) then return n(a) > n(b) end
+        return (a.name or "") < (b.name or "")
+    end)
     for _, h in ipairs(list) do
         NoteFreshness(h, notes, now)
         local cc = (h.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[h.class]) or { r = .9, g = .9, b = .9 }
