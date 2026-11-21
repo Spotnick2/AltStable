@@ -776,7 +776,7 @@ local function Paint(r, it, shownCamp)
             if r.faction.SetDesaturated then r.faction:SetDesaturated(true) end
             r.faction:Show()
         end
-        local badge = L.RulesetBadge(c.realm)
+        local badge = L.RulesetBadge(c)
         r.ruleset:SetText(badge)
         r.ruleset:SetShown(badge ~= "")
     else

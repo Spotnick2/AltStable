@@ -118,6 +118,13 @@ AltStableDB[ME].realm = nil
 for _, c in ipairs(AltStable.GetCharacters()) do if c.guid == ME then pvp = c end end
 eq("  no realm: ruleset nil, never \"Unknown\"", pvp.ruleset, nil)
 eq("    and no name", pvp.rulesetName, nil)
+-- #412: a character first seen after the realm was hidden has its ruleset stored.
+AltStableDB[ME].realm, AltStableDB[ME].ruleset = "", "Hardcore"
+for _, c in ipairs(AltStable.GetCharacters()) do if c.guid == ME then pvp = c end end
+eq("  a stored ruleset with the realm hidden", pvp.ruleset, "Hardcore")
+eq("  and the blank realm handed out as nil, never \"\"", pvp.realm, nil)
+eq("    named Hardcore", pvp.rulesetName, "Hardcore")
+AltStableDB[ME].ruleset = nil
 AltStableDB[ME].realm = "Classic Beta PvE"
 
 eq("the logged-in character is marked current", me.current, true)

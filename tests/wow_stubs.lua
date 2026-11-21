@@ -2014,6 +2014,26 @@ for _, n in ipairs({ "ContainerFrame1", "ContainerFrameCombinedBags" }) do allow
 -- The mail getters (#312): nil unless a test fills an inbox or a send draft,
 -- like GetInboxNumItems and GetInboxHeaderInfo above.
 for _, n in ipairs({ "GetInboxItem", "GetSendMailItem" }) do allowNil[n] = true end
+
+-- The game's rules (#412): C_GameRules.IsGameRuleActive is in the dump (70959,
+-- 71037). Enum.GameRule is NOT (the dump lists no GameRule enumeration): its
+-- ruleset names are from WoWUIDev (2026-11-20), their values MODELLED, NOT
+-- MEASURED. The rules follow the stub player's realm name (a PvP realm has the
+-- PvP rule on, as the server would), unless a test sets one:
+-- WoW.gameRules[Enum.GameRule.X] = true / false.
+WoW.gameRules = {}
+Enum.GameRule = { HardcoreRuleset = 101, RPRuleset = 102, PvPRuleset = 103 }
+C_GameRules = { IsGameRuleActive = function(rule)
+    if WoW.gameRules[rule] ~= nil then return WoW.gameRules[rule] == true end
+    local words = " " .. tostring(WoW.player.realm or ""):lower():gsub("[^%w]", " ") .. " "
+    if rule == Enum.GameRule.HardcoreRuleset then return words:find(" hardcore ", 1, true) ~= nil end
+    if rule == Enum.GameRule.RPRuleset then
+        return words:find(" rp ", 1, true) ~= nil or words:find(" rppvp ", 1, true) ~= nil
+    end
+    if rule == Enum.GameRule.PvPRuleset then return words:find("pvp", 1, true) ~= nil end
+    return false
+end }
+
 Kit.strict(allowNil)
 
 return WoW

@@ -5046,7 +5046,7 @@ function AltStable.Barriers(fromGuid, toGuid)
     local otherRuleset = false
     local rulesetOf = AltStable.RulesetOf
     if rulesetOf then
-        local ra, rb = rulesetOf(a.realm), rulesetOf(b.realm)
+        local ra, rb = rulesetOf(a), rulesetOf(b)
         otherRuleset = (ra ~= "Unknown" and rb ~= "Unknown" and ra ~= rb) and true or false
     end
     return otherFaction, otherRuleset
@@ -5094,7 +5094,7 @@ function AltStable.SplitTooltipHolders(holders, playerGuid)
             local c = AltStableDB and AltStableDB[h.guid] or {}
             local tags = {}
             if otherFaction then tags[#tags + 1] = c.faction end
-            if otherRuleset and AltStable.RulesetOf then tags[#tags + 1] = AltStable.RulesetOf(c.realm) end
+            if otherRuleset and AltStable.RulesetOf then tags[#tags + 1] = AltStable.RulesetOf(c) end
             why[h] = table.concat(tags, ", ")
         else
             side[#side + 1] = h

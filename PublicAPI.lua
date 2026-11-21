@@ -81,6 +81,9 @@ function AltStable.GetCharacters()
         if type(char) == "table" and char.name then
             local copy = {}
             for _, k in ipairs(FIELDS) do copy[k] = char[k] end
+            -- A blank realm is no realm (#412): a scan just after the 2026-11-20
+            -- hotfix stored "" (#408), and peers may have synced it.
+            if type(copy.realm) ~= "string" or not copy.realm:find("%S") then copy.realm = nil end
             copy.level = PlainNumber(copy.level)
             copy.money = PlainNumber(copy.money)
             copy.lastUpdate = PlainNumber(copy.lastUpdate)
@@ -94,10 +97,10 @@ function AltStable.GetCharacters()
             copy.provenance, copy.provenanceAt, copy.provenanceVia = ProvenanceOf(char)
             -- The realm's ruleset (#405): RulesetOf's key and the name a player
             -- says, both nil when the realm can't be read (not "Unknown").
-            local ruleset = AltStable.RulesetOf and AltStable.RulesetOf(char.realm)
+            local ruleset = AltStable.RulesetOf and AltStable.RulesetOf(char)
             if ruleset and ruleset ~= "Unknown" then
                 copy.ruleset = ruleset
-                copy.rulesetName = AltStable.RulesetName and AltStable.RulesetName(char.realm) or nil
+                copy.rulesetName = AltStable.RulesetName and AltStable.RulesetName(char) or nil
             end
             out[#out + 1] = copy
         end

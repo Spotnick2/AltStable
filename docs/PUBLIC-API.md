@@ -58,7 +58,7 @@ you like, it is not AltStable's data.
 |---|---|---|
 | `guid` | string | The character's GUID - its identity. Names are not unique. |
 | `name` | string | The best name known: normally the full name with its surname (`"Karuzo Elegia"`); a record from an older peer can lack the surname. |
-| `realm` | string or nil | nil only on a record too old or too partial to carry it. |
+| `realm` | string or nil | nil on a record too old or too partial to carry it, and on a character first seen after 2026-11-20, when Forever stopped telling addons the realm (#412). Never `""`. Use `ruleset` to group by ruleset. |
 | `faction` | string or nil | `"Alliance"` / `"Horde"`. |
 | `class` | string or nil | Class file token, `"PRIEST"` - use it with `RAID_CLASS_COLORS`, and guard the nil. |
 | `level` | number or nil | |
@@ -70,7 +70,7 @@ you like, it is not AltStable's data.
 | `provenance` | string | Whose character it is: `"self"`, `"own-account"` or `"third-party"`. See `GetCharacterProvenance`. |
 | `provenanceAt` | number or nil | When that was established (`time()` on this client); nil when not known. |
 | `provenanceVia` | string or nil | For `"own-account"`, the name of the own account's character that said so. |
-| `ruleset` | string or nil | The realm's ruleset: `"Normal"`, `"PvP"`, `"RP"`, `"RPPvP"` or `"Hardcore"`. Compare these. nil when the realm can't be read. Since the `ruleset` flag. |
+| `ruleset` | string or nil | The character's ruleset: `"Normal"`, `"PvP"`, `"RP"`, `"RPPvP"` or `"Hardcore"`. Compare these. It comes from the game's rules as the character's own client read them, or from its realm name for an older record (Forever hides the realm since 2026-11-20). nil when neither is known. Since the `ruleset` flag. |
 | `rulesetName` | string or nil | The same, as a player says it: `"PvE"`, `"PvP"`, `"Roleplay"`, `"Roleplay PvP"`, `"Hardcore"`. For display only. nil with `ruleset`. Since the `ruleset` flag. |
 
 These are the characters AltStable's sheet lists: every one it has a record for. A character

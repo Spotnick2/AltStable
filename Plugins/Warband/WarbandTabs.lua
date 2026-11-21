@@ -82,10 +82,10 @@ M.RulesetOf = AltStable.RulesetOf
 
 -- The setting is "current", "all" or a ruleset; "current" is resolved here, at
 -- use, against wherever the player is now - never saved resolved. nil means no
--- filter.
-function M.ResolveRuleset(setting, currentRealm)
+-- filter. `current`: a realm name, or { ruleset, realm } (RulesetOf reads both, #412).
+function M.ResolveRuleset(setting, current)
     if setting == "all" then return nil end
-    if setting == nil or setting == "current" then return M.RulesetOf(currentRealm) end
+    if setting == nil or setting == "current" then return M.RulesetOf(current) end
     return setting
 end
 

@@ -746,6 +746,13 @@ local function CleanupWarbandDB(keepGuid)
     end
 end
 
+-- Where the player is now, for "current ruleset" (#412): the core's one path
+-- (AltStable.CurrentRuleset: the game's rules, the realm, then this
+-- character's own record), as a record RulesetOf reads.
+local function Here()
+    return { ruleset = AltStable.CurrentRuleset and AltStable.CurrentRuleset() }
+end
+
 -- filter (optional, #153):
 --   only       = guid    one character (Personal), hidden or not
 --   ruleset    = "PvP"   characters whose realm is on that ruleset
@@ -757,7 +764,7 @@ local function Included(guid, c, filter)
     if filter.skipHidden and AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(guid) then
         return false
     end
-    if filter.ruleset and AltStableWarbandModel.RulesetOf(c.realm) ~= filter.ruleset then
+    if filter.ruleset and AltStableWarbandModel.RulesetOf(c) ~= filter.ruleset then
         return false
     end
     return true
@@ -1251,7 +1258,7 @@ local function CurrentFilter()
         return { personal = true, only = UnitGUID and UnitGUID("player") }
     end
     return {
-        ruleset = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName()),
+        ruleset = M.ResolveRuleset(Cfg("warbandRuleset", "current"), Here()),
         skipHidden = true,
     }
 end
@@ -1294,7 +1301,7 @@ local RULESET_LABEL = {
 local function RulesetText(setting)
     setting = setting or Cfg("warbandRuleset", "current")
     if setting == "current" then
-        return "Current ruleset (" .. M.RulesetOf(GetRealmName and GetRealmName()) .. ")"
+        return "Current ruleset (" .. M.RulesetOf(Here()) .. ")"
     end
     return RULESET_LABEL[setting] or tostring(setting)
 end
@@ -2021,7 +2028,7 @@ local function StatusText()
         return paging .. ((me and me.name) or "This character")
             .. (MailOn() and "  ·  Bags, bank + mail" or "  ·  Bags + bank") .. "  ·  Read-only"
     end
-    local r = M.ResolveRuleset(Cfg("warbandRuleset", "current"), GetRealmName and GetRealmName())
+    local r = M.ResolveRuleset(Cfg("warbandRuleset", "current"), Here())
     return paging .. (MailOn() and "Bags, banks + mail  ·  " or "Bags + banks  ·  ")
         .. (r or "All rulesets") .. "  ·  Read-only"
 end

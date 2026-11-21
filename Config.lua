@@ -704,7 +704,19 @@ AltStable._TOMBSTONE_CAP = TOMBSTONE_CAP
 
 AltStable.RULESETS = { "Normal", "PvP", "RP", "RPPvP", "Hardcore" }
 
+local KNOWN_RULESET = {}
+for _, r in ipairs(AltStable.RULESETS) do KNOWN_RULESET[r] = true end
+
+-- `realm` is a realm name, or a character record: its own client's reading of
+-- the game's rules (`ruleset`, #412) wins over its realm's name. Since the
+-- 2026-11-20 hotfix GetRealmName() returns "" (and GetRealmID() 0) on purpose,
+-- so a character first seen after it has no realm to read; older records keep
+-- theirs (#408) and still read from it until their next scan stores the rules.
 function AltStable.RulesetOf(realm)
+    if type(realm) == "table" then
+        if KNOWN_RULESET[realm.ruleset] then return realm.ruleset end
+        realm = realm.realm
+    end
     if type(realm) ~= "string" or not realm:find("%S") then return "Unknown" end
     local words = " " .. (realm:lower():gsub("[^%w]", " ")) .. " "
     if words:find(" hardcore ", 1, true) or words:find(" hc ", 1, true) then return "Hardcore" end
@@ -715,6 +727,44 @@ function AltStable.RulesetOf(realm)
     end
     if pvp then return "PvP" end
     return "Normal"
+end
+
+-- The ruleset the game says the logged-in character is on (#412), from its
+-- rules: Hardcore, RP and/or PvP, else Normal. nil when this client can't
+-- say (no C_GameRules, or a rule name it doesn't know): the names are the
+-- ones WoWUIDev uses (2026-11-20), not in the API dump, so each is checked.
+function AltStable.LiveRuleset()
+    local rules = C_GameRules
+    local E = Enum and Enum.GameRule
+    if not (rules and rules.IsGameRuleActive and E and E.HardcoreRuleset and E.RPRuleset and E.PvPRuleset) then
+        return nil
+    end
+    -- A query that fails, or answers anything but a boolean, says nothing:
+    -- reading it as "off" would store Normal over a PvP character's PvP
+    -- (#413 review). Any such answer and there is no reading at all.
+    local function on(rule)
+        local ok, v = pcall(rules.IsGameRuleActive, rule)
+        if ok and type(v) == "boolean" then return v end
+        return nil
+    end
+    local hc, rp, pvp = on(E.HardcoreRuleset), on(E.RPRuleset), on(E.PvPRuleset)
+    if hc == nil or rp == nil or pvp == nil then return nil end
+    if hc then return "Hardcore" end
+    if rp and pvp then return "RPPvP" end
+    if rp then return "RP" end
+    if pvp then return "PvP" end
+    return "Normal"
+end
+
+-- Where the player is now: the game's rules, then the realm's name, then -
+-- when neither reads - the logged-in character's own record, as the scan kept
+-- it (#413 review). "Unknown" only when none of the three says.
+function AltStable.CurrentRuleset()
+    local r = AltStable.RulesetOf({ ruleset = AltStable.LiveRuleset(), realm = GetRealmName and GetRealmName() })
+    if r ~= "Unknown" then return r end
+    local guid = UnitGUID and UnitGUID("player")
+    local me = guid and AltStableDB and AltStableDB[guid]
+    return type(me) == "table" and AltStable.RulesetOf(me) or "Unknown"
 end
 
 -- No ruleset art exists in the client (its UI source has the words, not
@@ -730,7 +780,7 @@ local RULESET_BADGE = {
     Hardcore = { "HC",  "|cffff9a3c", "Hardcore", "Hardcore" },
 }
 
--- The coloured badge for a realm, or "" for one we cannot read.
+-- The coloured badge for a realm or a character (RulesetOf), or "" for one we cannot read.
 function AltStable.RulesetBadge(realm)
     local b = RULESET_BADGE[AltStable.RulesetOf(realm)]
     return b and (b[2] .. b[1] .. "|r") or ""
@@ -744,6 +794,7 @@ function AltStable.RulesetGroupName(ruleset)
 end
 
 -- The ruleset as a player calls it ("PvE", "Roleplay"), or nil when unknown.
+-- A realm or a character, as RulesetOf reads them.
 function AltStable.RulesetName(realm)
     local b = RULESET_BADGE[AltStable.RulesetOf(realm)]
     return b and b[3] or nil

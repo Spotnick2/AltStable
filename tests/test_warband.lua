@@ -773,6 +773,64 @@ do
     eq("'current' resolves against where you are", M.ResolveRuleset("current", "Classic Beta PvP 2"), "PvP")
     eq("  and so does an unset setting", M.ResolveRuleset(nil, "Classic Beta PvE"), "Normal")
     eq("'all' is no filter", M.ResolveRuleset("all", "Classic Beta PvP"), nil)
+
+    -- #412: since the 2026-11-20 hotfix the realm is hidden ("" from
+    -- GetRealmName), so a record carries its ruleset, read from the game's rules.
+    eq("a record's own ruleset wins over its realm",
+       M.RulesetOf({ ruleset = "PvP", realm = "Classic Beta PvE" }), "PvP")
+    eq("  a record with a blank realm still has one", M.RulesetOf({ ruleset = "RP", realm = "" }), "RP")
+    eq("  one with none reads its realm", M.RulesetOf({ realm = "Classic Beta PvP" }), "PvP")
+    eq("  a stored value it doesn't know is ignored", M.RulesetOf({ ruleset = "Bogus", realm = "Forever RP" }), "RP")
+    eq("  neither: Unknown", M.RulesetOf({ realm = "" }), "Unknown")
+    eq("'current' resolves against the game's rules", M.ResolveRuleset("current", { ruleset = "Hardcore", realm = "" }), "Hardcore")
+
+    -- The game's rules, as read: Hardcore first, RP and PvP together are RP-PvP.
+    local R, held = Enum.GameRule, WoW.gameRules
+    local function rules(h, rp, pvp)
+        WoW.gameRules = { [R.HardcoreRuleset] = h, [R.RPRuleset] = rp, [R.PvPRuleset] = pvp }
+        return AltStable.LiveRuleset()
+    end
+    eq("no rule on: Normal", rules(false, false, false), "Normal")
+    eq("PvP", rules(false, false, true), "PvP")
+    eq("RP", rules(false, true, false), "RP")
+    eq("RP and PvP: RP-PvP", rules(false, true, true), "RPPvP")
+    eq("Hardcore wins", rules(true, false, true), "Hardcore")
+    local realRealm = GetRealmName
+    GetRealmName = function() return "" end
+    rules(false, false, true)
+    eq("where you are, with the realm hidden: the rules", AltStable.CurrentRuleset(), "PvP")
+    local realRules = Enum.GameRule
+    Enum.GameRule = nil
+    eq("a client without the rule names can't say", AltStable.LiveRuleset(), nil)
+    local heldRec = AltStableDB[UnitGUID("player")]
+    AltStableDB[UnitGUID("player")] = nil
+    eq("  and where you are falls back to the realm: hidden, and no record, Unknown", AltStable.CurrentRuleset(), "Unknown")
+    AltStableDB[UnitGUID("player")] = heldRec
+    Enum.GameRule = { RPRuleset = 1, PvPRuleset = 2 }
+    eq("  a missing name is the same as none", AltStable.LiveRuleset(), nil)
+    Enum.GameRule = realRules
+    -- #413 review: a query that fails is not "off".
+    local realActive = C_GameRules.IsGameRuleActive
+    C_GameRules.IsGameRuleActive = function(rule)
+        if rule == Enum.GameRule.PvPRuleset then error("not ready") end
+        return false
+    end
+    eq("a rule query that throws: no reading, never Normal", AltStable.LiveRuleset(), nil)
+    C_GameRules.IsGameRuleActive = function() return nil end
+    eq("  nor one that answers nil", AltStable.LiveRuleset(), nil)
+    C_GameRules.IsGameRuleActive = realActive
+    -- No rules, no realm: where you are is this character's own record.
+    Enum.GameRule = nil
+    local me = UnitGUID("player")
+    local heldMe = AltStableDB[me]
+    AltStableDB[me] = { guid = me, name = "Me", ruleset = "PvP", realm = "" }
+    eq("rules and realm unreadable: the current ruleset is this character's record", AltStable.CurrentRuleset(), "PvP")
+    AltStableDB[me] = nil
+    eq("  no record either: Unknown", AltStable.CurrentRuleset(), "Unknown")
+    AltStableDB[me] = heldMe
+    Enum.GameRule = realRules
+    GetRealmName = realRealm
+    WoW.gameRules = held
     eq("a named ruleset is itself", M.ResolveRuleset("RP", "Classic Beta PvP"), "RP")
     eq("'current' on an RP-PvP realm is RP-PvP", M.ResolveRuleset("current", "Forever RP-PvP"), "RPPvP")
 
@@ -903,6 +961,26 @@ do
     -- Warband, current ruleset (PvP): Kaleid only - Morph is PvE, Hidden is hidden.
     eq("single view shows the selected tab", colKeys(), "1")
     eq("  holding this ruleset's trade goods, hidden characters left out", shownIDs(), "101")
+    -- #412: with the realm hidden (the 2026-11-20 hotfix), "current" is the
+    -- game's rules, not Unknown.
+    do
+        local realRealm, heldRules = GetRealmName, WoW.gameRules
+        GetRealmName = function() return "" end
+        WoW.gameRules = { [Enum.GameRule.PvPRuleset] = true }
+        wb.Refresh()
+        eq("  the realm hidden: still this ruleset's, from the game's rules", shownIDs(), "101")
+        -- #413 review: no rules either - this character's own record says.
+        local realRules, heldRuleset = Enum.GameRule, AltStableDB[ME].ruleset
+        Enum.GameRule = nil
+        AltStableDB[ME].ruleset = "PvP"
+        local heldRealm = AltStableDB[ME].realm
+        AltStableDB[ME].realm = ""
+        wb.Refresh()
+        eq("  no rules and no realm: this character's record, its own items shown", shownIDs(), "101")
+        Enum.GameRule, AltStableDB[ME].ruleset, AltStableDB[ME].realm = realRules, heldRuleset, heldRealm
+        GetRealmName, WoW.gameRules = realRealm, heldRules
+        wb.Refresh()
+    end
 
     -- Empty slots fill the view and carry nothing.
     local empty
