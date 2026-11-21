@@ -1179,9 +1179,9 @@ function AltStable.RenderRow(row, char, index, columns)
         elseif col.field=="lastUpdate"  then
             value = AltStable.FormatLastOnlineFor(char)
         elseif col.type=="ruleset"      then
-            value = AltStable.RulesetBadge(char.realm)
+            value = AltStable.RulesetBadge(char)
             if tip then
-                tip.line1 = AltStable.RulesetName(char.realm)
+                tip.line1 = AltStable.RulesetName(char)
                 tip.line2, tip.line3, tip.cdLines = nil, nil, nil
             end
         elseif col.type=="money"        then value = FormatMoney(char[col.field])

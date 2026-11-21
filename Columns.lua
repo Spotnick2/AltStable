@@ -66,7 +66,7 @@ AltStable.Columns = {
     -- Race then, since a realm header no longer says where anyone is. The
     -- ruleset, not the realm - Forever's realms are its rulesets to a player.
     { label="Ruleset", field="ruleset", width=50, align="CENTER", type="ruleset", group="always",
-      sortText=true, sortValue=function(c) return AltStable.RulesetName(c.realm) end },
+      sortText=true, sortValue=function(c) return AltStable.RulesetName(c) end },
     { label="Lvl",   field="level", width=35, align="RIGHT",  type="number",    group="always",
       sortValue=LevelSortValue },
     { label="iLvl",  field="ilvl",  width=45, align="RIGHT",  type="number",    group="always" },

@@ -237,6 +237,16 @@ GetNormalizedRealmName()    ->  "ClassicBetaPvE"
 C_PlayerInfo.ShouldDisplaySurname()  ->  true
 ```
 
+**The realm is hidden since the 2026-11-20 server hotfix (on purpose; not a client build).**
+`GetRealmName()` returns `""` and `GetRealmID()` returns `0`. Seen live on Karuzo's record that
+evening (#408), and confirmed by addon authors in WoWUIDev's #forever that day, who describe it
+as a deliberate change shipped with GUID-related changes. GUIDs still carry the realm id for
+now. The ruleset comes from the game's rules instead (#412):
+`C_GameRules.IsGameRuleActive(Enum.GameRule.HardcoreRuleset / RPRuleset / PvPRuleset)`.
+`C_GameRules.IsGameRuleActive` is in the dump. **`Enum.GameRule`'s names are not**: the dump lists
+no GameRule enumeration, and the names are WoWUIDev's, so `AltStable.LiveRuleset` checks each one
+exists. Still to measure: whether the rules read correctly at the first scan after login.
+
 Findings that matter (all still true on 70009 — only where the surname *lives* changed):
 
 1. **The surname is part of the name string, separated by a SPACE** — `"Example Surname"`, not

@@ -1011,7 +1011,7 @@ local function BuildDisplayList()
     -- realms are named in the header's tooltip.
     local groupOrder, groupChars, groupOf = {}, {}, {}
     for _, char in ipairs(allChars) do
-        local ruleset = byRealm and AltStable.RulesetOf(char.realm) or nil
+        local ruleset = byRealm and AltStable.RulesetOf(char) or nil
         local faction = byFaction and FactionGroupOf(char) or nil
         local key = ruleset and faction and (faction .. "\031" .. ruleset) or ruleset or faction
         local g = groupOf[key]

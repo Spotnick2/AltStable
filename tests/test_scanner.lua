@@ -434,6 +434,23 @@ do
     GetRealmName = realRealm
     pcall(AltStable.ScanCharacter)
     eq("a real one is stored", AltStableDB[me].realm, WoW.player.realm)
+
+    -- #412: the ruleset, from the game's rules, stored with the record (and so
+    -- synced); a client that can't read them keeps what is stored. The rules
+    -- are read by Config.lua's LiveRuleset, loaded before any scan in game.
+    dofile("Config.lua")
+    WoW.gameRules = { [Enum.GameRule.PvPRuleset] = true, [Enum.GameRule.RPRuleset] = true }
+    GetRealmName = function() return "" end
+    pcall(AltStable.ScanCharacter)
+    eq("the scan stores the ruleset the game says", AltStableDB[me].ruleset, "RPPvP")
+    eq("  which is the record's ruleset, its realm hidden", AltStable.RulesetOf(AltStableDB[me]), "RPPvP")
+    local realRules = Enum.GameRule
+    Enum.GameRule = nil
+    pcall(AltStable.ScanCharacter)
+    eq("  a client that can't read the rules keeps it", AltStableDB[me].ruleset, "RPPvP")
+    Enum.GameRule = realRules
+    GetRealmName = realRealm
+    WoW.gameRules = {}
     WoW.reset()
 end
 

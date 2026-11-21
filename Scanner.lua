@@ -848,6 +848,11 @@ function AltStable.ScanCharacter()
     -- under the sheet's "Unknown" ruleset - and its tooltips' matching - until
     -- the next good scan, and sent it to every peer.
     if type(realm) == "string" and realm:find("%S") then char.realm = realm end
+    -- And since then, the realm is hidden on purpose: the ruleset comes from the
+    -- game's rules instead (#412), synced with the record like any field. A
+    -- client that can't read them keeps what is stored.
+    local ruleset = AltStable.LiveRuleset and AltStable.LiveRuleset()
+    if ruleset then char.ruleset = ruleset end
 
     -- Account number: set once with /alts account 1 (or 2, etc.)
     -- Stored globally so all chars on this client share the same value.
