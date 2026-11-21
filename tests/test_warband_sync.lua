@@ -436,6 +436,20 @@ do
     receive(B3, A3, payloadFrom(A3, 0))
     eq("  B keeps the newer bags it holds", B3.wb[X].bags[1], 9)
     eq("  and takes the confirmed bank's date", B3.wb[X].bankStamp, t)
+
+    -- A fresh or reset store on A: the bank read first, no bags at all yet.
+    -- It sends bt=0, which is unread bags, not "date them by s=".
+    A3.wb = {}
+    use(A3)
+    P.NewSession()
+    WoW.now = WoW.now + 10
+    P.OnBankOpened(); P.OnBankClosed()
+    A3.db[X].lastUpdate = WoW.now
+    local blob = payloadFrom(A3, 0)
+    check("  a store with no bags yet sends bt=0", blob:find("|bt=0|", 1, true) ~= nil)
+    receive(B3, A3, blob)
+    eq("  B keeps its bags against unread ones", B3.wb[X].bags[1], 9)
+    eq("  and still takes the bank", B3.wb[X].bankStamp, WoW.now)
     WoW.bankTabs, WoW.containers = nil, nil
 end
 

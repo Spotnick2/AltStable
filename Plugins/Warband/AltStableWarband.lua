@@ -716,11 +716,17 @@ local function DeserializePlayer(guid, blob)
     -- bags by them). bt= matters because a bank visit's confirming read moves
     -- the overall stamp while the bags are still a cached map (Codex review of
     -- #438). Held bags newer than that stay.
+    -- bt=0 is a current sender saying its bags were never read (a fresh or
+    -- reset store whose bank was read first): unknown age, like kt=0, so it
+    -- never replaces held bags that say anything (Codex review of #438). Only a
+    -- blob with no bt= at all (an older sender) falls back to s=.
     local bt = tonumber(("|" .. rest .. "|"):match("|bt=(%d+)|"))
-    local bagsStamp = (bt and bt > 0) and bt or incomingStamp
+    local bagsStamp = bt or incomingStamp
+    local heldMap = existing and existing.bags
     local heldBags = existing and (existing.bagsStamp or existing.stamp) or 0
-    if existing and existing.bags and heldBags > bagsStamp then
-        bags, bagsStamp = existing.bags, heldBags
+    if heldMap and ((bagsStamp > 0 and heldBags > bagsStamp)
+                    or (bagsStamp == 0 and (heldBags > 0 or next(heldMap)))) then
+        bags, bagsStamp = heldMap, heldBags
     end
 
     -- The bank's own stamp, the whole pipe-delimited field: "xkt=123" or
