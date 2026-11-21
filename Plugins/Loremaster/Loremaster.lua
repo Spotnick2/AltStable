@@ -51,6 +51,11 @@ local EXCL, PRESINGLE, PREGROUP, BREAD, NEXT, PARENT, UNTIL = 1, 2, 3, 4, 5, 6, 
 local F_UNSURE, F_REF = 1, 2
 
 M.BLOB_VERSION = "v1"
+-- What a snapshot's counts were made with: the quest table, and the counting
+-- rules (r2: prerequisites through the whole chain, #429). Alphanumeric, so
+-- it survives the blob's strip. A snapshot made with anything else shows as
+-- counted with another version until that character is scanned again.
+M.SNAP_VERSION = D.VERSION .. "r2"
 M.SCAN_DELAY = 1.5             -- after QUEST_TURNED_IN: the completion lands ~0.5 s later
 
 local floor = math.floor
@@ -123,32 +128,61 @@ function M.CanTake(q, p)
 end
 
 -- Whether a quest the character could take by its masks has pre-quests it can
--- never take. One level deep; a pre-quest the table doesn't hold is possible.
-local function PreImpossible(q, p, done)
+-- never reach, through the whole chain (#429: 99260 needs 92850, which needs
+-- the race-95-only 92849). A pre-quest is reachable when it is done, when the
+-- table doesn't hold it, or when the character can take it and reach its own
+-- pre-quests. `memo` keeps settled answers for one profile and done set;
+-- `walking` the ids on the current path. A pre-quest already on the path
+-- counts as reachable (a cycle never makes a quest impossible, as an unknown
+-- one doesn't), and an answer that leaned on that is not kept in `memo`:
+-- reached from elsewhere, the same quest may settle the other way. Returns
+-- impossible, and whether the answer leaned on the path.
+local Reachable
+local function PreImpossible(q, p, done, memo, walking)
+    local leaned = false
+    local function reach(id)
+        local ok, l = Reachable(math.abs(id), p, done, memo, walking)   -- signed: -4962 means exactly 4962
+        if l then leaned = true end
+        return ok
+    end
     local single = Link(q, p, PRESINGLE)
     if single and #single > 0 then
         local any = false
         for _, id in ipairs(single) do
-            id = math.abs(id)
-            local pq = D.QUESTS[id]
-            if done[id] or not pq or M.CanTake(pq, p) then any = true; break end
+            if reach(id) then any = true; break end
         end
-        if not any then return true end
+        if not any then return true, leaned end
     end
     local group = Link(q, p, PREGROUP)
     if group then
         for _, id in ipairs(group) do
-            id = math.abs(id)          -- signed: -4962 means exactly 4962
-            local pq = D.QUESTS[id]
-            if not done[id] and pq and not M.CanTake(pq, p) then return true end
+            if not reach(id) then return true, leaned end
         end
     end
-    return false
+    return false, leaned
 end
 
-function M.Eligible(q, p, done)
+function Reachable(id, p, done, memo, walking)
+    if done[id] then return true, false end
+    local pq = D.QUESTS[id]
+    if not pq then return true, false end
+    if memo[id] ~= nil then return memo[id], false end
+    if walking[id] then return true, true end
+    if not M.CanTake(pq, p) then
+        memo[id] = false
+        return false, false
+    end
+    walking[id] = true
+    local impossible, leaned = PreImpossible(pq, p, done, memo, walking)
+    walking[id] = nil
+    if not leaned then memo[id] = not impossible end
+    return not impossible, leaned
+end
+
+-- `memo` (optional): one per profile and done set, shared across calls (Count).
+function M.Eligible(q, p, done, memo)
     if not q or q[FLAGS] % 4 >= F_REF then return false end
-    return M.CanTake(q, p) and not PreImpossible(q, p, done)
+    return M.CanTake(q, p) and not PreImpossible(q, p, done, memo or {}, {})
 end
 
 -- Why an undone quest can no longer be done, or nil. From completions and
@@ -186,6 +220,7 @@ end
 --           lists = { [key] = { open = {ids}, missed = {ids}, done = {ids} } } | nil }
 function M.Count(p, done, withLists)
     local c, lists = {}, withLists and {} or nil
+    local memo = {}
     local cls = { 0, 0, 0 }
     local classKey = D.CLASS_KEY
     for id, q in pairs(D.QUESTS) do
@@ -195,7 +230,7 @@ function M.Count(p, done, withLists)
             local state
             if done[id] then
                 state = "done"
-            elseif M.Eligible(q, p, done) and q[FLAGS] % 2 ~= F_UNSURE then
+            elseif M.Eligible(q, p, done, memo) and q[FLAGS] % 2 ~= F_UNSURE then
                 state = M.ClosedWhy(id, p, done) and "missed" or "open"
             end
             if state then
@@ -295,7 +330,7 @@ function M.Scan()
     if not done then return false end
     local p = M.Profile()
     local counts = M.Count(p, done)
-    local r = { ver = D.VERSION, level = p.level, faction = p.faction, race = p.race, class = p.class,
+    local r = { ver = M.SNAP_VERSION, level = p.level, faction = p.faction, race = p.race, class = p.class,
                 log = LogCount(), completed = completed, cls = counts.cls, c = counts.c }
     local db = M.DB()
     local held = db.chars[guid]

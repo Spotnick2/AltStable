@@ -374,12 +374,17 @@ end
 -- from the same snapshot the cell shows
 ------------------------------------------------------------
 
+-- Counted with another quest table or other counting rules (M.SNAP_VERSION).
+function L.OtherVersion(snap)
+    return type(snap) ~= "table" or snap.ver ~= M.SNAP_VERSION
+end
+
 local listCache = {}
 function L.ListsFor(col)
     local db = M.DB()
     local mine = db.done[col.guid]
     local snap = col.snap
-    if type(mine) ~= "table" or not mine.ids or mine.stamp ~= snap.stamp or snap.ver ~= D.VERSION then
+    if type(mine) ~= "table" or not mine.ids or mine.stamp ~= snap.stamp or L.OtherVersion(snap) then
         return nil
     end
     local cacheKey = col.guid .. ":" .. tostring(snap.stamp)
@@ -410,7 +415,7 @@ function L.CellOnEnter(self)
     if key == D.CLASS_KEY and col.snap.cls then
         GameTooltip:AddLine(("%d available at level %d"):format(col.snap.cls.now or 0, col.level), 0.7, 0.7, 0.7)
     end
-    if col.snap.ver ~= D.VERSION then
+    if L.OtherVersion(col.snap) then
         GameTooltip:AddLine("Counted with another version of the quest list.", 0.6, 0.6, 0.6, true)
     end
     local lists = L.ListsFor(col)

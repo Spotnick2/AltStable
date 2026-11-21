@@ -163,6 +163,42 @@ eq("an unsure quest done counts, and a done one whatever its masks", r.c[12] and
 eq("  in the total too, with the follow-up the done pre-quest opens", r.c[12] and r.c[12][2], 4)
 r = Only(P("Horde", 2, 8, 30))
 eq("Horde mage: Open, Horde only and its follow-up", r.c[12] and r.c[12][2], 3)
+
+-- Prerequisites through the whole chain (#429), on the shipped data: 92849 is
+-- race 95 only, 92850 (Alliance) needs it, 99260 (Alliance) needs 92850.
+do
+    local human, skyborne = P("Alliance", 1, 8, 30), P("Alliance", 95, 8, 30)
+    check("#429: a Human can't take 92849", not M.Eligible(Q[92849], human, {}))
+    check("  nor 92850 after it", not M.Eligible(Q[92850], human, {}))
+    check("  nor 99260 two steps on", not M.Eligible(Q[99260], human, {}))
+    check("  a race-95 character can take all three", M.Eligible(Q[92849], skyborne, Set(92727))
+          and M.Eligible(Q[92850], skyborne, {}) and M.Eligible(Q[99260], skyborne, {}))
+    check("  a done 92849 counts as met through the chain",
+          M.Eligible(Q[92850], human, Set(92849)) and M.Eligible(Q[99260], human, Set(92849)))
+    -- A cycle (A needs B and a Horde-only one, B needs A, C needs B, Z needs
+    -- A): for a Human A is impossible, so B, C and Z are too, whichever is
+    -- asked first. Asking Z first walks Z, A, B, back to A: B leans on A while
+    -- A is still open, and must not be remembered as possible.
+    Q[9100101] = { 12, nil, 1, 0, 0, 0, "A", 0, nil, nil, { 9100102, 9100002 } }
+    Q[9100102] = { 12, nil, 1, 0, 0, 0, "B", 0, nil, { 9100101 } }
+    Q[9100103] = { 12, nil, 1, 0, 0, 0, "C", 0, nil, { 9100102 } }
+    Q[9100104] = { 12, nil, 1, 0, 0, 0, "D", 0, nil, { 9100105 } }
+    Q[9100105] = { 12, nil, 1, 0, 0, 0, "E", 0, nil, { 9100104 } }
+    Q[9100106] = { 12, nil, 1, 0, 0, 0, "Z", 0, nil, { 9100101 } }
+    Q[9100107] = { 12, nil, 1, 0, 0, 0, "Unknown pre-quest", 0, nil, { 9199999 } }
+    local memo = {}
+    local z1, c1 = M.Eligible(Q[9100106], human, {}, memo), M.Eligible(Q[9100103], human, {}, memo)
+    memo = {}
+    local c2, z2 = M.Eligible(Q[9100103], human, {}, memo), M.Eligible(Q[9100106], human, {}, memo)
+    check("  a cycle with an impossible link: Z then C, both impossible", not z1 and not c1)
+    check("  C then Z, the same", not c2 and not z2)
+    check("  and A itself", not M.Eligible(Q[9100101], human, {}))
+    memo = {}
+    check("  a cycle with nothing impossible: both possible, no loop",
+          M.Eligible(Q[9100104], human, {}, memo) and M.Eligible(Q[9100105], human, {}, memo))
+    check("  a pre-quest the table doesn't hold is possible", M.Eligible(Q[9100107], human, {}))
+    for id = 9100101, 9100107 do Q[id] = nil end
+end
 eq("Class quests: both mage quests in the total", r.cls.total, 2)
 eq("  one available at level 30", r.cls.now, 1)
 r = Only(P("Horde", 2, 5, 30))
@@ -180,7 +216,7 @@ completed = Set(1361, 1362, 870, 123456789)   -- the last one is not in the tabl
 check("a first scan keeps a snapshot", M.Scan())
 local snap = M.DB().chars[ME]
 check("  with the measured shape", snap and snap.faction == "Horde" and snap.race == 2 and snap.class == 8
-      and snap.level == 30 and snap.ver == D.VERSION)
+      and snap.level == 30 and snap.ver == M.SNAP_VERSION)
 eq("  every completed quest counted in all", snap and snap.completed, 4)
 eq("  the quest log's quests", snap and snap.log, 7)
 eq("  Desolace 2 done", snap and snap.c[405] and snap.c[405][1], 2)
@@ -612,12 +648,27 @@ local r = btn.label:GetTextColor()
 check("  dimmed when disabled", r < 0.5)
 check("the Zone header is there", L.zoneHdr ~= nil and L.zoneHdr:GetText() == "Zone")
 
--- A snapshot counted before this update keeps its quest list (Codex on #399:
+-- A snapshot counted with these rules keeps its quest list (Codex on #399:
 -- the version is what the counting reads, not display fields).
-M.DB().chars[ME].ver = "9b0a9380"
+M.DB().chars[ME].ver = M.SNAP_VERSION
 M.DB().done[ME].stamp = M.DB().chars[ME].stamp
-check("a pre-update snapshot with its done set still lists its quests",
+check("a snapshot with its done set lists its quests",
       L.ListsFor({ guid = ME, snap = M.DB().chars[ME] }) ~= nil)
+-- One counted before the whole-chain rule (#429), with the bare data version,
+-- is another version's until that character is scanned again.
+M.DB().chars[ME].ver = D.VERSION
+check("#429: a snapshot from before the chain rule lists nothing",
+      L.ListsFor({ guid = ME, snap = M.DB().chars[ME] }) == nil)
+check("  the rule's version is the data's plus the rules'", M.SNAP_VERSION == D.VERSION .. "r2")
+do
+    WoW.tooltipLines = {}
+    L.CellOnEnter({ info = { col = { guid = ME, snap = M.DB().chars[ME], name = "Old", class = "MAGE", level = 30 },
+                             key = 405, row = { 2, 5 } } })
+    local said = table.concat(WoW.tooltipLines, " / ")
+    check("  and its tooltip says it was counted with another version",
+          said:find("Counted with another version", 1, true) ~= nil, said)
+end
+M.DB().chars[ME].ver = M.SNAP_VERSION
 
 local okD = pcall(plugin.OnDeactivate, main)
 check("the tab closes", okD)
