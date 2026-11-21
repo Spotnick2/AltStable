@@ -437,11 +437,54 @@ T.DeserializeFullDB(T.SerializeChar(
     { guid = "Player-T-1", name = "Tee", class = "PRIEST", level = 70, ilvl = 50, lastUpdate = 900 }
 ) .. "\n" .. T.CHAR_SEP, "Peer")
 eq(AltStableDB["Player-T-1"].ilvl, 200, "older incoming (>60s) does not overwrite newer local")
--- Incoming within 60s: accept.
+-- Incoming within 60s older: refused too (#421; it used to be taken).
 T.DeserializeFullDB(T.SerializeChar(
     { guid = "Player-T-1", name = "Tee", class = "PRIEST", level = 70, ilvl = 250, lastUpdate = 970 }
 ) .. "\n" .. T.CHAR_SEP, "Peer")
-eq(AltStableDB["Player-T-1"].ilvl, 250, "incoming within 60s overwrites local")
+eq(AltStableDB["Player-T-1"].ilvl, 200, "older incoming (even by 30s) does not overwrite newer local (#421)")
+-- An equal stamp with other contents is taken: the same-stamp gear correction.
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-T-1", name = "Tee", class = "PRIEST", level = 70, ilvl = 250, lastUpdate = 1000 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-T-1"].ilvl, 250, "an equal stamp with other contents overwrites local")
+
+-- #421: newer, then older, then a duplicate, on both receive paths. The newer
+-- stays; an equal stamp with a changed gear slot is taken (a path that refused
+-- equality would miss the same-stamp correction); a record we scan refuses it.
+do
+    local function rec(stamp, money, gear)
+        return { guid = "Player-T-2", name = "Two", class = "MAGE", level = 60, lastUpdate = stamp,
+                 money = money, gear_head = gear }
+    end
+    local paths = {
+        bulk = function(c) T.DeserializeFullDB(T.SerializeChar(c) .. "\n" .. T.CHAR_SEP, "Peer") end,
+        single = function(c) T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(c)), "Peer") end,
+    }
+    for _, name in ipairs({ "bulk", "single" }) do
+        local deliver = paths[name]
+        AltStableDB = {}
+        deliver(rec(1000, 100, 50))
+        deliver(rec(960, 60, 40))
+        eq(AltStableDB["Player-T-2"].lastUpdate, 1000, name .. ": newer then older keeps the newer stamp")
+        eq(AltStableDB["Player-T-2"].money, 100, name .. ":   and its money")
+        deliver(rec(1000, 100, 50))
+        eq(AltStableDB["Player-T-2"].money, 100, name .. ": a duplicate changes nothing")
+        deliver(rec(1000, 100, 55))
+        eq(AltStableDB["Player-T-2"].gear_head, 55, name .. ": an equal stamp with a changed gear slot is taken")
+        AltStableDB["Player-T-2"].scannedHere = true
+        deliver(rec(1000, 100, 60))
+        eq(AltStableDB["Player-T-2"].gear_head, 55, name .. ": a record we scan refuses an equal stamp")
+    end
+    -- Two clocks (declared in ShouldMerge): A scanned it at 1000; B, whose
+    -- clock runs 30 s behind, scans it later at 970. A third client holding
+    -- A's copy refuses B's until B's next scan passes 1000.
+    AltStableDB = {}
+    paths.bulk(rec(1000, 100, 50))
+    paths.bulk(rec(970, 120, 50))
+    eq(AltStableDB["Player-T-2"].money, 100, "two clocks: a newer scan from a slower clock is refused (declared)")
+    paths.bulk(rec(1010, 120, 50))
+    eq(AltStableDB["Player-T-2"].money, 120, "  and taken once its stamp passes the one held")
+end
 
 ------------------------------------------------------------
 -- 7. End-to-end wire round-trip: chunk -> reassemble

@@ -1502,18 +1502,29 @@ end
 -- record echoed back. It is accepted only if strictly newer - meaning the
 -- character was genuinely played somewhere else since.
 --
--- Everything else keeps the old rule: the local copy wins only if it is more
--- than 60 seconds newer, because a remote record sent with incomplete gear
+-- Everything else is accepted when it is at least as new as what we hold. An
+-- EQUAL stamp still merges: a remote record sent with incomplete gear
 -- (GetItemInfo cache miss) is often corrected moments later with the same
--- stamp. Applied to our own characters, that grace let a peer's slightly older
--- copy roll back gear we had just scanned - and take its links with it.
+-- stamp, and a delta deliberately re-sends the records at its watermark.
+--
+-- An older one never does (#421). This used to allow up to 60 seconds older,
+-- for that same-stamp correction, and the grace let an out-of-order relay roll
+-- a character back: stamp 1000 then stamp 960 left 960, its money and gear
+-- with it. Applied to our own characters, the grace had already let a peer's
+-- slightly older copy roll back gear we had just scanned.
+--
+-- Declared: the grace also let through a genuinely newer scan from a PC whose
+-- clock runs behind (A scans at 1000, the owner then plays on B, whose clock
+-- says 970). That is now refused until the character's next scan on B passes
+-- the stamp held. Clocks kept by NTP differ by seconds; the out-of-order relay
+-- is the case that was reproduced.
 local function ShouldMerge(existing, incoming)
     local existingTime = existing.lastUpdate or 0
     local incomingTime = incoming.lastUpdate or 0
     if existing.scannedHere then
         return incomingTime > existingTime
     end
-    return existingTime - incomingTime <= 60
+    return incomingTime >= existingTime
 end
 
 -- Forgotten here (#65): the peer still holds this character and always will

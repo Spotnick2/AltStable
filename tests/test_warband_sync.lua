@@ -188,7 +188,8 @@ use(B); before = snap(B)
 receive(B, A, payloadFrom(A, T.GetPeerWatermark(A.name)))
 expectDiffs("  and B's snapshot goes with it", before, snap(B), {
     wx("bank[2589]") .. ": 20 -> nil", wx("bank") .. ": nil -> empty", wx("bankStamp") .. ": 950 -> " .. WoW.now,
-    wx("stamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now, wx("bagsStamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
+    wx("stamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
+    -- The bags keep their own stamp: the bank visit doesn't date them (bt=, #438).
     x("lastUpdate") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
 })
 
@@ -210,6 +211,8 @@ use(B); before = snap(B)
 receive(B, A, payloadFrom(A, T.GetPeerWatermark(A.name)))
 expectDiffs("  an equal stamp with other contents applies (two moves in one second)", before, snap(B), {
     wx("bags[2318]") .. ": 10 -> 11", x("lastUpdate") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
+    -- The sender's own bags stamp (bt=), which the bank visit above didn't move on B.
+    wx("bagsStamp") .. ": " .. (WoW.now - 30) .. " -> " .. (WoW.now - 20),
 })
 WoW.now = WoW.now + 10
 local truncated = table.concat({ "guid:" .. X, "name:Example Surname", "class:PRIEST", "level:60",
@@ -364,6 +367,90 @@ do
     receive(B2, A2, delta)
     use(B2)
     eq("  and the inventory B kept is shown once the name arrives", P.CountItem(2318), 6)
+end
+
+------------------------------------------------------------
+-- R9 (#420, #421): through the core, an older snapshot rolls back neither the
+-- character nor its bank. A second PC (A2) on the owning account holds an old
+-- bank snapshot and scans new bags.
+------------------------------------------------------------
+do
+    local A2, B2 = side("Alpha3-Realm", X), side("Bravo3-Realm", Y)
+    local Q = "Player-1-0000Q001"
+    local function owner(lastUpdate, s, kt, bag, bank, money)
+        A2.db = { [Q] = { guid = Q, name = "Queue", class = "MAGE", lastUpdate = lastUpdate, money = money } }
+        A2.wb = { [Q] = { bags = { [1] = bag }, bank = { [2318] = bank }, stamp = s, bagsStamp = s, bankStamp = kt } }
+    end
+    owner(100, 100, 95, 1, 20, 500)
+    receive(B2, A2, payloadFrom(A2, 0))
+    eq("R9: B holds the bank at its stamp", B2.wb[Q] and B2.wb[Q].bankStamp, 95)
+    owner(101, 101, 60, 2, 3, 600)
+    receive(B2, A2, payloadFrom(A2, 0))
+    eq("  newer bags with an older bank: the record is taken", B2.db[Q].money, 600)
+    eq("  the bags too", B2.wb[Q].bags[1], 2)
+    eq("  and the bank is kept", B2.wb[Q].bank[2318], 20)
+    owner(99, 99, 90, 9, 9, 50)
+    receive(B2, A2, payloadFrom(A2, 0))
+    eq("  an older core record is refused (#421)", B2.db[Q].money, 600)
+    eq("  and an older inventory in it too, by Warband's own stamps", B2.wb[Q].bags[1], 2)
+    eq("  bank included", B2.wb[Q].bank[2318], 20)
+
+    -- Codex review of #438: PC 1 read the alt's bank at 100; PC 2, with
+    -- Warband off, played it at 130 and was heard first. PC 1's record loses
+    -- the core merge, but its bank is the newest there is: it lands.
+    local C2 = side("Charlie3-Realm", Y)
+    local P2 = side("Papa3-Realm", X)
+    P2.db = { [Q] = { guid = Q, name = "Queue", class = "MAGE", lastUpdate = 130, money = 900 } }
+    receive(C2, P2, payloadFrom(P2, 0))
+    eq("a record heard first from a PC with Warband off", C2.db[Q] and C2.db[Q].money, 900)
+    eq("  brings no inventory", C2.wb[Q], nil)
+    owner(100, 100, 100, 4, 12, 500)
+    receive(C2, A2, payloadFrom(A2, 0))
+    eq("  the older record from the PC that read the bank is refused", C2.db[Q].money, 900)
+    eq("  but its bank lands, judged by its own stamp", C2.wb[Q] and C2.wb[Q].bank[2318], 12)
+    eq("  and its bags", C2.wb[Q] and C2.wb[Q].bags[1], 4)
+end
+
+------------------------------------------------------------
+-- R10 (Codex follow-up on #438): the bank's confirming read on PC A, before
+-- its first bag scan, moves A's overall stamp while its bags are a cached map
+-- from 80; a peer holding those bags from 110 (PC B played it since) keeps
+-- them, and takes A's freshly confirmed bank. Through serialization.
+------------------------------------------------------------
+do
+    local A3, B3 = side("Alpha4-Realm", X), side("Bravo4-Realm", Y)
+    WoW.now = WoW.now + 100
+    local t = WoW.now
+    A3.db[X] = { guid = X, name = "Example Surname", class = "PRIEST", level = 60, lastUpdate = t - 50 }
+    A3.wb[X] = { bags = { [1] = 1 }, bank = { [2318] = 5 }, stamp = t - 50, bagsStamp = t - 50, bankStamp = t - 50 }
+    B3.db[X] = { guid = X, name = "Example Surname", class = "PRIEST", level = 60, lastUpdate = t - 20 }
+    B3.wb[X] = { bags = { [1] = 9 }, bank = { [2318] = 5 }, stamp = t - 20, bagsStamp = t - 20, bankStamp = t - 50 }
+    use(A3)
+    P.NewSession()
+    WoW.bankTabs = { 6 }; WoW.containers = { [6] = { size = 1, slot(2318, 5) } }
+    P.OnBankOpened()                                 -- confirms the unchanged bank, before any bag scan
+    P.OnBankClosed()
+    eq("R10: A's confirming read dates the bank", A3.wb[X].bankStamp, t)
+    eq("  not its cached bags", A3.wb[X].bagsStamp, t - 50)
+    A3.db[X].lastUpdate = t                          -- TouchCharacter's stamp, as the scan gives it
+    receive(B3, A3, payloadFrom(A3, 0))
+    eq("  B keeps the newer bags it holds", B3.wb[X].bags[1], 9)
+    eq("  and takes the confirmed bank's date", B3.wb[X].bankStamp, t)
+
+    -- A fresh or reset store on A: the bank read first, no bags at all yet.
+    -- It sends bt=0, which is unread bags, not "date them by s=".
+    A3.wb = {}
+    use(A3)
+    P.NewSession()
+    WoW.now = WoW.now + 10
+    P.OnBankOpened(); P.OnBankClosed()
+    A3.db[X].lastUpdate = WoW.now
+    local blob = payloadFrom(A3, 0)
+    check("  a store with no bags yet sends bt=0", blob:find("|bt=0|", 1, true) ~= nil)
+    receive(B3, A3, blob)
+    eq("  B keeps its bags against unread ones", B3.wb[X].bags[1], 9)
+    eq("  and still takes the bank", B3.wb[X].bankStamp, WoW.now)
+    WoW.bankTabs, WoW.containers = nil, nil
 end
 
 WoW.finish("test_warband_sync", passed, failed)
