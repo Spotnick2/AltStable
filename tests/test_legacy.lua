@@ -916,6 +916,38 @@ check("  the core's totals are back", main.totalsBar.core:IsShown())
 check("  ours are gone", not L.foot:IsShown())
 check("  and the grid is back", main.bodyScroll:IsShown())
 
+-- An area explored with the tab closed is kept (#430): read on its own after
+-- the criteria change, without drawing anything, and at logout if still pending.
+if evFrame then
+    local on = evFrame:GetScript("OnEvent")
+    for _ = 1, 3 do WoW.flushTimers() end
+    local me = UnitGUID("player")
+    local ek = WoW.legacy.achievements[62353].criteria
+    local explores, renders, realExplore, realRender = 0, 0, L.ReadExplore, L.Render
+    L.ReadExplore = function(...) explores = explores + 1; return realExplore(...) end
+    L.Render = function(...) renders = renders + 1; return realRender(...) end
+    ek[6].done = true
+    for _ = 1, 5 do on(evFrame, "CRITERIA_UPDATE") end
+    eq("#430: a criteria change with the tab closed reads nothing at once", explores, 0)
+    WoW.flushTimers()
+    eq("  then one read for the burst", explores, 1)
+    eq("  and the area is kept", AltStableLegacyDB.explore[me].parts[1].done, 6)
+    eq("  with nothing drawn", renders, 0)
+    ek[7].done = true
+    on(evFrame, "CRITERIA_UPDATE")
+    check("  the plugin listens for the logout", evFrame._events.PLAYER_LOGOUT ~= nil)
+    on(evFrame, "PLAYER_LOGOUT")
+    eq("  still pending at logout: read there", explores, 2)
+    eq("  and kept", AltStableLegacyDB.explore[me].parts[1].done, 7)
+    WoW.flushTimers()
+    eq("  not read again after", explores, 2)
+    on(evFrame, "PLAYER_LOGOUT")
+    eq("  nothing pending: a logout reads nothing", explores, 2)
+    eq("  and still nothing drawn", renders, 0)
+    L.ReadExplore, L.Render = realExplore, realRender
+    ek[6].done, ek[7].done = false, false
+end
+
 -- No Legacy calls at all (a build without them): nothing to show, no error.
 rawset(_G, "C_Traits", nil)
 L.state = nil
