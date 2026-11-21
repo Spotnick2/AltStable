@@ -3937,6 +3937,59 @@ do
         check(AltStableDB["Player-Mine-58"] ~= nil, "  though their characters merge")
     end
 
+    -- 50 camps at most (#427): a sync carries no more, here or in an older
+    -- client, which cuts a longer list - and the cut copy came back.
+    do
+        local function list(n, prefix)
+            local t = {}
+            for i = 1, n do t[i] = { id = i, name = prefix .. i, members = {} } end
+            return t
+        end
+        local A = { rosterCamps = list(51, "A"), rosterCampsStamp = 8000, rosterCampNextId = 51 }
+        local B = { rosterCamps = list(3, "B"), rosterCampsStamp = 7000, rosterCampNextId = 3 }
+        local function as(cfg, fn)
+            local held = AltStableConfig
+            AltStableConfig = cfg
+            local r = fn()
+            AltStableConfig = held
+            return r
+        end
+        local function campsLine(cfg)
+            for _, l in ipairs(as(cfg, AltStable.CampSyncLines)) do
+                if l:find("^==CAMPS1==:") then return l end
+            end
+        end
+        check(campsLine(A) == nil, "#427: a list of 51 camps (made before the limit) is not sent")
+        WoW.now = 9000
+        as(B, function() return AltStable.RenameCamp(1, "Renamed") end)
+        local fromB = campsLine(B)
+        check(fromB ~= nil and B.rosterCampsStamp == 9000, "  the other account renames one: a newer list")
+        check(not as(A, function() return AltStable.ApplyCampSyncLine(fromB) end),
+              "  which the account holding 51 refuses")
+        eq(#A.rosterCamps, 51, "  so it keeps its 51 camps")
+        eq(A.rosterCampsStamp, 8000, "  and its stamp")
+        eq(B.rosterCamps[1].name, "Renamed", "  and the other keeps its own")
+        WoW.now = 9500
+        as(A, function() return AltStable.DeleteCamp(51) end)
+        local fromA = campsLine(A)
+        check(fromA ~= nil, "  back to 50: the list goes again")
+        check(as(B, function() return AltStable.ApplyCampSyncLine(fromA) end), "  and, newer, is taken whole")
+        eq(#B.rosterCamps, 50, "  all 50 of them")
+        local nextId = A.rosterCampNextId
+        eq(as(A, function() return AltStable.CreateCamp("One more", {}) end), nil, "a 51st camp is not made")
+        eq(#A.rosterCamps, 50, "  the list is unchanged")
+        eq(A.rosterCampNextId, nextId, "  and no id is spent")
+        check(not as(A, AltStable.CanCreateCamp), "  CanCreateCamp says so")
+        local chunks = {}
+        for i = 1, 51 do chunks[i] = i .. ",Far" .. i .. ",," end
+        local big = "==CAMPS1==:99999;" .. table.concat(chunks, ";")
+        check(not as(B, function() return AltStable.ApplyCampSyncLine(big) end),
+              "a received list of 51 is refused whole, not cut")
+        eq(#B.rosterCamps, 50, "  the camps here stay")
+        eq(B.rosterCampsStamp, A.rosterCampsStamp, "  with their stamp")
+        WoW.now = 7000
+    end
+
     -- An equal stamp with different contents (#428): the greater text wins on
     -- both sides, so two accounts meet instead of refusing each other for good.
     do

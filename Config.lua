@@ -950,9 +950,21 @@ function AltStable.CampOf(guid)
     end
 end
 
--- A new camp, last in the list. Returns its id. `members` beyond CAMP_SIZE are
--- dropped, and anyone in another camp leaves it.
+-- The most camps a list may hold (#427): what a sync carries, here and in
+-- every older client, which cuts a longer list. So no more are made; a list
+-- made longer before this limit is kept as it is, but not synced (see
+-- CampSyncLines and ApplyCampSyncLine).
+local MAX_CAMPS = 50
+AltStable.MAX_CAMPS = MAX_CAMPS
+function AltStable.CanCreateCamp()
+    return #AltStable.GetCamps() < MAX_CAMPS
+end
+
+-- A new camp, last in the list. Returns its id, or nil at the limit (nothing
+-- made, no id spent). `members` beyond CAMP_SIZE are dropped, and anyone in
+-- another camp leaves it.
 function AltStable.CreateCamp(name, members, backdrop)
+    if not AltStable.CanCreateCamp() then return nil end
     local camps = CopyCamps(AltStable.GetCamps())
     local nextId = NextCampId(camps)
     local keep, taken = {}, {}
@@ -1123,7 +1135,7 @@ end
 AltStable.CAMPS_LINE, AltStable.ORDER_LINE = "==CAMPS1==", "==ORDER1=="
 -- MAX_NAME is BYTES: the rename box allows 32 letters, and a letter can be up
 -- to four bytes in UTF-8 (#172 review: "été" names were replaced).
-local MAX_SYNCED_CAMPS, MAX_SYNCED_ORDER, MAX_NAME = 50, 500, 128
+local MAX_SYNCED_ORDER, MAX_NAME = 500, 128
 
 local function Unesc(v)
     return (tostring(v or ""):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
@@ -1169,10 +1181,12 @@ end
 -- it switched off, a camp would go out with an empty field and show the other
 -- account's default; it goes with the next sync made with the Roster on. The
 -- campless order holds no backdrop, so it never waits.
+-- Nor while the list holds more than MAX_CAMPS (#427): an older receiver would
+-- cut it, and the cut copy would come back here as the newer list.
 function AltStable.CampSyncLines()
     local out = {}
     local stamp = CampsStamp()
-    if stamp > 0 and AltStable.DefaultCampBackdrop then
+    if stamp > 0 and AltStable.DefaultCampBackdrop and #AltStable.GetCamps() <= MAX_CAMPS then
         out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";"
             .. CampsWire(AltStable.GetCamps(), AltStable.DefaultCampBackdrop())
     end
@@ -1184,15 +1198,19 @@ function AltStable.CampSyncLines()
     return out
 end
 
--- A received ==CAMPS== body: its stamp and the camps, checked - capped,
--- deduplicated, every guid a guid - or nil for anything that does not read.
+-- A received ==CAMPS== body: its stamp and the camps, checked - deduplicated,
+-- every guid a guid - or nil for anything that does not read. More than
+-- MAX_CAMPS is refused whole, never cut (#427): the cut list would replace
+-- the sender's own the next time it came back.
 local function ParseCamps(body)
     local stampText, rest = body:match("^(%d+);?(.*)$")
     local stamp = tonumber(stampText)
     if not stamp or stamp <= 0 then return nil end
+    local n = 0
+    for _ in (rest or ""):gmatch("[^;]+") do n = n + 1 end
+    if n > MAX_CAMPS then return nil end
     local camps, seenId, seenGuid = {}, {}, {}
     for chunk in (rest or ""):gmatch("[^;]+") do
-        if #camps >= MAX_SYNCED_CAMPS then break end
         local f = {}
         for field in (chunk .. ","):gmatch("([^,]*),") do f[#f + 1] = field end
         local id = tonumber(f[1])
@@ -1254,6 +1272,11 @@ function AltStable.ApplyCampSyncLine(line)
             local _, ours = ParseCamps(held .. ";" .. CampsWire(AltStable.GetCamps(), default))
             if not ours or not TieWins(CampsWire(camps, default), CampsWire(ours, default)) then return false end
         end
+        -- A list here longer than a sync carries (made before the limit) is
+        -- never replaced by one from an account that never saw it (#427).
+        -- Declared: until the player brings it back to MAX_CAMPS, the camps
+        -- don't sync either way; the campless order still does.
+        if #AltStable.GetCamps() > MAX_CAMPS then return false end
         -- A field this build does not send (a later build's) survives on a camp
         -- that is still there, as it does every local write (CopyCamps).
         for _, c in ipairs(camps) do

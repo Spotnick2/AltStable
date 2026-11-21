@@ -4119,6 +4119,23 @@ do
     eq("  at the end", members(raiders.id), "7")
     AltStable.RemoveFromCamp("pool-7")
 
+    -- At 50 camps, no new one (#427): + is off, and the dialog makes nothing.
+    do
+        local heldCamps, heldSel = AltStableConfig.rosterCamps, AltStableConfig.rosterCamp
+        local full = {}
+        for i = 1, 50 do full[i] = { id = 100 + i, name = "Full " .. i, members = {} } end
+        AltStableConfig.rosterCamps = full
+        L.PaintRows()
+        check("#427: at 50 camps the + button is off", not LT.Plus():IsEnabled())
+        L.OpenDialog(nil)
+        L.Dialog().box:SetText("One more")
+        L.AcceptDialog()
+        eq("  and the dialog makes no 51st", #AltStable.GetCamps(), 50)
+        AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = heldCamps, heldSel
+        L.PaintRows()
+        check("  with fewer, it is on again", LT.Plus():IsEnabled())
+    end
+
     -- Between camps.
     check("a member dropped on another camp's empty seat moves",
           L.Drop({ kind = "char", guid = "pool-5", fromCamp = camp1, fromPos = 4 }, item("slot", nil, "Raiders")))
