@@ -1134,6 +1134,9 @@ local function ReconcileHover()
     local now = cell and cell:IsShown() and cell.entry
     if now and now.id == e.id then
         AT_WB.hoverEntry = now
+        -- The tooltip's "N shown in this tab" is the cell's count: when that
+        -- changed, draw it again for the same item (#407 review).
+        if now.total ~= e.total then CellOnEnter(cell) end
     else
         ClearHover()
     end

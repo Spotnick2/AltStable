@@ -1107,10 +1107,22 @@ do
     check("the linen is on screen", cell ~= nil)
     if cell then
         cell:GetScript("OnEnter")(cell)
+        -- Drawn again when the cell's count changes (its "shown in this tab"
+        -- line, #407 review), and only then.
+        local drawn = 0
+        local realSet = GameTooltip.SetHyperlink
+        GameTooltip.SetHyperlink = function(self, link, ...)
+            if link == "item:101" then drawn = drawn + 1 end
+            return realSet(self, link, ...)
+        end
+        wb.Refresh()
+        eq("a refresh with the same count leaves the tooltip as drawn", drawn, 0)
         AltStableWarbandDB["Player-1-X"] = { bags = { [101] = 3 } }    -- a bag update
         wb.Refresh()
         check("a refresh keeps the tooltip on the same item", wb.hoverEntry ~= nil and wb.hoverEntry.id == 101)
         eq("  with its refreshed count", wb.hoverEntry and wb.hoverEntry.total, 3)
+        eq("  and draws it again, so its tab line says 3", drawn, 1)
+        GameTooltip.SetHyperlink = realSet
         -- ...and drops it when the item is gone.
         AltStableWarbandDB["Player-1-X"] = { bags = { [102] = 1 } }
         WoW.items[102] = { name = "Wool", classID = 7, quality = 1, icon = 2 }
