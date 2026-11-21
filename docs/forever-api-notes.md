@@ -1103,6 +1103,36 @@ character, rested).
 are byte-identical to 70938's. `gen-recipes.py --check` against them: 2211 recipes, 0 added,
 0 removed, 0 changed.
 
+## Build 1.60.1.71037 (2026-11-20) — C_BattleNet.IsGameAccountOnSameRealm, none we use
+
+Dumped (`forever-api-1.60.1.71037.md`, client built Nov 18 2026) and compared with
+`Compare-Dumps.ps1` against 70959:
+
+```
+Documented functions - +1 -0     + C_BattleNet.IsGameAccountOnSameRealm(id:number) -> isOnSameRealm:bool
+Documented events - no change (1816)
+Documented tables - +1 -1        BNetGameAccountInfo gains hasRealmInfo:bool (after realmID); nothing else changes
+Widget methods - no change (7530)
+Namespace functions - +1 -0      + C_BattleNet.IsGameAccountOnSameRealm
+Global functions - +12 -0 (walks _G: addon noise, not listed)
+Namespace candidates - +705 -38 (walks _G: addon noise, not listed)
+```
+
+AltStable doesn't call `IsGameAccountOnSameRealm` or read `BNetGameAccountInfo` outside the
+probe (`Tools\AltStableProbe\BNet.lua`, `Online.lua`, where a new field changes nothing). Both
+additions look like the client side of the realm being hidden. The server hotfix of the same week
+(2026-11-20, see "The realm is hidden" under the surname findings) made `GetRealmName()` return `""`
+and `GetRealmID()` return `0`. The ruleset now comes from `C_GameRules` (#412).
+
+**Behaviour**, the RUNBOOK step-3 line: `60 7600 10644 -1 5 table`, all as expected (a rested
+character).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+**Test kit.** `tests\kit.pin` stays at build 70959: WowTestKit's 71037 data is in
+Spotnick2/WowTestKit#102, not merged yet. Its lists differ from 70959's only by
+`C_BattleNet.IsGameAccountOnSameRealm`, which AltStable doesn't call.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk
