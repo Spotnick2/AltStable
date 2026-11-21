@@ -83,11 +83,13 @@ end
 --
 -- Cached: BAG_UPDATE fires several times a second while questing and each one
 -- asks whether the bag is a bank tab. The set only changes when a tab is
--- bought, which happens at the bank - so every bank session re-reads it.
+-- bought, which happens at the bank - so every bank session re-reads it. Only
+-- a success is cached ({} included): a failed enumeration is asked again, so
+-- the next read in the same visit can recover (#419).
 local tabCache
 local function BankTabIDs()
-    if tabCache == nil then tabCache = AltStable.API.GetCharacterBankTabIDs() or false end
-    return tabCache or nil
+    if tabCache == nil then tabCache = AltStable.API.GetCharacterBankTabIDs() end
+    return tabCache
 end
 
 local function InvalidateTabCache()
@@ -105,6 +107,7 @@ local AT_WB = { cells = {}, isActive = false, search = "" }
 
 -- Bank-session state for the transactional bank scan.
 local isBankOpen  = false
+local bankDirty   = false   -- a bank change (or the open) not yet read (#419)
 local bankGen     = 0
 local bagsPending = false
 local bankPending = false
@@ -157,11 +160,20 @@ end
 -- Sum a set of containers into { [itemID] = count }. Returns nil if any
 -- occupied slot is unreadable, so a mid-transition scan aborts instead of
 -- recording garbage.
-local function ScanContainerSet(ids)
+-- `slotsOf(bag)`, when given, says how many slots to read, 0 for a container
+-- that is legitimately empty, or nil when it isn't loaded yet: then the whole
+-- read is nil, and nothing is recorded (#439).
+local function ScanContainerSet(ids, slotsOf)
     if not CGetNumSlots or not ids then return nil end
     local map = {}
     for _, bag in ipairs(ids) do
-        local n = CGetNumSlots(bag)
+        local n
+        if slotsOf then
+            n = slotsOf(bag)
+            if n == nil then return nil end
+        else
+            n = CGetNumSlots(bag)
+        end
         if n and n > 0 then
             for slot = 1, n do
                 local id, count = ReadSlot(bag, slot)
@@ -221,10 +233,22 @@ end
 local bagsConfirmed = false      -- this session's first bag read has confirmed them
 local bankConfirm = false        -- the open bank visit's first complete read is still to come
 
-local function ScanBags()
-    if ApplyScan("bags", "bagsStamp", ScanContainerSet(CarriedBagIDs()), not bagsConfirmed) then
-        bagsConfirmed = true
+-- The carried bags by Core's readiness rule (the backpack or a bag at 0 slots
+-- is not loaded yet; an empty bag slot is nothing), the keyring as before: it
+-- has no bag slot to ask about. Returns whether the bags were read.
+local function CarriedSlots(bag)
+    if bag == AltStable.API.GetKeyringBagID() then
+        return (CGetNumSlots and tonumber(CGetNumSlots(bag))) or 0
     end
+    return AltStable.API.CarriedContainerSlots(bag)
+end
+
+local function ScanBags()
+    if ApplyScan("bags", "bagsStamp", ScanContainerSet(CarriedBagIDs(), CarriedSlots), not bagsConfirmed) then
+        bagsConfirmed = true
+        return true
+    end
+    return false
 end
 
 -- Transactional bank scan. A genuinely emptied bank MUST be allowed to replace
@@ -238,17 +262,22 @@ end
 -- who owns tabs whose slot counts have not arrived yet is not ready, while one
 -- who owns none legitimately has an empty bank. (Which is why the old
 -- MAIN_BANK slot-count gate is gone along with the constant.)
+--
+-- A purchased bag slot with no bag reports 0 slots: that is nothing, not "not
+-- ready" (#439: it aborted every read of such a bank). The main bank at 0, or a
+-- slot holding a bag at 0, is still "not ready" (Compat's BankContainerSlots).
+-- Returns whether the bank was read.
 local function ScanBank()
-    if not isBankOpen then return end
+    if not isBankOpen then return false end
     local tabs = BankTabIDs()
-    if not tabs then return end                   -- can't enumerate: not ready
-    for _, bag in ipairs(tabs) do
-        local n = CGetNumSlots and CGetNumSlots(bag)
-        if not n or n <= 0 then return end        -- slots not ready yet
+    if not tabs then return false end             -- can't enumerate: not ready
+    local candidate = ScanContainerSet(tabs, AltStable.API.BankContainerSlots)
+    if not candidate then return false end        -- not loaded, or malformed mid-transition: abort
+    if ApplyScan("bank", "bankStamp", candidate, bankConfirm) then
+        bankConfirm, bankDirty = false, false
+        return true
     end
-    local candidate = ScanContainerSet(tabs)
-    if not candidate then return end              -- malformed mid-transition: abort
-    if ApplyScan("bank", "bankStamp", candidate, bankConfirm) then bankConfirm = false end
+    return false
 end
 
 local function ScheduleBags()
@@ -270,6 +299,19 @@ local function ScheduleBank()
         bankPending = false
         if pendingBankGen == bankGen and isBankOpen then ScanBank() end
     end)
+end
+
+-- Read the bags and the bank together, while the bank is certainly readable
+-- (#419): at the end of a batch that changed it (BAG_UPDATE_DELAYED, which the
+-- probe measured in the SAME frame as the move's bank update), and inside
+-- BANKFRAME_CLOSED (measured still readable; one frame later it reports 0
+-- slots everywhere). The bags first, so both sides of a move are published
+-- together. Bags that can't be read yet keep the bank read and get the 1 s bag
+-- timer, which needs no bank (Codex review).
+local function ReadBankPass()
+    local bagsRead = ScanBags()
+    ScanBank()
+    if not bagsRead then ScheduleBags() end
 end
 
 ------------------------------------------------------------
@@ -559,10 +601,17 @@ local function OnBagUpdate(bag)
     if isMailOpen and inboxReady then ScheduleMail() end
     bag = tonumber(bag)
     if bag and IsBankContainer(bag) then
-        if isBankOpen then ScheduleBank() end   -- bank-tab change while open
+        -- A bank-tab change while open: read at the batch's end (below), with
+        -- the 1 s timer as the fallback.
+        if isBankOpen then bankDirty = true; ScheduleBank() end
         return
     end
     ScheduleBags()   -- carried bags / keyring (or a nil/unspecified bag)
+end
+
+-- The end of a batch of bag updates: the bank read now, if it changed.
+local function OnBagUpdateDelayed()
+    if isBankOpen and bankDirty then ReadBankPass() end
 end
 
 local function OnBankOpened()
@@ -570,6 +619,7 @@ local function OnBankOpened()
     bankConfirm = true
     InvalidateTabCache()   -- a tab may have been bought since the last session
     bankGen = bankGen + 1
+    bankDirty = true       -- until a read succeeds, so the next batch's end retries
     ScanBank()          -- immediate...
     ScheduleBank()      -- ...plus a follow-up in case slot counts aren't ready yet
 end
@@ -582,11 +632,15 @@ local function OnBankTabsChanged(bankType)
         return
     end
     InvalidateTabCache()
-    if isBankOpen then ScanBank(); ScheduleBank() end
+    if isBankOpen then bankDirty = true; ScanBank(); ScheduleBank() end
 end
 
+-- The last read, inside the close: the bank still reads right here, and not a
+-- frame later (#419). The bags too, always: a move's carried update can come
+-- in the batch after the bank's. Then the visit ends.
 local function OnBankClosed()
-    isBankOpen = false
+    if isBankOpen then ReadBankPass() end
+    isBankOpen, bankDirty = false, false
     InvalidateTabCache()
     bankGen = bankGen + 1   -- invalidate any in-flight scheduled scan
 end
@@ -2307,6 +2361,8 @@ end
 -- Bootstrap + events
 ------------------------------------------------------------
 
+local eventFrame   -- the plugin's event frame, for the tests (set below)
+
 local function BootstrapPlugin()
     if not AltStable or not AltStable.RegisterPlugin then
         Print("AltStable not found — make sure it is installed and enabled.")
@@ -2355,6 +2411,8 @@ local function BootstrapPlugin()
             gather = gather, ScanBags = ScanBags, ScanBank = ScanBank, CountItem = CountItem,
             EncodeMap = EncodeMap, ParseMap = ParseMap, mapsEqual = mapsEqual,
             OnBagUpdate = OnBagUpdate, OnBankOpened = OnBankOpened, OnBankClosed = OnBankClosed,
+            OnBagUpdateDelayed = OnBagUpdateDelayed, IsBankDirty = function() return bankDirty end,
+            EventFrame = function() return eventFrame end,
             NewSession = function() bagsConfirmed = false end,
             CarriedBagIDs = CarriedBagIDs, BankTabIDs = BankTabIDs, IsBankContainer = IsBankContainer,
             CleanupWarbandDB = CleanupWarbandDB,
@@ -2395,8 +2453,10 @@ local function BootstrapPlugin()
 end
 
 local frame = CreateFrame("Frame")
+eventFrame = frame
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("BAG_UPDATE")
+frame:RegisterEvent("BAG_UPDATE_DELAYED")     -- the end of a batch: the bank read (#419)
 frame:RegisterEvent("BANKFRAME_OPENED")
 frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
@@ -2430,7 +2490,9 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     elseif event == "BANKFRAME_CLOSED" then
         OnBankClosed()
     elseif event == "PLAYERBANKSLOTS_CHANGED" then
-        if isBankOpen then ScheduleBank() end
+        if isBankOpen then bankDirty = true; ScheduleBank() end
+    elseif event == "BAG_UPDATE_DELAYED" then
+        OnBagUpdateDelayed()
     elseif event == "BANK_TABS_CHANGED" then
         OnBankTabsChanged(arg1)
     elseif event == "GET_ITEM_INFO_RECEIVED" then

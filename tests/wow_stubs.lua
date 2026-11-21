@@ -1186,6 +1186,19 @@ C_Container = {
     end,
 }
 
+-- ItemLocation (Blizzard_ObjectAPI) and C_Item.DoesItemExist, as Forever's
+-- Camelot bank frame uses them for its bag slots (#439): a bank bag slot is
+-- ItemLocation(Enum.BagIndex.Characterbanktab, n), n from 2. WoW.bankBags[n]
+-- = true says a bag sits in purchased bag slot n; absent, the slot is empty.
+ItemLocation = {
+    CreateFromBagAndSlot = function(_, bag, slot) return { bagID = bag, slotIndex = slot } end,
+}
+C_Item.DoesItemExist = function(loc)
+    if type(loc) ~= "table" then error("Usage: C_Item.DoesItemExist(emptiableItemLocation)", 2) end
+    if loc.bagID == -2 then return (WoW.bankBags or {})[loc.slotIndex] == true end
+    return false
+end
+
 ------------------------------------------------------------
 -- C_Bank
 ------------------------------------------------------------

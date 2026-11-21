@@ -550,4 +550,315 @@ if questsProc and Q then
     WoW.player.name = savedName
 end
 
+------------------------------------------------------------
+-- /fp steps as bankclose (#419): a bank move's events against the close, and
+-- every read of the bank against the open's
+------------------------------------------------------------
+do
+    local proc = FP.procedures and FP.procedures["AltStableProbe/bankclose"]
+    check("/fp steps as bankclose is defined", proc ~= nil and #proc.steps >= 15)
+    check("  and ends with a /reload", proc ~= nil and proc.steps[#proc.steps].reload == true)
+    check("  /fp as bankclose exists", P and P.commands.bankclose ~= nil)
+    local B = ns.BankClose
+    check("  its readers are reachable for the tests", B ~= nil and B.Read ~= nil)
+
+    local function slot(id, n) return { itemID = id, stackCount = n, hyperlink = "|Hitem:" .. id .. "|h" } end
+    local function bank(...) WoW.containers[6] = { size = 3, ... } end
+    local function visit(fire)
+        AltStableProbeDB.bankclose = nil
+        WoW.bankTabs = { 6 }
+        WoW.containers = { [0] = { size = 3 } }
+        bank(slot(2318, 20), slot(2589, 4))            -- 2589 is the control, never touched
+        fireProbeEvent("BANKFRAME_OPENED")
+        B.Arm()                                        -- the owner leaves the Open step
+        fire()
+        for _ = 1, 4 do WoW.flushTimers() end
+        local ok, line = B.VisitDone()
+        return AltStableProbeDB.bankclose and AltStableProbeDB.bankclose[1], ok, line
+    end
+    local function readOf(s, kind)
+        for _, l in ipairs(s and s.reads or {}) do if l:find(" " .. kind .. ": ", 1, true) then return l end end
+        return ""
+    end
+
+    -- A. Part of a stack, the batch ends before the close: a healthy close read.
+    local s, ok, line = visit(function()
+        bank(slot(2318, 5), slot(2589, 4))
+        WoW.containers[0] = { size = 3, slot(2318, 15) }
+        fireProbeEvent("BAG_UPDATE", 6)
+        fireProbeEvent("BAG_UPDATE", 0)
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+        fireProbeEvent("BANKFRAME_CLOSED")
+    end)
+    check("a visit is saved once its window ends", s ~= nil)
+    eq("  the batch ended before the close", s and s.delayedBeforeClose, true)
+    check("  the close read keeps the untouched slot, changes the moved one",
+          readOf(s, "CLOSED"):find("kept=1/2", 1, true) ~= nil
+          and readOf(s, "CLOSED"):find("6:1 2318x20->2318x5", 1, true) ~= nil, readOf(s, "CLOSED"))
+    check("  the item totals say what moved", readOf(s, "CLOSED"):find("2318:20->5", 1, true) ~= nil)
+    check("  the bank-tab update is read too", readOf(s, "BAG_UPDATE"):find("kept=1/2", 1, true) ~= nil)
+    check("  and the order names the carried bag", s and s.order:find("BAG_UPDATE(0 carried)", 1, true) ~= nil,
+          s and s.order)
+    check("  After(0)'s frame delta is recorded", s and s.nextFrameDelta ~= nil)
+    check("  the wait step completes once, with the line", ok == true and line:find("visit", 1, true) ~= nil)
+    check("  and not again for the same visit", (B.VisitDone()) == false)
+
+    -- An unreadable close: slots reported, contents gone. The control slot
+    -- reads empty too: kept=0.
+    s = visit(function()
+        fireProbeEvent("BAG_UPDATE", 6)
+        bank()
+        fireProbeEvent("BANKFRAME_CLOSED")
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+    end)
+    eq("a close before the batch ended says so", s and s.delayedBeforeClose, false)
+    check("  a read that lost the bank keeps none, the control included",
+          readOf(s, "CLOSED"):find("kept=0/2", 1, true) ~= nil, readOf(s, "CLOSED"))
+    check("  the DELAYED after the close is read", readOf(s, "DELAYED"):find("kept=0/2", 1, true) ~= nil)
+
+    -- A whole stack withdrawn, read healthily: its slot is empty, the control
+    -- stays (kept=1/2), unlike the unreadable close above.
+    s = visit(function()
+        bank(nil, slot(2589, 4))
+        WoW.containers[6] = { size = 3, [2] = slot(2589, 4) }
+        fireProbeEvent("BAG_UPDATE", 6)
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+        fireProbeEvent("BANKFRAME_CLOSED")
+    end)
+    check("a whole stack withdrawn reads apart from an unreadable bank",
+          readOf(s, "CLOSED"):find("kept=1/2", 1, true) ~= nil
+          and readOf(s, "CLOSED"):find("2318x20->empty", 1, true) ~= nil, readOf(s, "CLOSED"))
+
+    -- In one frame, DELAYED then a new bank-tab update then the close: the
+    -- update's batch did not end before the close.
+    s = visit(function()
+        fireProbeEvent("BAG_UPDATE", 6)
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+        fireProbeEvent("BAG_UPDATE", 6)
+        fireProbeEvent("BANKFRAME_CLOSED")
+    end)
+    eq("DELAYED, then a new bank update, then the close: not before the close", s and s.delayedBeforeClose, false)
+    s = visit(function()
+        fireProbeEvent("BAG_UPDATE", 6)
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+        fireProbeEvent("BANKFRAME_CLOSED")
+    end)
+    eq("  the update, DELAYED, the close in one frame: before the close", s and s.delayedBeforeClose, true)
+    s = visit(function()
+        fireProbeEvent("BAG_UPDATE", 0)
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+        fireProbeEvent("BANKFRAME_CLOSED")
+    end)
+    eq("  no bank-tab update at all is said as such", s and s.delayedBeforeClose, "no bank-tab update after the trial was armed")
+
+    -- A slot whose reads throw is counted, never taken as empty.
+    s = visit(function()
+        local real = AltStable.API.GetContainerItemID
+        AltStable.API.GetContainerItemID = function() error("withheld") end
+        fireProbeEvent("BANKFRAME_CLOSED")
+        AltStable.API.GetContainerItemID = real
+    end)
+    check("a read that throws counts errors", readOf(s, "CLOSED"):find("errors=3", 1, true) ~= nil, readOf(s, "CLOSED"))
+    check("  its slots read as unknown, never as withdrawn",
+          readOf(s, "CLOSED"):find("->?", 1, true) ~= nil and not readOf(s, "CLOSED"):find("->empty", 1, true),
+          readOf(s, "CLOSED"))
+    check("  and its totals are marked incomplete", readOf(s, "CLOSED"):find("items(INCOMPLETE)", 1, true) ~= nil)
+    check("  the close's absolute totals say so too", s and tostring(s.closeTotals):find("unknown slots", 1, true) ~= nil,
+          s and s.closeTotals)
+
+    -- Absolute totals and elapsed time are saved (the final reopen is checked
+    -- against the trials by them).
+    s = visit(function() fireProbeEvent("BANKFRAME_CLOSED") end)
+    eq("the open's absolute totals are saved", s and s.openTotals, "2318:20 2589:4")
+    check("  the order carries elapsed time", s and s.order:find("+0.000s OPENED", 1, true) ~= nil, s and s.order)
+
+    -- Reopened inside the window, before the report polls: the report answers
+    -- for the visit the trial closed, cut short, and its late reads are skipped.
+    AltStableProbeDB.bankclose = nil
+    WoW.bankTabs = { 6 }
+    bank(slot(2318, 20), slot(2589, 4))
+    fireProbeEvent("BANKFRAME_OPENED")
+    B.Arm()
+    fireProbeEvent("BANKFRAME_CLOSED")
+    local first = B.Recent()
+    fireProbeEvent("BANKFRAME_OPENED")              -- before any timer ran
+    local okR, lineR = B.VisitDone()
+    check("a reopen inside the window: the report is the closed visit's",
+          okR == true and lineR:find("visit " .. first.id .. " (INTERRUPTED", 1, true) ~= nil, lineR)
+    for _ = 1, 4 do WoW.flushTimers() end
+    local late = false
+    for _, e in ipairs(first.events) do if e.kind == "CLOSED+0" or e.kind == "CLOSED+1s" then late = true end end
+    check("  and its pending reads were skipped", not late)
+    check("  the new visit is not reported for it", (B.VisitDone()) == false)
+    fireProbeEvent("BANKFRAME_CLOSED")
+    for _ = 1, 4 do WoW.flushTimers() end
+    check("  and the unarmed visit after it reports nothing", (B.VisitDone()) == false)
+
+    -- Ordinary banking before the trial never answers for it: an earlier
+    -- visit, then the armed one; the report is the armed one's.
+    fireProbeEvent("BANKFRAME_OPENED"); local X = B.Recent(); fireProbeEvent("BANKFRAME_CLOSED")
+    for _ = 1, 4 do WoW.flushTimers() end
+    fireProbeEvent("BANKFRAME_OPENED"); B.Arm(); local Tv = B.Recent(); fireProbeEvent("BANKFRAME_CLOSED")
+    for _ = 1, 4 do WoW.flushTimers() end
+    local _, l1 = B.VisitDone()
+    check("an earlier visit does not answer for the trial",
+          tostring(l1):find("visit " .. Tv.id .. ":", 1, true) == 1 and Tv.id ~= X.id, l1)
+    -- Armed before the bank's own OPENED arrives (the panel's event first):
+    -- the next visit is the trial's.
+    B.Arm()
+    fireProbeEvent("BANKFRAME_OPENED"); local Nv = B.Recent(); fireProbeEvent("BANKFRAME_CLOSED")
+    for _ = 1, 4 do WoW.flushTimers() end
+    local _, l2 = B.VisitDone()
+    check("  armed before the bank's OPENED: the next visit is the trial's",
+          tostring(l2):find("visit " .. Nv.id .. ":", 1, true) == 1, l2)
+
+    -- The verdict counts only the trial's move: an update and its batch from
+    -- before arming, then the move's tab update arriving after the close.
+    s = (function()
+        AltStableProbeDB.bankclose = nil
+        fireProbeEvent("BANKFRAME_OPENED")
+        fireProbeEvent("BAG_UPDATE", 6)
+        fireProbeEvent("BAG_UPDATE_DELAYED")
+        B.Arm()
+        fireProbeEvent("BANKFRAME_CLOSED")
+        fireProbeEvent("BAG_UPDATE", 6)
+        for _ = 1, 4 do WoW.flushTimers() end
+        B.VisitDone()
+        return AltStableProbeDB.bankclose[1]
+    end)()
+    eq("a batch from before the trial is not the move's", s and s.delayedBeforeClose,
+       "no bank-tab update after the trial was armed")
+
+    -- Codex round 6: the baseline is the settled read at Ready, and each
+    -- trial's reads are checked against the NEXT visit's baseline. Here the
+    -- DELAYED before the close still reads the old counts; the move shows only
+    -- after the close.
+    AltStableProbeDB.bankclose = nil
+    WoW.bankTabs = { 6 }
+    bank(slot(2318, 20), slot(2589, 4))
+    fireProbeEvent("BANKFRAME_OPENED"); B.Arm()
+    fireProbeEvent("BAG_UPDATE", 6)
+    fireProbeEvent("BAG_UPDATE_DELAYED")              -- still 20: stale
+    fireProbeEvent("BANKFRAME_CLOSED")                -- still 20 inside the close
+    bank(slot(2318, 5), slot(2589, 4))                -- the move lands after it
+    for _ = 1, 4 do WoW.flushTimers() end
+    local first = AltStableProbeDB.bankclose[#AltStableProbeDB.bankclose]
+    eq("  the order alone says the batch ended before the close", first.delayedBeforeClose, true)
+    B.VisitDone()
+    -- The next visit opens unready (no slots), then settles by Ready.
+    WoW.containers[6] = { size = 0 }
+    fireProbeEvent("BANKFRAME_OPENED")
+    bank(slot(2318, 5), slot(2589, 4))
+    B.Arm()
+    eq("the next visit's settled baseline judges it: the DELAYED read was wrong", first.delayedRight, false)
+    eq("  so was the read inside the close", first.closeRight, false)
+    eq("  the read a second later was right", first.lastRight, true)
+    check("  the reference's own move is saved, slot by slot, to check the grade against",
+          tostring(first.referenceMove):find("6:1 2318x20->2318x5", 1, true) ~= nil, tostring(first.referenceMove))
+    fireProbeEvent("BANKFRAME_CLOSED")
+    for _ = 1, 4 do WoW.flushTimers() end
+    local second = AltStableProbeDB.bankclose[#AltStableProbeDB.bankclose]
+    eq("an unready open is not the baseline: the Ready read is", second.baselineTotals, "2318:5 2589:4")
+    B.VisitDone()
+
+    -- Codex round 7. A trial whose move never landed is inconclusive, not right.
+    local function trial(fire, nextBank)
+        AltStableProbeDB.bankclose = nil
+        bank(slot(2318, 20), slot(2589, 4))
+        fireProbeEvent("BANKFRAME_OPENED"); B.Arm()
+        fire()
+        for _ = 1, 4 do WoW.flushTimers() end
+        local v = AltStableProbeDB.bankclose[#AltStableProbeDB.bankclose]
+        B.VisitDone()
+        nextBank()
+        fireProbeEvent("BANKFRAME_OPENED"); B.Arm()
+        fireProbeEvent("BANKFRAME_CLOSED")
+        for _ = 1, 4 do WoW.flushTimers() end
+        B.VisitDone()
+        return v
+    end
+    local v = trial(function() fireProbeEvent("BANKFRAME_CLOSED") end,
+                    function() bank(slot(2318, 20), slot(2589, 4)) end)
+    check("no move landed: inconclusive", tostring(v.closeRight):find("inconclusive", 1, true) ~= nil,
+          tostring(v.closeRight))
+    -- An incomplete next baseline: inconclusive too.
+    v = trial(function() bank(slot(2318, 5), slot(2589, 4)); fireProbeEvent("BANKFRAME_CLOSED") end,
+              function()
+                  local real = AltStable.API.GetContainerNumSlots
+                  AltStable.API.GetContainerNumSlots = function() return 0 end
+                  fireProbeEvent("BANKFRAME_OPENED"); B.Arm()
+                  AltStable.API.GetContainerNumSlots = real
+                  fireProbeEvent("BANKFRAME_CLOSED"); for _ = 1, 4 do WoW.flushTimers() end; B.VisitDone()
+              end)
+    -- (that unready visit graded v; the trial helper's own visit after it doesn't re-grade it)
+    check("an unreadable next baseline: inconclusive", tostring(v.closeRight):find("inconclusive", 1, true) ~= nil,
+          tostring(v.closeRight))
+    -- The pre-close DELAYED is graded whatever the order, and the 1 s grade is
+    -- the CLOSED+1s sample, not a later read.
+    v = trial(function()
+        bank(slot(2318, 5), slot(2589, 4))
+        fireProbeEvent("BAG_UPDATE_DELAYED")             -- no bank-tab update before it
+        fireProbeEvent("BANKFRAME_CLOSED")
+        fireProbeEvent("BAG_UPDATE", 0)
+        WoW.flushTimers(); WoW.flushTimers()           -- +0 and +1 s read 5
+        bank(slot(2318, 99), slot(2589, 4))
+        fireProbeEvent("BAG_UPDATE_DELAYED")             -- a later read in the window: 99
+    end, function() bank(slot(2318, 5), slot(2589, 4)) end)
+    eq("a pre-close DELAYED read is graded whatever the order", v.delayedRight, true)
+    eq("  the 1 s grade is the 1 s sample's", v.lastRight, true)
+    -- Codex round 8: a reference with slots but no items (the control gone)
+    -- is inconclusive, even against an equally blank close read.
+    v = trial(function() bank(); fireProbeEvent("BANKFRAME_CLOSED") end,
+              function() bank() end)
+    check("a blank reference that lost the control: inconclusive",
+          tostring(v.closeRight):find("lost the control", 1, true) ~= nil, tostring(v.closeRight))
+    bank(slot(2318, 20), slot(2589, 4))
+
+    -- A reopen after the window is not an interruption.
+    local realGetTime = GetTime
+    local clock = 100
+    rawset(_G, "GetTime", function() return clock end)
+    fireProbeEvent("BANKFRAME_OPENED"); B.Arm(); local W = B.Recent()
+    fireProbeEvent("BANKFRAME_CLOSED")
+    clock = 103.05                                   -- past the 3 s window, before the 3.1 s timer
+    fireProbeEvent("BANKFRAME_OPENED")
+    check("a reopen after the window does not mark the visit interrupted", W.done and not W.interrupted)
+    fireProbeEvent("BANKFRAME_CLOSED")
+    for _ = 1, 4 do WoW.flushTimers() end
+    B.VisitDone()
+    rawset(_G, "GetTime", realGetTime)
+
+    -- Unknown is never empty: a tab whose slot count fails, an opening slot
+    -- that failed, a tab list that failed.
+    local open = B.Read({ 6 })
+    local realSlots = AltStable.API.GetContainerNumSlots
+    AltStable.API.GetContainerNumSlots = function() error("withheld") end
+    local blind = B.Read({ 6 })
+    AltStable.API.GetContainerNumSlots = realSlots
+    local line = B.Summarise(open, blind)
+    check("a tab whose slot count failed: its slots are unknown, not withdrawn",
+          line:find("->?", 1, true) ~= nil and not line:find("->empty", 1, true), line)
+    line = B.Summarise(blind, open)
+    check("  an opening read that failed: later items are ?->, not empty->",
+          line:find("?->", 1, true) ~= nil and not line:find("empty->", 1, true), line)
+    eq("  a failed tab list is never totals of an empty bank", B.Totals(B.Read(nil)), "ERR no tab list")
+    AltStable.API.GetContainerNumSlots = function() return 0 end
+    local zero = B.Read({ 6 })
+    AltStable.API.GetContainerNumSlots = realSlots
+    line = B.Summarise(open, zero)
+    check("  a slot count of 0 is unreadable, not an empty tab",
+          line:find("->?", 1, true) ~= nil and not line:find("->empty", 1, true), line)
+    -- #439: a purchased bag slot (7) with no bag reads 0 slots and is whole.
+    local savedBags = WoW.bankBags
+    WoW.bankBags = {}
+    WoW.containers[7] = { size = 0 }
+    local withEmpty = B.Read({ 6, 7 })
+    check("  an empty purchased bag slot is read whole, not unknown", withEmpty.unknownTabs == 0,
+          tostring(withEmpty.slots))
+    WoW.bankBags = { [2] = true }
+    check("  a bag in it at 0 slots is unknown", B.Read({ 6, 7 }).unknownTabs == 1)
+    WoW.containers[7], WoW.bankBags = nil, savedBags
+    WoW.bankTabs, WoW.containers = nil, nil
+end
+
 WoW.finish("test_probe", passed, failed)

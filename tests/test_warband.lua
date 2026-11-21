@@ -819,12 +819,20 @@ WoW.flushTimers()
 eq("a bank reopened inside the debounce window still gets its scan",
    AltStableWarbandDB[GUID].bank and AltStableWarbandDB[GUID].bank[2318], 13)
 
--- ...while a scan whose session ended is still dropped.
+-- ...while a scan whose session ended is still dropped. The close itself
+-- reads the bank (#419: still readable inside BANKFRAME_CLOSED), and the old
+-- timer then reads nothing.
 AltStableWarbandDB[GUID].bank = nil
 T.OnBagUpdate(6)
 T.OnBankClosed()
-WoW.flushTimers()
-eq("a scan whose bank session ended is dropped", AltStableWarbandDB[GUID].bank, nil)
+eq("#419: the close reads the bank", AltStableWarbandDB[GUID].bank and AltStableWarbandDB[GUID].bank[2318], 13)
+do
+    local reads, real = 0, AltStable.API.GetContainerNumSlots
+    AltStable.API.GetContainerNumSlots = function(b) if b == 6 then reads = reads + 1 end return real(b) end
+    WoW.flushTimers()
+    AltStable.API.GetContainerNumSlots = real
+    eq("  and a scan whose bank session ended reads nothing", reads, 0)
+end
 
 ------------------------------------------------------------
 -- Tooltips: the hovered cell's breakdown belongs to that item
@@ -1543,6 +1551,183 @@ do
     wb.ResetIconList()
     panel.GetHeight = realH
     wb.Deactivate(main)
+    WoW.reset()
+end
+
+------------------------------------------------------------
+-- #419: the bank is read at the end of the batch that changed it, and inside
+-- the close; never after. Driven through the plugin's real event frame.
+------------------------------------------------------------
+do
+    WoW.reset()
+    -- The kit's reset discards every frame; the plugin's event frame goes back
+    -- in, with the events it registered, so WoW.fire reaches it as in game.
+    local ef = T.EventFrame()
+    local present = false
+    for _, w in ipairs(WoW.frames) do if w == ef then present = true end end
+    if not present then table.insert(WoW.frames, ef) end
+    local function fresh(bank, bags)
+        WoW.flushTimers()                            -- no timer left over from the scenario before
+        WoW.bankTabs, WoW.accountTabs, WoW.bankBags = { 6 }, {}, {}
+        WoW.containers = { [0] = { size = 3 }, [6] = { size = 3 } }
+        for i, v in ipairs(bank or {}) do WoW.containers[6][i] = slot(v[1], v[2]) end
+        for i, v in ipairs(bags or {}) do WoW.containers[0][i] = slot(v[1], v[2]) end
+        AltStableWarbandDB = {}
+        T.NewSession()
+    end
+    local ME = UnitGUID("player")                       -- the reset's player, not the file's GUID
+    local function mine() return AltStableWarbandDB[ME] or {} end
+    local function bankOf(id) return (mine().bank or {})[id] or 0 end
+    local function bagsOf(id) return (mine().bags or {})[id] or 0 end
+    local function withdraw(fromBank, toBags)
+        WoW.containers[6][1] = fromBank > 0 and slot(2318, fromBank) or nil
+        WoW.containers[0][1] = toBags > 0 and slot(2318, toBags) or nil
+    end
+
+    -- A withdrawal, then Escape: the batch's end reads both sides at once.
+    fresh({ { 2318, 20 } })
+    WoW.fire("BANKFRAME_OPENED")
+    eq("#419: the open reads the bank", bankOf(2318), 20)
+    withdraw(5, 15)
+    WoW.fire("BAG_UPDATE", 6); WoW.fire("BAG_UPDATE", 0); WoW.fire("BAG_UPDATE_DELAYED")
+    eq("  the batch's end reads the bank, before any close or timer", bankOf(2318), 5)
+    eq("  and the bags with it", bagsOf(2318), 15)
+    WoW.fire("BANKFRAME_CLOSED"); WoW.flushTimers()
+    eq("  the total stays 20 after the close", bankOf(2318) + bagsOf(2318), 20)
+
+    -- A deposit: the same.
+    fresh({ { 2318, 5 } }, { { 2318, 15 } })
+    WoW.fire("BANKFRAME_OPENED")
+    withdraw(20, 0)
+    WoW.fire("BAG_UPDATE", 6); WoW.fire("BAG_UPDATE", 0); WoW.fire("BAG_UPDATE_DELAYED")
+    eq("a deposit: the bank at the batch's end", bankOf(2318), 20)
+    eq("  the bags too", bagsOf(2318), 0)
+    WoW.fire("BANKFRAME_CLOSED")
+
+    -- PLAYERBANKSLOTS_CHANGED alone marks the bank changed.
+    fresh({ { 2318, 20 } })
+    WoW.fire("BANKFRAME_OPENED")
+    withdraw(7, 13)
+    WoW.fire("PLAYERBANKSLOTS_CHANGED", 1); WoW.fire("BAG_UPDATE_DELAYED")
+    eq("PLAYERBANKSLOTS_CHANGED alone: the batch's end reads the bank", bankOf(2318), 7)
+    WoW.fire("BANKFRAME_CLOSED")
+
+    -- The carried update in the NEXT batch: the close reads the bags.
+    fresh({ { 2318, 20 } })
+    WoW.fire("BANKFRAME_OPENED")
+    WoW.containers[6][1] = slot(2318, 5)
+    WoW.fire("BAG_UPDATE", 6); WoW.fire("BAG_UPDATE_DELAYED")
+    WoW.containers[0][1] = slot(2318, 15)            -- the bags' own update hasn't come yet
+    WoW.fire("BANKFRAME_CLOSED")
+    eq("the carried side arriving later is read inside the close", bagsOf(2318), 15)
+
+    -- A close with no batch end first: the close read takes the move.
+    fresh({ { 2318, 20 } })
+    WoW.fire("BANKFRAME_OPENED")
+    withdraw(5, 15)
+    WoW.fire("BAG_UPDATE", 6)
+    WoW.fire("BANKFRAME_CLOSED")
+    eq("a close before the batch's end: the close reads the bank", bankOf(2318), 5)
+    eq("  and the bags", bagsOf(2318), 15)
+
+    -- A batch's end while the bank isn't loaded keeps it marked; the next
+    -- batch's end, with no new change, reads it.
+    fresh({ { 2318, 20 } })
+    WoW.fire("BANKFRAME_OPENED")
+    WoW.fire("BAG_UPDATE", 6)
+    WoW.containers[6].size = 0                       -- the main bank not loaded
+    WoW.fire("BAG_UPDATE_DELAYED")
+    check("an unloaded bank at the batch's end stays marked", T.IsBankDirty())
+    WoW.containers[6].size = 3; WoW.containers[6][1] = slot(2318, 9)
+    WoW.fire("BAG_UPDATE_DELAYED")
+    eq("  the next batch's end reads it", bankOf(2318), 9)
+    check("  and clears the mark", not T.IsBankDirty())
+    WoW.fire("BANKFRAME_CLOSED")
+
+    -- The tab list failing at the open is retried by the next batch's end, with
+    -- no change event between; the confirming stamp moves once.
+    fresh({ { 2318, 20 } })
+    WoW.bankTabs = "not a list"
+    WoW.fire("BANKFRAME_OPENED")
+    eq("a failed tab list at the open reads nothing", mine().bank, nil)
+    WoW.bankTabs = { 6 }
+    WoW.now = WoW.now + 5
+    WoW.fire("BAG_UPDATE_DELAYED")
+    eq("  the next batch's end reads it", bankOf(2318), 20)
+    eq("  confirmed once, at that read", mine().bankStamp, WoW.now)
+    local confirmed = WoW.now
+    WoW.now = WoW.now + 5
+    WoW.fire("BAG_UPDATE", 6); WoW.fire("BAG_UPDATE_DELAYED"); WoW.flushTimers()
+    eq("  an unchanged later read doesn't move it", mine().bankStamp, confirmed)
+    WoW.fire("BANKFRAME_CLOSED")
+
+    -- A batch's end with the bank closed, or nothing changed: no bank read.
+    do
+        local reads, real = 0, AltStable.API.GetContainerNumSlots
+        AltStable.API.GetContainerNumSlots = function(b) if b == 6 then reads = reads + 1 end return real(b) end
+        WoW.fire("BAG_UPDATE_DELAYED")
+        eq("a batch's end with the bank closed reads no bank", reads, 0)
+        fresh({ { 2318, 20 } })
+        WoW.fire("BANKFRAME_OPENED")
+        reads = 0
+        WoW.fire("BAG_UPDATE", 0); WoW.fire("BAG_UPDATE_DELAYED")
+        eq("  nor with only the bags changed", reads, 0)
+        WoW.fire("BANKFRAME_CLOSED")
+        AltStable.API.GetContainerNumSlots = real
+    end
+
+    -- The backpack not loaded at the close: the bags and their stamp stay, the
+    -- bank is recorded, and the 1 s bag timer repairs the bags afterwards.
+    fresh({ { 2318, 20 } }, { { 2318, 1 } })
+    T.ScanBags()                                     -- the bags as last read
+    WoW.fire("BANKFRAME_OPENED")
+    local bagsStamp = mine().bagsStamp
+    eq("  (the bags read before the visit)", bagsOf(2318), 1)
+    WoW.now = WoW.now + 5
+    withdraw(5, 16)
+    WoW.containers[0].size = 0
+    WoW.fire("BANKFRAME_CLOSED")
+    eq("an unloaded backpack at the close: the bags stay", bagsOf(2318), 1)
+    eq("  with their stamp", mine().bagsStamp, bagsStamp)
+    eq("  the bank is recorded", bankOf(2318), 5)
+    WoW.containers[0].size = 3; WoW.containers[0][1] = slot(2318, 15)
+    WoW.flushTimers()
+    eq("  and the bag timer repairs the bags, no bank needed", bagsOf(2318), 15)
+
+    -- A bag slot holding a bag at 0 slots is not loaded either; an empty one is nothing.
+    fresh({ { 2318, 20 } }, { { 2318, 1 } })
+    WoW.containers[1] = { size = 0 }
+    WoW.equipped[31] = "|Hitem:4500|h"                 -- a bag in carried slot 1
+    check("a bag slot holding a bag at 0 slots: the bags aren't read", (function()
+        T.ScanBags(); return mine().bags == nil end)())
+    WoW.equipped[31] = nil
+    T.ScanBags()
+    eq("  an empty bag slot at 0 is nothing: the bags read", bagsOf(2318), 1)
+
+    -- #439: a purchased bank bag slot with no bag (container 7, slot 2) is
+    -- nothing; with a bag at 0 slots it isn't loaded.
+    fresh({ { 2318, 20 } })
+    WoW.bankTabs = { 6, 7 }; WoW.containers[7] = { size = 0 }
+    WoW.fire("BANKFRAME_OPENED")
+    eq("#439: an empty purchased bag slot doesn't stop the bank read", bankOf(2318), 20)
+    WoW.fire("BANKFRAME_CLOSED")
+    fresh({ { 2318, 20 } })
+    WoW.bankTabs = { 6, 7 }; WoW.containers[7] = { size = 0 }; WoW.bankBags = { [2] = true }
+    WoW.fire("BANKFRAME_OPENED")
+    eq("  a bag in it at 0 slots: not loaded, nothing recorded", mine().bank, nil)
+    WoW.fire("BANKFRAME_CLOSED")
+
+    -- A peer gets both sides, each by its own stamp.
+    fresh({ { 2318, 20 } })
+    WoW.fire("BANKFRAME_OPENED")
+    withdraw(5, 15)
+    WoW.fire("BAG_UPDATE", 6); WoW.fire("BAG_UPDATE", 0); WoW.fire("BAG_UPDATE_DELAYED")
+    WoW.fire("BANKFRAME_CLOSED")
+    local blob = T.SerializePlayer(ME)
+    T.DeserializePlayer("Player-Peer-419", blob)
+    local peer = AltStableWarbandDB["Player-Peer-419"]
+    eq("a peer gets the bank after the move", peer and peer.bank[2318], 5)
+    eq("  and the bags", peer and peer.bags[2318], 15)
     WoW.reset()
 end
 
