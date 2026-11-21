@@ -186,10 +186,11 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- logic is correct, and becomes durable the moment SavedVariables load.)
 --
 -- Limit, stated rather than solved: a peer is marked served when its full reply
--- goes out (a Battle.net reply the library refuses leaves it owed, #422, unless
--- it was too large: that one is spent, so the deltas that fit still go). If that
--- stream is then lost, its next request gets a delta again; `/alts sync <name>`
--- always sends in full and recovers it.
+-- goes out: over Battle.net, when the library reports it sent (refused, or
+-- failed on the way, it stays owed, #422), unless it was too large: that one is
+-- spent, so the deltas that fit still go. A whispered stream counts once its
+-- last message leaves; if it is then lost, the next request gets a delta again.
+-- `/alts sync <name>` always sends in full and recovers it.
 local function ScopeGeneration()
     AltStableConfig = AltStableConfig or {}
     return tonumber(AltStableConfig.syncScopeGeneration) or 0
@@ -1415,7 +1416,10 @@ end
 -- `also` (a set of guids) is sent whatever the account and the delta say:
 -- the members of the camps going to our own other account (#171), so it knows
 -- every one of them rather than pruning the ones it has no record of.
-local function SerializeFullDB(accountOnly, sinceTS, also)
+-- `ownMarksOnly`: changedAt counts only for a character we scan (a star on an
+-- offline alt), not for one we relayed - the narrower delta SendFullDatabase
+-- falls back to when the whole one is too large for Battle.net.
+local function SerializeFullDB(accountOnly, sinceTS, also, ownMarksOnly)
 
     local entries = {}
     sinceTS = sinceTS or 0
@@ -1436,7 +1440,7 @@ local function SerializeFullDB(accountOnly, sinceTS, also)
             entries[#entries + 1] = SerializeChar(c, sinceTS)
         elseif type(c) == "table" and c.guid
         and (sinceTS <= 0 or (c.lastUpdate or 0) >= sinceTS
-             or (tonumber(c.changedAt) or 0) >= sinceTS) then
+             or ((tonumber(c.changedAt) or 0) >= sinceTS and (c.scannedHere or not ownMarksOnly))) then
             if accountOnly and myAccount and myAccount ~= "" then
                 local charAcct = c.account
                 if charAcct and charAcct ~= "" and tostring(charAcct) ~= tostring(myAccount) then
@@ -2091,7 +2095,12 @@ function LibSync.Ping()
     end
 end
 
-local function ChunkAndSendPayload(payload, channel, target)
+-- True when the payload was taken: onDone(ok), optional, then runs once, when
+-- it has gone (over the library: the library's report; whispered: the last
+-- message, the DONE) or has failed. False, with the library's reason, when
+-- nothing went over Battle.net: onDone never runs. `quiet`: the caller has a
+-- smaller payload to try, so a too-large refusal is not reported yet.
+local function ChunkAndSendPayload(payload, channel, target, onDone, quiet)
 
     -- Our own account on the library: the whole payload as one message. A
     -- refusal (no nonce yet, too large, switched off) falls through to the
@@ -2103,13 +2112,13 @@ local function ChunkAndSendPayload(payload, channel, target)
     if libPeer and LibDeflate then
         local msg = LibSync.MSG_DB .. "|" .. LibDeflate:CompressDeflate(payload or "", { level = 8 })
         local sent
-        sent, why = LibSync.SendGuid(libPeer.guid, msg, nil, target)
-        if sent then return end
+        sent, why = LibSync.SendGuid(libPeer.guid, msg, onDone, target)
+        if sent then return true end
         -- Too large never gets better by asking again, and nothing else
         -- carries it over Battle.net: say so, here, rather than leave the
-        -- other side's stall watch to guess. Only a full database gets this
-        -- big (a delta stays small) - about 9 KB deflated per 28 characters.
-        if why == "too-large" and channel == "BNET" then
+        -- other side's stall watch to guess. Mostly a full database gets this
+        -- big - about 9 KB deflated per 28 characters.
+        if why == "too-large" and channel == "BNET" and not quiet then
             Print(("|cffff8800Your character database is too large to send to %s over Battle.net|r "
                 .. "(%d KB compressed; the limit is 32 KB). A sync that only sends what changed since an earlier one still fits.")
                 :format(tostring(target), math.ceil(#msg / 1024)))
@@ -2155,7 +2164,8 @@ local function ChunkAndSendPayload(payload, channel, target)
         local header = MSG_CHUNK_V .. "|" .. sid .. "|" .. idx .. "/" .. total .. "|"
         QueueWire(header .. chunk, channel, target)
     end
-    QueueWire(MSG_DONE_V .. "|" .. sid .. "|" .. checksum, channel, target)
+    QueueWire(MSG_DONE_V .. "|" .. sid .. "|" .. checksum, channel, target, nil, onDone)
+    return true
 
 end
 
@@ -2183,7 +2193,8 @@ local function ReplyDelay(name, now)
     return 1 + ((seed + ((now or 0) % 1000)) % 30) / 10
 end
 
-local function SendFullDatabase(channel, target, sinceTS)
+-- onDone(ok) and the returns: ChunkAndSendPayload's.
+local function SendFullDatabase(channel, target, sinceTS, onDone)
 
     channel = channel or "GUILD"
 
@@ -2204,23 +2215,40 @@ local function SendFullDatabase(channel, target, sinceTS)
     -- the records of everyone in a camp.
     local own = target and OwnBNetPeer(target)
     local toOwn = own and AltStable.CampSyncLines
-    local payload = SerializeFullDB(accountOnly, sinceTS, toOwn and AltStable.CampMemberGuids() or nil)
-    if toOwn then
-        for _, line in ipairs(AltStable.CampSyncLines()) do
-            payload = payload .. "\n" .. line
+    local function build(ownMarksOnly)
+        local payload = SerializeFullDB(accountOnly, sinceTS, toOwn and AltStable.CampMemberGuids() or nil,
+                                        ownMarksOnly)
+        if toOwn then
+            for _, line in ipairs(AltStable.CampSyncLines()) do
+                payload = payload .. "\n" .. line
+            end
+            -- And the settings, when the player chose to sync them.
+            for _, line in ipairs(AltStable.PrefsSyncLines and AltStable.PrefsSyncLines() or {}) do
+                payload = payload .. "\n" .. line
+            end
         end
-        -- And the settings, when the player chose to sync them.
-        for _, line in ipairs(AltStable.PrefsSyncLines and AltStable.PrefsSyncLines() or {}) do
-            payload = payload .. "\n" .. line
-        end
+        -- Which characters we scan (#281), to our own account only: a friend
+        -- has no use for it, and it is the word our own account trusts.
+        local mine = own and Provenance.Line()
+        if mine then payload = payload .. "\n" .. mine end
+        -- Our clock, so the requester can keep its watermark in OUR frame.
+        return payload .. "\n" .. SEND_TIME .. ":" .. time()
     end
-    -- Which characters we scan (#281), to our own account only: a friend
-    -- has no use for it, and it is the word our own account trusts.
-    local mine = own and Provenance.Line()
-    if mine then payload = payload .. "\n" .. mine end
-    -- Our clock, so the requester can keep its watermark in OUR frame.
-    payload = payload .. "\n" .. SEND_TIME .. ":" .. time()
-    return ChunkAndSendPayload(payload, channel, target)
+
+    -- A delta too large for Battle.net (Codex, #450): the records we relayed
+    -- (changedAt on a character we don't scan) can add up - a whole account
+    -- received at once marks every record - and the requester's watermark
+    -- only moves on a reply, so every later delta would carry them and be
+    -- refused too, our own changes with them. Then the delta goes without
+    -- them: what this delta would have been before #422, plus our own marks.
+    -- Declared: the relayed records it leaves out reach that peer with their
+    -- next change, or a full sync.
+    local delta = (tonumber(sinceTS) or 0) > 0
+    local went, why = ChunkAndSendPayload(build(false), channel, target, onDone, delta)
+    if went == false and why == "too-large" and delta then
+        went, why = ChunkAndSendPayload(build(true), channel, target, onDone)
+    end
+    return went, why
 
 end
 
@@ -2291,14 +2319,20 @@ local function DefineSyncServing()
             -- went back. Either way changedAt can't be trusted against it.
             if (tonumber(sinceTS) or 0) > WatermarkCeiling(time()) then sinceTS = 0 end
 
-            -- Spent only when the reply went: Battle.net refusing it (not
-            -- ready yet) leaves it owed for the next request (#422). Too large
-            -- is spent all the same, so the next request gets a delta.
-            local went, why = SendFullDatabase(replyChannel, replyTarget, sinceTS)
-            if owed and (went ~= false or why == "too-large") then
-                AltStableConfig.peerScopeGeneration[owedShort] = generation
-                AltStable.OnConfigChanged("peerScopeGeneration")
+            -- Spent only when the reply went (#422): Battle.net refusing it
+            -- (not ready yet), or the library taking it and then reporting it
+            -- failed (Codex, #450), leaves it owed for the next request. Too
+            -- large is spent all the same, so the next request gets a delta.
+            local function spend()
+                local held = AltStableConfig.peerScopeGeneration or {}
+                if (held[owedShort] or 0) < generation then
+                    held[owedShort] = generation
+                    AltStable.SetConfigValue("peerScopeGeneration", held)
+                end
             end
+            local went, why = SendFullDatabase(replyChannel, replyTarget, sinceTS,
+                                               owed and function(ok) if ok then spend() end end or nil)
+            if owed and went == false and why == "too-large" then spend() end
         end)
     end
 

@@ -114,6 +114,7 @@ local function freshFake()
     function fake.SendTo(guid, msg, onResult)
         fake.sent[#fake.sent + 1] = { guid = guid, msg = msg, onResult = onResult }
         if fake.early then onResult({ guid = guid }, fake.early, "not-ready") end
+        if fake.tooLarge and fake.tooLarge(msg) then return nil, "too-large" end
         return fake.ret, fake.why
     end
     function fake.Peers() return fake.peers end
@@ -570,6 +571,14 @@ do
     flush()
     eq("#422: a request over Battle.net, refused by the library: nothing goes", #wire(T.MSG_CHUNK_V), 0)
     check("  and the full reply stays owed", not spent())
+    -- Taken by the library, then reported failed (Codex, #450): still owed.
+    fake.sent, fake.ret = {}, 1
+    fromBee(T.MSG_REQUEST_V .. "|2000")
+    flush()
+    local taken = dbSent()
+    check("  a reply the library takes is not spent before it reports", taken ~= nil and not spent())
+    if taken then taken.onResult({ guid = BEE_GUID }, "failed", "offline") end
+    check("  nor when it reports the send failed", not spent())
     fake.sent, fake.ret = {}, 1
     fromBee(T.MSG_REQUEST_V .. "|2000")
     flush()
@@ -577,7 +586,15 @@ do
     local body = again and LD:DecompressDeflate(again.msg:sub(#L.MSG_DB + 2))
     check("  so the next request is answered in full, below its watermark",
           type(body) == "string" and body:find("Alpha", 1, true) ~= nil, body)
-    check("  and then it is spent", spent())
+    if again then again.onResult({ guid = BEE_GUID }, "sent") end
+    check("  and once the library says it went, it is spent", spent())
+    -- A report that comes after a newer reply was spent never lowers it.
+    for k in pairs(AltStableConfig.peerScopeGeneration) do AltStableConfig.peerScopeGeneration[k] = 5 end
+    if again then again.onResult({ guid = BEE_GUID }, "sent") end
+    local five = true
+    for _, g in pairs(AltStableConfig.peerScopeGeneration) do five = five and g == 5 end
+    check("  and a late report never lowers a newer one", five)
+    for k in pairs(AltStableConfig.peerScopeGeneration) do AltStableConfig.peerScopeGeneration[k] = 1 end
 
     -- Too large never gets better by asking again (Codex round 10): spent all
     -- the same, so the next request's delta, which fits, goes.
@@ -598,6 +615,60 @@ do
     local dbody = delta and LD:DecompressDeflate(delta.msg:sub(#L.MSG_DB + 2))
     check("  so the next request gets its delta",
           type(dbody) == "string" and dbody:find("Gamma", 1, true) ~= nil and not dbody:find("Alpha", 1, true), dbody)
+end
+
+-- A delta too large because of the records we relayed (Codex, #450): it goes
+-- without them, so our own changes still reach the peer.
+do
+    reset()
+    WoW.now = 100000
+    seed()
+    listBee()
+    fromBee(L.MSG_CAP)
+    AltStableDB["Player-9-R"] = { guid = "Player-9-R", name = "Relayed", class = "MAGE", level = 9,
+                                  lastUpdate = 1000, changedAt = 99000 }
+    AltStableDB["Player-1-S"] = { guid = "Player-1-S", name = "Starred", class = "MAGE", level = 9,
+                                  lastUpdate = 1000, changedAt = 99000, scannedHere = true }
+    AltStableDB["Player-9-N"] = { guid = "Player-9-N", name = "Newest", class = "MAGE", level = 9,
+                                  lastUpdate = 99500 }
+    local function body(s) return s and LD:DecompressDeflate(s.msg:sub(#L.MSG_DB + 2)) end
+    local function has(s, text) local b = body(s); return type(b) == "string" and b:find(text, 1, true) ~= nil end
+    fake.sent, fake.ret = {}, 1
+    fake.tooLarge = function(msg) return has({ msg = msg }, "Relayed") end
+    WoW.chatOut = {}
+    fromBee(T.MSG_REQUEST_V .. "|98000")
+    flush()
+    local last = fake.sent[#fake.sent]
+    eq("#422: a delta too large with the relayed records is sent again", #fake.sent, 2)
+    check("  the first one had them", has(fake.sent[1], "Relayed") and has(fake.sent[1], "Starred"))
+    check("  the second goes without them", last and has(last, "Newest") and not has(last, "Relayed"), body(last))
+    check("  but keeps our own marked alt", has(last, "Starred"), body(last))
+    local told = 0
+    for _, l in ipairs(WoW.chatOut) do if l:find("too large", 1, true) then told = told + 1 end end
+    eq("  and the player is not told it was too large", told, 0)
+
+    -- Still too large without them: told once, nothing went.
+    fake.sent = {}
+    fake.tooLarge = function() return true end
+    WoW.chatOut = {}
+    eq("  still too large: the narrower one is refused too",
+       select(2, T.SendFullDatabase("BNET", BEE, 98000)), "too-large")
+    eq("  after two tries", #fake.sent, 2)
+    told = 0
+    for _, l in ipairs(WoW.chatOut) do if l:find("too large", 1, true) then told = told + 1 end end
+    eq("  and the player is told once", told, 1)
+
+    -- A full reply has nothing narrower to try: one refusal.
+    fake.sent = {}
+    T.SendFullDatabase("BNET", BEE, 0)
+    eq("  a full reply too large is tried once", #fake.sent, 1)
+    fake.tooLarge = nil
+
+    -- Not ready is not about size: nothing narrower is tried.
+    fake.sent, fake.ret, fake.why = {}, nil, "not-ready"
+    T.SendFullDatabase("BNET", BEE, 98000)
+    eq("  a delta refused as not ready is tried once", #fake.sent, 1)
+    fake.ret, fake.why = 1, nil
 end
 
 -- A whisper to our own account on the library: the library, not the whisper.
