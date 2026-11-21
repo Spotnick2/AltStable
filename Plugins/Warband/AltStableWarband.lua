@@ -985,12 +985,16 @@ end
 -- awayTotal, why, scope }. Scope "both" lists this side, then Elsewhere, then
 -- the Total; "side" lists this side and one grey line for the rest (alone when
 -- nobody is on this side). No split, or nobody elsewhere: one list, as before.
-local function AppendBreakdown(tt, total, holders, split)
+-- `inTab` (a Warband cell's own count): when the Total shown differs, one grey
+-- line says how many the tab itself shows, so the two numbers never puzzle.
+local function AppendBreakdown(tt, total, holders, split, inTab)
     local notes = {}
+    local shown = total
     local away = split and split.awayTotal > 0 and split.scope ~= "all"
     if away and split.scope == "side" then
         local leftLine = AltStable.TooltipLeftOutLine(split.awayTotal)
         tt:AddLine(" ")
+        shown = split.sideTotal
         if split.sideTotal > 0 then
             Header(tt, "Total:", split.sideTotal)
             HolderLines(tt, split.side, holders, nil, notes)
@@ -1017,7 +1021,30 @@ local function AppendBreakdown(tt, total, holders, split)
     if notes.stale then tt:AddLine("Bank data may be out of date", .55, .55, .55) end
     if notes.mailStale then tt:AddLine("Mail data may be out of date", .55, .55, .55) end
     if notes.mailMore then tt:AddLine("Some mail not read yet: a mailbox shows 50 at a time", .55, .55, .55) end
+    if inTab and inTab ~= shown then tt:AddLine(inTab .. " shown in this tab", .55, .55, .55) end
     tt:Show()
+end
+
+-- One item's breakdown, as the item tooltips' Show setting asks (#403): every
+-- character, split into this side and Elsewhere. `inTab`, for a Warband cell.
+local function ItemBreakdown(tt, id, inTab)
+    local total, holders = CountItem(id)
+    if total <= 0 then return end
+    local split
+    if AltStable.SplitTooltipHolders then
+        local side, sideTotal, away, awayTotal, why = AltStable.SplitTooltipHolders(holders)
+        split = { side = side, sideTotal = sideTotal, away = away, awayTotal = awayTotal,
+                  why = why, scope = AltStable.TooltipScope() }
+    end
+    AppendBreakdown(tt, total, holders, split, inTab)
+end
+
+-- A Warband cell's breakdown: the same as everywhere else (Show, the owner,
+-- 2026-11-20), whatever the tab filters, with the tab's own count beside it
+-- when they differ. The items with no counts and the global opt-in don't
+-- apply here: hovering a cell is asking.
+local function CellBreakdown(tt, e)
+    ItemBreakdown(tt, e.id, e.total)
 end
 
 -- A tooltip re-renders itself from the item link when the async item info
@@ -1044,23 +1071,14 @@ local function EnsureTooltipHook()
         -- through this same post-call, and would otherwise be labelled with the
         -- hovered item's holders - bypassing the opt-in below as well.
         local e = AT_WB.hoverEntry
-        if e and id == e.id then AppendBreakdown(tt, e.total, e.holders); return end
+        if e and id == e.id then CellBreakdown(tt, e); return end
         if e then return end
         -- Global enrichment: on unless the player turned it off, or (never
         -- having chosen) another addon already shows counts (#304, Core.lua).
         if not (AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn()) then return end
         -- Items the player left out, and only the characters they asked for (#403).
         if id and not (AltStable.TooltipIgnored and AltStable.TooltipIgnored(id)) then
-            local total, holders = CountItem(id)
-            if total > 0 then
-                local split
-                if AltStable.SplitTooltipHolders then
-                    local side, sideTotal, away, awayTotal, why = AltStable.SplitTooltipHolders(holders)
-                    split = { side = side, sideTotal = sideTotal, away = away, awayTotal = awayTotal,
-                              why = why, scope = AltStable.TooltipScope() }
-                end
-                AppendBreakdown(tt, total, holders, split)
-            end
+            ItemBreakdown(tt, id)
         end
     end)
     if hooked then AT_WB._ttHooked = true end
@@ -1078,7 +1096,7 @@ local function CellOnEnter(self)
     if ok and AT_WB._ttHooked == nil then
         -- No TooltipDataProcessor on this client, so nothing appends for us:
         -- add the breakdown here, where the grid's whole point lives.
-        AppendBreakdown(GameTooltip, e.total, e.holders)
+        CellBreakdown(GameTooltip, e)
         return
     end
     if not ok or GameTooltip:NumLines() == 0 then
@@ -1089,7 +1107,7 @@ local function CellOnEnter(self)
         local qc = e.quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[e.quality]
         if qc then r, g, b = qc.r, qc.g, qc.b end
         GameTooltip:AddLine(e.name or ("Item " .. e.id), r, g, b)
-        AppendBreakdown(GameTooltip, e.total, e.holders)
+        CellBreakdown(GameTooltip, e)
     end
 end
 

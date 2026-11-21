@@ -639,6 +639,45 @@ if AT_WB then
     hoverLines = {}
     for _, fn in ipairs(ttCalls) do fn(htt, { id = 9999 }) end
     eq("a comparison tooltip for a different item gets nothing", #hoverLines, 0)
+
+    -- A cell follows Show like every item tooltip (the owner, 2026-11-20):
+    -- every character, whatever the tab filters, and the tab's own count when
+    -- it differs. Kaleid's 21 is the tab's; Birch, on the other faction and
+    -- outside the tab's filter, holds 4 more.
+    local BIRCH = "Player-1-BIRCH"
+    AltStableDB[GUID].faction, AltStableDB[GUID].realm = "Alliance", "Forever PvE"
+    AltStableDB[BIRCH] = { guid = BIRCH, name = "Birch", class = "ROGUE", faction = "Horde", realm = "Forever PvE" }
+    AltStableWarbandDB[BIRCH] = { bags = { [2318] = 4 } }
+    local function hover()
+        hoverLines = {}
+        AT_WB.hoverEntry = { id = 2318, total = 21, holders = { { name = "Kaleid", bags = 8, bank = 13 } } }
+        for _, fn in ipairs(ttCalls) do fn(htt, { id = 2318 }) end
+        return table.concat(hoverLines, " / ")
+    end
+    local t = hover()
+    check("a cell lists every character, not only the tab's", t:find("Birch", 1, true) ~= nil
+          and t:find("Total:|25", 1, true) ~= nil, t)
+    check("  and says what the tab itself shows", t:find("21 shown in this tab", 1, true) ~= nil, t)
+    AltStable.SetConfigValue("tooltipSameFaction", true)
+    t = hover()
+    check("  Both: Birch under Elsewhere", t:find("Elsewhere:|4", 1, true) ~= nil, t)
+    AltStable.SetConfigValue("tooltipScope", "side")
+    t = hover()
+    check("  This side: the Total is the tab's 21, so no tab line",
+          t:find("Total:|21", 1, true) ~= nil and not t:find("shown in this tab", 1, true), t)
+    AltStable.SetConfigValue("tooltipIgnore", { [2318] = true })
+    t = hover()
+    check("  an item with no counts still gets them in a cell (hovering it is asking)", t:find("Total:", 1, true) ~= nil, t)
+    AltStable.SetConfigValue("tooltipIgnore", nil)
+    AltStable.SetConfigValue("tooltipScope", nil)
+    AltStable.SetConfigValue("tooltipSameFaction", nil)
+    AltStableWarbandDB[BIRCH] = nil
+    t = hover()
+    check("the same count as the tab: no tab line", not t:find("shown in this tab", 1, true), t)
+    AltStableDB[BIRCH] = nil
+    AltStable.SetConfigValue("warbandItemTooltips", false)
+    t = hover()
+    check("  and the global opt-in off still leaves the cell its breakdown", t:find("Total:|21", 1, true) ~= nil, t)
     AT_WB.hoverEntry = nil
 else
     check("the panel state is exposed for testing", false)
