@@ -32,8 +32,8 @@ Get it from [AltStable Companion releases](https://github.com/Spotnick2/AltStabl
   - Items in the Warband tab use the same layout. When the tooltip's Total isn't the count shown in
     the tab, a grey line says how many the tab shows.
 - **Items with no counts:** `/alts tooltip ignore` and the item (shift-click it) leaves that item's
-  tooltip alone, like the Hearthstone every character carries. `/alts tooltip unignore` brings it
-  back, and `/alts tooltip` lists them. Hovering it in the Warband tab still shows who has it.
+  tooltip alone, like the Hearthstone every character carries. `/alts tooltip unignore` and the
+  item brings it back, and `/alts tooltip` lists them. Hovering it in the Warband tab still shows who has it.
 
 ### Changed
 

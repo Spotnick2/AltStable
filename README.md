@@ -47,7 +47,7 @@ counts in tooltips** in the Warband tab) turns it on or off either way.
 - **Sort characters** by name or by count.
 
 To keep an item's tooltip as it is, like the Hearthstone every character carries, type
-`/alts tooltip ignore <item>` (shift-click the item). `/alts tooltip unignore` brings it back.
+`/alts tooltip ignore <item>` (shift-click the item). `/alts tooltip unignore <item>` brings it back.
 
 Bags are read as you play. A bank is only readable while it's open, so its count is from your
 last visit, and the tooltip warns when that is more than a week old. A mailbox works the same way:
