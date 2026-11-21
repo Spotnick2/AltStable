@@ -4419,6 +4419,39 @@ local function CreateFrameIfNeeded()
         end
         Y = Y - 8
 
+        -- The order within each group: by name (default) or by count, side by
+        -- side on one row. Stored as tooltipSort.
+        local SORTS = {
+            { id = "name",  label = "By name",  help = "Each group's characters in alphabetical order." },
+            { id = "count", label = "By count", help = "Whoever holds the most first; ties by name." },
+        }
+        local sortLbl = SubLabel("Sort characters", Y)
+        Y = Y - 22
+        local sortRadios = {}
+        for i, m in ipairs(SORTS) do
+            local rb = CreateFrame("CheckButton", nil, optionsFrame, "UIRadioButtonTemplate")
+            rb:SetSize(16, 16)
+            if i == 1 then rb:SetPoint("TOPLEFT", P + 24, Y)
+            else rb:SetPoint("LEFT", sortRadios[i - 1].label, "RIGHT", 24, 0) end
+            local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            lbl:SetPoint("LEFT", rb, "RIGHT", 8, 0)
+            lbl:SetText(m.label)
+            rb.sort, rb.label = m, lbl
+            rb:SetScript("OnClick", function()
+                AltStable.SetConfigValue("tooltipSort", m.id)
+                refreshAll()
+            end)
+            rb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(m.label, 1, 1, 1)
+                GameTooltip:AddLine(m.help, nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
+            rb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            sortRadios[i] = rb
+        end
+        Y = Y - 30
+
         -- What "matching" means. Kept while One list is chosen, which ignores them.
         local matchLbl = SubLabel("Match my current character by", Y)
         Y = Y - 22
@@ -4627,6 +4660,16 @@ local function CreateFrameIfNeeded()
                 elseif chosen then rb.label:SetTextColor(ar, ag, ab)
                 else rb.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
             end
+            local order = AltStable.TooltipSort()
+            sortLbl:SetTextColor(unpack(on and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
+            for _, rb in ipairs(sortRadios) do
+                local chosen = rb.sort.id == order
+                rb:SetChecked(chosen)
+                rb:SetEnabled(on)
+                if not on then rb.label:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                elseif chosen then rb.label:SetTextColor(ar, ag, ab)
+                else rb.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+            end
             local matchOn = on and scope ~= "all"
             matchLbl:SetTextColor(unpack(matchOn and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
             for _, cb in ipairs({ faction, ruleset }) do
@@ -4647,7 +4690,7 @@ local function CreateFrameIfNeeded()
         AltStable.RegisterThemeCallback(refreshAll)
         AltStable._test.OptItemCounts = main
         AltStable._test.OptTooltipFilter = {
-            main = main, radios = radios, faction = faction, ruleset = ruleset, matchHelp = matchHelp, who = pvWho,
+            main = main, radios = radios, sortRadios = sortRadios, faction = faction, ruleset = ruleset, matchHelp = matchHelp, who = pvWho,
             ignored = ignored, refresh = refreshAll, preview = pv, tip = tip, layout = Layout, page = page,
             tipText = function()
                 local out = {}

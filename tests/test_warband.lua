@@ -347,6 +347,18 @@ do
           has("Total:|15") and has("Kaleid|") and has("Cedar|") and not has("Birch"), t)
     check("  and one line for the rest, naming their faction", has("+4 on Horde characters"), t)
 
+    -- The order within a group: by name unless chosen, by count on request.
+    AltStable.SetConfigValue("tooltipScope", "all")
+    t, has = shown()
+    check("One list by name: Alder before Cedar", t:find("Alder", 1, true) < t:find("Cedar", 1, true), t)
+    AltStable.SetConfigValue("tooltipSort", "count")
+    t, has = shown()
+    check("  by count: Cedar's 8, Birch's 4, Alder's 2, Kaleid's 1",
+          t:find("Cedar", 1, true) < t:find("Birch", 1, true) and t:find("Birch", 1, true) < t:find("Alder", 1, true)
+          and t:find("Alder", 1, true) < t:find("Kaleid", 1, true), t)
+    AltStable.SetConfigValue("tooltipSort", nil)
+    AltStable.SetConfigValue("tooltipScope", "side")
+
     -- One list: the boxes don't matter.
     AltStable.SetConfigValue("tooltipScope", "all")
     t, has = shown()
