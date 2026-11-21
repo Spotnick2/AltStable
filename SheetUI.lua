@@ -4348,97 +4348,102 @@ local function CreateFrameIfNeeded()
     end
     Y = Y - 58
 
-    OptSection("ITEMS & MAIL")
-    -- Character counts in item tooltips (#304): the Warband tab's checkbox too,
-    -- here where players look for settings. Shows the setting in effect; a click
-    -- makes it the player's own choice (Core.lua, ItemTooltipCountsOn).
-    local optItemCountsCheck = MakeOptCheckRow("warbandItemTooltips",
-        "Show character counts in item tooltips", Y, nil,
-        function() return AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn() or false end)
-    optItemCountsCheck:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        AltStable.ItemTooltipCountsHelp(GameTooltip)
-        GameTooltip:Show()
-    end)
-    optItemCountsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    AltStable._test.OptItemCounts = optItemCountsCheck
-    Y = Y - 22
-
-    -- Which characters they list (#403): "this side" is this character's
-    -- faction and/or ruleset (two boxes, both off unless chosen), and Show
-    -- picks Both (this side, then Elsewhere), This side, or Everyone, for the
-    -- counts in tooltips everywhere and the Warband tab's cells alike. Then the
-    -- items that get no counts at all (/alts tooltip; not in the tab's cells).
-    -- (Scoped: the builder is at Lua 5.1's 200 locals.)
+    -- ── Item tooltips (#304, #403) ─────────────────────────
+    -- Who holds an item, in its tooltip everywhere: the main box, the layout,
+    -- what "matching" means, and a preview on the right that shows the
+    -- result as it is chosen - below the controls when the page is narrow.
+    -- The preview is drawn by the same code as the real tooltips
+    -- (AltStable.AppendItemCountsFor, Core.lua), from a fixed example, so it
+    -- works with an empty roster. (Scoped: the builder is at Lua 5.1's 200 locals.)
+    OptSection("ITEM TOOLTIPS")
     do
-        local SCOPES = {
-            { id = "both", label = "Both",      w = 64,
-              hint = "This side, then everyone else under Elsewhere." },
-            { id = "side", label = "This side", w = 84,
-              hint = "Only this side; one grey line says how many are elsewhere." },
-            { id = "all",  label = "Everyone",  w = 84,
-              hint = "One list of every character, as if the boxes below were off." },
-        }
-        local showLbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        showLbl:SetPoint("TOPLEFT", P + 20, Y)
-        showLbl:SetText("Show")
-        showLbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
-        local scopeHint = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        scopeHint:SetPoint("TOPLEFT", P + 70, Y - 26)
-        scopeHint:SetPoint("TOPRIGHT", -P, Y - 26)
-        scopeHint:SetJustifyH("LEFT"); scopeHint:SetWordWrap(true)
-        scopeHint:SetTextColor(unpack(AltStable.C.TEXT_HELP))
-        local scopeBtns = {}
-        local function RefreshScope()
-            local cur = AltStable.TooltipScope()
-            for _, b in ipairs(scopeBtns) do
-                SetChoiceBtnState(b, b.lbl, b.scope.id == cur)
-                if b.scope.id == cur then scopeHint:SetText(b.scope.hint) end
-            end
-        end
-        for i, m in ipairs(SCOPES) do
-            local b = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
-            b:SetSize(m.w, 22)
-            if i == 1 then b:SetPoint("TOPLEFT", P + 70, Y + 1)
-            else b:SetPoint("LEFT", scopeBtns[i - 1], "RIGHT", 8, 0) end
-            AltStable.ApplyBackdrop(b, 0.12, 0.12, 0.12, 1)
-            local l = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            l:SetAllPoints(); l:SetJustifyH("CENTER")
-            l:SetText(m.label)
-            b.scope, b.lbl = m, l
-            b:SetScript("OnClick", function()
-                AltStable.SetConfigValue("tooltipScope", m.id)
-                RefreshScope()
-            end)
-            scopeBtns[i] = b
-        end
-        RefreshScope()
-        optionsPanel.refreshers = optionsPanel.refreshers or {}
-        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshScope
-        AltStable.RegisterThemeCallback(RefreshScope)
-        Y = Y - 50
+        local COL_W, PV_W, TIP_W = 380, 290, 280
+        local top = Y
+        local page = optionsFrame    -- this page, for what runs later (optionsFrame moves on)
+        local refreshAll    -- set below; every control repaints through it
 
-        local function own(key) return function() return AltStableConfig and AltStableConfig[key] == true end end
-        local faction = MakeOptCheckRow("tooltipSameFaction",
-            "This side: same faction", Y, nil, own("tooltipSameFaction"), 22)
-        OptDependsOn(faction, optItemCountsCheck)
-        Y = Y - 22
-        local ruleset = MakeOptCheckRow("tooltipSameRuleset",
-            "This side: same ruleset", Y, nil, own("tooltipSameRuleset"), 22)
-        OptDependsOn(ruleset, optItemCountsCheck)
-        local help = function(self)
+        -- The main box: the Warband tab's checkbox too. Shows the setting in
+        -- effect; a click makes it the player's own choice (ItemTooltipCountsOn).
+        local main = MakeOptCheckRow("warbandItemTooltips",
+            "Show who has this item and how many", Y, nil,
+            function() return AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn() or false end)
+        main:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:AddLine(self.label:GetText(), 1, 1, 1)
-            GameTooltip:AddLine("Item tooltips list the characters on this character's side apart from "
-                .. "the rest, as Show says. With both boxes off, everyone is on this side.", nil, nil, nil, true)
-            GameTooltip:AddLine("The Warband tab's cells follow it too, and say what the tab shows.", .8, .8, .8, true)
+            AltStable.ItemTooltipCountsHelp(GameTooltip)
             GameTooltip:Show()
+        end)
+        main:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        main:HookScript("OnClick", function() refreshAll() end)
+        Y = Y - 30
+
+        local function SubLabel(text, y)
+            local fs = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            fs:SetPoint("TOPLEFT", P + 22, y)
+            fs:SetText(text)
+            return fs
         end
+
+        -- The layout. Stored as tooltipScope: its values are older than these names.
+        local LAYOUTS = {
+            { id = "all",  label = "One list",
+              help = "Every character who has the item, together." },
+            { id = "both", label = "Separate groups",
+              help = "Characters matching this one first, then the others, each group with its own count." },
+            { id = "side", label = "Summarize other characters",
+              help = "Characters matching this one by name; the others as one line with their count." },
+        }
+        local layoutLbl = SubLabel("Tooltip layout", Y)
+        Y = Y - 22
+        local radios = {}
+        for i, m in ipairs(LAYOUTS) do
+            local rb = CreateFrame("CheckButton", nil, optionsFrame, "UIRadioButtonTemplate")
+            rb:SetSize(16, 16)
+            rb:SetPoint("TOPLEFT", P + 24, Y)
+            local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            lbl:SetPoint("LEFT", rb, "RIGHT", 8, 0)
+            lbl:SetText(m.label)
+            rb.layout, rb.label = m, lbl
+            rb:SetScript("OnClick", function()
+                AltStable.SetConfigValue("tooltipScope", m.id)
+                refreshAll()
+            end)
+            rb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(m.label, 1, 1, 1)
+                GameTooltip:AddLine(m.help, nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
+            rb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            radios[i] = rb
+            Y = Y - 22
+        end
+        Y = Y - 8
+
+        -- What "matching" means. Kept while One list is chosen, which ignores them.
+        local matchLbl = SubLabel("Match my current character by", Y)
+        Y = Y - 22
+        local function own(key) return function() return AltStableConfig and AltStableConfig[key] == true end end
+        local faction = MakeOptCheckRow("tooltipSameFaction", "Faction", Y, nil, own("tooltipSameFaction"), 22)
+        Y = Y - 22
+        local ruleset = MakeOptCheckRow("tooltipSameRuleset", "Ruleset", Y, nil, own("tooltipSameRuleset"), 22)
+        Y = Y - 22
+        local matchHelp = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        matchHelp:SetPoint("TOPLEFT", P + 22, Y - 2)
+        matchHelp:SetWidth(COL_W - 22)
+        matchHelp:SetJustifyH("LEFT"); matchHelp:SetWordWrap(true)
+        Y = Y - 34
         for _, cb in ipairs({ faction, ruleset }) do
-            cb:SetScript("OnEnter", help)
+            cb:HookScript("OnClick", function() refreshAll() end)
+            cb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine("Match my current character by " .. self.label:GetText():lower(), 1, 1, 1)
+                GameTooltip:AddLine("Used by Separate groups and Summarize other characters. "
+                    .. "With both ticked, a character must match both; with neither, everyone is together.",
+                    nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
             cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
         end
-        Y = Y - 22
 
         -- The items left out, read-only here: /alts tooltip changes them. The
         -- rows below sit at fixed offsets, so the line is bounded (#404
@@ -4446,8 +4451,8 @@ local function CreateFrameIfNeeded()
         -- whitelist does, and never more than two lines.
         local IGNORED_SHOWN = 3
         local ignored = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        ignored:SetPoint("TOPLEFT", P + 42, Y)
-        ignored:SetPoint("TOPRIGHT", -P, Y)
+        ignored:SetPoint("TOPLEFT", P + 22, Y)
+        ignored:SetWidth(COL_W - 22)
         ignored:SetJustifyH("LEFT"); ignored:SetWordWrap(true)
         ignored:SetMaxLines(2)
         ignored:SetTextColor(unpack(AltStable.C.TEXT_HELP))
@@ -4463,51 +4468,220 @@ local function CreateFrameIfNeeded()
                 and "No counts for an item: |cffffff00/alts tooltip ignore|r <item>"
                 or ("No counts for: " .. table.concat(names, ", ") .. " - |cffffff00/alts tooltip|r"))
         end
-        RefreshIgnored()
-        optionsPanel.refreshers = optionsPanel.refreshers or {}
-        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = RefreshIgnored
-        AltStable._test.OptTooltipFilter = { faction = faction, ruleset = ruleset, scopeBtns = scopeBtns,
-                                             scopeHint = scopeHint, ignored = ignored, refresh = RefreshIgnored }
-    end
-    Y = Y - 30
+        Y = Y - 34
 
-    -- The Professions tab's wishlist on recipe tooltips (#271): on unless
-    -- turned off. The stars themselves stay either way. (Scoped: the builder
-    -- is at Lua 5.1's 200 locals.)
-    do
-        local optWishTipCheck = MakeOptCheckRow("professionsWishTooltip",
-            "Show who wants a recipe on its tooltip", Y)
-        optWishTipCheck:SetScript("OnEnter", function(self)
+        -- The Professions tab's wishlist on recipe tooltips (#271): on unless
+        -- turned off. The stars themselves stay either way.
+        local wish = MakeOptCheckRow("professionsWishTooltip", "Show who wants a recipe on its tooltip", Y)
+        wish:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine("Wanted by", 1, 1, 1)
             GameTooltip:AddLine("On a recipe's tooltip, the alts that starred it in the Professions tab, "
                 .. "until they learn it.", nil, nil, nil, true)
             GameTooltip:Show()
         end)
-        optWishTipCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        AltStable._test.OptWishTooltip = optWishTipCheck
-    end
-    Y = Y - 22
+        wish:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        AltStable._test.OptWishTooltip = wish
+        Y = Y - 22
+        local bottom = Y
 
-    -- Mailbox items in the Warband tab and the item counts (#312): on unless
+        -- The preview: a heading, the example character, and a small tooltip
+        -- that takes AddLine / AddDoubleLine / Show like the game's, so the
+        -- counts are drawn by the real code.
+        local pv = CreateFrame("Frame", nil, optionsFrame)
+        pv:SetSize(PV_W, 60)
+        optFlow.skip[pv] = true      -- it places itself (Layout, below)
+        local pvTitle = pv:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        pvTitle:SetPoint("TOPLEFT", 0, 0)
+        pvTitle:SetText("Tooltip preview")
+        local pvWho = pv:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        pvWho:SetPoint("TOPLEFT", 0, -18)
+        pvWho:SetText("Karuzo Mistwalker \194\183 Alliance \194\183 PvE")
+        pvWho:SetTextColor(unpack(AltStable.C.TEXT_HELP))
+
+        local tip = CreateFrame("Frame", nil, pv, "BackdropTemplate")
+        tip:SetPoint("TOPLEFT", 0, -38)
+        tip:SetWidth(TIP_W)
+        tip:SetBackdrop({
+            bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        tip:SetBackdropColor(0.09, 0.09, 0.19, 0.95)
+        tip:SetBackdropBorderColor(1, 1, 1, 1)
+        tip.lines, tip.n = {}, 0
+        local function TipRow(i)
+            local row = tip.lines[i]
+            if not row then
+                row = {
+                    left  = tip:CreateFontString(nil, "OVERLAY", "GameTooltipText"),
+                    right = tip:CreateFontString(nil, "OVERLAY", "GameTooltipText"),
+                }
+                row.left:SetJustifyH("LEFT"); row.right:SetJustifyH("RIGHT")
+                tip.lines[i] = row
+            end
+            return row
+        end
+        function tip:ClearLines()
+            for _, row in ipairs(self.lines) do row.left:Hide(); row.right:Hide() end
+            self.n = 0
+        end
+        function tip:AddLine(text, r, g, b, wrap, font)
+            self.n = self.n + 1
+            local row = TipRow(self.n)
+            row.left:SetFontObject(font or "GameTooltipText")
+            row.left:SetWidth(wrap and (TIP_W - 22) or 0)
+            row.left:SetWordWrap(wrap and true or false)
+            row.left:SetText(text or "")
+            row.left:SetTextColor(r or 1, g or 1, b or 1)
+            row.left:Show(); row.right:Hide()
+            row.double = false
+        end
+        function tip:AddDoubleLine(l, rt, lr, lg, lb, rr, rg, rb)
+            self:AddLine(l, lr, lg, lb)
+            local row = self.lines[self.n]
+            row.right:SetText(rt or "")
+            row.right:SetTextColor(rr or 1, rg or 1, rb or 1)
+            row.right:Show()
+            row.double = true
+        end
+        function tip:Show()
+            local y = -10
+            for i = 1, self.n do
+                local row = self.lines[i]
+                row.left:ClearAllPoints(); row.right:ClearAllPoints()
+                row.left:SetPoint("TOPLEFT", 11, y)
+                if row.double then row.right:SetPoint("TOPRIGHT", -11, y) end
+                y = y - math.max(row.left:GetStringHeight() or 0, 12) - 2
+            end
+            self:SetHeight(-y + 8)
+            pv:SetHeight(38 + self:GetHeight())
+        end
+
+        -- The example, fixed: three PvE characters, Karuzo the current one.
+        local ME = "Preview-Karuzo"
+        local PV_DB = {
+            [ME] = { guid = ME, name = "Karuzo Mistwalker", class = "PRIEST", faction = "Alliance",
+                     realm = "Preview PvE" },
+            ["Preview-Kaleidria"] = { guid = "Preview-Kaleidria", name = "Kaleidria Kashmere",
+                                      class = "HUNTER", faction = "Horde", realm = "Preview PvE" },
+            ["Preview-Kalizo"] = { guid = "Preview-Kalizo", name = "Kalizo Mistwalker", class = "MAGE",
+                                   faction = "Horde", realm = "Preview PvE" },
+        }
+        local PV_HOLDERS = {
+            { guid = ME, name = "Karuzo Mistwalker", class = "PRIEST", bags = 21 },
+            { guid = "Preview-Kaleidria", name = "Kaleidria Kashmere", class = "HUNTER", bags = 20 },
+            { guid = "Preview-Kalizo", name = "Kalizo Mistwalker", class = "MAGE", bags = 19 },
+        }
+        local COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"
+        local function RefreshPreview()
+            tip:ClearLines()
+            tip:AddLine("Ice Cold Milk", 1, 1, 1, false, "GameTooltipHeaderText")
+            tip:AddLine("Use: Restores 437 mana over 21 sec. Must remain seated while drinking.", 0, 1, 0, true)
+            tip:AddLine("Requires Level 5", 1, 1, 1)
+            tip:AddLine("Sell Price: 6" .. COPPER, 1, 1, 1)
+            if main:GetChecked() then
+                AltStable.AppendItemCountsFor(tip, 60, PV_HOLDERS, nil, ME, PV_DB)
+            end
+            tip:Show()
+        end
+
+        -- Where the preview goes: right of the controls when the page is wide
+        -- enough, below them otherwise. The room below is reserved in the page
+        -- flow (#151) and handed back when the preview sits on the right; on
+        -- the right it only takes what it hangs below the controls.
+        local RESERVE = 480
+        local flow = optFlow.Mark(RESERVE, 1)
+        Y = Y - RESERVE
+        local function Layout()
+            local w = page:GetWidth() or 0
+            local wide = w >= P + COL_W + 24 + PV_W + P
+            pv:ClearAllPoints()
+            local need
+            if wide then
+                pv:SetPoint("TOPLEFT", page, "TOPLEFT", w - P - PV_W, top)
+                need = pv:GetHeight() - (top - bottom) + 10
+            else
+                pv:SetPoint("TOPLEFT", page, "TOPLEFT", P + 22, bottom - 12)
+                need = pv:GetHeight() + 24
+            end
+            pv.wide = wide
+            optFlow.Use(flow, math.floor(math.max(1, need)))
+        end
+        page:HookScript("OnSizeChanged", Layout)
+
+        -- Every control from the settings: the main box gates them all, and
+        -- One list leaves the match boxes unused (kept, greyed).
+        refreshAll = function()
+            local on = main:GetChecked() and true or false
+            local scope = AltStable.TooltipScope()
+            local ar, ag, ab = AltStable.GetAccentRGB()
+            layoutLbl:SetTextColor(unpack(on and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
+            for _, rb in ipairs(radios) do
+                local chosen = rb.layout.id == scope
+                rb:SetChecked(chosen)
+                rb:SetEnabled(on)
+                if not on then rb.label:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                elseif chosen then rb.label:SetTextColor(ar, ag, ab)
+                else rb.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+            end
+            local matchOn = on and scope ~= "all"
+            matchLbl:SetTextColor(unpack(matchOn and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
+            for _, cb in ipairs({ faction, ruleset }) do
+                cb:SetEnabled(matchOn)
+                cb.label:SetTextColor(unpack(matchOn and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
+            end
+            matchHelp:SetText(scope == "all"
+                and "Not used by One list: every character is together."
+                or "With both ticked, a character must match both. With neither, everyone is together.")
+            matchHelp:SetTextColor(unpack(matchOn and AltStable.C.TEXT_HELP or AltStable.C.TEXT_DIM))
+            RefreshIgnored()
+            RefreshPreview()
+            Layout()
+        end
+        refreshAll()
+        optionsPanel.refreshers = optionsPanel.refreshers or {}
+        optionsPanel.refreshers[#optionsPanel.refreshers + 1] = refreshAll
+        AltStable.RegisterThemeCallback(refreshAll)
+        AltStable._test.OptItemCounts = main
+        AltStable._test.OptTooltipFilter = {
+            main = main, radios = radios, faction = faction, ruleset = ruleset, matchHelp = matchHelp,
+            ignored = ignored, refresh = refreshAll, preview = pv, tip = tip, layout = Layout, page = page,
+            tipText = function()
+                local out = {}
+                for i = 1, tip.n do
+                    local row = tip.lines[i]
+                    out[#out + 1] = (row.left:GetText() or "") .. (row.double and ("|" .. (row.right:GetText() or "")) or "")
+                end
+                return table.concat(out, " / ")
+            end,
+        }
+    end
+
+    -- ── Mailbox (#312) ─────────────────────────────────────
+    -- What AltStable tracks, not how tooltips look: its own heading. On unless
     -- switched off. Off, no mail is read, recorded, shown or synced.
-    local optMailCheck = MakeOptCheckRow("warbandMail",
-        "Track mailbox items", Y,
-        function(checked)
-            AltStable.SetConfigValue("warbandMail", checked)
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    OptSection("MAILBOX")
+    do
+        local mail = MakeOptCheckRow("warbandMail",
+            "Track mailbox items", Y,
+            function(checked)
+                AltStable.SetConfigValue("warbandMail", checked)
+                if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+            end)
+        mail:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("Mailbox items", 1, 1, 1)
+            GameTooltip:AddLine("Each character's mail is read when it opens a mailbox, so it is as recent as its last visit. "
+                .. "Mail you send or return to your own characters counts as soon as it leaves.", nil, nil, nil, true)
+            GameTooltip:AddLine("Off: no mail is read, shown or synced.", nil, nil, nil, true)
+            GameTooltip:Show()
         end)
-    optMailCheck:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Mailbox items", 1, 1, 1)
-        GameTooltip:AddLine("Each character's mail is read when it opens a mailbox, so it is as recent as its last visit. "
-            .. "Mail you send or return to your own characters counts as soon as it leaves.", nil, nil, nil, true)
-        GameTooltip:AddLine("Off: no mail is read, shown or synced.", nil, nil, nil, true)
-        GameTooltip:Show()
-    end)
-    optMailCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    OptDesc(optMailCheck, "When disabled: no mail is read, shown or synced.")
-    AltStable._test.OptWarbandMail = optMailCheck
+        mail:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        OptDesc(mail, "Include items held in each character's mailbox. Off: none is read, shown or synced.")
+        AltStable._test.OptWarbandMail = mail
+    end
     Y = Y - 44
 
     -- ── Accounts & sync page ──────────────────────────────

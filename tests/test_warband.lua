@@ -287,8 +287,8 @@ check("the player's own true wins over another addon", tipLines() > 0)
 help = {}
 AltStable.ItemTooltipCountsHelp(htip)
 eq("  and the help no longer says it starts off", #help, 3)
-check("  it points at the faction, ruleset and item options (#403)",
-      (help[3] or ""):find("Options, Items & Mail", 1, true) ~= nil, help[3])
+check("  it points at the layout, matching and item options (#403)",
+      (help[3] or ""):find("Options, Item tooltips", 1, true) ~= nil, help[3])
 AltStable.SetConfigValue("warbandItemTooltips", false)
 WoW.loaded.Bagnon, WoW.loaded.BagBrother = nil, nil
 eq("the player's own false wins with nothing else loaded", tipLines(), 0)
@@ -320,91 +320,105 @@ do
         return t, has
     end
     AltStable.SetConfigValue("warbandItemTooltips", true)
-    eq("Show is Both unless chosen", AltStable.TooltipScope(), "both")
+    local D = " \194\183 "
+    eq("the layout is Separate groups unless chosen", AltStable.TooltipScope(), "both")
     local t, has = shown()
-    check("both boxes off: one list of everyone, as before",
-          has("Total:|15") and has("Birch") and has("Cedar") and not has("Elsewhere"), t)
-    check("  and no left-out line", not has("+"), t)
+    check("no match box ticked: one list of everyone, as before",
+          has("Total:|15") and has("Birch") and has("Cedar") and not has("Other"), t)
+    check("  and no summary line", not has("+"), t)
 
-    -- Both (the default): this side, then Elsewhere, then the Total.
+    -- Separate groups (the default): the matching ones, the others, the Total.
     AltStable.SetConfigValue("tooltipSameFaction", true)
     t, has = shown()
-    check("same faction, Both: this side first, under its name", has("Same faction:|11")
-          and t:find("Same faction:", 1, true) < t:find("Elsewhere", 1, true), t)
-    check("  then Elsewhere with the Horde alt, tagged",
-          has("Elsewhere:|4") and has("Birch |cff888888(Horde)|r"), t)
-    check("  the Horde alt is listed once, after the header",
-          select(2, t:gsub("Birch", "")) == 1 and t:find("Elsewhere", 1, true) < t:find("Birch", 1, true), t)
-    check("  the PvP alt stays on this side, untagged", has("Cedar|") and not has("Cedar |cff"), t)
-    check("  and everyone's Total last", t:find("Total:|15", 1, true) ~= nil
-          and t:find("Total:|15", 1, true) > t:find("Elsewhere", 1, true), t)
+    check("Faction, Separate groups: the matching ones first, under their faction",
+          has("Alliance|11") and t:find("Alliance|11", 1, true) < t:find("Other", 1, true), t)
+    check("  then the others under the faction that explains them all",
+          has("Other faction" .. D .. "Horde|4") and has("Birch|4"), t)
+    check("  untagged: the heading already says why", not has("(Horde)"), t)
+    check("  Birch is listed once, after that heading",
+          select(2, t:gsub("Birch", "")) == 1 and t:find("Other faction", 1, true) < t:find("Birch", 1, true), t)
+    check("  the PvP alt matches on faction", has("Cedar|") and t:find("Cedar", 1, true) < t:find("Other", 1, true), t)
+    check("  and everyone's Total last", has("Total|15") and t:find("Total|15", 1, true) > t:find("Birch", 1, true), t)
 
-    -- This side only.
+    -- Summarize other characters.
     AltStable.SetConfigValue("tooltipScope", "side")
     t, has = shown()
-    check("same faction, This side: the Horde alt is left out of the list and the total",
-          has("Total:|11") and not has("Birch") and has("Cedar") and not has("Elsewhere"), t)
-    check("  and one grey line says how many", has("+4 on the other faction"), t)
+    check("Faction, Summarize: everyone's Total, the matching ones by name",
+          has("Total:|15") and has("Kaleid|") and has("Cedar|") and not has("Birch"), t)
+    check("  and one line for the rest, naming their faction", has("+4 on Horde characters"), t)
 
-    -- Everyone: the boxes don't matter.
+    -- One list: the boxes don't matter.
     AltStable.SetConfigValue("tooltipScope", "all")
     t, has = shown()
-    check("Everyone: one list, whatever the boxes say",
-          has("Total:|15") and has("Birch|") and not has("Elsewhere") and not has("+"), t)
+    check("One list: everyone together, whatever the boxes say",
+          has("Total:|15") and has("Birch|") and not has("Other") and not has("+"), t)
     AltStable.SetConfigValue("tooltipScope", "bogus")
-    eq("an unknown Show value is Both", AltStable.TooltipScope(), "both")
+    eq("an unknown layout is Separate groups", AltStable.TooltipScope(), "both")
 
-    AltStable.SetConfigValue("tooltipScope", "side")
+    -- Ruleset alone.
     AltStable.SetConfigValue("tooltipSameFaction", false)
     AltStable.SetConfigValue("tooltipSameRuleset", true)
-    t, has = shown()
-    check("same ruleset alone: the PvP alt is left out, the Horde one stays",
-          has("Total:|7") and has("Birch") and not has("Cedar"), t)
-    check("  and the line names the ruleset", has("+8 on another ruleset"), t)
-    AltStable.SetConfigValue("tooltipScope", "both")
-    t, has = shown()
-    check("  Both: the PvP alt Elsewhere, tagged with its ruleset",
-          has("Same ruleset:|7") and has("Cedar |cff888888(" .. AltStable.RulesetOf("Forever PvP") .. ")|r"), t)
-
-    AltStable.SetConfigValue("tooltipSameFaction", true)
-    t, has = shown()
-    check("both boxes, Both: only the same faction and ruleset on this side",
-          has("Same faction & ruleset:|3") and has("Elsewhere:|12"), t)
+    local pvp = AltStable.RulesetName("Forever PvP")
     AltStable.SetConfigValue("tooltipScope", "side")
     t, has = shown()
-    check("both boxes, This side: the line names both",
-          has("Total:|3") and not has("Birch") and not has("Cedar") and has("+12 on another faction or ruleset"), t)
+    check("Ruleset, Summarize: the PvP alt summarized, the Horde one listed",
+          has("Total:|15") and has("Birch") and not has("Cedar") and has("+8 on " .. pvp .. " characters"), t)
+    AltStable.SetConfigValue("tooltipScope", "both")
+    t, has = shown()
+    check("  Separate groups: under this character's ruleset, then the other one",
+          has(AltStable.RulesetName("Forever PvE") .. "|7") and has("Other ruleset" .. D .. pvp .. "|8"), t)
 
-    -- #404 review: what is left out keeps its warnings. Only Birch (Horde)
+    -- Both boxes: a character must match both. Birch differs by faction, Cedar
+    -- by ruleset, so no one reason explains the others: "Other characters",
+    -- each tagged.
+    AltStable.SetConfigValue("tooltipSameFaction", true)
+    t, has = shown()
+    check("both boxes, Separate groups: what they share, then Other characters",
+          has("Alliance" .. D .. AltStable.RulesetName("Forever PvE") .. "|3") and has("Other characters|12"), t)
+    check("  each other character with its reason", has("Birch |cff888888(Horde)|r") and has("Cedar |cff888888(" .. pvp .. ")|r"), t)
+    AltStable.SetConfigValue("tooltipScope", "side")
+    t, has = shown()
+    check("both boxes, Summarize: one line for a mix", has("Total:|15") and has("+12 on other characters"), t)
+    -- One reason for all of them, both parts: Birch on a Horde PvP realm, Cedar back on PvE.
+    AltStableDB[HORDE].realm, AltStableDB[PVP].realm = "Forever PvP", "Forever PvE"
+    t, has = shown()
+    check("  a Horde PvP character alone: named both ways", has("+4 on Horde " .. pvp .. " characters"), t)
+    AltStable.SetConfigValue("tooltipScope", "both")
+    t, has = shown()
+    check("    and in Separate groups", has("Horde" .. D .. pvp .. "|4") and not has("(Horde"), t)
+    AltStableDB[HORDE].realm, AltStableDB[PVP].realm = "Forever PvE", "Forever PvP"
+    AltStable.SetConfigValue("tooltipScope", "side")
+
+    -- #404 review: what is summarized keeps its warnings. Only Birch (Horde)
     -- has bank stock, eight days old; Birch is not listed, the warning is.
     AltStableWarbandDB[HORDE] = { bags = {}, bank = { [2318] = 4 }, bankStamp = WoW.now - 8 * 86400 }
     AltStable.SetConfigValue("tooltipSameRuleset", false)
     t, has = shown()
-    check("This side: a stale bank left out still warns",
-          has("+4 on the other faction") and has("Bank data may be out of date") and not has("Birch"), t)
+    check("Summarize: a stale bank summarized still warns",
+          has("+4 on Horde characters") and has("Bank data may be out of date") and not has("Birch"), t)
     AltStableWarbandDB[HORDE] = { bags = { [2318] = 4 } }
     t, has = shown()
     check("  and a fresh one does not", not has("out of date"), t)
     AltStable.SetConfigValue("tooltipSameRuleset", true)
 
-    -- A record whose faction or realm can't be read stops nothing.
+    -- A record whose faction or realm can't be read matches.
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = nil, nil
     t, has = shown()
-    check("an unknown faction or realm is listed, not left out", has("Birch") and has("Cedar") and not has("+"), t)
+    check("an unknown faction or realm is listed, not summarized", has("Birch") and has("Cedar") and not has("+"), t)
     AltStableDB[HORDE].faction, AltStableDB[PVP].realm = "Horde", "Forever PvP"
 
-    -- Nobody on this side: This side shows only the left-out line, Both only Elsewhere.
+    -- Nobody matching: Summarize keeps the Total and the line, Separate groups
+    -- has no empty heading.
     AltStableWarbandDB[GUID], AltStableWarbandDB[ALLY] = nil, nil
     t, has = shown()
-    check("nobody on this side, This side: no Total, only the left-out line",
-          not has("Total:") and has("+12 on another"), t)
+    check("nobody matching, Summarize: the Total and the line", has("Total:|12") and has("+12 on other"), t)
     AltStable.SetConfigValue("tooltipScope", "both")
     t, has = shown()
-    check("  Both: no empty header, Elsewhere and the Total",
-          not has("Same faction") and has("Elsewhere:|12") and has("Total:|12"), t)
+    check("  Separate groups: no empty heading, the others and the Total",
+          not has("Alliance") and has("Other characters|12") and has("Total|12"), t)
     AltStableWarbandDB[GUID], AltStableWarbandDB[ALLY] = { bags = { [2318] = 1 } }, { bags = { [2318] = 2 } }
 
-    -- The Warband tab's own cells still list everyone.
+    -- The Warband tab's own grid counts everyone.
     local _, all = T.CountItem(2318)
     eq("CountItem itself is unfiltered (the Warband grid's view)", #all, 4)
 
@@ -660,11 +674,12 @@ if AT_WB then
     check("  and says what the tab itself shows", t:find("21 shown in this tab", 1, true) ~= nil, t)
     AltStable.SetConfigValue("tooltipSameFaction", true)
     t = hover()
-    check("  Both: Birch under Elsewhere", t:find("Elsewhere:|4", 1, true) ~= nil, t)
+    check("  Separate groups: Birch under the other faction", t:find("Other faction \194\183 Horde|4", 1, true) ~= nil, t)
     AltStable.SetConfigValue("tooltipScope", "side")
     t = hover()
-    check("  This side: the Total is the tab's 21, so no tab line",
-          t:find("Total:|21", 1, true) ~= nil and not t:find("shown in this tab", 1, true), t)
+    check("  Summarize: everyone's Total, Birch as the line, and the tab's count",
+          t:find("Total:|25", 1, true) ~= nil and t:find("+4 on Horde characters", 1, true) ~= nil
+          and t:find("21 shown in this tab", 1, true) ~= nil, t)
     AltStable.SetConfigValue("tooltipIgnore", { [2318] = true })
     t = hover()
     check("  an item with no counts still gets them in a cell (hovering it is asking)", t:find("Total:", 1, true) ~= nil, t)

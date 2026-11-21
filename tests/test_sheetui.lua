@@ -3340,7 +3340,7 @@ do
     local flow = T.OptFlow
     local optPanel = T.optionsPanel
     check("the Options page records what sits below its lists", flow.items and #flow.items > 0)
-    eq("five lists flow: the Glass UI card, peers, requests, hidden, old characters", #flow.lists, 5)
+    eq("six lists flow: the Glass UI card, the tooltip preview, peers, requests, hidden, old characters", #flow.lists, 6)
 
     local saved = { AltStableConfig.whitelist, AltStable.SyncAuthList,
                     AltStable.PendingSyncRequests, AltStable.HiddenCharacterList,
@@ -3383,7 +3383,7 @@ do
     -- Everything empty: each list keeps one row, for its "none" line.
     AltStableConfig.whitelist = {}
     optPanel:GetScript("OnShow")(optPanel)
-    local wl, au, hd = flow.lists[2], flow.lists[3], flow.lists[4]
+    local wl, au, hd = flow.lists[3], flow.lists[4], flow.lists[5]
     eq("an empty peer list uses one row", wl.used, 1)
     eq("  and so do the answers", au.used, 1)
     eq("  and the hidden list", hd.used, 1)
@@ -3404,7 +3404,7 @@ do
     -- Accounts & sync page, the hidden and old characters the Characters page.
     local child, chars = wl.page, hd.page
     eq("the sync lists share a page", au.page, child)
-    check("  the character lists another", chars ~= child and flow.lists[5].page == chars)
+    check("  the character lists another", chars ~= child and flow.lists[6].page == chars)
     for _, it in ipairs(flow.items) do
         for _, l in ipairs(it.below) do
             if l.page ~= it.o:GetParent() then check("a list moves only its own page", false); break end
@@ -3518,14 +3518,17 @@ do
     AltStable.RefreshOptionsHiddenList()
     local skipped = 0
     for o in pairs(flow.skip) do
+      if o ~= T.OptTooltipFilter.preview then   -- it places itself, beside or below (#403)
         skipped = skipped + 1
         local _, rel = o:GetPoint(1)
         check("the hidden list's note is anchored to the list's own rows", rel ~= nil and rel ~= child)
         for _, it in ipairs(flow.items) do
             if it.o == o then check("  and the flow does not re-anchor it", false) end
         end
+      end
     end
     eq("one note is left to its own anchoring", skipped, 1)
+    eq("  and the tooltip preview places itself", flow.skip[T.OptTooltipFilter.preview], true)
 
     -- The accent footnote sits under the Accent row, above every list.
     local note = T.OptAccentFootnote
@@ -4299,50 +4302,92 @@ end
 ------------------------------------------------------------
 -- Syncing settings with your other accounts: off unless ticked
 ------------------------------------------------------------
--- #403: only this character's faction / ruleset, under the counts box, and
--- the items with no counts.
+-- #403: the Item tooltips settings - main box, layout, what matches - and the
+-- preview beside them, drawn by the real tooltip code from a fixed example.
 do
     local F = AltStable._test.OptTooltipFilter
-    check("Options has the faction and ruleset boxes", F ~= nil and F.faction ~= nil and F.ruleset ~= nil)
+    check("Options has the item tooltip controls", F ~= nil and F.faction ~= nil and F.ruleset ~= nil
+          and F.radios ~= nil and F.tip ~= nil)
     if F then
-        local held = { AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset, AltStableConfig.tooltipIgnore }
+        local held = { AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset,
+                       AltStableConfig.tooltipIgnore, AltStableConfig.tooltipScope,
+                       AltStableConfig.warbandItemTooltips }
+        local D = " \194\183 "
+        local function has(t, s) return t:find(s, 1, true) ~= nil end
+        local function pick(i) F.radios[i]:GetScript("OnClick")(F.radios[i]); return F.tipText() end
+
         AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset = nil, nil
-        check("  both off unless chosen", F.faction._getter() == false and F.ruleset._getter() == false)
+        AltStableConfig.tooltipScope, AltStableConfig.warbandItemTooltips = nil, true
+        F.main:SetChecked(true)
+        F.refresh()
+        check("  both match boxes off unless chosen", F.faction._getter() == false and F.ruleset._getter() == false)
+        eq("  three layouts", #F.radios, 3)
+        check("  Separate groups is the default", F.radios[2]:GetChecked() and not F.radios[1]:GetChecked())
         F.faction:SetChecked(true); F.faction:GetScript("OnClick")(F.faction)
-        eq("  ticking faction saves it", AltStableConfig.tooltipSameFaction, true)
-        eq("  and leaves ruleset alone", AltStableConfig.tooltipSameRuleset, nil)
+        eq("  ticking Faction saves it", AltStableConfig.tooltipSameFaction, true)
+        eq("    and leaves Ruleset alone", AltStableConfig.tooltipSameRuleset, nil)
         F.ruleset:SetChecked(true); F.ruleset:GetScript("OnClick")(F.ruleset)
-        eq("  ruleset is its own option", AltStableConfig.tooltipSameRuleset, true)
-        check("  both hang under the counts box", F.faction.parentRow == AltStable._test.OptItemCounts
-              and F.ruleset.parentRow == AltStable._test.OptItemCounts)
-        local heldScope = AltStableConfig.tooltipScope
-        AltStableConfig.tooltipScope = nil
-        eq("  Show has three choices", #F.scopeBtns, 3)
-        F.scopeBtns[2]:GetScript("OnClick")(F.scopeBtns[2])
-        eq("  This side saves \"side\"", AltStableConfig.tooltipScope, "side")
-        check("    and its hint shows", (F.scopeHint:GetText() or ""):find("grey line", 1, true) ~= nil, F.scopeHint:GetText())
-        F.scopeBtns[3]:GetScript("OnClick")(F.scopeBtns[3])
-        eq("  Everyone saves \"all\"", AltStableConfig.tooltipScope, "all")
-        F.scopeBtns[1]:GetScript("OnClick")(F.scopeBtns[1])
-        eq("  Both saves \"both\"", AltStableConfig.tooltipScope, "both")
-        AltStableConfig.tooltipScope = heldScope
+        eq("  Ruleset is its own box", AltStableConfig.tooltipSameRuleset, true)
+
+        -- The owner's acceptance check: Faction and Ruleset ticked, each layout.
+        local t = pick(1)
+        eq("One list saves \"all\"", AltStableConfig.tooltipScope, "all")
+        check("  the preview lists all three together, Total 60",
+              has(t, "Karuzo Mistwalker|21") and has(t, "Kaleidria Kashmere|20") and has(t, "Kalizo Mistwalker|19")
+              and has(t, "Total:|60") and not has(t, "Other faction"), t)
+        check("  the match boxes are kept but unused",
+              AltStableConfig.tooltipSameFaction == true and not F.faction:IsEnabled() and not F.ruleset:IsEnabled())
+        check("    and the help says so", has(F.matchHelp:GetText() or "", "Not used by One list"), F.matchHelp:GetText())
+
+        t = pick(2)
+        eq("Separate groups saves \"both\"", AltStableConfig.tooltipScope, "both")
+        check("  Alliance" .. D .. "PvE with Karuzo's 21", has(t, "Alliance" .. D .. "PvE|21") and has(t, "Karuzo Mistwalker|21"), t)
+        check("  then Other faction" .. D .. "Horde with 39: 20 and 19",
+              has(t, "Other faction" .. D .. "Horde|39") and has(t, "Kaleidria Kashmere|20") and has(t, "Kalizo Mistwalker|19"), t)
+        check("  untagged, the heading says why", not has(t, "(Horde)"), t)
+        check("  and the Total last, 60", has(t, "Total|60") and t:find("Total|60", 1, true) > t:find("Horde|39", 1, true), t)
+        check("  the boxes are back in use", F.faction:IsEnabled() and F.ruleset:IsEnabled())
+        check("    still ticked", F.faction:GetChecked() and F.ruleset:GetChecked())
+
+        t = pick(3)
+        eq("Summarize saves \"side\"", AltStableConfig.tooltipScope, "side")
+        check("  Karuzo's 21 and one muted line for the rest, Total 60",
+              has(t, "Karuzo Mistwalker|21") and has(t, "+39 on Horde characters") and has(t, "Total:|60")
+              and not has(t, "Kaleidria"), t)
+
+        -- The main box off: the ordinary tooltip only, so the player sees what
+        -- AltStable adds; the layout and the boxes grey out.
+        F.main:SetChecked(false); F.main:GetScript("OnClick")(F.main)
+        t = F.tipText()
+        check("main box off: the item's own lines, no counts",
+              has(t, "Ice Cold Milk") and has(t, "Sell Price") and not has(t, "Total") and not has(t, "Karuzo"), t)
+        check("  and the layout can't be chosen", not F.radios[1]:IsEnabled() and not F.faction:IsEnabled())
+        F.main:SetChecked(true); F.main:GetScript("OnClick")(F.main)
+
+        -- Beside the controls when the page is wide, below them when narrow.
+        F.page:SetWidth(900); F.layout()
+        eq("a wide page: the preview on the right", F.preview.wide, true)
+        F.page:SetWidth(480); F.layout()
+        eq("a narrow one: below the controls", F.preview.wide, false)
+
+        -- The items with no counts.
         AltStableConfig.tooltipIgnore = nil
         F.refresh()
-        check("  no items left out: the line says how",
-              (F.ignored:GetText() or ""):find("/alts tooltip ignore", 1, true) ~= nil, F.ignored:GetText())
+        check("no items left out: the line says how",
+              has(F.ignored:GetText() or "", "/alts tooltip ignore"), F.ignored:GetText())
         AltStableConfig.tooltipIgnore = { [6948] = true }
         F.refresh()
-        check("  an item left out is named",
-              (F.ignored:GetText() or ""):find("No counts for: ", 1, true) ~= nil, F.ignored:GetText())
+        check("  an item left out is named", has(F.ignored:GetText() or "", "No counts for: "), F.ignored:GetText())
         -- #404 review: the rows below sit at fixed offsets, so a long list is cut.
         AltStableConfig.tooltipIgnore = {}
         for id = 1, 9 do AltStableConfig.tooltipIgnore[id] = true end
         F.refresh()
         local txt = F.ignored:GetText() or ""
-        check("  a long list shows three and \"+6 more\"", txt:find("+6 more", 1, true) ~= nil
-              and select(2, txt:gsub(", ", "")) == 3, txt)
-        AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset, AltStableConfig.tooltipIgnore =
-            held[1], held[2], held[3]
+        check("  a long list shows three and \"+6 more\"", has(txt, "+6 more") and select(2, txt:gsub(", ", "")) == 3, txt)
+
+        AltStableConfig.tooltipSameFaction, AltStableConfig.tooltipSameRuleset, AltStableConfig.tooltipIgnore,
+            AltStableConfig.tooltipScope, AltStableConfig.warbandItemTooltips = held[1], held[2], held[3], held[4], held[5]
+        F.refresh()
     end
 end
 
@@ -5048,7 +5093,8 @@ do
     check("sharing keeps its meaning under the short label",
           (T.OptSyncSettings.desc and T.OptSyncSettings.desc:GetText() or ""):find("latest change wins") ~= nil)
     eq("mailbox tracking's label", T.OptWarbandMail.label:GetText(), "Track mailbox items")
-    check("  says what turning it off does", (T.OptWarbandMail.desc:GetText() or ""):find("^When disabled: no mail") ~= nil)
+    check("  says what turning it off does", (T.OptWarbandMail.desc:GetText() or ""):find("^Include items held in each character's mailbox%. Off: none is read") ~= nil,
+          T.OptWarbandMail.desc:GetText())
     for _, row in ipairs(T.optionsPanel.checkRows) do
         local d = row.desc and row.desc:GetText() or ""
         check("no helper line starts with a bare \"Off:\" (it reads as the state): " .. d, not d:find("^Off:"))
