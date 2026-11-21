@@ -4496,7 +4496,7 @@ local function CreateFrameIfNeeded()
         pvTitle:SetText("Tooltip preview")
         local pvWho = pv:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         pvWho:SetPoint("TOPLEFT", 0, -18)
-        pvWho:SetText("Karuzo Mistwalker \194\183 Alliance \194\183 PvE")
+        pvWho:SetText("Jaina Proudmoore \194\183 Alliance \194\183 PvE")
         pvWho:SetTextColor(unpack(AltStable.C.TEXT_HELP))
 
         local tip = CreateFrame("Frame", nil, pv, "BackdropTemplate")
@@ -4559,20 +4559,21 @@ local function CreateFrameIfNeeded()
             pv:SetHeight(38 + self:GetHeight())
         end
 
-        -- The example, fixed: three PvE characters, Karuzo the current one.
-        local ME = "Preview-Karuzo"
+        -- The example, fixed: three PvE characters from Warcraft lore, Jaina
+        -- the current one, so no player's names show in another's Options.
+        local ME = "Preview-Jaina"
         local PV_DB = {
-            [ME] = { guid = ME, name = "Karuzo Mistwalker", class = "PRIEST", faction = "Alliance",
+            [ME] = { guid = ME, name = "Jaina Proudmoore", class = "MAGE", faction = "Alliance",
                      realm = "Preview PvE" },
-            ["Preview-Kaleidria"] = { guid = "Preview-Kaleidria", name = "Kaleidria Kashmere",
-                                      class = "HUNTER", faction = "Horde", realm = "Preview PvE" },
-            ["Preview-Kalizo"] = { guid = "Preview-Kalizo", name = "Kalizo Mistwalker", class = "MAGE",
+            ["Preview-Sylvanas"] = { guid = "Preview-Sylvanas", name = "Sylvanas Windrunner",
+                                     class = "HUNTER", faction = "Horde", realm = "Preview PvE" },
+            ["Preview-Cairne"] = { guid = "Preview-Cairne", name = "Cairne Bloodhoof", class = "WARRIOR",
                                    faction = "Horde", realm = "Preview PvE" },
         }
         local PV_HOLDERS = {
-            { guid = ME, name = "Karuzo Mistwalker", class = "PRIEST", bags = 21 },
-            { guid = "Preview-Kaleidria", name = "Kaleidria Kashmere", class = "HUNTER", bags = 20 },
-            { guid = "Preview-Kalizo", name = "Kalizo Mistwalker", class = "MAGE", bags = 19 },
+            { guid = ME, name = "Jaina Proudmoore", class = "MAGE", bags = 21 },
+            { guid = "Preview-Sylvanas", name = "Sylvanas Windrunner", class = "HUNTER", bags = 20 },
+            { guid = "Preview-Cairne", name = "Cairne Bloodhoof", class = "WARRIOR", bags = 19 },
         }
         local COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"
         local function RefreshPreview()
@@ -4646,7 +4647,7 @@ local function CreateFrameIfNeeded()
         AltStable.RegisterThemeCallback(refreshAll)
         AltStable._test.OptItemCounts = main
         AltStable._test.OptTooltipFilter = {
-            main = main, radios = radios, faction = faction, ruleset = ruleset, matchHelp = matchHelp,
+            main = main, radios = radios, faction = faction, ruleset = ruleset, matchHelp = matchHelp, who = pvWho,
             ignored = ignored, refresh = refreshAll, preview = pv, tip = tip, layout = Layout, page = page,
             tipText = function()
                 local out = {}
