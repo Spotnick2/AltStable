@@ -313,12 +313,13 @@ local function SetWish(guid, id, on)
     if not next(e.wish) then e.wish = nil end
     Bump(e)
     -- Only the character being played is touched: lastUpdate is its Last
-    -- Online, and an alt starred from another one has not been online. Its
-    -- snapshot goes out with its record, the next time that is sent.
+    -- Online, and an alt starred from another one has not been online. That
+    -- one is marked changed instead (#422), so the next delta carries it.
     if guid == (UnitGUID and UnitGUID("player")) then
         Changed(guid)
-    elseif AT.isActive and AT.RequestRefresh then
-        AT.RequestRefresh()
+    else
+        if AltStable.MarkChanged then AltStable.MarkChanged(guid) end
+        if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
     end
     return true
 end
@@ -702,8 +703,10 @@ local function DeserializePlayer(guid, blob)
     if wish == false then return end
     AltStableProfessionsDB[guid] = { stamp = stamp, profs = profs, wish = wish }
     -- No TouchCharacter: receiving is not a change of ours, and a relay that
-    -- moved lastUpdate would make every peer re-send it forever.
+    -- moved lastUpdate would make every peer re-send it forever. The core marks
+    -- the record changed instead, on this true (#422): a newer stamp stored.
     if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
+    return true
 end
 
 ------------------------------------------------------------
@@ -2335,7 +2338,7 @@ local function BootstrapPlugin()
         end,
         OnDeactivate  = function(mf) AT.Deactivate(mf) end,
         OnSerialize   = function(g) return SerializePlayer(g) end,
-        OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
+        OnDeserialize = function(g, b) return DeserializePlayer(g, b) end,
         OnCleanup     = function(keepGuid) Cleanup(keepGuid) end,
         DropForgottenOrphans = function() return DropForgottenOrphans() end,
         OnForget      = function(guid) if guid then AltStableProfessionsDB[guid] = nil end end,
@@ -2374,6 +2377,15 @@ local function BootstrapPlugin()
     if AltStable.ResetPeerWatermarks and AltStable.HoldsAttached
        and not AltStable.HoldsAttached(AltStableProfessionsDB) then
         AltStable.ResetPeerWatermarks()
+    end
+    -- Once (#422): a star made on an offline alt before deltas could carry it
+    -- is below every peer's watermark, with nothing to mark it. One full reply
+    -- to each peer, now that this plugin can send it. The core clears the key
+    -- again if a full reply goes out without this plugin registered.
+    if AltStable.OnSyncScopeChanged and AltStable.SetConfigValue
+       and not (AltStableConfig and AltStableConfig.wishDeltaRepair) then
+        AltStable.OnSyncScopeChanged()
+        AltStable.SetConfigValue("wishDeltaRepair", true)
     end
     C_Timer.After(4, RefreshOwnership)
 end

@@ -1641,7 +1641,7 @@ function L.Bootstrap()
         -- of the character record.
         independentStamp = true,
         OnSerialize   = function(guid) return M.Serialize(guid) end,
-        OnDeserialize = function(guid, blob) M.Deserialize(guid, blob) end,
+        OnDeserialize = function(guid, blob) return M.Deserialize(guid, blob) end,
         OnCleanup     = function(keep) M.Cleanup(keep) end,
         OnForget      = function(guid) M.Forget(guid) end,
         DropForgottenOrphans = function() return M.DropForgottenOrphans() end,

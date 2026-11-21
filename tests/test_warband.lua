@@ -557,12 +557,21 @@ eq("  and their bank", got and got.bank[2318], 13)
 AltStableWarbandDB["Player-Peer-1"].stamp = 500
 AltStableWarbandDB["Player-Peer-1"].bagsStamp, AltStableWarbandDB["Player-Peer-1"].bankStamp = 500, 500
 local older = "v1|s=400|kt=400|b=2318,999|k=2318,999"
-T.DeserializePlayer("Player-Peer-1", older)
+check("an older blob says nothing new (#422)", not T.DeserializePlayer("Player-Peer-1", older))
 eq("an older relayed blob does not roll back fresher data",
    AltStableWarbandDB["Player-Peer-1"].bags[2318], 8)
 local newer = "v1|s=600|kt=600|b=2318,999|k=2318,13"
-T.DeserializePlayer("Player-Peer-1", newer)
+eq("a newer one says so, for the core to mark (#422)", T.DeserializePlayer("Player-Peer-1", newer), true)
 eq("  a newer one is applied", AltStableWarbandDB["Player-Peer-1"].bags[2318], 999)
+check("  the same again says nothing new", not T.DeserializePlayer("Player-Peer-1", newer))
+check("  nor other contents under the same stamps: taken, not marked",
+      not T.DeserializePlayer("Player-Peer-1", "v1|s=600|kt=600|bt=600|b=2318,998|k=2318,13"))
+eq("  (taken)", AltStableWarbandDB["Player-Peer-1"].bags[2318], 998)
+eq("  a newer bank alone says so", T.DeserializePlayer("Player-Peer-1", "v1|s=600|kt=601|bt=600|b=2318,998|k=2318,14"), true)
+eq("  and newer mail alone", T.DeserializePlayer("Player-Peer-1",
+   "v1|s=600|kt=601|bt=600|b=2318,998|k=2318,14|mt=700|mm=0|m=2318,1"), true)
+eq("  and a newer outbox alone", T.DeserializePlayer("Player-Peer-1",
+   "v1|s=600|kt=601|bt=600|b=2318,998|k=2318,14|mt=700|mm=0|m=2318,1|ot=800|o=Alt-Name@790:2318,1"), true)
 
 T.DeserializePlayer("Player-Peer-2", "v1|s=999|kt=0|b=2318,notanumber|k=")
 eq("a malformed blob is ignored", AltStableWarbandDB["Player-Peer-2"], nil)

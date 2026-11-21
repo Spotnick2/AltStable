@@ -425,13 +425,15 @@ T.DeserializePlayer(ALT, blob(201, { 2329, 2330 }))
 T.DeserializePlayer(ALT, blob(200, { 2329 }))
 check("newer then older: the newer stays", AltStableProfessionsDB[ALT].profs[171].known[2330])
 AltStableProfessionsDB = {}
-T.DeserializePlayer(ALT, blob(200, { 2329 }))
-T.DeserializePlayer(ALT, blob(201, { 2329, 2330 }))
+eq("a first snapshot says it stored something newer (#422)", T.DeserializePlayer(ALT, blob(200, { 2329 })), true)
+eq("  and so does a newer one", T.DeserializePlayer(ALT, blob(201, { 2329, 2330 })), true)
 check("older then newer: the newer wins", AltStableProfessionsDB[ALT].profs[171].known[2330])
 local held = AltStableProfessionsDB[ALT]
-T.DeserializePlayer(ALT, blob(201, { 2329 }))
+check("an equal stamp says nothing new", not T.DeserializePlayer(ALT, blob(201, { 2329 })))
 check("an equal stamp is not applied (one owner never reuses a stamp)",
       AltStableProfessionsDB[ALT].profs[171].known[2330] and AltStableProfessionsDB[ALT] == held)
+check("  nor an older one", not T.DeserializePlayer(ALT, blob(199, { 2329 })))
+eq("the plugin hands the core that answer", plugin.OnDeserialize(ALT, blob(202, { 2329 })), true)
 
 -- One of our own alts, played on another PC: the core takes the newer record,
 -- and the snapshot has to come with it. Our own echo (equal or older) does not.
@@ -651,6 +653,69 @@ AltStable.SetPluginEnabled("warband", true)
 eq("  but not when it is already loaded", resets, 3)
 AltStable.SetPluginEnabled("warband", false)
 eq("  nor when switching one off", resets, 3)
+
+-- #422: switched on, it also gives every peer one full reply - their
+-- watermarks for us went past what we could not send while it was off.
+do
+    local gen = Core.SyncScopeEpoch()
+    WoW.loaded = {}
+    AltStable.SetPluginEnabled("warband", true)
+    eq("enabling a plugin that was off: nothing yet, a reply due now could not carry it", Core.SyncScopeEpoch(), gen)
+    eq("  it is remembered across a /reload", AltStableConfig.widenOnRegister and AltStableConfig.widenOnRegister.warband, true)
+    local stub = { id = "warband", label = "Warband", OnActivate = function() end, OnSerialize = function() return "" end }
+    AltStable.RegisterPlugin(stub)
+    eq("  once it registers, every peer gets one full reply", Core.SyncScopeEpoch(), gen + 1)
+    eq("  and it is spent", AltStableConfig.widenOnRegister, nil)
+    for i, p in ipairs(AltStable.plugins) do if p == stub then table.remove(AltStable.plugins, i) break end end
+    AltStable.RegisterPlugin(stub)
+    eq("  a later registration of it gives none", Core.SyncScopeEpoch(), gen + 1)
+    for i, p in ipairs(AltStable.plugins) do if p == stub then table.remove(AltStable.plugins, i) break end end
+    AltStable.SetPluginEnabled("warband", true)
+    AltStable.RegisterPlugin(stub)
+    eq("  nor does enabling it when it is already loaded", Core.SyncScopeEpoch(), gen + 1)
+    for i, p in ipairs(AltStable.plugins) do if p == stub then table.remove(AltStable.plugins, i) break end end
+    -- A plugin that only shows data sends nothing more: no full replies.
+    WoW.loaded = {}
+    AltStable.SetPluginEnabled("legacy", true)
+    local shows = { id = "legacy", label = "Legacy", OnActivate = function() end }
+    AltStable.RegisterPlugin(shows)
+    eq("a plugin with nothing to send gives no full reply", Core.SyncScopeEpoch(), gen + 1)
+    eq("  and its pending mark is spent all the same", AltStableConfig.widenOnRegister, nil)
+    for i, p in ipairs(AltStable.plugins) do if p == shows then table.remove(AltStable.plugins, i) break end end
+end
+
+-- #422: stars made on offline alts before deltas could carry them are owed
+-- one full reply, given by the bootstrap once.
+do
+    AltStableProfessionsDB = { [ALT] = { stamp = 3, profs = {} } }
+    AltStableConfig.wishDeltaRepair = nil
+    local gen = Core.SyncScopeEpoch()
+    T.BootstrapPlugin()
+    eq("the first bootstrap gives every peer one full reply", Core.SyncScopeEpoch(), gen + 1)
+    eq("  and remembers it", AltStableConfig.wishDeltaRepair, true)
+    T.BootstrapPlugin()
+    eq("  once", Core.SyncScopeEpoch(), gen + 1)
+
+    -- A reply that goes out without this plugin (switched off, or not
+    -- registered yet) can't carry a star, so the repair is owed again.
+    local held = AltStable.plugins
+    local without = {}
+    for _, p in ipairs(held) do if p.id ~= "professions" then without[#without + 1] = p end end
+    -- Codex round 5: the peer already served at this generation, and an
+    -- ordinary delta (not a full reply) goes out while the plugin is off.
+    AltStableConfig.peerScopeGeneration = { Peer = Core.SyncScopeEpoch() }
+    AltStable.plugins = without
+    Core.SendFullDatabase("WHISPER", "Peer", 4700)
+    AltStable.plugins = held
+    eq("a delta sent without the plugin owes the repair again", AltStableConfig.wishDeltaRepair, nil)
+    T.BootstrapPlugin()
+    eq("  which its next bootstrap gives", Core.SyncScopeEpoch(), gen + 2)
+    check("  so the peer already served is owed a full reply again",
+          AltStableConfig.peerScopeGeneration.Peer < Core.SyncScopeEpoch())
+    Core.SendFullDatabase("WHISPER", "Peer")
+    eq("a reply sent with it keeps the repair done", AltStableConfig.wishDeltaRepair, true)
+    WoW.flushTimers()
+end
 AltStable.ResetPeerWatermarks = realReset
 WoW.flushTimers()
 
@@ -1385,8 +1450,12 @@ eq("  stores it on its snapshot", wishes(A), "2332")
 eq("  under a new stamp, so peers take it", AltStableProfessionsDB[A].stamp, 1700000000)
 check("  and it wants it", T.Wants(A, 2332))
 eq("  without touching its Last Online: Alder is not the one being played", AltStableDB[A].lastUpdate, 50)
+eq("  but marked changed, so the next delta carries it (#422)", AltStableDB[A].changedAt, 1700000000)
+WoW.now = 1700000001
 check("starring it again changes nothing", not T.SetWish(A, 2332, true))
 eq("  not even the stamp", AltStableProfessionsDB[A].stamp, 1700000000)
+eq("  nor the change mark", AltStableDB[A].changedAt, 1700000000)
+WoW.now = 1700000000
 check("a recipe it knows cannot be starred", not T.SetWish(A, 2329, true))
 eq("  and is not stored", wishes(A), "2332")
 check("a recipe on another account's alt cannot be starred here", not T.SetWish(B, 2332, true))
@@ -1404,6 +1473,7 @@ WoW.now = 1700000005
 check("unstarring", T.SetWish(A, 2332, false))
 eq("  leaves no empty list behind", AltStableProfessionsDB[A].wish, nil)
 eq("  and moves the stamp too", AltStableProfessionsDB[A].stamp, 1700000005)
+eq("  and the change mark", AltStableDB[A].changedAt, 1700000005)
 check("unstarring what is not starred changes nothing", not T.SetWish(A, 2332, false))
 eq("  not even the stamp", AltStableProfessionsDB[A].stamp, 1700000005)
 T.SetWish(A, 2331, false)
@@ -1416,6 +1486,27 @@ AltStableProfessionsDB[ME] = { stamp = 3, profs = { [171] = { rank = 60, max = 7
 WoW.now = 1700000100
 T.SetWish(ME, 2330, true)
 eq("starring for the character being played marks it for the next sync", AltStableDB[ME].lastUpdate, 1700000100)
+eq("  through its Last Online, not the change mark", AltStableDB[ME].changedAt, nil)
+
+-- #422: an offline alt's star reaches a peer whose watermark is past the
+-- alt's Last Online, and only once that peer has moved past the star.
+do
+    local saved = AltStableConfig.sendAllAccounts
+    AltStableConfig.sendAllAccounts = true
+    AltStableDB[A].lastUpdate = 1000
+    WoW.now = 1700000300
+    check("starring the offline alt", T.SetWish(A, 2332, true))
+    local function sent(since)
+        local payload = Core.SerializeFullDB(false, since)
+        return payload:find("guid:" .. A, 1, true) ~= nil, payload
+    end
+    local inDelta, payload = sent(1700000200)
+    check("a delta from below the star carries the starred alt", inDelta)
+    check("  with its snapshot, wish included", payload:find("plugin_professions:", 1, true) ~= nil
+          and payload:find("w=2332", 1, true) ~= nil)
+    check("a delta from past the star leaves it out", not (sent(1700000301)))
+    AltStableConfig.sendAllAccounts = saved
+end
 
 -- A snapshot that still holds a star on a known recipe (one from before it
 -- was learned) shows no star.

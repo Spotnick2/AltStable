@@ -551,6 +551,55 @@ check("  one whole deflated payload", type(raw) == "string" and raw:find("Alpha"
 check("  with our clock at the end, as the whispered stream has", raw and raw:find("\n==NOW==:", 1, true) ~= nil, raw)
 eq("  and no whispered chunks", #wire(T.MSG_CHUNK_V), 0)
 
+-- #422: a full reply owed to a peer (the scope generation moved) is spent only
+-- when the reply goes. Refused by the library with no other way across, it
+-- stays owed, and the next request gets it in full.
+do
+    reset()
+    WoW.now = 100000
+    seed()
+    listBee()
+    fromBee(L.MSG_CAP)
+    AltStableConfig.syncScopeGeneration = 1
+    local function spent()
+        for _, g in pairs(AltStableConfig.peerScopeGeneration or {}) do if g == 1 then return true end end
+        return false
+    end
+    fake.sent, fake.ret = {}, nil
+    fromBee(T.MSG_REQUEST_V .. "|2000")
+    flush()
+    eq("#422: a request over Battle.net, refused by the library: nothing goes", #wire(T.MSG_CHUNK_V), 0)
+    check("  and the full reply stays owed", not spent())
+    fake.sent, fake.ret = {}, 1
+    fromBee(T.MSG_REQUEST_V .. "|2000")
+    flush()
+    local again = dbSent()
+    local body = again and LD:DecompressDeflate(again.msg:sub(#L.MSG_DB + 2))
+    check("  so the next request is answered in full, below its watermark",
+          type(body) == "string" and body:find("Alpha", 1, true) ~= nil, body)
+    check("  and then it is spent", spent())
+
+    -- Too large never gets better by asking again (Codex round 10): spent all
+    -- the same, so the next request's delta, which fits, goes.
+    AltStableConfig.syncScopeGeneration = 2
+    AltStableDB["Player-1-C"] = { guid = "Player-1-C", name = "Gamma", class = "MAGE", level = 10, lastUpdate = 5101 }
+    local function spentAt2()
+        for _, g in pairs(AltStableConfig.peerScopeGeneration or {}) do if g == 2 then return true end end
+        return false
+    end
+    fake.sent, fake.ret, fake.why = {}, nil, "too-large"
+    fromBee(T.MSG_REQUEST_V .. "|4700")
+    flush()
+    check("  a full reply refused as too large is spent anyway", spentAt2())
+    fake.sent, fake.ret, fake.why = {}, 1, nil
+    fromBee(T.MSG_REQUEST_V .. "|4700")
+    flush()
+    local delta = dbSent()
+    local dbody = delta and LD:DecompressDeflate(delta.msg:sub(#L.MSG_DB + 2))
+    check("  so the next request gets its delta",
+          type(dbody) == "string" and dbody:find("Gamma", 1, true) ~= nil and not dbody:find("Alpha", 1, true), dbody)
+end
+
 -- A whisper to our own account on the library: the library, not the whisper.
 reset()
 seed()

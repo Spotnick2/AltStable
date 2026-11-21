@@ -400,8 +400,10 @@ function M.Deserialize(guid, blob)
     local held = db.chars[guid]
     if type(held) == "table" and (tonumber(held.stamp) or 0) >= r.stamp then return end
     db.chars[guid] = r          -- wholesale, an empty c= included
-    -- No TouchCharacter: receiving is not a change of ours.
+    -- No TouchCharacter: receiving is not a change of ours. True: a newer
+    -- stamp stored, which the core marks for the deltas it sends (#422).
     if M.OnChanged then M.OnChanged() end
+    return true
 end
 
 function M.Forget(guid)
