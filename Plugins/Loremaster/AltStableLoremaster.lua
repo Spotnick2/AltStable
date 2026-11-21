@@ -1528,8 +1528,10 @@ function L.RenderFooter()
     local col = L.SelectedColumn()
     local snap = col and col.snap
     if not snap then
+        -- Through the named core record, like the columns: a kept orphan (#418)
+        -- is not shown.
         local me = UnitGUID and UnitGUID("player")
-        snap = me and M.DB().chars[me]
+        snap = me and (not AltStable.HasNamedRecord or AltStable.HasNamedRecord(me)) and M.DB().chars[me]
     end
     if not snap then
         f.left:SetText("|cff888888Loremaster: this character is not counted yet|r")
@@ -1642,6 +1644,7 @@ function L.Bootstrap()
         OnDeserialize = function(guid, blob) M.Deserialize(guid, blob) end,
         OnCleanup     = function(keep) M.Cleanup(keep) end,
         OnForget      = function(guid) M.Forget(guid) end,
+        DropForgottenOrphans = function() return M.DropForgottenOrphans() end,
         _test        = L,
     })
     M.Start()

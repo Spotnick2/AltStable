@@ -1173,14 +1173,83 @@ function AltStable.ForgetCharacter(guid, when)
     -- And its seat in a Roster camp (#152): a forgotten character leaves it.
     if AltStable.RemoveFromCamp then AltStable.RemoveFromCamp(guid) end
 
-    -- The plugins hold their own per-character tables and would otherwise keep
-    -- the inventory, recipes and lockouts of a character nothing shows.
-    for _, plugin in ipairs(AltStable.plugins or {}) do
-        if plugin.OnForget then pcall(plugin.OnForget, guid) end
-    end
+    AltStable.ForgetPluginRecords(guid)
 
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true, name
+end
+
+-- The plugins hold their own per-character tables and would otherwise keep
+-- the inventory, recipes and lockouts of a character nothing shows. Only the
+-- loaded ones can be told: a plugin switched off drops a forgotten
+-- character's records at its next bootstrap (DropForgottenOrphans).
+function AltStable.ForgetPluginRecords(guid)
+    if not guid then return end
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.OnForget then pcall(plugin.OnForget, guid) end
+    end
+end
+
+------------------------------------------------------------
+-- Plugin records whose character the core has no record of (#418)
+--
+-- Each plugin keeps its own SavedVariables file, keyed by the same GUIDs as
+-- AltStableDB. An older or lost AltStable.lua next to intact plugin files
+-- leaves plugin records with no named core record: orphans. They are KEPT,
+-- invisible (every read model goes through the named core record), and come
+-- back when a sync restores the record. A wishlist star exists nowhere else,
+-- so deleting orphans at login (as every plugin but Warband once did) lost it
+-- for good. Only these delete them: a forget (OnForget, or a tombstone found
+-- at bootstrap by DropForgottenOrphans) and /alts cleanup (OnCleanup).
+------------------------------------------------------------
+
+-- The core holds a named record for this character.
+function AltStable.HasNamedRecord(guid)
+    local c = guid and AltStableDB and AltStableDB[guid]
+    return type(c) == "table" and c.name ~= nil
+end
+
+-- Drop the orphans of forgotten characters from a plugin store: a forget made
+-- while the plugin was switched off never reached its OnForget. A tombstone
+-- lifted before then (an unforget, an eviction) lets the records re-attach,
+-- which is what an unforget asks for. Never the character being played: its
+-- core record comes back with the scan a second later, and a tombstone of a
+-- character played since is lifted only on receive. Never a record made after
+-- the forget either (CameBackSince on the record's own stamp, every plugin
+-- record has one): the character was played since, and that reading may be
+-- the only one there is (Codex review of #437). Returns how many went.
+function AltStable.DropForgottenOrphans(store)
+    if type(store) ~= "table" or not AltStable.IsCharacterForgotten then return 0 end
+    local me = UnitGUID and UnitGUID("player")
+    local gone = {}
+    for guid, entry in pairs(store) do
+        local stamp = type(entry) == "table" and tonumber(entry.stamp) or 0
+        if guid ~= me and not AltStable.HasNamedRecord(guid) and AltStable.IsCharacterForgotten(guid)
+           and not (AltStable.CameBackSince and AltStable.CameBackSince(guid, stamp)) then
+            gone[#gone + 1] = guid
+        end
+    end
+    for _, guid in ipairs(gone) do store[guid] = nil end
+    return #gone
+end
+
+-- Every loaded plugin's sweep of forgotten orphans (its DropForgottenOrphans
+-- hook), for a forget received with no core record to hand ForgetCharacter.
+function AltStable.DropForgottenPluginOrphans()
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        if plugin.DropForgottenOrphans then pcall(plugin.DropForgottenOrphans) end
+    end
+end
+
+-- Whether a plugin store holds anything to build on: a record of a character
+-- the core has a named record of (and that `pred` accepts, when given). An
+-- orphan doesn't count, so a store of orphans still asks for a full pull.
+function AltStable.HoldsAttached(store, pred)
+    if type(store) ~= "table" then return false end
+    for guid, entry in pairs(store) do
+        if AltStable.HasNamedRecord(guid) and (not pred or pred(entry)) then return true end
+    end
+    return false
 end
 
 -- Characters nobody has played for `days` days (#259): the deleted, and the
@@ -4793,6 +4862,21 @@ SlashCmdList["ALTSTABLE"] = function(args)
     if cmd == "cleanup" then
         CleanupDB()
         Print("DB wiped — kept only your current character. Requesting fresh data from peers...")
+        -- A plugin switched off isn't loaded, so its store couldn't be cleared
+        -- (#418): say so, with the way to repair it. Only one the player
+        -- switched off and that is installed: a plugin folder left out has
+        -- nothing to repair (Codex review of #437).
+        local off = {}
+        for _, p in ipairs(AltStable.LOD_PLUGINS) do
+            local installed = not (C_AddOns and C_AddOns.GetAddOnInfo) or C_AddOns.GetAddOnInfo(p.addon) ~= nil
+            if not AltStable.IsPluginEnabled(p.key) and not AltStable.IsPluginLoaded(p.key) and installed then
+                off[#off + 1] = p.label
+            end
+        end
+        if #off > 0 then
+            Print("Not cleared, switched off: " .. table.concat(off, ", ")
+                  .. ". To repair their data, switch them on, /reload, then run /alts cleanup again.")
+        end
         if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         -- Give the rescan a moment to complete before broadcasting
         C_Timer.After(1, function()

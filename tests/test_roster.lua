@@ -60,14 +60,21 @@ dofile("CharacterMenu.lua")
 WoW.timers = {}
 dofile("Plugins/Roster/AltStableRoster.lua")
 dofile("Plugins/Roster/CampList.lua")      -- the camp list, after it, as the .toc loads them (#152)
--- A reading for a character the core doesn't know: the bootstrap prunes it.
-AltStableRosterDB = { talents = { orphan = { stamp = 1 } } }
+-- A reading for a character the core doesn't know: the bootstrap keeps it
+-- (#418), unless that character was forgotten.
+AltStableRosterDB = { talents = { orphan = { stamp = 1 }, gone = { stamp = 1 } } }
+AltStableConfig = AltStableConfig or {}
+local savedForgotten = AltStableConfig.forgottenCharacters
+AltStableConfig.forgottenCharacters = { gone = { at = 1, forgottenAt = 1, name = "Gone" } }
 dofile("Plugins/Roster/Talents.lua")       -- the talents, last in the .toc (#273)
 check("loading after login schedules its own bootstrap", #WoW.timers > 0,
       "no timer scheduled - the plugin is waiting for a PLAYER_LOGIN that already fired")
 WoW.flushTimers()
-check("  which starts the talents: an orphan reading is pruned",
-      AltStableRosterDB.talents.orphan == nil)
+check("  which starts the talents: an orphan reading is kept (#418)",
+      AltStableRosterDB.talents.orphan ~= nil)
+check("  and a forgotten character's orphan reading goes",
+      AltStableRosterDB.talents.gone == nil)
+AltStableConfig.forgottenCharacters = savedForgotten
 
 local registered
 for _, p in ipairs(AltStable.plugins or {}) do
@@ -5181,9 +5188,33 @@ do
     registered.OnForget(peer)
     eq("forgetting a character drops its talents", TL.Get(peer), nil)
     AltStableRosterDB.talents.ghost = { stamp = 1 }
-    TL.PruneOrphans()
-    eq("a reading whose character the core no longer knows is pruned", TL.Get("ghost"), nil)
+    TL.DropForgottenOrphans()
+    check("a reading whose character the core no longer knows is kept (#418)", TL.Get("ghost") ~= nil)
+    AltStableConfig.forgottenCharacters = { ghost = { at = 1, forgottenAt = 1, name = "Ghost" } }
+    eq("  until that character is forgotten", TL.DropForgottenOrphans(), 1)
+    eq("  then it goes", TL.Get("ghost"), nil)
     check("  while a known one stays", TL.Get(guid) ~= nil)
+    AltStableConfig.forgottenCharacters = nil
+    -- Restored: the core record comes back (a sync), and the reading with it.
+    AltStableRosterDB.talents.back = { stamp = 2, active = 1, specs = {} }
+    TL.DropForgottenOrphans()
+    AltStableDB.back = { guid = "back", name = "Back", class = "MAGE" }
+    check("  an orphan reading is there again once the record is restored", TL.Get("back") ~= nil)
+    AltStableDB.back, AltStableRosterDB.talents.back = nil, nil
+    -- A store of orphans is nothing to build on: the bootstrap asks for a full pull.
+    do
+        local resets, realReset = 0, AltStable.ResetPeerWatermarks
+        AltStable.ResetPeerWatermarks = function() resets = resets + 1 end
+        local held = AltStableRosterDB.talents
+        AltStableRosterDB.talents = { ["Player-orphan-1"] = { stamp = 1 } }
+        TL.Start()
+        eq("  a store of orphans asks for a full pull", resets, 1)
+        AltStableRosterDB.talents["Player-orphan-1"], AltStableRosterDB.talents[guid] = nil, held[guid]
+        TL.Start()
+        eq("  one attached reading doesn't", resets, 1)
+        AltStableRosterDB.talents = held
+        AltStable.ResetPeerWatermarks = realReset
+    end
     registered.OnCleanup("keep-none")
     eq("a cleanup keeps only the given character", next(AltStableRosterDB.talents), nil)
 

@@ -4373,4 +4373,26 @@ do
     AltStable.EnsureSheetVisible = heldEnsure
     AltStableCutoutManifest, AltStablePortraits = heldManifest, heldStore
 end
+
+do
+    -- /alts cleanup names the plugins it couldn't clear (#418): only those the
+    -- player switched off that are installed, not a folder left out (Codex
+    -- review of #437).
+    WoW.reset()
+    AltStableDB, AltStableConfig = {}, { peerWatermarks = {}, plugins = { roster = false, legacy = false } }
+    local heldInfo = C_AddOns.GetAddOnInfo
+    C_AddOns.GetAddOnInfo = function(a) if a ~= "AltStableLegacy" then return a end end
+    for _, p in ipairs(AltStable.LOD_PLUGINS) do
+        if p.key ~= "roster" and p.key ~= "legacy" then WoW.loaded[p.addon] = true end
+    end
+    WoW.chatOut = {}
+    SlashCmdList.ALTSTABLE("cleanup")
+    check(chatHas("Not cleared, switched off: Roster."), "cleanup names the installed plugin switched off")
+    check(not chatHas("Legacy"), "  not one whose folder is missing")
+    AltStableConfig.plugins = {}
+    WoW.chatOut = {}
+    SlashCmdList.ALTSTABLE("cleanup")
+    check(not chatHas("Not cleared"), "  and says nothing when every plugin is on")
+    C_AddOns.GetAddOnInfo = heldInfo
+end
 WoW.finish("test_comm", testsRun - failures, failures)

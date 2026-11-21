@@ -32,6 +32,8 @@
 --   * inventory whose character record is gone is kept, invisible, until that
 --     character is forgotten or the database cleaned up: the login never
 --     deletes it, so a loss of AltStable.lua does not take this file with it.
+--     The other plugins follow the same rule (#418, Core.lua "Plugin records
+--     whose character the core has no record of").
 ------------------------------------------------------------
 
 AltStableWarbandDB = AltStableWarbandDB or {}
@@ -376,10 +378,13 @@ local function EntryLive(e, now)
 end
 
 -- Items on their way to each character: { [guid] = { [itemID] = count } }.
+-- Not from a sender the core has no record of (an orphan, #418): its other
+-- sections are invisible, and so is what it sent.
 local function Incoming()
     local out, now = {}, time()
-    for _, wb in pairs(AltStableWarbandDB) do
-        if type(wb) == "table" and type(wb.outbox) == "table" then
+    for sender, wb in pairs(AltStableWarbandDB) do
+        if type(wb) == "table" and type(wb.outbox) == "table"
+           and (not AltStable.HasNamedRecord or AltStable.HasNamedRecord(sender)) then
             for _, e in ipairs(wb.outbox) do
                 if EntryLive(e, now) then
                     local m = out[e.to] or {}
@@ -2268,6 +2273,9 @@ local function BootstrapPlugin()
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
         OnCleanup     = function(keepGuid) CleanupWarbandDB(keepGuid) end,
+        DropForgottenOrphans = function()
+            return AltStable.DropForgottenOrphans and AltStable.DropForgottenOrphans(AltStableWarbandDB) or 0
+        end,
         -- #65: a forgotten character's bags and bank go with its record, or
         -- they sit in SavedVariables for good - for a character nothing shows.
         OnForget      = function(guid)
@@ -2302,15 +2310,15 @@ local function BootstrapPlugin()
     -- took that branch. That reset every peer watermark about a second before
     -- the login sync, turning every session into a full-database pull (minutes
     -- on a large database). Holding data is the only signal that matters.
-    if AltStable.ResetPeerWatermarks then
-        local hasData = false
-        for guid, cdb in pairs(AltStableWarbandDB) do
-            local c = AltStableDB and AltStableDB[guid]
-            if type(c) == "table" and c.name and type(cdb) == "table"
-               and ((cdb.bags and next(cdb.bags)) or (cdb.bank and next(cdb.bank))) then
-                hasData = true; break
-            end
-        end
+    --
+    -- First, the orphans of characters forgotten while this plugin was off
+    -- (their forget never reached OnForget): the only orphans that go.
+    if AltStable.DropForgottenOrphans then AltStable.DropForgottenOrphans(AltStableWarbandDB) end
+    if AltStable.ResetPeerWatermarks and AltStable.HoldsAttached then
+        local hasData = AltStable.HoldsAttached(AltStableWarbandDB, function(cdb)
+            return type(cdb) == "table"
+               and ((cdb.bags and next(cdb.bags)) or (cdb.bank and next(cdb.bank))) and true or false
+        end)
         if not hasData then AltStable.ResetPeerWatermarks() end
     end
 
