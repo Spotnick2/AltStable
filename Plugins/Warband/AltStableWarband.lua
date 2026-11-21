@@ -594,7 +594,7 @@ end
 ------------------------------------------------------------
 -- Sync — compact, single-line, no "\n". Only itemID+count integers ride the
 -- wire (item links are reconstructed client-side, like the core gear scan).
---   v1|s=<stamp>|kt=<bankStamp>|b=id,count;id,count|k=id,count;...
+--   v1|s=<stamp>|kt=<bankStamp>|bt=<bagsStamp>|b=id,count;id,count|k=id,count;...
 --     [|mt=<mailStamp>|mm=<mails unread>|m=id,count;...|ot=<outboxStamp>|o=<guid>@<at>:id,count;.../...]
 --
 -- The mail fields (#312) come last and only while the sender's mail setting is
@@ -602,6 +602,11 @@ end
 -- of which sit before them, so it takes the rest of the blob and ignores the
 -- mail. The new fields are matched with their leading "|", so "|m=" never
 -- matches inside "|mm=" or "|mt=".
+--
+-- bt= (Codex review of #438) is the bags' own stamp, after kt=. An older
+-- client never sees it: its "b=" and "k=" matches find the real fields first
+-- ("bt=" holds no "b=" or "k="), so it keeps dating the bags by s=. A blob
+-- without it (an older sender) is dated by s= here too.
 ------------------------------------------------------------
 
 local function EncodeMap(map)
@@ -666,6 +671,7 @@ local function SerializePlayer(guid, sinceTS)
     local blob = BLOB_VERSION
         .. "|s=" .. stamp
         .. "|kt=" .. (db.bankStamp or 0)
+        .. "|bt=" .. (db.bagsStamp or 0)
         .. "|b=" .. EncodeMap(db.bags)
         .. "|k=" .. EncodeMap(db.bank)
     if MailOn() then
@@ -704,13 +710,16 @@ local function DeserializePlayer(guid, blob)
     local bags, bank = ParseMap(bagsStr), ParseMap(bankStr)
     if not bags or not bank then return end   -- malformed: keep existing good data
 
-    -- The bags, by the overall stamp: the wire carries no bags stamp, and the
-    -- overall one is the newest of the sender's sections, so it is no older
-    -- than its bags (declared: a sender whose mail is newer than its bags
-    -- dates its bags by its mail). Held bags newer than that stay.
-    local bagsStamp = incomingStamp
+    -- The bags, by their own stamp (bt=), else by the overall one: the newest
+    -- of the sender's sections, so no older than its bags (declared, for an
+    -- older sender: one whose bank or mail is newer than its bags dates its
+    -- bags by them). bt= matters because a bank visit's confirming read moves
+    -- the overall stamp while the bags are still a cached map (Codex review of
+    -- #438). Held bags newer than that stay.
+    local bt = tonumber(("|" .. rest .. "|"):match("|bt=(%d+)|"))
+    local bagsStamp = (bt and bt > 0) and bt or incomingStamp
     local heldBags = existing and (existing.bagsStamp or existing.stamp) or 0
-    if existing and existing.bags and heldBags > incomingStamp then
+    if existing and existing.bags and heldBags > bagsStamp then
         bags, bagsStamp = existing.bags, heldBags
     end
 
@@ -729,8 +738,13 @@ local function DeserializePlayer(guid, blob)
     -- on the owning account erased the bank everywhere until its next bank
     -- visit (docs/AUDIT.md, B1). An equal kt with another map is taken: two
     -- moves in one second (B2, declared).
-    if existing and existing.bank and (existing.bankStamp or 0) > 0 and bankStamp < existing.bankStamp then
-        bank, bankStamp = existing.bank, existing.bankStamp
+    -- A bank of unknown age (0) is no evidence at all, so it never replaces a
+    -- held bank that says anything: a dated one, or an undated one with items
+    -- in it (Codex review of #438: a delayed never-read blob emptied one).
+    local held = existing and existing.bank
+    local heldStamp = existing and existing.bankStamp or 0
+    if held and ((heldStamp > 0 and bankStamp < heldStamp) or (bankStamp == 0 and (heldStamp > 0 or next(held)))) then
+        bank, bankStamp = held, heldStamp
     end
 
     -- Mail (#312) and the outbox, each by its own stamp. Absent (an older

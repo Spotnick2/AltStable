@@ -188,7 +188,8 @@ use(B); before = snap(B)
 receive(B, A, payloadFrom(A, T.GetPeerWatermark(A.name)))
 expectDiffs("  and B's snapshot goes with it", before, snap(B), {
     wx("bank[2589]") .. ": 20 -> nil", wx("bank") .. ": nil -> empty", wx("bankStamp") .. ": 950 -> " .. WoW.now,
-    wx("stamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now, wx("bagsStamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
+    wx("stamp") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
+    -- The bags keep their own stamp: the bank visit doesn't date them (bt=, #438).
     x("lastUpdate") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
 })
 
@@ -210,6 +211,8 @@ use(B); before = snap(B)
 receive(B, A, payloadFrom(A, T.GetPeerWatermark(A.name)))
 expectDiffs("  an equal stamp with other contents applies (two moves in one second)", before, snap(B), {
     wx("bags[2318]") .. ": 10 -> 11", x("lastUpdate") .. ": " .. (WoW.now - 10) .. " -> " .. WoW.now,
+    -- The sender's own bags stamp (bt=), which the bank visit above didn't move on B.
+    wx("bagsStamp") .. ": " .. (WoW.now - 30) .. " -> " .. (WoW.now - 20),
 })
 WoW.now = WoW.now + 10
 local truncated = table.concat({ "guid:" .. X, "name:Example Surname", "class:PRIEST", "level:60",
@@ -406,6 +409,34 @@ do
     eq("  the older record from the PC that read the bank is refused", C2.db[Q].money, 900)
     eq("  but its bank lands, judged by its own stamp", C2.wb[Q] and C2.wb[Q].bank[2318], 12)
     eq("  and its bags", C2.wb[Q] and C2.wb[Q].bags[1], 4)
+end
+
+------------------------------------------------------------
+-- R10 (Codex follow-up on #438): the bank's confirming read on PC A, before
+-- its first bag scan, moves A's overall stamp while its bags are a cached map
+-- from 80; a peer holding those bags from 110 (PC B played it since) keeps
+-- them, and takes A's freshly confirmed bank. Through serialization.
+------------------------------------------------------------
+do
+    local A3, B3 = side("Alpha4-Realm", X), side("Bravo4-Realm", Y)
+    WoW.now = WoW.now + 100
+    local t = WoW.now
+    A3.db[X] = { guid = X, name = "Example Surname", class = "PRIEST", level = 60, lastUpdate = t - 50 }
+    A3.wb[X] = { bags = { [1] = 1 }, bank = { [2318] = 5 }, stamp = t - 50, bagsStamp = t - 50, bankStamp = t - 50 }
+    B3.db[X] = { guid = X, name = "Example Surname", class = "PRIEST", level = 60, lastUpdate = t - 20 }
+    B3.wb[X] = { bags = { [1] = 9 }, bank = { [2318] = 5 }, stamp = t - 20, bagsStamp = t - 20, bankStamp = t - 50 }
+    use(A3)
+    P.NewSession()
+    WoW.bankTabs = { 6 }; WoW.containers = { [6] = { size = 1, slot(2318, 5) } }
+    P.OnBankOpened()                                 -- confirms the unchanged bank, before any bag scan
+    P.OnBankClosed()
+    eq("R10: A's confirming read dates the bank", A3.wb[X].bankStamp, t)
+    eq("  not its cached bags", A3.wb[X].bagsStamp, t - 50)
+    A3.db[X].lastUpdate = t                          -- TouchCharacter's stamp, as the scan gives it
+    receive(B3, A3, payloadFrom(A3, 0))
+    eq("  B keeps the newer bags it holds", B3.wb[X].bags[1], 9)
+    eq("  and takes the confirmed bank's date", B3.wb[X].bankStamp, t)
+    WoW.bankTabs, WoW.containers = nil, nil
 end
 
 WoW.finish("test_warband_sync", passed, failed)

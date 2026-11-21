@@ -651,6 +651,28 @@ do
     eq("  and the newer bags stay", AltStableWarbandDB[G].bags[1], 7)
     eq("  with their stamp", AltStableWarbandDB[G].bagsStamp, 130)
     eq("  the overall stamp is the newest section", AltStableWarbandDB[G].stamp, 130)
+
+    -- An undated bank with items (taken from a blob with no kt=) is never
+    -- emptied by a never-read one: kt=0 is no evidence (Codex follow-up on #438).
+    AltStableWarbandDB[G] = { bags = { [1] = 1 }, bank = { [2318] = 3 }, stamp = 200, bagsStamp = 200, bankStamp = 0 }
+    T.DeserializePlayer(G, "v1|s=100|kt=0|b=1,1|k=")
+    eq("a never-read blob keeps an undated bank with items", bank(), 3)
+    T.DeserializePlayer(G, "v1|s=100|b=1,1|k=")
+    eq("  so does one with no kt=", bank(), 3)
+    T.DeserializePlayer(G, "v1|s=100|kt=150|b=1,1|k=")
+    eq("  a dated empty bank clears it", bank(), nil)
+    AltStableWarbandDB[G] = { bags = { [1] = 1 }, bank = {}, stamp = 200, bagsStamp = 200, bankStamp = 0 }
+    T.DeserializePlayer(G, "v1|s=100|b=1,1|k=2318,4")
+    eq("  an undated EMPTY bank held takes an undated one with items", bank(), 4)
+
+    -- bt= dates the bags; without it, s= does (an older sender).
+    AltStableWarbandDB[G] = { bags = { [1] = 7 }, bank = {}, stamp = 110, bagsStamp = 110, bankStamp = 0 }
+    T.DeserializePlayer(G, "v1|s=130|kt=130|bt=80|b=1,2|k=")
+    eq("bags dated by bt= older than the held ones are kept", AltStableWarbandDB[G].bags[1], 7)
+    T.DeserializePlayer(G, "v1|s=130|kt=130|b=1,2|k=")
+    eq("  an older sender's (no bt=) are dated by s=", AltStableWarbandDB[G].bags[1], 2)
+    check("  and the serializer sends bt=", (T.SerializePlayer(G) or ""):find("|bt=130|", 1, true) ~= nil,
+          T.SerializePlayer(G))
     AltStableWarbandDB[G] = nil
 end
 
