@@ -647,6 +647,41 @@ do
     for _, l in ipairs(WoW.chatOut) do if l:find("too large", 1, true) then told = told + 1 end end
     eq("  and the player is not told it was too large", told, 0)
 
+    -- A relayed record the narrower delta still sends (by its Last Online
+    -- here) sends only its plugin data past the watermark (Codex, #450).
+    AltStableDB["Player-9-K"] = { guid = "Player-9-K", name = "Kept", class = "MAGE", level = 9,
+                                  lastUpdate = 99500, changedAt = 99000 }
+    AltStable.plugins = AltStable.plugins or {}
+    local blobs = { id = "blobs", OnSerialize = function(guid, since)
+        return (since == 0 and "WHOLE_" or "PART_") .. guid
+    end }
+    table.insert(AltStable.plugins, blobs)
+    fake.sent = {}
+    fromBee(T.MSG_REQUEST_V .. "|98000")
+    flush()
+    last = fake.sent[#fake.sent]
+    eq("  with a plugin too: sent again", #fake.sent, 2)
+    check("  the first one sends the relayed record's plugin data whole", has(fake.sent[1], "WHOLE_Player-9-K"))
+    check("  the second keeps the record", has(last, "Kept"), body(last))
+    check("  with only its plugin data past the watermark",
+          has(last, "PART_Player-9-K") and not has(last, "WHOLE_Player-9-K"), body(last))
+    check("  and our own marked alt's whole", has(last, "WHOLE_Player-1-S"), body(last))
+    -- The same for a camp member, and with only our account's records.
+    AltStableDB["Player-9-K"].lastUpdate = 1000
+    local camp = T.SerializeFullDB(false, 98000, { ["Player-9-K"] = true }, true)
+    check("  a relayed camp member in the narrower delta: plugin data past the watermark only",
+          camp:find("PART_Player-9-K", 1, true) ~= nil and not camp:find("WHOLE_Player-9-K", 1, true), camp)
+    AltStableDB["Player-9-K"].lastUpdate, AltStableDB["Player-9-K"].account = 99500, "1"
+    AltStableConfig.accountNumber = "1"
+    local mineOnly = T.SerializeFullDB(true, 98000, nil, true)
+    check("  and in an account-only one",
+          mineOnly:find("PART_Player-9-K", 1, true) ~= nil and not mineOnly:find("WHOLE_Player-9-K", 1, true), mineOnly)
+    AltStableConfig.accountNumber = nil
+    for i = #AltStable.plugins, 1, -1 do
+        if AltStable.plugins[i] == blobs then table.remove(AltStable.plugins, i) end
+    end
+    AltStableDB["Player-9-K"] = nil
+
     -- Still too large without them: told once, nothing went.
     fake.sent = {}
     fake.tooLarge = function() return true end

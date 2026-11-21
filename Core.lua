@@ -968,7 +968,7 @@ end
 -- Serialize character
 ------------------------------------------------------------
 
-local function SerializeChar(c, sinceTS)
+local function SerializeChar(c, sinceTS, ownMarksOnly)
 
     local parts = {}
 
@@ -1005,8 +1005,11 @@ local function SerializeChar(c, sinceTS)
     -- can skip re-sending data the peer already has (returning "").
     -- Except for a record that changed here since then (#422): a relayed
     -- record's plugin stamps are its origin's, so comparing them with this
-    -- watermark would drop exactly what changed. It goes whole.
-    if sinceTS and sinceTS > 0 and (tonumber(c.changedAt) or 0) >= sinceTS then sinceTS = 0 end
+    -- watermark would drop exactly what changed. It goes whole. Not in the
+    -- narrower delta (ownMarksOnly, see SendFullDatabase): there a relayed
+    -- record's mark counts for nothing, its plugin data included (Codex, #450).
+    if sinceTS and sinceTS > 0 and (tonumber(c.changedAt) or 0) >= sinceTS
+       and (c.scannedHere or not ownMarksOnly) then sinceTS = 0 end
     if AltStable.plugins then
         for _, plugin in ipairs(AltStable.plugins) do
             if plugin.OnSerialize and c.guid then
@@ -1417,8 +1420,9 @@ end
 -- the members of the camps going to our own other account (#171), so it knows
 -- every one of them rather than pruning the ones it has no record of.
 -- `ownMarksOnly`: changedAt counts only for a character we scan (a star on an
--- offline alt), not for one we relayed - the narrower delta SendFullDatabase
--- falls back to when the whole one is too large for Battle.net.
+-- offline alt), not for one we relayed, neither to pick it nor to send its
+-- plugin data whole - the narrower delta SendFullDatabase falls back to when
+-- the whole one is too large for Battle.net.
 local function SerializeFullDB(accountOnly, sinceTS, also, ownMarksOnly)
 
     local entries = {}
@@ -1437,7 +1441,7 @@ local function SerializeFullDB(accountOnly, sinceTS, also, ownMarksOnly)
         -- just the currently-played one) — negligible under compression, and the
         -- merge is idempotent (last-write-wins accepts an equal timestamp).
         if type(c) == "table" and c.guid and also and also[c.guid] then
-            entries[#entries + 1] = SerializeChar(c, sinceTS)
+            entries[#entries + 1] = SerializeChar(c, sinceTS, ownMarksOnly)
         elseif type(c) == "table" and c.guid
         and (sinceTS <= 0 or (c.lastUpdate or 0) >= sinceTS
              or ((tonumber(c.changedAt) or 0) >= sinceTS and (c.scannedHere or not ownMarksOnly))) then
@@ -1446,10 +1450,10 @@ local function SerializeFullDB(accountOnly, sinceTS, also, ownMarksOnly)
                 if charAcct and charAcct ~= "" and tostring(charAcct) ~= tostring(myAccount) then
                     -- Skip — belongs to a different account
                 else
-                    entries[#entries + 1] = SerializeChar(c, sinceTS)
+                    entries[#entries + 1] = SerializeChar(c, sinceTS, ownMarksOnly)
                 end
             else
-                entries[#entries + 1] = SerializeChar(c, sinceTS)
+                entries[#entries + 1] = SerializeChar(c, sinceTS, ownMarksOnly)
             end
         end
     end
