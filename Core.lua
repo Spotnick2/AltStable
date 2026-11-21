@@ -186,8 +186,10 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- logic is correct, and becomes durable the moment SavedVariables load.)
 --
 -- Limit, stated rather than solved: a peer is marked served when its full reply
--- is scheduled. If that stream is then lost, its next request gets a delta again;
--- `/alts sync <name>` always sends in full and recovers it.
+-- goes out (a Battle.net reply the library refuses leaves it owed, #422, unless
+-- it was too large: that one is spent, so the deltas that fit still go). If that
+-- stream is then lost, its next request gets a delta again; `/alts sync <name>`
+-- always sends in full and recovers it.
 local function ScopeGeneration()
     AltStableConfig = AltStableConfig or {}
     return tonumber(AltStableConfig.syncScopeGeneration) or 0
@@ -873,7 +875,10 @@ local Provenance = {
     -- sent, and dropped on receipt. Before #281 a peer sending
     -- "scannedHere:1" had it merged, and ShouldMerge then guarded that
     -- peer's record as our own scan.
-    LOCAL_ONLY = { scannedHere = true, provKind = true, provAt = true, provVia = true },
+    -- changedAt (#422) is when the record last changed HERE, by our clock:
+    -- it only picks what a delta sends (SerializeFullDB).
+    LOCAL_ONLY = { scannedHere = true, provKind = true, provAt = true, provVia = true,
+                   changedAt = true },
 }
 
 -- The line our own other account gets: every character this client scans.
@@ -940,16 +945,22 @@ end
 -- a store switched on after the fact, on a PC whose own alts' core records are
 -- already current, can still receive their plugin data (Codex review of #132).
 -- Validation and the forgotten check have run before either call.
+-- Returns whether any plugin stored something newer: its OnDeserialize returns
+-- true only for a strictly newer stamp of its own (#422). Every plugin still
+-- gets its blob after the first one says so.
 local function DispatchPluginPayloads(c, independentOnly)
     local payloads = c and c._pluginPayloads
     c._pluginPayloads = nil
-    if not payloads or not AltStable.plugins then return end
+    if not payloads or not AltStable.plugins then return false end
+    local advanced = false
     for _, plugin in ipairs(AltStable.plugins) do
         local blob = payloads[plugin.id]
         if blob and plugin.OnDeserialize and (not independentOnly or plugin.independentStamp) then
-            pcall(plugin.OnDeserialize, c.guid, blob)
+            local ok, newer = pcall(plugin.OnDeserialize, c.guid, blob)
+            if ok and newer == true then advanced = true end
         end
     end
+    return advanced
 end
 
 ------------------------------------------------------------
@@ -991,6 +1002,10 @@ local function SerializeChar(c, sinceTS)
     -- no newline characters.  Lines are stored as "plugin_<id>:<blob>".
     -- sinceTS (the requester's delta watermark) is passed through so a plugin
     -- can skip re-sending data the peer already has (returning "").
+    -- Except for a record that changed here since then (#422): a relayed
+    -- record's plugin stamps are its origin's, so comparing them with this
+    -- watermark would drop exactly what changed. It goes whole.
+    if sinceTS and sinceTS > 0 and (tonumber(c.changedAt) or 0) >= sinceTS then sinceTS = 0 end
     if AltStable.plugins then
         for _, plugin in ipairs(AltStable.plugins) do
             if plugin.OnSerialize and c.guid then
@@ -1378,8 +1393,25 @@ function AltStable.TouchCharacter(guid)
     end
 end
 
+-- A record changed HERE without being played (#422): a star on an offline alt,
+-- or newer data received for it that our peers may not have (a relay). Not
+-- lastUpdate - that is the Last Online, the merge authority and the forget
+-- check - but changedAt, local-only, which only picks what a delta sends.
+--
+-- Why our own clock is enough: a requester's watermark for us is capped below
+-- our clock at our last reply (WatermarkCeiling, against our SEND_TIME), so
+-- anything marked after a reply is above the requester's next watermark. A
+-- watermark from beyond our clock is answered in full (ServeSyncRequest).
+-- Declared: a clock rollback that has recovered by the next request (they hold
+-- 5200, our clock goes back to 4900, the star, then 5500 again) misses it.
+function AltStable.MarkChanged(guid)
+    local c = guid and AltStableDB[guid]
+    if type(c) == "table" then c.changedAt = time() end
+end
+
 -- sinceTS > 0 => delta: send only characters changed since the requester last
 -- heard from us. sinceTS <= 0 => full DB (first sync / forced resync).
+-- A character is "changed since" by its Last Online or by changedAt (#422).
 -- `also` (a set of guids) is sent whatever the account and the delta say:
 -- the members of the camps going to our own other account (#171), so it knows
 -- every one of them rather than pruning the ones it has no record of.
@@ -1403,7 +1435,8 @@ local function SerializeFullDB(accountOnly, sinceTS, also)
         if type(c) == "table" and c.guid and also and also[c.guid] then
             entries[#entries + 1] = SerializeChar(c, sinceTS)
         elseif type(c) == "table" and c.guid
-        and (sinceTS <= 0 or (c.lastUpdate or 0) >= sinceTS) then
+        and (sinceTS <= 0 or (c.lastUpdate or 0) >= sinceTS
+             or (tonumber(c.changedAt) or 0) >= sinceTS) then
             if accountOnly and myAccount and myAccount ~= "" then
                 local charAcct = c.account
                 if charAcct and charAcct ~= "" and tostring(charAcct) ~= tostring(myAccount) then
@@ -1561,6 +1594,45 @@ local function RefuseIfForgotten(c)
     return true
 end
 
+-- Merge one received record that passed the forgotten check and validation,
+-- by either receive path. Returns whether the core record was merged (the
+-- independent plugin blobs are dispatched either way).
+--
+-- It is marked changed here (#422) only on a strict advance: a record we did
+-- not have, a newer Last Online, or a plugin storing a newer stamp of its own.
+-- Then a peer that pulls from us gets it even when its Last Online is older
+-- than that peer's watermark - a record relayed from a third account. An echo
+-- or a replay never advances, so nothing bounces between two peers.
+-- Declared: an equal-stamp correction (a second bag move or a gear fix in the
+-- origin's same second) that reaches us late through a relay is merged but not
+-- marked; it travels on with the record's next change, or a full pull.
+local function MergeIncoming(c)
+    local held = AltStableDB[c.guid]
+    local existing = held or {}
+    local advanced
+    local merged = ShouldMerge(existing, c)
+    if merged then
+        local priorStamp = tonumber(existing.lastUpdate) or 0
+        local priorName = existing.name
+        local gearBefore = Provenance.GearSig(existing)
+        advanced = DispatchPluginPayloads(c)
+        ClearSyncedStateFields(existing)
+        for k,v in pairs(c) do
+            existing[k] = v
+        end
+        KeepFullerName(existing, priorName)
+        AltStableDB[c.guid] = existing
+        Provenance.GearMerged(c.guid, gearBefore, existing)
+        -- A record we did not have counts whatever its stamp: a first scan
+        -- still waiting on an item is sent with no lastUpdate at all.
+        if not held or (tonumber(existing.lastUpdate) or 0) > priorStamp then advanced = true end
+    else
+        advanced = DispatchPluginPayloads(c, true)   -- see DispatchPluginPayloads
+    end
+    if advanced then AltStable.MarkChanged(c.guid) end
+    return merged
+end
+
 local function DeserializeFullDB(payload, sender)
 
     local current = {}
@@ -1624,22 +1696,7 @@ local function DeserializeFullDB(payload, sender)
                 if not ValidateIncoming(c, sender) then
                     rejected = rejected + 1
                 else
-                    local existing = AltStableDB[c.guid] or {}
-
-                    if ShouldMerge(existing, c) then
-                        local priorName = existing.name
-                        local gearBefore = Provenance.GearSig(existing)
-                        DispatchPluginPayloads(c)
-                        ClearSyncedStateFields(existing)
-                        for k,v in pairs(c) do
-                            existing[k] = v
-                        end
-                        KeepFullerName(existing, priorName)
-                        AltStableDB[c.guid] = existing
-                        Provenance.GearMerged(c.guid, gearBefore, existing)
-                    else
-                        DispatchPluginPayloads(c, true)
-                    end
+                    MergeIncoming(c)
                 end
 
             end
@@ -2042,9 +2099,11 @@ local function ChunkAndSendPayload(payload, channel, target)
     -- "BNET" there is no other way: nothing goes, as to any unreachable peer,
     -- and the requester's stall watch says so.
     local libPeer = LibSync.RouteFor(channel, target)
+    local why
     if libPeer and LibDeflate then
         local msg = LibSync.MSG_DB .. "|" .. LibDeflate:CompressDeflate(payload or "", { level = 8 })
-        local sent, why = LibSync.SendGuid(libPeer.guid, msg, nil, target)
+        local sent
+        sent, why = LibSync.SendGuid(libPeer.guid, msg, nil, target)
         if sent then return end
         -- Too large never gets better by asking again, and nothing else
         -- carries it over Battle.net: say so, here, rather than leave the
@@ -2056,7 +2115,10 @@ local function ChunkAndSendPayload(payload, channel, target)
                 :format(tostring(target), math.ceil(#msg / 1024)))
         end
     end
-    if channel == "BNET" then return end
+    -- false: nothing went (#422), so a reply owed in full stays owed - unless
+    -- it was too large, which asking again never fixes: then the deltas that
+    -- still fit must not wait behind it.
+    if channel == "BNET" then return false, why end
 
     -- Compress the whole payload once (DEFLATE crushes the repetitive recipe
     -- data), then make it addon-channel safe. The body is opaque bytes chunked
@@ -2130,6 +2192,13 @@ local function SendFullDatabase(channel, target, sinceTS)
     AltStableConfig = AltStableConfig or {}
     local accountOnly = not AltStableConfig.sendAllAccounts
 
+    -- A reply without Professions can't carry a star (#422), and the peer's
+    -- watermark moves past it anyway: the one-time full reply its bootstrap
+    -- gives every peer (wishDeltaRepair) is owed again, for when it is back.
+    if AltStableConfig.wishDeltaRepair and not AltStable.HasPlugin("professions") then
+        AltStable.SetConfigValue("wishDeltaRepair", nil)
+    end
+
     -- The camps and the list order (#171), to the player's own other account
     -- only - after the last record, where every parser reads past them - with
     -- the records of everyone in a camp.
@@ -2151,7 +2220,7 @@ local function SendFullDatabase(channel, target, sinceTS)
     if mine then payload = payload .. "\n" .. mine end
     -- Our clock, so the requester can keep its watermark in OUR frame.
     payload = payload .. "\n" .. SEND_TIME .. ":" .. time()
-    ChunkAndSendPayload(payload, channel, target)
+    return ChunkAndSendPayload(payload, channel, target)
 
 end
 
@@ -2212,13 +2281,24 @@ local function DefineSyncServing()
             -- below every watermark - were never sent at all.
             local generation = ScopeGeneration()
             AltStableConfig.peerScopeGeneration = AltStableConfig.peerScopeGeneration or {}
-            if (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation then
+            local owed = (AltStableConfig.peerScopeGeneration[owedShort] or 0) < generation
+            if owed then
                 sinceTS = 0   -- our scope changed since this peer last heard from us
+            end
+            -- A watermark from beyond our own clock: a current requester caps
+            -- it below our clock at our last reply, so this one is an older
+            -- client's (which kept a fast third party's stamp) or our clock
+            -- went back. Either way changedAt can't be trusted against it.
+            if (tonumber(sinceTS) or 0) > WatermarkCeiling(time()) then sinceTS = 0 end
+
+            -- Spent only when the reply went: Battle.net refusing it (not
+            -- ready yet) leaves it owed for the next request (#422). Too large
+            -- is spent all the same, so the next request gets a delta.
+            local went, why = SendFullDatabase(replyChannel, replyTarget, sinceTS)
+            if owed and (went ~= false or why == "too-large") then
                 AltStableConfig.peerScopeGeneration[owedShort] = generation
                 AltStable.OnConfigChanged("peerScopeGeneration")
             end
-
-            SendFullDatabase(replyChannel, replyTarget, sinceTS)
         end)
     end
 
@@ -2692,26 +2772,9 @@ local function ReceiveCharacter(c, sender)
         return
     end
 
-    local existing = AltStableDB[c.guid] or {}
-
-    -- The same merge rule as DeserializeFullDB, shared so the two paths cannot
+    -- The same merge as DeserializeFullDB, shared so the two paths cannot
     -- drift - they had: this one never got the first ownership fix.
-    if not ShouldMerge(existing, c) then
-        DispatchPluginPayloads(c, true)   -- see DispatchPluginPayloads
-        return
-    end
-
-    local priorName = existing.name
-    local gearBefore = Provenance.GearSig(existing)
-    DispatchPluginPayloads(c)
-    ClearSyncedStateFields(existing)
-    for k,v in pairs(c) do
-        existing[k] = v
-    end
-    KeepFullerName(existing, priorName)
-
-    AltStableDB[c.guid] = existing
-    Provenance.GearMerged(c.guid, gearBefore, existing)
+    if not MergeIncoming(c) then return end
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
@@ -4282,10 +4345,29 @@ function AltStable.SetPluginEnabled(key, enabled)
                     -- never received, so a delta would never backfill it. One
                     -- full pull, for any plugin that syncs (review of #132).
                     AltStable.ResetPeerWatermarks()
+                    -- And the other way (#422): our peers' watermarks for us
+                    -- went past what we couldn't send while it was off - a
+                    -- star on an offline alt, say. Sending more is what the
+                    -- scope generation is for: one full reply to each peer,
+                    -- once it has registered (a second later), or a reply
+                    -- already due would spend it without the plugin's data.
+                    -- Saved, so a /reload in that second keeps it.
+                    local pending = {}
+                    for k, v in pairs(AltStableConfig.widenOnRegister or {}) do pending[k] = v end
+                    pending[p.key] = true
+                    AltStable.SetConfigValue("widenOnRegister", pending)
                 end
             end
         end
     end
+end
+
+-- Whether a plugin with this id has registered (so its data can be sent).
+function AltStable.HasPlugin(id)
+    for _, p in ipairs(AltStable.plugins or {}) do
+        if p.id == id then return true end
+    end
+    return false
 end
 
 function AltStable.RegisterPlugin(plugin)
@@ -4298,6 +4380,15 @@ function AltStable.RegisterPlugin(plugin)
         if p.id == plugin.id then return end
     end
     table.insert(AltStable.plugins, plugin)
+    -- Switched on from Options (#422): one full reply to each peer, if it
+    -- sends anything at all (a plugin that only shows data doesn't).
+    local pending = AltStableConfig and AltStableConfig.widenOnRegister
+    if type(pending) == "table" and pending[plugin.id] then
+        local rest = {}
+        for k, v in pairs(pending) do if k ~= plugin.id then rest[k] = v end end
+        AltStable.SetConfigValue("widenOnRegister", next(rest) and rest or nil)
+        if plugin.OnSerialize then AltStable.OnSyncScopeChanged() end
+    end
     -- If the sheet is already built, notify it so it can add the button live
     if AltStable.AddPluginButton then
         AltStable.AddPluginButton(plugin)

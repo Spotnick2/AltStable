@@ -837,6 +837,16 @@ local function DeserializePlayer(guid, blob)
         return
     end
 
+    -- A section with a newer stamp than held: what the core marks for the
+    -- deltas it sends (#422). Not an equal-stamp swap of contents: two peers
+    -- holding different maps under one stamp would mark each other for good.
+    local function newer(stamp, heldStamp) return (stamp or 0) > (heldStamp or 0) end
+    local advanced = not existing
+        or newer(bagsStamp, existing.bagsStamp or existing.stamp)
+        or newer(bankStamp, existing.bankStamp)
+        or newer(mailStamp, existing.mailStamp)
+        or newer(outboxStamp, existing.outboxStamp)
+
     local db = GetDB(guid)
     db.bags = bags
     db.bank = bank
@@ -846,6 +856,7 @@ local function DeserializePlayer(guid, blob)
     db.outbox, db.outboxStamp = outbox, outboxStamp
     Restamp(db)
     if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+    return advanced
 end
 
 ------------------------------------------------------------
@@ -2389,7 +2400,7 @@ local function BootstrapPlugin()
         end,
         OnDeactivate  = function(mf) AT_WB.Deactivate(mf) end,
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
-        OnDeserialize = function(g, b) DeserializePlayer(g, b) end,
+        OnDeserialize = function(g, b) return DeserializePlayer(g, b) end,
         -- Our blob is judged by its own stamps (the overall one, then the
         -- bank's), so it is applied even when the record carrying it loses the
         -- core merge (Codex review of #438): PC 1 reads the alt's bank at 100,

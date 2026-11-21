@@ -257,12 +257,18 @@ check("a field this version doesn't know is skipped", later ~= nil and later.c[1
 
 local OTHER = "Player-9999-0000BBBB"
 AltStableDB[OTHER] = { name = "Other Name", class = "MAGE", level = 12 }
-M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.5.10,-9999.1.4")
+eq("a received snapshot says it stored something newer (#422)",
+   M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.5.10,-9999.1.4"), true)
 eq("a received snapshot is kept", M.DB().chars[OTHER] and M.DB().chars[OTHER].c[12][1], 5)
 eq("  with its class row", M.DB().chars[OTHER].cls.done, 1)
 M.Deserialize(OTHER, "v1|s=90|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=0|c=12.9.10")
 eq("an older one is ignored", M.DB().chars[OTHER].c[12][1], 5)
-M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=0|c=12.7.10")
+AltStableDB["Player-9999-0000CCCC"] = { name = "Third Name", class = "MAGE", level = 12 }
+eq("  through the plugin the core calls, too",
+   plugin.OnDeserialize("Player-9999-0000CCCC", "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.5.10,-9999.1.4"), true)
+M.DB().chars["Player-9999-0000CCCC"], AltStableDB["Player-9999-0000CCCC"] = nil, nil
+check("  the same stamp says nothing new",
+      not M.Deserialize(OTHER, "v1|s=100|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=0|c=12.7.10"))
 eq("  so is one with the same stamp (our own echo)", M.DB().chars[OTHER].c[12][1], 5)
 -- Counts that can't be true leave the snapshot we hold (Codex on #397).
 M.Deserialize(OTHER, "v1|s=150|d=abc|f=A|r=95|k=8|lv=12|l=3|t=40|n=1|c=12.11.10,-9999.1.4")

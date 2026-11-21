@@ -5022,13 +5022,13 @@ do
 
     local peer = "Player-1-PEER"
     AltStableDB[peer] = { guid = peer, name = "Peer Alt", class = "MAGE", realm = "R", level = 25 }
-    registered.OnDeserialize(peer, blob)
+    eq("a peer's line says it stored something newer (#422)", registered.OnDeserialize(peer, blob), true)
     check("a peer's line is stored", TL.Get(peer) ~= nil)
     local older = blob:gsub("|s=(%d+)|", function(s) return "|s=" .. (tonumber(s) - 5) .. "|" end, 1)
     older = older:gsub("2,2,14", "9,9,9", 1)
     registered.OnDeserialize(peer, older)
     eq("  an older line does not replace it", table.concat(TL.Get(peer).specs[1].pts, "/"), "2/2/14")
-    registered.OnDeserialize(peer, blob)
+    check("  the same one again says nothing new", not registered.OnDeserialize(peer, blob))
     eq("  nor does the same one again (an echo)", table.concat(TL.Get(peer).specs[1].pts, "/"), "2/2/14")
     registered.OnDeserialize(peer, (blob:gsub("2,2,14", "7,7,7", 1)))
     eq("  nor a different one under the same stamp", table.concat(TL.Get(peer).specs[1].pts, "/"), "2/2/14")

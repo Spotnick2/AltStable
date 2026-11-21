@@ -214,8 +214,10 @@ function T.Deserialize(guid, blob)
     local held = Store()[guid]
     if type(held) == "table" and (held.stamp or 0) >= r.stamp then return end
     Store()[guid] = r
-    -- No TouchCharacter: receiving is not a change of ours.
+    -- No TouchCharacter: receiving is not a change of ours. True: a newer
+    -- stamp stored, which the core marks for the deltas it sends (#422).
     if Roster.isActive and Roster.Refresh then Roster.Refresh() end
+    return true
 end
 
 function T.Forget(guid) if guid then Store()[guid] = nil end end
