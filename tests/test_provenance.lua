@@ -208,11 +208,11 @@ eq("  without provKind", AltStableDB[ZED].provKind, nil)
 eq("  without provAt", AltStableDB[ZED].provAt, nil)
 eq("  without provVia", AltStableDB[ZED].provVia, nil)
 eq("  and it stays third-party", (prov(ZED)), "third-party")
--- Not guarded as ours afterwards: an older record from the friend still lands
--- inside the normal 60 s grace, as for any record that is not our scan.
-local older = table.concat({ "guid:" .. ZED, "name:Zed", "class:DRUID", "level:29",
-                             "lastUpdate:2990", T.CHAR_SEP }, "\n")
-T.DeserializeFullDB(older, FRIEND)
+-- Not guarded as ours afterwards: an equal-stamp record from the friend still
+-- lands, as for any record that is not our scan (ours refuses an equal stamp).
+local equal = table.concat({ "guid:" .. ZED, "name:Zed", "class:DRUID", "level:29",
+                             "lastUpdate:3000", T.CHAR_SEP }, "\n")
+T.DeserializeFullDB(equal, FRIEND)
 eq("  and not guarded as our own scan", AltStableDB[ZED].level, 29)
 
 -- The single-record path drops them too.

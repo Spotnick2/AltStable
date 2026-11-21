@@ -27,6 +27,12 @@
 -- What a received blob may and may not do (docs/AUDIT.md):
 --   * an older stamp is refused; an equal one applies only when the maps differ;
 --   * a bank the owner has never read (kt=0) leaves a held snapshot alone;
+--   * the bank has its own stamp (kt=): an older bank, or one with no kt=
+--     (unknown age, stored as 0), never replaces a dated one, whatever the
+--     overall stamp says (#420). Mixed versions: an older client still
+--     replaces it, so two clients can hold different banks until the owner
+--     publishes a newer kt= that both accept (a bank change, or a visit once
+--     visits restamp, #432) - each swap needs more sync traffic, nothing loops;
 --   * two moves in one second relayed out of order keep the later-arriving
 --     map until the next change: one-second stamps carry no order (declared);
 --   * inventory whose character record is gone is kept, invisible, until that
@@ -193,7 +199,10 @@ local function ApplyScan(sectionKey, stampKey, newMap)
     local guid = UnitGUID("player")
     if not guid then return end
     local db = GetDB(guid)
-    if mapsEqual(db[sectionKey], newMap) then return end
+    -- An unchanged map with a stamp is nothing to record. One with no stamp
+    -- (a bank of unknown age received for our own character, #420) gets dated
+    -- by this read, once.
+    if mapsEqual(db[sectionKey], newMap) and (db[stampKey] or 0) > 0 then return end
 
     db[sectionKey] = newMap
     db[stampKey]   = time()
@@ -680,14 +689,22 @@ local function DeserializePlayer(guid, blob)
     local bags, bank = ParseMap(bagsStr), ParseMap(bankStr)
     if not bags or not bank then return end   -- malformed: keep existing good data
 
-    local bankStamp = tonumber(rest:match("kt=(%d+)")) or incomingStamp
+    -- The bank's own stamp, the whole pipe-delimited field: "xkt=123" or
+    -- "kt=123junk" is no stamp. Absent, the bank's age is unknown (0), never
+    -- the overall stamp: newer bags must not date a bank of unknown age (#420).
+    local kt = tonumber(("|" .. rest .. "|"):match("|kt=(%d+)|"))
+    local bankStamp = kt or 0
 
-    -- kt=0 says the owner has never read this bank since its data began (a
-    -- bank read as empty carries its scan time), so it is no knowledge: a held
-    -- snapshot stays, and only the bags are taken. Without this, a data reset
+    -- The bank is kept when a dated one is held and the incoming one is older,
+    -- of unknown age (no kt=), or never read (kt=0: the owner has not read this
+    -- bank since its data began; a bank read as empty carries its scan time).
+    -- The overall stamp moves with the bags, so it says nothing about the bank:
+    -- a second PC holding an older bank snapshot scans new bags and sends its
+    -- old bank under a newer stamp (#420). Without the kt=0 case, a data reset
     -- on the owning account erased the bank everywhere until its next bank
-    -- visit (docs/AUDIT.md, B1).
-    if bankStamp == 0 and existing and existing.bank and (existing.bankStamp or 0) > 0 then
+    -- visit (docs/AUDIT.md, B1). An equal kt with another map is taken: two
+    -- moves in one second (B2, declared).
+    if existing and existing.bank and (existing.bankStamp or 0) > 0 and bankStamp < existing.bankStamp then
         bank, bankStamp = existing.bank, existing.bankStamp
     end
 

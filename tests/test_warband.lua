@@ -123,6 +123,17 @@ eq("an open bank records the purchased tab", AltStableWarbandDB[GUID].bank[2318]
 eq("  and never the account bank", AltStableWarbandDB[GUID].bank[9999], nil)
 eq("  while the bags map survives the bank scan", AltStableWarbandDB[GUID].bags[2318], 8)
 
+-- #420: a bank of unknown age (stamp 0, received for our own character)
+-- read unchanged here gets dated, once; a dated one read unchanged doesn't move.
+AltStableWarbandDB[GUID].bankStamp = 0
+WoW.now = WoW.now + 5
+T.ScanBank()
+eq("#420: an undated bank read unchanged is dated by the read", AltStableWarbandDB[GUID].bankStamp, WoW.now)
+local dated = AltStableWarbandDB[GUID].bankStamp
+WoW.now = WoW.now + 5
+T.ScanBank()
+eq("  and an unchanged read of a dated bank leaves it", AltStableWarbandDB[GUID].bankStamp, dated)
+
 -- Slot counts arrive late: a tab that reports none is not "an empty bank".
 AltStableWarbandDB[GUID].bank = { [2318] = 13 }
 WoW.containers[6] = { size = 0 }
@@ -551,6 +562,60 @@ eq("  as does a bank stamp moving on its own", redraws, 2)
 wb.Refresh, wb.isActive = realRefresh, realActive
 T.DeserializePlayer("Player-Same-1", "v1|s=99|kt=99|b=2318,777|k=")
 eq("  and an older one is still refused", AltStableWarbandDB["Player-Same-1"].bags[2318], 3)
+
+-- #420: the bank has its own stamp. Newer bags with an older bank (a second PC
+-- holding an old bank snapshot) take the bags and keep the bank.
+do
+    local G = "Player-Bank-1"
+    local function hold() AltStableWarbandDB[G] = { bags = { [1] = 1 }, bank = { [2318] = 20 }, stamp = 100,
+                                                    bagsStamp = 100, bankStamp = 95 } end
+    local function bank() return AltStableWarbandDB[G].bank[2318] end
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|kt=60|b=1,2|k=2318,3")
+    eq("#420: newer bags with an older bank: the bags are taken", AltStableWarbandDB[G].bags[1], 2)
+    eq("  the bank is kept", bank(), 20)
+    eq("  with its own stamp", AltStableWarbandDB[G].bankStamp, 95)
+    -- Replayed, it changes nothing and costs no redraw.
+    local n = 0
+    wb.Refresh, wb.isActive = function() n = n + 1 end, true
+    T.DeserializePlayer(G, "v1|s=101|kt=60|b=1,2|k=2318,3")
+    eq("  a replay doesn't redraw", n, 0)
+    wb.Refresh, wb.isActive = realRefresh, realActive
+
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|kt=95|b=1,1|k=2318,7")
+    eq("an equal bank stamp with another map is taken (B2)", bank(), 7)
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|kt=95|b=1,1|k=")
+    eq("  so is a same-second emptying", bank(), nil)
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|kt=96|b=1,1|k=")
+    eq("a newer confirmed-empty bank clears it", bank(), nil)
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|kt=0|b=1,1|k=")
+    eq("a never-read bank (kt=0) keeps it (B1)", bank(), 20)
+
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|b=1,1|k=2318,3")
+    eq("no kt= (unknown age) keeps a dated bank", bank(), 20)
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|xkt=123|b=1,1|k=2318,3")
+    eq("  xkt= is not kt=", bank(), 20)
+    hold()
+    T.DeserializePlayer(G, "v1|s=101|kt=123junk|b=1,1|k=2318,3")
+    eq("  nor is kt=123junk", bank(), 20)
+
+    AltStableWarbandDB[G] = nil
+    T.DeserializePlayer(G, "v1|s=200|b=1,1|k=2318,3")
+    eq("no kt= on an empty store: the bank is taken", bank(), 3)
+    eq("  undated (0), not under the overall stamp", AltStableWarbandDB[G].bankStamp, 0)
+    check("  and relayed as never read", (T.SerializePlayer(G) or ""):find("|kt=0|", 1, true) ~= nil,
+          T.SerializePlayer(G))
+    T.DeserializePlayer(G, "v1|s=201|kt=150|b=1,1|k=2318,9")
+    eq("  a confirmed bank with a lower kt but newer overall stamp replaces it", bank(), 9)
+    eq("  dated", AltStableWarbandDB[G].bankStamp, 150)
+    AltStableWarbandDB[G] = nil
+end
 
 -- A blob missing a section is malformed, not "this character has nothing":
 -- ParseMap(nil) is an empty map, so this would silently blank the inventory.

@@ -366,4 +366,31 @@ do
     eq("  and the inventory B kept is shown once the name arrives", P.CountItem(2318), 6)
 end
 
+------------------------------------------------------------
+-- R9 (#420, #421): through the core, an older snapshot rolls back neither the
+-- character nor its bank. A second PC (A2) on the owning account holds an old
+-- bank snapshot and scans new bags.
+------------------------------------------------------------
+do
+    local A2, B2 = side("Alpha3-Realm", X), side("Bravo3-Realm", Y)
+    local Q = "Player-1-0000Q001"
+    local function owner(lastUpdate, s, kt, bag, bank, money)
+        A2.db = { [Q] = { guid = Q, name = "Queue", class = "MAGE", lastUpdate = lastUpdate, money = money } }
+        A2.wb = { [Q] = { bags = { [1] = bag }, bank = { [2318] = bank }, stamp = s, bagsStamp = s, bankStamp = kt } }
+    end
+    owner(100, 100, 95, 1, 20, 500)
+    receive(B2, A2, payloadFrom(A2, 0))
+    eq("R9: B holds the bank at its stamp", B2.wb[Q] and B2.wb[Q].bankStamp, 95)
+    owner(101, 101, 60, 2, 3, 600)
+    receive(B2, A2, payloadFrom(A2, 0))
+    eq("  newer bags with an older bank: the record is taken", B2.db[Q].money, 600)
+    eq("  the bags too", B2.wb[Q].bags[1], 2)
+    eq("  and the bank is kept", B2.wb[Q].bank[2318], 20)
+    owner(99, 150, 150, 9, 9, 50)
+    receive(B2, A2, payloadFrom(A2, 0))
+    eq("  an older core record is refused (#421)", B2.db[Q].money, 600)
+    eq("  and its inventory with it (Warband rides the core merge)", B2.wb[Q].bags[1], 2)
+    eq("  bank included", B2.wb[Q].bank[2318], 20)
+end
+
 WoW.finish("test_warband_sync", passed, failed)
