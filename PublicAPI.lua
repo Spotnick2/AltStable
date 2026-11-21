@@ -39,6 +39,7 @@ AltStable.PUBLIC_API_FEATURES = {
     provenance = true,          -- GetCharacterProvenance, the provenance fields, ProvenanceChanged
     ownAccountChannel = true,   -- SendToOwnAccounts and the rest, OwnAccountPeersChanged
     gear = true,                -- GetCharacterGear, GearChanged (AS-003)
+    ruleset = true,             -- ruleset, rulesetName on GetCharacters (#405)
 }
 
 -- Whose character a record is (Core.lua, "Ownership provenance"): kind, the
@@ -91,6 +92,13 @@ function AltStable.GetCharacters()
             copy.hidden = (AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(char.guid)) or false
             copy.current = (me ~= nil and char.guid == me)
             copy.provenance, copy.provenanceAt, copy.provenanceVia = ProvenanceOf(char)
+            -- The realm's ruleset (#405): RulesetOf's key and the name a player
+            -- says, both nil when the realm can't be read (not "Unknown").
+            local ruleset = AltStable.RulesetOf and AltStable.RulesetOf(char.realm)
+            if ruleset and ruleset ~= "Unknown" then
+                copy.ruleset = ruleset
+                copy.rulesetName = AltStable.RulesetName and AltStable.RulesetName(char.realm) or nil
+            end
             out[#out + 1] = copy
         end
     end
