@@ -802,9 +802,32 @@ do
     local realRules = Enum.GameRule
     Enum.GameRule = nil
     eq("a client without the rule names can't say", AltStable.LiveRuleset(), nil)
-    eq("  and where you are falls back to the realm: hidden, Unknown", AltStable.CurrentRuleset(), "Unknown")
+    local heldRec = AltStableDB[UnitGUID("player")]
+    AltStableDB[UnitGUID("player")] = nil
+    eq("  and where you are falls back to the realm: hidden, and no record, Unknown", AltStable.CurrentRuleset(), "Unknown")
+    AltStableDB[UnitGUID("player")] = heldRec
     Enum.GameRule = { RPRuleset = 1, PvPRuleset = 2 }
     eq("  a missing name is the same as none", AltStable.LiveRuleset(), nil)
+    Enum.GameRule = realRules
+    -- #413 review: a query that fails is not "off".
+    local realActive = C_GameRules.IsGameRuleActive
+    C_GameRules.IsGameRuleActive = function(rule)
+        if rule == Enum.GameRule.PvPRuleset then error("not ready") end
+        return false
+    end
+    eq("a rule query that throws: no reading, never Normal", AltStable.LiveRuleset(), nil)
+    C_GameRules.IsGameRuleActive = function() return nil end
+    eq("  nor one that answers nil", AltStable.LiveRuleset(), nil)
+    C_GameRules.IsGameRuleActive = realActive
+    -- No rules, no realm: where you are is this character's own record.
+    Enum.GameRule = nil
+    local me = UnitGUID("player")
+    local heldMe = AltStableDB[me]
+    AltStableDB[me] = { guid = me, name = "Me", ruleset = "PvP", realm = "" }
+    eq("rules and realm unreadable: the current ruleset is this character's record", AltStable.CurrentRuleset(), "PvP")
+    AltStableDB[me] = nil
+    eq("  no record either: Unknown", AltStable.CurrentRuleset(), "Unknown")
+    AltStableDB[me] = heldMe
     Enum.GameRule = realRules
     GetRealmName = realRealm
     WoW.gameRules = held
@@ -946,6 +969,15 @@ do
         WoW.gameRules = { [Enum.GameRule.PvPRuleset] = true }
         wb.Refresh()
         eq("  the realm hidden: still this ruleset's, from the game's rules", shownIDs(), "101")
+        -- #413 review: no rules either - this character's own record says.
+        local realRules, heldRuleset = Enum.GameRule, AltStableDB[ME].ruleset
+        Enum.GameRule = nil
+        AltStableDB[ME].ruleset = "PvP"
+        local heldRealm = AltStableDB[ME].realm
+        AltStableDB[ME].realm = ""
+        wb.Refresh()
+        eq("  no rules and no realm: this character's record, its own items shown", shownIDs(), "101")
+        Enum.GameRule, AltStableDB[ME].ruleset, AltStableDB[ME].realm = realRules, heldRuleset, heldRealm
         GetRealmName, WoW.gameRules = realRealm, heldRules
         wb.Refresh()
     end

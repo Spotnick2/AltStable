@@ -746,10 +746,11 @@ local function CleanupWarbandDB(keepGuid)
     end
 end
 
--- Where the player is now, for "current ruleset" (#412): the game's rules,
--- and the realm's name for a client that can't read them (RulesetOf reads both).
+-- Where the player is now, for "current ruleset" (#412): the core's one path
+-- (AltStable.CurrentRuleset: the game's rules, the realm, then this
+-- character's own record), as a record RulesetOf reads.
 local function Here()
-    return { ruleset = AltStable.LiveRuleset and AltStable.LiveRuleset(), realm = GetRealmName and GetRealmName() }
+    return { ruleset = AltStable.CurrentRuleset and AltStable.CurrentRuleset() }
 end
 
 -- filter (optional, #153):

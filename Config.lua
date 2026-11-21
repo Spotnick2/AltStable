@@ -739,22 +739,32 @@ function AltStable.LiveRuleset()
     if not (rules and rules.IsGameRuleActive and E and E.HardcoreRuleset and E.RPRuleset and E.PvPRuleset) then
         return nil
     end
+    -- A query that fails, or answers anything but a boolean, says nothing:
+    -- reading it as "off" would store Normal over a PvP character's PvP
+    -- (#413 review). Any such answer and there is no reading at all.
     local function on(rule)
         local ok, v = pcall(rules.IsGameRuleActive, rule)
-        return ok and v == true
+        if ok and type(v) == "boolean" then return v end
+        return nil
     end
-    if on(E.HardcoreRuleset) then return "Hardcore" end
-    local rp, pvp = on(E.RPRuleset), on(E.PvPRuleset)
+    local hc, rp, pvp = on(E.HardcoreRuleset), on(E.RPRuleset), on(E.PvPRuleset)
+    if hc == nil or rp == nil or pvp == nil then return nil end
+    if hc then return "Hardcore" end
     if rp and pvp then return "RPPvP" end
     if rp then return "RP" end
     if pvp then return "PvP" end
     return "Normal"
 end
 
--- Where the player is now, as RulesetOf reads a record: the game's rules,
--- with the realm's name for a client that can't read them.
+-- Where the player is now: the game's rules, then the realm's name, then -
+-- when neither reads - the logged-in character's own record, as the scan kept
+-- it (#413 review). "Unknown" only when none of the three says.
 function AltStable.CurrentRuleset()
-    return AltStable.RulesetOf({ ruleset = AltStable.LiveRuleset(), realm = GetRealmName and GetRealmName() })
+    local r = AltStable.RulesetOf({ ruleset = AltStable.LiveRuleset(), realm = GetRealmName and GetRealmName() })
+    if r ~= "Unknown" then return r end
+    local guid = UnitGUID and UnitGUID("player")
+    local me = guid and AltStableDB and AltStableDB[guid]
+    return type(me) == "table" and AltStable.RulesetOf(me) or "Unknown"
 end
 
 -- No ruleset art exists in the client (its UI source has the words, not

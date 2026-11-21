@@ -449,6 +449,12 @@ do
     pcall(AltStable.ScanCharacter)
     eq("  a client that can't read the rules keeps it", AltStableDB[me].ruleset, "RPPvP")
     Enum.GameRule = realRules
+    -- #413 review: a query that throws keeps it too, never stores Normal.
+    local realActive = C_GameRules.IsGameRuleActive
+    C_GameRules.IsGameRuleActive = function() error("not ready") end
+    pcall(AltStable.ScanCharacter)
+    eq("  a rule query that throws keeps it", AltStableDB[me].ruleset, "RPPvP")
+    C_GameRules.IsGameRuleActive = realActive
     GetRealmName = realRealm
     WoW.gameRules = {}
     WoW.reset()
