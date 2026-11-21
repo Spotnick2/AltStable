@@ -1441,6 +1441,39 @@ C_Bank.FetchPurchasedBankTabData(Enum.BankType.Character)
 (The 8 padlocked "Bag Slots" in the bank UI are the 8 *unpurchased* tabs — 9 max minus 1 owned.
 Next one costs 1000 copper.)
 
+### A purchased "tab" is a bank BAG SLOT, and an empty one has 0 slots (#439, 71037)
+
+The client loads the Camelot bank frame (`Blizzard_UIPanels_Game/Camelot/BankFrame.lua`, the TOC's
+`[Game]\BankFrame.lua [AllowLoadGameType camelot]`), not the Vanilla one. Tab 6 is the 48-slot main
+bank; every further purchase is a **bag slot**: the frame's bag buttons are `bagSlotID` 2.. on
+`ItemLocation:CreateFromBagAndSlot(Enum.BagIndex.Characterbanktab, bagSlotID)`, and slot n is container
+`CharacterBankTab_1 + n - 1` (slot 2 is container 7). Measured on Cowruzo (one slot bought):
+
+```
+FetchPurchasedBankTabIDs(Character)  ->  { 6, 7 }
+GetContainerNumSlots(6)              ->  48
+GetContainerNumSlots(7)              ->  0     with no bag in the slot (legitimate, not "not loaded")
+                                     ->  6     once a 6-slot bag is put in it (the grid grows 48 -> 54)
+```
+
+A reader that took any 0 for "not loaded yet" never read this bank again (#439). Compat's
+`API.BankContainerSlots` tells them apart with `C_Item.DoesItemExist` on that item location.
+
+### A bank move's events, and the close (probe `/fp steps as bankclose`, #419, 71037)
+
+Five trials (part of a stack + Escape, a deposit + the close button, a withdrawal + walking away, a
+drag + Escape, a 3 s wait + Escape), each checked against the next visit's settled read:
+
+- The move's bank-tab `BAG_UPDATE`, `PLAYERBANKSLOTS_CHANGED` and `BAG_UPDATE_DELAYED` arrive in the
+  **same frame**. The carried bag's `BAG_UPDATE` comes in that frame or the next batch.
+- **Inside `BANKFRAME_CLOSED` the bank still reads right**; one frame later (`C_Timer.After(0)`) every
+  tab reports 0 slots. Nothing bank-related arrives after the close.
+- The close comes with `PLAYER_INTERACTION_MANAGER_FRAME_HIDE` (67, then 0) in the same frame.
+- Human closes were 1.7-6.3 s after the server's update: a close under 1 s was not reproduced.
+
+So Warband reads the bank (with the bags) on `BAG_UPDATE_DELAYED` while it is open, and once more
+inside `BANKFRAME_CLOSED`, never after.
+
 ### Account bank: exists in the API, not enabled — exclude it
 
 ```

@@ -790,12 +790,19 @@ function AltStable.ScanBankSpace(char)
     if not tabs then return false end
     local slots, free = 0, 0
     for _, tab in ipairs(tabs) do
-        local n = plain(API.GetContainerNumSlots(tab))
-        local ok, f = pcall(API.GetContainerNumFreeSlots, tab)
-        f = ok and plain(f) or nil
-        if not n or n <= 0 or not f then return false end   -- not loaded yet
-        slots, free = slots + n, free + f
+        -- 0 for a purchased bag slot with no bag (nothing, #439); nil when the
+        -- main bank or a bag's slots aren't loaded yet (Compat BankContainerSlots).
+        local n = API.BankContainerSlots and API.BankContainerSlots(tab)
+        if n == nil then return false end                    -- not loaded yet
+        if n > 0 then
+            local ok, f = pcall(API.GetContainerNumFreeSlots, tab)
+            f = ok and plain(f) or nil
+            if not f then return false end                   -- not loaded yet
+            slots, free = slots + n, free + f
+        end
     end
+    -- bank_tabs stays the purchased count (shown against the maximum), an
+    -- empty bag slot included: 6:48 + an empty slot is 2 tabs, 48 slots.
     char.bank_tabs, char.bank_slots, char.bank_free = #tabs, slots, free
     char.bank_at = time()   -- the visit's time is news even when nothing moved
     return true

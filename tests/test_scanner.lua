@@ -1906,10 +1906,29 @@ do
     eq("  their slots", b.bank_slots, 96)
     eq("  and the free ones", b.bank_free, 95)
     eq("  as of now", b.bank_at, time())
+    -- Container 7 is purchased bag slot 2 (#439): with a bag in it, 0 slots
+    -- means its slots haven't arrived.
     WoW.containers[7] = { size = 0 }
+    WoW.bankBags = { [2] = true }
     local b2 = {}
     check("a tab whose slots have not arrived: nothing is written", not AltStable.ScanBankSpace(b2))
     eq("  no tabs", b2.bank_tabs, nil)
+    -- With no bag in it, 0 slots is an empty bag slot: the bank reads (#439).
+    WoW.bankBags = {}
+    local b3 = {}
+    check("#439: an empty purchased bag slot doesn't stop the read", AltStable.ScanBankSpace(b3))
+    eq("  its tabs are still both purchased ones", b3.bank_tabs, 2)
+    eq("  its slots are the main bank's", b3.bank_slots, 48)
+    eq("  and the free ones", b3.bank_free, 47)
+    -- The main bank at 0 is never "empty": not loaded yet.
+    WoW.containers[6] = { size = 0 }
+    check("  the main bank at 0 slots: nothing is written", not AltStable.ScanBankSpace({}))
+    WoW.containers[6] = { size = 48, [1] = { itemID = 1 } }
+    -- Without the API to tell, a 0 is not trusted.
+    local realExists = C_Item.DoesItemExist
+    C_Item.DoesItemExist = nil
+    check("  no C_Item.DoesItemExist: a 0 aborts", not AltStable.ScanBankSpace({}))
+    C_Item.DoesItemExist = realExists
     WoW.containers[7] = { size = 48 }
 
     -- The scan writes the bags (not the bank: it waits for a visit).

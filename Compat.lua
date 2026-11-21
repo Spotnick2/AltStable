@@ -295,6 +295,54 @@ function API.GetCharacterBankTabIDs()
     return out
 end
 
+-- How many slots a purchased bank container has, for a reader that must tell
+-- "nothing there" from "not loaded yet" (#439). Returns the count; 0 for a
+-- purchased bag slot with no bag in it (legitimately nothing); nil when the
+-- read can't be trusted yet, so the caller aborts and keeps what it has.
+--
+-- Forever's bank is the Camelot frame (wow-ui-source
+-- Blizzard_UIPanels_Game/Camelot/BankFrame.lua:150-190, build 71037): the main
+-- bank is CharacterBankTab_1 (container 6), and each purchased bag slot n
+-- (from 2) is container CharacterBankTab_1 + n - 1, whose bag sits at
+-- ItemLocation(Characterbanktab, n). An empty purchased slot reports 0 slots
+-- (measured, #439); the main bank never legitimately does.
+function API.BankContainerSlots(id)
+    local okN, n = pcall(API.GetContainerNumSlots, id)
+    n = okN and tonumber(n) or nil
+    if n and n > 0 then return n end
+    local B = Enum and Enum.BagIndex
+    local first, holder = B and B.CharacterBankTab_1, B and B.Characterbanktab
+    if type(first) ~= "number" or type(holder) ~= "number" or type(id) ~= "number" then return nil end
+    if id == first or n == nil then return nil end           -- the main bank, or no count at all
+    local exists = C_Item and C_Item.DoesItemExist
+    local make = ItemLocation and ItemLocation.CreateFromBagAndSlot
+    if type(exists) ~= "function" or type(make) ~= "function" then return nil end
+    local ok, has = pcall(function() return exists(make(ItemLocation, holder, id - first + 1)) end)
+    if not ok or type(has) ~= "boolean" then return nil end
+    if has then return nil end                                -- a bag whose slots haven't loaded
+    return 0
+end
+
+-- The same question for a carried bag (backpack, the four bag slots, the
+-- reagent bag; not the keyring, which has no bag slot), by Core's bag-space
+-- rule (Scanner.lua BagRead): the backpack at 0 is not loaded yet; a bag slot
+-- at 0 holding a bag is not loaded yet; an empty bag slot at 0 is nothing.
+function API.CarriedContainerSlots(bag)
+    local okN, n = pcall(API.GetContainerNumSlots, bag)
+    n = okN and tonumber(n) or nil
+    if n and n > 0 then return n end
+    if n == nil then return nil end
+    local B = Enum and Enum.BagIndex
+    if not B or bag == B.Backpack then return nil end
+    if type(API.ContainerIDToInventoryID) ~= "function" then return nil end
+    local ok, inv = pcall(API.ContainerIDToInventoryID, bag)
+    if not ok or not inv then return nil end
+    local okItem, item = pcall(GetInventoryItemID, "player", inv)
+    if not okItem then return nil end
+    if item and item ~= 0 then return nil end                 -- a bag whose slots haven't loaded
+    return 0
+end
+
 ----------------------------------------------------------------------------
 -- Currencies
 ----------------------------------------------------------------------------
