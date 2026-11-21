@@ -58,7 +58,7 @@ you like, it is not AltStable's data.
 |---|---|---|
 | `guid` | string | The character's GUID - its identity. Names are not unique. |
 | `name` | string | The best name known: normally the full name with its surname (`"Karuzo Elegia"`); a record from an older peer can lack the surname. |
-| `realm` | string or nil | nil only on a record too old or too partial to carry it. |
+| `realm` | string or nil | nil on a record too old or too partial to carry it, and on a character first seen after 2026-11-20, when Forever stopped telling addons the realm (#412). Never `""`. Use `ruleset` to group by ruleset. |
 | `faction` | string or nil | `"Alliance"` / `"Horde"`. |
 | `class` | string or nil | Class file token, `"PRIEST"` - use it with `RAID_CLASS_COLORS`, and guard the nil. |
 | `level` | number or nil | |

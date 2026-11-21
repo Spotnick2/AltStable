@@ -81,6 +81,9 @@ function AltStable.GetCharacters()
         if type(char) == "table" and char.name then
             local copy = {}
             for _, k in ipairs(FIELDS) do copy[k] = char[k] end
+            -- A blank realm is no realm (#412): a scan just after the 2026-11-20
+            -- hotfix stored "" (#408), and peers may have synced it.
+            if type(copy.realm) ~= "string" or not copy.realm:find("%S") then copy.realm = nil end
             copy.level = PlainNumber(copy.level)
             copy.money = PlainNumber(copy.money)
             copy.lastUpdate = PlainNumber(copy.lastUpdate)
