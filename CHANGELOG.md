@@ -37,8 +37,9 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
   button tells you about AltStable Companion's Google Sheet. `/alts export` from a key also shows
   while the game UI is hidden ([#434](https://github.com/Spotnick2/AltStable/issues/434)).
 - **Loremaster's quests** come from QuestieDB 1.1.3 and Questie 12.11.1
-  ([#472](https://github.com/Spotnick2/AltStable/issues/472)). There are 68 more quests and
-  corrections to others. The old Khan quests that Forever replaced are no longer counted, and the
+  ([#472](https://github.com/Spotnick2/AltStable/issues/472)). QuestieDB has 68 more quests and
+  corrections to others; how many of them a character can count depends on its faction, race and
+  class, as before. The old Khan quests that Forever replaced are no longer counted, and the
   Darkspear Islands brackets count as alternatives: once you've done one, the others drop out. Each
   alt's quest lists show again once that alt logs in.
 - **Camps** hold 50 at most ([#427](https://github.com/Spotnick2/AltStable/issues/427)): the +
@@ -49,9 +50,10 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
   is closed. A tab that changed meanwhile redraws once when you open it.
 - **The camera** (LibShowcase r15, [#474](https://github.com/Spotnick2/AltStable/issues/474),
   [#479](https://github.com/Spotnick2/AltStable/issues/479)): closing the sheet's camera showcase no
-  longer leaves the camera on a view that stops following your character. A camera already left
-  there is put back once, at your next login. On "Never adjust camera", the close snaps back as
-  before.
+  longer leaves the camera on a view that stops following your character. A camera an earlier
+  version left there is put back once, at a login with a Camera Following Style that follows,
+  when it is still on AltStable's saved-view slot (Options: 5 unless you changed it). On "Never
+  adjust camera", the close snaps back as before.
 - **LibGlass r13** (was r11), the glass material AltStable shares with the other glass addons,
   is what this release was tested with. Nothing changes in AltStable's look.
 
