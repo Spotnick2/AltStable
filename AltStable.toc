@@ -14,6 +14,8 @@ Libs\LibShowcase-1.0\LibShowcase-1.0.xml
 Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml
 Libs\LibMailbox-1.0\LibMailbox-1.0.xml
 Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\LibDeflate\LibDeflate.lua
 Libs\ChatThrottleLib\ChatThrottleLib.lua
 Compat.lua
@@ -35,4 +37,5 @@ Capture.lua
 AutoCapture.lua
 GoldTooltip.lua
 PublicAPI.lua
+Broker.lua
 Export.lua

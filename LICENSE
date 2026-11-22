@@ -56,6 +56,18 @@ terms and remains the work of its authors:
                            Fetched at build time, not kept in this
                            repository. It bundles its own copy of LibStub.
 
+  Libs/CallbackHandler-1.0 CallbackHandler-1.0, by Nevcairiel and the Ace3
+                           Development Team. BSD License, full text in
+                           Libs/CallbackHandler-1.0/LICENSE.txt.
+
+  Libs/LibDataBroker-1.1   LibDataBroker-1.1, by tekkub. No licence text is
+                           published with it: its source repository has
+                           none, and its CurseForge page says "All Rights
+                           Reserved unless otherwise explicitly stated".
+                           Embedded unmodified, as that page's note to addon
+                           authors asks: hard-embedded, with a "tools used"
+                           relationship to libdatabroker-1-1 (.pkgmeta, #466).
+
   Libs/ChatThrottleLib     ChatThrottleLib, by Mikk.
                            Carries no licence header. It is embedded in a
                            great many addons by long-standing convention

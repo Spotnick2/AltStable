@@ -119,11 +119,31 @@ AltStableDB = {
 local _, rows = AltStable.GoldTooltipRows()
 eq("equal gold sorts by name", rows[1].name .. "," .. rows[2].name, "Abe,Zed")
 
--- No characters at all (a fresh install before the first scan): no tooltip.
+-- Nobody's gold readable: the total is unknown, never 0 (#466). A real zero
+-- still reads as one.
+AltStableDB = { s = { guid = "s", name = "Secret", class = "DRUID", money = WoW.secret(5) } }
+lines = hover(gold)
+eq("nothing readable: the total is ?", lines[1], "Gold on all characters|?")
+AltStableDB = { z = { guid = "z", name = "Broke", class = "MAGE", money = 0 } }
+lines = hover(gold)
+eq("a known zero total is 0", lines[1], "Gold on all characters|m0")
+
+-- No characters at all (a fresh install before the first scan): no tooltip,
+-- and GameTooltip left to whoever has it - not taken and left empty.
 AltStableDB = {}
 WoW.tooltipShown = false
+local other = WoW.makeFrame("Frame")
+GameTooltip:SetOwner(other, "ANCHOR_NONE")
 hover(gold)
 eq("with no characters, nothing is shown", WoW.tooltipShown, false)
+eq("  and GameTooltip keeps its owner", WoW.tooltipOwner, other)
+-- Every character hidden: the same.
+AltStableDB = { h = { guid = "h", name = "Hid", class = "MAGE", money = 10 } }
+AltStableConfig.hiddenCharacters = { h = true }
+hover(gold)
+eq("with every character hidden, nothing is shown", WoW.tooltipShown, false)
+eq("  and GameTooltip keeps its owner", WoW.tooltipOwner, other)
+AltStableConfig.hiddenCharacters = {}
 
 -- Leaving hides it.
 AltStableDB = { x = { guid = "x", name = "Zed", class = "MAGE", money = 10 } }

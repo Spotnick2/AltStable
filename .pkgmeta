@@ -29,6 +29,12 @@ externals:
     url: https://github.com/Spotnick2/LibMailbox
     tag: r1
 
+# LibDataBroker-1.1 is hard-embedded in Libs/ (#466). Its CurseForge page asks
+# addons that do so to add a "tools used" entry for libdatabroker-1-1 (not an
+# embed entry), so every file packaged from here on carries the relationship.
+tools-used:
+  - libdatabroker-1-1
+
 # One CurseForge project, six addon folders. WoW only discovers addons as
 # top-level folders under Interface/AddOns, so the plugins cannot ship nested
 # inside AltStable/ - the packager moves them out.

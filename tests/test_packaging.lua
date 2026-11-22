@@ -194,6 +194,10 @@ check("Loremaster moves to its own folder",
 
     -- Both, on purpose: manual-changelog reads it, ignore keeps the file itself
     -- out of the addon folder.
+    -- LibDataBroker's own note to addon authors that embed it (#466).
+    check("libdatabroker-1-1 is listed as a tool used",
+          pkg:find("tools%-used:%s*\n%s*%- libdatabroker%-1%-1") ~= nil)
+
     check("CHANGELOG.md is the manual changelog",
           pkg:find("filename: CHANGELOG.md", 1, true) ~= nil)
     check("  and is also ignored", ignore:find("CHANGELOG%.md") ~= nil)

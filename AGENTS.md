@@ -53,14 +53,17 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 
 `Libs\LibGlass-1.0\LibGlass-1.0.xml` → `Libs\LibShowcase-1.0\LibShowcase-1.0.xml` →
 `Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml` → `Libs\LibMailbox-1.0\LibMailbox-1.0.xml` →
-`Libs/` (LibStub, LibDeflate, ChatThrottleLib) →
+`Libs/` (LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
-`RowRenderer.lua` → `CharacterMenu.lua` → `Appearance.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `PublicAPI.lua` → `Export.lua`.
+`RowRenderer.lua` → `CharacterMenu.lua` → `Appearance.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `GoldTooltip.lua` → `PublicAPI.lua` → `Broker.lua` → `Export.lua`.
 
 `PublicAPI.lua` is what OTHER addons build on (`docs/PUBLIC-API.md`): copies of a fixed set
 of fields, never live tables. Changing what a field means, or removing one, bumps
 `AltStable.PUBLIC_API_VERSION`; adding one does not.
+
+`Broker.lua` is the LibDataBroker-1.1 data source for Titan Panel and other displays (#466):
+gold text from `CharacterTotals`, the gold tooltip's lines, the minimap button's clicks.
 
 - `Compat.lua` is the **Retail-API adapter layer** (`AltStable.API`). Consuming files take a
   file-local alias (`local GetItemInfo = AltStable.API.GetItemInfo`); nothing is injected into

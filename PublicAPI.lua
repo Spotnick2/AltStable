@@ -19,10 +19,11 @@
 -- adapter (Compat.lua), and a consumer reading "AltStable.API" as this would be
 -- reading the wrong table entirely.
 --
--- AltStable's own code never calls into this file. The sheet's footer uses
+-- AltStable's own code takes no numbers from this file. The sheet's footer uses
 -- AltStable.CharacterTotals (Core.lua), which GetTotals exposes: a function
 -- other addons can see - and wrap - must not be able to change AltStable's own
--- numbers.
+-- numbers. The one call in is a signal, not a number: the LibDataBroker object
+-- (Broker.lua, #466) repaints on "CharactersChanged" and reads CharacterTotals.
 ------------------------------------------------------------
 
 AltStable = AltStable or {}
@@ -289,8 +290,9 @@ end
 
 local function Changed(event)
     event = event or "CharactersChanged"
-    -- Nothing listening: nothing to schedule. The default for everyone without
-    -- a consumer addon, on every coin looted and every bag change.
+    -- Nothing listening: nothing to schedule. Since Broker.lua (#466) listens to
+    -- "CharactersChanged" whenever LibDataBroker loaded, that event has a
+    -- listener in normal play; the others still skip here without a consumer.
     if not next(callbacks[event] or {}) then return end
     -- A refresh made FROM INSIDE a callback is the consumer syncing the sheet to
     -- what it was just told, not a new change. Notifying it again would call the
