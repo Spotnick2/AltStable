@@ -97,6 +97,7 @@ local function EnsureDefaults()
     if AltStableConfig.warbandView == nil then AltStableConfig.warbandView = "single" end
     if AltStableConfig.warbandScope == nil then AltStableConfig.warbandScope = "warband" end
     if AltStableConfig.warbandRuleset == nil then AltStableConfig.warbandRuleset = "current" end
+    if AltStableConfig.warbandFaction == nil then AltStableConfig.warbandFaction = "current" end   -- #461
     if AltStableConfig.warbandTab == nil then AltStableConfig.warbandTab = 1 end
     -- Pets in the Roster scene (#75): an option, off unless asked for.
     if AltStableConfig.rosterPets == nil then

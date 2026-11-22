@@ -888,6 +888,7 @@ end
 -- filter (optional, #153):
 --   only       = guid    one character (Personal), hidden or not
 --   ruleset    = "PvP"   characters whose realm is on that ruleset
+--   faction    = "Horde" characters of that faction (#461)
 --   skipHidden = true    leave hidden characters out, as the sheet's totals do
 -- No filter is every character - the tooltips' and the tests' view.
 local function Included(guid, c, filter)
@@ -897,6 +898,13 @@ local function Included(guid, c, filter)
         return false
     end
     if filter.ruleset and AltStableWarbandModel.RulesetOf(c) ~= filter.ruleset then
+        return false
+    end
+    -- Only a recorded Alliance or Horde is left out for being the other side;
+    -- a faction not recorded ("", "Unknown", nil) stays, as in the tooltip's
+    -- filter: no claim from nothing.
+    local f = c.faction
+    if filter.faction and (f == "Alliance" or f == "Horde") and f ~= filter.faction then
         return false
     end
     return true
@@ -977,7 +985,8 @@ local ARROW_W   = 26    -- Combined's paging arrows get their own margin
 -- (~640) plus the rail, and the Configure dialog's height. Inherited from a
 -- narrow or short section, the ruleset control ran off the window and the
 -- dialog's last icon rows past its own Save (Codex review of #154).
-local MIN_PANEL_W, MIN_PANEL_H = 720, 470
+-- With the faction menu and the reset (#461) the closed row is ~714 wide: 740.
+local MIN_PANEL_W, MIN_PANEL_H = 740, 470
 
 local panel, titleFS, emptyFS, searchBox, statusFS
 AT_WB.scrollRow = 0
@@ -1273,6 +1282,19 @@ end
 local function Scope() return Cfg("warbandScope", "warband") end
 local function View() return Cfg("warbandView", "single") end
 
+-- The two filters' saved choices, normalized (#461): kept in AltStableConfig,
+-- so they last between sessions; "current" by default.
+local function RulesetChoice() return M.RulesetChoice(Cfg("warbandRuleset", "current")) end
+local function FactionChoice() return M.FactionChoice(Cfg("warbandFaction", "current")) end
+local function FiltersAtDefault() return RulesetChoice() == "current" and FactionChoice() == "current" end
+
+-- The played character's faction tag, nil when unreadable.
+local function MyFaction()
+    local f = UnitFactionGroup and UnitFactionGroup("player")
+    if f == "Alliance" or f == "Horde" then return f end
+    return nil
+end
+
 -- Who the grid is about: Personal is the logged-in character alone, ruleset
 -- ignored, hidden or not; Warband is every character not hidden (the sheet's
 -- totals leave hidden ones out too) on the chosen ruleset.
@@ -1283,7 +1305,8 @@ local function CurrentFilter()
         return { personal = true, only = UnitGUID and UnitGUID("player") }
     end
     return {
-        ruleset = M.ResolveRuleset(Cfg("warbandRuleset", "current"), Here()),
+        ruleset = M.ResolveRuleset(RulesetChoice(), Here()),
+        faction = M.ResolveFaction(FactionChoice(), MyFaction()),
         skipHidden = true,
     }
 end
@@ -1324,11 +1347,24 @@ local RULESET_LABEL = {
 }
 
 local function RulesetText(setting)
-    setting = setting or Cfg("warbandRuleset", "current")
+    setting = setting or RulesetChoice()
     if setting == "current" then
         return "Current ruleset (" .. M.RulesetOf(Here()) .. ")"
     end
     return RULESET_LABEL[setting] or tostring(setting)
+end
+
+-- The faction button shows the side in effect (#461); its menu spells out
+-- which choice that comes from.
+local function FactionText(setting, inMenu)
+    setting = setting or FactionChoice()
+    if setting == "all" then return "Both factions" end
+    if setting == "current" then
+        local f = MyFaction()
+        if not f then return "Current faction" end
+        return inMenu and ("Current faction (" .. f .. ")") or f
+    end
+    return setting
 end
 
 ------------------------------------------------------------
@@ -1444,50 +1480,107 @@ end
 -- The ruleset menu
 ------------------------------------------------------------
 
-local rulesetBtn, rulesetMenu, rulesetCatcher
+-- The ruleset and faction menus (#461: one helper for both). Each has its own
+-- catcher, which covers the panel: with one menu open, a click on the other
+-- button closes it, and a second click opens the other (two clicks, declared).
+local rulesetBtn, factionBtn, resetBtn
+local menus = {}   -- [name] = { frame = ..., catcher = ... }
 
-local function CloseRulesetMenu()
-    if rulesetMenu then rulesetMenu:Hide() end
-    if rulesetCatcher then rulesetCatcher:Hide() end
+local function CloseMenus()
+    for _, m in pairs(menus) do
+        m.frame:Hide()
+        m.catcher:Hide()
+    end
 end
 
-local function OpenRulesetMenu()
+-- spec: name, setting (the config key), keys, choice() (the normalized saved
+-- choice), label(key), anchor(frame) (the menu's point, set on every open).
+local function OpenMenu(spec)
     if Scope() == "personal" then return end
-    if not rulesetMenu then
-        rulesetCatcher = MakeCatcher(panel, CloseRulesetMenu)
-        rulesetMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
-        rulesetMenu:SetFrameStrata("FULLSCREEN_DIALOG")
-        rulesetMenu:SetFrameLevel(rulesetCatcher:GetFrameLevel() + 5)
-        if not (AltStable.SkinWindow and AltStable.SkinWindow(rulesetMenu, "small")) then
-            AltStable.ApplyBackdrop(rulesetMenu, 0.08, 0.08, 0.1, 0.97)
+    CloseMenus()
+    local m = menus[spec.name]
+    if not m then
+        local catcher = MakeCatcher(panel, CloseMenus)
+        local f = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        f:SetFrameStrata("FULLSCREEN_DIALOG")
+        f:SetFrameLevel(catcher:GetFrameLevel() + 5)
+        local g = AltStable.SkinWindow and AltStable.SkinWindow(f, "small")
+        if g then
+            -- The popup glass alone is see-through, and over the item icons the
+            -- rows could not be read (in game, #461): the tooltip's backing,
+            -- BACKGROUND -7, over the shadow (-8), under the tint (-6), masked
+            -- to the glass's corners. See AltStable.TOOLTIP_BACKING.
+            local b = f:CreateTexture(nil, "BACKGROUND", nil, -7)
+            b:SetAllPoints(f)
+            if g.mask and b.AddMaskTexture then b:AddMaskTexture(g.mask) end
+            local c = AltStable.TOOLTIP_BACKING or { 0.04, 0.05, 0.07, 0.93 }
+            b:SetColorTexture(c[1], c[2], c[3], c[4])
+            f.backing = b
+        else
+            AltStable.ApplyBackdrop(f, 0.08, 0.08, 0.1, 0.97)
         end
-        CloseOnEscape(rulesetMenu, CloseRulesetMenu)
-        rulesetMenu.rows = {}
-        local keys = { "current", "all", "Normal", "PvP", "RP", "RPPvP", "Hardcore" }
-        for i, key in ipairs(keys) do
-            local row = MakeButton(rulesetMenu, 180, 22, "", function()
-                CloseRulesetMenu()
-                AltStable.SetConfigValue("warbandRuleset", key)
+        CloseOnEscape(f, CloseMenus)
+        f.rows = {}
+        for i, key in ipairs(spec.keys) do
+            local row = MakeButton(f, 180, 22, "", function()
+                CloseMenus()
+                AltStable.SetConfigValue(spec.setting, key)
                 AT_WB.scrollRow = 0
                 AT_WB.Refresh()
             end)
-            row:SetPoint("TOPLEFT", rulesetMenu, "TOPLEFT", 8, -8 - (i - 1) * 24)
+            row:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -8 - (i - 1) * 24)
             row.key = key
-            rulesetMenu.rows[i] = row
+            f.rows[i] = row
         end
-        rulesetMenu:SetSize(196, 16 + #keys * 24)
+        f:SetSize(196, 16 + #spec.keys * 24)
+        m = { frame = f, catcher = catcher }
+        menus[spec.name] = m
     end
-    local current = Cfg("warbandRuleset", "current")
-    for _, row in ipairs(rulesetMenu.rows) do
-        row.label:SetText(row.key == "current" and RulesetText("current") or RULESET_LABEL[row.key])
+    local current = spec.choice()
+    for _, row in ipairs(m.frame.rows) do
+        row.label:SetText(spec.label(row.key))
         SetActive(row, row.key == current)
     end
-    rulesetMenu:ClearAllPoints()
-    rulesetMenu:SetPoint("TOPLEFT", rulesetBtn, "BOTTOMLEFT", 0, -2)
-    rulesetCatcher:Show()
-    rulesetMenu:Show()
-    GrabKeyboard(rulesetMenu)
+    m.frame:ClearAllPoints()
+    spec.anchor(m.frame)
+    m.catcher:Show()
+    m.frame:Show()
+    GrabKeyboard(m.frame)
 end
+
+local RULESET_MENU = {
+    name = "ruleset", setting = "warbandRuleset",
+    keys = { "current", "all", "Normal", "PvP", "RP", "RPPvP", "Hardcore" },
+    choice = function() return RulesetChoice() end,
+    label = function(key) return key == "current" and RulesetText("current") or RULESET_LABEL[key] end,
+    anchor = function(f) f:SetPoint("TOPLEFT", rulesetBtn, "BOTTOMLEFT", 0, -2) end,
+}
+-- Opens leftwards from the faction button's right edge, so it stays inside the
+-- panel at the tab's minimum width (Codex review of the #461 plan).
+local FACTION_MENU = {
+    name = "faction", setting = "warbandFaction",
+    keys = { "current", "all", "Alliance", "Horde" },
+    choice = function() return FactionChoice() end,
+    label = function(key) return FactionText(key, true) end,
+    anchor = function(f) f:SetPoint("TOPRIGHT", factionBtn, "BOTTOMRIGHT", 0, -2) end,
+}
+
+local function OpenRulesetMenu() OpenMenu(RULESET_MENU) end
+local function OpenFactionMenu() OpenMenu(FACTION_MENU) end
+
+-- Both filters back to their defaults (#461).
+local function ResetFilters()
+    CloseMenus()
+    AltStable.SetConfigValue("warbandRuleset", "current")
+    AltStable.SetConfigValue("warbandFaction", "current")
+    AT_WB.scrollRow = 0
+    AT_WB.Refresh()
+end
+
+-- Tests.
+AT_WB.OpenRulesetMenu, AT_WB.OpenFactionMenu = OpenRulesetMenu, OpenFactionMenu
+AT_WB.Menu = function(name) local m = menus[name]; return m and m.frame, m and m.catcher end
+AT_WB.FilterControls = function() return rulesetBtn, factionBtn, resetBtn end
 
 ------------------------------------------------------------
 -- Configure Tab
@@ -1740,7 +1833,7 @@ end
 -- index nil = a new tab: nothing is inserted until Save.
 local function OpenDialog(index)
     if not dialog then BuildDialog() end
-    CloseRulesetMenu()
+    CloseMenus()
     local tabs = Tabs()
     if not index and #tabs >= M.MAX_TABS then return end
     dialog.index = index
@@ -2042,6 +2135,13 @@ local function UpdateControls()
     rulesetBtn.chevron:SetShown(not personal)
     rulesetBtn:SetEnabled(not personal)
     rulesetBtn:SetAlpha(personal and 0.5 or 1)
+    factionBtn.label:SetText(personal and "This character" or FactionText())
+    factionBtn.chevron:SetShown(not personal)
+    factionBtn:SetEnabled(not personal)
+    factionBtn:SetAlpha(personal and 0.5 or 1)
+    -- Reset compares the saved CHOICE, not the side it resolves to: "Alliance"
+    -- picked while playing Alliance is still not the default.
+    resetBtn:SetShown(not personal and not FiltersAtDefault())
 end
 
 local function StatusText()
@@ -2053,9 +2153,10 @@ local function StatusText()
         return paging .. ((me and me.name) or "This character")
             .. (MailOn() and "  ·  Bags, bank + mail" or "  ·  Bags + bank") .. "  ·  Read-only"
     end
-    local r = M.ResolveRuleset(Cfg("warbandRuleset", "current"), Here())
+    local r = M.ResolveRuleset(RulesetChoice(), Here())
+    local f = M.ResolveFaction(FactionChoice(), MyFaction())
     return paging .. (MailOn() and "Bags, banks + mail  ·  " or "Bags + banks  ·  ")
-        .. (r or "All rulesets") .. "  ·  Read-only"
+        .. (r or "All rulesets") .. "  ·  " .. (f or "Both factions") .. "  ·  Read-only"
 end
 
 AT_WB.StatusText = function() return StatusText() end
@@ -2160,7 +2261,7 @@ local function BuildPanel(mainFrame)
     -- Anything open goes with the panel: a menu or dialog left up over another
     -- tab would act on a view that is not there.
     panel:SetScript("OnHide", function()
-        CloseRulesetMenu()
+        CloseMenus()
         CloseDialog()
         ClearHover()
     end)
@@ -2199,7 +2300,9 @@ local function BuildPanel(mainFrame)
     end)
     local tipLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     tipLbl:SetPoint("LEFT", tipCheck, "RIGHT", 2, 0)
-    tipLbl:SetText("Show character counts in tooltips")
+    -- Short, to leave the row room for both filter menus (#461); the hover
+    -- help spells it out.
+    tipLbl:SetText("Counts in tooltips")
     tipLbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
     tipCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -2215,6 +2318,34 @@ local function BuildPanel(mainFrame)
     rulesetBtn.chevron:SetPoint("RIGHT", -8, 0)
     rulesetBtn.chevron:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up")
 
+    -- The faction filter (#461), then the reset for both.
+    factionBtn = MakeButton(panel, 130, 22, "", OpenFactionMenu)
+    factionBtn:SetPoint("LEFT", rulesetBtn, "RIGHT", 6, 0)
+    factionBtn.chevron = factionBtn:CreateTexture(nil, "OVERLAY")
+    factionBtn.chevron:SetSize(12, 12)
+    factionBtn.chevron:SetPoint("RIGHT", -8, 0)
+    factionBtn.chevron:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up")
+
+    resetBtn = MakeButton(panel, 22, 22, "", ResetFilters)
+    resetBtn:SetPoint("LEFT", factionBtn, "RIGHT", 6, 0)
+    resetBtn.icon = resetBtn:CreateTexture(nil, "OVERLAY")
+    resetBtn.icon:SetSize(14, 14)
+    resetBtn.icon:SetPoint("CENTER")
+    resetBtn.icon:SetTexture("Interface\\Buttons\\UI-RefreshButton")
+    local onEnter, onLeave = resetBtn:GetScript("OnEnter"), resetBtn:GetScript("OnLeave")
+    resetBtn:SetScript("OnEnter", function(self)
+        onEnter(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Reset filters", 1, 1, 1)
+        GameTooltip:AddLine("Back to the current ruleset and the current faction.", nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    resetBtn:SetScript("OnLeave", function(self)
+        onLeave(self)
+        GameTooltip:Hide()
+    end)
+    resetBtn:Hide()
+
     -- Combined's paging arrows, either side of the column titles.
     prevBtn = MakeButton(panel, 22, 22, "<", function() StepWindow(-1) end)
     prevBtn:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -HEAD_H + 1)
@@ -2224,7 +2355,7 @@ local function BuildPanel(mainFrame)
 
     -- The bottom bar: Personal Bank / Warband, and what is being shown.
     scopeBtns.personal = MakeButton(panel, 110, 24, "Personal Bank", function()
-        CloseRulesetMenu()
+        CloseMenus()
         AltStable.SetConfigValue("warbandScope", "personal"); AT_WB.scrollRow = 0; AT_WB.Refresh()
     end)
     scopeBtns.personal:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", PAD, 6)
@@ -2357,7 +2488,7 @@ end
 function AT_WB.Deactivate(mainFrame)
     AT_WB.isActive = false
     if panel then panel:Hide() end
-    CloseRulesetMenu()
+    CloseMenus()
     CloseDialog()
     ClearHover()
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Show()   end
