@@ -1,5 +1,100 @@
 # Changelog
 
+## v1.12.0 - 2026-11-22
+
+**Invite your other account's alts** from their right-click menu, the **Salt Shaker's** cooldown, a
+**faction filter** on the Warband tab, a clearer export window, and a long list of fixes from a full
+review of v1.11.0. Built for client 1.60.1.71037, the live build. v1.12.0 syncs with everything
+v1.11.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+It can also keep your characters in a Google Sheet in your own Google Drive. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.1** is the current version.
+
+### New
+
+- **Invite to group** ([#448](https://github.com/Spotnick2/AltStable/issues/448)): right-click a
+  character, on a sheet row or a Roster card, to invite it. That's for an alt logged in on your other
+  account. The entry is greyed, with the reason on hover, for the character you're playing, one of
+  the other faction, and one of this WoW account, which can't be online while you play.
+- **The Salt Shaker's cooldown** ([#460](https://github.com/Spotnick2/AltStable/issues/460)), for
+  Leatherworking, is tracked like the other profession cooldowns. It's in the sheet's tooltip and
+  the Professions tab, it syncs, and you're told when it's ready.
+- **Warband tab: a faction filter** ([#461](https://github.com/Spotnick2/AltStable/issues/461))
+  next to the ruleset one: your current faction (the default), both, Alliance or Horde. Both filters
+  are kept between sessions, and a reset button puts them back to your current ruleset and faction.
+
+### Changed
+
+- **The export window** ([#470](https://github.com/Spotnick2/AltStable/issues/470)) no longer shows
+  the raw spreadsheet text, whose columns drew as boxes. It says how many characters and columns are
+  ready: press Ctrl+C, then paste into cell A1 of a Google Sheet, and the columns split by
+  themselves. **Select again** selects it again if you clicked away. An info icon beside the close
+  button tells you about AltStable Companion's Google Sheet. `/alts export` from a key also shows
+  while the game UI is hidden ([#434](https://github.com/Spotnick2/AltStable/issues/434)).
+- **Loremaster's quests** come from QuestieDB 1.1.3 and Questie 12.11.1
+  ([#472](https://github.com/Spotnick2/AltStable/issues/472)). There are 68 more quests and
+  corrections to others. The old Khan quests that Forever replaced are no longer counted, and the
+  Darkspear Islands brackets count as alternatives: once you've done one, the others drop out. Each
+  alt's quest lists show again once that alt logs in.
+- **Camps** hold 50 at most ([#427](https://github.com/Spotnick2/AltStable/issues/427)): the +
+  button is greyed past that. A longer list from a sync is never cut, so no camp comes back after
+  you removed it.
+- **Fewer redraws** ([#435](https://github.com/Spotnick2/AltStable/issues/435)): the Warband, Roster
+  and Raids tabs redraw once however many characters a sync brings, and not at all while the sheet
+  is closed. A tab that changed meanwhile redraws once when you open it.
+- **The camera** (LibShowcase r15, [#474](https://github.com/Spotnick2/AltStable/issues/474),
+  [#479](https://github.com/Spotnick2/AltStable/issues/479)): closing the sheet's camera showcase no
+  longer leaves the camera on a view that stops following your character. A camera already left
+  there is put back once, at your next login. On "Never adjust camera", the close snaps back as
+  before.
+
+### Fixed
+
+- **A plugin's data at login** ([#418](https://github.com/Spotnick2/AltStable/issues/418)): a
+  wishlist, a talent snapshot or a quest history is no longer deleted when the main save is missing
+  that character.
+- **A plugin switched off and back on** through the game's AddOns list now gets what your other
+  account sent meanwhile ([#449](https://github.com/Spotnick2/AltStable/issues/449)).
+- **The bank:**
+  - closing it right after a move keeps that move
+    ([#419](https://github.com/Spotnick2/AltStable/issues/419));
+  - an older bank from a sync no longer replaces a newer one
+    ([#420](https://github.com/Spotnick2/AltStable/issues/420));
+  - a visit with no change no longer leaves "over a week old"
+    ([#432](https://github.com/Spotnick2/AltStable/issues/432));
+  - a character with an empty purchased bank bag slot has its bank recorded
+    ([#439](https://github.com/Spotnick2/AltStable/issues/439)).
+- **Sync:**
+  - a slightly older snapshot no longer rolls a character back
+    ([#421](https://github.com/Spotnick2/AltStable/issues/421));
+  - a change made to an alt you aren't playing, such as a recipe star, reaches your other account
+    ([#422](https://github.com/Spotnick2/AltStable/issues/422)).
+- **Settings sync:** camps, list order and preference groups agree on both accounts again, even
+  when both changed in the same second
+  ([#428](https://github.com/Spotnick2/AltStable/issues/428)). Both accounts need v1.12.0 for this.
+- **Professions:** "nobody has it" no longer shows while some alts' bags or bank were never read,
+  and a crafter who holds some says "nobody else"
+  ([#423](https://github.com/Spotnick2/AltStable/issues/423)).
+- **The mail alert** keeps warning about an alt whose soonest mail expired while more is waiting
+  ([#424](https://github.com/Spotnick2/AltStable/issues/424)).
+- **Rested XP and XP %** stay current below the level cap
+  ([#425](https://github.com/Spotnick2/AltStable/issues/425)).
+- **Level, skills and reputation** update as they change, not only at the next full scan
+  ([#426](https://github.com/Spotnick2/AltStable/issues/426)).
+- **Loremaster** follows a quest's prerequisites through the whole chain
+  ([#429](https://github.com/Spotnick2/AltStable/issues/429)).
+- **Legacy:** exploration found while the tab is closed is kept
+  ([#430](https://github.com/Spotnick2/AltStable/issues/430)).
+- **Raids:** the footer counts every save, including folded rows and rows past the columns shown
+  ([#431](https://github.com/Spotnick2/AltStable/issues/431)).
+- **Export:** a Skyborne character with no recorded faction gets a blank faction, not "A"
+  ([#433](https://github.com/Spotnick2/AltStable/issues/433)).
+
 ## v1.11.0 - 2026-11-20
 
 **Item tooltips your way:** one list, the characters that match yours apart from the others, or
