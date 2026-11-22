@@ -75,21 +75,21 @@ end
 -- What the menu offers
 ------------------------------------------------------------
 
-eq("a plain character gets all five entries", ids(OTHER), "title,favourite,look,hide,forget")
+eq("a plain character gets all six entries", ids(OTHER), "title,favourite,invite,look,hide,forget")
 
 AltStable.SetCharacterFavourite("other", true)
-eq("a favourite is offered the way back", ids(OTHER), "title,unfavourite,look,hide,forget")
+eq("a favourite is offered the way back", ids(OTHER), "title,unfavourite,invite,look,hide,forget")
 AltStable.SetCharacterFavourite("other", false)
 
 AltStable.SetCharacterHidden("other", true)
-eq("a hidden character is offered Unhide", ids(OTHER), "title,favourite,look,unhide,forget")
+eq("a hidden character is offered Unhide", ids(OTHER), "title,favourite,invite,look,unhide,forget")
 AltStable.SetCharacterHidden("other", false)
-eq("  and Hide again once it is back", ids(OTHER), "title,favourite,look,hide,forget")
+eq("  and Hide again once it is back", ids(OTHER), "title,favourite,invite,look,hide,forget")
 
 -- Favourite and hidden are separate states and must not collapse into one.
 AltStable.SetCharacterFavourite("other", true)
 AltStable.SetCharacterHidden("other", true)
-eq("a character can be both at once", ids(OTHER), "title,unfavourite,look,unhide,forget")
+eq("a character can be both at once", ids(OTHER), "title,unfavourite,invite,look,unhide,forget")
 AltStable.SetCharacterFavourite("other", false)
 AltStable.SetCharacterHidden("other", false)
 
@@ -102,7 +102,7 @@ do
         if e.id == "forget" then forget = e end
     end
     eq("the character you are playing still lists Forget", ids(ME),
-       "title,favourite,look,hide,forget")
+       "title,favourite,invite,look,hide,forget")
     check("  but cannot choose it", forget and forget.disabled == true)
     check("  and is told why", forget and (forget.why or ""):find("playing") ~= nil,
           tostring(forget and forget.why))
@@ -117,6 +117,84 @@ end
 eq("nothing at all gets no menu", #AltStable.CharacterMenuEntries(nil), 0)
 eq("  and neither does a record with no guid",
    #AltStable.CharacterMenuEntries({ name = "Nameless" }), 0)
+
+------------------------------------------------------------
+-- Invite to group (#448)
+------------------------------------------------------------
+do
+    local function entry(char)
+        for _, e in ipairs(AltStable.CharacterMenuEntries(char)) do
+            if e.id == "invite" then return e end
+        end
+    end
+    local heldFaction = WoW.faction
+    WoW.faction = "Alliance"
+    local ALT = { guid = "inv-1", name = "Karuzo Windmere", class = "PRIEST", faction = "Alliance" }
+    AltStableDB[ALT.guid] = ALT
+    WoW.invites = {}
+
+    local e = entry(ALT)
+    check("#448: an alt of the other account is offered Invite to group", e and e.text == "Invite to group")
+    check("  enabled", e and not e.disabled and e.why == nil)
+    check("  and choosing it invites", AltStable.CharacterMenuInvoke("invite", ALT))
+    eq("  by its whole stored name, surname included", WoW.invites[1], "Karuzo Windmere")
+    eq("  once", #WoW.invites, 1)
+
+    -- The one being played.
+    e = entry(ME)
+    check("the character being played: disabled", e and e.disabled == true)
+    check("  and told why", e and (e.why or ""):find("playing", 1, true) ~= nil, tostring(e and e.why))
+    check("  and choosing it anyway invites nobody", not AltStable.CharacterMenuInvoke("invite", ME))
+
+    -- The other faction; an unknown faction is no claim.
+    ALT.faction = "Horde"
+    e = entry(ALT)
+    check("an alt of the other faction: disabled", e and e.disabled == true)
+    check("  and told why", e and (e.why or ""):find("faction", 1, true) ~= nil, tostring(e and e.why))
+    check("  and choosing it anyway invites nobody", not AltStable.CharacterMenuInvoke("invite", ALT))
+    for _, f in ipairs({ "Unknown", "" }) do
+        ALT.faction = f
+        e = entry(ALT)
+        check("  a faction not recorded (" .. f .. ") is no claim", e and not e.disabled)
+    end
+    ALT.faction = nil
+    check("  nor is none at all", entry(ALT) and not entry(ALT).disabled)
+    WoW.faction = "Horde"
+    ALT.faction = "Horde"
+    check("  same faction as the player, Horde side too", entry(ALT) and not entry(ALT).disabled)
+    WoW.faction = "Alliance"
+    ALT.faction = "Alliance"
+
+    -- One of this WoW account: it can't be online now.
+    ALT.scannedHere = true
+    e = entry(ALT)
+    check("an alt of this account: disabled", e and e.disabled == true)
+    check("  and told why", e and (e.why or ""):find("this account", 1, true) ~= nil, tostring(e and e.why))
+    check("  and choosing it anyway invites nobody", not AltStable.CharacterMenuInvoke("invite", ALT))
+    ALT.scannedHere = 1   -- merged from a peer before #281: not ours
+    check("  a scannedHere of 1 (an old peer's) stays invitable", entry(ALT) and not entry(ALT).disabled)
+    ALT.scannedHere = nil
+    ALT.provKind = "own-account"
+    check("  as does an alt of the other own account", entry(ALT) and not entry(ALT).disabled)
+    ALT.provKind = nil
+    eq("nobody was invited by a disabled entry", #WoW.invites, 1)
+
+    -- No name: no entry. No API: no entry, and invoking does nothing.
+    local nameless = { guid = "inv-2", class = "MAGE" }
+    check("a record with no name gets no invite entry", entry(nameless) == nil)
+    check("  and invoking it does nothing", not AltStable.CharacterMenuInvoke("invite", nameless))
+    local realParty = C_PartyInfo
+    C_PartyInfo = nil
+    check("without the client's invite, no entry", entry(ALT) == nil)
+    check("  and invoking it does nothing", not AltStable.CharacterMenuInvoke("invite", ALT))
+    C_PartyInfo = { InviteUnit = function() error("refused") end }
+    check("an invite that throws is caught, and reported as not done",
+          not AltStable.CharacterMenuInvoke("invite", ALT))
+    C_PartyInfo = realParty
+
+    AltStableDB[ALT.guid] = nil
+    WoW.faction = heldFaction
+end
 
 ------------------------------------------------------------
 -- What the entries do

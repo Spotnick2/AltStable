@@ -2051,6 +2051,16 @@ C_GameRules = { IsGameRuleActive = function(rule)
     return false
 end }
 
+-- Party invites (#448): C_PartyInfo.InviteUnit(targetName) is in the 71037
+-- dump. Every call is recorded in WoW.invites, cleared by WoW.reset().
+WoW.invites = {}
+C_PartyInfo = { InviteUnit = function(name) WoW.invites[#WoW.invites + 1] = name end }
+local resetBeforeInvites = WoW.reset
+function WoW.reset()
+    resetBeforeInvites()
+    WoW.invites = {}
+end
+
 Kit.strict(allowNil)
 
 return WoW
