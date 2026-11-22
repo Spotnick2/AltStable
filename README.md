@@ -26,9 +26,10 @@ doesn't move it anywhere, and whether you can pass it on still depends on the ga
 The **Warband** tab lays out every item in all your characters' bags, banks and mailboxes like a
 warband bank, with tabs you can arrange yourself. Show one tab at a time, or three side by side.
 Hover an item to see who holds how many, split between bags, bank and mail. You can show everyone on your
-current ruleset, a chosen ruleset, or only the character you are on.
+current ruleset or a chosen one, of your faction, the other or both, or only the character you are on.
+Both filters are kept between sessions, and a reset button puts them back.
 
-![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset menu and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
+![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset and faction menus, the reset button and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
 
 *The Warband tab, Combined view: everyone's trade goods, consumables and equipment in one place.
 Hover any item to see who holds it.*
@@ -94,7 +95,8 @@ counts.
 When you open a profession window, any recipe whose reagents there differ from AltStable's own list
 takes the window's, so a game patch that changes a recipe shows right away.
 
-Profession cooldowns are tracked too, and a notification tells you when one is ready.
+Profession cooldowns are tracked too, the Leatherworking Salt Shaker's included, and a notification
+tells you when one is ready.
 
 ### Which characters are saved to a raid, and when do they reset?
 
@@ -188,7 +190,8 @@ each one holds, richest first. (Bagnon and Baganator replace that window and hav
 
 *Reputations, including Forever's own factions.*
 
-Right-click a character to hide it, mark it a favourite, forget it, or see its **Appearance**
+Right-click a character to invite it to your group (an alt logged in on your other account), hide
+it, mark it a favourite, forget it, or see its **Appearance**
 (face, hair, skin and the rest, recorded when it sits in a barber's chair). At login, AltStable
 also warns you about mail that's about to expire on any alt, as of its last mailbox visit.
 
@@ -252,7 +255,7 @@ installed and need to be **online at the same time**.
 ## Optional: character portraits and the Companion
 
 The **Roster** tab shows your characters as character cards, or standing together around a
-campfire in **camps** of four, each camp with its own backdrop. Click a character for its paper
+campfire in **camps** of four (up to 50 camps), each with its own backdrop. Click a character for its paper
 doll, stats and talents. **View** opens its talents in the game's own talent frame, read-only,
 as they were when it was last played.
 
@@ -340,7 +343,7 @@ The Companion has its own **Check for updates** under **Help → About**.
 | `/alts stale` [days] | Characters nobody has played in that long; forget them from Options, Old characters |
 | `/alts account` &lt;n&gt; | This account's number in the sheet |
 | `/alts tooltip` [ignore / unignore &lt;item&gt;] | Items whose tooltips get no counts (shift-click the item) |
-| `/alts export` | Every character as a spreadsheet |
+| `/alts export` | Every character as a spreadsheet: press Ctrl+C, then paste into cell A1 of a Google Sheet |
 | `/alts config` | Options (also a right-click on the minimap button) |
 
 ## Reporting a problem
