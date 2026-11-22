@@ -320,7 +320,7 @@ function L.AcceptDialog()
         AltStable.RenameCamp(camp.id, name)
     else
         local id = AltStable.CreateCamp(name)
-        AltStable.SelectCamp(id)
+        if id then AltStable.SelectCamp(id) end
     end
     L.CloseDialog()
     if Roster.Refresh then Roster.Refresh() end
@@ -824,11 +824,19 @@ local function Build()
     plusBtn:SetSize(26, SEARCH_H)
     plusBtn:SetPoint("TOPRIGHT", -PAD, -PAD)
     plusBtn:SetText("+")
+    -- Disabled at the camp limit (#427), and the tooltip saying why is the
+    -- point: the template leaves a disabled button's OnEnter off.
+    plusBtn:SetMotionScriptsWhileDisabled(true)
     plusBtn:SetScript("OnClick", function() L.OpenDialog(nil) end)
     plusBtn:SetScript("OnEnter", function(self)
         if GameTooltip then
             GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:ClearLines()
-            GameTooltip:AddLine("New camp", 1, 1, 1); GameTooltip:Show()
+            GameTooltip:AddLine("New camp", 1, 1, 1)
+            if AltStable.CanCreateCamp and not AltStable.CanCreateCamp() then
+                GameTooltip:AddLine(("%d camps at most: a longer list can't sync to your other account.")
+                    :format(AltStable.MAX_CAMPS or 50), 1, 0.5, 0.25, true)
+            end
+            GameTooltip:Show()
         end
     end)
     plusBtn:SetScript("OnLeave", function(self)
@@ -908,6 +916,8 @@ end
 -- is shown at all is Render's call, made with the scene's own layout.
 function L.PaintRows()
     if not (list and content) then return end
+    -- At the limit, no new camp (#427).
+    if plusBtn then plusBtn:SetEnabled(not AltStable.CanCreateCamp or AltStable.CanCreateCamp()) end
     local shownCamp = AltStable.SelectedCamp and AltStable.SelectedCamp()
     local items = L.Items()
     local y = 0

@@ -4119,6 +4119,39 @@ do
     eq("  at the end", members(raiders.id), "7")
     AltStable.RemoveFromCamp("pool-7")
 
+    -- At 50 camps, no new one (#427): + is off, and the dialog makes nothing.
+    do
+        local heldCamps, heldSel = AltStableConfig.rosterCamps, AltStableConfig.rosterCamp
+        local full = {}
+        for i = 1, 50 do full[i] = { id = 100 + i, name = "Full " .. i, members = {} } end
+        AltStableConfig.rosterCamps = full
+        L.PaintRows()
+        check("#427: at 50 camps the + button is off", not LT.Plus():IsEnabled())
+        check("  and still hovers, so its tooltip says why", LT.Plus():GetMotionScriptsWhileDisabled())
+        L.OpenDialog(nil)
+        L.Dialog().box:SetText("One more")
+        L.AcceptDialog()
+        eq("  and the dialog makes no 51st", #AltStable.GetCamps(), 50)
+        -- The character menu (Codex review of #457): its new-camp entry is
+        -- offered disabled, with the reason, and choosing it anyway moves nobody.
+        local newEntry
+        for _, e in ipairs(AltStable.CharacterMenuEntries(AltStableDB["pool-7"])) do
+            if e.id == "camp:new" then newEntry = e end
+        end
+        check("  the menu's new camp is disabled", newEntry and newEntry.disabled == true)
+        check("  with the limit as the reason", newEntry and newEntry.why
+              and newEntry.why:find("50 camps at most", 1, true) ~= nil, newEntry and newEntry.why)
+        AltStable.CharacterMenuInvoke("camp:new", AltStableDB["pool-7"])
+        check("  and choosing it anyway makes no camp", #AltStable.GetCamps() == 50 and not AltStable.CampOf("pool-7"))
+        AltStableConfig.rosterCamps, AltStableConfig.rosterCamp = heldCamps, heldSel
+        L.PaintRows()
+        check("  with fewer, it is on again", LT.Plus():IsEnabled())
+        for _, e in ipairs(AltStable.CharacterMenuEntries(AltStableDB["pool-7"])) do
+            if e.id == "camp:new" then newEntry = e end
+        end
+        check("  and so is the menu's new camp", newEntry and not newEntry.disabled and newEntry.why == nil)
+    end
+
     -- Between camps.
     check("a member dropped on another camp's empty seat moves",
           L.Drop({ kind = "char", guid = "pool-5", fromCamp = camp1, fromPos = 4 }, item("slot", nil, "Raiders")))
