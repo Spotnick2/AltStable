@@ -52,6 +52,8 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
   longer leaves the camera on a view that stops following your character. A camera already left
   there is put back once, at your next login. On "Never adjust camera", the close snaps back as
   before.
+- **LibGlass r13** (was r11), the glass material AltStable shares with the other glass addons,
+  is what this release was tested with. Nothing changes in AltStable's look.
 
 ### Fixed
 
