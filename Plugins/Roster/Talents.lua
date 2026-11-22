@@ -145,7 +145,7 @@ function T.Scan()
     r.stamp = math.max(time(), (type(held) == "table" and held.stamp or 0) + 1)
     Store()[guid] = r
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
-    if Roster.isActive and Roster.Refresh then Roster.Refresh() end
+    if Roster.isActive and Roster.RequestRefresh then Roster.RequestRefresh() end
     return true
 end
 
@@ -216,7 +216,7 @@ function T.Deserialize(guid, blob)
     Store()[guid] = r
     -- No TouchCharacter: receiving is not a change of ours. True: a newer
     -- stamp stored, which the core marks for the deltas it sends (#422).
-    if Roster.isActive and Roster.Refresh then Roster.Refresh() end
+    if Roster.isActive and Roster.RequestRefresh then Roster.RequestRefresh() end
     return true
 end
 

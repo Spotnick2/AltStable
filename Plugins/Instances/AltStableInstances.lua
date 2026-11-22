@@ -748,12 +748,29 @@ local function ScheduleExpiryRefresh(lookup)
     if delay < 1 then delay = 1 end
     AT_SI._expiryTimer = C_Timer.NewTimer(delay, function()
         AT_SI._expiryTimer = nil
-        if AT_SI.isActive then AT_SI.Refresh() end
+        if AT_SI.isActive then AT_SI.RequestRefresh() end
+    end)
+end
+
+-- Redraws asked for by data - the sheet's refresh, a lockout expiring
+-- (#435): at most one per frame, none while the tab is off screen (closing the
+-- sheet hides the window without OnDeactivate, and IsShown stays true under a
+-- hidden parent). Off screen it is marked dirty and drawn once on show; any
+-- draw consumes `dirty`. As Warband's.
+function AT_SI.RequestRefresh()
+    if not AT_SI.isActive then return end
+    AT_SI.dirty = true
+    if AT_SI._pending or not (panel and panel:IsVisible()) then return end
+    AT_SI._pending = true
+    C_Timer.After(0, function()
+        AT_SI._pending = nil
+        if AT_SI.isActive and AT_SI.dirty and panel and panel:IsVisible() then AT_SI.Refresh() end
     end)
 end
 
 function AT_SI.Refresh()
     if not panel or not panel:IsShown() then return end
+    AT_SI.dirty = nil
 
     local allChars, lookup = gather()
     ScheduleExpiryRefresh(lookup)
@@ -1083,6 +1100,10 @@ local function BuildPanel(mainFrame)
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     AT_SI._headerSep = headerSep
     panel:Hide()
+    -- The sheet opened again on this tab: what changed while it was closed (#435).
+    panel:SetScript("OnShow", function()
+        if AT_SI.isActive and AT_SI.dirty then AT_SI.Refresh() end
+    end)
 
     -- Horizontally-scrolling viewport for the character columns (Raid + Reset stay
     -- frozen on the panel). colChild holds the char headers/cells/grid lines.
@@ -1170,8 +1191,12 @@ local function HookRefresh()
     if AT_SI._refreshHooked or type(AltStable.RefreshSheet) ~= "function" then return end
     local prev = AltStable.RefreshSheet
     AltStable.RefreshSheet = function(...)
+        -- Asked for BEFORE the sheet's own refresh (Codex review of #469): that
+        -- can finish a window animation, whose settle redraws this panel
+        -- through OnResize with the new data, consuming the request. Asked
+        -- after, it would rebuild a second time for the same update.
+        if AT_SI.isActive then AT_SI.RequestRefresh() end
         prev(...)
-        if AT_SI.isActive then C_Timer.After(0, function() if AT_SI.isActive then AT_SI.Refresh() end end) end
     end
     AT_SI._refreshHooked = true
 end
@@ -1195,6 +1220,7 @@ end
 
 function AT_SI.Deactivate(mainFrame)
     AT_SI.isActive = false
+    AT_SI.dirty = nil   -- Activate draws afresh
     if panel then panel:Hide() end
     if mainFrame.bodyScroll   then mainFrame.bodyScroll:Show()   end
     if mainFrame.frozenScroll then mainFrame.frozenScroll:Show() end
@@ -1238,6 +1264,8 @@ function AT_SI._Bootstrap()
             Groups   = function() return AT_SI.groups end,
             Cells    = function() return AT_SI.cells end,
             Refresh  = function() AT_SI.Refresh() end,
+            SI       = AT_SI,
+            Panel    = function() return panel end,
             StatsText = function() return statsFS and statsFS:GetText() or nil end,
             footerTotals = footerTotals,
             raidBossList = raidBossList, bossNames = bossNames,

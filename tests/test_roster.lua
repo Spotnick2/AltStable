@@ -5057,6 +5057,81 @@ do
     AltStableDB[peer] = { guid = peer, name = "Peer Alt", class = "MAGE", realm = "R", level = 25 }
     eq("a peer's line says it stored something newer (#422)", registered.OnDeserialize(peer, blob), true)
     check("a peer's line is stored", TL.Get(peer) ~= nil)
+
+    -- #435: a pull of 40 talent lines redraws an open Roster once, a closed
+    -- sheet not at all, and once when it shows again.
+    do
+        local R = AltStable.RosterPlugin
+        -- A redraw queued before a WoW.reset() dropped its timer: in game it fires.
+        R._pending = nil
+        pcall(registered.OnActivate, main)
+        local win = R.panel:GetParent()
+        win:Show()
+        local real, n = R.Refresh, 0
+        R.Refresh = function(...) n = n + 1; return real(...) end
+        WoW.flushTimers()
+        n = 0
+        local function pull(from, to)
+            for i = from, to do
+                local g = "Player-435-" .. i
+                AltStableDB[g] = { guid = g, name = "Alt " .. i, class = "MAGE", realm = "R", level = 25 }
+                registered.OnDeserialize(g, blob)
+            end
+        end
+        pull(1, 40)
+        eq("#435: 40 talent lines in one pull: no redraw yet", n, 0)
+        WoW.flushTimers()
+        eq("  one Roster redraw on the next frame", n, 1)
+        win:Hide()
+        n = 0
+        pull(41, 80)
+        WoW.flushTimers()
+        eq("  the sheet closed: none", n, 0)
+        win:Show()
+        eq("  shown again: one", n, 1)
+        WoW.flushTimers()
+        eq("  and none more", n, 1)
+        win:Hide()
+        win:Show()
+        eq("  closed and opened with nothing new: none", n, 1)
+        -- The sheet's refresh finishing a window animation redraws the panel
+        -- itself (OnResize): that draw is the one (Codex review of #469).
+        local realSheet = AltStable.RefreshSheet
+        R._refreshHooked = nil
+        AltStable.RefreshSheet = function() R.Refresh() end
+        pcall(registered.OnActivate, main)
+        WoW.flushTimers()
+        n = 0
+        AltStable.RefreshSheet()
+        WoW.flushTimers()
+        eq("a sheet refresh that redraws on resize: one draw in all", n, 1)
+        AltStable.RefreshSheet = realSheet
+        -- A panel with no size yet retries on the next frame (#170); the sheet
+        -- closed by then, it waits for the show.
+        local realWidth = R.panel.GetWidth
+        R.panel.GetWidth = function() return 0 end
+        n = 0
+        R.Refresh()
+        R.panel.GetWidth = realWidth
+        win:Hide()
+        WoW.flushTimers()
+        eq("a size retry after the sheet closed: no draw", n, 1)
+        win:Show()
+        eq("  one when it shows", n, 2)
+        WoW.flushTimers()
+        R.Refresh = real
+        pcall(registered.OnDeactivate, main)
+        n = 0
+        R.Refresh = function(...) n = n + 1; return real(...) end
+        pull(81, 82)
+        WoW.flushTimers()
+        eq("a closed tab: no redraw", n, 0)
+        R.Refresh = real
+        for i = 1, 82 do
+            AltStableDB["Player-435-" .. i] = nil
+            TL.Forget("Player-435-" .. i)
+        end
+    end
     local older = blob:gsub("|s=(%d+)|", function(s) return "|s=" .. (tonumber(s) - 5) .. "|" end, 1)
     older = older:gsub("2,2,14", "9,9,9", 1)
     registered.OnDeserialize(peer, older)
