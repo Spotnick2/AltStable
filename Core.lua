@@ -3316,6 +3316,57 @@ local function CheckMailAlerts()
 end
 AltStable.CheckMailAlerts = CheckMailAlerts
 
+-- Skills and reputation between full scans (#426), read on the next frame
+-- after their event: every event in one frame (a login burst, a header
+-- refresh) is one read, and a read that is cheap - one pass over the skill
+-- lines, one over the visible factions - runs again for a later change, so
+-- the last one is kept. A read still pending at logout runs there, before the
+-- stamp: the skills then only move known ranks (UpdateSkillRanks), since a
+-- list torn down at logout may be partial. A change touches the record, so
+-- the next delta carries it.
+local LightReads = { pending = {} }
+function LightReads.Run(kind, atLogout)
+    local guid = UnitGUID("player")
+    local char = guid and AltStableDB and AltStableDB[guid]
+    if not char then return end
+    local fn
+    if kind == "skills" then
+        fn = atLogout and AltStable.UpdateSkillRanks or AltStable.ScanSkills
+    else
+        fn = AltStable.UpdateReputations
+    end
+    if not fn then return end
+    local before = {}
+    for k, v in pairs(char) do before[k] = v end
+    fn(char)
+    local changed = false
+    for k, v in pairs(char) do if before[k] ~= v then changed = true; break end end
+    if not changed then
+        for k in pairs(before) do if char[k] == nil then changed = true; break end end
+    end
+    if changed then
+        AltStable.TouchCharacter(guid)
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    end
+end
+function LightReads.Queue(kind)
+    if LightReads.pending[kind] then return end
+    LightReads.pending[kind] = true
+    C_Timer.After(0, function()
+        if not LightReads.pending[kind] then return end   -- the logout ran it
+        LightReads.pending[kind] = nil
+        LightReads.Run(kind)
+    end)
+end
+function LightReads.Flush()
+    for _, kind in ipairs({ "skills", "reps" }) do
+        if LightReads.pending[kind] then
+            LightReads.pending[kind] = nil
+            LightReads.Run(kind, true)
+        end
+    end
+end
+
 local frame = CreateFrame("Frame")
 
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -3336,6 +3387,9 @@ frame:RegisterEvent("PLAYER_XP_UPDATE")
 frame:RegisterEvent("UPDATE_INSTANCE_INFO")   -- saved raid lockouts
 frame:RegisterEvent("MAIL_INBOX_UPDATE")      -- mail with expiry
 frame:RegisterEvent("CHAT_MSG_SYSTEM")    -- detect peer "X has come online" notifications
+frame:RegisterEvent("PLAYER_LEVEL_UP")        -- level, skills, reputation between scans (#426)
+frame:RegisterEvent("SKILL_LINES_CHANGED")
+frame:RegisterEvent("UPDATE_FACTION")
 -- Battle.net presence changes that may mean our own other account came or
 -- went (#58): the library carries the data, these only trigger a rescan.
 -- Registered through pcall: an event this client does not know must not stop
@@ -3834,6 +3888,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     -- SavedVariables and carried by the next sync. Only the stamp - the
     -- rested-XP note below says why nothing is READ here.
     if event == "PLAYER_LOGOUT" then
+        LightReads.Flush()   -- before the stamp: a skill-up or a gain still pending (#426)
         AltStable.TouchCharacter(UnitGUID("player"))
         -- May not leave in time; the silence will do.
         LibSync.SendToPeers(LibSync.MSG_BYE .. "|" .. tostring(UnitGUID("player")))
@@ -4051,6 +4106,21 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
         return
     end
+
+    -- Level, skills and reputation between full scans (#426).
+    if event == "PLAYER_LEVEL_UP" then
+        local guid = UnitGUID("player")
+        local char = guid and AltStableDB[guid]
+        local level = AltStable.API.PlainNumber((...))
+        if char and level and level > 0 and char.level ~= level then
+            char.level = level
+            AltStable.TouchCharacter(guid)
+            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+        end
+        return
+    end
+    if event == "SKILL_LINES_CHANGED" then LightReads.Queue("skills"); return end
+    if event == "UPDATE_FACTION" then LightReads.Queue("reps"); return end
 
     -- Merchant's Favor changed (or any currency: the event's first argument is
     -- the currency, but nil on a full refresh). Read it like money, in place.

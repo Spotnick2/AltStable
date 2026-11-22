@@ -4758,4 +4758,185 @@ do
     eq(decodeAs(ask(99700), "Pull Surname")["Player-RL-O"], nil, "  one at the slack is a delta")
 end
 
+------------------------------------------------------------
+-- Level, skills and reputation between full scans (#426)
+------------------------------------------------------------
+do
+    WoW.reset()
+    -- The reads themselves live in Scanner.lua and Reputations.lua, which
+    -- this file doesn't otherwise load (last block: nothing after it sees them).
+    dofile("Scanner.lua")
+    dofile("Reputations.lua")
+    local guid = UnitGUID("player")
+    local function fresh()
+        AltStableDB = { [guid] = { guid = guid, name = "Lev", class = "MAGE", level = 20, lastUpdate = 1,
+                                   prof1 = "Tailoring", prof1Skill = 146, prof1Max = 150,
+                                   prof2 = "Mining", prof2Skill = 80, prof2Max = 150,
+                                   prof_Tailoring = 146, profmax_Tailoring = 150,
+                                   prof_Mining = 80, profmax_Mining = 150,
+                                   cooking = 0, cookingMax = 0 } }
+        return AltStableDB[guid]
+    end
+    local function lines(tailoring, mining)
+        local t = { { name = "Professions", isHeader = true, rank = 0, maxRank = 0, skillID = 11 } }
+        if tailoring then t[#t + 1] = { name = "Tailoring", isHeader = false, rank = tailoring, maxRank = 150, skillID = 197 } end
+        if mining then t[#t + 1] = { name = "Mining", isHeader = false, rank = mining, maxRank = 150, skillID = 186 } end
+        return t
+    end
+    check(T.frame._events and T.frame._events.PLAYER_LEVEL_UP and T.frame._events.SKILL_LINES_CHANGED
+          and T.frame._events.UPDATE_FACTION, "#426: the core listens for level, skill and reputation changes")
+
+    -- A level-up, no gear change.
+    local c = fresh()
+    onEvent(T.frame, "PLAYER_LEVEL_UP", 21)
+    eq(c.level, 21, "a level-up is stored at once")
+    check(c.lastUpdate > 1, "  and touches the record, so the next delta carries it")
+    c.lastUpdate = 1
+    onEvent(T.frame, "PLAYER_LEVEL_UP", 21)
+    eq(c.lastUpdate, 1, "  the same level again touches nothing")
+
+    -- A skill-up: one read for a burst in one frame, on the next frame.
+    c = fresh()
+    WoW.skillLines = lines(147, 80)
+    local scans, realScan = 0, AltStable.ScanSkills
+    AltStable.ScanSkills = function(...) scans = scans + 1; return realScan(...) end
+    for _ = 1, 5 do onEvent(T.frame, "SKILL_LINES_CHANGED") end
+    eq(c.prof_Tailoring, 146, "a skill-up is read on the next frame, not in the event")
+    WoW.flushTimers()
+    eq(scans, 1, "  five events in one frame are one read")
+    eq(c.prof_Tailoring, 147, "  the new rank is stored")
+    eq(c.prof1Skill, 147, "  in its slot too")
+    check(c.lastUpdate > 1, "  and the record is touched")
+    c.lastUpdate = 1
+    WoW.skillLines = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 147, "an empty skill list changes nothing")
+    eq(c.lastUpdate, 1, "  and touches nothing")
+
+    -- Still pending at logout: read there, before the stamp.
+    WoW.skillLines = lines(148, 80)
+    scans = 0
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 148, "a skill-up pending at logout is stored there")
+    eq(c.prof1Skill, 148, "  in its slot too")
+    WoW.flushTimers()
+    eq(scans, 0, "  by the ranks-only read, and not read again after")
+    -- A partial list at logout only moves known ranks, by name.
+    c = fresh()
+    c.prof_Tailoring, c.prof1Skill = 147, 147
+    WoW.skillLines = lines(nil, 81)
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof1 .. " " .. c.prof1Skill .. ", " .. c.prof2 .. " " .. c.prof2Skill, "Tailoring 147, Mining 81",
+       "  only Mining listed at logout: Tailoring stays in its slot, Mining moves")
+    eq(c.prof_Tailoring .. "/" .. c.prof_Mining, "147/81", "  and the per-profession fields agree")
+    WoW.skillLines = lines(nil, nil)
+    WoW.skillLines[2] = { name = "Alchemy", isHeader = false, rank = 30, maxRank = 75, skillID = 171 }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. "/" .. c.prof_Mining, "147/81", "  only the header listed: nothing changes")
+    eq(c.prof_Alchemy, nil, "  and a skill never recorded is not added at logout")
+    WoW.flushTimers()
+    AltStable.ScanSkills = realScan
+
+    -- Under a collapsed header, a recorded skill is asked for by its ID.
+    c = fresh()
+    WoW.skillLines = {
+        { name = "Professions", isHeader = true, isCollapsed = true, rank = 0, maxRank = 0, skillID = 11 },
+        { name = "Secondary Skills", isHeader = true, isCollapsed = true, rank = 0, maxRank = 0, skillID = 9 },
+    }
+    local byID = { [197] = { rank = 148, maxRank = 225 }, [185] = { rank = 75, maxRank = 150 },
+                   [171] = { rank = 50, maxRank = 75 } }
+    C_SkillInfo.GetSkillLineInfoByID = function(id) return byID[id] end
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 148, "Professions collapsed: a recorded skill's new rank comes by its ID")
+    eq(c.prof1Skill .. "/" .. c.prof1Max, "148/225", "  in its slot too")
+    eq(c.prof_Mining, 80, "  one the ID read doesn't answer keeps its rank")
+    eq(c.cooking, 0, "  an unlearned secondary (0) is not added")
+    eq(c.prof_Alchemy, nil, "  nor a profession never recorded")
+    check(c.lastUpdate > 1, "  and the record is touched")
+    c.lastUpdate = 1
+    byID = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 148, "  no answer by ID: the saved rank stays")
+    eq(c.lastUpdate, 1, "  and nothing is touched")
+    byID = { [197] = { rank = 0, maxRank = 0 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 148, "  a rank of 0 by ID is no answer either")
+    -- Collapsed AND pending at logout (Codex review of #459): the logout's
+    -- ranks-only read asks by ID too.
+    byID = { [197] = { rank = 149, maxRank = 225 }, [185] = { rank = 80, maxRank = 150 } }
+    c.lastUpdate = 1
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. " " .. c.prof1Skill .. "/" .. c.prof1Max, "149 149/225",
+       "collapsed and pending at logout: the new rank comes by its ID, in its slot too")
+    eq(c.prof_Mining, 80, "  one the ID read doesn't answer keeps its rank")
+    eq(c.cooking, 0, "  an unlearned secondary is not added")
+    check(c.lastUpdate > 1, "  and the record is stamped with it")
+    WoW.flushTimers()
+    WoW.skillLines = {}
+    byID = { [197] = { rank = 150, maxRank = 225 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. " " .. c.prof1Skill, "150 150", "  a list already torn down at logout: asked by ID as well")
+    WoW.skillLines = lines(151, 80)
+    byID = { [197] = { rank = 140, maxRank = 225 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 151, "  a skill the list shows is not asked by ID: the list wins")
+    WoW.skillLines = {}
+    byID = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 151, "  no list and no answer: nothing moves")
+    WoW.flushTimers()
+    C_SkillInfo.GetSkillLineInfoByID = nil
+
+    -- Reputation: the list as it is, never toggled; a recorded faction hidden
+    -- under a collapsed header by its ID; a never-met one stays absent.
+    c = fresh()
+    local SW, IF, DN = AltStable.RepField(72), AltStable.RepField(47), AltStable.RepField(69)
+    c[IF] = 4
+    WoW.factions = {
+        { name = "Alliance", isHeader = true, isCollapsed = false, factionID = 0 },
+        { name = "Stormwind", isHeader = false, factionID = 72, reaction = 5 },
+        { name = "Other", isHeader = true, isCollapsed = true, factionID = 0 },
+        { name = "Ironforge", isHeader = false, factionID = 47, reaction = 4 },
+    }
+    WoW.factionByID = { [47] = { factionID = 47, reaction = 6 }, [69] = { factionID = 69, reaction = 4 } }
+    local expands, realExpand = 0, C_Reputation.ExpandAllFactionHeaders
+    C_Reputation.ExpandAllFactionHeaders = function(...) expands = expands + 1; return realExpand(...) end
+    local reads, realReps = 0, AltStable.UpdateReputations
+    AltStable.UpdateReputations = function(...) reads = reads + 1; return realReps(...) end
+    for _ = 1, 3 do onEvent(T.frame, "UPDATE_FACTION") end
+    WoW.flushTimers()
+    eq(reads, 1, "reputation: three events in one frame are one read")
+    eq(c[SW], 5, "  a visible faction never recorded is stored (met)")
+    eq(c[IF], 6, "  a recorded one under a collapsed header comes by its ID")
+    eq(c[DN], nil, "  a faction never met stays absent")
+    eq(expands, 0, "  no header is expanded")
+    check(WoW.factions[3].isCollapsed, "  and the collapsed one stays collapsed")
+    check(c.lastUpdate > 1, "  and the record is touched")
+    WoW.factions[2].reaction = 6
+    onEvent(T.frame, "UPDATE_FACTION")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c[SW], 6, "a gain pending at logout is stored there")
+    c.lastUpdate = 1
+    WoW.factions = {}
+    WoW.factionByID[47] = { factionID = 47, reaction = 7 }
+    onEvent(T.frame, "UPDATE_FACTION")
+    WoW.flushTimers()
+    eq(c[SW] .. "/" .. c[IF], "6/6", "an empty faction list erases nothing")
+    eq(c.lastUpdate, 1, "  and touches nothing")
+    C_Reputation.ExpandAllFactionHeaders = realExpand
+    AltStable.UpdateReputations = realReps
+    WoW.reset()
+end
+
 WoW.finish("test_comm", testsRun - failures, failures)
