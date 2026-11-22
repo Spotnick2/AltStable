@@ -587,6 +587,8 @@ function Methods.SetWidth(self, w) self._GetWidth = w; return self end
 function Methods.SetHeight(self, h) self._GetHeight = h; return self end
 function Methods.SetSize(self, w, h) self._GetWidth, self._GetHeight = w, h; return self end
 function Methods.SetClipsChildren(self, v) self._clipsChildren = v and true or false; return self end
+-- EditBox:SetHighlightColor (SimpleEditBoxAPI); the client has no getter.
+function Methods.SetHighlightColor(self, r, g, b, a) self._highlightColor = { r, g, b, a }; return self end
 function Methods.DoesClipChildren(self) return self._clipsChildren == true end
 -- The highlight is a texture that exists once it is set, as on the client.
 function Methods.SetHighlightTexture(self, path, blend)
