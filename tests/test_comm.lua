@@ -1609,6 +1609,21 @@ inbox = {}
 T.ScanMail()
 check(AltStableDB[mguid].mail_count == nil and AltStableDB[mguid].mail_expiry == nil,
       "mail: emptying the mailbox clears the mail_ summary")
+-- And with it the "visit the mailbox again" line (#424): two mails, the
+-- soonest expired, then a visit that finds the box empty.
+do
+    local savedCfg = AltStableConfig
+    AltStableConfig = { mailAlertsEnabled = true, peerWatermarks = {} }
+    AltStableDB[mguid].mail_count, AltStableDB[mguid].mail_expiry = 2, WoW.now - 100
+    WoW.chatOut = {}
+    T.CheckMailAlerts()
+    check(chatHas("Mailer") and chatHas("visit the mailbox again"), "mail (#424): an expired two-mail summary says visit again")
+    T.ScanMail()
+    WoW.chatOut = {}
+    T.CheckMailAlerts()
+    check(not chatHas("Mailer"), "  a visit that finds the box empty ends it")
+    AltStableConfig = savedCfg
+end
 -- So does a mailbox of only mail with nothing to lose, or no days left.
 inbox = { { daysLeft = 5, itemCount = 2 } }
 T.ScanMail()
@@ -1675,10 +1690,33 @@ check(chatHas("Expiro"), "mail alerts: an alt within the window is listed")
 check(not chatHas("Patient"), "mail alerts: an alt outside the window is not listed")
 check(not chatHas("Toolate"), "mail alerts: already-expired mail is not listed")
 
--- Same clock as above, so the only difference is the toggle. Without the pin,
--- every seeded expiry fell outside the window and this passed with the toggle
--- check deleted.
-WoW.reset(); WoW.now = 100000
+-- Two mails, the soonest past its deadline, the mailbox not visited since
+-- (#424): the other may still be waiting, so the alt stays listed - far past
+-- the first deadline too (player mail can last 31 days) - until a visit.
+WoW.reset(); WoW.now = 100000 + 40 * 86400
+local revGuid = UnitGUID("player")
+AltStableDB = {
+    [revGuid]  = { guid = revGuid, name = "Twomail", class = "MAGE", mail_expiry = 100000 + 86400, mail_count = 2 },
+    ["g-soon"] = { guid = "g-soon", name = "Expiro", class = "MAGE", mail_expiry = WoW.now + 86400, mail_count = 1 },
+    ["g-past"] = { guid = "g-past", name = "Toolate", class = "ROGUE", mail_expiry = 100000 - 100, mail_count = 1 },
+}
+AltStableConfig = { mailAlertsEnabled = true }
+T.CheckMailAlerts()
+check(chatHas("Twomail") and chatHas("visit the mailbox again"),
+      "mail alerts (#424): two mails, the soonest expired, no visit since: listed as visit again")
+check(not chatHas("Toolate"), "  one mail past its deadline: still not listed")
+local revLine, soonLine
+for i, l in ipairs(WoW.chatOut) do
+    if l:find("Twomail", 1, true) then revLine = i end
+    if l:find("Expiro", 1, true) then soonLine = i end
+end
+check(revLine and soonLine and soonLine < revLine, "  after the dated ones")
+
+-- Same clock and fixture as above, so the only difference is the toggle.
+-- Without the pin, every seeded expiry fell outside the window and this passed
+-- with the toggle check deleted (again with the #424 fixture's day 40: Codex
+-- review of #453).
+WoW.reset(); WoW.now = 100000 + 40 * 86400
 AltStableConfig = { mailAlertsEnabled = false }
 T.CheckMailAlerts()
 check(not chatHas("Mail expiring soon"), "mail alerts: disabling the toggle suppresses the warning")

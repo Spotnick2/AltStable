@@ -3281,22 +3281,31 @@ AltStable.ScanMail = ScanMail
 -- Login notification: one line per alt whose mail expires within
 -- MAIL_ALERT_DAYS, soonest first. Reads persisted/synced data (no mailbox
 -- needed) and is gated by AltStableConfig.mailAlertsEnabled.
+--
+-- Only the soonest deadline is kept (#424). Once it has passed, an alt that
+-- had more than one such mail may still have some waiting, due any time up to
+-- 31 days after the visit (player mail), so it stays listed, after the dated
+-- ones, as "visit the mailbox again" - until a visit rescans the box, which
+-- replaces or clears the summary. One mail past its deadline is gone.
 local function CheckMailAlerts()
     if not AltStableConfig or AltStableConfig.mailAlertsEnabled == false then return end
     if not AltStableDB then return end
 
     local now = time()
     local threshold = now + MAIL_ALERT_DAYS * 86400
-    local alerts = {}
+    local alerts, revisit = {}, {}
     for _, c in pairs(AltStableDB) do
         local exp = tonumber(c.mail_expiry)
+        local count = tonumber(c.mail_count) or 0
         if exp and exp > now and exp <= threshold then
-            alerts[#alerts + 1] = { name = c.name or "?", class = c.class,
-                                    exp = exp, count = tonumber(c.mail_count) or 0 }
+            alerts[#alerts + 1] = { name = c.name or "?", class = c.class, exp = exp, count = count }
+        elseif exp and exp <= now and count > 1 then
+            revisit[#revisit + 1] = { name = c.name or "?", class = c.class, count = count }
         end
     end
-    if #alerts == 0 then return end
+    if #alerts == 0 and #revisit == 0 then return end
     table.sort(alerts, function(a, b) return a.exp < b.exp end)
+    table.sort(revisit, function(a, b) return a.name < b.name end)
 
     Print("|cffffcc00Mail expiring soon:|r")
     for _, a in ipairs(alerts) do
@@ -3312,6 +3321,11 @@ local function CheckMailAlerts()
         local color = (AltStable.ClassColor and AltStable.ClassColor(a.class)) or "|cffffffff"
         Print(string.format("  %s%s|r — %d mail, expires in %s",
             color, a.name, a.count, when))
+    end
+    for _, a in ipairs(revisit) do
+        local color = (AltStable.ClassColor and AltStable.ClassColor(a.class)) or "|cffffffff"
+        Print(string.format("  %s%s|r — %d mail, the soonest has expired: visit the mailbox again",
+            color, a.name, a.count))
     end
 end
 AltStable.CheckMailAlerts = CheckMailAlerts
