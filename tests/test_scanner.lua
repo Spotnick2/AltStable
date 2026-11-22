@@ -2060,6 +2060,28 @@ do
           table.concat(lines, "|"):find("Bank: not visited with this version yet", 1, true) ~= nil)
     AltStable.ItemMapsFor = heldMaps
 
+    -- A profession's cooldowns show on its column's tooltip also when the core
+    -- has no rank for it (#460): the Professions plugin can know a leatherworker,
+    -- and its Salt Shaker, before the core's scan does.
+    do
+        local lcol
+        for _, x in ipairs(AltStable.Columns) do
+            if x.type == "profSkill" and x.label == "Leatherworking" then lcol = x end
+        end
+        local lw = { guid = "Player-LW-1", name = "Tanner", class = "ROGUE",
+                     ["cd_Leatherworking@Salt Shaker"] = time() + 2 * 86400 + 3 * 3600 }
+        local lrow = AltStable.CreateRow(nil, 20, { lcol })
+        AltStable.RenderRow(lrow, lw, 1, { lcol })
+        local ltip = lrow.cellTips[1]
+        local text = table.concat(ltip and ltip.cdLines or {}, "|")
+        check("#460: the Leatherworking tooltip lists the Shaker with no rank recorded",
+              text:find("Salt Shaker: 2d 3h", 1, true) ~= nil, text)
+        lw["cd_Leatherworking@Salt Shaker"] = time() - 60
+        AltStable.RenderRow(lrow, lw, 1, { lcol })
+        text = table.concat(ltip and ltip.cdLines or {}, "|")
+        check("  and Ready! once it is over", text:find("Salt Shaker: Ready!", 1, true) ~= nil, text)
+    end
+
     -- Live: after each batch of bag updates, and the bank while it is open.
     local frame = AltStable._test.frame
     local onEvent = frame:GetScript("OnEvent")

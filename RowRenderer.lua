@@ -1139,9 +1139,11 @@ function AltStable.RenderRow(row, char, index, columns)
                 -- Append any craft cooldowns for this profession. The Professions
                 -- plugin writes them as cd_<Profession>@<recipe name> on the
                 -- record, so we match this column's profession and list whatever
-                -- it holds - no allowlist.
+                -- it holds - no allowlist. Also with no rank recorded here: the
+                -- plugin can know a leatherworker (and its Salt Shaker, #460)
+                -- before the core's scan has the skill.
                 tip.cdLines = nil
-                if col.label and skill and skill > 0 then
+                if col.label then
                     local prefix = "cd_" .. col.label .. "@"
                     local plen   = #prefix
                     local cdLines = {}

@@ -1788,6 +1788,9 @@ local function ProfessionsReset()
     WoW.unknownSpells = {}   -- [id] = true: GetSpellName returns nil, as for an ID the client lacks
     WoW.spellRequests = {}   -- RequestLoadSpellData calls, in order
     WoW.recipeLines = nil
+    -- An item's cooldown (#460), on the GetTime() clock: [itemID] = { start, duration }.
+    -- None: start 0, duration 0, as the three readers below answer for an idle item.
+    WoW.itemCooldowns = {}
 end
 ProfessionsReset()
 local resetBeforeProfessions = WoW.reset
@@ -1896,6 +1899,27 @@ C_Spell = {
     GetSpellTexture = function() return 136235, 136235 end,
     RequestLoadSpellData = function(id) table.insert(WoW.spellRequests, id) end,
 }
+
+-- An item's cooldown by its ID (#460): the three readers the 71037 dump
+-- declares, each in its own shape. C_Container's flag is a number, C_Item's a
+-- boolean, C_Spell's a SpellCooldownInfo struct.
+local function itemCooldown(id)
+    local cd = WoW.itemCooldowns and WoW.itemCooldowns[id]
+    if not cd then return 0, 0 end
+    return cd[1], cd[2]
+end
+C_Container.GetItemCooldown = function(id)
+    local s, d = itemCooldown(id)
+    return s, d, 1
+end
+C_Item.GetItemCooldown = function(id)
+    local s, d = itemCooldown(id)
+    return s, d, true
+end
+C_Spell.GetItemCooldown = function(id)
+    local s, d = itemCooldown(id)
+    return { startTime = s, duration = d, isEnabled = true, isActive = s > 0 and d > 0, modRate = 1 }
+end
 
 ------------------------------------------------------------
 -- Pets (#75), in the shape MEASURED on 1.60.1.70124 (Tools/AltStableProbe/Pets.lua)

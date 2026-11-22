@@ -340,6 +340,21 @@ local function CooldownLabel(name)
     return label ~= "" and label or nil
 end
 
+-- Cooldowns that belong to an ITEM, not a recipe (#460): the Salt Shaker turns
+-- Deeprock Salt into Refined Deeprock Salt every 2 days 23 hours, and is used
+-- from the bags, so the profession window never lists it. Filed under the
+-- profession that can use it, so the sheet, the sync and the toast read it like
+-- any cd_<Profession>@<label> field.
+local ITEM_COOLDOWNS = {
+    { item = 15846, spell = 19566, prof = "Leatherworking", line = 165, label = "Salt Shaker" },
+}
+local ITEM_LABELS, ITEM_SPELLS = {}, {}   -- [prof][label] = true; [spellID] = true
+for _, ic in ipairs(ITEM_COOLDOWNS) do
+    ITEM_LABELS[ic.prof] = ITEM_LABELS[ic.prof] or {}
+    ITEM_LABELS[ic.prof][ic.label] = true
+    ITEM_SPELLS[ic.spell] = true
+end
+
 -- cds = { [label] = seconds remaining } for the learned recipes whose cooldown
 -- is RUNNING; knownLabels = every label a learned recipe files under. A ready
 -- cooldown may come back as nil or as 0 (Retail returns nil; Forever is not
@@ -362,10 +377,15 @@ local function ApplyCooldowns(char, label, cds, knownLabels)
             end
         end
     end
+    local items = ITEM_LABELS[label]
     for key, v in pairs(char) do
         if type(key) == "string" and key:sub(1, #prefix) == prefix then
             local name = key:sub(#prefix + 1)
-            if not knownLabels[name] then
+            if items and items[name] then
+                -- An item's cooldown (#460): no recipe files under it, and the
+                -- window can't say whether it runs. Left whole: not removed,
+                -- not set ready. ReadItemCooldowns keeps it.
+            elseif not knownLabels[name] then
                 char[key] = nil; changed = true
             elseif not (cds[name] and cds[name] > 0) and (tonumber(v) or 0) > now then
                 char[key] = now; changed = true    -- ready again: a transition, never jitter
@@ -382,6 +402,120 @@ local function ClearCooldowns(char, label)
         if type(key) == "string" and key:sub(1, #prefix) == prefix then char[key] = nil; changed = true end
     end
     return changed
+end
+
+------------------------------------------------------------
+-- Item cooldowns (#460): the Salt Shaker
+------------------------------------------------------------
+
+-- Who can use it, by Owners' rule: this plugin's own snapshot decides once it
+-- has one (a confirmed loss must not bring the field back from a stale core
+-- rank); the core's skill field only stands in before that.
+local function OwnsLine(guid, char, line)
+    local e = AltStableProfessionsDB and AltStableProfessionsDB[guid]
+    if type(e) == "table" and e.profs and e.profs[line] then return true end
+    if type(e) == "table" and e.stamp then return false end
+    return CoreSkill(char, line) ~= nil
+end
+
+local function PlainTime(v)
+    local n = AltStable.API.PlainNumber(v)
+    return (n and n >= 0) and n or nil
+end
+
+-- The three readers the 71037 dump declares, in order; unmeasured on Forever
+-- which of them answers for an item, so the first that gives two plain
+-- numbers wins. Start is on the GetTime() clock; 0, 0 is "not running".
+local ITEM_CD_READERS = {
+    function(id)
+        local c = rawget(_G, "C_Container")
+        local f = type(c) == "table" and c.GetItemCooldown
+        if type(f) == "function" then return f(id) end
+    end,
+    function(id)
+        local c = rawget(_G, "C_Item")
+        local f = type(c) == "table" and c.GetItemCooldown
+        if type(f) == "function" then return f(id) end
+    end,
+    function(id)
+        local c = rawget(_G, "C_Spell")
+        local f = type(c) == "table" and c.GetItemCooldown
+        local info = type(f) == "function" and f(id)
+        if type(info) == "table" then return info.startTime, info.duration end
+    end,
+}
+
+local function ItemCooldown(id)
+    for _, read in ipairs(ITEM_CD_READERS) do
+        local ok, s, d = pcall(read, id)
+        if ok then
+            s, d = PlainTime(s), PlainTime(d)
+            if s and d then return s, d end
+        end
+    end
+    return nil
+end
+
+-- The played character's item cooldowns, on the recipe cooldowns' rules (a
+-- running one is an absolute expiry, a shift under 60 s is not a change, a
+-- ready one keeps a past expiry). Additionally:
+--   * first seen and not running: written as now, so the grid says Ready and
+--     the login toast can say it once;
+--   * an expiry already past is kept as it is (the toast's de-duplication keys
+--     on it);
+--   * the item not in the bags (sold, banked): a running cooldown stays, one
+--     that is over goes, so nothing lists a Shaker that is gone.
+-- A read that fails, a secret, or a count that can't be read changes nothing.
+local function ReadItemCooldowns()
+    local guid = UnitGUID and UnitGUID("player")
+    local char = guid and AltStableDB and AltStableDB[guid]
+    if type(char) ~= "table" then return false end
+    local now, changed = time(), false
+    for _, ic in ipairs(ITEM_COOLDOWNS) do
+        if OwnsLine(guid, char, ic.line) then
+            local key = "cd_" .. ic.prof .. "@" .. ic.label
+            local held = tonumber(char[key])
+            local okc, count = pcall(AltStable.API.GetItemCount, ic.item)
+            count = okc and AltStable.API.PlainNumber(count) or nil
+            if count and count > 0 then
+                local s, d = ItemCooldown(ic.item)
+                if s then
+                    local left = (s > 0 and d > 0) and (s + d - (GetTime() or 0)) or 0
+                    if left > 0 then
+                        local expiry = math.floor(now + left + 0.5)
+                        if not held or held <= now or math.abs(held - expiry) > 60 then
+                            char[key] = expiry; changed = true
+                        end
+                    elseif not held or held > now then
+                        char[key] = now; changed = true
+                    end
+                end
+            elseif count and held and held <= now then
+                char[key] = nil; changed = true
+            end
+        end
+    end
+    if changed then
+        Changed(guid)
+        -- The sheet's Leatherworking tooltip is built when the row renders, and
+        -- this read comes a frame after the event, so nothing else would
+        -- redraw it: the Shaker just used showed "Ready!" until some unrelated
+        -- redraw (Codex review of #464).
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    end
+    return changed
+end
+
+-- Bag cooldown events and the Shaker's own cast come in bursts: one read on
+-- the next frame for all of them.
+local itemReadPending = false
+local function QueueItemRead()
+    if itemReadPending then return end
+    itemReadPending = true
+    C_Timer.After(0, function()
+        itemReadPending = false
+        ReadItemCooldowns()
+    end)
 end
 
 ------------------------------------------------------------
@@ -2371,6 +2505,7 @@ local function BootstrapPlugin()
             OnShow = OnShow, OnClose = OnClose, OnChanging = OnChanging, OnRecipeLearned = OnRecipeLearned,
             RefreshOwnership = RefreshOwnership, ReadOwned = ReadOwned, ApplyCooldowns = ApplyCooldowns,
             CooldownLabel = CooldownLabel,
+            ReadItemCooldowns = ReadItemCooldowns, QueueItemRead = QueueItemRead, ClearCooldowns = ClearCooldowns,
             Owners = Owners, AllOwners = AllOwners, Catalogue = Catalogue, BuildRows = BuildRows, Cards = Cards,
             MeetsSkill = MeetsSkill, DifficultyColor = DifficultyColor, HasNonTrainerSource = HasNonTrainerSource,
             SourceText = SourceText,
@@ -2409,12 +2544,13 @@ local function BootstrapPlugin()
         AltStable.OnSyncScopeChanged()
         AltStable.SetConfigValue("wishDeltaRepair", true)
     end
-    C_Timer.After(4, RefreshOwnership)
+    -- The Shaker's cooldown (#460) after ownership: who is a leatherworker.
+    C_Timer.After(4, function() RefreshOwnership(); ReadItemCooldowns() end)
 end
 
 local frame = CreateFrame("Frame")
 local ownershipTimer
-frame:SetScript("OnEvent", function(_, event, arg1, arg2)
+frame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     if event == "PLAYER_LOGIN" then
         C_Timer.After(1, BootstrapPlugin)
     elseif event == "TRADE_SKILL_SHOW" then
@@ -2434,6 +2570,11 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         -- A craft with the window open may have started a cooldown.
         if arg1 == "player" and scan.open then ScheduleScan() end
+        -- The Salt Shaker used (#460): its spell is the third argument.
+        if arg1 == "player" and ITEM_SPELLS[tonumber(arg3) or 0] then QueueItemRead() end
+    elseif event == "BAG_UPDATE_COOLDOWN" or event == "BAG_UPDATE_DELAYED" then
+        -- A cooldown started or ended, or the Shaker moved in or out (#460).
+        QueueItemRead()
     elseif event == "SPELL_DATA_LOAD_RESULT" then
         OnSpellData(arg1, arg2)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
@@ -2447,7 +2588,8 @@ end)
 for _, ev in ipairs({ "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE",
                       "TRADE_SKILL_DATA_SOURCE_CHANGED", "TRADE_SKILL_DATA_SOURCE_CHANGING",
                       "TRADE_SKILL_CLOSE", "NEW_RECIPE_LEARNED", "SKILL_LINES_CHANGED",
-                      "SPELL_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED" }) do
+                      "SPELL_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED",
+                      "BAG_UPDATE_COOLDOWN", "BAG_UPDATE_DELAYED" }) do
     frame:RegisterEvent(ev)
 end
 -- The player's casts only: registered for every unit, each party, raid and
