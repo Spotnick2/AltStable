@@ -1712,10 +1712,11 @@ for i, l in ipairs(WoW.chatOut) do
 end
 check(revLine and soonLine and soonLine < revLine, "  after the dated ones")
 
--- Same clock as above, so the only difference is the toggle. Without the pin,
--- every seeded expiry fell outside the window and this passed with the toggle
--- check deleted.
-WoW.reset(); WoW.now = 100000
+-- Same clock and fixture as above, so the only difference is the toggle.
+-- Without the pin, every seeded expiry fell outside the window and this passed
+-- with the toggle check deleted (again with the #424 fixture's day 40: Codex
+-- review of #453).
+WoW.reset(); WoW.now = 100000 + 40 * 86400
 AltStableConfig = { mailAlertsEnabled = false }
 T.CheckMailAlerts()
 check(not chatHas("Mail expiring soon"), "mail alerts: disabling the toggle suppresses the warning")
