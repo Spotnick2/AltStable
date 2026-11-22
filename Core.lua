@@ -169,6 +169,46 @@ local autoRetryCounts = {}
 local lastRequestedAt = {}
 local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 
+-- A plugin's data dropped while the plugin was not loaded (#449): switched off
+-- through WoW's AddOns list, a reply still carried its blob, nobody took it,
+-- and the reply still advanced our watermark past it. The saved mark,
+-- AltStableConfig.missedPluginPulls = { [pluginId] = { [guid] = { peer = AuthKey,
+-- short = PeerShort, tries = n } } }, says whose data, from whom. A new miss
+-- for the same character replaces its entry (tries back to 0).
+--
+-- Recovery is best-effort and never touches ordinary sync: no watermark is
+-- lowered, deleted or held, and the login pull and every later request use the
+-- saved watermark as before (Codex reviews of #465: a full reply over the
+-- library's 32 KB never comes, and must not stall the deltas that fit). Once a
+-- session, ~10 s after the first marked plugin registers (after the login
+-- pull), each current sync target with entries of a loaded plugin gets ONE
+-- extra request with watermark 0, outside the throttle (neither checked nor
+-- written, so a failed one never suppresses an ordinary pull). Leaving, it
+-- counts a try on those entries. An entry clears only when a loaded plugin
+-- receives a non-empty blob for that character from the entry's own peer (a
+-- blob from another peer can be older). It is dropped after MAX_RECOVERY_TRIES
+-- requests left without it clearing (that peer no longer has that data: its
+-- plugin is off there, say) at the next registration, when the character is
+-- forgotten, and at registration when the core has no named record of it.
+-- A peer that becomes reachable later in the session - found on Battle.net,
+-- or come online - gets its own recovery request ~10 s after its ordinary
+-- pull (Codex review of #465). At most one per peer per session
+-- (recoveryDone, by AuthKey; recoveryPlanned keeps one timer per peer).
+-- A request that could not reach the peer doesn't count (Codex review of
+-- #465): the startup pass can ask a whitelisted peer that is still offline. A
+-- refusal at send, or the unreachable signal within UNREACHABLE_ECHO of it
+-- leaving, marks the peer "unreachable" and gives back the try it counted
+-- (recoveryCounted: what each request that left counted). Such a peer gets
+-- its recovery once it shows it is reachable - come online, or found on
+-- Battle.net - not from another startup pass.
+-- Declared: a marked peer that isn't a sync target when its turn comes gets no
+-- recovery request - its entries wait for it to be one, bounded by the drop
+-- rules.
+local recoveryDone, recoveryPlanned, recoveryCounted = {}, {}, {}
+local ScheduleRecoveryFor   -- defined with RecoverMissedPulls; called from discovery
+local MAX_RECOVERY_TRIES = 3
+local RECOVERY_DELAY = 10
+
 -- Sync-scope epoch. Watermarks belong to the REQUESTER: a peer asks us for
 -- changes since its own watermark for us. So when a setting widens WHICH
 -- characters we send (sendAllAccounts, accountNumber), the newly eligible ones
@@ -949,17 +989,75 @@ end
 -- Returns whether any plugin stored something newer: its OnDeserialize returns
 -- true only for a strictly newer stamp of its own (#422). Every plugin still
 -- gets its blob after the first one says so.
-local function DispatchPluginPayloads(c, independentOnly)
+-- The missed-pull entries (#449, see recoveryDone), copied on write.
+local function MissedPulls()
+    local all = AltStableConfig and AltStableConfig.missedPluginPulls
+    return type(all) == "table" and all or {}
+end
+local function SetMissedPull(id, guid, value)
+    local copy = {}
+    for pid, entries in pairs(MissedPulls()) do
+        local kept = {}
+        for g, e in pairs(type(entries) == "table" and entries or {}) do kept[g] = e end
+        copy[pid] = kept
+    end
+    copy[id] = copy[id] or {}
+    copy[id][guid] = value
+    if not next(copy[id]) then copy[id] = nil end
+    AltStable.SetConfigValue("missedPluginPulls", next(copy) and copy or nil)
+end
+
+-- A character forgotten (#449): its entries go from every plugin's marks,
+-- loaded or not. Called by MarkCharacterForgotten, so the player's forget and
+-- a received one alike.
+function AltStable.DropMissedPulls(guid)
+    if not guid then return end
+    for id, entries in pairs(MissedPulls()) do
+        if type(entries) == "table" and entries[guid] then SetMissedPull(id, guid, nil) end
+    end
+end
+
+-- A blob for one of our own plugins that is not loaded (#449): remember whose
+-- and from whom. An id that is not ours - a newer build's plugin - is ignored,
+-- so the marks cannot grow without bound.
+local function NoteMissedPull(id, guid, sender)
+    local key = AuthKey(sender)
+    if not key or not guid then return end
+    local ours = false
+    for _, p in ipairs(AltStable.LOD_PLUGINS or {}) do
+        if p.key == id then ours = true; break end
+    end
+    if not ours then return end
+    local entries = MissedPulls()[id]
+    local e = type(entries) == "table" and entries[guid]
+    if type(e) == "table" and e.peer == key and e.tries == 0 then return end
+    SetMissedPull(id, guid, { peer = key, short = PeerShort(sender), tries = 0 })
+end
+
+local function DispatchPluginPayloads(c, independentOnly, sender)
     local payloads = c and c._pluginPayloads
     c._pluginPayloads = nil
-    if not payloads or not AltStable.plugins then return false end
-    local advanced = false
-    for _, plugin in ipairs(AltStable.plugins) do
+    if not payloads then return false end
+    local advanced, registered = false, {}
+    local key = AuthKey(sender)
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        registered[plugin.id] = true
         local blob = payloads[plugin.id]
         if blob and plugin.OnDeserialize and (not independentOnly or plugin.independentStamp) then
             local ok, newer = pcall(plugin.OnDeserialize, c.guid, blob)
             if ok and newer == true then advanced = true end
+            -- This character's data, from the peer it was missed from (#449):
+            -- its entry is spent. Another character's stays.
+            local entries = MissedPulls()[plugin.id]
+            local e = type(entries) == "table" and entries[c.guid]
+            if ok and blob ~= "" and key and type(e) == "table" and e.peer == key then
+                SetMissedPull(plugin.id, c.guid, nil)
+            end
         end
+    end
+    -- Both paths (#449): a stale core record can carry a plugin's own newer data.
+    for id, blob in pairs(payloads) do
+        if not registered[id] and blob ~= "" then NoteMissedPull(id, c.guid, sender) end
     end
     return advanced
 end
@@ -1161,6 +1259,24 @@ local function AdvancePeerWatermark(name, ts, peerNow)
     end
 end
 AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
+
+-- The entries missed from this peer key that a loaded plugin (one that
+-- receives data) waits for (#449, see recoveryDone), as { id, guid }
+-- pairs. A plugin still not loaded waits on its own.
+local function PendingEntries(key)
+    local out = {}
+    if not key then return out end
+    local all = MissedPulls()
+    for _, p in ipairs(AltStable.plugins or {}) do
+        local entries = all[p.id]
+        if p.OnDeserialize and type(entries) == "table" then
+            for guid, e in pairs(entries) do
+                if type(e) == "table" and e.peer == key then out[#out + 1] = { p.id, guid } end
+            end
+        end
+    end
+    return out
+end
 
 -- Forget a character: the record goes, and a tombstone stops peers putting it
 -- back. Returns false with a reason the caller can print.
@@ -1614,7 +1730,7 @@ end
 -- Declared: an equal-stamp correction (a second bag move or a gear fix in the
 -- origin's same second) that reaches us late through a relay is merged but not
 -- marked; it travels on with the record's next change, or a full pull.
-local function MergeIncoming(c)
+local function MergeIncoming(c, sender)
     local held = AltStableDB[c.guid]
     local existing = held or {}
     local advanced
@@ -1623,7 +1739,7 @@ local function MergeIncoming(c)
         local priorStamp = tonumber(existing.lastUpdate) or 0
         local priorName = existing.name
         local gearBefore = Provenance.GearSig(existing)
-        advanced = DispatchPluginPayloads(c)
+        advanced = DispatchPluginPayloads(c, false, sender)
         ClearSyncedStateFields(existing)
         for k,v in pairs(c) do
             existing[k] = v
@@ -1635,7 +1751,7 @@ local function MergeIncoming(c)
         -- still waiting on an item is sent with no lastUpdate at all.
         if not held or (tonumber(existing.lastUpdate) or 0) > priorStamp then advanced = true end
     else
-        advanced = DispatchPluginPayloads(c, true)   -- see DispatchPluginPayloads
+        advanced = DispatchPluginPayloads(c, true, sender)   -- see DispatchPluginPayloads
     end
     if advanced then AltStable.MarkChanged(c.guid) end
     return merged
@@ -1704,7 +1820,7 @@ local function DeserializeFullDB(payload, sender)
                 if not ValidateIncoming(c, sender) then
                     rejected = rejected + 1
                 else
-                    MergeIncoming(c)
+                    MergeIncoming(c, sender)
                 end
 
             end
@@ -1917,10 +2033,27 @@ local function SayUnreachable(name, key, transport)
     end
 end
 
+-- The recovery request that just left (#449) did not reach this peer: it
+-- stays eligible this session, and its tries are given back. A signal well
+-- after it left is about a later message, not the request.
+local function RecoveryUnreachable(key)
+    local c = key and recoveryCounted[key]
+    if not c or (time() - c.at) > UNREACHABLE_ECHO then return end
+    recoveryDone[key], recoveryCounted[key] = "unreachable", nil
+    for _, p in ipairs(c.entries) do
+        local entries = MissedPulls()[p[1]]
+        local e = type(entries) == "table" and entries[p[2]]
+        if type(e) == "table" and e.peer == key and (tonumber(e.tries) or 0) > 0 then
+            SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short, tries = tonumber(e.tries) - 1 })
+        end
+    end
+end
+
 -- Unreachable, from either signal - the chat line or TargetOffline at send
--- time: the current manual attempt must not push, and a sync the player typed
--- is told once.
+-- time: the current manual attempt must not push, a sync the player typed
+-- is told once, and a recovery request just sent doesn't count (#449).
 function NoteUnreachable(name, key, transport)
+    RecoveryUnreachable(key)
     if syncAttempt[key] then syncAttempt[key].unreachable = true end
     if manualSyncAt[key] and (time() - manualSyncAt[key]) <= 30 then
         SayUnreachable(name, key, transport)
@@ -2539,7 +2672,10 @@ local function ClearSyncWatch(peer)
     syncWatch[PeerShort(peer)] = nil
 end
 
-function RequestCharacters(channel, target, force, onSent)
+-- wmOverride (#449): the watermark to ask with instead of the saved one - the
+-- missed-pull recovery's 0. Such a request is outside the throttle: neither
+-- checked nor recorded, so it never suppresses an ordinary pull.
+function RequestCharacters(channel, target, force, onSent, wmOverride)
 
     channel = channel or "GUILD"
 
@@ -2549,20 +2685,20 @@ function RequestCharacters(channel, target, force, onSent)
         -- when the request goes out.
         if SyncAuthFor(target) == AUTH_NEVER then return false end
         local now = time()
-        if not force then
+        if not force and not wmOverride then
             local last = lastRequestedAt[AuthKey(target) or target]
             if last and (now - last) < REQUEST_THROTTLE then
                 return false
             end
         end
         -- By peer key: "Name" and "Name-Realm" are one peer (#58).
-        lastRequestedAt[AuthKey(target) or target] = now
+        if not wmOverride then lastRequestedAt[AuthKey(target) or target] = now end
     end
 
     -- Carry our delta watermark for this peer so they can send only what
     -- changed since we last heard from them. A peer on older code ignores the
     -- extra payload and replies with a full DB (correct, just unoptimized).
-    local wm = target and GetPeerWatermark(target) or 0
+    local wm = wmOverride or (target and GetPeerWatermark(target)) or 0
     -- Through ChatThrottleLib at ALERT, not raw: a request can go out while
     -- CTL is still draining BULK chunks (a reply, a broadcast), and a raw send
     -- then lands with the outbound budget already spent and risks a silent
@@ -2812,7 +2948,7 @@ local function ReceiveCharacter(c, sender)
 
     -- The same merge as DeserializeFullDB, shared so the two paths cannot
     -- drift - they had: this one never got the first ownership fix.
-    if not MergeIncoming(c) then return end
+    if not MergeIncoming(c, sender) then return end
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
@@ -3764,6 +3900,8 @@ function LibSync.OnMessage(payload, sender)
                     .. tostring(sender.faction or "?") .. ", " .. tostring(realm or "?") .. ") - syncing.")
             end
             LibSync.Fetch(name)
+            -- Its own recovery for missed plugin data, after that pull (#449).
+            ScheduleRecoveryFor(name)
         end
     end
     local cmd, body = payload:match("^([^|]*)|?(.*)$")
@@ -4101,6 +4239,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 Print(matched .. " came online — requesting data.")
             end
         end)
+        -- Its own recovery for missed plugin data, after that pull (#449).
+        ScheduleRecoveryFor(matched)
         return
     end
     -- (e.g. looting, selling, buying, mailing).  A full ScanCharacter
@@ -4519,6 +4659,57 @@ function AltStable.HasPlugin(id)
     return false
 end
 
+-- One sync target's recovery request for missed plugin data (#449, see
+-- recoveryDone): when entries a loaded plugin waits for came from it and it
+-- has had none this session. Asks for everything, outside the throttle, with
+-- the target's own spelling and route as GetSyncTargets gives them. Leaving,
+-- it counts a try on those entries. `reachable`: the peer has just shown it
+-- is (come online, found), so a request that could not reach it earlier this
+-- session is tried again.
+local function RecoverPeer(t, reachable)
+    local key = AuthKey(t.target)
+    if not key then return end
+    if recoveryDone[key] and not (reachable and recoveryDone[key] == "unreachable") then return end
+    local pending = PendingEntries(key)
+    if #pending == 0 then return end
+    recoveryDone[key] = true
+    RequestCharacters(t.channel, t.target, true, function(didSend)
+        -- Refused at send: it never left, so the peer stays eligible.
+        if not didSend then recoveryDone[key] = "unreachable"; return end
+        local counted = {}
+        for _, p in ipairs(pending) do
+            local entries = MissedPulls()[p[1]]
+            local e = type(entries) == "table" and entries[p[2]]
+            if type(e) == "table" and e.peer == key then
+                SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short,
+                                            tries = (tonumber(e.tries) or 0) + 1 })
+                counted[#counted + 1] = p
+            end
+        end
+        recoveryCounted[key] = { at = time(), entries = counted }
+    end, 0)
+end
+
+-- Every current sync target's (the startup pass, after the login pull).
+local function RecoverMissedPulls()
+    for _, t in ipairs(GetSyncTargets()) do RecoverPeer(t) end
+end
+
+-- A peer reachable later (#449): its own pass, RECOVERY_DELAY after its
+-- ordinary pull, if it is still a sync target then.
+ScheduleRecoveryFor = function(name)
+    local key = AuthKey(name)
+    if not key or recoveryDone[key] == true or recoveryPlanned[key] or #PendingEntries(key) == 0 then return end
+    if not (C_Timer and C_Timer.After) then return end
+    recoveryPlanned[key] = true
+    C_Timer.After(RECOVERY_DELAY, function()
+        recoveryPlanned[key] = nil
+        for _, t in ipairs(GetSyncTargets()) do
+            if AuthKey(t.target) == key then RecoverPeer(t, true) end
+        end
+    end)
+end
+
 function AltStable.RegisterPlugin(plugin)
     if not plugin or not plugin.id or not plugin.label or not plugin.OnActivate then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r RegisterPlugin: missing required fields (id, label, OnActivate).")
@@ -4529,6 +4720,28 @@ function AltStable.RegisterPlugin(plugin)
         if p.id == plugin.id then return end
     end
     table.insert(AltStable.plugins, plugin)
+    -- Its data dropped by a reply while it was not loaded (#449), however it was
+    -- switched back on. An entry whose recovery request has left
+    -- MAX_RECOVERY_TRIES times without it clearing goes (that peer no longer
+    -- has the data), and so does one of a character the core has no named
+    -- record of. If any are left, a recovery pass is planned after the login
+    -- pull; each peer gets one request a session whatever the passes (see
+    -- recoveryDone).
+    local entries = plugin.OnDeserialize and MissedPulls()[plugin.id]
+    if type(entries) == "table" then
+        local waiting = false
+        for guid, e in pairs(entries) do
+            local tries = type(e) == "table" and tonumber(e.tries) or MAX_RECOVERY_TRIES
+            if tries >= MAX_RECOVERY_TRIES or not AltStable.HasNamedRecord(guid) then
+                SetMissedPull(plugin.id, guid, nil)
+            else
+                waiting = true
+            end
+        end
+        if waiting and C_Timer and C_Timer.After then
+            C_Timer.After(RECOVERY_DELAY, RecoverMissedPulls)
+        end
+    end
     -- Switched on from Options (#422): one full reply to each peer, if it
     -- sends anything at all (a plugin that only shows data doesn't).
     local pending = AltStableConfig and AltStableConfig.widenOnRegister
@@ -5242,6 +5455,7 @@ local function ResetSyncState()
     outdatedSenders = {}
     autoRetryCounts = {}
     lastRequestedAt = {}
+    recoveryDone, recoveryPlanned, recoveryCounted = {}, {}, {}   -- #449: session-local, the saved marks stay
     syncWatch       = {}
     heardAt, leftAt, onlineNow, answeredHere, askedHereAt, redrawnAt = {}, {}, {}, {}, 0, 0
 end
@@ -5706,6 +5920,7 @@ local _seam = {
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
     CoreFrame          = frame,   -- the same, under a name SheetUI does not reuse for the sheet
     ResetSyncState     = ResetSyncState,
+    RecoverMissedPulls = RecoverMissedPulls,                  -- #449
     BufferedStreams    = function() local n = 0; for _ in pairs(incomingBuffers) do n = n + 1 end; return n end,
 }
 

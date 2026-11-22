@@ -5056,4 +5056,335 @@ do
     WoW.reset()
 end
 
+------------------------------------------------------------
+-- #449: a plugin's data dropped while it was not loaded comes back
+------------------------------------------------------------
+do
+    WoW.reset()
+    AltStable.plugins = {}
+    local function rec(guid, name, lu)
+        return { guid = guid, name = name, class = "MAGE", level = 60, lastUpdate = lu }
+    end
+    -- A database reply as LibSync.Apply takes it, with the sender's clock.
+    local function reply(...)
+        local parts = {}
+        for _, r in ipairs({ ... }) do
+            parts[#parts + 1] = T.SerializeChar(r[1]) .. (r[2] and ("\n" .. r[2]) or "")
+            parts[#parts + 1] = T.CHAR_SEP
+        end
+        parts[#parts + 1] = "==NOW==:" .. time()
+        return table.concat(parts, "\n")
+    end
+    local function entry(id, guid)
+        local all = AltStableConfig.missedPluginPulls
+        return all and all[id] and all[id][guid]
+    end
+    local got = {}
+    local function plugin(id)
+        return { id = id, label = id, OnActivate = function() end,
+                 OnDeserialize = function(g, b) got[#got + 1] = id .. ":" .. g .. ":" .. b; return true end }
+    end
+    -- Every request as it is handed to the transport, sent or not.
+    local asked = {}
+    local realSendRequest = T.LibSync.SendRequest
+    T.LibSync.SendRequest = function(msg, ...)
+        asked[#asked + 1] = msg:match("^" .. T.MSG_REQUEST_V .. "|(%d+)")
+        return realSendRequest(msg, ...)
+    end
+    local function requests()
+        local out = table.concat(asked, ",")
+        asked = {}
+        return out
+    end
+    -- A new session: the session state goes, SavedVariables stay.
+    local function session(...)
+        WoW.reset()
+        AltStable.plugins = {}
+        for _, id in ipairs({ ... }) do AltStable.RegisterPlugin(plugin(id)) end
+    end
+    local A, B, C = "Player-449-A", "Player-449-B", "Player-449-C"
+
+    -- Marking: per character, with the peer it came from.
+    AltStableConfig = { peerWatermarks = {}, whitelist = { "karuzo" } }
+    AltStableDB = {}
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec(A, "Alpha", WoW.now - 500), "plugin_warband:bags=1" },
+                                          { rec(B, "Beta", WoW.now - 500), "plugin_warband:bags=2" },
+                                          { rec(C, "Gamma", WoW.now - 500), "plugin_future:x" },
+                                          { rec("Player-449-D", "Delta", WoW.now - 500), "plugin_roster:" }))
+    local e = entry("warband", A)
+    eq(e and (e.peer .. "/" .. e.short .. "/" .. e.tries), "karuzo/Karuzo/0",
+       "#449: a blob for our plugin that isn't loaded marks that character, with its peer")
+    check(entry("warband", B) ~= nil, "  each character its own entry")
+    eq(AltStableConfig.missedPluginPulls.future, nil, "  a plugin this build doesn't have marks nothing")
+    eq(AltStableConfig.missedPluginPulls.roster, nil, "  an empty blob marks nothing")
+    AltStable.plugins = { plugin("legacy") }
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec(C, "Gamma", WoW.now - 400), "plugin_legacy:x" }))
+    eq(AltStableConfig.missedPluginPulls.legacy, nil, "  a loaded plugin's blob marks nothing")
+    AltStable.plugins = {}
+    -- A record that loses the merge still carries a plugin's own data: marked too.
+    AltStableDB[C].lastUpdate = WoW.now
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec(C, "Gamma", WoW.now - 3600), "plugin_loremaster:q" }))
+    check(entry("loremaster", C) ~= nil, "  the stale-record path marks as well")
+    T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(rec("Player-449-E", "Eps", WoW.now - 300))
+                                         .. "\nplugin_instances:r"), "Other-Realm")
+    eq(entry("instances", "Player-449-E") and entry("instances", "Player-449-E").peer, "other",
+       "  and the single-character path")
+    -- A new miss for the same character replaces its entry.
+    AltStableConfig.missedPluginPulls.warband[B].tries = 2
+    T.LibSync.Apply("Other", reply({ rec(B, "Beta", WoW.now - 450), "plugin_warband:bags=3" }))
+    eq(entry("warband", B).peer .. "/" .. entry("warband", B).tries, "other/0",
+       "  a new miss for that character replaces its entry: its peer, tries back to 0")
+    AltStableConfig.missedPluginPulls.warband[B] = { peer = "karuzo", short = "Karuzo", tries = 0 }
+    -- legacy: a plugin never loaded below.
+    AltStableConfig.missedPluginPulls.legacy = { [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+
+    -- Registration: ordinary sync untouched.
+    local stored = WoW.now - 900
+    AltStableConfig.peerWatermarks = { karuzo = stored, Other = 777 }   -- as GetPeerWatermark reads "karuzo"
+    requests()
+    session("warband", "loremaster")
+    eq(AltStableConfig.peerWatermarks.karuzo, stored, "registration keeps the marked peer's watermark")
+    eq(AltStableConfig.peerWatermarks.Other, 777, "  and every other's")
+    T.RequestCharacters("WHISPER", "karuzo")
+    eq(requests(), tostring(stored), "the ordinary pull after registration uses the saved watermark")
+    -- ~10 s later, one extra request asks for everything, the throttle notwithstanding.
+    WoW.flushTimers()
+    eq(requests(), "0", "the recovery request asks for everything, the ordinary pull's throttle notwithstanding")
+    eq(entry("warband", A).tries .. "/" .. entry("warband", B).tries .. "/" .. entry("loremaster", C).tries, "1/1/1",
+       "  leaving, it counts a try on that peer's entries")
+    eq(entry("legacy", A).tries, 0, "  not on a plugin still not loaded")
+    eq(entry("instances", "Player-449-E").tries, 0, "  nor on another peer's entries")
+    AltStable.RegisterPlugin(plugin("instances"))
+    WoW.flushTimers()
+    eq(requests(), "", "once a session: a later marked registration plans no second one")
+    check(T.RequestCharacters("WHISPER", "karuzo") == false, "  and it didn't write the throttle: the ordinary pull's still holds")
+
+    -- What clears an entry.
+    got = {}
+    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-F", "Phi", WoW.now - 100), "plugin_warband:other" }))
+    check(entry("warband", A) and entry("warband", B), "a delta carrying another character's data clears nothing")
+    T.LibSync.Apply("Other", reply({ rec(A, "Alpha", WoW.now - 90), "plugin_warband:fromother" }))
+    check(entry("warband", A) ~= nil, "A's data from another peer doesn't clear A (it can be older)")
+    T.LibSync.Apply("Karuzo", reply({ rec(A, "Alpha", WoW.now - 80) }))
+    check(entry("warband", A) ~= nil, "a reply with A but no plugin data for it doesn't clear A")
+    T.LibSync.Apply("Karuzo", reply({ rec(A, "Alpha", WoW.now - 70), "plugin_warband:" }))
+    check(entry("warband", A) ~= nil, "  nor does an empty blob")
+    got = {}
+    T.LibSync.Apply("Karuzo", reply({ rec(A, "Alpha", WoW.now - 60), "plugin_warband:bags=9" }))
+    eq(got[1], "warband:" .. A .. ":bags=9", "A's data from its peer is handed over")
+    eq(entry("warband", A), nil, "  and clears A (Karuzo-Realm, karuzo, Karuzo: one peer)")
+    check(entry("warband", B) ~= nil, "  B's entry stays")
+    eq(entry("legacy", A).tries, 0, "  and A's entry of a plugin not loaded")
+
+    -- A recovery request that fails to leave counts nothing; ordinary sync goes on.
+    session("warband", "loremaster")
+    WoW.sendResults = { 12 }
+    WoW.flushTimers()
+    eq(requests(), "0", "the next session's recovery request")
+    eq(entry("warband", B).tries, 1, "  failing to leave, it counts no try")
+    T.RequestCharacters("WHISPER", "karuzo")
+    eq(requests(), tostring(stored), "  and the ordinary pull still uses the saved watermark")
+
+    -- Sent, with a full reply that never comes (too large): a try a session, then the entry goes.
+    session("warband", "loremaster"); WoW.flushTimers()
+    eq(entry("warband", B).tries, 2, "a full reply that never comes: a second try")
+    T.RequestCharacters("WHISPER", "karuzo")
+    eq(requests(), "0," .. tostring(stored), "  ordinary sync unaffected")
+    session("warband", "loremaster"); WoW.flushTimers()
+    eq(entry("warband", B).tries, 3, "  a third")
+    requests()
+    session("warband", "loremaster")
+    eq(entry("warband", B), nil, "after three, the next registration drops the entry")
+    eq(entry("loremaster", C), nil, "  each plugin's alike")
+    eq(AltStableConfig.missedPluginPulls.loremaster, nil, "  an emptied plugin leaves no table behind")
+    WoW.flushTimers()
+    eq(requests(), "", "  and no recovery request goes")
+    eq(entry("legacy", A).tries, 0, "a plugin never loaded keeps its entry throughout")
+
+    -- An entry of a character the core has no named record of goes at registration.
+    AltStableConfig.missedPluginPulls.warband = { ["Player-449-Z"] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+    session("warband")
+    eq(entry("warband", "Player-449-Z"), nil, "an orphan entry is dropped at registration")
+    WoW.flushTimers()
+    eq(requests(), "", "  and plans no recovery")
+
+    -- Forgetting the character drops its entries, every plugin's.
+    AltStableConfig.missedPluginPulls.warband = { [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+    AltStable.ForgetCharacter(A)
+    eq(entry("warband", A), nil, "forgetting a character drops its entries")
+    eq(entry("legacy", A), nil, "  a plugin not loaded's too")
+    AltStableConfig.missedPluginPulls.warband = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+    AltStable.MarkCharacterForgotten(B, WoW.now)
+    eq(entry("warband", B), nil, "  a received forget (no record here) too")
+
+    -- A marked peer that isn't a sync target gets no request; one only a plugin
+    -- not loaded waits for, none either.
+    AltStableDB[B] = rec(B, "Beta", WoW.now - 10)
+    AltStableConfig.forgottenCharacters = {}
+    AltStableConfig.missedPluginPulls = { warband = { [B] = { peer = "stranger", short = "Stranger", tries = 0 } },
+                                          legacy = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 } } }
+    session("warband")
+    WoW.flushTimers()
+    eq(requests(), "", "a marked peer outside the sync targets, or a plugin not loaded: no recovery request")
+    eq(entry("warband", B).tries, 0, "  and no try counted")
+    -- A plugin with nothing to receive doesn't act on its entries: no drop,
+    -- no recovery, no tries - also when another plugin's recovery goes.
+    AltStableConfig.missedPluginPulls = {
+        warband = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 } },
+        legacy = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 },
+                   ["Player-449-Z"] = { peer = "karuzo", short = "Karuzo", tries = 3 } } }
+    session()
+    AltStable.RegisterPlugin({ id = "legacy", label = "L", OnActivate = function() end })
+    WoW.flushTimers()
+    eq(requests(), "", "a plugin that receives nothing plans no recovery")
+    eq(entry("legacy", "Player-449-Z").tries, 3, "  nor drops its entries")
+    AltStable.RegisterPlugin(plugin("warband"))
+    WoW.flushTimers()
+    eq(requests(), "0", "another plugin's recovery goes")
+    eq(entry("warband", B).tries .. "/" .. entry("legacy", B).tries, "1/0", "  counting no try for one that receives nothing")
+    -- An entry missed again from another peer while the request was on its way
+    -- isn't counted against the new peer.
+    session("warband")
+    WoW.ctlDefer = true
+    WoW.flushTimers()
+    T.LibSync.Apply("Other", reply({ rec(B, "Beta", WoW.now - 5), "plugin_legacy:x" }))   -- (legacy not loaded)
+    AltStableConfig.missedPluginPulls.warband[B] = { peer = "other", short = "Other", tries = 0 }
+    WoW.ctlDrain()
+    WoW.ctlDefer = false
+    eq(entry("warband", B).peer .. "/" .. entry("warband", B).tries, "other/0",
+       "an entry re-marked from another peer before the request left gets no try")
+    -- A peer reachable after the startup pass gets its own recovery, once
+    -- (Codex review of #465).
+    do
+        local L = T.LibSync
+        local realInst = L.inst
+        local fake = { messages = true, peers = {} }
+        -- Every send is accepted and leaves (a refused one would be retried
+        -- when the peer is found again: see the offline tests below).
+        function fake.SendTo(_, _, done) if done then done(nil, "sent") end return 1 end
+        function fake.Peers() return fake.peers end
+        local bee = { name = "Bee", guid = "Player-449-BEE", realm = "R", faction = "Alliance" }
+        -- Recovery requests only (watermark 0): the stand-in library's own
+        -- discovery ticks re-send ordinary pulls on every flush.
+        local function recoveries()
+            local n = 0
+            for w in requests():gmatch("[^,]+") do if w == "0" then n = n + 1 end end
+            return n
+        end
+        requests()
+        local cee = { name = "Cee", guid = "Player-449-CEE", realm = "R", faction = "Alliance" }
+        AltStableConfig.whitelist = {}
+        AltStableConfig.peerWatermarks = { Bee = stored, Cee = stored, karuzo = stored }
+        AltStableConfig.missedPluginPulls = { warband = { [B] = { peer = "bee", short = "Bee", tries = 0 },
+                                                          [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } } }
+        AltStableDB[A] = rec(A, "Alpha", WoW.now - 10)
+        AltStableConfig.forgottenCharacters = {}
+        session("warband")
+        WoW.flushTimers()
+        eq(recoveries(), 0, "the startup pass: neither marked peer is a sync target yet, no recovery")
+        L.inst = fake; L.Forget()
+        fake.peers = { bee }
+        L.OnMessage(L.MSG_CAP .. "|1", bee)
+        eq(requests(), tostring(stored), "a Battle.net peer found later: its ordinary pull keeps its watermark")
+        WoW.flushTimers()
+        eq(recoveries(), 1, "  and ~10 s later its own recovery request asks for everything")
+        L.OnMessage(L.MSG_CAP .. "|1", bee)
+        WoW.flushTimers()
+        eq(recoveries(), 0, "  found again the same session: no second recovery")
+        -- A peer with nothing pending gets none.
+        fake.peers = { bee, cee }
+        L.OnMessage(L.MSG_CAP .. "|1", cee)
+        eq(requests(), tostring(stored), "a peer with nothing pending: its ordinary pull")
+        WoW.flushTimers()
+        eq(recoveries(), 0, "  and no recovery")
+        -- Come online (a whitelisted peer): the same, after its ordinary pull.
+        AltStableConfig.whitelist = { "karuzo" }
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", "karuzo has come online. |Hplayer:karuzo|h[karuzo]|h")
+        local before = #asked
+        WoW.flushTimers()
+        eq(asked[before + 1] .. "," .. recoveries(), tostring(stored) .. ",1",
+           "a marked peer come online: its ordinary pull keeps its watermark, then one recovery")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", "karuzo has come online. |Hplayer:karuzo|h[karuzo]|h")
+        WoW.flushTimers()
+        eq(recoveries(), 0, "  come online again: no second recovery")
+        fake.peers = {}
+        L.inst = realInst
+        L.Forget()
+    end
+    -- A whitelisted peer still offline at the startup pass: that request
+    -- doesn't count, and its recovery comes when it comes online (Codex review
+    -- of #465). Both signals: refused at send (TargetOffline), and the server's
+    -- "No player named" line after it left.
+    do
+        local online = "karuzo has come online. |Hplayer:karuzo|h[karuzo]|h"
+        local function startup()
+            AltStableConfig.whitelist = { "karuzo" }
+            AltStableConfig.peerWatermarks = { karuzo = stored }
+            AltStableConfig.missedPluginPulls = { warband = { [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } } }
+            AltStableDB[A] = rec(A, "Alpha", WoW.now - 10)
+            AltStableConfig.forgottenCharacters = {}
+            session("warband")
+            requests()
+        end
+        startup()
+        WoW.sendResults = { Enum.SendAddonMessageResult.TargetOffline }
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, "0/0",
+           "a startup recovery refused as offline counts no try")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, tostring(stored) .. ",0/1",
+           "  and when the peer comes online: its ordinary pull, then its recovery")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, "/1",
+           "  online again after that recovery left: no second one (the pull is throttled)")
+
+        startup()
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, "0/1", "a startup recovery that left counts a try")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("karuzo"))
+        eq(entry("warband", A).tries, 0, "  the server says the peer is offline: the try is given back")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, tostring(stored) .. ",0/1",
+           "  and when it comes online: its ordinary pull, then its recovery")
+
+        -- A later message refused (the peer logged off since): not the recovery's.
+        startup()
+        WoW.flushTimers()
+        requests()
+        WoW.now = WoW.now + 11
+        WoW.sendResults = { Enum.SendAddonMessageResult.TargetOffline }
+        T.RequestCharacters("WHISPER", "karuzo", true)
+        eq(requests() .. "/" .. entry("warband", A).tries, tostring(stored) .. "/1",
+           "a later request refused as offline: the recovery that left keeps its try")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests(), "", "  and coming online then gets no second recovery (the pull is throttled)")
+
+        -- Given back only to the entries that request counted, never below 0.
+        startup()
+        AltStableConfig.missedPluginPulls.warband[B] = { peer = "karuzo", short = "Karuzo", tries = 0 }
+        AltStableDB[B] = rec(B, "Beta", WoW.now - 10)
+        WoW.flushTimers()
+        AltStableConfig.missedPluginPulls.warband[A] = { peer = "other", short = "Other", tries = 1 }
+        AltStableConfig.missedPluginPulls.warband[B] = { peer = "karuzo", short = "Karuzo", tries = 0 }
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("karuzo"))
+        eq(entry("warband", A).peer .. "/" .. entry("warband", A).tries .. "," .. entry("warband", B).tries,
+           "other/1,0", "an entry re-marked since the request left is not given a try back")
+
+        -- Come online before the startup pass: one recovery, from whichever runs first.
+        startup()
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        local n = 0
+        for w in requests():gmatch("[^,]+") do if w == "0" then n = n + 1 end end
+        eq(n .. "/" .. entry("warband", A).tries, "1/1", "online before the startup pass: one recovery in all")
+    end
+    AltStable.plugins = {}
+    T.LibSync.SendRequest = realSendRequest
+    WoW.reset()
+end
+
 WoW.finish("test_comm", testsRun - failures, failures)
