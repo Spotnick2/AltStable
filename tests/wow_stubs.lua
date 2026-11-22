@@ -88,6 +88,10 @@ for k, v in pairs({
 -- WoW.reset() clears the kit's state (frames, timers, combat, ...), then runs
 -- this for AltStable's own.
 WoW.onReset[#WoW.onReset + 1] = function()
+    -- The live ruleset is read once a session (#435): a reset is a new one.
+    if AltStable and AltStable._test and AltStable._test.ResetLiveRuleset then
+        AltStable._test.ResetLiveRuleset()
+    end
     WoW.items, WoW.skillLines, WoW.factions, WoW.factionByID = {}, {}, {}, {}
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.currencies = {}

@@ -736,7 +736,18 @@ end
 -- rules: Hardcore, RP and/or PvP, else Normal. nil when this client can't
 -- say (no C_GameRules, or a rule name it doesn't know): the names are the
 -- ones WoWUIDev uses (2026-11-20), not in the API dump, so each is checked.
+local liveRuleset   -- the first reading this session (#435)
 function AltStable.LiveRuleset()
+    -- The logged-in character's ruleset can't change while it is logged in:
+    -- read once (the scan and every Warband rebuild ask). Only a reading is
+    -- kept: nil while the rules aren't readable yet at login (#413 review)
+    -- would freeze "unknown" for the session.
+    if liveRuleset then return liveRuleset end
+    liveRuleset = AltStable.ReadLiveRuleset()
+    return liveRuleset
+end
+
+function AltStable.ReadLiveRuleset()
     local rules = C_GameRules
     local E = Enum and Enum.GameRule
     if not (rules and rules.IsGameRuleActive and E and E.HardcoreRuleset and E.RPRuleset and E.PvPRuleset) then
@@ -758,6 +769,9 @@ function AltStable.LiveRuleset()
     if pvp then return "PvP" end
     return "Normal"
 end
+-- Test seam: a new session, as far as the ruleset reading goes.
+AltStable._test = AltStable._test or {}
+AltStable._test.ResetLiveRuleset = function() liveRuleset = nil end
 
 -- Where the player is now: the game's rules, then the realm's name, then -
 -- when neither reads - the logged-in character's own record, as the scan kept

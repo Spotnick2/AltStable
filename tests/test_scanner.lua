@@ -479,12 +479,14 @@ do
     eq("  which is the record's ruleset, its realm hidden", AltStable.RulesetOf(AltStableDB[me]), "RPPvP")
     local realRules = Enum.GameRule
     Enum.GameRule = nil
+    AltStable._test.ResetLiveRuleset()   -- a new session: the reading is kept (#435)
     pcall(AltStable.ScanCharacter)
     eq("  a client that can't read the rules keeps it", AltStableDB[me].ruleset, "RPPvP")
     Enum.GameRule = realRules
     -- #413 review: a query that throws keeps it too, never stores Normal.
     local realActive = C_GameRules.IsGameRuleActive
     C_GameRules.IsGameRuleActive = function() error("not ready") end
+    AltStable._test.ResetLiveRuleset()
     pcall(AltStable.ScanCharacter)
     eq("  a rule query that throws keeps it", AltStableDB[me].ruleset, "RPPvP")
     C_GameRules.IsGameRuleActive = realActive

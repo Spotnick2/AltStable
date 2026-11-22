@@ -921,6 +921,10 @@ local function BuildPanel(mainFrame)
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, footerH + 2)
     panel:Hide()
     Roster.panel = panel        -- for the camp list (CampList.lua, #152)
+    -- The sheet opened again on this tab: what changed while it was closed (#435).
+    panel:SetScript("OnShow", function()
+        if Roster.isActive and Roster.dirty then Roster.Refresh() end
+    end)
 
     backdropTex = panel:CreateTexture(nil, "BACKGROUND")
     backdropTex:SetAllPoints()
@@ -2800,8 +2804,24 @@ function Roster.Back()
     return true
 end
 
+-- Redraws asked for by data - a sync, a talent read, the sheet's refresh
+-- (#435): at most one per frame, none while the tab is off screen (closing the
+-- sheet hides the window without OnDeactivate). Off screen it is marked dirty
+-- and drawn once on show; any draw consumes `dirty`. As Warband's.
+function Roster.RequestRefresh()
+    if not Roster.isActive then return end
+    Roster.dirty = true
+    if Roster._pending or not (panel and panel:IsVisible()) then return end
+    Roster._pending = true
+    C_Timer.After(0, function()
+        Roster._pending = nil
+        if Roster.isActive and Roster.dirty and panel and panel:IsVisible() then Roster.Refresh() end
+    end)
+end
+
 function Roster.Refresh()
     if not panel then return end
+    Roster.dirty = nil
     -- A panel just shown has no size until the client lays it out, on the
     -- next frame: measured now, the camp list stepped aside as "too narrow"
     -- and the scene seated no one, until some later refresh - the login scan
@@ -2810,7 +2830,10 @@ function Roster.Refresh()
         Roster._sizeWait = true
         C_Timer.After(0, function()
             Roster._sizeWait = nil
-            if Roster.isActive and (panel:GetWidth() or 0) > 0 then Roster.Refresh() end
+            if Roster.isActive and (panel:GetWidth() or 0) > 0 then
+                -- The sheet closed meanwhile: drawn when it shows (#435).
+                if panel:IsVisible() then Roster.Refresh() else Roster.dirty = true end
+            end
         end)
     end
     -- Pets belong to the scene alone; RenderScene puts back the ones it wants.
@@ -3044,11 +3067,7 @@ local function HookRefresh()
     local prev = AltStable.RefreshSheet
     AltStable.RefreshSheet = function(...)
         prev(...)
-        if Roster.isActive then
-            C_Timer.After(0, function()
-                if Roster.isActive then Roster.Refresh() end
-            end)
-        end
+        if Roster.isActive then Roster.RequestRefresh() end
     end
     Roster._refreshHooked = true
 end
@@ -3102,6 +3121,7 @@ end
 
 function Roster.Deactivate(mainFrame)
     Roster.isActive = false
+    Roster.dirty = nil   -- Activate draws afresh
     -- The camp list's dialogs go with the tab: their dimming covers only the
     -- panel, so the sidebar stays clickable, and a dialog left open came back
     -- open on the next visit (#170 review).

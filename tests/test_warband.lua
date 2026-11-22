@@ -630,8 +630,8 @@ eq("a same-second blob with different contents is applied",
 -- character, and each redraw rebuilds the whole grid.
 local wb = plugin._wb
 local redraws = 0
-local realRefresh, realActive = wb.Refresh, wb.isActive
-wb.Refresh, wb.isActive = function() redraws = redraws + 1 end, true
+local realRefresh, realActive = wb.RequestRefresh, wb.isActive
+wb.RequestRefresh, wb.isActive = function() redraws = redraws + 1 end, true
 T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,2|k=")
 eq("  re-sending the same one changes nothing", AltStableWarbandDB["Player-Same-1"].bags[2318], 2)
 eq("  and does not redraw the grid", redraws, 0)
@@ -639,7 +639,7 @@ T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=100|b=2318,3|k=")
 eq("  a changed one does", redraws, 1)
 T.DeserializePlayer("Player-Same-1", "v1|s=100|kt=101|b=2318,3|k=")
 eq("  as does a bank stamp moving on its own", redraws, 2)
-wb.Refresh, wb.isActive = realRefresh, realActive
+wb.RequestRefresh, wb.isActive = realRefresh, realActive
 T.DeserializePlayer("Player-Same-1", "v1|s=99|kt=99|b=2318,777|k=")
 eq("  and an older one is still refused", AltStableWarbandDB["Player-Same-1"].bags[2318], 3)
 
@@ -657,10 +657,10 @@ do
     eq("  with its own stamp", AltStableWarbandDB[G].bankStamp, 95)
     -- Replayed, it changes nothing and costs no redraw.
     local n = 0
-    wb.Refresh, wb.isActive = function() n = n + 1 end, true
+    wb.RequestRefresh, wb.isActive = function() n = n + 1 end, true
     T.DeserializePlayer(G, "v1|s=101|kt=60|b=1,2|k=2318,3")
     eq("  a replay doesn't redraw", n, 0)
-    wb.Refresh, wb.isActive = realRefresh, realActive
+    wb.RequestRefresh, wb.isActive = realRefresh, realActive
 
     hold()
     T.DeserializePlayer(G, "v1|s=101|kt=95|b=1,1|k=2318,7")
@@ -750,10 +750,10 @@ eq("  and its stamp", p4.bankStamp, 90)
 eq("  while the bags are taken", p4.bags[2318], 9)
 eq("  and the record's stamp moves", p4.stamp, 200)
 redraws = 0
-wb.Refresh, wb.isActive = function() redraws = redraws + 1 end, true
+wb.RequestRefresh, wb.isActive = function() redraws = redraws + 1 end, true
 T.DeserializePlayer("Player-Peer-4", "v1|s=200|kt=0|b=2318,9|k=")
 eq("  re-sending it changes nothing and does not redraw", redraws, 0)
-wb.Refresh, wb.isActive = realRefresh, realActive
+wb.RequestRefresh, wb.isActive = realRefresh, realActive
 T.DeserializePlayer("Player-Peer-4", "v1|s=300|kt=300|b=2318,9|k=")
 eq("  a bank read as empty (kt>0) still empties it", next(p4.bank), nil)
 eq("  with its stamp", p4.bankStamp, 300)
@@ -1055,9 +1055,12 @@ do
 
     -- The game's rules, as read: Hardcore first, RP and PvP together are RP-PvP.
     local R, held = Enum.GameRule, WoW.gameRules
+    -- Each reading below is a new session's: the answer is kept once read (#435).
+    local fresh = AltStable._test.ResetLiveRuleset
+    local function live() fresh(); return AltStable.LiveRuleset() end
     local function rules(h, rp, pvp)
         WoW.gameRules = { [R.HardcoreRuleset] = h, [R.RPRuleset] = rp, [R.PvPRuleset] = pvp }
-        return AltStable.LiveRuleset()
+        return live()
     end
     eq("no rule on: Normal", rules(false, false, false), "Normal")
     eq("PvP", rules(false, false, true), "PvP")
@@ -1070,13 +1073,14 @@ do
     eq("where you are, with the realm hidden: the rules", AltStable.CurrentRuleset(), "PvP")
     local realRules = Enum.GameRule
     Enum.GameRule = nil
-    eq("a client without the rule names can't say", AltStable.LiveRuleset(), nil)
+    eq("a client without the rule names can't say", live(), nil)
     local heldRec = AltStableDB[UnitGUID("player")]
     AltStableDB[UnitGUID("player")] = nil
+    fresh()
     eq("  and where you are falls back to the realm: hidden, and no record, Unknown", AltStable.CurrentRuleset(), "Unknown")
     AltStableDB[UnitGUID("player")] = heldRec
     Enum.GameRule = { RPRuleset = 1, PvPRuleset = 2 }
-    eq("  a missing name is the same as none", AltStable.LiveRuleset(), nil)
+    eq("  a missing name is the same as none", live(), nil)
     Enum.GameRule = realRules
     -- #413 review: a query that fails is not "off".
     local realActive = C_GameRules.IsGameRuleActive
@@ -1084,20 +1088,49 @@ do
         if rule == Enum.GameRule.PvPRuleset then error("not ready") end
         return false
     end
-    eq("a rule query that throws: no reading, never Normal", AltStable.LiveRuleset(), nil)
+    eq("a rule query that throws: no reading, never Normal", live(), nil)
     C_GameRules.IsGameRuleActive = function() return nil end
-    eq("  nor one that answers nil", AltStable.LiveRuleset(), nil)
+    eq("  nor one that answers nil", live(), nil)
+
+    -- Read once a session (#435): the character's ruleset can't change while
+    -- it is logged in. Only a reading is kept: nil at login, while the rules
+    -- aren't readable yet, would freeze "unknown" for the session.
+    local asked = 0
+    C_GameRules.IsGameRuleActive = function(rule) asked = asked + 1; return rule == R.PvPRuleset end
+    fresh()
+    eq("the first call reads the rules", AltStable.LiveRuleset(), "PvP")
+    local first = asked
+    check("  asking each of the three", first == 3, tostring(first))
+    eq("a second call", AltStable.LiveRuleset(), "PvP")
+    eq("  doesn't ask again", asked, first)
+    fresh()
+    asked = 0
+    C_GameRules.IsGameRuleActive = function() asked = asked + 1; error("not ready") end
+    eq("a first call before the rules are readable says nothing", AltStable.LiveRuleset(), nil)
+    C_GameRules.IsGameRuleActive = function(rule) asked = asked + 1; return rule == R.RPRuleset end
+    eq("  and isn't kept: the next call reads them", AltStable.LiveRuleset(), "RP")
+    local n = asked
+    eq("  and keeps that", AltStable.LiveRuleset(), "RP")
+    eq("  without asking again", asked, n)
+    fresh()
+    C_GameRules.IsGameRuleActive = function() return "yes" end
+    eq("an answer that isn't a boolean isn't kept either", AltStable.LiveRuleset(), nil)
+    C_GameRules.IsGameRuleActive = function(rule) return rule == R.HardcoreRuleset end
+    eq("  the next call reads", AltStable.LiveRuleset(), "Hardcore")
     C_GameRules.IsGameRuleActive = realActive
+    fresh()
     -- No rules, no realm: where you are is this character's own record.
     Enum.GameRule = nil
     local me = UnitGUID("player")
     local heldMe = AltStableDB[me]
     AltStableDB[me] = { guid = me, name = "Me", ruleset = "PvP", realm = "" }
+    fresh()
     eq("rules and realm unreadable: the current ruleset is this character's record", AltStable.CurrentRuleset(), "PvP")
     AltStableDB[me] = nil
     eq("  no record either: Unknown", AltStable.CurrentRuleset(), "Unknown")
     AltStableDB[me] = heldMe
     Enum.GameRule = realRules
+    fresh()
     GetRealmName = realRealm
     WoW.gameRules = held
     eq("a named ruleset is itself", M.ResolveRuleset("RP", "Classic Beta PvP"), "RP")
@@ -1221,6 +1254,79 @@ do
         return table.concat(out, ",")
     end
 
+    -- #435: redraws asked for by data are coalesced, and none while the sheet
+    -- is closed (the window hidden, the tab still active).
+    do
+        local real, n = wb.Refresh, 0
+        wb.Refresh = function(...) n = n + 1; return real(...) end
+        -- The sheet's refresh, which the tab wraps on activation.
+        local realSheet = AltStable.RefreshSheet
+        AltStable.RefreshSheet = function() end
+        wb.Activate(main)
+        WoW.flushTimers()
+        n = 0
+        for i = 1, 40 do
+            T.DeserializePlayer("Player-435-" .. i, "v1|s=" .. (500 + i) .. "|kt=0|b=101," .. i .. "|k=")
+        end
+        eq("#435: 40 changed inventories in one pull: no redraw yet", n, 0)
+        WoW.flushTimers()
+        eq("  one on the next frame", n, 1)
+        WoW.flushTimers()
+        eq("  and only one", n, 1)
+        AltStable.RefreshSheet()
+        AltStable.RefreshSheet()
+        WoW.flushTimers()
+        eq("two sheet refreshes in a frame: one redraw", n, 2)
+        main:Hide()
+        n = 0
+        for i = 1, 40 do
+            T.DeserializePlayer("Player-435-" .. i, "v1|s=" .. (600 + i) .. "|kt=0|b=101," .. (i + 1) .. "|k=")
+        end
+        AltStable.RefreshSheet()
+        WoW.flushTimers()
+        eq("the sheet closed: none", n, 0)
+        main:Show()
+        eq("  shown again: one", n, 1)
+        WoW.flushTimers()
+        eq("  and none more", n, 1)
+        main:Hide()
+        main:Show()
+        eq("closed and opened with nothing new: none", n, 1)
+        -- Asked for, then the sheet closed before the next frame: drawn on show.
+        n = 0
+        T.DeserializePlayer("Player-435-1", "v1|s=700|kt=0|b=101,77|k=")
+        main:Hide()
+        WoW.flushTimers()
+        eq("closed before the queued redraw ran: none", n, 0)
+        main:Show()
+        eq("  one when it shows", n, 1)
+        -- Dirty from a closed sheet, then another tab: the next activation
+        -- draws once, not once for the dirt and once for itself.
+        main:Hide()
+        T.DeserializePlayer("Player-435-1", "v1|s=701|kt=0|b=101,78|k=")
+        wb.Deactivate(main)
+        main:Show()
+        n = 0
+        wb.Activate(main)
+        WoW.flushTimers()
+        eq("dirty, then another tab, then back: one draw", n, 1)
+        -- Activation draws itself: a changed scan of our bags on open asks
+        -- for a redraw, which that draw has already done.
+        n = 0
+        AltStableWarbandDB[ME] = { bags = { [101] = 99 } }
+        WoW.containers = { [0] = { size = 1, slot(101, 3) } }
+        wb.Activate(main)
+        WoW.flushTimers()
+        eq("activation with a changed bag scan: one draw", n, 1)
+        WoW.containers = {}
+        for i = 1, 40 do AltStableWarbandDB["Player-435-" .. i] = nil end
+        wb.Refresh = real
+        AltStable.RefreshSheet = realSheet
+    end
+    -- Activating rescans our own (stubbed, empty) bags; put Kaleid's back.
+    AltStableWarbandDB[ME] = { bags = { [101] = 2, [201] = 1 } }
+    wb.Refresh()
+
     -- First draw: the four default tabs are seeded, through the seam.
     eq("the default tabs are seeded", #(AltStableConfig.warbandTabs or {}), 4)
     local seeded = false
@@ -1236,6 +1342,7 @@ do
         local realRealm, heldRules = GetRealmName, WoW.gameRules
         GetRealmName = function() return "" end
         WoW.gameRules = { [Enum.GameRule.PvPRuleset] = true }
+        AltStable._test.ResetLiveRuleset()
         wb.Refresh()
         eq("  the realm hidden: still this ruleset's, from the game's rules", shownIDs(), "101")
         -- #413 review: no rules either - this character's own record says.
@@ -1244,10 +1351,12 @@ do
         AltStableDB[ME].ruleset = "PvP"
         local heldRealm = AltStableDB[ME].realm
         AltStableDB[ME].realm = ""
+        AltStable._test.ResetLiveRuleset()
         wb.Refresh()
         eq("  no rules and no realm: this character's record, its own items shown", shownIDs(), "101")
         Enum.GameRule, AltStableDB[ME].ruleset, AltStableDB[ME].realm = realRules, heldRuleset, heldRealm
         GetRealmName, WoW.gameRules = realRealm, heldRules
+        AltStable._test.ResetLiveRuleset()
         wb.Refresh()
     end
 

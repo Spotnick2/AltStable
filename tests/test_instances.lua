@@ -674,4 +674,53 @@ do
     end
 end
 
+-- #435: redraws asked for by data are coalesced, and none while the sheet is
+-- closed (the window hidden, the tab still active); one when it shows again.
+do
+    local SI, p = T.SI, T.Panel()
+    check("#435: the Raids panel was built", p ~= nil)
+    if p then
+        local win = p:GetParent()
+        local realSheet = AltStable.RefreshSheet
+        if not SI._refreshHooked then AltStable.RefreshSheet = function() end end
+        pcall(plugin.OnActivate, win)
+        win:Show()
+        local real, n = SI.Refresh, 0
+        SI.Refresh = function(...) n = n + 1; return real(...) end
+        WoW.flushTimers()
+        n = 0
+        for _ = 1, 40 do AltStable.RefreshSheet() end
+        eq("#435: 40 sheet refreshes in a frame: no redraw yet", n, 0)
+        WoW.flushTimers()
+        eq("  one Raids redraw on the next frame", n, 1)
+        win:Hide()
+        n = 0
+        for _ = 1, 40 do AltStable.RefreshSheet() end
+        WoW.flushTimers()
+        eq("  the sheet closed: none", n, 0)
+        win:Show()
+        eq("  shown again: one", n, 1)
+        win:Hide()
+        win:Show()
+        eq("  closed and opened with nothing new: none", n, 1)
+        -- A save expiring while the sheet is closed waits for it to show.
+        win:Hide()
+        n = 0
+        T.ScheduleExpiryRefresh({ a = { mc = { expires = WoW.now + 5 } } })
+        WoW.now = WoW.now + 10
+        WoW.flushTimers()
+        eq("a save expiring with the sheet closed: no redraw", n, 0)
+        win:Show()
+        eq("  one when it shows", n, 1)
+        WoW.flushTimers()
+        SI.Refresh = real
+        pcall(plugin.OnDeactivate, win)
+        n = 0
+        AltStable.RefreshSheet()
+        WoW.flushTimers()
+        eq("a closed tab: no redraw", n, 0)
+        AltStable.RefreshSheet = realSheet
+    end
+end
+
 WoW.finish("test_instances", passed, failed)

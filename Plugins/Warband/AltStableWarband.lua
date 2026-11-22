@@ -226,7 +226,7 @@ local function ApplyScan(sectionKey, stampKey, newMap, confirm)
     db[stampKey]   = time()
     Restamp(db)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
-    if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+    if AT_WB.isActive and AT_WB.RequestRefresh then AT_WB.RequestRefresh() end
     return true
 end
 
@@ -462,7 +462,7 @@ end
 
 local function Touch(guid)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
-    if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+    if AT_WB.isActive and AT_WB.RequestRefresh then AT_WB.RequestRefresh() end
 end
 
 -- A read is recorded when it changed something, or when it is the visit's
@@ -855,7 +855,7 @@ local function DeserializePlayer(guid, blob)
     db.mail, db.mailStamp, db.mailMore = mail, mailStamp, mailMore
     db.outbox, db.outboxStamp = outbox, outboxStamp
     Restamp(db)
-    if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+    if AT_WB.isActive and AT_WB.RequestRefresh then AT_WB.RequestRefresh() end
     return advanced
 end
 
@@ -2172,9 +2172,29 @@ end
 
 AT_WB.StatusText = function() return StatusText() end
 
+-- Redraws asked for by data - a scan, a received inventory, the sheet's
+-- refresh (#435): at most one per frame, however many records a sync brings,
+-- and none while the tab is off screen. Closing the sheet hides the window
+-- without OnDeactivate, and IsShown stays true under a hidden parent: the
+-- panel is marked dirty instead, and drawn once when it shows again (OnShow).
+-- Any draw consumes `dirty`, so a draw made meanwhile (Activate, a click)
+-- leaves the queued one nothing to do. Legacy's pattern (L.RequestRefresh).
+-- What the player does still redraws at once: the click answers in its frame.
+function AT_WB.RequestRefresh()
+    if not AT_WB.isActive then return end
+    AT_WB.dirty = true
+    if AT_WB._pending or not (panel and panel:IsVisible()) then return end
+    AT_WB._pending = true
+    C_Timer.After(0, function()
+        AT_WB._pending = nil
+        if AT_WB.isActive and AT_WB.dirty and panel and panel:IsVisible() then AT_WB.Refresh() end
+    end)
+end
+
 -- Recompute what is shown from current data, then lay out.
 function AT_WB.Refresh()
     if not panel or not panel:IsShown() then return end
+    AT_WB.dirty = nil
     UpdateControls()
 
     local filter = CurrentFilter()
@@ -2275,6 +2295,10 @@ local function BuildPanel(mainFrame)
         CloseMenus()
         CloseDialog()
         ClearHover()
+    end)
+    -- The sheet opened again on this tab: what changed while it was closed (#435).
+    panel:SetScript("OnShow", function()
+        if AT_WB.isActive and AT_WB.dirty then AT_WB.Refresh() end
     end)
 
     titleFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -2431,7 +2455,7 @@ local function HookRefresh()
     local prev = AltStable.RefreshSheet
     AltStable.RefreshSheet = function(...)
         prev(...)
-        if AT_WB.isActive then C_Timer.After(0, function() if AT_WB.isActive then AT_WB.Refresh() end end) end
+        if AT_WB.isActive then AT_WB.RequestRefresh() end
     end
     AT_WB._refreshHooked = true
 end
@@ -2498,6 +2522,7 @@ end
 
 function AT_WB.Deactivate(mainFrame)
     AT_WB.isActive = false
+    AT_WB.dirty = nil   -- Activate draws afresh
     if panel then panel:Hide() end
     CloseMenus()
     CloseDialog()
@@ -2656,7 +2681,7 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
                 if self._metaTimer then self._metaTimer:Cancel() end
                 self._metaTimer = C_Timer.NewTimer(0.2, function()
                     self._metaTimer = nil
-                    if AT_WB.isActive and AT_WB.Refresh then AT_WB.Refresh() end
+                    if AT_WB.isActive and AT_WB.RequestRefresh then AT_WB.RequestRefresh() end
                 end)
             end
         end
