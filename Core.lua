@@ -4230,13 +4230,27 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player")) or 0
             local lvl      = AltStable.API.PlainNumber(UnitLevel("player")) or 0
             local liveXP   = AltStable.API.PlainNumber(UnitXP("player"))
+            -- What a peer and the sheet read: a change touches the record, so
+            -- the next delta carries it, and redraws the sheet (Codex review of
+            -- #456). restTimestamp alone is not a change: it moves every event.
+            local before = { char.xpMax, char.xpPercent, char.restXP, char.restPercent, char.restedArea }
+            local function settle()
+                local after = { char.xpMax, char.xpPercent, char.restXP, char.restPercent, char.restedArea }
+                for i = 1, 5 do
+                    if before[i] ~= after[i] then
+                        AltStable.TouchCharacter(guid)
+                        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+                        return
+                    end
+                end
+            end
             -- The XP %, whatever the rested read: this handler never wrote it,
             -- so it went stale between scans (#425).
             if liveMax > 0 and liveXP then
                 char.xpMax     = liveMax
                 char.xpPercent = math.floor((liveXP / liveMax) * 100)
             end
-            if liveRest == nil then return end   -- a secret: keep the rested snapshot
+            if liveRest == nil then settle(); return end   -- a secret: keep the rested snapshot
             local atCap    = lvl >= AltStable.API.LevelCap()
 
             -- Suspicious-zero guard.  Only accept a zero read if we have
@@ -4268,6 +4282,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 char.restedArea    = IsResting and IsResting() or false
                 char.restTimestamp = time()
             end
+            settle()
         end
         return
     end

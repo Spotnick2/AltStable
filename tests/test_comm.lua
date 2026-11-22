@@ -1915,6 +1915,46 @@ WoW.restXP, WoW.xp = 100, 200
 onEvent(T.frame, "PLAYER_XP_UPDATE")
 eq(AltStableDB[liveGuid].xpPercent, 50, "with a rested bonus, the XP % is written too")
 eq(AltStableDB[liveGuid].restPercent, 25, "  and the bonus")
+
+-- A change rides the next delta and redraws the open sheet (Codex review of
+-- #456); the same values again do neither.
+do
+    local c = AltStableDB[liveGuid]
+    local refreshes, realRefresh = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function() refreshes = refreshes + 1 end
+    c.lastUpdate = 1
+    local mark = WoW.now
+    WoW.now = WoW.now + 10
+    check(not T.SerializeFullDB(false, mark):find(liveGuid, 1, true), "  (a delta from before holds no XP change yet)")
+    WoW.xp = 300
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.xpPercent, 75, "an XP gain on a played character")
+    check(c.lastUpdate > mark, "  touches the record")
+    check(T.SerializeFullDB(false, mark):find(liveGuid, 1, true) ~= nil, "  so a delta request before logout carries it")
+    eq(refreshes, 1, "  and the open sheet is redrawn")
+    c.lastUpdate = 1
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.lastUpdate, 1, "the same values again touch nothing")
+    eq(refreshes, 1, "  and redraw nothing")
+    -- Only the rested bonus spent, XP unchanged.
+    WoW.restXP = 0
+    WoW.now = WoW.now + 10
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.restPercent, 0, "the bonus spent")
+    check(c.lastUpdate > 1, "  touches the record too")
+    eq(refreshes, 2, "  and redraws")
+    -- A secret rested read: the XP % alone still counts.
+    local realExh2 = GetXPExhaustion
+    GetXPExhaustion = function() return WoW.secret(120) end
+    c.lastUpdate = 1
+    WoW.xp = 340
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.xpPercent, 85, "a secret rested read: the XP % still moves")
+    check(c.lastUpdate > 1, "  and touches the record")
+    eq(refreshes, 3, "  and redraws")
+    GetXPExhaustion = realExh2
+    AltStable.RefreshSheet = realRefresh
+end
 WoW.reset()
 
 ------------------------------------------------------------
