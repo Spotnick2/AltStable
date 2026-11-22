@@ -5075,14 +5075,14 @@ do
         parts[#parts + 1] = "==NOW==:" .. time()
         return table.concat(parts, "\n")
     end
-    local function marks(id)
+    local function entry(id, guid)
         local all = AltStableConfig.missedPluginPulls
-        return all and all[id]
+        return all and all[id] and all[id][guid]
     end
     local got = {}
     local function plugin(id)
         return { id = id, label = id, OnActivate = function() end,
-                 OnDeserialize = function(g, b) got[#got + 1] = id .. ":" .. b; return true end }
+                 OnDeserialize = function(g, b) got[#got + 1] = id .. ":" .. g .. ":" .. b; return true end }
     end
     -- Every request as it is handed to the transport, sent or not.
     local asked = {}
@@ -5102,116 +5102,157 @@ do
         AltStable.plugins = {}
         for _, id in ipairs({ ... }) do AltStable.RegisterPlugin(plugin(id)) end
     end
+    local A, B, C = "Player-449-A", "Player-449-B", "Player-449-C"
 
-    -- Marking: our own plugin, not loaded, a non-empty blob.
+    -- Marking: per character, with the peer it came from.
     AltStableConfig = { peerWatermarks = {}, whitelist = { "karuzo" } }
     AltStableDB = {}
-    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-1", "Alpha", WoW.now - 500), "plugin_warband:bags=1" },
-                                          { rec("Player-449-2", "Beta", WoW.now - 500), "plugin_future:x" },
-                                          { rec("Player-449-3", "Gamma", WoW.now - 500), "plugin_roster:" }))
-    eq(marks("warband") and marks("warband").karuzo, 0,
-       "#449: a blob for our plugin that isn't loaded marks it, by the sender's key")
-    eq(marks("future"), nil, "  a plugin this build doesn't have marks nothing")
-    eq(marks("roster"), nil, "  an empty blob marks nothing")
-    check((AltStableConfig.peerWatermarks.Karuzo or 0) > 0, "  and the reply still advanced the watermark (the bug)")
-    -- A loaded plugin takes its blob: no mark.
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec(A, "Alpha", WoW.now - 500), "plugin_warband:bags=1" },
+                                          { rec(B, "Beta", WoW.now - 500), "plugin_warband:bags=2" },
+                                          { rec(C, "Gamma", WoW.now - 500), "plugin_future:x" },
+                                          { rec("Player-449-D", "Delta", WoW.now - 500), "plugin_roster:" }))
+    local e = entry("warband", A)
+    eq(e and (e.peer .. "/" .. e.short .. "/" .. e.tries), "karuzo/Karuzo/0",
+       "#449: a blob for our plugin that isn't loaded marks that character, with its peer")
+    check(entry("warband", B) ~= nil, "  each character its own entry")
+    eq(AltStableConfig.missedPluginPulls.future, nil, "  a plugin this build doesn't have marks nothing")
+    eq(AltStableConfig.missedPluginPulls.roster, nil, "  an empty blob marks nothing")
     AltStable.plugins = { plugin("legacy") }
-    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-4", "Delta", WoW.now - 400), "plugin_legacy:x" }))
-    eq(marks("legacy"), nil, "  a loaded plugin's blob marks nothing")
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec(C, "Gamma", WoW.now - 400), "plugin_legacy:x" }))
+    eq(AltStableConfig.missedPluginPulls.legacy, nil, "  a loaded plugin's blob marks nothing")
     AltStable.plugins = {}
     -- A record that loses the merge still carries a plugin's own data: marked too.
-    AltStableDB["Player-449-1"].lastUpdate = WoW.now
-    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-1", "Alpha", WoW.now - 3600), "plugin_loremaster:q" }))
-    eq(marks("loremaster") and marks("loremaster").karuzo, 0, "  the stale-record path marks as well")
-    -- The single-character path too.
-    T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(rec("Player-449-5", "Eps", WoW.now - 300))
+    AltStableDB[C].lastUpdate = WoW.now
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec(C, "Gamma", WoW.now - 3600), "plugin_loremaster:q" }))
+    check(entry("loremaster", C) ~= nil, "  the stale-record path marks as well")
+    T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(rec("Player-449-E", "Eps", WoW.now - 300))
                                          .. "\nplugin_instances:r"), "Other-Realm")
-    eq(marks("instances") and marks("instances").other, 0, "  and the single-character path")
+    eq(entry("instances", "Player-449-E") and entry("instances", "Player-449-E").peer, "other",
+       "  and the single-character path")
+    -- A new miss for the same character replaces its entry.
+    AltStableConfig.missedPluginPulls.warband[B].tries = 2
+    T.LibSync.Apply("Other", reply({ rec(B, "Beta", WoW.now - 450), "plugin_warband:bags=3" }))
+    eq(entry("warband", B).peer .. "/" .. entry("warband", B).tries, "other/0",
+       "  a new miss for that character replaces its entry: its peer, tries back to 0")
+    AltStableConfig.missedPluginPulls.warband[B] = { peer = "karuzo", short = "Karuzo", tries = 0 }
+    -- legacy: a plugin never loaded below.
+    AltStableConfig.missedPluginPulls.legacy = { [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
 
-    -- Two loaded plugins marked for one peer (warband also for another), one
-    -- not loaded (legacy).
-    AltStableConfig.missedPluginPulls = { warband = { karuzo = 0, zed = 0 }, loremaster = { karuzo = 0 },
-                                          legacy = { karuzo = 0 } }
+    -- Registration: ordinary sync untouched.
     local stored = WoW.now - 900
     AltStableConfig.peerWatermarks = { karuzo = stored, Other = 777 }   -- as GetPeerWatermark reads "karuzo"
-    -- A delta asked for before the plugins register, still queued.
-    WoW.ctlDefer = true
-    T.RequestCharacters("WHISPER", "karuzo", true)
-    WoW.ctlDefer = false
-    eq(requests(), tostring(stored), "before the plugin is loaded, a request is a delta")
-    AltStable.RegisterPlugin(plugin("warband"))
-    AltStable.RegisterPlugin(plugin("loremaster"))
+    requests()
+    session("warband", "loremaster")
     eq(AltStableConfig.peerWatermarks.karuzo, stored, "registration keeps the marked peer's watermark")
     eq(AltStableConfig.peerWatermarks.Other, 777, "  and every other's")
-    WoW.ctlDrain()
-    WoW.ctlDefer = false                       -- ctlDrain leaves it on
-    check(not T.RecoverSent().karuzo, "the delta queued before, sent after, doesn't count")
-    -- The session's first request: throttle cleared, watermark 0, once.
+    T.RequestCharacters("WHISPER", "karuzo")
+    eq(requests(), tostring(stored), "the ordinary pull after registration uses the saved watermark")
+    -- ~10 s later, one extra request asks for everything, the throttle notwithstanding.
     WoW.flushTimers()
-    eq(requests(), "0", "3 s later the session's first request to that peer asks for everything")
-    check(T.RecoverSent().karuzo, "  and counts once it has left")
-    eq(marks("warband").karuzo .. "/" .. marks("loremaster").karuzo, "1/1", "  one try counted for each loaded plugin")
-    eq(marks("legacy").karuzo, 0, "  not for a plugin still not loaded")
-    T.RequestCharacters("WHISPER", "karuzo", true)
-    eq(requests(), tostring(stored), "the second request of the session carries the stored watermark")
+    eq(requests(), "0", "the recovery request asks for everything, the ordinary pull's throttle notwithstanding")
+    eq(entry("warband", A).tries .. "/" .. entry("warband", B).tries .. "/" .. entry("loremaster", C).tries, "1/1/1",
+       "  leaving, it counts a try on that peer's entries")
+    eq(entry("legacy", A).tries, 0, "  not on a plugin still not loaded")
+    eq(entry("instances", "Player-449-E").tries, 0, "  nor on another peer's entries")
+    AltStable.RegisterPlugin(plugin("instances"))
+    WoW.flushTimers()
+    eq(requests(), "", "once a session: a later marked registration plans no second one")
+    check(T.RequestCharacters("WHISPER", "karuzo") == false, "  and it didn't write the throttle: the ordinary pull's still holds")
 
-    -- A full reply without the marked plugin's data: its mark stays.
-    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-6", "Zeta", WoW.now - 100) }))
-    eq(marks("warband").karuzo, 1, "a reply without the plugin's data leaves its mark")
-    -- One with one plugin's data clears only that plugin's mark for that peer.
+    -- What clears an entry.
     got = {}
-    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-7", "Eta", WoW.now - 90), "plugin_warband:bags=2" }))
-    eq(got[1], "warband:bags=2", "a reply with the plugin's data hands it over")
-    eq(marks("warband").karuzo, nil, "  and clears that plugin's mark (Karuzo-Realm, karuzo, Karuzo: one key)")
-    eq(marks("warband").zed, 0, "  another peer's mark for it stays")
-    eq(marks("loremaster").karuzo, 1, "  another plugin's mark, its data not in the reply, stays")
-    eq(marks("legacy").karuzo, 0, "  a plugin still not loaded keeps its own")
-    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-7", "Eta", WoW.now - 85), "plugin_loremaster:" }))
-    eq(marks("loremaster").karuzo, 1, "  an empty blob for it clears nothing")
-    -- Data before our full request left (no recovery yet) clears nothing.
-    session("loremaster")
+    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-F", "Phi", WoW.now - 100), "plugin_warband:other" }))
+    check(entry("warband", A) and entry("warband", B), "a delta carrying another character's data clears nothing")
+    T.LibSync.Apply("Other", reply({ rec(A, "Alpha", WoW.now - 90), "plugin_warband:fromother" }))
+    check(entry("warband", A) ~= nil, "A's data from another peer doesn't clear A (it can be older)")
+    T.LibSync.Apply("Karuzo", reply({ rec(A, "Alpha", WoW.now - 80) }))
+    check(entry("warband", A) ~= nil, "a reply with A but no plugin data for it doesn't clear A")
+    T.LibSync.Apply("Karuzo", reply({ rec(A, "Alpha", WoW.now - 70), "plugin_warband:" }))
+    check(entry("warband", A) ~= nil, "  nor does an empty blob")
     got = {}
-    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-8", "Theta", WoW.now - 80), "plugin_loremaster:q2" }))
-    eq(got[1], "loremaster:q2", "a delta's data before the session's full request is handed over")
-    eq(marks("loremaster").karuzo, 1, "  but clears nothing")
+    T.LibSync.Apply("Karuzo", reply({ rec(A, "Alpha", WoW.now - 60), "plugin_warband:bags=9" }))
+    eq(got[1], "warband:" .. A .. ":bags=9", "A's data from its peer is handed over")
+    eq(entry("warband", A), nil, "  and clears A (Karuzo-Realm, karuzo, Karuzo: one peer)")
+    check(entry("warband", B) ~= nil, "  B's entry stays")
+    eq(entry("legacy", A).tries, 0, "  and A's entry of a plugin not loaded")
 
-    -- A full request that fails: deltas still work, the mark stays.
-    requests()
+    -- A recovery request that fails to leave counts nothing; ordinary sync goes on.
+    session("warband", "loremaster")
     WoW.sendResults = { 12 }
     WoW.flushTimers()
-    eq(requests(), "0", "the next session asks for everything again")
-    check(not T.RecoverSent().karuzo, "  a request that didn't leave doesn't count")
-    eq(marks("loremaster").karuzo, 1, "  nor is it a try")
-    T.RequestCharacters("WHISPER", "karuzo", true)
-    eq(requests(), tostring(stored), "  the next request is a delta: a full reply that never comes stalls nothing")
-    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-9", "Iota", WoW.now - 70), "plugin_loremaster:q3" }))
-    eq(marks("loremaster").karuzo, 1, "  its reply clears nothing")
+    eq(requests(), "0", "the next session's recovery request")
+    eq(entry("warband", B).tries, 1, "  failing to leave, it counts no try")
+    T.RequestCharacters("WHISPER", "karuzo")
+    eq(requests(), tostring(stored), "  and the ordinary pull still uses the saved watermark")
 
-    -- Three sessions whose full request left without the data: the mark goes.
-    session("loremaster"); WoW.flushTimers()
-    eq(marks("loremaster").karuzo, 2, "a second try")
-    session("loremaster"); WoW.flushTimers()
-    eq(marks("loremaster").karuzo, 3, "a third")
+    -- Sent, with a full reply that never comes (too large): a try a session, then the entry goes.
+    session("warband", "loremaster"); WoW.flushTimers()
+    eq(entry("warband", B).tries, 2, "a full reply that never comes: a second try")
+    T.RequestCharacters("WHISPER", "karuzo")
+    eq(requests(), "0," .. tostring(stored), "  ordinary sync unaffected")
+    session("warband", "loremaster"); WoW.flushTimers()
+    eq(entry("warband", B).tries, 3, "  a third")
     requests()
-    session("loremaster")
-    eq(marks("loremaster"), nil, "after three, the next registration drops the mark")
+    session("warband", "loremaster")
+    eq(entry("warband", B), nil, "after three, the next registration drops the entry")
+    eq(entry("loremaster", C), nil, "  each plugin's alike")
+    eq(AltStableConfig.missedPluginPulls.loremaster, nil, "  an emptied plugin leaves no table behind")
     WoW.flushTimers()
-    T.RequestCharacters("WHISPER", "karuzo", true)
-    eq(requests(), tostring(stored), "  and asks for everything no more")
-    eq(marks("legacy").karuzo, 0, "a plugin never loaded keeps its mark throughout")
-    -- More of its data missed: the peer does have some, the tries start again.
-    AltStableConfig.missedPluginPulls.legacy.karuzo = 2
-    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-10", "Kappa", WoW.now - 60), "plugin_legacy:z" }))
-    eq(marks("legacy").karuzo, 0, "  missed again, its tries start again")
+    eq(requests(), "", "  and no recovery request goes")
+    eq(entry("legacy", A).tries, 0, "a plugin never loaded keeps its entry throughout")
 
-    -- A plugin with nothing to receive doesn't act on a mark.
-    AltStableConfig.missedPluginPulls.legacy.karuzo = 3
+    -- An entry of a character the core has no named record of goes at registration.
+    AltStableConfig.missedPluginPulls.warband = { ["Player-449-Z"] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+    session("warband")
+    eq(entry("warband", "Player-449-Z"), nil, "an orphan entry is dropped at registration")
+    WoW.flushTimers()
+    eq(requests(), "", "  and plans no recovery")
+
+    -- Forgetting the character drops its entries, every plugin's.
+    AltStableConfig.missedPluginPulls.warband = { [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+    AltStable.ForgetCharacter(A)
+    eq(entry("warband", A), nil, "forgetting a character drops its entries")
+    eq(entry("legacy", A), nil, "  a plugin not loaded's too")
+    AltStableConfig.missedPluginPulls.warband = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 } }
+    AltStable.MarkCharacterForgotten(B, WoW.now)
+    eq(entry("warband", B), nil, "  a received forget (no record here) too")
+
+    -- A marked peer that isn't a sync target gets no request; one only a plugin
+    -- not loaded waits for, none either.
+    AltStableDB[B] = rec(B, "Beta", WoW.now - 10)
+    AltStableConfig.forgottenCharacters = {}
+    AltStableConfig.missedPluginPulls = { warband = { [B] = { peer = "stranger", short = "Stranger", tries = 0 } },
+                                          legacy = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 } } }
+    session("warband")
+    WoW.flushTimers()
+    eq(requests(), "", "a marked peer outside the sync targets, or a plugin not loaded: no recovery request")
+    eq(entry("warband", B).tries, 0, "  and no try counted")
+    -- A plugin with nothing to receive doesn't act on its entries: no drop,
+    -- no recovery, no tries - also when another plugin's recovery goes.
+    AltStableConfig.missedPluginPulls = {
+        warband = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 } },
+        legacy = { [B] = { peer = "karuzo", short = "Karuzo", tries = 0 },
+                   ["Player-449-Z"] = { peer = "karuzo", short = "Karuzo", tries = 3 } } }
     session()
     AltStable.RegisterPlugin({ id = "legacy", label = "L", OnActivate = function() end })
-    eq(marks("legacy").karuzo, 3, "a plugin that receives nothing leaves its mark alone")
-    requests()
-    T.RequestCharacters("WHISPER", "karuzo", true)
-    eq(requests(), tostring(stored), "a plugin that receives nothing doesn't ask for everything")
+    WoW.flushTimers()
+    eq(requests(), "", "a plugin that receives nothing plans no recovery")
+    eq(entry("legacy", "Player-449-Z").tries, 3, "  nor drops its entries")
+    AltStable.RegisterPlugin(plugin("warband"))
+    WoW.flushTimers()
+    eq(requests(), "0", "another plugin's recovery goes")
+    eq(entry("warband", B).tries .. "/" .. entry("legacy", B).tries, "1/0", "  counting no try for one that receives nothing")
+    -- An entry missed again from another peer while the request was on its way
+    -- isn't counted against the new peer.
+    session("warband")
+    WoW.ctlDefer = true
+    WoW.flushTimers()
+    T.LibSync.Apply("Other", reply({ rec(B, "Beta", WoW.now - 5), "plugin_legacy:x" }))   -- (legacy not loaded)
+    AltStableConfig.missedPluginPulls.warband[B] = { peer = "other", short = "Other", tries = 0 }
+    WoW.ctlDrain()
+    WoW.ctlDefer = false
+    eq(entry("warband", B).peer .. "/" .. entry("warband", B).tries, "other/0",
+       "an entry re-marked from another peer before the request left gets no try")
     AltStable.plugins = {}
     T.LibSync.SendRequest = realSendRequest
     WoW.reset()

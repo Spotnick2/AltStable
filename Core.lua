@@ -172,23 +172,29 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- A plugin's data dropped while the plugin was not loaded (#449): switched off
 -- through WoW's AddOns list, a reply still carried its blob, nobody took it,
 -- and the reply still advanced our watermark past it. The saved mark,
--- AltStableConfig.missedPluginPulls = { [pluginId] = { [AuthKey] = tries } },
--- says from whom. Once that plugin is loaded, the first request of a session
--- to that peer asks with watermark 0 (recoveryTried: once per session); every
--- later one uses the stored watermark, which is never touched - so a full
--- reply that never comes (over the library's 32 KB, say) leaves deltas working
--- (Codex review of #465). recoverSent: that full request actually left. The
--- mark clears only when that plugin's own data from that peer then arrives
--- (DispatchPluginPayloads); a reply without it leaves the mark pending.
--- `tries` counts the sessions whose full request left: after
--- MAX_RECOVERY_TRIES of them without the data - the other account has none of
--- that plugin's data any more - the mark is dropped at the next registration,
--- rather than a full pull every session for ever.
--- Declared: a delta reply arriving after the full request left can carry that
--- plugin's data and clear the mark; what it carried is then current anyway for
--- those records, and the rest waits for their next change or a full pull.
-local recoveryTried, recoverSent = {}, {}
+-- AltStableConfig.missedPluginPulls = { [pluginId] = { [guid] = { peer = AuthKey,
+-- short = PeerShort, tries = n } } }, says whose data, from whom. A new miss
+-- for the same character replaces its entry (tries back to 0).
+--
+-- Recovery is best-effort and never touches ordinary sync: no watermark is
+-- lowered, deleted or held, and the login pull and every later request use the
+-- saved watermark as before (Codex reviews of #465: a full reply over the
+-- library's 32 KB never comes, and must not stall the deltas that fit). Once a
+-- session, ~10 s after the first marked plugin registers (after the login
+-- pull), each current sync target with entries of a loaded plugin gets ONE
+-- extra request with watermark 0, outside the throttle (neither checked nor
+-- written, so a failed one never suppresses an ordinary pull). Leaving, it
+-- counts a try on those entries. An entry clears only when a loaded plugin
+-- receives a non-empty blob for that character from the entry's own peer (a
+-- blob from another peer can be older). It is dropped after MAX_RECOVERY_TRIES
+-- requests left without it clearing (that peer no longer has that data: its
+-- plugin is off there, say) at the next registration, when the character is
+-- forgotten, and at registration when the core has no named record of it.
+-- Declared: a marked peer that isn't a current sync target gets no recovery
+-- request - its entries wait for it to be one, bounded by the drop rules.
+local recoveryScheduled = false
 local MAX_RECOVERY_TRIES = 3
+local RECOVERY_DELAY = 10
 
 -- Sync-scope epoch. Watermarks belong to the REQUESTER: a peer asks us for
 -- changes since its own watermark for us. So when a setting widens WHICH
@@ -970,39 +976,49 @@ end
 -- Returns whether any plugin stored something newer: its OnDeserialize returns
 -- true only for a strictly newer stamp of its own (#422). Every plugin still
 -- gets its blob after the first one says so.
--- The missed-pull marks (#449, see recoveryTried), copied on write.
+-- The missed-pull entries (#449, see recoveryScheduled), copied on write.
 local function MissedPulls()
     local all = AltStableConfig and AltStableConfig.missedPluginPulls
     return type(all) == "table" and all or {}
 end
-local function SetMissedPull(id, key, value)
+local function SetMissedPull(id, guid, value)
     local copy = {}
-    for pid, peers in pairs(MissedPulls()) do
+    for pid, entries in pairs(MissedPulls()) do
         local kept = {}
-        for k, v in pairs(type(peers) == "table" and peers or {}) do kept[k] = v end
+        for g, e in pairs(type(entries) == "table" and entries or {}) do kept[g] = e end
         copy[pid] = kept
     end
     copy[id] = copy[id] or {}
-    copy[id][key] = value
+    copy[id][guid] = value
     if not next(copy[id]) then copy[id] = nil end
     AltStable.SetConfigValue("missedPluginPulls", next(copy) and copy or nil)
 end
 
--- A blob for one of our own plugins that is not loaded (#449): remember who
--- sent it. An id that is not ours - a newer build's plugin - is ignored, so
--- the marks cannot grow without bound. A mark already there starts its tries
--- again: that peer has just shown it does hold such data.
-local function NoteMissedPull(id, sender)
+-- A character forgotten (#449): its entries go from every plugin's marks,
+-- loaded or not. Called by MarkCharacterForgotten, so the player's forget and
+-- a received one alike.
+function AltStable.DropMissedPulls(guid)
+    if not guid then return end
+    for id, entries in pairs(MissedPulls()) do
+        if type(entries) == "table" and entries[guid] then SetMissedPull(id, guid, nil) end
+    end
+end
+
+-- A blob for one of our own plugins that is not loaded (#449): remember whose
+-- and from whom. An id that is not ours - a newer build's plugin - is ignored,
+-- so the marks cannot grow without bound.
+local function NoteMissedPull(id, guid, sender)
     local key = AuthKey(sender)
-    if not key then return end
+    if not key or not guid then return end
     local ours = false
     for _, p in ipairs(AltStable.LOD_PLUGINS or {}) do
         if p.key == id then ours = true; break end
     end
     if not ours then return end
-    local peers = MissedPulls()[id]
-    if type(peers) == "table" and peers[key] == 0 then return end
-    SetMissedPull(id, key, 0)
+    local entries = MissedPulls()[id]
+    local e = type(entries) == "table" and entries[guid]
+    if type(e) == "table" and e.peer == key and e.tries == 0 then return end
+    SetMissedPull(id, guid, { peer = key, short = PeerShort(sender), tries = 0 })
 end
 
 local function DispatchPluginPayloads(c, independentOnly, sender)
@@ -1017,18 +1033,18 @@ local function DispatchPluginPayloads(c, independentOnly, sender)
         if blob and plugin.OnDeserialize and (not independentOnly or plugin.independentStamp) then
             local ok, newer = pcall(plugin.OnDeserialize, c.guid, blob)
             if ok and newer == true then advanced = true end
-            -- Its own data from that peer, after our full request to it left
-            -- (#449): that mark is spent. Another plugin's mark stays.
-            local peers = MissedPulls()[plugin.id]
-            if ok and blob ~= "" and key and recoverSent[key]
-               and type(peers) == "table" and peers[key] then
-                SetMissedPull(plugin.id, key, nil)
+            -- This character's data, from the peer it was missed from (#449):
+            -- its entry is spent. Another character's stays.
+            local entries = MissedPulls()[plugin.id]
+            local e = type(entries) == "table" and entries[c.guid]
+            if ok and blob ~= "" and key and type(e) == "table" and e.peer == key then
+                SetMissedPull(plugin.id, c.guid, nil)
             end
         end
     end
     -- Both paths (#449): a stale core record can carry a plugin's own newer data.
     for id, blob in pairs(payloads) do
-        if not registered[id] and blob ~= "" then NoteMissedPull(id, sender) end
+        if not registered[id] and blob ~= "" then NoteMissedPull(id, c.guid, sender) end
     end
     return advanced
 end
@@ -1231,15 +1247,20 @@ local function AdvancePeerWatermark(name, ts, peerNow)
 end
 AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
 
--- The loaded plugins (that receive data) with a missed-pull mark for this peer
--- key (#449, see recoveryTried). A mark for a plugin still not loaded waits.
-local function PendingRecoveries(key)
+-- The entries missed from this peer key that a loaded plugin (one that
+-- receives data) waits for (#449, see recoveryScheduled), as { id, guid }
+-- pairs. A plugin still not loaded waits on its own.
+local function PendingEntries(key)
     local out = {}
     if not key then return out end
     local all = MissedPulls()
     for _, p in ipairs(AltStable.plugins or {}) do
-        local peers = all[p.id]
-        if p.OnDeserialize and type(peers) == "table" and peers[key] then out[#out + 1] = p.id end
+        local entries = all[p.id]
+        if p.OnDeserialize and type(entries) == "table" then
+            for guid, e in pairs(entries) do
+                if type(e) == "table" and e.peer == key then out[#out + 1] = { p.id, guid } end
+            end
+        end
     end
     return out
 end
@@ -2621,7 +2642,10 @@ local function ClearSyncWatch(peer)
     syncWatch[PeerShort(peer)] = nil
 end
 
-function RequestCharacters(channel, target, force, onSent)
+-- wmOverride (#449): the watermark to ask with instead of the saved one - the
+-- missed-pull recovery's 0. Such a request is outside the throttle: neither
+-- checked nor recorded, so it never suppresses an ordinary pull.
+function RequestCharacters(channel, target, force, onSent, wmOverride)
 
     channel = channel or "GUILD"
 
@@ -2631,44 +2655,20 @@ function RequestCharacters(channel, target, force, onSent)
         -- when the request goes out.
         if SyncAuthFor(target) == AUTH_NEVER then return false end
         local now = time()
-        if not force then
+        if not force and not wmOverride then
             local last = lastRequestedAt[AuthKey(target) or target]
             if last and (now - last) < REQUEST_THROTTLE then
                 return false
             end
         end
         -- By peer key: "Name" and "Name-Realm" are one peer (#58).
-        lastRequestedAt[AuthKey(target) or target] = now
+        if not wmOverride then lastRequestedAt[AuthKey(target) or target] = now end
     end
 
     -- Carry our delta watermark for this peer so they can send only what
     -- changed since we last heard from them. A peer on older code ignores the
     -- extra payload and replies with a full DB (correct, just unoptimized).
-    local wm = target and GetPeerWatermark(target) or 0
-    -- A loaded plugin's data missed from this peer (#449): the session's first
-    -- request to it asks for everything, once; the stored watermark stays for
-    -- every later one. Decided here, where the watermark goes into the message:
-    -- a delta queued before never counts, whenever its callback runs (Codex
-    -- review of the #449 plan). Once it has left, recoverSent lets that
-    -- plugin's data clear its mark, and the try is counted.
-    local key = target and AuthKey(target)
-    local pending = key and not recoveryTried[key] and PendingRecoveries(key) or {}
-    if #pending > 0 then
-        recoveryTried[key] = true
-        wm = 0
-        local inner = onSent
-        onSent = function(didSend)
-            if didSend then
-                recoverSent[key] = true
-                for _, id in ipairs(pending) do
-                    local peers = MissedPulls()[id]
-                    local tries = type(peers) == "table" and tonumber(peers[key])
-                    if tries then SetMissedPull(id, key, tries + 1) end
-                end
-            end
-            if inner then return inner(didSend) end
-        end
-    end
+    local wm = wmOverride or (target and GetPeerWatermark(target)) or 0
     -- Through ChatThrottleLib at ALERT, not raw: a request can go out while
     -- CTL is still draining BULK chunks (a reply, a broadcast), and a raw send
     -- then lands with the outbound budget already spent and risks a silent
@@ -4625,6 +4625,31 @@ function AltStable.HasPlugin(id)
     return false
 end
 
+-- The session's recovery requests for missed plugin data (#449, see
+-- recoveryScheduled): one to each current sync target with entries a loaded
+-- plugin waits for, asking for everything, outside the throttle. The target's
+-- own spelling and route, as GetSyncTargets gives them. Leaving, it counts a
+-- try on those entries.
+local function RecoverMissedPulls()
+    for _, t in ipairs(GetSyncTargets()) do
+        local key = AuthKey(t.target)
+        local pending = PendingEntries(key)
+        if #pending > 0 then
+            RequestCharacters(t.channel, t.target, true, function(didSend)
+                if not didSend then return end
+                for _, p in ipairs(pending) do
+                    local entries = MissedPulls()[p[1]]
+                    local e = type(entries) == "table" and entries[p[2]]
+                    if type(e) == "table" and e.peer == key then
+                        SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short,
+                                                    tries = (tonumber(e.tries) or 0) + 1 })
+                    end
+                end
+            end, 0)
+        end
+    end
+end
+
 function AltStable.RegisterPlugin(plugin)
     if not plugin or not plugin.id or not plugin.label or not plugin.OnActivate then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[AltStable]|r RegisterPlugin: missing required fields (id, label, OnActivate).")
@@ -4636,25 +4661,25 @@ function AltStable.RegisterPlugin(plugin)
     end
     table.insert(AltStable.plugins, plugin)
     -- Its data dropped by a reply while it was not loaded (#449), however it was
-    -- switched back on: those peers' first request this session asks for
-    -- everything (see recoveryTried). Their throttle goes, and one request
-    -- follows in 3 s - a no-op through the throttle when the login pull has
-    -- gone out since. The watermarks are not touched. A mark whose full
-    -- request has left MAX_RECOVERY_TRIES sessions running without bringing
-    -- its data is dropped here: the other account has none of it any more.
-    local peers = plugin.OnDeserialize and MissedPulls()[plugin.id]
-    if type(peers) == "table" and next(peers) then
-        local asking = false
-        for key, tries in pairs(peers) do
-            if (tonumber(tries) or 0) >= MAX_RECOVERY_TRIES then
-                SetMissedPull(plugin.id, key, nil)
+    -- switched back on. An entry whose recovery request has left
+    -- MAX_RECOVERY_TRIES times without it clearing goes (that peer no longer
+    -- has the data), and so does one of a character the core has no named
+    -- record of. If any are left, the session's recovery requests are planned
+    -- once, after the login pull (see recoveryScheduled).
+    local entries = plugin.OnDeserialize and MissedPulls()[plugin.id]
+    if type(entries) == "table" then
+        local waiting = false
+        for guid, e in pairs(entries) do
+            local tries = type(e) == "table" and tonumber(e.tries) or MAX_RECOVERY_TRIES
+            if tries >= MAX_RECOVERY_TRIES or not AltStable.HasNamedRecord(guid) then
+                SetMissedPull(plugin.id, guid, nil)
             else
-                lastRequestedAt[key] = nil
-                asking = true
+                waiting = true
             end
         end
-        if asking and C_Timer and C_Timer.After then
-            C_Timer.After(3, function() BroadcastRequest() end)
+        if waiting and not recoveryScheduled and C_Timer and C_Timer.After then
+            recoveryScheduled = true
+            C_Timer.After(RECOVERY_DELAY, RecoverMissedPulls)
         end
     end
     -- Switched on from Options (#422): one full reply to each peer, if it
@@ -5370,7 +5395,7 @@ local function ResetSyncState()
     outdatedSenders = {}
     autoRetryCounts = {}
     lastRequestedAt = {}
-    recoveryTried, recoverSent = {}, {}   -- #449: session-local, the saved marks stay
+    recoveryScheduled = false   -- #449: session-local, the saved marks stay
     syncWatch       = {}
     heardAt, leftAt, onlineNow, answeredHere, askedHereAt, redrawnAt = {}, {}, {}, {}, 0, 0
 end
@@ -5835,8 +5860,7 @@ local _seam = {
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
     CoreFrame          = frame,   -- the same, under a name SheetUI does not reuse for the sheet
     ResetSyncState     = ResetSyncState,
-    RecoveryTried      = function() return recoveryTried end, -- #449
-    RecoverSent        = function() return recoverSent end,   -- #449
+    RecoverMissedPulls = RecoverMissedPulls,                  -- #449
     BufferedStreams    = function() local n = 0; for _ in pairs(incomingBuffers) do n = n + 1 end; return n end,
 }
 

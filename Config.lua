@@ -507,6 +507,8 @@ function AltStable.MarkCharacterForgotten(guid, when, name, seen)
     -- Its portrait captures too (#343): the player's forget and one received
     -- by sync both come through here, the latter even with no record left.
     if AltStable.DropPortraitRecords then AltStable.DropPortraitRecords(guid) end
+    -- And any plugin data still waited for from a peer (#449).
+    if AltStable.DropMissedPulls then AltStable.DropMissedPulls(guid) end
     -- Forgotten again: the newer decision is this one.
     if (AltStableConfig.unforgottenCharacters or {})[guid] then
         local back = {}
