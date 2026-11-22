@@ -771,6 +771,90 @@ do
     end
 end
 
+-- #470: the window draws no raw text - the game's fonts draw a tab, which
+-- makes Sheets split a paste into columns, as a box. The TSV sits in an
+-- invisible box, selected and focused, for the player's Ctrl+C (addons can't
+-- write the clipboard on Forever).
+do
+    local held = AltStableDB
+    AltStableDB = {
+        a = { name = "Ann", realm = "R", class = "MAGE", race = "Human", level = 60 },
+        b = { name = "Bob", realm = "R", class = "MAGE", race = "Orc", level = 50 },
+    }
+    AltStable.ShowExport()
+    local f = _G["AltStableExport"]
+    local box = f.editBox
+    local text = box:GetText() or ""
+    check("#470: the box holds the TSV, tabs and all", text:find("\t", 1, true) ~= nil, text:sub(1, 40))
+    eq("  the header and a line per character", select(2, text:gsub("\n", "")) + 1, 3)
+    eq("  and is never drawn", box:GetAlpha(), 0)
+    -- Alpha didn't hide the selection in game: grey bars up the screen.
+    eq("  its selection is transparent", box._highlightColor and box._highlightColor[4], 0)
+    eq("  so is its text", box:GetTextColor() and select(4, box:GetTextColor()), 0)
+    check("  and it sits in a frame that clips it", box:GetParent():DoesClipChildren())
+    local hw, hh = box:GetParent():GetWidth(), box:GetParent():GetHeight()
+    check("  one pixel at most", hw <= 1 and hh <= 1, hw .. "x" .. hh)
+    check("  nor takes the mouse", not box:IsMouseEnabled())
+    check("  selected", box._highlighted == true)
+    check("  and focused, for Ctrl+C", box:HasFocus())
+    local cols = 1
+    for _ in AltStable._test.ExportHeader():gmatch("\t") do cols = cols + 1 end
+    eq("the window says what is ready", f.status:GetText(),
+       ("Ready to copy: 2 characters, %d columns."):format(cols))
+    check("  and what to do", (f.how:GetText() or ""):find("Ctrl+C", 1, true) ~= nil, f.how:GetText())
+    -- Typing can't change it.
+    box:SetText("x")
+    box:GetScript("OnTextChanged")(box, true)
+    eq("typing doesn't change the text", box:GetText(), text)
+    box:SetText(text)
+    box:GetScript("OnTextChanged")(box, false)
+    eq("  our own SetText stands", box:GetText(), text)
+    -- Focus lost, then Select again.
+    box:ClearFocus()
+    box:GetScript("OnEditFocusLost")(box)
+    check("losing the selection says so", (f.how:GetText() or ""):find("Select again", 1, true) ~= nil, f.how:GetText())
+    box._highlighted = nil
+    f.again:GetScript("OnClick")(f.again)
+    check("Select again selects it", box._highlighted == true)
+    check("  and focuses it", box:HasFocus())
+    -- A caret key collapses the selection with the box still focused: the
+    -- key's release selects it all again, and the line still holds.
+    box._highlighted = nil
+    box:GetScript("OnKeyUp")(box, "END")
+    check("a caret key's release selects the whole text again", box._highlighted == true)
+    check("  and the line says it is selected", (f.how:GetText() or ""):find("Ctrl+C now", 1, true) ~= nil, f.how:GetText())
+    box._highlighted = nil
+    box:GetScript("OnEditFocusGained")(box)
+    check("focus regained selects all", box._highlighted == true)
+    check("  and says so", (f.how:GetText() or ""):find("Ctrl+C now", 1, true) ~= nil, f.how:GetText())
+    -- The companion's Google Sheet, beside the close button.
+    WoW.tooltipLines = {}
+    f.info:GetScript("OnEnter")(f.info)
+    local tip = table.concat(WoW.tooltipLines, "|")
+    check("the info icon names the companion", tip:find("AltStable Companion", 1, true) ~= nil, tip)
+    check("  and the Google Sheet", tip:find("Google", 1, true) ~= nil, tip)
+    local copied
+    local realCopy, realURL = AltStable.ShowCopyText, AltStable.COMPANION_URL
+    AltStable.COMPANION_URL = realURL or "https://example.invalid/releases"
+    AltStable.ShowCopyText = function(_, t) copied = t end
+    f.info:GetScript("OnClick")(f.info)
+    eq("  a click offers the download link", copied, AltStable.COMPANION_URL)
+    AltStable.ShowCopyText, AltStable.COMPANION_URL = realCopy, realURL
+    -- Only what the fonts draw: no tab, no arrow, in anything on screen.
+    for _, s in ipairs({ f.status:GetText() or "", f.how:GetText() or "", tip, "Select again" }) do
+        check("no tab or arrow on screen: " .. s:sub(1, 30),
+              not s:find("\t", 1, true) and not s:find("\226\134\146", 1, true))
+    end
+    box:GetScript("OnEditFocusLost")(box)
+    check("  nor in the lost-selection line", not (f.how:GetText() or ""):find("\226\134\146", 1, true))
+    f:Hide()
+    AltStableDB = { a = { name = "Solo", realm = "R", class = "MAGE", race = "Human", level = 1 } }
+    AltStable.ShowExport()
+    eq("one character is one character", f.status:GetText(), ("Ready to copy: 1 character, %d columns."):format(cols))
+    f:Hide()
+    AltStableDB = held
+end
+
 do
     local row = AltStable._test.ExportRow
     local function firstCols(line)

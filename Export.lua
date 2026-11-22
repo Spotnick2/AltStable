@@ -166,6 +166,19 @@ end
 
 local exportFrame
 
+-- The window's words (#470), plain ASCII beyond the title's dash: the game's
+-- fonts draw an arrow, or a tab, as a box.
+local HOW_SELECTED = "Selected. Press Ctrl+C now, then paste into cell A1 of a Google Sheet:"
+    .. " the columns split by themselves."
+local HOW_LOST = "Not selected any more: click Select again, then press Ctrl+C."
+local COMPANION_TIP = {
+    "A Google Sheet, kept for you",
+    "AltStable Companion, the desktop app, writes your characters to a spreadsheet in your own"
+        .. " Google Drive: characters, skills, reputations and gear, rewritten after each save."
+        .. " It is off until you connect it, in the app's Settings.",
+    "Click for the download link.",
+}
+
 -- Test seam (the AltStable._test convention): the row and header builders.
 AltStable._test = AltStable._test or {}
 AltStable._test.ExportRow    = CharToTSV
@@ -175,7 +188,7 @@ local function CreateExportFrame()
     if exportFrame then return end
 
     exportFrame = CreateFrame("Frame","AltStableExport",UIParent,"BackdropTemplate")
-    exportFrame:SetSize(700, 420)
+    exportFrame:SetSize(460, 190)
     exportFrame:SetPoint("CENTER")
     exportFrame:SetFrameStrata("DIALOG")
     exportFrame:SetToplevel(true)
@@ -202,39 +215,104 @@ local function CreateExportFrame()
     title:SetPoint("TOP",0,-16)
     title:SetText("AltStable — Export to Spreadsheet")
 
-    local hint = exportFrame:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
-    hint:SetPoint("TOP",0,-38)
-    hint:SetTextColor(0.7,0.7,0.7)
-    hint:SetText("Select All (Ctrl+A)  →  Copy (Ctrl+C)  →  Paste into Google Sheets column A")
+    -- What is ready, and what to do with it (#470). Only characters the
+    -- game's fonts draw: an arrow came out as a box.
+    local status = exportFrame:CreateFontString(nil,"OVERLAY","GameFontHighlight")
+    status:SetPoint("TOP",0,-52)
+    status:SetWidth(400)
+    exportFrame.status = status
+
+    local how = exportFrame:CreateFontString(nil,"OVERLAY","GameFontNormal")
+    how:SetPoint("TOP",status,"BOTTOM",0,-10)
+    how:SetWidth(400)
+    exportFrame.how = how
 
     local close = CreateFrame("Button",nil,exportFrame,"UIPanelCloseButton")
     close:SetPoint("TOPRIGHT",-5,-5)
 
-    -- Scrollable text area
-    local scroll = CreateFrame("ScrollFrame","AltStableExportScroll",exportFrame,"UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", exportFrame,"TOPLEFT",   16,-60)
-    scroll:SetPoint("BOTTOMRIGHT",exportFrame,"BOTTOMRIGHT",-30,14)
+    -- The companion keeps a Google Sheet for you (#470): said beside the close
+    -- button, on hover; a click gives the download link to copy.
+    local info = CreateFrame("Button",nil,exportFrame)
+    info:SetSize(16,16)
+    info:SetPoint("RIGHT",close,"LEFT",-2,0)
+    info:SetNormalTexture("Interface\\FriendsFrame\\InformationIcon")
+    info:SetHighlightTexture("Interface\\FriendsFrame\\InformationIcon-Highlight")
+    info:SetScript("OnEnter",function(self)
+        GameTooltip:SetOwner(self,"ANCHOR_RIGHT")
+        for i, line in ipairs(COMPANION_TIP) do
+            if i == 1 then GameTooltip:SetText(line,1,1,1)
+            else GameTooltip:AddLine(line,nil,nil,nil,true) end
+        end
+        GameTooltip:Show()
+    end)
+    info:SetScript("OnLeave",function() GameTooltip:Hide() end)
+    info:SetScript("OnClick",function()
+        if AltStable.ShowCopyText and AltStable.COMPANION_URL then
+            AltStable.ShowCopyText("AltStable Companion keeps a Google Sheet of your alts. "
+                .. "Copy the link (Ctrl+C) and open it in your browser:", AltStable.COMPANION_URL)
+        end
+    end)
+    exportFrame.info = info
 
-    local editBox = CreateFrame("EditBox",nil,scroll)
+    -- The TSV itself, never drawn (#470). Its columns are separated by tabs,
+    -- which is what makes Google Sheets split a paste into columns, and the
+    -- game's fonts draw a tab as a box. Addons can't write the clipboard on
+    -- Forever (CopyToClipboard is forbidden), so the text sits here selected
+    -- and focused, invisible, for the player's Ctrl+C - and typing can't
+    -- change it.
+    --
+    -- Alpha alone hides the text but NOT the selection: in game the highlight
+    -- still drew, and a multi-line box grows past its height - grey bars up
+    -- the whole screen (owner, 2026-11-22). So the highlight and the text are
+    -- transparent too, and the box sits in a 1x1 frame that clips it: if the
+    -- client draws anything regardless, it is one pixel.
+    local holder = CreateFrame("Frame",nil,exportFrame)
+    holder:SetSize(1, 1)
+    holder:SetPoint("BOTTOMLEFT",12,12)
+    holder:SetClipsChildren(true)
+    exportFrame.copyHolder = holder
+
+    local editBox = CreateFrame("EditBox",nil,holder)
     editBox:SetMultiLine(true)
     editBox:SetFontObject(GameFontHighlightSmall)
-    editBox:SetWidth(640)
+    editBox:SetSize(400, 14)
+    editBox:SetPoint("TOPLEFT",holder,"TOPLEFT",0,0)
+    editBox:SetAlpha(0)
+    editBox:SetTextColor(0, 0, 0, 0)
+    editBox:SetHighlightColor(0, 0, 0, 0)
+    editBox:EnableMouse(false)
     editBox:SetAutoFocus(false)
     editBox:SetMaxLetters(0)  -- unlimited
     editBox:SetScript("OnEscapePressed",function() exportFrame:Hide() end)
-    scroll:SetScrollChild(editBox)
+    editBox:SetScript("OnTextChanged",function(self, userInput)
+        if userInput and self.fixed then self:SetText(self.fixed); self:HighlightText() end
+    end)
+    editBox:SetScript("OnEditFocusGained",function(self)
+        self:HighlightText()
+        how:SetText(HOW_SELECTED)
+    end)
+    editBox:SetScript("OnEditFocusLost",function()
+        how:SetText(HOW_LOST)
+    end)
+    -- A caret key (End, Home, an arrow) collapses the selection without any
+    -- change of focus, and the line would still say "press Ctrl+C" (Codex
+    -- review of #471). Every key released selects the whole TSV again, so
+    -- what the line says is what Ctrl+C copies.
+    editBox:SetScript("OnKeyUp",function(self)
+        self:HighlightText()
+        how:SetText(HOW_SELECTED)
+    end)
     exportFrame.editBox = editBox
 
-    -- Select-all on first click for convenience
-    editBox:SetScript("OnMouseDown",function(self)
-        if not self._selected then
-            self:HighlightText()
-            self._selected = true
-        end
+    local again = CreateFrame("Button",nil,exportFrame,"UIPanelButtonTemplate")
+    again:SetSize(140,24)
+    again:SetPoint("BOTTOM",0,20)
+    again:SetText("Select again")
+    again:SetScript("OnClick",function()
+        editBox:SetFocus()
+        editBox:HighlightText()
     end)
-    editBox:SetScript("OnTextChanged",function(self)
-        self._selected = false
-    end)
+    exportFrame.again = again
 
     exportFrame:Hide()
 end
@@ -266,8 +344,12 @@ function AltStable.ShowExport()
     end
 
     local tsv = table.concat(lines, "\n")
+    local columns = 1
+    for _ in lines[1]:gmatch("\t") do columns = columns + 1 end
+    exportFrame.status:SetText(("Ready to copy: %d %s, %d columns."):format(
+        #chars, #chars == 1 and "character" or "characters", columns))
+    exportFrame.editBox.fixed = tsv
     exportFrame.editBox:SetText(tsv)
-    exportFrame.editBox._selected = false
     -- With the game UI hidden (the showcase), a child of UIParent is invisible
     -- whatever its strata (#434): lift it out, the same door the character
     -- menu uses. Not hidden: false drops a lift left from before.
@@ -283,4 +365,5 @@ function AltStable.ShowExport()
     if exportFrame.Raise then exportFrame:Raise() end
     exportFrame.editBox:SetFocus()
     exportFrame.editBox:HighlightText()
+    exportFrame.how:SetText(HOW_SELECTED)
 end
