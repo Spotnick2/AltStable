@@ -14,7 +14,7 @@ WoW account, received by sync.
 | Field | Type | Meaning |
 |---|---|---|
 | `stamp` | number | When this snapshot was taken (Unix time, strictly increasing per character). |
-| `ver` | string | The quest table's version. Counts from different versions are not directly comparable. |
+| `ver` | string | What the counts were made with: the quest table's version and the counting rules' (for example `9b0a9380r2`). Counts from different versions are not directly comparable. |
 | `level` | number | The character's level at the snapshot. |
 | `faction` | string | `"Alliance"` or `"Horde"`. |
 | `race`, `class` | number | Race ID and class ID (`UnitRace`/`UnitClass` third returns). |
