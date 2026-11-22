@@ -169,6 +169,18 @@ local autoRetryCounts = {}
 local lastRequestedAt = {}
 local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 
+-- A plugin's data dropped while the plugin was not loaded (#449): switched off
+-- through WoW's AddOns list, a reply still carried its blob, nobody took it,
+-- and the reply still advanced our watermark past it. The saved mark,
+-- AltStableConfig.missedPluginPulls = { [pluginId] = { [AuthKey] = PeerShort } },
+-- says from whom. When that plugin registers, those peers are HELD for the
+-- session (by AuthKey): their watermark is dropped and never advanced again
+-- this session, so every request to them is a full pull and no delta from
+-- before the reset can carry us past the dropped data again (Codex review of
+-- the #449 plan). recoverSent: a full request to a held peer that actually
+-- went out; the next database reply from that peer then clears the mark.
+local heldPeers, recoverSent = {}, {}
+
 -- Sync-scope epoch. Watermarks belong to the REQUESTER: a peer asks us for
 -- changes since its own watermark for us. So when a setting widens WHICH
 -- characters we send (sendAllAccounts, accountNumber), the newly eligible ones
@@ -949,17 +961,45 @@ end
 -- Returns whether any plugin stored something newer: its OnDeserialize returns
 -- true only for a strictly newer stamp of its own (#422). Every plugin still
 -- gets its blob after the first one says so.
-local function DispatchPluginPayloads(c, independentOnly)
+-- A blob for one of our own plugins that is not loaded (#449): remember who
+-- sent it (see heldPeers). An id that is not ours - a newer build's plugin -
+-- is ignored, so the marks cannot grow without bound.
+local function NoteMissedPull(id, sender)
+    local key, short = AuthKey(sender), PeerShort(sender)
+    if not key or not short then return end
+    local ours = false
+    for _, p in ipairs(AltStable.LOD_PLUGINS or {}) do
+        if p.key == id then ours = true; break end
+    end
+    if not ours then return end
+    local all = (AltStableConfig and AltStableConfig.missedPluginPulls) or {}
+    if type(all[id]) == "table" and all[id][key] then return end
+    local copy = {}
+    for pid, peers in pairs(all) do
+        copy[pid] = {}
+        for k, v in pairs(type(peers) == "table" and peers or {}) do copy[pid][k] = v end
+    end
+    copy[id] = copy[id] or {}
+    copy[id][key] = short
+    AltStable.SetConfigValue("missedPluginPulls", copy)
+end
+
+local function DispatchPluginPayloads(c, independentOnly, sender)
     local payloads = c and c._pluginPayloads
     c._pluginPayloads = nil
-    if not payloads or not AltStable.plugins then return false end
-    local advanced = false
-    for _, plugin in ipairs(AltStable.plugins) do
+    if not payloads then return false end
+    local advanced, registered = false, {}
+    for _, plugin in ipairs(AltStable.plugins or {}) do
+        registered[plugin.id] = true
         local blob = payloads[plugin.id]
         if blob and plugin.OnDeserialize and (not independentOnly or plugin.independentStamp) then
             local ok, newer = pcall(plugin.OnDeserialize, c.guid, blob)
             if ok and newer == true then advanced = true end
         end
+    end
+    -- Both paths (#449): a stale core record can carry a plugin's own newer data.
+    for id, blob in pairs(payloads) do
+        if not registered[id] and blob ~= "" then NoteMissedPull(id, sender) end
     end
     return advanced
 end
@@ -1142,6 +1182,8 @@ end
 -- stored value too, so a watermark already in the future is pulled back rather
 -- than only ever ratcheting upward.
 local function AdvancePeerWatermark(name, ts, peerNow)
+    -- A peer held for a plugin's missed data (#449) stays at a full pull.
+    if heldPeers[AuthKey(name) or ""] then return end
     AltStableConfig = AltStableConfig or {}
     AltStableConfig.peerWatermarks = AltStableConfig.peerWatermarks or {}
     local short = PeerShort(name)
@@ -1161,6 +1203,33 @@ local function AdvancePeerWatermark(name, ts, peerNow)
     end
 end
 AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
+
+-- A database reply from a held peer after our full request to it went out
+-- (#449): the missed data is back, for the plugins that are registered now. A
+-- mark for a plugin still not loaded stays. The hold itself lasts the session.
+-- Declared: a reply doesn't say which request it answers (no wire change for
+-- that). So a delta asked for before the reset, answered after our full request
+-- went out but before its reply, in a session that then ends, clears the mark
+-- early: that data then waits for the character's next change or a full pull,
+-- as it did before (Codex review of the #449 plan).
+local function ClearRecoveredPulls(peer)
+    local key = AuthKey(peer)
+    if not key or not recoverSent[key] then return end
+    recoverSent[key] = nil
+    local all = AltStableConfig and AltStableConfig.missedPluginPulls
+    if type(all) ~= "table" then return end
+    local loaded = {}
+    for _, p in ipairs(AltStable.plugins or {}) do loaded[p.id] = true end
+    local copy, changed = {}, false
+    for pid, peers in pairs(all) do
+        local kept = {}
+        for k, v in pairs(type(peers) == "table" and peers or {}) do
+            if loaded[pid] and k == key then changed = true else kept[k] = v end
+        end
+        if next(kept) then copy[pid] = kept end
+    end
+    if changed then AltStable.SetConfigValue("missedPluginPulls", next(copy) and copy or nil) end
+end
 
 -- Forget a character: the record goes, and a tombstone stops peers putting it
 -- back. Returns false with a reason the caller can print.
@@ -1614,7 +1683,7 @@ end
 -- Declared: an equal-stamp correction (a second bag move or a gear fix in the
 -- origin's same second) that reaches us late through a relay is merged but not
 -- marked; it travels on with the record's next change, or a full pull.
-local function MergeIncoming(c)
+local function MergeIncoming(c, sender)
     local held = AltStableDB[c.guid]
     local existing = held or {}
     local advanced
@@ -1623,7 +1692,7 @@ local function MergeIncoming(c)
         local priorStamp = tonumber(existing.lastUpdate) or 0
         local priorName = existing.name
         local gearBefore = Provenance.GearSig(existing)
-        advanced = DispatchPluginPayloads(c)
+        advanced = DispatchPluginPayloads(c, false, sender)
         ClearSyncedStateFields(existing)
         for k,v in pairs(c) do
             existing[k] = v
@@ -1635,7 +1704,7 @@ local function MergeIncoming(c)
         -- still waiting on an item is sent with no lastUpdate at all.
         if not held or (tonumber(existing.lastUpdate) or 0) > priorStamp then advanced = true end
     else
-        advanced = DispatchPluginPayloads(c, true)   -- see DispatchPluginPayloads
+        advanced = DispatchPluginPayloads(c, true, sender)   -- see DispatchPluginPayloads
     end
     if advanced then AltStable.MarkChanged(c.guid) end
     return merged
@@ -1704,7 +1773,7 @@ local function DeserializeFullDB(payload, sender)
                 if not ValidateIncoming(c, sender) then
                     rejected = rejected + 1
                 else
-                    MergeIncoming(c)
+                    MergeIncoming(c, sender)
                 end
 
             end
@@ -2563,6 +2632,18 @@ function RequestCharacters(channel, target, force, onSent)
     -- changed since we last heard from them. A peer on older code ignores the
     -- extra payload and replies with a full DB (correct, just unoptimized).
     local wm = target and GetPeerWatermark(target) or 0
+    -- A full request to a peer held for a plugin's missed data (#449) counts
+    -- toward its recovery once it has actually left. Decided here, where the
+    -- watermark goes into the message: a delta queued before the reset never
+    -- counts, whenever its callback runs (Codex review of the #449 plan).
+    local key = target and AuthKey(target)
+    if key and heldPeers[key] and wm == 0 then
+        local inner = onSent
+        onSent = function(didSend)
+            if didSend then recoverSent[key] = true end
+            if inner then return inner(didSend) end
+        end
+    end
     -- Through ChatThrottleLib at ALERT, not raw: a request can go out while
     -- CTL is still draining BULK chunks (a reply, a broadcast), and a raw send
     -- then lands with the outbound budget already spent and risks a silent
@@ -2812,7 +2893,7 @@ local function ReceiveCharacter(c, sender)
 
     -- The same merge as DeserializeFullDB, shared so the two paths cannot
     -- drift - they had: this one never got the first ownership fix.
-    if not MergeIncoming(c) then return end
+    if not MergeIncoming(c, sender) then return end
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
@@ -2937,6 +3018,7 @@ function LibSync.Apply(peer, buffer)
         -- Advance our delta watermark for this peer so the next request only
         -- pulls what changes after this point.
         AdvancePeerWatermark(peer, maxTS, peerNow)
+        ClearRecoveredPulls(peer)
         local after = 0
         for _ in pairs(AltStableDB) do after = after + 1 end
         local newChars = after - before
@@ -4529,6 +4611,27 @@ function AltStable.RegisterPlugin(plugin)
         if p.id == plugin.id then return end
     end
     table.insert(AltStable.plugins, plugin)
+    -- Its data dropped by a reply while it was not loaded (#449), however it was
+    -- switched back on: those peers are held at a full pull for the session (see
+    -- heldPeers). Their own watermark goes, the others' stay; their throttle
+    -- goes, and one request follows in 3 s - a no-op through the throttle when
+    -- the login pull has gone out since. The mark stays until a reply proves
+    -- the data back (ClearRecoveredPulls), across a /reload too.
+    local missed = AltStableConfig and AltStableConfig.missedPluginPulls
+    local peers = plugin.OnDeserialize and type(missed) == "table" and missed[plugin.id]
+    if type(peers) == "table" and next(peers) then
+        local wms = AltStableConfig.peerWatermarks
+        local dropped = false
+        for key in pairs(peers) do
+            heldPeers[key] = true
+            lastRequestedAt[key] = nil
+            for short in pairs(type(wms) == "table" and wms or {}) do
+                if AuthKey(short) == key then wms[short] = nil; dropped = true end
+            end
+        end
+        if dropped then AltStable.OnConfigChanged("peerWatermarks") end
+        if C_Timer and C_Timer.After then C_Timer.After(3, function() BroadcastRequest() end) end
+    end
     -- Switched on from Options (#422): one full reply to each peer, if it
     -- sends anything at all (a plugin that only shows data doesn't).
     local pending = AltStableConfig and AltStableConfig.widenOnRegister
@@ -5242,6 +5345,7 @@ local function ResetSyncState()
     outdatedSenders = {}
     autoRetryCounts = {}
     lastRequestedAt = {}
+    heldPeers, recoverSent = {}, {}   -- #449: session-local, the saved marks stay
     syncWatch       = {}
     heardAt, leftAt, onlineNow, answeredHere, askedHereAt, redrawnAt = {}, {}, {}, {}, 0, 0
 end
@@ -5706,6 +5810,8 @@ local _seam = {
     frame              = frame,   -- drive CHAT_MSG_ADDON in receive-side tests
     CoreFrame          = frame,   -- the same, under a name SheetUI does not reuse for the sheet
     ResetSyncState     = ResetSyncState,
+    HeldPeers          = function() return heldPeers end,     -- #449
+    RecoverSent        = function() return recoverSent end,   -- #449
     BufferedStreams    = function() local n = 0; for _ in pairs(incomingBuffers) do n = n + 1 end; return n end,
 }
 

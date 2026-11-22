@@ -5056,4 +5056,150 @@ do
     WoW.reset()
 end
 
+------------------------------------------------------------
+-- #449: a plugin's data dropped while it was not loaded comes back
+------------------------------------------------------------
+do
+    WoW.reset()
+    AltStable.plugins = {}
+    local function rec(guid, name, lu)
+        return { guid = guid, name = name, class = "MAGE", level = 60, lastUpdate = lu }
+    end
+    -- A database reply as LibSync.Apply takes it, with the sender's clock.
+    local function reply(...)
+        local parts = {}
+        for _, r in ipairs({ ... }) do
+            parts[#parts + 1] = T.SerializeChar(r[1]) .. (r[2] and ("\n" .. r[2]) or "")
+            parts[#parts + 1] = T.CHAR_SEP
+        end
+        parts[#parts + 1] = "==NOW==:" .. time()
+        return table.concat(parts, "\n")
+    end
+    local function marks(id)
+        local all = AltStableConfig.missedPluginPulls
+        return all and all[id]
+    end
+    local got = {}
+    local function plugin(id)
+        return { id = id, label = id, OnActivate = function() end,
+                 OnDeserialize = function(g, b) got[#got + 1] = id .. ":" .. b; return true end }
+    end
+    -- Every request as it is handed to the transport, sent or not.
+    local asked = {}
+    local realSendRequest = T.LibSync.SendRequest
+    T.LibSync.SendRequest = function(msg, ...)
+        asked[#asked + 1] = msg:match("^" .. T.MSG_REQUEST_V .. "|(%d+)")
+        return realSendRequest(msg, ...)
+    end
+    local function requests()
+        local out = table.concat(asked, ",")
+        asked = {}
+        return out
+    end
+
+    -- Marking: our own plugin, not loaded, a non-empty blob.
+    AltStableConfig = { peerWatermarks = {}, whitelist = { "karuzo" } }
+    AltStableDB = {}
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-1", "Alpha", WoW.now - 500), "plugin_warband:bags=1" },
+                                          { rec("Player-449-2", "Beta", WoW.now - 500), "plugin_future:x" },
+                                          { rec("Player-449-3", "Gamma", WoW.now - 500), "plugin_roster:" }))
+    eq(marks("warband") and marks("warband").karuzo, "Karuzo",
+       "#449: a blob for our plugin that isn't loaded marks it, by the sender's key and spelling")
+    eq(marks("future"), nil, "  a plugin this build doesn't have marks nothing")
+    eq(marks("roster"), nil, "  an empty blob marks nothing")
+    check((AltStableConfig.peerWatermarks.Karuzo or 0) > 0, "  and the reply still advanced the watermark (the bug)")
+    -- A loaded plugin takes its blob: no mark.
+    AltStable.plugins = { plugin("legacy") }
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-4", "Delta", WoW.now - 400), "plugin_legacy:x" }))
+    eq(marks("legacy"), nil, "  a loaded plugin's blob marks nothing")
+    AltStable.plugins = {}
+    -- A record that loses the merge still carries a plugin's own data: marked too.
+    AltStableDB["Player-449-1"].lastUpdate = WoW.now
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-1", "Alpha", WoW.now - 3600), "plugin_loremaster:q" }))
+    eq(marks("loremaster") and marks("loremaster").karuzo, "Karuzo", "  the stale-record path marks as well")
+    -- The single-character path too.
+    T.ReceiveCharacter(T.DeserializeChar(T.SerializeChar(rec("Player-449-5", "Eps", WoW.now - 300))
+                                         .. "\nplugin_instances:r"), "Other-Realm")
+    eq(marks("instances") and marks("instances").other, "Other", "  and the single-character path")
+
+    -- Registration holds that peer, and only that one.
+    AltStableConfig.missedPluginPulls = { warband = { karuzo = "Karuzo", zed = "Zed" }, legacy = { karuzo = "Karuzo" } }
+    AltStableConfig.peerWatermarks = { Karuzo = WoW.now - 500, Other = 777 }
+    -- A delta asked for before the plugin registers, still queued.
+    WoW.ctlDefer = true
+    T.RequestCharacters("WHISPER", "karuzo", true)
+    WoW.ctlDefer = false
+    AltStable.RegisterPlugin(plugin("warband"))
+    eq(AltStableConfig.peerWatermarks.Karuzo, nil, "registration drops the marked peer's watermark")
+    eq(AltStableConfig.peerWatermarks.Other, 777, "  not another peer's")
+    check(T.HeldPeers().karuzo, "  and holds it")
+    check(marks("warband") and marks("warband").karuzo, "  the mark stays until the data is back")
+    WoW.ctlDrain()
+    WoW.ctlDefer = false                       -- ctlDrain leaves it on
+    check(not T.RecoverSent().karuzo, "the delta queued before, sent after the reset, doesn't count")
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-6", "Zeta", WoW.now - 100) }))
+    eq(AltStableConfig.peerWatermarks.Karuzo, nil, "  its reply leaves the held watermark at 0")
+    check(marks("warband") and marks("warband").karuzo, "  and the mark")
+    T.LibSync.Apply("Other", reply({ rec("Player-449-7", "Eta", WoW.now - 100) }))
+    check(AltStableConfig.peerWatermarks.Other > 777, "  while another peer's watermark advances")
+    -- The request that follows: throttle cleared, watermark 0. It fails here
+    -- (the peer unreachable), which is the next case.
+    requests()
+    WoW.sendResults = { 12 }
+    WoW.flushTimers()
+    eq(requests(), "0", "3 s later a full request goes to the held peer, the throttle cleared")
+
+    -- A full request that fails, then a reload: still marked, held again.
+    check(not T.RecoverSent().karuzo, "a full request that didn't leave doesn't count")
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-8", "Theta", WoW.now - 50) }))
+    check(marks("warband") and marks("warband").karuzo, "  the mark survives its peer's next reply")
+    WoW.reset()                                  -- a /reload: session state goes, the saved marks stay
+    AltStable.plugins = {}
+    check(not T.HeldPeers().karuzo, "  (a reload forgets the hold)")
+    AltStableConfig.peerWatermarks.Karuzo = WoW.now - 40    -- the old delta advanced it meanwhile
+    AltStable.RegisterPlugin(plugin("warband"))
+    check(T.HeldPeers().karuzo and AltStableConfig.peerWatermarks.Karuzo == nil,
+          "  and the next session holds it again, from 0")
+
+    -- Only a request carrying 0 counts: a held peer with a watermark from
+    -- anywhere else (none is written today) is still asked as a delta.
+    -- (Read under the target's own spelling, as GetPeerWatermark does.)
+    AltStableConfig.peerWatermarks.karuzo = WoW.now - 900
+    T.RequestCharacters("WHISPER", "karuzo", true)
+    check(not T.RecoverSent().karuzo, "a delta request to a held peer doesn't count, even sent")
+    AltStableConfig.peerWatermarks.karuzo = nil
+    -- A full request that leaves, then the reply: the registered plugin's mark
+    -- goes, whatever the spelling; the unloaded plugin's stays.
+    requests()
+    T.RequestCharacters("WHISPER", "karuzo", true)
+    eq(requests(), "0", "the full request carries 0")
+    check(T.RecoverSent().karuzo, "  and counts once it has left")
+    got = {}
+    T.LibSync.Apply("Karuzo", reply({ rec("Player-449-10", "Kappa", WoW.now - 30), "plugin_warband:bags=2" }))
+    eq(got[1], "warband:bags=2", "  its reply hands the plugin its data")
+    eq(marks("warband").karuzo, nil, "  and clears that plugin's mark (Karuzo-Realm, karuzo, Karuzo: one key)")
+    eq(marks("warband").zed, "Zed", "  another peer's mark for it stays")
+    eq(marks("legacy") and marks("legacy").karuzo, "Karuzo", "  a plugin still not loaded keeps its own")
+    check(not T.RecoverSent().karuzo, "  the recovery is spent")
+    eq(AltStableConfig.peerWatermarks.Karuzo, nil, "  the hold lasts the session")
+
+    -- The next session: no mark, no hold, the watermark advances again.
+    WoW.reset()
+    AltStable.plugins = {}
+    AltStableConfig.peerWatermarks.Karuzo = WoW.now - 2000
+    AltStable.RegisterPlugin(plugin("warband"))
+    eq(AltStableConfig.peerWatermarks.Karuzo, WoW.now - 2000, "the next session's registration resets nothing")
+    check(not T.HeldPeers().karuzo, "  holds nothing")
+    T.LibSync.Apply("Karuzo-Realm", reply({ rec("Player-449-9", "Iota", WoW.now - 1000) }))
+    check(AltStableConfig.peerWatermarks.Karuzo > WoW.now - 2000, "  and deltas advance again")
+    -- A plugin with nothing to receive doesn't act on a mark.
+    WoW.reset()
+    AltStable.plugins = {}
+    AltStable.RegisterPlugin({ id = "legacy", label = "L", OnActivate = function() end })
+    check(not T.HeldPeers().karuzo, "a plugin that receives nothing holds no peer")
+    AltStable.plugins = {}
+    T.LibSync.SendRequest = realSendRequest
+    WoW.reset()
+end
+
 WoW.finish("test_comm", testsRun - failures, failures)
