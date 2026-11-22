@@ -2454,8 +2454,12 @@ local function HookRefresh()
     if AT_WB._refreshHooked or type(AltStable.RefreshSheet) ~= "function" then return end
     local prev = AltStable.RefreshSheet
     AltStable.RefreshSheet = function(...)
-        prev(...)
+        -- Asked for BEFORE the sheet's own refresh (Codex review of #469): that
+        -- can finish a window animation, whose settle redraws this panel
+        -- through OnResize with the new data, consuming the request. Asked
+        -- after, it would rebuild a second time for the same update.
         if AT_WB.isActive then AT_WB.RequestRefresh() end
+        prev(...)
     end
     AT_WB._refreshHooked = true
 end

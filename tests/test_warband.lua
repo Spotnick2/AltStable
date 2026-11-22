@@ -1261,7 +1261,8 @@ do
         wb.Refresh = function(...) n = n + 1; return real(...) end
         -- The sheet's refresh, which the tab wraps on activation.
         local realSheet = AltStable.RefreshSheet
-        AltStable.RefreshSheet = function() end
+        local base = function() end
+        AltStable.RefreshSheet = function() base() end
         wb.Activate(main)
         WoW.flushTimers()
         n = 0
@@ -1277,6 +1278,15 @@ do
         AltStable.RefreshSheet()
         WoW.flushTimers()
         eq("two sheet refreshes in a frame: one redraw", n, 2)
+        -- The sheet's refresh finishing a window animation redraws the panel
+        -- itself (OnResize): that draw is the one (Codex review of #469).
+        base = function() wb.Refresh() end
+        n = 0
+        T.DeserializePlayer("Player-435-1", "v1|s=650|kt=0|b=101,55|k=")
+        AltStable.RefreshSheet()
+        WoW.flushTimers()
+        eq("a sheet refresh that redraws on resize: one draw in all", n, 1)
+        base = function() end
         main:Hide()
         n = 0
         for i = 1, 40 do

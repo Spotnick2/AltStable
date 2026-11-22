@@ -703,6 +703,18 @@ do
         win:Hide()
         win:Show()
         eq("  closed and opened with nothing new: none", n, 1)
+        -- The sheet's refresh finishing a window animation redraws the panel
+        -- itself (OnResize): that draw is the one (Codex review of #469).
+        local heldSheet = AltStable.RefreshSheet
+        SI._refreshHooked = nil
+        AltStable.RefreshSheet = function() SI.Refresh() end
+        pcall(plugin.OnActivate, win)
+        WoW.flushTimers()
+        n = 0
+        AltStable.RefreshSheet()
+        WoW.flushTimers()
+        eq("a sheet refresh that redraws on resize: one draw in all", n, 1)
+        AltStable.RefreshSheet = heldSheet
         -- A save expiring while the sheet is closed waits for it to show.
         win:Hide()
         n = 0

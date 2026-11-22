@@ -3066,8 +3066,12 @@ local function HookRefresh()
     if Roster._refreshHooked or type(AltStable.RefreshSheet) ~= "function" then return end
     local prev = AltStable.RefreshSheet
     AltStable.RefreshSheet = function(...)
-        prev(...)
+        -- Asked for BEFORE the sheet's own refresh (Codex review of #469): that
+        -- can finish a window animation, whose settle redraws this panel
+        -- through OnResize with the new data, consuming the request. Asked
+        -- after, it would rebuild a second time for the same update.
         if Roster.isActive then Roster.RequestRefresh() end
+        prev(...)
     end
     Roster._refreshHooked = true
 end
