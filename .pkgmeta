@@ -21,7 +21,7 @@ externals:
     tag: r11
   Libs/LibShowcase-1.0:
     url: https://github.com/Spotnick2/LibShowcase
-    tag: r10
+    tag: r12
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
     tag: r8
