@@ -1551,8 +1551,12 @@ local function ApplyPrefsLine(body)
             local e = carried[k.key]
             if e then
                 theirs[#theirs + 1] = k.key .. "=" .. Encode(k, e.v)
+                -- An explicit check, not `okO and mine or nil`: that turned a
+                -- decoded false into nil, which encodes as a default-on key's 1
+                -- (Codex review of #458).
                 local okO, mine = Decode(k, Encode(k, AltStableConfig[k.key]))
-                ours[#ours + 1] = k.key .. "=" .. Encode(k, okO and mine or nil)
+                if not okO then mine = nil end
+                ours[#ours + 1] = k.key .. "=" .. Encode(k, mine)
             end
         end
         if not TieWins(table.concat(theirs, ";"), table.concat(ours, ";")) then return nil end

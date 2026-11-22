@@ -4356,6 +4356,26 @@ do
         eq(A.theme .. "/" .. B.theme, "light/light", "  both end the same")
         tookA, tookB = swap()
         check(not tookA and not tookB, "  and the next exchange is nothing, so no \"Settings from\" line")
+        -- A default-on preference set to false on both sides (Codex review of
+        -- #458): ours compares as the 0 it sends, not as the default's 1, so
+        -- the differing scale after it still decides.
+        A = { syncSettings = true, skinClean = false, scale = 1,    prefsStamps = { appearance = 9 } }
+        B = { syncSettings = true, skinClean = false, scale = 1.25, prefsStamps = { appearance = 9 } }
+        tookA, tookB = swap()
+        check((tookA == "appearance") ~= (tookB == "appearance"),
+              "  skinClean off on both, scales apart: exactly one side takes the other's")
+        eq(tostring(A.scale) .. "/" .. tostring(B.scale), "1.25/1.25", "  both end on the same scale")
+        eq(tostring(A.skinClean) .. "/" .. tostring(B.skinClean), "false/false", "  and the look stays off")
+        tookA, tookB = swap()
+        check(not tookA and not tookB, "  then nothing more")
+        -- Ours is compared as a receiver would hold it: a theme that doesn't
+        -- read (sent as "theme=", refused there) counts as the default, dark,
+        -- which is above "class" - not as the empty text, which is below it.
+        A = { syncSettings = true, theme = "bad-word", prefsStamps = { appearance = 11 } }
+        B = { syncSettings = true, theme = "class",    prefsStamps = { appearance = 11 } }
+        local fromB = prefsLine(B, "appearance")
+        check(not as(A, function() return AltStable.ApplyPrefsSyncLine(fromB) end),
+              "  an unreadable theme here compares as the default, so \"class\" at the same stamp is refused")
     end
     -- The clean look (#230) travels with the appearance. A version from before
     -- it sends no such key, and ours stays.
