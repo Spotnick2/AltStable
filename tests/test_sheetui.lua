@@ -48,6 +48,33 @@ dofile("Capture.lua")
 dofile("PublicAPI.lua")
 dofile("Export.lua")
 
+-- LibShowcase r12's login repair (#51) reads the saved-view slot at
+-- PLAYER_LOGIN: AltStable hands its slot over at ADDON_LOADED, before that,
+-- not only when the sheet opens (Codex review of #475).
+do
+    local f = AltStable._test.showcaseSlotFrame
+    local lib = LibStub("LibShowcase-1.0")
+    check("#475: the showcase slot is handed over at ADDON_LOADED", f ~= nil)
+    if f and lib.VIEW_REPAIR_DB_KEY then
+        local held = AltStable.Showcase.opts.savedViewSlot
+        AltStableConfig.worldCameraSavedViewSlot = 3
+        AltStableConfig[lib.VIEW_REPAIR_DB_KEY] = nil
+        WoW.cvars.cameraSmoothStyle = "1"     -- a style that follows
+        WoW.cvars.cameraView = "3"            -- left on the saved view by an older exit
+        WoW.camera.view = 3
+        f:GetScript("OnEvent")(f, "ADDON_LOADED", "SomeOtherAddon")
+        eq("  not for another addon's load", AltStable.Showcase.opts.savedViewSlot, held)
+        f:GetScript("OnEvent")(f, "ADDON_LOADED", "AltStable")
+        eq("  ours: the configured slot", AltStable.Showcase.opts.savedViewSlot, 3)
+        lib.eventFrame:GetScript("OnEvent")(lib.eventFrame, "PLAYER_LOGIN")
+        eq("a player stuck on saved slot 3 is moved back to view 2 at login", WoW.camera.view, 2)
+        eq("  and the repair is recorded once", AltStableConfig[lib.VIEW_REPAIR_DB_KEY], true)
+        AltStableConfig.worldCameraSavedViewSlot = nil
+        AltStable.Showcase.opts.savedViewSlot = held
+        WoW.cvars.cameraView, WoW.cvars.cameraSmoothStyle = nil, nil
+    end
+end
+
 -- /alts export while the game UI is hidden (#434): a child of UIParent can't
 -- be seen then, whatever its strata. It is lifted out, and closing it puts it
 -- back under UIParent.

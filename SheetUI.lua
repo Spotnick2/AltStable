@@ -266,6 +266,26 @@ do
     end
     AltStable.Showcase = Showcase
 
+    -- The player's saved-view slot, before the library's login repair reads it
+    -- (LibShowcase r12, #51; Codex review of #475). The repair runs at
+    -- PLAYER_LOGIN and moves a player found on the saved view back to a view
+    -- that follows; the slot otherwise reached the library only when the sheet
+    -- opened, so a player on slot 3 was compared against the default 5, left
+    -- stuck, and marked repaired for good. ADDON_LOADED comes after the
+    -- SavedVariables load and before PLAYER_LOGIN. Only the slot: the rest of
+    -- the options wait for the open, and EnsureConfigDefaults stays Core's.
+    if Showcase then
+        local slotFrame = CreateFrame("Frame")
+        slotFrame:RegisterEvent("ADDON_LOADED")
+        slotFrame:SetScript("OnEvent", function(self, _, name)
+            if name ~= "AltStable" then return end
+            self:UnregisterEvent("ADDON_LOADED")
+            Showcase.opts.savedViewSlot = tonumber(AltStableConfig and AltStableConfig.worldCameraSavedViewSlot)
+        end)
+        AltStable._test = AltStable._test or {}
+        AltStable._test.showcaseSlotFrame = slotFrame
+    end
+
     -- AltStableConfig -> the instance's options, at every open. Unset or
     -- non-numeric values fall back exactly as the old _GetConfig did (the library
     -- clamps to the same ranges and falls back to the same defaults; the two that
