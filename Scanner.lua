@@ -521,10 +521,11 @@ end
 -- The ranks only, for the skills already recorded, by name (#426): what the
 -- logout reads when a skill change is still pending. A list torn down at
 -- logout may be partial, so this never adds a skill, removes one, or moves
--- one between the prof1/prof2 slots: it can only move known ranks.
+-- one between the prof1/prof2 slots: it can only move known ranks. A recorded
+-- skill missing from the list (under a collapsed header, or a list already
+-- torn down) is asked for by its ID, as ScanSkills does; no answer keeps it.
 function AltStable.UpdateSkillRanks(char)
-    local n = GetNumSkillLines()
-    if not n or n == 0 then return end
+    local n = GetNumSkillLines() or 0
     local seen = {}
     for i = 1, n do
         local info = GetSkillLineInfo(i)
@@ -535,6 +536,14 @@ function AltStable.UpdateSkillRanks(char)
             if rank and Recorded(char, name) then SetRank(char, name, rank, max) end
         end
     end
+    local function byID(name)
+        if not seen[name] and Recorded(char, name) then
+            local rank, max = RankByID(name)
+            if rank then SetRank(char, name, rank, max) end
+        end
+    end
+    for _, name in ipairs(ALL_PROFESSIONS) do byID(name) end
+    for name in pairs(SECONDARY_FIELDS) do byID(name) end
 end
 
 -- Skill lines: secondary skills, riding, and the primary professions.

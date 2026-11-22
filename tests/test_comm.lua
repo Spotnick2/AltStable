@@ -4722,6 +4722,34 @@ do
     onEvent(T.frame, "SKILL_LINES_CHANGED")
     WoW.flushTimers()
     eq(c.prof_Tailoring, 148, "  a rank of 0 by ID is no answer either")
+    -- Collapsed AND pending at logout (Codex review of #459): the logout's
+    -- ranks-only read asks by ID too.
+    byID = { [197] = { rank = 149, maxRank = 225 }, [185] = { rank = 80, maxRank = 150 } }
+    c.lastUpdate = 1
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. " " .. c.prof1Skill .. "/" .. c.prof1Max, "149 149/225",
+       "collapsed and pending at logout: the new rank comes by its ID, in its slot too")
+    eq(c.prof_Mining, 80, "  one the ID read doesn't answer keeps its rank")
+    eq(c.cooking, 0, "  an unlearned secondary is not added")
+    check(c.lastUpdate > 1, "  and the record is stamped with it")
+    WoW.flushTimers()
+    WoW.skillLines = {}
+    byID = { [197] = { rank = 150, maxRank = 225 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. " " .. c.prof1Skill, "150 150", "  a list already torn down at logout: asked by ID as well")
+    WoW.skillLines = lines(151, 80)
+    byID = { [197] = { rank = 140, maxRank = 225 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 151, "  a skill the list shows is not asked by ID: the list wins")
+    WoW.skillLines = {}
+    byID = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 151, "  no list and no answer: nothing moves")
+    WoW.flushTimers()
     C_SkillInfo.GetSkillLineInfoByID = nil
 
     -- Reputation: the list as it is, never toggled; a recorded faction hidden
