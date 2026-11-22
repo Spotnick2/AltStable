@@ -202,4 +202,38 @@ eq("  and no listener", registered, 0)
 LibStub = realLibStub
 AltStable.RegisterCallback = realRegister
 
+------------------------------------------------------------
+-- When the first paint comes
+------------------------------------------------------------
+
+-- A fresh LibDataBroker (the first one already holds the name), and Broker.lua
+-- loaded again into it.
+local function freshBroker()
+    LibStub = nil
+    dofile("Libs/LibStub/LibStub.lua")
+    dofile("Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua")
+    dofile("Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua")
+    dofile("Broker.lua")
+    return AltStable._test.broker.object
+end
+AltStableDB = { [ME] = { guid = ME, name = "Me", class = "PRIEST", money = 4200 } }
+
+-- A normal login: ADDON_LOADED comes before the client counts as logged in,
+-- and the paint waits for PLAYER_LOGIN.
+WoW.loggedIn = false
+local o = freshBroker()
+WoW.fire("ADDON_LOADED", "AltStable")
+eq("a normal login: nothing painted at ADDON_LOADED", o.text, "?")
+WoW.loggedIn = nil
+WoW.fire("PLAYER_LOGIN")
+eq("  but at PLAYER_LOGIN", o.text, "m4200")
+
+-- Loaded into a running session by an addon manager (Codex on #482):
+-- PLAYER_LOGIN is long gone, so the paint is at AltStable's own ADDON_LOADED.
+o = freshBroker()
+WoW.fire("ADDON_LOADED", "SomeOtherAddon")
+eq("loaded late: another addon's ADDON_LOADED paints nothing", o.text, "?")
+WoW.fire("ADDON_LOADED", "AltStable")
+eq("  AltStable's own paints the saved gold", o.text, "m4200")
+
 WoW.finish("test_broker", passed, failed)

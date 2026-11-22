@@ -84,11 +84,18 @@ if obj then
     AltStable.RegisterCallback("CharactersChanged", Update)
 
     -- The saved characters first, at login; the login scan's own
-    -- CharactersChanged repaints with this character's current gold.
+    -- CharactersChanged repaints with this character's current gold. An addon
+    -- manager that loads AltStable into a running session (PLAYER_LOGIN long
+    -- gone): at our own ADDON_LOADED, once the saved characters are in (Codex
+    -- on #482). At a normal login IsLoggedIn() is still false there.
     local login = CreateFrame("Frame")
     login:RegisterEvent("PLAYER_LOGIN")
-    login:SetScript("OnEvent", function(self)
-        self:UnregisterEvent("PLAYER_LOGIN")
+    login:RegisterEvent("ADDON_LOADED")
+    login:SetScript("OnEvent", function(self, event, addon)
+        if event == "ADDON_LOADED" and (addon ~= "AltStable" or not (IsLoggedIn and IsLoggedIn())) then
+            return
+        end
+        self:UnregisterAllEvents()
         Update()
     end)
 end

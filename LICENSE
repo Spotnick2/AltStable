@@ -64,8 +64,9 @@ terms and remains the work of its authors:
                            published with it: its source repository has
                            none, and its CurseForge page says "All Rights
                            Reserved unless otherwise explicitly stated".
-                           Embedded unmodified, as the WoW addon ecosystem
-                           embeds it (#466).
+                           Embedded unmodified, as that page's note to addon
+                           authors asks: hard-embedded, with a "tools used"
+                           relationship to libdatabroker-1-1 (.pkgmeta, #466).
 
   Libs/ChatThrottleLib     ChatThrottleLib, by Mikk.
                            Carries no licence header. It is embedded in a
