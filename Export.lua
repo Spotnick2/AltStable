@@ -260,12 +260,26 @@ local function CreateExportFrame()
     -- Forever (CopyToClipboard is forbidden), so the text sits here selected
     -- and focused, invisible, for the player's Ctrl+C - and typing can't
     -- change it.
-    local editBox = CreateFrame("EditBox",nil,exportFrame)
+    --
+    -- Alpha alone hides the text but NOT the selection: in game the highlight
+    -- still drew, and a multi-line box grows past its height - grey bars up
+    -- the whole screen (owner, 2026-11-22). So the highlight and the text are
+    -- transparent too, and the box sits in a 1x1 frame that clips it: if the
+    -- client draws anything regardless, it is one pixel.
+    local holder = CreateFrame("Frame",nil,exportFrame)
+    holder:SetSize(1, 1)
+    holder:SetPoint("BOTTOMLEFT",12,12)
+    holder:SetClipsChildren(true)
+    exportFrame.copyHolder = holder
+
+    local editBox = CreateFrame("EditBox",nil,holder)
     editBox:SetMultiLine(true)
     editBox:SetFontObject(GameFontHighlightSmall)
     editBox:SetSize(400, 14)
-    editBox:SetPoint("BOTTOM",0,14)
+    editBox:SetPoint("TOPLEFT",holder,"TOPLEFT",0,0)
     editBox:SetAlpha(0)
+    editBox:SetTextColor(0, 0, 0, 0)
+    editBox:SetHighlightColor(0, 0, 0, 0)
     editBox:EnableMouse(false)
     editBox:SetAutoFocus(false)
     editBox:SetMaxLetters(0)  -- unlimited
@@ -279,6 +293,14 @@ local function CreateExportFrame()
     end)
     editBox:SetScript("OnEditFocusLost",function()
         how:SetText(HOW_LOST)
+    end)
+    -- A caret key (End, Home, an arrow) collapses the selection without any
+    -- change of focus, and the line would still say "press Ctrl+C" (Codex
+    -- review of #471). Every key released selects the whole TSV again, so
+    -- what the line says is what Ctrl+C copies.
+    editBox:SetScript("OnKeyUp",function(self)
+        self:HighlightText()
+        how:SetText(HOW_SELECTED)
     end)
     exportFrame.editBox = editBox
 

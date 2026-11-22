@@ -788,6 +788,12 @@ do
     check("#470: the box holds the TSV, tabs and all", text:find("\t", 1, true) ~= nil, text:sub(1, 40))
     eq("  the header and a line per character", select(2, text:gsub("\n", "")) + 1, 3)
     eq("  and is never drawn", box:GetAlpha(), 0)
+    -- Alpha didn't hide the selection in game: grey bars up the screen.
+    eq("  its selection is transparent", box._highlightColor and box._highlightColor[4], 0)
+    eq("  so is its text", box:GetTextColor() and select(4, box:GetTextColor()), 0)
+    check("  and it sits in a frame that clips it", box:GetParent():DoesClipChildren())
+    local hw, hh = box:GetParent():GetWidth(), box:GetParent():GetHeight()
+    check("  one pixel at most", hw <= 1 and hh <= 1, hw .. "x" .. hh)
     check("  nor takes the mouse", not box:IsMouseEnabled())
     check("  selected", box._highlighted == true)
     check("  and focused, for Ctrl+C", box:HasFocus())
@@ -811,6 +817,12 @@ do
     f.again:GetScript("OnClick")(f.again)
     check("Select again selects it", box._highlighted == true)
     check("  and focuses it", box:HasFocus())
+    -- A caret key collapses the selection with the box still focused: the
+    -- key's release selects it all again, and the line still holds.
+    box._highlighted = nil
+    box:GetScript("OnKeyUp")(box, "END")
+    check("a caret key's release selects the whole text again", box._highlighted == true)
+    check("  and the line says it is selected", (f.how:GetText() or ""):find("Ctrl+C now", 1, true) ~= nil, f.how:GetText())
     box._highlighted = nil
     box:GetScript("OnEditFocusGained")(box)
     check("focus regained selects all", box._highlighted == true)
