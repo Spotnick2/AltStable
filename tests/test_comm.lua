@@ -5253,6 +5253,62 @@ do
     WoW.ctlDefer = false
     eq(entry("warband", B).peer .. "/" .. entry("warband", B).tries, "other/0",
        "an entry re-marked from another peer before the request left gets no try")
+    -- A peer reachable after the startup pass gets its own recovery, once
+    -- (Codex review of #465).
+    do
+        local L = T.LibSync
+        local realInst = L.inst
+        local fake = { messages = true, peers = {} }
+        function fake.SendTo() return nil end
+        function fake.Peers() return fake.peers end
+        local bee = { name = "Bee", guid = "Player-449-BEE", realm = "R", faction = "Alliance" }
+        -- Recovery requests only (watermark 0): the stand-in library's own
+        -- discovery ticks re-send ordinary pulls on every flush.
+        local function recoveries()
+            local n = 0
+            for w in requests():gmatch("[^,]+") do if w == "0" then n = n + 1 end end
+            return n
+        end
+        requests()
+        local cee = { name = "Cee", guid = "Player-449-CEE", realm = "R", faction = "Alliance" }
+        AltStableConfig.whitelist = {}
+        AltStableConfig.peerWatermarks = { Bee = stored, Cee = stored, karuzo = stored }
+        AltStableConfig.missedPluginPulls = { warband = { [B] = { peer = "bee", short = "Bee", tries = 0 },
+                                                          [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } } }
+        AltStableDB[A] = rec(A, "Alpha", WoW.now - 10)
+        AltStableConfig.forgottenCharacters = {}
+        session("warband")
+        WoW.flushTimers()
+        eq(recoveries(), 0, "the startup pass: neither marked peer is a sync target yet, no recovery")
+        L.inst = fake; L.Forget()
+        fake.peers = { bee }
+        L.OnMessage(L.MSG_CAP .. "|1", bee)
+        eq(requests(), tostring(stored), "a Battle.net peer found later: its ordinary pull keeps its watermark")
+        WoW.flushTimers()
+        eq(recoveries(), 1, "  and ~10 s later its own recovery request asks for everything")
+        L.OnMessage(L.MSG_CAP .. "|1", bee)
+        WoW.flushTimers()
+        eq(recoveries(), 0, "  found again the same session: no second recovery")
+        -- A peer with nothing pending gets none.
+        fake.peers = { bee, cee }
+        L.OnMessage(L.MSG_CAP .. "|1", cee)
+        eq(requests(), tostring(stored), "a peer with nothing pending: its ordinary pull")
+        WoW.flushTimers()
+        eq(recoveries(), 0, "  and no recovery")
+        -- Come online (a whitelisted peer): the same, after its ordinary pull.
+        AltStableConfig.whitelist = { "karuzo" }
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", "karuzo has come online. |Hplayer:karuzo|h[karuzo]|h")
+        local before = #asked
+        WoW.flushTimers()
+        eq(asked[before + 1] .. "," .. recoveries(), tostring(stored) .. ",1",
+           "a marked peer come online: its ordinary pull keeps its watermark, then one recovery")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", "karuzo has come online. |Hplayer:karuzo|h[karuzo]|h")
+        WoW.flushTimers()
+        eq(recoveries(), 0, "  come online again: no second recovery")
+        fake.peers = {}
+        L.inst = realInst
+        L.Forget()
+    end
     AltStable.plugins = {}
     T.LibSync.SendRequest = realSendRequest
     WoW.reset()

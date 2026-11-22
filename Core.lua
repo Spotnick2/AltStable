@@ -190,9 +190,15 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- requests left without it clearing (that peer no longer has that data: its
 -- plugin is off there, say) at the next registration, when the character is
 -- forgotten, and at registration when the core has no named record of it.
--- Declared: a marked peer that isn't a current sync target gets no recovery
--- request - its entries wait for it to be one, bounded by the drop rules.
-local recoveryScheduled = false
+-- A peer that becomes reachable later in the session - found on Battle.net,
+-- or come online - gets its own recovery request ~10 s after its ordinary
+-- pull (Codex review of #465). At most one per peer per session
+-- (recoveryDone, by AuthKey; recoveryPlanned keeps one timer per peer).
+-- Declared: a marked peer that isn't a sync target when its turn comes gets no
+-- recovery request - its entries wait for it to be one, bounded by the drop
+-- rules.
+local recoveryDone, recoveryPlanned = {}, {}
+local ScheduleRecoveryFor   -- defined with RecoverMissedPulls; called from discovery
 local MAX_RECOVERY_TRIES = 3
 local RECOVERY_DELAY = 10
 
@@ -976,7 +982,7 @@ end
 -- Returns whether any plugin stored something newer: its OnDeserialize returns
 -- true only for a strictly newer stamp of its own (#422). Every plugin still
 -- gets its blob after the first one says so.
--- The missed-pull entries (#449, see recoveryScheduled), copied on write.
+-- The missed-pull entries (#449, see recoveryDone), copied on write.
 local function MissedPulls()
     local all = AltStableConfig and AltStableConfig.missedPluginPulls
     return type(all) == "table" and all or {}
@@ -1248,7 +1254,7 @@ end
 AltStable.ResetPeerWatermarks = function() AltStable.SetConfigValue("peerWatermarks", {}) end
 
 -- The entries missed from this peer key that a loaded plugin (one that
--- receives data) waits for (#449, see recoveryScheduled), as { id, guid }
+-- receives data) waits for (#449, see recoveryDone), as { id, guid }
 -- pairs. A plugin still not loaded waits on its own.
 local function PendingEntries(key)
     local out = {}
@@ -3870,6 +3876,8 @@ function LibSync.OnMessage(payload, sender)
                     .. tostring(sender.faction or "?") .. ", " .. tostring(realm or "?") .. ") - syncing.")
             end
             LibSync.Fetch(name)
+            -- Its own recovery for missed plugin data, after that pull (#449).
+            ScheduleRecoveryFor(name)
         end
     end
     local cmd, body = payload:match("^([^|]*)|?(.*)$")
@@ -4207,6 +4215,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 Print(matched .. " came online — requesting data.")
             end
         end)
+        -- Its own recovery for missed plugin data, after that pull (#449).
+        ScheduleRecoveryFor(matched)
         return
     end
     -- (e.g. looting, selling, buying, mailing).  A full ScanCharacter
@@ -4625,29 +4635,48 @@ function AltStable.HasPlugin(id)
     return false
 end
 
--- The session's recovery requests for missed plugin data (#449, see
--- recoveryScheduled): one to each current sync target with entries a loaded
--- plugin waits for, asking for everything, outside the throttle. The target's
--- own spelling and route, as GetSyncTargets gives them. Leaving, it counts a
--- try on those entries.
-local function RecoverMissedPulls()
-    for _, t in ipairs(GetSyncTargets()) do
-        local key = AuthKey(t.target)
-        local pending = PendingEntries(key)
-        if #pending > 0 then
-            RequestCharacters(t.channel, t.target, true, function(didSend)
-                if not didSend then return end
-                for _, p in ipairs(pending) do
-                    local entries = MissedPulls()[p[1]]
-                    local e = type(entries) == "table" and entries[p[2]]
-                    if type(e) == "table" and e.peer == key then
-                        SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short,
-                                                    tries = (tonumber(e.tries) or 0) + 1 })
-                    end
-                end
-            end, 0)
+-- One sync target's recovery request for missed plugin data (#449, see
+-- recoveryDone): when entries a loaded plugin waits for came from it and it
+-- has had none this session. Asks for everything, outside the throttle, with
+-- the target's own spelling and route as GetSyncTargets gives them. Leaving,
+-- it counts a try on those entries.
+local function RecoverPeer(t)
+    local key = AuthKey(t.target)
+    if not key or recoveryDone[key] then return end
+    local pending = PendingEntries(key)
+    if #pending == 0 then return end
+    recoveryDone[key] = true
+    RequestCharacters(t.channel, t.target, true, function(didSend)
+        if not didSend then return end
+        for _, p in ipairs(pending) do
+            local entries = MissedPulls()[p[1]]
+            local e = type(entries) == "table" and entries[p[2]]
+            if type(e) == "table" and e.peer == key then
+                SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short,
+                                            tries = (tonumber(e.tries) or 0) + 1 })
+            end
         end
-    end
+    end, 0)
+end
+
+-- Every current sync target's (the startup pass, after the login pull).
+local function RecoverMissedPulls()
+    for _, t in ipairs(GetSyncTargets()) do RecoverPeer(t) end
+end
+
+-- A peer reachable later (#449): its own pass, RECOVERY_DELAY after its
+-- ordinary pull, if it is still a sync target then.
+ScheduleRecoveryFor = function(name)
+    local key = AuthKey(name)
+    if not key or recoveryDone[key] or recoveryPlanned[key] or #PendingEntries(key) == 0 then return end
+    if not (C_Timer and C_Timer.After) then return end
+    recoveryPlanned[key] = true
+    C_Timer.After(RECOVERY_DELAY, function()
+        recoveryPlanned[key] = nil
+        for _, t in ipairs(GetSyncTargets()) do
+            if AuthKey(t.target) == key then RecoverPeer(t) end
+        end
+    end)
 end
 
 function AltStable.RegisterPlugin(plugin)
@@ -4664,8 +4693,9 @@ function AltStable.RegisterPlugin(plugin)
     -- switched back on. An entry whose recovery request has left
     -- MAX_RECOVERY_TRIES times without it clearing goes (that peer no longer
     -- has the data), and so does one of a character the core has no named
-    -- record of. If any are left, the session's recovery requests are planned
-    -- once, after the login pull (see recoveryScheduled).
+    -- record of. If any are left, a recovery pass is planned after the login
+    -- pull; each peer gets one request a session whatever the passes (see
+    -- recoveryDone).
     local entries = plugin.OnDeserialize and MissedPulls()[plugin.id]
     if type(entries) == "table" then
         local waiting = false
@@ -4677,8 +4707,7 @@ function AltStable.RegisterPlugin(plugin)
                 waiting = true
             end
         end
-        if waiting and not recoveryScheduled and C_Timer and C_Timer.After then
-            recoveryScheduled = true
+        if waiting and C_Timer and C_Timer.After then
             C_Timer.After(RECOVERY_DELAY, RecoverMissedPulls)
         end
     end
@@ -5395,7 +5424,7 @@ local function ResetSyncState()
     outdatedSenders = {}
     autoRetryCounts = {}
     lastRequestedAt = {}
-    recoveryScheduled = false   -- #449: session-local, the saved marks stay
+    recoveryDone, recoveryPlanned = {}, {}   -- #449: session-local, the saved marks stay
     syncWatch       = {}
     heardAt, leftAt, onlineNow, answeredHere, askedHereAt, redrawnAt = {}, {}, {}, {}, 0, 0
 end
