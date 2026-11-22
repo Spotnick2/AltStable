@@ -74,7 +74,15 @@ function AltStable.CharacterMenuEntries(char)
                 end
             end
         end
-        out[#out + 1] = { id = "camp:new", text = mine and "Move to a new camp" or "Add to a new camp" }
+        local newText = mine and "Move to a new camp" or "Add to a new camp"
+        if AltStable.CanCreateCamp and not AltStable.CanCreateCamp() then
+            -- At the camp limit (#427): offered, disabled, with the reason.
+            out[#out + 1] = { id = "camp:new", text = newText, disabled = true,
+                              why = ("%d camps at most: a longer list can't sync to your other account.")
+                                  :format(AltStable.MAX_CAMPS or 50) }
+        else
+            out[#out + 1] = { id = "camp:new", text = newText }
+        end
     end
 
     -- The look recorded at a barber (Appearance.lua). Disabled rather than

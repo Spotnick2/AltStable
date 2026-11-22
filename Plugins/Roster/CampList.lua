@@ -824,6 +824,9 @@ local function Build()
     plusBtn:SetSize(26, SEARCH_H)
     plusBtn:SetPoint("TOPRIGHT", -PAD, -PAD)
     plusBtn:SetText("+")
+    -- Disabled at the camp limit (#427), and the tooltip saying why is the
+    -- point: the template leaves a disabled button's OnEnter off.
+    plusBtn:SetMotionScriptsWhileDisabled(true)
     plusBtn:SetScript("OnClick", function() L.OpenDialog(nil) end)
     plusBtn:SetScript("OnEnter", function(self)
         if GameTooltip then
