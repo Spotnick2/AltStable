@@ -123,6 +123,31 @@ else:
         check("  the edit is kept", read(os.path.join(repo, "src.lua")) == "-- edited meanwhile\n")
         check("  and the original is beside it", open(os.path.join(repo, "src.lua.mutate-orig"), "rb").read() == orig)
 
+        # Again, with that recovery file still there: never overwritten.
+        with open(os.path.join(repo, "src.lua"), "wb") as f:
+            f.write(orig)
+        code, out = run_mutate(repo, [
+            {"name": "break it", "file": "src.lua", "old": "local answer = 42\n", "new": "local answer = 7\n", "test": "test_edits.lua"},
+        ])
+        first = open(os.path.join(repo, "src.lua.mutate-orig"), "rb").read()
+        check("a second conflict keeps the first recovery file", first == orig)
+        check("  and writes a new one", os.path.exists(os.path.join(repo, "src.lua.mutate-orig.1")), os.listdir(repo))
+        check("  naming it", "src.lua.mutate-orig.1" in out, out)
+
+        # Renamed during the test: the rename stands, the original is saved.
+        with open(os.path.join(repo, "src.lua"), "wb") as f:
+            f.write(orig)
+        write(os.path.join(repo, "tests", "test_renames.lua"),
+              'local f = assert(io.open("src.lua", "rb")); local s = f:read("*a"); f:close()\n'
+              'if s:find("answer = 7", 1, true) then assert(os.rename("src.lua", "moved.lua")) end\n')
+        code, out = run_mutate(repo, [
+            {"name": "break it", "file": "src.lua", "old": "local answer = 42\n", "new": "local answer = 7\n", "test": "test_renames.lua"},
+        ])
+        check("a file renamed during its test stops the run, without a crash", code == 2 and "STOP: src.lua" in out, (code, out))
+        check("  the rename stands (no src.lua made again)", not os.path.exists(os.path.join(repo, "src.lua")))
+        check("  and the original is saved", open(os.path.join(repo, "src.lua.mutate-orig.2"), "rb").read() == orig,
+              os.listdir(repo))
+
 # ------------------------------------------------------------------
 # Tools/Checkouts.ps1
 # ------------------------------------------------------------------

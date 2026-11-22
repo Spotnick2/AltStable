@@ -30,9 +30,10 @@ The mutation list is a JSON array of objects:
   before mutating, with that test's output (Codex review of #478).
 - RED: a FAIL line, a traceback or a non-zero exit. GREEN: the test still
   passed - a real gap, or an equivalent mutation (say why in the PR).
-- The file is restored only if it still holds the mutation. If it changed
-  while the test ran (an editor saved it), the current file is kept, the
-  original is written beside it as <file>.mutate-orig, and the run stops.
+- The file is restored only if it still holds the mutation. If it changed,
+  was renamed or was deleted while the test ran, that is left as it is, the
+  original is written beside it as <file>.mutate-orig (.mutate-orig.1, .2, ...
+  when an earlier one is there: never overwritten), and the run stops.
 
 Exit status: 0 when every mutation went red, 1 when one survived or was
 skipped, 2 on a setup error (unreadable list, no Lua, a failing baseline test)
@@ -56,6 +57,20 @@ def run_test(lua, repo, test):
     red = bool(fails) or "traceback" in out or r.returncode != 0
     why = fails[0].strip() if fails else ("crash or non-zero exit" if red else "")
     return red, why, out
+
+
+def save_original(path, data):
+    """Write data beside path, never over an earlier recovery file: <file>.mutate-orig,
+    else .mutate-orig.1, .2, ... (Codex review of #478). Returns the path written."""
+    n = 0
+    while True:
+        name = path + ".mutate-orig" + ("" if n == 0 else ".%d" % n)
+        try:
+            with open(name, "xb") as f:
+                f.write(data)
+            return name
+        except FileExistsError:
+            n += 1
 
 
 def main(argv=None):
@@ -104,19 +119,21 @@ def main(argv=None):
                 f.write(mutated)
             red, why, _ = run_test(args.lua, args.repo, m["test"])
         finally:
-            # Only put back what we wrote: an edit saved meanwhile is kept.
-            with open(path, "rb") as f:
-                now = f.read()
+            # Only put back what we wrote: an edit saved meanwhile is kept, and
+            # so is a rename or a deletion (the original is saved instead).
+            try:
+                with open(path, "rb") as f:
+                    now = f.read()
+            except FileNotFoundError:
+                now = None
             if now == mutated:
                 with open(path, "wb") as f:
                     f.write(orig)
             else:
-                changed = True
-                with open(path + ".mutate-orig", "wb") as f:
-                    f.write(orig)
+                changed = save_original(path, orig)
         if changed:
-            print("STOP: %s changed while its test ran; kept it, the original is %s.mutate-orig"
-                  % (m["file"], m["file"]))
+            print("STOP: %s changed or went while its test ran; left as it is, the original is %s"
+                  % (m["file"], changed))
             return 2
         if red:
             print("RED   %s -- %s" % (m["name"], why[:200]))
