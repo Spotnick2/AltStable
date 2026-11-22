@@ -52,7 +52,7 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
   [#479](https://github.com/Spotnick2/AltStable/issues/479)): closing the sheet's camera showcase no
   longer leaves the camera on a view that stops following your character. A camera an earlier
   version left there is put back once, at a login with a Camera Following Style that follows,
-  when it is still on AltStable's saved-view slot (Options: 5 unless you changed it). On "Never
+  when it is still on AltStable's saved-view slot (view 5). On "Never
   adjust camera", the close snaps back as before.
 - **LibGlass r13** (was r11), the glass material AltStable shares with the other glass addons,
   is what this release was tested with. Nothing changes in AltStable's look.
