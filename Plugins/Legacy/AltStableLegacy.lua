@@ -2138,6 +2138,28 @@ function L.Refresh()
 end
 
 local refreshTimer
+
+-- Exploration read on its own, tab shown or not (#430): an area discovered
+-- moves Explorer with no achievement earned, and only CRITERIA_UPDATE says
+-- so. One read per 10 s at most (a kill burst is many events; the read is a
+-- hundred criteria), never pushed back by later events, and a read still
+-- pending at logout is done there, so switching characters right after the
+-- discovery keeps it.
+local exploreTimer
+function L.QueueExplore()
+    if exploreTimer then return end
+    exploreTimer = C_Timer.NewTimer(10, function()
+        exploreTimer = nil
+        L.ReadExplore()
+    end)
+end
+function L.FlushExplore()
+    if not exploreTimer then return end
+    exploreTimer:Cancel()
+    exploreTimer = nil
+    L.ReadExplore()
+end
+
 -- Whether the tab is on screen. Closing the sheet hides the window without
 -- calling OnDeactivate (SheetUI's OnHide), so isActive alone would keep a
 -- hidden tab re-reading on every burst of CRITERIA_UPDATE (Codex on #381).
@@ -2238,6 +2260,8 @@ local frame = CreateFrame("Frame")
 frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         C_Timer.After(1, L.Bootstrap)
+    elseif event == "PLAYER_LOGOUT" then
+        L.FlushExplore()
     elseif event == "ACHIEVEMENT_EARNED" then
         C_Timer.After(1, L.ReadExplore)
         L.RequestRefresh(1)
@@ -2249,11 +2273,12 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if ok and L.isActive and L.wantItem and tonumber(arg1) == L.wantItem then L.RenderFooter() end
     else
         -- CRITERIA_UPDATE fires on every kill: debounced, and only read while
-        -- the tab shows.
+        -- the tab shows. The exploration is read either way (#430).
+        if event == "CRITERIA_UPDATE" then L.QueueExplore() end
         L.RequestRefresh(2)
     end
 end)
-for _, ev in ipairs({ "PLAYER_LOGIN", "ACHIEVEMENT_EARNED", "CRITERIA_UPDATE", "RECEIVED_ACHIEVEMENT_LIST",
+for _, ev in ipairs({ "PLAYER_LOGIN", "PLAYER_LOGOUT", "ACHIEVEMENT_EARNED", "CRITERIA_UPDATE", "RECEIVED_ACHIEVEMENT_LIST",
                       "MAJOR_FACTION_RENOWN_LEVEL_CHANGED", "GET_ITEM_INFO_RECEIVED",
                       "ITEM_DATA_LOAD_RESULT" }) do
     frame:RegisterEvent(ev)
