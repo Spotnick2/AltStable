@@ -506,6 +506,10 @@ function Methods.SetEnabled(self, v) self._enabled = not not v; return self end
 function Methods.Enable(self) self._enabled = true; return self end
 function Methods.Disable(self) self._enabled = false; return self end
 function Methods.IsEnabled(self) return self._enabled ~= false end
+-- Motion scripts (OnEnter/OnLeave) while disabled: off by default, as the
+-- 71037 UIPanelButtonTemplate leaves them; the same nil rule.
+function Methods.SetMotionScriptsWhileDisabled(self, v) self._motionDisabled = not not v; return self end
+function Methods.GetMotionScriptsWhileDisabled(self) return self._motionDisabled == true end
 -- Word wrap: on unless turned off; the same nil rule.
 function Methods.SetWordWrap(self, v) self._wrap = not not v; return self end
 function Methods.GetWordWrap(self) return self._wrap ~= false end
