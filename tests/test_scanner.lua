@@ -416,6 +416,39 @@ do
     WoW.reset()
 end
 
+-- "Not rested" is the client's plain nil, and is 0, not unknown (#425); the
+-- XP % is written whatever the rested read.
+do
+    local function scanWith(restXP, secret)
+        WoW.reset()
+        local realExh = GetXPExhaustion
+        if secret then GetXPExhaustion = function() return WoW.secret(120) end end
+        WoW.level, WoW.xp, WoW.xpMax, WoW.restXP = 20, 100, 400, restXP
+        AltStableDB = { [UnitGUID("player")] = { guid = UnitGUID("player"), restPercent = 40, restXP = 160,
+                                                 xpPercent = 5, restTimestamp = 111 } }
+        pcall(AltStable.ScanCharacter)
+        GetXPExhaustion = realExh
+        return AltStableDB[UnitGUID("player")]
+    end
+    local c = scanWith(nil)
+    eq("#425: not rested (a plain nil): the rested % goes to 0", c.restPercent, 0)
+    eq("  and the amount", c.restXP, 0)
+    eq("  and the XP % is written", c.xpPercent, 25)
+    check("  with a new snapshot time", c.restTimestamp ~= 111)
+    c = scanWith(200)
+    eq("a rested bonus: its %", c.restPercent, 50)
+    eq("  and the XP %", c.xpPercent, 25)
+    c = scanWith(nil, true)
+    eq("a secret: the rested % kept", c.restPercent, 40)
+    eq("  but the XP % still written", c.xpPercent, 25)
+    local realExh = GetXPExhaustion
+    GetXPExhaustion = nil
+    local okR, r = pcall(AltStable.API.RestedXP)
+    check("  no GetXPExhaustion at all: unknown, not 0", okR and r == nil, tostring(r))
+    GetXPExhaustion = realExh
+    WoW.reset()
+end
+
 ------------------------------------------------------------
 -- A realm the client could not give keeps the stored one (live, 2026-11-20:
 -- GetRealmName() returned "" and the character fell under "Unknown").
@@ -593,6 +626,19 @@ if gear and avg and rested then
     eq("  and a stored value above 180% is never clamped down", (rested(wr(190, nil, 400))), 190)
     eq("RestedCap: 150 without the talent", AltStable.RestedCap(wr(0, 0, 0)), 150)
     eq("RestedCap: 180 with it", AltStable.RestedCap(wr(0, 1, 0)), 180)
+
+    -- The played character: the live bonus (100 of 400 is 25%), and not rested
+    -- (a plain nil) is 0% rather than the stored 40% (#425); a secret falls
+    -- back to the stored value.
+    WoW.level, WoW.xpMax, WoW.restXP = 20, 400, 100
+    local me = { guid = UnitGUID("player"), level = 20, restPercent = 40, restTimestamp = WoW.now }
+    eq("#425: the played character's live bonus", (rested(me)), 25)
+    WoW.restXP = nil
+    eq("  not rested: 0%, not the stored 40%", (rested(me)), 0)
+    local realExh = GetXPExhaustion
+    GetXPExhaustion = function() return WoW.secret(120) end
+    eq("  a secret: the stored value", (rested(me)), 40)
+    GetXPExhaustion = realExh
 
     -- The current character reads the live API; UnitXPMax 0 must not divide.
     WoW.xpMax, WoW.restXP = 0, 100

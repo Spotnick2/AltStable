@@ -1081,20 +1081,25 @@ function AltStable.ScanCharacter()
     -- caught it). At the cap it is real: there is no next level, so the
     -- snapshot is zero. Below the cap it is a bad read, and the last good
     -- snapshot is kept rather than replaced with a percentage of nothing.
-    -- `rested` unreadable is NOT zero: writing 0 here would overwrite a good
-    -- snapshot and sync that zero to the other account. Unlike the live event
-    -- path there is no suspicious-zero guard to catch it afterwards.
-    local rested = plain(GetXPExhaustion())
+    -- `rested` unreadable (a secret) is NOT zero: writing 0 here would
+    -- overwrite a good snapshot and sync that zero to the other account.
+    -- Unlike the live event path there is no suspicious-zero guard to catch it
+    -- afterwards. But the client's plain nil is "not rested", which is 0
+    -- (API.RestedXP, #425). And the XP % is written whatever the rested read:
+    -- with no bonus it used to go stale too.
+    local rested = API.RestedXP()
     local nextXP = plain(UnitXPMax("player")) or 0
-    local currentXP = plain(UnitXP("player")) or 0
+    local currentXP = plain(UnitXP("player"))
 
-    if rested ~= nil and nextXP > 0 then
-        char.restXP = rested
-        char.restPercent = math.floor((rested / nextXP) * 100)
+    if nextXP > 0 then
         char.xpMax = nextXP
-        char.xpPercent = math.floor((currentXP / nextXP) * 100)
-        char.restedArea = IsResting and IsResting() or false
-        char.restTimestamp = time()
+        if currentXP then char.xpPercent = math.floor((currentXP / nextXP) * 100) end
+        if rested ~= nil then
+            char.restXP = rested
+            char.restPercent = math.floor((rested / nextXP) * 100)
+            char.restedArea = IsResting and IsResting() or false
+            char.restTimestamp = time()
+        end
     elseif (UnitLevel("player") or 0) >= AltStable.API.LevelCap() then
         char.restXP, char.restPercent, char.xpMax, char.xpPercent = 0, 0, 0, 0
         char.restedArea = IsResting and IsResting() or false

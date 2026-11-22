@@ -158,6 +158,19 @@ function API.PlainNumber(v)
     return n
 end
 
+-- The rested bonus (#425). Measured: GetXPExhaustion is a number while rested
+-- and a plain nil when not (docs/forever-api-notes.md), so a plain nil is 0,
+-- "not rested", and only a secret is unknown - unlike PlainNumber, whose nil
+-- is always unknown. Returns the amount (nil when unknown), and true when it
+-- was the client's "not rested".
+function API.RestedXP()
+    local read = rawget(_G, "GetXPExhaustion")
+    if type(read) ~= "function" then return nil end
+    local v = read()
+    if v == nil then return 0, true end
+    return API.PlainNumber(v), false
+end
+
 -- Sum of values that may be secret: nil if any part is, since a partial sum is
 -- not a smaller number, it is a wrong one. No values at all is also nil, not 0:
 -- some APIs here return NOTHING on a miss (see the cache-miss note above), and

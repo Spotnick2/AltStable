@@ -1892,10 +1892,69 @@ GetMoney = realMoney
 local realExh = GetXPExhaustion
 GetXPExhaustion = function() return WoW.secret(120) end
 WoW.xpMax, WoW.level = 400, 20
+WoW.xp = 100
 local okXP = pcall(onEvent, T.frame, "PLAYER_XP_UPDATE")
 check(okXP, "a secret from GetXPExhaustion does not throw on an XP tick")
 eq(AltStableDB[liveGuid].restPercent, 40, "  and the stored rested % is kept")
+eq(AltStableDB[liveGuid].xpPercent, 25, "  but the XP % is written (#425)")
 GetXPExhaustion = realExh
+WoW.reset()
+
+-- Not rested (a plain nil) on an XP tick is written at once (#425), even
+-- right after a 40% snapshot: a logout next must not keep the old bonus.
+WoW.reset()
+AltStableDB = { [liveGuid] = { guid = liveGuid, name = "Live", class = "MAGE", restPercent = 40, restXP = 160,
+                               xpPercent = 5, restTimestamp = WoW.now, lastUpdate = 1 } }
+WoW.level, WoW.xp, WoW.xpMax, WoW.restXP = 20, 100, 400, nil
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+onEvent(T.frame, "PLAYER_LOGOUT")
+eq(AltStableDB[liveGuid].restXP, 0, "#425: not rested on an XP tick: the amount is 0 at once")
+eq(AltStableDB[liveGuid].restPercent, 0, "  and the %, also with a logout straight after")
+eq(AltStableDB[liveGuid].xpPercent, 25, "  and the XP % is written")
+WoW.restXP, WoW.xp = 100, 200
+onEvent(T.frame, "PLAYER_XP_UPDATE")
+eq(AltStableDB[liveGuid].xpPercent, 50, "with a rested bonus, the XP % is written too")
+eq(AltStableDB[liveGuid].restPercent, 25, "  and the bonus")
+
+-- A change rides the next delta and redraws the open sheet (Codex review of
+-- #456); the same values again do neither.
+do
+    local c = AltStableDB[liveGuid]
+    local refreshes, realRefresh = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function() refreshes = refreshes + 1 end
+    c.lastUpdate = 1
+    local mark = WoW.now
+    WoW.now = WoW.now + 10
+    check(not T.SerializeFullDB(false, mark):find(liveGuid, 1, true), "  (a delta from before holds no XP change yet)")
+    WoW.xp = 300
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.xpPercent, 75, "an XP gain on a played character")
+    check(c.lastUpdate > mark, "  touches the record")
+    check(T.SerializeFullDB(false, mark):find(liveGuid, 1, true) ~= nil, "  so a delta request before logout carries it")
+    eq(refreshes, 1, "  and the open sheet is redrawn")
+    c.lastUpdate = 1
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.lastUpdate, 1, "the same values again touch nothing")
+    eq(refreshes, 1, "  and redraw nothing")
+    -- Only the rested bonus spent, XP unchanged.
+    WoW.restXP = 0
+    WoW.now = WoW.now + 10
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.restPercent, 0, "the bonus spent")
+    check(c.lastUpdate > 1, "  touches the record too")
+    eq(refreshes, 2, "  and redraws")
+    -- A secret rested read: the XP % alone still counts.
+    local realExh2 = GetXPExhaustion
+    GetXPExhaustion = function() return WoW.secret(120) end
+    c.lastUpdate = 1
+    WoW.xp = 340
+    onEvent(T.frame, "PLAYER_XP_UPDATE")
+    eq(c.xpPercent, 85, "a secret rested read: the XP % still moves")
+    check(c.lastUpdate > 1, "  and touches the record")
+    eq(refreshes, 3, "  and redraws")
+    GetXPExhaustion = realExh2
+    AltStable.RefreshSheet = realRefresh
+end
 WoW.reset()
 
 ------------------------------------------------------------
