@@ -46,6 +46,41 @@ dofile("SheetUI.lua")
 -- Capture.lua follows SheetUI in the .toc; the title-bar button hands off to it.
 dofile("Capture.lua")
 dofile("PublicAPI.lua")
+dofile("Export.lua")
+
+-- /alts export while the game UI is hidden (#434): a child of UIParent can't
+-- be seen then, whatever its strata. It is lifted out, and closing it puts it
+-- back under UIParent.
+do
+    local realHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return true end
+    UIParent:Hide()
+    AltStable.ShowExport()
+    local ex = _G["AltStableExport"]
+    check("the export opened with the game UI hidden is lifted out from under UIParent",
+          ex:GetParent() ~= UIParent, tostring(ex:GetParent()))
+    check("  so it can be seen", ex:IsVisible() == true)
+    ex:Hide()
+    eq("closing it parents it back", ex:GetParent(), UIParent)
+    UIParent:Show()
+    AltStable.IsGameUIHidden = realHidden
+
+    AltStable.ShowExport()
+    eq("with the game UI shown it stays under UIParent", ex:GetParent(), UIParent)
+    check("  and is seen", ex:IsVisible() == true)
+    ex:Hide()
+
+    -- Lifted, then opened again with the UI back (the sheet closed while it
+    -- stayed open): it goes back under UIParent.
+    AltStable.IsGameUIHidden = function() return true end
+    UIParent:Hide()
+    AltStable.ShowExport()
+    UIParent:Show()
+    AltStable.IsGameUIHidden = realHidden
+    AltStable.ShowExport()
+    eq("opened again with the UI shown, a lifted export goes back under UIParent", ex:GetParent(), UIParent)
+    ex:Hide()
+end
 
 local GOLD = 10000   -- copper per gold
 

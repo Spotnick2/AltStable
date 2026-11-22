@@ -12,11 +12,15 @@ AltStable = AltStable or {}
 ------------------------------------------------------------
 
 -- Fallback only, for a record scanned before char.faction existed. Skyborne is
--- absent on purpose: it is one race key on BOTH factions, which is exactly why
--- the scan now asks the client instead of guessing from the race.
+-- in neither on purpose: it is one race key on BOTH factions, which is exactly
+-- why the scan now asks the client instead of guessing from the race. Such a
+-- record, or one with no race, exports a blank faction (#433), never a guess.
 local HORDE_RACES = {
     Orc=true, Troll=true, Scourge=true, Tauren=true,
     BloodElf=true, Goblin=true,
+}
+local ALLIANCE_RACES = {
+    Human=true, Dwarf=true, Gnome=true, NightElf=true, Draenei=true,
 }
 
 local REP_LETTER = {
@@ -79,12 +83,14 @@ end
 local function CharToTSV(char)
     local t = "\t"
 
-    -- What the client said at scan time, falling back to the race guess for a
-    -- record that predates it.
+    -- What the client said at scan time, falling back to the race for a
+    -- record that predates it - when the race belongs to one side.
     local faction
     if char.faction == "Horde" then faction = "H"
     elseif char.faction == "Alliance" then faction = "A"
-    else faction = HORDE_RACES[char.race] and "H" or "A" end
+    elseif HORDE_RACES[char.race] then faction = "H"
+    elseif ALLIANCE_RACES[char.race] then faction = "A"
+    else faction = "" end
 
     -- iLvl rounded to 1 decimal
     local ilvlStr = char.ilvl and string.format("%.1f", char.ilvl) or ""
@@ -186,6 +192,11 @@ local function CreateExportFrame()
     exportFrame:SetScript("OnDragStart",exportFrame.StartMoving)
     exportFrame:SetScript("OnDragStop", exportFrame.StopMovingOrSizing)
     tinsert(UISpecialFrames,"AltStableExport")
+    -- Back under UIParent once closed (#434), as the character menu does: a
+    -- frame left lifted would stay out of the hierarchy the showcase restores.
+    exportFrame:SetScript("OnHide", function(self)
+        if AltStable.LiftAboveHiddenUI then AltStable.LiftAboveHiddenUI(self, false) end
+    end)
 
     local title = exportFrame:CreateFontString(nil,"OVERLAY","GameFontHighlightLarge")
     title:SetPoint("TOP",0,-16)
@@ -257,6 +268,12 @@ function AltStable.ShowExport()
     local tsv = table.concat(lines, "\n")
     exportFrame.editBox:SetText(tsv)
     exportFrame.editBox._selected = false
+    -- With the game UI hidden (the showcase), a child of UIParent is invisible
+    -- whatever its strata (#434): lift it out, the same door the character
+    -- menu uses. Not hidden: false drops a lift left from before.
+    if AltStable.LiftAboveHiddenUI and AltStable.IsGameUIHidden then
+        AltStable.LiftAboveHiddenUI(exportFrame, AltStable.IsGameUIHidden())
+    end
     exportFrame:Show()
     -- ABOVE THE SHEET. Both are DIALOG and both are toplevel, so whichever was
     -- raised last wins - and clicking the sheet raises it. That was survivable

@@ -787,6 +787,16 @@ do
     eq("  and an Alliance one as A - the same race key", ally[5], "A")
     local old = firstCols(row({ name = "C", realm = "R", class = "WARRIOR", race = "Orc", level = 60 }))
     eq("a record with no faction falls back to the race guess", old[5], "H")
+    -- Skyborne is on both sides: no stored faction, no guess (#433).
+    local sky = firstCols(row({ name = "D", realm = "R", class = "MAGE", race = "Skyborne", level = 60 }))
+    eq("a Skyborne record with no faction exports a blank faction", sky[5], "")
+    eq("  in its own column: the race is still the fourth", sky[4], "Skyborne")
+    local human = firstCols(row({ name = "E", realm = "R", class = "MAGE", race = "Human", level = 60 }))
+    eq("a Human with no faction is still Alliance", human[5], "A")
+    local none = firstCols(row({ name = "F", realm = "R", class = "MAGE", level = 60 }))
+    eq("a record with neither faction nor race exports a blank faction", none[5], "")
+    local unknown = firstCols(row({ name = "G", realm = "R", class = "MAGE", race = "Pandaren", level = 60 }))
+    eq("  as does a race the export doesn't know", unknown[5], "")
 end
 -- A record scanned before #177, or synced from a peer still on that build,
 -- holds ONE profession in both prof1 and prof2. The export reads each
