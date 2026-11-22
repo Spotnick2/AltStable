@@ -194,10 +194,17 @@ local REQUEST_THROTTLE = 300  -- 5 minutes between automatic re-requests
 -- or come online - gets its own recovery request ~10 s after its ordinary
 -- pull (Codex review of #465). At most one per peer per session
 -- (recoveryDone, by AuthKey; recoveryPlanned keeps one timer per peer).
+-- A request that could not reach the peer doesn't count (Codex review of
+-- #465): the startup pass can ask a whitelisted peer that is still offline. A
+-- refusal at send, or the unreachable signal within UNREACHABLE_ECHO of it
+-- leaving, marks the peer "unreachable" and gives back the try it counted
+-- (recoveryCounted: what each request that left counted). Such a peer gets
+-- its recovery once it shows it is reachable - come online, or found on
+-- Battle.net - not from another startup pass.
 -- Declared: a marked peer that isn't a sync target when its turn comes gets no
 -- recovery request - its entries wait for it to be one, bounded by the drop
 -- rules.
-local recoveryDone, recoveryPlanned = {}, {}
+local recoveryDone, recoveryPlanned, recoveryCounted = {}, {}, {}
 local ScheduleRecoveryFor   -- defined with RecoverMissedPulls; called from discovery
 local MAX_RECOVERY_TRIES = 3
 local RECOVERY_DELAY = 10
@@ -2026,10 +2033,27 @@ local function SayUnreachable(name, key, transport)
     end
 end
 
+-- The recovery request that just left (#449) did not reach this peer: it
+-- stays eligible this session, and its tries are given back. A signal well
+-- after it left is about a later message, not the request.
+local function RecoveryUnreachable(key)
+    local c = key and recoveryCounted[key]
+    if not c or (time() - c.at) > UNREACHABLE_ECHO then return end
+    recoveryDone[key], recoveryCounted[key] = "unreachable", nil
+    for _, p in ipairs(c.entries) do
+        local entries = MissedPulls()[p[1]]
+        local e = type(entries) == "table" and entries[p[2]]
+        if type(e) == "table" and e.peer == key and (tonumber(e.tries) or 0) > 0 then
+            SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short, tries = tonumber(e.tries) - 1 })
+        end
+    end
+end
+
 -- Unreachable, from either signal - the chat line or TargetOffline at send
--- time: the current manual attempt must not push, and a sync the player typed
--- is told once.
+-- time: the current manual attempt must not push, a sync the player typed
+-- is told once, and a recovery request just sent doesn't count (#449).
 function NoteUnreachable(name, key, transport)
+    RecoveryUnreachable(key)
     if syncAttempt[key] then syncAttempt[key].unreachable = true end
     if manualSyncAt[key] and (time() - manualSyncAt[key]) <= 30 then
         SayUnreachable(name, key, transport)
@@ -4639,23 +4663,30 @@ end
 -- recoveryDone): when entries a loaded plugin waits for came from it and it
 -- has had none this session. Asks for everything, outside the throttle, with
 -- the target's own spelling and route as GetSyncTargets gives them. Leaving,
--- it counts a try on those entries.
-local function RecoverPeer(t)
+-- it counts a try on those entries. `reachable`: the peer has just shown it
+-- is (come online, found), so a request that could not reach it earlier this
+-- session is tried again.
+local function RecoverPeer(t, reachable)
     local key = AuthKey(t.target)
-    if not key or recoveryDone[key] then return end
+    if not key then return end
+    if recoveryDone[key] and not (reachable and recoveryDone[key] == "unreachable") then return end
     local pending = PendingEntries(key)
     if #pending == 0 then return end
     recoveryDone[key] = true
     RequestCharacters(t.channel, t.target, true, function(didSend)
-        if not didSend then return end
+        -- Refused at send: it never left, so the peer stays eligible.
+        if not didSend then recoveryDone[key] = "unreachable"; return end
+        local counted = {}
         for _, p in ipairs(pending) do
             local entries = MissedPulls()[p[1]]
             local e = type(entries) == "table" and entries[p[2]]
             if type(e) == "table" and e.peer == key then
                 SetMissedPull(p[1], p[2], { peer = e.peer, short = e.short,
                                             tries = (tonumber(e.tries) or 0) + 1 })
+                counted[#counted + 1] = p
             end
         end
+        recoveryCounted[key] = { at = time(), entries = counted }
     end, 0)
 end
 
@@ -4668,13 +4699,13 @@ end
 -- ordinary pull, if it is still a sync target then.
 ScheduleRecoveryFor = function(name)
     local key = AuthKey(name)
-    if not key or recoveryDone[key] or recoveryPlanned[key] or #PendingEntries(key) == 0 then return end
+    if not key or recoveryDone[key] == true or recoveryPlanned[key] or #PendingEntries(key) == 0 then return end
     if not (C_Timer and C_Timer.After) then return end
     recoveryPlanned[key] = true
     C_Timer.After(RECOVERY_DELAY, function()
         recoveryPlanned[key] = nil
         for _, t in ipairs(GetSyncTargets()) do
-            if AuthKey(t.target) == key then RecoverPeer(t) end
+            if AuthKey(t.target) == key then RecoverPeer(t, true) end
         end
     end)
 end
@@ -5424,7 +5455,7 @@ local function ResetSyncState()
     outdatedSenders = {}
     autoRetryCounts = {}
     lastRequestedAt = {}
-    recoveryDone, recoveryPlanned = {}, {}   -- #449: session-local, the saved marks stay
+    recoveryDone, recoveryPlanned, recoveryCounted = {}, {}, {}   -- #449: session-local, the saved marks stay
     syncWatch       = {}
     heardAt, leftAt, onlineNow, answeredHere, askedHereAt, redrawnAt = {}, {}, {}, {}, 0, 0
 end

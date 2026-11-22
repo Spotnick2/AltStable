@@ -5259,7 +5259,9 @@ do
         local L = T.LibSync
         local realInst = L.inst
         local fake = { messages = true, peers = {} }
-        function fake.SendTo() return nil end
+        -- Every send is accepted and leaves (a refused one would be retried
+        -- when the peer is found again: see the offline tests below).
+        function fake.SendTo(_, _, done) if done then done(nil, "sent") end return 1 end
         function fake.Peers() return fake.peers end
         local bee = { name = "Bee", guid = "Player-449-BEE", realm = "R", faction = "Alliance" }
         -- Recovery requests only (watermark 0): the stand-in library's own
@@ -5308,6 +5310,77 @@ do
         fake.peers = {}
         L.inst = realInst
         L.Forget()
+    end
+    -- A whitelisted peer still offline at the startup pass: that request
+    -- doesn't count, and its recovery comes when it comes online (Codex review
+    -- of #465). Both signals: refused at send (TargetOffline), and the server's
+    -- "No player named" line after it left.
+    do
+        local online = "karuzo has come online. |Hplayer:karuzo|h[karuzo]|h"
+        local function startup()
+            AltStableConfig.whitelist = { "karuzo" }
+            AltStableConfig.peerWatermarks = { karuzo = stored }
+            AltStableConfig.missedPluginPulls = { warband = { [A] = { peer = "karuzo", short = "Karuzo", tries = 0 } } }
+            AltStableDB[A] = rec(A, "Alpha", WoW.now - 10)
+            AltStableConfig.forgottenCharacters = {}
+            session("warband")
+            requests()
+        end
+        startup()
+        WoW.sendResults = { Enum.SendAddonMessageResult.TargetOffline }
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, "0/0",
+           "a startup recovery refused as offline counts no try")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, tostring(stored) .. ",0/1",
+           "  and when the peer comes online: its ordinary pull, then its recovery")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, "/1",
+           "  online again after that recovery left: no second one (the pull is throttled)")
+
+        startup()
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, "0/1", "a startup recovery that left counts a try")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("karuzo"))
+        eq(entry("warband", A).tries, 0, "  the server says the peer is offline: the try is given back")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests() .. "/" .. entry("warband", A).tries, tostring(stored) .. ",0/1",
+           "  and when it comes online: its ordinary pull, then its recovery")
+
+        -- A later message refused (the peer logged off since): not the recovery's.
+        startup()
+        WoW.flushTimers()
+        requests()
+        WoW.now = WoW.now + 11
+        WoW.sendResults = { Enum.SendAddonMessageResult.TargetOffline }
+        T.RequestCharacters("WHISPER", "karuzo", true)
+        eq(requests() .. "/" .. entry("warband", A).tries, tostring(stored) .. "/1",
+           "a later request refused as offline: the recovery that left keeps its try")
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        eq(requests(), "", "  and coming online then gets no second recovery (the pull is throttled)")
+
+        -- Given back only to the entries that request counted, never below 0.
+        startup()
+        AltStableConfig.missedPluginPulls.warband[B] = { peer = "karuzo", short = "Karuzo", tries = 0 }
+        AltStableDB[B] = rec(B, "Beta", WoW.now - 10)
+        WoW.flushTimers()
+        AltStableConfig.missedPluginPulls.warband[A] = { peer = "other", short = "Other", tries = 1 }
+        AltStableConfig.missedPluginPulls.warband[B] = { peer = "karuzo", short = "Karuzo", tries = 0 }
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", ERR_CHAT_PLAYER_NOT_FOUND_S:format("karuzo"))
+        eq(entry("warband", A).peer .. "/" .. entry("warband", A).tries .. "," .. entry("warband", B).tries,
+           "other/1,0", "an entry re-marked since the request left is not given a try back")
+
+        -- Come online before the startup pass: one recovery, from whichever runs first.
+        startup()
+        onEvent(T.frame, "CHAT_MSG_SYSTEM", online)
+        WoW.flushTimers()
+        local n = 0
+        for w in requests():gmatch("[^,]+") do if w == "0" then n = n + 1 end end
+        eq(n .. "/" .. entry("warband", A).tries, "1/1", "online before the startup pass: one recovery in all")
     end
     AltStable.plugins = {}
     T.LibSync.SendRequest = realSendRequest
