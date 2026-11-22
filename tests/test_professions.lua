@@ -799,6 +799,7 @@ eq("  and only matches", #rows, 1)
 -- { guid, name, class, bags, bank, bankStale } per holder (test_warband checks
 -- the real one has that shape).
 local held = {}
+local unseenStub   -- CountItem's third answer (#423): our alts never read
 local function holdersStub(item)
     local total, out = 0, {}
     for guid, items in pairs(held) do
@@ -811,7 +812,7 @@ local function holdersStub(item)
                               mail = h.mail or 0 }
         end
     end
-    return total, out
+    return total, out, unseenStub
 end
 local function owner(guid) for _, x in ipairs(T.Owners(171)) do if x.guid == guid then return x end end end
 
@@ -1020,6 +1021,39 @@ lines = T.ReagentLines(2329, { owner(A) })
 check("a reagent nobody holds says so", lines[#lines][2]:find("nobody has it", 1, true) ~= nil, lines[#lines][2])
 check("  and its total is red", table.concat({ lines[4][2] or "" }):find("|cffff40400|r", 1, true) ~= nil,
       tostring(lines[4][2]))
+local function said(ls)
+    local t = {}
+    for _, l in ipairs(ls) do t[#t + 1] = tostring(l[1]) .. " | " .. tostring(l[2]) end
+    return table.concat(t, " / ")
+end
+check("  and no note about unread alts when every one was read",
+      not said(lines):find("aren't recorded yet", 1, true), said(lines))
+-- One of our alts' bags or bank never read (#423): nobody can't be said.
+unseenStub = { B }
+lines = T.ReagentLines(2329, { owner(A) })
+check("#423: an alt never read: none recorded, not nobody", lines[#lines][2]:find("(none recorded)", 1, true) ~= nil
+      and not lines[#lines][2]:find("nobody", 1, true), lines[#lines][2])
+check("  and the block says some alts aren't recorded", said(lines):find("aren't recorded yet", 1, true) ~= nil, said(lines))
+local heldHidden = AltStable.IsCharacterHidden
+AltStable.IsCharacterHidden = function(g) return g == B end
+lines = T.ReagentLines(2329, { owner(A) })
+check("  a hidden alt never read doesn't count", lines[#lines][2]:find("(nobody has it)", 1, true) ~= nil, lines[#lines][2])
+AltStable.IsCharacterHidden = heldHidden
+-- The crafter holds some, nobody else any (2331 needs 2 of 785).
+held[A][785], held[A][3371] = { bags = 1 }, { bags = 1 }
+unseenStub = nil
+lines = T.ReagentLines(2331, { owner(A) })
+check("  the crafter holds some, every alt read: nobody else has it",
+      lines[#lines][2]:find("needs 1 item 785 (nobody else has it)", 1, true) ~= nil, lines[#lines][2])
+unseenStub = { B }
+lines = T.ReagentLines(2331, { owner(A) })
+check("  and with an alt unread: none recorded elsewhere",
+      lines[#lines][2]:find("(none recorded elsewhere)", 1, true) ~= nil, lines[#lines][2])
+held[A][3371] = { bags = 1 }
+lines = T.ReagentLines(2329, { owner(A) })
+check("  enough of everything: no note, unread alts or not", not said(lines):find("aren't recorded yet", 1, true), said(lines))
+unseenStub = nil
+held[A][785], held[A][3371] = nil, nil
 
 -- Names: cached ones are used, a miss is asked for once.
 WoW.itemLoadRequests = {}

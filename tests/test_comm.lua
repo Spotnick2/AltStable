@@ -1609,6 +1609,21 @@ inbox = {}
 T.ScanMail()
 check(AltStableDB[mguid].mail_count == nil and AltStableDB[mguid].mail_expiry == nil,
       "mail: emptying the mailbox clears the mail_ summary")
+-- And with it the "visit the mailbox again" line (#424): two mails, the
+-- soonest expired, then a visit that finds the box empty.
+do
+    local savedCfg = AltStableConfig
+    AltStableConfig = { mailAlertsEnabled = true, peerWatermarks = {} }
+    AltStableDB[mguid].mail_count, AltStableDB[mguid].mail_expiry = 2, WoW.now - 100
+    WoW.chatOut = {}
+    T.CheckMailAlerts()
+    check(chatHas("Mailer") and chatHas("visit the mailbox again"), "mail (#424): an expired two-mail summary says visit again")
+    T.ScanMail()
+    WoW.chatOut = {}
+    T.CheckMailAlerts()
+    check(not chatHas("Mailer"), "  a visit that finds the box empty ends it")
+    AltStableConfig = savedCfg
+end
 -- So does a mailbox of only mail with nothing to lose, or no days left.
 inbox = { { daysLeft = 5, itemCount = 2 } }
 T.ScanMail()
@@ -1675,10 +1690,33 @@ check(chatHas("Expiro"), "mail alerts: an alt within the window is listed")
 check(not chatHas("Patient"), "mail alerts: an alt outside the window is not listed")
 check(not chatHas("Toolate"), "mail alerts: already-expired mail is not listed")
 
--- Same clock as above, so the only difference is the toggle. Without the pin,
--- every seeded expiry fell outside the window and this passed with the toggle
--- check deleted.
-WoW.reset(); WoW.now = 100000
+-- Two mails, the soonest past its deadline, the mailbox not visited since
+-- (#424): the other may still be waiting, so the alt stays listed - far past
+-- the first deadline too (player mail can last 31 days) - until a visit.
+WoW.reset(); WoW.now = 100000 + 40 * 86400
+local revGuid = UnitGUID("player")
+AltStableDB = {
+    [revGuid]  = { guid = revGuid, name = "Twomail", class = "MAGE", mail_expiry = 100000 + 86400, mail_count = 2 },
+    ["g-soon"] = { guid = "g-soon", name = "Expiro", class = "MAGE", mail_expiry = WoW.now + 86400, mail_count = 1 },
+    ["g-past"] = { guid = "g-past", name = "Toolate", class = "ROGUE", mail_expiry = 100000 - 100, mail_count = 1 },
+}
+AltStableConfig = { mailAlertsEnabled = true }
+T.CheckMailAlerts()
+check(chatHas("Twomail") and chatHas("visit the mailbox again"),
+      "mail alerts (#424): two mails, the soonest expired, no visit since: listed as visit again")
+check(not chatHas("Toolate"), "  one mail past its deadline: still not listed")
+local revLine, soonLine
+for i, l in ipairs(WoW.chatOut) do
+    if l:find("Twomail", 1, true) then revLine = i end
+    if l:find("Expiro", 1, true) then soonLine = i end
+end
+check(revLine and soonLine and soonLine < revLine, "  after the dated ones")
+
+-- Same clock and fixture as above, so the only difference is the toggle.
+-- Without the pin, every seeded expiry fell outside the window and this passed
+-- with the toggle check deleted (again with the #424 fixture's day 40: Codex
+-- review of #453).
+WoW.reset(); WoW.now = 100000 + 40 * 86400
 AltStableConfig = { mailAlertsEnabled = false }
 T.CheckMailAlerts()
 check(not chatHas("Mail expiring soon"), "mail alerts: disabling the toggle suppresses the warning")
@@ -3956,6 +3994,123 @@ do
         check(AltStableDB["Player-Mine-58"] ~= nil, "  though their characters merge")
     end
 
+    -- 50 camps at most (#427): a sync carries no more, here or in an older
+    -- client, which cuts a longer list - and the cut copy came back.
+    do
+        local function list(n, prefix)
+            local t = {}
+            for i = 1, n do t[i] = { id = i, name = prefix .. i, members = {} } end
+            return t
+        end
+        local A = { rosterCamps = list(51, "A"), rosterCampsStamp = 8000, rosterCampNextId = 51 }
+        local B = { rosterCamps = list(3, "B"), rosterCampsStamp = 7000, rosterCampNextId = 3 }
+        local function as(cfg, fn)
+            local held = AltStableConfig
+            AltStableConfig = cfg
+            local r = fn()
+            AltStableConfig = held
+            return r
+        end
+        local function campsLine(cfg)
+            for _, l in ipairs(as(cfg, AltStable.CampSyncLines)) do
+                if l:find("^==CAMPS1==:") then return l end
+            end
+        end
+        check(campsLine(A) == nil, "#427: a list of 51 camps (made before the limit) is not sent")
+        WoW.now = 9000
+        as(B, function() return AltStable.RenameCamp(1, "Renamed") end)
+        local fromB = campsLine(B)
+        check(fromB ~= nil and B.rosterCampsStamp == 9000, "  the other account renames one: a newer list")
+        check(not as(A, function() return AltStable.ApplyCampSyncLine(fromB) end),
+              "  which the account holding 51 refuses")
+        eq(#A.rosterCamps, 51, "  so it keeps its 51 camps")
+        eq(A.rosterCampsStamp, 8000, "  and its stamp")
+        eq(B.rosterCamps[1].name, "Renamed", "  and the other keeps its own")
+        WoW.now = 9500
+        as(A, function() return AltStable.DeleteCamp(51) end)
+        local fromA = campsLine(A)
+        check(fromA ~= nil, "  back to 50: the list goes again")
+        check(as(B, function() return AltStable.ApplyCampSyncLine(fromA) end), "  and, newer, is taken whole")
+        eq(#B.rosterCamps, 50, "  all 50 of them")
+        local nextId = A.rosterCampNextId
+        eq(as(A, function() return AltStable.CreateCamp("One more", {}) end), nil, "a 51st camp is not made")
+        eq(#A.rosterCamps, 50, "  the list is unchanged")
+        eq(A.rosterCampNextId, nextId, "  and no id is spent")
+        check(not as(A, AltStable.CanCreateCamp), "  CanCreateCamp says so")
+        local chunks = {}
+        for i = 1, 51 do chunks[i] = i .. ",Far" .. i .. ",," end
+        local big = "==CAMPS1==:99999;" .. table.concat(chunks, ";")
+        check(not as(B, function() return AltStable.ApplyCampSyncLine(big) end),
+              "a received list of 51 is refused whole, not cut")
+        eq(#B.rosterCamps, 50, "  the camps here stay")
+        eq(B.rosterCampsStamp, A.rosterCampsStamp, "  with their stamp")
+        WoW.now = 7000
+    end
+
+    -- An equal stamp with different contents (#428): the greater text wins on
+    -- both sides, so two accounts meet instead of refusing each other for good.
+    do
+        local function as(cfg, fn)
+            local held = AltStableConfig
+            AltStableConfig = cfg
+            local r = fn()
+            AltStableConfig = held
+            return r
+        end
+        local function lineOf(cfg, prefix)
+            for _, l in ipairs(as(cfg, AltStable.CampSyncLines)) do
+                if l:sub(1, #prefix) == prefix then return l end
+            end
+        end
+        local function swap(A, B, prefix)
+            local fromA, fromB = lineOf(A, prefix), lineOf(B, prefix)
+            local tookB = as(B, function() return AltStable.ApplyCampSyncLine(fromA) end)
+            local tookA = as(A, function() return AltStable.ApplyCampSyncLine(fromB) end)
+            return tookA, tookB
+        end
+        -- Camps from before the stamps: both at the synthetic 1.
+        local A = { rosterCamps = { { id = 1, name = "North", members = {} } } }
+        local B = { rosterCamps = { { id = 1, name = "South", members = {} } } }
+        eq(lineOf(A, "==CAMPS1=="), "==CAMPS1==:1;1,North,felwood", "#428: the camps line is unchanged on the wire")
+        local tookA, tookB = swap(A, B, "==CAMPS1==")
+        check(tookA and not tookB, "  North vs South at stamp 1: the greater text is taken, by one side only")
+        eq(A.rosterCamps[1].name .. "/" .. B.rosterCamps[1].name, "South/South", "  both end the same")
+        tookA, tookB = swap(A, B, "==CAMPS1==")
+        check(not tookA and not tookB, "  and the next exchange changes nothing")
+        -- The campless order, the same.
+        A = { rosterListOrder = { "Player-1-1", "Player-1-2" } }
+        B = { rosterListOrder = { "Player-1-2", "Player-1-1" } }
+        eq(lineOf(A, "==ORDER1=="), "==ORDER1==:1;Player-1-1,Player-1-2", "  the order line is unchanged on the wire")
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(tookA and not tookB, "  two orders at stamp 1: one side takes the other's")
+        eq(table.concat(A.rosterListOrder, ",") .. "/" .. table.concat(B.rosterListOrder, ","),
+           "Player-1-2,Player-1-1/Player-1-2,Player-1-1", "  both end the same")
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(not tookA and not tookB, "  and the next exchange changes nothing")
+        -- 501 entries against the same first 500: a receiver keeps 500, so
+        -- both compare those and agree there is nothing to do.
+        local long, short = {}, {}
+        for i = 1, 501 do long[i] = "Player-2-" .. i end
+        for i = 1, 500 do short[i] = long[i] end
+        A = { rosterListOrder = long, rosterListOrderStamp = 5 }
+        B = { rosterListOrder = short, rosterListOrderStamp = 5 }
+        local _, commas = lineOf(A, "==ORDER1=="):gsub(",", "")
+        eq(commas, 500, "  501 entries: all of them still go")
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(not tookA and not tookB, "  against the same first 500: equal, both ways")
+        eq(#A.rosterListOrder .. "/" .. #B.rosterListOrder, "501/500", "  and nothing is written")
+        -- Ours is compared as a receiver would hold it: a repeat, or a name
+        -- the parse cleans, is no difference to act on.
+        A = { rosterListOrder = { "Player-3-1", "Player-3-1", "Player-3-3" }, rosterListOrderStamp = 6 }
+        B = { rosterListOrder = { "Player-3-1", "Player-3-3" }, rosterListOrderStamp = 6 }
+        tookA, tookB = swap(A, B, "==ORDER1==")
+        check(not tookA and not tookB, "  a repeated entry here is not a difference")
+        A = { rosterCamps = { { id = 1, name = "No	rth", members = {} } }, rosterCampsStamp = 6 }
+        B = { rosterCamps = { { id = 1, name = "North", members = {} } }, rosterCampsStamp = 6 }
+        tookA, tookB = swap(A, B, "==CAMPS1==")
+        check(not tookA and not tookB, "  nor a camp name the parse cleans")
+    end
+
     -- A player's change is stamped; an automatic one is not (#171).
     do
         AltStableConfig = {}
@@ -4219,7 +4374,7 @@ do
     AltStableConfig = { syncSettings = true, theme = "dark", scale = 1.1, skin = "flat",
                         prefsStamps = { appearance = 100 } }
     check(not AltStable.ApplyPrefsSyncLine(line("appearance", 100, "theme=class")),
-          "a group no newer than ours is refused")
+          "a group at our stamp, its text below ours (#428), is refused")
     eq(AltStableConfig.theme, "dark", "  and changes nothing")
     eq(AltStable.ApplyPrefsSyncLine(line("appearance", 200,
         "theme=class;skin=;scale=5;skinClassTint=yes;hiddenCharacters=Player-1;future=1")),
@@ -4230,6 +4385,55 @@ do
     eq(AltStableConfig.skinClassTint, nil, "  so is a flag that is not one")
     eq(AltStableConfig.hiddenCharacters, nil, "  and another group's key")
     eq(AltStableConfig.prefsStamps.appearance, 200, "  the stamp is the sender's")
+
+    -- An equal stamp with different contents (#428): the greater text wins on
+    -- both sides; equal contents are nothing to apply, and say nothing.
+    do
+        local heldCfg = AltStableConfig
+        local function as(cfg, fn)
+            AltStableConfig = cfg
+            local r = fn()
+            AltStableConfig = heldCfg
+            return r
+        end
+        local function prefsLine(cfg, gid)
+            for _, l in ipairs(as(cfg, AltStable.PrefsSyncLines)) do
+                if l:find("^==PREFS1==:" .. gid .. ":") then return l end
+            end
+        end
+        local A = { syncSettings = true, theme = "class", prefsStamps = { appearance = 7 } }
+        local B = { syncSettings = true, theme = "light", prefsStamps = { appearance = 7 } }
+        local function swap()
+            local fromA, fromB = prefsLine(A, "appearance"), prefsLine(B, "appearance")
+            return as(A, function() return AltStable.ApplyPrefsSyncLine(fromB) end),
+                   as(B, function() return AltStable.ApplyPrefsSyncLine(fromA) end)
+        end
+        local tookA, tookB = swap()
+        check(tookA == "appearance" and not tookB, "#428: two appearance groups at one stamp: one side takes the other's")
+        eq(A.theme .. "/" .. B.theme, "light/light", "  both end the same")
+        tookA, tookB = swap()
+        check(not tookA and not tookB, "  and the next exchange is nothing, so no \"Settings from\" line")
+        -- A default-on preference set to false on both sides (Codex review of
+        -- #458): ours compares as the 0 it sends, not as the default's 1, so
+        -- the differing scale after it still decides.
+        A = { syncSettings = true, skinClean = false, scale = 1,    prefsStamps = { appearance = 9 } }
+        B = { syncSettings = true, skinClean = false, scale = 1.25, prefsStamps = { appearance = 9 } }
+        tookA, tookB = swap()
+        check((tookA == "appearance") ~= (tookB == "appearance"),
+              "  skinClean off on both, scales apart: exactly one side takes the other's")
+        eq(tostring(A.scale) .. "/" .. tostring(B.scale), "1.25/1.25", "  both end on the same scale")
+        eq(tostring(A.skinClean) .. "/" .. tostring(B.skinClean), "false/false", "  and the look stays off")
+        tookA, tookB = swap()
+        check(not tookA and not tookB, "  then nothing more")
+        -- Ours is compared as a receiver would hold it: a theme that doesn't
+        -- read (sent as "theme=", refused there) counts as the default, dark,
+        -- which is above "class" - not as the empty text, which is below it.
+        A = { syncSettings = true, theme = "bad-word", prefsStamps = { appearance = 11 } }
+        B = { syncSettings = true, theme = "class",    prefsStamps = { appearance = 11 } }
+        local fromB = prefsLine(B, "appearance")
+        check(not as(A, function() return AltStable.ApplyPrefsSyncLine(fromB) end),
+              "  an unreadable theme here compares as the default, so \"class\" at the same stamp is refused")
+    end
     -- The clean look (#230) travels with the appearance. A version from before
     -- it sends no such key, and ours stays.
     AltStableConfig.skinClean = true
@@ -4629,6 +4833,187 @@ do
     check(decodeAs(ask(99701), "Pull Surname")["Player-RL-O"] ~= nil,
           "#422: a watermark past our clock less the slack is answered in full")
     eq(decodeAs(ask(99700), "Pull Surname")["Player-RL-O"], nil, "  one at the slack is a delta")
+end
+
+------------------------------------------------------------
+-- Level, skills and reputation between full scans (#426)
+------------------------------------------------------------
+do
+    WoW.reset()
+    -- The reads themselves live in Scanner.lua and Reputations.lua, which
+    -- this file doesn't otherwise load (last block: nothing after it sees them).
+    dofile("Scanner.lua")
+    dofile("Reputations.lua")
+    local guid = UnitGUID("player")
+    local function fresh()
+        AltStableDB = { [guid] = { guid = guid, name = "Lev", class = "MAGE", level = 20, lastUpdate = 1,
+                                   prof1 = "Tailoring", prof1Skill = 146, prof1Max = 150,
+                                   prof2 = "Mining", prof2Skill = 80, prof2Max = 150,
+                                   prof_Tailoring = 146, profmax_Tailoring = 150,
+                                   prof_Mining = 80, profmax_Mining = 150,
+                                   cooking = 0, cookingMax = 0 } }
+        return AltStableDB[guid]
+    end
+    local function lines(tailoring, mining)
+        local t = { { name = "Professions", isHeader = true, rank = 0, maxRank = 0, skillID = 11 } }
+        if tailoring then t[#t + 1] = { name = "Tailoring", isHeader = false, rank = tailoring, maxRank = 150, skillID = 197 } end
+        if mining then t[#t + 1] = { name = "Mining", isHeader = false, rank = mining, maxRank = 150, skillID = 186 } end
+        return t
+    end
+    check(T.frame._events and T.frame._events.PLAYER_LEVEL_UP and T.frame._events.SKILL_LINES_CHANGED
+          and T.frame._events.UPDATE_FACTION, "#426: the core listens for level, skill and reputation changes")
+
+    -- A level-up, no gear change.
+    local c = fresh()
+    onEvent(T.frame, "PLAYER_LEVEL_UP", 21)
+    eq(c.level, 21, "a level-up is stored at once")
+    check(c.lastUpdate > 1, "  and touches the record, so the next delta carries it")
+    c.lastUpdate = 1
+    onEvent(T.frame, "PLAYER_LEVEL_UP", 21)
+    eq(c.lastUpdate, 1, "  the same level again touches nothing")
+
+    -- A skill-up: one read for a burst in one frame, on the next frame.
+    c = fresh()
+    WoW.skillLines = lines(147, 80)
+    local scans, realScan = 0, AltStable.ScanSkills
+    AltStable.ScanSkills = function(...) scans = scans + 1; return realScan(...) end
+    for _ = 1, 5 do onEvent(T.frame, "SKILL_LINES_CHANGED") end
+    eq(c.prof_Tailoring, 146, "a skill-up is read on the next frame, not in the event")
+    WoW.flushTimers()
+    eq(scans, 1, "  five events in one frame are one read")
+    eq(c.prof_Tailoring, 147, "  the new rank is stored")
+    eq(c.prof1Skill, 147, "  in its slot too")
+    check(c.lastUpdate > 1, "  and the record is touched")
+    c.lastUpdate = 1
+    WoW.skillLines = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 147, "an empty skill list changes nothing")
+    eq(c.lastUpdate, 1, "  and touches nothing")
+
+    -- Still pending at logout: read there, before the stamp.
+    WoW.skillLines = lines(148, 80)
+    scans = 0
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 148, "a skill-up pending at logout is stored there")
+    eq(c.prof1Skill, 148, "  in its slot too")
+    WoW.flushTimers()
+    eq(scans, 0, "  by the ranks-only read, and not read again after")
+    -- A partial list at logout only moves known ranks, by name.
+    c = fresh()
+    c.prof_Tailoring, c.prof1Skill = 147, 147
+    WoW.skillLines = lines(nil, 81)
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof1 .. " " .. c.prof1Skill .. ", " .. c.prof2 .. " " .. c.prof2Skill, "Tailoring 147, Mining 81",
+       "  only Mining listed at logout: Tailoring stays in its slot, Mining moves")
+    eq(c.prof_Tailoring .. "/" .. c.prof_Mining, "147/81", "  and the per-profession fields agree")
+    WoW.skillLines = lines(nil, nil)
+    WoW.skillLines[2] = { name = "Alchemy", isHeader = false, rank = 30, maxRank = 75, skillID = 171 }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. "/" .. c.prof_Mining, "147/81", "  only the header listed: nothing changes")
+    eq(c.prof_Alchemy, nil, "  and a skill never recorded is not added at logout")
+    WoW.flushTimers()
+    AltStable.ScanSkills = realScan
+
+    -- Under a collapsed header, a recorded skill is asked for by its ID.
+    c = fresh()
+    WoW.skillLines = {
+        { name = "Professions", isHeader = true, isCollapsed = true, rank = 0, maxRank = 0, skillID = 11 },
+        { name = "Secondary Skills", isHeader = true, isCollapsed = true, rank = 0, maxRank = 0, skillID = 9 },
+    }
+    local byID = { [197] = { rank = 148, maxRank = 225 }, [185] = { rank = 75, maxRank = 150 },
+                   [171] = { rank = 50, maxRank = 75 } }
+    C_SkillInfo.GetSkillLineInfoByID = function(id) return byID[id] end
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 148, "Professions collapsed: a recorded skill's new rank comes by its ID")
+    eq(c.prof1Skill .. "/" .. c.prof1Max, "148/225", "  in its slot too")
+    eq(c.prof_Mining, 80, "  one the ID read doesn't answer keeps its rank")
+    eq(c.cooking, 0, "  an unlearned secondary (0) is not added")
+    eq(c.prof_Alchemy, nil, "  nor a profession never recorded")
+    check(c.lastUpdate > 1, "  and the record is touched")
+    c.lastUpdate = 1
+    byID = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 148, "  no answer by ID: the saved rank stays")
+    eq(c.lastUpdate, 1, "  and nothing is touched")
+    byID = { [197] = { rank = 0, maxRank = 0 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    WoW.flushTimers()
+    eq(c.prof_Tailoring, 148, "  a rank of 0 by ID is no answer either")
+    -- Collapsed AND pending at logout (Codex review of #459): the logout's
+    -- ranks-only read asks by ID too.
+    byID = { [197] = { rank = 149, maxRank = 225 }, [185] = { rank = 80, maxRank = 150 } }
+    c.lastUpdate = 1
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. " " .. c.prof1Skill .. "/" .. c.prof1Max, "149 149/225",
+       "collapsed and pending at logout: the new rank comes by its ID, in its slot too")
+    eq(c.prof_Mining, 80, "  one the ID read doesn't answer keeps its rank")
+    eq(c.cooking, 0, "  an unlearned secondary is not added")
+    check(c.lastUpdate > 1, "  and the record is stamped with it")
+    WoW.flushTimers()
+    WoW.skillLines = {}
+    byID = { [197] = { rank = 150, maxRank = 225 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring .. " " .. c.prof1Skill, "150 150", "  a list already torn down at logout: asked by ID as well")
+    WoW.skillLines = lines(151, 80)
+    byID = { [197] = { rank = 140, maxRank = 225 } }
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 151, "  a skill the list shows is not asked by ID: the list wins")
+    WoW.skillLines = {}
+    byID = {}
+    onEvent(T.frame, "SKILL_LINES_CHANGED")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c.prof_Tailoring, 151, "  no list and no answer: nothing moves")
+    WoW.flushTimers()
+    C_SkillInfo.GetSkillLineInfoByID = nil
+
+    -- Reputation: the list as it is, never toggled; a recorded faction hidden
+    -- under a collapsed header by its ID; a never-met one stays absent.
+    c = fresh()
+    local SW, IF, DN = AltStable.RepField(72), AltStable.RepField(47), AltStable.RepField(69)
+    c[IF] = 4
+    WoW.factions = {
+        { name = "Alliance", isHeader = true, isCollapsed = false, factionID = 0 },
+        { name = "Stormwind", isHeader = false, factionID = 72, reaction = 5 },
+        { name = "Other", isHeader = true, isCollapsed = true, factionID = 0 },
+        { name = "Ironforge", isHeader = false, factionID = 47, reaction = 4 },
+    }
+    WoW.factionByID = { [47] = { factionID = 47, reaction = 6 }, [69] = { factionID = 69, reaction = 4 } }
+    local expands, realExpand = 0, C_Reputation.ExpandAllFactionHeaders
+    C_Reputation.ExpandAllFactionHeaders = function(...) expands = expands + 1; return realExpand(...) end
+    local reads, realReps = 0, AltStable.UpdateReputations
+    AltStable.UpdateReputations = function(...) reads = reads + 1; return realReps(...) end
+    for _ = 1, 3 do onEvent(T.frame, "UPDATE_FACTION") end
+    WoW.flushTimers()
+    eq(reads, 1, "reputation: three events in one frame are one read")
+    eq(c[SW], 5, "  a visible faction never recorded is stored (met)")
+    eq(c[IF], 6, "  a recorded one under a collapsed header comes by its ID")
+    eq(c[DN], nil, "  a faction never met stays absent")
+    eq(expands, 0, "  no header is expanded")
+    check(WoW.factions[3].isCollapsed, "  and the collapsed one stays collapsed")
+    check(c.lastUpdate > 1, "  and the record is touched")
+    WoW.factions[2].reaction = 6
+    onEvent(T.frame, "UPDATE_FACTION")
+    onEvent(T.frame, "PLAYER_LOGOUT")
+    eq(c[SW], 6, "a gain pending at logout is stored there")
+    c.lastUpdate = 1
+    WoW.factions = {}
+    WoW.factionByID[47] = { factionID = 47, reaction = 7 }
+    onEvent(T.frame, "UPDATE_FACTION")
+    WoW.flushTimers()
+    eq(c[SW] .. "/" .. c[IF], "6/6", "an empty faction list erases nothing")
+    eq(c.lastUpdate, 1, "  and touches nothing")
+    C_Reputation.ExpandAllFactionHeaders = realExpand
+    AltStable.UpdateReputations = realReps
+    WoW.reset()
 end
 
 WoW.finish("test_comm", testsRun - failures, failures)

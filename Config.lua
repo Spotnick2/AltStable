@@ -97,6 +97,7 @@ local function EnsureDefaults()
     if AltStableConfig.warbandView == nil then AltStableConfig.warbandView = "single" end
     if AltStableConfig.warbandScope == nil then AltStableConfig.warbandScope = "warband" end
     if AltStableConfig.warbandRuleset == nil then AltStableConfig.warbandRuleset = "current" end
+    if AltStableConfig.warbandFaction == nil then AltStableConfig.warbandFaction = "current" end   -- #461
     if AltStableConfig.warbandTab == nil then AltStableConfig.warbandTab = 1 end
     -- Pets in the Roster scene (#75): an option, off unless asked for.
     if AltStableConfig.rosterPets == nil then
@@ -950,9 +951,21 @@ function AltStable.CampOf(guid)
     end
 end
 
--- A new camp, last in the list. Returns its id. `members` beyond CAMP_SIZE are
--- dropped, and anyone in another camp leaves it.
+-- The most camps a list may hold (#427): what a sync carries, here and in
+-- every older client, which cuts a longer list. So no more are made; a list
+-- made longer before this limit is kept as it is, but not synced (see
+-- CampSyncLines and ApplyCampSyncLine).
+local MAX_CAMPS = 50
+AltStable.MAX_CAMPS = MAX_CAMPS
+function AltStable.CanCreateCamp()
+    return #AltStable.GetCamps() < MAX_CAMPS
+end
+
+-- A new camp, last in the list. Returns its id, or nil at the limit (nothing
+-- made, no id spent). `members` beyond CAMP_SIZE are dropped, and anyone in
+-- another camp leaves it.
 function AltStable.CreateCamp(name, members, backdrop)
+    if not AltStable.CanCreateCamp() then return nil end
     local camps = CopyCamps(AltStable.GetCamps())
     local nextId = NextCampId(camps)
     local keep, taken = {}, {}
@@ -1123,7 +1136,7 @@ end
 AltStable.CAMPS_LINE, AltStable.ORDER_LINE = "==CAMPS1==", "==ORDER1=="
 -- MAX_NAME is BYTES: the rename box allows 32 letters, and a letter can be up
 -- to four bytes in UTF-8 (#172 review: "été" names were replaced).
-local MAX_SYNCED_CAMPS, MAX_SYNCED_ORDER, MAX_NAME = 50, 500, 128
+local MAX_SYNCED_ORDER, MAX_NAME = 500, 128
 
 local function Unesc(v)
     return (tostring(v or ""):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
@@ -1169,10 +1182,12 @@ end
 -- it switched off, a camp would go out with an empty field and show the other
 -- account's default; it goes with the next sync made with the Roster on. The
 -- campless order holds no backdrop, so it never waits.
+-- Nor while the list holds more than MAX_CAMPS (#427): an older receiver would
+-- cut it, and the cut copy would come back here as the newer list.
 function AltStable.CampSyncLines()
     local out = {}
     local stamp = CampsStamp()
-    if stamp > 0 and AltStable.DefaultCampBackdrop then
+    if stamp > 0 and AltStable.DefaultCampBackdrop and #AltStable.GetCamps() <= MAX_CAMPS then
         out[#out + 1] = AltStable.CAMPS_LINE .. ":" .. stamp .. ";"
             .. CampsWire(AltStable.GetCamps(), AltStable.DefaultCampBackdrop())
     end
@@ -1184,15 +1199,19 @@ function AltStable.CampSyncLines()
     return out
 end
 
--- A received ==CAMPS== body: its stamp and the camps, checked - capped,
--- deduplicated, every guid a guid - or nil for anything that does not read.
+-- A received ==CAMPS== body: its stamp and the camps, checked - deduplicated,
+-- every guid a guid - or nil for anything that does not read. More than
+-- MAX_CAMPS is refused whole, never cut (#427): the cut list would replace
+-- the sender's own the next time it came back.
 local function ParseCamps(body)
     local stampText, rest = body:match("^(%d+);?(.*)$")
     local stamp = tonumber(stampText)
     if not stamp or stamp <= 0 then return nil end
+    local n = 0
+    for _ in (rest or ""):gmatch("[^;]+") do n = n + 1 end
+    if n > MAX_CAMPS then return nil end
     local camps, seenId, seenGuid = {}, {}, {}
     for chunk in (rest or ""):gmatch("[^;]+") do
-        if #camps >= MAX_SYNCED_CAMPS then break end
         local f = {}
         for field in (chunk .. ","):gmatch("([^,]*),") do f[#f + 1] = field end
         local id = tonumber(f[1])
@@ -1215,16 +1234,50 @@ local function ParseCamps(body)
     return stamp, camps
 end
 
--- Apply one synced line from the player's own account. Newer than ours wins;
--- the shown camp stays shown if it is still there (else the first). Returns
--- whether anything changed.
+-- An equal stamp with different contents (#428): the synthetic stamp 1 of
+-- data from before the stamps, or two edits in the same second. Rejecting
+-- every tie left two accounts apart for good, so the greater of the two
+-- texts wins - the same answer on every updated client, so they meet in one
+-- exchange each way. Both texts are what a receiver would hold (the same
+-- parse, caps and all), so a side holding more than the wire carries never
+-- disagrees with itself. Equal texts are a no-op. An older client still
+-- refuses every tie, which is no worse than before.
+local function TieWins(theirs, ours)
+    return theirs ~= ours and theirs > ours
+end
+-- The campless order as a receiver keeps it: guids only, no repeats, the first
+-- MAX_SYNCED_ORDER.
+local function OrderAsReceived(list)
+    local order, seen = {}, {}
+    for _, g in ipairs(list) do
+        if #order >= MAX_SYNCED_ORDER then break end
+        if GoodGuid(g) and not seen[g] then order[#order + 1] = g; seen[g] = true end
+    end
+    return order
+end
+
+-- Apply one synced line from the player's own account. Newer than ours wins
+-- (an equal stamp: TieWins); the shown camp stays shown if it is still there
+-- (else the first). Returns whether anything changed.
 function AltStable.ApplyCampSyncLine(line)
     if type(line) ~= "string" then return false end
     local body = line:match("^" .. AltStable.CAMPS_LINE .. ":(.*)$")
     if body then
         local stamp, camps = ParseCamps(body)
         if not stamp then return false end
-        if stamp <= CampsStamp() then return false end
+        local held = CampsStamp()
+        if stamp < held then return false end
+        if stamp == held then
+            local default = AltStable.DefaultCampBackdrop and AltStable.DefaultCampBackdrop()
+            if not default then return false end
+            local _, ours = ParseCamps(held .. ";" .. CampsWire(AltStable.GetCamps(), default))
+            if not ours or not TieWins(CampsWire(camps, default), CampsWire(ours, default)) then return false end
+        end
+        -- A list here longer than a sync carries (made before the limit) is
+        -- never replaced by one from an account that never saw it (#427).
+        -- Declared: until the player brings it back to MAX_CAMPS, the camps
+        -- don't sync either way; the campless order still does.
+        if #AltStable.GetCamps() > MAX_CAMPS then return false end
         -- A field this build does not send (a later build's) survives on a camp
         -- that is still there, as it does every local write (CopyCamps).
         for _, c in ipairs(camps) do
@@ -1248,11 +1301,14 @@ function AltStable.ApplyCampSyncLine(line)
         local stampText, rest = body:match("^(%d+);?(.*)$")
         local stamp = tonumber(stampText)
         if not stamp or stamp <= 0 then return false end
-        if stamp <= OrderStamp() then return false end
-        local order, seen = {}, {}
-        for g in (rest or ""):gmatch("[^,]+") do
-            if #order >= MAX_SYNCED_ORDER then break end
-            if GoodGuid(g) and not seen[g] then order[#order + 1] = g; seen[g] = true end
+        local held = OrderStamp()
+        if stamp < held then return false end
+        local list = {}
+        for g in (rest or ""):gmatch("[^,]+") do list[#list + 1] = g end
+        local order = OrderAsReceived(list)
+        if stamp == held and not TieWins(table.concat(order, ","),
+                                         table.concat(OrderAsReceived(AltStable.GetListOrder()), ",")) then
+            return false
         end
         AltStable.SetConfigValue("rosterListOrder", order)
         AltStable.SetConfigValue("rosterListOrderStamp", stamp)
@@ -1473,7 +1529,9 @@ end
 local function ApplyPrefsLine(body)
     local gid, stampText, rest = body:match("^(%w+):(%d+);?(.*)$")
     local g, stamp = PREF_GROUP[gid or ""], tonumber(stampText)
-    if not g or not stamp or stamp <= 0 or stamp <= GroupStamp(g) then return nil end
+    if not g or not stamp or stamp <= 0 then return nil end
+    local held = GroupStamp(g)
+    if stamp < held then return nil end
     local values = {}
     for pair in rest:gmatch("[^;]+") do
         local key, text = pair:match("^([%w_]+)=(.*)$")
@@ -1482,6 +1540,27 @@ local function ApplyPrefsLine(body)
             local ok, v = Decode(k, text)
             if ok then values[#values + 1] = { k = k, v = v } end
         end
+    end
+    if stamp == held then
+        -- A tie (TieWins), compared over the keys the line carried - in our
+        -- order - so two builds with different keys don't take turns applying
+        -- a change that changes nothing. Ours as a receiver would hold it.
+        local carried = {}
+        for _, e in ipairs(values) do carried[e.k.key] = e end
+        local theirs, ours = {}, {}
+        for _, k in ipairs(g.keys) do
+            local e = carried[k.key]
+            if e then
+                theirs[#theirs + 1] = k.key .. "=" .. Encode(k, e.v)
+                -- An explicit check, not `okO and mine or nil`: that turned a
+                -- decoded false into nil, which encodes as a default-on key's 1
+                -- (Codex review of #458).
+                local okO, mine = Decode(k, Encode(k, AltStableConfig[k.key]))
+                if not okO then mine = nil end
+                ours[#ours + 1] = k.key .. "=" .. Encode(k, mine)
+            end
+        end
+        if not TieWins(table.concat(theirs, ";"), table.concat(ours, ";")) then return nil end
     end
     AsSync(function()
         for _, e in ipairs(values) do

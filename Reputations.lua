@@ -186,6 +186,36 @@ local function ReadReputationList()
     return met, rows
 end
 
+-- Between full scans (#426): on UPDATE_FACTION, without the full read's
+-- expanding and re-collapsing (which fires UPDATE_FACTION itself, and would
+-- make the player's reputation window jump on every gain). The list as it is:
+-- a visible tracked faction is met, so its standing is written, new or not.
+-- A recorded one hidden under a collapsed header is read by its ID. Nothing is
+-- ever removed here, and an empty list writes nothing. Declared: a faction met
+-- for the first time under a collapsed header waits for the next full scan (an
+-- ID read can't say "met").
+function AltStable.UpdateReputations(char)
+    local n = GetNumFactions()
+    if not n or n == 0 then return end
+    local ids, visible = TrackedIDs(), {}
+    for i = 1, n do
+        local d = GetFactionDataByIndex(i)
+        if d and (d.factionID or 0) > 0 and (not d.isHeader or d.isHeaderWithRep) then
+            visible[d.factionID] = true
+            local reaction = API.PlainNumber(d.reaction)
+            if ids[d.factionID] and reaction then char[AltStable.RepField(d.factionID)] = reaction end
+        end
+    end
+    for id in pairs(ids) do
+        local field = AltStable.RepField(id)
+        if char[field] ~= nil and not visible[id] and API.GetFactionDataByID then
+            local d = API.GetFactionDataByID(id)
+            local reaction = type(d) == "table" and API.PlainNumber(d.reaction)
+            if reaction then char[field] = reaction end
+        end
+    end
+end
+
 function AltStable.ScanReputations(char)
     local met, rows = ReadReputationList()
     if rows == 0 then return end

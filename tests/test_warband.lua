@@ -283,6 +283,49 @@ _, holders = T.CountItem(2318)
 eq("  a count with nothing in the bank never is", holders[1] and holders[1].bankStale, false)
 AltStableWarbandDB[GUID] = { bags = { [2318] = 8 }, bank = { [2318] = 13 }, bankStamp = WoW.now }
 
+-- Which of our own alts were never read (#423), by the section stamps: only
+-- they keep "nobody has it" from being said.
+do
+    local heldDB, heldWB = AltStableDB, AltStableWarbandDB
+    local function rec(g, extra)
+        local r = { guid = g, name = g, class = "MAGE" }
+        for k, v in pairs(extra or {}) do r[k] = v end
+        return r
+    end
+    AltStableDB = {
+        ["P-read"]    = rec("P-read", { scannedHere = true }),
+        ["P-none"]    = rec("P-none", { scannedHere = true }),
+        ["P-nobank"]  = rec("P-nobank", { provKind = "own-account" }),
+        ["P-bankonly"]= rec("P-bankonly", { scannedHere = true }),
+        ["P-friend"]  = rec("P-friend", { provKind = "third-party" }),
+        ["P-bt0"]     = rec("P-bt0", { scannedHere = true }),
+        ["P-kt0"]     = rec("P-kt0", { scannedHere = true }),
+    }
+    AltStableWarbandDB = {
+        ["P-read"]     = { bags = {}, bagsStamp = 100, bank = {}, bankStamp = 100, stamp = 100 },
+        ["P-nobank"]   = { bags = {}, bagsStamp = 100, stamp = 100 },
+        ["P-bankonly"] = { bank = {}, bankStamp = 100, stamp = 100 },
+    }
+    T.DeserializePlayer("P-bt0", "v1|s=200|bt=0|kt=200|b=|k=")
+    T.DeserializePlayer("P-kt0", "v1|s=200|bt=200|kt=0|b=|k=")
+    local _, _, unseen = T.CountItem(2318)
+    local set = {}
+    for _, g in ipairs(unseen or {}) do set[g] = true end
+    check("#423: an alt whose bags and bank were both read is not unseen", not set["P-read"])
+    check("  one with no Warband entry is", set["P-none"])
+    check("  our other account's, bank never visited, is", set["P-nobank"])
+    check("  a bank read first, bags never, is", set["P-bankonly"])
+    check("  a synced bt=0 (bags never read) is", set["P-bt0"])
+    check("  a synced kt=0 (bank never read) is", set["P-kt0"])
+    check("  a friend's is not ours to count", not set["P-friend"])
+    AltStableWarbandDB["P-bankonly"].bags, AltStableWarbandDB["P-bankonly"].bagsStamp = {}, 150
+    local _, _, after = T.CountItem(2318)
+    local still = false
+    for _, g in ipairs(after or {}) do if g == "P-bankonly" then still = true end end
+    check("  and once its bags are read, empty, it no longer is", not still)
+    AltStableDB, AltStableWarbandDB = heldDB, heldWB
+end
+
 AltStable.SetConfigValue("warbandItemTooltips", true)
 local lines = {}
 local tt = WoW.makeFrame()
@@ -1288,6 +1331,151 @@ do
     AltStable.SetConfigValue("warbandScope", "warband"); wb.Refresh()
     eq("warband on Normal is the PvE character", shownIDs(), "102")
     AltStable.SetConfigValue("warbandRuleset", "current")
+
+    -- #461: the faction filter, kept in AltStableConfig, and the reset.
+    do
+        local ALLY, HORDE, NOFAC, UNK = "Player-1-F001", "Player-1-F002", "Player-1-F003", "Player-1-F004"
+        local PVP = "Classic Beta PvP"
+        AltStableDB[ALLY]  = { name = "Ally",  class = "PRIEST", realm = PVP, faction = "Alliance" }
+        AltStableDB[HORDE] = { name = "Hordy", class = "ROGUE",  realm = PVP, faction = "Horde" }
+        AltStableDB[NOFAC] = { name = "Nofac", class = "DRUID",  realm = PVP }
+        AltStableDB[UNK]   = { name = "Unk",   class = "SHAMAN", realm = PVP, faction = "Unknown" }
+        AltStableWarbandDB[ALLY]  = { bags = { [104] = 1 } }
+        AltStableWarbandDB[HORDE] = { bags = { [105] = 1 } }
+        AltStableWarbandDB[NOFAC] = { bags = { [106] = 1 } }
+        AltStableWarbandDB[UNK]   = { bags = { [107] = 1 } }
+        for id = 104, 107 do WoW.items[id] = { name = "Cloth " .. id, classID = 7, quality = 1, icon = id } end
+        local heldFaction = WoW.faction
+        local rb, fb, reset = wb.FilterControls()
+        local function rows(name)
+            local menu = wb.Menu(name)
+            local out = {}
+            for _, r in ipairs(menu and menu.rows or {}) do out[r.key] = r end
+            return out
+        end
+        local function click(b) b:GetScript("OnClick")(b) end
+
+        -- Current faction, Alliance: the Horde alt out; no faction or "Unknown" stays in.
+        WoW.faction = "Alliance"
+        wb.Refresh()
+        eq("#461: current faction leaves the other side's alt out, an unrecorded faction stays",
+           shownIDs(), "101,104,106,107")
+        eq("  the button names the side", fb.label:GetText(), "Alliance")
+        check("  at the defaults, no reset", not reset:IsShown())
+        local st = wb.StatusText()
+        check("  the status line names it too", st:find("PvP  ·  Alliance  ·  Read-only", 1, true) ~= nil, st)
+        -- The player changes side: "current" follows, never saved resolved.
+        WoW.faction = "Horde"
+        wb.Refresh()
+        eq("  playing Horde, current follows", shownIDs(), "101,105,106,107")
+        eq("  and so does the button", fb.label:GetText(), "Horde")
+        eq("  the saved choice is untouched", AltStableConfig.warbandFaction, nil)
+        -- No readable faction: no faction filter.
+        local realUFG = UnitFactionGroup
+        UnitFactionGroup = function() return nil end
+        wb.Refresh()
+        eq("  an unreadable side filters nothing", shownIDs(), "101,104,105,106,107")
+        eq("  and the button says Current faction", fb.label:GetText(), "Current faction")
+        UnitFactionGroup = realUFG
+        WoW.faction = "Alliance"
+
+        -- The menu: rows labelled, the choice highlighted, a click writes it.
+        wb.OpenFactionMenu()
+        local menu, catcher = wb.Menu("faction")
+        check("the faction menu opens", menu and menu:IsShown() and catcher:IsShown())
+        local p, rel, relP = menu:GetPoint()
+        check("  leftwards from the button's right edge", p == "TOPRIGHT" and rel == fb and relP == "BOTTOMRIGHT")
+        local r = rows("faction")
+        eq("  current spelled out", r.current.label:GetText(), "Current faction (Alliance)")
+        eq("  both", r.all.label:GetText(), "Both factions")
+        check("  current highlighted", r.current._active and not r.all._active and not r.Horde._active)
+        if AltStable.SkinIsGlass() then
+            check("  on glass, a dark backing under the menu", menu.backing ~= nil)
+        end
+        click(r.all)
+        check("  a click closes it", not menu:IsShown() and not catcher:IsShown())
+        eq("  and saves the choice", AltStableConfig.warbandFaction, "all")
+        eq("both factions: everyone on this ruleset", shownIDs(), "101,104,105,106,107")
+        eq("  the button says so", fb.label:GetText(), "Both factions")
+        check("  and Reset appears", reset:IsShown())
+        st = wb.StatusText()
+        check("  the status line too", st:find("Both factions", 1, true) ~= nil, st)
+        wb.OpenFactionMenu()
+        check("  reopened, Both is the highlighted row", rows("faction").all._active and not rows("faction").current._active)
+        menu:GetScript("OnKeyDown")(menu, "ESCAPE")
+        check("  Escape closes it", not menu:IsShown() and not catcher:IsShown())
+
+        -- An explicit side equal to the played one is still not the default.
+        click(rows("faction").Alliance)
+        eq("Alliance picked while playing Alliance", shownIDs(), "101,104,106,107")
+        check("  still shows Reset", reset:IsShown())
+        click(reset)
+        eq("Reset puts the faction back to current", AltStableConfig.warbandFaction, "current")
+        eq("  and the ruleset", AltStableConfig.warbandRuleset, "current")
+        check("  and hides itself", not reset:IsShown())
+
+        -- The ruleset through its menu: Normal while on PvP.
+        wb.OpenRulesetMenu()
+        local rmenu, rcatch = wb.Menu("ruleset")
+        click(rows("ruleset").Normal)
+        eq("Normal picked from the menu: the PvE alt", shownIDs(), "102")
+        check("  Reset shows for the ruleset alone", reset:IsShown())
+        wb.OpenRulesetMenu()
+        check("  Normal highlighted", rows("ruleset").Normal._active and not rows("ruleset").current._active)
+        -- Opening the other menu closes this one.
+        wb.OpenFactionMenu()
+        check("opening the faction menu closes the ruleset one",
+              not rmenu:IsShown() and not rcatch:IsShown() and menu:IsShown())
+        -- Leaving the tab closes it too.
+        wb.Deactivate(main)
+        check("leaving the tab closes the menu", not menu:IsShown() and not catcher:IsShown())
+        wb.Activate(main)
+        AltStableWarbandDB[ME] = { bags = { [101] = 2, [201] = 1 } }
+        check("  back on the tab, Reset still shows for Normal", reset:IsShown())
+        click(reset)
+        eq("Reset puts the ruleset back to current from Normal", AltStableConfig.warbandRuleset, "current")
+        eq("  this ruleset's items again", shownIDs(), "101,104,106,107")
+
+        -- A saved value nobody offers reads as current, everywhere.
+        AltStableConfig.warbandRuleset, AltStableConfig.warbandFaction = "bogus", "Neutral"
+        wb.Refresh()
+        eq("unknown saved choices filter as current", shownIDs(), "101,104,106,107")
+        check("  label as current", rb.label:GetText():find("Current ruleset", 1, true) == 1
+              and fb.label:GetText() == "Alliance", rb.label:GetText())
+        check("  and need no reset", not reset:IsShown())
+        wb.OpenRulesetMenu()
+        check("  the ruleset menu highlights current", rows("ruleset").current._active)
+        wb.OpenFactionMenu()
+        check("  so does the faction menu", rows("faction").current._active)
+        menu:GetScript("OnKeyDown")(menu, "ESCAPE")
+        AltStableConfig.warbandRuleset, AltStableConfig.warbandFaction = "current", nil
+
+        -- Personal ignores the faction, as it ignores the ruleset.
+        AltStableDB[ME].faction = "Alliance"
+        AltStable.SetConfigValue("warbandFaction", "Horde")
+        AltStable.SetConfigValue("warbandScope", "personal"); wb.Refresh()
+        eq("personal ignores the faction", shownIDs(), "101")
+        eq("  its button says This character", fb.label:GetText(), "This character")
+        check("  disabled, and no reset", not fb:IsEnabled() and not reset:IsShown())
+        AltStable.SetConfigValue("warbandScope", "warband")
+        AltStable.SetConfigValue("warbandFaction", "current")
+        AltStableDB[ME].faction = nil
+        wb.Refresh()
+
+        -- Kept between sessions: a key in AltStableConfig, defaulted, never overwritten.
+        local heldCfg = AltStableConfig
+        AltStableConfig = {}
+        AltStable.EnsureConfigDefaults()
+        eq("a fresh config defaults the faction to current", AltStableConfig.warbandFaction, "current")
+        AltStableConfig = { warbandFaction = "all" }
+        AltStable.EnsureConfigDefaults()
+        eq("  a saved choice survives the defaults", AltStableConfig.warbandFaction, "all")
+        AltStableConfig = heldCfg
+
+        for _, g in ipairs({ ALLY, HORDE, NOFAC, UNK }) do AltStableDB[g] = nil; AltStableWarbandDB[g] = nil end
+        WoW.faction = heldFaction
+        wb.Refresh()
+    end
 
     -- Personal for a character never scanned: says so, never shows everyone.
     WoW.player.guid = "Player-1-NEW"
