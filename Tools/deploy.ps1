@@ -47,7 +47,7 @@ $libs = @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS; Env
           @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC; EnvName = "LIBACCOUNTSYNC" },
           @{ Name = "LibMailbox"; Major = "LibMailbox-1.0"; Env = $env:LIBMAILBOX; EnvName = "LIBMAILBOX" })
 foreach ($lib in $libs) {
-    $lib.Root = Get-CheckoutRoot -RepoRoot $RepoRoot -Name $lib.Name -EnvValue $lib.Env
+    $lib.Root = Get-CheckoutRoot -RepoRoot $RepoRoot -Name $lib.Name -EnvValue $lib.Env -Marker "$($lib.Major).xml"
     if (-not (Test-Path -LiteralPath (Join-Path $lib.Root "Tools\deploy.ps1"))) {
         throw "$($lib.Name) checkout not found at $($lib.Root) (clone github.com/Spotnick2/$($lib.Name) there, or set `$env:$($lib.EnvName))"
     }

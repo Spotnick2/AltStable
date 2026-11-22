@@ -53,8 +53,9 @@ try {
                        @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE },
                        @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC },
                        @{ Name = "LibMailbox"; Major = "LibMailbox-1.0"; Env = $env:LIBMAILBOX })) {
-        $root = Get-CheckoutRoot -RepoRoot $RepoRoot -Name $lib.Name -EnvValue $lib.Env
-        if (-not $lib.Env -and (Test-Path -LiteralPath $root)) {
+        $marker = "$($lib.Major).xml"
+        $root = Get-CheckoutRoot -RepoRoot $RepoRoot -Name $lib.Name -EnvValue $lib.Env -Marker $marker
+        if (-not $lib.Env -and (Test-Path -LiteralPath (Join-Path $root $marker))) {
             Set-Item -Path ("env:" + $lib.Name.ToUpper()) -Value $root
         }
         # This library's own external block: its pin, not the first in the file.
