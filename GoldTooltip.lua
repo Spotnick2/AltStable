@@ -63,13 +63,16 @@ local function Plural(n, one, many)
     return n .. " " .. (n == 1 and one or many)
 end
 
-function AltStable.ShowGoldTooltip(owner)
-    local tt = GameTooltip
-    if not tt then return end
-    local totals, rows = AltStable.GoldTooltipRows()
-    if #rows == 0 then return end
-    tt:SetOwner(owner, "ANCHOR_TOPRIGHT", 20, 2)
-    tt:AddDoubleLine("Gold on all characters", Money(totals.money), 1, .82, 0, 1, 1, 1)
+-- The lines, into whichever tooltip is given: the bag money's (ShowGoldTooltip
+-- below, which owns and shows GameTooltip) and the broker's (Broker.lua, whose
+-- display owns and shows its own). One renderer, so the two cannot disagree.
+-- totals and rows are GoldTooltipRows()'s, with at least one row.
+--
+-- The total is "?" when no counted character's gold can be read: unknown,
+-- never 0 (#466). A real zero still reads as one.
+function AltStable.AddGoldTooltipLines(tt, totals, rows)
+    local total = (totals.characters - totals.unknown > 0) and Money(totals.money) or "?"
+    tt:AddDoubleLine("Gold on all characters", total, 1, .82, 0, 1, 1, 1)
     tt:AddLine(" ")
     for _, r in ipairs(rows) do
         local cc = (r.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[r.class]) or { r = .9, g = .9, b = .9 }
@@ -90,6 +93,17 @@ function AltStable.ShowGoldTooltip(owner)
         tt:AddLine(Plural(totals.hidden, "hidden character", "hidden characters")
             .. " left out.", .55, .55, .55, true)
     end
+end
+
+function AltStable.ShowGoldTooltip(owner)
+    local tt = GameTooltip
+    if not tt then return end
+    local totals, rows = AltStable.GoldTooltipRows()
+    -- Before SetOwner: hovering with nothing to show must leave GameTooltip to
+    -- whoever has it (review of #466's plan).
+    if #rows == 0 then return end
+    tt:SetOwner(owner, "ANCHOR_TOPRIGHT", 20, 2)
+    AltStable.AddGoldTooltipLines(tt, totals, rows)
     tt:Show()
 end
 

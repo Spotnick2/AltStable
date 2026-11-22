@@ -20,6 +20,10 @@ dofile("tests/libaccountsync.lua"); LoadAccountSync("AltStable")
 dofile("Libs/LibStub/LibStub.lua")
 dofile("Libs/LibDeflate/LibDeflate.lua")
 dofile("Libs/ChatThrottleLib/ChatThrottleLib.lua")
+-- The broker's libraries (#466): without them Broker.lua returns before it
+-- builds anything, and its start would go unchecked.
+dofile("Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua")
+dofile("Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua")
 local function loadToc(toc, dir)
     for _, file in ipairs(Kit.tocFiles(toc, dir)) do
         if not file:match("Libs/") then assert(loadfile(file))() end
@@ -62,6 +66,19 @@ end
 try(AltStable.ShowSheet)
 exercise()
 exercise()
+
+-- The broker object is no frame, so the exercise above never reaches it: its
+-- tooltip into GameTooltip, as a display would hand it over, and its clicks.
+local broker = LibStub("LibDataBroker-1.1"):GetDataObjectByName("AltStable")
+check(broker ~= nil, "Broker.lua built its object")
+if broker then
+    GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    try(broker.OnTooltipShow, GameTooltip)
+    GameTooltip:Show(); GameTooltip:Hide()
+    try(broker.OnClick, UIParent, "RightButton")
+    try(broker.OnClick, UIParent, "LeftButton")
+    try(WoW.flushTimers)
+end
 
 -- Methods a Blizzard mixin adds in Lua (Backdrop, the tooltip's setters) are
 -- allowed in the stub, before anything loads (Kit.allowMethods, #311).
