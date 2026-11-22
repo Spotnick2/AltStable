@@ -495,7 +495,14 @@ local function ReadItemCooldowns()
             end
         end
     end
-    if changed then Changed(guid) end
+    if changed then
+        Changed(guid)
+        -- The sheet's Leatherworking tooltip is built when the row renders, and
+        -- this read comes a frame after the event, so nothing else would
+        -- redraw it: the Shaker just used showed "Ready!" until some unrelated
+        -- redraw (Codex review of #464).
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    end
     return changed
 end
 

@@ -387,13 +387,23 @@ do
     lw()
     AltStableDB[ME].lastUpdate = 1
     WoW.itemCooldowns[15846] = { 900, 400 }
+    -- The sheet's tooltip is built at render: a changed read redraws it (Codex
+    -- review of #464), an unchanged one doesn't.
+    local sheetRedraws, realRefreshSheet = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function(...)
+        sheetRedraws = sheetRedraws + 1
+        if realRefreshSheet then return realRefreshSheet(...) end
+    end
     check("#460: a running Shaker is a change", T.ReadItemCooldowns())
     eq("  stored as an expiry: start + duration - GetTime()", AltStableDB[ME][KEY], WoW.now + 300)
     eq("  for a leatherworker known only to this plugin (no core rank)", AltStableDB[ME].prof_Leatherworking, nil)
     eq("  and the character is touched, so it syncs", AltStableDB[ME].lastUpdate, WoW.now)
+    eq("  and the open sheet is redrawn, so its tooltip shows it", sheetRedraws, 1)
     gt = 1030
     check("a shift under a minute is no change", not T.ReadItemCooldowns())
     eq("  the expiry stays", AltStableDB[ME][KEY], WoW.now + 300)
+    eq("  and the sheet is not redrawn", sheetRedraws, 1)
+    AltStable.RefreshSheet = realRefreshSheet
     gt = 1000
 
     -- A Leatherworking window scan neither removes it nor calls it ready.
