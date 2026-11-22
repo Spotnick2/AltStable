@@ -36,6 +36,40 @@ local MIN_W, MAX_W = 150, 280
 -- What is on the menu
 ------------------------------------------------------------
 
+-- The client's invite (#448): C_PartyInfo.InviteUnit, declared in 71037, which
+-- Blizzard's own friends list, calendar and /invite call with a bare name.
+-- Names are unique region-wide, so the stored name (with its surname, when it
+-- has one) is the whole target; the realm is hidden anyway.
+local function InviteFunc()
+    local p = rawget(_G, "C_PartyInfo")
+    local f = type(p) == "table" and rawget(p, "InviteUnit")
+    return type(f) == "function" and f or nil
+end
+
+-- Why this character can't be invited, or nil. Re-asked on invoke: the menu
+-- can sit open while things change.
+--   * the one being played;
+--   * one of the other faction (only a recorded Alliance or Horde counts: an
+--     unknown faction is no claim);
+--   * one of THIS WoW account: SavedVariables are per account, and scannedHere
+--     (true, the boolean only this client's scan writes) marks this account's
+--     own alts, which can't be online while another of them is played. A
+--     `scannedHere:1` merged from a peer before #281 is the number 1, not
+--     true, and stays invitable (Codex review of the #448 plan).
+-- Not an online check: an alt of the other account is the point of this, and
+-- an offline name only gets the game's own "not found". Another ruleset is
+-- unmeasured, so it is not refused here.
+local function InviteBlocked(char)
+    if char.guid == (UnitGUID and UnitGUID("player")) then return "You are playing this character." end
+    local theirs = char.faction
+    local mine = UnitFactionGroup and UnitFactionGroup("player")
+    if (theirs == "Alliance" or theirs == "Horde") and (mine == "Alliance" or mine == "Horde") and theirs ~= mine then
+        return "Another faction can't be invited."
+    end
+    if char.scannedHere == true then return "On this account: it can't be online while you play." end
+    return nil
+end
+
 -- Frame-free, but NOT pure: it reads the config and who you are playing. That
 -- is the point - it is the one place the four states turn into labels, so a
 -- test can assert the menu a given character gets without building any UI.
@@ -51,6 +85,13 @@ function AltStable.CharacterMenuEntries(char)
         out[#out + 1] = { id = "unfavourite", text = "Remove favourite" }
     else
         out[#out + 1] = { id = "favourite", text = "Favourite" }
+    end
+
+    -- Invite to group (#448), for an alt logged in on another account at the
+    -- same time. Offered disabled, with the reason, when it can't work.
+    if InviteFunc() and type(char.name) == "string" and char.name ~= "" then
+        local why = InviteBlocked(char)
+        out[#out + 1] = { id = "invite", text = "Invite to group", disabled = why and true or nil, why = why }
     end
 
     -- Roster camps (#152), only while the Roster plugin is loaded: the camps
@@ -142,6 +183,14 @@ function AltStable.CharacterMenuInvoke(id, char)
         -- Favourites sort first, so the row moves: repaint.
         if AltStable.RefreshSheet then AltStable.RefreshSheet() end
         return true
+    end
+
+    if id == "invite" then
+        local invite = InviteFunc()
+        if not invite or type(char.name) ~= "string" or char.name == "" or InviteBlocked(char) then
+            return false
+        end
+        return pcall(invite, char.name) and true or false
     end
 
     if id == "hide" then

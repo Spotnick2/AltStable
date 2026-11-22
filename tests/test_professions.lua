@@ -367,6 +367,197 @@ AltStable.ScanCooldowns()
 eq("a cooldown that came up weeks ago is not toasted again at every login", toasted, nil)
 
 ------------------------------------------------------------
+-- The Salt Shaker (#460): an item's cooldown, read from the bags
+------------------------------------------------------------
+do
+    local KEY = "cd_Leatherworking@Salt Shaker"
+    local realGetTime = GetTime
+    local gt = 1000
+    GetTime = function() return gt end
+    -- A leatherworker by the plugin's own snapshot (line 165), no core rank.
+    local function lw(count)
+        fresh()
+        gt = 1000
+        WoW.professions = { { name = "Leatherworking", rank = 260, max = 300, line = 165 } }
+        T.RefreshOwnership()
+        WoW.items[15846] = { name = "Salt Shaker", count = count == nil and 1 or count }
+    end
+
+    -- Running: an absolute expiry, from the GetTime() clock.
+    lw()
+    AltStableDB[ME].lastUpdate = 1
+    WoW.itemCooldowns[15846] = { 900, 400 }
+    -- The sheet's tooltip is built at render: a changed read redraws it (Codex
+    -- review of #464), an unchanged one doesn't.
+    local sheetRedraws, realRefreshSheet = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function(...)
+        sheetRedraws = sheetRedraws + 1
+        if realRefreshSheet then return realRefreshSheet(...) end
+    end
+    check("#460: a running Shaker is a change", T.ReadItemCooldowns())
+    eq("  stored as an expiry: start + duration - GetTime()", AltStableDB[ME][KEY], WoW.now + 300)
+    eq("  for a leatherworker known only to this plugin (no core rank)", AltStableDB[ME].prof_Leatherworking, nil)
+    eq("  and the character is touched, so it syncs", AltStableDB[ME].lastUpdate, WoW.now)
+    eq("  and the open sheet is redrawn, so its tooltip shows it", sheetRedraws, 1)
+    gt = 1030
+    check("a shift under a minute is no change", not T.ReadItemCooldowns())
+    eq("  the expiry stays", AltStableDB[ME][KEY], WoW.now + 300)
+    eq("  and the sheet is not redrawn", sheetRedraws, 1)
+    AltStable.RefreshSheet = realRefreshSheet
+    gt = 1000
+
+    -- A Leatherworking window scan neither removes it nor calls it ready.
+    WoW.tradeSkill.line, WoW.tradeSkill.rank, WoW.tradeSkill.max = 165, 260, 300
+    WoW.tradeSkill.recipes = { [7000] = { name = "Rugged Leather Pants", learned = true } }
+    T.OnShow(); WoW.flushTimers(); T.OnClose()
+    check("  (the window was read)", AltStableProfessionsDB[ME].profs[165].known[7000])
+    eq("a Leatherworking scan keeps the Shaker's exact expiry", AltStableDB[ME][KEY], WoW.now + 300)
+    check("  ApplyCooldowns leaves it whole", not T.ApplyCooldowns(AltStableDB[ME], "Leatherworking", {}, {}))
+    eq("  still", AltStableDB[ME][KEY], WoW.now + 300)
+    check("the profession lost: ClearCooldowns takes it", T.ClearCooldowns(AltStableDB[ME], "Leatherworking"))
+    eq("  gone", AltStableDB[ME][KEY], nil)
+
+    -- Not running.
+    lw()
+    check("first seen and ready: a change", T.ReadItemCooldowns())
+    eq("  written as now, so the grid says Ready", AltStableDB[ME][KEY], WoW.now)
+    check("  ready again: no change", not T.ReadItemCooldowns())
+    WoW.now = WoW.now + 100
+    check("an expiry already past is kept as it is", not T.ReadItemCooldowns())
+    eq("  (the toast keys on it)", AltStableDB[ME][KEY], WoW.now - 100)
+    AltStableDB[ME][KEY] = WoW.now + 5000
+    check("a future expiry read as not running is cut short", T.ReadItemCooldowns())
+    eq("  to now", AltStableDB[ME][KEY], WoW.now)
+    WoW.itemCooldowns[15846] = { 900, 400 }
+    check("running again after a past expiry", T.ReadItemCooldowns())
+    eq("  a new expiry", AltStableDB[ME][KEY], WoW.now + 300)
+    AltStableDB[ME][KEY] = WoW.now - 30
+    WoW.itemCooldowns[15846] = { gt - 380, 400 }
+    check("running again within a minute of a past expiry is still a change", T.ReadItemCooldowns())
+    eq("  (a past expiry is never jitter)", AltStableDB[ME][KEY], WoW.now + 20)
+
+    -- The readers: first that answers with plain numbers wins.
+    local realC, realI, realS = C_Container.GetItemCooldown, C_Item.GetItemCooldown, C_Spell.GetItemCooldown
+    lw()
+    WoW.itemCooldowns[15846] = { 900, 400 }
+    C_Container.GetItemCooldown = function() error("boom") end
+    T.ReadItemCooldowns()
+    eq("the first reader throws: the second answers", AltStableDB[ME][KEY], WoW.now + 300)
+    lw()
+    WoW.itemCooldowns[15846] = { 900, 400 }
+    C_Container.GetItemCooldown = function() return nil end
+    C_Item.GetItemCooldown = function() return WoW.secret(900), WoW.secret(400), true end
+    T.ReadItemCooldowns()
+    eq("nothing, then a secret: the struct reader answers", AltStableDB[ME][KEY], WoW.now + 300)
+    lw()
+    WoW.itemCooldowns[15846] = { 900, 400 }
+    C_Container.GetItemCooldown = function() return -1, 400, 1 end
+    C_Item.GetItemCooldown = nil
+    T.ReadItemCooldowns()
+    eq("a negative start is no answer; a missing reader is skipped", AltStableDB[ME][KEY], WoW.now + 300)
+    AltStableDB[ME][KEY] = WoW.now + 77
+    C_Spell.GetItemCooldown = function() error("x") end
+    check("every reader failing changes nothing", not T.ReadItemCooldowns())
+    eq("  the stored expiry stays", AltStableDB[ME][KEY], WoW.now + 77)
+    C_Spell.GetItemCooldown = function() return { startTime = WoW.secret(1), duration = WoW.secret(2) } end
+    check("  nor secrets", not T.ReadItemCooldowns())
+    eq("  still", AltStableDB[ME][KEY], WoW.now + 77)
+    C_Container.GetItemCooldown, C_Item.GetItemCooldown, C_Spell.GetItemCooldown = realC, realI, realS
+
+    -- The bag count.
+    local realCount = AltStable.API.GetItemCount
+    lw()
+    AltStableDB[ME][KEY] = WoW.now - 10
+    AltStable.API.GetItemCount = function() return WoW.secret(1) end
+    check("a count that can't be read changes nothing", not T.ReadItemCooldowns())
+    eq("  not even an expired field", AltStableDB[ME][KEY], WoW.now - 10)
+    AltStable.API.GetItemCount = function() error("no") end
+    check("  nor a count read that fails", not T.ReadItemCooldowns())
+    AltStable.API.GetItemCount = realCount
+    lw(0)
+    AltStableDB[ME][KEY] = WoW.now - 10
+    check("the Shaker gone from the bags, its cooldown over: removed", T.ReadItemCooldowns())
+    eq("  gone", AltStableDB[ME][KEY], nil)
+    check("  and nothing is written while it is gone", not T.ReadItemCooldowns() and AltStableDB[ME][KEY] == nil)
+    AltStableDB[ME][KEY] = WoW.now + 1000
+    check("gone while still running: kept", not T.ReadItemCooldowns())
+    eq("  the expiry stays", AltStableDB[ME][KEY], WoW.now + 1000)
+
+    -- Who is a leatherworker.
+    fresh()
+    WoW.professions = { { name = "Alchemy", rank = 60, max = 75, line = 171 } }
+    T.RefreshOwnership()
+    WoW.items[15846] = { name = "Salt Shaker", count = 1 }
+    check("not a leatherworker: nothing", not T.ReadItemCooldowns() and AltStableDB[ME][KEY] == nil)
+    fresh()
+    WoW.items[15846] = { name = "Salt Shaker", count = 1 }
+    AltStableDB[ME].prof_Leatherworking = 260
+    check("no snapshot yet: the core's rank counts", T.ReadItemCooldowns() and AltStableDB[ME][KEY] == WoW.now)
+    -- A confirmed loss, the core's rank still there: nothing comes back.
+    lw()
+    AltStableDB[ME].prof_Leatherworking = 260
+    T.ReadItemCooldowns()
+    WoW.professions = {}
+    T.RefreshOwnership()
+    WoW.now = WoW.now + 6
+    T.RefreshOwnership()
+    eq("  (the loss confirmed took the field)", AltStableDB[ME][KEY], nil)
+    check("after a confirmed loss a stale core rank recreates nothing",
+          not T.ReadItemCooldowns() and AltStableDB[ME][KEY] == nil)
+
+    -- The events: one read on the next frame for a burst.
+    lw()
+    local reads = 0
+    AltStable.API.GetItemCount = function(...) reads = reads + 1; return realCount(...) end
+    local fire = eventFrame:GetScript("OnEvent")
+    for _ = 1, 3 do fire(eventFrame, "BAG_UPDATE_COOLDOWN") end
+    fire(eventFrame, "BAG_UPDATE_DELAYED")
+    fire(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", 19566)
+    eq("a burst of bag events and the Shaker's cast: nothing in the event", reads, 0)
+    WoW.flushTimers()
+    eq("  one read on the next frame", reads, 1)
+    eq("  which stored it", AltStableDB[ME][KEY], WoW.now)
+    check("the plugin listens for bag cooldowns and bag moves",
+          eventFrame._events.BAG_UPDATE_COOLDOWN and eventFrame._events.BAG_UPDATE_DELAYED)
+    reads = 0
+    fire(eventFrame, "BAG_UPDATE_COOLDOWN"); WoW.flushTimers()
+    eq("a bag cooldown alone reads, also after an earlier burst", reads, 1)
+    fire(eventFrame, "BAG_UPDATE_DELAYED"); WoW.flushTimers()
+    eq("  so does a bag move alone", reads, 2)
+    fire(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-4", 19566); WoW.flushTimers()
+    eq("  and the Shaker's cast alone", reads, 3)
+    reads = 0
+    T.BootstrapPlugin(); WoW.flushTimers()
+    check("the bootstrap reads it after ownership", reads >= 1)
+    reads = 0
+    T.scan.open = true
+    local gen = T.scan.gen
+    fire(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-2", 12345)
+    WoW.flushTimers()
+    eq("another spell: no Shaker read", reads, 0)
+    check("  while the open window is still rescanned", T.scan.gen > gen)
+    fire(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "party1", "Cast-3", 19566)
+    WoW.flushTimers()
+    eq("someone else's cast reads nothing", reads, 0)
+    T.scan.open = false
+    AltStable.API.GetItemCount = realCount
+
+    -- The login toast lists it, once.
+    lw()
+    AltStableDB[ME][KEY] = WoW.now - 60
+    AltStableConfig.toastsShown = {}
+    toasted = nil
+    AltStable.ScanCooldowns()
+    eq("the toast lists a ready Shaker", toasted and toasted[1] and toasted[1].cdName, "Salt Shaker")
+    eq("  under Leatherworking", toasted and toasted[1] and toasted[1].profKey, "Leatherworking")
+    toasted = nil
+    AltStable.ScanCooldowns()
+    eq("  once", toasted, nil)
+
+    GetTime = realGetTime
+end
+
+------------------------------------------------------------
 -- Sync, through the core
 ------------------------------------------------------------
 
