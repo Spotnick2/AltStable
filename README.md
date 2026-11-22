@@ -29,7 +29,7 @@ Hover an item to see who holds how many, split between bags, bank and mail. You 
 current ruleset or a chosen one, of your faction, the other or both, or only the character you are on.
 Both filters are kept between sessions, and a reset button puts them back.
 
-![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset menu and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
+![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset and faction menus, the reset button and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
 
 *The Warband tab, Combined view: everyone's trade goods, consumables and equipment in one place.
 Hover any item to see who holds it.*
