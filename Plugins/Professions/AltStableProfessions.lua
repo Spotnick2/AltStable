@@ -942,8 +942,14 @@ end
 -- asks for the same Empty Vial a hundred times.
 local function Holders(item, cache)
     if cache and cache[item] then return cache[item] end
-    local ok, _, list = pcall(AltStable.ItemHolders, item)
+    local ok, _, list, unseen = pcall(AltStable.ItemHolders, item)
     if not ok or type(list) ~= "table" then return nil end
+    -- Our own alts whose bags or bank were never read (#423), hidden ones left
+    -- out as everywhere here: "nobody has it" can't be said while there are any.
+    local notRead = 0
+    for _, g in ipairs(type(unseen) == "table" and unseen or {}) do
+        if not IsHidden(g) then notRead = notRead + 1 end
+    end
     local total, out = 0, {}
     for _, h in ipairs(list) do
         -- Bags and bank only: an item in the mail can't be crafted with until it
@@ -958,7 +964,7 @@ local function Holders(item, cache)
         if a.n ~= b.n then return a.n > b.n end
         return (a.name or "") < (b.name or "")
     end)
-    local res = { total = total, list = out }
+    local res = { total = total, list = out, unseen = notRead }
     if cache then cache[item] = res end
     return res
 end
@@ -995,7 +1001,8 @@ local function ReagentPlan(id, knowers, cache)
         local item, need = list[i], list[i + 1]
         local h = Holders(item, cache)
         if not h then return nil, "failed" end
-        plan.reagents[#plan.reagents + 1] = { item = item, need = need, total = h.total, holders = h.list }
+        plan.reagents[#plan.reagents + 1] = { item = item, need = need, total = h.total, holders = h.list,
+                                              unseen = h.unseen or 0 }
         if h.total < need then plan.enough = false end
     end
     for _, o in ipairs(knowers or {}) do
@@ -1023,7 +1030,8 @@ local function ReagentPlan(id, knowers, cache)
                 -- falls short, even beside one who can (Codex review of #388).
                 local blocked = reach < g.need
                 short[#short + 1] = { item = g.item, need = g.need, have = have, from = from,
-                                      away = blocked and away or nil, wall = blocked and wall or nil }
+                                      away = blocked and away or nil, wall = blocked and wall or nil,
+                                      unseen = g.unseen }
             end
         end
         if ready then plan.ready = true end
@@ -1068,7 +1076,7 @@ local function ReagentLines(id, knowers)
                           or "Turn on the Warband plugin to count them across your alts.", nil, 0.6, 0.6, 0.6 }
         return out
     end
-    local stale = false
+    local stale, unread = false, false
     for _, g in ipairs(plan.reagents) do
         local parts = {}
         for i, h in ipairs(g.holders) do
@@ -1090,12 +1098,17 @@ local function ReagentLines(id, knowers)
             if shown < g.total then ofTotal = " |cff999999of " .. g.total .. "|r" end
         end
         local ok = shown >= g.need
+        -- Short, with some of our alts unread: maybe not short at all (#423).
+        if not ok and (g.unseen or 0) > 0 then unread = true end
         out[#out + 1] = { g.need .. " x " .. ItemName(g.item),
                           (ok and "|cff40ff40" or "|cffff4040") .. shown .. "|r" .. ofTotal ..
                           (#parts > 0 and ("  " .. table.concat(parts, ", ")) or ""),
                           1, 1, 1, 1, 1, 1 }
     end
     if stale then out[#out + 1] = { "Some bank counts are over a week old.", nil, 0.6, 0.6, 0.6 } end
+    if unread then
+        out[#out + 1] = { "Some of your alts' bags or bank aren't recorded yet.", nil, 0.6, 0.6, 0.6 }
+    end
     for i, c in ipairs(plan.crafters) do
         if i > CRAFTERS_SHOWN then
             out[#out + 1] = { "+" .. (#plan.crafters - CRAFTERS_SHOWN) .. " more who know it", nil, 0.6, 0.6, 0.6 }
@@ -1112,7 +1125,16 @@ local function ReagentLines(id, knowers)
             if s.away then
                 whoParts[#whoParts + 1] = ColorName(s.away) .. " has " .. s.away.n .. ", other " .. s.wall
             end
-            local who = #whoParts > 0 and (" (" .. table.concat(whoParts, "; ") .. ")") or " (nobody has it)"
+            -- Nobody named: "nobody (else) has it" only when every one of our
+            -- alts' bags and bank was read; otherwise none is recorded (#423).
+            local who
+            if #whoParts > 0 then
+                who = " (" .. table.concat(whoParts, "; ") .. ")"
+            elseif (s.unseen or 0) > 0 then
+                who = s.have > 0 and " (none recorded elsewhere)" or " (none recorded)"
+            else
+                who = s.have > 0 and " (nobody else has it)" or " (nobody has it)"
+            end
             right = "needs " .. (s.need - s.have) .. " " .. ItemName(s.item) .. who ..
                 (#c.short > 1 and (" +" .. (#c.short - 1)) or "")
         end
