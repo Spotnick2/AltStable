@@ -15,7 +15,9 @@
 ------------------------------------------------------------
 
 function LibAccountSyncRoot()
-    local root = (os.getenv("LIBACCOUNTSYNC") or "../LibAccountSync"):gsub("\\", "/"):gsub("/$", "")
+    -- $LIBACCOUNTSYNC, else ../LibAccountSync, else beside the main checkout (a worktree, #477).
+    dofile("tests/checkouts.lua")
+    local root = CheckoutRoot("LIBACCOUNTSYNC", "LibAccountSync", "LibAccountSync-1.0.xml")
     local f = io.open(root .. "/LibAccountSync-1.0.xml", "rb")
     if not f then
         error("LibAccountSync checkout not found at " .. root .. " (no LibAccountSync-1.0.xml): clone "

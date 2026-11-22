@@ -29,7 +29,9 @@ function fireProbeEvent(event, ...)
 end
 
 function loadForeverProbe()
-    local root = (os.getenv("FOREVERPROBE") or "../ForeverProbe"):gsub("\\", "/"):gsub("/$", "")
+    -- $FOREVERPROBE, else ../ForeverProbe, else beside the main checkout (a worktree, #477).
+    dofile("tests/checkouts.lua")
+    local root = CheckoutRoot("FOREVERPROBE", "ForeverProbe", "ForeverProbe.toc")
     local toc = io.open(root .. "/ForeverProbe.toc", "rb")
     if not toc then
         if os.getenv("FOREVERPROBE_OPTIONAL") == "1" then
