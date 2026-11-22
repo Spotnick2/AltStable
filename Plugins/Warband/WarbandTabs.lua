@@ -84,8 +84,39 @@ M.RulesetOf = AltStable.RulesetOf
 -- use, against wherever the player is now - never saved resolved. nil means no
 -- filter. `current`: a realm name, or { ruleset, realm } (RulesetOf reads both, #412).
 function M.ResolveRuleset(setting, current)
+    setting = M.RulesetChoice(setting)
     if setting == "all" then return nil end
-    if setting == nil or setting == "current" then return M.RulesetOf(current) end
+    if setting == "current" then return M.RulesetOf(current) end
+    return setting
+end
+
+-- The saved choice as the controls show it (#461): "current", "all" or one of
+-- M.RULESETS' values; anything else (a hand edit, a future key) is "current",
+-- for the filter, the label, the highlighted row and the reset alike.
+function M.RulesetChoice(setting)
+    if setting == "all" then return "all" end
+    for _, r in ipairs(M.RULESETS or {}) do
+        if setting == r then return r end
+    end
+    return "current"
+end
+
+-- Factions (#461): the same three kinds of choice. "current" is the played
+-- character's UnitFactionGroup tag, passed in, resolved at use and never saved
+-- resolved; unreadable, it filters nothing.
+M.FACTIONS = { "Alliance", "Horde" }
+
+function M.FactionChoice(setting)
+    if setting == "all" or setting == "Alliance" or setting == "Horde" then return setting end
+    return "current"
+end
+
+function M.ResolveFaction(setting, current)
+    setting = M.FactionChoice(setting)
+    if setting == "all" then return nil end
+    if setting == "current" then
+        return (current == "Alliance" or current == "Horde") and current or nil
+    end
     return setting
 end
 
