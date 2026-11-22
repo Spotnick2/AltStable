@@ -32,7 +32,8 @@ local Describe = Probe.Describe
 
 local function Out(s) Probe:Say("[quests] " .. tostring(s)) end
 
--- Quests worth naming in the readings (from QuestieDB 1.1.1 Forever): a
+-- Quests worth naming in the readings (picked from QuestieDB 1.1.1 Forever,
+-- all still there in 1.1.3): a
 -- Northshire start, a Barrens exploration, a breadcrumb chain, a child quest,
 -- the Skyborne shaman chain, a PvP bracket quest.
 local SAMPLES = { 7, 783, 870, 1361, 1362, 1365, 3449, 3450, 92466, 92467, 92468, 98895 }

@@ -127,6 +127,37 @@ eq("doing the parent 3449 closes 3450 (needs it active)", (M.ClosedWhy(3450, A30
 eq("past the cap: 98895 missed at 40", (M.ClosedWhy(98895, P("Alliance", 1, 8, 40), {})), "level")
 eq("  at 39 still open", (M.ClosedWhy(98895, P("Alliance", 1, 8, 39), {})), nil)
 eq("a done quest is never closed", (M.ClosedWhy(4022, A30, Set(4022, 4023))), nil)
+
+-- The data from QuestieDB 1.1.3 and Questie 12.11.1 (#472).
+eq("#472: the data is QuestieDB 1.1.3's", D.SOURCE.questiedb, "1.1.3")
+check("  the old Khan quests Questie blacklists on Forever are gone", Q[1374] == nil and Q[1380] == nil)
+check("  1381 stays only as a row the rules look at", Q[1381] ~= nil and Q[1381][6] == 2)
+check("  their Forever replacements count", Q[93128] ~= nil and Q[93128][6] == 0
+      and Q[96222] ~= nil and Q[96222][6] == 0)
+check("  the other newly blacklisted quests are gone",
+      Q[78917] == nil and Q[87318] == nil and Q[88757] == nil and Q[88758] == nil)
+-- Darkspear Islands' level brackets now exclude each other: one per character.
+eq("doing the 40 bracket closes the 30 one", (M.ClosedWhy(98887, P("Horde", 2, 8, 35), Set(98889))), "excl")
+eq("  nothing done: open", (M.ClosedWhy(98887, P("Horde", 2, 8, 35), {})), nil)
+-- Counted as the rules count any alternatives (#374): each bracket in the
+-- total until one is done, then that one alone (Codex review of #476).
+do
+    local function bgState(done)
+        local l = M.Count(P("Horde", 2, 8, 35), done, true).lists[-25] or {}
+        local state = {}
+        for _, st in ipairs({ "open", "missed", "done" }) do
+            for _, id in ipairs(l[st] or {}) do
+                if id >= 98887 and id <= 98893 then state[#state + 1] = id .. "=" .. st end
+            end
+        end
+        table.sort(state)
+        return table.concat(state, " ")
+    end
+    eq("a level-35 Horde character with no bracket done counts all four",
+       bgState({}), "98887=open 98889=open 98891=open 98893=open")
+    eq("  one done: that one, the others missed and out of the total",
+       bgState(Set(98887)), "98887=done 98889=missed 98891=missed 98893=missed")
+end
 -- Horde's own links: 1198 leads to 1200 for the Alliance only (Codex on #394).
 check("Alliance: doing 1200 closes 1198 (its breadcrumb and follow-up)", M.ClosedWhy(1198, A30, Set(1200)) ~= nil)
 eq("  Horde: it does not", (M.ClosedWhy(1198, H30, Set(1200))), nil)
