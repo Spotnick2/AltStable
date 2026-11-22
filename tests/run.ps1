@@ -45,12 +45,19 @@ try {
     # They take them as they are; CI loads the
     # .pkgmeta pins. Running against something else is fine (a library change
     # before a pin bump) but must not pass for a check of what ships.
+    # From a worktree kept elsewhere, the checkouts beside the main one (#477);
+    # exported, so the Lua loaders find the same ones.
+    . (Join-Path $RepoRoot "Tools\Checkouts.ps1")
     $pkgmeta = Get-Content ".pkgmeta"
     foreach ($lib in @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS },
                        @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE },
                        @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC },
                        @{ Name = "LibMailbox"; Major = "LibMailbox-1.0"; Env = $env:LIBMAILBOX })) {
-        $root = if ($lib.Env) { $lib.Env } else { Join-Path (Split-Path -Parent $RepoRoot) $lib.Name }
+        $marker = "$($lib.Major).xml"
+        $root = Get-CheckoutRoot -RepoRoot $RepoRoot -Name $lib.Name -EnvValue $lib.Env -Marker $marker
+        if (-not $lib.Env -and (Test-Path -LiteralPath (Join-Path $root $marker))) {
+            Set-Item -Path ("env:" + $lib.Name.ToUpper()) -Value $root
+        }
         # This library's own external block: its pin, not the first in the file.
         $pin = $null; $inBlock = $false
         foreach ($line in $pkgmeta) {

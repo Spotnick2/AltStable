@@ -15,7 +15,9 @@
 ------------------------------------------------------------
 
 function LibShowcaseRoot()
-    local root = (os.getenv("LIBSHOWCASE") or "../LibShowcase"):gsub("\\", "/"):gsub("/$", "")
+    -- $LIBSHOWCASE, else ../LibShowcase, else beside the main checkout (a worktree, #477).
+    dofile("tests/checkouts.lua")
+    local root = CheckoutRoot("LIBSHOWCASE", "LibShowcase", "LibShowcase-1.0.xml")
     local f = io.open(root .. "/LibShowcase-1.0.xml", "rb")
     if not f then
         error("LibShowcase checkout not found at " .. root .. " (no LibShowcase-1.0.xml): clone "

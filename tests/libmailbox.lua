@@ -16,7 +16,9 @@
 ------------------------------------------------------------
 
 function LibMailboxRoot()
-    local root = (os.getenv("LIBMAILBOX") or "../LibMailbox"):gsub("\\", "/"):gsub("/$", "")
+    -- $LIBMAILBOX, else ../LibMailbox, else beside the main checkout (a worktree, #477).
+    dofile("tests/checkouts.lua")
+    local root = CheckoutRoot("LIBMAILBOX", "LibMailbox", "LibMailbox-1.0.xml")
     local f = io.open(root .. "/LibMailbox-1.0.xml", "rb")
     if not f then
         error("LibMailbox checkout not found at " .. root .. " (no LibMailbox-1.0.xml): clone "

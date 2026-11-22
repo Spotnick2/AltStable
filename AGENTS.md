@@ -105,7 +105,10 @@ Lua is first on `PATH`).
   **LibAccountSync checkout** (`$env:LIBACCOUNTSYNC`, else `..\LibAccountSync`) and a **LibMailbox
   checkout** (`$env:LIBMAILBOX`, else `..\LibMailbox`), and fail loudly
   without them; `run.ps1` warns when one is not at its `.pkgmeta`
-  pin. It also runs the cutout manifest's self-test and the Python suites (skipped without Python).
+  pin. From a git worktree kept elsewhere (a scratch folder has no `..\LibGlass`), the
+  checkouts next to the **main** checkout are used, through `git rev-parse --git-common-dir`:
+  `Tools/Checkouts.ps1` for `run.ps1` and `deploy.ps1`, `tests/checkouts.lua` for the Lua
+  loaders, so a single `lua tests/test_x.lua` finds them too (#477). It also runs the cutout manifest's self-test and the Python suites (skipped without Python).
 - **The test scaffolding is WowTestKit** (`C:\Projects\WoW\WowTestKit`; its README is the
   reference) at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that
   commit in `%LOCALAPPDATA%\WowTestKit\<sha>` and hands off to the kit's runner; CI fetches it with
@@ -136,6 +139,12 @@ Lua is first on `PATH`).
 - **Add a test** as `tests/test_<area>.lua`; `run.ps1` picks it up automatically.
 - **Mutation-test claims.** A test that passes both with and against the change proves nothing;
   break the behaviour deliberately and confirm the suite goes red before trusting it.
+  `python -I Tools/mutate.py <mutations.json>` does it: each mutation is
+  `{name, file, old, new, test}`, applied alone, its test file run, and the file restored byte
+  for byte (its docstring has the details). A survivor is a gap or an equivalent mutation: say
+  which in the PR. **Write the list with Python or a file, never a Bash heredoc**: a heredoc
+  collapses a doubled backslash to a single one, so a Lua escape becomes another mutation that
+  "survives".
 
 ## Deploying for in-game testing
 

@@ -40,12 +40,14 @@ if (-not (Test-Path $AddOnsPath)) {
 $dest = Join-Path $AddOnsPath "AltStable"
 
 $pkgmeta = Get-Content -LiteralPath (Join-Path $RepoRoot ".pkgmeta")
+# From a worktree kept elsewhere, the checkouts beside the main one (#477).
+. (Join-Path $PSScriptRoot "Checkouts.ps1")
 $libs = @(@{ Name = "LibGlass"; Major = "LibGlass-1.0"; Env = $env:LIBGLASS; EnvName = "LIBGLASS" },
           @{ Name = "LibShowcase"; Major = "LibShowcase-1.0"; Env = $env:LIBSHOWCASE; EnvName = "LIBSHOWCASE" },
           @{ Name = "LibAccountSync"; Major = "LibAccountSync-1.0"; Env = $env:LIBACCOUNTSYNC; EnvName = "LIBACCOUNTSYNC" },
           @{ Name = "LibMailbox"; Major = "LibMailbox-1.0"; Env = $env:LIBMAILBOX; EnvName = "LIBMAILBOX" })
 foreach ($lib in $libs) {
-    $lib.Root = if ($lib.Env) { $lib.Env } else { Join-Path (Split-Path -Parent $RepoRoot) $lib.Name }
+    $lib.Root = Get-CheckoutRoot -RepoRoot $RepoRoot -Name $lib.Name -EnvValue $lib.Env -Marker "$($lib.Major).xml"
     if (-not (Test-Path -LiteralPath (Join-Path $lib.Root "Tools\deploy.ps1"))) {
         throw "$($lib.Name) checkout not found at $($lib.Root) (clone github.com/Spotnick2/$($lib.Name) there, or set `$env:$($lib.EnvName))"
     }

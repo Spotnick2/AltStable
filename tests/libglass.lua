@@ -16,7 +16,9 @@
 LIBGLASS_XML = "Libs\\LibGlass-1.0\\LibGlass-1.0.xml"
 
 function LibGlassRoot()
-    local root = (os.getenv("LIBGLASS") or "../LibGlass"):gsub("\\", "/"):gsub("/$", "")
+    -- $LIBGLASS, else ../LibGlass, else beside the main checkout (a worktree, #477).
+    dofile("tests/checkouts.lua")
+    local root = CheckoutRoot("LIBGLASS", "LibGlass", "LibGlass-1.0.xml")
     local f = io.open(root .. "/LibGlass-1.0.xml", "rb")
     if not f then
         error("LibGlass checkout not found at " .. root .. " (no LibGlass-1.0.xml): clone "
