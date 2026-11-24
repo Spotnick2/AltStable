@@ -954,6 +954,25 @@ function Provenance.Apply(line, sender)
     return n
 end
 
+-- Whether a slot's item string (gearstr_, #281) describes the item the record
+-- says is worn: the same item id, and when the record has its enchant and gems
+-- (gearmod_), the same ones. An older client relays a string it cannot clear
+-- on a later merge, so a string that disagrees is stale and never trusted.
+-- GetCharacterGear (PublicAPI.lua) and the Roster's hover (#486) both ask.
+function AltStable.GearStringMatches(str, id, mod)
+    if type(str) ~= "string" or str == "" or not id then return false end
+    local f = {}
+    for v in (str:gsub("^item:", "") .. ":"):gmatch("([^:]*):") do f[#f + 1] = v end
+    if tonumber(f[1]) ~= id then return false end
+    if type(mod) == "string" and mod ~= "" then
+        local ench, _, g1, g2, g3 = mod:match("^(%d+):([^:]*):(%d+):(%d+):(%d+)$")
+        if ench and (tonumber(f[2]) or 0) ~= tonumber(ench) then return false end
+        if g1 and ((tonumber(f[3]) or 0) ~= tonumber(g1) or (tonumber(f[4]) or 0) ~= tonumber(g2)
+                   or (tonumber(f[5]) or 0) ~= tonumber(g3)) then return false end
+    end
+    return true
+end
+
 -- What a record says is worn (#281, AS-003): the item ids, item strings and
 -- enchant/gem fields, slot by slot - everything GetCharacterGear's slot state
 -- reads (a new enchant under a stale string turns the slot unknown; Codex,

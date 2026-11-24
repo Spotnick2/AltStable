@@ -152,19 +152,10 @@ local function GearSlot(char, slot)
         str = AltStable.GearItemString(char["gearlink_" .. slot.key])
     end
     out.state = "unknown"
-    if type(str) ~= "string" then return out end
-    local f = {}
-    for v in (str:gsub("^item:", "") .. ":"):gmatch("([^:]*):") do f[#f + 1] = v end
-    if tonumber(f[1]) ~= id then return out end
     -- An older client relays a string it cannot clear on a later merge: one
-    -- whose enchant or gems disagree with the record's own is stale.
-    local mod = char["gearmod_" .. slot.key]
-    if type(mod) == "string" and mod ~= "" then
-        local ench, _, g1, g2, g3 = mod:match("^(%d+):([^:]*):(%d+):(%d+):(%d+)$")
-        if ench and (tonumber(f[2]) or 0) ~= tonumber(ench) then return out end
-        if g1 and ((tonumber(f[3]) or 0) ~= tonumber(g1) or (tonumber(f[4]) or 0) ~= tonumber(g2)
-                   or (tonumber(f[5]) or 0) ~= tonumber(g3)) then return out end
-    end
+    -- whose item, enchant or gems disagree with the record's own is stale
+    -- (Core.lua, GearStringMatches).
+    if not AltStable.GearStringMatches(str, id, char["gearmod_" .. slot.key]) then return out end
     out.state, out.itemString = "occupied", str
     return out
 end
