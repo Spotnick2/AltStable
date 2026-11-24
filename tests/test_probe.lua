@@ -861,4 +861,53 @@ do
     WoW.bankTabs, WoW.containers = nil, nil
 end
 
+------------------------------------------------------------
+-- /fp steps as transmog (#485): what a slot shows, three states
+------------------------------------------------------------
+-- What has to hold: without any transmog API the reading still saves
+-- ShowingHelm and the equipped items, and throws nothing; with one, it saves
+-- the slot's applied source and isHideVisual; the procedure ends with a
+-- /reload.
+do
+    local proc = FP.procedures and FP.procedures["AltStableProbe/transmog"]
+    check("/fp steps as transmog is defined", proc ~= nil)
+    check("  and ends with a /reload", proc ~= nil and proc.steps[#proc.steps].reload == true)
+    check("/fp as transmog exists", P.commands.transmog ~= nil)
+
+    local T = ns.transmog
+    local realHelm = rawget(_G, "ShowingHelm")
+    ShowingHelm = function() return false end
+    local okBare, bare = pcall(T.Read, "bare")
+    check("with no transmog API the reading throws nothing", okBare, tostring(bare))
+    eq("  and keeps ShowingHelm", okBare and bare.showingHelm, false)
+    WoW.flushTimers()
+
+    -- A stand-in for the transmog API: the head hidden by transmog.
+    local realUtil, realT, realTC = rawget(_G, "TransmogUtil"), rawget(_G, "C_Transmog"), rawget(_G, "C_TransmogCollection")
+    rawset(_G, "TransmogUtil", nil)
+    TransmogUtil = { GetTransmogLocation = function(name) return { name = name } end }
+    C_Transmog = { GetSlotVisualInfo = function(loc)
+        local head = loc.name == "HEADSLOT"
+        return { baseSourceID = 11, baseVisualID = 21, appliedSourceID = head and 99 or 0,
+                 appliedVisualID = head and 77 or 0, isHideVisual = head }
+    end }
+    C_TransmogCollection = {
+        GetSourceInfo = function(src) return { itemID = src * 10, visualID = src == 99 and 77 or 21, name = "S" .. src } end,
+        IsAppearanceHiddenVisual = function(id) return id == 77 end,
+    }
+    local okT, rec = pcall(T.Read, "transmogged")
+    check("with a transmog API the reading throws nothing", okT, tostring(rec))
+    local head = okT and rec.slots["1"] or {}
+    eq("  the head's applied source is saved", type(head.slotVisual) == "table" and head.slotVisual.appliedSourceID, 99)
+    eq("  and its isHideVisual", type(head.slotVisual) == "table" and head.slotVisual.isHideVisual, true)
+    eq("  the shown source is the applied one", head.shownSource, 99)
+    eq("  and IsAppearanceHiddenVisual on it", head.isHiddenVisual, true)
+    eq("the latest reading of a label is found", T.Latest("transmogged"), rec)
+    check("  and summed up", T.Summary(rec):find("hide true", 1, true) ~= nil, T.Summary(rec))
+    WoW.flushTimers()
+    rawset(_G, "TransmogUtil", realUtil); rawset(_G, "C_Transmog", realT)
+    rawset(_G, "C_TransmogCollection", realTC)
+    ShowingHelm = realHelm
+end
+
 WoW.finish("test_probe", passed, failed)
