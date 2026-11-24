@@ -2267,7 +2267,12 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY, size
         local id   = tonumber(char["gearid_" .. slot.key]) or 0
 
         b.link = char["gearlink_" .. slot.key]
-        b.itemString = id > 0 and char["gearstr_" .. slot.key] or nil
+        -- Only a string that matches this slot's item, enchant and gems: an
+        -- older client can relay a stale one with newer slot fields (Codex,
+        -- PR #488). A stale one falls back to the name and enchant lines.
+        local str = char["gearstr_" .. slot.key]
+        b.itemString = (id > 0 and AltStable.GearStringMatches
+                        and AltStable.GearStringMatches(str, id, char["gearmod_" .. slot.key])) and str or nil
         b.itemName = char["gearname_" .. slot.key]
 
         -- Toward the figure on the side columns, so the words sit over the

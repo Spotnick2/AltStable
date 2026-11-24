@@ -2708,6 +2708,26 @@ do
             b.link = "|cff1eff00|Hitem:10:1900|h[Sword]|h|r"
             local mine = hover("mainhand")
             eq("  this account's own link still wins", mine, "|cff1eff00|Hitem:10:1900|h[Sword]|h|r")
+            -- A stale string relayed by an older client (Codex, PR #488): another
+            -- item, or another enchant than the record's, is not used.
+            AltStableDB.messy.gearstr_waist = "item:99"
+            T.Refresh()
+            eq("  a string for another item is not used", T.DetailSlotFrame("waist").itemString, nil)
+            AltStableDB.messy.gearstr_mainhand, AltStableDB.messy.gearmod_mainhand = "item:10:1899", "1900:0:0:0:0"
+            T.Refresh()
+            local staleLink, staleOn = hover("mainhand")
+            eq("  nor one with another enchant than the record's", staleLink, nil)
+            check("    and the hover falls back to the name and enchant", staleOn == true)
+            AltStableDB.messy.gearstr_mainhand = "item:10:1900"
+            T.Refresh()
+            eq("  a string that matches the record's enchant is used", (hover("mainhand")), "item:10:1900")
+            AltStableDB.messy.gearmod_mainhand = "1900:1:5:0:0"
+            T.Refresh()
+            eq("  nor one with other gems than the record's", (hover("mainhand")), nil)
+            AltStableDB.messy.gearstr_mainhand = "item:10:1900:5"
+            T.Refresh()
+            eq("  the same gems are", (hover("mainhand")), "item:10:1900:5")
+            AltStableDB.messy.gearmod_mainhand = nil
             AltStableDB.messy.gearid_waist = nil
             T.Refresh()
             eq("  an empty slot keeps no item string", T.DetailSlotFrame("waist").itemString, nil)
