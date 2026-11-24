@@ -182,6 +182,9 @@ column**, in Options, hides it.
 Hover the gold in the game's bag window to see the total across your characters and how much
 each one holds, richest first. (Bagnon and Baganator replace that window and have their own.)
 
+With **Titan Panel** or another LibDataBroker display, add AltStable to it: it shows the same
+total, and the per-character list on hover. Left-click opens AltStable, right-click its Options.
+
 ![The sheet's gear view: the item level of every equipped slot for each character, coloured by quality](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-gear.jpg)
 
 *Gear: the item level in every slot, for every character.*
@@ -370,8 +373,10 @@ AltStable's own code is MIT — see
 The libraries under `Libs/` are **not** covered by it. Each is redistributed
 under its own terms and stays the work of its authors: LibStub (public domain),
 LibDeflate (zlib), LibGlass-1.0, LibShowcase-1.0, LibAccountSync-1.0 and LibMailbox-1.0 (MIT,
-fetched at build time), and ChatThrottleLib (no stated licence — embedded by convention). The same note
-travels in `LICENSE`, which ships inside the addon; this file does not.
+fetched at build time), CallbackHandler-1.0 (BSD), and ChatThrottleLib (no stated licence —
+embedded by convention). LibDataBroker-1.1 (tekkub) publishes no licence text and its CurseForge page says "All Rights
+Reserved"; it is embedded unmodified, as that page asks of addons that hard-embed it. The same notes travel in `LICENSE`, which ships
+inside the addon; this file does not.
 
 The **Loremaster** plugin (`Plugins/Loremaster`, the `AltStableLoremaster` folder) is the exception:
 it is **GPL-3.0-or-later**, because its quest table is derived from
