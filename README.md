@@ -373,9 +373,10 @@ AltStable's own code is MIT — see
 The libraries under `Libs/` are **not** covered by it. Each is redistributed
 under its own terms and stays the work of its authors: LibStub (public domain),
 LibDeflate (zlib), LibGlass-1.0, LibShowcase-1.0, LibAccountSync-1.0 and LibMailbox-1.0 (MIT,
-fetched at build time), CallbackHandler-1.0 (BSD), and ChatThrottleLib and LibDataBroker-1.1
-(no stated licence — embedded by convention). The same note
-travels in `LICENSE`, which ships inside the addon; this file does not.
+fetched at build time), CallbackHandler-1.0 (BSD), and ChatThrottleLib (no stated licence —
+embedded by convention). LibDataBroker-1.1 (tekkub) publishes no licence text and its CurseForge page says "All Rights
+Reserved"; it is embedded unmodified, as that page asks of addons that hard-embed it. The same notes travel in `LICENSE`, which ships
+inside the addon; this file does not.
 
 The **Loremaster** plugin (`Plugins/Loremaster`, the `AltStableLoremaster` folder) is the exception:
 it is **GPL-3.0-or-later**, because its quest table is derived from
