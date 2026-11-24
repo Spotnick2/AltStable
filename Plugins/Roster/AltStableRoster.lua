@@ -2004,17 +2004,22 @@ local function BuildSlot(parent)
     b.ench:Hide()
 
     b:SetScript("OnEnter", function(self)
-        local hasLink = self.link and self.link ~= ""
-        -- A synced character has no link (gearlink_ is local-only), so its
-        -- enchant is shown here in words: the paper doll can cut long ones
-        -- short, the weapons row especially (#94).
-        if not hasLink and not self.enchWords then return end
+        -- The link this account stored, else the item string that syncs
+        -- (gearstr_, #281): an alt from the other account has no link, since
+        -- gearlink_ is local-only, and showed only its enchant (#486). The item
+        -- string carries the enchant, gems and the bonus that holds a Forever
+        -- suffix, so its tooltip is the item's.
+        local link = (self.link and self.link ~= "" and self.link)
+                     or (self.itemString and self.itemString ~= "" and self.itemString) or nil
+        -- With neither (data from before #281), the enchant in words: the
+        -- paper doll can cut long ones short, the weapons row especially (#94).
+        if not link and not self.enchWords then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         -- SetHyperlink rather than SetInventoryItem: the item belongs to a
         -- character who is not logged in, so there is no inventory slot to
         -- point at - only the link we stored when they were. The link carries
         -- the enchant, so the tooltip it builds already names it.
-        local ok = hasLink and pcall(GameTooltip.SetHyperlink, GameTooltip, self.link)
+        local ok = link and pcall(GameTooltip.SetHyperlink, GameTooltip, link)
         if not ok then
             GameTooltip:AddLine(self.itemName or self.slotLabel or "", 1, 1, 1)
             if self.enchWords then GameTooltip:AddLine(self.enchWords, 0.1, 1, 0.1) end
@@ -2262,6 +2267,7 @@ local function RenderDetailSlots(char, figureCx, topY, figureHalf, bottomY, size
         local id   = tonumber(char["gearid_" .. slot.key]) or 0
 
         b.link = char["gearlink_" .. slot.key]
+        b.itemString = id > 0 and char["gearstr_" .. slot.key] or nil
         b.itemName = char["gearname_" .. slot.key]
 
         -- Toward the figure on the side columns, so the words sit over the

@@ -2682,6 +2682,39 @@ do
                   text:find("Crusader", 1, true) ~= nil, text)
             b:GetScript("OnLeave")(b)
         end
+        -- #486: a synced slot with its item string (gearstr_, which syncs)
+        -- gets the item's own tooltip, enchant or not.
+        do
+            local shown
+            local realSet = GameTooltip.SetHyperlink
+            GameTooltip.SetHyperlink = function(_, l) shown = l end
+            AltStableDB.messy.gearstr_mainhand = "item:10:1900"
+            AltStableDB.messy.gearid_waist, AltStableDB.messy.gearstr_waist = 10, "item:10::::::::::::1:1482"
+            T.Refresh()
+            local function hover(key)
+                local b = T.DetailSlotFrame(key)
+                shown = nil
+                GameTooltip:Hide()
+                b:GetScript("OnEnter")(b)
+                local on = GameTooltip:IsShown()
+                b:GetScript("OnLeave")(b)
+                return shown, on, b
+            end
+            eq("  a synced slot's hover is its item string's tooltip (#486)", (hover("mainhand")), "item:10:1900")
+            local l, on = hover("waist")
+            eq("  an unenchanted synced slot too", l, "item:10::::::::::::1:1482")
+            check("    and it shows", on == true)
+            local _, _, b = hover("mainhand")
+            b.link = "|cff1eff00|Hitem:10:1900|h[Sword]|h|r"
+            local mine = hover("mainhand")
+            eq("  this account's own link still wins", mine, "|cff1eff00|Hitem:10:1900|h[Sword]|h|r")
+            AltStableDB.messy.gearid_waist = nil
+            T.Refresh()
+            eq("  an empty slot keeps no item string", T.DetailSlotFrame("waist").itemString, nil)
+            GameTooltip.SetHyperlink = realSet
+            AltStableDB.messy.gearstr_mainhand, AltStableDB.messy.gearstr_waist = nil, nil
+            T.Refresh()
+        end
         AltStableDB.messy.gearid_back, AltStableDB.messy.gearmod_back = nil, nil
         AltStableConfig.rosterEnchants = false
         T.Refresh()
