@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.13.0 - 2026-11-24
+
+A small release: **AltStable on Titan Panel** and other LibDataBroker displays. Built for client
+1.60.1.71037, the live build. v1.13.0 syncs with everything v1.12.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+It can also keep your characters in a Google Sheet in your own Google Drive. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.1** is the current version.
+
+### New
+
+- **Titan Panel and other LibDataBroker displays**
+  ([#466](https://github.com/Spotnick2/AltStable/issues/466)): AltStable is a data source named
+  AltStable. It shows your characters' total gold, the sheet footer's figure, and updates when it
+  changes. Hover it for each character's gold, richest first. Left-click opens or closes AltStable,
+  right-click opens its Options. Add it the way your display adds any plugin. The minimap button
+  doesn't change.
+
+### Changed
+
+- **The gold tooltip** on the bag window's money shows "?" for the total when no character's gold
+  can be read, instead of 0. A real zero still shows as 0.
+- AltStable now embeds **LibDataBroker-1.1** and **CallbackHandler-1.0**, the libraries every
+  broker display uses.
+
 ## v1.12.0 - 2026-11-22
 
 **Invite your other account's alts** from their right-click menu, the **Salt Shaker's** cooldown, a
