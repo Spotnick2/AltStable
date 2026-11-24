@@ -301,6 +301,13 @@ function L.DisplayRows(cols)
         for key in pairs(col.snap.c or {}) do
             if D.ZONES[key] and L.RowShown(key) then present[key] = true end
         end
+        -- A raid with an attunement chain for this character shows, with no
+        -- quest counted under it too (#487).
+        for key in pairs(M.ATTUNE) do
+            if D.ZONES[key] and not present[key] and L.RowShown(key) and L.AttuneApplies(col, key) then
+                present[key] = true
+            end
+        end
     end
     local byGroup = {}
     for key in pairs(present) do
@@ -379,18 +386,48 @@ function L.OtherVersion(snap)
     return type(snap) ~= "table" or snap.ver ~= M.SNAP_VERSION
 end
 
-local listCache = {}
-function L.ListsFor(col)
-    local db = M.DB()
-    local mine = db.done[col.guid]
+-- The done set behind a column's snapshot, when this install holds it.
+function L.DoneFor(col)
+    local mine = M.DB().done[col.guid]
     local snap = col.snap
     if type(mine) ~= "table" or not mine.ids or mine.stamp ~= snap.stamp or L.OtherVersion(snap) then
         return nil
     end
+    return mine.ids
+end
+
+local function ProfileOf(snap)
+    return { faction = snap.faction, race = snap.race, class = snap.class, level = snap.level }
+end
+
+-- Whether a raid has an attunement chain for this column's character (#487):
+-- the snapshot's faction, race and class are enough, no done set needed.
+function L.AttuneApplies(col, key)
+    return M.ATTUNE[key] ~= nil and M.AttuneChain(key, ProfileOf(col.snap)) ~= nil
+end
+
+-- Its attunement under a raid, from the done set this install holds; nil
+-- without one (a character from another account) or without a chain.
+function L.AttuneFor(col, key)
+    if not M.ATTUNE[key] then return nil end
+    local done = L.DoneFor(col)
+    if not done then return nil end
+    return M.Attunement(key, ProfileOf(col.snap), done)
+end
+
+function L.AttuneText(a)
+    if a.attuned then return "Attuned" end
+    return ("Attunement %d/%d"):format(a.done, a.total)
+end
+
+local listCache = {}
+function L.ListsFor(col)
+    local snap = col.snap
+    local done = L.DoneFor(col)
+    if not done then return nil end
     local cacheKey = col.guid .. ":" .. tostring(snap.stamp)
     if listCache[col.guid] and listCache[col.guid].key == cacheKey then return listCache[col.guid].lists end
-    local p = { faction = snap.faction, race = snap.race, class = snap.class, level = snap.level }
-    local lists = M.Count(p, mine.ids, true).lists
+    local lists = M.Count(ProfileOf(snap), done, true).lists
     listCache[col.guid] = { key = cacheKey, lists = lists }
     return lists
 end
@@ -404,6 +441,31 @@ local function QuestLine(id, level)
     return ("[%d] %s"):format(req, name), req > (level or 0)
 end
 
+-- The attunement's lines (#487): a heading, then each step in order with the
+-- zone it is counted in. Done green, the next step gold, missed dim red.
+function L.AttuneLines(col, key, a)
+    local out = {}
+    if a.attuned then
+        out[1] = { text = ("Attunement: done (%d/%d)"):format(a.done, a.total), r = 0.55, g = 0.8, b = 0.55 }
+    else
+        out[1] = { text = ("Attunement (%d/%d)"):format(a.done, a.total), r = GOLD[1], g = GOLD[2], b = GOLD[3] }
+    end
+    local p = ProfileOf(col.snap)
+    for i, s in ipairs(a.steps) do
+        local text = QuestLine(s.id, col.level)
+        local q = D.QUESTS[s.id]
+        local where = q and M.KeyOf(q, p)
+        if where and where ~= key and D.ZONES[where] then text = text .. "  |cff888888" .. L.ZoneName(where) .. "|r" end
+        if #s.ids > 1 and s.state ~= "done" then text = text .. " |cff888888(one of " .. #s.ids .. ")|r" end
+        local line = { text = text, r = 0.9, g = 0.9, b = 0.9 }
+        if s.state == "done" then line.r, line.g, line.b = 0.55, 0.8, 0.55
+        elseif s.state == "missed" then line.r, line.g, line.b = 0.6, 0.45, 0.45
+        elseif i == a.next then line.text = "> " .. text; line.r, line.g, line.b = GOLD[1], GOLD[2], GOLD[3] end
+        out[#out + 1] = line
+    end
+    return out
+end
+
 function L.CellOnEnter(self)
     local info = self.info
     if not info then return end
@@ -411,7 +473,14 @@ function L.CellOnEnter(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(L.ZoneName(key), 1, 1, 1)
     GameTooltip:AddLine(ClassHex(col.class) .. col.name .. "|r")
-    GameTooltip:AddLine(L.ProgressText(row[1], row[2]), 0.9, 0.9, 0.9)
+    if row then GameTooltip:AddLine(L.ProgressText(row[1], row[2]), 0.9, 0.9, 0.9) end
+    local att = L.AttuneFor(col, key)
+    if att then
+        GameTooltip:AddLine(" ")
+        for _, line in ipairs(L.AttuneLines(col, key, att)) do
+            GameTooltip:AddLine(line.text, line.r, line.g, line.b)
+        end
+    end
     if key == D.CLASS_KEY and col.snap.cls then
         GameTooltip:AddLine(("%d available at level %d"):format(col.snap.cls.now or 0, col.level), 0.7, 0.7, 0.7)
     end
@@ -440,7 +509,7 @@ function L.CellOnEnter(self)
             end
             if #l.missed > 5 then GameTooltip:AddLine(("and %d more"):format(#l.missed - 5), 0.5, 0.5, 0.5) end
         end
-    elseif row[1] < row[2] then
+    elseif (row and row[1] < row[2]) or (not row and not att) then
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("The quests themselves show once this character logs in here.", 0.6, 0.6, 0.6, true)
     end
@@ -933,6 +1002,9 @@ local function CardBox(parent)
     return f
 end
 
+-- The card, for the tests.
+function L.Card() return card end
+
 function L.BuildCard()
     card = CardBox(panel)
     card.zone = FS(card, "GameFontNormalLarge")
@@ -1002,8 +1074,10 @@ end
 function L.ListLines(col, key)
     local lists = L.ListsFor(col)
     local l = lists and lists[key]
-    if not l then return nil end
-    local out = {}
+    local att = L.AttuneFor(col, key)
+    if not l and not att then return nil end
+    local out = att and L.AttuneLines(col, key, att) or {}
+    l = l or { open = {}, done = {}, missed = {} }
     local function section(title, ids, r, g, b, dimHigh)
         if #ids == 0 then return end
         out[#out + 1] = { text = ("%s (%d)"):format(title, #ids), r = GOLD[1], g = GOLD[2], b = GOLD[3] }
@@ -1093,7 +1167,13 @@ function L.RenderCard()
         card.pct:SetText("")
         card.left:SetText("")
     end
-    card.view:SetEnabled(row ~= nil and L.ListsFor(col) ~= nil)
+    -- A raid's attunement (#487), for a character whose done set is here.
+    local att = L.AttuneFor(col, key)
+    if att then
+        local before = card.left:GetText()
+        card.left:SetText((before and before ~= "" and (before .. " \194\183 ") or "") .. L.AttuneText(att))
+    end
+    card.view:SetEnabled((row ~= nil or att ~= nil) and L.ListsFor(col) ~= nil)
     card.view:Paint(false)   -- not left to OnEnable/OnDisable alone
 end
 
@@ -1310,7 +1390,8 @@ function L.Render()
                     cell.info = { col = col, key = r.key, row = row }
                 else
                     cell.text:SetText("")
-                    cell.info = nil
+                    -- An attunement row's empty cell still has its hover (#487).
+                    cell.info = L.AttuneApplies(col, r.key) and { col = col, key = r.key } or nil
                 end
             end
             y = y + ROW_H

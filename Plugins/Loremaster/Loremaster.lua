@@ -268,6 +268,81 @@ function M.Count(p, done, withLists)
 end
 
 ------------------------------------------------------------
+-- Raid attunements (#487): each raid's chain, shown under the raid
+------------------------------------------------------------
+-- Display only. The chain's quests stay counted under the zone where each is
+-- picked up, once; nothing here changes a count, a snapshot or D.VERSION.
+-- Hand-kept ordered steps, not a walk of the pre-quest links: two steps have
+-- no link to follow (Codex on the #487 plan). Horde's chain opens with Blood
+-- and Thunder (98325), which Warlord's Command (4903) does not link back to;
+-- Alliance's The Great Masquerade has two IDs, 6403 and 99435, either done
+-- completes the step. A step is a quest ID, or a list of IDs any one of which
+-- completes it: the Naxxramas quest is one of three, by Argent Dawn standing.
+-- Every ID is checked on Wowhead Forever, and against QuestData.lua by the
+-- tests. Which chain a character follows: the one whose last quest its
+-- faction, race and class can take.
+M.ATTUNE = {
+    [2159] = {   -- Onyxia's Lair
+        { 4182, 4183, 4184, 4185, 4186, 4223, 4224, 4241, 4242, 4264, 4282, 4322, 6402,
+          { 6403, 99435 }, 6501, 6502 },                                       -- Alliance
+        { 98325, 4903, 4941, 4974, 6566, 6567, 6568, 6569, 6570, 6582, 6583, 6584, 6585,
+          6601, 6602 },                                                        -- Horde
+    },
+    [2677] = { { 7761 } },                  -- Blackwing Lair: Blackhand's Command
+    [2717] = { { 7848 } },                  -- Molten Core: Attunement to the Core
+    [3456] = { { { 9121, 9122, 9123 } } },  -- Naxxramas: The Dread Citadel
+}
+
+local function StepIds(step) return type(step) == "table" and step or { step } end
+
+-- The chain this profile follows under a raid, or nil.
+function M.AttuneChain(key, p)
+    for _, chain in ipairs(M.ATTUNE[key] or {}) do
+        for _, id in ipairs(StepIds(chain[#chain])) do
+            local q = D.QUESTS[id]
+            if q and M.CanTake(q, p) then return chain end
+        end
+    end
+    return nil
+end
+
+-- A profile's attunement under a raid, from its done set: nil when the raid
+-- has none for it, else { steps = { { ids, id, state } }, done, total,
+-- attuned, next }. A step is done when any of its quests is; missed when
+-- every one is closed (M.ClosedWhy) - the same rule as the counts; else open.
+-- `id` is the quest to name: the done one, else the first this profile can take.
+-- `next` is the first open step: the chain's order, not availability.
+function M.Attunement(key, p, done)
+    local chain = M.AttuneChain(key, p)
+    if not chain then return nil end
+    local out = { steps = {}, done = 0, total = #chain }
+    for i, step in ipairs(chain) do
+        local ids = StepIds(step)
+        local s = { ids = ids }
+        for _, id in ipairs(ids) do
+            if done[id] then s.state, s.id = "done", id; break end
+        end
+        if not s.state then
+            local closed = true
+            for _, id in ipairs(ids) do
+                local q = D.QUESTS[id]
+                if q and M.CanTake(q, p) then
+                    s.id = s.id or id
+                    if not M.ClosedWhy(id, p, done) then closed = false end
+                end
+            end
+            s.id = s.id or ids[1]
+            s.state = closed and "missed" or "open"
+        end
+        if s.state == "done" then out.done = out.done + 1 end
+        if s.state == "open" and not out.next then out.next = i end
+        out.steps[i] = s
+    end
+    out.attuned = out.steps[#chain].state == "done"
+    return out
+end
+
+------------------------------------------------------------
 -- Scanning the character playing
 ------------------------------------------------------------
 
