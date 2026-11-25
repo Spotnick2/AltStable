@@ -84,20 +84,30 @@ end
 
 -- The Bags and Hearthstone checkboxes (#346, #371) became hidden columns
 -- (#378). Moved as they are, not through SetConfigValue: an upgrade is not
--- the player's edit, so it must not stamp the columns group (GroupStamp
--- counts a non-empty set as the oldest choice).
+-- the player's edit, so it gets no new stamp. It keeps the old one: the
+-- sheet group's stamp is when those choices were last made, so two accounts
+-- upgrading from the same synced choices keep the newer one, a choice to show
+-- both included (Codex review of #494). Without a sheet stamp, GroupStamp
+-- counts a non-empty set as the oldest choice.
 local LEGACY_COLUMNS = { sheetBagsColumn = "summary.bags_free", sheetHearthColumn = "summary.bind" }
 local function MigrateColumnOptions()
+    local moved = false
     for key, col in pairs(LEGACY_COLUMNS) do
         if AltStableConfig[key] ~= nil then
+            moved = true
+            if type(AltStableConfig.sheetHiddenColumns) ~= "table" then
+                AltStableConfig.sheetHiddenColumns = {}
+            end
             if AltStableConfig[key] == false then
-                if type(AltStableConfig.sheetHiddenColumns) ~= "table" then
-                    AltStableConfig.sheetHiddenColumns = {}
-                end
                 AltStableConfig.sheetHiddenColumns[col] = true
             end
             AltStableConfig[key] = nil
         end
+    end
+    local stamps = AltStableConfig.prefsStamps
+    local sheet = type(stamps) == "table" and tonumber(stamps.sheet)
+    if moved and sheet and sheet > 0 and not tonumber(stamps.columns) then
+        stamps.columns = sheet
     end
 end
 
@@ -1722,6 +1732,8 @@ function AltStable.SettingsSynced(sender, groups, forgot, back)
 
     if groups.appearance and AltStable.ApplyTheme then AltStable.ApplyTheme() end
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    -- An open column chooser shows the columns as they now are (#378).
+    if groups.columns and AltStable.RefreshStayingMenu then AltStable.RefreshStayingMenu() end
     if AltStable.RefreshOptions then AltStable.RefreshOptions() end
     local msg = "Settings from " .. tostring(sender) .. ": " .. table.concat(said, ", ") .. "."
     if groups.appearance and AltStable.PendingSkinName and AltStable.SkinName

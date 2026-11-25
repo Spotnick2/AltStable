@@ -818,11 +818,15 @@ local function ColumnMenuEntries(section)
     local out = { { title = true, text = "Columns: " .. (section.label or section.id) } }
     out[#out + 1] = { id = "__name", text = CHECK_ON .. AltStable.Columns[1].label, disabled = true,
                       why = "Always shown." }
-    local anyHidden = false
     for _, col in ipairs(EligibleColumns(section)) do
-        local on = ColumnOn(section, col)
-        if not on then anyHidden = true end
-        out[#out + 1] = { id = col.field, text = (on and CHECK_ON or CHECK_OFF) .. col.label }
+        out[#out + 1] = { id = col.field, text = (ColumnOn(section, col) and CHECK_ON or CHECK_OFF) .. col.label }
+    end
+    -- From what is saved for the tab, not what the menu lists: a hidden
+    -- Ruleset stays saved while the realm groups are on and it isn't listed
+    -- (Codex review of #494), and Show all clears it all the same.
+    local anyHidden, prefix = false, section.id .. "."
+    for k, v in pairs(HiddenColumns()) do
+        if v == true and k:sub(1, #prefix) == prefix then anyHidden = true end
     end
     out[#out + 1] = { id = "__all", text = "Show all columns", disabled = not anyHidden,
                       why = (not anyHidden) and "Every column of this tab is shown." or nil }

@@ -815,6 +815,19 @@ do
     check("nothing to show again: it closes", not T.MenuIsShown())
 
     AltStable.ShowMenu(list(), pick, list)
+    on.a = false
+    check("a change made elsewhere: the staying menu shows it", AltStable.RefreshStayingMenu()
+          and labels() == "[ ] A|[x] B|Close it|Open another", labels())
+    AltStable.CloseCharacterMenu()
+    check("  closed, there's nothing to refresh", not AltStable.RefreshStayingMenu() and not T.MenuIsShown())
+    AltStable.ShowMenu({ { id = "q", text = "Q" } }, function() end)
+    check("  nor for a menu that doesn't stay", not AltStable.RefreshStayingMenu() and labels() == "Q")
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowMenu(list(), pick, function() return nil end)
+    AltStable.RefreshStayingMenu()
+    check("  nothing to show: it closes", not T.MenuIsShown())
+
+    AltStable.ShowMenu(list(), pick, list)
     T.MenuEscape()
     check("Escape closes a staying menu", not T.MenuIsShown())
     AltStable.ShowCharacterMenu(OTHER)

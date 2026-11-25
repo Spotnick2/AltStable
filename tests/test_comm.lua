@@ -4556,6 +4556,26 @@ do
     AltStableConfig = {}
     AltStable.EnsureConfigDefaults()
     eq(AltStableConfig.sheetHiddenColumns, nil, "  and no set made when there was nothing to move")
+    -- The order the old choices had travels with them (Codex review of #494):
+    -- the sheet group's stamp, never a new one.
+    AltStableConfig = { sheetBagsColumn = false, prefsStamps = { sheet = 50 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.prefsStamps.columns, 50, "moved, the choice keeps the sheet group's stamp")
+    AltStableConfig = { sheetBagsColumn = true, sheetHearthColumn = true, prefsStamps = { sheet = 60 } }
+    AltStable.EnsureConfigDefaults()
+    check(type(AltStableConfig.sheetHiddenColumns) == "table" and next(AltStableConfig.sheetHiddenColumns) == nil
+          and AltStableConfig.prefsStamps.columns == 60, "  both shown is a choice too, with its stamp")
+    AltStableConfig = { syncSettings = true, sheetBagsColumn = false, prefsStamps = { sheet = 40 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStable.ApplyPrefsSyncLine(line("columns", 60, "sheetHiddenColumns=")), "columns",
+       "  so the other account's newer 'shown' beats an older 'hidden'")
+    eq(next(AltStableConfig.sheetHiddenColumns), nil, "  and Bags is shown on both")
+    AltStableConfig = { sheetBagsColumn = false, prefsStamps = { sheet = 70, columns = 80 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.prefsStamps.columns, 80, "  a columns stamp already there is kept")
+    AltStableConfig = { prefsStamps = { sheet = 90 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.prefsStamps.columns, nil, "  nothing moved, nothing stamped")
 
     AltStableConfig.syncSettings = false
     check(not AltStable.ApplyPrefsSyncLine(line("appearance", 999, "theme=dark")), "nothing is taken while it is off")

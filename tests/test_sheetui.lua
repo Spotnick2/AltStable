@@ -4125,6 +4125,16 @@ do
           and MenuHas("Bags") == nil)
     T.MenuClick("gear_head")
     check("a gear slot hides on its own", not HasColumn("gear_head") and HasColumn("gear_neck"))
+    -- Toggling builds no new frames after the first time (Codex review of
+    -- #494): the rows keep each column's widgets.
+    T.MenuClick("gear_head")
+    local frames, realCF = 0, CreateFrame
+    CreateFrame = function(...) frames = frames + 1; return realCF(...) end
+    for _ = 1, 5 do T.MenuClick("gear_head"); T.MenuClick("gear_head") end
+    CreateFrame = realCF
+    eq("  toggling it again and again makes no new frame", frames, 0)
+    check("  and it is back", HasColumn("gear_head"))
+    T.MenuClick("gear_head")
     T.MenuClickOutside()
     eq("a click outside closes it", T.MenuIsShown(), false)
 
@@ -4149,8 +4159,28 @@ do
     eq("  Race hidden, Ruleset keeps Race's place", cols[2] and cols[2].field, "ruleset")
     T.MenuClick("ruleset")
     check("  and it hides like any other", not HasColumn("ruleset"))
+    T.MenuClick("race")
     T.MenuEscape()
     AltStableConfig.sheetGroupByRealm = nil
+    AltStableConfig.sheetHiddenColumns = { ["summary.ruleset"] = true }   -- the only one hidden
+    AltStable.RefreshSheet()
+    RightClick("name")
+    check("grouped again, the hidden Ruleset isn't listed", MenuHas("Ruleset") == nil)
+    check("  but Show all can still clear it", not T.MenuEntry("__all")._disabled)
+    T.MenuClick("__all")
+    eq("  and does", AltStableConfig.sheetHiddenColumns["summary.ruleset"], nil)
+    T.MenuEscape()
+
+    -- A synced change while the chooser is open: its marks follow.
+    AltStable.SetColumnShown("summary", "bags_free", false)
+    RightClick("name")
+    eq("the chooser shows Bags hidden", MenuHas("Bags"), OFF .. "Bags")
+    AltStableConfig.sheetHiddenColumns = {}
+    AltStable.SettingsSynced("Other", { columns = true }, 0, 0)
+    eq("  a synced 'shown' ticks it in the open menu", MenuHas("Bags"), ON .. "Bags")
+    T.MenuEscape()
+    AltStableConfig.sheetHiddenColumns = { ["summary.bags_free"] = true }
+    AltStable.RefreshSheet()
 
     -- Every column hidden: Name alone, and the menu still opens from it.
     AltStable.ShowAllColumns()

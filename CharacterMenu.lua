@@ -517,6 +517,18 @@ function AltStable.ShowMenu(list, onPick, again)
     return Open(list)
 end
 
+-- A staying menu shown again in place, its entries listed anew: for a change
+-- made elsewhere while it is open (the column chooser after a settings sync,
+-- #378), so its marks never show the opposite of what a pick will do. Closed
+-- when it has nothing to show. Nothing for any other menu.
+function AltStable.RefreshStayingMenu()
+    if not (root and stay) then return false end   -- closing clears stay
+    local list = stay()
+    if type(list) == "table" and #list > 0 then return Open(list, true) end
+    AltStable.CloseCharacterMenu()
+    return false
+end
+
 -- At most this share of the screen's height; a longer list wraps into more
 -- columns (the Reputations tab can have forty and more).
 local MAX_SCREEN_SHARE = 0.85
