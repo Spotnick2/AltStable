@@ -201,6 +201,25 @@ D.Read()
 advance(100)
 eq("  every fresh trigger gets its own tries", setUnits, 10)
 
+-- Two triggers before the first retry: the newer one's tries are its own,
+-- and the earlier one's queued retry does nothing (Codex review of #498).
+fresh()
+drawn = {}
+D.Read()            -- t = 0
+advance(1)
+D.Read()            -- t = 1, takes over
+advance(100)
+eq("two fresh triggers, then retries for the newer only (1 + 1 + 3)", setUnits, 5)
+fresh()
+drawn = {}
+D.Read()
+advance(1)
+D.Read()
+advance(43)         -- t = 44: the newer trigger's last try is at 1.5 + 3.5 + 10.5 + 30.5 = 46
+drawn = { [1] = 77344 }
+advance(10)
+eq("  its last try still comes, and reads", AltStableDB[me].hidehelm, 1)
+
 -- An equipped slot left unread is asked again even when the other read.
 fresh()
 WoW.equipped = { [1] = "|Hitem:7048::|h[Helm]|h", [15] = "|Hitem:271719::|h[Cloak]|h" }
@@ -323,6 +342,13 @@ T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = 
     lastUpdate = 2500, hidehelm = 1, hidecloak = 1, drawn = "h0c0", drawnAt = 1900 }) .. "\n" .. T.CHAR_SEP, "OldRelay")
 eq("  a relayed stamp that doesn't match the flags: dropped", AltStableDB["Player-Peer"].hidecloak, nil)
 eq("  with the stamp", AltStableDB["Player-Peer"].drawn, nil)
+-- Ours must not vouch for an older build's flags that happen to match it.
+AltStableDB = { ["Player-Peer"] = { guid = "Player-Peer", name = "P", class = "MAGE", level = 30,
+    lastUpdate = 1000, hidehelm = 1, hidecloak = 1, drawn = "h1c1", drawnAt = 900 } }
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = "MAGE", level = 30,
+    lastUpdate = 2000, hidehelm = 1, hidecloak = 1 }) .. "\n" .. T.CHAR_SEP, "OldPeer")
+eq("an older peer's flags matching our stamp are still dropped", AltStableDB["Player-Peer"].hidehelm, nil)
+eq("  and our stamp with them", AltStableDB["Player-Peer"].drawn, nil)
 T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = "MAGE", level = 30,
     lastUpdate = 3000, hidehelm = 1 }) .. "\n" .. T.CHAR_SEP, "OldPeer")
 eq("  then an older peer's newer record: the stamp doesn't linger", AltStableDB["Player-Peer"].drawnAt, nil)

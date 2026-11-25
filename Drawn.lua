@@ -44,6 +44,9 @@ local RETRY = { 3, 10, 30 }
 local model
 local reading, again = false, false
 local retries = 0
+-- Which trigger the retries belong to: a fresh one takes over, and a retry
+-- still queued for an earlier one then does nothing (Codex review of #498).
+local generation = 0
 -- The last reading, for the character it was read on: written by the scan
 -- if the record didn't exist yet when it came.
 local last
@@ -120,10 +123,15 @@ end
 
 -- Reads the player's helm and cloak. One at a time; a trigger during a read
 -- asks for one more after it, so the last change wins. `retry` is a retry's
--- own call: anything else is a fresh trigger, with its own tries.
+-- own call, with the generation it belongs to: anything else is a fresh
+-- trigger, with its own tries.
 function Drawn.Read(retry)
     if reading then again = true; return false end
-    if retry ~= true then retries = 0 end
+    if retry == nil then
+        retries, generation = 0, generation + 1
+    elseif retry ~= generation then
+        return false   -- an earlier trigger's retry: a newer one took over
+    end
     local guid = UnitGUID and UnitGUID("player")
     if not guid then return false end
     reading = true
@@ -142,7 +150,8 @@ function Drawn.Read(retry)
             again = false; Drawn.Read()
         elseif Unresolved(result) and retries < #RETRY then
             retries = retries + 1
-            C_Timer.After(RETRY[retries], function() Drawn.Read(true) end)
+            local gen = generation
+            C_Timer.After(RETRY[retries], function() Drawn.Read(gen) end)
         end
     end)
     return true
@@ -186,5 +195,5 @@ AltStable._test = AltStable._test or {}
 AltStable._test.DrawnFrame = events
 AltStable._test.DrawnModel = function() return model end
 AltStable._test.ResetDrawn = function()
-    model, reading, again, last, pendingEquip, retries = nil, false, false, nil, nil, 0
+    model, reading, again, last, pendingEquip, retries, generation = nil, false, false, nil, nil, 0, 0
 end
