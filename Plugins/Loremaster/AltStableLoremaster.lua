@@ -442,7 +442,9 @@ local function QuestLine(id, level)
 end
 
 -- The attunement's lines (#487): a heading, then each step in order with the
--- zone it is counted in. Done green, the next step gold, missed dim red.
+-- zone it is counted under (where Loremaster counts it, not always where it
+-- starts: 98325 starts in Kargath, counted under Blackrock Spire). Done green,
+-- the next step gold, missed dim red.
 function L.AttuneLines(col, key, a)
     local out = {}
     if a.attuned then
@@ -455,7 +457,9 @@ function L.AttuneLines(col, key, a)
         local text = QuestLine(s.id, col.level)
         local q = D.QUESTS[s.id]
         local where = q and M.KeyOf(q, p)
-        if where and where ~= key and D.ZONES[where] then text = text .. "  |cff888888" .. L.ZoneName(where) .. "|r" end
+        if where and where ~= key and D.ZONES[where] then
+            text = text .. "  |cff888888(counted under " .. L.ZoneName(where) .. ")|r"
+        end
         if #s.ids > 1 and s.state ~= "done" then text = text .. " |cff888888(one of " .. #s.ids .. ")|r" end
         local line = { text = text, r = 0.9, g = 0.9, b = 0.9 }
         if s.state == "done" then line.r, line.g, line.b = 0.55, 0.8, 0.55
@@ -509,7 +513,7 @@ function L.CellOnEnter(self)
             end
             if #l.missed > 5 then GameTooltip:AddLine(("and %d more"):format(#l.missed - 5), 0.5, 0.5, 0.5) end
         end
-    elseif (row and row[1] < row[2]) or (not row and not att) then
+    elseif (row and row[1] < row[2]) or (not att and L.AttuneApplies(col, key)) then
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("The quests themselves show once this character logs in here.", 0.6, 0.6, 0.6, true)
     end

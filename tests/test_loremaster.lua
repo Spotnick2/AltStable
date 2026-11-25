@@ -797,6 +797,28 @@ do
     L.CellOnEnter({ info = { col = colS, key = ony } })
     said = table.concat(WoW.tooltipLines, " / ")
     check("  a synced one's says it shows after a login here", said:find("logs in here", 1, true) ~= nil, said)
+    -- Codex on PR #489: a synced warrior with Quel'Serrar done has a complete 1/1
+    -- cell, and still no attunement to show; the hint stays.
+    WoW.tooltipLines = {}
+    L.CellOnEnter({ info = { col = colS, key = ony, row = { 1, 1 } } })
+    said = table.concat(WoW.tooltipLines, " / ")
+    check("  a synced complete cell still says it shows after a login here", said:find("logs in here", 1, true) ~= nil, said)
+
+    -- Codex on PR #489: Blood and Thunder starts in Kargath, so the zone after it
+    -- says it is where the quest is counted, not where it starts.
+    local HG = "Player-487-AAAA0003"
+    AltStableDB[HG] = { name = "Hordling", class = "WARRIOR", level = 60, scannedHere = true }
+    M.DB().chars[HG] = { stamp = 70, ver = M.SNAP_VERSION, faction = "Horde", race = 2, class = 1, level = 60,
+                         c = { [1637] = { 0, 4 } } }
+    M.DB().done[HG] = { stamp = 70, ids = {} }
+    local colH
+    for _, c in ipairs(L.Columns()) do if c.guid == HG then colH = c end end
+    local hl = colH and L.ListLines(colH, ony) or {}
+    eq("Horde's list: 0 of 15", hl[1] and hl[1].text, "Attunement (0/15)")
+    check("  its opener is the next step, counted under Blackrock Spire",
+          hl[2] and hl[2].text:sub(1, 2) == "> " and hl[2].text:find("(counted under Blackrock Spire)", 1, true) ~= nil,
+          hl[2] and hl[2].text)
+    M.DB().chars[HG], M.DB().done[HG], AltStableDB[HG] = nil, nil, nil
 
     L.Select(ony, AG)
     local cardLeft = L.Card() and L.Card().left:GetText() or ""
