@@ -701,6 +701,133 @@ do
 end
 M.DB().chars[ME].ver = M.SNAP_VERSION
 
+------------------------------------------------------------
+-- #487: raid attunement chains, shown under their raid
+------------------------------------------------------------
+-- What has to hold: every step is a quest of the shipped table, each chain
+-- for one faction, and the chain is the one the character's faction can take;
+-- a step is done by any of its quests (6403 or 99435), Horde's chain opens
+-- with 98325; attuned = the last step done; the counts and D.VERSION don't
+-- move; a raid with a chain shows for a character with nothing counted under
+-- it, its empty cell has a hover, and the list and card show the chain only
+-- from this install's done set.
+do
+    local ALLIANCE, HORDE = P("Alliance", 1, 1, 60), P("Horde", 2, 1, 60)
+    local stepsOk, bad = true, {}
+    for key, chains in pairs(M.ATTUNE) do
+        if not (D.ZONES[key] and D.ZONES[key][1] == "raid") then stepsOk = false; bad[#bad + 1] = "raid " .. key end
+        for _, chain in ipairs(chains) do
+            for _, step in ipairs(chain) do
+                for _, id in ipairs(type(step) == "table" and step or { step }) do
+                    if not Q[id] then stepsOk = false; bad[#bad + 1] = tostring(id) end
+                end
+            end
+        end
+    end
+    check("every attunement raid is a raid row, every step a quest of the table", stepsOk, table.concat(bad, ","))
+
+    local ony = 2159
+    local a = M.Attunement(ony, ALLIANCE, {})
+    eq("Onyxia, Alliance: 16 steps", a and a.total, 16)
+    eq("  opening with Dragonkin Menace", a and a.steps[1].id, 4182)
+    eq("  none done, the first is next", a and a.next, 1)
+    check("  not attuned", a and not a.attuned)
+    local h = M.Attunement(ony, HORDE, {})
+    eq("Onyxia, Horde: 15 steps", h and h.total, 15)
+    eq("  opening with Blood and Thunder (98325)", h and h.steps[1].id, 98325)
+    eq("  ending with Blood of the Black Dragon Champion", h and h.steps[15].id, 6602)
+
+    -- The Great Masquerade by its other ID (Codex on the plan): the step is done.
+    local masq = Set(4182, 4183, 4184, 4185, 4186, 4223, 4224, 4241, 4242, 4264, 4282, 4322, 6402, 99435)
+    a = M.Attunement(ony, ALLIANCE, masq)
+    eq("99435 completes The Great Masquerade's step", a.steps[14].state, "done")
+    eq("  naming the one done", a.steps[14].id, 99435)
+    eq("  14 of 16, The Dragon's Eye next", a.done .. ":" .. tostring(a.next), "14:15")
+    masq[6501], masq[6502] = true, true
+    a = M.Attunement(ony, ALLIANCE, masq)
+    check("the last step done: attuned", a.attuned and a.done == 16 and a.next == nil)
+
+    -- Naxxramas: one step, any of the three.
+    for _, id in ipairs({ 9121, 9122, 9123 }) do
+        local n = M.Attunement(3456, ALLIANCE, Set(id))
+        check("Naxxramas attuned by " .. id, n and n.total == 1 and n.attuned)
+    end
+    eq("Blackwing Lair: one step for either faction", (M.Attunement(2677, HORDE, {}) or {}).total, 1)
+    eq("a raid without a chain has none", M.Attunement(3606, ALLIANCE, {}), nil)
+
+    -- Nothing counted twice: the counts and the data version are the ones before.
+    -- A mage: Onyxia's Lair's one quest, Quel'Serrar, is for warriors and paladins.
+    local before = M.Count(P("Alliance", 1, 8, 60), masq).c
+    eq("Onyxia's Lair counts nothing for a mage, the chain done", before[ony], nil)
+    check("  Stormwind still counts The Great Masquerade's step", before[1519] and before[1519][1] >= 1)
+    eq("  D.VERSION is the one the table shipped with", D.VERSION, "cabf3cd3")
+
+    -- The tab: a character with a local done set and a synced one.
+    local AG, SG = "Player-487-AAAA0001", "Player-487-AAAA0002"
+    AltStableDB[AG] = { name = "Attuner", class = "WARRIOR", level = 60, scannedHere = true }
+    AltStableDB[SG] = { name = "Synced", class = "MAGE", level = 60 }
+    M.DB().chars[AG] = { stamp = 50, ver = M.SNAP_VERSION, faction = "Alliance", race = 1, class = 1, level = 60,
+                         c = { [1519] = { 3, 9 } } }
+    M.DB().done[AG] = { stamp = 50, ids = Set(4182, 4183) }
+    M.DB().chars[SG] = { stamp = 60, ver = M.SNAP_VERSION, faction = "Horde", race = 2, class = 8, level = 60,
+                         c = { [1637] = { 1, 4 } } }
+    local colA, colS
+    for _, c in ipairs(L.Columns()) do
+        if c.guid == AG then colA = c elseif c.guid == SG then colS = c end
+    end
+    local shown = false
+    for _, row in ipairs(L.DisplayRows({ colA })) do if row.key == ony then shown = true end end
+    check("Onyxia's Lair shows for a character with nothing counted there", shown)
+    check("  its chain applies to both columns", L.AttuneApplies(colA, ony) and L.AttuneApplies(colS, ony))
+    eq("  the synced one has no attunement to show", L.AttuneFor(colS, ony), nil)
+    local att = L.AttuneFor(colA, ony)
+    eq("  the local one: 2 of 16", att and L.AttuneText(att), "Attunement 2/16")
+    local lines = L.ListLines(colA, ony) or {}
+    eq("its quest list opens with the attunement", lines[1] and lines[1].text, "Attunement (2/16)")
+    check("  the next step marked", lines[4] and lines[4].text:sub(1, 2) == "> ", lines[4] and lines[4].text)
+    check("  with the zone it is counted in", lines[2] and lines[2].text:find("Burning Steppes", 1, true) ~= nil,
+          lines[2] and lines[2].text)
+
+    WoW.tooltipLines = {}
+    local okHover, herr = pcall(L.CellOnEnter, { info = { col = colA, key = ony } })
+    check("an empty attunement cell's hover is no error", okHover, tostring(herr))
+    local said = table.concat(WoW.tooltipLines, " / ")
+    check("  and shows the chain", said:find("Attunement (2/16)", 1, true) ~= nil, said)
+    WoW.tooltipLines = {}
+    L.CellOnEnter({ info = { col = colS, key = ony } })
+    said = table.concat(WoW.tooltipLines, " / ")
+    check("  a synced one's says it shows after a login here", said:find("logs in here", 1, true) ~= nil, said)
+    -- Codex on PR #489: a synced warrior with Quel'Serrar done has a complete 1/1
+    -- cell, and still no attunement to show; the hint stays.
+    WoW.tooltipLines = {}
+    L.CellOnEnter({ info = { col = colS, key = ony, row = { 1, 1 } } })
+    said = table.concat(WoW.tooltipLines, " / ")
+    check("  a synced complete cell still says it shows after a login here", said:find("logs in here", 1, true) ~= nil, said)
+
+    -- Codex on PR #489: Blood and Thunder starts in Kargath, so the zone after it
+    -- says it is where the quest is counted, not where it starts.
+    local HG = "Player-487-AAAA0003"
+    AltStableDB[HG] = { name = "Hordling", class = "WARRIOR", level = 60, scannedHere = true }
+    M.DB().chars[HG] = { stamp = 70, ver = M.SNAP_VERSION, faction = "Horde", race = 2, class = 1, level = 60,
+                         c = { [1637] = { 0, 4 } } }
+    M.DB().done[HG] = { stamp = 70, ids = {} }
+    local colH
+    for _, c in ipairs(L.Columns()) do if c.guid == HG then colH = c end end
+    local hl = colH and L.ListLines(colH, ony) or {}
+    eq("Horde's list: 0 of 15", hl[1] and hl[1].text, "Attunement (0/15)")
+    check("  its opener is the next step, counted under Blackrock Spire",
+          hl[2] and hl[2].text:sub(1, 2) == "> " and hl[2].text:find("(counted under Blackrock Spire)", 1, true) ~= nil,
+          hl[2] and hl[2].text)
+    M.DB().chars[HG], M.DB().done[HG], AltStableDB[HG] = nil, nil, nil
+
+    L.Select(ony, AG)
+    local cardLeft = L.Card() and L.Card().left:GetText() or ""
+    check("the card says the attunement", cardLeft:find("Attunement 2/16", 1, true) ~= nil, cardLeft)
+    check("  and View quests is on, with nothing counted there", L.Card().view:IsEnabled())
+    M.DB().chars[AG], M.DB().done[AG], M.DB().chars[SG] = nil, nil, nil
+    AltStableDB[AG], AltStableDB[SG] = nil, nil
+end
+
 local okD = pcall(plugin.OnDeactivate, main)
 check("the tab closes", okD)
 check("  the core's totals are back", main.totalsBar.core:IsShown())
