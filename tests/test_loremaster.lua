@@ -804,6 +804,24 @@ do
     said = table.concat(WoW.tooltipLines, " / ")
     check("  a synced complete cell still says it shows after a login here", said:find("logs in here", 1, true) ~= nil, said)
 
+    -- The empty cell shows the attunement's steps, dimmed (owner, after PR #489).
+    local ct, cr, _, _, ci = L.CellFill(colA, ony, nil)
+    eq("an empty attunement cell shows its steps", ct, "2/16")
+    check("  dimmed", cr and cr < 0.5, tostring(cr))
+    check("  with its hover", ci and ci.key == ony and ci.row == nil)
+    ct, cr, _, _, ci = L.CellFill(colS, ony, nil)
+    check("a synced one's stays empty, with its hover", ct == "" and cr == nil and ci and ci.key == ony, ct)
+    ct, _, _, _, ci = L.CellFill(colA, 3606, nil)
+    check("an empty cell without a chain stays empty, no hover", ct == "" and ci == nil, ct)
+    ct, cr = L.CellFill(colA, ony, { 1, 1 })
+    eq("a counted cell keeps its count", ct, "1/1")
+    eq("  in its usual colour", cr, (L.CellRGB(1, 1)))
+    local allDone = Set(4182, 4183, 4184, 4185, 4186, 4223, 4224, 4241, 4242, 4264, 4282, 4322, 6402, 6403, 6501, 6502)
+    M.DB().done[AG].ids = allDone
+    ct, cr = L.CellFill(colA, ony, nil)
+    check("attuned: 16/16 in a dim gold", ct == "16/16" and cr and cr > 0.5 and cr < 1, ct .. " " .. tostring(cr))
+    M.DB().done[AG].ids = Set(4182, 4183)
+
     -- Codex on PR #489: Blood and Thunder starts in Kargath, so the zone after it
     -- says it is where the quest is counted, not where it starts.
     local HG = "Player-487-AAAA0003"

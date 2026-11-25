@@ -415,6 +415,25 @@ function L.AttuneFor(col, key)
     return M.Attunement(key, ProfileOf(col.snap), done)
 end
 
+-- A grid cell: its text, colour and hover info. With nothing counted under a
+-- raid, the cell shows the attunement's steps, dimmed, since they are not the
+-- raid's quest count (#487); a character from another account keeps an empty
+-- cell with the hover.
+function L.CellFill(col, key, row)
+    if row then
+        local r, g, b = L.CellRGB(row[1], row[2])
+        return ("%d/%d"):format(row[1], row[2]), r, g, b, { col = col, key = key, row = row }
+    end
+    if not L.AttuneApplies(col, key) then return "", nil, nil, nil, nil end
+    local info = { col = col, key = key }
+    local a = L.AttuneFor(col, key)
+    if not a then return "", nil, nil, nil, info end
+    if a.attuned then
+        return ("%d/%d"):format(a.done, a.total), GOLD[1] * 0.7, GOLD[2] * 0.7, GOLD[3] * 0.7, info
+    end
+    return ("%d/%d"):format(a.done, a.total), 0.45, 0.45, 0.45, info
+end
+
 function L.AttuneText(a)
     if a.attuned then return "Attuned" end
     return ("Attunement %d/%d"):format(a.done, a.total)
@@ -1388,15 +1407,10 @@ function L.Render()
                 cell:SetPoint("TOPLEFT", content, "TOPLEFT", x0 + (i - 1) * colW, -y)
                 cell:SetSize(colW, ROW_H)
                 cell.rowKey, cell.guid = r.key, col.guid
-                if row then
-                    cell.text:SetText(("%d/%d"):format(row[1], row[2]))
-                    cell.text:SetTextColor(L.CellRGB(row[1], row[2]))
-                    cell.info = { col = col, key = r.key, row = row }
-                else
-                    cell.text:SetText("")
-                    -- An attunement row's empty cell still has its hover (#487).
-                    cell.info = L.AttuneApplies(col, r.key) and { col = col, key = r.key } or nil
-                end
+                local text, cr, cg, cb, info = L.CellFill(col, r.key, row)
+                cell.text:SetText(text)
+                if cr then cell.text:SetTextColor(cr, cg, cb) end
+                cell.info = info
             end
             y = y + ROW_H
         end
