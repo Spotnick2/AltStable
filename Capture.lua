@@ -456,11 +456,13 @@ local SLOT_NAMES = {
 }
 
 -- Whether the helm and cloak are SHOWN: the equipment list cannot say a slot is
--- hidden (Scanner.lua, hidehelm), and a hidden helm is not in the portrait.
-local function Showing(fn)
-    if type(fn) ~= "function" then return true end
-    local ok, v = pcall(fn)
-    return not ok or v and true or false
+-- hidden, and a hidden helm is not in the portrait (seen in the stage's preview,
+-- #485). From the record, as Drawn.lua read it - the same flags the roster
+-- sends, so the capture and the Companion's roster look agree. Absent is shown.
+local function Showing(field)
+    local guid = UnitGUID and UnitGUID("player")
+    local char = guid and type(AltStableDB) == "table" and AltStableDB[guid]
+    return not (type(char) == "table" and char[field] == 1)
 end
 
 -- "slot:itemID;slot:itemID;..." for the visible slots, 0 for an empty one and
@@ -474,7 +476,7 @@ end
 -- unknown too; that is the cheaper mistake.
 local function ReadLook()
     if type(GetInventoryItemID) ~= "function" then return nil end
-    local showHelm, showCloak = Showing(ShowingHelm), Showing(ShowingCloak)
+    local showHelm, showCloak = Showing("hidehelm"), Showing("hidecloak")
     local parts, any = {}, false
     for _, slot in ipairs(LOOK_SLOTS) do
         local id = tonumber((GetInventoryItemID("player", slot)))

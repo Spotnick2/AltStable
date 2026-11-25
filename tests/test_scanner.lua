@@ -1921,6 +1921,31 @@ end
 
 
 ------------------------------------------------------------
+-- Helm and cloak (#485): never from ShowingHelm, never reset by a scan; the
+-- scan hands the record to Drawn.lua for a reading that came before it.
+do
+    WoW.reset()
+    AltStableDB = {}
+    local realDrawn, handed = AltStable.Drawn, nil
+    AltStable.Drawn = { OnScanned = function(char) handed = char end }
+    local realHelm, realCloak = ShowingHelm, ShowingCloak
+    ShowingHelm = function() return false end
+    ShowingCloak = function() return false end
+    pcall(AltStable.ScanCharacter)
+    local me = AltStableDB[UnitGUID("player")]
+    check("a scan hands its record to the drawn reader", me ~= nil and handed == me)
+    eq("  and writes no helm flag of its own (ShowingHelm says hidden for everything)", me and me.hidehelm, nil)
+    eq("  nor a cloak flag", me and me.hidecloak, nil)
+    me.hidehelm, me.hidecloak, me.drawnAt = 1, 0, 5
+    pcall(AltStable.ScanCharacter)
+    check("  a flag the reader wrote survives the next scan", me.hidehelm == 1 and me.hidecloak == 0)
+    ShowingHelm, ShowingCloak = realHelm, realCloak
+    AltStable.Drawn = realDrawn
+    AltStableDB = {}
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Hearthstone (#371)
 ------------------------------------------------------------
 -- GetBindLocation() names the inn. The scan stores it as `bind`, and keeps

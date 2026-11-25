@@ -914,9 +914,23 @@ eq("a new ring, neck or ranged-slot relic does not change the look", T.CurrentLo
 wear({})
 eq("nothing readable at all (inventory not loaded yet) is 'cannot tell', not 'naked'", T.CurrentLook(), nil)
 wear({ [1] = 10, [5] = 100 })
+-- Hidden or shown comes from the record, as Drawn.lua read it (#485), not
+-- from ShowingHelm(), which says hidden for everything on Forever.
+AltStableDB = type(AltStableDB) == "table" and AltStableDB or {}
+AltStableDB[GUID] = AltStableDB[GUID] or { guid = GUID }
 local realShowingHelm = ShowingHelm
 ShowingHelm = function() return false end
+check("ShowingHelm saying hidden no longer hides the helm", (T.CurrentLook() or ""):find("1:10", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidehelm = 1
 check("a hidden helm is marked hidden, not its item", (T.CurrentLook() or ""):find("1:h", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidehelm = 0
+check("  0 is shown", (T.CurrentLook() or ""):find("1:10", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidecloak = 1
+wear({ [1] = 10, [5] = 100, [15] = 20 })
+check("  the cloak the same way", (T.CurrentLook() or ""):find("15:h", 1, true), T.CurrentLook())
+wear({ [1] = 10, [5] = 100 })
+check("  but an empty back stays empty, hidden or not", (T.CurrentLook() or ""):find("15:0", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidehelm, AltStableDB[GUID].hidecloak = nil, nil
 ShowingHelm = realShowingHelm
 local realInv = GetInventoryItemID
 GetInventoryItemID = function() error("boom") end
@@ -985,7 +999,7 @@ eq("a stored look with an extra slot, same gear, is not 'changed'", T.PortraitSt
 -- Showing or hiding the helm is a change the portrait would show.
 wear({ [1] = 10, [5] = 101, [7] = 200 })
 pair(T.CurrentLook())
-ShowingHelm = function() return false end
+AltStableDB[GUID].hidehelm = 1
 st = T.PortraitStatus()
 eq("hiding the helm since the capture: changed", st.reason, "changed")
 eq("  on the Head", table.concat(st.changedSlots, ","), "Head")
@@ -993,7 +1007,7 @@ wear({ [1] = 11, [5] = 101, [7] = 200 })
 pair(T.CurrentLook())
 wear({ [1] = 12, [5] = 101, [7] = 200 })
 eq("swapping a helm that stays hidden is not a change", T.PortraitStatus().reason, "none")
-ShowingHelm = realShowingHelm
+AltStableDB[GUID].hidehelm = nil
 
 -- Inventory not readable yet: no verdict about the look.
 wear({})

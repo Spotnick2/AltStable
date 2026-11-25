@@ -1108,7 +1108,8 @@ local function SerializeChar(c, sinceTS, ownMarksOnly)
         and not Provenance.LOCAL_ONLY[k] -- scannedHere and the provenance (#281): on the
                                       -- wire they would tell every peer the character was ITS own
         -- NOTE: hidehelm / hidecloak ride sync on purpose — a portrait pipeline has to know
-        -- the player hid a slot, since the equipped item list alone can't tell it. They are
+        -- the player hid a slot, since the equipped item list alone can't tell it. Read from
+        -- what the game draws (Drawn.lua, #485), with drawnAt beside them. They are
         -- plain 1/0 numbers, so the tonumber() coercion below round-trips them unchanged.
         -- They must NOT become booleans: tostring(false) sends "false", which tonumber() leaves
         -- as the STRING "false" — and a non-empty string is truthy in Lua, so a hidden-cloak
@@ -1644,6 +1645,8 @@ local function ClearSyncedStateFields(t)
     -- on the word of a scan that peer can no longer confirm. Absent means "shown", which is
     -- the safe direction to fail.
     t.hidehelm = nil; t.hidecloak = nil
+    -- And their stamp (#485): without it, the flags are an older build's.
+    t.drawnAt = nil
     -- Merchant's Favor (#270): an older peer's record has none, and a scan that
     -- couldn't read it sends none. Either way, the last number must not linger.
     t.favor = nil
@@ -1769,6 +1772,9 @@ local function MergeIncoming(c, sender)
         for k,v in pairs(c) do
             existing[k] = v
         end
+        -- Helm/cloak flags from a peer on a build before #485 are the broken
+        -- ones (ShowingHelm said hidden for everything): dropped, absent = shown.
+        if AltStable.DropUndrawnFlags then AltStable.DropUndrawnFlags(existing) end
         KeepFullerName(existing, priorName)
         AltStableDB[c.guid] = existing
         Provenance.GearMerged(c.guid, gearBefore, existing)
@@ -4115,6 +4121,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
         PurgeRetiredFields()
+        -- The helm/cloak flags written before #485 (always "hidden"): dropped
+        -- once, on every record without the drawn reading's stamp.
+        if AltStable.DropUndrawnFlags then
+            for _, c in pairs(AltStableDB or {}) do AltStable.DropUndrawnFlags(c) end
+        end
 
         -- Re-register the prefix on login.  Calling it at file load
         -- time isn't always sufficient — same-machine dual-boxing has
