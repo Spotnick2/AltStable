@@ -431,7 +431,7 @@ function L.CellFill(col, key, row)
     if a.attuned then
         return ("%d/%d"):format(a.done, a.total), GOLD[1] * 0.7, GOLD[2] * 0.7, GOLD[3] * 0.7, info
     end
-    return ("%d/%d"):format(a.done, a.total), 0.45, 0.45, 0.45, info
+    return ("%d/%d"):format(a.done, a.total), 0.32, 0.32, 0.32, info
 end
 
 function L.AttuneText(a)

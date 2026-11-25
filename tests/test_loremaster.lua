@@ -807,7 +807,8 @@ do
     -- The empty cell shows the attunement's steps, dimmed (owner, after PR #489).
     local ct, cr, _, _, ci = L.CellFill(colA, ony, nil)
     eq("an empty attunement cell shows its steps", ct, "2/16")
-    check("  dimmed", cr and cr < 0.5, tostring(cr))
+    -- Clearly darker than a 0/n count (0.55): 0.45 looked the same in game.
+    check("  dimmed, clearly below a 0/n count", cr and cr <= (L.CellRGB(0, 1)) - 0.2, tostring(cr))
     check("  with its hover", ci and ci.key == ony and ci.row == nil)
     ct, cr, _, _, ci = L.CellFill(colS, ony, nil)
     check("a synced one's stays empty, with its hover", ct == "" and cr == nil and ci and ci.key == ony, ct)
