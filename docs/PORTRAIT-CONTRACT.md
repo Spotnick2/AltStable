@@ -118,6 +118,17 @@ gear changed since the last capture. **Converters do not read it** and must not 
 it: records written before it existed have none. Adding it did not bump `version`, and
 a field like it - one no converter needs - never will.
 
+**`drawnLook` and `outfit`** (optional, since #497) say what the portrait actually shows.
+- **`drawnLook`** is in the same `slot:value;...` form as `look`, but each slot is the item the
+  game **draws**: the transmog's item where the slot is transmogrified, `h` for a hidden
+  appearance on any slot, `0` for an empty slot. A slot the addon couldn't read is left out.
+- **`outfit`** is the saved transmog outfit that was on (`C_TransmogOutfitInfo.GetActiveOutfitID()`).
+- `look` keeps the equipped items, as before, for readers that compare those.
+- Forever's saved outfits switch by themselves with location, movement, weather and time of day,
+  and at random among several that fit. So a drawn look is only comparable within one outfit:
+  in another outfit, there is no verdict about the gear.
+- Converters don't read either field. No `version` bump.
+
 **Matching records to screenshots.** The client names each screenshot
 `Screenshots\WoWScrnShot_MMDDYY_HHMMSS.tga` in the same local time as `stamp`.
 
@@ -358,6 +369,7 @@ never for conversion, from the same `AltStable.lua`:
 | `AltStableDB[guid].gearAt` | number (epoch seconds), armory only | `lastUpdate` alone |
 | `AltStableDB[guid].gearid_<key>`, `hidehelm`, `hidecloak` | numbers, armory only | the old estimate (section 4) |
 | `AltStableDB[guid].lookAt` | number (epoch seconds), armory only | appearance not compared |
+| `AltStableDB[guid].gearlook_<key>`, `drawnOutfit`, `drawnLookAt` | numbers, armory only (since #497) | drawn as equipped; drawn look not compared |
 | `AltStableDB[guid].gearReadAt` | number (epoch seconds), armory only | `lastUpdate` |
 | `AltStableConfig.hiddenCharacters` | table, guid → true | nobody is hidden |
 
@@ -371,6 +383,22 @@ from what the game draws (a hidden helm or cloak is a transmog appearance there)
 `drawn` stamp beside them (the values that reading wrote, e.g. `h1c0`) and `drawnAt` (when). The
 addon drops flags that don't match the stamp, so an older record reads as absent (shown). Their meaning here is unchanged. A capture taken before #485 may read as
 changed once on its head or back.
+
+**The drawn look (since #497).**
+- **`gearlook_<key>`** (the keys as `gearid_<key>`) is the item the slot is **drawn** as where it
+  differs from `gearid_<key>`, `0` for a hidden appearance, and absent for drawn as equipped.
+- **`drawnOutfit`** is the saved outfit it was read in. **`drawnLookAt`** is when that look last
+  changed. `gearlookSig` is the addon's own check, so a reader can ignore it.
+- These are written only on a stable reading (login, closing the transmogrifier, a gear change),
+  never on an outfit that switched by itself.
+- A reader comparing a capture's `drawnLook` with the roster:
+  - builds each roster slot as `gearlook_<key>` when present (`0` → `h`), else `gearid_<key>`
+    (`0` → empty, with `h` from `hidehelm` / `hidecloak`);
+  - compares only when the capture's `outfit` and `drawnOutfit` are equal (or either is absent);
+  - dates a difference by `drawnLookAt`.
+- A capture with no `drawnLook` is compared by `look`, as before.
+- An older reader that compares `look` against `gearid_<key>` is unaffected: `look` still holds
+  the equipped items.
 
 **Compatibility.**
 

@@ -1167,6 +1167,53 @@ check("  the stage's model, not some other", asked ~= nil and asked.GetObjectTyp
 AltStable.Drawn = realDrawnStage
 AltStableDB[GUID].hidehelm = nil
 
+-- #497: the capture also records what it DREW and in which saved outfit, and
+-- the status compares that, within one outfit.
+do
+    local outfitNow, nowLook = 2, { [3] = 271754, [5] = 4242, [9] = "h", [4] = 16060 }
+    AltStable.Drawn = {
+        SlotValue = function(m, slot) return m.drawn and m.drawn[slot] end,
+        SlotHidden = function() return nil end,
+        Current = function() return { look = nowLook, outfit = outfitNow } end,
+        ActiveOutfit = function() return outfitNow end,
+    }
+    resetCapture()
+    wear({ [3] = 4197, [5] = 4242, [9] = 300 })
+    T.Capture()
+    runChain()
+    local shot = renders()[#renders()]
+    check("a capture records the drawn look", shot and shot.drawnLook
+          and shot.drawnLook:find("3:271754", 1, true) and shot.drawnLook:find("9:h", 1, true),
+          shot and tostring(shot.drawnLook))
+    check("  the shirt too", shot and shot.drawnLook and shot.drawnLook:find("4:16060", 1, true))
+    eq("  and the outfit", shot and shot.outfit, 2)
+    check("  the equipped look stays as it was, for an older Companion",
+          shot and shot.look and shot.look:find("3:4197", 1, true), shot and tostring(shot.look))
+    local d = T.CurrentDrawnLook({ drawn = { [3] = 111 } }) or ""
+    check("the stage's value wins at the shutter", d:find("3:111", 1, true) and d:find("5:4242", 1, true), d)
+
+    AltStableCutoutManifest = { [GUID] = { file = "x.tga", w = 1, h = 1, texw = 1, texh = 1 } }
+    pair("3:4197;5:4242")
+    local function withDrawn(drawnLook, outfitThen)
+        for _, r in ipairs(AltStablePortraits.renders) do r.drawnLook, r.outfit = drawnLook, outfitThen end
+    end
+    withDrawn("3:271754;5:4242;9:h", 2)
+    eq("the same drawn look in the same outfit: nothing to do", T.PortraitStatus().reason, "none")
+    nowLook[3] = 999
+    local st = T.PortraitStatus()
+    eq("a transmog changed in the same outfit: changed", st.reason, "changed")
+    eq("  on the shoulders", table.concat(st.changedSlots, ","), "Shoulder")
+    outfitNow = 1
+    eq("another outfit (a situational switch): no verdict", T.PortraitStatus().reason, "none")
+    outfitNow = 2
+    nowLook[3] = 271754
+    wear({ [3] = 5555, [5] = 4242, [9] = 300 })
+    eq("new shoulders under the same transmog: still current", T.PortraitStatus().reason, "none")
+    withDrawn(nil, nil)
+    eq("a capture without a drawn look: the equipped compare, as before", T.PortraitStatus().reason, "changed")
+    AltStable.Drawn = realDrawnStage
+end
+
 -- Capture's helpers are locals: a missing forward declaration would either
 -- throw (a nil global at the call) or leak a global. Neither may happen.
 check("Capture leaks no global PortraitStatus or GlowForCombat",

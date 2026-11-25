@@ -1205,6 +1205,18 @@ the issue). `ShowingHelm()` / `ShowingCloak()` still say hidden for everything. 
 
 `Drawn.lua` reads it that way, on one 1x1 alpha-0 model on WorldFrame for the session.
 
+**Saved outfits (71139, #497).**
+- `C_TransmogOutfitInfo.GetActiveOutfitID()` reads away from the transmogrifier. The owner's
+  `/run` gave outfit 2, with 2 saved outfits, and `GetOutfitSituationsEnabled()` = true.
+- The transmogrifier's **Situations** tab switches into an outfit by Locations, Movement, Weather
+  and Time of Day. "If multiple outfits are equally valid, one will be chosen randomly" (the
+  window's own text).
+- So the drawn look can change without the player doing anything. `TRANSMOG_DISPLAYED_OUTFIT_CHANGED`
+  (in the dump) is read as such a switch. Whether it fires on a situational switch is not
+  measured yet.
+- Each slot's per-outfit choice is Unassigned, Show Equipped Gear, a hidden appearance or an item.
+  The model reading gives the result of any of them.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk

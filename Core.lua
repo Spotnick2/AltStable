@@ -1649,6 +1649,10 @@ local function ClearSyncedStateFields(t)
     -- incoming record's stamp alone. Ours left in place would vouch for an
     -- older build's flags that happen to match it (Codex review of #498).
     t.drawn = nil; t.drawnAt = nil
+    -- The drawn look of every slot (#497): its stamp and outfit, so the
+    -- incoming record's gearlook_ fields are judged by its own stamp alone
+    -- (MergeIncoming -> DropUndrawnFlags drops them, absent = drawn as equipped).
+    t.drawnOutfit = nil; t.drawnLookAt = nil; t.gearlookSig = nil
     -- Merchant's Favor (#270): an older peer's record has none, and a scan that
     -- couldn't read it sends none. Either way, the last number must not linger.
     t.favor = nil
