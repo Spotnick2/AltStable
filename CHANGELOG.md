@@ -3,7 +3,7 @@
 ## v1.14.0 - 2026-11-25
 
 **Raid attunements** in the Loremaster tab, and the Roster's gear hover for your other account's
-characters. Both came from a player's comment on CurseForge. Built for client 1.60.1.71037, the live
+characters. Both came from a player's comment on CurseForge. Built for client 1.60.1.71091, the live
 build. v1.14.0 syncs with everything v1.13.0 does.
 
 ### AltStable Companion
