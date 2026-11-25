@@ -151,8 +151,8 @@ can ever do there, for its faction, race and class, at any level.
   character's level), done, and missed.
 - **Raid attunements** show under their raid: Onyxia's Lair's quest chain for your faction,
   Blackwing Lair's, Molten Core's and Naxxramas's. The card says "Attunement 3/16" or "Attuned",
-  and the hover and View quests list the steps in order: done ones green, the next one gold, each
-  with the zone it's counted under. A raid with no quest counted for a character shows its steps
+  and the hover and View quests list the steps in order: done ones green, the next one gold. A step
+  counted under another zone names it ("counted under Blackrock Spire"). A raid with no quest counted for a character shows its steps
   done, dimmed, such as "0/15". The steps stay counted once, under their own zones.
 
 ![The Loremaster tab: a map zoomed into the Wetlands with Excavation Site's entrance pinned, a card with 5 of 5 quests done, and a grid of dungeons with each character's progress](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/loremaster.jpg)

@@ -20,8 +20,8 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
   ([#487](https://github.com/Spotnick2/AltStable/issues/487)): Onyxia's Lair (Alliance 16 steps,
   Horde 15), Blackwing Lair, Molten Core and Naxxramas show their attunement under the raid. The
   card says "Attunement 3/16" or "Attuned". The cell's hover and View quests open with the steps in
-  order: done ones green, the next one gold, a missed one dim red, each with the zone it's counted
-  under. The raid's row now shows for every character with a chain, and a cell with no quest
+  order: done ones green, the next one gold, a missed one dim red. A step counted under another
+  zone names it ("counted under Blackrock Spire"). The raid's row now shows for every character with a chain, and a cell with no quest
   counted shows the steps done, dimmed, such as "0/15". Display only: each quest is still counted
   once, under its own zone, and no count changes. Like the quest lists, it shows for the
   characters played on this WoW account.
