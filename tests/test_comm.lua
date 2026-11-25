@@ -4387,13 +4387,15 @@ do
     AltStable.SetConfigValue("sheetGroupByFaction", true)
     eq(AltStableConfig.prefsStamps.sheet, 8100, "  the faction groups too")
     AltStableConfig.prefsStamps.sheet = nil
+    AltStable.SetConfigValue("sheetHiddenColumns", { ["summary.bags_free"] = true })
+    eq(AltStableConfig.prefsStamps.columns, 8100, "  a hidden column, the columns (#378)")
+    eq(AltStableConfig.prefsStamps.sheet, nil, "  not the sheet: its own group")
     AltStable.SetConfigValue("sheetBagsColumn", false)
-    eq(AltStableConfig.prefsStamps.sheet, 8100, "  and the Bags column (#346)")
     AltStable.SetConfigValue("worldCameraEnterDuration", 2)
     AltStable.SetConfigValue("bnetSync", false)
     local groups = 0
     for _ in pairs(AltStableConfig.prefsStamps) do groups = groups + 1 end
-    eq(groups, 4, "  the camera and the sync machinery are never synced")
+    eq(groups, 4, "  the camera, the sync machinery and the old column options are never synced")
     -- A stamp adopted from a clock running ahead is never undercut.
     AltStableConfig.prefsStamps.appearance = 9000
     AltStable.SetConfigValue("theme", "dark")
@@ -4505,6 +4507,75 @@ do
     AltStableConfig = { sheetShowHidden = false }
     AltStable.SetConfigValue("sheetShowHidden", nil)
     eq(AltStableConfig.prefsStamps, nil, "  and unset is no change from its default")
+
+    -- The hidden columns (#378): their own group, sorted names, only the
+    -- hidden ones; junk refused, the empty set a real choice.
+    AltStableConfig = { syncSettings = true, prefsStamps = { columns = 500 },
+                        sheetHiddenColumns = { ["summary.bind"] = true, ["gear.gear_head"] = true,
+                                               ["summary.money"] = false, ["bad key"] = true } }
+    sent = AltStable.PrefsSyncLines()
+    eq(sent[1], "==PREFS1==:columns:500;sheetHiddenColumns=gear.gear_head+summary.bind",
+       "hidden columns go sorted, without the shown ones or junk")
+    AltStableConfig = { syncSettings = true, prefsStamps = { columns = 400 },
+                        sheetHiddenColumns = { ["rep.rep_59"] = true } }
+    eq(AltStable.ApplyPrefsSyncLine(sent[1]), "columns", "  a newer set is taken")
+    check(AltStableConfig.sheetHiddenColumns["summary.bind"] and AltStableConfig.sheetHiddenColumns["gear.gear_head"]
+          and not AltStableConfig.sheetHiddenColumns["rep.rep_59"], "  whole, replacing ours")
+    eq(AltStable.ApplyPrefsSyncLine(line("columns", 600, "sheetHiddenColumns=")), "columns",
+       "  an empty set is a choice too")
+    eq(next(AltStableConfig.sheetHiddenColumns), nil, "  and shows every column")
+    AltStable.ApplyPrefsSyncLine(line("columns", 700, "sheetHiddenColumns=summary.bags_free+x+a.b c+toolong."
+        .. string.rep("a", 70)))
+    local cols = {}
+    for k in pairs(AltStableConfig.sheetHiddenColumns) do cols[#cols + 1] = k end
+    eq(table.concat(cols, ","), "summary.bags_free", "  a name that isn't tab.field is dropped")
+    -- A sheet line from a build before #378 still carries the old options:
+    -- ignored, and the columns keep their own stamp.
+    AltStableConfig = { syncSettings = true, prefsStamps = { sheet = 10, columns = 15 },
+                        sheetHiddenColumns = { ["summary.bind"] = true } }
+    eq(AltStable.ApplyPrefsSyncLine(line("sheet", 20, "sheetGroupByRealm=1;sheetBagsColumn=0;sheetHearthColumn=1")),
+       "sheet", "an older build's sheet line is taken")
+    eq(AltStableConfig.sheetBagsColumn, nil, "  without the old Bags option")
+    eq(AltStableConfig.prefsStamps.columns, 15, "  and the columns' stamp untouched")
+    eq(AltStable.ApplyPrefsSyncLine(line("columns", 16, "sheetHiddenColumns=summary.money")), "columns",
+       "  so a column choice stamped between the two still lands")
+
+    -- The two old options become hidden columns once, without a stamp.
+    AltStableConfig = { sheetBagsColumn = false, sheetHearthColumn = true }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.sheetHiddenColumns and AltStableConfig.sheetHiddenColumns["summary.bags_free"], true,
+       "the Bags option turned off becomes a hidden column")
+    eq(AltStableConfig.sheetHiddenColumns["summary.bind"], nil, "  the Hearthstone one left on does not")
+    check(AltStableConfig.sheetBagsColumn == nil and AltStableConfig.sheetHearthColumn == nil,
+          "  both old keys are gone")
+    eq(AltStableConfig.prefsStamps and AltStableConfig.prefsStamps.columns, nil, "  and nothing is stamped")
+    AltStableConfig = { sheetHearthColumn = false, sheetHiddenColumns = { ["gear.gear_neck"] = true } }
+    AltStable.EnsureConfigDefaults()
+    check(AltStableConfig.sheetHiddenColumns["summary.bind"] and AltStableConfig.sheetHiddenColumns["gear.gear_neck"],
+          "  added to a set already there")
+    AltStableConfig = {}
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.sheetHiddenColumns, nil, "  and no set made when there was nothing to move")
+    -- The order the old choices had travels with them (Codex review of #494):
+    -- the sheet group's stamp, never a new one.
+    AltStableConfig = { sheetBagsColumn = false, prefsStamps = { sheet = 50 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.prefsStamps.columns, 50, "moved, the choice keeps the sheet group's stamp")
+    AltStableConfig = { sheetBagsColumn = true, sheetHearthColumn = true, prefsStamps = { sheet = 60 } }
+    AltStable.EnsureConfigDefaults()
+    check(type(AltStableConfig.sheetHiddenColumns) == "table" and next(AltStableConfig.sheetHiddenColumns) == nil
+          and AltStableConfig.prefsStamps.columns == 60, "  both shown is a choice too, with its stamp")
+    AltStableConfig = { syncSettings = true, sheetBagsColumn = false, prefsStamps = { sheet = 40 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStable.ApplyPrefsSyncLine(line("columns", 60, "sheetHiddenColumns=")), "columns",
+       "  so the other account's newer 'shown' beats an older 'hidden'")
+    eq(next(AltStableConfig.sheetHiddenColumns), nil, "  and Bags is shown on both")
+    AltStableConfig = { sheetBagsColumn = false, prefsStamps = { sheet = 70, columns = 80 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.prefsStamps.columns, 80, "  a columns stamp already there is kept")
+    AltStableConfig = { prefsStamps = { sheet = 90 } }
+    AltStable.EnsureConfigDefaults()
+    eq(AltStableConfig.prefsStamps.columns, nil, "  nothing moved, nothing stamped")
 
     AltStableConfig.syncSettings = false
     check(not AltStable.ApplyPrefsSyncLine(line("appearance", 999, "theme=dark")), "nothing is taken while it is off")

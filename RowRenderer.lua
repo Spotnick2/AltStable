@@ -674,13 +674,13 @@ local function GetGroupBG() return AltStable.SkinGroupBand() end
 
 local DIVIDER_COLOR = AltStable.C.GRIDLINE
 
--- Row pools, one per sheet section. A row is built with one cell and tooltip
--- frame per column, so it can't be reused across a change of columns - and the
--- Reputations section's columns follow the data. A pool remembers the columns
--- its rows were built for; when they change, the old rows are hidden and
--- dropped (frames can't be destroyed; this only happens when a character meets
--- a new faction) and the caller builds fresh ones. Frozen (Name) rows don't
--- depend on the columns and are kept.
+-- Row pools, one per sheet section. A pool remembers the columns its rows
+-- were set up for; when they change (a faction met on Reputations, a column
+-- hidden or shown, #378), its rows are set up again for the new ones
+-- (AltStable.SetRowColumns), reusing the widgets each row already has for a
+-- column. Frames can't be destroyed, so building fresh rows instead grew the
+-- client's frames with every toggle (Codex review of #494). Frozen (Name)
+-- rows don't depend on the columns.
 function AltStable.RowPoolFor(pools, sectionId, columns)
     local fields = {}
     for i, col in ipairs(columns) do fields[i] = col.field end
@@ -690,8 +690,7 @@ function AltStable.RowPoolFor(pools, sectionId, columns)
         pool = { rows = {}, frozenRows = {}, signature = signature }
         pools[sectionId] = pool
     elseif pool.signature ~= signature then
-        for _, row in ipairs(pool.rows) do row:Hide() end
-        pool.rows = {}
+        for _, row in ipairs(pool.rows) do AltStable.SetRowColumns(row, columns) end
         pool.signature = signature
     end
     return pool
@@ -714,6 +713,193 @@ end
 
 -- A row's hover buttons, by kind; each is placed over its cell.
 local TIP_SETS = { "cellTips", "repTips", "gearTips" }
+
+-- One column's widgets on a row: its text and its hover button, keyed by
+-- field on the row (row.byField) so the row can show other columns and come
+-- back to this one without building it again (#378). A column's definition
+-- is fixed per field, so the closures below may keep `col`.
+local function MakeColumnWidgets(row, col, height)
+    local w = {}
+    local cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    if col.type == "classIcon" or col.type == "raceIcon" then
+        cell:SetJustifyH("CENTER")
+    else
+        cell:SetJustifyH(col.align or "LEFT")
+    end
+    cell:SetWordWrap(false)
+    w.cell = cell
+
+    -- General tooltip button for classIcon, raceIcon, ruleset, level, restPercent, profSkill
+    if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
+    or col.field=="level" or col.type=="restXP"
+    or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags" then
+        local tip = CreateFrame("Button", nil, row)
+        tip:SetSize(col.width, height)
+        -- The Bags tooltip (#346) is built on hover, not at render: the
+        -- Warband plugin's bag scan lands a second after the bag update
+        -- that redrew the row, and bag names load from the item cache.
+        if col.type == "bags" then
+            tip.refresh = function(t)
+                if t.bagsChar then t.line1, t.cdLines = AltStable.BagSpaceTooltip(t.bagsChar) end
+            end
+        end
+        tip:SetScript("OnEnter", function()
+            if tip.refresh then tip.refresh(tip) end
+            GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+            GameTooltip:ClearLines()
+            if tip.line1 then GameTooltip:AddLine(tip.line1, 1,1,1) end
+            if tip.line2 then GameTooltip:AddLine(tip.line2, 0.8,0.8,0.8) end
+            if tip.line3 then GameTooltip:AddLine(tip.line3, 0.7,0.7,0.4) end
+            if tip.cdLines then
+                GameTooltip:AddLine(" ", 1,1,1)  -- spacer
+                for _, line in ipairs(tip.cdLines) do
+                    GameTooltip:AddLine(line, 1,1,1)
+                end
+            end
+            GameTooltip:Show()
+        end)
+        tip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        w.cellTip = tip
+    end
+
+    -- Invisible hover button for rep cells
+    if col.type == "rep" then
+        local tip = CreateFrame("Button", nil, row)
+        tip:SetSize(col.width, height)
+        tip:SetScript("OnEnter", function()
+            if tip.standing then
+                GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                GameTooltip:ClearLines()
+                local factionName = tip.factionLabel or ""
+                GameTooltip:AddLine(factionName, 1, 1, 1)
+                GameTooltip:AddLine(tip.standing, 0.8, 0.8, 0.8)
+                GameTooltip:Show()
+            end
+        end)
+        tip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        tip.factionLabel = col.label
+        w.repTip = tip
+    end
+
+    -- Invisible hover button for gear slots
+    if col.type == "gearSlot" then
+        local tip = CreateFrame("Button", nil, row)
+        tip:SetSize(col.width, height)
+
+        -- Hover highlight background
+        local hoverBg = tip:CreateTexture(nil, "BACKGROUND")
+        hoverBg:SetAllPoints()
+        hoverBg:SetColorTexture(1, 1, 1, 0.12)
+        hoverBg:Hide()
+        tip.hoverBg = hoverBg
+
+        tip:SetScript("OnEnter", function()
+            hoverBg:Show()
+            if tip.isCurrentPlayer and tip.slotID then
+                -- Live tooltip for the currently logged-in character's equipped item.
+                -- SetInventoryItem shows enchants, gems, and socket bonuses correctly.
+                GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                GameTooltip:SetInventoryItem("player", tip.slotID)
+                GameTooltip:Show()
+            elseif tip.itemLink and tip.itemLink ~= "" then
+                -- Local full item link only (carries this client's
+                -- gems/enchants).
+                local itemID = tip.itemLink:match("item:(%d+)")
+                if itemID then
+                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                    GameTooltip:SetHyperlink("item:"..itemID)
+                    GameTooltip:Show()
+                end
+            elseif tip.itemID and tip.itemID > 0 then
+                -- Synced characters carry no link, only the item id: the
+                -- base item's tooltip, without this character's enchants.
+                GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                GameTooltip:SetHyperlink("item:"..tip.itemID)
+                GameTooltip:Show()
+            elseif tip.slotIlvl and tip.slotIlvl > 0 then
+                -- Fallback for items without a stored link
+                local qColor = QUALITY_COLORS[tip.slotQuality or 1] or "|cffffffff"
+                GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
+                GameTooltip:ClearLines()
+                if tip.itemName and tip.itemName ~= "" then
+                    GameTooltip:AddLine(qColor..tip.itemName.."|r", 1,1,1)
+                end
+                GameTooltip:AddLine(col.label.." — ilvl "..tip.slotIlvl, 0.8,0.8,0.8)
+                GameTooltip:Show()
+            end
+        end)
+        tip:SetScript("OnLeave", function()
+            hoverBg:Hide()
+            GameTooltip:Hide()
+        end)
+        w.gearTip = tip
+    end
+    return w
+end
+
+-- A row's hover buttons on or off. On only once RenderRow has filled them
+-- for the character in the row: a pooled row turned filler or group band
+-- would otherwise keep the last character's item under a blank cell (Codex
+-- review of #494).
+local function SetRowTipsShown(row, shown)
+    for _, set in ipairs(TIP_SETS) do
+        for _, tip in pairs(row[set] or {}) do
+            if shown then tip:Show() else tip:Hide() end
+        end
+    end
+end
+AltStable._SetRowTipsShown = SetRowTipsShown
+
+local function EachTip(w, fn)
+    if w.cellTip then fn(w.cellTip) end
+    if w.repTip then fn(w.repTip) end
+    if w.gearTip then fn(w.gearTip) end
+end
+
+-- Sets a row up for `columns`: each column's widgets (made the first time
+-- the row shows it), index by index in row.cells / cellTips / repTips /
+-- gearTips, and a divider between each two. A column the row no longer shows
+-- keeps its widgets, hidden and blank. Placed by LayoutRowCells: one walk for
+-- every position, shared with the header (AltStable.WalkColumns).
+function AltStable.SetRowColumns(row, columns)
+    local height = row:GetHeight()
+    row.byField = row.byField or {}
+    row.cells, row.cellTips, row.repTips, row.gearTips = {}, {}, {}, {}
+    local used = {}
+    for i, col in ipairs(columns) do
+        local key = col.field or ("#" .. i)   -- a column without a field: by place
+        local w = row.byField[key]
+        if not w then
+            w = MakeColumnWidgets(row, col, height)
+            row.byField[key] = w
+        end
+        used[key] = true
+        row.cells[i] = w.cell
+        row.cellTips[i], row.repTips[i], row.gearTips[i] = w.cellTip, w.repTip, w.gearTip
+        w.cell:Show()
+    end
+    -- Every hover button off, the shown columns' too, until RenderRow fills them.
+    for field, w in pairs(row.byField) do
+        if not used[field] then w.cell:SetText(""); w.cell:Hide() end
+        EachTip(w, function(t) t:Hide() end)
+    end
+    -- Dividers from a pool on the row; row.dividers holds only the ones in
+    -- use, since rendering shows every one it holds.
+    row.dividerPool = row.dividerPool or {}
+    row.dividers = {}
+    for i = 1, math.max(#columns - 1, 0) do
+        local div = row.dividerPool[i]
+        if not div then
+            div = row:CreateTexture(nil, "ARTWORK")
+            div:SetSize(1, height)
+            div:SetColorTexture(unpack(DIVIDER_COLOR))
+            row.dividerPool[i] = div
+        end
+        row.dividers[i] = div
+    end
+    for i = #row.dividers + 1, #row.dividerPool do row.dividerPool[i]:Hide() end
+    AltStable.LayoutRowCells(row, columns)   -- no key: placed, and the cached widths forgotten
+end
 
 function AltStable.CreateRow(parent, height, columns)
     local row = CreateFrame("Frame", nil, parent)
@@ -761,138 +947,7 @@ function AltStable.CreateRow(parent, height, columns)
     row.mark:Hide()
     markRows[row] = true
 
-    -- Created here, PLACED by LayoutRowCells at the end: one walk for every
-    -- position, shared with the header (AltStable.WalkColumns).
-    for i, col in ipairs(columns) do
-        local cell
-
-        if col.type == "classIcon" or col.type == "raceIcon" then
-            cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            cell:SetJustifyH("CENTER")
-            cell:SetWordWrap(false)
-            row.cells[i] = cell
-        else
-            cell = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-            cell:SetJustifyH(col.align or "LEFT")
-            cell:SetWordWrap(false)
-            row.cells[i] = cell
-        end
-
-        -- General tooltip button for classIcon, raceIcon, ruleset, level, restPercent, profSkill
-        if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
-        or col.field=="level" or col.type=="restXP"
-        or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags" then
-            local tip = CreateFrame("Button", nil, row)
-            tip:SetSize(col.width, height)
-            -- The Bags tooltip (#346) is built on hover, not at render: the
-            -- Warband plugin's bag scan lands a second after the bag update
-            -- that redrew the row, and bag names load from the item cache.
-            if col.type == "bags" then
-                tip.refresh = function(t)
-                    if t.bagsChar then t.line1, t.cdLines = AltStable.BagSpaceTooltip(t.bagsChar) end
-                end
-            end
-            tip:SetScript("OnEnter", function()
-                if tip.refresh then tip.refresh(tip) end
-                GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
-                GameTooltip:ClearLines()
-                if tip.line1 then GameTooltip:AddLine(tip.line1, 1,1,1) end
-                if tip.line2 then GameTooltip:AddLine(tip.line2, 0.8,0.8,0.8) end
-                if tip.line3 then GameTooltip:AddLine(tip.line3, 0.7,0.7,0.4) end
-                if tip.cdLines then
-                    GameTooltip:AddLine(" ", 1,1,1)  -- spacer
-                    for _, line in ipairs(tip.cdLines) do
-                        GameTooltip:AddLine(line, 1,1,1)
-                    end
-                end
-                GameTooltip:Show()
-            end)
-            tip:SetScript("OnLeave", function() GameTooltip:Hide() end)
-            row.cellTips[i] = tip
-        end
-
-        -- Invisible hover button for rep cells
-        if col.type == "rep" then
-            local tip = CreateFrame("Button", nil, row)
-            tip:SetSize(col.width, height)
-            tip:SetScript("OnEnter", function()
-                if tip.standing then
-                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
-                    GameTooltip:ClearLines()
-                    local factionName = tip.factionLabel or ""
-                    GameTooltip:AddLine(factionName, 1, 1, 1)
-                    GameTooltip:AddLine(tip.standing, 0.8, 0.8, 0.8)
-                    GameTooltip:Show()
-                end
-            end)
-            tip:SetScript("OnLeave", function() GameTooltip:Hide() end)
-            tip.factionLabel = col.label
-            row.repTips[i] = tip
-        end
-
-        -- Invisible hover button for gear slots
-        if col.type == "gearSlot" then
-            local tip = CreateFrame("Button", nil, row)
-            tip:SetSize(col.width, height)
-
-            -- Hover highlight background
-            local hoverBg = tip:CreateTexture(nil, "BACKGROUND")
-            hoverBg:SetAllPoints()
-            hoverBg:SetColorTexture(1, 1, 1, 0.12)
-            hoverBg:Hide()
-            tip.hoverBg = hoverBg
-
-            tip:SetScript("OnEnter", function()
-                hoverBg:Show()
-                if tip.isCurrentPlayer and tip.slotID then
-                    -- Live tooltip for the currently logged-in character's equipped item.
-                    -- SetInventoryItem shows enchants, gems, and socket bonuses correctly.
-                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
-                    GameTooltip:SetInventoryItem("player", tip.slotID)
-                    GameTooltip:Show()
-                elseif tip.itemLink and tip.itemLink ~= "" then
-                    -- Local full item link only (carries this client's
-                    -- gems/enchants).
-                    local itemID = tip.itemLink:match("item:(%d+)")
-                    if itemID then
-                        GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
-                        GameTooltip:SetHyperlink("item:"..itemID)
-                        GameTooltip:Show()
-                    end
-                elseif tip.itemID and tip.itemID > 0 then
-                    -- Synced characters carry no link, only the item id: the
-                    -- base item's tooltip, without this character's enchants.
-                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
-                    GameTooltip:SetHyperlink("item:"..tip.itemID)
-                    GameTooltip:Show()
-                elseif tip.slotIlvl and tip.slotIlvl > 0 then
-                    -- Fallback for items without a stored link
-                    local qColor = QUALITY_COLORS[tip.slotQuality or 1] or "|cffffffff"
-                    GameTooltip:SetOwner(tip, "ANCHOR_RIGHT")
-                    GameTooltip:ClearLines()
-                    if tip.itemName and tip.itemName ~= "" then
-                        GameTooltip:AddLine(qColor..tip.itemName.."|r", 1,1,1)
-                    end
-                    GameTooltip:AddLine(col.label.." — ilvl "..tip.slotIlvl, 0.8,0.8,0.8)
-                    GameTooltip:Show()
-                end
-            end)
-            tip:SetScript("OnLeave", function()
-                hoverBg:Hide()
-                GameTooltip:Hide()
-            end)
-            row.gearTips[i] = tip
-        end
-
-        if i<#columns then
-            local div = row:CreateTexture(nil,"ARTWORK")
-            div:SetSize(1,height)
-            div:SetColorTexture(unpack(DIVIDER_COLOR))
-            row.dividers = row.dividers or {}
-            table.insert(row.dividers, div)
-        end
-    end
-    AltStable.LayoutRowCells(row, columns)
+    AltStable.SetRowColumns(row, columns)
     return row
 end
 
@@ -934,6 +989,7 @@ function AltStable.RenderGroupRow(row, item)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     for _, cell in ipairs(row.cells) do cell:SetText("") end
+    SetRowTipsShown(row, false)
 
     -- Group row is a solid full-width band — column dividers must not paint
     -- through it. RenderRow restores them for character rows.
@@ -983,6 +1039,7 @@ function AltStable.RenderRow(row, char, index, columns)
     SetRowGuid(row, char and char.guid or nil)
     DimRow(row, char)
     SetRowBg(row, index)
+    SetRowTipsShown(row, true)
     -- Pool reuse: a row that previously rendered as a group header may carry
     -- a leftover groupLabel. Hide it so it doesn't bleed onto this char row.
     if row.groupLabel then row.groupLabel:Hide() end
@@ -1242,6 +1299,7 @@ function AltStable.RenderFillerRow(row, index)
     -- space — like a real spreadsheet's empty rows below the last data row.
     if row.dividers then for _, d in ipairs(row.dividers) do d:Show() end end
     for _, cell in ipairs(row.cells) do cell:SetText("") end
+    SetRowTipsShown(row, false)
     row:Show()
 end
 

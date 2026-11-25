@@ -243,6 +243,10 @@ end
 -- caller's own for a menu opened through AltStable.ShowMenu (the Legacy
 -- Bucket List's). One frame for every right-click menu, so they cannot drift.
 local root, panel, catcher, entries, pick
+-- A menu that stays open on a pick (#378, the column chooser): the function
+-- that lists its entries again once the pick has run. Nil for every other
+-- menu, which closes first.
+local stay
 
 -- Cursor position is in PHYSICAL pixels; frame offsets are in the frame's own
 -- scaled units. Dividing by the effective scale is not optional - skip it and
@@ -281,6 +285,8 @@ local function PlaceAtCursor()
     -- The panel hangs DOWN and RIGHT from the cursor, like every other menu.
     panel:SetPoint("TOPLEFT", root, "BOTTOMLEFT", x, y)
 end
+
+local Open
 
 local function EntryButton(index)
     entries = entries or {}
@@ -331,6 +337,19 @@ local function EntryButton(index)
     b:SetScript("OnClick", function(self)
         if self._disabled then return end
         local id, fn = self._id, pick
+        -- Staying open: the pick runs with the menu up, then the menu shows
+        -- its entries again where it is - unless the pick closed it or opened
+        -- another menu in its place.
+        if stay and fn then
+            local again = stay
+            fn(id)
+            if pick == fn and stay == again then
+                local list = again()
+                if type(list) == "table" and #list > 0 then Open(list, true)
+                else AltStable.CloseCharacterMenu() end
+            end
+            return
+        end
         -- Closed BEFORE the action runs. Forget raises a confirmation, and a
         -- menu still sitting on screen underneath it - with a full-screen
         -- catcher swallowing the first click at the dialog - is the same bug
@@ -452,7 +471,7 @@ end
 
 function AltStable.CloseCharacterMenu()
     if not root then return end
-    pick = nil
+    pick, stay = nil, nil
     -- Let the list stop marking the row.
     --
     -- After the `if not root then return end` above, not before it - which is
@@ -468,8 +487,6 @@ function AltStable.CloseCharacterMenu()
     if AltStable.LiftAboveHiddenUI then AltStable.LiftAboveHiddenUI(root, false) end
     root:Hide()
 end
-
-local Open
 
 function AltStable.ShowCharacterMenu(char)
     if type(char) ~= "table" or not char.guid then return false end
@@ -488,22 +505,40 @@ end
 
 -- Any other right-click menu, on the same frame: `list` takes the entries'
 -- shape above ({ id, text, title?, disabled?, why?, danger? }), and
--- onPick(id) runs once the menu has closed.
-function AltStable.ShowMenu(list, onPick)
+-- onPick(id) runs once the menu has closed. With `again` (a function giving
+-- the entries anew), the menu stays open on a pick instead: onPick runs, then
+-- the menu shows again() in place. Escape and a click outside still close it.
+function AltStable.ShowMenu(list, onPick, again)
     if type(list) ~= "table" or #list == 0 then return false end
     Build()
     AltStable.CloseCharacterMenu()
     pick = onPick
+    stay = type(again) == "function" and again or nil
     return Open(list)
 end
 
-Open = function(list)
-    local width, y = MIN_W, -PAD
+-- A staying menu shown again in place, its entries listed anew: for a change
+-- made elsewhere while it is open (the column chooser after a settings sync,
+-- #378), so its marks never show the opposite of what a pick will do. Closed
+-- when it has nothing to show. Nothing for any other menu.
+function AltStable.RefreshStayingMenu()
+    if not (root and stay) then return false end   -- closing clears stay
+    local list = stay()
+    if type(list) == "table" and #list > 0 then return Open(list, true) end
+    AltStable.CloseCharacterMenu()
+    return false
+end
+
+-- At most this share of the screen's height; a longer list wraps into more
+-- columns (the Reputations tab can have forty and more).
+local MAX_SCREEN_SHARE = 0.85
+
+Open = function(list, inPlace)
+    local width = MIN_W
     for i, e in ipairs(list) do
         local b = EntryButton(i)
         b._id, b._disabled, b._why = e.id, e.disabled and true or false, e.why
         b:SetHeight(e.title and TITLE_H or ENTRY_H)
-        b:SetPoint("TOP", panel, "TOP", 0, y)
         b.label:SetText(e.text or "")
 
         if e.title then
@@ -521,14 +556,35 @@ Open = function(list)
         end
 
         b:Show()
-        y = y - b:GetHeight()
         local lw = (b.label.GetStringWidth and b.label:GetStringWidth()) or 0
         if lw + PAD * 4 > width then width = lw + PAD * 4 end
     end
     -- Recycled buttons from a longer menu must not linger under the backdrop.
     for i = #list + 1, #(entries or {}) do entries[i]:Hide() end
 
-    panel:SetSize(math.min(width, MAX_W), -y + PAD)
+    -- Placed once the widest label is known: one column, or more when the
+    -- list is taller than the screen allows. Anchors replaced, never added:
+    -- the buttons are pooled.
+    local colW = math.min(width, MAX_W) - PAD * 2
+    local maxH = ((root:GetHeight() or 0) * MAX_SCREEN_SHARE) - PAD * 2
+    local col, y, lowest = 0, -PAD, -PAD
+    for i = 1, #list do
+        local b = entries[i]
+        local h = b:GetHeight()
+        if maxH > 0 and y < -PAD and (-y + h) > maxH then
+            col, y = col + 1, -PAD
+        end
+        b:ClearAllPoints()
+        b:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD + col * colW, y)
+        b:SetWidth(colW)
+        y = y - h
+        if y < lowest then lowest = y end
+    end
+
+    panel:SetSize(PAD * 2 + (col + 1) * colW, -lowest + PAD)
+    -- Shown again after a pick that stays open: same place, same lift, same
+    -- keyboard. Moving it to the cursor would make it walk with every click.
+    if inPlace then return true end
 
     -- Lift BEFORE placing: the lift changes the panel's effective scale, and
     -- the cursor maths divides by it.

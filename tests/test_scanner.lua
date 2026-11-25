@@ -683,8 +683,10 @@ do
 end
 
 -- A row is built with one cell per column. The Reputations columns follow the
--- data, so when a faction is met the pool must hand out rows built for the new
--- columns: rendering an old row against them indexes a cell that doesn't exist.
+-- data, and any column can be hidden (#378), so when they change the pool sets
+-- its rows up again for the new columns: rendering a row against columns it
+-- wasn't set up for indexes a cell that doesn't exist. The widgets are reused,
+-- since frames are never freed.
 do
     local colsA = { { label = "Orgrimmar", field = "rep_76", type = "rep", width = 22 },
                     { label = "Thunder Bluff", field = "rep_81", type = "rep", width = 22 } }
@@ -701,16 +703,53 @@ do
     check("  (the hazard: an old row rendered against more columns errors)",
           not pcall(AltStable.RenderRow, oldRow, char, 1, colsB))
 
-    local hidden = false
-    oldRow.Hide = function() hidden = true end
     eq("the same columns keep the pool's rows", #AltStable.RowPoolFor(pools, "rep", colsA).rows, 1)
+    local thunderCell = oldRow.byField.rep_81.cell
+    local frames = 0
+    local realCF = CreateFrame
+    CreateFrame = function(...) frames = frames + 1; return realCF(...) end
     pool = AltStable.RowPoolFor(pools, "rep", colsB)
-    eq("new columns: the pool drops the rows built for the old ones", #pool.rows, 0)
-    check("  and hides them", hidden)
-    local newRow = AltStable.CreateRow(nil, 20, colsB)
-    pool.rows[1] = newRow
-    local ok, err = pcall(AltStable.RenderRow, newRow, char, 1, colsB)
-    check("  a fresh row renders the new faction", ok, tostring(err))
+    eq("new columns: the pool keeps its rows (#378: frames are never freed)", pool.rows[1], oldRow)
+    local ok, err = pcall(AltStable.RenderRow, oldRow, char, 1, colsB)
+    check("  set up again, the row renders the new faction", ok, tostring(err))
+    eq("  in a cell of its own", oldRow.cells[3], oldRow.byField.rep_576.cell)
+    eq("  the columns it had keep their cells", oldRow.cells[2], thunderCell)
+    eq("  two dividers for three columns", #oldRow.dividers, 2)
+    local timberCell = oldRow.byField.rep_576.cell
+    local made = frames
+    pool = AltStable.RowPoolFor(pools, "rep", colsA)
+    check("back to the old columns: the one it no longer shows is hidden and blank",
+          not timberCell:IsShown() and (timberCell:GetText() or "") == "")
+    eq("  one divider again", #oldRow.dividers, 1)
+    AltStable.RowPoolFor(pools, "rep", colsB)
+    eq("  and shown again, the same cell", oldRow.cells[3], timberCell)
+    check("  shown", timberCell:IsShown())
+    for _ = 1, 5 do
+        AltStable.RowPoolFor(pools, "rep", colsB)
+        AltStable.RowPoolFor(pools, "rep", colsA)
+    end
+    eq("  toggling again and again makes no new frame", frames, made)
+    CreateFrame = realCF
+    AltStable.RowPoolFor(pools, "rep", { colsA[1] })
+    eq("one column: no divider in use", #oldRow.dividers, 0)
+    check("  the pool's are hidden", not oldRow.dividerPool[1]:IsShown())
+
+    -- Hover buttons only on a character's row, once it is rendered (Codex
+    -- review of #494): a pooled row turned filler or group band must not
+    -- keep the last character's under a blank cell.
+    AltStable.RowPoolFor(pools, "rep", colsB)
+    local tip = oldRow.repTips[3]
+    check("set up for new columns, a hover button waits for the render", tip and not tip:IsShown())
+    check("  a column it already showed too", oldRow.repTips[1] and not oldRow.repTips[1]:IsShown())
+    AltStable.RenderRow(oldRow, char, 1, colsB)
+    check("  rendered for a character, it is on", tip:IsShown())
+    AltStable.RenderFillerRow(oldRow, 2)
+    check("  a filler row's are off", not tip:IsShown())
+    AltStable.RenderRow(oldRow, char, 1, colsB)
+    AltStable.RenderGroupRow(oldRow, { kind = "group", realm = "R", count = 1 })
+    check("  and a group row's", not tip:IsShown())
+    AltStable.RenderRow(oldRow, char, 1, colsB)
+    check("  back to a character, on again", tip:IsShown())
     check("another section's pool is untouched",
           AltStable.RowPoolFor(pools, "gear", colsA) ~= pool)
 end
@@ -1915,7 +1954,7 @@ do
     local col
     for _, x in ipairs(AltStable.Columns) do if x.field == "bind" then col = x end end
     check("a Hearthstone column exists", col ~= nil)
-    check("  sorted as text, with its option", col and col.sortText and col.option == "sheetHearthColumn")
+    check("  sorted as text", col and col.sortText)
     check("  on Account Summary, after Bags",
           io.open("SheetUI.lua"):read("*a"):find('"bags_free","bind","lastUpdate"', 1, true) ~= nil)
     if col then
