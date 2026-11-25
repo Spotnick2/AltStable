@@ -25,6 +25,7 @@ Skin.lua
 Prompt.lua
 Core.lua
 Scanner.lua
+Played.lua
 Reputations.lua
 Config.lua
 Toasts.lua

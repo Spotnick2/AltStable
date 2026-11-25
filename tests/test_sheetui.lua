@@ -36,6 +36,7 @@ dofile("Skin.lua")
 dofile("Prompt.lua")   -- our prompts, before Core (TOC order)
 assert(loadfile("Core.lua"))()
 dofile("Scanner.lua")
+dofile("Played.lua")
 dofile("Reputations.lua")
 dofile("Config.lua")
 dofile("Toasts.lua")
@@ -4093,8 +4094,8 @@ do
     eq("  Bags checked", MenuHas("Bags"), ON .. "Bags")
     check("  Show all is greyed out while nothing is hidden", T.MenuEntry("__all")._disabled)
     local labels = T.MenuLabels()
-    check("  the columns in the tab's order: Class first, Last Online last before Show all",
-          labels[3] == ON .. "Class" and labels[#labels - 1] == ON .. "Last Online", labels[3])
+    check("  the columns in the tab's order: Class first, Played last before Show all",
+          labels[3] == ON .. "Class" and labels[#labels - 1] == ON .. "Played", labels[3])
 
     T.MenuClick("bags_free")
     eq("unticking Bags hides it on this tab", AltStableConfig.sheetHiddenColumns["summary.bags_free"], true)
@@ -4222,6 +4223,24 @@ do
     T.MenuClick("__all")
     check("  and Show all brings them back", HasColumn("money"))
     T.MenuEscape()
+
+    -- The Played column (#378) in the footer: the known added, the rest
+    -- counted, never as 0.
+    AltStable._test.ResetPlayed()
+    local savedDB = AltStableDB
+    AltStableDB = { a = { guid = "a", name = "A", level = 60, played = 3 * 86400 },
+                    b = { guid = "b", name = "B", level = 10, played = 4 * 3600 },
+                    c = { guid = "c", name = "C", level = 1 } }
+    AltStable.RefreshSheet()
+    local mid = AltStableSheet.totalsBar.mid:GetText() or ""
+    check("the footer adds the time played", mid:find("3d 4h played", 1, true) ~= nil, mid)
+    check("  and counts the unknown", mid:find("(1 unknown)", 1, true) ~= nil, mid)
+    AltStableDB = { c = { guid = "c", name = "C", level = 1 } }
+    AltStable.RefreshSheet()
+    mid = AltStableSheet.totalsBar.mid:GetText() or ""
+    check("  nothing known: no played total at all", mid:find("played", 1, true) == nil, mid)
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
 
     -- The Options button.
     AltStable.SetColumnShown("gear", "gear_head", false)

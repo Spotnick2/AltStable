@@ -1319,6 +1319,11 @@ function AltStable.ScanCharacter()
         char.pet_name    = petName
     end
 
+    -- The time played (#378): a reply that came before this record existed
+    -- (another addon asking at login on a new character), and the clock's
+    -- value at every scan, so a sync carries it before logout.
+    if AltStable.Played and AltStable.Played.OnScanned then AltStable.Played.OnScanned(char) end
+
     -- Only stamp lastUpdate when we have complete data.
     -- If any items are pending cache we deliberately leave the timestamp
     -- unchanged so peers don't reject a later corrected version.

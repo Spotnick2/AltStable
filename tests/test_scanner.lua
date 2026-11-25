@@ -1969,6 +1969,53 @@ do
 end
 
 ------------------------------------------------------------
+-- Time played (#378): the column and its cell
+------------------------------------------------------------
+do
+    dofile("Played.lua")
+    AltStable._test.ResetPlayed()
+    -- A reply before the first scan made the record: the scan writes it
+    -- (Codex review of #496).
+    WoW.reset()
+    AltStableDB = {}
+    AltStable.Played.OnReply(500, 50)
+    pcall(AltStable.ScanCharacter)
+    local me = AltStableDB[UnitGUID("player")]
+    eq("a reply before the record is written by the first scan", me and me.played, 500)
+    eq("  with the level's time", me and me.playedLevel, 50)
+    AltStable._test.ResetPlayed()
+    AltStableDB = {}
+    local col
+    for _, x in ipairs(AltStable.Columns) do if x.field == "played" then col = x end end
+    check("a Played column exists", col ~= nil)
+    check("  on Account Summary, after Last Online",
+          io.open("SheetUI.lua"):read("*a"):find('"bind","lastUpdate","played"', 1, true) ~= nil)
+    if col then
+        eq("  sorted by the time played", col.sortValue({ played = 50 }), 50)
+        eq("  unknown sorts as nothing (last)", col.sortValue({}), nil)
+        local row = AltStable.CreateRow(nil, 20, { col })
+        local char = { guid = "Player-Pl-1", name = "P", played = 212 * 86400 + 4 * 3600, playedLevel = 3600 }
+        AltStable.RenderRow(row, char, 1, { col })
+        eq("  the cell is compact", row.cells[1]:GetText(), "212d 4h")
+        local tip = row.cellTips[1]
+        check("  it has a tooltip", tip ~= nil)
+        eq("  in words", tip and tip.line1, "Played: 7 months, 2 days, 4 hours")
+        eq("  with the time at this level", tip and tip.line2, "At this level: 1 hour")
+        eq("  as of the last time played, months explained", tip and tip.line3,
+           "As of when it was last played (a month is 30 days, a year 365)")
+        char.played = 5 * 3600
+        AltStable.RenderRow(row, char, 1, { col })
+        eq("  no months, nothing to explain", tip and tip.line3, "As of when it was last played")
+        AltStable.RenderRow(row, { guid = "Player-Pl-2", name = "Q" }, 1, { col })
+        eq("  unknown: a dim dash, not a 0", row.cells[1]:GetText(), "|cff888888\226\128\148|r")
+        eq("  and the tooltip says so", tip and tip.line1, "Played: not known yet")
+        eq("  and when it will be", tip and tip.line2, "Read the next time this character logs in.")
+    end
+    AltStableDB = {}
+    WoW.reset()
+end
+
+------------------------------------------------------------
 -- Merchant's Favor (#270)
 ------------------------------------------------------------
 -- C_CurrencyInfo.GetCurrencyInfo returns a struct, the amount in `quantity`
