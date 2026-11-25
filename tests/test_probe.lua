@@ -994,4 +994,126 @@ do
     rawset(_G, "C_TransmogCollection", realTC)
 end
 
+------------------------------------------------------------
+-- /fp steps as played (#378): the reply, and our own request kept out of chat
+------------------------------------------------------------
+-- What has to hold: a plain request is counted as printed by the chat frames;
+-- a silenced one unregisters every chat frame that had the event, none prints
+-- it, and they are registered again on the NEXT frame after the reply, or
+-- after 10 s without one; the saved runs hold no frame; a typed /played is
+-- waited for and counted; the procedure ends with a /reload.
+do
+    local proc = FP.procedures and FP.procedures["AltStableProbe/played"]
+    check("/fp steps as played is defined", proc ~= nil)
+    check("  and ends with a /reload", proc ~= nil and proc.steps[#proc.steps].reload == true)
+    check("/fp as played exists", P.commands.played ~= nil)
+
+    local function chatFrame()
+        local f = { reg = { TIME_PLAYED_MSG = true }, lines = {} }
+        function f:IsEventRegistered(e) return self.reg[e] == true end
+        function f:RegisterEvent(e) self.reg[e] = true end
+        function f:UnregisterEvent(e) self.reg[e] = nil end
+        function f:AddMessage(t) self.lines[#self.lines + 1] = t end
+        return f
+    end
+    local saved = { rawget(_G, "ChatFrame1"), rawget(_G, "ChatFrame2"), rawget(_G, "NUM_CHAT_WINDOWS"),
+                    rawget(_G, "TIME_PLAYED_TOTAL"), rawget(_G, "RequestTimePlayed") }
+    ChatFrame1, ChatFrame2, NUM_CHAT_WINDOWS = chatFrame(), chatFrame(), 2
+    TIME_PLAYED_TOTAL = "Total time played: %s"
+    local asked = 0
+    RequestTimePlayed = function() asked = asked + 1 end
+    -- The client's answer: our frame and every chat frame still registered.
+    local function reply(total, level)
+        fireProbeEvent("TIME_PLAYED_MSG", total, level)
+        for _, f in ipairs({ ChatFrame1, ChatFrame2 }) do
+            if f:IsEventRegistered("TIME_PLAYED_MSG") then f:AddMessage("Total time played: 1 day") end
+        end
+    end
+    local PL = ns.played.Played
+    -- A clock of its own: WoW.flushTimers runs timers in the order they were
+    -- set, so a 10 s timeout set first would beat a 0.5 s count set after it.
+    local realAfter, clock, due = C_Timer.After, 0, {}
+    C_Timer.After = function(d, fn) due[#due + 1] = { at = clock + d, fn = fn, n = #due } end
+    local function advance(sec)
+        local stop = clock + sec
+        while true do
+            local best, bi
+            for i, e in ipairs(due) do
+                if e.at <= stop and (not best or e.at < best.at) then best, bi = e, i end
+            end
+            if not best then break end
+            table.remove(due, bi)
+            clock = best.at
+            best.fn()
+        end
+        clock = stop
+    end
+
+    proc.steps[1].run()
+    eq("the plain request asks once", asked, 1)
+    reply(90000, 3600)
+    ChatFrame1:AddMessage("Someone says: Total time played")   -- not ours, not counted
+    advance(1)
+    local plain = ns.played.Latest("plain")
+    eq("  both chat frames printed it", plain and plain.printed, 2)
+    eq("  the reply's values are kept", plain and plain.reply and plain.reply.total, 90000)
+    eq("  and the run no longer waits: a later event isn't ours", PL.pending, nil)
+    check("  the step's check passes", (proc.steps[2].check()))
+    eq("  the login reading counted no event before the request",
+       AltStableProbeDB.played.atStart and AltStableProbeDB.played.atStart.eventsSinceLoad, 0)
+
+    proc.steps[3].run()
+    local silent = ns.played.Latest("silent")
+    check("a silenced request unregisters every chat frame",
+          not ChatFrame1:IsEventRegistered("TIME_PLAYED_MSG") and not ChatFrame2:IsEventRegistered("TIME_PLAYED_MSG"))
+    eq("  and says how many", silent.silencedCount, 2)
+    reply(90010, 3610)
+    check("  still unregistered inside the reply's dispatch", not ChatFrame1:IsEventRegistered("TIME_PLAYED_MSG"))
+    advance(1)
+    eq("  nothing printed", silent.printed, 0)
+    check("  both registered again after", ChatFrame1:IsEventRegistered("TIME_PLAYED_MSG")
+          and ChatFrame2:IsEventRegistered("TIME_PLAYED_MSG"))
+    eq("  on the reply", silent.restoredBy, "reply")
+    check("  the step's check passes", (proc.steps[4].check()))
+
+    advance(20)   -- the earlier runs' timeouts, which must change nothing
+    eq("  a later timeout leaves the replied run alone", silent.restoredBy, "reply")
+    local lost = PL.Ask("lost", true)
+    advance(9)
+    check("  nine seconds without a reply: still silenced", not ChatFrame1:IsEventRegistered("TIME_PLAYED_MSG"))
+    advance(2)
+    eq("without a reply the frames come back after 10 s", lost.restoredBy, "timeout")
+    check("  registered again", ChatFrame1:IsEventRegistered("TIME_PLAYED_MSG"))
+    eq("  and the run says it timed out", lost.timedOut, true)
+
+    local frameSaved = false
+    for _, r in ipairs(AltStableProbeDB.played.runs) do
+        for _, v in pairs(r) do
+            if type(v) == "table" then
+                for _, x in pairs(v) do
+                    if type(x) == "table" and x.IsEventRegistered then frameSaved = true end
+                end
+            end
+        end
+    end
+    check("no saved run holds a frame", not frameSaved)
+
+    proc.steps[5].run()
+    local okBefore = proc.steps[6].wait()
+    check("the typed step waits for /played", not okBefore)
+    reply(90020, 3620)
+    advance(1)
+    local okAfter, detail = proc.steps[6].wait()
+    check("  and sees it print", okAfter, tostring(detail))
+    eq("  the typed run is done", ns.played.Latest("typed").done, true)
+    check("  the step's check passes", (proc.steps[6].check()))
+    local evs = AltStableProbeDB.played.events
+    eq("the events log marks ours", evs[1] and evs[1].ours, "plain")
+    eq("  and not the typed one", evs[#evs] and evs[#evs].ours, nil)
+
+    C_Timer.After = realAfter
+    ChatFrame1, ChatFrame2, NUM_CHAT_WINDOWS, TIME_PLAYED_TOTAL, RequestTimePlayed =
+        saved[1], saved[2], saved[3], saved[4], saved[5]
+end
+
 WoW.finish("test_probe", passed, failed)

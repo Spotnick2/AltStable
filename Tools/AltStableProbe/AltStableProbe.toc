@@ -24,3 +24,4 @@ Legacy.lua
 Quests.lua
 Bank.lua
 Transmog.lua
+Played.lua
