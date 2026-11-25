@@ -1186,6 +1186,25 @@ character: 400 XP to its next level, 5 factions met).
 **Test kit.** `tests\kit.pin` stays at build 70959, for the same reason as 71091: the documented
 lists are unchanged.
 
+**Also measured on 71139: the helm and cloak as drawn** (`/fp steps as drawn`, #485, results on
+the issue). `ShowingHelm()` / `ShowingCloak()` still say hidden for everything. What works:
+
+- A `DressUpModel` on the player gives, per slot, `GetItemTransmogInfo(slot).appearanceID`: the
+  **source** the slot is drawn with. The equipped item's own source when untouched, the applied
+  one when transmogged.
+- `C_TransmogCollection.GetSourceInfo(source).isHideVisual` is true for the hidden helm (source
+  77344, item 134110 "Hidden Helm") and the hidden cloak (77345, item 134111 "Hidden Cloak").
+  `IsAppearanceHiddenVisual(visualID)` says **false** for both: don't use it.
+- The model must be **shown**: on screen or 1x1 at alpha 0 both read, one never shown reads
+  nothing. A new model reads nothing at 0 s and everything at 0.1 s; a reused one at once.
+- Applying a transmog fires `VIEWED_TRANSMOG_OUTFIT_SLOT_SAVE_SUCCESS`, then
+  `UNIT_INVENTORY_CHANGED player` and `UNIT_MODEL_CHANGED player`; `TRANSMOGRIFY_OPEN` /
+  `TRANSMOGRIFY_CLOSE` fire too. `TRANSMOGRIFY_SUCCESS` and `TRANSMOGRIFY_UPDATE` never did.
+- The portrait stage (Capture.lua, both transmog options off) draws a hidden helm and cloak
+  hidden: seen in `/alts portrait preview` with both hidden.
+
+`Drawn.lua` reads it that way, on one 1x1 alpha-0 model on WorldFrame for the session.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk

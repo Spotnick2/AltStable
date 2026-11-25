@@ -456,11 +456,19 @@ local SLOT_NAMES = {
 }
 
 -- Whether the helm and cloak are SHOWN: the equipment list cannot say a slot is
--- hidden (Scanner.lua, hidehelm), and a hidden helm is not in the portrait.
-local function Showing(fn)
-    if type(fn) ~= "function" then return true end
-    local ok, v = pcall(fn)
-    return not ok or v and true or false
+-- hidden, and a hidden helm is not in the portrait (seen in the stage's preview,
+-- #485). At a shutter, from the posed stage itself: what is in the picture,
+-- even while Drawn.lua's own reading is still pending after a login (Codex
+-- review of #498). Otherwise, or when the stage can't say, from the record, as
+-- Drawn.lua read it - the flags the roster sends. Absent is shown.
+local function Showing(field, slot, stage)
+    if stage and AltStable.Drawn and AltStable.Drawn.SlotHidden then
+        local ok, hidden = pcall(AltStable.Drawn.SlotHidden, stage, slot)
+        if ok and hidden ~= nil then return not hidden end
+    end
+    local guid = UnitGUID and UnitGUID("player")
+    local char = guid and type(AltStableDB) == "table" and AltStableDB[guid]
+    return not (type(char) == "table" and char[field] == 1)
 end
 
 -- "slot:itemID;slot:itemID;..." for the visible slots, 0 for an empty one and
@@ -472,9 +480,9 @@ end
 -- screen. Reading that as "wearing nothing" made every slot "changed" (review
 -- of #134). A character who really wears nothing in every shown slot reads as
 -- unknown too; that is the cheaper mistake.
-local function ReadLook()
+local function ReadLook(stage)
     if type(GetInventoryItemID) ~= "function" then return nil end
-    local showHelm, showCloak = Showing(ShowingHelm), Showing(ShowingCloak)
+    local showHelm, showCloak = Showing("hidehelm", HEAD, stage), Showing("hidecloak", BACK, stage)
     local parts, any = {}, false
     for _, slot in ipairs(LOOK_SLOTS) do
         local id = tonumber((GetInventoryItemID("player", slot)))
@@ -488,8 +496,8 @@ end
 
 -- Never lets a look failure out: it is read inside the capture's timer chain,
 -- and an error there would stop the chain with the interface hidden.
-local function CurrentLook()
-    local ok, look = pcall(ReadLook)
+local function CurrentLook(stage)
+    local ok, look = pcall(ReadLook, stage)
     return ok and look or nil
 end
 
@@ -546,7 +554,7 @@ local function RecordMetadata(shotIndex)
         uiScale = UIParent:GetEffectiveScale(),
         -- What the portrait shows, so a later change of gear can say it is out
         -- of date (#128). Converters do not read it (PORTRAIT-CONTRACT.md).
-        look = CurrentLook(),
+        look = CurrentLook(model),
     })
 end
 
@@ -1173,7 +1181,7 @@ AltStable._test.portrait = {
     SWAP_DELAY     = SWAP_DELAY,
     WATCHDOG       = WATCHDOG,
     STORE_VERSION  = STORE_VERSION,
-    CurrentLook    = function() return CurrentLook() end,
+    CurrentLook    = function(stage) return CurrentLook(stage) end,
     LookDiff       = LookDiff,
     PortraitStatus = function() return PortraitStatus() end,
     CutoutEntry    = CutoutEntry,

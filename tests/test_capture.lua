@@ -914,10 +914,41 @@ eq("a new ring, neck or ranged-slot relic does not change the look", T.CurrentLo
 wear({})
 eq("nothing readable at all (inventory not loaded yet) is 'cannot tell', not 'naked'", T.CurrentLook(), nil)
 wear({ [1] = 10, [5] = 100 })
+-- Hidden or shown comes from the record, as Drawn.lua read it (#485), not
+-- from ShowingHelm(), which says hidden for everything on Forever.
+AltStableDB = type(AltStableDB) == "table" and AltStableDB or {}
+AltStableDB[GUID] = AltStableDB[GUID] or { guid = GUID }
 local realShowingHelm = ShowingHelm
 ShowingHelm = function() return false end
+check("ShowingHelm saying hidden no longer hides the helm", (T.CurrentLook() or ""):find("1:10", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidehelm = 1
 check("a hidden helm is marked hidden, not its item", (T.CurrentLook() or ""):find("1:h", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidehelm = 0
+check("  0 is shown", (T.CurrentLook() or ""):find("1:10", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidecloak = 1
+wear({ [1] = 10, [5] = 100, [15] = 20 })
+check("  the cloak the same way", (T.CurrentLook() or ""):find("15:h", 1, true), T.CurrentLook())
+wear({ [1] = 10, [5] = 100 })
+check("  but an empty back stays empty, hidden or not", (T.CurrentLook() or ""):find("15:0", 1, true), T.CurrentLook())
+AltStableDB[GUID].hidehelm, AltStableDB[GUID].hidecloak = nil, nil
 ShowingHelm = realShowingHelm
+-- At a shutter the posed stage says it (Codex review of #498): what is in the
+-- picture, even while the record has no reading yet.
+local realDrawn = AltStable.Drawn
+AltStable.Drawn = { SlotHidden = function(m, slot) return m.hidden[slot] end }
+wear({ [1] = 10, [5] = 100, [15] = 20 })
+local stage = { hidden = { [1] = true, [15] = false } }
+local staged = T.CurrentLook(stage) or ""
+check("the stage's hidden helm is in the capture's look", staged:find("1:h", 1, true), staged)
+check("  its shown cloak too", staged:find("15:20", 1, true), staged)
+AltStableDB[GUID].hidecloak = 1
+staged = T.CurrentLook(stage) or ""
+check("  the stage wins over the record", staged:find("15:20", 1, true), staged)
+staged = T.CurrentLook({ hidden = {} }) or ""
+check("  a stage that can't say falls back to the record", staged:find("15:h", 1, true), staged)
+AltStableDB[GUID].hidecloak = nil
+AltStable.Drawn = realDrawn
+wear({ [1] = 10, [5] = 100 })
 local realInv = GetInventoryItemID
 GetInventoryItemID = function() error("boom") end
 eq("a failing inventory read is 'cannot tell', never an error", T.CurrentLook(), nil)
@@ -985,7 +1016,7 @@ eq("a stored look with an extra slot, same gear, is not 'changed'", T.PortraitSt
 -- Showing or hiding the helm is a change the portrait would show.
 wear({ [1] = 10, [5] = 101, [7] = 200 })
 pair(T.CurrentLook())
-ShowingHelm = function() return false end
+AltStableDB[GUID].hidehelm = 1
 st = T.PortraitStatus()
 eq("hiding the helm since the capture: changed", st.reason, "changed")
 eq("  on the Head", table.concat(st.changedSlots, ","), "Head")
@@ -993,7 +1024,7 @@ wear({ [1] = 11, [5] = 101, [7] = 200 })
 pair(T.CurrentLook())
 wear({ [1] = 12, [5] = 101, [7] = 200 })
 eq("swapping a helm that stays hidden is not a change", T.PortraitStatus().reason, "none")
-ShowingHelm = realShowingHelm
+AltStableDB[GUID].hidehelm = nil
 
 -- Inventory not readable yet: no verdict about the look.
 wear({})
@@ -1117,6 +1148,24 @@ runChain()
 local newest = renders()[#renders()]
 check("a capture records the look it photographed", newest and newest.look and newest.look:find("5:4242", 1, true),
       newest and tostring(newest.look))
+
+-- Hidden or shown at the shutter comes from the posed stage (#485, Codex
+-- review of #498), even with the record saying otherwise.
+resetCapture()
+wear({ [1] = 10, [5] = 4242 })
+AltStableDB = type(AltStableDB) == "table" and AltStableDB or {}
+AltStableDB[GUID] = AltStableDB[GUID] or { guid = GUID }
+AltStableDB[GUID].hidehelm = 0
+local realDrawnStage, asked = AltStable.Drawn, nil
+AltStable.Drawn = { SlotHidden = function(m, slot) asked = m; return slot == 1 end }
+T.Capture()
+runChain()
+newest = renders()[#renders()]
+check("the shutter reads the helm from the stage", newest and newest.look and newest.look:find("1:h", 1, true),
+      newest and tostring(newest.look))
+check("  the stage's model, not some other", asked ~= nil and asked.GetObjectType ~= nil)
+AltStable.Drawn = realDrawnStage
+AltStableDB[GUID].hidehelm = nil
 
 -- Capture's helpers are locals: a missing forward declaration would either
 -- throw (a nil global at the call) or leak a global. Neither may happen.

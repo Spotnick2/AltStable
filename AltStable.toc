@@ -26,6 +26,7 @@ Prompt.lua
 Core.lua
 Scanner.lua
 Played.lua
+Drawn.lua
 Reputations.lua
 Config.lua
 Toasts.lua

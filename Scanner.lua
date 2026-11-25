@@ -446,14 +446,9 @@ local function ResetCharacter(char)
         char["gearench_"..slot.key] = nil  -- the enchant in words, absent for none (synced, #94)
     end
 
-    -- Helm/cloak display toggles. 1 = hidden, 0 = shown.
-    -- Numbers, not booleans: DeserializeChar coerces with tonumber and falls back to the raw
-    -- string, so a boolean would arrive at a peer as the STRING "true" while staying a real
-    -- boolean locally (the asymmetry restedArea already has). 1/0 round-trips as a number.
-    -- Named for the HIDDEN state so absent (record predates the field, or a peer on an older
-    -- build) reads as 0 = shown = the behaviour before this existed.
-    char.hidehelm  = 0
-    char.hidecloak = 0
+    -- The helm/cloak flags (hidehelm, hidecloak) are NOT reset here: Drawn.lua
+    -- writes them from what the game draws, and a scan that can't read them
+    -- must not turn a hidden helm back into a shown one (#485).
 
 end
 
@@ -1300,13 +1295,12 @@ function AltStable.ScanCharacter()
     -- an item uncached holds it back; Codex, PR #283).
     char.gearReadAt = time()
 
-    -- Helm/cloak display toggles. A portrait pipeline needs these because the equipment
-    -- list alone cannot say a slot is hidden: a character with the helm hidden would
-    -- otherwise be drawn wearing a helmet they never see in game. Synced on purpose — a
-    -- pipeline reads ONE aggregator account, so an alt's toggle has to ride sync to reach it.
-    -- Guarded: these are TBC-era APIs, and a missing global must not abort the whole scan.
-    char.hidehelm  = (ShowingHelm  and not ShowingHelm())  and 1 or 0
-    char.hidecloak = (ShowingCloak and not ShowingCloak()) and 1 or 0
+    -- Helm/cloak shown or hidden (hidehelm, hidecloak): a portrait pipeline needs them,
+    -- since the equipment list can't say a slot is hidden. NOT from ShowingHelm() /
+    -- ShowingCloak(), which say hidden for everything on Forever (#485): Drawn.lua reads
+    -- what the game draws, and a reading that came before this record existed goes on it
+    -- here. 1/0 numbers, synced on purpose (a pipeline reads one aggregator account).
+    if AltStable.Drawn and AltStable.Drawn.OnScanned then AltStable.Drawn.OnScanned(char) end
 
     -- The pet (#75). The LAST one seen out, not only one out right now: every
     -- character the Roster shows is logged out, and one who logged out with the
