@@ -72,7 +72,7 @@ local SECTIONS = {
         preferH = 400,
         fields = {
             "class","race","level","ilvl",
-            "guild","restPercent","money","bags_free","bind","lastUpdate",
+            "guild","restPercent","money","bags_free","bind","lastUpdate","played",
         },
     },
     {
@@ -181,6 +181,7 @@ local totalGold  = 0
 -- like the totals above: BuildDisplayList counts them and UpdateTotalsBar reads
 -- the count, and a local in the first would read as a nil global in the second.
 local goldUnknown = 0
+local totalPlayed, playedUnknown = 0, 0   -- seconds, and characters not read yet (#378)
 -- Characters the user has hidden (#21). Same file scope, same reason: counted
 -- in BuildDisplayList, reported by UpdateTotalsBar.
 local hiddenCount = 0
@@ -1093,6 +1094,7 @@ local function BuildDisplayList()
     local t = AltStable.CharacterTotals()
     totalChars, totalLevel, totalGold = t.characters, t.levels, t.money
     goldUnknown, hiddenCount = t.unknown, t.hidden
+    totalPlayed, playedUnknown = t.played, t.playedUnknown
 
     local allChars = {}
     for _, char in next, store do
@@ -1274,7 +1276,18 @@ local function UpdateTotalsBar()
     totalsBar.left:SetText(
         accentHex .. totalChars .. "|r |cffaaaaaa chars  " ..
         accentHex .. totalLevel .. "|r |cffaaaaaa total levels|r")
-    if totalsBar.mid then totalsBar.mid:SetText(avgIlvlStr) end
+    -- Time played (#378), the characters it knows; like gold, the ones not
+    -- read yet are counted, not taken as nothing.
+    local playedStr = ""
+    if totalPlayed > 0 and AltStable.FormatPlayedShort then
+        playedStr = "|cffaaaaaa" .. AltStable.FormatPlayedShort(totalPlayed) .. " played|r"
+        if playedUnknown > 0 then
+            playedStr = playedStr .. " |cffff8800(" .. playedUnknown .. " unknown)|r"
+        end
+    end
+    if totalsBar.mid then
+        totalsBar.mid:SetText(avgIlvlStr .. ((avgIlvlStr ~= "" and playedStr ~= "") and "   " or "") .. playedStr)
+    end
     local goldNote = (goldUnknown > 0)
         and ("  |cffff8800(" .. goldUnknown .. " unknown)|r") or ""
     totalsBar.right:SetText(
@@ -1546,7 +1559,7 @@ end
 ------------------------------------------------------------
 
 local COL_TOOLTIPS = {
-    level="Level", ilvl="Item Level",
+    level="Level", ilvl="Item Level", played="Time played",
     gear_head="Head", gear_neck="Neck", gear_shoulder="Shoulders",
     gear_back="Back", gear_chest="Chest", gear_wrist="Wrists",
     gear_hands="Hands", gear_waist="Waist", gear_legs="Legs",

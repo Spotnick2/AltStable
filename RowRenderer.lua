@@ -732,7 +732,8 @@ local function MakeColumnWidgets(row, col, height)
     -- General tooltip button for classIcon, raceIcon, ruleset, level, restPercent, profSkill
     if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
     or col.field=="level" or col.type=="restXP"
-    or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags" then
+    or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags"
+    or col.type=="played" then
         local tip = CreateFrame("Button", nil, row)
         tip:SetSize(col.width, height)
         -- The Bags tooltip (#346) is built on hover, not at render: the
@@ -1090,6 +1091,29 @@ function AltStable.RenderRow(row, char, index, columns)
             end
 
         elseif col.field=="ilvl" then value = FormatItemLevel(char.ilvl)
+
+        elseif col.type=="played" then
+            -- Time played (#378): a dim dash until the character's first
+            -- reading, never a 0 that reads as "never played".
+            local total, level
+            if AltStable.PlayedNow then total, level = AltStable.PlayedNow(char) end
+            local short = total and AltStable.FormatPlayedShort(total)
+            value = short or "|cff888888\226\128\148|r"
+            if tip then
+                if short then
+                    local words, months = AltStable.FormatPlayedLong(total)
+                    tip.line1 = "Played: " .. words
+                    tip.line2 = level and ("At this level: " .. AltStable.FormatPlayedLong(level)) or nil
+                    tip.line3 = (AltStable.PlayedIsLive and AltStable.PlayedIsLive(char))
+                        and "Counting while you play"
+                        or "As of when it was last played"
+                    if months then tip.line3 = tip.line3 .. " (a month is 30 days, a year 365)" end
+                else
+                    tip.line1 = "Played: not known yet"
+                    tip.line2 = "Read the next time this character logs in."
+                    tip.line3 = nil
+                end
+            end
 
         elseif col.type=="gearSlot" then
             local slotKey = col.field:sub(6)  -- e.g. "head", "neck", etc.

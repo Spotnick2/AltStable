@@ -108,6 +108,11 @@ AltStable.Columns = {
       orderWords={ "oldest first", "most recent first" },
       -- What it shows: online counts as now, a logoff seen this session as then.
       sortValue=function(c) return AltStable.LastOnline and AltStable.LastOnline(c) or c.lastUpdate end },
+    -- Time played (#378): live for the character being played (Played.lua).
+    -- Unknown until the character's first reading, and sorted last.
+    { label="Played",      field="played",      width=70,  align="RIGHT", type="played",     group="always",
+      orderWords={ "least first", "most first" },
+      sortValue=function(c) return AltStable.PlayedNow and (AltStable.PlayedNow(c)) or nil end },
 
     -- Professions
     prof("Alchemy",       "prof_Alchemy",        "profmax_Alchemy",        "Interface\\Icons\\Trade_Alchemy"),

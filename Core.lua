@@ -312,7 +312,8 @@ AltStable.Print = Print
 -- silently leaving one character out.
 function AltStable.CharacterTotals()
     local Plain = AltStable.API.PlainNumber
-    local t = { money = 0, unknown = 0, characters = 0, hidden = 0, levels = 0 }
+    local t = { money = 0, unknown = 0, characters = 0, hidden = 0, levels = 0,
+                played = 0, playedUnknown = 0 }
     for _, char in pairs(type(AltStableDB) == "table" and AltStableDB or {}) do
         if type(char) == "table" and char.name then
             if AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(char.guid) then
@@ -322,6 +323,9 @@ function AltStable.CharacterTotals()
                 t.levels = t.levels + (Plain(char.level) or 0)
                 local m = Plain(char.money)
                 if m == nil then t.unknown = t.unknown + 1 else t.money = t.money + m end
+                -- Time played (#378): live for the one being played.
+                local p = AltStable.PlayedNow and (AltStable.PlayedNow(char)) or nil
+                if p == nil then t.playedUnknown = t.playedUnknown + 1 else t.played = t.played + p end
             end
         end
     end
@@ -1645,6 +1649,8 @@ local function ClearSyncedStateFields(t)
     t.favor = nil
     -- Hearthstone (#371): absent from an older peer's record = unknown.
     t.bind = nil
+    -- Time played (#378): the same.
+    t.played = nil; t.playedLevel = nil
     -- When the gear last changed (#281): an older peer's record has none, and
     -- the stamp of a gear set no longer on the record must not linger. Nor
     -- the time it was read.

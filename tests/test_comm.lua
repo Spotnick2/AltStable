@@ -2072,6 +2072,25 @@ do
 end
 WoW.reset()
 
+-- Time played (#378): rides the wire as numbers, and an accepted record
+-- without it leaves it unknown, never the last number seen.
+do
+    local wire = T.SerializeChar({ guid = "Player-Pl-2", name = "Pl", class = "MAGE", level = 30,
+                                   played = 90061, playedLevel = 3601, lastUpdate = 100 })
+    local back = T.DeserializeChar(wire)
+    eq(back.played, 90061, "the time played rides the wire as a number")
+    eq(back.playedLevel, 3601, "  and the time at the level")
+    AltStableDB = { ["Player-Pl-2"] = { guid = "Player-Pl-2", name = "Pl", class = "MAGE", level = 30,
+                                        played = 90061, playedLevel = 3601, lastUpdate = 100 } }
+    T.DeserializeFullDB(T.SerializeChar(
+        { guid = "Player-Pl-2", name = "Pl", class = "MAGE", level = 30, lastUpdate = 200 }
+    ) .. "\n" .. T.CHAR_SEP, "Peer")
+    eq(AltStableDB["Player-Pl-2"].lastUpdate, 200, "a newer record without it is accepted")
+    eq(AltStableDB["Player-Pl-2"].played, nil, "  and the old time played doesn't linger")
+    eq(AltStableDB["Player-Pl-2"].playedLevel, nil, "  nor the level's")
+end
+WoW.reset()
+
 ------------------------------------------------------------
 -- Retired fields (#8)
 ------------------------------------------------------------
