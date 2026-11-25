@@ -1161,6 +1161,31 @@ character).
 **Test kit.** `tests\kit.pin` stays at build 70959: WowTestKit's 71091 data was still being made
 when this was bumped. The documented lists are the same as 71037's.
 
+## Build 1.60.1.71139 (2026-11-25) — documented surface identical, nothing to adapt
+
+Dumped (`forever-api-1.60.1.71139.md`, client built Nov 24 2026) and compared with
+`Compare-Dumps.ps1` against 71091:
+
+```
+Documented functions - no change (6624)
+Documented events - no change (1816)
+Documented tables - no change (801)
+Widget methods - no change (7530)
+Namespace functions - no change (5435)
+Global functions - +28 -0 (walks _G: addon noise, not listed)
+Namespace candidates - +73 -107 (walks _G: addon noise, not listed)
+
+Documented surface identical.
+```
+
+**Behaviour**, the RUNBOOK step-3 line: `60 400 600 -1 5 table`, all as expected (a new, rested
+character: 400 XP to its next level, 5 factions met).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+**Test kit.** `tests\kit.pin` stays at build 70959, for the same reason as 71091: the documented
+lists are unchanged.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk
