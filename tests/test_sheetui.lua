@@ -4660,6 +4660,21 @@ do
         check("  and false stays off with nothing else loaded", cb._getter() == false)
         AltStableConfig.warbandItemTooltips = held
     end
+    -- #493: "Only while Shift is held", under it.
+    local sh = T.OptTooltipShift
+    check("Options has the Shift-only box", sh ~= nil)
+    if sh then
+        local heldShift = AltStableConfig.tooltipCountsShift
+        AltStableConfig.tooltipCountsShift = nil
+        check("  off by default", sh._getter() == false)
+        sh:SetChecked(true); sh:GetScript("OnClick")(sh)
+        eq("  ticking it saves it", AltStableConfig.tooltipCountsShift, true)
+        check("  and shows it ticked", sh._getter() == true)
+        sh:SetChecked(false); sh:GetScript("OnClick")(sh)
+        eq("  unticking saves false", AltStableConfig.tooltipCountsShift, false)
+        eq("  it hangs under the counts box", sh.parentRow, cb)
+        AltStableConfig.tooltipCountsShift = heldShift
+    end
 end
 
 -- #312: mailbox items, on unless switched off.
