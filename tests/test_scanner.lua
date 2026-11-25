@@ -1974,6 +1974,17 @@ end
 do
     dofile("Played.lua")
     AltStable._test.ResetPlayed()
+    -- A reply before the first scan made the record: the scan writes it
+    -- (Codex review of #496).
+    WoW.reset()
+    AltStableDB = {}
+    AltStable.Played.OnReply(500, 50)
+    pcall(AltStable.ScanCharacter)
+    local me = AltStableDB[UnitGUID("player")]
+    eq("a reply before the record is written by the first scan", me and me.played, 500)
+    eq("  with the level's time", me and me.playedLevel, 50)
+    AltStable._test.ResetPlayed()
+    AltStableDB = {}
     local col
     for _, x in ipairs(AltStable.Columns) do if x.field == "played" then col = x end end
     check("a Played column exists", col ~= nil)

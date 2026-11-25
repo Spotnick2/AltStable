@@ -138,6 +138,37 @@ advance(0.5)
 P.OnLogout()
 eq("  whole seconds", AltStableDB[me].played, 7380)
 
+-- A level-up goes on the record at once, for a peer pulling it before logout
+-- (Codex review of #496).
+fresh()
+reply(7200, 900)
+P.OnLevelUp()
+eq("a level-up: the record's level time starts at nothing", AltStableDB[me].playedLevel, 0)
+fresh()
+AltStableDB[me].playedLevel = 900
+P.OnLevelUp()
+eq("  without a clock it becomes unknown", AltStableDB[me].playedLevel, nil)
+
+-- A reply before the record exists (a new character, another addon asking
+-- at login): kept by the clock, written by the first scan.
+fresh()
+AltStableDB[me] = nil
+reply(300, 300)
+check("a reply before the record: nothing to write yet", AltStableDB[me] == nil)
+advance(30)
+local rec = { guid = me, name = "Me", level = 1 }
+AltStableDB[me] = rec
+P.OnScanned(rec)
+eq("  the first scan writes it, counted on", rec.played, 330)
+eq("  and the level's", rec.playedLevel, 330)
+AltStableDB["Player-Alt"].played = 3600 * 30 + 0.5   -- would come back floored if written
+P.OnScanned(AltStableDB["Player-Alt"])
+eq("  another character's scan is never touched", AltStableDB["Player-Alt"].played, 3600 * 30 + 0.5)
+fresh()
+local plain = { guid = me, name = "Me" }
+P.OnScanned(plain)
+eq("  without a clock a scan writes nothing", plain.played, nil)
+
 fresh()
 P.OnLogout()
 eq("logout without a reply changes nothing", AltStableDB[me].played, nil)

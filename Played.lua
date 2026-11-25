@@ -158,19 +158,32 @@ function Played.OnReply(total, level)
     end
 end
 
--- A new level: its time starts at nothing.
+-- A new level: its time starts at nothing, on the clock and on the record,
+-- so a peer pulling it before logout doesn't see the last level's hours at
+-- this one (Codex review of #496). Without a clock the record's level time
+-- is unknown from here.
 function Played.OnLevelUp()
     if clock then clock.level, clock.levelAt = 0, GetTime() end
+    local guid = UnitGUID and UnitGUID("player")
+    local char = guid and type(AltStableDB) == "table" and AltStableDB[guid]
+    if type(char) == "table" then char.playedLevel = clock and 0 or nil end
+end
+
+-- A scan of the character being played: the clock's value goes on the
+-- record. That is also what saves a reply that came before the record
+-- existed - a new character, another addon asking at login, before the
+-- first scan (Codex review of #496).
+function Played.OnScanned(char)
+    if not (clock and type(char) == "table" and char.guid == clock.guid) then return end
+    local total, level = AltStable.PlayedNow(char)
+    char.played, char.playedLevel = floor(total), floor(level)
 end
 
 -- Leaving: the clock's value goes on the record, written with the
 -- SavedVariables and carried by the next sync.
 function Played.OnLogout()
     if not clock then return end
-    local char = type(AltStableDB) == "table" and AltStableDB[clock.guid]
-    if type(char) ~= "table" then return end
-    local total, level = AltStable.PlayedNow(char)
-    char.played, char.playedLevel = floor(total), floor(level)
+    Played.OnScanned(type(AltStableDB) == "table" and AltStableDB[clock.guid])
 end
 
 -- A login or a reload: ask if nobody has within REQUEST_AFTER seconds.
