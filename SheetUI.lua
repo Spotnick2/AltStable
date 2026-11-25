@@ -4493,6 +4493,25 @@ local function CreateFrameIfNeeded()
         end)
         main:SetScript("OnLeave", function() GameTooltip:Hide() end)
         main:HookScript("OnClick", function() refreshAll() end)
+        Y = Y - 24
+
+        -- Only while Shift is held (#493): under the main box, greyed while
+        -- it is off. Our own Warband cells show their counts either way.
+        local shiftOnly = MakeOptCheckRow("tooltipCountsShift",
+            "Only while Shift is held", Y, nil,
+            function() return AltStable.ItemTooltipCountsShiftOnly and AltStable.ItemTooltipCountsShiftOnly() or false end,
+            20)
+        shiftOnly:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("Only while Shift is held", 1, 1, 1)
+            GameTooltip:AddLine("Item tooltips show who has the item only while you hold Shift. "
+                .. "Bags, the bank, merchants and the character window update as you press it; "
+                .. "anywhere else, hover the item again.", nil, nil, nil, true)
+            GameTooltip:Show()
+        end)
+        shiftOnly:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        OptDependsOn(shiftOnly, main)
+        AltStable._test.OptTooltipShift = shiftOnly
         Y = Y - 30
 
         local function SubLabel(text, y)

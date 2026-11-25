@@ -5590,6 +5590,25 @@ function AltStable.ItemTooltipCountsOn()
     return AltStable.OtherItemCountsAddon() == nil
 end
 
+-- Only while Shift is held (#493, a CurseForge request): an option under the
+-- counts, off unless chosen.
+function AltStable.ItemTooltipCountsShiftOnly()
+    return (AltStableConfig and AltStableConfig.tooltipCountsShift) == true
+end
+
+-- Whether the item tooltip being built now gets the counts: they are on, and
+-- Shift is held when the player asked for that. Read as the tooltip is built.
+-- Blizzard's bag, bank, merchant and character slots rebuild theirs a few
+-- times a second while hovered (GameTooltip_OnUpdate -> owner:UpdateTooltip),
+-- so pressing Shift over one shows them at once; a tooltip that doesn't (a
+-- chat link) shows them from the next hover.
+function AltStable.ItemTooltipCountsNow()
+    if not AltStable.ItemTooltipCountsOn() then return false end
+    if not AltStable.ItemTooltipCountsShiftOnly() then return true end
+    local shift = rawget(_G, "IsShiftKeyDown")
+    return type(shift) == "function" and shift() and true or false
+end
+
 -- The checkbox's help, shared by the Warband tab and Options.
 function AltStable.ItemTooltipCountsHelp(tt)
     tt:AddLine("Show character counts in tooltips")

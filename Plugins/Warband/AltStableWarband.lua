@@ -1126,8 +1126,9 @@ local function EnsureTooltipHook()
         if e and id == e.id then CellBreakdown(tt, e); return end
         if e then return end
         -- Global enrichment: on unless the player turned it off, or (never
-        -- having chosen) another addon already shows counts (#304, Core.lua).
-        if not (AltStable.ItemTooltipCountsOn and AltStable.ItemTooltipCountsOn()) then return end
+        -- having chosen) another addon already shows counts (#304, Core.lua);
+        -- and only while Shift is held, when asked (#493).
+        if not (AltStable.ItemTooltipCountsNow and AltStable.ItemTooltipCountsNow()) then return end
         -- Items the player left out, and only the characters they asked for (#403).
         if id and not (AltStable.TooltipIgnored and AltStable.TooltipIgnored(id)) then
             ItemBreakdown(tt, id)

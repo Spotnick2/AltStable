@@ -336,10 +336,40 @@ local sawTotal = false
 for _, l in ipairs(lines) do if l:find("Total:", 1, true) and l:find("21", 1, true) then sawTotal = true end end
 check("an item tooltip gets the cross-alt breakdown", sawTotal, table.concat(lines, " / "))
 
+-- #493: only while Shift is held, when the player asks for that.
+local realShift = rawget(_G, "IsShiftKeyDown")
+local shiftDown = false
+rawset(_G, "IsShiftKeyDown", function() return shiftDown end)
+AltStable.SetConfigValue("tooltipCountsShift", true)
+lines = {}
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+eq("Shift only, Shift up: nothing is appended", #lines, 0)
+shiftDown = true
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+check("  Shift down: the breakdown", #lines > 0)
+AltStable.SetConfigValue("tooltipCountsShift", false)
+shiftDown = false
+lines = {}
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+check("the option off (the default): Shift doesn't matter", #lines > 0)
+rawset(_G, "IsShiftKeyDown", nil)
+AltStable.SetConfigValue("tooltipCountsShift", true)
+lines = {}
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+eq("  no IsShiftKeyDown on the client: Shift only shows nothing", #lines, 0)
+AltStable.SetConfigValue("tooltipCountsShift", nil)
+rawset(_G, "IsShiftKeyDown", realShift)
+
 lines = {}
 AltStable.SetConfigValue("warbandItemTooltips", false)
 for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
 eq("with the setting off, nothing is appended", #lines, 0)
+rawset(_G, "IsShiftKeyDown", function() return true end)
+AltStable.SetConfigValue("tooltipCountsShift", true)
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 2318 }) end
+eq("  nor with Shift held: the counts themselves are off", #lines, 0)
+AltStable.SetConfigValue("tooltipCountsShift", nil)
+rawset(_G, "IsShiftKeyDown", realShift)
 
 -- #304: never chosen (nil) means on, unless another addon already shows counts.
 local function tipLines()
