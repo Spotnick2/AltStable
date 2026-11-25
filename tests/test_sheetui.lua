@@ -4182,6 +4182,20 @@ do
     AltStable.RefreshSheet()
     check("  and goes with them", MenuHas("Ruleset") == nil and T.MenuIsShown())
     T.MenuEscape()
+    -- The same when the grid doesn't change: Ruleset hidden, the groups on,
+    -- then a sync turns them off (Codex review of #494).
+    AltStableConfig.sheetHiddenColumns = { ["summary.ruleset"] = true }
+    AltStable.RefreshSheet()
+    RightClick("name")
+    AltStableConfig.sheetGroupByRealm = false
+    AltStable.RefreshSheet()
+    eq("  a hidden Ruleset is listed unticked when the groups go off", MenuHas("Ruleset"), OFF .. "Ruleset")
+    AltStableConfig.sheetGroupByRealm = nil
+    AltStable.RefreshSheet()
+    AltStableConfig.sheetHiddenColumns = {}
+    AltStable.RefreshSheet()
+    check("  a sync clearing the only saved one greys out Show all", T.MenuEntry("__all")._disabled)
+    T.MenuEscape()
 
     -- A synced change while the chooser is open: its marks follow.
     AltStable.SetColumnShown("summary", "bags_free", false)

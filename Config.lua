@@ -1731,8 +1731,7 @@ function AltStable.SettingsSynced(sender, groups, forgot, back)
     if #said == 0 then return end
 
     if groups.appearance and AltStable.ApplyTheme then AltStable.ApplyTheme() end
-    -- RefreshSheet also shows an open column chooser again when the tab's
-    -- columns changed (#378).
+    -- RefreshSheet also lists an open column chooser again (#378).
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     if AltStable.RefreshOptions then AltStable.RefreshOptions() end
     local msg = "Settings from " .. tostring(sender) .. ": " .. table.concat(said, ", ") .. "."

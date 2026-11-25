@@ -6025,14 +6025,17 @@ local function RebuildDataDrivenColumns()
         ResetSortIfInvalid()
         AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, activeSection.headerHeight or HEADER_HEIGHT))
         BuildHeaders()
-        -- An open column chooser lists the columns as they now are: a faction
-        -- met, the realm groups switched by a sync (Codex review of #494).
-        if AltStable.RefreshStayingMenu then AltStable.RefreshStayingMenu() end
     end
 end
 
 local function Refresh()
     RebuildDataDrivenColumns()
+    -- An open column chooser, listed again on every refresh: what it lists
+    -- and marks (the tab's columns, the saved choices, whether Show all has
+    -- anything to clear) can change without the grid changing - a hidden
+    -- Ruleset when a sync switches the realm groups (Codex review of #494).
+    -- One short menu redrawn, and only while it is open.
+    if AltStable.RefreshStayingMenu then AltStable.RefreshStayingMenu() end
     BuildDisplayList()
     local needed=CountVisibleRows()
     EnsureRows(needed)
