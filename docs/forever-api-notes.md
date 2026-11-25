@@ -1133,6 +1133,34 @@ character).
 Spotnick2/WowTestKit#102, not merged yet. Its lists differ from 70959's only by
 `C_BattleNet.IsGameAccountOnSameRealm`, which AltStable doesn't call.
 
+## Build 1.60.1.71091 (2026-11-25) — documented surface identical, nothing to adapt
+
+Dumped (`forever-api-1.60.1.71091.md`, client built Nov 20 2026) and compared with
+`Compare-Dumps.ps1` against 71037:
+
+```
+Documented functions - no change (6624)
+Documented events - no change (1816)
+Documented tables - no change (801)
+Widget methods - no change (7530)
+Namespace functions - no change (5435)
+Global functions - +4 -25 (walks _G: addon noise, not listed)
+Namespace candidates - +104 -781 (walks _G: addon noise, not listed)
+
+Documented surface identical.
+```
+
+**Behaviour**, the RUNBOOK step-3 line: `60 80800 3910 -1 17 table`, all as expected (a rested
+character).
+
+**Persistence** was not re-run: it is no longer a per-build step, and nothing looked lost.
+
+**Also measured on 71091** (#485's transmog probe, 2026-11-25): `ShowingHelm()` and
+`ShowingCloak()` return false even with the helm and cloak drawn. The details are on #485.
+
+**Test kit.** `tests\kit.pin` stays at build 70959: WowTestKit's 71091 data was still being made
+when this was bumped. The documented lists are the same as 71037's.
+
 ## The live install (from 2026-11-04) — persistence holds, own-account sync works
 
 `_forever_` was installed new at launch: nothing in its `WTF` came from the beta. Read from disk
