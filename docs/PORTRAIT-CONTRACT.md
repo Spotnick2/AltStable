@@ -368,8 +368,8 @@ enhancement and armory renders; it never affects conversion.
 `ShowingHelm()` / `ShowingCloak()`, which on Forever say hidden for everything, so every record
 said `1` and every capture's `look` said `h` for an equipped helm and cloak. Since #485 they come
 from what the game draws (a hidden helm or cloak is a transmog appearance there), with a
-`drawnAt` stamp beside them; the addon drops flags that have no stamp, so an older record reads
-as absent (shown). Their meaning here is unchanged. A capture taken before #485 may read as
+`drawn` stamp beside them (the values that reading wrote, e.g. `h1c0`) and `drawnAt` (when). The
+addon drops flags that don't match the stamp, so an older record reads as absent (shown). Their meaning here is unchanged. A capture taken before #485 may read as
 changed once on its head or back.
 
 **Compatibility.**

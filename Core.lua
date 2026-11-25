@@ -1645,8 +1645,8 @@ local function ClearSyncedStateFields(t)
     -- on the word of a scan that peer can no longer confirm. Absent means "shown", which is
     -- the safe direction to fail.
     t.hidehelm = nil; t.hidecloak = nil
-    -- And their stamp (#485): without it, the flags are an older build's.
-    t.drawnAt = nil
+    -- Their stamp (#485, drawn / drawnAt) goes with them in MergeIncoming
+    -- (DropUndrawnFlags): it no longer matches flags that are gone.
     -- Merchant's Favor (#270): an older peer's record has none, and a scan that
     -- couldn't read it sends none. Either way, the last number must not linger.
     t.favor = nil

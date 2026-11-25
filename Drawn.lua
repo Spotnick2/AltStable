@@ -19,9 +19,11 @@
 -- the showcase and the portrait capture hide UIParent, which would blind it.
 --
 -- Written: hidehelm / hidecloak, 1 or 0, the portrait contract's fields
--- (docs/PORTRAIT-CONTRACT.md), only for a slot read; `drawnAt` beside them
--- marks a record whose flags came from this reading. Records without it had
--- the broken ones: Core drops their flags (absent means shown).
+-- (docs/PORTRAIT-CONTRACT.md), only for a slot read. Beside them `drawn`, the
+-- flags this reading wrote ("h1c0", "-" for a flag not set), and `drawnAt`,
+-- when. Flags that don't match `drawn` didn't come from this reading - the
+-- broken ones, or an older build's written over a relayed record that kept
+-- the stamp (Codex review of #498) - and Core drops them (absent = shown).
 ------------------------------------------------------------
 
 AltStable = AltStable or {}
@@ -33,10 +35,10 @@ local FIELDS = { [1] = "hidehelm", [15] = "hidecloak" }
 local READ_AFTER  = 0.5   -- after SetUnit: a new model needs about 0.1 s
 local LOGIN_AFTER = 2     -- with the login scan
 local EQUIP_AFTER = 3     -- with Core's rescan after a gear change
--- A reading that saw nothing is asked again: 2 s after a login the player's
--- model can still be loading, and the model then gives no transmog info at
--- all (seen in game, 2026-11-25, on dev-c75a1ff). Then it stops: a character
--- with no helm and no cloak reads nothing too.
+-- A reading is asked again while it saw nothing, or left an EQUIPPED helm or
+-- cloak unread: 2 s after a login the player's model can still be loading,
+-- and gives no transmog info at all (seen in game, 2026-11-25, on
+-- dev-c75a1ff). Three more tries per trigger, then it stops.
 local RETRY = { 3, 10, 30 }
 
 local model
@@ -45,6 +47,11 @@ local retries = 0
 -- The last reading, for the character it was read on: written by the scan
 -- if the record didn't exist yet when it came.
 local last
+
+-- The flags as `drawn` records them.
+local function Signature(char)
+    return "h" .. tostring(char.hidehelm or "-") .. "c" .. tostring(char.hidecloak or "-")
+end
 
 local function Model()
     if model then return model end
@@ -60,7 +67,7 @@ end
 
 -- Whether a slot's drawn source is a hidden one: true or false, nil when it
 -- can't be read (nothing drawn, no source info, an error).
-local function SlotHidden(m, slot)
+function Drawn.SlotHidden(m, slot)
     local ok, info = pcall(m.GetItemTransmogInfo, m, slot)
     local source = ok and type(info) == "table" and tonumber(info.appearanceID)
     if not source or source <= 0 then return nil end
@@ -86,6 +93,7 @@ function Drawn.Apply(char, result)
         end
     end
     if not any then return false end
+    char.drawn = Signature(char)
     char.drawnAt = time()
     if changed then
         -- The Companion dates a hidden/shown difference by gearReadAt
@@ -98,10 +106,24 @@ function Drawn.Apply(char, result)
     return changed
 end
 
+-- Whether a reading needs another try: it saw nothing, or a slot with
+-- something equipped stayed unread.
+local function Unresolved(result)
+    if next(result) == nil then return true end
+    for slot in pairs(FIELDS) do
+        if result[slot] == nil and GetInventoryItemID and GetInventoryItemID("player", slot) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Reads the player's helm and cloak. One at a time; a trigger during a read
--- asks for one more after it, so the last change wins.
-function Drawn.Read()
+-- asks for one more after it, so the last change wins. `retry` is a retry's
+-- own call: anything else is a fresh trigger, with its own tries.
+function Drawn.Read(retry)
     if reading then again = true; return false end
+    if retry ~= true then retries = 0 end
     local guid = UnitGUID and UnitGUID("player")
     if not guid then return false end
     reading = true
@@ -109,20 +131,18 @@ function Drawn.Read()
     pcall(m.SetUnit, m, "player")
     C_Timer.After(READ_AFTER, function()
         local result = {}
-        for slot in pairs(FIELDS) do result[slot] = SlotHidden(m, slot) end
-        local any = next(result) ~= nil
+        for slot in pairs(FIELDS) do result[slot] = Drawn.SlotHidden(m, slot) end
         local char = type(AltStableDB) == "table" and AltStableDB[guid]
-        if any then
-            retries = 0
+        if next(result) ~= nil then
             last = { guid = guid, result = result }
             if type(char) == "table" then Drawn.Apply(char, result) end
         end
         reading = false
         if again then
             again = false; Drawn.Read()
-        elseif not any and retries < #RETRY then
+        elseif Unresolved(result) and retries < #RETRY then
             retries = retries + 1
-            C_Timer.After(RETRY[retries], Drawn.Read)
+            C_Timer.After(RETRY[retries], function() Drawn.Read(true) end)
         end
     end)
     return true
@@ -141,7 +161,7 @@ events:RegisterEvent("TRANSMOGRIFY_CLOSE")
 events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 events:SetScript("OnEvent", function(_, event, a, b)
     if event == "PLAYER_ENTERING_WORLD" then
-        if a or b then C_Timer.After(LOGIN_AFTER, Drawn.Read) end   -- a login or a reload
+        if a or b then C_Timer.After(LOGIN_AFTER, function() Drawn.Read() end) end   -- a login or a reload
     elseif event == "TRANSMOGRIFY_CLOSE" then
         Drawn.Read()
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
@@ -152,12 +172,13 @@ events:SetScript("OnEvent", function(_, event, a, b)
     end
 end)
 
--- Records whose flags didn't come from this reading had the broken ones
--- (always 1): dropped, absent means shown. At load, and for a record taken
--- from a peer on an older build (Core.lua).
+-- Flags that don't match `drawn` didn't come from this reading: the broken
+-- ones (always 1), or an older build's written beside a stamp it relayed.
+-- Dropped with the stamp: absent means shown. At load, and for a record
+-- taken from a peer (Core.lua).
 function AltStable.DropUndrawnFlags(char)
-    if type(char) == "table" and char.drawnAt == nil then
-        char.hidehelm, char.hidecloak = nil, nil
+    if type(char) == "table" and char.drawn ~= Signature(char) then
+        char.hidehelm, char.hidecloak, char.drawn, char.drawnAt = nil, nil, nil, nil
     end
 end
 

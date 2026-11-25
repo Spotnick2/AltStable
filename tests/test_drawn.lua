@@ -88,6 +88,7 @@ local me = UnitGUID("player")
 local function fresh(rec)
     T.ResetDrawn()
     due, drawn, models, setUnits = {}, {}, {}, 0
+    WoW.equipped = {}
     statusRefreshes, sheetRefreshes = 0, 0
     AltStableDB = { [me] = rec or { guid = me, name = "Me", lastUpdate = 1, gearReadAt = 5 } }
 end
@@ -120,6 +121,7 @@ local rec = AltStableDB[me]
 eq("a hidden helm reads hidden", rec.hidehelm, 1)
 eq("  a drawn cloak shown", rec.hidecloak, 0)
 eq("  stamped", rec.drawnAt, 1000)
+eq("  with what it wrote", rec.drawn, "h1c0")
 eq("  a change dates the gear reading (the Companion's gearReadAt)", rec.gearReadAt, 1000)
 eq("  and the delta", rec.lastUpdate, 1000)
 eq("  the portrait status is asked again", statusRefreshes, 1)
@@ -145,6 +147,7 @@ D.Read()
 advance(1)
 eq("nothing drawn (an empty slot): left as it was", rec.hidehelm, 0)
 eq("  a model error too", rec.hidecloak, 1)
+eq("  the stamp still says what the flags are", rec.drawn, "h0c1")
 eq("  and nothing read is no reading", rec.drawnAt, 2000)
 drawn = { [1] = 158756, [15] = 999 }
 D.Read()
@@ -194,6 +197,30 @@ drawn = {}
 D.Read()
 advance(100)
 eq("a later empty reading retries again: 3 s, 10 s, 30 s, then stops", setUnits, 6)
+D.Read()
+advance(100)
+eq("  every fresh trigger gets its own tries", setUnits, 10)
+
+-- An equipped slot left unread is asked again even when the other read.
+fresh()
+WoW.equipped = { [1] = "|Hitem:7048::|h[Helm]|h", [15] = "|Hitem:271719::|h[Cloak]|h" }
+drawn = { [1] = 999, [15] = 307653 }
+D.Read()
+advance(0.5)
+eq("the cloak read, the equipped helm not", AltStableDB[me].hidecloak, 0)
+advance(3.0)
+eq("  the helm is asked again", setUnits, 2)
+drawn = { [1] = 77344, [15] = 307653 }
+advance(100)
+eq("  and read", AltStableDB[me].hidehelm, 1)
+eq("  then no more", setUnits, 2)
+fresh()
+WoW.equipped = { [15] = "|Hitem:271719::|h[Cloak]|h" }
+drawn = { [15] = 307653 }
+D.Read()
+advance(100)
+eq("no helm equipped: nothing to wait for", setUnits, 1)
+WoW.equipped = {}
 
 ------------------------------------------------------------
 -- A reading before the record exists
@@ -209,6 +236,13 @@ local scanned = { guid = me, name = "Me" }
 D.OnScanned(scanned)
 eq("the first scan writes it", scanned.hidehelm, 1)
 eq("  stamped", scanned.drawnAt ~= nil, true)
+-- An empty reading after it doesn't lose it.
+drawn = {}
+D.Read()
+advance(0.5)
+local later = { guid = me, name = "Me" }
+D.OnScanned(later)
+eq("  an empty reading since doesn't lose it", later.hidehelm, 1)
 local other = { guid = "Player-Other", name = "O" }
 D.OnScanned(other)
 eq("  another character's scan is untouched", other.hidehelm, nil)
@@ -259,12 +293,16 @@ eq("  and only once", setUnits, 1)
 local old = { guid = "Player-Old", name = "Old", hidehelm = 1, hidecloak = 1 }
 AltStable.DropUndrawnFlags(old)
 check("flags without drawnAt are dropped (absent = shown)", old.hidehelm == nil and old.hidecloak == nil)
-local new = { guid = "Player-New", name = "New", hidehelm = 1, hidecloak = 0, drawnAt = 5 }
+local new = { guid = "Player-New", name = "New", hidehelm = 1, hidecloak = 0, drawn = "h1c0", drawnAt = 5 }
 AltStable.DropUndrawnFlags(new)
-check("  with it they stay", new.hidehelm == 1 and new.hidecloak == 0)
+check("  with a stamp that matches they stay", new.hidehelm == 1 and new.hidecloak == 0)
+local over = { guid = "Player-Over", name = "Over", hidehelm = 1, hidecloak = 1, drawn = "h0c0", drawnAt = 5 }
+AltStable.DropUndrawnFlags(over)
+check("  flags an older build wrote over a kept stamp are dropped, with the stamp",
+      over.hidehelm == nil and over.hidecloak == nil and over.drawn == nil and over.drawnAt == nil)
 
 AltStableDB = { [me] = { guid = me, name = "Me", hidehelm = 1, hidecloak = 1 },
-                ["Player-Read"] = { guid = "Player-Read", name = "R", hidehelm = 1, drawnAt = 9 } }
+                ["Player-Read"] = { guid = "Player-Read", name = "R", hidehelm = 1, drawn = "h1c-", drawnAt = 9 } }
 local coreEvent = T.frame:GetScript("OnEvent")
 coreEvent(T.frame, "PLAYER_LOGIN")
 eq("at login, every unstamped record loses them", AltStableDB[me].hidehelm, nil)
@@ -275,9 +313,16 @@ T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = 
     lastUpdate = 1000, hidehelm = 1, hidecloak = 0 }) .. "\n" .. T.CHAR_SEP, "OldPeer")
 eq("an older peer's flags (no drawnAt) are dropped", AltStableDB["Player-Peer"].hidehelm, nil)
 T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = "MAGE", level = 30,
-    lastUpdate = 2000, hidehelm = 1, hidecloak = 0, drawnAt = 1900 }) .. "\n" .. T.CHAR_SEP, "NewPeer")
+    lastUpdate = 2000, hidehelm = 1, hidecloak = 0, drawn = "h1c0", drawnAt = 1900 }) .. "\n" .. T.CHAR_SEP, "NewPeer")
 eq("  a current peer's arrive", AltStableDB["Player-Peer"].hidehelm, 1)
-eq("  with the stamp, as a number", AltStableDB["Player-Peer"].drawnAt, 1900)
+eq("  with the stamp, as text", AltStableDB["Player-Peer"].drawn, "h1c0")
+eq("  and its time, as a number", AltStableDB["Player-Peer"].drawnAt, 1900)
+-- An older relay kept a current record's stamp and wrote its own legacy flag
+-- over it (Codex review of #498).
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = "MAGE", level = 30,
+    lastUpdate = 2500, hidehelm = 1, hidecloak = 1, drawn = "h0c0", drawnAt = 1900 }) .. "\n" .. T.CHAR_SEP, "OldRelay")
+eq("  a relayed stamp that doesn't match the flags: dropped", AltStableDB["Player-Peer"].hidecloak, nil)
+eq("  with the stamp", AltStableDB["Player-Peer"].drawn, nil)
 T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = "MAGE", level = 30,
     lastUpdate = 3000, hidehelm = 1 }) .. "\n" .. T.CHAR_SEP, "OldPeer")
 eq("  then an older peer's newer record: the stamp doesn't linger", AltStableDB["Player-Peer"].drawnAt, nil)
