@@ -294,5 +294,218 @@ Probe:Steps("transmog", {
       reload = true },
 })
 
+----------------------------------------------------------------------------
+-- /fp steps as drawn - the second pass (#485), after /fp steps as transmog
+-- found (71091) that only a DressUpModel's GetItemTransmogInfo reads the drawn
+-- look: the base source untransmogged, the applied one transmogged, 77344 for
+-- a hidden helm. Before AltStable reads it the same way:
+--   * what each drawn id IS: GetSourceInfo (item, name, isHideVisual) and
+--     IsAppearanceHiddenVisual on its visual, for the helm, the cloak and a
+--     transmogged slot;
+--   * how the model must be set up: shown on screen, shown 1x1 at alpha 0
+--     (Scanner.lua's model-path frame), or never shown; read at once and
+--     0.1 / 0.5 / 1 / 2 s after SetUnit;
+--   * which events fire when a transmog is applied or undone.
+----------------------------------------------------------------------------
+
+local VARIANTS = { "shown", "alpha0", "hidden" }
+local DELAYS = { 0, 0.1, 0.5, 1, 2 }
+local LOOK = { 1, 3, 15 } -- head, shoulder, back: the slots the summary names
+
+local function DrawnDB()
+    AltStableProbeDB.transmogDrawn = AltStableProbeDB.transmogDrawn or {}
+    return AltStableProbeDB.transmogDrawn
+end
+
+local Drawn = {}
+
+function Drawn.MakeModel(kind)
+    local m = CreateFrame("DressUpModel", nil, UIParent)
+    if kind == "shown" then
+        m:SetSize(120, 160)
+        m:SetPoint("BOTTOMLEFT", 136, 8)
+    else
+        m:SetSize(1, 1)
+        m:SetPoint("TOPLEFT", 0, 0)
+    end
+    return m
+end
+
+local models = {}
+local function VariantModel(kind)
+    local m = models[kind]
+    if not m then m = Drawn.MakeModel(kind); models[kind] = m end
+    if kind == "hidden" then m:Hide() else m:Show() end
+    if m.SetAlpha then m:SetAlpha(kind == "alpha0" and 0 or 1) end
+    return m
+end
+
+-- Every slot's drawn id now, from one model.
+local function Snap(m)
+    local row = {}
+    for _, s in ipairs(SLOTS) do
+        local ok, info = pcall(m.GetItemTransmogInfo, m, s[1])
+        if ok and type(info) == "table" then
+            row[tostring(s[1])] = info.appearanceID
+        else
+            row[tostring(s[1])] = Got(ok, info)
+        end
+    end
+    return row
+end
+
+-- What a drawn source id is.
+local function Source(id)
+    local e = {}
+    local ok, si = Try(Api("C_TransmogCollection", "GetSourceInfo"), id)
+    e.info = Got(ok, si)
+    if ok and type(si) == "table" and si.visualID then
+        local okH, hidden = Try(Api("C_TransmogCollection", "IsAppearanceHiddenVisual"), si.visualID)
+        e.hiddenVisual = Got(okH, hidden)
+    end
+    return e
+end
+
+local function LatestDrawn(label)
+    local t = DrawnDB()
+    for i = #t, 1, -1 do
+        if t[i].label == label and t[i].char == UnitName("player") then return t[i] end
+    end
+end
+
+-- Head, shoulder and back in one line: the drawn id per setup (at once / 2 s),
+-- and what the shown model's id is.
+local function DrawnSummary(rec)
+    if not rec then return "no reading" end
+    if not rec.done then return "still reading" end
+    local parts = {}
+    for _, slot in ipairs(LOOK) do
+        local k = tostring(slot)
+        local per = {}
+        for _, kind in ipairs(VARIANTS) do
+            local v = rec.variants[kind] or {}
+            per[#per + 1] = ("%s %s/%s"):format(kind, V((v.t0 or {})[k]), V((v.t2 or {})[k]))
+        end
+        local id = (rec.variants.shown and rec.variants.shown.t2 or {})[k]
+        local src = type(id) == "number" and rec.sources[tostring(id)] or nil
+        local si = src and type(src.info) == "table" and src.info or {}
+        parts[#parts + 1] = ("%d: equipped %s | %s | drawn item %s %q hide %s/%s"):format(slot,
+            tostring(rec.equipped[k]), table.concat(per, " "), V(si.itemID), tostring(si.name or ""),
+            V(si.isHideVisual), V(src and src.hiddenVisual))
+    end
+    return table.concat(parts, " || ")
+end
+
+function Drawn.Read(label)
+    local rec = {
+        label = label, char = UnitName("player"), at = date("%Y-%m-%d %H:%M:%S"),
+        build = select(2, GetBuildInfo()), uptime = GetTime(),
+        variants = {}, sources = {}, equipped = {},
+    }
+    local t = DrawnDB()
+    t[#t + 1] = rec
+    for _, s in ipairs(SLOTS) do rec.equipped[tostring(s[1])] = GetInventoryItemID("player", s[1]) end
+    for _, kind in ipairs(VARIANTS) do
+        local m = VariantModel(kind)
+        local ok, err = pcall(m.SetUnit, m, "player")
+        local v = { setUnit = ok and true or tostring(err) }
+        rec.variants[kind] = v
+        if ok then
+            for _, d in ipairs(DELAYS) do
+                local key = "t" .. d
+                if d == 0 then v[key] = Snap(m) else C_Timer.After(d, function() v[key] = Snap(m) end) end
+            end
+        end
+    end
+    C_Timer.After(2.5, function()
+        for _, kind in ipairs(VARIANTS) do
+            for _, row in pairs(rec.variants[kind]) do
+                if type(row) == "table" then
+                    for _, id in pairs(row) do
+                        if type(id) == "number" and id > 0 and not rec.sources[tostring(id)] then
+                            rec.sources[tostring(id)] = Source(id)
+                        end
+                    end
+                end
+            end
+        end
+        for _, m in pairs(models) do m:Hide() end
+        rec.done = true
+        Out(label .. ": " .. DrawnSummary(rec))
+    end)
+    return rec
+end
+
+-- The events around a transmog, kept from load: what AltStable could listen to.
+Drawn.EVENTS = {
+    "TRANSMOGRIFY_SUCCESS", "TRANSMOGRIFY_UPDATE", "TRANSMOGRIFY_ITEM_UPDATE", "TRANSMOGRIFY_OPEN",
+    "TRANSMOGRIFY_CLOSE", "TRANSMOG_OUTFITS_CHANGED", "TRANSMOG_DISPLAYED_OUTFIT_CHANGED",
+    "VIEWED_TRANSMOG_OUTFIT_CHANGED", "VIEWED_TRANSMOG_OUTFIT_SLOT_SAVE_SUCCESS",
+    "VIEWED_TRANSMOG_OUTFIT_SLOT_REFRESH", "PLAYER_EQUIPMENT_CHANGED", "UNIT_MODEL_CHANGED",
+    "UNIT_INVENTORY_CHANGED",
+}
+Drawn.watched = {}
+
+function Drawn.OnEvent(_, event, ...)
+    if (event == "UNIT_MODEL_CHANGED" or event == "UNIT_INVENTORY_CHANGED") and ... ~= "player" then return end
+    AltStableProbeDB.transmogEvents = AltStableProbeDB.transmogEvents or {}
+    local log = AltStableProbeDB.transmogEvents
+    local args = {}
+    for i = 1, select("#", ...) do args[i] = V((select(i, ...))) end
+    log[#log + 1] = ("%.1f %s %s"):format(GetTime(), event, table.concat(args, " "))
+    while #log > 300 do table.remove(log, 1) end
+end
+
+do
+    local f = CreateFrame("Frame")
+    for _, e in ipairs(Drawn.EVENTS) do
+        if pcall(f.RegisterEvent, f, e) then Drawn.watched[#Drawn.watched + 1] = e end
+    end
+    f:SetScript("OnEvent", Drawn.OnEvent)
+end
+
+local function Waited(label)
+    return function()
+        local r = LatestDrawn(label)
+        if r and r.done then return true, DrawnSummary(r) end
+        return false, "reading the models"
+    end
+end
+
+local function Checked(label)
+    return function()
+        local r = LatestDrawn(label)
+        return r ~= nil and r.done == true, DrawnSummary(r)
+    end
+end
+
+Probe:Command("drawn", function(arg) Drawn.Read(arg ~= "" and arg or "manual") end,
+    "what each slot is DRAWN as, three model setups, and the source behind it (#485)")
+
+Probe:Steps("drawn", {
+    title = "What a slot is drawn as: the ids, the model setup, the events (#485)",
+    { text = "Wear a helm and a cloak. Reading what is drawn now, from three models: one shown (bottom "
+          .. "left), one 1x1 at alpha 0, one hidden. About 3 s.",
+      auto = true,
+      run = function() Drawn.Read("now"); return true end },
+    { text = "Reading the models...",
+      wait = Waited("now"), timeout = 10, check = Checked("now") },
+    { text = "Go to a transmogrifier. HIDE the helm and HIDE the cloak, and transmogrify the shoulders to "
+          .. "another look. Apply, close the transmog window, then press Run.",
+      button = "Run",
+      run = function() Drawn.Read("hidden"); return true end },
+    { text = "Reading the models...",
+      wait = Waited("hidden"), timeout = 10, check = Checked("hidden") },
+    { text = "Back at the transmogrifier, SHOW the helm and the cloak again (their own look). Apply, close "
+          .. "the window, then press Run.",
+      button = "Run",
+      run = function() Drawn.Read("shown again"); return true end },
+    { text = "Reading the models...",
+      wait = Waited("shown again"), timeout = 10, check = Checked("shown again") },
+    { text = "Done. Type /reload now to save the results.",
+      reload = true },
+})
+
 -- The test seam, on the namespace, never on _G.
-NS.transmog = { Read = Read, Summary = Summary, Latest = Latest, V = V, Plain = Plain }
+NS.transmog = { Read = Read, Summary = Summary, Latest = Latest, V = V, Plain = Plain,
+                Drawn = Drawn, DrawnSummary = DrawnSummary, LatestDrawn = LatestDrawn }

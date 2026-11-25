@@ -910,4 +910,88 @@ do
     ShowingHelm = realHelm
 end
 
+------------------------------------------------------------
+-- /fp steps as drawn (#485): what each drawn id is, per model setup
+------------------------------------------------------------
+-- What has to hold: each of the three model setups is read at once and after
+-- the delays, a setup whose read fails keeps why; every drawn id gets its
+-- source info and hidden flag; the reading says it is done only after the
+-- last delay, and hides the models; the events log keeps the player's and
+-- drops another unit's; the procedure waits for each reading and ends with a
+-- /reload.
+do
+    local proc = FP.procedures and FP.procedures["AltStableProbe/drawn"]
+    check("/fp steps as drawn is defined", proc ~= nil)
+    check("  and ends with a /reload", proc ~= nil and proc.steps[#proc.steps].reload == true)
+    check("/fp as drawn exists", P.commands.drawn ~= nil)
+
+    local D = ns.transmog.Drawn
+    local made = {}
+    local realMake = D.MakeModel
+    D.MakeModel = function(kind)
+        local m = { kind = kind, shown = false }
+        function m:Show() self.shown = true end
+        function m:Hide() self.shown = false end
+        function m:SetAlpha(a) self.alpha = a end
+        function m:SetUnit(u) self.unit = u end
+        function m:GetItemTransmogInfo(slot)
+            if self.kind == "hidden" then error("not loaded") end
+            local ids = { [1] = 77344, [3] = 307683, [15] = 307653 }
+            return { appearanceID = ids[slot] or 0 }
+        end
+        made[kind] = m
+        return m
+    end
+    local realTC = rawget(_G, "C_TransmogCollection")
+    C_TransmogCollection = {
+        GetSourceInfo = function(id)
+            if id == 77344 then return { itemID = 134110, name = "Hidden Helm", visualID = 5, isHideVisual = true } end
+            return { itemID = id * 10, name = "S" .. id, visualID = id, isHideVisual = false }
+        end,
+        IsAppearanceHiddenVisual = function(v) return v == 5 end,
+    }
+
+    local rec = D.Read("hidden")
+    eq("  before the last delay it is still reading", ns.transmog.DrawnSummary(rec), "still reading")
+    check("  the alpha-0 model is set to alpha 0", made.alpha0 and made.alpha0.alpha == 0)
+    check("  the hidden one is never shown", made.hidden and not made.hidden.shown)
+    local okWait, waitDetail = proc.steps[4].wait()
+    check("  the procedure waits for it", proc.steps[4].wait ~= nil and not okWait, tostring(waitDetail))
+    WoW.flushTimers()
+    check("then it is done", rec.done == true)
+    eq("  the shown model's head at once", rec.variants.shown.t0["1"], 77344)
+    eq("  and at 2 s", rec.variants.shown.t2["1"], 77344)
+    eq("  the alpha-0 model's shoulder at 0.5 s", rec.variants.alpha0["t0.5"]["3"], 307683)
+    check("  the hidden model's failure is kept", type(rec.variants.hidden.t2["1"]) == "string"
+          and rec.variants.hidden.t2["1"]:find("not loaded", 1, true) ~= nil, tostring(rec.variants.hidden.t2["1"]))
+    local hh = rec.sources["77344"] or {}
+    eq("  the hidden helm's source: its item", type(hh.info) == "table" and hh.info.itemID, 134110)
+    eq("  and its hidden visual", hh.hiddenVisual, true)
+    check("  the cloak's source is read too", rec.sources["307653"] ~= nil)
+    eq("  no source is read for an empty slot", rec.sources["0"], nil)
+    check("  the models are hidden after", not made.shown.shown and not made.alpha0.shown)
+    local sum = ns.transmog.DrawnSummary(rec)
+    check("  the summary names the hidden helm", sum:find('drawn item 134110 "Hidden Helm" hide true/true', 1, true) ~= nil, sum)
+    local okW, detail = proc.steps[4].wait()
+    check("  and the procedure's wait is over", okW and detail == sum, tostring(detail))
+    eq("the latest reading of a label is found", ns.transmog.LatestDrawn("hidden"), rec)
+
+    AltStableProbeDB.transmogEvents = nil
+    D.OnEvent(nil, "UNIT_MODEL_CHANGED", "target")
+    D.OnEvent(nil, "UNIT_MODEL_CHANGED", "player")
+    D.OnEvent(nil, "TRANSMOGRIFY_SUCCESS", 2)
+    local log = AltStableProbeDB.transmogEvents or {}
+    eq("the events log keeps the player's and drops another unit's", #log, 2)
+    check("  with the event's arguments", tostring(log[2]):find("TRANSMOGRIFY_SUCCESS 2", 1, true) ~= nil, tostring(log[2]))
+    for i = 1, 310 do D.OnEvent(nil, "PLAYER_EQUIPMENT_CHANGED", i) end
+    eq("  and stays at 300 lines", #AltStableProbeDB.transmogEvents, 300)
+    local watchesSuccess = false
+    for _, e in ipairs(D.watched) do if e == "TRANSMOGRIFY_SUCCESS" then watchesSuccess = true end end
+    check("TRANSMOGRIFY_SUCCESS is watched", watchesSuccess)
+    AltStableProbeDB.transmogEvents = nil
+
+    D.MakeModel = realMake
+    rawset(_G, "C_TransmogCollection", realTC)
+end
+
 WoW.finish("test_probe", passed, failed)
