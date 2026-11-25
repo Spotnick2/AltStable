@@ -5597,16 +5597,44 @@ function AltStable.ItemTooltipCountsShiftOnly()
 end
 
 -- Whether the item tooltip being built now gets the counts: they are on, and
--- Shift is held when the player asked for that. Read as the tooltip is built.
--- Blizzard's bag, bank, merchant and character slots rebuild theirs a few
--- times a second while hovered (GameTooltip_OnUpdate -> owner:UpdateTooltip),
--- so pressing Shift over one shows them at once; a tooltip that doesn't (a
--- chat link) shows them from the next hover.
+-- Shift is held when the player asked for that. Read as the tooltip is built;
+-- RefreshTooltipsForShift below rebuilds an open one when Shift changes.
 function AltStable.ItemTooltipCountsNow()
     if not AltStable.ItemTooltipCountsOn() then return false end
     if not AltStable.ItemTooltipCountsShiftOnly() then return true end
     local shift = rawget(_G, "IsShiftKeyDown")
     return type(shift) == "function" and shift() and true or false
+end
+
+-- Shift pressed or released with an item tooltip open (#493): rebuilt, so the
+-- counts come and go with the key. Not every hover rebuilds its own tooltip
+-- (the character bank's slots and a chat link's popup don't; Codex review of
+-- #499), so the tooltip is asked to: RefreshData (GameTooltipDataMixin) runs
+-- its data call again, and with it our post-call. Only while Shift-only is
+-- on, only for an item tooltip, never in combat. Returns how many it rebuilt.
+local SHIFT_TOOLTIPS = { "GameTooltip", "ItemRefTooltip" }
+function AltStable.RefreshTooltipsForShift(key)
+    if key ~= "LSHIFT" and key ~= "RSHIFT" then return 0 end
+    if not (AltStable.ItemTooltipCountsShiftOnly() and AltStable.ItemTooltipCountsOn()) then return 0 end
+    if InCombatLockdown and InCombatLockdown() then return 0 end
+    local itemType = Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item
+    if not itemType then return 0 end
+    local n = 0
+    for _, name in ipairs(SHIFT_TOOLTIPS) do
+        local tt = rawget(_G, name)
+        if type(tt) == "table" and tt.IsShown and tt:IsShown()
+                and type(tt.RefreshData) == "function" and type(tt.IsTooltipType) == "function"
+                and tt:IsTooltipType(itemType) then
+            if pcall(tt.RefreshData, tt) then n = n + 1 end
+        end
+    end
+    return n
+end
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("MODIFIER_STATE_CHANGED")
+    f:SetScript("OnEvent", function(_, _, key) AltStable.RefreshTooltipsForShift(key) end)
+    AltStable._shiftTooltipFrame = f
 end
 
 -- The checkbox's help, shared by the Warband tab and Options.

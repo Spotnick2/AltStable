@@ -4505,8 +4505,7 @@ local function CreateFrameIfNeeded()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine("Only while Shift is held", 1, 1, 1)
             GameTooltip:AddLine("Item tooltips show who has the item only while you hold Shift. "
-                .. "Bags, the bank, merchants and the character window update as you press it; "
-                .. "anywhere else, hover the item again.", nil, nil, nil, true)
+                .. "An open tooltip updates as you press or release it.", nil, nil, nil, true)
             GameTooltip:Show()
         end)
         shiftOnly:SetScript("OnLeave", function() GameTooltip:Hide() end)

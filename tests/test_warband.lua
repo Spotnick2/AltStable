@@ -336,6 +336,51 @@ local sawTotal = false
 for _, l in ipairs(lines) do if l:find("Total:", 1, true) and l:find("21", 1, true) then sawTotal = true end end
 check("an item tooltip gets the cross-alt breakdown", sawTotal, table.concat(lines, " / "))
 
+-- #493: Shift pressed or released over an OPEN item tooltip rebuilds it, so
+-- the counts follow the key on a hover that doesn't rebuild itself (the
+-- character bank, a chat link; Codex review of #499).
+do
+    local function fakeTip(kind, shown)
+        local t = { shown = shown, kind = kind, refreshed = 0 }
+        function t:IsShown() return self.shown end
+        function t:IsTooltipType(k) return self.kind == k end
+        function t:RefreshData() self.refreshed = self.refreshed + 1 end
+        return t
+    end
+    local realGT, realRef = rawget(_G, "GameTooltip"), rawget(_G, "ItemRefTooltip")
+    local gt, ref = fakeTip(Enum.TooltipDataType.Item, true), fakeTip(Enum.TooltipDataType.Item, true)
+    rawset(_G, "GameTooltip", gt); rawset(_G, "ItemRefTooltip", ref)
+    AltStable.SetConfigValue("warbandItemTooltips", true)
+    AltStable.SetConfigValue("tooltipCountsShift", true)
+    local onShift = AltStable._shiftTooltipFrame:GetScript("OnEvent")
+    check("Core listens to the modifier keys", AltStable._shiftTooltipFrame:IsEventRegistered("MODIFIER_STATE_CHANGED"))
+    onShift(AltStable._shiftTooltipFrame, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+    eq("Shift pressed: the open item tooltip is rebuilt", gt.refreshed, 1)
+    eq("  and a chat link's", ref.refreshed, 1)
+    onShift(AltStable._shiftTooltipFrame, "MODIFIER_STATE_CHANGED", "RSHIFT", 0)
+    eq("  released, rebuilt again", gt.refreshed, 2)
+    onShift(AltStable._shiftTooltipFrame, "MODIFIER_STATE_CHANGED", "LCTRL", 1)
+    eq("  Ctrl: nothing", gt.refreshed, 2)
+    ref.shown = false
+    gt.kind = 99
+    eq("a hidden tooltip and one that isn't an item are left alone",
+       AltStable.RefreshTooltipsForShift("LSHIFT"), 0)
+    gt.kind = Enum.TooltipDataType.Item
+    WoW.combat = true
+    eq("  nothing in combat", AltStable.RefreshTooltipsForShift("LSHIFT"), 0)
+    WoW.combat = false
+    AltStable.SetConfigValue("tooltipCountsShift", false)
+    eq("  nor without Shift-only", AltStable.RefreshTooltipsForShift("LSHIFT"), 0)
+    AltStable.SetConfigValue("tooltipCountsShift", true)
+    AltStable.SetConfigValue("warbandItemTooltips", false)
+    eq("  nor with the counts off", AltStable.RefreshTooltipsForShift("LSHIFT"), 0)
+    AltStable.SetConfigValue("warbandItemTooltips", true)
+    gt.RefreshData = function() error("boom") end
+    eq("  a refresh that throws is caught, and not counted", AltStable.RefreshTooltipsForShift("LSHIFT"), 0)
+    AltStable.SetConfigValue("tooltipCountsShift", nil)
+    rawset(_G, "GameTooltip", realGT); rawset(_G, "ItemRefTooltip", realRef)
+end
+
 -- #493: only while Shift is held, when the player asks for that.
 local realShift = rawget(_G, "IsShiftKeyDown")
 local shiftDown = false
