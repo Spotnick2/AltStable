@@ -729,11 +729,16 @@ end
 local function GroupsByFaction()
     return (AltStableConfig and AltStableConfig.sheetGroupByFaction) == true
 end
--- A column with an option (Bags #346, Hearthstone #371): on unless turned
--- off. Off only hides it; the data is still read and synced, so it is current
--- when turned back on.
-local function ColumnOn(col)
-    return not (col.option and AltStableConfig and AltStableConfig[col.option] == false)
+-- The columns each tab hides (#378): { ["tab.field"] = true }, chosen by
+-- right-clicking a header. Hiding only hides: the data is still read and
+-- synced, so a column is current when it comes back. Per tab, so Level hidden
+-- on Gear stays on Account Summary.
+local function HiddenColumns()
+    local t = AltStableConfig and AltStableConfig.sheetHiddenColumns
+    return type(t) == "table" and t or {}
+end
+local function ColumnOn(section, col)
+    return HiddenColumns()[section.id .. "." .. col.field] ~= true
 end
 
 -- A character's faction as the groups use it: the scanner's English tag
@@ -744,8 +749,10 @@ local function FactionGroupOf(char)
     return "Unknown"
 end
 
-local function BuildScrollableColsForSection(section)
-    wipe(scrollableCols)
+-- Every column a tab can show, in order, before the player's choice: the
+-- column menu lists these, and the grid shows the ones not hidden.
+local function EligibleColumns(section)
+    local out = {}
     local fields = section.fields
     if section.repFields then
         fields = {}
@@ -755,15 +762,94 @@ local function BuildScrollableColsForSection(section)
     -- With the realm groups off, nothing says where a character is: the
     -- Ruleset column goes in after Race, on every tab. Faction groups don't
     -- say it either.
+    -- After the Race slot even when Race itself is hidden.
     local ungrouped = not GroupsByRealm()
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
-        if col and ColumnOn(col) then scrollableCols[#scrollableCols+1] = col end
-        if field == "race" and ungrouped then
-            scrollableCols[#scrollableCols+1] = ColumnFor("ruleset")
-        end
+        if col then out[#out + 1] = col end
+        if field == "race" and ungrouped then out[#out + 1] = ColumnFor("ruleset") end
+    end
+    return out
+end
+
+local function BuildScrollableColsForSection(section)
+    wipe(scrollableCols)
+    for _, col in ipairs(EligibleColumns(section)) do
+        if ColumnOn(section, col) then scrollableCols[#scrollableCols + 1] = col end
     end
 end
+
+------------------------------------------------------------
+-- Choosing the columns (#378): right-click any header
+------------------------------------------------------------
+
+-- Shows or hides one column of one tab. A fresh table each time, so the
+-- change is seen (and, with settings sync on, stamped) as one.
+function AltStable.SetColumnShown(sectionId, field, shown)
+    local copy = {}
+    for k, v in pairs(HiddenColumns()) do if v == true then copy[k] = true end end
+    copy[sectionId .. "." .. field] = (not shown) and true or nil
+    AltStable.SetConfigValue("sheetHiddenColumns", copy)
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+end
+
+-- Every column of one tab shown again, or of every tab when sectionId is nil.
+function AltStable.ShowAllColumns(sectionId)
+    local copy = {}
+    if sectionId then
+        local prefix = sectionId .. "."
+        for k, v in pairs(HiddenColumns()) do
+            if v == true and k:sub(1, #prefix) ~= prefix then copy[k] = true end
+        end
+    end
+    AltStable.SetConfigValue("sheetHiddenColumns", copy)
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+end
+
+-- A check mark, bright for a shown column and faint for a hidden one: the
+-- texture's own vertex colour (the |T escape's last three numbers).
+local CHECK_ON  = "|TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:0:32:32:0:32:0:32:255:255:255|t "
+local CHECK_OFF = "|TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:0:32:32:0:32:0:32:60:60:60|t "
+AltStable._test.ColumnChecks = function() return CHECK_ON, CHECK_OFF end
+
+-- The column menu of a tab, frame-free: a title, Name (always shown), each
+-- column the tab can show with its mark, then "Show all columns".
+local function ColumnMenuEntries(section)
+    local out = { { title = true, text = "Columns: " .. (section.label or section.id) } }
+    out[#out + 1] = { id = "__name", text = CHECK_ON .. AltStable.Columns[1].label, disabled = true,
+                      why = "Always shown." }
+    local anyHidden = false
+    for _, col in ipairs(EligibleColumns(section)) do
+        local on = ColumnOn(section, col)
+        if not on then anyHidden = true end
+        out[#out + 1] = { id = col.field, text = (on and CHECK_ON or CHECK_OFF) .. col.label }
+    end
+    out[#out + 1] = { id = "__all", text = "Show all columns", disabled = not anyHidden,
+                      why = (not anyHidden) and "Every column of this tab is shown." or nil }
+    return out
+end
+AltStable._test.ColumnMenuEntries = ColumnMenuEntries
+
+-- The menu stays open while columns are picked, and closes with Escape or a
+-- click outside. It belongs to the tab it was opened on: after a tab switch a
+-- pick changes nothing and the menu closes.
+local function OpenColumnMenu()
+    local section = activeSection
+    if not (section and section.fields) or not AltStable.ShowMenu then return false end
+    return AltStable.ShowMenu(ColumnMenuEntries(section), function(id)
+        if activeSection ~= section then return end
+        if id == "__all" then
+            AltStable.ShowAllColumns(section.id)
+            return
+        end
+        local col = ColumnFor(id)
+        if col then AltStable.SetColumnShown(section.id, id, not ColumnOn(section, col)) end
+    end, function()
+        if activeSection ~= section then return nil end
+        return ColumnMenuEntries(section)
+    end)
+end
+AltStable._test.OpenColumnMenu = OpenColumnMenu
 
 ------------------------------------------------------------
 -- Display list
@@ -1597,6 +1683,7 @@ local function ShowHeaderTooltip(btn)
             GameTooltip:AddLine("Click to sort " .. OrderWords(col, col.sortText == true), 0.7, 0.7, 0.7)
         end
     end
+    GameTooltip:AddLine("Right-click to choose the columns", 0.7, 0.7, 0.7)
     -- The standing key lives in the faction headers, so the footer keeps the
     -- normal char/level/gold totals like every other tab.
     if col.type == "rep" then AddRepStandingLegend(GameTooltip) end
@@ -1618,7 +1705,15 @@ local function SortByHeader(btn)
 end
 
 local function WireHeader(btn)
-    btn:SetScript("OnClick", function(self) SortByHeader(self) end)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+            OpenColumnMenu()
+            return
+        end
+        SortByHeader(self)
+    end)
     btn:SetScript("OnEnter", function(self)
         -- A header that does not sort does not look like a button.
         if self.sortable then self.hoverFill:Show() end
@@ -4266,41 +4361,28 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptRememberSort = optRememberSortCheck
     Y = Y - 22
 
-    -- The Bags column on Account Summary (#346): on unless turned off.
-    local optBagsCheck = MakeOptCheckRow("sheetBagsColumn",
-        "Show the Bags column", Y,
-        function(checked)
-            AltStable.SetConfigValue("sheetBagsColumn", checked)
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
-        end)
-    optBagsCheck:SetScript("OnEnter", function(self)
+    -- Which columns each tab shows (#378) is chosen on the sheet, by
+    -- right-clicking a header. Here: where to find it, and the way back.
+    local optColsLbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optColsLbl:SetPoint("TOPLEFT", P, Y)
+    optColsLbl:SetText("Columns: right-click a column header to choose them")
+    optColsLbl:SetTextColor(unpack(AltStable.C.TEXT_NORM))
+    local optShowAll = CreateFrame("Button", nil, optionsFrame, "BackdropTemplate")
+    optShowAll:SetSize(120, 20)
+    optShowAll:SetPoint("LEFT", optColsLbl, "RIGHT", 12, 0)
+    AltStable.ApplyBackdrop(optShowAll, 0.12, 0.12, 0.12, 1)
+    local optShowAllLbl = optShowAll:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    optShowAllLbl:SetAllPoints(); optShowAllLbl:SetJustifyH("CENTER"); optShowAllLbl:SetText("Show all columns")
+    optShowAll:SetScript("OnClick", function() AltStable.ShowAllColumns() end)
+    optShowAll:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Bags column", 1, 1, 1)
-        GameTooltip:AddLine("Each character's free and total bag slots on Account Summary; hover a cell for "
-            .. "their bags, bank tabs and spare bags.", nil, nil, nil, true)
+        GameTooltip:AddLine("Show all columns", 1, 1, 1)
+        GameTooltip:AddLine("Every tab shows all its columns again.", nil, nil, nil, true)
         GameTooltip:Show()
     end)
-    optBagsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    AltStable._test.OptBagsColumn = optBagsCheck
-    Y = Y - 22
-
-    -- The Hearthstone column on Account Summary (#371): on unless turned off.
-    local optHearthCheck = MakeOptCheckRow("sheetHearthColumn",
-        "Show the Hearthstone column", Y,
-        function(checked)
-            AltStable.SetConfigValue("sheetHearthColumn", checked)
-            if AltStable.RefreshSheet then AltStable.RefreshSheet() end
-        end)
-    optHearthCheck:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Hearthstone column", 1, 1, 1)
-        GameTooltip:AddLine("Where each character's hearthstone takes them, on Account Summary. "
-            .. "Read when they log in and when they set it at an inn.", nil, nil, nil, true)
-        GameTooltip:Show()
-    end)
-    optHearthCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    AltStable._test.OptHearthColumn = optHearthCheck
-    Y = Y - 22
+    optShowAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    AltStable._test.OptShowAllColumns = optShowAll
+    Y = Y - 26
 
     -- How the sheet groups its characters: one choice of four, over the two
     -- settings it has always been (sheetGroupByRealm, on unless turned off;

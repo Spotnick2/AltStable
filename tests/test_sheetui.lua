@@ -4053,44 +4053,134 @@ do
     f = T.SortState()
     eq("its column gone, the sort falls back to level", f, "level")
 
-    -- The Bags column (#346): on Account Summary unless the option turns it off.
+    -- Choosing the columns (#378): right-click any header. Bags (#346) and
+    -- Hearthstone (#371) had their own options before; now every column
+    -- but Name can be hidden, per tab.
     local function HasColumn(field)
         local cols = T.ColumnLayout()
         for _, c in ipairs(cols) do if c.field == field then return true end end
         return false
     end
+    local function RightClick(field)
+        if field == "name" then local n = T.NameHeader(); n:GetScript("OnClick")(n, "RightButton"); return end
+        local cols, hdrs = T.ColumnLayout()
+        for i, c in ipairs(cols) do
+            if c.field == field then hdrs[i]:GetScript("OnClick")(hdrs[i], "RightButton"); return end
+        end
+        check("a header for " .. field .. " to right-click", false)
+    end
+    local function MenuHas(text)
+        for _, l in ipairs(T.MenuLabels()) do if l:find(text, 1, true) then return l end end
+        return nil
+    end
+    local ON, OFF = T.ColumnChecks()
+    AltStableConfig.sheetHiddenColumns = nil
     AltStableDB.a.bags_slots, AltStableDB.a.bags_free = 28, 20
-    Open("summary")
-    check("the Bags column shows by default", HasColumn("bags_free"))
-    check("  the option shows it checked", T.OptBagsColumn:GetChecked())
-    Click("bags_free")
-    eq("  it sorts", (T.SortState()), "bags_free")
-    local ob = T.OptBagsColumn
-    ob:SetChecked(false); ob:GetScript("OnClick")(ob)
-    eq("turned off, it is saved off", AltStableConfig.sheetBagsColumn, false)
-    check("  the column goes at once", not HasColumn("bags_free"))
-    eq("  and its sort falls back to level", (T.SortState()), "level")
-    check("  the other columns stay", HasColumn("money") and HasColumn("lastUpdate"))
-    ob:SetChecked(true); ob:GetScript("OnClick")(ob)
-    check("back on, it is back", HasColumn("bags_free") and AltStableConfig.sheetBagsColumn == true)
-    AltStableConfig.sheetBagsColumn = nil
-
-    -- The Hearthstone column (#371): the same, with its own option.
     AltStableDB.a.bind = "The Crossroads"
     Open("summary")
-    check("the Hearthstone column shows by default", HasColumn("bind"))
-    check("  the option shows it checked", T.OptHearthColumn:GetChecked())
-    Click("bind")
-    eq("  it sorts", (T.SortState()), "bind")
-    local oh = T.OptHearthColumn
-    oh:SetChecked(false); oh:GetScript("OnClick")(oh)
-    eq("turned off, it is saved off", AltStableConfig.sheetHearthColumn, false)
-    check("  the column goes at once", not HasColumn("bind"))
+    check("the Bags column shows by default", HasColumn("bags_free"))
+    check("  and the Hearthstone column", HasColumn("bind"))
+    Click("bags_free")
+    eq("  Bags sorts", (T.SortState()), "bags_free")
+    eq("a left-click still sorts, it opens no menu", T.MenuIsShown(), false)
+
+    RightClick("money")
+    check("a right-click on a header opens the column menu", T.MenuIsShown())
+    check("  titled with the tab", MenuHas("Columns: Account Summary") ~= nil)
+    eq("  Name is listed, checked", MenuHas("Name"), ON .. "Name")
+    local nameEntry = T.MenuEntry("__name")
+    check("  and can't be picked", nameEntry and nameEntry._disabled)
+    eq("  Bags checked", MenuHas("Bags"), ON .. "Bags")
+    check("  Show all is greyed out while nothing is hidden", T.MenuEntry("__all")._disabled)
+    local labels = T.MenuLabels()
+    check("  the columns in the tab's order: Class first, Last Online last before Show all",
+          labels[3] == ON .. "Class" and labels[#labels - 1] == ON .. "Last Online", labels[3])
+
+    T.MenuClick("bags_free")
+    eq("unticking Bags hides it on this tab", AltStableConfig.sheetHiddenColumns["summary.bags_free"], true)
+    check("  the column goes at once", not HasColumn("bags_free"))
     eq("  and its sort falls back to level", (T.SortState()), "level")
-    check("  Bags stays", HasColumn("bags_free"))
-    oh:SetChecked(true); oh:GetScript("OnClick")(oh)
-    check("back on, it is back", HasColumn("bind") and AltStableConfig.sheetHearthColumn == true)
-    AltStableConfig.sheetHearthColumn = nil
+    check("  the other columns stay", HasColumn("money") and HasColumn("lastUpdate") and HasColumn("bind"))
+    check("  the menu stays open", T.MenuIsShown())
+    eq("  and shows Bags unticked", MenuHas("Bags"), OFF .. "Bags")
+    check("  Show all can be picked now", not T.MenuEntry("__all")._disabled)
+
+    T.MenuClick("level")
+    check("Level can be hidden too", not HasColumn("level"))
+    T.MenuClick("level")
+    check("  and ticked back", HasColumn("level") and not HasColumn("bags_free"))
+    T.MenuClick("level")
+    local hdrs = select(2, T.ColumnLayout())
+    check("every header hears the right button", WoW.handlesClick(hdrs[1], "RightButton")
+          and WoW.handlesClick(T.NameHeader(), "RightButton"))
+    check("  and still the left one", WoW.handlesClick(hdrs[1], "LeftButton"))
+    T.MenuEscape()
+    eq("Escape closes the menu", T.MenuIsShown(), false)
+
+    Open("gear")
+    check("another tab keeps its own Level", HasColumn("level"))
+    RightClick("name")
+    check("the Name header opens the menu too", T.MenuIsShown())
+    check("  with this tab's columns", MenuHas("Columns: Gear Progression") ~= nil and MenuHas("Head") ~= nil
+          and MenuHas("Bags") == nil)
+    T.MenuClick("gear_head")
+    check("a gear slot hides on its own", not HasColumn("gear_head") and HasColumn("gear_neck"))
+    T.MenuClickOutside()
+    eq("a click outside closes it", T.MenuIsShown(), false)
+
+    -- A non-sortable header (a gear slot) opens the menu all the same.
+    RightClick("gear_neck")
+    check("a gear slot's header opens it", T.MenuIsShown())
+    T.MenuClick("__all")
+    check("Show all brings this tab's columns back", HasColumn("gear_head"))
+    eq("  and leaves the other tab's choice alone", AltStableConfig.sheetHiddenColumns["summary.bags_free"], true)
+    T.MenuEscape()
+
+    -- The Ruleset column, while the realm groups are off: listed after Race,
+    -- hidden through the same set, still after Race's slot when Race is hidden.
+    AltStableConfig.sheetGroupByRealm = false
+    Open("summary")
+    check("ungrouped, the Ruleset column shows", HasColumn("ruleset"))
+    RightClick("name")
+    local l = T.MenuLabels()
+    eq("  listed right after Race", l[5], ON .. "Ruleset")
+    T.MenuClick("race")
+    local cols = T.ColumnLayout()
+    eq("  Race hidden, Ruleset keeps Race's place", cols[2] and cols[2].field, "ruleset")
+    T.MenuClick("ruleset")
+    check("  and it hides like any other", not HasColumn("ruleset"))
+    T.MenuEscape()
+    AltStableConfig.sheetGroupByRealm = nil
+
+    -- Every column hidden: Name alone, and the menu still opens from it.
+    AltStable.ShowAllColumns()
+    eq("Options' Show all clears every tab", next(AltStableConfig.sheetHiddenColumns), nil)
+    Open("summary")
+    check("  and Bags is back", HasColumn("bags_free") and HasColumn("level"))
+    local all = {}
+    for _, c in ipairs((T.ColumnLayout())) do all[#all + 1] = c.field end
+    for _, f in ipairs(all) do AltStable.SetColumnShown("summary", f, false) end
+    eq("every column but Name can go", #(T.ColumnLayout()), 0)
+    RightClick("name")
+    check("  the Name header still opens the menu", T.MenuIsShown())
+    T.MenuClick("__all")
+    check("  and Show all brings them back", HasColumn("money"))
+    T.MenuEscape()
+
+    -- The Options button.
+    AltStable.SetColumnShown("gear", "gear_head", false)
+    local sa = T.OptShowAllColumns
+    sa:GetScript("OnClick")(sa)
+    eq("Options' Show all columns clears the set", next(AltStableConfig.sheetHiddenColumns), nil)
+
+    -- A tab switch with the menu open: a pick there changes nothing and closes it.
+    Open("summary")
+    RightClick("name")
+    Open("gear")
+    T.MenuClick("money")
+    eq("a pick after a tab switch changes nothing", next(AltStableConfig.sheetHiddenColumns), nil)
+    eq("  and the menu closes", T.MenuIsShown(), false)
+    AltStableConfig.sheetHiddenColumns = nil
 
     -- Who wants a recipe, on its tooltip (#271): on unless turned off.
     local ow = T.OptWishTooltip
@@ -5013,8 +5103,7 @@ do
     local function On(o) return o and o:GetParent() end
     eq("grouping is on General", On(T.OptGroupBtns[1]), pages.general)
     eq("  with the sort order", On(T.OptRememberSort), pages.general)
-    eq("  the Bags column", On(T.OptBagsColumn), pages.general)
-    eq("  the Hearthstone column", On(T.OptHearthColumn), pages.general)
+    eq("  Show all columns", On(T.OptShowAllColumns), pages.general)
     eq("  the item counts", On(T.OptItemCounts), pages.general)
     eq("  with their faction and ruleset options", On(T.OptTooltipFilter.faction), pages.general)
     eq("  the wishlist on recipe tooltips", On(T.OptWishTooltip), pages.general)

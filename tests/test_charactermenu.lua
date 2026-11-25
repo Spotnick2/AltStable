@@ -770,4 +770,85 @@ do
     AltStable.CloseCharacterMenu()
 end
 
+------------------------------------------------------------
+-- A menu that stays open on a pick (#378, the column chooser), and a list
+-- too long for the screen wrapping into columns.
+------------------------------------------------------------
+
+do
+    local on = { a = true, b = false }
+    local function list()
+        return { { id = "a", text = (on.a and "[x] " or "[ ] ") .. "A" },
+                 { id = "b", text = (on.b and "[x] " or "[ ] ") .. "B" },
+                 { id = "close", text = "Close it" },
+                 { id = "other", text = "Open another" } }
+    end
+    local picked = {}
+    local function pick(id)
+        picked[#picked + 1] = id
+        if id == "close" then AltStable.CloseCharacterMenu()
+        elseif id == "other" then AltStable.ShowMenu({ { id = "z", text = "Another" } }, function() end)
+        else on[id] = not on[id] end
+    end
+    WoW.cursorX, WoW.cursorY = 300, 400
+    AltStable.ShowMenu(list(), pick, list)
+    local pnl = T.MenuPanel()
+    local _, _, _, x0, y0 = pnl:GetPoint(1)
+    WoW.cursorX, WoW.cursorY = 500, 200   -- the cursor is on the entry, elsewhere
+    T.MenuClick("b")
+    eq("a staying menu runs the pick", picked[1], "b")
+    check("  and stays open", T.MenuIsShown())
+    eq("  showing its entries again", labels(), "[x] A|[x] B|Close it|Open another")
+    local _, _, _, x1, y1 = pnl:GetPoint(1)
+    check("  where it was", x1 == x0 and y1 == y0, ("%s,%s -> %s,%s"):format(tostring(x0), tostring(y0), tostring(x1), tostring(y1)))
+    T.MenuClick("close")
+    check("a pick that closes it leaves it closed", not T.MenuIsShown())
+
+    AltStable.ShowMenu(list(), pick, list)
+    T.MenuClick("other")
+    eq("a pick that opens another menu leaves that one", labels(), "Another")
+    T.MenuClick("z")
+    check("  and the other one closes on a pick as usual", not T.MenuIsShown())
+
+    AltStable.ShowMenu(list(), pick, function() return nil end)
+    T.MenuClick("a")
+    check("nothing to show again: it closes", not T.MenuIsShown())
+
+    AltStable.ShowMenu(list(), pick, list)
+    T.MenuEscape()
+    check("Escape closes a staying menu", not T.MenuIsShown())
+    AltStable.ShowCharacterMenu(OTHER)
+    local fav = AltStable.IsCharacterFavourite("other")
+    T.MenuClick(fav and "unfavourite" or "favourite")
+    check("  and a character menu after it closes on a pick", not T.MenuIsShown())
+    local n = #picked
+    AltStable.ShowMenu({ { id = "q", text = "Q" } }, function(id) picked[#picked + 1] = id end)
+    T.MenuClick("q")
+    check("a menu opened after it closes on a pick, as before", not T.MenuIsShown() and #picked == n + 1)
+
+    -- Wrapping: 60 entries on a 600-high screen.
+    local root = T.MenuRoot()
+    local realH = root.GetHeight
+    root.GetHeight = function() return 600 end
+    local long = {}
+    for i = 1, 60 do long[i] = { id = "e" .. i, text = "Entry " .. i } end
+    AltStable.ShowMenu(long, function() end)
+    local w1 = pnl:GetWidth()
+    check("a long list stays within the screen's height", pnl:GetHeight() <= 600 * 0.85 + 12, tostring(pnl:GetHeight()))
+    local first, last = T.MenuEntry("e1"), T.MenuEntry("e60")
+    local _, _, _, fx = first:GetPoint(1)
+    local _, _, _, lx = last:GetPoint(1)
+    check("  by wrapping into columns", lx > fx, ("%s vs %s"):format(tostring(fx), tostring(lx)))
+    eq("  each entry anchored once", last:GetNumPoints(), 1)
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowMenu({ { id = "s1", text = "Short" }, { id = "s2", text = "List" } }, function() end)
+    check("a short list is one column again", pnl:GetWidth() < w1)
+    local _, _, _, s2x = T.MenuEntry("s2"):GetPoint(1)
+    local _, _, _, s1x = T.MenuEntry("s1"):GetPoint(1)
+    eq("  one under the other", s2x, s1x)
+    AltStable.CloseCharacterMenu()
+    root.GetHeight = realH
+    WoW.cursorX, WoW.cursorY = 800, 600
+end
+
 WoW.finish("test_charactermenu", passed, failed)

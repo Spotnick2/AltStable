@@ -1915,7 +1915,7 @@ do
     local col
     for _, x in ipairs(AltStable.Columns) do if x.field == "bind" then col = x end end
     check("a Hearthstone column exists", col ~= nil)
-    check("  sorted as text, with its option", col and col.sortText and col.option == "sheetHearthColumn")
+    check("  sorted as text", col and col.sortText)
     check("  on Account Summary, after Bags",
           io.open("SheetUI.lua"):read("*a"):find('"bags_free","bind","lastUpdate"', 1, true) ~= nil)
     if col then

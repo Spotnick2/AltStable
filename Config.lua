@@ -82,7 +82,27 @@ end
 -- Defaults
 ------------------------------------------------------------
 
+-- The Bags and Hearthstone checkboxes (#346, #371) became hidden columns
+-- (#378). Moved as they are, not through SetConfigValue: an upgrade is not
+-- the player's edit, so it must not stamp the columns group (GroupStamp
+-- counts a non-empty set as the oldest choice).
+local LEGACY_COLUMNS = { sheetBagsColumn = "summary.bags_free", sheetHearthColumn = "summary.bind" }
+local function MigrateColumnOptions()
+    for key, col in pairs(LEGACY_COLUMNS) do
+        if AltStableConfig[key] ~= nil then
+            if AltStableConfig[key] == false then
+                if type(AltStableConfig.sheetHiddenColumns) ~= "table" then
+                    AltStableConfig.sheetHiddenColumns = {}
+                end
+                AltStableConfig.sheetHiddenColumns[col] = true
+            end
+            AltStableConfig[key] = nil
+        end
+    end
+end
+
 local function EnsureDefaults()
+    MigrateColumnOptions()
     AltStableConfig.syncMode      = AltStableConfig.syncMode      or "whisper"
     AltStableConfig.whitelist     = AltStableConfig.whitelist     or {}
     -- #58: your other accounts sync through Battle.net unless switched off.
@@ -1362,7 +1382,8 @@ local function LevelCapDefault()
 end
 
 -- kind: bool, num (min..max), word (a token, nil allowed when the default is
--- nil), guids (a set of characters), flags (name = true/false).
+-- nil), guids (a set of characters), flags (name = true/false), cols (a set
+-- of "tab.field" names, only the true ones).
 local PREF_GROUPS = {
     { id = "characters", keys = {
         { key = "hiddenCharacters",    kind = "guids", default = {} },
@@ -1387,8 +1408,13 @@ local PREF_GROUPS = {
         { key = "rosterEnchants",    kind = "bool", default = false },
         { key = "sheetGroupByRealm", kind = "bool", default = true },
         { key = "sheetGroupByFaction", kind = "bool", default = false },
-        { key = "sheetBagsColumn",   kind = "bool", default = true },    -- #346
-        { key = "sheetHearthColumn", kind = "bool", default = true },    -- #371
+    } },
+    -- The columns each tab hides (#378): its own group, so a sheet line from
+    -- a build without it can't stamp past a column choice it never carried.
+    -- The Bags (#346) and Hearthstone (#371) checkboxes it replaced are no
+    -- longer synced; their last choice is moved in by EnsureDefaults.
+    { id = "columns", keys = {
+        { key = "sheetHiddenColumns", kind = "cols", default = {} },
     } },
 }
 local PREF_KEYS, PREF_GROUP = {}, {}
@@ -1403,6 +1429,12 @@ local function SortedKeys(t)
     table.sort(out)
     return out
 end
+
+-- A column as the cols kind names it: the tab's id, a dot, the field.
+local function GoodColumnKey(name)
+    return type(name) == "string" and #name <= 64 and name:match("^%a+%.[%w_]+$") ~= nil
+end
+AltStable.GoodColumnKey = GoodColumnKey
 
 local function DefaultOf(k)
     if type(k.default) == "function" then return k.default() end
@@ -1424,6 +1456,8 @@ local function Encode(k, v)
     for _, name in ipairs(SortedKeys(v)) do
         if k.kind == "guids" then
             if v[name] and GoodGuid(name) then parts[#parts + 1] = name end
+        elseif k.kind == "cols" then
+            if v[name] == true and GoodColumnKey(name) then parts[#parts + 1] = name end
         elseif name:match("^%a+$") then
             parts[#parts + 1] = name .. ":" .. (v[name] and "1" or "0")
         end
@@ -1436,7 +1470,7 @@ end
 local function Decode(k, text)
     if text == "" then
         if k.default == nil then return true, nil end
-        if k.kind ~= "guids" and k.kind ~= "flags" then return false end
+        if k.kind ~= "guids" and k.kind ~= "flags" and k.kind ~= "cols" then return false end
     end
     if k.kind == "bool" then
         if text == "1" or text == "0" then return true, text == "1" end
@@ -1456,6 +1490,8 @@ local function Decode(k, text)
         if count >= MAX_SYNCED_ORDER then break end
         if k.kind == "guids" then
             if GoodGuid(item) then out[item] = true; count = count + 1 end
+        elseif k.kind == "cols" then
+            if GoodColumnKey(item) then out[item] = true; count = count + 1 end
         else
             local name, on = item:match("^(%a+):([01])$")
             if name and #name <= 32 then out[name] = (on == "1"); count = count + 1 end

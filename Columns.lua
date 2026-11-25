@@ -99,13 +99,11 @@ AltStable.Columns = {
     { label="Gold",        field="money",       width=150, align="RIGHT", type="money",      group="always" },
     -- Bag space (#346): free / total in the bags that take anything. Sorted by
     -- the free slots, so the fullest bags come first or last.
-    -- option: the Options key that hides the column when false (on by default).
-    { label="Bags",        field="bags_free",   width=55,  align="RIGHT", type="bags",       group="always",
-      option="sheetBagsColumn" },
+    { label="Bags",        field="bags_free",   width=55,  align="RIGHT", type="bags",       group="always" },
     -- Hearthstone (#371): the inn the character is bound to, as the client
     -- names it (GetBindLocation, in the client's language).
     { label="Hearthstone", field="bind",        width=130, align="LEFT",  type="text",       group="always",
-      sortText=true, option="sheetHearthColumn" },
+      sortText=true },
     { label="Last Online", field="lastUpdate",  width=85,  align="RIGHT", type="lastOnline", group="always",
       orderWords={ "oldest first", "most recent first" },
       -- What it shows: online counts as now, a logoff seen this session as then.
