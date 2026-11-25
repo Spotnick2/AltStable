@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.14.0 - 2026-11-25
+
+**Raid attunements** in the Loremaster tab, and the Roster's gear hover for your other account's
+characters. Both came from a player's comment on CurseForge. Built for client 1.60.1.71037, the live
+build. v1.14.0 syncs with everything v1.13.0 does.
+
+### AltStable Companion
+
+The Roster's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+It can also keep your characters in a Google Sheet in your own Google Drive. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.2** is the current version.
+
+### New
+
+- **Raid attunements in the Loremaster tab**
+  ([#487](https://github.com/Spotnick2/AltStable/issues/487)): Onyxia's Lair (Alliance 16 steps,
+  Horde 15), Blackwing Lair, Molten Core and Naxxramas show their attunement under the raid. The
+  card says "Attunement 3/16" or "Attuned". The cell's hover and View quests open with the steps in
+  order: done ones green, the next one gold, a missed one dim red. A step counted under another
+  zone names it ("counted under Blackrock Spire"). The raid's row now shows for every character with a chain, and a cell with no quest
+  counted shows the steps done, dimmed, such as "0/15". Display only: each quest is still counted
+  once, under its own zone, and no count changes. Like the quest lists, it shows for the
+  characters played on this WoW account.
+
+### Fixed
+
+- **The Roster's gear hover for your other account's characters**
+  ([#486](https://github.com/Spotnick2/AltStable/issues/486)): hovering a slot of a synced
+  character showed nothing, or only its enchant. It now shows the item, with its enchant and gems,
+  as long as the synced gear still matches it.
+
 ## v1.13.0 - 2026-11-24
 
 A small release: **AltStable on Titan Panel** and other LibDataBroker displays. Built for client
