@@ -476,7 +476,7 @@ drawn = { [3] = 27175.4 }
 D.Read()
 advance(1)
 eq("a reading ahead of the scan (gearid still old): not written yet", AltStableDB[me].gearlook_shoulder, nil)
-eq("  the stamp says only what was written", AltStableDB[me].gearlookSig, "o2")
+eq("  nor the outfit (its look isn't complete)", AltStableDB[me].gearlookSig, "o-")
 AltStableDB[me].gearid_shoulder = 6666
 D.OnScanned(AltStableDB[me])
 eq("  the scan then writes it", AltStableDB[me].gearlook_shoulder, 271754)
@@ -606,11 +606,61 @@ advance(0.6)
 AltStableDB[me].gearid_shoulder = 6666
 D.OnScanned(AltStableDB[me])
 eq("the scan's memory doesn't carry outfit 2's shoulders into outfit 1", AltStableDB[me].gearlook_shoulder, nil)
-eq("  and outfit 1 isn't published with a slot unread: still 2", AltStableDB[me].drawnOutfit, 2)
+eq("  and outfit 1 isn't published with a slot unread", AltStableDB[me].drawnOutfit, nil)
 drawn = { [3] = 666.6 }
 advance(5)
 eq("  once read, it is", AltStableDB[me].drawnOutfit, 1)
 outfit = 2
+
+-- Codex follow-up of #501: a stable reading of another outfit that can't be
+-- applied in full (new gear the scan hasn't recorded) changes nothing at all.
+outfit = 2
+fresh(player({ head = 7048, shoulder = 4197, chest = 9623 }))
+wear({ [1] = 7048, [3] = 4197, [5] = 9623 })
+drawn = { [1] = 704.8, [3] = 27175.4, [5] = 962.3 }
+D.Read()
+advance(1)
+local pr = AltStableDB[me]
+eq("outfit 2, shoulders transmogged", pr.gearlook_shoulder, 271754)
+eq("  published", pr.drawnOutfit, 2)
+local sig2 = pr.gearlookSig
+outfit = 1
+wear({ [1] = 7048, [3] = 6666, [5] = 9623 })           -- new shoulders, not scanned yet
+drawn = { [1] = 77344, [3] = 666.6, [5] = 962.3 }      -- outfit 1 also hides the helm
+D.Read()
+advance(0.6)
+eq("another outfit, new gear not recorded: the outfit stays", pr.drawnOutfit, 2)
+eq("  the override stays", pr.gearlook_shoulder, 271754)
+eq("  under its own stamp", pr.gearlookSig, sig2)
+eq("  and no helm flag of the other outfit", pr.hidehelm, 0)
+pr.gearid_shoulder = 6666
+D.OnScanned(pr)
+eq("the scan recorded the gear: outfit 1 written whole", pr.drawnOutfit, 1)
+eq("  its shoulders drawn as equipped", pr.gearlook_shoulder, nil)
+eq("  and its hidden helm", pr.hidehelm, 1)
+outfit = 2
+
+-- A partial first reading, then its retry, in the same outfit: the look isn't
+-- re-dated when it didn't change.
+fresh(player({ shoulder = 4197, chest = 9623 }))
+wear({ [3] = 4197, [5] = 9623 })
+drawn = { [3] = 27175.4, [5] = 962.3 }
+WoW.now = 8000
+D.Read()
+advance(1)
+local dr = AltStableDB[me]
+eq("a complete reading dates the look", dr.drawnLookAt, 8000)
+T.ResetDrawn()                                  -- a /reload: no reading in memory
+drawn = { [5] = 962.3 }                         -- the shoulders not loaded yet
+WoW.now = 8100
+D.Read()
+advance(0.6)
+eq("a partial reading after a reload doesn't re-date it", dr.drawnLookAt, 8000)
+eq("  nor drop the shoulders' override", dr.gearlook_shoulder, 271754)
+drawn = { [3] = 27175.4, [5] = 962.3 }
+WoW.now = 8200
+advance(5)
+eq("  nor does its retry, the look unchanged", dr.drawnLookAt, 8000)
 
 -- 3. A situational switch writes no helm flag either; a switch during a
 -- stable reading makes it situational.

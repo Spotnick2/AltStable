@@ -181,6 +181,34 @@ function Drawn.Apply(char, result)
     -- The flags describe the same stable reading as the look below: an outfit
     -- that switched by itself writes neither (Codex review of #501).
     local stable = result.stable ~= false
+    local lookStable = result.stable and type(result.look) == "table"
+
+    -- Which roster slots this reading can apply: read, on the gear the record
+    -- holds. `complete` when every slot with something equipped (by the
+    -- reading or by the record) is one of them.
+    local applicable, complete = {}, true
+    if lookStable then
+        for _, s in ipairs(ROSTER) do
+            local slot, key = s[1], s[2]
+            local value, eq = result.look[slot], result.equipped and result.equipped[slot]
+            local gid = tonumber(char["gearid_" .. key]) or 0
+            if value ~= nil and eq ~= nil and gid == eq then
+                applicable[slot] = true
+            elseif (eq or 0) ~= 0 or gid ~= 0 then
+                complete = false
+            end
+        end
+        -- Another outfit than the record's, not all of it applicable (a slot
+        -- unread, or new gear the scan hasn't recorded yet): nothing at all is
+        -- written - flags, look or outfit - so the record never pairs one
+        -- outfit's fields with another's. The sample stays for the scan
+        -- (OnScanned) and the retries (Codex review of #501).
+        if char.drawnOutfit ~= nil and result.outfit ~= nil and result.outfit ~= char.drawnOutfit
+           and not complete then
+            return false
+        end
+    end
+
     for slot, field in pairs(FIELDS) do
         local hidden = nil   -- not `stable and result[slot]`: false would read as "shown"
         if stable then hidden = result[slot] end
@@ -195,44 +223,40 @@ function Drawn.Apply(char, result)
         char.drawnAt = time()
     end
     local lookChanged = false
-    if result.stable and type(result.look) == "table" then
-        -- A new outfit is published only once every equipped roster slot of it
-        -- was read: a slot left unread would keep the old outfit's look under
-        -- the new outfit's name (Codex review of #501). Retries come.
-        if result.outfit ~= nil and result.outfit ~= char.drawnOutfit then
-            for _, s in ipairs(ROSTER) do
-                local eq = result.equipped and result.equipped[s[1]] or 0
-                if eq ~= 0 and result.look[s[1]] == nil then return changed end
-            end
-        end
-        local wrote = false
+    if lookStable and next(applicable) ~= nil then
         -- What each slot is drawn as, the equipped item included: a gear swap
         -- in a "Show Equipped Gear" slot changes the look while gearlook_
         -- stays absent on both sides, and must date it too (Codex review of
-        -- #501). Kept as `drawnEff`, the writer's own; readers ignore it.
+        -- #501). Kept as `drawnEff`, the writer's own; readers ignore it. A
+        -- slot this reading can't apply keeps its last known value, so a
+        -- partial reading doesn't date an unchanged look.
         local eff = {}
+        for slot, v in tostring(char.drawnEff or ""):gmatch("(%d+):(%w+)") do eff[tonumber(slot)] = v end
         for _, s in ipairs(ROSTER) do
             local slot, key = s[1], s[2]
-            local value, eq = result.look[slot], result.equipped and result.equipped[slot]
-            if value ~= nil and eq ~= nil and (tonumber(char["gearid_" .. key]) or 0) == eq then
-                wrote = true
-                eff[#eff + 1] = slot .. ":" .. tostring(value)
+            if applicable[slot] then
+                local value, eq = result.look[slot], result.equipped[slot]
+                eff[slot] = tostring(value)
                 local gl = GearlookValue(value, eq)
                 if char["gearlook_" .. key] ~= gl then char["gearlook_" .. key] = gl; lookChanged = true end
             end
         end
-        if wrote then
-            if result.outfit ~= nil and char.drawnOutfit ~= result.outfit then
-                char.drawnOutfit = result.outfit
-                lookChanged = true
-            end
-            local effective = table.concat(eff, ";")
-            if lookChanged or char.drawnLookAt == nil or char.drawnEff ~= effective then
-                char.drawnLookAt = time()
-            end
-            char.drawnEff = effective
-            char.gearlookSig = LookSignature(char)
+        -- The outfit is published with a complete look only: a first reading
+        -- with a slot missing writes what it read and waits for the rest.
+        if complete and result.outfit ~= nil and char.drawnOutfit ~= result.outfit then
+            char.drawnOutfit = result.outfit
+            lookChanged = true
         end
+        local parts = {}
+        for _, s in ipairs(ROSTER) do
+            if eff[s[1]] ~= nil then parts[#parts + 1] = s[1] .. ":" .. eff[s[1]] end
+        end
+        local effective = table.concat(parts, ";")
+        if lookChanged or char.drawnLookAt == nil or char.drawnEff ~= effective then
+            char.drawnLookAt = time()
+        end
+        char.drawnEff = effective
+        char.gearlookSig = LookSignature(char)
     end
     if changed or lookChanged then
         -- The Companion dates a hidden/shown difference by gearReadAt
