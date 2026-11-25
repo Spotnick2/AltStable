@@ -837,6 +837,19 @@ local function MakeColumnWidgets(row, col, height)
     return w
 end
 
+-- A row's hover buttons on or off. On only once RenderRow has filled them
+-- for the character in the row: a pooled row turned filler or group band
+-- would otherwise keep the last character's item under a blank cell (Codex
+-- review of #494).
+local function SetRowTipsShown(row, shown)
+    for _, set in ipairs(TIP_SETS) do
+        for _, tip in pairs(row[set] or {}) do
+            if shown then tip:Show() else tip:Hide() end
+        end
+    end
+end
+AltStable._SetRowTipsShown = SetRowTipsShown
+
 local function EachTip(w, fn)
     if w.cellTip then fn(w.cellTip) end
     if w.repTip then fn(w.repTip) end
@@ -864,13 +877,11 @@ function AltStable.SetRowColumns(row, columns)
         row.cells[i] = w.cell
         row.cellTips[i], row.repTips[i], row.gearTips[i] = w.cellTip, w.repTip, w.gearTip
         w.cell:Show()
-        EachTip(w, function(t) t:Show() end)
     end
+    -- Every hover button off, the shown columns' too, until RenderRow fills them.
     for field, w in pairs(row.byField) do
-        if not used[field] then
-            w.cell:SetText(""); w.cell:Hide()
-            EachTip(w, function(t) t:Hide() end)
-        end
+        if not used[field] then w.cell:SetText(""); w.cell:Hide() end
+        EachTip(w, function(t) t:Hide() end)
     end
     -- Dividers from a pool on the row; row.dividers holds only the ones in
     -- use, since rendering shows every one it holds.
@@ -978,6 +989,7 @@ function AltStable.RenderGroupRow(row, item)
     row.bg:SetColorTexture(GetGroupBG())
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     for _, cell in ipairs(row.cells) do cell:SetText("") end
+    SetRowTipsShown(row, false)
 
     -- Group row is a solid full-width band — column dividers must not paint
     -- through it. RenderRow restores them for character rows.
@@ -1027,6 +1039,7 @@ function AltStable.RenderRow(row, char, index, columns)
     SetRowGuid(row, char and char.guid or nil)
     DimRow(row, char)
     SetRowBg(row, index)
+    SetRowTipsShown(row, true)
     -- Pool reuse: a row that previously rendered as a group header may carry
     -- a leftover groupLabel. Hide it so it doesn't bleed onto this char row.
     if row.groupLabel then row.groupLabel:Hide() end
@@ -1286,6 +1299,7 @@ function AltStable.RenderFillerRow(row, index)
     -- space — like a real spreadsheet's empty rows below the last data row.
     if row.dividers then for _, d in ipairs(row.dividers) do d:Show() end end
     for _, cell in ipairs(row.cells) do cell:SetText("") end
+    SetRowTipsShown(row, false)
     row:Show()
 end
 

@@ -6025,6 +6025,9 @@ local function RebuildDataDrivenColumns()
         ResetSortIfInvalid()
         AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, activeSection.headerHeight or HEADER_HEIGHT))
         BuildHeaders()
+        -- An open column chooser lists the columns as they now are: a faction
+        -- met, the realm groups switched by a sync (Codex review of #494).
+        if AltStable.RefreshStayingMenu then AltStable.RefreshStayingMenu() end
     end
 end
 

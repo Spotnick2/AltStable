@@ -733,6 +733,23 @@ do
     AltStable.RowPoolFor(pools, "rep", { colsA[1] })
     eq("one column: no divider in use", #oldRow.dividers, 0)
     check("  the pool's are hidden", not oldRow.dividerPool[1]:IsShown())
+
+    -- Hover buttons only on a character's row, once it is rendered (Codex
+    -- review of #494): a pooled row turned filler or group band must not
+    -- keep the last character's under a blank cell.
+    AltStable.RowPoolFor(pools, "rep", colsB)
+    local tip = oldRow.repTips[3]
+    check("set up for new columns, a hover button waits for the render", tip and not tip:IsShown())
+    check("  a column it already showed too", oldRow.repTips[1] and not oldRow.repTips[1]:IsShown())
+    AltStable.RenderRow(oldRow, char, 1, colsB)
+    check("  rendered for a character, it is on", tip:IsShown())
+    AltStable.RenderFillerRow(oldRow, 2)
+    check("  a filler row's are off", not tip:IsShown())
+    AltStable.RenderRow(oldRow, char, 1, colsB)
+    AltStable.RenderGroupRow(oldRow, { kind = "group", realm = "R", count = 1 })
+    check("  and a group row's", not tip:IsShown())
+    AltStable.RenderRow(oldRow, char, 1, colsB)
+    check("  back to a character, on again", tip:IsShown())
     check("another section's pool is untouched",
           AltStable.RowPoolFor(pools, "gear", colsA) ~= pool)
 end

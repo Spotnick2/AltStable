@@ -4171,6 +4171,18 @@ do
     eq("  and does", AltStableConfig.sheetHiddenColumns["summary.ruleset"], nil)
     T.MenuEscape()
 
+    -- The tab's columns change while the chooser is open (the realm groups
+    -- switched by a sync, a faction met): it lists them as they now are.
+    RightClick("name")
+    check("grouped, the chooser has no Ruleset", MenuHas("Ruleset") == nil)
+    AltStableConfig.sheetGroupByRealm = false
+    AltStable.RefreshSheet()
+    check("  the groups off, Ruleset appears in the open chooser", MenuHas("Ruleset") ~= nil)
+    AltStableConfig.sheetGroupByRealm = nil
+    AltStable.RefreshSheet()
+    check("  and goes with them", MenuHas("Ruleset") == nil and T.MenuIsShown())
+    T.MenuEscape()
+
     -- A synced change while the chooser is open: its marks follow.
     AltStable.SetColumnShown("summary", "bags_free", false)
     RightClick("name")
