@@ -126,12 +126,12 @@ end
 -- own call, with the generation it belongs to: anything else is a fresh
 -- trigger, with its own tries.
 function Drawn.Read(retry)
+    -- An earlier trigger's retry: a newer one took over. Checked before the
+    -- read in progress, or it would queue a trailing read of its own (Codex
+    -- review of #498).
+    if retry ~= nil and retry ~= generation then return false end
     if reading then again = true; return false end
-    if retry == nil then
-        retries, generation = 0, generation + 1
-    elseif retry ~= generation then
-        return false   -- an earlier trigger's retry: a newer one took over
-    end
+    if retry == nil then retries, generation = 0, generation + 1 end
     local guid = UnitGUID and UnitGUID("player")
     if not guid then return false end
     reading = true

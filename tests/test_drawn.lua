@@ -220,6 +220,17 @@ drawn = { [1] = 77344 }
 advance(10)
 eq("  its last try still comes, and reads", AltStableDB[me].hidehelm, 1)
 
+-- An earlier trigger's retry firing DURING the newer one's read: it does
+-- nothing, and queues no trailing read (Codex review of #498).
+fresh()
+drawn = {}
+D.Read()            -- t = 0, empty: a retry at 3.5
+advance(3.25)
+drawn = { [1] = 77344, [15] = 307653 }
+D.Read()            -- t = 3.25, reading until 3.75
+advance(100)
+eq("an old retry during a newer read queues nothing", setUnits, 2)
+
 -- An equipped slot left unread is asked again even when the other read.
 fresh()
 WoW.equipped = { [1] = "|Hitem:7048::|h[Helm]|h", [15] = "|Hitem:271719::|h[Cloak]|h" }
