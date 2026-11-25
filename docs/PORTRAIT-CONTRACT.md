@@ -388,7 +388,8 @@ changed once on its head or back.
 - **`gearlook_<key>`** (the keys as `gearid_<key>`) is the item the slot is **drawn** as where it
   differs from `gearid_<key>`, `0` for a hidden appearance, and absent for drawn as equipped.
 - **`drawnOutfit`** is the saved outfit it was read in. **`drawnLookAt`** is when that look last
-  changed. `gearlookSig` is the addon's own check, so a reader can ignore it.
+  changed, counting a slot drawn as equipped whose item changed. `gearlookSig` and `drawnEff`
+  are the addon's own checks, so a reader can ignore them.
 - These are written only on a stable reading (login, closing the transmogrifier, a gear change),
   never on an outfit that switched by itself.
 - A reader comparing a capture's `drawnLook` with the roster:

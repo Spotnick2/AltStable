@@ -64,7 +64,8 @@ end
 -- that was the reason until inventory loaded and the look after it restarted
 -- the countdown, and a skip stored then never matched again (review of #215).
 local function OfferKey(status)
-    return status.look
+    -- The drawn look when the status compared that (#497), else the equipped.
+    return status.dueLook or status.look
 end
 
 local function Skipped(status)

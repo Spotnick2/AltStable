@@ -72,6 +72,9 @@ local retries = 0
 -- Which trigger the retries belong to: a fresh one takes over, and a retry
 -- still queued for an earlier one then does nothing (Codex review of #498).
 local generation, genStable = 0, true
+-- Outfit switches seen: a stable reading during which one landed reads the
+-- switched outfit, so it counts as situational (Codex review of #501).
+local switches = 0
 -- The last reading, for the character it was read on: written by the scan
 -- if the record didn't exist yet when it came.
 local last
@@ -105,6 +108,13 @@ local function Model()
     if model.EnableMouse then model:EnableMouse(false) end
     model:Show()
     return model
+end
+
+-- The status's view of the look, only while it is still the outfit on: a
+-- switch not read yet leaves nothing to compare (Codex review of #501).
+local function CurrentFor(outfit)
+    if current.outfit ~= nil and outfit ~= nil and current.outfit ~= outfit then return { look = {} } end
+    return current
 end
 
 local function Equipped(slot)
@@ -168,8 +178,12 @@ end
 function Drawn.Apply(char, result)
     if type(char) ~= "table" or type(result) ~= "table" then return false end
     local changed, any = false, false
+    -- The flags describe the same stable reading as the look below: an outfit
+    -- that switched by itself writes neither (Codex review of #501).
+    local stable = result.stable ~= false
     for slot, field in pairs(FIELDS) do
-        local hidden = result[slot]
+        local hidden = nil   -- not `stable and result[slot]`: false would read as "shown"
+        if stable then hidden = result[slot] end
         if hidden ~= nil then
             any = true
             local v = hidden and 1 or 0
@@ -182,12 +196,27 @@ function Drawn.Apply(char, result)
     end
     local lookChanged = false
     if result.stable and type(result.look) == "table" then
+        -- A new outfit is published only once every equipped roster slot of it
+        -- was read: a slot left unread would keep the old outfit's look under
+        -- the new outfit's name (Codex review of #501). Retries come.
+        if result.outfit ~= nil and result.outfit ~= char.drawnOutfit then
+            for _, s in ipairs(ROSTER) do
+                local eq = result.equipped and result.equipped[s[1]] or 0
+                if eq ~= 0 and result.look[s[1]] == nil then return changed end
+            end
+        end
         local wrote = false
+        -- What each slot is drawn as, the equipped item included: a gear swap
+        -- in a "Show Equipped Gear" slot changes the look while gearlook_
+        -- stays absent on both sides, and must date it too (Codex review of
+        -- #501). Kept as `drawnEff`, the writer's own; readers ignore it.
+        local eff = {}
         for _, s in ipairs(ROSTER) do
             local slot, key = s[1], s[2]
             local value, eq = result.look[slot], result.equipped and result.equipped[slot]
             if value ~= nil and eq ~= nil and (tonumber(char["gearid_" .. key]) or 0) == eq then
                 wrote = true
+                eff[#eff + 1] = slot .. ":" .. tostring(value)
                 local gl = GearlookValue(value, eq)
                 if char["gearlook_" .. key] ~= gl then char["gearlook_" .. key] = gl; lookChanged = true end
             end
@@ -197,7 +226,11 @@ function Drawn.Apply(char, result)
                 char.drawnOutfit = result.outfit
                 lookChanged = true
             end
-            if lookChanged or char.drawnLookAt == nil then char.drawnLookAt = time() end
+            local effective = table.concat(eff, ";")
+            if lookChanged or char.drawnLookAt == nil or char.drawnEff ~= effective then
+                char.drawnLookAt = time()
+            end
+            char.drawnEff = effective
             char.gearlookSig = LookSignature(char)
         end
     end
@@ -225,7 +258,7 @@ end
 -- What the character is drawn as now, for its own portrait status: the last
 -- reading's look ({ [slot] = value }) and outfit. Empty before one.
 function Drawn.Current()
-    return current
+    return CurrentFor(ActiveOutfit())
 end
 
 -- Reads the player's drawn look. One at a time; a trigger during a read
@@ -251,9 +284,11 @@ function Drawn.Read(retry, situational)
     if not guid then return false end
     reading = true
     local m = Model()
+    local switchesAtStart = switches
     pcall(m.SetUnit, m, "player")
     C_Timer.After(READ_AFTER, function()
-        local result = { look = {}, equipped = {}, stable = genStable, outfit = ActiveOutfit() }
+        local result = { look = {}, equipped = {}, stable = genStable and switches == switchesAtStart,
+                         outfit = ActiveOutfit() }
         for _, slot in ipairs(LOOK_SLOTS) do
             result.equipped[slot] = Equipped(slot)
             result.look[slot] = Drawn.SlotValue(m, slot)
@@ -264,7 +299,10 @@ function Drawn.Read(retry, situational)
             elseif type(v) == "number" and v > 0 then result[slot] = false end
         end
         -- The status's view: every slot read, the outfit now. A confirmed
-        -- empty slot replaces what was there (an unequipped shirt).
+        -- empty slot replaces what was there (an unequipped shirt). Another
+        -- outfit starts it afresh: a slot this reading missed must not show
+        -- the last outfit's item under this one (Codex review of #501).
+        if current.outfit ~= result.outfit then current.look = {} end
         for slot, v in pairs(result.look) do current.look[slot] = v end
         current.outfit = result.outfit
         local char = type(AltStableDB) == "table" and AltStableDB[guid]
@@ -274,7 +312,7 @@ function Drawn.Read(retry, situational)
             -- What the scan may still need: a slot this reading couldn't see
             -- keeps the last reading's value while the same item is on.
             local prev = last and last.guid == guid and last.result
-            if prev then
+            if prev and prev.outfit == result.outfit then
                 for _, slot in ipairs(LOOK_SLOTS) do
                     if result.look[slot] == nil and prev.look and prev.look[slot] ~= nil
                        and prev.equipped and prev.equipped[slot] == result.equipped[slot] then
@@ -319,6 +357,7 @@ events:SetScript("OnEvent", function(_, event, a, b)
     elseif event == "TRANSMOGRIFY_CLOSE" then
         Drawn.Read()
     elseif event == "TRANSMOG_DISPLAYED_OUTFIT_CHANGED" then
+        switches = switches + 1
         Drawn.Read(nil, true)
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         -- Restarted on each change, as Core's rescan is: both read after the
@@ -341,7 +380,7 @@ function AltStable.DropUndrawnFlags(char)
     end
     if char.gearlookSig ~= LookSignature(char) then
         for _, s in ipairs(ROSTER) do char["gearlook_" .. s[2]] = nil end
-        char.drawnOutfit, char.drawnLookAt, char.gearlookSig = nil, nil, nil
+        char.drawnOutfit, char.drawnLookAt, char.gearlookSig, char.drawnEff = nil, nil, nil, nil
     end
 end
 
@@ -350,6 +389,6 @@ AltStable._test.DrawnFrame = events
 AltStable._test.DrawnModel = function() return model end
 AltStable._test.ResetDrawn = function()
     model, reading, again, againStable, last, equipTimer = nil, false, false, false, nil, nil
-    retries, generation, genStable = 0, 0, true
+    retries, generation, genStable, switches = 0, 0, true, 0
     current = { look = {} }
 end

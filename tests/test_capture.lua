@@ -1142,6 +1142,7 @@ AltStable.PortraitStatusUpdated = realUpdated
 -- A real capture records the look it photographed.
 resetCapture()
 wear({ [5] = 4242 })
+local realRefreshStatus = AltStable.RefreshPortraitStatus
 AltStable.RefreshPortraitStatus = function() end   -- Finish calls it; not under test here
 T.Capture()
 runChain()
@@ -1205,6 +1206,24 @@ do
     eq("  on the shoulders", table.concat(st.changedSlots, ","), "Shoulder")
     outfitNow = 1
     eq("another outfit (a situational switch): no verdict", T.PortraitStatus().reason, "none")
+    outfitNow = 2
+    local due1 = T.PortraitStatus().dueLook
+    nowLook[3] = 888
+    local due2 = T.PortraitStatus().dueLook
+    check("a due drawn look names the outfit and the look", due1 and due1:find("^o2|") and due1:find("3:999", 1, true),
+          tostring(due1))
+    check("  a second transmog of the same slot is another due look", due2 and due2 ~= due1, tostring(due2))
+    local heard, realHook = 0, AltStable.PortraitLookChanged
+    AltStable.PortraitLookChanged = function() heard = heard + 1 end
+    realRefreshStatus()
+    local before = heard
+    nowLook[3] = 777
+    realRefreshStatus()
+    check("  and the auto-capture hears it (same slots changed)", heard > before)
+    AltStable.PortraitLookChanged = realHook
+    nowLook[3] = 888
+    nowLook[3] = 999
+    outfitNow = 1
     outfitNow = 2
     nowLook[3] = 271754
     wear({ [3] = 5555, [5] = 4242, [9] = 300 })

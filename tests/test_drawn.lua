@@ -570,4 +570,89 @@ T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "M
 eq("an unstamped incoming look matching our stamp is still dropped", AltStableDB["Player-Pl"].gearlook_shoulder, nil)
 check("listens to the outfit switching", T.DrawnFrame:IsEventRegistered("TRANSMOG_DISPLAYED_OUTFIT_CHANGED"))
 
+------------------------------------------------------------
+-- Codex review of #501
+------------------------------------------------------------
+
+-- 1. A newer peer that dropped one override and kept another.
+AltStableDB = { ["Player-Pl"] = { guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 100,
+    gearlook_shoulder = 271754, gearlook_wrist = 0, drawnOutfit = 2, gearlookSig = "o2;3:271754;9:0" } }
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 200,
+    gearlook_wrist = 0, drawnOutfit = 2, drawnLookAt = 190, gearlookSig = "o2;9:0" }) .. "\n" .. T.CHAR_SEP, "NewPeer")
+local pl = AltStableDB["Player-Pl"]
+eq("a newer peer that dropped the shoulder override: ours goes", pl.gearlook_shoulder, nil)
+eq("  the wrist override it kept stays", pl.gearlook_wrist, 0)
+eq("  with its outfit", pl.drawnOutfit, 2)
+
+-- 2. The current view and the scan's memory belong to one outfit.
+outfit = 2
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 6666 })                 -- gearid still old: not written, kept for the scan
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+eq("outfit 2's shoulders in the current view", D.Current().look[3], 271754)
+outfit = 1
+drawn = {}                           -- outfit 1, the shoulders not read yet
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(0.6)
+eq("another outfit: the view starts afresh, nothing of outfit 2", D.Current().look[3], nil)
+eq("  under outfit 1", D.Current().outfit, 1)
+outfit = 2
+eq("an outfit switch not read yet leaves nothing to compare", D.Current().look[5], nil)
+outfit = 1
+D.Read()                             -- a stable reading in outfit 1, the shoulders still unread
+advance(0.6)
+AltStableDB[me].gearid_shoulder = 6666
+D.OnScanned(AltStableDB[me])
+eq("the scan's memory doesn't carry outfit 2's shoulders into outfit 1", AltStableDB[me].gearlook_shoulder, nil)
+eq("  and outfit 1 isn't published with a slot unread: still 2", AltStableDB[me].drawnOutfit, 2)
+drawn = { [3] = 666.6 }
+advance(5)
+eq("  once read, it is", AltStableDB[me].drawnOutfit, 1)
+outfit = 2
+
+-- 3. A situational switch writes no helm flag either; a switch during a
+-- stable reading makes it situational.
+fresh(player({ head = 7048 }))
+wear({ [1] = 7048 })
+drawn = { [1] = 704.8 }
+D.Read()
+advance(1)
+eq("the helm shown", AltStableDB[me].hidehelm, 0)
+drawn = { [1] = 77344 }
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(1)
+eq("a switch to an outfit hiding it: the record's flag stays", AltStableDB[me].hidehelm, 0)
+D.Read()                             -- a stable trigger...
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")   -- ...and a switch before its callback
+advance(5)
+eq("  a stable reading a switch landed in writes nothing", AltStableDB[me].hidehelm, 0)
+onEv(T.DrawnFrame, "TRANSMOGRIFY_CLOSE")
+advance(1)
+eq("  the next clean stable reading does", AltStableDB[me].hidehelm, 1)
+drawn = { [1] = 704.8 }
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(1)
+eq("  and a switch to an outfit showing it leaves the hidden flag alone", AltStableDB[me].hidehelm, 1)
+
+-- 4. A gear swap in a slot drawn as equipped dates the look.
+fresh(player({ chest = 1000 }))
+wear({ [5] = 1000 })
+drawn = { [5] = 100 }
+WoW.now = 7000
+D.Read()
+advance(1)
+eq("drawn as equipped: no override", AltStableDB[me].gearlook_chest, nil)
+local dated = AltStableDB[me].drawnLookAt
+AltStableDB[me].gearid_chest = 2000
+wear({ [5] = 2000 })
+drawn = { [5] = 200 }
+WoW.now = 7100
+D.Read()
+advance(1)
+eq("  a new chest, still drawn as equipped: still no override", AltStableDB[me].gearlook_chest, nil)
+check("  but the look is re-dated", AltStableDB[me].drawnLookAt == 7100 and dated ~= 7100,
+      tostring(AltStableDB[me].drawnLookAt))
+
 WoW.finish("test_drawn", passed, failed)

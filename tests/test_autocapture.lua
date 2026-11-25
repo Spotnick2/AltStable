@@ -280,6 +280,18 @@ check("  not even when asked afresh", not shown())
 update(changed("5:3"))
 check("  while the next change is", shown())
 
+-- #497: a drawn look is what the offer and the skip are keyed by, when the
+-- status compared one: a second transmog of the same slot, the equipped look
+-- unchanged, is offered again (Codex review of #501).
+reset()
+local first = changed("5:1"); first.dueLook = "o2|3:111"
+update(first)
+A.Skip()
+eq("a skip remembers the drawn look", AltStableConfig.portraitAutoSkip[UnitGUID("player")], "o2|3:111")
+local second = changed("5:1"); second.dueLook = "o2|3:222"
+update(second)
+check("  another transmog, same equipped look: offered again", shown())
+
 ------------------------------------------------------------
 -- Now, by click
 ------------------------------------------------------------

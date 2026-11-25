@@ -1047,8 +1047,14 @@ function PortraitStatus()
     local diff
     if pair and pair.drawnLook then
         local drawn = CurrentDrawnLook()
-        local same = pair.outfit == nil or CurrentOutfit() == nil or pair.outfit == CurrentOutfit()
+        local outfitNow = CurrentOutfit()
+        local same = pair.outfit == nil or outfitNow == nil or pair.outfit == outfitNow
         diff = (same and drawn) and LookDiff(pair.drawnLook, drawn) or {}
+        -- What a due portrait is due FOR, for the auto-capture's offer and
+        -- skip: the drawn look and its outfit, so a second transmog of the
+        -- same slot is offered again (Codex review of #501). status.look
+        -- stays the equipped look, as documented.
+        if drawn then status.dueLook = "o" .. tostring(outfitNow) .. "|" .. drawn end
     else
         diff = (pair and pair.look and look) and LookDiff(pair.look, look) or {}
     end
@@ -1101,7 +1107,7 @@ function AltStable.RefreshPortraitStatus()
     -- and chest B then chest C answer the same (review of #215). The
     -- auto-capture still needs to hear it - it skips a LOOK, so a skipped chest
     -- swapped for another must be offered (#124) - so it has its own hook.
-    local lookKey = status.due and tostring(status.look) or ""
+    local lookKey = status.due and tostring(status.dueLook or status.look) or ""
     if key == lastStatusKey then
         if lookKey ~= lastLookKey then
             lastLookKey = lookKey
