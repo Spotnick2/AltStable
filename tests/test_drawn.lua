@@ -170,6 +170,32 @@ advance(5)
 eq("  and no more", setUnits, 2)
 
 ------------------------------------------------------------
+-- A reading that saw nothing is asked again: the model can still be loading
+-- 2 s after a login (seen in game on dev-c75a1ff)
+------------------------------------------------------------
+
+fresh()
+drawn = {}
+D.Read()
+advance(0.5)
+eq("nothing read: nothing written", AltStableDB[me].drawnAt, nil)
+advance(2.9)
+eq("  asked again at 3 s", setUnits, 1)
+advance(0.1)
+eq("  then", setUnits, 2)
+drawn = { [1] = 77344 }
+advance(0.5)
+eq("  and read once the model has loaded", AltStableDB[me].hidehelm, 1)
+advance(100)
+eq("  then no more", setUnits, 2)
+local blank = { guid = me }
+check("an empty reading applied directly stamps nothing", not D.Apply(blank, {}) and blank.drawnAt == nil)
+drawn = {}
+D.Read()
+advance(100)
+eq("a later empty reading retries again: 3 s, 10 s, 30 s, then stops", setUnits, 6)
+
+------------------------------------------------------------
 -- A reading before the record exists
 ------------------------------------------------------------
 
@@ -213,6 +239,7 @@ fresh()
 onEvent(T.DrawnFrame, "TRANSMOGRIFY_CLOSE")
 eq("closing the transmogrifier reads at once", setUnits, 1)
 fresh()
+drawn = { [1] = 158756 }
 onEvent(T.DrawnFrame, "PLAYER_EQUIPMENT_CHANGED", 5, false)
 advance(10)
 eq("a chest change reads nothing", setUnits, 0)

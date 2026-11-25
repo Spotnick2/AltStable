@@ -33,9 +33,15 @@ local FIELDS = { [1] = "hidehelm", [15] = "hidecloak" }
 local READ_AFTER  = 0.5   -- after SetUnit: a new model needs about 0.1 s
 local LOGIN_AFTER = 2     -- with the login scan
 local EQUIP_AFTER = 3     -- with Core's rescan after a gear change
+-- A reading that saw nothing is asked again: 2 s after a login the player's
+-- model can still be loading, and the model then gives no transmog info at
+-- all (seen in game, 2026-11-25, on dev-c75a1ff). Then it stops: a character
+-- with no helm and no cloak reads nothing too.
+local RETRY = { 3, 10, 30 }
 
 local model
 local reading, again = false, false
+local retries = 0
 -- The last reading, for the character it was read on: written by the scan
 -- if the record didn't exist yet when it came.
 local last
@@ -104,11 +110,20 @@ function Drawn.Read()
     C_Timer.After(READ_AFTER, function()
         local result = {}
         for slot in pairs(FIELDS) do result[slot] = SlotHidden(m, slot) end
-        last = { guid = guid, result = result }
+        local any = next(result) ~= nil
         local char = type(AltStableDB) == "table" and AltStableDB[guid]
-        if type(char) == "table" then Drawn.Apply(char, result) end
+        if any then
+            retries = 0
+            last = { guid = guid, result = result }
+            if type(char) == "table" then Drawn.Apply(char, result) end
+        end
         reading = false
-        if again then again = false; Drawn.Read() end
+        if again then
+            again = false; Drawn.Read()
+        elseif not any and retries < #RETRY then
+            retries = retries + 1
+            C_Timer.After(RETRY[retries], Drawn.Read)
+        end
     end)
     return true
 end
@@ -150,5 +165,5 @@ AltStable._test = AltStable._test or {}
 AltStable._test.DrawnFrame = events
 AltStable._test.DrawnModel = function() return model end
 AltStable._test.ResetDrawn = function()
-    model, reading, again, last, pendingEquip = nil, false, false, nil, nil
+    model, reading, again, last, pendingEquip, retries = nil, false, false, nil, nil, 0
 end
