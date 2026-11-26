@@ -300,6 +300,20 @@ local refreshes = 0
 AltStable.RosterPlugin = { isActive = true, RequestRefresh = function() refreshes = refreshes + 1 end }
 LT.Scan()
 eq("a change and a layout learned: the Roster redrawn once", refreshes, 1)
+-- The sheet too: its Rested XP cell reads Well Rested's rank from the reading
+-- (#526; Codex review of #527).
+do
+    local sheet, realRS, roster = 0, AltStable.RefreshSheet, refreshes
+    AltStable.RefreshSheet = function() sheet = sheet + 1 end
+    api.trees[1188][1].rank = 2
+    LT.Scan()
+    eq("a changed reading redraws the sheet", sheet, 1)
+    LT.Scan()
+    eq("  the same one does not", sheet, 1)
+    api.trees[1188][1].rank = 1
+    LT.Scan()
+    AltStable.RefreshSheet, refreshes = realRS, roster
+end
 AltStableConfig.legacyLayout.build = "70000"
 LT.Scan()
 eq("the same reading, this build's layout learned: redrawn", refreshes, 2)

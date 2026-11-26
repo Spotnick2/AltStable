@@ -668,11 +668,35 @@ if gear and avg and rested then
     eq("  also as synced (the string \"1\")", (rested(wr(0, "1", 80))), 60)
     eq("without it, the cap is 150%", (rested(wr(140, 0, 400))), 150)
     eq("with it, the cap is 180%", (rested(wr(140, 1, 400))), 180)
-    eq("a stored value above 150% proves a raised cap, whatever the scan said",
-       (rested(wr(160, nil, 400))), 180)
-    eq("  and a stored value above 180% is never clamped down", (rested(wr(190, nil, 400))), 190)
+    -- #526: the game reported 221% on an alt without the talent. Held at the
+    -- cap, and not taken for Well Rested.
+    eq("a stored value above 150% without the talent: held at 150%", (rested(wr(221, 0, 0))), 150)
+    eq("  nor does it make the talent", AltStable.RestedCap(wr(221, 0, 0)), 150)
+    eq("  accruing at the base rate", (rested(wr(0, 0, 80))), 50)
+    eq("a value above 180% with it: held at 180%", (rested(wr(221, 1, 0))), 180)
     eq("RestedCap: 150 without the talent", AltStable.RestedCap(wr(0, 0, 0)), 150)
     eq("RestedCap: 180 with it", AltStable.RestedCap(wr(0, 1, 0)), 180)
+    -- The rank read from the alt's Legacy talents (#500), node 110301: 4% a
+    -- rank (unmeasured below 5/5; GlassPanel's reading of the 5/5 text).
+    if not AltStable.LegacyTalents then dofile("LegacyTalents.lua") end
+    if AltStable.LegacyTalents then
+        local withLT = wr(0, 1, 80)   -- the scan's flag says yes, the reading says rank 1
+        withLT.legacyTalents = "v1;c4;1187:0:;1188:1:110301.1.5.136855.1.1225478;1189:0:"
+        eq("Well Rested 1/5 in the alt's Legacy talents: the cap is 156%, not 180%", AltStable.RestedCap(withLT), 156)
+        eq("  and it accrues 4% faster: 52%", (rested(withLT)), 52)
+        withLT.legacyTalents = "v1;c4;1187:0:;1188:5:110301.5.5.136855.5.1225478;1189:0:"
+        eq("  at 5/5: 180%", AltStable.RestedCap(withLT), 180)
+        eq("  and 20% faster", (rested(withLT)), 60)
+        withLT.legacyTalents = "v1;c4;1187:3:110291.3.5.136848.3.1225435;1188:0:;1189:0:"
+        eq("  a reading without it: 150%, whatever the flag", AltStable.RestedCap(withLT), 150)
+        eq("  at the base rate", (rested(withLT)), 50)
+        withLT.legacyTalents = "v1;c4;1187:0:;1188:0:110301.0.5.136855.0.1225478;1189:0:"
+        eq("  Well Rested at rank 0: 150%", AltStable.RestedCap(withLT), 150)
+        withLT.legacyTalents = "v1;c4;1187:0:;1188:9:110301.9.5.136855.9.1225478;1189:0:"
+        eq("  a rank past 5 counts as 5", AltStable.RestedCap(withLT), 180)
+    else
+        check("LegacyTalents is loaded for the rested tests", false)
+    end
 
     -- The played character: the live bonus (100 of 400 is 25%), and not rested
     -- (a plain nil) is 0% rather than the stored 40% (#425); a secret falls
@@ -680,6 +704,9 @@ if gear and avg and rested then
     WoW.level, WoW.xpMax, WoW.restXP = 20, 400, 100
     local me = { guid = UnitGUID("player"), level = 20, restPercent = 40, restTimestamp = WoW.now }
     eq("#425: the played character's live bonus", (rested(me)), 25)
+    WoW.restXP = 884   -- 221% of 400, as the game reported on an alt (#526)
+    eq("#526: the played character's live value above the cap: held at it", (rested(me)), 150)
+    WoW.restXP = 100
     WoW.restXP = nil
     eq("  not rested: 0%, not the stored 40%", (rested(me)), 0)
     local realExh = GetXPExhaustion
