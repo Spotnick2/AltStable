@@ -864,4 +864,64 @@ do
     WoW.cursorX, WoW.cursorY = 800, 600
 end
 
+------------------------------------------------------------
+-- A menu opened from a button (#523): under it, on screen, and readable
+------------------------------------------------------------
+do
+    local root, pnl = T.MenuRoot(), T.MenuPanel()
+    root:SetSize(1920, 1080)
+    local btn = CreateFrame("Button", nil, UIParent)
+    btn._GetRight, btn._GetBottom = 900, 700
+    local entries = { { id = "a", text = "A" }, { id = "b", text = "B" } }
+    AltStable.ShowMenu(entries, function() end, function() return entries end, { anchor = btn })
+    local pt, rel, _, x, y = pnl:GetPoint(1)
+    eq("under its button, right-aligned with it", ("%s %s %s"):format(pt, tostring(rel == root), tostring(x)),
+       "TOPLEFT true " .. tostring(900 - pnl:GetWidth()))
+    eq("  4 below it", y, 696)
+    AltStable.CloseCharacterMenu()
+    -- A narrow window by the left edge (Codex review of #524).
+    btn._GetRight, btn._GetBottom = 60, 20
+    AltStable.ShowMenu(entries, function() end, function() return entries end, { anchor = btn })
+    _, _, _, x, y = pnl:GetPoint(1)
+    eq("a button by the left edge: the menu pulled on screen", x, 0)
+    check("  and one by the bottom keeps its bottom on screen", y >= pnl:GetHeight(), tostring(y))
+    -- A scaled button: its edges are in its own units.
+    AltStable.CloseCharacterMenu()
+    btn._GetRight, btn._GetBottom, btn._scale = 450, 350, 2
+    AltStable.ShowMenu(entries, function() end, nil, { anchor = btn })
+    _, _, _, x, y = pnl:GetPoint(1)
+    eq("a button at another scale: converted to the menu's", y, 696)
+    btn._scale = nil
+    AltStable.CloseCharacterMenu()
+    -- Shown again in place: clamped again where it stands, should the screen
+    -- (or the list) no longer hold it there.
+    btn._GetRight, btn._GetBottom = 1900, 700
+    local long = { { id = "a", text = "A" } }
+    AltStable.ShowMenu(long, function() end, function() return long end, { anchor = btn })
+    local _, _, _, x0, y0 = pnl:GetPoint(1)
+    root:SetSize(1000, 1080)
+    T.MenuClick("a")
+    _, _, _, x, y = pnl:GetPoint(1)
+    local padR = 0
+    if AltStable.SkinIsGlass() and AltStable.Glass then padR = AltStable.Glass.SIZES.small.shadowPad[3] or 0 end
+    check("shown again where it no longer fits: pulled back on screen", x + pnl:GetWidth() + padR <= 1000,
+          ("%s + %s"):format(tostring(x), tostring(pnl:GetWidth())))
+    eq("  at the same height", y, y0)
+    root:SetSize(1920, 1080)
+    AltStable.CloseCharacterMenu()
+    -- The next menu without an anchor opens at the cursor again.
+    WoW.cursorX, WoW.cursorY = 800, 600
+    AltStable.ShowCharacterMenu(OTHER)
+    _, _, _, x, y = pnl:GetPoint(1)
+    check("the next menu opens at the cursor", math.abs(x - 800 / pnl:GetEffectiveScale()) < 0.01, tostring(x))
+    AltStable.CloseCharacterMenu()
+    -- Opaque enough to read over the grid (#523, in game): the tooltip's backing.
+    if AltStable.SkinIsGlass() then
+        local b = pnl.backing
+        local c = b and b._colorTexture
+        check("under glass the menu has the tooltip's backing", c ~= nil and c[4] == AltStable.TOOLTIP_BACKING[4],
+              tostring(c and c[4]))
+    end
+end
+
 WoW.finish("test_charactermenu", passed, failed)

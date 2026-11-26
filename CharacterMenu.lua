@@ -247,21 +247,18 @@ local root, panel, catcher, entries, pick
 -- that lists its entries again once the pick has run. Nil for every other
 -- menu, which closes first.
 local stay
+-- A menu opened from a button (#523, the Columns button): the frame it hangs
+-- under instead of the cursor, and what to tell its opener when it closes.
+local anchorTo, onClosed
 
 -- Cursor position is in PHYSICAL pixels; frame offsets are in the frame's own
 -- scaled units. Dividing by the effective scale is not optional - skip it and
 -- the menu appears at a multiple of the distance from the corner, which on a
 -- scaled UI looks like it opened somewhere random.
-local function PlaceAtCursor()
-    local x, y = GetCursorPosition()
-    local scale = panel:GetEffectiveScale()
-    panel:ClearAllPoints()
-    if not x or not y or not scale or scale == 0 then
-        panel:SetPoint("CENTER", root, "CENTER", 0, 0)   -- no cursor: still reachable
-        return
-    end
-    x, y = x / scale, y / scale
-
+-- The panel's top-left corner at (x, y), in its own units from the screen's
+-- bottom-left, pulled back on screen. Kept, to clamp again in place.
+local placedX, placedY
+local function PlaceAt(x, y)
     -- Clamp so a right-click near an edge does not open the menu off-screen.
     -- root spans UIParent and shares the panel's scale, so its size is the
     -- screen in the same units the offsets are in.
@@ -282,8 +279,37 @@ local function PlaceAtCursor()
     if sw > 0 then x = math.max(0, math.min(x, sw - pw - padR)) end
     if sh > 0 then y = math.max(ph + padB, math.min(y, sh)) end
 
-    -- The panel hangs DOWN and RIGHT from the cursor, like every other menu.
+    panel:ClearAllPoints()
     panel:SetPoint("TOPLEFT", root, "BOTTOMLEFT", x, y)
+    placedX, placedY = x, y
+end
+
+local function PlaceAtCursor()
+    local x, y = GetCursorPosition()
+    local scale = panel:GetEffectiveScale()
+    if not x or not y or not scale or scale == 0 then
+        placedX, placedY = nil, nil
+        panel:ClearAllPoints()
+        panel:SetPoint("CENTER", root, "CENTER", 0, 0)   -- no cursor: still reachable
+        return
+    end
+    -- The panel hangs DOWN and RIGHT from the cursor, like every other menu.
+    PlaceAt(x / scale, y / scale)
+end
+
+-- Under a button (#523), right-aligned with it, and clamped like the rest: a
+-- narrow window by the screen's left edge would otherwise hang the menu off
+-- it (Codex review of #524). The button's edges are in its own scale.
+local function PlaceUnder(anchor)
+    local r, b = anchor:GetRight(), anchor:GetBottom()
+    local as, ps = anchor:GetEffectiveScale(), panel:GetEffectiveScale()
+    if not (r and b and as and ps and ps ~= 0) then
+        placedX, placedY = nil, nil
+        panel:ClearAllPoints()
+        panel:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -4)
+        return
+    end
+    PlaceAt(r * as / ps - (panel:GetWidth() or 0), b * as / ps - 4)
 end
 
 local Open
@@ -406,11 +432,22 @@ local function Build()
     -- The menu stands on its own rather than inside the sheet, so the parent
     -- walk from a tooltip owner never reaches the window's mark.
     if AltStable.MarkTooltipHost then AltStable.MarkTooltipHost(panel) end
-    if not (AltStable.SkinWindow and AltStable.SkinWindow(panel, "small")) then
-        if AltStable.ApplyBackdrop then
-            local c = AltStable.C.BG_HEADER
-            AltStable.ApplyBackdrop(panel, c[1], c[2], c[3], 0.98)
-        end
+    local g = AltStable.SkinWindow and AltStable.SkinWindow(panel, "small")
+    if g then
+        -- The popup glass alone is see-through, and a menu opens over the
+        -- grid: its rows read through the entries (the Columns menu, in game,
+        -- #523). The tooltip's backing, as the Warband menus have it:
+        -- BACKGROUND -7, over the shadow (-8), under the tint (-6), masked to
+        -- the glass's corners. See AltStable.TOOLTIP_BACKING.
+        local b = panel:CreateTexture(nil, "BACKGROUND", nil, -7)
+        b:SetAllPoints(panel)
+        if g.mask and b.AddMaskTexture then b:AddMaskTexture(g.mask) end
+        local c = AltStable.TOOLTIP_BACKING or { 0.04, 0.05, 0.07, 0.93 }
+        b:SetColorTexture(c[1], c[2], c[3], c[4])
+        panel.backing = b
+    elseif AltStable.ApplyBackdrop then
+        local c = AltStable.C.BG_HEADER
+        AltStable.ApplyBackdrop(panel, c[1], c[2], c[3], 0.98)
     end
 
     -- Escape.
@@ -471,7 +508,10 @@ end
 
 function AltStable.CloseCharacterMenu()
     if not root then return end
-    pick, stay = nil, nil
+    pick, stay, anchorTo = nil, nil, nil
+    local closed = onClosed
+    onClosed = nil
+    if closed then pcall(closed) end
     -- Let the list stop marking the row.
     --
     -- After the `if not root then return end` above, not before it - which is
@@ -508,12 +548,17 @@ end
 -- onPick(id) runs once the menu has closed. With `again` (a function giving
 -- the entries anew), the menu stays open on a pick instead: onPick runs, then
 -- the menu shows again() in place. Escape and a click outside still close it.
-function AltStable.ShowMenu(list, onPick, again)
+-- opts (optional): anchor, a frame the menu hangs under, right-aligned, instead
+-- of opening at the cursor; onClose, called once when the menu closes.
+function AltStable.ShowMenu(list, onPick, again, opts)
     if type(list) ~= "table" or #list == 0 then return false end
     Build()
     AltStable.CloseCharacterMenu()
     pick = onPick
     stay = type(again) == "function" and again or nil
+    opts = type(opts) == "table" and opts or {}
+    anchorTo = opts.anchor
+    onClosed = type(opts.onClose) == "function" and opts.onClose or nil
     return Open(list)
 end
 
@@ -584,7 +629,11 @@ Open = function(list, inPlace)
     panel:SetSize(PAD * 2 + (col + 1) * colW, -lowest + PAD)
     -- Shown again after a pick that stays open: same place, same lift, same
     -- keyboard. Moving it to the cursor would make it walk with every click.
-    if inPlace then return true end
+    -- Clamped again where it stands, in case the list grew past an edge.
+    if inPlace then
+        if placedX then PlaceAt(placedX, placedY) end
+        return true
+    end
 
     -- Lift BEFORE placing: the lift changes the panel's effective scale, and
     -- the cursor maths divides by it.
@@ -592,7 +641,7 @@ Open = function(list, inPlace)
         AltStable.LiftAboveHiddenUI(root, AltStable.IsGameUIHidden())
     end
     root:Show()
-    PlaceAtCursor()
+    if anchorTo then PlaceUnder(anchorTo) else PlaceAtCursor() end
     -- The keyboard is taken OUT OF COMBAT ONLY.
     --
     -- Grabbing it means every key arrives here and has to be handed back one at

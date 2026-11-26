@@ -2898,6 +2898,11 @@ do
         pbtn:GetScript("OnClick")(pbtn)
         AltStable.RefreshSheet()
         check("  but not under a plugin tab, refresh or not", not f.hScrollBar:IsShown())
+        -- The Columns button (#523) is the sheet's: a plugin has no columns.
+        check("a plugin tab hides the Columns button", not T.colBtn:IsShown())
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        check("  a sheet tab shows it again", T.colBtn:IsShown())
+        pbtn:GetScript("OnClick")(pbtn)
         sheetBtn:GetScript("OnClick")(sheetBtn)
         AltStable.RefreshSheet()
         check("  and it is back on the sheet tab", f.hScrollBar:IsShown())
@@ -2939,7 +2944,68 @@ do
     AltStableConfig.sidebarCompact = false
     eq("the sidebar starts full width", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
     -- Set at build from the saved setting, not only on a click.
-    eq("  with the chevron showing collapse, >>", T.chevronText:GetText(), "\194\187")
+    -- The toggle is the title bar's (#523), beside Maximize: its glyph's pane
+    -- filled while the sidebar is full.
+    check("  with the title bar's toggle showing the pane", T.navPane:IsShown())
+    -- Nothing is pinned under the buttons now: the floor is the buttons and 8px.
+    eq("  the sidebar needs its buttons' height and 8px", AltStable.GetSidebarRequiredHeight(),
+       -sidebar._pluginBtnY + 8)
+    -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
+    -- bar in the accent on its edge, then the tab's name, which stops short of
+    -- the buttons. A sheet tab is never narrower than all of it (Codex review
+    -- of #524).
+    do
+        local tt, sep, st = T.titleText, T.titleSep, T.sectionText
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        local p1, r1, rp1 = tt:GetPoint(1)
+        check("  the sidebar full: AltStable centred over it", p1 == "CENTER" and r1 == sidebar and rp1 == "TOP",
+              tostring(p1) .. " " .. tostring(rp1))
+        local p2, r2, rp2 = sep:GetPoint(1)
+        check("  the bar on the sidebar's edge", p2 == "CENTER" and r2 == sidebar and rp2 == "TOPRIGHT")
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        local c = sep._colorTexture or {}
+        check("  in the accent", c[1] == ar and c[2] == ag and c[3] == ab)
+        local p3, r3 = st:GetPoint(1)
+        check("  the tab's name after it", p3 == "LEFT" and r3 == sep)
+        eq("  saying which tab", st:GetText(), sheetBtn.lbl:GetText())
+        local _, rr = st:GetPoint(2)
+        check("  and stopping short of Columns", rr == T.colBtn)
+        check("  cut short, never wrapped", st._wrap == false)
+        pbtn:GetScript("OnClick")(pbtn)
+        eq("  a plugin tab: its name", st:GetText(), "Test 150")
+        _, rr = st:GetPoint(2)
+        check("  stopping short of the capture button, Columns hidden", rr == T.refBtn)
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        local need = AltStable.GetTitleBarRequiredWidth()
+        eq("  the title bar's floor: the sidebar, the name and every button, Columns included", need,
+           230 + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
+        -- A name wider than the columns: the window grows to the floor.
+        st._GetStringWidth = 1200
+        need = AltStable.GetTitleBarRequiredWidth()
+        AltStable.RefreshSheet()
+        check("  a sheet tab's window is at least that wide", f:GetWidth() >= need,
+              tostring(f:GetWidth()) .. " vs " .. tostring(need))
+        st._GetStringWidth = nil
+        AltStable.RefreshSheet()
+    end
+    -- The bar between the sheet's buttons and the window's.
+    local sp, srel, srp, sx = T.ctlSep:GetPoint(1)
+    check("  a bar between the capture button and the toggle", sp == "CENTER" and srel == T.navBtn
+          and srp == "LEFT" and sx == -7)
+    -- The chevron on Columns: a "v" closed, a "^" open.
+    local a, b, c = T.ChevronPoints(false)
+    check("  the Columns chevron points down while closed", b[2] < a[2] and b[2] < c[2] and a[1] < b[1] and b[1] < c[1])
+    a, b, c = T.ChevronPoints(true)
+    check("  and up while open", b[2] > a[2] and b[2] > c[2])
+    local _, navRel = T.navBtn:GetPoint(1)
+    check("  the toggle beside Maximize", navRel == T.maxBtn)
+    local _, capRel = T.refBtn:GetPoint(1)
+    check("  the capture button left of the toggle", capRel == T.navBtn)
+    local _, colRel = T.colBtn:GetPoint(1)
+    check("  and Columns left of the capture button", colRel == T.refBtn)
+    T.navBtn:GetScript("OnEnter")(T.navBtn)
+    eq("  its tooltip offers to collapse", GameTooltip:IsOwned(T.navBtn) and GameTooltip._text, "Collapse menu")
+    T.navBtn:GetScript("OnLeave")(T.navBtn)
 
     -- What sits beside the sidebar is anchored to its edge, not the window.
     local probe = CreateFrame("Frame", nil, f)
@@ -2970,8 +3036,13 @@ do
     -- width given back, and the setting is saved.
     sheetBtn:GetScript("OnClick")(sheetBtn)
     local fullW = f:GetWidth()
-    T.chevron:GetScript("OnClick")(T.chevron)
-    eq("the chevron collapses the sidebar", AltStableConfig.sidebarCompact, true)
+    T.navBtn:GetScript("OnClick")(T.navBtn)
+    eq("the toggle collapses the sidebar", AltStableConfig.sidebarCompact, true)
+    -- Compact, the title runs from the left: AltStable, the bar, the tab's name.
+    local cp1, cr1, crp1 = T.titleText:GetPoint(1)
+    check("  the title moves to the left edge", cp1 == "LEFT" and cr1 == T.titleBar and crp1 == "LEFT")
+    local cp2, cr2 = T.titleSep:GetPoint(1)
+    check("  with the bar right after it", cp2 == "LEFT" and cr2 == T.titleText)
     eq("  to icons only", AltStable.LAYOUT.SIDEBAR_WIDTH, 56)
     eq("  the frame itself", sidebar:GetWidth(), 55)
     check("  with every label hidden", (function()
@@ -2983,7 +3054,10 @@ do
     check("the grid is anchored to the sidebar's edge", bodyRel == sidebar)
     local _, hdrRel = f.headerScroll:GetPoint(1)
     check("  and so are its column headers", hdrRel == sidebar)
-    eq("a compact sidebar's chevron shows expand, <<", T.chevronText:GetText(), "\194\171")
+    check("a compact sidebar's toggle shows an empty pane", not T.navPane:IsShown())
+    T.navBtn:GetScript("OnEnter")(T.navBtn)
+    eq("  its tooltip offers to expand", GameTooltip._text, "Expand menu")
+    T.navBtn:GetScript("OnLeave")(T.navBtn)
 
     -- Compact, each label is its button's tooltip.
     sheetBtn:GetScript("OnEnter")(sheetBtn)
@@ -4062,13 +4136,9 @@ do
         for _, c in ipairs(cols) do if c.field == field then return true end end
         return false
     end
-    local function RightClick(field)
-        if field == "name" then local n = T.NameHeader(); n:GetScript("OnClick")(n, "RightButton"); return end
-        local cols, hdrs = T.ColumnLayout()
-        for i, c in ipairs(cols) do
-            if c.field == field then hdrs[i]:GetScript("OnClick")(hdrs[i], "RightButton"); return end
-        end
-        check("a header for " .. field .. " to right-click", false)
+    -- Opened from the title bar's Columns button (#523).
+    local function OpenColumns()
+        T.colBtn:GetScript("OnClick")(T.colBtn)
     end
     local function MenuHas(text)
         for _, l in ipairs(T.MenuLabels()) do if l:find(text, 1, true) then return l end end
@@ -4085,9 +4155,25 @@ do
     eq("  Bags sorts", (T.SortState()), "bags_free")
     eq("a left-click still sorts, it opens no menu", T.MenuIsShown(), false)
 
-    RightClick("money")
-    check("a right-click on a header opens the column menu", T.MenuIsShown())
-    check("  titled with the tab", MenuHas("Columns: Account Summary") ~= nil)
+    check("a sheet tab shows the Columns button", T.colBtn:IsShown())
+    local cols0, hdrs0 = T.ColumnLayout()
+    -- A right-click never reaches a header now: it is not registered for one.
+    check("headers hear only the left button", not WoW.handlesClick(hdrs0[1], "RightButton")
+          and not WoW.handlesClick(T.NameHeader(), "RightButton") and WoW.handlesClick(hdrs0[1], "LeftButton"))
+    T.colBtn._GetRight, T.colBtn._GetBottom = 900, 700
+    T.MenuRoot():SetSize(1920, 1080)
+    OpenColumns()
+    check("the Columns button opens the column menu", T.MenuIsShown())
+    check("  titled with the tab", MenuHas("Account Summary columns") ~= nil)
+    -- Under the button, right-aligned with it, clamped to the screen
+    -- (test_charactermenu has the clamp's cases).
+    local mp, mrel, _, mx, my = T.MenuPanel():GetPoint(1)
+    -- The button's edges are in the sheet's scale, the menu's offsets in its own.
+    local k = T.colBtn:GetEffectiveScale() / T.MenuPanel():GetEffectiveScale()
+    check("  hung under the button, right-aligned", mp == "TOPLEFT" and mrel == T.MenuRoot()
+          and math.abs(mx - (900 * k - T.MenuPanel():GetWidth())) < 0.01 and math.abs(my - (700 * k - 4)) < 0.01,
+          tostring(mp) .. " " .. tostring(mx) .. "," .. tostring(my))
+    check("  its arrow up while open", T.colBtn._open == true)
     eq("  Name is listed, checked", MenuHas("Name"), ON .. "Name")
     local nameEntry = T.MenuEntry("__name")
     check("  and can't be picked", nameEntry and nameEntry._disabled)
@@ -4111,18 +4197,22 @@ do
     T.MenuClick("level")
     check("  and ticked back", HasColumn("level") and not HasColumn("bags_free"))
     T.MenuClick("level")
-    local hdrs = select(2, T.ColumnLayout())
-    check("every header hears the right button", WoW.handlesClick(hdrs[1], "RightButton")
-          and WoW.handlesClick(T.NameHeader(), "RightButton"))
-    check("  and still the left one", WoW.handlesClick(hdrs[1], "LeftButton"))
+    check("  the arrow stays up while picking", T.colBtn._open == true)
     T.MenuEscape()
     eq("Escape closes the menu", T.MenuIsShown(), false)
+    check("  and the arrow points down again", T.colBtn._open == false)
+    -- The next menu, a character's, opens at the cursor, not under the button.
+    AltStable.ShowCharacterMenu(AltStableDB.a)
+    local _, _, _, cx = T.MenuPanel():GetPoint(1)
+    check("a character menu after it opens at the cursor, not under the button",
+          T.MenuIsShown() and math.abs(cx - (900 * k - T.MenuPanel():GetWidth())) > 1, tostring(cx))
+    T.MenuEscape()
 
     Open("gear")
     check("another tab keeps its own Level", HasColumn("level"))
-    RightClick("name")
-    check("the Name header opens the menu too", T.MenuIsShown())
-    check("  with this tab's columns", MenuHas("Columns: Gear Progression") ~= nil and MenuHas("Head") ~= nil
+    OpenColumns()
+    check("the button opens the menu on another tab too", T.MenuIsShown())
+    check("  with this tab's columns", MenuHas("Gear Progression columns") ~= nil and MenuHas("Head") ~= nil
           and MenuHas("Bags") == nil)
     T.MenuClick("gear_head")
     check("a gear slot hides on its own", not HasColumn("gear_head") and HasColumn("gear_neck"))
@@ -4139,9 +4229,8 @@ do
     T.MenuClickOutside()
     eq("a click outside closes it", T.MenuIsShown(), false)
 
-    -- A non-sortable header (a gear slot) opens the menu all the same.
-    RightClick("gear_neck")
-    check("a gear slot's header opens it", T.MenuIsShown())
+    OpenColumns()
+    check("opened again on the gear tab", T.MenuIsShown())
     T.MenuClick("__all")
     check("Show all brings this tab's columns back", HasColumn("gear_head"))
     eq("  and leaves the other tab's choice alone", AltStableConfig.sheetHiddenColumns["summary.bags_free"], true)
@@ -4152,7 +4241,7 @@ do
     AltStableConfig.sheetGroupByRealm = false
     Open("summary")
     check("ungrouped, the Ruleset column shows", HasColumn("ruleset"))
-    RightClick("name")
+    OpenColumns()
     local l = T.MenuLabels()
     eq("  listed right after Race", l[5], ON .. "Ruleset")
     T.MenuClick("race")
@@ -4165,7 +4254,7 @@ do
     AltStableConfig.sheetGroupByRealm = nil
     AltStableConfig.sheetHiddenColumns = { ["summary.ruleset"] = true }   -- the only one hidden
     AltStable.RefreshSheet()
-    RightClick("name")
+    OpenColumns()
     check("grouped again, the hidden Ruleset isn't listed", MenuHas("Ruleset") == nil)
     check("  but Show all can still clear it", not T.MenuEntry("__all")._disabled)
     T.MenuClick("__all")
@@ -4174,7 +4263,7 @@ do
 
     -- The tab's columns change while the chooser is open (the realm groups
     -- switched by a sync, a faction met): it lists them as they now are.
-    RightClick("name")
+    OpenColumns()
     check("grouped, the chooser has no Ruleset", MenuHas("Ruleset") == nil)
     AltStableConfig.sheetGroupByRealm = false
     AltStable.RefreshSheet()
@@ -4187,7 +4276,7 @@ do
     -- then a sync turns them off (Codex review of #494).
     AltStableConfig.sheetHiddenColumns = { ["summary.ruleset"] = true }
     AltStable.RefreshSheet()
-    RightClick("name")
+    OpenColumns()
     AltStableConfig.sheetGroupByRealm = false
     AltStable.RefreshSheet()
     eq("  a hidden Ruleset is listed unticked when the groups go off", MenuHas("Ruleset"), OFF .. "Ruleset")
@@ -4200,7 +4289,7 @@ do
 
     -- A synced change while the chooser is open: its marks follow.
     AltStable.SetColumnShown("summary", "bags_free", false)
-    RightClick("name")
+    OpenColumns()
     eq("the chooser shows Bags hidden", MenuHas("Bags"), OFF .. "Bags")
     AltStableConfig.sheetHiddenColumns = {}
     AltStable.SettingsSynced("Other", { columns = true }, 0, 0)
@@ -4218,7 +4307,7 @@ do
     for _, c in ipairs((T.ColumnLayout())) do all[#all + 1] = c.field end
     for _, f in ipairs(all) do AltStable.SetColumnShown("summary", f, false) end
     eq("every column but Name can go", #(T.ColumnLayout()), 0)
-    RightClick("name")
+    OpenColumns()
     check("  the Name header still opens the menu", T.MenuIsShown())
     T.MenuClick("__all")
     check("  and Show all brings them back", HasColumn("money"))
@@ -4228,7 +4317,7 @@ do
     -- while the plugin gives AltStable.TalentSpec; after Level on Account
     -- Summary and Gear Progression; sorted by the spec's name.
     check("no Roster talents: no Spec column", not HasColumn("talentSpec"))
-    RightClick("name")
+    OpenColumns()
     check("  nor in the chooser", MenuHas("Spec") == nil)
     T.MenuEscape()
     local specs = { a = "Arcane", b = "Frost" }
@@ -4278,7 +4367,7 @@ do
 
     -- A tab switch with the menu open: a pick there changes nothing and closes it.
     Open("summary")
-    RightClick("name")
+    OpenColumns()
     Open("gear")
     T.MenuClick("money")
     eq("a pick after a tab switch changes nothing", next(AltStableConfig.sheetHiddenColumns), nil)
