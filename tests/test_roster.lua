@@ -5084,6 +5084,10 @@ do
     ----------------------------------------------------------
     TL._test.ResetPending()
     WoW.timers = {}
+    -- The sheet refreshed by the scheduled scan itself, nothing else asking:
+    -- an open grid's Spec column must not keep the last reading (#506 review).
+    local realRefresh, sheetRefreshes = AltStable.RefreshSheet, 0
+    AltStable.RefreshSheet = function() sheetRefreshes = sheetRefreshes + 1 end
     WoW.fire("TRAIT_CONFIG_UPDATED", 650751)
     WoW.fire("PLAYER_TALENT_UPDATE")
     -- One for the class talents, one for the Legacy talents (LegacyTalents.lua, #500).
@@ -5091,11 +5095,68 @@ do
     api.spent[1][11594] = 2
     WoW.flushTimers()
     eq("  which reads the change", table.concat(TL.Get(guid).specs[1].pts, "/"), "2/2/14")
+    eq("  and refreshes the sheet once", sheetRefreshes, 1)
+    WoW.fire("PLAYER_TALENT_UPDATE")
+    WoW.flushTimers()
+    eq("a scan that finds nothing new leaves the sheet alone", sheetRefreshes, 1)
+    AltStable.RefreshSheet = realRefresh
     for _, ev in ipairs({ "PLAYER_TALENT_UPDATE", "TRAIT_CONFIG_UPDATED", "ACTIVE_TALENT_GROUP_CHANGED" }) do
         local found = false
         for _, x in ipairs(TL._test.EVENTS) do if x == ev then found = true end end
         check("  listens to " .. ev, found)
     end
+
+    ----------------------------------------------------------
+    -- The sheet's Spec column (#506): the tree with the most points
+    ----------------------------------------------------------
+    eq("the plugin gives the sheet its spec reading", AltStable.TalentSpec, TL.SpecOf)
+    local sp = TL.SpecOf(guid)
+    eq("the spec is the tree with the most points (2/2/14)", sp and sp.name, "Frost")
+    eq("  with its icon", sp and sp.icon, 135846)
+    eq("  the split and the trees for the tooltip",
+       sp and (table.concat(sp.pts, "/") .. " " .. table.concat(sp.trees, ",")), "2/2/14 Arcane,Fire,Frost")
+    eq("  and the level it was read at", sp and sp.lv, 25)
+    eq("never read: nothing", TL.SpecOf("nobody"), nil)
+    local held = TL.Get(guid).specs[1].pts
+    TL.Get(guid).specs[1].pts = { 7, 7, 0 }
+    sp = TL.SpecOf(guid)
+    check("a tie for the most: no spec, the split still given", sp and sp.name == nil and sp.pts[1] == 7)
+    TL.Get(guid).specs[1].pts = { 0, 0, 5 }
+    eq("one tree only: that one", TL.SpecOf(guid).name, "Frost")
+    TL.Get(guid).specs[1].pts = { 5, 7, 7 }
+    eq("a tie below the top doesn't count", TL.SpecOf(guid).name, nil)
+    TL.Get(guid).specs[1].pts = { 7, 3, 3 }
+    eq("  nor one under it", TL.SpecOf(guid).name, "Arcane")
+    TL.Get(guid).specs[1].pts = { 0, 0, 0 }
+    eq("no points spent: no spec", TL.SpecOf(guid).name, nil)
+    -- Dual spec: the active group's points.
+    TL.Get(guid).specs[1].pts = held
+    TL.Get(guid).specs[2] = { pts = { 0, 30, 1 } }
+    TL.Get(guid).active = 2
+    eq("the active spec group decides", TL.SpecOf(guid).name, "Fire")
+    TL.Get(guid).specs[2], TL.Get(guid).active = nil, 1
+
+    -- The cell and its tooltip (RowRenderer).
+    local scol = { label = "Spec", field = "talentSpec", width = 90, align = "LEFT", type = "spec" }
+    local srow = AltStable.CreateRow(nil, 20, { scol })
+    local stip = srow.cellTips[1]
+    AltStable.RenderRow(srow, AltStableDB[guid], 1, { scol })
+    eq("the cell shows the spec", srow.cells[1]:GetText(), "Frost")
+    stip:GetScript("OnEnter")(stip)
+    eq("  its tooltip names it", stip.line1, "Frost")
+    eq("  the points per tree", stip.line2, "Arcane 2 \194\183 Fire 2 \194\183 Frost 14")
+    eq("  and the level", stip.line3, "As of level 25")
+    AltStable.RenderRow(srow, { guid = "nobody", name = "N" }, 1, { scol })
+    eq("never read: a dim dash", srow.cells[1]:GetText(), "|cff888888\226\128\148|r")
+    eq("  and why", stip.line1, "Talents not read yet")
+    TL.Get(guid).specs[1].pts = { 7, 7, 0 }
+    AltStable.RenderRow(srow, AltStableDB[guid], 1, { scol })
+    eq("a tie: a dash", srow.cells[1]:GetText(), "|cff888888\226\128\148|r")
+    eq("  and the tooltip says no tree leads", stip.line1, "No tree leads")
+    TL.Get(guid).specs[1].pts = { 0, 0, 0 }
+    AltStable.RenderRow(srow, AltStableDB[guid], 1, { scol })
+    eq("nothing spent: the tooltip says so", stip.line1, "No talent points spent")
+    TL.Get(guid).specs[1].pts = held
 
     ----------------------------------------------------------
     -- Sync

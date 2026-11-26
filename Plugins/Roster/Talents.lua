@@ -147,7 +147,10 @@ function T.Scan()
     r.stamp = math.max(time(), (type(held) == "table" and held.stamp or 0) + 1)
     Store()[guid] = r
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
-    if Roster.isActive and Roster.RequestRefresh then Roster.RequestRefresh() end
+    -- The sheet's Spec column shows it too (#506), so an open grid repaints and
+    -- re-sorts. The Roster panel needs no call of its own: the plugin wraps
+    -- RefreshSheet to repaint the panel while it is open (HookRefresh).
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true
 end
 
@@ -280,6 +283,34 @@ function T.Value(char, def)
     local s = e.specs[e.active]
     return s and tostring(s.pts[def.talent] or 0) or "-"
 end
+
+-- The sheet's Spec column (#506). Forever has no specialization to ask for
+-- (GetSpecialization means nothing here), so the spec is the tree with the
+-- most points in the active spec group. nil when the character was never
+-- read; then .name is nil on a tie for the most or with no points spent.
+--   { name, icon, pts = { a, b, c }, trees = { name x3 }, lv }
+function T.SpecOf(guid)
+    local e = T.Get(guid)
+    local s = e and e.specs and e.specs[e.active]
+    if not (s and type(s.pts) == "table" and type(e.trees) == "table") then return nil end
+    local out = { pts = {}, trees = {}, lv = e.lv }
+    local best, top, tie = nil, 0, false
+    for i = 1, 3 do
+        local p = tonumber(s.pts[i]) or 0
+        out.pts[i] = p
+        out.trees[i] = e.trees[i] and e.trees[i].name or "?"
+        if p > top then best, top, tie = i, p, false
+        elseif p == top and p > 0 then tie = true end
+    end
+    if best and not tie then
+        out.name = out.trees[best]
+        out.icon = e.trees[best] and tonumber(e.trees[best].icon) or nil
+    end
+    return out
+end
+-- The core sheet's column reads it through here, and offers the column only
+-- while it exists: while this plugin is loaded.
+AltStable.TalentSpec = T.SpecOf
 
 -- The game's frame, read-only on the stored build: what a talent-build chat
 -- link opens. Out of combat only: it shows a UI panel.

@@ -92,6 +92,17 @@ AltStable.Columns = {
     { label="Off Hand",  field="gear_offhand",  slotSlug="offhand",   slotID=17, width=32, align="RIGHT", type="gearSlot", group="gear", sortable=false, headerIconSize=20 },
     { label="Ranged",    field="gear_ranged",   slotSlug="ranged",    slotID=18, width=32, align="RIGHT", type="gearSlot", group="gear", sortable=false, headerIconSize=20 },
 
+    -- Spec (#506): the talent tree with the most points, from the Roster
+    -- plugin's talents (synced there). Offered only while that plugin is
+    -- loaded, since nothing else reads talents (`available`, SheetUI's
+    -- EligibleColumns).
+    { label="Spec",        field="talentSpec",  width=90,  align="LEFT",  type="spec",       group="always",
+      sortText=true, available=function() return AltStable.TalentSpec ~= nil end,
+      sortValue=function(c)
+          local s = AltStable.TalentSpec and AltStable.TalentSpec(c.guid)
+          return s and s.name or nil
+      end },
+
     -- Info (always visible — shown in name tooltip but kept as columns too)
     { label="Guild",       field="guild",       width=110, align="LEFT",  type="text",       group="always", sortText=true },
     { label="Rested XP",   field="restPercent", width=70,  align="RIGHT", type="restXP",     group="always",

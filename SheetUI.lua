@@ -71,7 +71,7 @@ local SECTIONS = {
         preferW = 985,
         preferH = 400,
         fields = {
-            "class","race","level","ilvl",
+            "class","race","level","talentSpec","ilvl",
             "guild","restPercent","money","bags_free","bind","lastUpdate","played",
         },
     },
@@ -83,7 +83,7 @@ local SECTIONS = {
         preferW = 1350,
         preferH = 420,
         fields = {
-            "class","race","level","ilvl",
+            "class","race","level","talentSpec","ilvl",
             "gear_head","gear_neck","gear_shoulder","gear_back","gear_chest",
             "gear_wrist","gear_hands","gear_waist","gear_legs","gear_feet",
             "gear_ring1","gear_ring2","gear_trinket1","gear_trinket2",
@@ -767,6 +767,9 @@ local function EligibleColumns(section)
     local ungrouped = not GroupsByRealm()
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
+        -- A column whose data comes from a plugin (Spec, #506) is offered
+        -- only while that plugin is loaded.
+        if col and col.available and not col.available() then col = nil end
         if col then out[#out + 1] = col end
         if field == "race" and ungrouped then out[#out + 1] = ColumnFor("ruleset") end
     end
