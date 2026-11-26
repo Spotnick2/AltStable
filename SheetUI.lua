@@ -3288,6 +3288,18 @@ local function CreateFrameIfNeeded()
         sidebar.optSep:ClearAllPoints()
         sidebar.optSep:SetPoint("BOTTOMLEFT", o, "TOPLEFT", 12, 6)
         sidebar.optSep:SetPoint("BOTTOMRIGHT", o, "TOPRIGHT", -12, 6)
+        -- A tab arriving with the window open makes the list taller, and
+        -- Options is pinned below it: the window grows to the sidebar's floor,
+        -- or the last tab sits over Options (Codex review of #529). A sheet
+        -- tab sizes to its content, which counts the floor; a plugin tab gets
+        -- the floor alone.
+        if frame and frame:IsShown() and frame.bodyScroll then   -- built
+            if activeSection and not activeSection._isPlugin then
+                ResizeFrameToContent()
+            elseif AltStable.EnsureWindowMinSize then
+                AltStable.EnsureWindowMinSize(0, TITLE_H + AltStable.GetSidebarRequiredHeight())
+            end
+        end
     end
 
     local function MakePluginButton(plugin)

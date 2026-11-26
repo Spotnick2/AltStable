@@ -3010,6 +3010,18 @@ do
         check("  a late Legacy Challenges goes after Reputations", y.legacy < y.rep, tostring(y.legacy))
         check("  and a tab not in the order after every listed one", y.test150 < y.legacy, tostring(y.test150))
         eq("  Options stays at the foot", (select(3, T.sidebarBtns[1]:GetParent().optBtn:GetPoint(1))), "BOTTOMLEFT")
+        -- The window open and too short for one more tab: it grows to the
+        -- sidebar's floor, so the new tab doesn't sit over Options (Codex
+        -- review of #529). On a plugin tab, and on a sheet tab.
+        pbtn:GetScript("OnClick")(pbtn)
+        f:SetHeight(200)
+        AltStable.RegisterPlugin({ id = "late529a", label = "Late A", _isPlugin = true, OnActivate = function() end })
+        check("  a late tab on a plugin tab: the window grows to the sidebar's floor",
+              f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(), tostring(f:GetHeight()))
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        f:SetHeight(200)
+        AltStable.RegisterPlugin({ id = "late529b", label = "Late B", _isPlugin = true, OnActivate = function() end })
+        check("  and on a sheet tab", f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(), tostring(f:GetHeight()))
     end
     -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
     -- bar in the accent on its edge, then the tab's name, which stops short of
