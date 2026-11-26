@@ -203,6 +203,40 @@ LibStub = realLibStub
 AltStable.RegisterCallback = realRegister
 
 ------------------------------------------------------------
+-- The AddOn Compartment (#510), with no broker object left: the entry works
+-- without one.
+------------------------------------------------------------
+
+-- The TOC names the three globals, and each is a function Broker.lua made.
+local toc = assert(io.open("AltStable.toc")):read("*a")
+for _, field in ipairs({ "AddonCompartmentFunc", "AddonCompartmentFuncOnEnter",
+                         "AddonCompartmentFuncOnLeave" }) do
+    local name = toc:match("\n## " .. field .. ": ([%w_]+)")
+    check("the TOC names " .. field, name ~= nil)
+    eq("  and it is a global function", type(name and _G[name]), "function")
+end
+
+toggles, configs = 0, 0
+AltStable_OnAddonCompartmentClick("AltStable", "LeftButton")
+eq("compartment left-click toggles the sheet", toggles, 1)
+AltStable_OnAddonCompartmentClick("AltStable", "RightButton")
+eq("compartment right-click opens Options", configs, 1)
+
+AltStableDB = { [ME] = { guid = ME, name = "Me", class = "PRIEST", money = 1000 } }
+local menuButton = CreateFrame("Button")
+WoW.tooltipLines = {}
+AltStable_OnAddonCompartmentEnter("AltStable", menuButton)
+all = table.concat(WoW.tooltipLines, "\n")
+eq("compartment hover: GameTooltip owned by the menu entry", GameTooltip:GetOwner(), menuButton)
+check("  and shown", GameTooltip:IsShown())
+eq("  the broker's tooltip: the name first", WoW.tooltipLines[1], "AltStable")
+check("  the gold", all:find("Gold on all characters|m1000", 1, true) ~= nil, all)
+check("  the hints", all:find("Right-click: options", 1, true) ~= nil, all)
+AltStable_OnAddonCompartmentLeave("AltStable", menuButton)
+check("compartment leave hides it", not GameTooltip:IsShown())
+eq("  and lets it go", GameTooltip:GetOwner(), nil)
+
+------------------------------------------------------------
 -- When the first paint comes
 ------------------------------------------------------------
 
