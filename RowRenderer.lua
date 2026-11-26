@@ -773,7 +773,9 @@ local function MakeColumnWidgets(row, col, height)
                 GameTooltip:ClearLines()
                 local factionName = tip.factionLabel or ""
                 GameTooltip:AddLine(factionName, 1, 1, 1)
-                GameTooltip:AddLine(tip.standing, 0.8, 0.8, 0.8)
+                -- With the progress within the standing when it's known (#396).
+                GameTooltip:AddLine(tip.standing .. (tip.progress and ("  " .. tip.progress) or ""),
+                                    0.8, 0.8, 0.8)
                 GameTooltip:Show()
             end
         end)
@@ -1306,6 +1308,10 @@ function AltStable.RenderRow(row, char, index, columns)
             value = FormatReputation(standing)
             if row.repTips[i] then
                 row.repTips[i].standing = standing and REP_TEXT[standing] or nil
+                -- "1234 / 6000" (#396); none from an older peer, or at Exalted.
+                local vf, mf = col.field .. "_v", col.field .. "_max"
+                local v, m = tonumber(char[vf]), tonumber(char[mf])
+                row.repTips[i].progress = (standing and v and m) and (v .. " / " .. m) or nil
             end
         else
             value = tostring(char[col.field] or "")

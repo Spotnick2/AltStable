@@ -19,6 +19,13 @@
 --
 -- The display owns the tooltip it hands OnTooltipShow (owner, anchor, Show),
 -- so this only adds lines to it.
+--
+-- The same clicks and tooltip are AltStable's entry in the minimap's AddOn
+-- Compartment (#510), for players who hide the minimap button and run no
+-- broker display. The TOC names three globals (AddonCompartmentFunc,
+-- ...OnEnter, ...OnLeave): Blizzard's compartment calls them by name from
+-- _G, so they can't live on the AltStable table. They work whether or not
+-- the data object exists.
 ------------------------------------------------------------
 
 AltStable = AltStable or {}
@@ -58,6 +65,23 @@ local function OnTooltipShow(tt)
     tt:AddLine(" ")
     tt:AddLine("Left-click: open or close AltStable", HINT[1], HINT[2], HINT[3])
     tt:AddLine("Right-click: options", HINT[1], HINT[2], HINT[3])
+end
+
+-- The AddOn Compartment (Blizzard_Minimap, AddonCompartment.lua): a click
+-- calls the function with (addonName, mouseButton), a hover with
+-- (addonName, menuButton). Here we own GameTooltip, as the minimap button does.
+function AltStable_OnAddonCompartmentClick(_, button)
+    OnClick(nil, button)
+end
+
+function AltStable_OnAddonCompartmentEnter(_, menuButton)
+    GameTooltip:SetOwner(menuButton, "ANCHOR_LEFT")
+    OnTooltipShow(GameTooltip)
+    GameTooltip:Show()
+end
+
+function AltStable_OnAddonCompartmentLeave()
+    GameTooltip:Hide()
 end
 
 -- No library (it is bundled, so only a broken install), or another addon
