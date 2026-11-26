@@ -274,11 +274,23 @@ function LV.Draw(index)
     local model = LV.Model(win.char, index)
     for _, b in ipairs(win.nodes) do b:Hide() end
     for _, l in ipairs(win.lines) do l:Hide() end
+    -- Each tab as wide as its name and points, in a row; the window widens
+    -- when they need more than the canvas (in game, "Resourcefulness (0)"
+    -- ran out of its third of the row and past the window's edge).
+    local x = 20
     for i, tab in ipairs(win.tabs) do
         local r = LT().Get(win.char)
-        tab:SetText(("%s (%d)"):format(LT().TreeName(LT().TREES[i]), r and r.trees[i].spent or 0))
+        local text = ("%s (%d)"):format(LT().TreeName(LT().TREES[i]), r and r.trees[i].spent or 0)
+        tab:SetText(text)
+        win.measure:SetText(text)
+        local w = math.max(60, math.ceil((tonumber(win.measure:GetStringWidth()) or 0) + 24))
+        tab:SetWidth(w)
+        tab:ClearAllPoints()
+        tab:SetPoint("TOPLEFT", win, "TOPLEFT", x, -58)
+        x = x + w + 4
         if tab.SetEnabled then tab:SetEnabled(i ~= index) end
     end
+    win:SetWidth(math.max(CANVAS + 40, x - 4 + 20))
     if not model then return end
     local byId = {}
     for i, n in ipairs(model.nodes) do
@@ -334,14 +346,15 @@ local function Build()
     local close = CreateFrame("Button", nil, win, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -5, -5)
     win.tabs = {}
-    local tabW = (CANVAS - 8) / 3
     for i = 1, 3 do
         local tab = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-        tab:SetSize(tabW, 20)
-        tab:SetPoint("TOPLEFT", win, "TOPLEFT", 20 + (i - 1) * (tabW + 4), -58)
+        tab:SetHeight(20)                  -- its width and place: LV.Draw
         tab:SetScript("OnClick", function() LV.Draw(i) end)
         win.tabs[i] = tab
     end
+    -- Measures a tab's text in the buttons' font.
+    win.measure = win:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    win.measure:Hide()
     win.canvas = CreateFrame("Frame", nil, win)
     win.canvas:SetSize(CANVAS, CANVAS)
     win.canvas:SetPoint("TOP", win, "TOP", 0, -84)

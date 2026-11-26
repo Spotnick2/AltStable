@@ -5640,6 +5640,21 @@ do
         shown = 0
         for _, node in ipairs(LV._test.Window().nodes) do if node:IsShown() then shown = shown + 1 end end
         eq("  another tab: its nodes only", shown, 1)
+        -- Each tab as wide as its text (in game, "Resourcefulness (0)" overflowed).
+        local w0 = LV._test.Window()
+        local t1, t2, t3 = w0.tabs[1], w0.tabs[2], w0.tabs[3]
+        eq("  a tab as wide as its text and 24px (or 60)", t1:GetWidth(), 64)
+        local _, _, _, x2 = t2:GetPoint(1)
+        eq("  the next one after it", x2, 20 + 64 + 4)
+        eq("  the window as wide as the canvas while they fit", w0:GetWidth(), 340)
+        w0.measure._GetStringWidth = 150
+        LV.Draw(2)
+        eq("  a long name: its tab widens", t3:GetWidth(), 174)
+        local _, _, _, x3 = t3:GetPoint(1)
+        eq("  placed after the others", x3, 20 + 2 * (174 + 4))
+        eq("  and the window widens to hold the row", w0:GetWidth(), 20 + 3 * 174 + 2 * 4 + 20)
+        w0.measure._GetStringWidth = nil
+        LV.Draw(2)
         -- A node's tooltip: the entry at its own rank, the badge at the node's.
         me.legacyTalents = "v1;c4;1187:3:110291.3.5.136848.1.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
         LV.Draw(1)
