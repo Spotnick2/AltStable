@@ -46,6 +46,7 @@ counts in tooltips** in the Warband Bank tab) turns it on or off either way.
 - **Match my current character by** Faction and/or Ruleset. With both ticked, a character must
   match both. With neither, everyone is together.
 - **Sort characters** by name or by count.
+- **Only while Shift is held:** the counts show only while you hold Shift.
 
 To keep an item's tooltip as it is, like the Hearthstone every character carries, type
 `/alts tooltip ignore <item>` (shift-click the item). `/alts tooltip unignore <item>` brings it back.
@@ -172,27 +173,34 @@ played on this WoW account; a character on another account shows its counts once
 
 ### How much gold, rested XP and progression does each character have?
 
-The **sheet** has one row per character: level, item level and gear in every slot, professions,
-Merchant's Favor, reputations (Vanilla's and Forever's own factions), guild, gold, rested XP and when it was last
-played. Sort by any column, and group the rows by ruleset, by faction or both (**Group**, in
+The **sheet** has one row per character: level, spec, item level and gear in every slot,
+professions, Merchant's Favor, reputations (Vanilla's and Forever's own factions), guild, gold,
+rested XP, time played and when it was last played. **Columns**, at the top of the window, chooses
+which columns each sheet tab shows; the character's name always shows. Sort by any column, and group the rows by ruleset, by faction or both (**Group**, in
 Options); hover a ruleset's header to see its servers. Since 2026-11-20 the game no longer tells
 addons a character's server, so the ruleset comes from the game's rules, and a character first
 seen since then has no server to show. Rested XP keeps counting up while you're
-away, worked out from where the character logged out, and faster and higher with the Well Rested
-talent.
+away, worked out from where the character logged out, up to the cap of 1.5 levels, and faster and
+higher with the Well Rested Legacy talent, by its rank.
+
+The **Spec** column names the talent tree with the most points, when one tree leads. A tie, no
+points spent, or talents not read yet (log in with the Armory on) show a dash. Hover it for the
+points in each tree, as last recorded. The **Played** column shows each character's time played, with the total
+along the bottom. Hover a reputation for its progress within the standing, such as "Honored
+1234 / 12000".
 
 The **Bags** column shows each character's free and total bag slots, to see who needs a bigger
 bag. Hover it for that character's bags, its bank tabs (as of its last bank visit) and the spare
-bags it carries or keeps in the bank or the mail. **Show the Bags column**, in Options, hides it.
+bags it carries or keeps in the bank or the mail.
 
-The **Hearthstone** column shows the inn each character is bound to. **Show the Hearthstone
-column**, in Options, hides it.
+The **Hearthstone** column shows the inn each character is bound to.
 
 Hover the gold in the game's bag window to see the total across your characters and how much
 each one holds, richest first. (Bagnon and Baganator replace that window and have their own.)
 
 With **Titan Panel** or another LibDataBroker display, add AltStable to it: it shows the same
 total, and the per-character list on hover. Left-click opens AltStable, right-click its Options.
+The same entry is in the minimap's **AddOn Compartment**.
 
 ![The sheet's gear view: the item level of every equipped slot for each character, coloured by quality](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-gear.jpg)
 
@@ -273,7 +281,9 @@ installed and need to be **online at the same time**.
 The **Armory** tab shows your characters as character cards, or standing together around a
 campfire in **camps** of four (up to 50 camps), each with its own backdrop. Click a character for its paper
 doll, stats and talents. **View** opens its talents in the game's own talent frame, read-only,
-as they were when it was last played.
+as they were when it was last played. Its **Legacy** group shows the Legacy talents it chose:
+the points in each tree, and the talents on hover. **View** beside it opens the three trees,
+read-only. Each character needs one login with this version to be read.
 
 ![The Armory's character cards: one full-length portrait per character with its level, and a plain card with the class icon for characters without a portrait yet](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-cards.jpg)
 
@@ -283,7 +293,7 @@ as they were when it was last played.
 
 *Click a character for its paper doll and stats. The Audit tab beside Char lists its enchants.*
 
-![A camp in the Armory: four characters around a campfire at Mount Hyjal, from portraits made by AltStable Companion, with the camp list beside it](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
+![A camp in the Armory: four characters around a campfire at Karazhan under a full moon, from portraits made by AltStable Companion, with the camp list beside it and the sidebar collapsed](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
 
 *Armory portraits from your own captures, made by the free AltStable Companion.*
 
@@ -298,7 +308,7 @@ There are three separate pieces here, and only the first is required:
 The Companion makes ordinary portraits without any AI. Enhanced portraits are the only part that
 uses one.
 
-![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-enhanced.jpg)
+![Another camp, in Ashenvale by moonlight, drawn with the optional enhanced portraits](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-enhanced.jpg)
 
 *Another camp, with the optional enhanced portraits (Codex CLI, uses your ChatGPT account's usage).*
 
