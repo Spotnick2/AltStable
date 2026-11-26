@@ -3301,6 +3301,14 @@ local function CreateFrameIfNeeded()
             end
         end
     end
+    -- And when the window opens on a plugin tab: a tab may have arrived while
+    -- it was closed, and a plugin tab's reopening doesn't size the window
+    -- (Codex review of #529). A sheet tab's Refresh does, floor included.
+    frame:HookScript("OnShow", function()
+        if frame.bodyScroll and activeSection and activeSection._isPlugin and AltStable.EnsureWindowMinSize then
+            AltStable.EnsureWindowMinSize(0, TITLE_H + AltStable.GetSidebarRequiredHeight())
+        end
+    end)
 
     local function MakePluginButton(plugin)
         local pbtn=CreateFrame("Button",nil,sidebar,"BackdropTemplate")

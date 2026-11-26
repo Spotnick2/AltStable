@@ -3022,6 +3022,21 @@ do
         f:SetHeight(200)
         AltStable.RegisterPlugin({ id = "late529b", label = "Late B", _isPlugin = true, OnActivate = function() end })
         check("  and on a sheet tab", f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(), tostring(f:GetHeight()))
+        -- A tab arriving while the window is closed, reopened on a plugin tab:
+        -- the floor applies on opening (Codex review of #529).
+        pbtn:GetScript("OnClick")(pbtn)
+        f:SetHeight(200)
+        -- Opening applies the saved scale, which the blocks after this one
+        -- don't expect: kept as it was.
+        local scale = f:GetScale()
+        f:Hide()
+        AltStable.RegisterPlugin({ id = "late529c", label = "Late C", _isPlugin = true, OnActivate = function() end })
+        eq("  closed, the window is left alone", f:GetHeight(), 200)
+        f:Show()
+        f:SetScale(scale)
+        check("  reopened on a plugin tab, it grows to the floor", f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(),
+              tostring(f:GetHeight()))
+        sheetBtn:GetScript("OnClick")(sheetBtn)
     end
     -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
     -- bar in the accent on its edge, then the tab's name, which stops short of
