@@ -106,7 +106,7 @@ characters, plus anyone else who holds a lockout.
 
 ![The Raid Lockouts tab: Barrow Deeps, Hyjal Summit and Onyxia's Lair, with the active saves and the characters tracked along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/raids.jpg)
 
-*The Raid Lockouts tab, waiting for your first level-60 save.*
+*The Raid Lockouts tab before any character has a raid to show: no level-60 character and no lockout yet.*
 
 ### How far along are my Legacy Challenges?
 
@@ -161,7 +161,7 @@ can ever do there, for its faction, race and class, at any level.
 
 ![The Loremaster tab: the map of Orgrimmar, a card with 11 of 62 quests done, and the zones of Kalimdor with each character's progress](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/loremaster.jpg)
 
-*The Loremaster tab: a dungeon's entrance on the map, its card, and every character's progress.*
+*The Loremaster tab: a zone on the map, its card for one character, and every character's progress by zone.*
 
 Zone, dungeon, raid, battleground and profession quests count, breadcrumbs included. Repeatable
 quests, holiday quests and quests not in the game don't. A quest a character can no longer take
