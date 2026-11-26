@@ -145,7 +145,10 @@ function T.Scan()
     r.stamp = math.max(time(), (type(held) == "table" and held.stamp or 0) + 1)
     Store()[guid] = r
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
-    if Roster.isActive and Roster.RequestRefresh then Roster.RequestRefresh() end
+    -- The sheet's Spec column shows it too (#506), so an open grid repaints and
+    -- re-sorts. The Roster panel needs no call of its own: the plugin wraps
+    -- RefreshSheet to repaint the panel while it is open (HookRefresh).
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true
 end
 

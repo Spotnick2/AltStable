@@ -5082,12 +5082,21 @@ do
     ----------------------------------------------------------
     TL._test.ResetPending()
     WoW.timers = {}
+    -- The sheet refreshed by the scheduled scan itself, nothing else asking:
+    -- an open grid's Spec column must not keep the last reading (#506 review).
+    local realRefresh, sheetRefreshes = AltStable.RefreshSheet, 0
+    AltStable.RefreshSheet = function() sheetRefreshes = sheetRefreshes + 1 end
     WoW.fire("TRAIT_CONFIG_UPDATED", 650751)
     WoW.fire("PLAYER_TALENT_UPDATE")
     eq("a burst of talent events schedules one scan", #WoW.timers, 1)
     api.spent[1][11594] = 2
     WoW.flushTimers()
     eq("  which reads the change", table.concat(TL.Get(guid).specs[1].pts, "/"), "2/2/14")
+    eq("  and refreshes the sheet once", sheetRefreshes, 1)
+    WoW.fire("PLAYER_TALENT_UPDATE")
+    WoW.flushTimers()
+    eq("a scan that finds nothing new leaves the sheet alone", sheetRefreshes, 1)
+    AltStable.RefreshSheet = realRefresh
     for _, ev in ipairs({ "PLAYER_TALENT_UPDATE", "TRAIT_CONFIG_UPDATED", "ACTIVE_TALENT_GROUP_CHANGED" }) do
         local found = false
         for _, x in ipairs(TL._test.EVENTS) do if x == ev then found = true end end
