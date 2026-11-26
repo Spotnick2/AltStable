@@ -4,7 +4,7 @@
 
 **A new look for the window**: the title bar and the sidebar, with new icons and tab names. Also
 **each alt's Legacy talents**, a **Played** and a **Spec** column, and the choice of the columns on
-every tab. Several came from players' comments on CurseForge. Built for client 1.60.1.71139, the
+every sheet tab. Several came from players' comments on CurseForge. Built for client 1.60.1.71139, the
 live build. v1.15.0 syncs with everything v1.14.0 does.
 
 ### AltStable Companion
@@ -25,10 +25,11 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
   Levels** (was Skills), **Recipe Book** (was Professions), **Warband Bank** (was Warband),
   Reputations, **Raid Lockouts** (was Raids), Loremaster, **Legacy Challenges** (was Legacy).
   Options sits apart at the bottom, and the sidebar is only as wide as its names.
-- **Choose the columns of each tab** ([#378](https://github.com/Spotnick2/AltStable/issues/378)):
-  the **Columns** button lists every column the tab can show. Tick or untick them, or show them
-  all again; each tab keeps its own choice. Options has a **Show all columns** button for every
-  tab at once.
+- **Choose the columns of each sheet tab**
+  ([#378](https://github.com/Spotnick2/AltStable/issues/378)): on Account Summary, Gear
+  Progression, Skill Levels and Reputations, the **Columns** button lists the columns the tab can
+  show. The character's name always shows. Tick or untick the others, or show them all again;
+  each tab keeps its own choice. Options has a **Show all columns** button for every tab at once.
 - **A Played column** ([#378](https://github.com/Spotnick2/AltStable/issues/378)): each
   character's time played, read whenever it's logged in, with the total along the bottom.
 - **A Spec column** ([#506](https://github.com/Spotnick2/AltStable/issues/506)), on Account
