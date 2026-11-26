@@ -79,8 +79,9 @@ local switches = 0
 -- if the record didn't exist yet when it came.
 local last
 -- What the character being played is drawn as right now, every reading
--- included (a situational switch too): { look = { [slot] = value }, outfit }.
-local current = { look = {} }
+-- included (a situational switch too): { look = { [slot] = value }, outfit },
+-- with the item each slot was read on (`equipped`).
+local current = { look = {}, equipped = {} }
 
 -- The flags as `drawn` records them (#485): kept byte for byte.
 local function Signature(char)
@@ -110,17 +111,24 @@ local function Model()
     return model
 end
 
--- The status's view of the look, only while it is still the outfit on: a
--- switch not read yet leaves nothing to compare (Codex review of #501).
-local function CurrentFor(outfit)
-    if current.outfit ~= nil and outfit ~= nil and current.outfit ~= outfit then return { look = {} } end
-    return current
-end
-
 local function Equipped(slot)
     local f = rawget(_G, "GetInventoryItemID")
     local id = type(f) == "function" and tonumber((f("player", slot))) or nil
     return id or 0
+end
+
+-- The status's view of the look, only while it is still the outfit on: a
+-- switch not read yet leaves nothing to compare. And of each slot only while
+-- the item it was read on is still equipped: a swap not read yet (or never
+-- read) leaves that slot unknown, as the scan's memory does (Codex review of
+-- #501).
+local function CurrentFor(outfit)
+    if current.outfit ~= nil and outfit ~= nil and current.outfit ~= outfit then return { look = {} } end
+    local look = {}
+    for slot, v in pairs(current.look) do
+        if current.equipped[slot] == Equipped(slot) then look[slot] = v end
+    end
+    return { look = look, outfit = current.outfit }
 end
 
 local function ActiveOutfit()
@@ -203,9 +211,13 @@ function Drawn.Apply(char, result)
         -- written - flags, look or outfit - so the record never pairs one
         -- outfit's fields with another's. The sample stays for the scan
         -- (OnScanned) and the retries (Codex review of #501).
-        if char.drawnOutfit ~= nil and result.outfit ~= nil and result.outfit ~= char.drawnOutfit
-           and not complete then
-            return false
+        -- The record's first outfit the same way: its look is published with
+        -- the outfit or not at all, so no reader meets a look without the
+        -- outfit it was read in. The helm and cloak flags (#485) don't wait
+        -- for it (Codex review of #501).
+        if result.outfit ~= nil and result.outfit ~= char.drawnOutfit and not complete then
+            if char.drawnOutfit ~= nil then return false end
+            applicable = {}
         end
     end
 
@@ -241,9 +253,8 @@ function Drawn.Apply(char, result)
                 if char["gearlook_" .. key] ~= gl then char["gearlook_" .. key] = gl; lookChanged = true end
             end
         end
-        -- The outfit is published with a complete look only: a first reading
-        -- with a slot missing writes what it read and waits for the rest.
-        if complete and result.outfit ~= nil and char.drawnOutfit ~= result.outfit then
+        -- Another outfit gets here with a complete look only (above).
+        if result.outfit ~= nil and char.drawnOutfit ~= result.outfit then
             char.drawnOutfit = result.outfit
             lookChanged = true
         end
@@ -326,8 +337,10 @@ function Drawn.Read(retry, situational)
         -- empty slot replaces what was there (an unequipped shirt). Another
         -- outfit starts it afresh: a slot this reading missed must not show
         -- the last outfit's item under this one (Codex review of #501).
-        if current.outfit ~= result.outfit then current.look = {} end
-        for slot, v in pairs(result.look) do current.look[slot] = v end
+        if current.outfit ~= result.outfit then current.look, current.equipped = {}, {} end
+        for slot, v in pairs(result.look) do
+            current.look[slot], current.equipped[slot] = v, result.equipped[slot]
+        end
         current.outfit = result.outfit
         local char = type(AltStableDB) == "table" and AltStableDB[guid]
         -- Retried on what this reading itself saw, before the merge below.
@@ -414,5 +427,5 @@ AltStable._test.DrawnModel = function() return model end
 AltStable._test.ResetDrawn = function()
     model, reading, again, againStable, last, equipTimer = nil, false, false, false, nil, nil
     retries, generation, genStable, switches = 0, 0, true, 0
-    current = { look = {} }
+    current = { look = {}, equipped = {} }
 end

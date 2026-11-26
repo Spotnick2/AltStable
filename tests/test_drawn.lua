@@ -476,7 +476,7 @@ drawn = { [3] = 27175.4 }
 D.Read()
 advance(1)
 eq("a reading ahead of the scan (gearid still old): not written yet", AltStableDB[me].gearlook_shoulder, nil)
-eq("  nor the outfit (its look isn't complete)", AltStableDB[me].gearlookSig, "o-")
+eq("  nor anything of the look (its outfit waits for the rest)", AltStableDB[me].gearlookSig, nil)
 AltStableDB[me].gearid_shoulder = 6666
 D.OnScanned(AltStableDB[me])
 eq("  the scan then writes it", AltStableDB[me].gearlook_shoulder, 271754)
@@ -704,5 +704,47 @@ advance(1)
 eq("  a new chest, still drawn as equipped: still no override", AltStableDB[me].gearlook_chest, nil)
 check("  but the look is re-dated", AltStableDB[me].drawnLookAt == 7100 and dated ~= 7100,
       tostring(AltStableDB[me].drawnLookAt))
+
+------------------------------------------------------------
+-- Codex review of #501 at bfd709f
+------------------------------------------------------------
+
+-- 1. A record's first look is published with its outfit or not at all.
+fresh(player({ head = 7048, shoulder = 4197, chest = 9623 }))
+wear({ [1] = 7048, [3] = 4197, [5] = 9623 })
+drawn = { [1] = 77344, [3] = 27175.4 }   -- the chest not read yet
+D.Read()
+advance(1)
+local p1 = AltStableDB[me]
+eq("a first partial reading: no override without its outfit", p1.gearlook_shoulder, nil)
+eq("  no outfit", p1.drawnOutfit, nil)
+eq("  no date", p1.drawnLookAt, nil)
+eq("  no signature", p1.gearlookSig, nil)
+eq("  the helm flag doesn't wait (#485)", p1.hidehelm, 1)
+drawn = { [1] = 77344, [3] = 27175.4, [5] = 962.3 }
+advance(5)
+eq("  once complete: the override", p1.gearlook_shoulder, 271754)
+eq("  with its outfit", p1.drawnOutfit, 2)
+check("  and dated", p1.drawnLookAt ~= nil)
+
+-- 2. The status's view of a slot holds only while its item is on.
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 4197 })
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+eq("shoulders A, transmogged", D.Current().look[3], 271754)
+wear({ [3] = 5555 })
+eq("  shoulders B on, not read yet: unknown, not A's look", D.Current().look[3], nil)
+drawn = { [3] = 555.5 }
+D.Read()
+advance(1)
+eq("  B read: drawn as itself", D.Current().look[3], 5555)
+wear({ [3] = 4197 })
+drawn = {}                               -- A back on, the next reading can't see it
+D.Read()
+advance(1)
+eq("  A back on, unread: not B's look", D.Current().look[3], nil)
+eq("  an empty slot read stays known", D.Current().look[5], 0)
 
 WoW.finish("test_drawn", passed, failed)

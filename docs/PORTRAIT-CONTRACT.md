@@ -392,6 +392,9 @@ changed once on its head or back.
   are the addon's own checks, so a reader can ignore them.
 - These are written only on a stable reading (login, closing the transmogrifier, a gear change),
   never on an outfit that switched by itself.
+- On a client with saved outfits, a look is published with its `drawnOutfit`: a record's first
+  look waits until every equipped slot was read, so `gearlook_<key>` never comes without the
+  outfit. Only a client that can't name the outfit writes them without one.
 - A reader comparing a capture's `drawnLook` with the roster:
   - builds each roster slot as `gearlook_<key>` when present (`0` → `h`), else `gearid_<key>`
     (`0` → empty, with `h` from `hidehelm` / `hidecloak`);
