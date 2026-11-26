@@ -298,7 +298,7 @@ There are three separate pieces here, and only the first is required:
 The Companion makes ordinary portraits without any AI. Enhanced portraits are the only part that
 uses one.
 
-![Another camp, at Mount Hyjal, drawn with the optional enhanced portraits](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-enhanced.jpg)
+![Another camp, in Ashenvale by moonlight, drawn with the optional enhanced portraits](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-enhanced.jpg)
 
 *Another camp, with the optional enhanced portraits (Codex CLI, uses your ChatGPT account's usage).*
 
