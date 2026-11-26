@@ -1,5 +1,62 @@
 # Changelog
 
+## v1.15.0 - 2026-11-26
+
+**A new look for the window**: the title bar and the sidebar, with new icons and tab names. Also
+**each alt's Legacy talents**, a **Played** and a **Spec** column, and the choice of the columns on
+every tab. Several came from players' comments on CurseForge. Built for client 1.60.1.71139, the
+live build. v1.15.0 syncs with everything v1.14.0 does.
+
+### AltStable Companion
+
+The Armory's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+It can also keep your characters in a Google Sheet in your own Google Drive. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.2** is the current version.
+
+### New
+
+- **A new title bar** ([#523](https://github.com/Spotnick2/AltStable/issues/523)): "AltStable",
+  then the tab you're on. **Columns** opens the tab's column menu under it, and the sidebar's
+  collapse button now sits beside Maximize. The menu is easier to read over the grid.
+- **A new sidebar** ([#528](https://github.com/Spotnick2/AltStable/issues/528)): new icons, and
+  new names in a new order. Account Summary, **Armory** (was Roster), Gear Progression, **Skill
+  Levels** (was Skills), **Recipe Book** (was Professions), **Warband Bank** (was Warband),
+  Reputations, **Raid Lockouts** (was Raids), Loremaster, **Legacy Challenges** (was Legacy).
+  Options sits apart at the bottom, and the sidebar is only as wide as its names.
+- **Choose the columns of each tab** ([#378](https://github.com/Spotnick2/AltStable/issues/378)):
+  the **Columns** button lists every column the tab can show. Tick or untick them, or show them
+  all again; each tab keeps its own choice. Options has a **Show all columns** button for every
+  tab at once.
+- **A Played column** ([#378](https://github.com/Spotnick2/AltStable/issues/378)): each
+  character's time played, read whenever it's logged in, with the total along the bottom.
+- **A Spec column** ([#506](https://github.com/Spotnick2/AltStable/issues/506)), on Account
+  Summary and Gear Progression: the talent tree with the most points, such as "Frost". The tooltip
+  gives the points in each tree.
+- **Each alt's Legacy talents** ([#500](https://github.com/Spotnick2/AltStable/issues/500)): a
+  character opened in the Armory has a **Legacy** group, with the points spent and each tree's
+  points. Hover a tree for its talents. **View** opens the three trees, read-only, as they were
+  when the character was last played. Each alt needs one login on this version to be read.
+- **Reputation progress** ([#396](https://github.com/Spotnick2/AltStable/issues/396)): a reputation
+  cell's tooltip gives the progress within the standing, such as "Honored 1234 / 12000".
+- **Item counts only while Shift is held**
+  ([#493](https://github.com/Spotnick2/AltStable/issues/493)): an option under the item tooltip
+  counts.
+- **An entry in the minimap's AddOn Compartment**
+  ([#510](https://github.com/Spotnick2/AltStable/issues/510)): left-click opens AltStable,
+  right-click its Options, and its tooltip gives your gold.
+- **Portraits as the game draws them** ([#485](https://github.com/Spotnick2/AltStable/issues/485),
+  [#497](https://github.com/Spotnick2/AltStable/issues/497)): a hidden helm or cloak stays hidden,
+  and each slot's look within a saved outfit is passed to AltStable Companion.
+
+### Fixed
+
+- **Rested XP above 150%** ([#526](https://github.com/Spotnick2/AltStable/issues/526)): an alt the
+  game briefly reported over the cap showed 221% and was called Well Rested. Rested XP is now held
+  at the cap. Well Rested's cap and rate follow its rank in the alt's Legacy talents: 156% at 1/5,
+  180% at 5/5.
+
 ## v1.14.0 - 2026-11-25
 
 **Raid attunements** in the Loremaster tab, and the Roster's gear hover for your other account's
