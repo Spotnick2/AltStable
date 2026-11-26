@@ -733,7 +733,7 @@ local function MakeColumnWidgets(row, col, height)
     if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
     or col.field=="level" or col.type=="restXP"
     or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags"
-    or col.type=="played" then
+    or col.type=="played" or col.type=="spec" then
         local tip = CreateFrame("Button", nil, row)
         tip:SetSize(col.width, height)
         -- The Bags tooltip (#346) is built on hover, not at render: the
@@ -1091,6 +1091,27 @@ function AltStable.RenderRow(row, char, index, columns)
             end
 
         elseif col.field=="ilvl" then value = FormatItemLevel(char.ilvl)
+
+        elseif col.type=="spec" then
+            -- Spec (#506): the tree with the most points, from the Roster's
+            -- talents. A dim dash when they were never read, or no tree leads.
+            local s = AltStable.TalentSpec and AltStable.TalentSpec(char.guid)
+            value = (s and s.name) or "|cff888888\226\128\148|r"
+            if tip then
+                if not s then
+                    tip.line1 = "Talents not read yet"
+                    tip.line2 = "Log in on this character once with the Roster enabled."
+                    tip.line3 = nil
+                else
+                    local total = s.pts[1] + s.pts[2] + s.pts[3]
+                    tip.line1 = s.name or (total == 0 and "No talent points spent" or "No tree leads")
+                    local parts = {}
+                    for t = 1, 3 do parts[t] = s.trees[t] .. " " .. s.pts[t] end
+                    tip.line2 = table.concat(parts, " \194\183 ")
+                    tip.line3 = s.lv and ("As of level " .. s.lv) or nil
+                end
+                tip.cdLines = nil
+            end
 
         elseif col.type=="played" then
             -- Time played (#378): a dim dash until the character's first

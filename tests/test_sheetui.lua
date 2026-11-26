@@ -4224,6 +4224,34 @@ do
     check("  and Show all brings them back", HasColumn("money"))
     T.MenuEscape()
 
+    -- The Spec column (#506): from the Roster's talents, so offered only
+    -- while the plugin gives AltStable.TalentSpec; after Level on Account
+    -- Summary and Gear Progression; sorted by the spec's name.
+    check("no Roster talents: no Spec column", not HasColumn("talentSpec"))
+    RightClick("name")
+    check("  nor in the chooser", MenuHas("Spec") == nil)
+    T.MenuEscape()
+    local specs = { a = "Arcane", b = "Frost" }
+    AltStable.TalentSpec = function(guid)
+        return specs[guid] and { name = specs[guid], pts = { 0, 0, 0 }, trees = { "x", "y", "z" } } or nil
+    end
+    AltStable.RefreshSheet()
+    check("the plugin loaded: the Spec column shows at once", HasColumn("talentSpec"))
+    local function FieldAt(i) local c = T.ColumnLayout(); return c[i] and c[i].field end
+    local lvlAt
+    for i, c in ipairs((T.ColumnLayout())) do if c.field == "level" then lvlAt = i end end
+    eq("  right after Level", FieldAt((lvlAt or 0) + 1), "talentSpec")
+    Open("gear")
+    check("  on Gear Progression too", HasColumn("talentSpec"))
+    Open("summary")
+    Click("talentSpec")
+    eq("  it sorts", (T.SortState()), "talentSpec")
+    eq("  by the spec's name, A to Z, never read last", Order(), "a,b,c")
+    AltStable.TalentSpec = nil
+    AltStable.RefreshSheet()
+    check("the plugin gone: the column goes", not HasColumn("talentSpec"))
+    eq("  and the sort falls back to level", (T.SortState()), "level")
+
     -- The Played column (#378) in the footer: the known added, the rest
     -- counted, never as 0.
     AltStable._test.ResetPlayed()
