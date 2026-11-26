@@ -247,6 +247,9 @@ local root, panel, catcher, entries, pick
 -- that lists its entries again once the pick has run. Nil for every other
 -- menu, which closes first.
 local stay
+-- A menu opened from a button (#523, the Columns button): the frame it hangs
+-- under instead of the cursor, and what to tell its opener when it closes.
+local anchorTo, onClosed
 
 -- Cursor position is in PHYSICAL pixels; frame offsets are in the frame's own
 -- scaled units. Dividing by the effective scale is not optional - skip it and
@@ -471,7 +474,10 @@ end
 
 function AltStable.CloseCharacterMenu()
     if not root then return end
-    pick, stay = nil, nil
+    pick, stay, anchorTo = nil, nil, nil
+    local closed = onClosed
+    onClosed = nil
+    if closed then pcall(closed) end
     -- Let the list stop marking the row.
     --
     -- After the `if not root then return end` above, not before it - which is
@@ -508,12 +514,17 @@ end
 -- onPick(id) runs once the menu has closed. With `again` (a function giving
 -- the entries anew), the menu stays open on a pick instead: onPick runs, then
 -- the menu shows again() in place. Escape and a click outside still close it.
-function AltStable.ShowMenu(list, onPick, again)
+-- opts (optional): anchor, a frame the menu hangs under, right-aligned, instead
+-- of opening at the cursor; onClose, called once when the menu closes.
+function AltStable.ShowMenu(list, onPick, again, opts)
     if type(list) ~= "table" or #list == 0 then return false end
     Build()
     AltStable.CloseCharacterMenu()
     pick = onPick
     stay = type(again) == "function" and again or nil
+    opts = type(opts) == "table" and opts or {}
+    anchorTo = opts.anchor
+    onClosed = type(opts.onClose) == "function" and opts.onClose or nil
     return Open(list)
 end
 
@@ -592,7 +603,12 @@ Open = function(list, inPlace)
         AltStable.LiftAboveHiddenUI(root, AltStable.IsGameUIHidden())
     end
     root:Show()
-    PlaceAtCursor()
+    if anchorTo then
+        panel:ClearAllPoints()
+        panel:SetPoint("TOPRIGHT", anchorTo, "BOTTOMRIGHT", 0, -4)
+    else
+        PlaceAtCursor()
+    end
     -- The keyboard is taken OUT OF COMBAT ONLY.
     --
     -- Grabbing it means every key arrives here and has to be handed back one at
