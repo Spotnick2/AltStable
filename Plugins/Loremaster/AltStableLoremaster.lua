@@ -293,8 +293,13 @@ function L.RowShown(key)
     return true
 end
 
+local function ByOrder(a, b) return D.ZONES[a][5] < D.ZONES[b][5] end
+
 -- The display list: a group header, then its rows, for every row some column
 -- has quests in. Collapsed groups keep their header; a search opens them.
+-- A header also carries the rows the toolbar lets through that no column has
+-- quests in (`hidden`, #538: a Horde roster has no Deadmines row, which read
+-- as a bug); a group with only such rows still gets its header, so it says so.
 function L.DisplayRows(cols)
     local present = {}
     for _, col in ipairs(cols) do
@@ -309,7 +314,7 @@ function L.DisplayRows(cols)
             end
         end
     end
-    local byGroup = {}
+    local byGroup, hiddenBy = {}, {}
     for key in pairs(present) do
         local g = L.GroupOf(key)
         if g then
@@ -317,20 +322,63 @@ function L.DisplayRows(cols)
             table.insert(byGroup[g], key)
         end
     end
+    -- No column at all: the empty-state message says why, not every header.
+    -- (Every row of the table has quests someone can count, measured on
+    -- cabf3cd3, so a row left out is always some character's.)
+    if #cols > 0 then
+        for key in pairs(D.ZONES) do
+            local g = L.GroupOf(key)
+            if g and not present[key] and L.RowShown(key) then
+                hiddenBy[g] = hiddenBy[g] or {}
+                table.insert(hiddenBy[g], key)
+            end
+        end
+    end
     local collapsed = M.DB().collapsed
     local searching = L.search and L.search ~= ""
     local out = {}
     for _, g in ipairs(L.GROUPS) do
-        local keys = byGroup[g.key]
-        if keys then
-            table.sort(keys, function(a, b) return D.ZONES[a][5] < D.ZONES[b][5] end)
-            out[#out + 1] = { isGroup = true, key = g.key, label = g.label, n = #keys }
+        local keys, hidden = byGroup[g.key], hiddenBy[g.key]
+        if keys or hidden then
+            keys = keys or {}
+            table.sort(keys, ByOrder)
+            if hidden then table.sort(hidden, ByOrder) end
+            out[#out + 1] = { isGroup = true, key = g.key, label = g.label, n = #keys, hidden = hidden }
             if searching or not collapsed[g.key] then
                 for _, key in ipairs(keys) do out[#out + 1] = { key = key } end
             end
         end
     end
     return out
+end
+
+-- A group header's text: "– Dungeons", "+ Dungeons (12)", and the rows left
+-- out, " · 2 not listed".
+function L.GroupText(r, collapsed)
+    local s = (collapsed and "+ " or "\226\128\147 ") .. r.label
+        .. (collapsed and (" |cff888888(" .. r.n .. ")|r") or "")
+    if r.hidden and #r.hidden > 0 then
+        s = s .. ("  |cff888888\194\183 %d not listed|r"):format(#r.hidden)
+    end
+    return s
+end
+
+-- A group header's tooltip: which rows are not listed, and why.
+function L.GroupOnEnter(self)
+    local hidden = self.hidden
+    if not hidden or #hidden == 0 then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText(GROUP_LABEL[self.key] or "", 1, 1, 1)
+    GameTooltip:AddLine((L.cols and #L.cols == 1)
+        and "Not listed: no quests this character can take."
+        or "Not listed: no quests any of these characters can take.", 0.7, 0.7, 0.7, true)
+    for i = 1, math.min(#hidden, MAX_TIP) do
+        GameTooltip:AddLine(L.ZoneName(hidden[i]), 0.9, 0.9, 0.9)
+    end
+    if #hidden > MAX_TIP then
+        GameTooltip:AddLine(("and %d more"):format(#hidden - MAX_TIP), 0.7, 0.7, 0.7)
+    end
+    GameTooltip:Show()
 end
 
 -- One character's total over every row.
@@ -621,6 +669,8 @@ local function MakeGroup()
     g.sep:SetHeight(1)
     g.sep:SetPoint("BOTTOMLEFT", 0, 0)
     g.sep:SetPoint("BOTTOMRIGHT", 0, 0)
+    g:SetScript("OnEnter", L.GroupOnEnter)
+    g:SetScript("OnLeave", HideTip)
     g:SetScript("OnClick", function(self)
         local c = M.DB().collapsed
         c[self.key] = (not c[self.key]) and true or nil
@@ -1376,10 +1426,9 @@ function L.Render()
             g:ClearAllPoints()
             g:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
             g:SetWidth(width)
-            g.key = r.key
+            g.key, g.hidden = r.key, r.hidden
             local collapsed = db.collapsed[r.key] and not (L.search and L.search ~= "")
-            g.label:SetText((collapsed and "+ " or "\226\128\147 ") .. r.label
-                .. (collapsed and (" |cff888888(" .. r.n .. ")|r") or ""))
+            g.label:SetText(L.GroupText(r, collapsed))
             g.bg:SetColorTexture(gr, gg, gb, ga)
             g.sep:SetColorTexture(accent[1], accent[2], accent[3], 0.6)
             y = y + GROUP_H
