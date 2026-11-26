@@ -3022,6 +3022,37 @@ do
         f:SetHeight(200)
         AltStable.RegisterPlugin({ id = "late529b", label = "Late B", _isPlugin = true, OnActivate = function() end })
         check("  and on a sheet tab", f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(), tostring(f:GetHeight()))
+        -- A window shorter than the floor, as on a screen too short for it
+        -- (maximized or not; Codex review of #529): the tabs close up, down to
+        -- 40 apart, and the last one stays clear of Options.
+        do
+            local savedH = f:GetHeight()
+            local need = 30 + AltStable.GetSidebarRequiredHeight()
+            f:SetHeight(need - 40)
+            f:GetScript("OnSizeChanged")(f)
+            local order = sidebar.order
+            local last = order[#order]
+            local _, _, _, _, ly = last:GetPoint(1)
+            local lastBottom = -ly + last:GetHeight()
+            local optTop = (f:GetHeight() - 30) - 4 - 52
+            check("  a window short of the floor: the last tab clear of Options' separator",
+                  lastBottom <= optTop - 6, lastBottom .. " vs " .. (optTop - 6))
+            local _, _, _, _, y2 = order[2]:GetPoint(1)
+            check("  the tabs closer together", -8 - y2 < 53 and -8 - y2 >= 40, tostring(y2))
+            eq("  each as tall as its step, less 1", order[1]:GetHeight(), (-8 - y2) - 1)
+            eq("  the floor still counts the full step", AltStable.GetSidebarRequiredHeight(), need - 30)
+            f:SetHeight(200)
+            f:GetScript("OnSizeChanged")(f)
+            _, _, _, _, y2 = order[2]:GetPoint(1)
+            eq("  never closer than 40, however short", y2, -8 - 40)
+            f:SetHeight(need + 100)
+            f:GetScript("OnSizeChanged")(f)
+            _, _, _, _, y2 = order[2]:GetPoint(1)
+            eq("  a tall window: 53 apart again", y2, -8 - 53)
+            eq("  and 52 tall", order[1]:GetHeight(), 52)
+            f:SetHeight(savedH)
+            f:GetScript("OnSizeChanged")(f)
+        end
         -- A tab arriving while the window is closed, reopened on a plugin tab:
         -- the floor applies on opening (Codex review of #529).
         pbtn:GetScript("OnClick")(pbtn)

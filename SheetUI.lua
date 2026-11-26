@@ -3267,15 +3267,47 @@ local function CreateFrameIfNeeded()
             if a ~= c then return a < c end
             return x.i < z.i
         end)
-        local y = -SIDEBAR_TOP_INSET
-        for _, e in ipairs(list) do
-            e.b:ClearAllPoints()
-            e.b:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 0, y)
-            e.b:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, y)
-            y = y - SIDEBAR_BUTTON_STEP
+        sidebar.order = {}
+        for k, e in ipairs(list) do sidebar.order[k] = e.b end
+        -- The floor counts every tab at its full step, so the window grows to
+        -- it whenever the screen allows.
+        sidebar._pluginBtnY = -SIDEBAR_TOP_INSET - #list * SIDEBAR_BUTTON_STEP
+        sidebar.Place()
+        -- A tab arriving with the window open makes the list taller, and
+        -- Options is pinned below it: the window grows to the sidebar's floor,
+        -- or the last tab sits over Options (Codex review of #529). A sheet
+        -- tab sizes to its content, which counts the floor; a plugin tab gets
+        -- the floor alone.
+        if frame and frame:IsShown() and frame.bodyScroll then   -- built
+            if activeSection and not activeSection._isPlugin then
+                ResizeFrameToContent()
+            elseif AltStable.EnsureWindowMinSize then
+                AltStable.EnsureWindowMinSize(0, TITLE_H + AltStable.GetSidebarRequiredHeight())
+            end
+            sidebar.Place()   -- at the height the window got
         end
-        sidebar._pluginBtnY = y
-        local o = sidebar.optBtn
+    end
+    -- The tabs in their order, and Options at the foot under its separator.
+    -- 53 apart; tighter, down to 40, while the window is shorter than the
+    -- sidebar's floor - a screen too short for it, maximized or not, where no
+    -- resize can make the room (Codex review of #529) - so the last tab never
+    -- sits over Options. Placed again whenever the window's height changes.
+    function sidebar.Place()
+        local list, o = sidebar.order or {}, sidebar.optBtn
+        local step = SIDEBAR_BUTTON_STEP
+        local h = frame and tonumber(frame:GetHeight()) or 0
+        if o and h > 0 and #list > 0 then
+            local room = h - TITLE_H - SIDEBAR_TOP_INSET - (12 + SIDEBAR_BUTTON_H + 4) - SIDEBAR_BOTTOM_BREATH
+            step = math.max(40, math.min(SIDEBAR_BUTTON_STEP, math.floor(room / #list)))
+        end
+        local y = -SIDEBAR_TOP_INSET
+        for _, b in ipairs(list) do
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 0, y)
+            b:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, y)
+            b:SetHeight(step - 1)
+            y = y - step
+        end
         if not o then return end
         o:ClearAllPoints()
         o:SetPoint("BOTTOMLEFT", sidebar, "BOTTOMLEFT", 0, 4)
@@ -3288,19 +3320,8 @@ local function CreateFrameIfNeeded()
         sidebar.optSep:ClearAllPoints()
         sidebar.optSep:SetPoint("BOTTOMLEFT", o, "TOPLEFT", 12, 6)
         sidebar.optSep:SetPoint("BOTTOMRIGHT", o, "TOPRIGHT", -12, 6)
-        -- A tab arriving with the window open makes the list taller, and
-        -- Options is pinned below it: the window grows to the sidebar's floor,
-        -- or the last tab sits over Options (Codex review of #529). A sheet
-        -- tab sizes to its content, which counts the floor; a plugin tab gets
-        -- the floor alone.
-        if frame and frame:IsShown() and frame.bodyScroll then   -- built
-            if activeSection and not activeSection._isPlugin then
-                ResizeFrameToContent()
-            elseif AltStable.EnsureWindowMinSize then
-                AltStable.EnsureWindowMinSize(0, TITLE_H + AltStable.GetSidebarRequiredHeight())
-            end
-        end
     end
+    frame:HookScript("OnSizeChanged", function() sidebar.Place() end)
     -- And when the window opens on a plugin tab: a tab may have arrived while
     -- it was closed, and a plugin tab's reopening doesn't size the window
     -- (Codex review of #529). A sheet tab's Refresh does, floor included.
