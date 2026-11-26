@@ -1,5 +1,7 @@
 # AltStable — Alt Tracker (Altoholic Alternative)
 
+![AltStable, the alt tracker for WoW Forever: four alts sitting around a campfire under the full moon at Karazhan, beside a panel of trade goods](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/hero.jpg)
+
 **For World of Warcraft: Forever.**
 
 Looking for an Altoholic alternative for WoW Forever? AltStable brings your characters' gear,
