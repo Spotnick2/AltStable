@@ -309,6 +309,9 @@ function LT.Write(char, text)
     char.legacyTalents, char.legacyAt = text, time()
     if AltStable.TouchCharacter then AltStable.TouchCharacter(char.guid) end
     Refresh()
+    -- The sheet too: its Rested XP cell reads Well Rested's rank from here
+    -- (#526; Codex review of #527). Redrawn only while it shows.
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     return true
 end
 
