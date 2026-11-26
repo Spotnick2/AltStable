@@ -746,6 +746,22 @@ T.DeserializeFullDB(T.SerializeChar(
 eq(AltStableDB["Player-Rep-1"].rep_2758, nil, "a standing the peer no longer has is cleared on merge")
 eq(AltStableDB["Player-Rep-1"].rep_76, 6, "  and a standing it sent is updated")
 
+-- The progress within a standing (#396) rides with it, as numbers; a peer
+-- that sends none (an older version, or Exalted) leaves none behind.
+AltStableDB = { ["Player-Rep-1"] = { guid = "Player-Rep-1", name = "Rep", class = "MAGE", level = 20,
+                                      rep_76 = 4, rep_76_v = 100, rep_76_max = 3000, lastUpdate = 1000 } }
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Rep-1", name = "Rep", class = "MAGE", level = 20,
+      rep_76 = 6, rep_76_v = 1234, rep_76_max = 12000, lastUpdate = 1001 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Rep-1"].rep_76_v, 1234, "a standing's progress syncs, as a number")
+eq(AltStableDB["Player-Rep-1"].rep_76_max, 12000, "  and its size")
+T.DeserializeFullDB(T.SerializeChar(
+    { guid = "Player-Rep-1", name = "Rep", class = "MAGE", level = 20, rep_76 = 8, lastUpdate = 1002 }
+) .. "\n" .. T.CHAR_SEP, "Peer")
+eq(AltStableDB["Player-Rep-1"].rep_76_v, nil, "a record with no progress clears ours on merge")
+eq(AltStableDB["Player-Rep-1"].rep_76_max, nil, "  both halves")
+
 ------------------------------------------------------------
 -- 15. Plugin per-character payload round-trips through serialization
 ------------------------------------------------------------

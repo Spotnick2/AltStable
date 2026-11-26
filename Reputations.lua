@@ -8,7 +8,9 @@ local GetFactionDataByIndex = API.GetFactionDataByIndex
 -- columns, the Reputations section, Export, sync clearing) derives from it.
 --
 -- Keyed by faction ID, never by name. A standing is stored on the character as
--- rep_<factionID> = reaction (1 Hated .. 4 Neutral .. 8 Exalted).
+-- rep_<factionID> = reaction (1 Hated .. 4 Neutral .. 8 Exalted), and beside it
+-- the progress within that standing, rep_<factionID>_v of rep_<factionID>_max
+-- (#396; none at Exalted).
 --
 -- IDs: the Vanilla set from warcraft.wiki.gg's FactionID table; the Forever-only
 -- set measured with GetFactionDataByID on 1.60.1.69913 from both sides. Hidden
@@ -101,6 +103,37 @@ function AltStable.RepField(id)
     return "rep_" .. id
 end
 
+-- The progress within the standing (#396): rep_<id>_v of rep_<id>_max, e.g.
+-- 1234 of 6000 into Honored. Under the rep_ prefix so the scan's and the
+-- sync's "^rep_" clearing takes them with the standing; RepFieldsInUse's
+-- "^rep_%d+$" never takes them for a faction.
+function AltStable.RepProgressFields(id)
+    local f = "rep_" .. id
+    return f .. "_v", f .. "_max"
+end
+
+-- From the faction's struct (measured on 1.60.1.69913: Neutral Orgrimmar,
+-- currentStanding 2000 between thresholds 0 and 3000): the value within the
+-- standing and its size, or nil. Nil at Exalted (nothing further to gain),
+-- when the thresholds don't make a range, or when any of the three is
+-- unreadable (a secret value): unknown, never 0.
+local function Progress(d, reaction)
+    if type(d) ~= "table" or not reaction or reaction >= 8 then return nil end
+    local cur = API.PlainNumber(d.currentStanding)
+    local lo = API.PlainNumber(d.currentReactionThreshold)
+    local hi = API.PlainNumber(d.nextReactionThreshold)
+    if not (cur and lo and hi) or hi <= lo then return nil end
+    return cur - lo, hi - lo
+end
+
+-- Writes the standing and its progress together; the progress goes when it
+-- can't be read, so an old number never sits beside a new standing.
+local function SetStanding(char, id, reaction, d)
+    char[AltStable.RepField(id)] = reaction
+    local vf, mf = AltStable.RepProgressFields(id)
+    char[vf], char[mf] = Progress(d, reaction)
+end
+
 -- The rep fields at least one character holds, in table order. The sheet shows
 -- only these: a fresh alt has met four or five factions, not forty-eight, and a
 -- column no character has would only ever be blank.
@@ -171,7 +204,7 @@ local function ReadReputationList()
         -- A header carries a standing only when it is a faction in its own
         -- right (isHeaderWithRep); a plain grouping header is not one.
         if d and (d.factionID or 0) > 0 and (not d.isHeader or d.isHeaderWithRep) then
-            met[d.factionID] = d.reaction
+            met[d.factionID] = d
         end
     end
 
@@ -203,7 +236,7 @@ function AltStable.UpdateReputations(char)
         if d and (d.factionID or 0) > 0 and (not d.isHeader or d.isHeaderWithRep) then
             visible[d.factionID] = true
             local reaction = API.PlainNumber(d.reaction)
-            if ids[d.factionID] and reaction then char[AltStable.RepField(d.factionID)] = reaction end
+            if ids[d.factionID] and reaction then SetStanding(char, d.factionID, reaction, d) end
         end
     end
     for id in pairs(ids) do
@@ -211,7 +244,7 @@ function AltStable.UpdateReputations(char)
         if char[field] ~= nil and not visible[id] and API.GetFactionDataByID then
             local d = API.GetFactionDataByID(id)
             local reaction = type(d) == "table" and API.PlainNumber(d.reaction)
-            if reaction then char[field] = reaction end
+            if reaction then SetStanding(char, id, reaction, d) end
         end
     end
 end
@@ -224,9 +257,10 @@ function AltStable.ScanReputations(char)
         if type(k) == "string" and k:find("^rep_") then char[k] = nil end
     end
     local ids = TrackedIDs()
-    for id, reaction in pairs(met) do
+    for id, d in pairs(met) do
+        local reaction = d.reaction
         if ids[id] and type(reaction) == "number" then
-            char[AltStable.RepField(id)] = reaction
+            SetStanding(char, id, reaction, d)
         end
     end
 end

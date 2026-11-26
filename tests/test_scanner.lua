@@ -347,6 +347,51 @@ eq("a tuple-shaped API records no standing", rep2.rep_76, nil)
 C_Reputation.GetFactionDataByIndex = realFac
 dofile("Compat.lua"); dofile("Reputations.lua")
 
+-- The progress within the standing (#396), from the struct's thresholds
+-- (measured: Neutral Orgrimmar, 2000 between 0 and 3000).
+do
+    local function fac(id, reaction, cur, lo, hi)
+        return { name = "F" .. id, factionID = id, reaction = reaction, isHeader = false,
+                 currentStanding = cur, currentReactionThreshold = lo, nextReactionThreshold = hi }
+    end
+    WoW.factions = { fac(76, 4, 2000, 0, 3000), fac(81, 6, 10234, 9000, 21000),
+                     fac(530, 8, 42500, 42000, 42999), fac(2758, 5, 3000, 3000, 9000),
+                     fac(2778, 5, WoW.secret(4000), 3000, 9000), fac(68, 4, 100, 3000, 3000) }
+    local r = { rep_72_v = 9, rep_72_max = 9 }   -- left from a faction no longer listed
+    AltStable.ScanReputations(r)
+    eq("progress: the value within the standing", r.rep_76_v, 2000)
+    eq("  and its size", r.rep_76_max, 3000)
+    eq("  measured from the standing's own threshold (Honored)", r.rep_81_v .. "/" .. r.rep_81_max, "1234/12000")
+    eq("  a standing just reached is 0, not unknown", r.rep_2758_v, 0)
+    check("Exalted: the standing, no progress", r.rep_530 == 8 and r.rep_530_v == nil and r.rep_530_max == nil)
+    check("an unreadable value: the standing, no progress", r.rep_2778 == 5 and r.rep_2778_v == nil
+          and r.rep_2778_max == nil)
+    WoW.secretBlocked = nil
+    check("thresholds with no range: no progress", r.rep_68 == 4 and r.rep_68_v == nil)
+    check("a faction no longer listed takes its progress with it", r.rep_72_v == nil and r.rep_72_max == nil)
+    local inUse = table.concat(AltStable.RepFieldsInUse({ a = r }), ",")
+    check("the progress fields are never taken for factions", not inUse:find("_v", 1, true)
+          and not inUse:find("_max", 1, true), inUse)
+    eq("RepProgressFields names them", table.concat({ AltStable.RepProgressFields(76) }, ","), "rep_76_v,rep_76_max")
+
+    -- Between full scans (UpdateReputations): the same, and a progress that
+    -- can't be read any more goes rather than staying beside a new standing.
+    r = { rep_76 = 4, rep_76_v = 2000, rep_76_max = 3000, rep_47 = 4, rep_47_v = 5, rep_47_max = 3000 }
+    WoW.factions = { fac(76, 5, 3500, 3000, 9000), { name = "Other", isHeader = true, isCollapsed = true,
+                                                     factionID = 0 },
+                     fac(47, 5, 3000, 3000, 9000) }
+    WoW.factionByID = { [47] = { factionID = 47, reaction = 5, currentStanding = 3600,
+                                 currentReactionThreshold = 3000, nextReactionThreshold = 9000 } }
+    AltStable.UpdateReputations(r)
+    eq("an update writes the new progress", r.rep_76_v .. "/" .. r.rep_76_max, "500/6000")
+    eq("  and by ID under a collapsed header", r.rep_47_v .. "/" .. r.rep_47_max, "600/6000")
+    WoW.factions[1].currentStanding = nil
+    AltStable.UpdateReputations(r)
+    check("  an unreadable one is cleared, the standing kept", r.rep_76 == 5 and r.rep_76_v == nil
+          and r.rep_76_max == nil)
+    WoW.factions, WoW.factionByID = {}, {}
+end
+
 -- The sheet shows only factions some character has met, in table order.
 local inUse = AltStable.RepFieldsInUse({
     a = { rep_2758 = 5, rep_76 = 4 },
@@ -752,6 +797,27 @@ do
     check("  back to a character, on again", tip:IsShown())
     check("another section's pool is untouched",
           AltStable.RowPoolFor(pools, "gear", colsA) ~= pool)
+end
+
+-- A reputation cell's tooltip (#396): the standing, then the progress within
+-- it when the record has it.
+do
+    local col = { label = "Orgrimmar", field = "rep_76", type = "rep", width = 22 }
+    local row = AltStable.CreateRow(nil, 20, { col })
+    local tip = row.repTips[1]
+    local function Hover(char)
+        AltStable.RenderRow(row, char, 1, { col })
+        WoW.tooltipLines = {}
+        tip:GetScript("OnEnter")(tip)
+        return table.concat(WoW.tooltipLines, "|")
+    end
+    eq("the tooltip gives the progress within the standing",
+       Hover({ guid = "g", name = "N", rep_76 = 6, rep_76_v = 1234, rep_76_max = 12000 }),
+       "Orgrimmar|Honored  1234 / 12000")
+    eq("  the standing alone without it (an older peer, Exalted)",
+       Hover({ guid = "g", name = "N", rep_76 = 8 }), "Orgrimmar|Exalted")
+    eq("  nor half of it", Hover({ guid = "g", name = "N", rep_76 = 4, rep_76_v = 5 }), "Orgrimmar|Neutral")
+    GameTooltip:Hide()
 end
 
 -- SheetUI doesn't load under the stubs: check that a data refresh rebuilds the
