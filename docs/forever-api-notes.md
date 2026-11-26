@@ -2535,6 +2535,48 @@ one, realm 1; a mage 30 and a druid 14 on the other, realm 7; all Normal realms)
 - **Not measured:** Hardcore (set B, and whether a Hardcore earn counts for Normal); a live earn
   (when renown and `ACHIEVEMENT_EARNED` arrive); a second Battle.net account.
 
+## Legacy talents: one Generic config, per character — MEASURED (1.60.1.71139, #500)
+
+Measured with `/fp steps as legacytree` (probe branch `probe/500-legacytree`) on three characters of
+levels 1, 3 and 14, on 2026-11-26. The results are on #500.
+
+- **The config:** one trait config of type `Generic` (3) holds the Legacy trees.
+  - `C_Traits.GetConfigIDByTreeID(1118)` and `GetConfigIDByTreeID(1187)` both give it, and it's the
+    only `GetConfigsByType(3)` entry. Each character has its own config ID.
+  - `GetConfigInfo` gives `type = 3`, `name = ""` and `treeIDs = {1118, 1187, 1188, 1189}`, where 1118
+    is an empty parent.
+  - It's readable at `PLAYER_LOGIN` itself (0.0 s), at level 1 already: the trees are open from level 1.
+- **The trees:** 1187, 1188 and 1189 have 9 nodes each.
+  - Positions are on a 900-unit grid (x 2400-5100, y 850-3550). Arrows are `visibleEdges[].targetNode`.
+  - The layout is the same on every character: node IDs, positions, types, entries and edges were
+    compared on two characters.
+  - Node `type`: 0 is one talent. 1 is tiered, with one entry per rank ("Talented", node 110298, has 5
+    entries of spell 1225474). There's no choice node yet.
+  - Two nodes per tree (1135xx) use spell 1317256, which `GetSpellName` calls "Unknown"; the game
+    draws them as "?".
+- **Points:** the 4225 row of `GetTreeCurrencyInfo(config, tree, false)` gives:
+  - `spentInTree`, that tree's points;
+  - `spent`, the total of all three trees;
+  - `quantity`, the free points, shared by the trees;
+  - `maxQuantity`, what the account has to spend so far: 4 on the account measured, while
+    `C_Traits.GetMaxAvailableTraitCurrency(4225, true)` gave 16 and `(…, false)` gave 65.
+- **Ranks:** `activeRank`, `currentRank` and `ranksPurchased` agree, and each tree's sum equals its
+  `spentInTree`.
+  - `activeEntry.entryID` is set on every node, even at rank 0.
+  - Each node answers `GetNodeInfo` with its own `ID`.
+- **Staged changes:** a talent picked without Apply makes `ConfigHasStagedChanges` true. `spentInTree`
+  and the ranks then **include the staged pick**.
+  - `excludeStagedChanges = true` reads the staged tree right but gives **-1** for the others, so it
+    can't be relied on.
+  - Read only while nothing is staged, checked before and after.
+- **Events:** picking or undoing fires `TRAIT_NODE_CHANGED` and `TRAIT_TREE_CURRENCY_INFO_UPDATED`.
+  Apply fires `TRAIT_CONFIG_UPDATED <config>`.
+- **Tooltip:** `C_TooltipInfo.GetTraitEntry(entryID, rank)` returns the talent's tooltip, 3 lines, with
+  an empty first line. `GameTooltip:SetTraitEntry` is its tooltip method (`TooltipDataHandler`).
+- **Blizzard's Legacy window has no inspect mode:** `LegacyTreeTraitPanelMixin:SelectTree` always shows
+  the current character's config. So AltStable draws an alt's trees itself (`Plugins/Roster/LegacyView.lua`).
+- **Not measured:** a reset to zero, and a choice node (none exist yet).
+
 ## Completed quests: per character, ready at login — MEASURED (#374)
 
 `/fp steps as quests` (`Tools/AltStableProbe/Quests.lua`), build 1.60.1.70959, 2026-11-19, two

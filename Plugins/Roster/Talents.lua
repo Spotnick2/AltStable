@@ -94,8 +94,10 @@ function T.Read()
     local groups = tonumber(Call(rawget(_G, "GetNumSpecGroups"))) or 1
     r.active = tonumber(Call(Api("C_SpecializationInfo", "GetActiveSpecGroup"))) or 1
     for g = 1, math.max(groups, 1) do
-        local config = Call(Api("C_SpecializationInfo", "GetCombatConfigIDForSpecGroup"), g)
-        if config then
+        local config = tonumber(Call(Api("C_SpecializationInfo", "GetCombatConfigIDForSpecGroup"), g))
+        -- Positive only: an ID at or below 0 (the inspect sentinel is -1)
+        -- crashes the client in GenerateImportString (#500).
+        if config and config > 0 then
             local pts = { 0, 0, 0 }
             local infos = Call(Api("C_Traits", "GetGroupCurrencyInfo"), config, ids)
             if type(infos) ~= "table" then return nil end

@@ -27,6 +27,7 @@ Core.lua
 Scanner.lua
 Played.lua
 Drawn.lua
+LegacyTalents.lua
 Reputations.lua
 Config.lua
 Toasts.lua

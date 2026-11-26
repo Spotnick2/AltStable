@@ -651,6 +651,13 @@ local CHAR_STAT_GROUPS = {
         { talent = 1 }, { talent = 2 }, { talent = 3 },
         { label = "Other spec", talentOther = true },
     } },
+    -- The Legacy talents (#500): the points spent of what the character could
+    -- spend, then each tree's; names, values, tooltips and the View button
+    -- come from LegacyView.lua.
+    { header = "Legacy", legacy = true, defs = {
+        { label = "Points", legacyPoints = true },
+        { legacyTree = 1 }, { legacyTree = 2 }, { legacyTree = 3 },
+    } },
     { header = "Resources", defs = {
         { label = "Health", key = "stat_hp",    kind = "int" },
         { label = "Mana",   key = "stat_mana",  kind = "int" },
@@ -699,6 +706,9 @@ local function FormatStatValue(char, def)
     if def.talent or def.talentOther then
         return Roster.Talents and Roster.Talents.Value(char, def) or "-"
     end
+    if def.legacyPoints or def.legacyTree then
+        return Roster.LegacyView and Roster.LegacyView.Value(char, def) or "-"
+    end
     local value = char[def.key]
     if value == nil then return "-" end
     if def.kind == "money" then
@@ -726,6 +736,9 @@ local function HasStatValue(char, def)
     if not char then return false end
     if def.talent or def.talentOther then
         return Roster.Talents and Roster.Talents.HasRow(char, def) or false
+    end
+    if def.legacyPoints or def.legacyTree then
+        return Roster.LegacyView and Roster.LegacyView.HasRow(char, def) or false
     end
     local value = char[def.key]
     if value == nil then return false end
@@ -2182,9 +2195,17 @@ local function BuildDetail()
             row.value = detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             row.value:SetJustifyH("RIGHT")
             row.value:SetTextColor(unpack(AltStable.C.TEXT_VALUE))
+            if (def.legacyPoints or def.legacyTree) and Roster.LegacyView then
+                row.hit = Roster.LegacyView.MakeHit(detail)
+            end
             g.rows[#g.rows + 1] = row
         end
-        if group.talents and Roster.Talents then g.button = Roster.Talents.MakeButton(detail) end
+        if group.talents and Roster.Talents then
+            g.button, g.place = Roster.Talents.MakeButton(detail), Roster.Talents.PlaceButton
+        end
+        if group.legacy and Roster.LegacyView then
+            g.button, g.place = Roster.LegacyView.MakeButton(detail), Roster.LegacyView.PlaceButton
+        end
         detailRows[#detailRows + 1] = g
     end
 
@@ -2726,14 +2747,16 @@ local function RenderDetail(char)
                     hidden = hidden + 1
                 end
                 row.label:Hide(); row.value:Hide()
+                if row.hit then row.hit:Hide() end
             end
         else
             group.header:ClearAllPoints()
             group.header:SetPoint("TOPLEFT", detail, "TOPLEFT", x, y)
             group.header:Show()
-            if group.button then Roster.Talents.PlaceButton(group.button, char.guid, x + COLUMN_W, y) end
+            if group.button then group.place(group.button, char.guid, x + COLUMN_W, y) end
             y = y - headH
             for _, row in ipairs(group.rows) do
+                if row.hit then row.hit:Hide() end
                 if not HasStatValue(char, row.def) then
                     row.label:Hide(); row.value:Hide()
                 elseif (y - rowH) < floorY then
@@ -2745,8 +2768,10 @@ local function RenderDetail(char)
                     row.value:ClearAllPoints()
                     row.value:SetPoint("TOPRIGHT", detail, "TOPLEFT", x + COLUMN_W, y)
                     if row.def.talent then row.label:SetText(Roster.Talents.Label(char, row.def)) end
+                    if row.def.legacyTree then row.label:SetText(Roster.LegacyView.Label(char, row.def)) end
                     row.value:SetText(FormatStatValue(char, row.def))
                     row.label:Show(); row.value:Show()
+                    if row.hit then Roster.LegacyView.PlaceHit(row.hit, row, char) end
                     y = y - rowH
                 end
             end

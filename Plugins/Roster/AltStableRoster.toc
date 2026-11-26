@@ -12,3 +12,4 @@
 AltStableRoster.lua
 CampList.lua
 Talents.lua
+LegacyView.lua
