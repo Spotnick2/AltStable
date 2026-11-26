@@ -10,10 +10,10 @@ Everything below works with the addon on its own. Character portraits for the Ar
 optional extra that needs the free [AltStable Companion](#optional-character-portraits-and-the-companion)
 app.
 
-![The Account Summary: one row per character with its class, level, spec, item level, rested XP, gold, bag space, hearthstone and when it was last online, grouped by faction and ruleset, with the totals along the bottom and the tabs down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
+![A camp in the Armory: four characters around a campfire at Karazhan under a full moon, from portraits made by AltStable Companion, with the camp list beside it and the sidebar collapsed](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
 
-*The sheet: every character at a glance, with total levels, average item level and total gold
-along the bottom. (Names blurred in all screenshots.)*
+*The Armory: your characters around a campfire, from portraits made by the free AltStable
+Companion. (Names blurred in all screenshots.)*
 
 ## What AltStable helps you do
 
@@ -173,6 +173,11 @@ played on this WoW account; a character on another account shows its counts once
 
 ### How much gold, rested XP and progression does each character have?
 
+![The Account Summary: one row per character with its class, level, spec, item level, rested XP, gold, bag space, hearthstone and when it was last online, grouped by faction and ruleset, with the totals along the bottom and the tabs down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
+
+*The Account Summary: every character at a glance, with total levels, average item level
+and total gold along the bottom.*
+
 The **sheet** has one row per character: level, spec, item level and gear in every slot,
 professions, Merchant's Favor, reputations (Vanilla's and Forever's own factions), guild, gold,
 rested XP, time played and when it was last played. **Columns**, at the top of the window, chooses
@@ -292,10 +297,6 @@ read-only. Each character needs one login with this version to be read.
 ![A character opened from the Armory: its portrait with the equipped gear around it, and its gold, rested XP, talents, Legacy talents, health, mana, attributes and combat stats](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-character.jpg)
 
 *Click a character for its paper doll and stats. The Audit tab beside Char lists its enchants.*
-
-![A camp in the Armory: four characters around a campfire at Karazhan under a full moon, from portraits made by AltStable Companion, with the camp list beside it and the sidebar collapsed](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
-
-*Armory portraits from your own captures, made by the free AltStable Companion.*
 
 There are three separate pieces here, and only the first is required:
 
