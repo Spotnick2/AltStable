@@ -1317,6 +1317,8 @@ function AltStable.ScanCharacter()
     -- (another addon asking at login on a new character), and the clock's
     -- value at every scan, so a sync carries it before logout.
     if AltStable.Played and AltStable.Played.OnScanned then AltStable.Played.OnScanned(char) end
+    -- The Legacy talents (#500): a reading that came before this record existed.
+    if AltStable.LegacyTalents and AltStable.LegacyTalents.OnScanned then AltStable.LegacyTalents.OnScanned(char) end
 
     -- Only stamp lastUpdate when we have complete data.
     -- If any items are pending cache we deliberately leave the timestamp

@@ -67,7 +67,8 @@ end
 -- node, and the import string.
 local function ReadConfig(configID, treeID)
     local r = { configID = configID, groups = {}, nodes = {} }
-    if not configID or not treeID then r.error = "no config or tree"; return r end
+    -- A config ID at or below 0 crashes the client in GenerateImportString (#500).
+    if not (tonumber(configID) and tonumber(configID) > 0) or not treeID then r.error = "no config or tree"; return r end
 
     local ok, displays = Try(Api("C_Traits", "GetGroupDisplayInfoByTreeID"), treeID)
     local ids = {}

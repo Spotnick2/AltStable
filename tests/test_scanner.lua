@@ -2010,6 +2010,20 @@ do
     AltStableDB = {}
     WoW.reset()
 end
+-- The Legacy talents (#500): the scan hands its record over the same way, for
+-- a reading that came before the record existed.
+do
+    WoW.reset()
+    AltStableDB = {}
+    local realLegacy, handed = AltStable.LegacyTalents, nil
+    AltStable.LegacyTalents = { OnScanned = function(char) handed = char end }
+    pcall(AltStable.ScanCharacter)
+    local me = AltStableDB[UnitGUID("player")]
+    check("a scan hands its record to the Legacy talents reader", me ~= nil and handed == me)
+    AltStable.LegacyTalents = realLegacy
+    AltStableDB = {}
+    WoW.reset()
+end
 
 ------------------------------------------------------------
 -- Hearthstone (#371)

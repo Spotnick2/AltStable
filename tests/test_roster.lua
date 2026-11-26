@@ -66,7 +66,9 @@ AltStableRosterDB = { talents = { orphan = { stamp = 1 }, gone = { stamp = 1 } }
 AltStableConfig = AltStableConfig or {}
 local savedForgotten = AltStableConfig.forgottenCharacters
 AltStableConfig.forgottenCharacters = { gone = { at = 1, forgottenAt = 1, name = "Gone" } }
-dofile("Plugins/Roster/Talents.lua")       -- the talents, last in the .toc (#273)
+dofile("Plugins/Roster/Talents.lua")       -- the talents, in the .toc order (#273)
+dofile("LegacyTalents.lua")                -- a core file (AltStable.toc), read by the next
+dofile("Plugins/Roster/LegacyView.lua")    -- the Legacy talents, last in the .toc (#500)
 check("loading after login schedules its own bootstrap", #WoW.timers > 0,
       "no timer scheduled - the plugin is waiting for a PLAYER_LOGIN that already fired")
 WoW.flushTimers()
@@ -5084,7 +5086,8 @@ do
     WoW.timers = {}
     WoW.fire("TRAIT_CONFIG_UPDATED", 650751)
     WoW.fire("PLAYER_TALENT_UPDATE")
-    eq("a burst of talent events schedules one scan", #WoW.timers, 1)
+    -- One for the class talents, one for the Legacy talents (LegacyTalents.lua, #500).
+    eq("a burst of talent events schedules one scan (each)", #WoW.timers, 2)
     api.spent[1][11594] = 2
     WoW.flushTimers()
     eq("  which reads the change", table.concat(TL.Get(guid).specs[1].pts, "/"), "2/2/14")
@@ -5343,6 +5346,19 @@ do
     b = Button()
     check("no InspectLoadout on the client: no View button", not (b and b:IsShown()))
 
+    -- A config ID at or below 0 (the inspect sentinel is -1) crashes the
+    -- client in GenerateImportString (#500): it is never passed to it.
+    do
+        local realCfg, realGen, gens = C_SpecializationInfo.GetCombatConfigIDForSpecGroup, C_Traits.GenerateImportString, 0
+        C_Traits.GenerateImportString = function(c) gens = gens + 1; return realGen(c) end
+        for _, bad in ipairs({ -1, 0 }) do
+            C_SpecializationInfo.GetCombatConfigIDForSpecGroup = function() return bad end
+            eq("a config of " .. bad .. ": no reading", TL.Read(), nil)
+        end
+        eq("  and GenerateImportString never called with it", gens, 0)
+        C_SpecializationInfo.GetCombatConfigIDForSpecGroup, C_Traits.GenerateImportString = realCfg, realGen
+    end
+
     ----------------------------------------------------------
     -- Housekeeping
     ----------------------------------------------------------
@@ -5382,6 +5398,240 @@ do
     T.Back()
     AltStableDB, WoW.level = savedDB, savedLevel
     for k, v in pairs(saved) do _G[k] = v end
+    pcall(AltStable.RosterPlugin.Refresh)
+end
+
+------------------------------------------------------------
+-- The Legacy talents (#500): the detail pane's group and the read-only tree
+------------------------------------------------------------
+do
+    local LV = AltStable.RosterPlugin.LegacyView
+    check("LegacyView.lua loads into the Roster", type(LV) == "table")
+    local guid = WoW.player.guid
+    local savedDB, savedLayout = AltStableDB, AltStableConfig.legacyLayout
+    local savedName, savedTip = C_Spell.GetSpellName, rawget(_G, "C_TooltipInfo")
+    local names = { [1225435] = "Bountiful Harvest", [1225478] = "Well Rested", [1225451] = "Working Overtime",
+                    [1225456] = "Performance Bonus", [1225499] = "Gourmand", [1317256] = "Unknown" }
+    C_Spell.GetSpellName = function(id) return names[id] end
+    local TEXT = "v1;c4;1187:3:110291.3.5.136848.3.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
+    AltStableDB = { [guid] = { guid = guid, name = "Drucida", class = "MAGE", realm = "R", level = 14, race = "Troll",
+                               raceName = "Troll", lastUpdate = 100, legacyTalents = TEXT },
+                    none = { guid = "none", name = "None", class = "ROGUE", realm = "R", level = 10, race = "Human",
+                             raceName = "Human", lastUpdate = 100 } }
+    local function layoutFor(build)
+        return { build = build, trees = {
+            { tree = 1187, nodes = {
+                { id = 110290, x = 2400, y = 1750, type = 0, max = 5, entries = { { id = 136841, spell = 1225451 } }, edges = {} },
+                { id = 110291, x = 2400, y = 2650, type = 0, max = 5, entries = { { id = 136848, spell = 1225435 } }, edges = { 110292 } },
+                { id = 110292, x = 3300, y = 2650, type = 0, max = 3, entries = { { id = 136842, spell = 1225456 } }, edges = {} },
+            } },
+            { tree = 1188, nodes = {
+                { id = 110301, x = 2400, y = 1750, type = 0, max = 5,
+                  entries = { { id = 136855, spell = 1225478, name = "Well Rested (renamed)", icon = 4242 } }, edges = {} },
+            } },
+            { tree = 1189, nodes = {
+                { id = 110313, x = 2400, y = 1750, type = 0, max = 3, entries = { { id = 136867, spell = 1225499 } }, edges = {} },
+            } },
+        } }
+    end
+    AltStableConfig.legacyLayout = layoutFor("71139")
+    local me, none = AltStableDB[guid], AltStableDB.none
+
+    eq("the points row: spent of the cap", LV.Value(me, { legacyPoints = true }), "4/4")
+    eq("a tree's row: its points", LV.Value(me, { legacyTree = 1 }), "3")
+    eq("  a tree with none: 0", LV.Value(me, { legacyTree = 3 }), "0")
+    eq("  named by its tree", LV.Label(me, { legacyTree = 3 }), "Resourcefulness")
+    check("rows for a character with a reading", LV.HasRow(me, { legacyTree = 1 }))
+    check("  none for one without", not LV.HasRow(none, { legacyTree = 1 }))
+    eq("  whose value is a dash", LV.Value(none, { legacyPoints = true }), "-")
+
+    local function tipText(def, char)
+        local out = {}
+        for _, l in ipairs(LV.RowTip(char or me, def) or {}) do out[#out + 1] = l[1] end
+        return table.concat(out, " | ")
+    end
+    local t1 = tipText({ legacyTree = 1 })
+    check("a tree's tooltip: its points", t1:find("^Professions: 3 points") ~= nil, t1)
+    check("  each chosen talent with its rank", t1:find("Bountiful Harvest 3/5", 1, true) ~= nil, t1)
+    check("  with its icon", t1:find("|T136235:14|t", 1, true) ~= nil, t1)
+    check("  as of when it was last played", t1:find("As of when it was last played.", 1, true) ~= nil, t1)
+    check("  not the talents left unchosen", t1:find("Working Overtime", 1, true) == nil, t1)
+    local t2 = tipText({ legacyTree = 2 })
+    check("the game's renamed talent: its name and icon", t2:find("|T4242:14|t Well Rested (renamed) 1/5", 1, true) ~= nil, t2)
+    check("a tree with none: said so", tipText({ legacyTree = 3 }):find("No talent chosen.", 1, true) ~= nil)
+    local tp = tipText({ legacyPoints = true })
+    check("the points' tooltip: spent of the cap, and per tree",
+          tp:find("4 of 4 points spent", 1, true) and tp:find("Adventure: 1", 1, true) ~= nil, tp)
+    eq("no reading: no tooltip", LV.RowTip(none, { legacyTree = 1 }), nil)
+    -- A spell the client calls "Unknown": the game's trait tooltip names it.
+    names[1225435] = "Unknown"
+    C_TooltipInfo = { GetTraitEntry = function(entry, rank)
+        return entry == 136848 and { lines = { { leftText = "" }, { leftText = "Harvest of Plenty" } } } or nil
+    end }
+    check("a talent the spell can't name: the trait tooltip's name",
+          tipText({ legacyTree = 1 }):find("Harvest of Plenty 3/5", 1, true) ~= nil, tipText({ legacyTree = 1 }))
+    -- Asked at the entry's own rank, not the node's (Codex review of #521 at 7051a1f).
+    local asked
+    C_TooltipInfo = { GetTraitEntry = function(entry, rank) asked = rank
+        return { lines = { { leftText = "Harvest of Plenty" } } } end }
+    me.legacyTalents = "v1;c4;1187:3:110291.3.5.136848.2.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
+    tipText({ legacyTree = 1 })
+    eq("  asked at the entry's rank", asked, 2)
+    me.legacyTalents = TEXT
+    C_TooltipInfo = nil
+    check("  nor that: its entry", tipText({ legacyTree = 1 }):find("Talent 136848 3/5", 1, true) ~= nil)
+    names[1225435] = "Bountiful Harvest"
+    C_TooltipInfo = savedTip
+
+    -- Whether the view can draw it.
+    check("a reading and this build's layout: viewable", LV.CanView(me))
+    local ok, why = LV.CanView(none)
+    check("no reading: not viewable, and why", not ok and why:find("No Legacy talents", 1, true) ~= nil, tostring(why))
+    AltStableConfig.legacyLayout = layoutFor("70000")
+    ok, why = LV.CanView(me)
+    check("a layout of another build: not viewable", not ok and why:find("game version", 1, true) ~= nil, tostring(why))
+    AltStableConfig.legacyLayout = layoutFor("71139")
+    table.remove(AltStableConfig.legacyLayout.trees[1].nodes, 2)
+    ok, why = LV.CanView(me)
+    check("a talent the layout lacks: not viewable", not ok and why:find("doesn't know", 1, true) ~= nil, tostring(why))
+    AltStableConfig.legacyLayout = layoutFor("71139")
+    AltStableConfig.legacyLayout.trees[2].nodes[1].entries[1].id = 1
+    check("  nor an entry it lacks", not LV.CanView(me))
+    AltStableConfig.legacyLayout = layoutFor("71139")
+
+    -- What it draws.
+    local m = LV.Model(me, 1)
+    eq("a tree drawn: every node of the layout", m and #m.nodes, 3)
+    local byId = {}
+    for _, n in ipairs(m and m.nodes or {}) do byId[n.id] = n end
+    eq("  the chosen one at its rank", byId[110291] and byId[110291].rank, 3)
+    eq("  an unchosen one at 0", byId[110290] and byId[110290].rank, 0)
+    eq("  the entry's rank beside the node's", byId[110291] and byId[110291].entryRank, 3)
+    eq("  of the layout's maximum", byId[110292] and byId[110292].max, 3)
+    eq("  shown with its first entry", byId[110290] and byId[110290].entry, 136841)
+    eq("  the top-left node at the padding", byId[110290] and byId[110290].px, 28)
+    check("  the grid scaled into the canvas", byId[110292] and byId[110292].px > byId[110290].px
+          and byId[110292].px <= 300 - 28, tostring(byId[110292] and byId[110292].px))
+    eq("  rows down, as the game's y", byId[110291] and byId[110291].py > byId[110290].py, true)
+    eq("  the edges", m and #m.edges == 1 and (m.edges[1].from .. ">" .. m.edges[1].to), "110291>110292")
+    eq("no reading: nothing drawn", LV.Model(none, 1), nil)
+
+    -- The detail pane.
+    local main = CreateFrame("Frame")
+    main.GetWidth = function() return 1400 end
+    main.GetHeight = function() return 900 end
+    AltStableConfig.rosterView = "grid"
+    T.Activate(main)
+    T.Refresh()
+    T.DrillDown(guid)
+    T.DetailFrame():SetWidth(1400)
+    T.DetailFrame():SetHeight(900)
+    T.Refresh()
+    T.DrillDown(guid)
+    local stats = table.concat(T.DetailStats(), " | ")
+    check("the pane has a Legacy section", stats:find("Legacy", 1, true) ~= nil, stats)
+    check("  its points", stats:find("Points=4/4", 1, true) ~= nil, stats)
+    check("  and each tree's", stats:find("Professions=3", 1, true) and stats:find("Adventure=1", 1, true)
+          and stats:find("Resourcefulness=0", 1, true), stats)
+    local function LegacyButton()
+        local found
+        for _, child in ipairs({ T.DetailFrame():GetChildren() }) do
+            if child.GetText and child:GetText() == "View" then found = child end
+        end
+        return found   -- the last: the Legacy group comes after the Talents
+    end
+    local b = LegacyButton()
+    check("  a View button beside it", b ~= nil and b:IsShown())
+    check("  enabled", b and b:IsEnabled())
+    local hits = 0
+    for _, child in ipairs({ T.DetailFrame():GetChildren() }) do
+        if child.def and (child.def.legacyTree or child.def.legacyPoints) and child:IsShown() then hits = hits + 1 end
+    end
+    eq("  each row with a tooltip", hits, 4)
+    for _, child in ipairs({ T.DetailFrame():GetChildren() }) do
+        if child.def and child.def.legacyTree == 1 then
+            WoW.tooltipLines = {}
+            child:GetScript("OnEnter")(child)
+            check("  which shows the tree's talents",
+                  table.concat(WoW.tooltipLines, " | "):find("Bountiful Harvest", 1, true) ~= nil,
+                  table.concat(WoW.tooltipLines, " | "))
+        end
+    end
+    -- Lifted above the game UI only while it's hidden (Codex review of #521
+    -- at 7051a1f): a lift claims LibShowcase's shared frame.
+    local savedLift, savedHidden = AltStable.LiftAboveHiddenUI, AltStable.IsGameUIHidden
+    local lifts, hidden = {}, false
+    AltStable.LiftAboveHiddenUI = function(f, state) lifts[#lifts + 1] = state end
+    AltStable.IsGameUIHidden = function() return hidden end
+    if b then
+        b:GetScript("OnClick")(b)
+        eq("View with the game UI shown: not lifted", lifts[#lifts], false)
+        hidden = true
+        LV.View(guid)
+        eq("  with it hidden: lifted", lifts[#lifts], true)
+        AltStable.LiftAboveHiddenUI, AltStable.IsGameUIHidden = savedLift, savedHidden
+        local win = rawget(_G, "AltStableLegacyTree")
+        check("View opens the read-only tree", win ~= nil and win:IsShown())
+        local shown = 0
+        for _, node in ipairs(win and LV._test.Window().nodes or {}) do if node:IsShown() then shown = shown + 1 end end
+        eq("  the first tree's nodes", shown, 3)
+        LV.Draw(2)
+        shown = 0
+        for _, node in ipairs(LV._test.Window().nodes) do if node:IsShown() then shown = shown + 1 end end
+        eq("  another tab: its nodes only", shown, 1)
+        -- A node's tooltip: the entry at its own rank, the badge at the node's.
+        me.legacyTalents = "v1;c4;1187:3:110291.3.5.136848.1.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
+        LV.Draw(1)
+        local savedSet, got = GameTooltip.SetTraitEntry, nil
+        GameTooltip.SetTraitEntry = function(_, entry, rank) got = entry .. "@" .. rank end
+        for _, node in ipairs(LV._test.Window().nodes) do
+            if node.node and node.node.id == 110291 then
+                node:GetScript("OnEnter")(node)
+                eq("  a node's tooltip: the entry at its own rank", got, "136848@1")
+                eq("  its badge: the node's rank", node.rank:GetText(), "3/5")
+            end
+        end
+        GameTooltip.SetTraitEntry = savedSet
+        me.legacyTalents = TEXT
+        if win then win:Hide() end
+    end
+    -- A pane too short for every row: a row cut off takes its tooltip with it.
+    local function visibleHits()
+        local n = 0
+        for _, child in ipairs({ T.DetailFrame():GetChildren() }) do
+            if child.def and (child.def.legacyTree or child.def.legacyPoints) and child:IsShown() then n = n + 1 end
+        end
+        return n
+    end
+    local cut
+    for h = 900, 100, -4 do
+        T.DetailFrame():SetHeight(h)
+        T.DrillDown(guid)
+        local s = table.concat(T.DetailStats(), " | ")
+        if s:find("Points=", 1, true) and not s:find("Resourcefulness=", 1, true) then cut = s; break end
+    end
+    check("a height that cuts the Legacy rows short exists", cut ~= nil)
+    if cut then
+        local rowsShown = select(2, cut:gsub("Points=", "")) + select(2, cut:gsub("Professions=", ""))
+            + select(2, cut:gsub("Adventure=", ""))
+        eq("  only the rows shown keep a tooltip", visibleHits(), rowsShown)
+    end
+    T.DetailFrame():SetHeight(900)
+
+    AltStableConfig.legacyLayout = layoutFor("70000")
+    T.DrillDown(guid)
+    b = LegacyButton()
+    check("no layout for this build: the button shows, disabled", b and b:IsShown() and not b:IsEnabled())
+    eq("  and View opens nothing", LV.View(guid), false)
+    T.DrillDown("none")
+    stats = table.concat(T.DetailStats(), " | ")
+    check("a character never read has no Legacy section", stats:find("Points=", 1, true) == nil, stats)
+    b = LegacyButton()
+    check("  and no Legacy button", not (b and b:IsShown()))
+
+    T.Back()
+    AltStableDB, AltStableConfig.legacyLayout = savedDB, savedLayout
+    C_Spell.GetSpellName = savedName
     pcall(AltStable.RosterPlugin.Refresh)
 end
 

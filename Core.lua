@@ -1661,6 +1661,8 @@ local function ClearSyncedStateFields(t)
     t.bind = nil
     -- Time played (#378): the same.
     t.played = nil; t.playedLevel = nil
+    -- The Legacy talents (#500): the same.
+    t.legacyTalents = nil; t.legacyAt = nil
     -- When the gear last changed (#281): an older peer's record has none, and
     -- the stamp of a gear set no longer on the record must not linger. Nor
     -- the time it was read.
