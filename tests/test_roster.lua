@@ -5413,7 +5413,7 @@ do
     local names = { [1225435] = "Bountiful Harvest", [1225478] = "Well Rested", [1225451] = "Working Overtime",
                     [1225456] = "Performance Bonus", [1225499] = "Gourmand", [1317256] = "Unknown" }
     C_Spell.GetSpellName = function(id) return names[id] end
-    local TEXT = "v1;c4;1187:3:110291.3.5.136848.1225435;1188:1:110301.1.5.136855.1225478;1189:0:"
+    local TEXT = "v1;c4;1187:3:110291.3.5.136848.3.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
     AltStableDB = { [guid] = { guid = guid, name = "Drucida", class = "MAGE", realm = "R", level = 14, race = "Troll",
                                raceName = "Troll", lastUpdate = 100, legacyTalents = TEXT },
                     none = { guid = "none", name = "None", class = "ROGUE", realm = "R", level = 10, race = "Human",
@@ -5470,6 +5470,14 @@ do
     end }
     check("a talent the spell can't name: the trait tooltip's name",
           tipText({ legacyTree = 1 }):find("Harvest of Plenty 3/5", 1, true) ~= nil, tipText({ legacyTree = 1 }))
+    -- Asked at the entry's own rank, not the node's (Codex review of #521 at 7051a1f).
+    local asked
+    C_TooltipInfo = { GetTraitEntry = function(entry, rank) asked = rank
+        return { lines = { { leftText = "Harvest of Plenty" } } } end }
+    me.legacyTalents = "v1;c4;1187:3:110291.3.5.136848.2.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
+    tipText({ legacyTree = 1 })
+    eq("  asked at the entry's rank", asked, 2)
+    me.legacyTalents = TEXT
     C_TooltipInfo = nil
     check("  nor that: its entry", tipText({ legacyTree = 1 }):find("Talent 136848 3/5", 1, true) ~= nil)
     names[1225435] = "Bountiful Harvest"
@@ -5498,6 +5506,7 @@ do
     for _, n in ipairs(m and m.nodes or {}) do byId[n.id] = n end
     eq("  the chosen one at its rank", byId[110291] and byId[110291].rank, 3)
     eq("  an unchosen one at 0", byId[110290] and byId[110290].rank, 0)
+    eq("  the entry's rank beside the node's", byId[110291] and byId[110291].entryRank, 3)
     eq("  of the layout's maximum", byId[110292] and byId[110292].max, 3)
     eq("  shown with its first entry", byId[110290] and byId[110290].entry, 136841)
     eq("  the top-left node at the padding", byId[110290] and byId[110290].px, 28)
@@ -5548,8 +5557,19 @@ do
                   table.concat(WoW.tooltipLines, " | "))
         end
     end
+    -- Lifted above the game UI only while it's hidden (Codex review of #521
+    -- at 7051a1f): a lift claims LibShowcase's shared frame.
+    local savedLift, savedHidden = AltStable.LiftAboveHiddenUI, AltStable.IsGameUIHidden
+    local lifts, hidden = {}, false
+    AltStable.LiftAboveHiddenUI = function(f, state) lifts[#lifts + 1] = state end
+    AltStable.IsGameUIHidden = function() return hidden end
     if b then
         b:GetScript("OnClick")(b)
+        eq("View with the game UI shown: not lifted", lifts[#lifts], false)
+        hidden = true
+        LV.View(guid)
+        eq("  with it hidden: lifted", lifts[#lifts], true)
+        AltStable.LiftAboveHiddenUI, AltStable.IsGameUIHidden = savedLift, savedHidden
         local win = rawget(_G, "AltStableLegacyTree")
         check("View opens the read-only tree", win ~= nil and win:IsShown())
         local shown = 0
@@ -5559,6 +5579,20 @@ do
         shown = 0
         for _, node in ipairs(LV._test.Window().nodes) do if node:IsShown() then shown = shown + 1 end end
         eq("  another tab: its nodes only", shown, 1)
+        -- A node's tooltip: the entry at its own rank, the badge at the node's.
+        me.legacyTalents = "v1;c4;1187:3:110291.3.5.136848.1.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:"
+        LV.Draw(1)
+        local savedSet, got = GameTooltip.SetTraitEntry, nil
+        GameTooltip.SetTraitEntry = function(_, entry, rank) got = entry .. "@" .. rank end
+        for _, node in ipairs(LV._test.Window().nodes) do
+            if node.node and node.node.id == 110291 then
+                node:GetScript("OnEnter")(node)
+                eq("  a node's tooltip: the entry at its own rank", got, "136848@1")
+                eq("  its badge: the node's rank", node.rank:GetText(), "3/5")
+            end
+        end
+        GameTooltip.SetTraitEntry = savedSet
+        me.legacyTalents = TEXT
         if win then win:Hide() end
     end
     -- A pane too short for every row: a row cut off takes its tooltip with it.

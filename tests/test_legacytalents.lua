@@ -64,7 +64,7 @@ local function fresh()
     api = {
         config = 6966057, type = 3, treeIDs = { 1118, 1187, 1188, 1189 },
         staged = { false },   -- what ConfigHasStagedChanges answers, call by call (the last repeats)
-        cap = 4,
+        cap = 4, free = 0,   -- maxQuantity and quantity of the 4225 row (nil: omitted)
         trees = {
             [1187] = { { id = 110291, rank = 3, max = 5, entries = { 136848 } },
                        { id = 110290, rank = 0, max = 5, entries = { 136841 }, edges = { 110291 } } },
@@ -107,15 +107,20 @@ C_Traits = {
         return out
     end,
     GetTreeCurrencyInfo = function(config, tree)
-        if api.noSpent == tree then return { { traitCurrencyID = 4225, quantity = 1, maxQuantity = api.cap } } end
+        if api.noSpent == tree then return { { traitCurrencyID = 4225, quantity = api.free, maxQuantity = api.cap } } end
+        local all = spentIn(1187) + spentIn(1188) + spentIn(1189)
         return { { traitCurrencyID = 9999, spentInTree = 77 },
-                 { traitCurrencyID = 4225, quantity = 1, maxQuantity = api.cap, spent = 4, spentInTree = spentIn(tree) } }
+                 { traitCurrencyID = 4225, quantity = api.free, maxQuantity = api.cap, spent = all,
+                   spentInTree = spentIn(tree) } }
     end,
     GetNodeInfo = function(config, nodeID)
         local n = nodeOf(nodeID)
         if not n then return { ID = 0 } end
         local active
-        if not n.noActive then active = { entryID = n.active or n.entries[1], rank = n.rank } end
+        if not n.noActive then
+            active = { entryID = n.active or n.entries[1], rank = n.entryRank or n.rank }
+            if n.noEntryRank then active.rank = nil end
+        end
         return { ID = n.answer or nodeID, activeRank = n.rank, currentRank = n.rank, ranksPurchased = n.rank,
                  maxRanks = n.max, type = n.type or 0, posX = n.x or 3300, posY = n.y or 850,
                  entryIDs = n.entries, activeEntry = active, visibleEdges = n.edges and (function()
@@ -147,8 +152,9 @@ eq("  the points per tree", r and (r.trees[1].spent .. "/" .. r.trees[2].spent .
 eq("  the 4225 row's maxQuantity is the cap", r and r.cap, 4)
 eq("  only nodes with a rank", r and #r.trees[1].nodes, 1)
 local n1 = r and r.trees[1].nodes[1] or {}
-eq("  a node: id, rank, max, entry, spell", ("%s.%s.%s.%s.%s"):format(tostring(n1.id), tostring(n1.rank),
-   tostring(n1.max), tostring(n1.entry), tostring(n1.spell)), "110291.3.5.136848.1225435")
+eq("  a node: id, rank, max, entry, entry rank, spell", ("%s.%s.%s.%s.%s.%s"):format(tostring(n1.id),
+   tostring(n1.rank), tostring(n1.max), tostring(n1.entry), tostring(n1.entryRank), tostring(n1.spell)),
+   "110291.3.5.136848.3.1225435")
 eq("  the staged check before and after", stagedCalls, 2)
 check("the layout: every node of every tree", layout and #layout.trees == 3 and #layout.trees[1].nodes == 2)
 local l1 = layout and layout.trees[1].nodes or {}
@@ -181,6 +187,12 @@ none("a node answering with another ID: nothing", function() api.trees[1188][1].
 none("a node with no rank: nothing", function() api.trees[1188][1].rank = nil end,
      function() api.trees[1188][1].rank = 1 end)
 none("a tree with no spentInTree: nothing (never 0)", function() api.noSpent = 1188 end, function() api.noSpent = nil end)
+-- The cap (Codex review of #521 at 7051a1f): maxQuantity is optional in the API.
+api.cap, api.free = nil, 1
+r = read()
+eq("no maxQuantity: the cap is spent + free", r and r.cap, 5)
+none("  nor quantity: nothing (never \"of 0\")", function() api.free = nil end, function() api.free = 1 end)
+api.cap, api.free = 4, 0
 local savedCT = C_Traits
 none("no C_Traits: nothing", function() C_Traits = nil end, function() C_Traits = savedCT end)
 local savedStaged = C_Traits.ConfigHasStagedChanges
@@ -191,6 +203,17 @@ none("no staged check at all: nothing", function() C_Traits.ConfigHasStagedChang
 api.trees[1188][2].rank, api.trees[1188][2].active = 2, 137374
 r = read()
 eq("a tiered node with a rank: its active entry", r and r.trees[2].nodes[1].entry, 137374)
+-- One entry per rank: the entry's own rank isn't the node's (Codex review of
+-- #521 at 7051a1f; Blizzard's tooltip takes activeEntry.rank).
+api.trees[1188][2].entryRank = 1
+r = read()
+eq("  the node's rank", r and r.trees[2].nodes[1].rank, 2)
+eq("  and the entry's own, apart", r and r.trees[2].nodes[1].entryRank, 1)
+check("  both in the text", r and LT.Encode(r):find("110298.2.5.137374.1.1225474", 1, true) ~= nil, r and LT.Encode(r))
+api.trees[1188][2].entryRank, api.trees[1188][2].noEntryRank = nil, true
+r = read()
+eq("  an active entry without a rank: the node's", r and r.trees[2].nodes[1].entryRank, 2)
+api.trees[1188][2].noEntryRank = nil
 api.trees[1188][2].noActive = true
 eq("  without one, two entries: not proven", read(), nil)
 api.trees[1188][2].rank, api.trees[1188][2].noActive, api.trees[1188][2].active = 0, nil, nil
@@ -207,14 +230,14 @@ api.trees[1188][1].type, api.trees[1188][1].noActive = nil, nil
 
 r = read()
 local text = LT.Encode(r)
-eq("the text", text, "v1;c4;1187:3:110291.3.5.136848.1225435;1188:1:110301.1.5.136855.1225478;1189:0:")
+eq("the text", text, "v1;c4;1187:3:110291.3.5.136848.3.1225435;1188:1:110301.1.5.136855.1.1225478;1189:0:")
 -- Nodes in ascending ID whatever order the client lists them in.
 api.trees[1187][2].rank = 1
 local a = LT.Encode(read())
 api.trees[1187] = { api.trees[1187][2], api.trees[1187][1] }
 local b = LT.Encode(read())
 eq("  the same reading, nodes listed in another order: the same text", a, b)
-check("  in ascending ID", a:find("1187:4:110290.1.5.136841.1225451,110291.3.5.136848.1225435;", 1, true) ~= nil, a)
+check("  in ascending ID", a:find("1187:4:110290.1.5.136841.1.1225451,110291.3.5.136848.3.1225435;", 1, true) ~= nil, a)
 fresh()
 
 local d = LT.Decode(text)
@@ -223,7 +246,8 @@ eq("  the points", d and select(1, LT.Points(d)), 4)
 eq("  of the cap", d and select(2, LT.Points(d)), 4)
 for _, bad in ipairs({ "v2;c4;1187:0:;1188:0:;1189:0:", "c4;1187:0:;1188:0:;1189:0:", "v1;c4;1187:0:;1188:0:",
                        "v1;c4;1187:0:;1189:0:;1188:0:", "v1;c4;1187:0:;1188:0:;1189:0:;1190:0:",
-                       "v1;c4;1187:0:x;1188:0:;1189:0:", "v1;c4;1187:1:1.2.3.4;1188:0:;1189:0:", "junk" }) do
+                       "v1;c4;1187:0:x;1188:0:;1189:0:", "v1;c4;1187:1:1.2.3.4;1188:0:;1189:0:",
+                       "v1;c4;1187:1:1.1.5.4.1225435;1188:0:;1189:0:", "junk" }) do
     eq("junk is no reading: " .. bad, LT.Decode(bad), nil)
 end
 eq("a number is no reading", LT.Decode(5), nil)
@@ -270,9 +294,24 @@ eq("a layout of another build isn't used", LT.Layout(), nil)
 AltStableConfig.legacyLayout = { build = "71139", trees = { {}, {} } }
 eq("  nor one without the three trees", LT.Layout(), nil)
 
+-- The Roster redrawn when View becomes possible, not only when the reading
+-- changes (Codex review of #521 at 7051a1f).
+local refreshes = 0
+AltStable.RosterPlugin = { isActive = true, RequestRefresh = function() refreshes = refreshes + 1 end }
+LT.Scan()
+eq("a change and a layout learned: the Roster redrawn once", refreshes, 1)
+AltStableConfig.legacyLayout.build = "70000"
+LT.Scan()
+eq("the same reading, this build's layout learned: redrawn", refreshes, 2)
+LT.Scan()
+eq("  once", refreshes, 2)
+
 -- A reading before the record exists waits for the scan.
 AltStableDB = {}
+AltStableConfig.legacyLayout.build = "70000"
 check("no record yet: the reading is still proven", LT.Scan())
+eq("  the layout learned: redrawn", refreshes, 3)
+AltStable.RosterPlugin = nil
 eq("  kept, not written anywhere", AltStableDB[me], nil)
 AltStableDB[me] = { guid = me, name = "Me" }
 LT.OnScanned({ guid = "Player-other" })
@@ -293,6 +332,7 @@ for _, ev in ipairs(T.LegacyEvents) do
     check("listens to " .. ev, frame:IsEventRegistered(ev))
 end
 check("listens to PLAYER_ENTERING_WORLD", frame:IsEventRegistered("PLAYER_ENTERING_WORLD"))
+check("listens to PLAYER_LOGOUT", frame:IsEventRegistered("PLAYER_LOGOUT"))
 
 local scans = 0
 local realScan = LT.Scan
@@ -330,6 +370,15 @@ advance(0.2)
 eq("  then one reading", scans, 5)
 advance(5)
 eq("  only one", scans, 5)
+-- An Apply, then a logout within the second (Codex review of #521 at 7051a1f).
+onEv("PLAYER_LOGOUT")
+eq("a logout with nothing to settle reads nothing", scans, 5)
+onEv("TRAIT_CONFIG_UPDATED", 6966057)
+advance(0.3)
+onEv("PLAYER_LOGOUT")
+eq("an Apply, then a logout before it settles: read at the logout", scans, 6)
+advance(5)
+eq("  not again after", scans, 6)
 LT.Scan = realScan
 
 ------------------------------------------------------------

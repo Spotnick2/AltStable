@@ -7,11 +7,12 @@
 --   * one trait config of type Generic (3) holds them, readable from
 --     PLAYER_LOGIN on: C_Traits.GetConfigIDByTreeID(1118) (or of 1187), and
 --     GetConfigInfo(config).treeIDs = 1118 (an empty parent), 1187, 1188,
---     1189, with 9 nodes each; open from level 3 at least, so a character
---     simply has a reading or not;
+--     1189, with 9 nodes each; open from level 1, so a character simply has
+--     a reading or not;
 --   * GetTreeCurrencyInfo(config, tree, false)'s 4225 row: spentInTree (that
---     tree), quantity (free, shared), maxQuantity (what this character can
---     spend now: the "of" in "1 of 4");
+--     tree), spent (all three), quantity (free, shared), maxQuantity (what
+--     this character can spend now: the "of" in "1 of 4"; = spent + quantity,
+--     0 + 4 and 3 + 1);
 --   * GetNodeInfo(config, node): ID (its own), activeRank (= currentRank =
 --     ranksPurchased, and their sum is spentInTree), maxRanks, type (0 one
 --     talent; 1 tiered, one entry per rank; no choice node exists yet),
@@ -26,10 +27,12 @@
 -- another ID, and the reading is nil - the stored one stays.
 --
 -- Stored on the character record, synced like every other field:
---   legacyTalents = "v1;c4;1187:0:;1188:1:110301.1.5.136855.1225478;1189:0:"
+--   legacyTalents = "v1;c4;1187:0:;1188:1:110301.1.5.136855.1.1225478;1189:0:"
 --     the cap, then per tree (fixed order) its points and each node with a
---     rank (ascending ID) as node.rank.max.entry.spell. The spell travels so
---     any client can name a talent without the trees of its own.
+--     rank (ascending ID) as node.rank.max.entry.entryRank.spell. The entry's
+--     own rank is what the game's tooltip takes (activeEntry.rank): on a
+--     tiered node, one entry per rank, it isn't the node's. The spell travels
+--     so any client can name a talent without the trees of its own.
 --   legacyAt = when it last changed.
 -- And account-wide, never synced: AltStableConfig.legacyLayout, the trees'
 -- shape for the Roster's read-only view (positions, entries, edges; nothing
@@ -140,7 +143,14 @@ function LT.Read()
         end
         local spent = row and Num(row.spentInTree)
         if not spent then return nil end
-        reading.cap = reading.cap or Num(row.maxQuantity)
+        -- The cap: maxQuantity, which the API marks optional; else spent +
+        -- free, as measured equal. Neither: not proven (never "of 0").
+        local cap = Num(row.maxQuantity)
+        if not cap then
+            local total, free = Num(row.spent), Num(row.quantity)
+            if total and free then cap = total + free end
+        end
+        reading.cap = reading.cap or cap
         local t, l = { tree = tree, spent = spent, nodes = {} }, { tree = tree, nodes = {} }
         for _, raw in ipairs(ids) do
             local nodeID = Num(raw)
@@ -165,12 +175,16 @@ function LT.Read()
                 -- The talent chosen: the active entry; a node of one entry
                 -- can only be that one. A choice without its active entry
                 -- could record the other talent: not proven.
-                local entryID = type(n.activeEntry) == "table" and Num(n.activeEntry.entryID) or nil
+                local entryID, entryRank
+                if type(n.activeEntry) == "table" then
+                    entryID, entryRank = Num(n.activeEntry.entryID), Num(n.activeEntry.rank)
+                end
                 if not entryID then
                     if CHOICE[kind] or #entries ~= 1 then return nil end
                     entryID = entries[1].id
                 end
                 t.nodes[#t.nodes + 1] = { id = nodeID, rank = rank, max = max, entry = entryID,
+                                          entryRank = entryRank or rank,
                                           spell = Entry(config, entryID, cache).spell }
             end
         end
@@ -178,8 +192,7 @@ function LT.Read()
         table.sort(l.nodes, ById)
         reading.trees[i], layout.trees[i] = t, l
     end
-    if Staged(config) ~= false then return nil end
-    reading.cap = reading.cap or 0
+    if not reading.cap or Staged(config) ~= false then return nil end
     return reading, layout
 end
 
@@ -193,7 +206,8 @@ function LT.Encode(r)
         local t = r.trees[i]
         local nodes = {}
         for _, n in ipairs(t.nodes) do
-            nodes[#nodes + 1] = ("%d.%d.%d.%d.%d"):format(n.id, n.rank, n.max, n.entry, n.spell or 0)
+            nodes[#nodes + 1] = ("%d.%d.%d.%d.%d.%d"):format(n.id, n.rank, n.max, n.entry,
+                                                              n.entryRank or n.rank, n.spell or 0)
         end
         parts[#parts + 1] = ("%d:%d:%s"):format(tree, t.spent, table.concat(nodes, ","))
     end
@@ -214,10 +228,12 @@ function LT.Decode(s)
         local t = { tree = TREES[i], spent = tonumber(spent), nodes = {} }
         if list ~= "" then
             for item in (list .. ","):gmatch("([^,]*),") do
-                local id, rank, max, entry, spell = item:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+                local id, rank, max, entry, erank, spell =
+                    item:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)%.(%d+)%.(%d+)$")
                 if not id then return nil end
                 t.nodes[#t.nodes + 1] = { id = tonumber(id), rank = tonumber(rank), max = tonumber(max),
-                                          entry = tonumber(entry), spell = tonumber(spell) }
+                                          entry = tonumber(entry), entryRank = tonumber(erank),
+                                          spell = tonumber(spell) }
             end
         end
         r.trees[i] = t
@@ -283,12 +299,16 @@ end
 -- the scan (OnScanned).
 local pending
 
+local function Refresh()
+    local roster = AltStable.RosterPlugin
+    if roster and roster.isActive and roster.RequestRefresh then roster.RequestRefresh() end
+end
+
 function LT.Write(char, text)
     if char.legacyTalents == text then return false end
     char.legacyTalents, char.legacyAt = text, time()
     if AltStable.TouchCharacter then AltStable.TouchCharacter(char.guid) end
-    local roster = AltStable.RosterPlugin
-    if roster and roster.isActive and roster.RequestRefresh then roster.RequestRefresh() end
+    Refresh()
     return true
 end
 
@@ -299,15 +319,20 @@ function LT.Scan()
     if not guid then return false end
     local reading, layout = LT.Read()
     if not reading then return false end
+    -- A layout usable now and not before (a new build) enables View for
+    -- every alt, whether or not this character's reading changed.
+    local had = LT.Layout() ~= nil
     LT.Learn(layout)
+    local learned = not had and LT.Layout() ~= nil
     local text = LT.Encode(reading)
     local char = type(AltStableDB) == "table" and AltStableDB[guid]
     if type(char) ~= "table" then
         pending = { guid = guid, text = text }
-        return true
+    else
+        pending = nil
+        if LT.Write(char, text) then learned = false end
     end
-    pending = nil
-    LT.Write(char, text)
+    if learned then Refresh() end
     return true
 end
 
@@ -336,10 +361,19 @@ local EVENTS = { "TRAIT_CONFIG_UPDATED", "TRAIT_CONFIG_CREATED", "TRAIT_CONFIG_L
                  "TRAIT_TREE_CURRENCY_INFO_UPDATED", "PLAYER_LEVEL_UP", "SKILL_LINES_CHANGED" }
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
+events:RegisterEvent("PLAYER_LOGOUT")
 for _, ev in ipairs(EVENTS) do pcall(events.RegisterEvent, events, ev) end
 events:SetScript("OnEvent", function(_, event, a, b)
     if event == "PLAYER_ENTERING_WORLD" then
         if a or b then C_Timer.After(READ_AFTER, function() Attempt(1) end) end
+    elseif event == "PLAYER_LOGOUT" then
+        -- An Apply just before logging out: read it now, before the saved
+        -- variables are written, not after a timer that never comes.
+        if settle then
+            if settle.Cancel then settle:Cancel() end
+            settle = nil
+            LT.Scan()
+        end
     else
         Settle()
     end

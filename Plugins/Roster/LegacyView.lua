@@ -67,7 +67,8 @@ end
 -- A talent's name: the game's override, the spell's, the trait tooltip's.
 function LV.TalentName(n, entries)
     local e = entries and entries[n.entry]
-    return (e and e.name) or SpellName(n.spell) or TraitEntryName(n.entry, n.rank) or ("Talent " .. tostring(n.entry))
+    return (e and e.name) or SpellName(n.spell) or TraitEntryName(n.entry, math.max(n.entryRank or n.rank, 1))
+        or ("Talent " .. tostring(n.entry))
 end
 
 function LV.TalentIcon(n, entries)
@@ -210,6 +211,8 @@ function LV.Model(char, index)
         model.nodes[#model.nodes + 1] = {
             id = n.id, px = PAD + (n.x - minX) * scale, py = PAD + (n.y - minY) * scale,
             rank = c and c.rank or 0, max = c and c.max or n.max,
+            -- The badge shows the node's rank; the tooltip takes the entry's.
+            entryRank = c and (c.entryRank or c.rank) or 0,
             entry = c and c.entry or (first and first.id), spell = c and c.spell or (first and first.spell) or 0,
             choices = (n.type == 2 or n.type == 3) and #(n.entries or {}) or nil,
         }
@@ -230,7 +233,7 @@ local function NodeTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     local shown = false
     if n.entry and type(GameTooltip.SetTraitEntry) == "function" then
-        shown = pcall(GameTooltip.SetTraitEntry, GameTooltip, n.entry, math.max(n.rank, 1))
+        shown = pcall(GameTooltip.SetTraitEntry, GameTooltip, n.entry, math.max(n.entryRank or n.rank, 1))
         shown = shown and GameTooltip:NumLines() > 0
     end
     if not shown and n.spell and n.spell > 0 then shown = pcall(GameTooltip.SetSpellByID, GameTooltip, n.spell) end
@@ -355,7 +358,11 @@ function LV.View(guid)
     local spent, cap = LT().Points(LT().Get(char))
     win.title:SetText(("%s - Legacy talents"):format(tostring(char.name or "?")))
     win.sub:SetText(("%d of %d points spent, as of when it was last played. Read-only."):format(spent, cap))
-    if AltStable.LiftAboveHiddenUI then AltStable.LiftAboveHiddenUI(win, true) end
+    -- Lifted only with the game UI hidden: the lift claims LibShowcase's
+    -- shared frame, which a plain window mustn't hold (as CharacterMenu).
+    if AltStable.LiftAboveHiddenUI and AltStable.IsGameUIHidden then
+        AltStable.LiftAboveHiddenUI(win, AltStable.IsGameUIHidden())
+    end
     win:Show()
     win:Raise()
     LV.Draw(win.index or 1)

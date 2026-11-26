@@ -2560,9 +2560,14 @@ levels 1, 3 and 14, on 2026-11-26. The results are on #500.
   - `quantity`, the free points, shared by the trees;
   - `maxQuantity`, what the account has to spend so far: 4 on the account measured, while
     `C_Traits.GetMaxAvailableTraitCurrency(4225, true)` gave 16 and `(…, false)` gave 65.
+    It equals `spent + quantity` (0 + 4, 3 + 1). The API marks `maxQuantity` optional, so
+    AltStable falls back to that sum, and reads nothing without either.
 - **Ranks:** `activeRank`, `currentRank` and `ranksPurchased` agree, and each tree's sum equals its
   `spentInTree`.
   - `activeEntry.entryID` is set on every node, even at rank 0.
+  - `activeEntry.rank` is the entry's own rank, which Blizzard's tooltip passes to `GetTraitEntry`
+    (`Blizzard_TalentDisplay.lua`). On a tiered node, with one entry per rank, it may differ from
+    the node's rank; that wasn't measured, since no tiered node had a rank on the characters read.
   - Each node answers `GetNodeInfo` with its own `ID`.
 - **Staged changes:** a talent picked without Apply makes `ConfigHasStagedChanges` true. `spentInTree`
   and the ranks then **include the staged pick**.
