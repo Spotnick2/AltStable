@@ -2491,6 +2491,11 @@ talent is per character or account-wide.
   203% (level 14) and 158% (level 21) on alts without the spell. The cause isn't measured.
   AltStable holds every value at the cap, the played character's live one too, and no longer
   takes a value over 150% for the talent.
+- **The excess isn't real.** On their next logins (2026-11-26, 12:05-12:08) the same three alts read
+  exactly 150%: 13,200 / 8,800, 19,350 / 12,900 and 37,800 / 25,200. Their XP bars were unchanged
+  (11%, 48%, 42%), so no XP was earned. Rested XP only drains as XP is earned, yet the pool fell back
+  to the cap. The over-cap reads came from quick logins (three alts in two minutes on 2026-11-25), and
+  the cap held again on the next one. So the cap is shown, not the reported excess.
 
 ## Legacy Challenges: one state per Battle.net account — MEASURED (#373)
 
