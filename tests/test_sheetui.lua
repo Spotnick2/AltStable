@@ -3910,6 +3910,11 @@ do
               and wfull:find("180% is the most with Well Rested: 1.8 levels", 1, true) ~= nil, wfull)
         check("  without it, the full line does not name the talent",
               not full:find("Well Rested", 1, true) and full:find("150% is the most: 1.5 levels", 1, true), full)
+        -- #526: the game reported 221% on an alt without the talent. Held at
+        -- 150%, and not called Well Rested.
+        local over = tipFor({ name = "Over", level = 11, restPercent = 221, wellRested = 0, restTimestamp = now })
+        check("  221% without the talent: 150%, full, and no talent named", over:find("150% (full)", 1, true) ~= nil
+              and not over:find("Well Rested", 1, true), over)
 
         -- The cell's colour: the live value can pass the cap we assume, and a
         -- negative red printed as ffffffff and broke the colour code.
@@ -3919,7 +3924,7 @@ do
         end
         WoW.level, WoW.xpMax, WoW.restXP = 5, 1000, 2000
         local over = cellFor({ guid = UnitGUID("player"), name = "Me", level = 5, restPercent = 40 })
-        eq("a live 200% shows green, not a broken colour code", over, "|cff00ff00200%|r")
+        eq("a live 200% is held at the cap (#526), green, not a broken colour code", over, "|cff00ff00150%|r")
         WoW.level, WoW.xpMax, WoW.restXP = 1, 400, nil
         eq("150% without the talent is green", cellFor({ name = "F", level = 5, restPercent = 150,
             restTimestamp = now }), "|cff00ff00150%|r")

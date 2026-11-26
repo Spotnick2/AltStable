@@ -2477,6 +2477,21 @@ above 150% also counts as the talent. To confirm: the full value on a character 
 (180%, or 170% if the 20% is added), that `IsPlayerSpell` is true for it, and whether a Legacy
 talent is per character or account-wide.
 
+**Update (#526, 2026-11-26):**
+- **A Legacy talent is per character** (#500): each character has its own Generic trait config.
+- **Well Rested has five ranks** (node 110301, `maxRanks = 5`). GlassPanel's probe (its #81, 70374)
+  measured the build-up at 5/5: 6.000% of a level per 8 h at an inn, Vanilla's 5% × 1.20, online and
+  across a logout. Ranks 1-4 aren't measured. AltStable takes 4% a rank, the 5/5 text spread
+  evenly, as GlassPanel does: 156% and 1.04× the rate at 1/5.
+- **The rank comes from the alt's Legacy talents** (`legacyTalents`, #500). Without a reading, the
+  scan's `wellRested` flag counts as 5/5. That flag is `IsPlayerSpell(1225478)`, true at any rank.
+- **The 150% cap is seen in the data.** Alts stop at exactly 1.5 levels' XP: 19,350 of 12,900
+  (level 14), 24,000 of 16,000 (16), 11,400 of 7,600 (10), 600 of 400 (1).
+- **`GetXPExhaustion` can report more than the cap.** It returned 221% (19,472 of 8,800, level 11),
+  203% (level 14) and 158% (level 21) on alts without the spell. The cause isn't measured.
+  AltStable holds every value at the cap, the played character's live one too, and no longer
+  takes a value over 150% for the talent.
+
 ## Legacy Challenges: one state per Battle.net account — MEASURED (#373)
 
 Measured on 1.60.1.70959, 2026-11-19, with `/fp steps as legacy` (`Tools/AltStableProbe/Legacy.lua`):

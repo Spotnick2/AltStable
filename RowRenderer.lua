@@ -8,10 +8,21 @@ AltStable = AltStable or {}
 --   * 5% of a level per 32 hours while in the open world
 -- Cap is 150% of a level.
 --
--- The Well Rested Legacy talent (spell 1225478, #352) adds 20% to both:
--- "accumulates 20% faster and your rested experience cap is increased by 20%".
--- The cap with it is UNMEASURED: 180% (150 x 1.2) is assumed, and a stored
--- value above it wins, so a measured one is never clamped down.
+-- The 150% cap is seen in the data: alts stop at exactly 1.5 levels' XP
+-- (19350 of 12900, 24000 of 16000; #526).
+--
+-- The Well Rested Legacy talent (spell 1225478, #352) has five ranks; at 5/5
+-- "your rested experience accumulates 20% faster and your rested experience
+-- cap is increased by 20%" (GlassPanel measured the 20% faster at 5/5). Ranks
+-- 1-4 are taken as 4% a rank, the 5/5 text spread evenly, as GlassPanel does;
+-- unmeasured, as is the raised cap. The rank comes from the alt's Legacy
+-- talents (#500); without a reading, the scan's own flag (the spell known,
+-- whatever the rank) counts as 5/5, as before.
+--
+-- Every value is held at the cap, the played character's live one too: the
+-- game has reported more than it on alts without the talent (221% at level
+-- 11, #526), as other alt addons have long seen. Such a value is not taken for
+-- Well Rested any more.
 --
 -- We store at scan time: restXP (raw), xpMax (so % is recomputable),
 -- restedArea (was the char in a rested zone at logout?), and
@@ -29,25 +40,39 @@ local function InRestedArea(char)
     return char.restedArea == true or char.restedArea == "true"
 end
 
-local BASE_CAP, WELL_RESTED_CAP, WELL_RESTED_RATE = 150, 180, 1.2
+local BASE_CAP = 150
+local WELL_RESTED_NODE, WELL_RESTED_MAX, PER_RANK = 110301, 5, 0.04   -- Adventure tree (#500)
 
--- The scan stores wellRested as 1/0 (a number, so it syncs as one). A stored
--- rested % above the base cap proves a raised cap even when the scan could not
--- tell, e.g. a record from a version before #352.
-local function HasWellRested(char)
-    return tonumber(char.wellRested) == 1 or (tonumber(char.restPercent) or 0) > BASE_CAP
+-- Well Rested's rank, 0 to 5: the alt's Legacy talents when read (a node not
+-- listed has no rank); else the scan's flag (1/0, a number so it syncs as
+-- one), taken as 5/5.
+local function WellRestedRank(char)
+    local LT = AltStable.LegacyTalents
+    local r = LT and LT.Get and LT.Get(char)
+    if r then
+        for _, t in ipairs(r.trees or {}) do
+            for _, n in ipairs(t.nodes or {}) do
+                if n.id == WELL_RESTED_NODE then return math.min(n.rank or 0, WELL_RESTED_MAX) end
+            end
+        end
+        return 0
+    end
+    return tonumber(char.wellRested) == 1 and WELL_RESTED_MAX or 0
 end
 
+local function HasWellRested(char) return WellRestedRank(char) > 0 end
+
+-- What Well Rested multiplies the cap and the build-up by: 1.2 at 5/5.
+local function WellRestedFactor(char) return 1 + PER_RANK * WellRestedRank(char) end
+
 local function RestedCap(char)
-    if not HasWellRested(char) then return BASE_CAP end
-    return math.max(WELL_RESTED_CAP, tonumber(char.restPercent) or 0)
+    return math.floor(BASE_CAP * WellRestedFactor(char) + 0.5)
 end
 
 -- Accrual, % of a level per hour: 5% per 8h in a rested area, per 32h outside.
 local function RestedPerHour(char)
     local perHour = InRestedArea(char) and 0.625 or 0.15625
-    if HasWellRested(char) then perHour = perHour * WELL_RESTED_RATE end
-    return perHour
+    return perHour * WellRestedFactor(char)
 end
 
 AltStable.RestedCap = RestedCap
@@ -71,7 +96,7 @@ local function ComputeLiveRestedPercent(char)
         local liveRest = AltStable.API.RestedXP()
         local liveMax  = AltStable.API.PlainNumber(UnitXPMax("player"))
         if liveRest and liveMax and liveMax > 0 then
-            return math.floor((liveRest / liveMax) * 100 + 0.5), 0
+            return math.min(RestedCap(char), math.floor((liveRest / liveMax) * 100 + 0.5)), 0
         end
         -- Unreadable live values: fall through to the stored snapshot rather
         -- than reporting 0% rested, which reads as fact.
