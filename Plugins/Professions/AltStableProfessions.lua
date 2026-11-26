@@ -1207,7 +1207,7 @@ local function ReagentLines(id, knowers)
             out[#out + 1] = { list[i + 1] .. " x " .. ItemName(list[i]), nil, 1, 1, 1 }
         end
         out[#out + 1] = { why == "failed" and "The counts across your alts could not be read."
-                          or "Turn on the Warband plugin to count them across your alts.", nil, 0.6, 0.6, 0.6 }
+                          or "Turn on the Warband Bank tab to count them across your alts.", nil, 0.6, 0.6, 0.6 }
         return out
     end
     local stale, unread = false, false
@@ -2197,7 +2197,7 @@ function AT.Refresh()
     end
     -- Craftable counts with Warband's bags and banks: without it, say why it is empty.
     if AT.filter == "craftable" and not ReagentsCounted() then
-        statusFS:SetText("Needs the Warband plugin")
+        statusFS:SetText("Needs the Warband Bank tab")
     else
         statusFS:SetText(#AT.rows .. " recipes")
     end
@@ -2477,7 +2477,7 @@ local function BootstrapPlugin()
     end
     AltStable.RegisterPlugin({
         id            = ADDON_ID,
-        label         = "Professions",
+        label         = "Recipe Book",
         icon          = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\recipes.tga",
         _isPlugin     = true,
         -- Our snapshots carry their own stamp, so the core hands them over even

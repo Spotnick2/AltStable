@@ -92,7 +92,7 @@ local SECTIONS = {
     },
     {
         id    = "skills",
-        label = "Skills",
+        label = "Skill Levels",
         icon  = IC("skills"),
         headerHeight = 32,
         preferW = 1111,
@@ -3220,15 +3220,56 @@ local function CreateFrameIfNeeded()
     --
     -- Math: btnY starts at -8 (top inset) and decrements by one step per
     -- button. _pluginBtnY is the next-empty-Y after all buttons. Below the
-    -- last one: 8px of breathing space. (The collapse chevron that stood
-    -- there, #150, is the title bar's button since #523.)
+    -- last one: 8px of breathing space, then Options when it has its place
+    -- at the foot (#528): the separator's gap, the button and its inset.
+    -- (The collapse chevron that stood there, #150, is the title bar's
+    -- button since #523.)
     local SIDEBAR_TOP_INSET     = 8
-    local SIDEBAR_BOTTOM_FOOTER = 0
     local SIDEBAR_BOTTOM_BREATH = 8
     AltStable.GetSidebarRequiredHeight = function()
         if not sidebar or not sidebar._pluginBtnY then return 0 end
         local buttonsHeight = SIDEBAR_TOP_INSET + (-sidebar._pluginBtnY) - SIDEBAR_TOP_INSET
-        return buttonsHeight + SIDEBAR_BOTTOM_FOOTER + SIDEBAR_BOTTOM_BREATH
+        local footer = sidebar.optBtn and (12 + SIDEBAR_BUTTON_H + 4) or 0
+        return buttonsHeight + footer + SIDEBAR_BOTTOM_BREATH
+    end
+
+    -- The order (#528, the owner's mock-up), by section id; a tab not listed
+    -- goes after, in the order it came. Options stands apart, pinned to the
+    -- foot under a separator. Laid out again on every button added: the
+    -- plugins arrive one by one, some after the window is built.
+    AltStable.NAV_ORDER = { summary = 1, roster = 2, gear = 3, skills = 4, professions = 5,
+                            warband = 6, rep = 7, instances = 8, loremaster = 9, legacy = 10 }
+    function sidebar.Layout()
+        local list = {}
+        for i, b in ipairs(sidebarBtns) do
+            if b.sectionId == "options" then sidebar.optBtn = b else list[#list + 1] = { b = b, i = i } end
+        end
+        table.sort(list, function(x, z)
+            local a, c = AltStable.NAV_ORDER[x.b.sectionId] or 100, AltStable.NAV_ORDER[z.b.sectionId] or 100
+            if a ~= c then return a < c end
+            return x.i < z.i
+        end)
+        local y = -SIDEBAR_TOP_INSET
+        for _, e in ipairs(list) do
+            e.b:ClearAllPoints()
+            e.b:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 0, y)
+            e.b:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, y)
+            y = y - SIDEBAR_BUTTON_STEP
+        end
+        sidebar._pluginBtnY = y
+        local o = sidebar.optBtn
+        if not o then return end
+        o:ClearAllPoints()
+        o:SetPoint("BOTTOMLEFT", sidebar, "BOTTOMLEFT", 0, 4)
+        o:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 4)
+        if not sidebar.optSep then
+            sidebar.optSep = sidebar:CreateTexture(nil, "ARTWORK")
+            sidebar.optSep:SetHeight(1)
+            sidebar.optSep:SetColorTexture(unpack(AltStable.C.SEP))
+        end
+        sidebar.optSep:ClearAllPoints()
+        sidebar.optSep:SetPoint("BOTTOMLEFT", o, "TOPLEFT", 12, 6)
+        sidebar.optSep:SetPoint("BOTTOMRIGHT", o, "TOPRIGHT", -12, 6)
     end
 
     local function MakePluginButton(plugin)
@@ -3308,7 +3349,7 @@ local function CreateFrameIfNeeded()
         if AltStableConfig and AltStableConfig.sidebarCompact then lbl:Hide() end
 
         table.insert(sidebarBtns,pbtn)
-        sidebar._pluginBtnY = sidebar._pluginBtnY - SIDEBAR_BUTTON_STEP
+        sidebar.Layout()
         return pbtn
     end
 
@@ -4804,7 +4845,7 @@ local function CreateFrameIfNeeded()
         wish:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine("Wanted by", 1, 1, 1)
-            GameTooltip:AddLine("On a recipe's tooltip, the alts that starred it in the Professions tab, "
+            GameTooltip:AddLine("On a recipe's tooltip, the alts that starred it in the Recipe Book tab, "
                 .. "until they learn it.", nil, nil, nil, true)
             GameTooltip:Show()
         end)

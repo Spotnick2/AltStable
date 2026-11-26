@@ -2948,8 +2948,52 @@ do
     -- filled while the sidebar is full.
     check("  with the title bar's toggle showing the pane", T.navPane:IsShown())
     -- Nothing is pinned under the buttons now: the floor is the buttons and 8px.
-    eq("  the sidebar needs its buttons' height and 8px", AltStable.GetSidebarRequiredHeight(),
-       -sidebar._pluginBtnY + 8)
+    -- The buttons and 8px, then Options at the foot (#528): its separator's
+    -- gap, the button and its inset.
+    eq("  the sidebar needs its buttons' height, 8px and Options' block", AltStable.GetSidebarRequiredHeight(),
+       -sidebar._pluginBtnY + 8 + 12 + 52 + 4)
+    -- The order of the owner's mock-up (#528), whatever order the tabs came in,
+    -- and Options apart at the foot.
+    do
+        local want = { "summary", "roster", "gear", "skills", "professions", "warband", "rep",
+                       "instances", "loremaster", "legacy" }
+        local ys = {}
+        for _, b in ipairs(T.sidebarBtns) do
+            local p, _, _, _, y = b:GetPoint(1)
+            ys[b.sectionId] = { p = p, y = y, b = b }
+        end
+        local got, prevY, ordered = {}, 1, true
+        for _, id in ipairs(want) do
+            local e = ys[id]
+            if e then
+                got[#got + 1] = id
+                if not (e.p == "TOPLEFT" and e.y < prevY) then ordered = false end
+                prevY = e.y
+            end
+        end
+        check("  the tabs in the mock-up's order", ordered and #got >= 4, table.concat(got, ","))
+        eq("  Account Summary first", ys.summary and ys.summary.y, -8)
+        local o = ys.options
+        local op, orel, orp, _, oy = o.b:GetPoint(1)
+        check("  Options pinned to the foot", op == "BOTTOMLEFT" and orel == sidebar and orp == "BOTTOMLEFT" and oy == 4)
+        local sp, srel, srp, _, sy = sidebar.optSep:GetPoint(1)
+        check("  under a separator", sp == "BOTTOMLEFT" and srel == o.b and srp == "TOPLEFT" and sy == 6)
+        local labels = {}
+        for _, b in ipairs(T.sidebarBtns) do labels[b.sectionId] = b.lbl:GetText() end
+        eq("  Skills is Skill Levels", labels.skills, "Skill Levels")
+    end
+    -- Plugins arriving late, in another order, still take their places.
+    do
+        AltStable.RegisterPlugin({ id = "legacy", label = "Legacy Challenges", _isPlugin = true, OnActivate = function() end })
+        AltStable.RegisterPlugin({ id = "roster", label = "Armory", _isPlugin = true, OnActivate = function() end })
+        local y = {}
+        for _, b in ipairs(T.sidebarBtns) do y[b.sectionId] = select(5, b:GetPoint(1)) end
+        eq("  a late Armory goes second", y.roster, -8 - 53)
+        check("  Gear Progression moves down for it", y.gear == -8 - 2 * 53, tostring(y.gear))
+        check("  a late Legacy Challenges goes after Reputations", y.legacy < y.rep, tostring(y.legacy))
+        check("  and a tab not in the order after every listed one", y.test150 < y.legacy, tostring(y.test150))
+        eq("  Options stays at the foot", (select(3, T.sidebarBtns[1]:GetParent().optBtn:GetPoint(1))), "BOTTOMLEFT")
+    end
     -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
     -- bar in the accent on its edge, then the tab's name, which stops short of
     -- the buttons. A sheet tab is never narrower than all of it (Codex review

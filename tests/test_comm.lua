@@ -4799,7 +4799,7 @@ do
     end
     WoW.chatOut = {}
     SlashCmdList.ALTSTABLE("cleanup")
-    check(chatHas("Not cleared, switched off: Roster."), "cleanup names the installed plugin switched off")
+    check(chatHas("Not cleared, switched off: Armory."), "cleanup names the installed plugin switched off")
     check(not chatHas("Legacy"), "  not one whose folder is missing")
     AltStableConfig.plugins = {}
     WoW.chatOut = {}

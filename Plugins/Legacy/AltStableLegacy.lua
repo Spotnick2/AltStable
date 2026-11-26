@@ -2238,7 +2238,7 @@ function L.Bootstrap()
     HookRefresh()
     AltStable.RegisterPlugin({
         id           = ADDON_ID,
-        label        = "Legacy",
+        label        = "Legacy Challenges",
         icon         = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\legacy.tga",
         _isPlugin    = true,
         OnActivate   = function(mainFrame) L.Activate(mainFrame) end,

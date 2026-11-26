@@ -1238,7 +1238,7 @@ function AT_SI._Bootstrap()
     HookRefresh()
     AltStable.RegisterPlugin({
         id           = ADDON_ID,
-        label        = "Raids",
+        label        = "Raid Lockouts",
         icon         = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\") .. "Icons\\raid.tga",
         _isPlugin    = true,
         OnActivate   = function(mainFrame) AT_SI.Activate(mainFrame) end,

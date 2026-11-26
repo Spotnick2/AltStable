@@ -89,7 +89,7 @@ if not registered then
 end
 local T = registered._test
 
-eq("  under a readable label", registered.label, "Roster")
+eq("  under a readable label", registered.label, "Armory")
 check("  with both lifecycle hooks",
       type(registered.OnActivate) == "function" and type(registered.OnDeactivate) == "function")
 
