@@ -8,6 +8,9 @@
 ## Version: @project-version@
 ## SavedVariables: AltStableDB AltStableConfig AltStablePortraits
 ## OptionalDeps: GlassUI
+## AddonCompartmentFunc: AltStable_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: AltStable_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: AltStable_OnAddonCompartmentLeave
 
 Libs\LibGlass-1.0\LibGlass-1.0.xml
 Libs\LibShowcase-1.0\LibShowcase-1.0.xml
