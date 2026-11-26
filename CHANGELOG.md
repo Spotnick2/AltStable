@@ -2,7 +2,8 @@
 
 ## v1.15.0 - 2026-11-26
 
-**A new look for the window**: the title bar and the sidebar, with new icons and tab names. Also
+**A new look for the window**, the first part of a pass over AltStable's interface: the title bar
+and the sidebar, with new icons and tab names. Also
 **each alt's Legacy talents**, a **Played** and a **Spec** column, and the choice of the columns on
 every sheet tab. Several came from players' comments on CurseForge. Built for client 1.60.1.71139, the
 live build. v1.15.0 syncs with everything v1.14.0 does.
