@@ -3395,7 +3395,7 @@ function Roster._Bootstrap()
     end
     AltStable.RegisterPlugin({
         id           = ADDON_ID,
-        label        = "Roster",
+        label        = "Armory",
         icon         = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\")
                        .. "Icons\\roster.tga",
         _isPlugin    = true,

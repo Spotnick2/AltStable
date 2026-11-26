@@ -4601,11 +4601,11 @@ AltStable.plugins = AltStable.plugins or {}
 -- means a failed LoadAddOn at every login, which would bury the real errors
 -- this build exists to surface.
 AltStable.LOD_PLUGINS = {
-    { key = "warband", addon = "AltStableWarband", label = "Warband" },
-    { key = "instances", addon = "AltStableInstances", label = "Raids" },
-    { key = "roster", addon = "AltStableRoster", label = "Roster" },
-    { key = "professions", addon = "AltStableProfessions", label = "Professions" },
-    { key = "legacy", addon = "AltStableLegacy", label = "Legacy" },
+    { key = "warband", addon = "AltStableWarband", label = "Warband Bank" },
+    { key = "instances", addon = "AltStableInstances", label = "Raid Lockouts" },
+    { key = "roster", addon = "AltStableRoster", label = "Armory" },
+    { key = "professions", addon = "AltStableProfessions", label = "Recipe Book" },
+    { key = "legacy", addon = "AltStableLegacy", label = "Legacy Challenges" },
     { key = "loremaster", addon = "AltStableLoremaster", label = "Loremaster" },
 }
 
@@ -5662,7 +5662,7 @@ end
 function AltStable.ItemTooltipCountsHelp(tt)
     tt:AddLine("Show character counts in tooltips")
     tt:AddLine("Adds who holds how many to item tooltips everywhere - bags, "
-        .. "merchants, links - not only in AltStable. Needs the Warband tab.", .8, .8, .8, true)
+        .. "merchants, links - not only in AltStable. Needs the Warband Bank tab.", .8, .8, .8, true)
     local other = AltStable.OtherItemCountsAddon()
     local v = AltStableConfig and AltStableConfig.warbandItemTooltips
     if other and v == nil then

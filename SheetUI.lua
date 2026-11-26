@@ -12,7 +12,7 @@ local HEADER_HEIGHT = 28     -- compact; gear/skills/rep icon sections override 
 -- variable, not a constant: everything beside the sidebar is anchored to its
 -- right EDGE, or re-anchored from this on every layout pass, so collapsing it
 -- moves the content with it. LAYOUT.SIDEBAR_WIDTH follows it for the plugins.
-local SIDEBAR_FULL_W    = 230
+local SIDEBAR_FULL_W    = 230   -- the most; sized to the widest name (sidebar.Layout, #528)
 local SIDEBAR_COMPACT_W = 56     -- the 36px icon at x=10, and the same on its right
 local SIDEBAR_WIDTH = SIDEBAR_FULL_W
 local FRAME_W       = 1150   -- default; sections override via preferW
@@ -38,6 +38,7 @@ end
 AltStable.LAYOUT = AltStable.LAYOUT or {}
 AltStable.LAYOUT.TITLE_H        = TITLE_H
 AltStable.LAYOUT.SIDEBAR_WIDTH  = SIDEBAR_WIDTH
+AltStable.LAYOUT.SIDEBAR_FULL_W = SIDEBAR_FULL_W
 AltStable.LAYOUT.HEADER_HEIGHT  = HEADER_HEIGHT
 AltStable.LAYOUT.ROW_HEIGHT     = ROW_HEIGHT
 AltStable.LAYOUT.FOOTER_HEIGHT  = 22
@@ -92,7 +93,7 @@ local SECTIONS = {
     },
     {
         id    = "skills",
-        label = "Skills",
+        label = "Skill Levels",
         icon  = IC("skills"),
         headerHeight = 32,
         preferW = 1111,
@@ -3220,16 +3221,115 @@ local function CreateFrameIfNeeded()
     --
     -- Math: btnY starts at -8 (top inset) and decrements by one step per
     -- button. _pluginBtnY is the next-empty-Y after all buttons. Below the
-    -- last one: 8px of breathing space. (The collapse chevron that stood
-    -- there, #150, is the title bar's button since #523.)
+    -- last one: 8px of breathing space, then Options when it has its place
+    -- at the foot (#528): the separator's gap, the button and its inset.
+    -- (The collapse chevron that stood there, #150, is the title bar's
+    -- button since #523.)
     local SIDEBAR_TOP_INSET     = 8
-    local SIDEBAR_BOTTOM_FOOTER = 0
     local SIDEBAR_BOTTOM_BREATH = 8
     AltStable.GetSidebarRequiredHeight = function()
         if not sidebar or not sidebar._pluginBtnY then return 0 end
         local buttonsHeight = SIDEBAR_TOP_INSET + (-sidebar._pluginBtnY) - SIDEBAR_TOP_INSET
-        return buttonsHeight + SIDEBAR_BOTTOM_FOOTER + SIDEBAR_BOTTOM_BREATH
+        local footer = sidebar.optBtn and (12 + SIDEBAR_BUTTON_H + 4) or 0
+        return buttonsHeight + footer + SIDEBAR_BOTTOM_BREATH
     end
+
+    -- The order (#528, the owner's mock-up), by section id; a tab not listed
+    -- goes after, in the order it came. Options stands apart, pinned to the
+    -- foot under a separator. Laid out again on every button added: the
+    -- plugins arrive one by one, some after the window is built.
+    AltStable.NAV_ORDER = { summary = 1, roster = 2, gear = 3, skills = 4, professions = 5,
+                            warband = 6, rep = 7, instances = 8, loremaster = 9, legacy = 10 }
+    function sidebar.Layout()
+        -- As wide as its widest name (#528, the owner's mock-up): the icon's
+        -- column, the name and a margin, between 150 and the old 230.
+        local widest = 0
+        for _, b in ipairs(sidebarBtns) do
+            local w = b.lbl and tonumber(b.lbl:GetStringWidth()) or 0
+            if w > widest then widest = w end
+        end
+        local full = math.max(150, math.min(230, math.ceil(52 + widest + 16)))
+        if full ~= SIDEBAR_FULL_W then
+            SIDEBAR_FULL_W = full
+            AltStable.LAYOUT.SIDEBAR_FULL_W = full
+            if not (AltStableConfig and AltStableConfig.sidebarCompact) then
+                SIDEBAR_WIDTH = full
+                AltStable.LAYOUT.SIDEBAR_WIDTH = full
+                sidebar:SetWidth(full - 1)
+            end
+        end
+        local list = {}
+        for i, b in ipairs(sidebarBtns) do
+            if b.sectionId == "options" then sidebar.optBtn = b else list[#list + 1] = { b = b, i = i } end
+        end
+        table.sort(list, function(x, z)
+            local a, c = AltStable.NAV_ORDER[x.b.sectionId] or 100, AltStable.NAV_ORDER[z.b.sectionId] or 100
+            if a ~= c then return a < c end
+            return x.i < z.i
+        end)
+        sidebar.order = {}
+        for k, e in ipairs(list) do sidebar.order[k] = e.b end
+        -- The floor counts every tab at its full step, so the window grows to
+        -- it whenever the screen allows.
+        sidebar._pluginBtnY = -SIDEBAR_TOP_INSET - #list * SIDEBAR_BUTTON_STEP
+        sidebar.Place()
+        -- A tab arriving with the window open makes the list taller, and
+        -- Options is pinned below it: the window grows to the sidebar's floor,
+        -- or the last tab sits over Options (Codex review of #529). A sheet
+        -- tab sizes to its content, which counts the floor; a plugin tab gets
+        -- the floor alone.
+        if frame and frame:IsShown() and frame.bodyScroll then   -- built
+            if activeSection and not activeSection._isPlugin then
+                ResizeFrameToContent()
+            elseif AltStable.EnsureWindowMinSize then
+                AltStable.EnsureWindowMinSize(0, TITLE_H + AltStable.GetSidebarRequiredHeight())
+            end
+            sidebar.Place()   -- at the height the window got
+        end
+    end
+    -- The tabs in their order, and Options at the foot under its separator.
+    -- 53 apart; tighter, down to 40, while the window is shorter than the
+    -- sidebar's floor - a screen too short for it, maximized or not, where no
+    -- resize can make the room (Codex review of #529) - so the last tab never
+    -- sits over Options. Placed again whenever the window's height changes.
+    function sidebar.Place()
+        local list, o = sidebar.order or {}, sidebar.optBtn
+        local step = SIDEBAR_BUTTON_STEP
+        local h = frame and tonumber(frame:GetHeight()) or 0
+        if o and h > 0 and #list > 0 then
+            local room = h - TITLE_H - SIDEBAR_TOP_INSET - (12 + SIDEBAR_BUTTON_H + 4) - SIDEBAR_BOTTOM_BREATH
+            step = math.max(40, math.min(SIDEBAR_BUTTON_STEP, math.floor(room / #list)))
+        end
+        local y = -SIDEBAR_TOP_INSET
+        for _, b in ipairs(list) do
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 0, y)
+            b:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, y)
+            b:SetHeight(step - 1)
+            y = y - step
+        end
+        if not o then return end
+        o:ClearAllPoints()
+        o:SetPoint("BOTTOMLEFT", sidebar, "BOTTOMLEFT", 0, 4)
+        o:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 4)
+        if not sidebar.optSep then
+            sidebar.optSep = sidebar:CreateTexture(nil, "ARTWORK")
+            sidebar.optSep:SetHeight(1)
+            sidebar.optSep:SetColorTexture(unpack(AltStable.C.SEP))
+        end
+        sidebar.optSep:ClearAllPoints()
+        sidebar.optSep:SetPoint("BOTTOMLEFT", o, "TOPLEFT", 12, 6)
+        sidebar.optSep:SetPoint("BOTTOMRIGHT", o, "TOPRIGHT", -12, 6)
+    end
+    frame:HookScript("OnSizeChanged", function() sidebar.Place() end)
+    -- And when the window opens on a plugin tab: a tab may have arrived while
+    -- it was closed, and a plugin tab's reopening doesn't size the window
+    -- (Codex review of #529). A sheet tab's Refresh does, floor included.
+    frame:HookScript("OnShow", function()
+        if frame.bodyScroll and activeSection and activeSection._isPlugin and AltStable.EnsureWindowMinSize then
+            AltStable.EnsureWindowMinSize(0, TITLE_H + AltStable.GetSidebarRequiredHeight())
+        end
+    end)
 
     local function MakePluginButton(plugin)
         local pbtn=CreateFrame("Button",nil,sidebar,"BackdropTemplate")
@@ -3308,7 +3408,7 @@ local function CreateFrameIfNeeded()
         if AltStableConfig and AltStableConfig.sidebarCompact then lbl:Hide() end
 
         table.insert(sidebarBtns,pbtn)
-        sidebar._pluginBtnY = sidebar._pluginBtnY - SIDEBAR_BUTTON_STEP
+        sidebar.Layout()
         return pbtn
     end
 
@@ -4804,7 +4904,7 @@ local function CreateFrameIfNeeded()
         wish:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine("Wanted by", 1, 1, 1)
-            GameTooltip:AddLine("On a recipe's tooltip, the alts that starred it in the Professions tab, "
+            GameTooltip:AddLine("On a recipe's tooltip, the alts that starred it in the Recipe Book tab, "
                 .. "until they learn it.", nil, nil, nil, true)
             GameTooltip:Show()
         end)

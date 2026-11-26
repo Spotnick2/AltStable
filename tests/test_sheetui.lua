@@ -1324,7 +1324,7 @@ do
             -- A screen too small for even the tab's floor (the Roster's 796
             -- panel): the floor runs while clamped, and must floor the REQUEST,
             -- not replace it with the clamped size (Codex, #150).
-            UIParent:SetWidth(1000)
+            UIParent:SetWidth(sidebar + 796 - 30)
             AltStable.RefitWindow()
             check("a narrow screen clamps the window below the floor",
                   f:GetWidth() < sidebar + 1 + 796, tostring(f:GetWidth()))
@@ -2942,14 +2942,133 @@ do
 
     -- Starts full, from the default.
     AltStableConfig.sidebarCompact = false
-    eq("the sidebar starts full width", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
+    -- Full is as wide as the widest name (#528): the icon's 52px, the name, 16px;
+    -- here the stubs' 40px names, so the 150 floor.
+    local FULL = AltStable.LAYOUT.SIDEBAR_FULL_W
+    eq("the sidebar starts full width, sized to its names", AltStable.LAYOUT.SIDEBAR_WIDTH, 150)
+    eq("  which is the full width", FULL, 150)
+    do
+        local lbl = T.sidebarBtns[1].lbl
+        lbl._GetStringWidth = 120
+        sidebar.Layout()
+        eq("  a longer name widens it: 52 + 120 + 16", AltStable.LAYOUT.SIDEBAR_WIDTH, 188)
+        eq("  the frame too", sidebar:GetWidth(), 187)
+        lbl._GetStringWidth = 400
+        sidebar.Layout()
+        eq("  never past 230", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
+        lbl._GetStringWidth = nil
+        sidebar.Layout()
+        eq("  and back", AltStable.LAYOUT.SIDEBAR_WIDTH, FULL)
+    end
     -- Set at build from the saved setting, not only on a click.
     -- The toggle is the title bar's (#523), beside Maximize: its glyph's pane
     -- filled while the sidebar is full.
     check("  with the title bar's toggle showing the pane", T.navPane:IsShown())
     -- Nothing is pinned under the buttons now: the floor is the buttons and 8px.
-    eq("  the sidebar needs its buttons' height and 8px", AltStable.GetSidebarRequiredHeight(),
-       -sidebar._pluginBtnY + 8)
+    -- The buttons and 8px, then Options at the foot (#528): its separator's
+    -- gap, the button and its inset.
+    eq("  the sidebar needs its buttons' height, 8px and Options' block", AltStable.GetSidebarRequiredHeight(),
+       -sidebar._pluginBtnY + 8 + 12 + 52 + 4)
+    -- The order of the owner's mock-up (#528), whatever order the tabs came in,
+    -- and Options apart at the foot.
+    do
+        local want = { "summary", "roster", "gear", "skills", "professions", "warband", "rep",
+                       "instances", "loremaster", "legacy" }
+        local ys = {}
+        for _, b in ipairs(T.sidebarBtns) do
+            local p, _, _, _, y = b:GetPoint(1)
+            ys[b.sectionId] = { p = p, y = y, b = b }
+        end
+        local got, prevY, ordered = {}, 1, true
+        for _, id in ipairs(want) do
+            local e = ys[id]
+            if e then
+                got[#got + 1] = id
+                if not (e.p == "TOPLEFT" and e.y < prevY) then ordered = false end
+                prevY = e.y
+            end
+        end
+        check("  the tabs in the mock-up's order", ordered and #got >= 4, table.concat(got, ","))
+        eq("  Account Summary first", ys.summary and ys.summary.y, -8)
+        local o = ys.options
+        local op, orel, orp, _, oy = o.b:GetPoint(1)
+        check("  Options pinned to the foot", op == "BOTTOMLEFT" and orel == sidebar and orp == "BOTTOMLEFT" and oy == 4)
+        local sp, srel, srp, _, sy = sidebar.optSep:GetPoint(1)
+        check("  under a separator", sp == "BOTTOMLEFT" and srel == o.b and srp == "TOPLEFT" and sy == 6)
+        local labels = {}
+        for _, b in ipairs(T.sidebarBtns) do labels[b.sectionId] = b.lbl:GetText() end
+        eq("  Skills is Skill Levels", labels.skills, "Skill Levels")
+    end
+    -- Plugins arriving late, in another order, still take their places.
+    do
+        AltStable.RegisterPlugin({ id = "legacy", label = "Legacy Challenges", _isPlugin = true, OnActivate = function() end })
+        AltStable.RegisterPlugin({ id = "roster", label = "Armory", _isPlugin = true, OnActivate = function() end })
+        local y = {}
+        for _, b in ipairs(T.sidebarBtns) do y[b.sectionId] = select(5, b:GetPoint(1)) end
+        eq("  a late Armory goes second", y.roster, -8 - 53)
+        check("  Gear Progression moves down for it", y.gear == -8 - 2 * 53, tostring(y.gear))
+        check("  a late Legacy Challenges goes after Reputations", y.legacy < y.rep, tostring(y.legacy))
+        check("  and a tab not in the order after every listed one", y.test150 < y.legacy, tostring(y.test150))
+        eq("  Options stays at the foot", (select(3, T.sidebarBtns[1]:GetParent().optBtn:GetPoint(1))), "BOTTOMLEFT")
+        -- The window open and too short for one more tab: it grows to the
+        -- sidebar's floor, so the new tab doesn't sit over Options (Codex
+        -- review of #529). On a plugin tab, and on a sheet tab.
+        pbtn:GetScript("OnClick")(pbtn)
+        f:SetHeight(200)
+        AltStable.RegisterPlugin({ id = "late529a", label = "Late A", _isPlugin = true, OnActivate = function() end })
+        check("  a late tab on a plugin tab: the window grows to the sidebar's floor",
+              f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(), tostring(f:GetHeight()))
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        f:SetHeight(200)
+        AltStable.RegisterPlugin({ id = "late529b", label = "Late B", _isPlugin = true, OnActivate = function() end })
+        check("  and on a sheet tab", f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(), tostring(f:GetHeight()))
+        -- A window shorter than the floor, as on a screen too short for it
+        -- (maximized or not; Codex review of #529): the tabs close up, down to
+        -- 40 apart, and the last one stays clear of Options.
+        do
+            local savedH = f:GetHeight()
+            local need = 30 + AltStable.GetSidebarRequiredHeight()
+            f:SetHeight(need - 40)
+            f:GetScript("OnSizeChanged")(f)
+            local order = sidebar.order
+            local last = order[#order]
+            local _, _, _, _, ly = last:GetPoint(1)
+            local lastBottom = -ly + last:GetHeight()
+            local optTop = (f:GetHeight() - 30) - 4 - 52
+            check("  a window short of the floor: the last tab clear of Options' separator",
+                  lastBottom <= optTop - 6, lastBottom .. " vs " .. (optTop - 6))
+            local _, _, _, _, y2 = order[2]:GetPoint(1)
+            check("  the tabs closer together", -8 - y2 < 53 and -8 - y2 >= 40, tostring(y2))
+            eq("  each as tall as its step, less 1", order[1]:GetHeight(), (-8 - y2) - 1)
+            eq("  the floor still counts the full step", AltStable.GetSidebarRequiredHeight(), need - 30)
+            f:SetHeight(200)
+            f:GetScript("OnSizeChanged")(f)
+            _, _, _, _, y2 = order[2]:GetPoint(1)
+            eq("  never closer than 40, however short", y2, -8 - 40)
+            f:SetHeight(need + 100)
+            f:GetScript("OnSizeChanged")(f)
+            _, _, _, _, y2 = order[2]:GetPoint(1)
+            eq("  a tall window: 53 apart again", y2, -8 - 53)
+            eq("  and 52 tall", order[1]:GetHeight(), 52)
+            f:SetHeight(savedH)
+            f:GetScript("OnSizeChanged")(f)
+        end
+        -- A tab arriving while the window is closed, reopened on a plugin tab:
+        -- the floor applies on opening (Codex review of #529).
+        pbtn:GetScript("OnClick")(pbtn)
+        f:SetHeight(200)
+        -- Opening applies the saved scale, which the blocks after this one
+        -- don't expect: kept as it was.
+        local scale = f:GetScale()
+        f:Hide()
+        AltStable.RegisterPlugin({ id = "late529c", label = "Late C", _isPlugin = true, OnActivate = function() end })
+        eq("  closed, the window is left alone", f:GetHeight(), 200)
+        f:Show()
+        f:SetScale(scale)
+        check("  reopened on a plugin tab, it grows to the floor", f:GetHeight() >= 30 + AltStable.GetSidebarRequiredHeight(),
+              tostring(f:GetHeight()))
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+    end
     -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
     -- bar in the accent on its edge, then the tab's name, which stops short of
     -- the buttons. A sheet tab is never narrower than all of it (Codex review
@@ -2978,7 +3097,7 @@ do
         sheetBtn:GetScript("OnClick")(sheetBtn)
         local need = AltStable.GetTitleBarRequiredWidth()
         eq("  the title bar's floor: the sidebar, the name and every button, Columns included", need,
-           230 + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
+           AltStable.LAYOUT.SIDEBAR_FULL_W + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
         -- A name wider than the columns: the window grows to the floor.
         st._GetStringWidth = 1200
         need = AltStable.GetTitleBarRequiredWidth()
@@ -3048,7 +3167,7 @@ do
     check("  with every label hidden", (function()
         for _, b in ipairs(T.sidebarBtns) do if b.lbl:IsShown() then return false end end
         return true end)())
-    eq("a sheet tab's window narrows by what the sidebar gave back", f:GetWidth(), fullW - 174)
+    eq("a sheet tab's window narrows by what the sidebar gave back", f:GetWidth(), fullW - (FULL - 56))
     -- The grid hangs off the sidebar's edge, so it slides while the sidebar animates.
     local _, bodyRel = f.bodyScroll:GetPoint(1)
     check("the grid is anchored to the sidebar's edge", bodyRel == sidebar)
@@ -3070,6 +3189,14 @@ do
                                OnActivate = function() end })
     local late = T.sidebarBtns[#T.sidebarBtns]
     check("a late plugin's label is hidden in a compact sidebar", not late.lbl:IsShown())
+    -- A longer name arriving while compact sizes the full width for later,
+    -- and leaves the compact sidebar as it is (#528).
+    late.lbl._GetStringWidth = 120
+    sidebar.Layout()
+    eq("  a longer name while compact: still icons only", AltStable.LAYOUT.SIDEBAR_WIDTH, 56)
+    eq("  the full width noted for later", AltStable.LAYOUT.SIDEBAR_FULL_W, 188)
+    late.lbl._GetStringWidth = nil
+    sidebar.Layout()
 
     -- On a plugin tab the window keeps its size and the plugin re-lays out.
     pbtn:GetScript("OnClick")(pbtn)
@@ -3334,7 +3461,7 @@ do
     local tick = function(dt) local fn = runner:GetScript("OnUpdate"); if fn then fn(runner, dt) end end
     check("collapsing animates", runner and runner:GetScript("OnUpdate") ~= nil)
     eq("  the setting is saved at once", AltStableConfig.sidebarCompact, true)
-    eq("  and the sidebar starts from where it was", sidebar:GetWidth(), 229)
+    eq("  and the sidebar starts from where it was", sidebar:GetWidth(), FULL - 1)
     eq("  as does the window", f:GetWidth(), startW)
     check("  without clipping its children", not f:DoesClipChildren())
     tick(0.1)
@@ -3347,7 +3474,7 @@ do
     tick(0.2)
     check("then it stops", runner:GetScript("OnUpdate") == nil)
     eq("  on the compact sidebar", sidebar:GetWidth(), 55)
-    eq("  in the narrowed window", f:GetWidth(), startW - 174)
+    eq("  in the narrowed window", f:GetWidth(), startW - (FULL - 56))
     check("  with the labels gone, at full alpha for next time",
           not sheetBtn.lbl:IsShown() and sheetBtn.lbl:GetAlpha() == 1)
     local ep, _, _, ex, ey = f:GetPoint(1)
@@ -3363,12 +3490,12 @@ do
           tostring(sidebar:GetWidth()))
     tick(0.3)
     eq("  and lands on the latest choice", sidebar:GetWidth(), 55)
-    eq("  in the window that choice wants", f:GetWidth(), startW - 174)
+    eq("  in the window that choice wants", f:GetWidth(), startW - (FULL - 56))
 
     -- Maximize travels too, and lands maximized, centred.
     AltStable.SetWindowMaximized(true)
     check("maximizing animates", runner:GetScript("OnUpdate") ~= nil)
-    check("  from the window's size", f:GetWidth() == startW - 174)
+    check("  from the window's size", f:GetWidth() == startW - (FULL - 56))
     tick(0.3)
     eq("  to the display's", f:GetWidth(), limW)
     local cp = f:GetPoint(1)

@@ -2559,7 +2559,7 @@ local function BootstrapPlugin()
     AltStable.ItemMapsFor = ItemMapsFor
     AltStable.RegisterPlugin({
         id            = ADDON_ID,
-        label         = "Warband",
+        label         = "Warband Bank",
         icon          = (AltStable.MEDIA_PATH or "Interface\\AddOns\\AltStable\\Media\\")
                         .. "Icons\\warband.tga",
         _isPlugin     = true,
