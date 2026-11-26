@@ -183,8 +183,9 @@ seen since then has no server to show. Rested XP keeps counting up while you're
 away, worked out from where the character logged out, up to the cap of 1.5 levels, and faster and
 higher with the Well Rested Legacy talent, by its rank.
 
-The **Spec** column names each character's talent tree with the most points; hover it for the
-points in every tree. The **Played** column shows each character's time played, with the total
+The **Spec** column names the talent tree with the most points, when one tree leads. A tie, no
+points spent, or talents not read yet (log in with the Armory on) show a dash. Hover it for the
+points in each tree, as last recorded. The **Played** column shows each character's time played, with the total
 along the bottom. Hover a reputation for its progress within the standing, such as "Honored
 1234 / 12000".
 

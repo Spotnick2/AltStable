@@ -34,8 +34,9 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
 - **A Played column** ([#378](https://github.com/Spotnick2/AltStable/issues/378)): each
   character's time played, read whenever it's logged in, with the total along the bottom.
 - **A Spec column** ([#506](https://github.com/Spotnick2/AltStable/issues/506)), on Account
-  Summary and Gear Progression: the talent tree with the most points, such as "Frost". The tooltip
-  gives the points in each tree.
+  Summary and Gear Progression: the talent tree with the most points, such as "Frost", when one
+  tree leads. A tie, no points spent, or talents not read yet show a dash. The tooltip gives the
+  points in each tree, as last recorded.
 - **Each alt's Legacy talents** ([#500](https://github.com/Spotnick2/AltStable/issues/500)): a
   character opened in the Armory has a **Legacy** group, with the points spent and each tree's
   points. Hover a tree for its talents. **View** opens the three trees, read-only, as they were
