@@ -6,11 +6,11 @@ Looking for an Altoholic alternative for WoW Forever? AltStable brings your char
 inventory, professions and progression together in one window, so you can check what your alts
 have without logging into each of them.
 
-Everything below works with the addon on its own. Character portraits for the Roster are an
+Everything below works with the addon on its own. Character portraits for the Armory are an
 optional extra that needs the free [AltStable Companion](#optional-character-portraits-and-the-companion)
 app.
 
-![The sheet: one row per character with class, race, ruleset, level, item level, guild, rested XP, gold and when each was last played, with totals along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
+![The Account Summary: one row per character with its class, level, spec, item level, rested XP, gold, bag space, hearthstone and when it was last online, grouped by faction and ruleset, with the totals along the bottom and the tabs down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet.jpg)
 
 *The sheet: every character at a glance, with total levels, average item level and total gold
 along the bottom. (Names blurred in all screenshots.)*
@@ -23,21 +23,21 @@ doesn't move it anywhere, and whether you can pass it on still depends on the ga
 
 ### Which alt has my materials?
 
-The **Warband** tab lays out every item in all your characters' bags, banks and mailboxes like a
+The **Warband Bank** tab lays out every item in all your characters' bags, banks and mailboxes like a
 warband bank, with tabs you can arrange yourself. Show one tab at a time, or three side by side.
 Hover an item to see who holds how many, split between bags, bank and mail. You can show everyone on your
 current ruleset or a chosen one, of your faction, the other or both, or only the character you are on.
 Both filters are kept between sessions, and a reset button puts them back.
 
-![The Warband tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset and faction menus, the reset button and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
+![The Warband Bank tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset and faction menus and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
 
-*The Warband tab, Combined view: everyone's trade goods, consumables and equipment in one place.
+*The Warband Bank tab, Combined view: everyone's trade goods, consumables and equipment in one place.
 Hover any item to see who holds it.*
 
 Item tooltips everywhere in the game (your bags, merchants, links) show the same counts: the
 total, then who holds how many. It's on unless Bagnon, Baganator or Altoholic is installed, since
 they show their own counts. **Show who has this item and how many** in Options (**Show character
-counts in tooltips** in the Warband tab) turns it on or off either way.
+counts in tooltips** in the Warband Bank tab) turns it on or off either way.
 
 **Options, General, Item tooltips** decides how they look, with a live preview beside it:
 - **Tooltip layout:** *One list*, everyone together. *Separate groups*, the default: the characters
@@ -60,15 +60,15 @@ rather than in these counts.
 
 ### Who knows this recipe?
 
-The **Professions** tab shows which character knows which recipe, the skill it needs and where
+The **Recipe Book** tab shows which character knows which recipe, the skill it needs and where
 it comes from (trainer, vendor, quest or drop). Filter for the recipes you know, the ones you're
 missing, or the ones nobody has yet; the tab opens on the filter you last picked. Recipes the
 profession quartermasters sell for Merchant's Favor show their price, and the **Favor** filter
 lists them: with an alt picked and **Missing**, it's what that alt could buy.
 
-![The Professions tab for Cooking: each recipe with its skill level, its source and which characters know it, a progress card per cook, and a recipe tooltip listing its reagents](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/professions.jpg)
+![The Recipe Book tab for Cooking: each recipe with its skill level, its source and which characters know it, and a progress card per cook](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/professions.jpg)
 
-*The Professions tab: who knows each recipe, and where to get the ones nobody has.*
+*The Recipe Book tab: who knows each recipe, and where to get the ones nobody has.*
 
 Recipe items in the game (at a vendor, in the auction house) can also show who already knows
 them, who has the skill to learn them and whose skill is too low. Crafted items show who can make
@@ -79,13 +79,13 @@ the skill thresholds, where the recipe comes from, who knows it and its reagents
 
 ### Which recipes do my alts still want?
 
-Star a recipe for an alt in the Professions tab, and the **Wishlist** filter lists what it wants.
+Star a recipe for an alt in the Recipe Book tab, and the **Wishlist** filter lists what it wants.
 The recipe item's tooltip then says who wants it, until that alt learns it. Stars sync to your
 other accounts, and each alt's stars are set on the account it's played on.
 
 ### Do my characters already have the reagents?
 
-Hover a recipe in the Professions tab to see its reagents and how many your alts hold in their
+Hover a recipe in the Recipe Book tab to see its reagents and how many your alts hold in their
 bags and banks. For each alt who knows it, you see whether it has them or what it's short of. The
 **Craftable** filter lists the recipes an alt knows and has the reagents for. It counts the alt's
 own reagents and every other alt's, except an alt known to be of the other faction or on another
@@ -100,13 +100,17 @@ tells you when one is ready.
 
 ### Which characters are saved to a raid, and when do they reset?
 
-The **Raids** tab shows who is saved to which raid, how many bosses each has killed, and when
+The **Raid Lockouts** tab shows who is saved to which raid, how many bosses each has killed, and when
 each lockout resets. Hover a cell for the boss-by-boss detail. It lists your level-60
 characters, plus anyone else who holds a lockout.
 
+![The Raid Lockouts tab: Barrow Deeps, Hyjal Summit and Onyxia's Lair, with the active saves and the characters tracked along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/raids.jpg)
+
+*The Raid Lockouts tab before any character has a raid to show: no level-60 character and no lockout yet.*
+
 ### How far along are my Legacy Challenges?
 
-The **Legacy** tab shows Forever's Legacy Challenges for your whole Battle.net account: their
+The **Legacy Challenges** tab shows Forever's Legacy Challenges for your whole Battle.net account: their
 progress is shared by every character on it, so any of them shows the same.
 
 - **Classes** and **Tradeskills**: each class's level 25, 45 and 60 challenges with your highest
@@ -118,9 +122,9 @@ progress is shared by every character on it, so any of them shows the same.
 - **Legacy Points** along the bottom: your total, a bar coloured by reward, and the next reward
   with the points still to go.
 
-![The Legacy tab: a Classes grid and a Tradeskills grid with each tier's progress, the Dungeons and Raids challenges with their parts, and the Legacy Points bar along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/legacy.jpg)
+![The Legacy Challenges tab: a Classes grid and a Tradeskills grid with each tier's progress, the Dungeons and Raids challenges with their parts, and the Legacy Points bar along the bottom](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/legacy.jpg)
 
-*The Legacy tab: the challenges, the alt closest to each one, and the points along the bottom.*
+*The Legacy Challenges tab: the challenges, the alt closest to each one, and the points along the bottom.*
 
 Star the challenges you're after (click a grid cell, or the star on a row), and the **Bucket
 List** view lists them with the character closest to each, a progress bar and what's left ("Gain
@@ -155,9 +159,9 @@ can ever do there, for its faction, race and class, at any level.
   counted under another zone names it ("counted under Blackrock Spire"). A raid with no quest counted for a character shows its steps
   done, dimmed, such as "0/15". The steps stay counted once, under their own zones.
 
-![The Loremaster tab: a map zoomed into the Wetlands with Excavation Site's entrance pinned, a card with 5 of 5 quests done, and a grid of dungeons with each character's progress](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/loremaster.jpg)
+![The Loremaster tab: the map of Orgrimmar, a card with 11 of 62 quests done, and the zones of Kalimdor with each character's progress](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/loremaster.jpg)
 
-*The Loremaster tab: a dungeon's entrance on the map, its card, and every character's progress.*
+*The Loremaster tab: a zone on the map, its card for one character, and every character's progress by zone.*
 
 Zone, dungeon, raid, battleground and profession quests count, breadcrumbs included. Repeatable
 quests, holiday quests and quests not in the game don't. A quest a character can no longer take
@@ -193,6 +197,10 @@ total, and the per-character list on hover. Left-click opens AltStable, right-cl
 ![The sheet's gear view: the item level of every equipped slot for each character, coloured by quality](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-gear.jpg)
 
 *Gear: the item level in every slot, for every character.*
+
+![The sheet's skill view: each character's level in every profession and secondary skill](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-skills.jpg)
+
+*Skill levels: every profession and secondary skill, for every character.*
 
 ![The sheet's reputation view: each character's standing with Vanilla and Forever factions](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-reputations.jpg)
 
@@ -234,9 +242,9 @@ and it doesn't try to match every Altoholic feature.
 3. **Log in on each character once.** AltStable can only read the character you are playing. It
    records it at login and keeps it up to date while you play. A character you haven't logged
    into since installing isn't there yet.
-4. **Open your bank and a mailbox once** on each character for the Warband tab. The game only
+4. **Open your bank and a mailbox once** on each character for the Warband Bank tab. The game only
    lets an addon read them while they're open. Bags are read without asking.
-5. **Open each profession window once** for the Professions tab to know its recipes. Until then,
+5. **Open each profession window once** for the Recipe Book tab to know its recipes. Until then,
    the profession shows as "not scanned".
 
 Raid lockouts come from the game's saved-instance list, which is read at login. Where something
@@ -262,29 +270,29 @@ installed and need to be **online at the same time**.
 
 ## Optional: character portraits and the Companion
 
-The **Roster** tab shows your characters as character cards, or standing together around a
+The **Armory** tab shows your characters as character cards, or standing together around a
 campfire in **camps** of four (up to 50 camps), each with its own backdrop. Click a character for its paper
 doll, stats and talents. **View** opens its talents in the game's own talent frame, read-only,
 as they were when it was last played.
 
-![The Roster's character cards: one full-length portrait per character with its level, and a plain card with the class icon for characters without a portrait yet](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-cards.jpg)
+![The Armory's character cards: one full-length portrait per character with its level, and a plain card with the class icon for characters without a portrait yet](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-cards.jpg)
 
 *Character cards. A character without a portrait gets a plain card with its class icon.*
 
-![A character opened from the Roster: its portrait with the equipped gear around it, and its gold, rested XP, health, mana, attributes and combat stats](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-character.jpg)
+![A character opened from the Armory: its portrait with the equipped gear around it, and its gold, rested XP, talents, Legacy talents, health, mana, attributes and combat stats](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-character.jpg)
 
 *Click a character for its paper doll and stats. The Audit tab beside Char lists its enchants.*
 
-![A camp in the Roster: four characters around a campfire in Dalaran, from portraits made by AltStable Companion, with the camp list beside it](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
+![A camp in the Armory: four characters around a campfire at Mount Hyjal, from portraits made by AltStable Companion, with the camp list beside it](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
 
-*Roster portraits from your own captures, made by the free AltStable Companion.*
+*Armory portraits from your own captures, made by the free AltStable Companion.*
 
 There are three separate pieces here, and only the first is required:
 
 | Piece | What it is | Do you need it? |
 |---|---|---|
-| **AltStable** (this addon) | Tracks and compares your characters in the game, including the Roster | Yes. It's complete on its own |
-| **[AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases)** | A free Windows app that turns your portrait captures into the Roster's character portraits | Only for portraits in the Roster |
+| **AltStable** (this addon) | Tracks and compares your characters in the game, including the Armory | Yes. It's complete on its own |
+| **[AltStable Companion](https://github.com/Spotnick2/AltStableCompanion/releases)** | A free Windows app that turns your portrait captures into the Armory's character portraits | Only for portraits in the Armory |
 | **Enhanced portraits** | A setting in the Companion that asks the Codex CLI on your PC for a nicer picture of each portrait | No. It's off by default and uses your ChatGPT account's usage |
 
 The Companion makes ordinary portraits without any AI. Enhanced portraits are the only part that
@@ -296,7 +304,7 @@ uses one.
 
 ### Your first portrait
 
-Clicking the Roster's hint in the game shows the Companion's link.
+Clicking the Armory's hint in the game shows the Companion's link.
 
 1. Install and start **AltStable Companion** on your PC, and press **Start watching**.
 2. In the game, on the character you want, type `/alts portrait` (or press the spyglass
@@ -342,7 +350,7 @@ The Companion has its own **Check for updates** under **Help → About**.
 | `/alts` | Open the window |
 | `/alts help` | List the commands |
 | `/alts status` | Versions and counts, as one line to copy into a bug report |
-| `/alts portrait` | Capture this character for the Roster |
+| `/alts portrait` | Capture this character for the Armory |
 | `/alts sync` [name] | Sync now, with everyone or one character |
 | `/alts whitelist` [remove] [name] | Who you sync with |
 | `/alts auth`, `/alts allow` / `deny` &lt;name&gt; | Who may ask for your data |
