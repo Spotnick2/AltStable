@@ -23,12 +23,13 @@
     this repo> takes that commit's whole tests/kit.pin (sha, build, api); a
     40-hex sha that is no commit here replaces only sha=. The old pin is
     written into tests/kit.pin for its run and the file is put back byte for
-    byte after it. tests/kit.pin.compare-lock, created atomically before the
+    byte after it; an edit made to it meanwhile is kept, the pin as it was
+    saved in the logs, and the comparison stops (exit 2). tests/kit.pin.compare-lock, created atomically before the
     pin is read and removed after both runs, makes a second -Compare refuse
     to start: it says whether the first is still running, or stopped, and
     then what to do. tests/kit.pin.compare-backup holds the pin while it is
     changed, and exists only once complete. Each side's full output
-    is kept in a WowTestKit-compare-<time> folder in %TEMP%. Exit 0: nothing
+    is kept in a WowTestKit-compare-<time>-<pid> folder in %TEMP%. Exit 0: nothing
     differs and every run passed; 1: something differs, or a run failed (its
     identical lines prove nothing); 2: the comparison could not run.
 #>
@@ -152,6 +153,40 @@ function New-WowTestKitLock {
     return $true
 }
 
+# A comparison's own log folder in $Root: the time, this process's id, and a
+# number if that's taken. Created without -Force, so two comparisons never
+# share one, even started in the same second (#121).
+function New-WowTestKitLogDir {
+    param([string]$Stamp = (Get-Date -Format "yyyyMMdd-HHmmss"), [string]$Root = [IO.Path]::GetTempPath())
+    for ($n = 1; ; $n++) {
+        $dir = Join-Path $Root ("WowTestKit-compare-$Stamp-$PID" + $(if ($n -gt 1) { "-$n" }))
+        try { New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null; return $dir }
+        catch { if (-not (Test-Path -LiteralPath $dir)) { throw } }
+    }
+}
+
+# Replaces the pin's bytes $From with $To, the check and the write through one
+# handle no other writer can open meanwhile (#121): a save can't land between
+# them. On Windows such a save fails instead of being overwritten; elsewhere
+# the share mode is advisory, and an editor or git that replaces the file
+# writes a new one, which the later checks see. $false, with nothing written:
+# the pin doesn't hold $From (or is gone).
+function Switch-WowTestKitPin {
+    param([string]$Path, [byte[]]$From, [byte[]]$To)
+    try { $s = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    catch [IO.FileNotFoundException] { return $false }
+    try {
+        $ms = [IO.MemoryStream]::new()
+        $s.CopyTo($ms)
+        if ([Convert]::ToBase64String($ms.ToArray()) -cne [Convert]::ToBase64String($From)) { return $false }
+        $s.Position = 0
+        $s.SetLength(0)
+        $s.Write($To, 0, $To.Length)
+        $s.Flush($true)
+        return $true
+    } finally { $s.Dispose() }
+}
+
 function Compare-WowTestKit {
     param(
         [Parameter(Mandatory)][string]$Compare,
@@ -211,8 +246,12 @@ function Compare-WowTestKit {
         }
         return 2
     }
-    $newBytes, $madeBackup = $null, $false
-    try {
+    # $ours: tests/kit.pin holds the old pin this run wrote, not yet put back.
+    # $edited: the switch back found the pin edited.
+    $newBytes, $oldBytes, $madeBackup, $logDir, $ours, $edited, $code = $null, $null, $false, $null, $false, $false, $null
+    $b64 = { param($b) if ($b -is [byte[]]) { [Convert]::ToBase64String($b) } }
+    # The exit code is decided after the cleanup below, which can find an edit.
+    try { $code = . {
         if (Test-Path -LiteralPath $backup) {
             Write-Host "$backup is left from an earlier -Compare: $(& $backupAdvice). Then run again." -ForegroundColor Red
             return 2
@@ -251,8 +290,7 @@ function Compare-WowTestKit {
         }
 
         $pwsh = (Get-Process -Id $PID).Path
-        $logDir = Join-Path ([IO.Path]::GetTempPath()) ("WowTestKit-compare-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-        New-Item -ItemType Directory -Force $logDir | Out-Null
+        $logDir = New-WowTestKitLogDir
         $savedKit = $env:WOWTESTKIT
         # One side: tests/run.ps1 as the owner runs it, then the snapshot script
         # against the same kit.
@@ -284,14 +322,27 @@ function Compare-WowTestKit {
             @{ Results = $r; Code = $code; Snapshot = $snap; SnapshotCode = $snapCode }
         }
 
+        # The old pin goes in only over the pin read at the start, and is put
+        # back only while it still holds the old pin this run wrote: anything
+        # else is an edit made meanwhile (an editor, a branch switch, even to
+        # those same bytes), kept, and the comparison stops (#121). The cleanup
+        # below says so.
+        $oldBytes = [Text.UTF8Encoding]::new($false).GetBytes(($oldLines -join "`n") + "`n")
         try {
             try {
-                [IO.File]::WriteAllText($pinPath, (($oldLines -join "`n") + "`n"))
+                if (-not (Switch-WowTestKitPin $pinPath $newBytes $oldBytes)) { return 2 }
+                $ours = $true
                 $oldSide = & $runSide "old"
-            } finally { [IO.File]::WriteAllBytes($pinPath, $newBytes) }
-            $back = [IO.File]::ReadAllBytes($pinPath)
-            if ([Convert]::ToBase64String($back) -cne [Convert]::ToBase64String($newBytes)) { return 2 }
+            } finally {
+                # $ours stays set only if the switch back fails. A refused one
+                # is an edit, even when the pin now holds the startup bytes
+                # again (a git restore): the old run may have read them.
+                if ($ours) { $edited = -not (Switch-WowTestKitPin $pinPath $oldBytes $newBytes); $ours = $false }
+            }
+            # A later edit is the check after the new run's, or the cleanup's.
+            if ($edited) { return 2 }
             $newSide = & $runSide "new"
+            if ((& $bytesOf $pinPath) -cne (& $b64 $newBytes)) { return 2 }
         } finally { $env:WOWTESTKIT = $savedKit }
 
         # The result lines that differ, in the old run's order.
@@ -359,18 +410,30 @@ function Compare-WowTestKit {
         }
         Write-Host "full outputs: $logDir" -ForegroundColor DarkGray
         if ($differ -or $broken) { return 1 } else { return 0 }
-    } finally {
+    } } finally {
         # Released only once the pin is back: until then the lock and the backup
         # stay, and the next -Compare says what to do.
+        $now = if ($madeBackup) { & $bytesOf $pinPath }
         if (-not $madeBackup) {
             Remove-Item -LiteralPath $lockPath   # the pin was never changed
-        } elseif ((& $bytesOf $pinPath) -ceq [Convert]::ToBase64String($newBytes)) {
+        } elseif ($ours -and $now -ceq (& $b64 $oldBytes)) {
+            Write-Host "tests\kit.pin could not be put back: move $backup over it, then delete $lockPath" -ForegroundColor Red
+        } elseif (-not $edited -and $now -ceq (& $b64 $newBytes)) {
             Remove-Item -LiteralPath $backup
             Remove-Item -LiteralPath $lockPath
         } else {
-            Write-Host "tests\kit.pin could not be put back: move $backup over it, then delete $lockPath" -ForegroundColor Red
+            # Someone else's edit (or a restore it refused), kept. The pin as it
+            # was goes to this comparison's logs, so nothing is lost.
+            if (-not $logDir) { $logDir = New-WowTestKitLogDir }
+            $was = Join-Path $logDir "kit.pin.before"
+            [IO.File]::WriteAllBytes($was, $newBytes)
+            Remove-Item -LiteralPath $backup
+            Remove-Item -LiteralPath $lockPath
+            Write-Host "tests\kit.pin was changed while -Compare ran: it is left as it is, and the comparison stopped. tests\kit.pin as it was before is in $was" -ForegroundColor Red
+            $code = 2   # even if both runs finished: they may have read the edit
         }
     }
+    return $code
 }
 
 # Run directly (not dot-sourced): the comparison.
