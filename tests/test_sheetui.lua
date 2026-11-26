@@ -1324,7 +1324,7 @@ do
             -- A screen too small for even the tab's floor (the Roster's 796
             -- panel): the floor runs while clamped, and must floor the REQUEST,
             -- not replace it with the clamped size (Codex, #150).
-            UIParent:SetWidth(1000)
+            UIParent:SetWidth(sidebar + 796 - 30)
             AltStable.RefitWindow()
             check("a narrow screen clamps the window below the floor",
                   f:GetWidth() < sidebar + 1 + 796, tostring(f:GetWidth()))
@@ -2942,7 +2942,24 @@ do
 
     -- Starts full, from the default.
     AltStableConfig.sidebarCompact = false
-    eq("the sidebar starts full width", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
+    -- Full is as wide as the widest name (#528): the icon's 52px, the name, 16px;
+    -- here the stubs' 40px names, so the 150 floor.
+    local FULL = AltStable.LAYOUT.SIDEBAR_FULL_W
+    eq("the sidebar starts full width, sized to its names", AltStable.LAYOUT.SIDEBAR_WIDTH, 150)
+    eq("  which is the full width", FULL, 150)
+    do
+        local lbl = T.sidebarBtns[1].lbl
+        lbl._GetStringWidth = 120
+        sidebar.Layout()
+        eq("  a longer name widens it: 52 + 120 + 16", AltStable.LAYOUT.SIDEBAR_WIDTH, 188)
+        eq("  the frame too", sidebar:GetWidth(), 187)
+        lbl._GetStringWidth = 400
+        sidebar.Layout()
+        eq("  never past 230", AltStable.LAYOUT.SIDEBAR_WIDTH, 230)
+        lbl._GetStringWidth = nil
+        sidebar.Layout()
+        eq("  and back", AltStable.LAYOUT.SIDEBAR_WIDTH, FULL)
+    end
     -- Set at build from the saved setting, not only on a click.
     -- The toggle is the title bar's (#523), beside Maximize: its glyph's pane
     -- filled while the sidebar is full.
@@ -3022,7 +3039,7 @@ do
         sheetBtn:GetScript("OnClick")(sheetBtn)
         local need = AltStable.GetTitleBarRequiredWidth()
         eq("  the title bar's floor: the sidebar, the name and every button, Columns included", need,
-           230 + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
+           AltStable.LAYOUT.SIDEBAR_FULL_W + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
         -- A name wider than the columns: the window grows to the floor.
         st._GetStringWidth = 1200
         need = AltStable.GetTitleBarRequiredWidth()
@@ -3092,7 +3109,7 @@ do
     check("  with every label hidden", (function()
         for _, b in ipairs(T.sidebarBtns) do if b.lbl:IsShown() then return false end end
         return true end)())
-    eq("a sheet tab's window narrows by what the sidebar gave back", f:GetWidth(), fullW - 174)
+    eq("a sheet tab's window narrows by what the sidebar gave back", f:GetWidth(), fullW - (FULL - 56))
     -- The grid hangs off the sidebar's edge, so it slides while the sidebar animates.
     local _, bodyRel = f.bodyScroll:GetPoint(1)
     check("the grid is anchored to the sidebar's edge", bodyRel == sidebar)
@@ -3114,6 +3131,14 @@ do
                                OnActivate = function() end })
     local late = T.sidebarBtns[#T.sidebarBtns]
     check("a late plugin's label is hidden in a compact sidebar", not late.lbl:IsShown())
+    -- A longer name arriving while compact sizes the full width for later,
+    -- and leaves the compact sidebar as it is (#528).
+    late.lbl._GetStringWidth = 120
+    sidebar.Layout()
+    eq("  a longer name while compact: still icons only", AltStable.LAYOUT.SIDEBAR_WIDTH, 56)
+    eq("  the full width noted for later", AltStable.LAYOUT.SIDEBAR_FULL_W, 188)
+    late.lbl._GetStringWidth = nil
+    sidebar.Layout()
 
     -- On a plugin tab the window keeps its size and the plugin re-lays out.
     pbtn:GetScript("OnClick")(pbtn)
@@ -3378,7 +3403,7 @@ do
     local tick = function(dt) local fn = runner:GetScript("OnUpdate"); if fn then fn(runner, dt) end end
     check("collapsing animates", runner and runner:GetScript("OnUpdate") ~= nil)
     eq("  the setting is saved at once", AltStableConfig.sidebarCompact, true)
-    eq("  and the sidebar starts from where it was", sidebar:GetWidth(), 229)
+    eq("  and the sidebar starts from where it was", sidebar:GetWidth(), FULL - 1)
     eq("  as does the window", f:GetWidth(), startW)
     check("  without clipping its children", not f:DoesClipChildren())
     tick(0.1)
@@ -3391,7 +3416,7 @@ do
     tick(0.2)
     check("then it stops", runner:GetScript("OnUpdate") == nil)
     eq("  on the compact sidebar", sidebar:GetWidth(), 55)
-    eq("  in the narrowed window", f:GetWidth(), startW - 174)
+    eq("  in the narrowed window", f:GetWidth(), startW - (FULL - 56))
     check("  with the labels gone, at full alpha for next time",
           not sheetBtn.lbl:IsShown() and sheetBtn.lbl:GetAlpha() == 1)
     local ep, _, _, ex, ey = f:GetPoint(1)
@@ -3407,12 +3432,12 @@ do
           tostring(sidebar:GetWidth()))
     tick(0.3)
     eq("  and lands on the latest choice", sidebar:GetWidth(), 55)
-    eq("  in the window that choice wants", f:GetWidth(), startW - 174)
+    eq("  in the window that choice wants", f:GetWidth(), startW - (FULL - 56))
 
     -- Maximize travels too, and lands maximized, centred.
     AltStable.SetWindowMaximized(true)
     check("maximizing animates", runner:GetScript("OnUpdate") ~= nil)
-    check("  from the window's size", f:GetWidth() == startW - 174)
+    check("  from the window's size", f:GetWidth() == startW - (FULL - 56))
     tick(0.3)
     eq("  to the display's", f:GetWidth(), limW)
     local cp = f:GetPoint(1)

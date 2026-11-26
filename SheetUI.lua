@@ -12,7 +12,7 @@ local HEADER_HEIGHT = 28     -- compact; gear/skills/rep icon sections override 
 -- variable, not a constant: everything beside the sidebar is anchored to its
 -- right EDGE, or re-anchored from this on every layout pass, so collapsing it
 -- moves the content with it. LAYOUT.SIDEBAR_WIDTH follows it for the plugins.
-local SIDEBAR_FULL_W    = 230
+local SIDEBAR_FULL_W    = 230   -- the most; sized to the widest name (sidebar.Layout, #528)
 local SIDEBAR_COMPACT_W = 56     -- the 36px icon at x=10, and the same on its right
 local SIDEBAR_WIDTH = SIDEBAR_FULL_W
 local FRAME_W       = 1150   -- default; sections override via preferW
@@ -38,6 +38,7 @@ end
 AltStable.LAYOUT = AltStable.LAYOUT or {}
 AltStable.LAYOUT.TITLE_H        = TITLE_H
 AltStable.LAYOUT.SIDEBAR_WIDTH  = SIDEBAR_WIDTH
+AltStable.LAYOUT.SIDEBAR_FULL_W = SIDEBAR_FULL_W
 AltStable.LAYOUT.HEADER_HEIGHT  = HEADER_HEIGHT
 AltStable.LAYOUT.ROW_HEIGHT     = ROW_HEIGHT
 AltStable.LAYOUT.FOOTER_HEIGHT  = 22
@@ -3240,6 +3241,23 @@ local function CreateFrameIfNeeded()
     AltStable.NAV_ORDER = { summary = 1, roster = 2, gear = 3, skills = 4, professions = 5,
                             warband = 6, rep = 7, instances = 8, loremaster = 9, legacy = 10 }
     function sidebar.Layout()
+        -- As wide as its widest name (#528, the owner's mock-up): the icon's
+        -- column, the name and a margin, between 150 and the old 230.
+        local widest = 0
+        for _, b in ipairs(sidebarBtns) do
+            local w = b.lbl and tonumber(b.lbl:GetStringWidth()) or 0
+            if w > widest then widest = w end
+        end
+        local full = math.max(150, math.min(230, math.ceil(52 + widest + 16)))
+        if full ~= SIDEBAR_FULL_W then
+            SIDEBAR_FULL_W = full
+            AltStable.LAYOUT.SIDEBAR_FULL_W = full
+            if not (AltStableConfig and AltStableConfig.sidebarCompact) then
+                SIDEBAR_WIDTH = full
+                AltStable.LAYOUT.SIDEBAR_WIDTH = full
+                sidebar:SetWidth(full - 1)
+            end
+        end
         local list = {}
         for i, b in ipairs(sidebarBtns) do
             if b.sectionId == "options" then sidebar.optBtn = b else list[#list + 1] = { b = b, i = i } end
