@@ -2347,6 +2347,11 @@ local function ComputeContentSize()
     -- width because the h-scrollbar lives below the body, not beside it.
     local w = SIDEBAR_WIDTH + (FROZEN_WIDTH or 156) + GetScrollableWidth()
             + (needsV and SCROLLBAR_GUTTER_W or 4)
+    -- Never narrower than the title beside the title bar's buttons: with the
+    -- sidebar compact and only Name shown, Columns would cover "AltStable"
+    -- (Codex review of #524). The grid fills a wider window.
+    local titleMin = AltStable.GetTitleBarRequiredWidth and AltStable.GetTitleBarRequiredWidth() or 0
+    if w < titleMin then w = titleMin end
 
     -- Whether h-scroll is needed is decided by content width vs the
     -- viewport width AT THIS frame width — which we just computed.
@@ -2992,8 +2997,37 @@ local function CreateFrameIfNeeded()
         colBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
         if GameTooltip:IsOwned(colBtn) then GameTooltip:Hide() end
     end)
+    -- The title's room (Codex review of #524). Centred while it clears the
+    -- buttons; moved to the left edge when a narrow window would put them over
+    -- it. And a sheet tab is never narrower than the title beside them
+    -- (ComputeContentSize).
+    local TITLE_PAD = 12
+    local function ControlsWidth()
+        -- From the right edge: Close's inset and Close, Maximize, the toggle,
+        -- the gap, the capture button, then Columns when it shows.
+        local w = 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18
+        if colBtn:IsShown() then w = w + 6 + (colBtn:GetWidth() or 0) end
+        return w
+    end
+    local function TitleWidth() return tonumber(titleText:GetStringWidth()) or 0 end
+    local function PlaceTitle()
+        local w, tw = titleBar:GetWidth() or 0, TitleWidth()
+        titleText:ClearAllPoints()
+        if w > 0 and (w + tw) / 2 + TITLE_PAD > w - ControlsWidth() then
+            titleText:SetPoint("LEFT", titleBar, "LEFT", TITLE_PAD, 0)
+        else
+            titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
+        end
+    end
+    titleBar:HookScript("OnSizeChanged", PlaceTitle)
+    function AltStable.GetTitleBarRequiredWidth()
+        return TITLE_PAD + TitleWidth() + TITLE_PAD + ControlsWidth()
+    end
+    AltStable._test.PlaceTitle = PlaceTitle
+
     function AltStable.UpdateColumnsButton()
         colBtn:SetShown(activeSection ~= nil and activeSection.fields ~= nil)
+        PlaceTitle()
     end
     AltStable.UpdateColumnsButton()
     AltStable._test.colBtn, AltStable._test.colArrow = colBtn, colArrow

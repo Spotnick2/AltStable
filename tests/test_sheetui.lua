@@ -2950,6 +2950,44 @@ do
     -- Nothing is pinned under the buttons now: the floor is the buttons and 8px.
     eq("  the sidebar needs its buttons' height and 8px", AltStable.GetSidebarRequiredHeight(),
        -sidebar._pluginBtnY + 8)
+    -- The title clears the buttons (Codex review of #524): moved to the left
+    -- edge on a narrow window, centred on a wide one; and a sheet tab is never
+    -- narrower than the title beside the buttons.
+    do
+        local tb, tt = T.titleBar, T.titleText
+        local realW = tb.GetWidth
+        tb.GetWidth = function() return 230 end
+        T.PlaceTitle()
+        local tp = tt:GetPoint(1)
+        eq("  a narrow title bar: the title at the left edge", tp, "LEFT")
+        tb.GetWidth = function() return 900 end
+        T.PlaceTitle()
+        tp = tt:GetPoint(1)
+        eq("  a wide one: centred", tp, "CENTER")
+        -- Placed again when the bar resizes, and when a tab switch shows or
+        -- hides Columns.
+        tb.GetWidth = function() return 230 end
+        tb:GetScript("OnSizeChanged")(tb)
+        eq("  placed again when the title bar resizes", (tt:GetPoint(1)), "LEFT")
+        tb.GetWidth = function() return 900 end
+        AltStable.UpdateColumnsButton()
+        eq("  and when Columns shows or hides", (tt:GetPoint(1)), "CENTER")
+        tb.GetWidth = realW
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        check("  (on a sheet tab, Columns shows)", T.colBtn:IsShown())
+        local need = AltStable.GetTitleBarRequiredWidth()
+        eq("  the title bar's floor: the title, its padding and every button, Columns included", need,
+           12 + tt:GetStringWidth() + 12 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
+        -- A title wider than the columns: the window grows to the floor.
+        tt._GetStringWidth = 1500
+        need = AltStable.GetTitleBarRequiredWidth()
+        sheetBtn:GetScript("OnClick")(sheetBtn)
+        AltStable.RefreshSheet()
+        check("  a sheet tab's window is at least that wide", f:GetWidth() >= need,
+              tostring(f:GetWidth()) .. " vs " .. tostring(need))
+        tt._GetStringWidth = nil
+        AltStable.RefreshSheet()
+    end
     local _, navRel = T.navBtn:GetPoint(1)
     check("  the toggle beside Maximize", navRel == T.maxBtn)
     local _, capRel = T.refBtn:GetPoint(1)
@@ -4108,12 +4146,19 @@ do
     -- A right-click never reaches a header now: it is not registered for one.
     check("headers hear only the left button", not WoW.handlesClick(hdrs0[1], "RightButton")
           and not WoW.handlesClick(T.NameHeader(), "RightButton") and WoW.handlesClick(hdrs0[1], "LeftButton"))
+    T.colBtn._GetRight, T.colBtn._GetBottom = 900, 700
+    T.MenuRoot():SetSize(1920, 1080)
     OpenColumns()
     check("the Columns button opens the column menu", T.MenuIsShown())
     check("  titled with the tab", MenuHas("Account Summary columns") ~= nil)
-    local mp, mrel, mrelp = T.MenuPanel():GetPoint(1)
-    check("  hung under the button, right-aligned", mp == "TOPRIGHT" and mrel == T.colBtn and mrelp == "BOTTOMRIGHT",
-          tostring(mp) .. " " .. tostring(mrelp))
+    -- Under the button, right-aligned with it, clamped to the screen
+    -- (test_charactermenu has the clamp's cases).
+    local mp, mrel, _, mx, my = T.MenuPanel():GetPoint(1)
+    -- The button's edges are in the sheet's scale, the menu's offsets in its own.
+    local k = T.colBtn:GetEffectiveScale() / T.MenuPanel():GetEffectiveScale()
+    check("  hung under the button, right-aligned", mp == "TOPLEFT" and mrel == T.MenuRoot()
+          and math.abs(mx - (900 * k - T.MenuPanel():GetWidth())) < 0.01 and math.abs(my - (700 * k - 4)) < 0.01,
+          tostring(mp) .. " " .. tostring(mx) .. "," .. tostring(my))
     check("  its arrow up while open", T.colBtn._open == true)
     eq("  Name is listed, checked", MenuHas("Name"), ON .. "Name")
     local nameEntry = T.MenuEntry("__name")
@@ -4144,8 +4189,9 @@ do
     check("  and the arrow points down again", T.colBtn._open == false)
     -- The next menu, a character's, opens at the cursor, not under the button.
     AltStable.ShowCharacterMenu(AltStableDB.a)
-    local _, crel = T.MenuPanel():GetPoint(1)
-    check("a character menu after it opens at the cursor", T.MenuIsShown() and crel ~= T.colBtn)
+    local _, _, _, cx = T.MenuPanel():GetPoint(1)
+    check("a character menu after it opens at the cursor, not under the button",
+          T.MenuIsShown() and math.abs(cx - (900 * k - T.MenuPanel():GetWidth())) > 1, tostring(cx))
     T.MenuEscape()
 
     Open("gear")
