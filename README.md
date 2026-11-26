@@ -279,7 +279,7 @@ as they were when it was last played.
 
 *Character cards. A character without a portrait gets a plain card with its class icon.*
 
-![A character opened from the Armory: its portrait with the equipped gear around it, and its gold, rested XP, health, mana, attributes and combat stats](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-character.jpg)
+![A character opened from the Armory: its portrait with the equipped gear around it, and its gold, rested XP, talents, Legacy talents, health, mana, attributes and combat stats](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster-character.jpg)
 
 *Click a character for its paper doll and stats. The Audit tab beside Char lists its enchants.*
 
