@@ -2950,44 +2950,53 @@ do
     -- Nothing is pinned under the buttons now: the floor is the buttons and 8px.
     eq("  the sidebar needs its buttons' height and 8px", AltStable.GetSidebarRequiredHeight(),
        -sidebar._pluginBtnY + 8)
-    -- The title clears the buttons (Codex review of #524): moved to the left
-    -- edge on a narrow window, centred on a wide one; and a sheet tab is never
-    -- narrower than the title beside the buttons.
+    -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
+    -- bar in the accent on its edge, then the tab's name, which stops short of
+    -- the buttons. A sheet tab is never narrower than all of it (Codex review
+    -- of #524).
     do
-        local tb, tt = T.titleBar, T.titleText
-        local realW = tb.GetWidth
-        tb.GetWidth = function() return 230 end
-        T.PlaceTitle()
-        local tp = tt:GetPoint(1)
-        eq("  a narrow title bar: the title at the left edge", tp, "LEFT")
-        tb.GetWidth = function() return 900 end
-        T.PlaceTitle()
-        tp = tt:GetPoint(1)
-        eq("  a wide one: centred", tp, "CENTER")
-        -- Placed again when the bar resizes, and when a tab switch shows or
-        -- hides Columns.
-        tb.GetWidth = function() return 230 end
-        tb:GetScript("OnSizeChanged")(tb)
-        eq("  placed again when the title bar resizes", (tt:GetPoint(1)), "LEFT")
-        tb.GetWidth = function() return 900 end
-        AltStable.UpdateColumnsButton()
-        eq("  and when Columns shows or hides", (tt:GetPoint(1)), "CENTER")
-        tb.GetWidth = realW
+        local tt, sep, st = T.titleText, T.titleSep, T.sectionText
         sheetBtn:GetScript("OnClick")(sheetBtn)
-        check("  (on a sheet tab, Columns shows)", T.colBtn:IsShown())
+        local p1, r1, rp1 = tt:GetPoint(1)
+        check("  the sidebar full: AltStable centred over it", p1 == "CENTER" and r1 == sidebar and rp1 == "TOP",
+              tostring(p1) .. " " .. tostring(rp1))
+        local p2, r2, rp2 = sep:GetPoint(1)
+        check("  the bar on the sidebar's edge", p2 == "CENTER" and r2 == sidebar and rp2 == "TOPRIGHT")
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        local c = sep._colorTexture or {}
+        check("  in the accent", c[1] == ar and c[2] == ag and c[3] == ab)
+        local p3, r3 = st:GetPoint(1)
+        check("  the tab's name after it", p3 == "LEFT" and r3 == sep)
+        eq("  saying which tab", st:GetText(), sheetBtn.lbl:GetText())
+        local _, rr = st:GetPoint(2)
+        check("  and stopping short of Columns", rr == T.colBtn)
+        check("  cut short, never wrapped", st._wrap == false)
+        pbtn:GetScript("OnClick")(pbtn)
+        eq("  a plugin tab: its name", st:GetText(), "Test 150")
+        _, rr = st:GetPoint(2)
+        check("  stopping short of the capture button, Columns hidden", rr == T.refBtn)
+        sheetBtn:GetScript("OnClick")(sheetBtn)
         local need = AltStable.GetTitleBarRequiredWidth()
-        eq("  the title bar's floor: the title, its padding and every button, Columns included", need,
-           12 + tt:GetStringWidth() + 12 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
-        -- A title wider than the columns: the window grows to the floor.
-        tt._GetStringWidth = 1500
+        eq("  the title bar's floor: the sidebar, the name and every button, Columns included", need,
+           230 + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
+        -- A name wider than the columns: the window grows to the floor.
+        st._GetStringWidth = 1200
         need = AltStable.GetTitleBarRequiredWidth()
-        sheetBtn:GetScript("OnClick")(sheetBtn)
         AltStable.RefreshSheet()
         check("  a sheet tab's window is at least that wide", f:GetWidth() >= need,
               tostring(f:GetWidth()) .. " vs " .. tostring(need))
-        tt._GetStringWidth = nil
+        st._GetStringWidth = nil
         AltStable.RefreshSheet()
     end
+    -- The bar between the sheet's buttons and the window's.
+    local sp, srel, srp, sx = T.ctlSep:GetPoint(1)
+    check("  a bar between the capture button and the toggle", sp == "CENTER" and srel == T.navBtn
+          and srp == "LEFT" and sx == -7)
+    -- The chevron on Columns: a "v" closed, a "^" open.
+    local a, b, c = T.ChevronPoints(false)
+    check("  the Columns chevron points down while closed", b[2] < a[2] and b[2] < c[2] and a[1] < b[1] and b[1] < c[1])
+    a, b, c = T.ChevronPoints(true)
+    check("  and up while open", b[2] > a[2] and b[2] > c[2])
     local _, navRel = T.navBtn:GetPoint(1)
     check("  the toggle beside Maximize", navRel == T.maxBtn)
     local _, capRel = T.refBtn:GetPoint(1)
@@ -3029,6 +3038,11 @@ do
     local fullW = f:GetWidth()
     T.navBtn:GetScript("OnClick")(T.navBtn)
     eq("the toggle collapses the sidebar", AltStableConfig.sidebarCompact, true)
+    -- Compact, the title runs from the left: AltStable, the bar, the tab's name.
+    local cp1, cr1, crp1 = T.titleText:GetPoint(1)
+    check("  the title moves to the left edge", cp1 == "LEFT" and cr1 == T.titleBar and crp1 == "LEFT")
+    local cp2, cr2 = T.titleSep:GetPoint(1)
+    check("  with the bar right after it", cp2 == "LEFT" and cr2 == T.titleText)
     eq("  to icons only", AltStable.LAYOUT.SIDEBAR_WIDTH, 56)
     eq("  the frame itself", sidebar:GetWidth(), 55)
     check("  with every label hidden", (function()

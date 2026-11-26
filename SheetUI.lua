@@ -2708,15 +2708,26 @@ local function CreateFrameIfNeeded()
     -- no coverage at all, and deleting the call changed nothing the suite saw.
     AltStable._test.sidebarBtns = sidebarBtns
 
-    -- Title text — centered across the full width of the title bar.
-    local titleText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
+    -- The title (#523, the owner's mock-up): "AltStable" over the sidebar, a
+    -- bar in the accent at the sidebar's edge, then the tab's name. Placed by
+    -- PlaceTitle, below, once the buttons and the sidebar exist.
+    local titleText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    titleText:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
     titleText:SetText("AltStable")
-    -- Centred over a band the world shows through, so it needs the shadow.
+    -- Over a band the world shows through, so it needs the shadow.
     AltStable.SkinText(titleText)
-    AltStable._test.titleText = titleText
+    local titleSep = titleBar:CreateTexture(nil, "OVERLAY")
+    titleSep:SetSize(1, 16)
+    local sectionText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    sectionText:SetJustifyH("LEFT")
+    sectionText:SetWordWrap(false)     -- a narrow window cuts it short, never wraps it
+    AltStable.SkinText(sectionText)
+    AltStable._test.titleText, AltStable._test.titleSep, AltStable._test.sectionText = titleText, titleSep, sectionText
     local function UpdateTitleTextColor()
         titleText:SetTextColor(AltStable.SkinTitleColor())
+        sectionText:SetTextColor(AltStable.SkinTitleColor())
+        local ar, ag, ab = AltStable.GetAccentRGB()
+        titleSep:SetColorTexture(ar, ag, ab, 0.9)
     end
     UpdateTitleTextColor()
     AltStable.RegisterThemeCallback(UpdateTitleTextColor)
@@ -2797,55 +2808,66 @@ local function CreateFrameIfNeeded()
     AltStable._test.maxBtn = maxBtn
     AltStable._test.MaxGlyphs = function() return glyphMax, glyphRestore end
 
+    -- Set in the blocks below, used by the sidebar's mode and the tab switch.
+    local ShowNavGlyph, PlaceTitle
+
     -- Collapse / expand the sidebar (#150), beside Maximize (#523; it was a
     -- chevron at the sidebar's foot). The glyph is drawn: a window with its
     -- left pane, filled while the sidebar is full, empty while it's icons only.
     local navBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
-    navBtn:SetSize(18, 18)
-    navBtn:SetPoint("RIGHT", maxBtn, "LEFT", -6, 0)
-    navBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
-    AltStable.ApplyBackdrop(navBtn, 0.12, 0.12, 0.12, 1)
-    local function NavEdge(x1, y1, x2, y2)
-        local t = navBtn:CreateTexture(nil, "OVERLAY")
-        t:SetColorTexture(0.87, 0.87, 0.87, 1)
-        t:SetPoint("TOPLEFT", navBtn, "CENTER", x1, y1)
-        t:SetPoint("BOTTOMRIGHT", navBtn, "CENTER", x2, y2)
-        return t
+    do   -- its own block: this function is at Lua 5.1's 200 locals
+        navBtn:SetSize(18, 18)
+        navBtn:SetPoint("RIGHT", maxBtn, "LEFT", -6, 0)
+        navBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
+        AltStable.ApplyBackdrop(navBtn, 0.12, 0.12, 0.12, 1)
+        local function NavEdge(x1, y1, x2, y2)
+            local t = navBtn:CreateTexture(nil, "OVERLAY")
+            t:SetColorTexture(0.87, 0.87, 0.87, 1)
+            t:SetPoint("TOPLEFT", navBtn, "CENTER", x1, y1)
+            t:SetPoint("BOTTOMRIGHT", navBtn, "CENTER", x2, y2)
+            return t
+        end
+        NavEdge(-6, 5, 6, 4)     -- top
+        NavEdge(-6, -4, 6, -5)   -- bottom
+        NavEdge(-6, 5, -5, -5)   -- left
+        NavEdge(5, 5, 6, -5)     -- right
+        NavEdge(-2, 5, -1, -5)   -- the pane's edge
+        local navPane = NavEdge(-5, 4, -2, -4)
+        navPane:SetColorTexture(0.87, 0.87, 0.87, 0.75)
+        -- Set from the sidebar's mode (ApplySidebarMode, below).
+        function ShowNavGlyph(compact)
+            if compact then navPane:Hide() else navPane:Show() end
+        end
+        local function NavTipShow()
+            GameTooltip:SetOwner(navBtn, "ANCHOR_BOTTOMLEFT")
+            GameTooltip:SetText(AltStableConfig.sidebarCompact and "Expand menu" or "Collapse menu")
+            GameTooltip:Show()
+        end
+        navBtn:SetScript("OnClick", function()
+            AltStable.SetSidebarCompact(not AltStableConfig.sidebarCompact)
+            if GameTooltip:IsOwned(navBtn) then NavTipShow() end
+        end)
+        navBtn:SetScript("OnEnter", function()
+            navBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
+            NavTipShow()
+        end)
+        navBtn:SetScript("OnLeave", function()
+            navBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
+            if GameTooltip:IsOwned(navBtn) then GameTooltip:Hide() end
+        end)
+        AltStable._test.navBtn, AltStable._test.navPane = navBtn, navPane
     end
-    NavEdge(-6, 5, 6, 4)     -- top
-    NavEdge(-6, -4, 6, -5)   -- bottom
-    NavEdge(-6, 5, -5, -5)   -- left
-    NavEdge(5, 5, 6, -5)     -- right
-    NavEdge(-2, 5, -1, -5)   -- the pane's edge
-    local navPane = NavEdge(-5, 4, -2, -4)
-    navPane:SetColorTexture(0.87, 0.87, 0.87, 0.75)
-    -- Set from the sidebar's mode (ApplySidebarMode, below).
-    local function ShowNavGlyph(compact)
-        if compact then navPane:Hide() else navPane:Show() end
-    end
-    local function NavTipShow()
-        GameTooltip:SetOwner(navBtn, "ANCHOR_BOTTOMLEFT")
-        GameTooltip:SetText(AltStableConfig.sidebarCompact and "Expand menu" or "Collapse menu")
-        GameTooltip:Show()
-    end
-    navBtn:SetScript("OnClick", function()
-        AltStable.SetSidebarCompact(not AltStableConfig.sidebarCompact)
-        if GameTooltip:IsOwned(navBtn) then NavTipShow() end
-    end)
-    navBtn:SetScript("OnEnter", function()
-        navBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
-        NavTipShow()
-    end)
-    navBtn:SetScript("OnLeave", function()
-        navBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
-        if GameTooltip:IsOwned(navBtn) then GameTooltip:Hide() end
-    end)
-    AltStable._test.navBtn, AltStable._test.navPane = navBtn, navPane
 
     local refBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
     refBtn:SetSize(18, 18)
-    -- A gap between the window's own controls and the sheet's.
+    -- A gap between the window's own controls and the sheet's, with a bar in
+    -- it (#523, the owner's mock-up).
     refBtn:SetPoint("RIGHT", navBtn, "LEFT", -14, 0)
+    do local ctlSep = titleBar:CreateTexture(nil, "OVERLAY")
+    ctlSep:SetSize(1, 16)
+    ctlSep:SetPoint("CENTER", navBtn, "LEFT", -7, 0)
+    ctlSep:SetColorTexture(1, 1, 1, 0.25)
+    AltStable._test.ctlSep = ctlSep end
     refBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
     AltStable.ApplyBackdrop(refBtn, 0.12, 0.12, 0.12, 1)
     local refIcon = refBtn:CreateTexture(nil, "OVERLAY")
@@ -2962,75 +2984,113 @@ local function CreateFrameIfNeeded()
     -- Choosing the columns (#378), from the title bar (#523): the tab's column
     -- menu, hung under the button, its arrow up while it's open. Only on a
     -- sheet tab: a plugin has no columns to choose.
-    local colBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
-    colBtn:SetHeight(18)
-    colBtn:SetPoint("RIGHT", refBtn, "LEFT", -6, 0)
-    colBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
-    AltStable.ApplyBackdrop(colBtn, 0.12, 0.12, 0.12, 1)
-    local colLbl = colBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    colLbl:SetPoint("LEFT", colBtn, "LEFT", 7, 0)
-    colLbl:SetText("Columns")
-    local colArrow = colBtn:CreateTexture(nil, "OVERLAY")
-    colArrow:SetSize(9, 9)
-    colArrow:SetPoint("LEFT", colLbl, "RIGHT", 4, 0)
-    colArrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
-    -- The file points up: flipped while closed, as is while open.
-    local function ColArrow(open)
-        colArrow:SetTexCoord(0, 1, open and 0 or 1, open and 1 or 0)
-        colBtn._open = open and true or false
-    end
-    ColArrow(false)
-    local lw = colLbl.GetStringWidth and tonumber(colLbl:GetStringWidth()) or 0
-    colBtn:SetWidth(math.max(64, 7 + lw + 4 + 9 + 7))
-    colBtn:SetScript("OnClick", function()
-        if GameTooltip:IsOwned(colBtn) then GameTooltip:Hide() end
-        if OpenColumnMenu(colBtn, function() ColArrow(false) end) then ColArrow(true) end
-    end)
-    colBtn:SetScript("OnEnter", function()
-        colBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
-        GameTooltip:SetOwner(colBtn, "ANCHOR_BOTTOMLEFT")
-        GameTooltip:SetText("Columns")
-        GameTooltip:AddLine("Choose the columns this tab shows.", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    colBtn:SetScript("OnLeave", function()
-        colBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
-        if GameTooltip:IsOwned(colBtn) then GameTooltip:Hide() end
-    end)
-    -- The title's room (Codex review of #524). Centred while it clears the
-    -- buttons; moved to the left edge when a narrow window would put them over
-    -- it. And a sheet tab is never narrower than the title beside them
-    -- (ComputeContentSize).
-    local TITLE_PAD = 12
-    local function ControlsWidth()
-        -- From the right edge: Close's inset and Close, Maximize, the toggle,
-        -- the gap, the capture button, then Columns when it shows.
-        local w = 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18
-        if colBtn:IsShown() then w = w + 6 + (colBtn:GetWidth() or 0) end
-        return w
-    end
-    local function TitleWidth() return tonumber(titleText:GetStringWidth()) or 0 end
-    local function PlaceTitle()
-        local w, tw = titleBar:GetWidth() or 0, TitleWidth()
-        titleText:ClearAllPoints()
-        if w > 0 and (w + tw) / 2 + TITLE_PAD > w - ControlsWidth() then
-            titleText:SetPoint("LEFT", titleBar, "LEFT", TITLE_PAD, 0)
-        else
-            titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
+    -- Its own block: this function is at Lua 5.1's 200 locals.
+    do
+        local colBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
+        colBtn:SetHeight(18)
+        colBtn:SetPoint("RIGHT", refBtn, "LEFT", -6, 0)
+        colBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
+        AltStable.ApplyBackdrop(colBtn, 0.12, 0.12, 0.12, 1)
+        local colLbl = colBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        colLbl:SetPoint("LEFT", colBtn, "LEFT", 7, 0)
+        colLbl:SetText("Columns")
+        -- A chevron (the owner's mock-up), down while closed and up while open:
+        -- two lines meeting in the middle of this square. Without lines, the
+        -- headers' sort arrow stands in.
+        local colArrow = colBtn:CreateTexture(nil, "OVERLAY")
+        colArrow:SetSize(9, 9)
+        colArrow:SetPoint("LEFT", colLbl, "RIGHT", 4, 0)
+        colArrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+        local chevron
+        if colBtn.CreateLine then
+            local l1, l2 = colBtn:CreateLine(nil, "OVERLAY"), colBtn:CreateLine(nil, "OVERLAY")
+            if l1 and l2 and l1.SetStartPoint then
+                chevron = { l1, l2 }
+                for _, l in ipairs(chevron) do
+                    l:SetThickness(1.5)
+                    l:SetColorTexture(1, 0.82, 0, 1)
+                end
+                colArrow:SetAlpha(0)       -- kept as the lines' anchor
+            end
         end
-    end
-    titleBar:HookScript("OnSizeChanged", PlaceTitle)
-    function AltStable.GetTitleBarRequiredWidth()
-        return TITLE_PAD + TitleWidth() + TITLE_PAD + ControlsWidth()
-    end
-    AltStable._test.PlaceTitle = PlaceTitle
+        -- The chevron's three points around its centre: a "v" closed, a "^" open.
+        local function ChevronPoints(open)
+            local d = open and -1 or 1
+            return { -3.5, 1.75 * d }, { 0, -1.75 * d }, { 3.5, 1.75 * d }
+        end
+        local function ColArrow(open)
+            if chevron then
+                local a, b, c = ChevronPoints(open)
+                chevron[1]:SetStartPoint("CENTER", colArrow, a[1], a[2])
+                chevron[1]:SetEndPoint("CENTER", colArrow, b[1], b[2])
+                chevron[2]:SetStartPoint("CENTER", colArrow, b[1], b[2])
+                chevron[2]:SetEndPoint("CENTER", colArrow, c[1], c[2])
+            else
+                -- The file points up: flipped while closed, as is while open.
+                colArrow:SetTexCoord(0, 1, open and 0 or 1, open and 1 or 0)
+            end
+            colBtn._open = open and true or false
+        end
+        AltStable._test.ChevronPoints = ChevronPoints
+        ColArrow(false)
+        local lw = colLbl.GetStringWidth and tonumber(colLbl:GetStringWidth()) or 0
+        colBtn:SetWidth(math.max(64, 7 + lw + 4 + 9 + 7))
+        colBtn:SetScript("OnClick", function()
+            if GameTooltip:IsOwned(colBtn) then GameTooltip:Hide() end
+            if OpenColumnMenu(colBtn, function() ColArrow(false) end) then ColArrow(true) end
+        end)
+        colBtn:SetScript("OnEnter", function()
+            colBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
+            GameTooltip:SetOwner(colBtn, "ANCHOR_BOTTOMLEFT")
+            GameTooltip:SetText("Columns")
+            GameTooltip:AddLine("Choose the columns this tab shows.", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        colBtn:SetScript("OnLeave", function()
+            colBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
+            if GameTooltip:IsOwned(colBtn) then GameTooltip:Hide() end
+        end)
+        -- The title's place (#523): with the sidebar full, "AltStable" centred
+        -- over it and the bar on its edge, so the tab's name starts over the grid;
+        -- compact, the three in a row from the left. The tab's name stops short of
+        -- the buttons. And a sheet tab is never narrower than the title beside
+        -- them (ComputeContentSize; Codex review of #524).
+        local TITLE_PAD, SECTION_GAP = 12, 14
+        local function ControlsWidth()
+            -- From the right edge: Close's inset and Close, Maximize, the toggle,
+            -- the gap, the capture button, then Columns when it shows.
+            local w = 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18
+            if colBtn:IsShown() then w = w + 6 + (colBtn:GetWidth() or 0) end
+            return w
+        end
+        local function TextWidth(fs) return tonumber(fs:GetStringWidth()) or 0 end
+        local function Full() return frame.sidebar ~= nil and not (AltStableConfig and AltStableConfig.sidebarCompact) end
+        function PlaceTitle()
+            titleText:ClearAllPoints(); titleSep:ClearAllPoints(); sectionText:ClearAllPoints()
+            if Full() then
+                titleText:SetPoint("CENTER", frame.sidebar, "TOP", 0, TITLE_H / 2)
+                titleSep:SetPoint("CENTER", frame.sidebar, "TOPRIGHT", 0, TITLE_H / 2)
+            else
+                titleText:SetPoint("LEFT", titleBar, "LEFT", TITLE_PAD, 0)
+                titleSep:SetPoint("LEFT", titleText, "RIGHT", TITLE_PAD, 0)
+            end
+            sectionText:SetPoint("LEFT", titleSep, "RIGHT", SECTION_GAP, 0)
+            sectionText:SetPoint("RIGHT", colBtn:IsShown() and colBtn or refBtn, "LEFT", -10, 0)
+            sectionText:SetText(activeSection and activeSection.label or "")
+        end
+        function AltStable.GetTitleBarRequiredWidth()
+            local left = Full() and SIDEBAR_WIDTH or (TITLE_PAD + TextWidth(titleText) + TITLE_PAD)
+            return left + SECTION_GAP + TextWidth(sectionText) + 10 + ControlsWidth()
+        end
+        AltStable._test.PlaceTitle = PlaceTitle
 
-    function AltStable.UpdateColumnsButton()
-        colBtn:SetShown(activeSection ~= nil and activeSection.fields ~= nil)
-        PlaceTitle()
+        function AltStable.UpdateColumnsButton()
+            colBtn:SetShown(activeSection ~= nil and activeSection.fields ~= nil)
+            PlaceTitle()
+        end
+        AltStable.UpdateColumnsButton()
+        AltStable._test.colBtn, AltStable._test.colArrow = colBtn, colArrow
     end
-    AltStable.UpdateColumnsButton()
-    AltStable._test.colBtn, AltStable._test.colArrow = colBtn, colArrow
 
     --------------------------------------------------------
     -- Left sidebar
@@ -3280,6 +3340,7 @@ local function CreateFrameIfNeeded()
         sidebar:SetWidth(SIDEBAR_WIDTH - 1)
         SettleLabels(compact)
         ShowNavGlyph(compact)
+        PlaceTitle()
     end
     ApplySidebarMode()
     function AltStable.SetSidebarCompact(on)
