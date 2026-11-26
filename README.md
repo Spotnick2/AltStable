@@ -283,7 +283,7 @@ as they were when it was last played.
 
 *Click a character for its paper doll and stats. The Audit tab beside Char lists its enchants.*
 
-![A camp in the Armory: four characters around a campfire at Mount Hyjal, from portraits made by AltStable Companion, with the camp list beside it](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
+![A camp in the Armory: four characters around a campfire at Karazhan under a full moon, from portraits made by AltStable Companion, with the camp list beside it and the sidebar collapsed](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/roster.jpg)
 
 *Armory portraits from your own captures, made by the free AltStable Companion.*
 
