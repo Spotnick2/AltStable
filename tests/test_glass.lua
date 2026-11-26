@@ -1363,6 +1363,16 @@ do
     end
     local toast = AltStable._test.ToastFrame and AltStable._test.ToastFrame()
     check("the toast is built", toast ~= nil)
+    -- One profession's cooldowns: its icon, the Salt Shaker's included (#460).
+    if toast and toast.icon then
+        AltStable.ShowAggregateToast({ { charName = "A", charClass = "MAGE", cdName = "Salt Shaker",
+                                         profKey = "Leatherworking" } })
+        eq("  a Salt Shaker toast wears Leatherworking's icon", toast.icon:GetTexture(),
+           "Interface/Icons/Trade_LeatherWorking")
+        AltStable.ShowAggregateToast({ { charName = "A", charClass = "MAGE", cdName = "x", profKey = "Mining" } })
+        eq("  a profession with no icon, the pocket watch", toast.icon:GetTexture(),
+           "Interface/Icons/INV_Misc_PocketWatch_01")
+    end
     if toast then
         check("  and wears the material", toast._glass ~= nil)
         -- Its close button hangs 2px OUTSIDE the frame, which is where the rim

@@ -64,6 +64,7 @@ local CLASS_COLORS = {
 local PROF_ICONS = {
     Tailoring     = "Interface/Icons/Trade_Tailoring",
     Alchemy       = "Interface/Icons/Trade_Alchemy",
+    Leatherworking = "Interface/Icons/Trade_LeatherWorking",   -- the Salt Shaker (#460)
 }
 
 ------------------------------------------------------------

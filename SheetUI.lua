@@ -4324,7 +4324,24 @@ local function CreateFrameIfNeeded()
         -- ticked one the game would not load needs its AddOns list. The
         -- checkbox alone said neither.
         local status = {}
+        -- The status column starts past the widest name: at a fixed 120,
+        -- "Legacy Challenges" ran into its "On" (seen in game after #528's
+        -- names). Placed again at each refresh, when the font is final.
+        local function PlacePluginStatus()
+            local widest = 0
+            for key in pairs(status) do
+                local w = optPluginChecks[key].label:GetStringWidth() or 0
+                if w > widest then widest = w end
+            end
+            local x = math.max(120, math.ceil(18 + 4 + widest + 14))
+            for key, fs in pairs(status) do
+                fs:ClearAllPoints()
+                fs:SetPoint("LEFT", optPluginChecks[key], "LEFT", x, 0)
+            end
+            AltStable._test.OptPluginStatusX = x
+        end
         local function RefreshPluginStatus()
+            PlacePluginStatus()
             for key, fs in pairs(status) do
                 local on = AltStable.IsPluginEnabled(key)
                 local loaded = AltStable.IsPluginLoaded and AltStable.IsPluginLoaded(key)
@@ -4354,7 +4371,6 @@ local function CreateFrameIfNeeded()
                     return AltStable.IsPluginEnabled and AltStable.IsPluginEnabled(key)
                 end)
             local fs = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            fs:SetPoint("LEFT", optPluginChecks[key], "LEFT", 120, 0)
             fs:SetJustifyH("LEFT")
             status[key] = fs
             Y = Y - 22
@@ -5467,7 +5483,10 @@ local function CreateFrameIfNeeded()
     AltStable._test.OptToasts = optToastsCheck
     Y = Y - 22
 
-    local PROFESSION_KEYS = { "Tailoring", "Alchemy" }
+    -- The professions with a cooldown AltStable tracks: Mooncloth, the
+    -- transmutes, and the Salt Shaker (#460). One without a box here still
+    -- toasts (unset is on), so a new one needs its box.
+    local PROFESSION_KEYS = { "Alchemy", "Leatherworking", "Tailoring" }
     local optProfChecks = {}
     for _, profKey in ipairs(PROFESSION_KEYS) do
         local cb = CreateFrame("CheckButton", nil, optionsFrame, "UICheckButtonTemplate")
