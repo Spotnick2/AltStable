@@ -1649,6 +1649,11 @@ local function ClearSyncedStateFields(t)
     -- incoming record's stamp alone. Ours left in place would vouch for an
     -- older build's flags that happen to match it (Codex review of #498).
     t.drawn = nil; t.drawnAt = nil
+    -- The drawn look of every slot (#497): its stamp and outfit, and (with the
+    -- prefixes below) the gearlook_ fields themselves. A newer record that
+    -- dropped one override and kept another must not meet ours: the incoming
+    -- record is judged by its own stamp alone (Codex review of #501).
+    t.drawnOutfit = nil; t.drawnLookAt = nil; t.gearlookSig = nil; t.drawnEff = nil
     -- Merchant's Favor (#270): an older peer's record has none, and a scan that
     -- couldn't read it sends none. Either way, the last number must not linger.
     t.favor = nil
@@ -1675,6 +1680,7 @@ local function ClearSyncedStateFields(t)
         or k:find("^stat_")                      -- the stat snapshot: a stat that went unreadable must not linger
         or k:find("^rep_")                       -- reputations: a standing dropped at the source goes here too
         or k:find("^pet_")                       -- the pet (#75): the owner's scan keeps the last one seen, so absent means none
+        or k:find("^gearlook_")                  -- the drawn look (#497): ours never mixes with the incoming record's
         or k:find("^bag_") or k:find("^bags_") or k:find("^bank_") then   -- bag space (#346): absent from an older peer = unknown
             t[k] = nil
         end

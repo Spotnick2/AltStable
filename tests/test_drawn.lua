@@ -34,6 +34,12 @@ local T = AltStable._test
 -- Timers in the order they fall due.
 local now, due = 0, {}
 C_Timer.After = function(d, fn) due[#due + 1] = { at = now + d, fn = fn } end
+C_Timer.NewTimer = function(d, fn)
+    local e = { at = now + d, fn = fn }
+    e.Cancel = function() e.cancelled = true end
+    due[#due + 1] = e
+    return e
+end
 local function advance(sec)
     local stop = now + sec
     while true do
@@ -44,10 +50,14 @@ local function advance(sec)
         if not best then break end
         table.remove(due, bi)
         now = best.at
-        best.fn()
+        if not best.cancelled then best.fn() end
     end
     now = stop
 end
+-- A helm on: a slot with something equipped that the model gives nothing for
+-- is unreadable (the model still loading), not empty.
+local HELM = { [1] = "|Hitem:7048::|h[Helm]|h" }
+local function helmOn() WoW.equipped = { [1] = HELM[1] } end
 
 -- The model the reader makes: what it is drawn with is up to the test.
 local drawn, models, setUnits = {}, {}, 0
@@ -124,7 +134,7 @@ eq("  stamped", rec.drawnAt, 1000)
 eq("  with what it wrote", rec.drawn, "h1c0")
 eq("  a change dates the gear reading (the Companion's gearReadAt)", rec.gearReadAt, 1000)
 eq("  and the delta", rec.lastUpdate, 1000)
-eq("  the portrait status is asked again", statusRefreshes, 1)
+check("  the portrait status is asked again", statusRefreshes >= 1)
 eq("  and the sheet redrawn", sheetRefreshes, 1)
 
 WoW.now = 2000
@@ -132,7 +142,7 @@ D.Read()
 advance(1)
 eq("the same reading: stamped again", rec.drawnAt, 2000)
 eq("  but no change to date", rec.gearReadAt, 1000)
-eq("  nor anything to tell", statusRefreshes, 1)
+eq("  nor a sheet to redraw", sheetRefreshes, 1)
 eq("one model for the session", #models, 1)
 
 drawn = { [1] = 158756, [15] = 77345 }
@@ -178,6 +188,7 @@ eq("  and no more", setUnits, 2)
 ------------------------------------------------------------
 
 fresh()
+helmOn()
 drawn = {}
 D.Read()
 advance(0.5)
@@ -193,6 +204,7 @@ advance(100)
 eq("  then no more", setUnits, 2)
 local blank = { guid = me }
 check("an empty reading applied directly stamps nothing", not D.Apply(blank, {}) and blank.drawnAt == nil)
+helmOn()
 drawn = {}
 D.Read()
 advance(100)
@@ -204,6 +216,7 @@ eq("  every fresh trigger gets its own tries", setUnits, 10)
 -- Two triggers before the first retry: the newer one's tries are its own,
 -- and the earlier one's queued retry does nothing (Codex review of #498).
 fresh()
+helmOn()
 drawn = {}
 D.Read()            -- t = 0
 advance(1)
@@ -211,6 +224,7 @@ D.Read()            -- t = 1, takes over
 advance(100)
 eq("two fresh triggers, then retries for the newer only (1 + 1 + 3)", setUnits, 5)
 fresh()
+helmOn()
 drawn = {}
 D.Read()
 advance(1)
@@ -223,6 +237,7 @@ eq("  its last try still comes, and reads", AltStableDB[me].hidehelm, 1)
 -- An earlier trigger's retry firing DURING the newer one's read: it does
 -- nothing, and queues no trailing read (Codex review of #498).
 fresh()
+helmOn()
 drawn = {}
 D.Read()            -- t = 0, empty: a retry at 3.5
 advance(3.25)
@@ -258,6 +273,7 @@ WoW.equipped = {}
 
 fresh()
 AltStableDB = {}
+helmOn()
 drawn = { [1] = 77344, [15] = 307653 }
 D.Read()
 advance(1)
@@ -267,6 +283,7 @@ D.OnScanned(scanned)
 eq("the first scan writes it", scanned.hidehelm, 1)
 eq("  stamped", scanned.drawnAt ~= nil, true)
 -- An empty reading after it doesn't lose it.
+helmOn()
 drawn = {}
 D.Read()
 advance(0.5)
@@ -304,17 +321,23 @@ onEvent(T.DrawnFrame, "TRANSMOGRIFY_CLOSE")
 eq("closing the transmogrifier reads at once", setUnits, 1)
 fresh()
 drawn = { [1] = 158756 }
-onEvent(T.DrawnFrame, "PLAYER_EQUIPMENT_CHANGED", 5, false)
+onEvent(T.DrawnFrame, "PLAYER_EQUIPMENT_CHANGED", 2, false)
 advance(10)
-eq("a chest change reads nothing", setUnits, 0)
+eq("a neck change reads nothing (no portrait shows it)", setUnits, 0)
+onEvent(T.DrawnFrame, "PLAYER_EQUIPMENT_CHANGED", 5, false)
+advance(2.9)
+eq("a chest change waits for Core's rescan, 3 s (#497: every portrait slot)", setUnits, 0)
+advance(0.1)
+eq("  then reads", setUnits, 1)
 onEvent(T.DrawnFrame, "PLAYER_EQUIPMENT_CHANGED", 1, false)
+advance(2)
 onEvent(T.DrawnFrame, "PLAYER_EQUIPMENT_CHANGED", 15, true)
 advance(2.9)
-eq("a helm or cloak change waits for Core's rescan, 3 s", setUnits, 0)
+eq("  a second change restarts the wait, as Core's does", setUnits, 1)
 advance(0.1)
-eq("  then reads once for both", setUnits, 1)
+eq("  then reads once for both", setUnits, 2)
 advance(5)
-eq("  and only once", setUnits, 1)
+eq("  and only once", setUnits, 2)
 
 ------------------------------------------------------------
 -- The broken flags: dropped without the stamp
@@ -364,5 +387,364 @@ T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Peer", name = "P", class = 
     lastUpdate = 3000, hidehelm = 1 }) .. "\n" .. T.CHAR_SEP, "OldPeer")
 eq("  then an older peer's newer record: the stamp doesn't linger", AltStableDB["Player-Peer"].drawnAt, nil)
 eq("  nor its flag", AltStableDB["Player-Peer"].hidehelm, nil)
+
+------------------------------------------------------------
+-- #497: every portrait slot, as drawn
+------------------------------------------------------------
+-- The stub's sources: source N is item N * 10, except the hidden helm and
+-- cloak (77344, 77345).
+
+local outfit = 2
+C_TransmogOutfitInfo = { GetActiveOutfitID = function() return outfit end }
+local function wear(t)
+    WoW.equipped = {}
+    for slot, id in pairs(t) do WoW.equipped[slot] = "|Hitem:" .. id .. "::|h[x]|h" end
+end
+local function player(gear)
+    local r = { guid = me, name = "Me", lastUpdate = 1, gearReadAt = 5 }
+    for key, id in pairs(gear) do r["gearid_" .. key] = id end
+    return r
+end
+
+-- Shoulders transmogged, chest as equipped, wrists hidden, a shirt on.
+fresh(player({ head = 7048, shoulder = 4197, chest = 9623, wrist = 279883 }))
+wear({ [1] = 7048, [3] = 4197, [5] = 9623, [9] = 279883, [4] = 16060 })
+drawn = { [1] = 704.8, [3] = 27175.4, [5] = 962.3, [9] = 77344, [4] = 1606 }
+WoW.now = 5000
+D.Read()
+advance(1)
+local r = AltStableDB[me]
+eq("a transmogged slot: its drawn item", r.gearlook_shoulder, 271754)
+eq("  a slot drawn as equipped: nothing", r.gearlook_chest, nil)
+eq("  a hidden slot (any slot): 0", r.gearlook_wrist, 0)
+eq("  the head, drawn as itself: nothing", r.gearlook_head, nil)
+eq("  the outfit", r.drawnOutfit, 2)
+eq("  when the look changed", r.drawnLookAt, 5000)
+eq("  and the stamp of what was written", r.gearlookSig, "o2;3:271754;9:0")
+eq("  the shirt isn't on the record (the roster has no shirt)", r.gearlook_shirt, nil)
+local cur = D.Current()
+eq("the current look has the shirt", cur.look[4], 16060)
+eq("  the hidden wrists", cur.look[9], "h")
+eq("  an empty slot as 0", cur.look[6], 0)
+eq("  and the outfit", cur.outfit, 2)
+
+-- The same again: nothing changes, nothing is re-dated.
+WoW.now = 6000
+D.Read()
+advance(1)
+eq("the same look again isn't re-dated", r.drawnLookAt, 5000)
+
+-- An outfit switched by itself: read for the status, not written.
+outfit = 1
+drawn[3] = 419.7   -- outfit 1 draws the shoulders as equipped
+local onEv = T.DrawnFrame:GetScript("OnEvent")
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(1)
+eq("a situational switch: the record keeps its look", r.gearlook_shoulder, 271754)
+eq("  and its outfit", r.drawnOutfit, 2)
+eq("  the current view follows it", D.Current().look[3], 4197)
+eq("  with the outfit", D.Current().outfit, 1)
+-- Then a stable trigger (closing the transmogrifier) writes it.
+local readBefore = r.gearReadAt
+onEv(T.DrawnFrame, "TRANSMOGRIFY_CLOSE")
+advance(1)
+eq("a look-only change doesn't move gearReadAt (that dates the head and back)", r.gearReadAt, readBefore)
+eq("a stable reading writes the outfit's look", r.gearlook_shoulder, nil)
+eq("  and the outfit", r.drawnOutfit, 1)
+eq("  re-signed", r.gearlookSig, "o1;9:0")
+outfit = 2
+
+-- A reading from before a gear swap isn't read against the new item.
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 4197 })
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+eq("transmogged shoulders", AltStableDB[me].gearlook_shoulder, 271754)
+AltStableDB[me].gearid_shoulder = 5555   -- the scan saw new shoulders
+D.OnScanned(AltStableDB[me])
+eq("  the old reading isn't applied to the new shoulders", AltStableDB[me].gearlook_shoulder, 271754)
+wear({ [3] = 5555 })
+drawn = { [3] = 555.5 }
+D.Read()
+advance(1)
+eq("  a reading of the new ones is: drawn as equipped", AltStableDB[me].gearlook_shoulder, nil)
+-- The scan comes after the reading: the reading waits for it.
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 6666 })
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+eq("a reading ahead of the scan (gearid still old): not written yet", AltStableDB[me].gearlook_shoulder, nil)
+eq("  nor anything of the look (its outfit waits for the rest)", AltStableDB[me].gearlookSig, nil)
+AltStableDB[me].gearid_shoulder = 6666
+D.OnScanned(AltStableDB[me])
+eq("  the scan then writes it", AltStableDB[me].gearlook_shoulder, 271754)
+statusRefreshes = 0
+AltStableDB[me].gearid_shoulder = 4197
+wear({ [3] = 4197 })
+drawn = { [3] = 419.7 }
+D.Read()
+advance(1)
+local before = statusRefreshes
+AltStableDB[me].gearlook_shoulder = 123   -- as if read before; the scan's re-apply changes it
+D.OnScanned(AltStableDB[me])
+check("  a scan that changes the look asks for the portrait status", statusRefreshes > before)
+
+-- A slot the next reading can't see keeps the last reading's value for the
+-- scan, while the same item is on; not once another one is.
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 6666 })
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+drawn = {}               -- the next reading sees nothing for it
+D.Read()
+advance(0.6)
+AltStableDB[me].gearid_shoulder = 6666
+D.OnScanned(AltStableDB[me])
+eq("an unread slot keeps the last reading for the scan", AltStableDB[me].gearlook_shoulder, 271754)
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 6666 })
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+wear({ [3] = 7777 })
+drawn = {}
+D.Read()
+advance(0.6)
+AltStableDB[me].gearid_shoulder = 7777
+D.OnScanned(AltStableDB[me])
+eq("  but not for another item", AltStableDB[me].gearlook_shoulder, nil)
+
+-- A two-hander: the off hand empty, confirmed.
+fresh(player({ mainhand = 1000, offhand = 2000 }))
+wear({ [16] = 1000, [17] = 2000 })
+drawn = { [16] = 300, [17] = 400 }
+D.Read()
+advance(1)
+eq("an off hand transmogged", AltStableDB[me].gearlook_offhand, 4000)
+AltStableDB[me].gearid_offhand = 0
+wear({ [16] = 1000 })
+drawn = { [16] = 300 }
+D.Read()
+advance(1)
+eq("  a two-hander now: the empty off hand drops its look", AltStableDB[me].gearlook_offhand, nil)
+eq("  without a retry", setUnits, 2)
+
+-- The stamps.
+local legacy = { guid = "Player-485", name = "L", hidehelm = 1, hidecloak = 0, drawn = "h1c0", drawnAt = 5 }
+AltStable.DropUndrawnFlags(legacy)
+check("a #485 build's record (no look stamp) keeps its helm and cloak flags",
+      legacy.hidehelm == 1 and legacy.hidecloak == 0 and legacy.drawn == "h1c0")
+local good = { guid = "Player-G", gearlook_shoulder = 271754, drawnOutfit = 2, gearlookSig = "o2;3:271754" }
+AltStable.DropUndrawnFlags(good)
+eq("a look matching its stamp stays", good.gearlook_shoulder, 271754)
+local stale = { guid = "Player-S", gearlook_shoulder = 271754, gearlook_wrist = 0, drawnOutfit = 2,
+                drawnLookAt = 9, gearlookSig = "o2;3:271754" }
+AltStable.DropUndrawnFlags(stale)
+check("a look that doesn't match its stamp is dropped, with the stamp",
+      stale.gearlook_shoulder == nil and stale.gearlook_wrist == nil and stale.drawnOutfit == nil
+      and stale.drawnLookAt == nil and stale.gearlookSig == nil)
+-- The merge: an older peer's record without the look clears ours.
+AltStableDB = { ["Player-Pl"] = { guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 100,
+    gearlook_shoulder = 271754, drawnOutfit = 2, drawnLookAt = 90, gearlookSig = "o2;3:271754" } }
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "MAGE", level = 30,
+    lastUpdate = 200 }) .. "\n" .. T.CHAR_SEP, "OldPeer")
+check("a newer record without the look clears ours", AltStableDB["Player-Pl"].gearlook_shoulder == nil
+      and AltStableDB["Player-Pl"].gearlookSig == nil and AltStableDB["Player-Pl"].drawnOutfit == nil)
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 300,
+    gearlook_shoulder = 271754, gearlook_wrist = 0, drawnOutfit = 2, drawnLookAt = 290,
+    gearlookSig = "o2;3:271754;9:0" }) .. "\n" .. T.CHAR_SEP, "NewPeer")
+eq("a current peer's look arrives", AltStableDB["Player-Pl"].gearlook_shoulder, 271754)
+eq("  a hidden slot as the number 0", AltStableDB["Player-Pl"].gearlook_wrist, 0)
+eq("  its stamp as text", AltStableDB["Player-Pl"].gearlookSig, "o2;3:271754;9:0")
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 400,
+    gearlook_shoulder = 999, drawnOutfit = 2, gearlookSig = "o2;3:271754;9:0" }) .. "\n" .. T.CHAR_SEP, "OldRelay")
+eq("a relayed look that doesn't match its stamp is dropped", AltStableDB["Player-Pl"].gearlook_shoulder, nil)
+-- Ours mustn't vouch for an incoming record's look that happens to match it.
+AltStableDB = { ["Player-Pl"] = { guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 100,
+    gearlook_shoulder = 271754, drawnOutfit = 2, gearlookSig = "o2;3:271754" } }
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 200,
+    gearlook_shoulder = 271754, drawnOutfit = 2 }) .. "\n" .. T.CHAR_SEP, "OldRelay")
+eq("an unstamped incoming look matching our stamp is still dropped", AltStableDB["Player-Pl"].gearlook_shoulder, nil)
+check("listens to the outfit switching", T.DrawnFrame:IsEventRegistered("TRANSMOG_DISPLAYED_OUTFIT_CHANGED"))
+
+------------------------------------------------------------
+-- Codex review of #501
+------------------------------------------------------------
+
+-- 1. A newer peer that dropped one override and kept another.
+AltStableDB = { ["Player-Pl"] = { guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 100,
+    gearlook_shoulder = 271754, gearlook_wrist = 0, drawnOutfit = 2, gearlookSig = "o2;3:271754;9:0" } }
+T.DeserializeFullDB(T.SerializeChar({ guid = "Player-Pl", name = "P", class = "MAGE", level = 30, lastUpdate = 200,
+    gearlook_wrist = 0, drawnOutfit = 2, drawnLookAt = 190, gearlookSig = "o2;9:0" }) .. "\n" .. T.CHAR_SEP, "NewPeer")
+local pl = AltStableDB["Player-Pl"]
+eq("a newer peer that dropped the shoulder override: ours goes", pl.gearlook_shoulder, nil)
+eq("  the wrist override it kept stays", pl.gearlook_wrist, 0)
+eq("  with its outfit", pl.drawnOutfit, 2)
+
+-- 2. The current view and the scan's memory belong to one outfit.
+outfit = 2
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 6666 })                 -- gearid still old: not written, kept for the scan
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+eq("outfit 2's shoulders in the current view", D.Current().look[3], 271754)
+outfit = 1
+drawn = {}                           -- outfit 1, the shoulders not read yet
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(0.6)
+eq("another outfit: the view starts afresh, nothing of outfit 2", D.Current().look[3], nil)
+eq("  under outfit 1", D.Current().outfit, 1)
+outfit = 2
+eq("an outfit switch not read yet leaves nothing to compare", D.Current().look[5], nil)
+outfit = 1
+D.Read()                             -- a stable reading in outfit 1, the shoulders still unread
+advance(0.6)
+AltStableDB[me].gearid_shoulder = 6666
+D.OnScanned(AltStableDB[me])
+eq("the scan's memory doesn't carry outfit 2's shoulders into outfit 1", AltStableDB[me].gearlook_shoulder, nil)
+eq("  and outfit 1 isn't published with a slot unread", AltStableDB[me].drawnOutfit, nil)
+drawn = { [3] = 666.6 }
+advance(5)
+eq("  once read, it is", AltStableDB[me].drawnOutfit, 1)
+outfit = 2
+
+-- Codex follow-up of #501: a stable reading of another outfit that can't be
+-- applied in full (new gear the scan hasn't recorded) changes nothing at all.
+outfit = 2
+fresh(player({ head = 7048, shoulder = 4197, chest = 9623 }))
+wear({ [1] = 7048, [3] = 4197, [5] = 9623 })
+drawn = { [1] = 704.8, [3] = 27175.4, [5] = 962.3 }
+D.Read()
+advance(1)
+local pr = AltStableDB[me]
+eq("outfit 2, shoulders transmogged", pr.gearlook_shoulder, 271754)
+eq("  published", pr.drawnOutfit, 2)
+local sig2 = pr.gearlookSig
+outfit = 1
+wear({ [1] = 7048, [3] = 6666, [5] = 9623 })           -- new shoulders, not scanned yet
+drawn = { [1] = 77344, [3] = 666.6, [5] = 962.3 }      -- outfit 1 also hides the helm
+D.Read()
+advance(0.6)
+eq("another outfit, new gear not recorded: the outfit stays", pr.drawnOutfit, 2)
+eq("  the override stays", pr.gearlook_shoulder, 271754)
+eq("  under its own stamp", pr.gearlookSig, sig2)
+eq("  and no helm flag of the other outfit", pr.hidehelm, 0)
+pr.gearid_shoulder = 6666
+D.OnScanned(pr)
+eq("the scan recorded the gear: outfit 1 written whole", pr.drawnOutfit, 1)
+eq("  its shoulders drawn as equipped", pr.gearlook_shoulder, nil)
+eq("  and its hidden helm", pr.hidehelm, 1)
+outfit = 2
+
+-- A partial first reading, then its retry, in the same outfit: the look isn't
+-- re-dated when it didn't change.
+fresh(player({ shoulder = 4197, chest = 9623 }))
+wear({ [3] = 4197, [5] = 9623 })
+drawn = { [3] = 27175.4, [5] = 962.3 }
+WoW.now = 8000
+D.Read()
+advance(1)
+local dr = AltStableDB[me]
+eq("a complete reading dates the look", dr.drawnLookAt, 8000)
+T.ResetDrawn()                                  -- a /reload: no reading in memory
+drawn = { [5] = 962.3 }                         -- the shoulders not loaded yet
+WoW.now = 8100
+D.Read()
+advance(0.6)
+eq("a partial reading after a reload doesn't re-date it", dr.drawnLookAt, 8000)
+eq("  nor drop the shoulders' override", dr.gearlook_shoulder, 271754)
+drawn = { [3] = 27175.4, [5] = 962.3 }
+WoW.now = 8200
+advance(5)
+eq("  nor does its retry, the look unchanged", dr.drawnLookAt, 8000)
+
+-- 3. A situational switch writes no helm flag either; a switch during a
+-- stable reading makes it situational.
+fresh(player({ head = 7048 }))
+wear({ [1] = 7048 })
+drawn = { [1] = 704.8 }
+D.Read()
+advance(1)
+eq("the helm shown", AltStableDB[me].hidehelm, 0)
+drawn = { [1] = 77344 }
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(1)
+eq("a switch to an outfit hiding it: the record's flag stays", AltStableDB[me].hidehelm, 0)
+D.Read()                             -- a stable trigger...
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")   -- ...and a switch before its callback
+advance(5)
+eq("  a stable reading a switch landed in writes nothing", AltStableDB[me].hidehelm, 0)
+onEv(T.DrawnFrame, "TRANSMOGRIFY_CLOSE")
+advance(1)
+eq("  the next clean stable reading does", AltStableDB[me].hidehelm, 1)
+drawn = { [1] = 704.8 }
+onEv(T.DrawnFrame, "TRANSMOG_DISPLAYED_OUTFIT_CHANGED")
+advance(1)
+eq("  and a switch to an outfit showing it leaves the hidden flag alone", AltStableDB[me].hidehelm, 1)
+
+-- 4. A gear swap in a slot drawn as equipped dates the look.
+fresh(player({ chest = 1000 }))
+wear({ [5] = 1000 })
+drawn = { [5] = 100 }
+WoW.now = 7000
+D.Read()
+advance(1)
+eq("drawn as equipped: no override", AltStableDB[me].gearlook_chest, nil)
+local dated = AltStableDB[me].drawnLookAt
+AltStableDB[me].gearid_chest = 2000
+wear({ [5] = 2000 })
+drawn = { [5] = 200 }
+WoW.now = 7100
+D.Read()
+advance(1)
+eq("  a new chest, still drawn as equipped: still no override", AltStableDB[me].gearlook_chest, nil)
+check("  but the look is re-dated", AltStableDB[me].drawnLookAt == 7100 and dated ~= 7100,
+      tostring(AltStableDB[me].drawnLookAt))
+
+------------------------------------------------------------
+-- Codex review of #501 at bfd709f
+------------------------------------------------------------
+
+-- 1. A record's first look is published with its outfit or not at all.
+fresh(player({ head = 7048, shoulder = 4197, chest = 9623 }))
+wear({ [1] = 7048, [3] = 4197, [5] = 9623 })
+drawn = { [1] = 77344, [3] = 27175.4 }   -- the chest not read yet
+D.Read()
+advance(1)
+local p1 = AltStableDB[me]
+eq("a first partial reading: no override without its outfit", p1.gearlook_shoulder, nil)
+eq("  no outfit", p1.drawnOutfit, nil)
+eq("  no date", p1.drawnLookAt, nil)
+eq("  no signature", p1.gearlookSig, nil)
+eq("  the helm flag doesn't wait (#485)", p1.hidehelm, 1)
+drawn = { [1] = 77344, [3] = 27175.4, [5] = 962.3 }
+advance(5)
+eq("  once complete: the override", p1.gearlook_shoulder, 271754)
+eq("  with its outfit", p1.drawnOutfit, 2)
+check("  and dated", p1.drawnLookAt ~= nil)
+
+-- 2. The status's view of a slot holds only while its item is on.
+fresh(player({ shoulder = 4197 }))
+wear({ [3] = 4197 })
+drawn = { [3] = 27175.4 }
+D.Read()
+advance(1)
+eq("shoulders A, transmogged", D.Current().look[3], 271754)
+wear({ [3] = 5555 })
+eq("  shoulders B on, not read yet: unknown, not A's look", D.Current().look[3], nil)
+drawn = { [3] = 555.5 }
+D.Read()
+advance(1)
+eq("  B read: drawn as itself", D.Current().look[3], 5555)
+wear({ [3] = 4197 })
+drawn = {}                               -- A back on, the next reading can't see it
+D.Read()
+advance(1)
+eq("  A back on, unread: not B's look", D.Current().look[3], nil)
+eq("  an empty slot read stays known", D.Current().look[5], 0)
 
 WoW.finish("test_drawn", passed, failed)

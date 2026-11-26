@@ -501,6 +501,41 @@ local function CurrentLook(stage)
     return ok and look or nil
 end
 
+-- The DRAWN look (#497): the same "slot:value;..." form, each slot as the
+-- game draws it - the transmog's item, `h` for a hidden appearance, 0 for an
+-- empty slot. `look` keeps the equipped items for an older Companion; this
+-- sits beside it on the capture as `drawnLook`. At a shutter from the posed
+-- stage; otherwise, and for a slot the stage can't say, from Drawn.lua's last
+-- reading. A slot nobody could read is left out (the compare skips it). nil
+-- when nothing is known.
+local function ReadDrawnLook(stage)
+    local D = AltStable.Drawn
+    if not (D and D.SlotValue and D.Current) then return nil end
+    local known = D.Current().look or {}
+    local parts = {}
+    for _, slot in ipairs(LOOK_SLOTS) do
+        local v
+        if stage then
+            local ok, sv = pcall(D.SlotValue, stage, slot)
+            if ok then v = sv end
+        end
+        if v == nil then v = known[slot] end
+        if v ~= nil then parts[#parts + 1] = slot .. ":" .. tostring(v) end
+    end
+    return #parts > 0 and table.concat(parts, ";") or nil
+end
+
+local function CurrentDrawnLook(stage)
+    local ok, look = pcall(ReadDrawnLook, stage)
+    return ok and look or nil
+end
+
+-- The saved outfit on now (#497), nil when the client can't say.
+local function CurrentOutfit()
+    local D = AltStable.Drawn
+    return D and D.ActiveOutfit and D.ActiveOutfit() or nil
+end
+
 -- The names of the slots two looks disagree on, in slot order. This, not the
 -- strings being different, is what "changed" means: a stored look written by
 -- another version of this code differs as a string without any slot differing.
@@ -555,6 +590,10 @@ local function RecordMetadata(shotIndex)
         -- What the portrait shows, so a later change of gear can say it is out
         -- of date (#128). Converters do not read it (PORTRAIT-CONTRACT.md).
         look = CurrentLook(model),
+        -- What it is DRAWN as, and in which saved outfit (#497): a newer
+        -- Companion and our own status compare these, only within one outfit.
+        drawnLook = CurrentDrawnLook(model),
+        outfit = CurrentOutfit(),
     })
 end
 
@@ -1000,7 +1039,25 @@ function PortraitStatus()
     -- What is worn now, so the auto-capture can remember a look it was told to
     -- skip (#124).
     status.look = look
-    local diff = (pair and pair.look and look) and LookDiff(pair.look, look) or {}
+    -- The drawn look when the capture has one (#497), in the same saved
+    -- outfit only: a situational switch isn't a change (the owner's choice:
+    -- outfits switch by weather and time of day, at random among those that
+    -- fit). In another outfit there's no verdict about the gear. A capture
+    -- from before keeps the equipped comparison.
+    local diff
+    if pair and pair.drawnLook then
+        local drawn = CurrentDrawnLook()
+        local outfitNow = CurrentOutfit()
+        local same = pair.outfit == nil or outfitNow == nil or pair.outfit == outfitNow
+        diff = (same and drawn) and LookDiff(pair.drawnLook, drawn) or {}
+        -- What a due portrait is due FOR, for the auto-capture's offer and
+        -- skip: the drawn look and its outfit, so a second transmog of the
+        -- same slot is offered again (Codex review of #501). status.look
+        -- stays the equipped look, as documented.
+        if drawn then status.dueLook = "o" .. tostring(outfitNow) .. "|" .. drawn end
+    else
+        diff = (pair and pair.look and look) and LookDiff(pair.look, look) or {}
+    end
     local entry = CutoutEntry(guid, PlayerName())
     local madeFrom = entry and tonumber(entry.epoch)
     -- The companion follows this character's armory render: a new look reaches
@@ -1050,7 +1107,7 @@ function AltStable.RefreshPortraitStatus()
     -- and chest B then chest C answer the same (review of #215). The
     -- auto-capture still needs to hear it - it skips a LOOK, so a skipped chest
     -- swapped for another must be offered (#124) - so it has its own hook.
-    local lookKey = status.due and tostring(status.look) or ""
+    local lookKey = status.due and tostring(status.dueLook or status.look) or ""
     if key == lastStatusKey then
         if lookKey ~= lastLookKey then
             lastLookKey = lookKey
@@ -1182,6 +1239,7 @@ AltStable._test.portrait = {
     WATCHDOG       = WATCHDOG,
     STORE_VERSION  = STORE_VERSION,
     CurrentLook    = function(stage) return CurrentLook(stage) end,
+    CurrentDrawnLook = function(stage) return CurrentDrawnLook(stage) end,
     LookDiff       = LookDiff,
     PortraitStatus = function() return PortraitStatus() end,
     CutoutEntry    = CutoutEntry,
