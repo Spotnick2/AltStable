@@ -5653,6 +5653,10 @@ do
         local _, _, _, x3 = t3:GetPoint(1)
         eq("  placed after the others", x3, 20 + 2 * (174 + 4))
         eq("  and the window widens to hold the row", w0:GetWidth(), 20 + 3 * 174 + 2 * 4 + 20)
+        eq("  measured from the tab's own text", w0.measure:GetText(), t3:GetText())
+        w0.measure._GetStringWidth = 10
+        LV.Draw(2)
+        eq("  a short name: at least 60", t1:GetWidth(), 60)
         w0.measure._GetStringWidth = nil
         LV.Draw(2)
         -- A node's tooltip: the entry at its own rank, the badge at the node's.
