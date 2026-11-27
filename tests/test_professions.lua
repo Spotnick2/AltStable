@@ -145,9 +145,13 @@ T.RefreshOwnership()
 T.RefreshOwnership()
 check("two empty answers in the same second prune nothing", AltStableProfessionsDB[ME].profs[171] ~= nil)
 WoW.now = WoW.now + 6
+local heldRefresh, sheetRefreshes = AltStable.RefreshSheet, 0
+AltStable.RefreshSheet = function() sheetRefreshes = sheetRefreshes + 1 end
 T.RefreshOwnership()
+AltStable.RefreshSheet = heldRefresh
 check("an empty answer confirmed seconds later prunes", AltStableProfessionsDB[ME].profs[171] == nil)
 eq("  and takes the cooldowns with it", AltStableDB[ME]["cd_Alchemy@Transmute"], nil)
+check("  redrawing the sheet's Cooldowns view (#543)", sheetRefreshes >= 1, tostring(sheetRefreshes))
 check("  leaving an explicit 'has none' snapshot", next(AltStableProfessionsDB[ME].profs) == nil)
 
 -- A PARTIAL answer (one line missing) is held back the same way.
@@ -168,10 +172,15 @@ check("  and survives when the next answer has it again", AltStableProfessionsDB
 
 fresh()
 setAlchemy({ [2329] = { name = "Elixir of Minor Strength", learned = true },
-             [2330] = { name = "Minor Healing Potion", learned = true, cooldown = 7200 },
+             -- 99030: not in RecipeData (a recipe newer than the data) files under its name (#545).
+             [99030] = { name = "Minor Healing Potion", learned = true, cooldown = 7200 },
              [2331] = { name = "Elixir of Lesser Agility", learned = false } })
+local heldRefresh2, scanRefreshes = AltStable.RefreshSheet, 0
+AltStable.RefreshSheet = function() scanRefreshes = scanRefreshes + 1 end
 T.OnShow()
 WoW.flushTimers()
+AltStable.RefreshSheet = heldRefresh2
+check("a cooldown found by a scan redraws the sheet's Cooldowns view (#543)", scanRefreshes >= 1)
 e = AltStableProfessionsDB[ME]
 check("an open window is scanned", e and e.profs[171] ~= nil)
 eq("  learned recipes are recorded", e and count(e.profs[171].known), 2)
@@ -337,10 +346,10 @@ C_TradeSkillUI.GetRecipeCooldown = realCooldown
 
 -- A cooldown alone reaches peers: the character is touched.
 fresh()
-setAlchemy({ [2330] = { name = "Minor Healing Potion", learned = true } })
+setAlchemy({ [99030] = { name = "Minor Healing Potion", learned = true } })
 T.OnShow(); WoW.flushTimers()
 AltStableDB[ME].lastUpdate = 1
-WoW.tradeSkill.recipes[2330].cooldown = 600
+WoW.tradeSkill.recipes[99030].cooldown = 600
 T.OnShow(); WoW.flushTimers()
 eq("a cooldown-only change touches the character", AltStableDB[ME].lastUpdate, WoW.now)
 
@@ -553,6 +562,46 @@ do
     toasted = nil
     AltStable.ScanCooldowns()
     eq("  once", toasted, nil)
+    -- Its Options box (Leatherworking unticked) holds it back.
+    AltStableConfig.toastsShown = {}
+    AltStableConfig.toastProfessions = { Leatherworking = false }
+    toasted = nil
+    AltStable.ScanCooldowns()
+    eq("  not with Leatherworking's toasts off", toasted, nil)
+    AltStableConfig.toastProfessions = nil
+
+    -- Carried under Leatherworking 250 (Codex review of #546): it can't be
+    -- used, so nothing is recorded, and a record held from before goes.
+    fresh()
+    gt = 1000
+    WoW.professions = { { name = "Leatherworking", rank = 200, max = 225, line = 165 } }
+    T.RefreshOwnership()
+    WoW.items[15846] = { name = "Salt Shaker", count = 1 }
+    WoW.itemCooldowns[15846] = { 0, 0 }
+    T.ReadItemCooldowns()
+    eq("#546: a Shaker carried at Leatherworking 200 records nothing", AltStableDB[ME][KEY], nil)
+    AltStableDB[ME][KEY] = WoW.now - 10
+    check("  a record held from before is a change", T.ReadItemCooldowns())
+    eq("  and goes", AltStableDB[ME][KEY], nil)
+    -- Reaching 250 with the Shaker in the bags, in the order the client may
+    -- send it (Codex review of #546): the bag read first, at 249, then the
+    -- skill. The ownership refresh queues a read of its own.
+    WoW.professions = { { name = "Leatherworking", rank = 249, max = 300, line = 165 } }
+    T.RefreshOwnership(); WoW.flushTimers()
+    T.ReadItemCooldowns()
+    eq("  at 249, the bag read records nothing", AltStableDB[ME][KEY], nil)
+    WoW.professions = { { name = "Leatherworking", rank = 250, max = 300, line = 165 } }
+    T.RefreshOwnership()
+    WoW.flushTimers()
+    eq("  reaching 250 reads the bags again: recorded ready", AltStableDB[ME][KEY], WoW.now)
+    -- The same through a window scan's commit.
+    AltStableDB[ME][KEY] = nil
+    AltStableProfessionsDB[ME].profs[165].rank = 249
+    WoW.tradeSkill.line, WoW.tradeSkill.rank, WoW.tradeSkill.max = 165, 250, 300
+    WoW.tradeSkill.recipes = { [7000] = { name = "Rugged Leather Pants", learned = true } }
+    T.OnShow(); WoW.flushTimers()
+    WoW.flushTimers()   -- the read the scan's commit queued
+    eq("  and so does a window scan that moves the rank to 250", AltStableDB[ME][KEY], WoW.now)
 
     GetTime = realGetTime
 end
@@ -2253,5 +2302,155 @@ plugin.OnForget(A)
 eq("forgetting a character drops its recipes", AltStableProfessionsDB[A], nil)
 plugin.OnCleanup(B)
 check("cleanup keeps only the named character", AltStableProfessionsDB[B] ~= nil and next(AltStableProfessionsDB, nil) == B)
+
+------------------------------------------------------------
+-- The Cooldowns view's data (#545): the catalogue, filing by RecipeData's
+-- `cd`, the 0 for a cooldown seen ready, where each character stands
+------------------------------------------------------------
+do
+    local R = AltStableRecipeData.recipes
+    -- As the generator marks them (1.60.1.71139): the shared category is
+    -- "Transmutes", Iron to Gold has its own hour, Mooncloth its own.
+    local added = {
+        [17187] = { skill = { 171 }, learn = 275, src = { 5 }, makes = 12360, cd = "Transmutes" },
+        [17559] = { skill = { 171 }, learn = 275, src = { 2 }, items = { 13482 }, cd = "Transmutes" },
+        [25146] = { skill = { 171 }, learn = 300, src = { 5 }, cd = "Transmutes" },
+        [1317279] = { skill = { 171 }, learn = 275, items = { 284871 }, cd = "Transmutes" },  -- no src, a recipe item
+        [11479] = { skill = { 171 }, learn = 225, src = { 5, 6 }, makes = 3577, cd = "Iron to Gold" },
+        [18560] = { skill = { 197 }, learn = 250, src = { 5 }, cd = "Mooncloth" },
+    }
+    for id, r in pairs(added) do R[id] = r end
+    T.names[17187], T.names[17559], T.names[25146] = "Transmute: Arcanite", "Transmute: Air to Fire", "Transmute: Elemental Fire"
+    T.names[1317279], T.names[11479] = "Transmute: Legionite", "Transmute: Iron to Gold"
+
+    -- The catalogue.
+    fresh()
+    local cat = AltStable.CooldownCatalogue()
+    local keys = {}
+    for i, e in ipairs(cat) do keys[i] = e.key end
+    eq("the catalogue: every cooldown, by profession then label", table.concat(keys, ","),
+       "cd_Alchemy@Iron to Gold,cd_Alchemy@Transmutes,cd_Leatherworking@Salt Shaker,cd_Tailoring@Mooncloth")
+    local byKey = {}
+    for _, e in ipairs(cat) do byKey[e.key] = e end
+    local TR, IG = byKey["cd_Alchemy@Transmutes"], byKey["cd_Alchemy@Iron to Gold"]
+    local SH, MC = byKey["cd_Leatherworking@Salt Shaker"], byKey["cd_Tailoring@Mooncloth"]
+    eq("  Transmutes needs its lowest recipe's skill", TR.learn, 275)
+    eq("  its recipes by skill, then ID", table.concat(TR.spells, ","), "17187,17559,1317279,25146")
+    eq("  Iron to Gold its own", IG.learn, 225)
+    check("  the Salt Shaker, an item, needs Leatherworking 250", SH.item == 15846 and SH.learn == 250)
+    eq("  made once", AltStable.CooldownCatalogue(), cat)
+    eq("  its icon: what the lowest recipe makes (Arcanite Bar)", TR.iconItem, 12360)
+    eq("  Iron to Gold's, the Gold Bar", IG.iconItem, 3577)
+    eq("  an item's, the item", SH.iconItem, 15846)
+
+    -- A scan files by the data's label: Arcanite and Iron to Gold known, only
+    -- Iron to Gold running, an older version's "Transmute" field held.
+    setAlchemy({ [17187] = { name = "Transmute: Arcanite", learned = true },
+                 [11479] = { name = "Transmute: Iron to Gold", learned = true, cooldown = 3600 },
+                 [2329] = { name = "A", learned = true } }, 280)
+    AltStableDB[ME]["cd_Alchemy@Transmute"] = WoW.now + 1800
+    T.OnShow(); WoW.flushTimers()
+    local me = AltStableDB[ME]
+    eq("Iron to Gold runs under its own label", me["cd_Alchemy@Iron to Gold"], WoW.now + 3600)
+    eq("the shared one, learned and ready, is recorded as 0 (seen ready, never cast)", me["cd_Alchemy@Transmutes"], 0)
+    eq("the older version's ambiguous field goes", me["cd_Alchemy@Transmute"], nil)
+    local cdCount = 0
+    for k in pairs(me) do if k:find("^cd_") then cdCount = cdCount + 1 end end
+    eq("  and a recipe without a cooldown files nothing", cdCount, 2)
+    -- Again, still ready: the 0 stays as it is.
+    me.lastUpdate = 1
+    T.OnShow(); WoW.flushTimers()
+    eq("seen ready again: still 0", me["cd_Alchemy@Transmutes"], 0)
+    eq("  and nothing changed", me.lastUpdate, 1)
+    -- Cast: it runs; up again: the moment it came up, as before.
+    WoW.tradeSkill.recipes[17187].cooldown = 7200
+    T.OnShow(); WoW.flushTimers()
+    eq("cast: the shared one runs", me["cd_Alchemy@Transmutes"], WoW.now + 7200)
+    local castExpiry = me["cd_Alchemy@Transmutes"]
+    WoW.now = WoW.now + 7300
+    WoW.tradeSkill.recipes[17187].cooldown = nil
+    WoW.tradeSkill.recipes[11479].cooldown = nil
+    T.OnShow(); WoW.flushTimers()
+    eq("  up again: it keeps the past expiry, as every cooldown does", me["cd_Alchemy@Transmutes"], castExpiry)
+
+    -- A failing read leaves Iron to Gold's running timer as it was (round-2 review).
+    WoW.tradeSkill.recipes[11479].cooldown = 3600
+    T.OnShow(); WoW.flushTimers()
+    local ig = me["cd_Alchemy@Iron to Gold"]
+    check("Iron to Gold runs before the failing read", (tonumber(ig) or 0) > WoW.now, tostring(ig))
+    local realCooldown = C_TradeSkillUI.GetRecipeCooldown
+    C_TradeSkillUI.GetRecipeCooldown = function() error("boom") end
+    WoW.now = WoW.now + 60
+    T.OnShow(); WoW.flushTimers()
+    eq("  and after it, the same", me["cd_Alchemy@Iron to Gold"], ig)
+    C_TradeSkillUI.GetRecipeCooldown = realCooldown
+
+    -- The login toast never fires for a 0.
+    local heldShow, toastedList = AltStable.ShowAggregateToast, nil
+    AltStable.ShowAggregateToast = function(list) toastedList = list end
+    AltStableConfig.toastsShown = {}
+    AltStableDB = { [ME] = { guid = ME, name = "Me", class = "MAGE", ["cd_Alchemy@Transmutes"] = 0 } }
+    AltStable.ScanCooldowns()
+    eq("a 0 (seen ready, never cast) is never toasted", toastedList, nil)
+    AltStable.ShowAggregateToast = heldShow
+
+    -- Where each character stands.
+    fresh()
+    local function rec(guid, name, extra)
+        local c = { guid = guid, name = name, class = "MAGE", level = 60, lastUpdate = 1 }
+        for k, v in pairs(extra or {}) do c[k] = v end
+        AltStableDB[guid] = c
+        return c
+    end
+    local kim = rec("Kim-1", "Kim"); local pat = rec("Pat-1", "Pat"); local lee = rec("Lee-1", "Lee")
+    local low = rec("Low-1", "Low"); local new = rec("New-1", "New", { prof_Alchemy = 250 })
+    local tan = rec("Tan-1", "Tan"); local raw = rec("Raw-1", "Raw"); local none = rec("None-1", "None")
+    AltStableProfessionsDB = {
+        ["Kim-1"] = { stamp = 1, profs = { [171] = { rank = 290, max = 300, full = 1, known = { [17187] = true } } } },
+        ["Pat-1"] = { stamp = 1, profs = { [171] = { rank = 150, max = 300, known = { [17559] = true } } } },   -- partial
+        ["Lee-1"] = { stamp = 1, profs = { [171] = { rank = 280, max = 300, full = 1, known = {} } } },
+        ["Low-1"] = { stamp = 1, profs = { [171] = { rank = 230, max = 300, full = 1, known = {} } } },
+        ["Tan-1"] = { stamp = 1, profs = { [165] = { rank = 260, max = 300, full = 1, known = {} } } },
+        ["Raw-1"] = { stamp = 1, profs = { [165] = { rank = 200, max = 225, full = 1, known = {} } } },
+        ["None-1"] = { stamp = 1, profs = {} },
+    }
+    local S = AltStable.CooldownStanding
+    eq("a recipe of it known: known", (S(kim, TR)), "known")
+    eq("  on a partial snapshot too", (S(pat, TR)), "known")
+    local st, rank = S(lee, TR)
+    eq("complete scan, none known, skill enough: learnable", st, "learnable")
+    eq("  with the skill", rank, 280)
+    eq("under the lowest recipe's skill: low", (S(low, TR)), "low")
+    AltStableProfessionsDB["Low-1"].profs[171].rank = 275
+    eq("  at exactly its skill: learnable", (S(low, TR)), "learnable")
+    AltStableProfessionsDB["Low-1"].profs[171].rank = 230
+    eq("  while its own hour's 225 is learnable", (S(low, IG)), "learnable")
+    eq("an owner the core alone knows of: not scanned", (S(new, TR)), "unscanned")
+    eq("the Shaker with Leatherworking 260: usable", (S(tan, SH)), "usable")
+    eq("  with 200: low", (S(raw, SH)), "low")
+    eq("no such profession: nothing", S(none, TR), nil)
+    eq("  nor for a record without a guid", S({ name = "X" }, TR), nil)
+
+    -- The tooltip's recipe lines, the names as the client gives them.
+    T.names[17187], T.names[17559], T.names[25146] = "Transmute: Arcanite", "Transmute: Air to Fire", "Transmute: Elemental Fire"
+    T.names[1317279] = "Transmute: Legionite"
+    local function Lines(char, entry)
+        local out = {}
+        for _, l in ipairs(AltStable.CooldownRecipeLines(char, entry)) do
+            out[#out + 1] = l[1] .. "=" .. (l[2]:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+        end
+        return table.concat(out, "; ")
+    end
+    eq("learnable: what the skill meets and where each is learned", Lines(lee, TR),
+       "Transmute: Arcanite=Vendor; Transmute: Air to Fire=Drop; Transmute: Legionite=Recipe item")
+    eq("known first, then what it could learn (not Elemental Fire's 300 at 290)", Lines(kim, TR),
+       "Transmute: Arcanite=Known; Transmute: Air to Fire=Drop; Transmute: Legionite=Recipe item")
+    eq("too low: the lowest, what it needs, where", Lines(low, TR), "Transmute: Arcanite=needs 275, Vendor")
+    eq("an item: no recipe lines", Lines(tan, SH), "")
+    eq("no profession: none", Lines(none, TR), "")
+
+    for id in pairs(added) do R[id] = nil end
+    T.ResetState()
+end
 
 WoW.finish("test_professions", passed, failed)

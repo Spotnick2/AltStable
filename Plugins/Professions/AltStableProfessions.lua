@@ -245,9 +245,14 @@ local function Bump(e)
     e.stamp = math.max(time(), (e.stamp or 0) + 1)
 end
 
+-- Every change to a character's snapshot or cooldowns ends here, and each can
+-- change the sheet's Cooldowns view (#543, #545): a profession gained or lost
+-- adds or drops a row, a recipe learned changes a cell, a cooldown a column.
+-- RefreshSheet does nothing while the sheet isn't built.
 local function Changed(guid)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
     if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
 end
 
 local function setsEqual(a, b)
@@ -346,7 +351,9 @@ end
 -- profession that can use it, so the sheet, the sync and the toast read it like
 -- any cd_<Profession>@<label> field.
 local ITEM_COOLDOWNS = {
-    { item = 15846, spell = 19566, prof = "Leatherworking", line = 165, label = "Salt Shaker" },
+    -- learn: the skill the item asks ("Requires Leatherworking (250)", Wowhead
+    -- Forever item 15846, 2026-11-27), for the Cooldowns view (#545).
+    { item = 15846, spell = 19566, prof = "Leatherworking", line = 165, label = "Salt Shaker", learn = 250 },
 }
 local ITEM_LABELS, ITEM_SPELLS = {}, {}   -- [prof][label] = true; [spellID] = true
 for _, ic in ipairs(ITEM_COOLDOWNS) do
@@ -364,9 +371,22 @@ end
 --     is timing jitter between two reads and is not a change;
 --   * one that has come back up keeps a past expiry, so the grid says "Ready!";
 --   * a label no learned recipe files under any more takes its field with it.
-local function ApplyCooldowns(char, label, cds, knownLabels)
+--   * a catalogued one (RecipeData's `cd`, #545) learned and ready with no field
+--     yet is written as 0: seen ready, so the Cooldowns view can say Available
+--     for one never cast. 0 is ready everywhere, and the login toast skips it
+--     (it wants a positive expiry), so nothing toasts for it.
+local function ApplyCooldowns(char, label, cds, knownLabels, catalogued)
     if type(char) ~= "table" then return false end
     local prefix, now, changed = "cd_" .. label .. "@", time(), false
+    -- First, so a running one (cds) overwrites it just below: a 0 is a past
+    -- expiry there, like any other. `catalogued` holds learned labels only
+    -- (Candidate fills it beside knownLabels).
+    for name in pairs(catalogued or {}) do
+        local key = prefix .. name
+        if char[key] == nil then
+            char[key] = 0; changed = true
+        end
+    end
     for name, left in pairs(cds) do
         if left and left > 0 then
             local key = prefix .. name
@@ -411,11 +431,14 @@ end
 -- Who can use it, by Owners' rule: this plugin's own snapshot decides once it
 -- has one (a confirmed loss must not bring the field back from a stale core
 -- rank); the core's skill field only stands in before that.
-local function OwnsLine(guid, char, line)
+-- Its skill in that line, or nil when it doesn't own it (#545: the Shaker
+-- needs Leatherworking 250).
+local function LineRank(guid, char, line)
     local e = AltStableProfessionsDB and AltStableProfessionsDB[guid]
-    if type(e) == "table" and e.profs and e.profs[line] then return true end
-    if type(e) == "table" and e.stamp then return false end
-    return CoreSkill(char, line) ~= nil
+    local p = type(e) == "table" and e.profs and e.profs[line]
+    if p then return tonumber(p.rank) or 0 end
+    if type(e) == "table" and e.stamp then return nil end
+    return CoreSkill(char, line)
 end
 
 local function PlainTime(v)
@@ -472,8 +495,14 @@ local function ReadItemCooldowns()
     if type(char) ~= "table" then return false end
     local now, changed = time(), false
     for _, ic in ipairs(ITEM_COOLDOWNS) do
-        if OwnsLine(guid, char, ic.line) then
-            local key = "cd_" .. ic.prof .. "@" .. ic.label
+        local key = "cd_" .. ic.prof .. "@" .. ic.label
+        local rank = LineRank(guid, char, ic.line)
+        if rank and rank < (ic.learn or 0) then
+            -- An owner who can't use it yet (the Shaker under Leatherworking
+            -- 250, Codex review of #546): carrying one records nothing, and a
+            -- record held from before goes.
+            if char[key] ~= nil then char[key] = nil; changed = true end
+        elseif rank then
             local held = tonumber(char[key])
             local okc, count = pcall(AltStable.API.GetItemCount, ic.item)
             count = okc and AltStable.API.PlainNumber(count) or nil
@@ -496,24 +525,23 @@ local function ReadItemCooldowns()
         end
     end
     if changed then
+        -- Changed redraws the sheet too: its Leatherworking tooltip is built
+        -- when the row renders, and this read comes a frame after the event, so
+        -- nothing else would redraw it (Codex review of #464).
         Changed(guid)
-        -- The sheet's Leatherworking tooltip is built when the row renders, and
-        -- this read comes a frame after the event, so nothing else would
-        -- redraw it: the Shaker just used showed "Ready!" until some unrelated
-        -- redraw (Codex review of #464).
-        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
     end
     return changed
 end
 
 -- Bag cooldown events and the Shaker's own cast come in bursts: one read on
--- the next frame for all of them.
-local itemReadPending = false
+-- the next frame for all of them. The flag is on AT, so a test's reset can
+-- clear a read its dropped timer never ran (BootstrapPlugin, which builds the
+-- reset, is at Lua 5.1's 60 upvalues).
 local function QueueItemRead()
-    if itemReadPending then return end
-    itemReadPending = true
+    if AT.itemReadPending then return end
+    AT.itemReadPending = true
     C_Timer.After(0, function()
-        itemReadPending = false
+        AT.itemReadPending = false
         ReadItemCooldowns()
     end)
 end
@@ -582,6 +610,7 @@ local function RefreshOwnership()
     if confirmedLoss then
         for _, line in ipairs(lost) do
             e.profs[line] = nil
+            -- The cooldowns go with it (Changed, below, redraws the sheet).
             if BY_LINE[line] then ClearCooldowns(char, BY_LINE[line].label) end
             changed = true
         end
@@ -598,7 +627,9 @@ local function RefreshOwnership()
     end
     -- A character seen with no professions at all is a snapshot too ("has none"),
     -- so the first read always stamps.
-    if changed or not e.stamp then Bump(e); Changed(guid) end
+    -- A rank moved: the Salt Shaker's skill (#545) may have been reached after
+    -- the bag read that skipped it (Codex review of #546). One read, next frame.
+    if changed or not e.stamp then Bump(e); Changed(guid); QueueItemRead() end
 end
 
 ------------------------------------------------------------
@@ -635,6 +666,7 @@ local function Candidate()
     -- running cooldown into "ready" and synced that (Codex review of #132) - so
     -- one failure leaves the whole profession's cooldown fields as they are.
     local known, cds, labels, cdOk = {}, {}, {}, true
+    local catalogued = {}   -- labels from RecipeData's `cd` (#545)
     for _, id in ipairs(ids) do
         local oki, info = Try(t.GetRecipeInfo, id)
         -- Never measured to happen (727 IDs, no nil), but a half-read list
@@ -642,9 +674,16 @@ local function Candidate()
         if not oki or type(info) ~= "table" then return nil, "incomplete" end
         if info.learned then
             known[id] = true
-            local label = CooldownLabel(info.name)
+            -- The cooldown it files under: RecipeData's `cd` for a recipe it has
+            -- (#545) - the shared Transmute, Iron to Gold's own hour, nothing for
+            -- a recipe without one - in English on every client. The localized
+            -- name only for a recipe newer than the data.
+            local r = Data()[id]
+            local label
+            if r then label = r.cd else label = CooldownLabel(info.name) end
             if label then
                 labels[label] = true
+                if r then catalogued[label] = true end
                 local okc, left = Try(t.GetRecipeCooldown, id)
                 if not okc then
                     cdOk = false
@@ -664,7 +703,8 @@ local function Candidate()
         for id in pairs(known) do reagents[id] = SchematicReagents(id) end
     end
     return { line = line, rank = tonumber(base.skillLevel) or 0, max = tonumber(base.maxSkillLevel) or 0,
-             known = known, cds = cds, labels = labels, cdOk = cdOk, reagents = reagents }
+             known = known, cds = cds, labels = labels, catalogued = catalogued, cdOk = cdOk,
+             reagents = reagents }
 end
 
 local function Commit(c)
@@ -684,11 +724,13 @@ local function Commit(c)
     p.full = time()   -- "last verified", whether or not anything moved
     if changed then Bump(e) end
     local cdChanged = c.cdOk
-        and ApplyCooldowns(AltStableDB and AltStableDB[guid], BY_LINE[c.line].label, c.cds, c.labels)
+        and ApplyCooldowns(AltStableDB and AltStableDB[guid], BY_LINE[c.line].label, c.cds, c.labels, c.catalogued)
         or false
     -- A cooldown alone must reach peers too: the core only sends a character
     -- whose lastUpdate moved, and no recipe changed.
+    -- Changed also redraws the sheet's Cooldowns view (#543, #545).
     if changed or cdChanged then Changed(guid) end
+    if changed then QueueItemRead() end   -- a rank moved: the Shaker's skill (as RefreshOwnership)
     -- Not a change of the character's: the store is account-wide and never
     -- synced, so only the tab redraws.
     if c.reagents then
@@ -875,22 +917,28 @@ end
 --                 the plugin never saw), but no window was ever read
 -- Hidden characters are left out of the list, and counted: they still decide
 -- whether "nobody" can be said at all.
+-- One character as an owner of a line, or nil: this plugin's snapshot once it
+-- has one (a confirmed loss must not come back from a stale core rank), the
+-- core's skill field only before that. Owners' rule, and the Cooldowns view's (#545).
+local function OwnerOf(guid, c, line)
+    local e = AltStableProfessionsDB[guid]
+    local p = type(e) == "table" and e.profs and e.profs[line]
+    if p then
+        local state = p.full and "full" or (next(p.known or {}) and "partial" or "unscanned")
+        return { guid = guid, name = c.name, class = c.class, realm = c.realm,
+                 rank = p.rank or 0, max = p.max or 0, known = p.known or {},
+                 full = p.full, state = state }
+    elseif not (type(e) == "table" and e.stamp) and CoreSkill(c, line) then
+        return { guid = guid, name = c.name, class = c.class, realm = c.realm,
+                 rank = CoreSkill(c, line), max = 0, known = {}, state = "unscanned" }
+    end
+end
+
 local function Owners(line)
     local out, hidden = {}, 0
     for guid, c in pairs(AltStableDB or {}) do
         if type(c) == "table" and c.name then
-            local e = AltStableProfessionsDB[guid]
-            local p = type(e) == "table" and e.profs and e.profs[line]
-            local o
-            if p then
-                local state = p.full and "full" or (next(p.known or {}) and "partial" or "unscanned")
-                o = { guid = guid, name = c.name, class = c.class, realm = c.realm,
-                      rank = p.rank or 0, max = p.max or 0, known = p.known or {},
-                      full = p.full, state = state }
-            elseif not (type(e) == "table" and e.stamp) and CoreSkill(c, line) then
-                o = { guid = guid, name = c.name, class = c.class, realm = c.realm,
-                      rank = CoreSkill(c, line), max = 0, known = {}, state = "unscanned" }
-            end
+            local o = OwnerOf(guid, c, line)
             if o then
                 if IsHidden(guid) then hidden = hidden + 1 else out[#out + 1] = o end
             end
@@ -1500,6 +1548,119 @@ local function TooltipLines(itemID)
     if #crafters > 0 then out[#out + 1] = { "Crafted by", NameList(crafters) } end
     return out
 end
+
+------------------------------------------------------------
+-- The Cooldowns view (#545): every cooldown, and where each character stands
+--
+-- The core's view (Cooldowns.lua, SheetUI) asks these while this plugin is
+-- loaded, and falls back to the recorded cooldowns alone when it isn't.
+------------------------------------------------------------
+
+-- Every cooldown: RecipeData's `cd` labels, grouped by label and line, plus the
+-- item cooldowns. { key, prof, line, label, learn (the lowest of its recipes),
+-- spells (by learn, then ID), item }, by profession, then label. Built once,
+-- kept on AT (BootstrapPlugin is at Lua 5.1's 60 upvalues: no new local for it).
+local function CooldownCatalogue()
+    if AT.cdCatalogue then return AT.cdCatalogue end
+    local byKey, list = {}, {}
+    local function Add(line, label, learn, spell, item)
+        local p = BY_LINE[line]
+        if not p then return end
+        local key = "cd_" .. p.label .. "@" .. label
+        local e = byKey[key]
+        if not e then
+            e = { key = key, prof = p.label, line = line, label = label, spells = {}, item = item }
+            byKey[key] = e
+            list[#list + 1] = e
+        end
+        if spell then e.spells[#e.spells + 1] = spell end
+        if learn and (not e.learn or learn < e.learn) then e.learn = learn end
+    end
+    for id, r in pairs(Data()) do
+        if r.cd then
+            for _, line in ipairs(r.skill or {}) do Add(line, r.cd, r.learn, id) end
+        end
+    end
+    for _, ic in ipairs(ITEM_COOLDOWNS) do Add(ic.line, ic.label, ic.learn, nil, ic.item) end
+    local data = Data()
+    for _, e in ipairs(list) do
+        table.sort(e.spells, function(a, b)
+            local la, lb = data[a].learn or 9999, data[b].learn or 9999
+            if la ~= lb then return la < lb end
+            return a < b
+        end)
+    end
+    table.sort(list, function(a, b)
+        if a.prof ~= b.prof then return a.prof < b.prof end
+        return a.label < b.label
+    end)
+    -- Its icon: the item it is used from, or what its lowest recipe makes
+    -- (Arcanite Bar for the transmutes, Gold Bar, Mooncloth).
+    for _, e in ipairs(list) do
+        local first = e.spells[1] and data[e.spells[1]]
+        e.iconItem = e.item or (first and first.makes)
+    end
+    AT.cdCatalogue = list
+    return list
+end
+
+-- Where a character stands on one cooldown, and its skill:
+--   "known"      a recipe of it is in the snapshot (a partial one too)
+--   "unscanned"  owns the line, no complete scan to say more
+--   "learnable"  complete scan, none known, skill high enough
+--   "low"        skill under the lowest recipe's
+--   "usable"     an item's: skill high enough (whether it is carried, nobody knows)
+--   nil          doesn't have the profession
+-- The Recipe Book's evidence order (Verdict), by OwnerOf's ownership rule.
+local function CooldownStanding(char, entry)
+    local guid = type(char) == "table" and char.guid
+    local o = guid and entry and OwnerOf(guid, char, entry.line)
+    if not o then return nil end
+    if entry.item then
+        return (o.rank >= (entry.learn or 0)) and "usable" or "low", o.rank
+    end
+    for _, id in ipairs(entry.spells) do
+        if o.known[id] then return "known", o.rank end
+    end
+    if o.state ~= "full" then return "unscanned", o.rank end
+    if entry.learn and o.rank >= entry.learn then return "learnable", o.rank end
+    return "low", o.rank
+end
+
+-- Where a recipe is learned. A recipe item with no source code on Wowhead
+-- (Legionite) is still a recipe item.
+local function CooldownSourceText(r)
+    if r and not r.src and r.items then return "Recipe item" end
+    return SourceText(r)
+end
+
+-- The tooltip's recipe lines for one character, { left, right }: the recipes
+-- of the cooldown it knows, then those its skill meets with where each is
+-- learned; with none of either, the lowest one, what it needs and where.
+local function CooldownRecipeLines(char, entry)
+    local guid = type(char) == "table" and char.guid
+    local o = guid and entry and not entry.item and OwnerOf(guid, char, entry.line)
+    if not o then return {} end
+    local known, meets, lowest = {}, {}, nil
+    for _, id in ipairs(entry.spells) do
+        local v = Verdict(o, id)
+        local name = RecipeName(id) or ("Recipe " .. id)
+        if v == "known" then known[#known + 1] = { name, "|cff1eff00Known|r" }
+        elseif v == "meets" then meets[#meets + 1] = { name, CooldownSourceText(Data()[id]) }
+        elseif not lowest then lowest = id end
+    end
+    for _, l in ipairs(meets) do known[#known + 1] = l end
+    if #known == 0 and lowest then
+        local r = Data()[lowest]
+        known[1] = { RecipeName(lowest) or ("Recipe " .. lowest),
+                     (r.learn and ("needs " .. r.learn .. ", ") or "") .. CooldownSourceText(r) }
+    end
+    return known
+end
+
+AltStable.CooldownCatalogue = CooldownCatalogue
+AltStable.CooldownStanding = CooldownStanding
+AltStable.CooldownRecipeLines = CooldownRecipeLines
 
 local function TooltipsOn()
     return not (AltStableConfig and AltStableConfig.professionsTooltips == false)
@@ -2513,7 +2674,10 @@ local function BootstrapPlugin()
             TooltipLines = TooltipLines, EnsureTooltipHook = EnsureTooltipHook,
             DropForgottenOrphans = DropForgottenOrphans, Cleanup = Cleanup, BootstrapPlugin = BootstrapPlugin,
             PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
-            ResetState = function() pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil end,
+            ResetState = function()
+                pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil
+                AT.cdCatalogue, AT.itemReadPending = nil, false
+            end,
             Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
             ReagentPlan = ReagentPlan, ReagentLines = ReagentLines, ReagentsCounted = ReagentsCounted,
             Barrier = Barrier,
