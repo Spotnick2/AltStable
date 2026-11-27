@@ -21,12 +21,15 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
 - **A Cooldowns view in the Skills tab** ([#543](https://github.com/Spotnick2/AltStable/issues/543),
   [#545](https://github.com/Spotnick2/AltStable/issues/545)). The sidebar's Skill Levels is now
   **Skills**, with two views at the top: **Skill Levels** and **Cooldowns · N available**.
-  - Cooldowns has a column per cooldown (the transmutes, Iron to Gold, Mithril to Truesilver,
-    Mooncloth, the Salt Shaker) and a row per character with Alchemy, Tailoring or Leatherworking.
-  - A cell says **Available**, counts down to the second, or says where the character stands:
-    **Known** (its cooldown not read yet), **Learnable**, **Needs 275** when its skill is too low,
-    **Usable** for the Salt Shaker, or **Not scanned**. Its tooltip gives the skill needed and the
-    character's, and where each recipe is learned.
+  - With the Recipe Book module on (the default), Cooldowns has a column per cooldown (the
+    transmutes, Iron to Gold, Mithril to Truesilver, Mooncloth, the Salt Shaker) and a row per
+    character with Alchemy, Tailoring or Leatherworking. Without it, the cooldowns your characters
+    have recorded.
+  - A cell says **Available** or counts down live, to the second in the last hour. With the Recipe
+    Book, a character without the cooldown shows where it stands: **Known** (its cooldown not read
+    yet), **Learnable**, **Needs 275** when its skill is too low, **Usable** for the Salt Shaker, or
+    **Not scanned**. Its tooltip gives the skill needed and the character's, and where each recipe
+    is learned.
   - The Columns menu chooses which cooldowns show. A note at the top says whether the login
     notifications are on; click it to change them.
 - **Recipe tooltips, one character per line**
@@ -44,17 +47,18 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
 - **Rows nobody can count are named** in the Loremaster tab
   ([#538](https://github.com/Spotnick2/AltStable/issues/538)): a group's header says how many of
   its rows aren't listed, such as "Dungeons · 2 not listed", and its tooltip names them. A row
-  shows only when one of the characters shown has quests counted there: the Deadmines, for one, has
-  no quest for a Horde character.
+  shows only when one of the characters shown has quests counted there, or a raid attunement it can
+  do: the Deadmines, for one, has no quest for a Horde character.
 - **A Leatherworking box** in Options, Notifications
   ([#540](https://github.com/Spotnick2/AltStable/pull/540)): the Salt Shaker's notification can be
   turned off like the others, and shows Leatherworking's icon.
 
 ### Changed
 
-- **Cooldowns are saved under the same name in every language**, so two of your accounts with
-  different client languages see the same cooldown. Each alt's next profession scan updates its
-  record; until then an older one may show as a separate column.
+- **The Recipe Book's cooldowns are saved under the same name in every language**, so two of your
+  accounts with different client languages see the same cooldown. (A recipe newer than its recipe
+  data still goes by the client's own name.) Each alt's next profession scan updates its record;
+  until then an older one may show as a separate column.
 
 ### Fixed
 

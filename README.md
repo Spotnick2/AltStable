@@ -104,10 +104,12 @@ takes the window's, so a game patch that changes a recipe shows right away.
 
 The **Skills** tab's **Cooldowns** view has a column per cooldown (the transmutes, Iron to Gold,
 Mithril to Truesilver, Mooncloth, the Leatherworking Salt Shaker) and a row per character with
-Alchemy, Tailoring or Leatherworking. A cell says **Available**, counts down to the second, or says
-where the character stands: **Known** (its cooldown not read yet), **Learnable**, **Needs 275** when
-its skill is too low, or **Not scanned**. Hover it for the skill needed and where each recipe is
-learned. The tab's top bar counts what's available, and **Columns** chooses which cooldowns show.
+Alchemy, Tailoring or Leatherworking. A cell says **Available** or counts down live, to the second
+in the last hour. A character without the cooldown shows where it stands: **Known** (its cooldown
+not read yet), **Learnable**, **Needs 275** when its skill is too low, or **Not scanned**. Hover it
+for the skill needed and where each recipe is learned. The tab's top bar counts what's available,
+and **Columns** chooses which cooldowns show. This takes the Recipe Book module (on by default);
+without it, the view lists only the cooldowns your characters have recorded.
 
 A notification at login tells you which cooldowns came up while you were away. **Options,
 Notifications** chooses the professions it covers. A cooldown is read when the character opens its
@@ -175,7 +177,7 @@ can ever do there, for its faction, race and class, at any level.
   done, dimmed, such as "0/15". The steps stay counted once, under their own zones.
 - **Blackrock Spire is two rows,** Lower and Upper. Upper's shows Seal of Ascension, its key, the
   same way; the seal's quests count in Lower, where they're done.
-- **A row shows when a character shown has quests there.** A group's header says how many rows
+- **A row shows when a character shown has quests there,** or a raid attunement it can do. A group's header says how many rows
   aren't listed, such as "Dungeons · 2 not listed"; hover it for their names. The Deadmines, for
   one, has no quest for a Horde character.
 
