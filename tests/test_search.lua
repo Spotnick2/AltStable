@@ -401,6 +401,63 @@ do
     eq("a tab chosen on the rail ends the focus", wb.focus, nil)
 end
 
+-- Enter pressed within the typing delay acts on what the box says, not on
+-- the last query's rows (Codex review of #548).
+do
+    World()
+    AltStableConfig.warbandTab = 1
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    eq("(the rows are the last query's)", RowIDs(), "101")
+    local box = Window().box
+    box:SetText("wool")
+    box:GetScript("OnTextChanged")(box, true)   -- typed; its timer not fired yet
+    Enter()
+    eq("Enter right after typing opens the item now typed", wb.focus and wb.focus.itemID, 102)
+    wb.ClearFocus()
+    local uiHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return false end
+    WoW.chatBox, WoW.chatActive, WoW.chatRefuses = nil, nil, nil
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    box:SetText("wool")
+    box:GetScript("OnTextChanged")(box, true)
+    shift = true
+    Enter()
+    shift = false
+    eq("  Shift+Enter links it", WoW.chatBox and WoW.chatBox.inserted[1], "|Hitem:102|h[Wool Cloth]|h")
+    AltStable.IsGameUIHidden = uiHidden
+    WoW.flushTimers()
+    Window():Hide()
+end
+
+-- Alt+Z hides UIParent, and with it the window: that isn't closing it. It
+-- comes back with its data (Codex review of #548).
+do
+    World()
+    -- Opened with the UI shown, so it isn't lifted out from under UIParent.
+    -- The sheet's showcase may have hidden UIParent already: shown first, so
+    -- the Hide below is a real change and fires the window's OnHide.
+    local uiWasShown = UIParent:IsShown()
+    UIParent:Show()
+    local uiHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return false end
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    AltStable.IsGameUIHidden = uiHidden
+    eq("(opened under UIParent)", Window():GetParent(), UIParent)
+    UIParent:Hide()
+    check("(the game UI hidden hides the window from view)", not Window():IsVisible())
+    check("  but it is still open", Window():IsShown())
+    check("  and keeps its data", S.snap ~= nil and S.snap[101] ~= nil)
+    UIParent:Show()
+    Type("cloth")
+    eq("back with the UI, it still searches", RowIDs(), "101,103,102")
+    AltStableWarbandDB[ALT].bags[102] = 40
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("  and still hears changes", S.rows[1] and S.rows[1].id, 102)
+    Window():Hide()
+    eq("closing it for real still lets go", S.snap, nil)
+    if not uiWasShown then UIParent:Hide() end
+end
+
 -- Worn only, or nothing Warband shows: the search stays, and says why.
 do
     World()

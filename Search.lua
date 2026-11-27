@@ -284,6 +284,7 @@ local Paint
 
 local function Rerun()
     if not frame then return end
+    S.queryPending = nil
     -- The selection follows its item, wherever a re-sort puts it.
     local held = S.selected and S.rows[S.selected]
     local keep = held and held.id
@@ -513,15 +514,19 @@ local function BuildWindow()
     local typeArmed
     box:HookScript("OnTextChanged", function(self, userInput)
         S.query = self:GetText() or ""
+        S.queryPending = true
         if typeArmed then return end
         typeArmed = true
         C_Timer.After(TYPE_DELAY, function()
             typeArmed = nil
-            if frame:IsShown() then S.offset = 0; Rerun() end
+            if frame:IsShown() and S.queryPending then S.offset = 0; Rerun() end
         end)
     end)
     -- Set, not hooked: the template's Enter and Escape only clear focus.
+    -- Enter acts on what the box says now: typed within the delay, the rows
+    -- are still the last query's (Codex review of #548).
     box:SetScript("OnEnterPressed", function()
+        if S.queryPending then S.offset = 0; Rerun() end
         if IsShiftKeyDown() then S.Link() else S.Reveal() end
     end)
     box:SetScript("OnEscapePressed", function() frame:Hide() end)
@@ -552,7 +557,11 @@ local function BuildWindow()
 
     -- Closing lets everything go: the names, the queue, the snapshot. A load
     -- already asked for is the client's; its answer is ignored.
+    -- Closing, not hiding the game UI: OnHide fires for a child of UIParent
+    -- when Alt+Z hides UIParent, while the window itself is still shown and
+    -- comes back with it. That keeps everything (Codex review of #548).
     frame:SetScript("OnHide", function(self)
+        if self:IsShown() then return end
         self.events:UnregisterEvent("ITEM_DATA_LOAD_RESULT")
         if AltStable.UnregisterCallback then AltStable.UnregisterCallback("CharactersChanged", OnCharactersChanged) end
         S.names, S.folded, S.queue, S.pending, S.outstanding = {}, {}, {}, {}, 0
