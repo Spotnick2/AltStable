@@ -5171,6 +5171,7 @@ local function CreateFrameIfNeeded()
             row.left:SetFontObject(font or "GameTooltipText")
             row.left:SetWidth(wrap and (TIP_W - 22) or 0)
             row.left:SetWordWrap(wrap and true or false)
+            row.wrap = wrap and true or false
             row.left:SetText(text or "")
             row.left:SetTextColor(r or 1, g or 1, b or 1)
             row.left:Show(); row.right:Hide()
@@ -5191,12 +5192,16 @@ local function CreateFrameIfNeeded()
         -- right-hand text that would not fit wraps in what is left (Codex
         -- review of #547: side by side ran past a narrow page's edge).
         function tip:Fit()
-            local y, widest = -10, TIP_W
-            local cap = math.max(TIP_W, pv.maxW or math.huge)
+            -- TIP_W is the width it prefers, not a floor: below it on a page
+            -- narrower than that (Codex follow-up review of #547).
+            local cap = pv.maxW or math.huge
+            local base = math.min(TIP_W, cap)
+            local y, widest = -10, base
             for i = 1, self.n do
                 local row = self.lines[i]
                 row.left:ClearAllPoints(); row.right:ClearAllPoints()
                 row.left:SetPoint("TOPLEFT", 11, y)
+                if row.wrap then row.left:SetWidth(base - 22) end
                 local h = row.left:GetStringHeight() or 0
                 row.right:SetWidth(0); row.right:SetWordWrap(false)
                 if row.double then
@@ -5204,7 +5209,7 @@ local function CreateFrameIfNeeded()
                     local lw = tonumber(row.left:GetStringWidth()) or 0
                     local w = lw + (tonumber(row.right:GetStringWidth()) or 0) + 40
                     if w > cap then
-                        row.right:SetWidth(math.max(60, cap - lw - 40))
+                        row.right:SetWidth(math.max(40, cap - lw - 40))
                         row.right:SetWordWrap(true)
                         w = cap
                         h = math.max(h, row.right:GetStringHeight() or 0)
@@ -5213,7 +5218,7 @@ local function CreateFrameIfNeeded()
                 end
                 y = y - math.max(h, 12) - 2
             end
-            self:SetWidth(widest)
+            self:SetWidth(widest)   -- never past the cap: it starts under it, and wide lines are capped
             self:SetHeight(-y + 8)
             if pv.Stack then pv.Stack() end
         end
@@ -5227,7 +5232,7 @@ local function CreateFrameIfNeeded()
         -- The preview's size: both tooltips, the recipe's only while shown.
         function pv.Stack()
             local h = 38 + tip:GetHeight()
-            local w = math.max(PV_W, tip:GetWidth())
+            local w = math.max(math.min(PV_W, pv.maxW or PV_W), tip:GetWidth())
             if rtip:IsShown() then
                 h = h + 8 + rtip:GetHeight()
                 w = math.max(w, rtip:GetWidth())
@@ -5289,7 +5294,7 @@ local function CreateFrameIfNeeded()
             local w = page:GetWidth() or 0
             -- The most the preview may take: the page less its margins and the
             -- indent it has below the controls. Fitted again when that moves.
-            local maxW = math.max(TIP_W, w - 2 * P - 22)
+            local maxW = math.max(120, w - 2 * P - 22)
             if pv.maxW ~= maxW then
                 pv.maxW = maxW
                 tip:Fit(); rtip:Fit()

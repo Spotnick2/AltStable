@@ -6081,6 +6081,17 @@ do
     _, _, _, px = F.preview:GetPoint(1)
     check("  the page shrinks: fitted again, inside it", px + F.preview:GetWidth() <= 400,
           px .. " + " .. F.preview:GetWidth())
+    -- Narrower than the tooltip's preferred 280 plus its indent (Codex
+    -- follow-up review of #547): below its preferred width, still inside.
+    F.page._GetWidth = 300
+    F.layout()
+    _, _, _, px = F.preview:GetPoint(1)
+    check("a 300-wide page: the preview narrower than its usual 280, inside the page",
+          px + F.preview:GetWidth() <= 300 and F.rtip:GetWidth() < 280 and F.tip:GetWidth() < 280,
+          px .. " + " .. F.preview:GetWidth() .. " (tips " .. F.tip:GetWidth() .. ", " .. F.rtip:GetWidth() .. ")")
+    local wrapLine
+    for i = 1, F.tip.n do if F.tip.lines[i].wrap then wrapLine = F.tip.lines[i] end end
+    check("  a wrapped line narrows with it", wrapLine and wrapLine.left:GetWidth() <= F.tip:GetWidth() - 22)
     for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = nil end
     F.page._GetWidth = nil
     F.refresh()
