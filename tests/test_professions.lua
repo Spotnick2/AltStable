@@ -583,10 +583,25 @@ do
     AltStableDB[ME][KEY] = WoW.now - 10
     check("  a record held from before is a change", T.ReadItemCooldowns())
     eq("  and goes", AltStableDB[ME][KEY], nil)
+    -- Reaching 250 with the Shaker in the bags, in the order the client may
+    -- send it (Codex review of #546): the bag read first, at 249, then the
+    -- skill. The ownership refresh queues a read of its own.
+    WoW.professions = { { name = "Leatherworking", rank = 249, max = 300, line = 165 } }
+    T.RefreshOwnership(); WoW.flushTimers()
+    T.ReadItemCooldowns()
+    eq("  at 249, the bag read records nothing", AltStableDB[ME][KEY], nil)
     WoW.professions = { { name = "Leatherworking", rank = 250, max = 300, line = 165 } }
     T.RefreshOwnership()
-    T.ReadItemCooldowns()
-    eq("  at 250 it is recorded ready", AltStableDB[ME][KEY], WoW.now)
+    WoW.flushTimers()
+    eq("  reaching 250 reads the bags again: recorded ready", AltStableDB[ME][KEY], WoW.now)
+    -- The same through a window scan's commit.
+    AltStableDB[ME][KEY] = nil
+    AltStableProfessionsDB[ME].profs[165].rank = 249
+    WoW.tradeSkill.line, WoW.tradeSkill.rank, WoW.tradeSkill.max = 165, 250, 300
+    WoW.tradeSkill.recipes = { [7000] = { name = "Rugged Leather Pants", learned = true } }
+    T.OnShow(); WoW.flushTimers()
+    WoW.flushTimers()   -- the read the scan's commit queued
+    eq("  and so does a window scan that moves the rank to 250", AltStableDB[ME][KEY], WoW.now)
 
     GetTime = realGetTime
 end

@@ -534,13 +534,14 @@ local function ReadItemCooldowns()
 end
 
 -- Bag cooldown events and the Shaker's own cast come in bursts: one read on
--- the next frame for all of them.
-local itemReadPending = false
+-- the next frame for all of them. The flag is on AT, so a test's reset can
+-- clear a read its dropped timer never ran (BootstrapPlugin, which builds the
+-- reset, is at Lua 5.1's 60 upvalues).
 local function QueueItemRead()
-    if itemReadPending then return end
-    itemReadPending = true
+    if AT.itemReadPending then return end
+    AT.itemReadPending = true
     C_Timer.After(0, function()
-        itemReadPending = false
+        AT.itemReadPending = false
         ReadItemCooldowns()
     end)
 end
@@ -626,7 +627,9 @@ local function RefreshOwnership()
     end
     -- A character seen with no professions at all is a snapshot too ("has none"),
     -- so the first read always stamps.
-    if changed or not e.stamp then Bump(e); Changed(guid) end
+    -- A rank moved: the Salt Shaker's skill (#545) may have been reached after
+    -- the bag read that skipped it (Codex review of #546). One read, next frame.
+    if changed or not e.stamp then Bump(e); Changed(guid); QueueItemRead() end
 end
 
 ------------------------------------------------------------
@@ -727,6 +730,7 @@ local function Commit(c)
     -- whose lastUpdate moved, and no recipe changed.
     -- Changed also redraws the sheet's Cooldowns view (#543, #545).
     if changed or cdChanged then Changed(guid) end
+    if changed then QueueItemRead() end   -- a rank moved: the Shaker's skill (as RefreshOwnership)
     -- Not a change of the character's: the store is account-wide and never
     -- synced, so only the tab redraws.
     if c.reagents then
@@ -2672,7 +2676,7 @@ local function BootstrapPlugin()
             PROFESSIONS = PROFESSIONS, scan = scan, names = names, requested = requested,
             ResetState = function()
                 pendingLoss = nil; lineIndex, byTeach, byOutput = nil, nil, nil
-                AT.cdCatalogue = nil
+                AT.cdCatalogue, AT.itemReadPending = nil, false
             end,
             Verdict = Verdict, NobodyText = NobodyText, NameList = NameList,
             ReagentPlan = ReagentPlan, ReagentLines = ReagentLines, ReagentsCounted = ReagentsCounted,
