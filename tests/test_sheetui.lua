@@ -41,6 +41,7 @@ dofile("Reputations.lua")
 dofile("Config.lua")
 dofile("Toasts.lua")
 dofile("Columns.lua")
+dofile("Cooldowns.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
@@ -2997,7 +2998,8 @@ do
         check("  under a separator", sp == "BOTTOMLEFT" and srel == o.b and srp == "TOPLEFT" and sy == 6)
         local labels = {}
         for _, b in ipairs(T.sidebarBtns) do labels[b.sectionId] = b.lbl:GetText() end
-        eq("  Skills is Skill Levels", labels.skills, "Skill Levels")
+        eq("  Skills is Skills, its views in the strip (#543)", labels.skills, "Skills")
+        eq("  the Cooldowns view has no button of its own", labels.cooldowns, nil)
     end
     -- Plugins arriving late, in another order, still take their places.
     do
@@ -5754,6 +5756,186 @@ do
     check("opening the sheet asks who is online", asked == 1, tostring(asked))
     AltStable.AskWhoIsOnline = real
     if sheet and sheet:IsShown() then sheet:Hide() end
+end
+
+------------------------------------------------------------
+-- The Skills tab's Cooldowns view (#543)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local NOW = WoW.now
+    local heldGroup, heldHidden = AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters
+    AltStableConfig.sheetGroupByRealm = false
+    AltStableConfig.hiddenCharacters = { hid = true }
+    AltStableConfig.sheetHiddenColumns, AltStableConfig.toastProfessions = nil, nil
+    T.ForgetSessionSorts()
+    build({
+        ann = { guid = "ann", name = "Ann", class = "MAGE", level = 60, ilvl = 10, lastUpdate = 1,
+                ["cd_Tailoring@Mooncloth"] = NOW + 10, ["cd_Alchemy@Transmute"] = NOW - 10 },
+        bob = { guid = "bob", name = "Bob", class = "ROGUE", level = 50, ilvl = 50, lastUpdate = 1,
+                ["cd_Tailoring@Mooncloth"] = NOW + 20, ["cd_Leatherworking@Salt Shaker"] = NOW + 3600 },
+        cy  = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 },
+        hid = { guid = "hid", name = "Hid", class = "MAGE", level = 10, lastUpdate = 1,
+                ["cd_Engineering@Gizmo"] = NOW + 99 },
+        nameless = { guid = "nameless", ["cd_Enchanting@Orphan"] = NOW - 1 },
+    })
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId then btnFor[b.sectionId] = b end end
+    local function Open(id) btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local function Click(b) b:GetScript("OnClick")(b) end
+    local levelsTab, cdTab, note, empty = T.ViewTabs()
+    local VS = T.ViewStrip
+    local function Names()
+        local out = {}
+        for _, it in ipairs(T.DisplayList()) do if it.kind == "char" then out[#out + 1] = it.data.name end end
+        return table.concat(out, ",")
+    end
+    local function Labels()
+        local cols, out = T.ColumnLayout(), {}
+        for i, c in ipairs(cols) do out[i] = c.label end
+        return table.concat(out, ",")
+    end
+    local function Cell(r, c)
+        local _, _, _, rows = T.ColumnLayout()
+        return plain(rows[r].cells[c]:GetText() or "")
+    end
+    local function HeaderY() return select(5, T.frame.frozenHeader:GetPoint(1)) end
+
+    -- Another tab: no strip, the header where it always was.
+    Open("summary")
+    check("the strip is hidden on another tab", not VS.frame:IsShown())
+    local usualY = HeaderY()
+    eq("  the header under the title bar", usualY, -4)
+
+    -- Skills: the strip, the header below it, Skill Levels chosen.
+    Open("skills")
+    check("Skills shows the view strip", VS.frame:IsShown())
+    eq("  the header moves down by the strip", HeaderY(), usualY - VS.H)
+    eq("  the title says Skills", T.sectionText:GetText(), "Skills")
+    eq("  the first tab is Skill Levels", levelsTab.text:GetText(), "Skill Levels")
+    eq("  the second counts what is up (Ann's transmute)", plain(cdTab.text:GetText()),
+       "Cooldowns  \194\183 1 available")
+    check("  Skill Levels is the chosen one", levelsTab.line:IsShown() and not cdTab.line:IsShown())
+    check("  Skill Levels has its own columns", Labels():find("Alchemy", 1, true) ~= nil, Labels())
+
+    -- Cooldowns.
+    Click(cdTab)
+    check("the Cooldowns tab is chosen", cdTab.line:IsShown() and not levelsTab.line:IsShown())
+    eq("  the title still says Skills", T.sectionText:GetText(), "Skills")
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    local lr, lg, lb = btnFor.skills.lbl:GetTextColor()
+    check("  the sidebar lights Skills", lr == ar and lg == ag and lb == ab)
+    eq("  a column per cooldown found, by profession", Labels(), "Transmute,Salt Shaker,Mooncloth")
+    eq("  only the characters with one, by name; not hidden, not nameless", Names(), "Ann,Bob")
+    eq("  the strip stays", VS.frame:IsShown(), true)
+    eq("  the header below it", HeaderY(), usualY - VS.H)
+    check("  Ann's transmute is up", Cell(1, 1):find("Available", 1, true) ~= nil, Cell(1, 1))
+    eq("  Ann has no Shaker", Cell(1, 2), "\226\128\148")
+    eq("  her Mooncloth counts down", Cell(1, 3), "10s")
+    eq("  Bob's Shaker", Cell(2, 2), "1h 0m")
+    local _, hdrs, _, rows = T.ColumnLayout()
+    eq("  a cell's tooltip says when", rows[2].cellTips[2].line2, "Ready " .. date("%a %H:%M", NOW + 3600))
+    eq("  and what", rows[2].cellTips[2].line1, "Salt Shaker (Leatherworking)")
+    eq("  a dash says there is none", rows[1].cellTips[2].line2, "No recorded cooldown")
+    check("  a header has the icon and the name", hdrs[3].iconTex:IsShown() and hdrs[3].label:IsShown())
+    eq("  named", hdrs[3].label:GetText(), "Mooncloth")
+    local sf, sa = T.SortState()
+    check("  sorted by name, A to Z (no Level column here)", sf == "name" and sa == true, tostring(sf))
+
+    -- Sorting a cooldown: the soonest first.
+    Click(hdrs[3])
+    sf, sa = T.SortState()
+    check("a cooldown sorts soonest first on a first click", sf == hdrs[3].field and sa == true)
+    eq("  Ann's 10s before Bob's 20s", Names(), "Ann,Bob")
+
+    -- The clock. Once a second, not every frame.
+    local ticks, realTick = 0, VS.Tick
+    VS.Tick = function() ticks = ticks + 1 end
+    local onUpdate = VS.frame:GetScript("OnUpdate")
+    onUpdate(VS.frame, 0.5)
+    eq("the clock waits for a second", ticks, 0)
+    onUpdate(VS.frame, 0.6)
+    eq("  then ticks", ticks, 1)
+    VS.Tick = realTick
+
+    -- An expiry: the rows repaint and re-sort, the scroll stays put.
+    local body = T.frame.bodyScroll
+    local moved = 0
+    local rv, rh = body.SetVerticalScroll, body.SetHorizontalScroll
+    body.SetVerticalScroll = function(self, ...) moved = moved + 1; return rv(self, ...) end
+    body.SetHorizontalScroll = function(self, ...) moved = moved + 1; return rh(self, ...) end
+    WoW.now = NOW + 5
+    VS.Tick()
+    eq("a tick repaints the countdown", Cell(1, 3), "5s")
+    eq("  same order while nothing came up", Names(), "Ann,Bob")
+    WoW.now = NOW + 25
+    VS.Tick()
+    eq("both Mooncloths up: the count follows", plain(cdTab.text:GetText()), "Cooldowns  \194\183 3 available")
+    eq("  re-sorted: tied at ready, the higher item level first", Names(), "Bob,Ann")
+    check("  Bob's Mooncloth shows Available", Cell(1, 3):find("Available", 1, true) ~= nil, Cell(1, 3))
+    eq("  neither scrollbar was moved", moved, 0)
+    body.SetVerticalScroll, body.SetHorizontalScroll = rv, rh
+    WoW.now = NOW
+
+    -- Hiding a cooldown's column keeps its characters (the Columns menu
+    -- chooses columns, not people), and the choice can sync.
+    local shaker = AltStable.Cooldowns.Column("cd_Leatherworking@Salt Shaker").field
+    AltStable.SetColumnShown("cooldowns", shaker, false)
+    eq("a hidden cooldown column goes", Labels(), "Transmute,Mooncloth")
+    eq("  its owner stays", Names(), "Ann,Bob")
+    check("  saved under a name the settings sync takes",
+          AltStableConfig.sheetHiddenColumns["cooldowns." .. shaker] == true
+          and AltStable.GoodColumnKey("cooldowns." .. shaker))
+    local entries = T.ColumnMenuEntries({ id = "cooldowns", label = "Cooldowns", cdFields = true, fields = {} })
+    local listed = {}
+    for _, e in ipairs(entries) do if e.id then listed[e.id] = true end end
+    check("  the Columns menu lists it to bring back", listed[shaker] == true)
+    AltStable.ShowAllColumns("cooldowns")
+    eq("  Show all brings it back", Labels(), "Transmute,Salt Shaker,Mooncloth")
+
+    -- The note: the login toast's rule; a click opens Notifications.
+    VS.Update()
+    eq("the note: toasts on", plain(note.text:GetText()), "Login toasts: on")
+    AltStableConfig.toastProfessions = { Leatherworking = false }
+    VS.Update()
+    eq("  one profession off", plain(note.text:GetText()), "Login toasts: some professions")
+    AltStableConfig.toastProfessions = nil
+    Click(note)
+    check("  a click opens Options on Notifications",
+          T.optionsPanel:IsShown() and T.OptPages.notifications.scroll:IsShown())
+    check("  and the strip goes with the grid", not VS.frame:IsShown())
+
+    -- The sidebar's Skills opens the view last used.
+    Open("skills")
+    eq("Skills reopens on Cooldowns", Labels(), "Transmute,Salt Shaker,Mooncloth")
+    Click(levelsTab)
+    Open("summary"); Open("skills")
+    check("  and on Skill Levels after that was chosen", levelsTab.line:IsShown()
+          and Labels():find("Alchemy", 1, true) ~= nil)
+
+    -- Nobody with a cooldown: how they get there.
+    Click(cdTab)
+    check("the empty note is hidden while there are cooldowns", not empty:IsShown())
+    build({ cy = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 } })
+    eq("no cooldown anywhere: no columns", Labels(), "")
+    check("  the empty note says how they appear", empty:IsShown()
+          and (empty:GetText() or ""):find("seen running", 1, true) == nil
+          and (empty:GetText() or ""):find("sees it running", 1, true) ~= nil)
+    -- With no column at all, a long note: the window still holds the strip.
+    note.text._GetStringWidth = 600
+    VS.Update()
+    T.ResizeFrameToContent()
+    local need = AltStable.LAYOUT.SIDEBAR_WIDTH + VS.MinWidth()
+    check("  the window is at least as wide as the strip needs", T.frame:GetWidth() >= need,
+          T.frame:GetWidth() .. " < " .. need)
+    note.text._GetStringWidth = nil
+    VS.Update()
+    Click(levelsTab)
+    check("  gone on Skill Levels", not empty:IsShown())
+
+    Open("summary")
+    AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters = heldGroup, heldHidden
 end
 
 WoW.finish("test_sheetui", passed, failed)

@@ -24,11 +24,21 @@ local TITLE_H       = 30
 -- Column header and body start below the title bar.
 local HEADER_TOP_Y  = TITLE_H + 4    -- = 34 (4px gap between title bar and column header)
 
+-- The Skills tab's view strip (#543), between the title bar and the column
+-- header while Skills or its Cooldowns view is shown: the grid starts below it.
+-- Its frame and functions are filled in by CreateFrameIfNeeded.
+local viewStrip = { on = false, H = 32 }
+
+-- Where the column header starts: below the strip when it shows.
+local function HeaderTopY()
+    return HEADER_TOP_Y + (viewStrip.on and viewStrip.H or 0)
+end
+
 -- BODY_TOP_Y depends on the *current* header height, which changes per
 -- section (compact 28 for text-heavy sections, 32 for icon-heavy ones).
 -- Always call this; never cache the value at file load time.
 local function BodyTopY()
-    return HEADER_TOP_Y + currentHeaderHeight + 1
+    return HeaderTopY() + currentHeaderHeight + 1
 end
 
 -- Public layout contract — plugins read these to align their content with the
@@ -93,7 +103,8 @@ local SECTIONS = {
     },
     {
         id    = "skills",
-        label = "Skill Levels",
+        label = "Skills",            -- its views: Skill Levels, Cooldowns (#543)
+        viewLabel = "Skill Levels",
         icon  = IC("skills"),
         headerHeight = 32,
         preferW = 1111,
@@ -105,6 +116,19 @@ local SECTIONS = {
             "prof_Herbalism","prof_Mining","prof_Skinning",
             "cooking","fishing","firstAid","riding","favor",
         },
+    },
+    -- The Skills tab's second view (#543): a tab of its own for the sort, the
+    -- hidden columns and the rows, with no sidebar button - Skills' button and
+    -- the view strip lead here, and the sidebar lights its parent.
+    {
+        id    = "cooldowns",
+        label = "Cooldowns",
+        parent = "skills",
+        icon  = IC("skills"),
+        headerHeight = 32,
+        fields = {},
+        cdFields = true,             -- the columns are the cooldowns found (EligibleColumns)
+        defaultSort = { field = "name", asc = true },
     },
     {
         id    = "rep",
@@ -119,6 +143,25 @@ local SECTIONS = {
         repFields = true,
     },
 }
+
+-- The sections with a sidebar button: not a view of another (#543).
+function viewStrip.NavSections()
+    local out = {}
+    for _, s in ipairs(SECTIONS) do if not s.parent then out[#out + 1] = s end end
+    return out
+end
+
+-- The sidebar button a section lights: its parent's, for a view.
+function viewStrip.Nav(section)
+    return section and (section.parent or section.id)
+end
+
+-- The section a sidebar button opens: Skills, the view last shown this
+-- session (a Lua value, never saved).
+function viewStrip.Entry(section)
+    if viewStrip.last and viewStrip.last.parent == section.id then return viewStrip.last end
+    return section
+end
 
 -- Build a lookup: field → column def, used when building section col lists
 local function BuildFieldLookup()
@@ -135,7 +178,8 @@ end
 local columnByField
 local function ColumnFor(field)
     columnByField = columnByField or BuildFieldLookup()
-    return columnByField[field]
+    -- A cooldown's column (#543) is made when found, so it isn't in the list.
+    return columnByField[field] or AltStable.Cooldowns.ColumnForField(field)
 end
 
 ------------------------------------------------------------
@@ -751,10 +795,37 @@ local function FactionGroupOf(char)
     return "Unknown"
 end
 
+-- #21. Hiding is filtered HERE, at render time, and nowhere else: the record
+-- still syncs, still updates, and still goes out to peers. Config.lua owns the
+-- state (per account, keyed by guid).
+local function IsHidden(char)
+    if not AltStable.IsCharacterHidden then return false end
+    return AltStable.IsCharacterHidden(char.guid)
+end
+
+-- #69. The "show hidden" toggle changes WHAT THE GRID LISTS and nothing else.
+--
+-- Two predicates, not one, and the split is the whole point: IsHidden still
+-- decides the totals and the "(N hidden)" count, so those mean the same thing
+-- whether the toggle is on or off. Folding the toggle into IsHidden would have
+-- made switching a view silently change the account's reported gold.
+-- Above EligibleColumns, which lists the Cooldowns view's columns by it (#543).
+local function ShouldShowInGrid(char)
+    if not IsHidden(char) then return true end
+    return AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false
+end
+
 -- Every column a tab can show, in order, before the player's choice: the
 -- column menu lists these, and the grid shows the ones not hidden.
 local function EligibleColumns(section)
     local out = {}
+    -- The Cooldowns view (#543): a column per cooldown a listed character has.
+    if section.cdFields then
+        for _, key in ipairs(AltStable.Cooldowns.KeysInUse(GetCharacterStore(), ShouldShowInGrid)) do
+            out[#out + 1] = AltStable.Cooldowns.Column(key)
+        end
+        return out
+    end
     local fields = section.fields
     if section.repFields then
         fields = {}
@@ -864,25 +935,6 @@ AltStable._test.OpenColumnMenu = OpenColumnMenu
 ------------------------------------------------------------
 -- Display list
 ------------------------------------------------------------
-
--- #21. Hiding is filtered HERE, at render time, and nowhere else: the record
--- still syncs, still updates, and still goes out to peers. Config.lua owns the
--- state (per account, keyed by guid).
-local function IsHidden(char)
-    if not AltStable.IsCharacterHidden then return false end
-    return AltStable.IsCharacterHidden(char.guid)
-end
-
--- #69. The "show hidden" toggle changes WHAT THE GRID LISTS and nothing else.
---
--- Two predicates, not one, and the split is the whole point: IsHidden still
--- decides the totals and the "(N hidden)" count, so those mean the same thing
--- whether the toggle is on or off. Folding the toggle into IsHidden would have
--- made switching a view silently change the account's reported gold.
-local function ShouldShowInGrid(char)
-    if not IsHidden(char) then return true end
-    return AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false
-end
 
 -- The distinct accounts a set of characters came from, sorted.
 --
@@ -1047,9 +1099,17 @@ local function SortFieldValid(field)
     return false
 end
 
+-- Level, highest first, unless the tab says otherwise: the Cooldowns view has
+-- no Level column, and sorts by name (#543).
+local function DefaultSort(section)
+    local d = section and section.defaultSort
+    if d then return d.field, d.asc end
+    return DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC
+end
+
 local function ResetSortIfInvalid()
     if not SortFieldValid(sortColumn) then
-        sortColumn, sortAsc = DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC
+        sortColumn, sortAsc = DefaultSort(activeSection)
     end
 end
 
@@ -1065,7 +1125,7 @@ local function LoadSortFor(section)
         if s then sectionSorts[section.id] = { field = s.field, asc = s.asc } end
     end
     if s then sortColumn, sortAsc = s.field, s.asc
-    else sortColumn, sortAsc = DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC end
+    else sortColumn, sortAsc = DefaultSort(section) end
     ResetSortIfInvalid()
 end
 AltStable._test.SortState = function() return sortColumn, sortAsc end
@@ -1105,7 +1165,10 @@ local function BuildDisplayList()
     for _, char in next, store do
         -- ShouldShowInGrid, not IsHidden: this is the LIST. The totals above
         -- and the iLvl average below deliberately still use IsHidden.
-        if type(char)=="table" and char.name and ShouldShowInGrid(char) then
+        -- The Cooldowns view lists only the characters with a cooldown (#543):
+        -- AltStable.Cooldowns.Listed, the rule its columns and count use too.
+        if type(char)=="table" and char.name and ShouldShowInGrid(char)
+        and not (activeSection.cdFields and not AltStable.Cooldowns.HasAny(char)) then
             table.insert(allChars, char)
         end
     end
@@ -1214,6 +1277,8 @@ end
 
 local function UpdateRows()
     HideAllRows()
+    -- The Cooldowns view with nobody to list says how cooldowns get there (#543).
+    if viewStrip.SetEmpty and activeSection.cdFields then viewStrip.SetEmpty(#displayList == 0) end
     local needed=CountVisibleRows()
     EnsureRows(needed)
     local offset=bodyScroll:GetVerticalScroll()
@@ -1398,11 +1463,16 @@ local function ApplyContentAnchors(needsH, needsV)
     -- Header right edge MUST equal body right edge — same rightInset.
     -- Without this, the last column header is clipped (no v-scroll) or
     -- overflows past the v-scrollbar (with v-scroll).
+    -- Both header strips start below the Skills view strip when it shows (#543).
     if headerScroll then
         headerScroll:ClearAllPoints()
-        Left(headerScroll, "TOPLEFT", FROZEN_WIDTH, -HEADER_TOP_Y)
-        headerScroll:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -rightInset, -HEADER_TOP_Y)
+        Left(headerScroll, "TOPLEFT", FROZEN_WIDTH, -HeaderTopY())
+        headerScroll:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -rightInset, -HeaderTopY())
         headerScroll:SetHeight(currentHeaderHeight)
+    end
+    if frozenHeader then
+        frozenHeader:ClearAllPoints()
+        Left(frozenHeader, "TOPLEFT", 0, -HeaderTopY())
     end
 
     -- Horizontal scrollbar uses the same right inset as the body so it
@@ -1635,9 +1705,17 @@ end
 -- The kind, and for an icon header its icon (resolved once, here).
 local function HeaderKind(col)
     if col.vertical and not col.repIcon then return "stacked" end
+    -- A cooldown (#543): its icon and its name, side by side.
+    if col.cdIcon then return "iconText", col.cdIcon, false end
     local icon, isGlyph = HeaderIcon(col)
     if icon then return "icon", icon, isGlyph end
     return "text"
+end
+
+-- The first click's direction: text A to Z, a cooldown soonest first (#543),
+-- any other number highest first.
+local function FirstClickAsc(col)
+    return col.sortText == true or col.sortFirstAsc == true
 end
 
 -- What an order is called, for a column: "highest first", "A to Z".
@@ -1695,14 +1773,14 @@ end
 local function ShowHeaderTooltip(btn)
     local col = btn.col
     GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM"); GameTooltip:ClearLines()
-    GameTooltip:AddLine(COL_TOOLTIPS[col.field] or col.label, 1, 1, 1)
+    GameTooltip:AddLine(COL_TOOLTIPS[col.field] or col.headerTip or col.label, 1, 1, 1)
     if btn.sortable then
         if btn.field == sortColumn then
             local now = OrderWords(col, sortAsc)
             GameTooltip:AddLine(now:sub(1, 1):upper() .. now:sub(2), 0.7, 0.7, 0.7)
             GameTooltip:AddLine("Click to sort " .. OrderWords(col, not sortAsc), 0.7, 0.7, 0.7)
         else
-            GameTooltip:AddLine("Click to sort " .. OrderWords(col, col.sortText == true), 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Click to sort " .. OrderWords(col, FirstClickAsc(col)), 0.7, 0.7, 0.7)
         end
     end
     -- The standing key lives in the faction headers, so the footer keeps the
@@ -1718,7 +1796,7 @@ local function SortByHeader(btn)
     if not btn.sortable then return end
     local field = btn.field
     if sortColumn == field then sortAsc = not sortAsc
-    else sortColumn = field; sortAsc = btn.col.sortText == true end
+    else sortColumn = field; sortAsc = FirstClickAsc(btn.col) end
     SaveSort(activeSection)
     UpdateSortArrows(); BuildDisplayList(); UpdateScroll(); UpdateRows(); UpdateTotalsBar()
     -- The tooltip under the mouse described the order before the click.
@@ -1790,6 +1868,27 @@ local function ConfigureHeader(btn, col)
         end
         tex:Show()
         lbl:SetText(""); lbl:Hide()
+        return
+    end
+
+    if kind == "iconText" then
+        -- The pair centred together: the label's centre shifted right by half
+        -- the icon and its gap, the icon just left of it. A name too long
+        -- for the column is cut to fit.
+        local sz, gap = col.headerIconSize or 20, 6
+        lbl:SetFontObject(GameFontHighlight)
+        lbl:SetJustifyH("CENTER"); lbl:SetJustifyV("MIDDLE")
+        lbl:SetWordWrap(false)
+        lbl:SetText(col.label)
+        local room = col.width - sz - gap - 12
+        local w = tonumber(lbl:GetStringWidth()) or 0
+        if w > room then lbl:SetWidth(room); w = room end
+        lbl:SetPoint("CENTER", btn, "CENTER", (sz + gap) / 2, 0)
+        tex:SetSize(sz, sz)
+        tex:SetPoint("RIGHT", lbl, "CENTER", -w / 2 - gap, 0)
+        tex:SetTexture(icon)
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        tex:Show(); lbl:Show()
         return
     end
 
@@ -2353,6 +2452,12 @@ local function ComputeContentSize()
     -- (Codex review of #524). The grid fills a wider window.
     local titleMin = AltStable.GetTitleBarRequiredWidth and AltStable.GetTitleBarRequiredWidth() or 0
     if w < titleMin then w = titleMin end
+    -- Nor narrower than the Skills view strip's tabs and note (#543), with
+    -- no cooldown column at all.
+    if viewStrip.on and viewStrip.MinWidth then
+        local stripMin = SIDEBAR_WIDTH + viewStrip.MinWidth()
+        if w < stripMin then w = stripMin end
+    end
 
     -- Whether h-scroll is needed is decided by content width vs the
     -- viewport width AT THIS frame width — which we just computed.
@@ -2362,7 +2467,7 @@ local function ComputeContentSize()
     local needsH     = GetScrollableWidth() > viewportW
 
     local h = TITLE_H                                       -- title bar
-            + 4                                             -- gap title→header
+            + (HeaderTopY() - TITLE_H)                      -- gap title→header, the Skills strip (#543)
             + currentHeaderHeight                           -- column header
             + 1                                             -- separator under header
             + (rowCount * ROW_HEIGHT)                       -- body
@@ -2471,6 +2576,11 @@ local function SwitchSectionNow(section)
 
     activeSection = section
     if AltStable.UpdateColumnsButton then AltStable.UpdateColumnsButton() end
+    -- The Skills view strip (#543): shown for Skills and its views, the view
+    -- remembered for the sidebar button. Before the header is placed.
+    if section.id == "skills" then viewStrip.last = nil
+    elseif section.parent then viewStrip.last = section end
+    if viewStrip.Set then viewStrip.Set(section) end
 
     ShowDataUnderlay(not section._isPlugin)
 
@@ -2480,7 +2590,7 @@ local function SwitchSectionNow(section)
     -- Highlight active sidebar button using theme accent
     local ar, ag, ab = AltStable.GetAccentRGB()
     for _, btn in ipairs(sidebarBtns) do
-        if btn.sectionId == section.id then
+        if btn.sectionId == viewStrip.Nav(section) then
             AltStable.SkinButtonActive(btn)
             btn.lbl:SetTextColor(ar, ag, ab)
             if btn.icon then btn.icon:SetAlpha(1.0) end
@@ -3077,7 +3187,12 @@ local function CreateFrameIfNeeded()
             end
             sectionText:SetPoint("LEFT", titleSep, "RIGHT", SECTION_GAP, 0)
             sectionText:SetPoint("RIGHT", colBtn:IsShown() and colBtn or refBtn, "LEFT", -10, 0)
-            sectionText:SetText(activeSection and activeSection.label or "")
+            -- A view (#543) is titled by its tab: "Skills", not "Cooldowns".
+            local shown = activeSection
+            if shown and shown.parent then
+                for _, s in ipairs(SECTIONS) do if s.id == shown.parent then shown = s end end
+            end
+            sectionText:SetText(shown and shown.label or "")
         end
         function AltStable.GetTitleBarRequiredWidth()
             local left = Full() and SIDEBAR_WIDTH or (TITLE_PAD + TextWidth(titleText) + TITLE_PAD)
@@ -3147,7 +3262,7 @@ local function CreateFrameIfNeeded()
     local SIDEBAR_BUTTON_STEP = 53
     local SIDEBAR_BUTTON_ICON = 36
     local btnY = -8
-    for _, section in ipairs(SECTIONS) do
+    for _, section in ipairs(viewStrip.NavSections()) do
         local btn=CreateFrame("Button",nil,sidebar,"BackdropTemplate")
         btn:SetHeight(SIDEBAR_BUTTON_H)
         btn:SetPoint("TOPLEFT",sidebar,"TOPLEFT",0,btnY)
@@ -3178,9 +3293,10 @@ local function CreateFrameIfNeeded()
         lbl:SetTextColor(AltStable.SkinNavDim())
         btn.lbl=lbl; btn.icon=icon
 
-        btn:SetScript("OnClick",function() SwitchSection(section) end)
+        -- Skills opens the view last used this session (#543).
+        btn:SetScript("OnClick",function() SwitchSection(viewStrip.Entry(section)) end)
         btn:SetScript("OnEnter",function()
-            if activeSection.id~=section.id then
+            if viewStrip.Nav(activeSection)~=section.id then
                 AltStable.SkinButtonHover(btn)
                 lbl:SetTextColor(unpack(AltStable.C.TEXT_BRIGHT))
                 icon:SetAlpha(0.85)
@@ -3188,7 +3304,7 @@ local function CreateFrameIfNeeded()
             NavTip(btn, section.label)
         end)
         btn:SetScript("OnLeave",function()
-            if activeSection.id~=section.id then
+            if viewStrip.Nav(activeSection)~=section.id then
                 AltStable.SkinButtonIdle(btn)
                 lbl:SetTextColor(AltStable.SkinNavDim())
                 icon:SetAlpha(0.78)
@@ -3384,6 +3500,7 @@ local function CreateFrameIfNeeded()
                 end
                 activeSection = plugin
                 AltStable.UpdateColumnsButton()
+                if viewStrip.Set then viewStrip.Set(plugin) end   -- the Skills strip goes (#543)
                 ShowDataUnderlay(false)
                 plugin.OnActivate(frame)
             end, nil, true)
@@ -5924,6 +6041,9 @@ local function CreateFrameIfNeeded()
     AltStable.RegisterThemeCallback(RefreshOptNav)
     AltStable._test.OptPages, AltStable._test.OptNavBtns = optPages, optNavBtns
     AltStable._test.ShowOptPage = ShowOptPage
+    -- The Cooldowns view's toast note opens Notifications (#543), after
+    -- AltStable.OpenConfig has shown Options.
+    AltStable.ShowOptionsPage = ShowOptPage
     AltStable._test.OptActivePage = function() return optActivePage end
     end
 
@@ -6251,6 +6371,167 @@ local function CreateFrameIfNeeded()
         end
     end)
 
+    --------------------------------------------------------
+    -- The Skills view strip (#543): Skill Levels | Cooldowns · N available,
+    -- and the login-toast note, between the title bar and the header.
+    --------------------------------------------------------
+    do
+        local CD = AltStable.Cooldowns
+        local strip = CreateFrame("Frame", nil, frame)
+        strip:SetHeight(viewStrip.H)
+        -- Beside the sidebar, so it follows a collapse.
+        strip:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 0, -2)
+        strip:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -TITLE_H - 2)
+        local base = strip:CreateTexture(nil, "ARTWORK")
+        base:SetHeight(1)
+        base:SetPoint("BOTTOMLEFT"); base:SetPoint("BOTTOMRIGHT")
+        base:SetColorTexture(unpack(AltStable.C.SEP))
+        strip:Hide()
+        viewStrip.frame = strip
+
+        local function SectionById(id)
+            for _, s in ipairs(SECTIONS) do if s.id == id then return s end end
+        end
+
+        -- A tab: a backing that is faint when idle, lighter under the mouse and
+        -- accent-tinted when chosen, with an accent underline on the chosen one.
+        local tabs = {}
+        local function MakeTab(id)
+            local b = CreateFrame("Button", nil, strip)
+            b:SetHeight(viewStrip.H - 4)
+            b.id = id
+            b.fill = b:CreateTexture(nil, "BACKGROUND"); b.fill:SetAllPoints()
+            b.line = b:CreateTexture(nil, "ARTWORK"); b.line:SetHeight(2)
+            b.line:SetPoint("BOTTOMLEFT"); b.line:SetPoint("BOTTOMRIGHT")
+            b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            b.text:SetPoint("CENTER", 0, 1)
+            b:SetScript("OnClick", function()
+                local s = SectionById(id)
+                if s and activeSection ~= s then SwitchSection(s) end
+            end)
+            b:SetScript("OnEnter", function() b.hover = true; viewStrip.Update() end)
+            b:SetScript("OnLeave", function() b.hover = false; viewStrip.Update() end)
+            tabs[#tabs + 1] = b
+            return b
+        end
+        local levelsTab = MakeTab("skills")
+        levelsTab:SetPoint("BOTTOMLEFT", strip, "BOTTOMLEFT", 8, 1)
+        local cdTab = MakeTab("cooldowns")
+        cdTab:SetPoint("LEFT", levelsTab, "RIGHT", 4, 0)
+
+        -- The note: whether the login toast is on, for the professions shown.
+        local note = CreateFrame("Button", nil, strip)
+        note:SetHeight(viewStrip.H - 4)
+        note:SetPoint("BOTTOMRIGHT", strip, "BOTTOMRIGHT", -10, 1)
+        note.text = note:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        note.text:SetPoint("RIGHT")
+        note.text:SetTextColor(unpack(AltStable.C.TEXT_HELP))
+        note:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+            GameTooltip:AddLine("Login toasts", 1, 1, 1)
+            GameTooltip:AddLine("At login, a toast lists the cooldowns that came up while you were away.",
+                nil, nil, nil, true)
+            if AltStableConfig and AltStableConfig.toastsEnabled == false then
+                GameTooltip:AddLine("Turned off for every profession.", 0.6, 0.6, 0.6, true)
+            else
+                for _, l in ipairs(viewStrip.noteLines or {}) do
+                    GameTooltip:AddDoubleLine(l[1], l[2], 1, 0.82, 0)
+                end
+            end
+            GameTooltip:AddLine("Click to change it in Options > Notifications.", 0.6, 0.6, 0.6, true)
+            GameTooltip:Show()
+        end)
+        note:SetScript("OnLeave", function(self)
+            if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+        end)
+        note:SetScript("OnClick", function()
+            AltStable.OpenConfig()
+            if AltStable.ShowOptionsPage then AltStable.ShowOptionsPage("notifications") end
+        end)
+
+        -- With no cooldown recorded anywhere: how they get here.
+        local empty = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        empty:SetPoint("TOP", bodyScroll, "TOP", 0, -40)
+        empty:SetWidth(420)
+        empty:SetJustifyH("CENTER"); empty:SetWordWrap(true)
+        empty:SetTextColor(unpack(AltStable.C.TEXT_HELP))
+        empty:SetText("No cooldowns recorded yet.\n\nA recipe's cooldown appears once a scan of the "
+            .. "profession window sees it running. A carried Salt Shaker appears even when it is "
+            .. "already ready.")
+        empty:Hide()
+        function viewStrip.SetEmpty(show) empty:SetShown(show and true or false) end
+
+        -- The professions the shown cooldowns belong to, in order.
+        local function ProfsInUse()
+            local out, seen = {}, {}
+            for _, key in ipairs(CD.KeysInUse(GetCharacterStore(), ShouldShowInGrid)) do
+                local prof = CD.Parse(key)
+                if prof and not seen[prof] then seen[prof] = true; out[#out + 1] = prof end
+            end
+            return out
+        end
+
+        -- Repaint: the count, the tabs' states and widths, the note.
+        function viewStrip.Update()
+            viewStrip.ready = CD.ReadyCount(GetCharacterStore(), ShouldShowInGrid)
+            local n = viewStrip.ready
+            levelsTab.text:SetText(SectionById("skills").viewLabel)
+            cdTab.text:SetText("Cooldowns" .. (n > 0 and ("  |cff1eff00\194\183 " .. n .. " available|r") or ""))
+            local ar, ag, ab = AltStable.GetAccentRGB()
+            for _, b in ipairs(tabs) do
+                local chosen = activeSection and activeSection.id == b.id
+                b:SetWidth((tonumber(b.text:GetStringWidth()) or 0) + 32)
+                if chosen then b.fill:SetColorTexture(ar, ag, ab, 0.16)
+                elseif b.hover then b.fill:SetColorTexture(1, 1, 1, 0.08)
+                else b.fill:SetColorTexture(1, 1, 1, 0.03) end
+                b.line:SetColorTexture(ar, ag, ab, 1)
+                b.line:SetShown(chosen and true or false)
+                b.text:SetTextColor(unpack((chosen or b.hover) and AltStable.C.TEXT_BRIGHT or AltStable.C.TEXT_DIM))
+            end
+            local text, lines = CD.ToastNote(ProfsInUse())
+            viewStrip.noteLines = lines
+            note.text:SetText(text)
+            note:SetWidth((tonumber(note.text:GetStringWidth()) or 0) + 4)
+        end
+
+        -- The narrowest grid that still holds both tabs and the note.
+        function viewStrip.MinWidth()
+            local w = 8 + levelsTab:GetWidth() + 4 + cdTab:GetWidth() + 24 + note:GetWidth() + 10
+            return math.ceil(w)
+        end
+
+        -- Shown for Skills and its views, hidden for every other tab.
+        function viewStrip.Set(section)
+            local on = section ~= nil and (section.id == "skills" or section.parent == "skills")
+            viewStrip.on = on
+            strip:SetShown(on)
+            if on then viewStrip.Update() end
+            if not (section and section.cdFields) then empty:Hide() end
+        end
+
+        -- The clock: once a second while the strip shows (an OnUpdate does not
+        -- run on a hidden frame). Skill Levels only needs the count; Cooldowns
+        -- repaints its rows, and when a cooldown comes up re-sorts them -
+        -- BuildDisplayList and UpdateRows, never UpdateScroll, which would put
+        -- both scrollbars back to the start.
+        local elapsed = 0
+        function viewStrip.Tick()
+            local before = viewStrip.ready
+            viewStrip.Update()
+            if not (activeSection and activeSection.cdFields) then return end
+            if viewStrip.ready ~= before then BuildDisplayList() end
+            UpdateRows()
+        end
+        strip:SetScript("OnUpdate", function(_, dt)
+            elapsed = elapsed + (dt or 0)
+            if elapsed < 1 then return end
+            elapsed = 0
+            viewStrip.Tick()
+        end)
+        AltStable._test.ViewStrip = viewStrip
+        AltStable._test.ViewTabs = function() return levelsTab, cdTab, note, empty end
+    end
+
     -- Activate the first section: it builds the headers. Not animated: the
     -- window is still shown here (it is hidden at the end of the build), so an
     -- animated switch would start a trip on a window nobody sees and leave it
@@ -6276,7 +6557,7 @@ local function CreateFrameIfNeeded()
     AltStable.RegisterThemeCallback(function()
         local ar, ag, ab = AltStable.GetAccentRGB()
         for _, btn in ipairs(sidebarBtns) do
-            if btn.sectionId == activeSection.id then
+            if btn.sectionId == viewStrip.Nav(activeSection) then
                 btn.lbl:SetTextColor(ar, ag, ab)
                 if btn.accentStripe then
                     btn.accentStripe:SetColorTexture(ar, ag, ab, 1)

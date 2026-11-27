@@ -582,7 +582,9 @@ local function RefreshOwnership()
     if confirmedLoss then
         for _, line in ipairs(lost) do
             e.profs[line] = nil
-            if BY_LINE[line] then ClearCooldowns(char, BY_LINE[line].label) end
+            -- The cooldowns go with it, from the open Cooldowns view too (#543).
+            if BY_LINE[line] and ClearCooldowns(char, BY_LINE[line].label)
+            and AltStable.RefreshSheet then AltStable.RefreshSheet() end
             changed = true
         end
     end
@@ -689,6 +691,9 @@ local function Commit(c)
     -- A cooldown alone must reach peers too: the core only sends a character
     -- whose lastUpdate moved, and no recipe changed.
     if changed or cdChanged then Changed(guid) end
+    -- The sheet's Cooldowns view (#543) lists the cooldowns found: a new one,
+    -- or one gone, is a column to add or drop while it is open.
+    if cdChanged and AltStable.RefreshSheet then AltStable.RefreshSheet() end
     -- Not a change of the character's: the store is account-wide and never
     -- synced, so only the tab redraws.
     if c.reagents then

@@ -56,11 +56,16 @@ Lua files at the repo root, loaded in the order listed in `AltStable.toc` (order
 `Libs/` (LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDeflate, ChatThrottleLib) →
 `Compat.lua` → `Glass.lua` → `Theme.lua` → `Skin.lua` → `Prompt.lua` → `Core.lua` →
 `Scanner.lua` → `Reputations.lua` → `Config.lua` → `Toasts.lua` → `Columns.lua` →
-`RowRenderer.lua` → `CharacterMenu.lua` → `Appearance.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `GoldTooltip.lua` → `PublicAPI.lua` → `Broker.lua` → `Export.lua`.
+`Cooldowns.lua` → `RowRenderer.lua` → `CharacterMenu.lua` → `Appearance.lua` → `SheetUI.lua` → `Capture.lua` → `AutoCapture.lua` → `GoldTooltip.lua` → `PublicAPI.lua` → `Broker.lua` → `Export.lua`.
 
 `PublicAPI.lua` is what OTHER addons build on (`docs/PUBLIC-API.md`): copies of a fixed set
 of fields, never live tables. Changing what a field means, or removing one, bumps
 `AltStable.PUBLIC_API_VERSION`; adding one does not.
+
+`Cooldowns.lua` is the data side of the Skills tab's Cooldowns view (#543): the
+`cd_<Profession>@<label>` fields found, a column per cooldown (its field an id the settings
+sync accepts), the countdown text, the ready count and the login-toast note. The view itself
+(a child section of Skills, the view strip and its one-second clock) is in `SheetUI.lua`.
 
 `Broker.lua` is the LibDataBroker-1.1 data source for Titan Panel and other displays (#466):
 gold text from `CharacterTotals`, the gold tooltip's lines, the minimap button's clicks.
