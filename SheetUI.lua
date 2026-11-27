@@ -991,11 +991,12 @@ local DEFAULT_SORT_FIELD, DEFAULT_SORT_ASC = "level", false
 -- per COLUMN: choosing per pair (the old tostring fallback) can form a cycle -
 -- 2 < 10 as numbers, "10" < "11" < "2" as text - and table.sort then misorders
 -- or raises "invalid order function".
-local function SortValue(char, col)
+local function SortValue(char, col, now)
     -- The column's own sortValue when it has one (level, rested XP, class and
-    -- race: see Columns.lua), else the stored field.
+    -- race: see Columns.lua), else the stored field. `now` is the sort's one
+    -- reading of the clock, for a cooldown (#543).
     local v
-    if col.sortValue then v = col.sortValue(char) else v = char[col.field] end
+    if col.sortValue then v = col.sortValue(char, now) else v = char[col.field] end
     if col.sortText then
         if type(v) == "number" then v = tostring(v) end
         if type(v) ~= "string" or v == "" then return nil end
@@ -1018,11 +1019,12 @@ end
 -- A three-way result is turned into a boolean explicitly: 0 and -1 are both
 -- TRUE in Lua, so returning one would make every pair "less". Equal values go
 -- to the old tiebreak: item level, highest first, then name.
-local function SortComparator(chars, field, asc)
+local function SortComparator(chars, field, asc, now)
     local col = ColumnFor(field)
     local key = {}
+    now = now or time()
     if col then
-        for _, c in ipairs(chars) do key[c] = SortValue(c, col) end
+        for _, c in ipairs(chars) do key[c] = SortValue(c, col, now) end
     end
     local text = col and col.sortText
     return function(a, b)
@@ -1172,11 +1174,15 @@ local function BuildDisplayList()
             table.insert(allChars, char)
         end
     end
-    table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc))
+    -- One reading of the clock for the sort and the count it is recorded at: a
+    -- cooldown coming up between two readings would leave the recorded count
+    -- ahead of the order, and the clock would skip the re-sort (Codex review of #544).
+    local now = time()
+    table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc, now))
     -- The Cooldowns view's clock re-sorts when this count changes (#543):
     -- recorded at every sort, a data refresh's too (Codex review of #544).
     if activeSection.cdFields then
-        viewStrip.sortedReady = AltStable.Cooldowns.ReadyCount(store, ShouldShowInGrid)
+        viewStrip.sortedReady = AltStable.Cooldowns.ReadyCount(store, ShouldShowInGrid, now)
     end
 
     -- Grouped by realm unless the player turned it off (Options, "Group

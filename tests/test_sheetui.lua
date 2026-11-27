@@ -5904,6 +5904,21 @@ do
         WoW.now = T0 + 11                                                  -- Ann's Mooncloth up
         VS.Tick()
         eq("  the tick re-sorts: both up, the higher item level first", Names(), "Ann,Bob")
+
+        -- A cooldown coming up DURING a rebuild: the sort and the count it
+        -- records read the clock once, together (Codex review of c4d18a6).
+        -- Here the clock moves after its first reading.
+        AltStableDB.ann["cd_Tailoring@Mooncloth"] = T0 + 30
+        WoW.now = T0 + 20
+        local realTime, reads = time, 0
+        time = function() reads = reads + 1; return reads == 1 and T0 + 20 or T0 + 31 end
+        refresh()
+        time = realTime
+        eq("  a rebuild sorts at its one reading: Bob's up, Ann's 10 s off", Names(), "Bob,Ann")
+        eq("  and records the count at that same reading", VS.sortedReady, 1)
+        WoW.now = T0 + 31
+        VS.Tick()
+        eq("  so the tick after re-sorts", Names(), "Ann,Bob")
         WoW.now = NOW
         build(db1)
     end

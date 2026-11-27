@@ -95,7 +95,8 @@ function CD.Column(key)
         headerTip = label .. " (" .. prof .. ")",
         -- The soonest first on the first click; nobody without it, last.
         sortFirstAsc = true, orderWords = { "soonest first", "latest first" },
-        sortValue = function(c) return CD.Remaining(c, key) end,
+        -- At the sort's own reading of the clock (SheetUI's SortComparator).
+        sortValue = function(c, now) return CD.Remaining(c, key, now) end,
     }
     byKey[key], byField[col.field] = col, col
     return col
