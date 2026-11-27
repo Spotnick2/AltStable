@@ -69,6 +69,9 @@ do
     eq("  type", col.type, "cooldown")
     eq("  the item's icon", col.cdIcon, 133849)
     eq("  made once", CD.Column("cd_Leatherworking@Salt Shaker"), col)
+    eq("  a short name: 140 wide", col.width, 140)
+    check("  a long one wide enough for its name", CD.Column("cd_Alchemy@Mithril to Truesilver").width >= 40 + 7 * 21)
+    eq("  never wider than 220", CD.Column("cd_Alchemy@" .. string.rep("X", 60)).width, 220)
     eq("  found by its field", CD.ColumnForField(col.field), col)
     eq("  the soonest first on a first click", col.sortFirstAsc, true)
     eq("an unknown cooldown has its profession's icon", CD.Column("cd_Tailoring@Spellcloth").cdIcon,
@@ -199,6 +202,9 @@ do
         none = { name = "None" },                                          -- no such profession
         old = { name = "Old", ["cd_Alchemy@Transmute"] = NOW + 600 },      -- an older version's field
     }
+    TRANS.iconItem = 99001   -- an item the fallback table does not name
+    WoW.items[99001] = { icon = 133220 }
+    eq("a column's icon: the catalogue's item (what its lowest recipe makes)", CD.Column(TRANS.key).cdIcon, 133220)
     eq("columns: the catalogue's, and an older label someone recorded",
        table.concat(CD.KeysInUse(store), ","),
        "cd_Alchemy@Transmute,cd_Alchemy@Transmutes,cd_Leatherworking@Salt Shaker,cd_Tailoring@Mooncloth")

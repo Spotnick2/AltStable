@@ -1581,6 +1581,12 @@ local function CooldownCatalogue()
         if a.prof ~= b.prof then return a.prof < b.prof end
         return a.label < b.label
     end)
+    -- Its icon: the item it is used from, or what its lowest recipe makes
+    -- (Arcanite Bar for the transmutes, Gold Bar, Mooncloth).
+    for _, e in ipairs(list) do
+        local first = e.spells[1] and data[e.spells[1]]
+        e.iconItem = e.item or (first and first.makes)
+    end
     AT.cdCatalogue = list
     return list
 end

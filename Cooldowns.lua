@@ -50,10 +50,14 @@ end
 
 -- Icons: the item a cooldown makes or is used from, when it is one of these;
 -- otherwise the profession's own icon (its sheet column's).
+-- Without the Recipe Book's catalogue (recorded cooldowns only), these.
 local ICON_ITEMS = {
-    ["Tailoring@Mooncloth"]        = 14342,
-    ["Alchemy@Transmute"]          = 12360,   -- Arcanite Bar
-    ["Leatherworking@Salt Shaker"] = 15846,
+    ["Tailoring@Mooncloth"]            = 14342,
+    ["Alchemy@Transmutes"]             = 12360,   -- Arcanite Bar
+    ["Alchemy@Transmute"]              = 12360,   -- an older version's label (#545)
+    ["Alchemy@Iron to Gold"]           = 3577,    -- Gold Bar
+    ["Alchemy@Mithril to Truesilver"]  = 6037,    -- Truesilver Bar
+    ["Leatherworking@Salt Shaker"]     = 15846,
 }
 local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 
@@ -64,7 +68,9 @@ local function ProfessionIcon(prof)
 end
 
 local function IconFor(prof, label)
-    local item = ICON_ITEMS[prof .. "@" .. label]
+    -- The Recipe Book's catalogue knows what each cooldown makes (#545).
+    local entry = CD.Entry and CD.Entry("cd_" .. prof .. "@" .. label)
+    local item = (entry and entry.iconItem) or ICON_ITEMS[prof .. "@" .. label]
     if item and AltStable.API and AltStable.API.GetItemIconByID then
         local ok, icon = pcall(AltStable.API.GetItemIconByID, item)
         if ok and icon then return icon end
@@ -90,7 +96,10 @@ function CD.Column(key)
     if not prof then return nil end
     col = {
         label = label, field = CD.ColumnId(key), cdKey = key, prof = prof,
-        type = "cooldown", width = 140, align = "CENTER", group = "cooldown",
+        -- As wide as the icon and the name need ("Mithril to Truesilver" was
+        -- cut at 140), from 140 to 220. Measured in game: ~7 per character.
+        type = "cooldown", width = math.min(220, math.max(140, 40 + 7 * #label)),
+        align = "CENTER", group = "cooldown",
         cdIcon = IconFor(prof, label), headerIconSize = 20,
         headerTip = label .. " (" .. prof .. ")",
         -- The soonest first on the first click; nobody without it, last.

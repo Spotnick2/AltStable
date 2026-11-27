@@ -2279,11 +2279,11 @@ do
     -- As the generator marks them (1.60.1.71139): the shared category is
     -- "Transmutes", Iron to Gold has its own hour, Mooncloth its own.
     local added = {
-        [17187] = { skill = { 171 }, learn = 275, src = { 5 }, cd = "Transmutes" },
+        [17187] = { skill = { 171 }, learn = 275, src = { 5 }, makes = 12360, cd = "Transmutes" },
         [17559] = { skill = { 171 }, learn = 275, src = { 2 }, items = { 13482 }, cd = "Transmutes" },
         [25146] = { skill = { 171 }, learn = 300, src = { 5 }, cd = "Transmutes" },
         [1317279] = { skill = { 171 }, learn = 275, items = { 284871 }, cd = "Transmutes" },  -- no src, a recipe item
-        [11479] = { skill = { 171 }, learn = 225, src = { 5, 6 }, cd = "Iron to Gold" },
+        [11479] = { skill = { 171 }, learn = 225, src = { 5, 6 }, makes = 3577, cd = "Iron to Gold" },
         [18560] = { skill = { 197 }, learn = 250, src = { 5 }, cd = "Mooncloth" },
     }
     for id, r in pairs(added) do R[id] = r end
@@ -2306,6 +2306,9 @@ do
     eq("  Iron to Gold its own", IG.learn, 225)
     check("  the Salt Shaker, an item, needs Leatherworking 250", SH.item == 15846 and SH.learn == 250)
     eq("  made once", AltStable.CooldownCatalogue(), cat)
+    eq("  its icon: what the lowest recipe makes (Arcanite Bar)", TR.iconItem, 12360)
+    eq("  Iron to Gold's, the Gold Bar", IG.iconItem, 3577)
+    eq("  an item's, the item", SH.iconItem, 15846)
 
     -- A scan files by the data's label: Arcanite and Iron to Gold known, only
     -- Iron to Gold running, an older version's "Transmute" field held.
