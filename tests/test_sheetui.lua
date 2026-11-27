@@ -5534,6 +5534,31 @@ do
     toasts:SetChecked(true); toasts:GetScript("OnClick")(toasts)
     check("  and back", Live(profs.Tailoring))
 
+    -- Leatherworking's Salt Shaker (#460) has its box, in order: Alchemy,
+    -- Leatherworking, Tailoring.
+    local lw = profs.Leatherworking
+    check("Leatherworking has a toast box", lw ~= nil)
+    if lw then
+        eq("  named", lw.label:GetText(), "Leatherworking")
+        local function TopY(o) local _, _, _, _, y = o:GetPoint(1); return y or 0 end
+        check("  between Alchemy and Tailoring",
+            TopY(profs.Alchemy) > TopY(lw) and TopY(lw) > TopY(profs.Tailoring))
+        check("  indented under the toasts", X(lw) > X(toasts))
+        local heldProfs = AltStableConfig.toastProfessions
+        AltStableConfig.toastProfessions = { Tailoring = true, Alchemy = true }
+        panel:GetScript("OnShow")(panel)
+        check("  ticked when never set (unset toasts)", lw:GetChecked() == true)
+        lw:SetChecked(false); lw:GetScript("OnClick")(lw)
+        eq("  unticking turns it off", AltStableConfig.toastProfessions.Leatherworking, false)
+        eq("  and leaves the others", AltStableConfig.toastProfessions.Tailoring, true)
+        panel:GetScript("OnShow")(panel)
+        check("  and reopening shows it off", lw:GetChecked() == false)
+        toasts:SetChecked(false); toasts:GetScript("OnClick")(toasts)
+        check("  greyed with the toasts", not lw:IsEnabled())
+        toasts:SetChecked(true); toasts:GetScript("OnClick")(toasts)
+        AltStableConfig.toastProfessions = heldProfs
+    end
+
     -- Settings sync rides the Battle.net channel to your own accounts.
     local bnet, ss = T.OptBnet, T.OptSyncSettings
     local heldB = AltStableConfig.bnetSync
@@ -5578,6 +5603,29 @@ do
     box:SetChecked(true); box:GetScript("OnClick")(box)
     eq("ticking loads it, and it reads On", Plain(st.warband:GetText()), "On")
     eq("the status is on the Modules page", st.warband:GetParent(), T.OptPages.modules)
+
+    -- The status column clears the widest name ("Legacy Challenges" ran into
+    -- its "On" at a fixed 120).
+    local checks = T.OptPluginChecks
+    local function StatusX(key) local _, _, _, x = st[key]:GetPoint(1); return x end
+    local legacyKey
+    for key, cb in pairs(checks) do
+        if cb.label:GetText() == "Legacy Challenges" then legacyKey = key end
+    end
+    check("Legacy Challenges is a module", legacyKey ~= nil)
+    if legacyKey then
+        checks[legacyKey].label._GetStringWidth = 150
+        panel:GetScript("OnShow")(panel)
+        check("a wide name pushes the status past it", StatusX(legacyKey) >= 18 + 4 + 150 + 8, tostring(StatusX(legacyKey)))
+        local _, rel = st[legacyKey]:GetPoint(1)
+        eq("  beside its own box", rel, checks[legacyKey])
+        local same = true
+        for key in pairs(st) do if StatusX(key) ~= StatusX(legacyKey) then same = false end end
+        check("  every status in one column", same)
+        checks[legacyKey].label._GetStringWidth = nil
+        panel:GetScript("OnShow")(panel)
+        eq("short names keep the 120 column", StatusX(legacyKey), 120)
+    end
     AltStableConfig.plugins, WoW.loaded.AltStableWarband = heldPlugins, heldLoaded
     panel:GetScript("OnShow")(panel)
 end

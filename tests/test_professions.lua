@@ -553,6 +553,13 @@ do
     toasted = nil
     AltStable.ScanCooldowns()
     eq("  once", toasted, nil)
+    -- Its Options box (Leatherworking unticked) holds it back.
+    AltStableConfig.toastsShown = {}
+    AltStableConfig.toastProfessions = { Leatherworking = false }
+    toasted = nil
+    AltStable.ScanCooldowns()
+    eq("  not with Leatherworking's toasts off", toasted, nil)
+    AltStableConfig.toastProfessions = nil
 
     GetTime = realGetTime
 end
