@@ -46,3 +46,4 @@ GoldTooltip.lua
 PublicAPI.lua
 Broker.lua
 Export.lua
+Search.lua

@@ -1557,12 +1557,36 @@ UISpecialFrames = {}
 -- return hides the line). Forever has ChatFrameUtil.AddMessageEventFilter,
 -- with the old global kept as a deprecated alias (UI source, 70009).
 WoW.chatFilters = {}
+-- The chat box a link goes into (#503): GetActiveWindow is the open draft, or
+-- nil; ChooseBoxForSend picks the box a new one opens in; ActivateChat opens
+-- it, unless WoW.chatRefuses (a box that may not open: Blizzard_ChatFrameBase,
+-- ChatFrameUtil.lua:531). WoW.chatBox is that box, recording what it gets.
+local function ChatBox()
+    if not WoW.chatBox then
+        local eb = makeFrame("EditBox")
+        eb.inserted = {}
+        eb.Insert = function(self, text) self.inserted[#self.inserted + 1] = text end
+        WoW.chatBox = eb
+    end
+    return WoW.chatBox
+end
 ChatFrameUtil = {
     AddMessageEventFilter = function(event, fn)
         WoW.chatFilters[event] = WoW.chatFilters[event] or {}
         table.insert(WoW.chatFilters[event], fn)
     end,
+    GetActiveWindow = function() return WoW.chatActive end,
+    ChooseBoxForSend = function() return ChatBox() end,
+    ActivateChat = function(eb) if not WoW.chatRefuses then WoW.chatActive = eb end end,
 }
+-- C_Intl.ToLower folds more than ASCII on the client; ASCII is what the tests
+-- type. strlenutf8 counts characters, not bytes.
+C_Intl = { ToLower = function(s) return (tostring(s):lower()) end }
+function strlenutf8(s)
+    local n = 0
+    for _ in tostring(s):gmatch("[^\128-\191]") do n = n + 1 end
+    return n
+end
 ChatFrame_AddMessageEventFilter = ChatFrameUtil.AddMessageEventFilter
 function WoW.chatFiltered(event, text)
     for _, fn in ipairs(WoW.chatFilters[event] or {}) do

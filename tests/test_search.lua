@@ -1,0 +1,603 @@
+------------------------------------------------------------
+-- test_search.lua: finding an item on every character (#503)
+--
+-- The real sheet, the real Warband plugin and the real search window, driven
+-- the way a player drives them: typing, Enter, Shift, the title button,
+-- /alts search. The counts are what the plan was argued over (five Codex
+-- rounds, on the issue): the characters the sheet lists, mail in flight
+-- under its recipient once, worn gear by slot.
+------------------------------------------------------------
+
+dofile("tests/wow_stubs.lua")
+
+local passed, failed = 0, 0
+local function check(name, ok, detail)
+    if ok then passed = passed + 1
+    else failed = failed + 1; print("  FAIL: " .. name .. (detail and ("  -- " .. detail) or "")) end
+end
+local function eq(name, got, want)
+    check(name, got == want, "got " .. tostring(got) .. ", want " .. tostring(want))
+end
+
+AltStable, AltStableDB, AltStableConfig = {}, {}, {}
+dofile("Compat.lua")
+dofile("tests/libglass.lua"); LoadGlass("AltStable")
+dofile("tests/libshowcase.lua"); LoadShowcase("AltStable")
+dofile("Theme.lua")
+dofile("Skin.lua")
+dofile("Prompt.lua")
+assert(loadfile("Core.lua"))()
+dofile("Scanner.lua")
+dofile("Played.lua")
+dofile("Reputations.lua")
+dofile("Config.lua")
+dofile("Toasts.lua")
+dofile("Columns.lua")
+dofile("RowRenderer.lua")
+dofile("CharacterMenu.lua")
+dofile("SheetUI.lua")
+dofile("Capture.lua")
+dofile("PublicAPI.lua")
+dofile("Export.lua")
+dofile("Search.lua")
+dofile("Plugins/Warband/WarbandTabs.lua")
+dofile("Plugins/Warband/AltStableWarband.lua")
+WoW.flushTimers()
+
+local S = AltStable._search
+local plugin
+for _, p in ipairs(AltStable.plugins or {}) do if p.id == "warband" then plugin = p end end
+check("the Warband plugin registered", plugin ~= nil)
+check("the search is loaded", S ~= nil and AltStable.ShowSearch ~= nil)
+if not (plugin and S) then
+    print(("test_search: %d passed, %d failed"):format(passed, failed))
+    os.exit(1)
+end
+local wb, WT = plugin._wb, plugin._test
+
+local ME, ALT, HID, GONE = "Player-1-AAAA", "Player-1-BBBB", "Player-1-CCCC", "Player-1-DDDD"
+local NOW = 1000000
+local realTime = time
+time = function() return NOW end
+
+local function World()
+    WoW.player.guid = ME
+    AltStableDB = {
+        [ME]  = { name = "Kaleid", class = "HUNTER", gearid_ring1 = 200, gearid_ring2 = 200, gearid_head = 0 },
+        [ALT] = { name = "Brom", class = "WARRIOR" },
+        [HID] = { name = "Hidden", class = "MAGE" },
+    }
+    -- Every ruleset: the saved view this file returns to lists everyone.
+    AltStableConfig = { hiddenCharacters = { [HID] = true }, warbandRuleset = "all" }
+    AltStableWarbandDB = {
+        [ME]  = { bags = { [101] = 2 }, mailStamp = NOW - 100 },
+        [ALT] = { bags = { [101] = 5, [102] = 1 }, bank = { [101] = 3 } },
+        [HID] = { bags = { [101] = 7 },
+                  -- A hidden sender's mail to a listed character counts, under them.
+                  outbox = { { to = ME, at = NOW - 10, items = { [103] = 4 } } } },
+        -- What a forgotten character sent stays invisible, and so does mail
+        -- to one: GONE has no core record.
+        [GONE] = { outbox = { { to = ME, at = NOW - 10, items = { [106] = 1 } } } },
+    }
+    -- ME's mail to the hidden one, and to the forgotten one.
+    AltStableWarbandDB[ME].outbox = {
+        { to = HID, at = NOW - 10, items = { [104] = 1 } },
+        { to = GONE, at = NOW - 10, items = { [105] = 1 } },
+    }
+    -- The bags Warband rescans when its tab opens: what Kaleid's record says.
+    WoW.containers = { [0] = { size = 1, { itemID = 101, stackCount = 2, hyperlink = "|Hitem:101|h" } } }
+    WoW.items = {
+        [101] = { name = "Linen Cloth", classID = 7, quality = 1, icon = 1 },
+        [102] = { name = "Wool Cloth", classID = 7, quality = 1, icon = 2 },
+        [103] = { name = "Silk Cloth", classID = 7, quality = 1, icon = 3 },
+        [200] = { name = "Band of Thorns", classID = 4, quality = 2, icon = 4 },
+    }
+end
+
+------------------------------------------------------------
+-- The counts
+------------------------------------------------------------
+do
+    World()
+    local snap = S.BuildSnapshot()
+    eq("a hidden character's copies are left out of the total", snap[101] and snap[101].total, 10)
+    eq("  the most held first", snap[101] and snap[101].holders[1].name, "Brom")
+    eq("  with each place", snap[101] and (snap[101].holders[1].bags .. "/" .. snap[101].holders[1].bank), "5/3")
+    eq("a hidden sender's mail counts under the listed recipient",
+       snap[103] and snap[103].holders[1].guid .. ":" .. snap[103].holders[1].mail, ME .. ":4")
+    check("mail to a hidden character doesn't", snap[104] == nil)
+    check("mail to a forgotten character doesn't", snap[105] == nil)
+    check("nor what a forgotten character sent", snap[106] == nil)
+    eq("two of one ring worn count two", snap[200] and snap[200].holders[1].worn, 2)
+    check("an empty slot is nothing", snap[0] == nil)
+
+    AltStableConfig.warbandMail = false
+    snap = S.BuildSnapshot()
+    check("the mail option off: no mail, incoming or stored", snap[103] == nil)
+    eq("  bags and bank still count", snap[101] and snap[101].total, 10)
+    eq("  and worn gear", snap[200] and snap[200].total, 2)
+    AltStableConfig.warbandMail = nil
+
+    local held = AltStable.ItemMapsFor
+    AltStable.ItemMapsFor = nil
+    snap = S.BuildSnapshot()
+    check("Warband off: no bags, bank or mail", snap[101] == nil)
+    eq("  worn gear still", snap[200] and snap[200].total, 2)
+    AltStable.ItemMapsFor = held
+end
+
+------------------------------------------------------------
+-- Matching and names
+------------------------------------------------------------
+local function Window() return S._test.Window() end
+local function Type(text)
+    local box = Window().box
+    box:SetText(text)
+    local fn = box:GetScript("OnTextChanged"); if fn then fn(box, true) end
+    WoW.flushTimers()
+end
+local function RowIDs()
+    local out = {}
+    for _, e in ipairs(S.rows) do out[#out + 1] = e.id end
+    return table.concat(out, ",")
+end
+local function Loaded(id)
+    local ev = Window().events
+    ev:GetScript("OnEvent")(ev, "ITEM_DATA_LOAD_RESULT", id, true)
+end
+local function Requested(id)
+    for _, x in ipairs(WoW.itemLoadRequests or {}) do if x == id then return true end end
+    return false
+end
+
+do
+    World()
+    WoW.items[102] = nil                     -- not in the client's cache yet
+    WoW.itemLoadRequests = {}
+    AltStable.ShowSearch()
+    check("the window opens", Window():IsShown())
+    check("an uncached name is asked for", Requested(102))
+    check("a cached one isn't", not Requested(101))
+    Type("l")
+    eq("one letter: nothing yet", #S.rows, 0)
+    eq("  and says why", Window().status:GetText(), "Looking up 1 item name")
+    Type("LINEN")
+    eq("matched by part of the name, either case", RowIDs(), "101")
+    Type("cloth")
+    eq("most held first", RowIDs(), "101,103")
+    Type("wool")
+    eq("a name not loaded yet can't match", #S.rows, 0)
+    WoW.items[102] = { name = "Wool Cloth", classID = 7, quality = 1, icon = 2 }
+    local timersBefore = #WoW.timers
+    Loaded(999)                              -- someone else's load
+    eq("  another addon's load changes nothing", S.outstanding, 1)
+    eq("  and schedules no repaint", #WoW.timers, timersBefore)
+    Loaded(102)
+    WoW.flushTimers()
+    eq("  and matches once it arrives", RowIDs(), "102")
+    eq("the holders line", (S.HoldersLine(S.rows[1]):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")), "Brom 1")
+    eq("the hover's places", S.PlacesText(S.BuildSnapshot()[101].holders[1]), "5 in bags, 3 in the bank")
+
+    -- A load that answers without a name retires the item: never asked again.
+    AltStableWarbandDB[ALT].bags[107] = 1
+    WoW.itemLoadRequests = {}
+    AltStable.NotifyItemDataChanged()
+    WoW.flushTimers()
+    check("an item first seen in a later rebuild is asked for", Requested(107))
+    Loaded(107)
+    eq("  no name in the answer: retired", S.names[107], false)
+    eq("  and nothing left pending", S.outstanding, 0)
+    WoW.itemLoadRequests = {}
+    AltStable.NotifyItemDataChanged()
+    WoW.flushTimers()
+    check("  never asked again this session", not Requested(107))
+
+    -- At most twenty at a time; one answer lets the next go.
+    for id = 3001, 3025 do AltStableWarbandDB[ALT].bags[id] = 1 end
+    WoW.itemLoadRequests = {}
+    AltStable.NotifyItemDataChanged()
+    WoW.flushTimers()
+    eq("twenty loads asked for at once", #WoW.itemLoadRequests, 20)
+    Loaded(WoW.itemLoadRequests[1])
+    eq("  one answer, one more", #WoW.itemLoadRequests, 21)
+    -- No answer in ten seconds: given up, so the status can't stick.
+    local realGetTime = GetTime
+    GetTime = function() return 11 end
+    WoW.flushTimers(); WoW.flushTimers()
+    GetTime = realGetTime
+    check("  a load with no answer is given up", S.outstanding < 20, tostring(S.outstanding))
+
+    -- Closing lets it all go.
+    Window():Hide()
+    eq("closed: the names are dropped", next(S.names), nil)
+    eq("  and the queue", S.outstanding + #S.queue, 0)
+    WoW.itemLoadRequests = {}
+    WoW.timers = {}
+    AltStable.NotifyItemDataChanged()
+    eq("  a change while closed schedules nothing", #WoW.timers, 0)
+    WoW.flushTimers()
+    eq("  and rebuilds nothing", #WoW.itemLoadRequests, 0)
+    for id = 3001, 3025 do AltStableWarbandDB[ALT].bags[id] = nil end
+    AltStableWarbandDB[ALT].bags[107] = nil
+end
+
+------------------------------------------------------------
+-- Keeping current while open
+------------------------------------------------------------
+do
+    World()
+    AltStable.ShowSearch("linen")
+    WoW.flushTimers()
+    eq("opened with a query", RowIDs(), "101")
+    eq("  the box says it", Window().box:GetText(), "linen")
+    -- Our own bags rescanned, a stack grown, the Warband tab not open: the
+    -- scan restamps, and the search hears it.
+    WoW.containers = { [0] = { size = 1, { itemID = 101, stackCount = 9, hyperlink = "|Hitem:101|h" } } }
+    WT.ScanBags()
+    WoW.flushTimers()
+    eq("a bag scan with the Warband tab closed updates the total", S.rows[1] and S.rows[1].total, 17)
+    -- What a sync brings: Brom's record, newer.
+    -- Its bags section newer than ours (bt=, the section's own stamp).
+    local blob = WT.SerializePlayer(ALT)
+    AltStableWarbandDB[ALT].bags[101] = 50
+    blob = blob:gsub("101,5", "101,6"):gsub("|s=%d+", "|s=" .. (NOW + 5)):gsub("|bt=%d+", "|bt=" .. (NOW + 5))
+    WT.DeserializePlayer(ALT, blob)
+    WoW.flushTimers()
+    eq("received inventory updates it too", S.rows[1] and S.rows[1].holders[1].bags, 6)
+    -- A correction under the SAME stamp (two moves in one second): Warband
+    -- applies it and returns false, so no sheet refresh follows - the search
+    -- hears it from the restamp alone (Codex review of the plan).
+    eq("  (the held bags are stamped as the blob)", AltStableWarbandDB[ALT].bagsStamp, NOW + 5)
+    local refreshes, realRefresh = 0, AltStable.RefreshSheet
+    AltStable.RefreshSheet = function(...) refreshes = refreshes + 1; return realRefresh(...) end
+    WT.DeserializePlayer(ALT, blob:gsub("101,6", "101,7"))
+    WoW.flushTimers()
+    AltStable.RefreshSheet = realRefresh
+    eq("a same-stamp correction updates it, with no sheet refresh", S.rows[1] and S.rows[1].holders[1].bags, 7)
+    eq("  (none happened)", refreshes, 0)
+    -- The selection follows its item through a re-sort.
+    Type("cloth")
+    S.selected = 1
+    local keep = S.rows[1].id
+    AltStableWarbandDB[ME].bags[103] = 500    -- moves past the selected one
+    AltStable.NotifyItemDataChanged()
+    WoW.flushTimers()
+    check("  (it moved)", S.rows[1].id ~= keep)
+    eq("a re-sort keeps the selected item selected", S.rows[S.selected].id, keep)
+    Window():Hide()
+end
+
+------------------------------------------------------------
+-- Enter: the Warband tab, on the first holder, the item lit
+------------------------------------------------------------
+local rawShift = rawget(_G, "IsShiftKeyDown")
+local shift = false
+rawset(_G, "IsShiftKeyDown", function() return shift end)
+
+local function Enter()
+    local box = Window().box
+    box:GetScript("OnEnterPressed")(box)
+end
+local function LitIDs()
+    local out = {}
+    for _, cell in ipairs(wb.cells) do
+        if cell:IsShown() and cell.entry and cell.lit and cell.lit:IsShown() then out[#out + 1] = cell.entry.id end
+    end
+    return table.concat(out, ",")
+end
+local function ShownIDs()
+    local out = {}
+    for _, cell in ipairs(wb.cells) do
+        if cell:IsShown() and cell.entry then out[#out + 1] = cell.entry.id end
+    end
+    table.sort(out)
+    return table.concat(out, ",")
+end
+
+do
+    World()
+    AltStableConfig.warbandTab = 1
+    AltStableConfig.enableOpenAnimation = false
+    check("the sheet starts closed", not (AltStableSheet and AltStableSheet:IsShown()))
+    -- Saved as Personal: the view the search opens must not change it.
+    AltStableConfig.warbandScope = "personal"
+    local scopeBefore = AltStableConfig.warbandScope
+    AltStable.ShowSearch("linen")
+    WoW.flushTimers()
+    Enter()
+    check("Enter from a closed sheet opens it", AltStableSheet and AltStableSheet:IsShown())
+    check("  on the Warband tab", wb.isActive == true)
+    eq("  focused on the first holder", wb.focus and wb.focus.guid, ALT)
+    eq("  showing only what they hold", ShownIDs(), "101,102")
+    eq("  with the item lit", LitIDs(), "101")
+    check("  the search closes", not Window():IsShown())
+    check("  the status says whose", (wb.StatusText() or ""):find("Showing Brom", 1, true) ~= nil, wb.StatusText())
+    check("  with a way back", wb.backBtn:IsShown())
+    -- Warband's own search box dims what doesn't match; never the lit item.
+    wb.search = "nothing matches this"
+    wb.ApplySearchDim()
+    local litAlpha, otherAlpha
+    for _, cell in ipairs(wb.cells) do
+        if cell:IsShown() and cell.entry then
+            if cell.entry.id == 101 then litAlpha = cell:GetAlpha() else otherAlpha = cell:GetAlpha() end
+        end
+    end
+    eq("  Warband's own search never dims the lit item", litAlpha, 1)
+    eq("  (it dims the others)", otherAlpha, 0.25)
+    wb.search = ""
+    wb.ApplySearchDim()
+    eq("  the saved tab untouched", AltStableConfig.warbandTab, 1)
+    eq("  and the saved scope", AltStableConfig.warbandScope, scopeBefore)
+
+    wb.backBtn:GetScript("OnClick")(wb.backBtn)
+    eq("Back: the focus goes", wb.focus, nil)
+    check("  and the button with it", not wb.backBtn:IsShown())
+    eq("  the saved view: Personal, Kaleid's own (bags, and the mail coming)", ShownIDs(), "101,103")
+    AltStableConfig.warbandScope = nil
+
+    -- Warband already up: no re-click (it would rescan and rebuild).
+    local activations = 0
+    local realActivate = plugin.OnActivate
+    plugin.OnActivate = function(...) activations = activations + 1; return realActivate(...) end
+    AltStable.ShowSearch("wool")
+    WoW.flushTimers()
+    Enter()
+    eq("Warband already open: not activated again", activations, 0)
+    eq("  focused all the same", wb.focus and wb.focus.itemID, 102)
+    -- The sheet closed with Warband still its tab: shown again first.
+    AltStableSheet:Hide()
+    AltStable.ShowSearch("linen")
+    WoW.flushTimers()
+    Enter()
+    check("a closed sheet whose tab is Warband is shown again", AltStableSheet:IsShown())
+    eq("  focused", wb.focus and wb.focus.itemID, 101)
+    eq("  still not activated again", activations, 0)
+    plugin.OnActivate = realActivate
+
+    -- The focus leaves when it no longer holds.
+    eq("  on Brom", wb.focus and wb.focus.guid, ALT)
+    AltStableConfig.hiddenCharacters[ALT] = true
+    wb.Refresh()
+    eq("the holder hidden: back to the saved view", wb.focus, nil)
+    AltStableConfig.hiddenCharacters[ALT] = nil
+    AltStable.ShowSearch("linen"); WoW.flushTimers(); Enter()
+    AltStableWarbandDB[ALT].bags[101] = nil
+    AltStableWarbandDB[ALT].bank[101] = nil
+    wb.Refresh()
+    eq("the holder's last copy gone: back too", wb.focus, nil)
+    check("  with their other items still there (the case the empty view missed)",
+          AltStableWarbandDB[ALT].bags[102] == 1)
+end
+
+-- The page the item is on: not the saved one, and never saved.
+do
+    World()
+    AltStableConfig.warbandTab = 1
+    WoW.items[201] = { name = "Healing Potion", classID = 0, quality = 1, icon = 5 }
+    WoW.items[301] = { name = "Quest Letter", classID = 12, quality = 1, icon = 6 }
+    AltStableWarbandDB[ALT].bags[201] = 3
+    AltStableWarbandDB[ALT].bags[301] = 1
+    AltStable.ShowSearch("potion"); WoW.flushTimers(); Enter()
+    eq("an item on the second tab shows that tab", wb._sel, 2)
+    eq("  lit there", LitIDs(), "201")
+    eq("  the saved tab still the first", AltStableConfig.warbandTab, 1)
+    AltStable.ShowSearch("letter"); WoW.flushTimers(); Enter()
+    eq("an item in no tab shows Other", wb._sel, "other")
+    eq("  still not saved", AltStableConfig.warbandTab, 1)
+    -- Editing a tab in this view saves the edit, not a tab choice.
+    WT.OpenDialog(2)
+    WT.SaveDialog()
+    eq("a tab edited in the search's view keeps the saved tab", AltStableConfig.warbandTab, 1)
+    wb.ClearFocus(); wb.Refresh()
+    WT.OpenDialog(2)
+    WT.SaveDialog()
+    eq("  outside it, saving selects the tab as before", AltStableConfig.warbandTab, 2)
+    -- A tab clicked: the player's own view again.
+    AltStableConfig.warbandTab = 1
+    AltStable.ShowSearch("potion"); WoW.flushTimers(); Enter()
+    local railBtn
+    for _, b in ipairs(wb.tabBtns) do if b:IsShown() and b.key == 1 then railBtn = b end end
+    if railBtn then railBtn:GetScript("OnClick")(railBtn) end
+    eq("a tab chosen on the rail ends the focus", wb.focus, nil)
+end
+
+-- Enter pressed within the typing delay acts on what the box says, not on
+-- the last query's rows (Codex review of #548).
+do
+    World()
+    AltStableConfig.warbandTab = 1
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    eq("(the rows are the last query's)", RowIDs(), "101")
+    local box = Window().box
+    box:SetText("wool")
+    box:GetScript("OnTextChanged")(box, true)   -- typed; its timer not fired yet
+    Enter()
+    eq("Enter right after typing opens the item now typed", wb.focus and wb.focus.itemID, 102)
+    wb.ClearFocus()
+    local uiHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return false end
+    WoW.chatBox, WoW.chatActive, WoW.chatRefuses = nil, nil, nil
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    box:SetText("wool")
+    box:GetScript("OnTextChanged")(box, true)
+    shift = true
+    Enter()
+    shift = false
+    eq("  Shift+Enter links it", WoW.chatBox and WoW.chatBox.inserted[1], "|Hitem:102|h[Wool Cloth]|h")
+    AltStable.IsGameUIHidden = uiHidden
+    WoW.flushTimers()
+    Window():Hide()
+end
+
+-- Alt+Z hides UIParent, and with it the window: that isn't closing it. It
+-- comes back with its data (Codex review of #548).
+do
+    World()
+    -- Opened with the UI shown, so it isn't lifted out from under UIParent.
+    -- The sheet's showcase may have hidden UIParent already: shown first, so
+    -- the Hide below is a real change and fires the window's OnHide.
+    local uiWasShown = UIParent:IsShown()
+    UIParent:Show()
+    local uiHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return false end
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    AltStable.IsGameUIHidden = uiHidden
+    eq("(opened under UIParent)", Window():GetParent(), UIParent)
+    UIParent:Hide()
+    check("(the game UI hidden hides the window from view)", not Window():IsVisible())
+    check("  but it is still open", Window():IsShown())
+    check("  and keeps its data", S.snap ~= nil and S.snap[101] ~= nil)
+    UIParent:Show()
+    Type("cloth")
+    eq("back with the UI, it still searches", RowIDs(), "101,103,102")
+    AltStableWarbandDB[ALT].bags[102] = 40
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("  and still hears changes", S.rows[1] and S.rows[1].id, 102)
+    Window():Hide()
+    eq("closing it for real still lets go", S.snap, nil)
+    if not uiWasShown then UIParent:Hide() end
+end
+
+-- Worn only, or nothing Warband shows: the search stays, and says why.
+do
+    World()
+    AltStable.ShowSearch("thorns"); WoW.flushTimers()
+    Enter()
+    check("a worn-only item keeps the search open", Window():IsShown())
+    eq("  and says who wears it", Window().status:GetText(), "Worn by Kaleid.")
+    local held = AltStable.ItemMapsFor
+    AltStable.ItemMapsFor = nil
+    Type("linen")
+    check("Warband off: the warning shows", Window().warn:IsShown())
+    AltStable.ItemMapsFor = held
+    Window():Hide()
+end
+
+-- The animation on: the item is still in view at the end of the trip.
+do
+    World()
+    for id = 4001, 4300 do
+        AltStableWarbandDB[ALT].bags[id] = 1
+        WoW.items[id] = { name = "Rock " .. id, classID = 7, quality = 0, icon = 7 }
+    end
+    WoW.items[101].quality = 0
+    WoW.items[101].name = "Zzz Linen"          -- sorts last on its tab
+    -- Back on a sheet tab first, so Enter switches with a trip.
+    local T = AltStable._test
+    for _, b in ipairs(T.sidebarBtns) do
+        if b.sectionId == "summary" then b:GetScript("OnClick")(b) end
+    end
+    AltStableConfig.enableOpenAnimation = true
+    AltStable.ShowSearch("zzz linen"); WoW.flushTimers(); Enter()
+    local r = T.WindowAnimRunner and T.WindowAnimRunner()
+    local fn = r and r:GetScript("OnUpdate")
+    if fn then fn(r, 0.3) end
+    eq("after the trip, the item is on screen and lit", LitIDs(), "101")
+    check("  scrolled to it", (wb.scrollRow or 0) > 0, tostring(wb.scrollRow))
+    AltStableConfig.enableOpenAnimation = false
+    wb.ClearFocus()
+end
+
+------------------------------------------------------------
+-- Shift: the link into chat
+------------------------------------------------------------
+do
+    World()
+    local realInsertLink = ChatFrameUtil.InsertLink
+    -- Never through InsertLink: it may hand the link to the auction search.
+    ChatFrameUtil.InsertLink = function() error("InsertLink called") end
+    -- The sheet's showcase may hide the game UI; these are about chat with it shown.
+    local uiHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return false end
+    WoW.chatBox, WoW.chatActive, WoW.chatRefuses = nil, nil, nil
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    shift = true
+    Enter()
+    local box = WoW.chatBox
+    eq("Shift+Enter with no draft opens chat with the link", box and box.inserted[1], "|Hitem:101|h[Linen Cloth]|h")
+    eq("  the keyboard goes to chat", WoW.focus, box)
+    check("  the search stays open", Window():IsShown())
+
+    local draft = WoW.makeFrame("EditBox")
+    draft.inserted = {}
+    draft.Insert = function(self, t) self.inserted[#self.inserted + 1] = t end
+    WoW.chatActive = draft
+    Enter()
+    eq("an open draft gets the link", draft.inserted[1], "|Hitem:101|h[Linen Cloth]|h")
+    eq("  and the keyboard", WoW.focus, draft)
+
+    WoW.chatActive, WoW.chatRefuses, WoW.chatBox = nil, true, nil
+    Enter()
+    eq("chat refusing to open: said", Window().status:GetText(), "Chat isn't available.")
+    check("  nothing inserted", #WoW.chatBox.inserted == 0)
+    WoW.chatRefuses = nil
+
+    local realHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return true end
+    WoW.chatBox = nil
+    Enter()
+    eq("the game UI hidden: said", Window().status:GetText(), "Chat is hidden with the game UI.")
+    check("  chat untouched", WoW.chatBox == nil)
+    AltStable.IsGameUIHidden = function() return false end
+
+    -- A link the client hasn't cached: asked for, and said.
+    AltStableWarbandDB[ALT].bags[108] = 1
+    S.names[108] = "Mageweave"; S.folded[108] = "mageweave"
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    Type("mageweave")
+    WoW.itemLoadRequests = {}
+    Enter()
+    eq("an uncached link: said", Window().status:GetText(), "Item link loading, try again.")
+    check("  and asked for", Requested(108))
+
+    local row = Window().rows[1]
+    WoW.chatBox, WoW.chatActive = nil, nil
+    Type("linen")
+    row:GetScript("OnClick")(row)
+    eq("Shift-click links too", WoW.chatBox and WoW.chatBox.inserted[1], "|Hitem:101|h[Linen Cloth]|h")
+    shift = false
+    ChatFrameUtil.InsertLink = realInsertLink
+    AltStable.IsGameUIHidden = uiHidden
+    Window():Hide()
+end
+
+------------------------------------------------------------
+-- Keys, Escape, the slash command, the TOC
+------------------------------------------------------------
+do
+    World()
+    AltStable.ShowSearch("cloth"); WoW.flushTimers()
+    local box = Window().box
+    eq("the first row is selected", S.selected, 1)
+    box:GetScript("OnArrowPressed")(box, "DOWN")
+    eq("Down moves the selection", S.selected, 2)
+    for _ = 1, 5 do box:GetScript("OnArrowPressed")(box, "DOWN") end
+    eq("  not past the last", S.selected, #S.rows)
+    for _ = 1, 5 do box:GetScript("OnArrowPressed")(box, "UP") end
+    eq("Up moves it back, not past the first", S.selected, 1)
+    local row = Window().rows[1]
+    row:GetScript("OnEnter")(row)
+    check("hovering a row shows who holds it", GameTooltip:IsOwned(row))
+    row:GetScript("OnLeave")(row)
+    box:GetScript("OnEscapePressed")(box)
+    check("Escape in the box closes the search", not Window():IsShown())
+    local registered = false
+    for _, n in ipairs(UISpecialFrames) do if n == "AltStableSearch" then registered = true end end
+    check("  registered with the game's Escape", registered)
+
+    SlashCmdList["ALTSTABLE"]("search linen cloth")
+    WoW.flushTimers()
+    check("/alts search opens it", Window():IsShown())
+    eq("  with the rest of the line as the query", Window().box:GetText(), "linen cloth")
+    eq("  and finds it", RowIDs(), "101")
+    Window():Hide()
+
+    local toc = io.open("AltStable.toc"):read("*a")
+    check("Search.lua is in the TOC, after Export.lua", toc:find("Export.lua%s+Search.lua") ~= nil)
+end
+
+rawset(_G, "IsShiftKeyDown", rawShift)
+time = realTime
+
+print(("test_search: %d passed, %d failed"):format(passed, failed))
+if failed > 0 then os.exit(1) end

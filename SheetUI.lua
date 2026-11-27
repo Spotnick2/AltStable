@@ -3113,6 +3113,38 @@ local function CreateFrameIfNeeded()
         refTip:Hide()
     end)
 
+    -- Finding an item on every character (#503): the search window, from the
+    -- title bar, on every tab. Its own block: this function is at Lua 5.1's
+    -- 200 locals; kept on the title bar for Columns to sit beside.
+    do
+        local searchBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
+        searchBtn:SetSize(18, 18)
+        searchBtn:SetPoint("RIGHT", refBtn, "LEFT", -6, 0)
+        searchBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
+        AltStable.ApplyBackdrop(searchBtn, 0.12, 0.12, 0.12, 1)
+        local icon = searchBtn:CreateTexture(nil, "OVERLAY")
+        icon:SetPoint("CENTER")
+        icon:SetSize(12, 12)
+        icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+        searchBtn:SetScript("OnClick", function()
+            if GameTooltip:IsOwned(searchBtn) then GameTooltip:Hide() end
+            if AltStable.ShowSearch then AltStable.ShowSearch() end
+        end)
+        searchBtn:SetScript("OnEnter", function()
+            searchBtn:SetBackdropColor(0.22, 0.22, 0.22, 1)
+            GameTooltip:SetOwner(searchBtn, "ANCHOR_BOTTOMLEFT")
+            GameTooltip:SetText("Find an item")
+            GameTooltip:AddLine("Who holds it, on every character.", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        searchBtn:SetScript("OnLeave", function()
+            searchBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
+            if GameTooltip:IsOwned(searchBtn) then GameTooltip:Hide() end
+        end)
+        titleBar.searchBtn = searchBtn
+        AltStable._test.searchBtn = searchBtn
+    end
+
     -- Choosing the columns (#378), from the title bar (#523): the tab's column
     -- menu, hung under the button, its arrow up while it's open. Only on a
     -- sheet tab: a plugin has no columns to choose.
@@ -3120,7 +3152,7 @@ local function CreateFrameIfNeeded()
     do
         local colBtn = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
         colBtn:SetHeight(18)
-        colBtn:SetPoint("RIGHT", refBtn, "LEFT", -6, 0)
+        colBtn:SetPoint("RIGHT", titleBar.searchBtn, "LEFT", -6, 0)
         colBtn:SetFrameLevel(titleBar:GetFrameLevel() + 5)
         AltStable.ApplyBackdrop(colBtn, 0.12, 0.12, 0.12, 1)
         local colLbl = colBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -3190,8 +3222,9 @@ local function CreateFrameIfNeeded()
         local TITLE_PAD, SECTION_GAP = 12, 14
         local function ControlsWidth()
             -- From the right edge: Close's inset and Close, Maximize, the toggle,
-            -- the gap, the capture button, then Columns when it shows.
-            local w = 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18
+            -- the gap, the capture button, search (#503), then Columns when it
+            -- shows.
+            local w = 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + 18
             if colBtn:IsShown() then w = w + 6 + (colBtn:GetWidth() or 0) end
             return w
         end
@@ -3207,7 +3240,7 @@ local function CreateFrameIfNeeded()
                 titleSep:SetPoint("LEFT", titleText, "RIGHT", TITLE_PAD, 0)
             end
             sectionText:SetPoint("LEFT", titleSep, "RIGHT", SECTION_GAP, 0)
-            sectionText:SetPoint("RIGHT", colBtn:IsShown() and colBtn or refBtn, "LEFT", -10, 0)
+            sectionText:SetPoint("RIGHT", colBtn:IsShown() and colBtn or titleBar.searchBtn, "LEFT", -10, 0)
             -- A view (#543) is titled by its tab: "Skills", not "Cooldowns".
             local shown = activeSection
             if shown and shown.parent then
@@ -3546,6 +3579,10 @@ local function CreateFrameIfNeeded()
         if AltStableConfig and AltStableConfig.sidebarCompact then lbl:Hide() end
 
         table.insert(sidebarBtns,pbtn)
+        -- By id, for AltStable._OpenPluginTab (#503). A field, not a local:
+        -- this function is at Lua 5.1's 200 locals.
+        sidebar._pluginBtns = sidebar._pluginBtns or {}
+        sidebar._pluginBtns[plugin.id] = pbtn
         sidebar.Layout()
         return pbtn
     end
@@ -7165,6 +7202,36 @@ AltStable._test.BuildSheet = function() CreateFrameIfNeeded() end
 function AltStable.EnsureSheetVisible()
     CreateFrameIfNeeded()
     if not frame:IsShown() then frame:Show(); Refresh() end
+end
+
+-- Open a plugin's tab from code, on something (#503: the item search opens
+-- Warband on an item). Internal: the one caller is in this addon.
+--   1. Only a registered plugin: buttons are built lazily, so the registry
+--      says, and an unknown id opens nothing.
+--   2. The sheet shown in either case: a closed sheet keeps its active tab.
+--   3. That tab already up: no re-click (it would deactivate, rescan and
+--      rebuild it); a running window trip settled, then OnOpen alone.
+--   4. Otherwise OnOpen first, to store what to show, then the same click a
+--      player makes: its OnActivate runs synchronously and consumes it.
+-- plugin.OnOpen(...) is optional and gets the arguments after the id.
+function AltStable._OpenPluginTab(id, ...)
+    local plugin
+    for _, p in ipairs(AltStable.plugins or {}) do
+        if p.id == id then plugin = p end
+    end
+    if not plugin then return false end
+    AltStable.EnsureSheetVisible()
+    if activeSection == plugin then
+        FinishWindowAnimation()
+        if plugin.OnOpen then plugin.OnOpen(...) end
+        return true
+    end
+    local btns = frame and frame.sidebar and frame.sidebar._pluginBtns
+    local btn = btns and btns[id]
+    if not btn then return false end
+    if plugin.OnOpen then plugin.OnOpen(...) end
+    btn:GetScript("OnClick")(btn)
+    return true
 end
 
 -- Takes the group's key (the item's `key`): the ruleset ("PvP") or the
