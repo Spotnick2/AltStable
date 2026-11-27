@@ -1173,6 +1173,11 @@ local function BuildDisplayList()
         end
     end
     table.sort(allChars, SortComparator(allChars, sortColumn, sortAsc))
+    -- The Cooldowns view's clock re-sorts when this count changes (#543):
+    -- recorded at every sort, a data refresh's too (Codex review of #544).
+    if activeSection.cdFields then
+        viewStrip.sortedReady = AltStable.Cooldowns.ReadyCount(store, ShouldShowInGrid)
+    end
 
     -- Grouped by realm unless the player turned it off (Options, "Group
     -- characters by realm"), and by faction when they turned that on. Both:
@@ -6524,18 +6529,11 @@ local function CreateFrameIfNeeded()
         end
 
         -- Shown for Skills and its views, hidden for every other tab.
-        -- The count the rows were last sorted at: the clock's own, since a
-        -- hover repaints the badge (and viewStrip.ready) between ticks and
-        -- must not make the next tick skip the re-sort (Codex review of #544).
-        local sortedReady
-
         function viewStrip.Set(section)
             local on = section ~= nil and (section.id == "skills" or section.parent == "skills")
             viewStrip.on = on
             strip:SetShown(on)
             if on then viewStrip.Update() end
-            -- The switch builds the list right after this, at this count.
-            sortedReady = viewStrip.ready
             if not (section and section.cdFields) then empty:Hide() end
         end
 
@@ -6548,10 +6546,10 @@ local function CreateFrameIfNeeded()
         function viewStrip.Tick()
             viewStrip.Update()
             if not (activeSection and activeSection.cdFields) then return end
-            if viewStrip.ready ~= sortedReady then
-                BuildDisplayList()
-                sortedReady = viewStrip.ready
-            end
+            -- Against the count of the last sort (BuildDisplayList keeps it),
+            -- not the badge's: a hover or a data refresh between ticks must
+            -- not make this tick skip the re-sort (Codex reviews of #544).
+            if viewStrip.ready ~= viewStrip.sortedReady then BuildDisplayList() end
             UpdateRows()
         end
         strip:SetScript("OnUpdate", function(_, dt)

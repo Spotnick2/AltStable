@@ -5881,6 +5881,33 @@ do
     check("  Bob's Mooncloth shows Available", Cell(1, 3):find("Available", 1, true) ~= nil, Cell(1, 3))
     eq("  neither scrollbar was moved", moved, 0)
     body.SetVerticalScroll, body.SetHorizontalScroll = rv, rh
+
+    -- A data refresh between ticks sorts too, and the clock must count from
+    -- that sort (Codex follow-up review of #544): a ready Shaker and Mooncloth
+    -- (2 up), the Shaker used (a refresh at 1 up), then a second Mooncloth
+    -- comes up (2 again) - the tick must still re-sort.
+    do
+        local db1 = AltStableDB
+        local T0 = NOW + 1000
+        WoW.now = T0
+        build({
+            ann = { guid = "ann", name = "Ann", class = "MAGE", level = 60, ilvl = 50, lastUpdate = 1,
+                    ["cd_Leatherworking@Salt Shaker"] = T0 - 1, ["cd_Tailoring@Mooncloth"] = T0 + 10 },
+            bob = { guid = "bob", name = "Bob", class = "ROGUE", level = 50, ilvl = 10, lastUpdate = 1,
+                    ["cd_Tailoring@Mooncloth"] = T0 - 1 },
+        })
+        VS.Tick()
+        eq("sorted by Mooncloth: Bob's is up, Ann's soon", Names(), "Bob,Ann")
+        AltStableDB.ann["cd_Leatherworking@Salt Shaker"] = T0 + 3600     -- the Shaker used
+        refresh()
+        eq("  a refresh records the count it sorted at", VS.sortedReady, 1)
+        WoW.now = T0 + 11                                                  -- Ann's Mooncloth up
+        VS.Tick()
+        eq("  the tick re-sorts: both up, the higher item level first", Names(), "Ann,Bob")
+        WoW.now = NOW
+        build(db1)
+    end
+
     -- The badge appearing never widens the strip: text measured by its
     -- length here, the tab keeps room for "· 99 available" (Codex review of #544).
     local realSW = cdTab.text.GetStringWidth
