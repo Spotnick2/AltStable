@@ -310,6 +310,20 @@ The build number is in the launcher under the Play button. Two cases, by the sha
   diffs it with the shared `forever-api-dump` skill. This repo gets an issue only when it uses a name
   the diff removed or changed, and then only that name is verified. No `/run` line, nothing bumped,
   and `tests\kit.pin` moves only when verifying that name needs the build's kit data.
+- **Except the recipe data, at every build.** `Plugins/Professions/RecipeData.lua` is generated
+  from five client tables (DB2, from wago.tools), and the API diff holds none of their rows: on
+  70938 the diff found nothing we use while SpellReagents gave five Tailoring recipes one more
+  cloth. So at a new build, same Interface or not:
+  ```
+  python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory SpellReagents SpellCooldowns SpellCategories
+  python -I Tools\RecipeData\gen-recipes.py --check
+  ```
+  The first saves the tables at the newest build (`wago.py builds` lists them). The second is
+  offline (cached Wowhead pages) and writes nothing: exit 0 means no recipe changed and there is
+  nothing to do; exit 1 lists the recipes added, removed or changed, and then a PR regenerates
+  the file (the same command without `--check`) and records it in `docs/forever-api-notes.md`.
+  The shared new-build routine runs this step for the repos that generate data from client tables
+  (wow-dev-tools#100); until it does, run it here when a build comes out.
 - **An Interface bump** (a new `## Interface:` for the TOCs) **is the full re-check**, below, even
   when the diff is empty.
 

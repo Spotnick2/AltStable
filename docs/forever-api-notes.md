@@ -1074,8 +1074,9 @@ check above compared the wrong pair). Against 70532, two things the generator re
 - five Tailoring recipes take one more cloth (3758, 6688, 6693, 6695, 12079; SpellReagents).
 
 `RecipeData.lua` is regenerated at 70938 from those and the cached Wowhead pages (nothing
-fetched). From here, the three tables are got again at an Interface bump, or when a build's diff
-touches them (#541: a same-Interface build is otherwise only diffed).
+fetched). From here, the tables are got again at every build and checked with
+`gen-recipes.py --check` (`docs/RUNBOOK.md`, "When the client updates"): the API diff can't see
+them, as this build showed (#541, wow-dev-tools#100).
 
 ## Build 1.60.1.70959 (2026-11-17) — C_Mail.IsCODEnabled, none we use
 

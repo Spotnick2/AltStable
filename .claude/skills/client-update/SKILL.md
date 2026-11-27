@@ -24,6 +24,12 @@ build twice a week or more (22 from 69977 to 71139, all Interface 16001).
   if it needs the client), fix what it breaks, and record the finding with its build in
   `docs/forever-api-notes.md`. No behaviour line, no bump PR. `tests/kit.pin` moves only when
   verifying that name needs the build's kit data.
+- **Every build, either case: the recipe tables.** The API diff holds no DB2 rows, and
+  `RecipeData.lua` is generated from five of them (70938 changed five recipes' reagents with an
+  empty diff). Get the tables at the new build and run `gen-recipes.py --check`: the commands are
+  in the RUNBOOK's "When the client updates". Exit 0 is done; exit 1 lists the changed recipes and
+  calls for a regenerate PR. Until the shared routine does it (wow-dev-tools#100), it's this
+  repo's to run.
 - **Interface bump** (a new `## Interface:` for the TOCs): the full routine below, even when the
   diff is empty.
 
