@@ -73,19 +73,30 @@ if ($Remove) {
 }
 
 # The host, then the module, through ForeverProbe's own deploy (#549): it checks
-# both and copies nothing when either is refused. It copies the TOC and the
+# both first and copies nothing when either is refused. It copies the TOC and the
 # files it lists, and removes the ones it no longer lists, so a stale file goes
 # as /MIR's did. (read-wirelog.py stays in the repo: it reads WTF\, not this
 # copy.) SavedVariables live in WTF\, not here.
 # (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
 # settings from loading, and after the fix only overwrote the player's own.)
-if (-not (Test-Path -LiteralPath (Join-Path $ForeverProbe "Tools\deploy.ps1"))) {
+$fpDeploy = Join-Path $ForeverProbe "Tools\deploy.ps1"
+if (-not (Test-Path -LiteralPath $fpDeploy)) {
     Write-Error "ForeverProbe checkout not found at $ForeverProbe (clone github.com/Spotnick2/ForeverProbe there, or set `$env:FOREVERPROBE)"
     exit 1
 }
+# A checkout from before ForeverProbe#47 has no -Module: pwsh -File leaves the
+# argument unbound, deploys the host alone and exits 0 (review of #555). Ask the
+# script for the parameter before running it.
+if (-not (Get-Command -Name $fpDeploy).Parameters.ContainsKey("Module")) {
+    Write-Error "The ForeverProbe checkout at $ForeverProbe is too old: its Tools\deploy.ps1 has no -Module (ForeverProbe#47). Pull its main, then run this again. Nothing was copied."
+    exit 1
+}
 $dest = Join-Path $AddOnsPath "AltStableProbe"
-& pwsh -NoProfile -File (Join-Path $ForeverProbe "Tools\deploy.ps1") -AddOnsPath $AddOnsPath -Module (Join-Path $RepoRoot "Tools\AltStableProbe")
-if ($LASTEXITCODE -ne 0) { Write-Error "probe deploy refused; nothing was copied"; exit 1 }
+& pwsh -NoProfile -File $fpDeploy -AddOnsPath $AddOnsPath -Module (Join-Path $RepoRoot "Tools\AltStableProbe")
+# Its own error says what failed. A refusal at its checks copies nothing, but a
+# copy that fails after them (a locked file) can leave the host updated and the
+# probe partial, so this doesn't claim either.
+if ($LASTEXITCODE -ne 0) { Write-Error "the probe deploy did not complete (ForeverProbe's deploy.ps1 exited $LASTEXITCODE; its error is above). Run this again once it's fixed."; exit 1 }
 
 # Retired tools: remove what an older run installed, or it keeps loading - the
 # retired AltStableDevConfig re-seeded a whitelist the player had emptied
