@@ -1,7 +1,7 @@
 ---
 name: client-update
-description: Handle a new WoW Forever client build for AltStable - after the shared forever-api-dump skill has dumped, converted and diffed the build, verify behaviour and prepare the MEASURED_ON_BUILD bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", or the addon's login warning names a build other than MEASURED_ON_BUILD.
-version: 1.0.0
+description: Handle a new WoW Forever client build for AltStable. A build with the same Interface is a diff, checked centrally - verify only the names it removed or changed. An Interface bump is the full re-check - verify behaviour and prepare the bump PR. Use when the owner says there is a new build/API bump, "apidump done", "new api build", an Interface bump, or an upstream issue names an API the diff changed.
+version: 2.0.0
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
 
@@ -11,14 +11,34 @@ The checklist of record is `docs/RUNBOOK.md` → "When the client updates". This
 session runs it: which parts are the owner's (in game), which are yours, and the traps that have
 already caught a session. If the two ever disagree, fix the RUNBOOK and this file together.
 
-## Who does what
+## First: which case is it? (#541)
+
+The shared rule is the root `C:\Projects\WoW\CLAUDE.md`, "Forever API reference and new client
+builds": **a new build is a diff; only an Interface bump is a full re-check.** Blizzard ships a
+build twice a week or more (22 from 69977 to 71139, all Interface 16001).
+
+- **Same Interface** (the fourth value of `GetBuildInfo()` didn't change): the root session dumps,
+  converts and diffs it with the shared `forever-api-dump` skill. This repo is touched only when it
+  uses a name the diff removed or changed: that arrives as an upstream issue. Verify **that name**
+  (grep `*.lua`, `tests/wow_stubs.lua` and `docs/forever-api-notes.md`; a `/run` line or the probe
+  if it needs the client), fix what it breaks, and record the finding with its build in
+  `docs/forever-api-notes.md`. No behaviour line, no bump PR. `tests/kit.pin` moves only when
+  verifying that name needs the build's kit data.
+- **Interface bump** (a new `## Interface:` for the TOCs): the full routine below, even when the
+  diff is empty.
+
+Nothing in the addon records or announces the build it was checked on: there is no build
+constant and no login warning. `svLoadCheck.build` is a diagnostic stamp, and `/alts status`
+shows the running build for bug reports.
+
+## The full routine (Interface bump)
 
 | Step | Who | What |
 |---|---|---|
 | 1-2. Dump, convert, diff | owner + you | the shared `forever-api-dump` skill (`C:\Projects\WoW\.claude\skills\forever-api-dump\SKILL.md`) |
 | 3. Behaviour | **owner** pastes one `/run` line; you judge it | expected values below |
 | 4. Persistence | **only if saved data looks lost** - no longer per build | the probe counters |
-| 5. Bump PR | you | four edits, tests, branch, PR (commit/push only when asked) |
+| 5. Bump PR | you | the edits, tests, branch, PR (commit/push only when asked) |
 
 ## 1-2. Dump, convert, diff
 
@@ -83,21 +103,19 @@ a **full client exit** (Exit Game, wait for the process to go, relaunch) and a `
 the files, read the counters and the `log` yourself. Lines from other modules in ForeverProbe's
 console (e.g. **PriestlyProbe**) are another project's probe - not evidence about AltStable.
 
-## 5. The bump PR
+## 5. The bump PR (Interface bump only)
 
-Only after 3 passes on the new build (and 4, if it was run). Skipped builds need nothing special: bump straight to
-the newest measured one and record the intermediate ones as "not measured" if they were never
-dumped.
+Only after 3 passes on the new Interface's build (and 4, if it was run).
 
-Edits (branch `build-<build>` from `main`):
+Edits (branch `interface-<interface>` from `main`):
 
-1. `Config.lua` - `local MEASURED_ON_BUILD = "<build>"`. This is what silences the login warning.
-2. `tests/wow_stubs.lua` - `function GetBuildInfo() return "<version>", "<build>", "<client date from the dump header, verbatim: a single-digit day keeps its padding, e.g. Oct  5 2026>", 16001 end`.
+1. Every TOC's `## Interface:` (`AltStable.toc` and each plugin's under `Plugins/`).
+2. `tests/wow_stubs.lua` - `function GetBuildInfo() return "<version>", "<build>", "<client date from the dump header, verbatim: a single-digit day keeps its padding, e.g. Oct  5 2026>", <interface> end`.
    No test hard-codes the build: they read it from this stub.
    And `tests/kit.pin`: `build=` the new build and `sha=` a WowTestKit `main` commit that has its
    `data/forever-<build>/` (the forever-api-dump skill's step 4 makes it; until it's merged on
    the kit, keep the older pin and say so in the PR).
-3. `docs/RUNBOOK.md` step 3 - the "Expected on <build>" sentence names the new build.
+3. `docs/RUNBOOK.md` step 3 - the "Expected on <build>" sentence names the build step 3 ran on.
 4. `docs/forever-api-notes.md` - a `## Build <version>.<build> (<date>) - <one-line verdict>` section
    after the newest build section (they run oldest first; see `## Build 1.60.1.70009` for the
    shape): what the diff
@@ -105,7 +123,7 @@ Edits (branch `build-<build>` from `main`):
    evidence if step 4 was run.
 
 Then: `luac -p` on the touched `.lua`, `pwsh tests/run.ps1` green, `pwsh Tools/deploy.ps1`
-(pre-approved), and tell the owner it needs a `/reload` (no new files) to drop the warning. Commit,
-push and open the PR **only when the owner asks** - and the owner runs every review.
+(pre-approved), and tell the owner what needs a `/reload`. Commit, push and open the PR **only
+when the owner asks** - and the owner runs every review.
 
 Also update the memory note on SavedVariables persistence if the build changed its status.

@@ -165,7 +165,8 @@ and nothing is deleted, except where declared.** The plan was reviewed with Code
 
 Facts met on the way, not fixed here:
 - **The owner's live profiles were written by build 70532** (`svLoadCheck.build` on 2026-10-21) while
-  `MEASURED_ON_BUILD` is 70450. The bump is the `client-update` skill's job, after launch (#275).
+  the notes were measured on 70450. (Since #541 there is no build constant to bump: a same-Interface
+  build is a central diff.)
 - **`accountSync.selfRegion` is 1 on both profiles**; the beta measured 90 (`docs/SYNC-DISCOVERY.md`).
   #275 already asks whether a region saved from the beta fails closed on live.
 - **Nothing can be measured in game before 2026-11-04.** Section 5 is the procedure, run after launch.

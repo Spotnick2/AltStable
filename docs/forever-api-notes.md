@@ -143,7 +143,7 @@ either way. The settings cited as "non-default" were never verified as such.
 the whitelist and account number are set once and never regenerated, so they appeared to "vanish".
 Anything that rebuilds its state on login will mask this.
 
-Re-test on every build — but with a **full client exit and relaunch**, never the two reloads
+Re-test when saved data looks lost (no longer per build: fixed in 70009, held since) — and with a **full client exit and relaunch**, never the two reloads
 this section originally prescribed. A reload keeps the process alive, so the in-memory table is
 handed back untouched and a broken client reads as a working one; that is how the bug survived
 being "checked" more than once. 70009 was measured the right way.
@@ -1074,7 +1074,8 @@ check above compared the wrong pair). Against 70532, two things the generator re
 - five Tailoring recipes take one more cloth (3758, 6688, 6693, 6695, 12079; SpellReagents).
 
 `RecipeData.lua` is regenerated at 70938 from those and the cached Wowhead pages (nothing
-fetched). From here, every build's check re-gets all three tables.
+fetched). From here, the three tables are got again at an Interface bump, or when a build's diff
+touches them (#541: a same-Interface build is otherwise only diffed).
 
 ## Build 1.60.1.70959 (2026-11-17) — C_Mail.IsCODEnabled, none we use
 

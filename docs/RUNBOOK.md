@@ -302,11 +302,22 @@ store persisted when it had not.
 
 ## When the client updates
 
-The build number is in the launcher under the Play button. AltStable warns at login on any build
-other than `MEASURED_ON_BUILD` in `Config.lua`, because a stale API dump reads exactly as
-authoritatively as a current one.
+The build number is in the launcher under the Play button. Two cases, by the shared rule (the root
+`C:\Projects\WoW\CLAUDE.md`, "Forever API reference and new client builds", #541):
 
-Steps 1 and 2 are the shared `forever-api-dump` skill
+- **A new build with the same Interface** (the fourth value of `GetBuildInfo()`; the 22 builds from
+  69977 to 71139 were all 16001) **is a diff, done centrally.** The root session dumps, converts and
+  diffs it with the shared `forever-api-dump` skill. This repo gets an issue only when it uses a name
+  the diff removed or changed, and then only that name is verified. No `/run` line, nothing bumped,
+  and `tests\kit.pin` moves only when verifying that name needs the build's kit data.
+- **An Interface bump** (a new `## Interface:` for the TOCs) **is the full re-check**, below, even
+  when the diff is empty.
+
+Nothing records or announces the build it was checked on: no login warning, no build in
+SavedVariables to compare against (`svLoadCheck.build` is a diagnostic stamp). `/alts status`
+shows the running client's build for bug reports.
+
+At an Interface bump, steps 1 and 2 are the shared `forever-api-dump` skill
 (`C:\Projects\WoW\.claude\skills\forever-api-dump\SKILL.md`). Its tooling lives in
 `C:\Projects\WoW\References\Tools\ForeverAPIDump\` and runs from here by full path:
 
@@ -324,11 +335,11 @@ Steps 1 and 2 are the shared `forever-api-dump` skill
    /run print(GetMaxPlayerLevel(), UnitXPMax("player"), GetXPExhaustion(), Enum.BagIndex.Keyring, C_Reputation.GetNumFactions(), type(TooltipDataProcessor))
    ```
    Expected on 71139: `60`, a positive number, a number while rested (`nil` when not), `-1`,
-   your faction count, `table`. Update this line with the build when you bump
-   `MEASURED_ON_BUILD` below — an expectation pinned to an older build is the staleness this
-   checklist exists to prevent.
-4. **Bump `MEASURED_ON_BUILD`** and the test stub's `GetBuildInfo`, and record what was compared in
-   `docs/forever-api-notes.md`. Old dump files are kept, not deleted — deleting is a human call.
+   your faction count, `table`. This expectation stays tied to the build it was measured on: when
+   step 3 is run again, at the next Interface bump, the sentence names that build.
+4. **Record it:** the TOCs' `## Interface:`, the test stub's `GetBuildInfo`, `tests\kit.pin`, and a
+   `## Build` section in `docs/forever-api-notes.md` with what was compared. Old dump files are
+   kept, not deleted — deleting is a human call.
 
 Persistence is no longer re-checked every build: #23 was fixed in 70009 and held on 70124 and
 70170 (owner, 2026-10-01). If saved data ever looks lost, the probe check above still applies -

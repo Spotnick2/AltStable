@@ -1483,64 +1483,26 @@ check("a real login re-stamps", AltStableConfig.svLoadCheck ~= markerBefore)
 check("  and announces nothing", #WoW.chatOut == 0, WoW.chatOut[1] or "")
 
 ------------------------------------------------------------
--- Which build were the findings measured on?
+-- No build is announced at login (#541)
 --
--- A constant in the source: a human bumps it after re-measuring, which is the
--- point - a value the addon could compute would just agree with itself.
+-- A new build with the same Interface is a diff, checked centrally; only an
+-- Interface bump is a re-check here. So a login on a build other than the
+-- last one measured, on a development copy, prints nothing about it.
 ------------------------------------------------------------
 
-WoW.chatOut = {}
-AltStable.CheckClientBuild()
-check("the measured build stays quiet", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-
-local realBuildInfo = GetBuildInfo
-GetBuildInfo = function() return "1.60.2", "70001", "Oct 01 2026", 16001 end
-WoW.chatOut = {}
-AltStable.CheckClientBuild()
-check("a different build is announced",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("70001", 1, true) ~= nil
-      and WoW.chatOut[1]:find(AltStable.MEASURED_ON_BUILD, 1, true) ~= nil,
-      WoW.chatOut[1] or "(nothing printed)")
-check("  saying what to re-check and what to bump",
-      #WoW.chatOut > 0 and WoW.chatOut[1]:find("/apidump", 1, true) ~= nil
-      and WoW.chatOut[1]:find("MEASURED_ON_BUILD", 1, true) ~= nil,
-      WoW.chatOut[1] or "")
-
--- It keeps saying so until someone re-measures and bumps the constant.
-WoW.chatOut = {}
-AltStable.CheckClientBuild()
-check("  and keeps saying so on the next login", #WoW.chatOut > 0)
-
--- Only on a development copy. A released addon carries its tag as its version,
--- and a player has nothing to do with "re-run /apidump".
-local realMeta = AltStable.API.GetAddOnMetadata
-for _, case in ipairs({
-    { "v0.7.0-beta",        false, "a release" },
-    { "v0.11.0",            false, "a release tagged without -beta (from v0.10.0 on)" },
-    { "dev-9ea1f00",        true,  "a deploy.ps1 copy" },
-    { "dev",                true,  "a copy deployed outside git" },
-    { "@project-version@",  true,  "a checkout run as-is" },
-}) do
-    AltStable.API.GetAddOnMetadata = function(_, field) return field == "Version" and case[1] or nil end
+do
+    local realBuildInfo, realMeta = GetBuildInfo, AltStable.API.GetAddOnMetadata
+    GetBuildInfo = function() return "1.60.2", "70001", "Oct 01 2026", 16001 end
+    AltStable.API.GetAddOnMetadata = function(_, field) return field == "Version" and "dev-9ea1f00" or nil end
     WoW.chatOut = {}
-    AltStable.CheckClientBuild()
-    if case[2] then
-        check("a different build is announced on " .. case[3], #WoW.chatOut > 0, case[1])
-    else
-        check("a different build is NOT announced on " .. case[3], #WoW.chatOut == 0, WoW.chatOut[1] or "")
-    end
+    WoW.fire("PLAYER_LOGIN")
+    local said = table.concat(WoW.chatOut, " / ")
+    check("a login on another build, on a dev copy, says nothing about the build",
+          not said:find("70001", 1, true) and not said:lower():find("build", 1, true), said)
+    check("  and there is no build constant or check left",
+          AltStable.MEASURED_ON_BUILD == nil and AltStable.CheckClientBuild == nil and AltStable.IsDevBuild == nil)
+    GetBuildInfo, AltStable.API.GetAddOnMetadata = realBuildInfo, realMeta
 end
-AltStable.API.GetAddOnMetadata = function() error("no metadata") end
-WoW.chatOut = {}
-AltStable.CheckClientBuild()
-check("an unreadable version counts as a development copy", #WoW.chatOut > 0)
-AltStable.API.GetAddOnMetadata = realMeta
-
-GetBuildInfo = function() return nil end
-WoW.chatOut = {}
-AltStable.CheckClientBuild()
-check("an unreadable build is not treated as a new one", #WoW.chatOut == 0, WoW.chatOut[1] or "")
-GetBuildInfo = realBuildInfo
 
 ------------------------------------------------------------
 -- A scan marks the character as this client's own
