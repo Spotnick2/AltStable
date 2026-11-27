@@ -699,6 +699,18 @@ if PT then
     Enter()
     eq("Warband off: Enter on a craft-only item names its crafters", strip(Window().status:GetText()),
        "Can craft: Brom (Alchemy). Bags, bank and mail need the Warband module.")
+
+    -- Warband switched on: it publishes its holdings at its bootstrap, a second
+    -- after loading, and an open search rebuilds then, with the saved bags,
+    -- even when the bag scan reads nothing new.
+    Type("linen")
+    eq("(Warband off: only what can be crafted)", RowIDs(), "2996,4240")
+    local heldContainers = WoW.containers
+    WoW.containers = {}
+    plugin._test.BootstrapPlugin()
+    WoW.flushTimers()
+    eq("Warband's bootstrap rebuilds an open search with its saved holdings", RowIDs(), "101,2996,4240")
+    WoW.containers = heldContainers
     AltStable.ItemMapsFor = heldMaps
     AltStable.ItemCrafters = held
     Window():Hide()
