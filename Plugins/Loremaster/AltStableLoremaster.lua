@@ -370,8 +370,11 @@ function L.GroupOnEnter(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText(GROUP_LABEL[self.key] or "", 1, 1, 1)
     GameTooltip:AddLine((L.cols and #L.cols == 1)
-        and "Not listed: no quests this character can take."
-        or "Not listed: no quests any of these characters can take.", 0.7, 0.7, 0.7, true)
+        and "Not listed: no quests counted for this character."
+        or "Not listed: no quests counted for any of these characters.", 0.7, 0.7, 0.7, true)
+    -- What was COUNTED, not what can be taken: a row of quests that count only
+    -- once done (Craftsman's Writs, Other) is hidden until the first one is
+    -- (Codex review of #539).
     for i = 1, math.min(#hidden, MAX_TIP) do
         GameTooltip:AddLine(L.ZoneName(hidden[i]), 0.9, 0.9, 0.9)
     end

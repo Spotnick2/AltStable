@@ -532,12 +532,12 @@ WoW.tooltipLines = {}
 L.GroupOnEnter({ key = "dungeon", hidden = dg.hidden })
 local tip = table.concat(WoW.tooltipLines, "\n")
 check("  hovered, it names The Deadmines", tip:find("The Deadmines", 1, true) ~= nil, tip)
-check("  and why, for one character", tip:find("no quests this character can take", 1, true) ~= nil, tip)
+check("  and why, for one character: nothing counted", tip:find("no quests counted for this character", 1, true) ~= nil, tip)
 L.cols = { hordeCol, hordeCol }
 WoW.tooltipLines = {}
 L.GroupOnEnter({ key = "dungeon", hidden = dg.hidden })
 tip = table.concat(WoW.tooltipLines, "\n")
-check("  or for several", tip:find("any of these characters", 1, true) ~= nil, tip)
+check("  or for several", tip:find("no quests counted for any of these characters", 1, true) ~= nil, tip)
 WoW.tooltipLines = {}
 L.GroupOnEnter({ key = "raid" })
 eq("  a header with nothing hidden has no tooltip", #WoW.tooltipLines, 0)
@@ -549,6 +549,21 @@ check("Professions: Herbalism listed, Alchemy not", pg and pg.n == 1 and holds(p
 hordeCol.snap.c[-24] = nil
 pg = findGroup(L.DisplayRows({ hordeCol }), "profession")
 check("  with no profession row at all, the header stays, n = 0", pg and pg.n == 0 and holds(pg.hidden, ALCHEMY))
+L.SetFilter("all")
+
+-- A row whose quests count only once done (Codex review of #539): a level-60
+-- human can take Craftsman's Writ: Runecloth Bag (94353), yet the row is not
+-- counted, so not listed, until a writ is done - hence "counted", not "can take".
+local WRITS = 16941
+local human60 = { faction = "Alliance", race = 1, class = 1, level = 60 }
+check("a level-60 human may take a writ", M.Eligible(D.QUESTS[94353], human60, {}))
+check("  yet Craftsman's Writs is not counted before one is done", M.Count(human60, {}).c[WRITS] == nil)
+check("  and is once one is", M.Count(human60, { [94353] = true }).c[WRITS] ~= nil)
+local writCol = { guid = "Player-1-W", snap = { faction = "Alliance", race = 1, class = 1, level = 60,
+    c = { [ALCHEMY] = { 0, 1 } } } }
+L.SetFilter("profession")
+local wg = findGroup(L.DisplayRows({ writCol }), "profession")
+check("  so the Professions header lists it as not listed", wg and holds(wg.hidden, WRITS))
 L.SetFilter("all")
 
 -- A search narrows what's "not listed" too.
@@ -563,7 +578,8 @@ L.search = nil
 -- No column: no header claims anything (the empty-state message speaks).
 eq("no columns, no rows", #L.DisplayRows({}), 0)
 
--- "Not listed" means some other character would have the row: every row of
+-- "Not listed" means some other character would have the row, or will once
+-- one of its quests is done (an unsure quest counts only then): every row of
 -- the table holds a quest that isn't reference-only. A regenerated table that
 -- breaks this fails here, and the header would then need to skip such rows.
 do
