@@ -431,11 +431,14 @@ end
 -- Who can use it, by Owners' rule: this plugin's own snapshot decides once it
 -- has one (a confirmed loss must not bring the field back from a stale core
 -- rank); the core's skill field only stands in before that.
-local function OwnsLine(guid, char, line)
+-- Its skill in that line, or nil when it doesn't own it (#545: the Shaker
+-- needs Leatherworking 250).
+local function LineRank(guid, char, line)
     local e = AltStableProfessionsDB and AltStableProfessionsDB[guid]
-    if type(e) == "table" and e.profs and e.profs[line] then return true end
-    if type(e) == "table" and e.stamp then return false end
-    return CoreSkill(char, line) ~= nil
+    local p = type(e) == "table" and e.profs and e.profs[line]
+    if p then return tonumber(p.rank) or 0 end
+    if type(e) == "table" and e.stamp then return nil end
+    return CoreSkill(char, line)
 end
 
 local function PlainTime(v)
@@ -492,8 +495,14 @@ local function ReadItemCooldowns()
     if type(char) ~= "table" then return false end
     local now, changed = time(), false
     for _, ic in ipairs(ITEM_COOLDOWNS) do
-        if OwnsLine(guid, char, ic.line) then
-            local key = "cd_" .. ic.prof .. "@" .. ic.label
+        local key = "cd_" .. ic.prof .. "@" .. ic.label
+        local rank = LineRank(guid, char, ic.line)
+        if rank and rank < (ic.learn or 0) then
+            -- An owner who can't use it yet (the Shaker under Leatherworking
+            -- 250, Codex review of #546): carrying one records nothing, and a
+            -- record held from before goes.
+            if char[key] ~= nil then char[key] = nil; changed = true end
+        elseif rank then
             local held = tonumber(char[key])
             local okc, count = pcall(AltStable.API.GetItemCount, ic.item)
             count = okc and AltStable.API.PlainNumber(count) or nil

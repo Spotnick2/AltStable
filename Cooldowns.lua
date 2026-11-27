@@ -80,9 +80,19 @@ end
 
 -- Seconds until it comes up: 0 when ready, nil when the character has no
 -- such cooldown recorded.
+-- An item's cooldown recorded for a character the Recipe Book says can't use
+-- the item yet (a Salt Shaker carried under Leatherworking 250, or a record
+-- synced from an older client) is not believed: the cell says Needs 250, and
+-- the badge doesn't count it (Codex review of #546).
+local function Unusable(char, key)
+    local entry = CD.Entry and CD.Entry(key)
+    local standing = AltStable.CooldownStanding
+    return entry ~= nil and entry.item ~= nil and standing ~= nil and standing(char, entry) == "low"
+end
+
 function CD.Remaining(char, key, now)
     local expiry = type(char) == "table" and tonumber(char[key])
-    if not expiry then return nil end
+    if not expiry or Unusable(char, key) then return nil end
     return math.max(0, expiry - (now or time()))
 end
 
@@ -195,8 +205,10 @@ function CD.ReadyCount(store, shown, now)
     for _, char in pairs(store or {}) do
         if Shown(char, shown) then
             for k, v in pairs(char) do
-                local expiry = tonumber(v)
-                if expiry and expiry <= now and type(k) == "string" and CD.Parse(k) then n = n + 1 end
+                if tonumber(v) and type(k) == "string" and CD.Parse(k) then
+                    local left = CD.Remaining(char, k, now)   -- an unusable item's isn't believed
+                    if left and left <= 0 then n = n + 1 end
+                end
             end
         end
     end

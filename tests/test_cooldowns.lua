@@ -221,6 +221,21 @@ do
     local recorded = { name = "Kim", ["cd_Alchemy@Transmutes"] = NOW + 60 }
     eq("a recorded cooldown wins over the standing", CD.Cell(recorded, TRANS.key, NOW), "1m 0s")
     eq("the count: only recorded cooldowns that are up (Known is not)", CD.ReadyCount(store, nil, NOW), 0)
+    -- An item's cooldown recorded for someone who can't use it yet (Codex
+    -- review of #546): not believed in the cell, the sort or the count.
+    standing.Raw = { ["cd_Leatherworking@Salt Shaker"] = { "low", 200 } }
+    local raw = { name = "Raw", ["cd_Leatherworking@Salt Shaker"] = NOW - 5 }
+    eq("a Shaker recorded under Leatherworking 250: Needs 250, not Available",
+       plain(CD.Cell(raw, SHAKER.key, NOW)), "Needs 250")
+    eq("  no time left to sort by", CD.Remaining(raw, SHAKER.key, NOW), nil)
+    eq("  not counted", CD.ReadyCount({ raw = raw }, nil, NOW), 0)
+    standing.Raw[SHAKER.key] = { "usable", 260 }
+    eq("  at the skill, the record is believed", CD.ReadyCount({ raw = raw }, nil, NOW), 1)
+    -- A RECIPE's recorded cooldown is believed whatever the snapshot says: a
+    -- snapshot older than the record (learned since) must not hide a real timer.
+    local lowRec = { name = "Low", ["cd_Alchemy@Transmutes"] = NOW + 60 }
+    eq("a recipe's recorded cooldown under a 'low' snapshot still counts down",
+       CD.Cell(lowRec, TRANS.key, NOW), "1m 0s")
     local _, l2, l3, lines = CD.Tip(store.kim, TRANS.key, NOW)
     eq("tooltip, known: not recorded yet", l2, "Known; its cooldown is not recorded yet")
     eq("  how to read it", l3, "Open the Alchemy window on Kim to read it.")

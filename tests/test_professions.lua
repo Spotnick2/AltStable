@@ -570,6 +570,24 @@ do
     eq("  not with Leatherworking's toasts off", toasted, nil)
     AltStableConfig.toastProfessions = nil
 
+    -- Carried under Leatherworking 250 (Codex review of #546): it can't be
+    -- used, so nothing is recorded, and a record held from before goes.
+    fresh()
+    gt = 1000
+    WoW.professions = { { name = "Leatherworking", rank = 200, max = 225, line = 165 } }
+    T.RefreshOwnership()
+    WoW.items[15846] = { name = "Salt Shaker", count = 1 }
+    WoW.itemCooldowns[15846] = { 0, 0 }
+    T.ReadItemCooldowns()
+    eq("#546: a Shaker carried at Leatherworking 200 records nothing", AltStableDB[ME][KEY], nil)
+    AltStableDB[ME][KEY] = WoW.now - 10
+    check("  a record held from before is a change", T.ReadItemCooldowns())
+    eq("  and goes", AltStableDB[ME][KEY], nil)
+    WoW.professions = { { name = "Leatherworking", rank = 250, max = 300, line = 165 } }
+    T.RefreshOwnership()
+    T.ReadItemCooldowns()
+    eq("  at 250 it is recorded ready", AltStableDB[ME][KEY], WoW.now)
+
     GetTime = realGetTime
 end
 
