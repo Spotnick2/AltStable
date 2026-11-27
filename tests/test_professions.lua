@@ -1611,6 +1611,59 @@ lines = {}
 for _, fn in ipairs(ttCalls) do fn(tt, { id = 424242 }) end
 eq("an unrelated item gets nothing, not even a blank line", #lines, 0)
 
+-- The layout (#542): one per line unless Options says side by side.
+local function plainLines() local out = {} for i, l in ipairs(lines) do out[i] = l:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end return out end
+local groups = AT.TooltipGroups(3396)
+check("the recipe's groups carry names, not text", groups[1] and groups[1].names and #groups[1].names > 0)
+lines = {}
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
+local pl = plainLines()
+eq("unset, one per line: the group's name on a line of its own", pl[2], groups[1].label)
+check("  then a character per line, indented", (pl[3] or ""):find("^  ") ~= nil, pl[3])
+local sideLine = false
+for _, l in ipairs(pl) do if l:find("^" .. groups[1].label .. "|") then sideLine = true end end
+check("  never the group and its names on one line", not sideLine)
+AltStable.SetConfigValue("professionsTooltipLayout", "side")
+lines = {}
+for _, fn in ipairs(ttCalls) do fn(tt, { id = 3396 }) end
+pl = plainLines()
+check("side by side: the group and its names on one line, as before",
+      (pl[2] or ""):find("^" .. groups[1].label .. "|") ~= nil, pl[2])
+AltStable.SetConfigValue("professionsTooltipLayout", nil)
+
+-- The renderer itself (Core), with a fixed list: one per line caps at eight,
+-- side by side at four; a detail goes right, or in brackets.
+do
+    local out = {}
+    local fake = {
+        AddLine = function(_, t) out[#out + 1] = tostring(t) end,
+        AddDoubleLine = function(_, l, r) out[#out + 1] = tostring(l) .. "|" .. tostring(r) end,
+    }
+    local names = {}
+    for i = 1, 10 do names[i] = { name = "Alt" .. i, detail = (i == 1) and "150, needs 225" or nil } end
+    AltStable.AppendRecipeGroups(fake, { { label = "Skill too low", names = names },
+                                          { label = "AltStable", text = "No alt has Alchemy" } }, "lines")
+    eq("one per line: a blank line first", out[1], " ")
+    eq("  the group's name", out[2], "Skill too low")
+    eq("  a character, its detail on the right", out[3], "  Alt1|150, needs 225")
+    eq("  no detail: nothing on the right", out[4], "  Alt2|")
+    eq("  eight, then how many more", out[11], "  and 2 more")
+    eq("  a line of its own stays one", out[12], "AltStable|No alt has Alchemy")
+    out = {}
+    AltStable.AppendRecipeGroups(fake, { { label = "Skill too low", names = names } }, "side")
+    eq("side by side: four, the detail in brackets, then +N", out[2],
+       "Skill too low|Alt1 (150, needs 225), Alt2, Alt3, Alt4, +6")
+    out = {}
+    AltStable.AppendRecipeGroups(fake, {}, "lines")
+    eq("no group: nothing, not even the blank line", #out, 0)
+    local exactly = {}
+    for i = 1, 8 do exactly[i] = { name = "B" .. i } end
+    out = {}
+    AltStable.AppendRecipeGroups(fake, { { label = "Known by", names = exactly } }, "lines")
+    eq("exactly eight: all of them, no 'more'", #out, 10)
+    eq("the layout: one per line unless set to side", AltStable.RecipeTooltipLayout(), "lines")
+end
+
 AltStable.IsCharacterHidden = realHidden2
 AltStableRecipeData = savedData
 T.ResetState()
@@ -1631,6 +1684,14 @@ eq("  nor is one the tab doesn't have", T.SavedFilter(), "all")
 AltStableConfig.professionsFilter = "known"
 local main = CreateFrame("Frame", nil, UIParent)
 local ok, err = pcall(function() plugin.OnActivate(main) end)
+-- The tab's "On item tooltips" box is Options' recipe box too (#542): it
+-- shows the setting whenever the tab opens.
+check("the tab's tooltip box shows the setting (on, unset)", AT.tipsCheck and AT.tipsCheck:GetChecked())
+AltStable.SetConfigValue("professionsTooltips", false)
+plugin.OnActivate(main)
+check("  turned off in Options, it is unticked when the tab opens", AT.tipsCheck and not AT.tipsCheck:GetChecked())
+AltStable.SetConfigValue("professionsTooltips", nil)
+plugin.OnActivate(main)
 eq("a saved Known opens the tab on Known (#385)", AT.filter, "known")
 eq("  and lists only what the alts know", ids(AT.rows or {}), "2329,2330,2331")
 AT.filterButtons.all:GetScript("OnClick")(AT.filterButtons.all)

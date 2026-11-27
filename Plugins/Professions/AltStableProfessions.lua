@@ -1467,8 +1467,19 @@ local function WishTooltipOn()
     return not (AltStableConfig and AltStableConfig.professionsWishTooltip == false)
 end
 
--- The lines for one item, as { { label, text }, ... }. Pure, so tests read it.
-local function TooltipLines(itemID)
+-- A group of characters for the tooltip (#542): { label, names = { { name,
+-- detail } } }, a class-coloured name and its detail ("150, needs 225") or
+-- nil. The core draws it, one per line or side by side (AppendRecipeGroups).
+local function Group(label, list, detail)
+    local names = {}
+    for i, o in ipairs(list) do
+        names[i] = { name = ColorName(o), detail = detail and detail(o) or nil }
+    end
+    return { label = label, names = names }
+end
+
+-- The groups for one item. Pure, so tests read it.
+local function TooltipGroups(itemID)
     itemID = tonumber(itemID)
     if not itemID then return {} end
     BuildIndexes()
@@ -1509,7 +1520,7 @@ local function TooltipLines(itemID)
             -- Only when nobody at all has it: a hidden alt may.
             local names = {}
             for _, line in ipairs(r.skill or {}) do if BY_LINE[line] then names[#names + 1] = BY_LINE[line].label end end
-            out[#out + 1] = { "|cff888888AltStable|r", "|cff888888No alt has " ..
+            out[#out + 1] = { label = "|cff888888AltStable|r", text = "|cff888888No alt has " ..
                 (#names > 0 and table.concat(names, " or ") or "this profession") .. "|r" }
         end
         if WishTooltipOn() then
@@ -1517,18 +1528,18 @@ local function TooltipLines(itemID)
             for _, guid in ipairs(order) do
                 if Wants(guid, id) then wanted[#wanted + 1] = best[guid].o end
             end
-            if #wanted > 0 then out[#out + 1] = { "Wanted by", NameList(wanted) } end
+            if #wanted > 0 then out[#out + 1] = Group("Wanted by", wanted) end
         end
-        if #groups.known > 0 then out[#out + 1] = { "Known by", NameList(groups.known) } end
+        if #groups.known > 0 then out[#out + 1] = Group("Known by", groups.known) end
         if #groups.meets > 0 then
-            out[#out + 1] = { "Meets skill", NameList(groups.meets, function(o) return " (" .. o.rank .. ")" end) }
+            out[#out + 1] = Group("Meets skill", groups.meets, function(o) return tostring(o.rank) end)
         end
         if #groups.low > 0 then
-            out[#out + 1] = { "Skill too low", NameList(groups.low, function(o)
-                return " (" .. o.rank .. ", needs " .. r.learn .. ")" end) }
+            out[#out + 1] = Group("Skill too low", groups.low, function(o)
+                return o.rank .. ", needs " .. r.learn end)
         end
-        if #groups.unknown > 0 then out[#out + 1] = { "Requirement unknown", NameList(groups.unknown) } end
-        if #groups.unscanned > 0 then out[#out + 1] = { "Not scanned", NameList(groups.unscanned) } end
+        if #groups.unknown > 0 then out[#out + 1] = Group("Requirement unknown", groups.unknown) end
+        if #groups.unscanned > 0 then out[#out + 1] = Group("Not scanned", groups.unscanned) end
     end
 
     local crafters, seen = {}, {}
@@ -1545,7 +1556,21 @@ local function TooltipLines(itemID)
             end
         end
     end
-    if #crafters > 0 then out[#out + 1] = { "Crafted by", NameList(crafters) } end
+    if #crafters > 0 then out[#out + 1] = Group("Crafted by", crafters) end
+    return out
+end
+
+-- For tests, through the plugin's _at: BootstrapPlugin, which builds _test,
+-- is at Lua 5.1's 60 upvalues.
+AT.TooltipGroups = TooltipGroups
+
+-- The same as { { label, text }, ... }, side by side as before #542: what the
+-- tests read.
+local function TooltipLines(itemID)
+    local out = {}
+    for _, g in ipairs(TooltipGroups(itemID)) do
+        out[#out + 1] = { g.label, g.text or AltStable.RecipeSideText(g.names) }
+    end
     return out
 end
 
@@ -1676,12 +1701,10 @@ local function EnsureTooltipHook()
     if ttHooked or not AltStable.HookItemTooltip then return end
     ttHooked = AltStable.HookItemTooltip(function(tt, id)
         if not TooltipsOn() then return end
-        local lines = TooltipLines(id)
-        if #lines == 0 then return end
-        tt:AddLine(" ")
-        for _, l in ipairs(lines) do
-            tt:AddDoubleLine(l[1], l[2], 1, 0.82, 0, 1, 1, 1)
-        end
+        local groups = TooltipGroups(id)
+        if #groups == 0 then return end
+        -- One per line or side by side, as Options says (#542).
+        AltStable.AppendRecipeGroups(tt, groups)
         if tt.Show then tt:Show() end
     end)
 end
@@ -2512,6 +2535,7 @@ local function BuildPanel(mainFrame)
     tips:SetSize(18, 18)
     tips:SetPoint("LEFT", favorLbl, "RIGHT", 16, 0)
     tips:SetChecked(TooltipsOn())
+    AT.tipsCheck = tips
     tips:SetScript("OnClick", function(self)
         AltStable.SetConfigValue("professionsTooltips", self:GetChecked() and true or false)
     end)
@@ -2607,6 +2631,8 @@ function AT.Activate(mainFrame)
     AT.isActive = true
     for _, k in ipairs(GRID_PARTS) do if mainFrame[k] then mainFrame[k]:Hide() end end
     panel:Show()
+    -- The same setting as Options > Item tooltips (#542): shown as it is now.
+    if AT.tipsCheck then AT.tipsCheck:SetChecked(TooltipsOn()) end
     AT.Refresh()
 end
 

@@ -6033,4 +6033,39 @@ do
     AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters = heldGroup, heldHidden
 end
 
+------------------------------------------------------------
+-- Recipe tooltips in Options (#542): the Recipe Book's box, who wants it
+-- under it, the layout, and a recipe in the preview
+------------------------------------------------------------
+do
+    local F = AltStable._test.OptTooltipFilter
+    local function P(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local held = { AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout }
+    AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout = nil, nil
+    F.recipes:SetChecked(F.recipes._getter())
+    F.refresh()
+    check("the recipe box shows on, unset", F.recipes:GetChecked())
+    eq("  who wants a recipe hangs under it", AltStable._test.OptWishTooltip.parentRow, F.recipes)
+    check("one per line is chosen, unset", F.recipeRadios[1]:GetChecked() and not F.recipeRadios[2]:GetChecked())
+    local t = P(F.rtipText())
+    check("the preview has a recipe", F.rtip:IsShown() and t:find("Pattern: Mooncloth", 1, true) ~= nil, t)
+    check("  one per line: the group alone, then a character and its skill",
+          t:find("/ Skill too low /", 1, true) ~= nil and t:find("  Cairne Bloodhoof|210, needs 250", 1, true) ~= nil, t)
+    F.recipeRadios[2]:GetScript("OnClick")(F.recipeRadios[2])
+    eq("side by side saves 'side'", AltStableConfig.professionsTooltipLayout, "side")
+    t = P(F.rtipText())
+    check("  and the preview follows: the group and its names on one line",
+          t:find("Skill too low|Cairne Bloodhoof (210, needs 250), Thrall (235, needs 250)", 1, true) ~= nil, t)
+    F.recipeRadios[1]:GetScript("OnClick")(F.recipeRadios[1])
+    eq("one per line saves 'lines'", AltStableConfig.professionsTooltipLayout, "lines")
+    F.recipes:SetChecked(false); F.recipes:GetScript("OnClick")(F.recipes)
+    eq("the recipe box off saves false (the tab's setting)", AltStableConfig.professionsTooltips, false)
+    check("  the recipe preview goes", not F.rtip:IsShown())
+    check("  and the layout greys", not F.recipeRadios[1]:IsEnabled() and not F.recipeRadios[2]:IsEnabled())
+    F.recipes:SetChecked(true); F.recipes:GetScript("OnClick")(F.recipes)
+    check("back on, the preview is back", F.rtip:IsShown())
+    AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout = held[1], held[2]
+    F.refresh()
+end
+
 WoW.finish("test_sheetui", passed, failed)
