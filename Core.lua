@@ -5722,6 +5722,60 @@ function AltStable.TooltipSort()
     return (AltStableConfig and AltStableConfig.tooltipSort == "count") and "count" or "name"
 end
 
+------------------------------------------------------------
+-- Recipe tooltips (#542): the Recipe Book's lines on a recipe item
+--
+-- The plugin hands over groups, { label, names = { { name, detail } } } (a
+-- class-coloured name, and "150, needs 225" or nil), or { label, text } for a
+-- line of its own. Drawn here, so the Options preview and the real tooltip
+-- are one piece of code. Like the other item tooltip settings, the layout is
+-- not synced.
+------------------------------------------------------------
+
+local RECIPE_SIDE_NAMES = 4    -- side by side: then "+N"
+local RECIPE_LINE_NAMES = 8    -- one per line: then "and N more"
+
+-- "lines" (one character per line, the default) or "side" (the names on the
+-- group's own line, as before #542).
+function AltStable.RecipeTooltipLayout()
+    return (AltStableConfig and AltStableConfig.professionsTooltipLayout == "side") and "side" or "lines"
+end
+
+-- A group's names side by side: four, then "+N"; a detail in brackets.
+function AltStable.RecipeSideText(names)
+    local parts = {}
+    for i, e in ipairs(names or {}) do
+        if i > RECIPE_SIDE_NAMES then parts[#parts + 1] = "+" .. (#names - RECIPE_SIDE_NAMES); break end
+        parts[#parts + 1] = e.name .. (e.detail and (" (" .. e.detail .. ")") or "")
+    end
+    return table.concat(parts, ", ")
+end
+
+function AltStable.AppendRecipeGroups(tt, groups, layout)
+    if not groups or #groups == 0 then return end
+    layout = layout or AltStable.RecipeTooltipLayout()
+    tt:AddLine(" ")
+    for _, g in ipairs(groups) do
+        if g.text then
+            tt:AddDoubleLine(g.label, g.text, 1, 0.82, 0, 1, 1, 1)
+        elseif layout == "side" then
+            tt:AddDoubleLine(g.label, AltStable.RecipeSideText(g.names), 1, 0.82, 0, 1, 1, 1)
+        else
+            -- The group's name in gold, then a character per line, its detail
+            -- on the right: as the item counts above.
+            tt:AddLine(g.label, 1, 0.82, 0)
+            local names = g.names or {}
+            for i, e in ipairs(names) do
+                if i > RECIPE_LINE_NAMES then
+                    tt:AddLine("  and " .. (#names - RECIPE_LINE_NAMES) .. " more", 0.6, 0.6, 0.6)
+                    break
+                end
+                tt:AddDoubleLine("  " .. e.name, e.detail or "", 1, 1, 1, 0.8, 0.8, 0.8)
+            end
+        end
+    end
+end
+
 local MIDDOT = " \194\183 "
 
 -- Splits CountItem's holders (Warband: { guid, name, class, realm, bags, bank,

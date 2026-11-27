@@ -6033,4 +6033,78 @@ do
     AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters = heldGroup, heldHidden
 end
 
+------------------------------------------------------------
+-- Recipe tooltips in Options (#542): the Recipe Book's box, who wants it
+-- under it, the layout, and a recipe in the preview
+------------------------------------------------------------
+do
+    local F = AltStable._test.OptTooltipFilter
+    local function P(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local held = { AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout }
+    AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout = nil, nil
+    F.recipes:SetChecked(F.recipes._getter())
+    F.refresh()
+    check("the recipe box shows on, unset", F.recipes:GetChecked())
+    eq("  who wants a recipe hangs under it", AltStable._test.OptWishTooltip.parentRow, F.recipes)
+    check("one per line is chosen, unset", F.recipeRadios[1]:GetChecked() and not F.recipeRadios[2]:GetChecked())
+    local t = P(F.rtipText())
+    check("the preview has a recipe", F.rtip:IsShown() and t:find("Pattern: Mooncloth", 1, true) ~= nil, t)
+    check("  one per line: the group alone, then a character and its skill",
+          t:find("/ Skill too low /", 1, true) ~= nil and t:find("  Cairne Bloodhoof|210, needs 250", 1, true) ~= nil, t)
+    F.recipeRadios[2]:GetScript("OnClick")(F.recipeRadios[2])
+    eq("side by side saves 'side'", AltStableConfig.professionsTooltipLayout, "side")
+    t = P(F.rtipText())
+    check("  and the preview follows: the group and its names on one line",
+          t:find("Skill too low|Cairne Bloodhoof (210, needs 250), Thrall (235, needs 250)", 1, true) ~= nil, t)
+    -- A narrow page (a clamped window): the preview below the controls stays
+    -- inside it, the long side-by-side text wrapping (Codex review of #547).
+    for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = 600 end
+    F.page._GetWidth = 400
+    F.refresh()
+    local _, _, _, px = F.preview:GetPoint(1)
+    check("narrow page: the preview sits below the controls", not F.preview.wide)
+    check("  its right edge inside the page", px + F.preview:GetWidth() <= 400,
+          px .. " + " .. F.preview:GetWidth())
+    local wrapped = false
+    for i = 1, F.rtip.n do
+        local r = F.rtip.lines[i].right
+        if r:IsShown() and r:GetWordWrap() and (r:GetWidth() or 0) > 0 then wrapped = true end
+    end
+    check("  the right-hand text wraps in what is left", wrapped)
+    -- The page shrinking under an open preview (its OnSizeChanged runs Layout
+    -- alone): fitted again to the new width.
+    F.page._GetWidth = 2000
+    F.refresh()
+    check("on a wide page the long text fits unwrapped", F.preview:GetWidth() > 600)
+    F.page._GetWidth = 400
+    F.layout()
+    _, _, _, px = F.preview:GetPoint(1)
+    check("  the page shrinks: fitted again, inside it", px + F.preview:GetWidth() <= 400,
+          px .. " + " .. F.preview:GetWidth())
+    -- Narrower than the tooltip's preferred 280 plus its indent (Codex
+    -- follow-up review of #547): below its preferred width, still inside.
+    F.page._GetWidth = 300
+    F.layout()
+    _, _, _, px = F.preview:GetPoint(1)
+    check("a 300-wide page: the preview narrower than its usual 280, inside the page",
+          px + F.preview:GetWidth() <= 300 and F.rtip:GetWidth() < 280 and F.tip:GetWidth() < 280,
+          px .. " + " .. F.preview:GetWidth() .. " (tips " .. F.tip:GetWidth() .. ", " .. F.rtip:GetWidth() .. ")")
+    local wrapLine
+    for i = 1, F.tip.n do if F.tip.lines[i].wrap then wrapLine = F.tip.lines[i] end end
+    check("  a wrapped line narrows with it", wrapLine and wrapLine.left:GetWidth() <= F.tip:GetWidth() - 22)
+    for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = nil end
+    F.page._GetWidth = nil
+    F.refresh()
+    F.recipeRadios[1]:GetScript("OnClick")(F.recipeRadios[1])
+    eq("one per line saves 'lines'", AltStableConfig.professionsTooltipLayout, "lines")
+    F.recipes:SetChecked(false); F.recipes:GetScript("OnClick")(F.recipes)
+    eq("the recipe box off saves false (the tab's setting)", AltStableConfig.professionsTooltips, false)
+    check("  the recipe preview goes", not F.rtip:IsShown())
+    check("  and the layout greys", not F.recipeRadios[1]:IsEnabled() and not F.recipeRadios[2]:IsEnabled())
+    F.recipes:SetChecked(true); F.recipes:GetScript("OnClick")(F.recipes)
+    check("back on, the preview is back", F.rtip:IsShown())
+    AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout = held[1], held[2]
+    F.refresh()
+end
+
 WoW.finish("test_sheetui", passed, failed)

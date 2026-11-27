@@ -5052,9 +5052,27 @@ local function CreateFrameIfNeeded()
         end
         Y = Y - 34
 
+        -- Recipe tooltips (#542): the Recipe Book's lines on a recipe item. Its
+        -- box is the tab's own "On item tooltips" (one setting, shown in both);
+        -- who wants it (#271) and the layout under it.
+        local recipes = MakeOptCheckRow("professionsTooltips", "Show who knows a recipe, and who can learn it", Y)
+        recipes:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("Recipe tooltips", 1, 1, 1)
+            GameTooltip:AddLine("On a recipe's tooltip, the Recipe Book's lines: who knows it, whose skill "
+                .. "meets it, whose is too low. The same setting as the Recipe Book tab's "
+                .. "\"On item tooltips\" box.", nil, nil, nil, true)
+            GameTooltip:Show()
+        end)
+        recipes:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        recipes:HookScript("OnClick", function() refreshAll() end)
+        AltStable._test.OptRecipeTooltips = recipes
+        Y = Y - 24
+
         -- The Professions tab's wishlist on recipe tooltips (#271): on unless
         -- turned off. The stars themselves stay either way.
-        local wish = MakeOptCheckRow("professionsWishTooltip", "Show who wants a recipe on its tooltip", Y)
+        local wish = MakeOptCheckRow("professionsWishTooltip", "Show who wants a recipe on its tooltip", Y,
+            nil, nil, 20)
         wish:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine("Wanted by", 1, 1, 1)
@@ -5063,7 +5081,43 @@ local function CreateFrameIfNeeded()
             GameTooltip:Show()
         end)
         wish:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        wish:HookScript("OnClick", function() refreshAll() end)
+        OptDependsOn(wish, recipes)
         AltStable._test.OptWishTooltip = wish
+        Y = Y - 28
+
+        -- The layout (#542): one per line (the default) or side by side.
+        local RECIPE_LAYOUTS = {
+            { id = "lines", label = "One per line",
+              help = "Each group's name, then a character per line with its skill, like the item counts." },
+            { id = "side", label = "Side by side",
+              help = "Each group on one line: four names, then +N." },
+        }
+        local recipeLbl = SubLabel("Recipe layout", Y)
+        Y = Y - 22
+        local recipeRadios = {}
+        for i, m in ipairs(RECIPE_LAYOUTS) do
+            local rb = CreateFrame("CheckButton", nil, optionsFrame, "UIRadioButtonTemplate")
+            rb:SetSize(16, 16)
+            if i == 1 then rb:SetPoint("TOPLEFT", P + 24, Y)
+            else rb:SetPoint("LEFT", recipeRadios[i - 1].label, "RIGHT", 24, 0) end
+            local lbl = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            lbl:SetPoint("LEFT", rb, "RIGHT", 8, 0)
+            lbl:SetText(m.label)
+            rb.recipeLayout, rb.label = m, lbl
+            rb:SetScript("OnClick", function()
+                AltStable.SetConfigValue("professionsTooltipLayout", m.id)
+                refreshAll()
+            end)
+            rb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(m.label, 1, 1, 1)
+                GameTooltip:AddLine(m.help, nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
+            rb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            recipeRadios[i] = rb
+        end
         Y = Y - 22
         local bottom = Y
 
@@ -5081,8 +5135,10 @@ local function CreateFrameIfNeeded()
         pvWho:SetText("Jaina Proudmoore \194\183 Alliance \194\183 PvE")
         pvWho:SetTextColor(unpack(AltStable.C.TEXT_HELP))
 
+        -- Two of them (#542): the item counts' example, and a recipe's under it.
+        -- A tooltip grows to its widest line, as the game's does.
+        local function MakeTip()
         local tip = CreateFrame("Frame", nil, pv, "BackdropTemplate")
-        tip:SetPoint("TOPLEFT", 0, -38)
         tip:SetWidth(TIP_W)
         tip:SetBackdrop({
             bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -5115,6 +5171,7 @@ local function CreateFrameIfNeeded()
             row.left:SetFontObject(font or "GameTooltipText")
             row.left:SetWidth(wrap and (TIP_W - 22) or 0)
             row.left:SetWordWrap(wrap and true or false)
+            row.wrap = wrap and true or false
             row.left:SetText(text or "")
             row.left:SetTextColor(r or 1, g or 1, b or 1)
             row.left:Show(); row.right:Hide()
@@ -5128,17 +5185,59 @@ local function CreateFrameIfNeeded()
             row.right:Show()
             row.double = true
         end
-        function tip:Show()
-            local y = -10
+        -- Lays the lines out and sizes the box. Not named Show: the recipe's
+        -- tooltip is shown and hidden for real (SetShown), and a Show
+        -- overridden in Lua would be what that reaches in the test stubs.
+        -- Never wider than the page has room for (pv.maxW, set by Layout): a
+        -- right-hand text that would not fit wraps in what is left (Codex
+        -- review of #547: side by side ran past a narrow page's edge).
+        function tip:Fit()
+            -- TIP_W is the width it prefers, not a floor: below it on a page
+            -- narrower than that (Codex follow-up review of #547).
+            local cap = pv.maxW or math.huge
+            local base = math.min(TIP_W, cap)
+            local y, widest = -10, base
             for i = 1, self.n do
                 local row = self.lines[i]
                 row.left:ClearAllPoints(); row.right:ClearAllPoints()
                 row.left:SetPoint("TOPLEFT", 11, y)
-                if row.double then row.right:SetPoint("TOPRIGHT", -11, y) end
-                y = y - math.max(row.left:GetStringHeight() or 0, 12) - 2
+                if row.wrap then row.left:SetWidth(base - 22) end
+                local h = row.left:GetStringHeight() or 0
+                row.right:SetWidth(0); row.right:SetWordWrap(false)
+                if row.double then
+                    row.right:SetPoint("TOPRIGHT", -11, y)
+                    local lw = tonumber(row.left:GetStringWidth()) or 0
+                    local w = lw + (tonumber(row.right:GetStringWidth()) or 0) + 40
+                    if w > cap then
+                        row.right:SetWidth(math.max(40, cap - lw - 40))
+                        row.right:SetWordWrap(true)
+                        w = cap
+                        h = math.max(h, row.right:GetStringHeight() or 0)
+                    end
+                    if w > widest then widest = w end
+                end
+                y = y - math.max(h, 12) - 2
             end
+            self:SetWidth(widest)   -- never past the cap: it starts under it, and wide lines are capped
             self:SetHeight(-y + 8)
-            pv:SetHeight(38 + self:GetHeight())
+            if pv.Stack then pv.Stack() end
+        end
+        return tip
+        end
+        local tip = MakeTip()
+        tip.Show = tip.Fit   -- AppendItemCountsFor calls tt:Show(), as on the game's tooltip
+        tip:SetPoint("TOPLEFT", 0, -38)
+        local rtip = MakeTip()
+        rtip:SetPoint("TOPLEFT", tip, "BOTTOMLEFT", 0, -8)
+        -- The preview's size: both tooltips, the recipe's only while shown.
+        function pv.Stack()
+            local h = 38 + tip:GetHeight()
+            local w = math.max(math.min(PV_W, pv.maxW or PV_W), tip:GetWidth())
+            if rtip:IsShown() then
+                h = h + 8 + rtip:GetHeight()
+                w = math.max(w, rtip:GetWidth())
+            end
+            pv:SetSize(w, h)
         end
 
         -- The example, fixed: three PvE characters from Warcraft lore, Jaina
@@ -5168,22 +5267,44 @@ local function CreateFrameIfNeeded()
                 AltStable.AppendItemCountsFor(tip, 60, PV_HOLDERS, nil, ME, PV_DB)
             end
             tip:Show()
+            -- A recipe (#542), from the same lore characters and two more.
+            rtip:SetShown(recipes:GetChecked() and true or false)
+            rtip:ClearLines()
+            rtip:AddLine("Pattern: Mooncloth", 1, 1, 1, false, "GameTooltipHeaderText")
+            rtip:AddLine("Requires Tailoring (250)", 1, 1, 1)
+            local function Who(name, class) return AltStable.ClassColor(class) .. name .. "|r" end
+            AltStable.AppendRecipeGroups(rtip, {
+                { label = "Known by", names = { { name = Who("Jaina Proudmoore", "MAGE") } } },
+                { label = "Meets skill", names = { { name = Who("Sylvanas Windrunner", "HUNTER"), detail = "265" } } },
+                { label = "Skill too low", names = {
+                    { name = Who("Cairne Bloodhoof", "WARRIOR"), detail = "210, needs 250" },
+                    { name = Who("Thrall", "SHAMAN"), detail = "235, needs 250" } } },
+            }, AltStable.RecipeTooltipLayout())
+            rtip:Fit()
         end
 
         -- Where the preview goes: right of the controls when the page is wide
         -- enough, below them otherwise. The room below is reserved in the page
         -- flow (#151) and handed back when the preview sits on the right; on
         -- the right it only takes what it hangs below the controls.
-        local RESERVE = 480
+        local RESERVE = 700
         local flow = optFlow.Mark(RESERVE, 1)
         Y = Y - RESERVE
         local function Layout()
             local w = page:GetWidth() or 0
-            local wide = w >= P + COL_W + 24 + PV_W + P
+            -- The most the preview may take: the page less its margins and the
+            -- indent it has below the controls. Fitted again when that moves.
+            local maxW = math.max(120, w - 2 * P - 22)
+            if pv.maxW ~= maxW then
+                pv.maxW = maxW
+                tip:Fit(); rtip:Fit()
+            end
+            local pvW = math.max(PV_W, pv:GetWidth() or PV_W)
+            local wide = w >= P + COL_W + 24 + pvW + P
             pv:ClearAllPoints()
             local need
             if wide then
-                pv:SetPoint("TOPLEFT", page, "TOPLEFT", w - P - PV_W, top)
+                pv:SetPoint("TOPLEFT", page, "TOPLEFT", w - P - pvW, top)
                 need = pv:GetHeight() - (top - bottom) + 10
             else
                 pv:SetPoint("TOPLEFT", page, "TOPLEFT", P + 22, bottom - 12)
@@ -5219,6 +5340,18 @@ local function CreateFrameIfNeeded()
                 elseif chosen then rb.label:SetTextColor(ar, ag, ab)
                 else rb.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
             end
+            -- The recipe layout (#542), with its own box.
+            local recipeOn = recipes:GetChecked() and true or false
+            local recipeLayout = AltStable.RecipeTooltipLayout()
+            recipeLbl:SetTextColor(unpack(recipeOn and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
+            for _, rb in ipairs(recipeRadios) do
+                local chosen = rb.recipeLayout.id == recipeLayout
+                rb:SetChecked(chosen)
+                rb:SetEnabled(recipeOn)
+                if not recipeOn then rb.label:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+                elseif chosen then rb.label:SetTextColor(ar, ag, ab)
+                else rb.label:SetTextColor(unpack(AltStable.C.TEXT_NORM)) end
+            end
             local matchOn = on and scope ~= "all"
             matchLbl:SetTextColor(unpack(matchOn and AltStable.C.TEXT_NORM or AltStable.C.TEXT_DIM))
             for _, cb in ipairs({ faction, ruleset }) do
@@ -5241,6 +5374,15 @@ local function CreateFrameIfNeeded()
         AltStable._test.OptTooltipFilter = {
             main = main, radios = radios, sortRadios = sortRadios, faction = faction, ruleset = ruleset, matchHelp = matchHelp, who = pvWho,
             ignored = ignored, refresh = refreshAll, preview = pv, tip = tip, layout = Layout, page = page,
+            recipes = recipes, recipeRadios = recipeRadios, rtip = rtip,
+            rtipText = function()
+                local out = {}
+                for i = 1, rtip.n do
+                    local row = rtip.lines[i]
+                    out[#out + 1] = (row.left:GetText() or "") .. (row.double and ("|" .. (row.right:GetText() or "")) or "")
+                end
+                return table.concat(out, " / ")
+            end,
             tipText = function()
                 local out = {}
                 for i = 1, tip.n do
