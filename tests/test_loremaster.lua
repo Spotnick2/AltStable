@@ -494,6 +494,104 @@ eq("  and nothing else", others, 0)
 L.search = nil
 M.DB().collapsed.KAL = nil
 
+-- #538 (a CurseForge report: Deadmines, Stockade and Alchemy "missing"). Every
+-- quest under the three is Alliance's: an Alliance character has the rows at
+-- any level, a Horde one never does.
+local DEADMINES, STOCKADE, ALCHEMY, RFC = 1581, 717, -181, 2437
+local ally = M.Count({ faction = "Alliance", race = 1, class = 1, level = 5 }, {})
+check("an Alliance level-5 human counts The Deadmines", ally.c[DEADMINES] ~= nil)
+check("  The Stockade", ally.c[STOCKADE] ~= nil)
+check("  and Alchemy", ally.c[ALCHEMY] ~= nil)
+local horde = M.Count({ faction = "Horde", race = 2, class = 1, level = 5 }, {})
+check("a Horde orc counts none of them",
+    horde.c[DEADMINES] == nil and horde.c[STOCKADE] == nil and horde.c[ALCHEMY] == nil)
+check("  but Ragefire Chasm", horde.c[RFC] ~= nil)
+
+-- Those rows are not listed for a Horde roster, and its headers say so.
+local hordeCol = { guid = "Player-1-H", snap = { faction = "Horde", race = 2, class = 1, level = 20,
+    c = { [RFC] = { 0, 3 }, [-24] = { 0, 1 } } } }
+local function findGroup(rows, key)
+    for _, row in ipairs(rows) do if row.isGroup and row.key == key then return row end end
+end
+local function holds(list, key)
+    for _, k in ipairs(list or {}) do if k == key then return true end end
+    return false
+end
+L.SetFilter("dungeon")
+local dg = findGroup(L.DisplayRows({ hordeCol }), "dungeon")
+check("Horde roster, Dungeons: the header carries the rows not listed",
+    dg and holds(dg.hidden, DEADMINES) and holds(dg.hidden, STOCKADE))
+check("  never a row it lists", dg and not holds(dg.hidden, RFC))
+check("  in the table's order", dg and dg.hidden[1] and D.ZONES[dg.hidden[1]][5] <= D.ZONES[dg.hidden[#dg.hidden]][5])
+local text = L.GroupText(dg, false)
+check("  its text says how many", text:find(#dg.hidden .. " not listed", 1, true) ~= nil, text)
+check("  a group with nothing hidden says nothing",
+    not L.GroupText({ label = "Raids", n = 2 }, false):find("not listed", 1, true))
+L.cols = { hordeCol }
+WoW.tooltipLines = {}
+L.GroupOnEnter({ key = "dungeon", hidden = dg.hidden })
+local tip = table.concat(WoW.tooltipLines, "\n")
+check("  hovered, it names The Deadmines", tip:find("The Deadmines", 1, true) ~= nil, tip)
+check("  and why, for one character: nothing counted", tip:find("no quests counted for this character", 1, true) ~= nil, tip)
+L.cols = { hordeCol, hordeCol }
+WoW.tooltipLines = {}
+L.GroupOnEnter({ key = "dungeon", hidden = dg.hidden })
+tip = table.concat(WoW.tooltipLines, "\n")
+check("  or for several", tip:find("no quests counted for any of these characters", 1, true) ~= nil, tip)
+WoW.tooltipLines = {}
+L.GroupOnEnter({ key = "raid" })
+eq("  a header with nothing hidden has no tooltip", #WoW.tooltipLines, 0)
+
+-- A group whose every row is hidden still gets its header, to say so.
+L.SetFilter("profession")
+local pg = findGroup(L.DisplayRows({ hordeCol }), "profession")
+check("Professions: Herbalism listed, Alchemy not", pg and pg.n == 1 and holds(pg.hidden, ALCHEMY))
+hordeCol.snap.c[-24] = nil
+pg = findGroup(L.DisplayRows({ hordeCol }), "profession")
+check("  with no profession row at all, the header stays, n = 0", pg and pg.n == 0 and holds(pg.hidden, ALCHEMY))
+L.SetFilter("all")
+
+-- A row whose quests count only once done (Codex review of #539): a level-60
+-- human can take Craftsman's Writ: Runecloth Bag (94353), yet the row is not
+-- counted, so not listed, until a writ is done - hence "counted", not "can take".
+local WRITS = 16941
+local human60 = { faction = "Alliance", race = 1, class = 1, level = 60 }
+check("a level-60 human may take a writ", M.Eligible(D.QUESTS[94353], human60, {}))
+check("  yet Craftsman's Writs is not counted before one is done", M.Count(human60, {}).c[WRITS] == nil)
+check("  and is once one is", M.Count(human60, { [94353] = true }).c[WRITS] ~= nil)
+local writCol = { guid = "Player-1-W", snap = { faction = "Alliance", race = 1, class = 1, level = 60,
+    c = { [ALCHEMY] = { 0, 1 } } } }
+L.SetFilter("profession")
+local wg = findGroup(L.DisplayRows({ writCol }), "profession")
+check("  so the Professions header lists it as not listed", wg and holds(wg.hidden, WRITS))
+L.SetFilter("all")
+
+-- A search narrows what's "not listed" too.
+L.search = "deadmines"
+local srows = L.DisplayRows({ hordeCol })
+local sg = findGroup(srows, "dungeon")
+check("a search for Deadmines: Dungeons' header says it's not listed",
+    sg and #sg.hidden == 1 and sg.hidden[1] == DEADMINES)
+eq("  and no other header", #srows, 1)
+L.search = nil
+
+-- No column: no header claims anything (the empty-state message speaks).
+eq("no columns, no rows", #L.DisplayRows({}), 0)
+
+-- "Not listed" means some other character would have the row, or will once
+-- one of its quests is done (an unsure quest counts only then): every row of
+-- the table holds a quest that isn't reference-only. A regenerated table that
+-- breaks this fails here, and the header would then need to skip such rows.
+do
+    local rowHasQuest = {}
+    for _, q in pairs(D.QUESTS) do
+        if q[6] % 4 < 2 and q[1] then rowHasQuest[q[1]] = true end
+    end
+    local empty = {}
+    for key in pairs(D.ZONES) do if not rowHasQuest[key] then empty[#empty + 1] = tostring(key) end end
+    eq("every row of the table has a quest to count", table.concat(empty, ","), "")
+end
+
 -- Selection: a row, a character. (The local done set back on the snapshot's
 -- stamp: a check above moved it off on purpose.)
 M.DB().done[ME].stamp = M.DB().chars[ME].stamp

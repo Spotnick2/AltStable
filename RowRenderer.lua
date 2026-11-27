@@ -758,7 +758,7 @@ local function MakeColumnWidgets(row, col, height)
     if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
     or col.field=="level" or col.type=="restXP"
     or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags"
-    or col.type=="played" or col.type=="spec" then
+    or col.type=="played" or col.type=="spec" or col.type=="cooldown" then
         local tip = CreateFrame("Button", nil, row)
         tip:SetSize(col.width, height)
         -- The Bags tooltip (#346) is built on hover, not at render: the
@@ -767,6 +767,15 @@ local function MakeColumnWidgets(row, col, height)
         if col.type == "bags" then
             tip.refresh = function(t)
                 if t.bagsChar then t.line1, t.cdLines = AltStable.BagSpaceTooltip(t.bagsChar) end
+            end
+        end
+        -- A cooldown's (#545): its recipes and where each is learned are read
+        -- from the Recipe Book on hover, not on every second's repaint.
+        if col.type == "cooldown" then
+            tip.refresh = function(t)
+                if t.cdChar then
+                    t.line1, t.line2, t.line3, t.cdLines = AltStable.Cooldowns.Tip(t.cdChar, col.cdKey)
+                end
             end
         end
         tip:SetScript("OnEnter", function()
@@ -1316,6 +1325,11 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line1 = AltStable.RulesetName(char)
                 tip.line2, tip.line3, tip.cdLines = nil, nil, nil
             end
+        elseif col.type=="cooldown"     then
+            -- The Cooldowns view (#543, #545): up, a countdown, where the
+            -- character stands, or a dash. Its tooltip is built on hover.
+            value = AltStable.Cooldowns.Cell(char, col.cdKey)
+            if tip then tip.cdChar = char end
         elseif col.type=="money"        then value = FormatMoney(char[col.field])
         elseif col.type=="bags"         then
             value = AltStable.FormatBagSpace(char)

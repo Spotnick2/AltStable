@@ -35,6 +35,7 @@ Reputations.lua
 Config.lua
 Toasts.lua
 Columns.lua
+Cooldowns.lua
 RowRenderer.lua
 CharacterMenu.lua
 Appearance.lua

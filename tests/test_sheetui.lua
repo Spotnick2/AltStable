@@ -41,6 +41,7 @@ dofile("Reputations.lua")
 dofile("Config.lua")
 dofile("Toasts.lua")
 dofile("Columns.lua")
+dofile("Cooldowns.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
 dofile("SheetUI.lua")
@@ -2997,7 +2998,8 @@ do
         check("  under a separator", sp == "BOTTOMLEFT" and srel == o.b and srp == "TOPLEFT" and sy == 6)
         local labels = {}
         for _, b in ipairs(T.sidebarBtns) do labels[b.sectionId] = b.lbl:GetText() end
-        eq("  Skills is Skill Levels", labels.skills, "Skill Levels")
+        eq("  Skills is Skills, its views in the strip (#543)", labels.skills, "Skills")
+        eq("  the Cooldowns view has no button of its own", labels.cooldowns, nil)
     end
     -- Plugins arriving late, in another order, still take their places.
     do
@@ -5765,6 +5767,355 @@ do
     check("opening the sheet asks who is online", asked == 1, tostring(asked))
     AltStable.AskWhoIsOnline = real
     if sheet and sheet:IsShown() then sheet:Hide() end
+end
+
+------------------------------------------------------------
+-- The Skills tab's Cooldowns view (#543)
+------------------------------------------------------------
+
+do
+    local T = AltStable._test
+    local NOW = WoW.now
+    local heldGroup, heldHidden = AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters
+    AltStableConfig.sheetGroupByRealm = false
+    AltStableConfig.hiddenCharacters = { hid = true }
+    AltStableConfig.sheetHiddenColumns, AltStableConfig.toastProfessions = nil, nil
+    T.ForgetSessionSorts()
+    build({
+        ann = { guid = "ann", name = "Ann", class = "MAGE", level = 60, ilvl = 10, lastUpdate = 1,
+                ["cd_Tailoring@Mooncloth"] = NOW + 10, ["cd_Alchemy@Transmute"] = NOW - 10 },
+        bob = { guid = "bob", name = "Bob", class = "ROGUE", level = 50, ilvl = 50, lastUpdate = 1,
+                ["cd_Tailoring@Mooncloth"] = NOW + 20, ["cd_Leatherworking@Salt Shaker"] = NOW + 3600 },
+        cy  = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 },
+        hid = { guid = "hid", name = "Hid", class = "MAGE", level = 10, lastUpdate = 1,
+                ["cd_Engineering@Gizmo"] = NOW + 99 },
+        nameless = { guid = "nameless", ["cd_Enchanting@Orphan"] = NOW - 1 },
+    })
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId then btnFor[b.sectionId] = b end end
+    local function Open(id) btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local function Click(b) b:GetScript("OnClick")(b) end
+    local levelsTab, cdTab, note, empty = T.ViewTabs()
+    local VS = T.ViewStrip
+    local function Names()
+        local out = {}
+        for _, it in ipairs(T.DisplayList()) do if it.kind == "char" then out[#out + 1] = it.data.name end end
+        return table.concat(out, ",")
+    end
+    local function Labels()
+        local cols, out = T.ColumnLayout(), {}
+        for i, c in ipairs(cols) do out[i] = c.label end
+        return table.concat(out, ",")
+    end
+    local function Cell(r, c)
+        local _, _, _, rows = T.ColumnLayout()
+        return plain(rows[r].cells[c]:GetText() or "")
+    end
+    local function HeaderY() return select(5, T.frame.frozenHeader:GetPoint(1)) end
+
+    -- Another tab: no strip, the header where it always was.
+    Open("summary")
+    check("the strip is hidden on another tab", not VS.frame:IsShown())
+    local usualY = HeaderY()
+    eq("  the header under the title bar", usualY, -4)
+
+    -- Skills: the strip, the header below it, Skill Levels chosen.
+    Open("skills")
+    check("Skills shows the view strip", VS.frame:IsShown())
+    eq("  the header moves down by the strip", HeaderY(), usualY - VS.H)
+    eq("  the title says Skills", T.sectionText:GetText(), "Skills")
+    eq("  the first tab is Skill Levels", levelsTab.text:GetText(), "Skill Levels")
+    eq("  the second counts what is up (Ann's transmute)", plain(cdTab.text:GetText()),
+       "Cooldowns  \194\183 1 available")
+    check("  Skill Levels is the chosen one", levelsTab.line:IsShown() and not cdTab.line:IsShown())
+    check("  Skill Levels has its own columns", Labels():find("Alchemy", 1, true) ~= nil, Labels())
+
+    -- Cooldowns.
+    Click(cdTab)
+    check("the Cooldowns tab is chosen", cdTab.line:IsShown() and not levelsTab.line:IsShown())
+    eq("  the title still says Skills", T.sectionText:GetText(), "Skills")
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    local lr, lg, lb = btnFor.skills.lbl:GetTextColor()
+    check("  the sidebar lights Skills", lr == ar and lg == ag and lb == ab)
+    eq("  a column per cooldown found, by profession", Labels(), "Transmute,Salt Shaker,Mooncloth")
+    eq("  only the characters with one, by name; not hidden, not nameless", Names(), "Ann,Bob")
+    eq("  the strip stays", VS.frame:IsShown(), true)
+    eq("  the header below it", HeaderY(), usualY - VS.H)
+    check("  Ann's transmute is up", Cell(1, 1):find("Available", 1, true) ~= nil, Cell(1, 1))
+    eq("  Ann has no Shaker", Cell(1, 2), "\226\128\148")
+    eq("  her Mooncloth counts down", Cell(1, 3), "10s")
+    eq("  Bob's Shaker", Cell(2, 2), "1h 0m")
+    local _, hdrs, _, rows = T.ColumnLayout()
+    -- Built on hover (#545): the tip's refresh, as OnEnter runs it.
+    rows[2].cellTips[2].refresh(rows[2].cellTips[2]); rows[1].cellTips[2].refresh(rows[1].cellTips[2])
+    eq("  a cell's tooltip says when", rows[2].cellTips[2].line2, "Ready " .. date("%a %H:%M", NOW + 3600))
+    eq("  and what", rows[2].cellTips[2].line1, "Salt Shaker (Leatherworking)")
+    eq("  a dash says there is none", rows[1].cellTips[2].line2, "No recorded cooldown")
+    check("  a header has the icon and the name", hdrs[3].iconTex:IsShown() and hdrs[3].label:IsShown())
+    eq("  named", hdrs[3].label:GetText(), "Mooncloth")
+    local sf, sa = T.SortState()
+    check("  sorted by name, A to Z (no Level column here)", sf == "name" and sa == true, tostring(sf))
+
+    -- Sorting a cooldown: the soonest first.
+    Click(hdrs[3])
+    sf, sa = T.SortState()
+    check("a cooldown sorts soonest first on a first click", sf == hdrs[3].field and sa == true)
+    eq("  Ann's 10s before Bob's 20s", Names(), "Ann,Bob")
+
+    -- The clock. Once a second, not every frame.
+    local ticks, realTick = 0, VS.Tick
+    VS.Tick = function() ticks = ticks + 1 end
+    local onUpdate = VS.frame:GetScript("OnUpdate")
+    onUpdate(VS.frame, 0.5)
+    eq("the clock waits for a second", ticks, 0)
+    onUpdate(VS.frame, 0.6)
+    eq("  then ticks", ticks, 1)
+    VS.Tick = realTick
+
+    -- An expiry: the rows repaint and re-sort, the scroll stays put.
+    local body = T.frame.bodyScroll
+    local moved = 0
+    local rv, rh = body.SetVerticalScroll, body.SetHorizontalScroll
+    body.SetVerticalScroll = function(self, ...) moved = moved + 1; return rv(self, ...) end
+    body.SetHorizontalScroll = function(self, ...) moved = moved + 1; return rh(self, ...) end
+    WoW.now = NOW + 5
+    VS.Tick()
+    eq("a tick repaints the countdown", Cell(1, 3), "5s")
+    eq("  same order while nothing came up", Names(), "Ann,Bob")
+    WoW.now = NOW + 25
+    -- A hover between the expiry and the tick repaints the badge first; the
+    -- tick must still re-sort (Codex review of #544).
+    cdTab:GetScript("OnEnter")(cdTab); cdTab:GetScript("OnLeave")(cdTab)
+    eq("a hover repaints the badge", plain(cdTab.text:GetText()), "Cooldowns  \194\183 3 available")
+    eq("  without re-sorting", Names(), "Ann,Bob")
+    VS.Tick()
+    eq("both Mooncloths up: the count follows", plain(cdTab.text:GetText()), "Cooldowns  \194\183 3 available")
+    eq("  re-sorted at the tick, after the hover: the higher item level first", Names(), "Bob,Ann")
+    check("  Bob's Mooncloth shows Available", Cell(1, 3):find("Available", 1, true) ~= nil, Cell(1, 3))
+    eq("  neither scrollbar was moved", moved, 0)
+    body.SetVerticalScroll, body.SetHorizontalScroll = rv, rh
+
+    -- A data refresh between ticks sorts too, and the clock must count from
+    -- that sort (Codex follow-up review of #544): a ready Shaker and Mooncloth
+    -- (2 up), the Shaker used (a refresh at 1 up), then a second Mooncloth
+    -- comes up (2 again) - the tick must still re-sort.
+    do
+        local db1 = AltStableDB
+        local T0 = NOW + 1000
+        WoW.now = T0
+        build({
+            ann = { guid = "ann", name = "Ann", class = "MAGE", level = 60, ilvl = 50, lastUpdate = 1,
+                    ["cd_Leatherworking@Salt Shaker"] = T0 - 1, ["cd_Tailoring@Mooncloth"] = T0 + 10 },
+            bob = { guid = "bob", name = "Bob", class = "ROGUE", level = 50, ilvl = 10, lastUpdate = 1,
+                    ["cd_Tailoring@Mooncloth"] = T0 - 1 },
+        })
+        VS.Tick()
+        eq("sorted by Mooncloth: Bob's is up, Ann's soon", Names(), "Bob,Ann")
+        AltStableDB.ann["cd_Leatherworking@Salt Shaker"] = T0 + 3600     -- the Shaker used
+        refresh()
+        eq("  a refresh records the count it sorted at", VS.sortedReady, 1)
+        WoW.now = T0 + 11                                                  -- Ann's Mooncloth up
+        VS.Tick()
+        eq("  the tick re-sorts: both up, the higher item level first", Names(), "Ann,Bob")
+
+        -- A cooldown coming up DURING a rebuild: the sort and the count it
+        -- records read the clock once, together (Codex review of c4d18a6).
+        -- Here the clock moves after its first reading.
+        AltStableDB.ann["cd_Tailoring@Mooncloth"] = T0 + 30
+        WoW.now = T0 + 20
+        local realTime, reads = time, 0
+        time = function() reads = reads + 1; return reads == 1 and T0 + 20 or T0 + 31 end
+        refresh()
+        time = realTime
+        eq("  a rebuild sorts at its one reading: Bob's up, Ann's 10 s off", Names(), "Bob,Ann")
+        eq("  and records the count at that same reading", VS.sortedReady, 1)
+        WoW.now = T0 + 31
+        VS.Tick()
+        eq("  so the tick after re-sorts", Names(), "Ann,Bob")
+        WoW.now = NOW
+        build(db1)
+    end
+
+    -- The badge appearing never widens the strip: text measured by its
+    -- length here, the tab keeps room for "· 99 available" (Codex review of #544).
+    local realSW = cdTab.text.GetStringWidth
+    cdTab.text.GetStringWidth = function(self) return #plain(self._text or "") * 6 end
+    WoW.now = NOW - 100                        -- nothing up
+    VS.Update()
+    local noBadge = VS.MinWidth()
+    eq("  no badge with nothing up", plain(cdTab.text:GetText()), "Cooldowns")
+    WoW.now = NOW + 25                         -- three up
+    VS.Update()
+    eq("the strip is as wide with a badge as without", VS.MinWidth(), noBadge)
+    cdTab.text.GetStringWidth = realSW
+    WoW.now = NOW
+
+    -- Hiding a cooldown's column keeps its characters (the Columns menu
+    -- chooses columns, not people), and the choice can sync.
+    local shaker = AltStable.Cooldowns.Column("cd_Leatherworking@Salt Shaker").field
+    AltStable.SetColumnShown("cooldowns", shaker, false)
+    eq("a hidden cooldown column goes", Labels(), "Transmute,Mooncloth")
+    eq("  its owner stays", Names(), "Ann,Bob")
+    check("  saved under a name the settings sync takes",
+          AltStableConfig.sheetHiddenColumns["cooldowns." .. shaker] == true
+          and AltStable.GoodColumnKey("cooldowns." .. shaker))
+    local entries = T.ColumnMenuEntries({ id = "cooldowns", label = "Cooldowns", cdFields = true, fields = {} })
+    local listed = {}
+    for _, e in ipairs(entries) do if e.id then listed[e.id] = true end end
+    check("  the Columns menu lists it to bring back", listed[shaker] == true)
+    AltStable.ShowAllColumns("cooldowns")
+    eq("  Show all brings it back", Labels(), "Transmute,Salt Shaker,Mooncloth")
+
+    -- The note: the login toast's rule; a click opens Notifications.
+    VS.Update()
+    eq("the note: toasts on", plain(note.text:GetText()), "Login toasts: on")
+    AltStableConfig.toastProfessions = { Leatherworking = false }
+    VS.Update()
+    eq("  one profession off", plain(note.text:GetText()), "Login toasts: some professions")
+    AltStableConfig.toastProfessions = nil
+    Click(note)
+    check("  a click opens Options on Notifications",
+          T.optionsPanel:IsShown() and T.OptPages.notifications.scroll:IsShown())
+    check("  and the strip goes with the grid", not VS.frame:IsShown())
+
+    -- The sidebar's Skills opens the view last used.
+    Open("skills")
+    eq("Skills reopens on Cooldowns", Labels(), "Transmute,Salt Shaker,Mooncloth")
+    Click(levelsTab)
+    Open("summary"); Open("skills")
+    check("  and on Skill Levels after that was chosen", levelsTab.line:IsShown()
+          and Labels():find("Alchemy", 1, true) ~= nil)
+
+    -- Nobody with a cooldown: how they get there.
+    Click(cdTab)
+    check("the empty note is hidden while there are cooldowns", not empty:IsShown())
+    build({ cy = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 } })
+    eq("no cooldown anywhere: no columns", Labels(), "")
+    check("  the empty note says how they appear (no Recipe Book here: enable it, or sync)", empty:IsShown()
+          and (empty:GetText() or ""):find("Enable the Recipe Book", 1, true) ~= nil, empty:GetText())
+    -- With no column at all, a long note: the window still holds the strip.
+    note.text._GetStringWidth = 600
+    VS.Update()
+    T.ResizeFrameToContent()
+    local need = AltStable.LAYOUT.SIDEBAR_WIDTH + VS.MinWidth()
+    check("  the window is at least as wide as the strip needs", T.frame:GetWidth() >= need,
+          T.frame:GetWidth() .. " < " .. need)
+    note.text._GetStringWidth = nil
+    VS.Update()
+    -- The empty note spans the whole grid and wraps in it, not a fixed width
+    -- centred on the body that ran past a narrow window's edge.
+    local p1, r1 = empty:GetPoint(1)
+    local p2, r2 = empty:GetPoint(2)
+    check("  the empty note runs from the Name column", p1 == "TOPLEFT" and r1 == T.frame.frozenScroll)
+    check("  to the grid's right edge", p2 == "TOPRIGHT" and r2 == T.frame.bodyScroll)
+    -- The footer: its three texts never overlap, however few columns.
+    local bar = T.frame.totalsBar
+    bar.left._GetStringWidth = 500
+    T.ResizeFrameToContent()
+    local footNeed = AltStable.LAYOUT.SIDEBAR_WIDTH + 2 * (10 + 500 + 16) + bar.mid:GetStringWidth()
+    check("the window is at least as wide as the footer needs", T.frame:GetWidth() >= footNeed,
+          T.frame:GetWidth() .. " < " .. footNeed)
+    bar.left._GetStringWidth = nil
+    T.ResizeFrameToContent()
+    Click(levelsTab)
+    check("  gone on Skill Levels", not empty:IsShown())
+
+    -- With the Recipe Book (#545, stubbed: its rules are tested in
+    -- test_professions): an owner with nothing recorded is a row, its cell
+    -- where it stands, and the catalogue's cooldowns are columns.
+    do
+        local MOON = { key = "cd_Tailoring@Mooncloth", prof = "Tailoring", line = 197, label = "Mooncloth",
+                       learn = 250, spells = { 18560 } }
+        AltStable.CooldownCatalogue = function() return { MOON } end
+        AltStable.CooldownStanding = function(char, entry)
+            if char.name == "Tai" and entry == MOON then return "learnable", 260 end
+        end
+        build({ tai = { guid = "tai", name = "Tai", class = "MAGE", level = 60, lastUpdate = 1 },
+                cy = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 } })
+        Click(cdTab)
+        eq("the Recipe Book's cooldowns are columns, none recorded", Labels(), "Mooncloth")
+        eq("  an owner with nothing recorded is a row; no owner, none", Names(), "Tai")
+        eq("  its cell says where it stands", Cell(1, 1), "Learnable")
+        check("  no empty note", not empty:IsShown())
+        AltStable.CooldownCatalogue, AltStable.CooldownStanding = nil, nil
+    end
+
+    Open("summary")
+    AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters = heldGroup, heldHidden
+end
+
+------------------------------------------------------------
+-- Recipe tooltips in Options (#542): the Recipe Book's box, who wants it
+-- under it, the layout, and a recipe in the preview
+------------------------------------------------------------
+do
+    local F = AltStable._test.OptTooltipFilter
+    local function P(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local held = { AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout }
+    AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout = nil, nil
+    F.recipes:SetChecked(F.recipes._getter())
+    F.refresh()
+    check("the recipe box shows on, unset", F.recipes:GetChecked())
+    eq("  who wants a recipe hangs under it", AltStable._test.OptWishTooltip.parentRow, F.recipes)
+    check("one per line is chosen, unset", F.recipeRadios[1]:GetChecked() and not F.recipeRadios[2]:GetChecked())
+    local t = P(F.rtipText())
+    check("the preview has a recipe", F.rtip:IsShown() and t:find("Pattern: Mooncloth", 1, true) ~= nil, t)
+    check("  one per line: the group alone, then a character and its skill",
+          t:find("/ Skill too low /", 1, true) ~= nil and t:find("  Cairne Bloodhoof|210, needs 250", 1, true) ~= nil, t)
+    F.recipeRadios[2]:GetScript("OnClick")(F.recipeRadios[2])
+    eq("side by side saves 'side'", AltStableConfig.professionsTooltipLayout, "side")
+    t = P(F.rtipText())
+    check("  and the preview follows: the group and its names on one line",
+          t:find("Skill too low|Cairne Bloodhoof (210, needs 250), Thrall (235, needs 250)", 1, true) ~= nil, t)
+    -- A narrow page (a clamped window): the preview below the controls stays
+    -- inside it, the long side-by-side text wrapping (Codex review of #547).
+    for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = 600 end
+    F.page._GetWidth = 400
+    F.refresh()
+    local _, _, _, px = F.preview:GetPoint(1)
+    check("narrow page: the preview sits below the controls", not F.preview.wide)
+    check("  its right edge inside the page", px + F.preview:GetWidth() <= 400,
+          px .. " + " .. F.preview:GetWidth())
+    local wrapped = false
+    for i = 1, F.rtip.n do
+        local r = F.rtip.lines[i].right
+        if r:IsShown() and r:GetWordWrap() and (r:GetWidth() or 0) > 0 then wrapped = true end
+    end
+    check("  the right-hand text wraps in what is left", wrapped)
+    -- The page shrinking under an open preview (its OnSizeChanged runs Layout
+    -- alone): fitted again to the new width.
+    F.page._GetWidth = 2000
+    F.refresh()
+    check("on a wide page the long text fits unwrapped", F.preview:GetWidth() > 600)
+    F.page._GetWidth = 400
+    F.layout()
+    _, _, _, px = F.preview:GetPoint(1)
+    check("  the page shrinks: fitted again, inside it", px + F.preview:GetWidth() <= 400,
+          px .. " + " .. F.preview:GetWidth())
+    -- Narrower than the tooltip's preferred 280 plus its indent (Codex
+    -- follow-up review of #547): below its preferred width, still inside.
+    F.page._GetWidth = 300
+    F.layout()
+    _, _, _, px = F.preview:GetPoint(1)
+    check("a 300-wide page: the preview narrower than its usual 280, inside the page",
+          px + F.preview:GetWidth() <= 300 and F.rtip:GetWidth() < 280 and F.tip:GetWidth() < 280,
+          px .. " + " .. F.preview:GetWidth() .. " (tips " .. F.tip:GetWidth() .. ", " .. F.rtip:GetWidth() .. ")")
+    local wrapLine
+    for i = 1, F.tip.n do if F.tip.lines[i].wrap then wrapLine = F.tip.lines[i] end end
+    check("  a wrapped line narrows with it", wrapLine and wrapLine.left:GetWidth() <= F.tip:GetWidth() - 22)
+    for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = nil end
+    F.page._GetWidth = nil
+    F.refresh()
+    F.recipeRadios[1]:GetScript("OnClick")(F.recipeRadios[1])
+    eq("one per line saves 'lines'", AltStableConfig.professionsTooltipLayout, "lines")
+    F.recipes:SetChecked(false); F.recipes:GetScript("OnClick")(F.recipes)
+    eq("the recipe box off saves false (the tab's setting)", AltStableConfig.professionsTooltips, false)
+    check("  the recipe preview goes", not F.rtip:IsShown())
+    check("  and the layout greys", not F.recipeRadios[1]:IsEnabled() and not F.recipeRadios[2]:IsEnabled())
+    F.recipes:SetChecked(true); F.recipes:GetScript("OnClick")(F.recipes)
+    check("back on, the preview is back", F.rtip:IsShown())
+    AltStableConfig.professionsTooltips, AltStableConfig.professionsTooltipLayout = held[1], held[2]
+    F.refresh()
 end
 
 WoW.finish("test_sheetui", passed, failed)
