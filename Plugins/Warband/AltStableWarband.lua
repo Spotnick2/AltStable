@@ -2683,6 +2683,9 @@ local function BootstrapPlugin()
     -- only while this plugin is loaded: absent means "not counted", never "none".
     AltStable.ItemHolders = CountItem
     AltStable.ItemMapsFor = ItemMapsFor
+    -- Switched on in Options with the item search open (#503): its snapshot
+    -- has no bags, bank or mail yet, and the bag scan may read nothing new.
+    if AltStable.NotifyItemDataChanged then AltStable.NotifyItemDataChanged() end
     AltStable.RegisterPlugin({
         id            = ADDON_ID,
         label         = "Warband Bank",

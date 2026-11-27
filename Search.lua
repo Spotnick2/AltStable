@@ -2,9 +2,10 @@
 -- Search.lua: find an item on every character (#503)
 --
 -- One window: type part of an item's name, see who holds it and where - bags,
--- bank, mail (the Warband plugin's records) and worn gear (the core's). Enter
--- opens the Warband tab on the first holder with the item lit; Shift+Enter
--- puts its link in chat.
+-- bank, mail (the Warband plugin's records) and worn gear (the core's) - and
+-- who can craft it (the Professions plugin's known recipes, whose names match
+-- too: "transmute" finds Arcanite Bar). Enter opens the Warband tab on the
+-- first holder with the item lit; Shift+Enter puts its link in chat.
 --
 -- In the core, not a plugin: worn gear is the core's, and a search for worn
 -- gear works with every plugin off. What a plugin knows comes through what it
@@ -104,6 +105,18 @@ function S.BuildSnapshot()
                 local id = tonumber(c["gearid_" .. slot.key])
                 if id and id > 0 then add(id, guid, c, "worn", 1) end
             end
+        end
+    end
+    -- Who can craft each item (the Professions plugin, while loaded): also the
+    -- items nobody holds, and the recipes' names as aliases (PR 2 of #503).
+    local crafters = AltStable.ItemCrafters and AltStable.ItemCrafters()
+    for id, c in pairs(crafters or {}) do
+        id = tonumber(id)
+        if id then
+            local e = snap[id]
+            if not e then e = { id = id, total = 0, holders = {}, by = {} }; snap[id] = e end
+            e.crafters, e.aliases = c.crafters or {}, {}
+            for i, a in ipairs(c.aliases or {}) do e.aliases[i] = Fold(a) end
         end
     end
     for _, e in pairs(snap) do
@@ -210,7 +223,15 @@ function S.Match(snap, query)
     local q = Fold(query)
     for id, e in pairs(snap or {}) do
         local f = S.folded[id]
-        if f and f:find(q, 1, true) then out[#out + 1] = e end
+        local hit = f and f:find(q, 1, true)
+        -- Or a recipe making it: "transmute" finds Arcanite Bar, even before
+        -- the bar's own name has loaded ("item 12345" until then).
+        if not hit then
+            for _, a in ipairs(e.aliases or {}) do
+                if a:find(q, 1, true) then hit = true; break end
+            end
+        end
+        if hit then out[#out + 1] = e end
     end
     table.sort(out, function(a, b)
         if a.total ~= b.total then return a.total > b.total end
@@ -242,6 +263,30 @@ function S.HoldersLine(e, max)
         parts[#parts + 1] = ClassName(h) .. " " .. h.total
     end
     return table.concat(parts, ", ")
+end
+
+-- "Carissa (Tailoring), Brom (Tailoring), +1 more"
+function S.CraftersText(e, max)
+    max = max or 2
+    local parts = {}
+    for i, c in ipairs(e.crafters or {}) do
+        if i > max then
+            parts[#parts + 1] = "+" .. (#e.crafters - max) .. " more"
+            break
+        end
+        parts[#parts + 1] = ClassName(c) .. " (" .. (c.line or "?") .. ")"
+    end
+    return table.concat(parts, ", ")
+end
+
+-- A row's second line: who holds it, then who can craft it. Nobody holding
+-- it is "None recorded": what is recorded, never a claim that nobody has it.
+function S.WhoLine(e)
+    local held = (#e.holders > 0) and S.HoldersLine(e) or "None recorded"
+    if e.crafters and #e.crafters > 0 then
+        return held .. "  ·  can craft: " .. S.CraftersText(e)
+    end
+    return held
 end
 
 -- "12 in bags, 3 in the bank, 1 in the mail, 1 worn"
@@ -338,15 +383,20 @@ local function Selected() return S.selected and S.rows[S.selected] end
 function S.Reveal(e)
     e = e or Selected()
     if not e then return false end
-    if not AltStable.ItemMapsFor then
-        S.message = "Bags, bank and mail need the Warband module."
-        Paint(); return false
-    end
-    local h = S.RevealTarget(e)
+    -- Nothing in bags, bank or mail to open: say who wears it and who can
+    -- craft it, which are known with Warband off too (review of #554).
+    local warband = AltStable.ItemMapsFor ~= nil
+    local h = warband and S.RevealTarget(e)
     if not h then
-        local worn = {}
+        local worn, parts = {}, {}
         for _, x in ipairs(e.holders) do if x.worn > 0 then worn[#worn + 1] = x.name end end
-        S.message = (#worn > 0) and ("Worn by " .. table.concat(worn, ", ") .. ".") or "None recorded."
+        if #worn > 0 then parts[1] = "Worn by " .. table.concat(worn, ", ") .. "."
+        elseif warband then parts[1] = "None recorded." end
+        if e.crafters and #e.crafters > 0 then
+            parts[#parts + 1] = "Can craft: " .. S.CraftersText(e, 3) .. "."
+        end
+        if not warband then parts[#parts + 1] = "Bags, bank and mail need the Warband module." end
+        S.message = table.concat(parts, " ")
         Paint(); return false
     end
     local ok = AltStable._OpenPluginTab and AltStable._OpenPluginTab("warband", "item", h.guid, e.id)
@@ -411,6 +461,14 @@ local function RowTooltip(row)
     for _, h in ipairs(e.holders) do
         GameTooltip:AddDoubleLine(ClassName(h), S.PlacesText(h), 1, 1, 1, 0.8, 0.8, 0.8)
     end
+    if #e.holders == 0 then GameTooltip:AddLine("None recorded", 0.8, 0.8, 0.8) end
+    if e.crafters and #e.crafters > 0 then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Can craft it", 1, 0.82, 0)
+        for _, c in ipairs(e.crafters) do
+            GameTooltip:AddDoubleLine(ClassName(c), c.line or "", 1, 1, 1, 0.8, 0.8, 0.8)
+        end
+    end
     GameTooltip:Show()
 end
 
@@ -464,7 +522,7 @@ function Paint()
             row.name:SetText(nm or ("item " .. e.id))
             if qc then row.name:SetTextColor(qc.r, qc.g, qc.b) else row.name:SetTextColor(1, 1, 1) end
             row.total:SetText(tostring(e.total))
-            row.who:SetText(S.HoldersLine(e))
+            row.who:SetText(S.WhoLine(e))
             row.sel:SetShown(idx == S.selected)
             row:Show()
         else

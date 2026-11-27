@@ -4697,6 +4697,9 @@ function AltStable.SetPluginEnabled(key, enabled)
                     pending[p.key] = true
                     AltStable.SetConfigValue("widenOnRegister", pending)
                 end
+                -- An open item search (#503) built its snapshot without this
+                -- plugin's data: Warband's bags or the Recipe Book's crafters.
+                if ok and AltStable.NotifyItemDataChanged then AltStable.NotifyItemDataChanged() end
             end
         end
     end

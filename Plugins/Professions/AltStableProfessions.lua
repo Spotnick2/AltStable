@@ -251,6 +251,8 @@ end
 -- RefreshSheet does nothing while the sheet isn't built.
 local function Changed(guid)
     if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
+    -- Who can craft what may have changed: an open item search hears it (#503).
+    if AltStable.NotifyItemDataChanged then AltStable.NotifyItemDataChanged() end
     if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
 end
@@ -882,6 +884,7 @@ local function DeserializePlayer(guid, blob)
     -- moved lastUpdate would make every peer re-send it forever. The core marks
     -- the record changed instead, on this true (#422): a newer stamp stored.
     if AT.isActive and AT.RequestRefresh then AT.RequestRefresh() end
+    if AltStable.NotifyItemDataChanged then AltStable.NotifyItemDataChanged() end   -- #503
     return true
 end
 
@@ -989,6 +992,8 @@ local function OnSpellData(id, success)
         return false
     end
     if AT.isActive then AT.RequestRefresh() end
+    -- A recipe's name is an item search alias (#503), whichever tab is open.
+    if AltStable.NotifyItemDataChanged then AltStable.NotifyItemDataChanged() end
     return true
 end
 
@@ -1048,6 +1053,49 @@ local function Verdict(o, id)
     local r = Data()[id]
     if not (r and r.learn) then return "unknown" end
     return o.rank >= r.learn and "meets" or "low"
+end
+
+-- Who can craft what, for the core's item search (#503), in one pass:
+--   { [itemID] = { crafters = { { guid, name, class, line } }, aliases = { name } } }
+-- A crafter is a character the sheet lists (named, not hidden) who KNOWS a
+-- recipe making the item - Verdict's "known", the "Crafted by" tooltip's
+-- rule; a partial scan's learned recipe is known too. One entry per
+-- character however many of its recipes make it, `line` the profession's name.
+-- `aliases`: the recipes' own names, so "Transmute" finds Arcanite Bar. A name
+-- the client hasn't loaded yet is asked for (RecipeName), and its arrival
+-- tells the search (OnSpellData).
+local function ItemCrafters()
+    local out = {}
+    for guid, c in pairs(AltStableDB or {}) do
+        if type(c) == "table" and c.name and not IsHidden(guid) then
+            for _, l in ipairs(LINES) do
+                local o = OwnerOf(guid, c, l.line)
+                if o then
+                    for id in pairs(o.known) do
+                        local r = Data()[id]
+                        if r and r.makes then
+                            local e = out[r.makes]
+                            if not e then e = { crafters = {}, aliases = {}, by = {}, named = {} }; out[r.makes] = e end
+                            if not e.by[guid] then
+                                e.by[guid] = true
+                                e.crafters[#e.crafters + 1] = { guid = guid, name = c.name, class = c.class, line = l.label }
+                            end
+                            local n = RecipeName(id)
+                            if n and not e.named[n] then
+                                e.named[n] = true
+                                e.aliases[#e.aliases + 1] = n
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    for _, e in pairs(out) do
+        e.by, e.named = nil, nil
+        table.sort(e.crafters, function(a, b) return (a.name or "") < (b.name or "") end)
+    end
+    return out
 end
 
 local function MeetsSkill(o, id)
@@ -1683,6 +1731,9 @@ local function CooldownRecipeLines(char, entry)
     return known
 end
 
+-- The item search's crafters (#503): set only while this plugin is loaded, so
+-- absent means "not known", never "nobody".
+AltStable.ItemCrafters = ItemCrafters
 AltStable.CooldownCatalogue = CooldownCatalogue
 AltStable.CooldownStanding = CooldownStanding
 AltStable.CooldownRecipeLines = CooldownRecipeLines
