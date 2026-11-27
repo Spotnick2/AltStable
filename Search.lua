@@ -383,18 +383,20 @@ local function Selected() return S.selected and S.rows[S.selected] end
 function S.Reveal(e)
     e = e or Selected()
     if not e then return false end
-    if not AltStable.ItemMapsFor then
-        S.message = "Bags, bank and mail need the Warband module."
-        Paint(); return false
-    end
-    local h = S.RevealTarget(e)
+    -- Nothing in bags, bank or mail to open: say who wears it and who can
+    -- craft it, which are known with Warband off too (review of #554).
+    local warband = AltStable.ItemMapsFor ~= nil
+    local h = warband and S.RevealTarget(e)
     if not h then
-        local worn = {}
+        local worn, parts = {}, {}
         for _, x in ipairs(e.holders) do if x.worn > 0 then worn[#worn + 1] = x.name end end
-        S.message = (#worn > 0) and ("Worn by " .. table.concat(worn, ", ") .. ".") or "None recorded."
+        if #worn > 0 then parts[1] = "Worn by " .. table.concat(worn, ", ") .. "."
+        elseif warband then parts[1] = "None recorded." end
         if e.crafters and #e.crafters > 0 then
-            S.message = S.message .. " Can craft: " .. S.CraftersText(e, 3) .. "."
+            parts[#parts + 1] = "Can craft: " .. S.CraftersText(e, 3) .. "."
         end
+        if not warband then parts[#parts + 1] = "Bags, bank and mail need the Warband module." end
+        S.message = table.concat(parts, " ")
         Paint(); return false
     end
     local ok = AltStable._OpenPluginTab and AltStable._OpenPluginTab("warband", "item", h.guid, e.id)

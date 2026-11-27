@@ -677,6 +677,29 @@ if PT then
     AltStable.NotifyItemDataChanged(); WoW.flushTimers()   -- as a fresh snapshot would be
     Type("transmute")
     eq("Professions off: nothing found by recipe", #S.rows, 0)
+
+    -- The Recipe Book switched on in Options, the search open (review of #554):
+    -- loading it publishes the crafters, and the search rebuilds with them.
+    local realLoad = C_AddOns.LoadAddOn
+    C_AddOns.LoadAddOn = function(a)
+        if a == "AltStableProfessions" then AltStable.ItemCrafters = held end
+        return realLoad(a)
+    end
+    WoW.loaded.AltStableProfessions = nil
+    AltStable.SetPluginEnabled("professions", true)
+    C_AddOns.LoadAddOn = realLoad
+    WoW.flushTimers()
+    eq("the Recipe Book switched on with the search open: found by recipe", RowIDs(), "12360,12359")
+
+    -- Warband off: Enter on a craft-only item still says who can craft it.
+    local heldMaps = AltStable.ItemMapsFor
+    AltStable.ItemMapsFor = nil
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("(Warband off, still found by recipe)", RowIDs(), "12360,12359")
+    Enter()
+    eq("Warband off: Enter on a craft-only item names its crafters", strip(Window().status:GetText()),
+       "Can craft: Brom (Alchemy). Bags, bank and mail need the Warband module.")
+    AltStable.ItemMapsFor = heldMaps
     AltStable.ItemCrafters = held
     Window():Hide()
 end
