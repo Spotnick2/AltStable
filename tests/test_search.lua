@@ -42,6 +42,20 @@ dofile("Export.lua")
 dofile("Search.lua")
 dofile("Plugins/Warband/WarbandTabs.lua")
 dofile("Plugins/Warband/AltStableWarband.lua")
+-- Who can craft (PR 2): the Professions plugin, on a small fixed catalogue,
+-- shaped as RecipeData.lua writes it.
+AltStableRecipeData = { source = "test", recipes = {
+    [11000] = { skill = { 197 }, learn = 1,   makes = 2996 },    -- Bolt of Linen Cloth
+    [11001] = { skill = { 171 }, learn = 275, makes = 12360 },   -- two recipes, one Arcanite Bar
+    [11002] = { skill = { 171 }, learn = 275, makes = 12360 },
+    [11003] = { skill = { 197 }, learn = 45,  makes = 4238 },    -- known only by the hidden one
+    [11004] = { skill = { 333 }, learn = 1 },                    -- an enchant: no item
+    [11005] = { skill = { 197 }, learn = 25,  makes = 4240 },    -- learned while the search is open
+    [11006] = { skill = { 171 }, learn = 230, makes = 12359 },   -- its name loads late
+    [11007] = { skill = { 164 }, learn = 1,   makes = 2862 },    -- arrives by sync
+} }
+AltStableProfessionsDB = {}
+dofile("Plugins/Professions/AltStableProfessions.lua")
 WoW.flushTimers()
 
 local S = AltStable._search
@@ -84,6 +98,8 @@ local function World()
         { to = HID, at = NOW - 10, items = { [104] = 1 } },
         { to = GONE, at = NOW - 10, items = { [105] = 1 } },
     }
+    -- Nobody's recipes until the crafting section says so.
+    AltStableProfessionsDB = {}
     -- The bags Warband rescans when its tab opens: what Kaleid's record says.
     WoW.containers = { [0] = { size = 1, { itemID = 101, stackCount = 2, hyperlink = "|Hitem:101|h" } } }
     WoW.items = {
@@ -558,6 +574,110 @@ do
     shift = false
     ChatFrameUtil.InsertLink = realInsertLink
     AltStable.IsGameUIHidden = uiHidden
+    Window():Hide()
+end
+
+------------------------------------------------------------
+-- Who can craft it (PR 2)
+------------------------------------------------------------
+local prof
+for _, p in ipairs(AltStable.plugins or {}) do if p.id == "professions" then prof = p end end
+check("the Professions plugin registered", prof ~= nil)
+local PT = prof and prof._test
+
+local function Crafting()
+    World()
+    AltStableProfessionsDB = {
+        -- A complete scan, Tailoring; an enchant (no item) known too.
+        [ME]  = { stamp = 10, profs = {
+            [197] = { rank = 60, max = 75, full = NOW, known = { [11000] = true } },
+            [333] = { rank = 5, max = 75, full = NOW, known = { [11004] = true } } } },
+        -- Partial: only learned-recipe events, still known. Both recipes of one bar.
+        [ALT] = { stamp = 10, profs = {
+            [171] = { rank = 280, max = 300, known = { [11001] = true, [11002] = true, [11006] = true } } } },
+        [HID] = { stamp = 10, profs = { [197] = { rank = 50, max = 75, full = NOW, known = { [11003] = true } } } },
+    }
+    WoW.spellNames = { [11000] = "Bolt of Linen Cloth", [11001] = "Transmute: Arcanite",
+                       [11002] = "Transmute: Arcanite Bar", [11003] = "Linen Bag",
+                       [11005] = "Linen Belt", [11007] = "Rough Copper Ring" }
+    WoW.unknownSpells = { [11006] = true }    -- not loaded yet
+    WoW.items[2996] = { name = "Bolt of Linen Cloth", classID = 7, quality = 1, icon = 8 }
+    WoW.items[4240] = { name = "Linen Belt", classID = 4, quality = 1, icon = 9 }
+    WoW.items[12359] = { name = "Thorium Bar", classID = 7, quality = 1, icon = 10 }
+    WoW.items[2862] = { name = "Rough Copper Ring", classID = 4, quality = 1, icon = 11 }
+    -- 12360, Arcanite Bar: not in the client's cache.
+end
+
+if PT then
+    Crafting()
+    local c = AltStable.ItemCrafters()
+    eq("a known recipe's item has its crafter", c[2996] and c[2996].crafters[1].name, "Kaleid")
+    eq("  with the profession's name", c[2996] and c[2996].crafters[1].line, "Tailoring")
+    eq("two recipes of one item: one crafter", c[12360] and #c[12360].crafters, 1)
+    eq("  known from a partial scan", c[12360] and c[12360].crafters[1].name, "Brom")
+    eq("  both recipe names as aliases", c[12360] and #c[12360].aliases, 2)
+    check("a hidden character crafts nothing here", c[4238] == nil)
+    local any = 0
+    for _ in pairs(c) do any = any + 1 end
+    eq("an enchant (no item) is no entry", any, 3)
+
+    AltStable.ShowSearch("transmute"); WoW.flushTimers()
+    eq("a recipe's name finds its item", RowIDs(), "12360")
+    eq("  shown by id until its own name loads", Window().rows[1].name:GetText(), "item 12360")
+    local strip = function(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    eq("  nobody holds it: said, then who can craft it", strip(S.WhoLine(S.rows[1])),
+       "None recorded  ·  can craft: Brom (Alchemy)")
+    Enter()
+    check("Enter on a craft-only item keeps the search open", Window():IsShown())
+    eq("  and says who can craft it", strip(Window().status:GetText()), "None recorded. Can craft: Brom (Alchemy).")
+    local row = Window().rows[1]
+    row:GetScript("OnEnter")(row)
+    check("its hover lists the crafters", GameTooltip:IsOwned(row))
+    row:GetScript("OnLeave")(row)
+
+    Type("linen")
+    eq("held and craft-only together, held first", RowIDs(), "101,2996")
+    eq("  a held item's line adds no crafters it hasn't got", strip(S.WhoLine(S.rows[1])), "Brom 8, Kaleid 2")
+
+    -- A recipe learned with the profession window closed: the search hears it.
+    Type("belt")
+    eq("(nobody can make a belt yet)", #S.rows, 0)
+    PT.OnRecipeLearned(11005)
+    WoW.flushTimers()
+    eq("a recipe learned with the window closed shows", RowIDs(), "4240")
+    eq("  with who learned it", strip(S.CraftersText(S.rows[1])), "Kaleid (Tailoring)")
+
+    -- A snapshot received by sync, the Professions tab not open.
+    Type("copper ring")
+    eq("(no copper ring yet)", #S.rows, 0)
+    local heldAlt = AltStableProfessionsDB[ALT]
+    -- The whole snapshot travels: Brom's Alchemy as before, Blacksmithing new.
+    AltStableProfessionsDB[ALT] = { stamp = 50, profs = {
+        [171] = { rank = 280, max = 300, known = { [11001] = true, [11002] = true, [11006] = true } },
+        [164] = { rank = 20, max = 75, full = NOW, known = { [11007] = true } } } }
+    local blob = PT.SerializePlayer(ALT)
+    AltStableProfessionsDB[ALT] = heldAlt
+    check("  (the Professions tab isn't open)", not prof._at.isActive)
+    PT.DeserializePlayer(ALT, blob)
+    WoW.flushTimers()
+    eq("a received snapshot updates who can craft it", RowIDs(), "2862")
+
+    -- A recipe name that loads late, the Professions tab not open.
+    Type("mithril")
+    eq("(its recipe's name hasn't loaded)", #S.rows, 0)
+    WoW.unknownSpells[11006] = nil
+    WoW.spellNames[11006] = "Transmute: Mithril to Truesilver"
+    PT.OnSpellData(11006, true)
+    WoW.flushTimers()
+    eq("a recipe name loading late becomes searchable", RowIDs(), "12359")
+
+    -- Professions off: no crafters, nothing found by a recipe's name.
+    local held = AltStable.ItemCrafters
+    AltStable.ItemCrafters = nil
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()   -- as a fresh snapshot would be
+    Type("transmute")
+    eq("Professions off: nothing found by recipe", #S.rows, 0)
+    AltStable.ItemCrafters = held
     Window():Hide()
 end
 
