@@ -14,7 +14,7 @@ WoW account, received by sync.
 | Field | Type | Meaning |
 |---|---|---|
 | `stamp` | number | When this snapshot was taken (Unix time, strictly increasing per character). |
-| `ver` | string | What the counts were made with: the quest table's version and the counting rules' (for example `9b0a9380r2`). Counts from different versions are not directly comparable. |
+| `ver` | string | What the counts were made with: the quest table's version and the counting rules' (for example `cabf3cd3r3`; r3 since Blackrock Spire is two rows, #537). Counts from different versions are not directly comparable. |
 | `level` | number | The character's level at the snapshot. |
 | `faction` | string | `"Alliance"` or `"Horde"`. |
 | `race`, `class` | number | Race ID and class ID (`UnitRace`/`UnitClass` third returns). |
@@ -34,6 +34,9 @@ group = "zone" | "dungeon" | "raid" | "battleground" | "class" | "profession" | 
 
 `zoneKey` is:
 - an area ID (a zone, dungeon or raid, e.g. `1` Dun Morogh, `12` Elwynn Forest);
+- `-1583` for Upper Blackrock Spire, whose quests the client files under Blackrock Spire's area
+  (`1583`, which is then Lower Blackrock Spire). Since #537; a snapshot of an earlier version (`r2`)
+  has both halves under `1583`;
 - a negative QuestSort ID for professions and other sorts (e.g. `-304` Cooking);
 - `-25` for Battlegrounds;
 - `-9999` for the Class quests row (the same numbers as `cls.done` / `cls.total`);

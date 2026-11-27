@@ -55,7 +55,8 @@ M.BLOB_VERSION = "v1"
 -- rules (r2: prerequisites through the whole chain, #429). Alphanumeric, so
 -- it survives the blob's strip. A snapshot made with anything else shows as
 -- counted with another version until that character is scanned again.
-M.SNAP_VERSION = D.VERSION .. "r2"
+-- r3: Blackrock Spire counted as two rows, Lower and Upper (#537).
+M.SNAP_VERSION = D.VERSION .. "r3"
 M.SCAN_DELAY = 1.5             -- after QUEST_TURNED_IN: the completion lands ~0.5 s later
 
 local floor = math.floor
@@ -96,8 +97,51 @@ local function Link(q, p, i)
 end
 M.Link = Link
 
+------------------------------------------------------------
+-- Blackrock Spire, Lower and Upper (#537)
+------------------------------------------------------------
+-- The client has one area for the whole spire (1583, and its instance copy
+-- 17804; only the dungeon finder's table splits it, 31 and 43), and QuestieDB
+-- files every quest of it there. Upper's quests count under a row of their
+-- own, key -1583 (no area ID of its own to use); 1583 becomes Lower. In the
+-- counts, so a synced snapshot carries both rows (M.SNAP_VERSION r3).
+-- Hand-kept, each placed by its objective on Wowhead Forever (2026-11-27) and
+-- checked against QuestData.lua by the tests: the Rookery eggs, Rend, General
+-- Drakkisath (and his brand), Goraluk Anvilcrack, the dragonspawn's eyes,
+-- Valthalak's amulet. A quest whose half is unsure stays Lower: 4764
+-- Doomrigger's Clasp, 4768 The Darkstone Tablet, 5160 The Matron Protectorate.
+-- Seal of Ascension (4742, 4743) is done in Lower and opens Upper (the
+-- owner): counted in Lower, shown as Upper's key chain (M.ATTUNE, below).
+M.UBRS_KEY = -1583
+M.UPPER_BRS = {
+    4734, 4735,         -- Egg Freezing, Egg Collection: the Rookery
+    4974,               -- For The Horde!: Rend Blackhand
+    5102, 6502, 6602,   -- General Drakkisath's Demise, Drakefire Amulet, Blood of the Black Dragon Champion
+    7761,               -- Blackhand's Command: the brand Drakkisath guards
+    5127,               -- The Demon Forge: Goraluk Anvilcrack
+    6569,               -- Oculus Illusions: Black Dragonspawn Eyes
+    8966, 8989, 8995,   -- Lord Valthalak's amulet: Mor Grayhoof, then Lord Valthalak
+}
+-- By quest record, for KeyOf (which has no ID). A module field, so the tests
+-- can count without the split.
+M.UPPER_Q = {}
+for _, id in ipairs(M.UPPER_BRS) do
+    local q = D.QUESTS[id]
+    if q then M.UPPER_Q[q] = true end
+end
+do
+    -- The rows: 1583 is Lower, Upper right after it, the same entrance pin.
+    local brs = D.ZONES[1583]
+    if brs then
+        D.ZONES[M.UBRS_KEY] = { brs[1], brs[2], brs[3], "Upper Blackrock Spire", brs[5] + 0.5,
+                                brs[6], brs[7], brs[8] }
+        brs[4] = "Lower Blackrock Spire"
+    end
+end
+
 function M.KeyOf(q, p)
     if q[HKEY] and p.faction == "Horde" then return q[HKEY] end
+    if M.UPPER_Q[q] then return M.UBRS_KEY end
     return q[KEY]
 end
 
@@ -291,6 +335,9 @@ M.ATTUNE = {
     [2677] = { { 7761 } },                  -- Blackwing Lair: Blackhand's Command
     [2717] = { { 7848 } },                  -- Molten Core: Attunement to the Core
     [3456] = { { { 9121, 9122, 9123 } } },  -- Naxxramas: The Dread Citadel
+    -- Upper Blackrock Spire (#537): Seal of Ascension, both parts, done in
+    -- Lower; the seal opens Upper.
+    [M.UBRS_KEY] = { { 4742, 4743 } },
 }
 
 local function StepIds(step) return type(step) == "table" and step or { step } end
