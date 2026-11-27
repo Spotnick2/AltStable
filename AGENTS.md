@@ -13,9 +13,9 @@ Repository-specific additions:
 
 - Post every pull-request review and follow-up review on the PR, then link the posted review in the
   final response.
-- Match `MEASURED_ON_BUILD` in `Config.lua` to
-  `C:\Projects\WoW\References\Forever\api\forever-api-<version>.<build>.md`. Runtime measurements live in
-  `docs/forever-api-notes.md`; addon-agnostic Forever findings live in the canonical
+- Use the newest `C:\Projects\WoW\References\Forever\api\forever-api-<version>.<build>.md`.
+  Runtime measurements live in `docs/forever-api-notes.md`, each with the build it was measured
+  on; addon-agnostic Forever findings live in the canonical
   `C:\Projects\WoW\References\Docs\PORTING-TBC-TO-FOREVER.md`.
 
 ## What this project is
@@ -411,12 +411,11 @@ XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests 
 - **Don't re-derive the API notes.** `docs/forever-api-notes.md` is measured on the live client.
   For a live declaration check, use `/api search <name>`, `/api system list`, or
   `/api <system> list`; the Battle.net developer portal documents REST APIs, not the Lua API.
-- **The API dump is build-stamped — regenerate it when the client bumps.**
-  When `GetBuildInfo()` changes, follow the shared `forever-api-dump` skill: its tooling lives in
-  `C:\Projects\WoW\References\Tools\ForeverAPIDump\` (`deploy.ps1`, `/apidump`, `/reload`, then
-  `Convert-Dump.ps1`, all run by full path), then the `client-update` skill for the bump.
-  `MEASURED_ON_BUILD` in `Config.lua` is the record of
-  which build the notes describe, and the addon says so at login when the two differ.
+- **A new build is a diff; only an Interface bump is a full re-check** (#541, the root
+  `CLAUDE.md`). A build with the same Interface is dumped and diffed centrally with the shared
+  `forever-api-dump` skill (`C:\Projects\WoW\References\Tools\ForeverAPIDump\`, run by full
+  path), and this repo verifies only the names the diff removed or changed. An Interface bump is
+  the `client-update` skill. The addon announces no build at login.
 
 ## Cost control & model usage
 

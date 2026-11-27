@@ -65,8 +65,8 @@ which share one - see CATEGORY_LABELS.)
 
 It saves them as forever-<table lowercase>-<build>.csv in
 C:\Projects\WoW\References\Forever\db (--client-db DIR); the newest build that has
-all three is used. After a new client build, get them again at that build before
-rerunning. A recipe goes when every row the client has for it is in such a
+all five is used, or --client-build's, which must have all five. After a new client
+build, get them again at that build (--build) and rerun with --client-build. A recipe goes when every row the client has for it is in such a
 category. One that the client does not list at all stays: no row is no evidence.
 The drop comes after the recipe items are linked, so an SoD recipe still makes a
 same-named item ambiguous instead of handing it to its namesake.
@@ -469,15 +469,27 @@ CLIENT_TABLES = ("skilllineability", "tradeskillcategory", "spellreagents",
 _DB_FILE = re.compile(r"^forever-(%s)-(\d+(?:\.\d+)+)\.csv$" % "|".join(CLIENT_TABLES))
 
 
-def client_tables(directory):
+def client_tables(directory, want=None):
     """(build, {table: path}) for the newest build that has every one of
-    CLIENT_TABLES. Missing is an error: without them the SoD recipes come back."""
+    CLIENT_TABLES. Missing is an error: without them the SoD recipes come back.
+
+    `want` (--client-build) names the build instead: all of its tables, or an
+    error naming the missing ones. The per-build check needs it (review of #553):
+    a table wago.tools hasn't published yet would otherwise leave the previous
+    build's set the newest complete one, and --check would pass on old inputs."""
     found = {}
     if directory and os.path.isdir(directory):
         for name in os.listdir(directory):
             m = _DB_FILE.match(name)
             if m:
                 found.setdefault(m.group(2), {})[m.group(1)] = os.path.join(directory, name)
+    if want:
+        missing = [t for t in CLIENT_TABLES if t not in found.get(want, {})]
+        if missing:
+            raise DataError("build %s lacks %s in %r (get them with wago.py get ... --build %s)"
+                            % (want, ", ".join("forever-%s-%s.csv" % (t, want) for t in missing),
+                               directory, want))
+        return want, found[want]
     builds = [b for b, t in found.items() if len(t) == len(CLIENT_TABLES)]
     if not builds:
         raise DataError("no build in %r has all of %s (see the docstring for where to get them)"
@@ -565,9 +577,9 @@ def spell_cooldowns(cd_rows, cat_rows):
     return {s: tuple(v) for s, v in out.items()}
 
 
-def load_client(directory, log):
+def load_client(directory, log, want=None):
     """The client tables' answers: {"build", "season" (spell IDs), "reagents", "cooldowns"}."""
-    build, paths = client_tables(directory)
+    build, paths = client_tables(directory, want)
     season = season_spells(_read_csv(paths["skilllineability"], ["Spell", "TradeSkillCategoryID"]),
                            _read_csv(paths["tradeskillcategory"], ["ID", "Name_lang", "ParentTradeSkillCategoryID"]))
     reagents = spell_reagents(_read_csv(paths["spellreagents"],
@@ -930,12 +942,14 @@ def main(argv=None):
                     help="folder for the human-readable .md/.tsv reference ('' to skip)")
     ap.add_argument("--client-db", default=CLIENT_DB,
                     help="folder with the client's SkillLineAbility / TradeSkillCategory CSVs")
+    ap.add_argument("--client-build", default=None,
+                    help="use this build's client tables (e.g. 1.60.1.71139), all of them, or fail")
     args = ap.parse_args(argv)
 
     def log(msg):
         print(msg, flush=True)
 
-    client = load_client(args.client_db, log)   # before the fetches: a missing table fails fast
+    client = load_client(args.client_db, log, args.client_build)   # before the fetches: a missing table fails fast
     meta = {}
     recipes = build(args.refresh, log, meta)
     dropped = drop_season(recipes, meta, client["season"])

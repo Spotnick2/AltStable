@@ -1939,58 +1939,12 @@ function AltStable.HandleEnteringWorld(isInitialLogin, isReloadingUi)
 end
 
 ------------------------------------------------------------
--- Which build were the findings measured on?
---
--- docs/forever-api-notes.md and References/Forever/api/forever-api-<build>.md were
--- measured against one client build, and the beta updates without
--- announcement. The build therefore lives in the SOURCE - the one thing that
--- survives a restart on this client - and a mismatch at login says so.
---
--- Bump this after re-measuring on a new build. Until someone does, it says so
--- on every login, which is the point: the reminder has to outlast the moment
--- someone would have noticed.
+-- No per-build check (#541): a new client build with the same Interface is
+-- dumped and diffed centrally (the root CLAUDE.md, "Forever API reference and
+-- new client builds"), and only an Interface bump is a full re-check here
+-- (docs/RUNBOOK.md, "When the client updates"). Nothing announces the build
+-- at login. svLoadCheck's build, above, is a diagnostic stamp, not a check.
 ------------------------------------------------------------
-
-local MEASURED_ON_BUILD = "71139"
-AltStable.MEASURED_ON_BUILD = MEASURED_ON_BUILD
-
--- A development copy, not a release: deploy.ps1 stamps "dev-<sha>" (or "dev"),
--- a checkout run as-is still carries the packager's version keyword, and an
--- unreadable version is treated as dev. A packaged release carries its tag
--- ("v0.7.0-beta"). What the build check below is for is a chore for whoever
--- measures the client - a player can do nothing with it.
---
--- The keyword is ASSEMBLED, never written out: the packager replaces it in
--- every file it ships, not only the .toc. Written literally, v0.7.0-beta
--- shipped `v == "v0.7.0-beta"` here - the release counted itself as a dev copy
--- (tests/test_packaging.lua now fails on a literal keyword in shipped Lua).
-local VERSION_KEYWORD = "@" .. "project-version" .. "@"
-
-function AltStable.IsDevBuild()
-    local get = AltStable.API and AltStable.API.GetAddOnMetadata
-    local ok, v = pcall(function() return get and get("AltStable", "Version") end)
-    if not ok or type(v) ~= "string" or v == "" then return true end
-    return v == "dev" or v:sub(1, 4) == "dev-" or v == VERSION_KEYWORD
-end
-
-local function CheckClientBuild()
-    -- Development copies only: on a release, every player on a newer build
-    -- was told to run /apidump and bump a constant in the source.
-    if not AltStable.IsDevBuild() then return end
-    local build = CurrentBuild()
-    -- An unreadable build is not evidence of a new one; stay quiet.
-    if not build or build == MEASURED_ON_BUILD then return end
-    if DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage(
-            "|cffffcc00AltStable:|r this client is build " .. tostring(build)
-            .. "; everything in the API notes was measured on " .. MEASURED_ON_BUILD
-            .. ". Treat it as unverified: re-run |cffffff00/apidump|r and the RUNBOOK "
-            .. "behaviour line (\"When the client updates\"), then bump MEASURED_ON_BUILD "
-            .. "in Config.lua.")
-    end
-end
-
-AltStable.CheckClientBuild = CheckClientBuild
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
@@ -2000,7 +1954,6 @@ initFrame:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
         EnsureDefaults()
         -- Glass UI's suite, asked once before any glass is built (#261, Skin.lua).
         if AltStable.SuiteStart then AltStable.SuiteStart() end
-        CheckClientBuild()
         -- Drop tombstones nobody has offered in a month (#65). Once here,
         -- because it only changes on the scale of months and a sweep on every
         -- sync would rewrite the config for nothing.
