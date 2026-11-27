@@ -4849,6 +4849,33 @@ do
 end
 
 do
+    -- #545: the single-character path redraws the sheet when only a plugin's
+    -- own newer snapshot came (a profession gained or lost on the other
+    -- account), not only when the core record was taken.
+    local fake = { id = "fake545", independentStamp = true,
+                   OnDeserialize = function(g, blob) return blob == "newer" end }
+    local heldPlugins, heldRefresh = AltStable.plugins, AltStable.RefreshSheet
+    AltStable.plugins = { fake }
+    local refreshes = 0
+    AltStable.RefreshSheet = function() refreshes = refreshes + 1 end
+    WoW.reset(); WoW.now = 5000
+    AltStableConfig = { peerWatermarks = {} }
+    AltStableDB = {}
+    local function single(stamp, blob)
+        local s = T.SerializeChar({ guid = "Player-RS-1", name = "Snap", class = "MAGE", level = 40,
+                                    lastUpdate = stamp })
+        T.ReceiveCharacter(T.DeserializeChar(s .. "\nplugin_fake545:" .. blob), "Peer")
+    end
+    single(1000, "same")
+    eq(refreshes, 1, "#545: a record taken redraws the sheet")
+    single(999, "same")
+    eq(refreshes, 1, "  an older record with nothing new for the plugin does not")
+    single(999, "newer")
+    eq(refreshes, 2, "  an older record whose plugin snapshot is newer does")
+    AltStable.plugins, AltStable.RefreshSheet = heldPlugins, heldRefresh
+end
+
+do
     -- What marks a received record: only a strict advance.
     local stored = {}
     local fake = { id = "fake422", independentStamp = true,

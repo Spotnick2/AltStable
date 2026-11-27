@@ -367,7 +367,33 @@ SR_ROWS = [
 ]
 
 
-def write_client_db(directory, build, sla=True, tsc=True, tsc_rows=None, sr=True, sr_rows=None):
+# Cooldowns (#545), as the client's tables hold them on 1.60.1.71139 (trimmed):
+# Arcanite and Elemental Fire share category 310; Iron to Gold and Mooncloth have
+# their own recovery; 2329 has a cooldown row of 0.
+SCD_HEADER = "ID,DifficultyID,CategoryRecoveryTime,RecoveryTime,StartRecoveryTime,AuraSpellID,SpellID"
+SCD_ROWS = [
+    "1,0,169200000,0,1500,0,17187",     # Transmute: Arcanite, 47 h on the category
+    "2,0,600000,0,1500,0,25146",        # Transmute: Elemental Fire, 10 min on the category
+    "3,0,0,3600000,1500,0,11479",       # Transmute: Iron to Gold, its own hour
+    "4,0,0,342000000,1500,0,18560",     # Mooncloth, its own 95 h
+    "5,0,0,0,1500,0,2329",              # Elixir of Minor Strength: none
+    "6,0,0,300000,1500,0,3170",         # made up: five minutes, below the floor
+]
+SCAT_HEADER = ("ID,DifficultyID,Category,DefenseType,DiminishType,DispelType,Mechanic,PreventionType,"
+               "StartRecoveryCategory,ChargeCategory,SpellID")
+SCAT_ROWS = [
+    "1,0,310,0,0,0,0,0,133,0,17187",
+    "2,0,310,0,0,0,0,0,133,0,25146",
+    "3,0,0,0,0,0,0,0,133,0,11479",
+]
+
+
+def write_client_db(directory, build, sla=True, tsc=True, tsc_rows=None, sr=True, sr_rows=None,
+                    scd_rows=None, scat_rows=None):
+    with open(os.path.join(directory, "forever-spellcooldowns-%s.csv" % build), "w", encoding="utf-8") as f:
+        f.write("\n".join([SCD_HEADER] + (SCD_ROWS if scd_rows is None else scd_rows)) + "\n")
+    with open(os.path.join(directory, "forever-spellcategories-%s.csv" % build), "w", encoding="utf-8") as f:
+        f.write("\n".join([SCAT_HEADER] + (SCAT_ROWS if scat_rows is None else scat_rows)) + "\n")
     if sr:
         with open(os.path.join(directory, "forever-spellreagents-%s.csv" % build), "w", encoding="utf-8") as f:
             f.write("\n".join([SR_HEADER] + (SR_ROWS if sr_rows is None else sr_rows)) + "\n")
@@ -445,6 +471,41 @@ check("a reagent with no count is an error for a recipe that uses it",
       raises(lambda: gen.apply_reagents({2329: {"skill": [171]}}, bad_client["reagents"])))
 check("  and none for the recipes that do not",
       not raises(lambda: gen.apply_reagents({1250794: {"skill": [171]}}, bad_client["reagents"])))
+
+# Cooldowns (#545): a shared category is one label, a recipe's own hour its own,
+# below ten minutes none.
+cds = client["cooldowns"]
+check("the client's cooldowns: category and recoveries", cds.get(17187) == (310, 169200000, 0), repr(cds.get(17187)))
+check("  a spell's own recovery", cds.get(11479) == (0, 0, 3600000), repr(cds.get(11479)))
+cdrec = {sid: {"skill": [171]} for sid in (17187, 25146, 11479, 2329, 3170)}
+cdrec[18560] = {"skill": [197]}
+cdnames = {17187: "Transmute: Arcanite", 25146: "Transmute: Elemental Fire", 11479: "Transmute: Iron to Gold",
+           18560: "Mooncloth", 2329: "Elixir of Minor Strength", 3170: "Made Up"}
+groups = gen.apply_cooldowns(cdrec, cdnames, cds)
+check("the shared category is one label", cdrec[17187].get("cd") == "Transmutes" and cdrec[25146].get("cd") == "Transmutes",
+      repr(cdrec))
+check("  its ten minutes are enough (Elemental Fire)", 25146 in groups.get("Transmutes", []), repr(groups))
+check("an own cooldown takes the name after the colon", cdrec[11479].get("cd") == "Iron to Gold", repr(cdrec[11479]))
+check("  or the whole name", cdrec[18560].get("cd") == "Mooncloth", repr(cdrec[18560]))
+check("no cooldown, no label", "cd" not in cdrec[2329], repr(cdrec[2329]))
+check("  nor below ten minutes", "cd" not in cdrec[3170], repr(cdrec[3170]))
+check("groups by label", sorted(groups) == ["Iron to Gold", "Mooncloth", "Transmutes"], repr(groups))
+check("a long category with no name in CATEGORY_LABELS is an error",
+      raises(lambda: gen.apply_cooldowns({1: {"skill": [171]}}, {1: "X"}, {1: (999, 3600000, 0)})))
+check("two own cooldowns on one label are an error",
+      raises(lambda: gen.apply_cooldowns({1: {"skill": [171]}, 2: {"skill": [171]}}, {1: "A: Same", 2: "B: Same"},
+                                         {1: (0, 0, 3600000), 2: (0, 0, 3600000)})))
+check("an own cooldown named like a category is an error",
+      raises(lambda: gen.apply_cooldowns({1: {"skill": [171]}, 2: {"skill": [171]}}, {1: "X", 2: "Transmutes"},
+                                         {1: (310, 3600000, 0), 2: (0, 0, 3600000)})))
+check("a label with a colon left is an error", raises(lambda: gen.cooldown_label("A: B: C")))
+check("recipes without a cooldown: nothing marked, no error",
+      gen.apply_cooldowns({2329: {"skill": [171]}}, {2329: "E"}, {2329: (0, 0, 0)}) == {})
+nocd = tempfile.mkdtemp()
+write_client_db(nocd, "1.60.1.70532", scd_rows=["5,0,0,0,1500,0,2329"])
+check("a SpellCooldowns with no cooldown at all is an error", raises(lambda: gen.load_client(nocd, lambda m: None)))
+lua = gen.render_lua({11479: {"skill": [171], "learn": 225, "cd": "Iron to Gold"}}, "test")
+check("the Lua row carries cd, quoted", '[11479]={skill={171},learn=225,cd="Iron to Gold"},' in lua, lua[-200:])
 
 mixed = {
     2329: {"skill": [171], "reagents": [[765, 1], [2449, 1], [3371, 1]]},   # same set, Wowhead's order

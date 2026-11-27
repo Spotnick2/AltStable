@@ -1167,10 +1167,10 @@ local function BuildDisplayList()
     for _, char in next, store do
         -- ShouldShowInGrid, not IsHidden: this is the LIST. The totals above
         -- and the iLvl average below deliberately still use IsHidden.
-        -- The Cooldowns view lists only the characters with a cooldown (#543):
-        -- AltStable.Cooldowns.Listed, the rule its columns and count use too.
+        -- The Cooldowns view lists the characters with a cooldown, or with a
+        -- profession that has one (#543, #545): AltStable.Cooldowns.Listed.
         if type(char)=="table" and char.name and ShouldShowInGrid(char)
-        and not (activeSection.cdFields and not AltStable.Cooldowns.HasAny(char)) then
+        and not (activeSection.cdFields and not AltStable.Cooldowns.Listed(char)) then
             table.insert(allChars, char)
         end
     end
@@ -6478,11 +6478,12 @@ local function CreateFrameIfNeeded()
         empty:SetPoint("TOPRIGHT", bodyScroll, "TOPRIGHT", -16, -40)
         empty:SetJustifyH("CENTER"); empty:SetWordWrap(true)
         empty:SetTextColor(unpack(AltStable.C.TEXT_HELP))
-        empty:SetText("No cooldowns recorded yet.\n\nA recipe's cooldown appears once a scan of the "
-            .. "profession window sees it running. A carried Salt Shaker appears even when it is "
-            .. "already ready.")
         empty:Hide()
-        function viewStrip.SetEmpty(show) empty:SetShown(show and true or false) end
+        -- Its words depend on whether the Recipe Book is loaded (#545).
+        function viewStrip.SetEmpty(show)
+            if show then empty:SetText(CD.EmptyText()) end
+            empty:SetShown(show and true or false)
+        end
 
         -- The professions the shown cooldowns belong to, in order.
         local function ProfsInUse()

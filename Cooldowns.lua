@@ -104,9 +104,28 @@ end
 
 function CD.ColumnForField(field) return byField[field] end
 
--- Who the view lists: a named record the sheet shows (not hidden), with at
--- least one cooldown recorded. One rule for the columns, the rows and the
--- count, so none of them can know of a character the others don't.
+-- The Recipe Book's catalogue (Professions plugin, #545) while it is loaded:
+-- every cooldown, whoever has recorded one. nil without it, and the view is the
+-- recorded cooldowns alone.
+local function Catalogue()
+    local f = AltStable.CooldownCatalogue
+    return f and f() or nil
+end
+
+function CD.Entry(key)
+    for _, e in ipairs(Catalogue() or {}) do
+        if e.key == key then return e end
+    end
+end
+
+-- Where a character stands on a catalogued cooldown (the plugin's rule), and
+-- its skill. nil: no such profession, or no plugin.
+local function Standing(char, entry)
+    local f = AltStable.CooldownStanding
+    if f and entry then return f(char, entry) end
+end
+
+-- A record with at least one cooldown recorded.
 function CD.HasAny(char)
     if type(char) ~= "table" then return false end
     for k, v in pairs(char) do
@@ -115,15 +134,33 @@ function CD.HasAny(char)
     return false
 end
 
-function CD.Listed(char, shown)
-    return type(char) == "table" and char.name ~= nil and (not shown or shown(char)) and CD.HasAny(char)
+local function Shown(char, shown)
+    return type(char) == "table" and char.name ~= nil and (not shown or shown(char))
 end
 
--- Every cooldown a listed character has, by profession, then label.
+-- Who the view lists: a named record the sheet shows (not hidden), with a
+-- cooldown recorded or, the Recipe Book loaded, a profession that has one.
+-- One rule for the rows and the count.
+function CD.Listed(char, shown)
+    if not Shown(char, shown) then return false end
+    if CD.HasAny(char) then return true end
+    for _, e in ipairs(Catalogue() or {}) do
+        if Standing(char, e) then return true end
+    end
+    return false
+end
+
+-- Every column: the catalogue's cooldowns, and any other a shown character has
+-- recorded (an older version's label, a recipe newer than the data), by
+-- profession, then label.
 function CD.KeysInUse(store, shown)
     local seen, keys = {}, {}
+    for _, e in ipairs(Catalogue() or {}) do
+        seen[e.key] = true
+        keys[#keys + 1] = e.key
+    end
     for _, char in pairs(store or {}) do
-        if CD.Listed(char, shown) then
+        if Shown(char, shown) then
             for k, v in pairs(char) do
                 if not seen[k] and type(k) == "string" and tonumber(v) and CD.Parse(k) then
                     seen[k] = true
@@ -147,7 +184,7 @@ function CD.ReadyCount(store, shown, now)
     now = now or time()
     local n = 0
     for _, char in pairs(store or {}) do
-        if CD.Listed(char, shown) then
+        if Shown(char, shown) then
             for k, v in pairs(char) do
                 local expiry = tonumber(v)
                 if expiry and expiry <= now and type(k) == "string" and CD.Parse(k) then n = n + 1 end
@@ -172,15 +209,80 @@ end
 local READY_MARK = "|TInterface\\RaidFrame\\ReadyCheck-Ready:14:14|t "
 local DASH = "|cff888888\226\128\148|r"
 
--- The cell, and its tooltip's two lines: up, running, or nothing recorded.
+local STATE_TEXT = {
+    known     = "|cffb0b0b0Known|r",
+    learnable = "|cffffd200Learnable|r",
+    usable    = "|cffffd200Usable|r",
+    unscanned = "|cff888888Not scanned|r",
+}
+
+-- The cell. A recorded cooldown first: running, or up (a 0 is one seen ready
+-- and never cast). Otherwise, the Recipe Book loaded, where the character
+-- stands (#545): Known (its cooldown not read yet), Learnable, Usable (an
+-- item's), Needs <skill>, Not scanned. A dash for anyone else.
 function CD.Cell(char, key, now)
+    local left = CD.Remaining(char, key, now)
+    if left then
+        if left <= 0 then return READY_MARK .. "|cff1eff00Available|r" end
+        return CD.Format(left)
+    end
+    local entry = CD.Entry(key)
+    local state = Standing(char, entry)
+    if state == "low" then return "|cff888888Needs " .. tostring(entry.learn or "?") .. "|r" end
+    return STATE_TEXT[state] or DASH
+end
+
+-- The cell's tooltip, built on hover: a title, what the cell means, a note,
+-- and the recipes (known, or what the skill meets and where each is learned).
+function CD.Tip(char, key, now)
     now = now or time()
     local prof, label = CD.Parse(key)
-    local title = (label or key) .. " (" .. (prof or "?") .. ")"
+    prof, label = prof or "?", label or key
+    local name = type(char) == "table" and char.name or "?"
+    local title = label .. " (" .. prof .. ")"
+    local entry = CD.Entry(key)
+    local state, rank = Standing(char, entry)
+    local learn = tostring(entry and entry.learn or "?")
     local left = CD.Remaining(char, key, now)
-    if not left then return DASH, title, "No recorded cooldown" end
-    if left <= 0 then return READY_MARK .. "|cff1eff00Available|r", title, "Ready" end
-    return CD.Format(left), title, "Ready " .. date("%a %H:%M", now + left)
+    local l2, l3
+    if left then
+        l2 = (left <= 0) and "Ready" or ("Ready " .. date("%a %H:%M", now + left))
+        if Catalogue() and not entry then
+            l3 = "Not one of this version's cooldowns: recorded by an older version of AltStable, "
+                .. "or for a recipe newer than its data."
+        end
+    elseif state == "known" then
+        l2 = "Known; its cooldown is not recorded yet"
+        l3 = "Open the " .. prof .. " window on " .. name .. " to read it."
+    elseif state == "learnable" then
+        l2 = "Learnable: needs " .. prof .. " " .. learn .. ", " .. name .. " has " .. tostring(rank)
+    elseif state == "usable" then
+        l2 = "Meets " .. prof .. " " .. learn .. "; needs a " .. label .. " in the bags"
+    elseif state == "low" then
+        l2 = "Needs " .. prof .. " " .. learn .. "; " .. name .. " has " .. tostring(rank)
+    elseif state == "unscanned" then
+        l2 = "Not scanned"
+        l3 = "Open the " .. prof .. " window on " .. name .. " once."
+    else
+        l2 = "No recorded cooldown"
+    end
+    local lines
+    if entry and AltStable.CooldownRecipeLines then
+        for _, l in ipairs(AltStable.CooldownRecipeLines(char, entry)) do
+            lines = lines or {}
+            lines[#lines + 1] = l[1] .. ":  " .. l[2]
+        end
+    end
+    return title, l2, l3, lines
+end
+
+-- What the view says with nobody to list.
+function CD.EmptyText()
+    if Catalogue() then
+        return "No shown character has a profession with a tracked cooldown, or a recorded cooldown."
+    end
+    return "No cooldowns recorded.\n\nEnable the Recipe Book module and open each character's "
+        .. "profession window, or sync from your other account."
 end
 
 -- The login toast, as the note in the view's bar says it: the toast's own

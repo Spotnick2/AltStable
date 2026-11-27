@@ -1795,7 +1795,10 @@ local function MergeIncoming(c, sender)
         advanced = DispatchPluginPayloads(c, true, sender)   -- see DispatchPluginPayloads
     end
     if advanced then AltStable.MarkChanged(c.guid) end
-    return merged
+    -- And whether anything moved: a plugin's newer snapshot alone (a profession
+    -- gained or lost on the other account) changes the sheet's Cooldowns view
+    -- too (#545).
+    return merged, advanced
 end
 
 local function DeserializeFullDB(payload, sender)
@@ -2989,7 +2992,9 @@ local function ReceiveCharacter(c, sender)
 
     -- The same merge as DeserializeFullDB, shared so the two paths cannot
     -- drift - they had: this one never got the first ownership fix.
-    if not MergeIncoming(c, sender) then return end
+    -- The record taken, or only a plugin's snapshot (#545): either redraws.
+    local merged, advanced = MergeIncoming(c, sender)
+    if not (merged or advanced) then return end
 
     if AltStable.RefreshSheet then
         AltStable.RefreshSheet()
