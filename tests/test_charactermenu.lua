@@ -41,6 +41,7 @@ dofile("Reputations.lua")
 dofile("Config.lua")
 dofile("Toasts.lua")
 dofile("Columns.lua")
+dofile("Cooldowns.lua")
 dofile("RowRenderer.lua")
 dofile("CharacterMenu.lua")
 dofile("Appearance.lua")   -- after CharacterMenu (TOC order): the Appearance entry

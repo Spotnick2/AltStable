@@ -367,6 +367,7 @@ end
 
 -- Expose for manual testing / debug
 AltStable.ScanCooldowns = ScanCooldowns
+AltStable.IsToastEnabled = IsToastEnabled   -- the Cooldowns view's note (#543)
 
 ------------------------------------------------------------
 -- Startup

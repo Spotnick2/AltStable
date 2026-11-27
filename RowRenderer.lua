@@ -758,7 +758,7 @@ local function MakeColumnWidgets(row, col, height)
     if col.type=="classIcon" or col.type=="raceIcon" or col.type=="ruleset"
     or col.field=="level" or col.type=="restXP"
     or col.field=="restPercent" or col.type=="profSkill" or col.type=="bags"
-    or col.type=="played" or col.type=="spec" then
+    or col.type=="played" or col.type=="spec" or col.type=="cooldown" then
         local tip = CreateFrame("Button", nil, row)
         tip:SetSize(col.width, height)
         -- The Bags tooltip (#346) is built on hover, not at render: the
@@ -1316,6 +1316,11 @@ function AltStable.RenderRow(row, char, index, columns)
                 tip.line1 = AltStable.RulesetName(char)
                 tip.line2, tip.line3, tip.cdLines = nil, nil, nil
             end
+        elseif col.type=="cooldown"     then
+            -- The Cooldowns view (#543): up, a countdown, or a dash.
+            local l1, l2
+            value, l1, l2 = AltStable.Cooldowns.Cell(char, col.cdKey)
+            if tip then tip.line1, tip.line2, tip.line3, tip.cdLines = l1, l2, nil, nil end
         elseif col.type=="money"        then value = FormatMoney(char[col.field])
         elseif col.type=="bags"         then
             value = AltStable.FormatBagSpace(char)

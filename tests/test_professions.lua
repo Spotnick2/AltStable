@@ -145,9 +145,13 @@ T.RefreshOwnership()
 T.RefreshOwnership()
 check("two empty answers in the same second prune nothing", AltStableProfessionsDB[ME].profs[171] ~= nil)
 WoW.now = WoW.now + 6
+local heldRefresh, sheetRefreshes = AltStable.RefreshSheet, 0
+AltStable.RefreshSheet = function() sheetRefreshes = sheetRefreshes + 1 end
 T.RefreshOwnership()
+AltStable.RefreshSheet = heldRefresh
 check("an empty answer confirmed seconds later prunes", AltStableProfessionsDB[ME].profs[171] == nil)
 eq("  and takes the cooldowns with it", AltStableDB[ME]["cd_Alchemy@Transmute"], nil)
+check("  redrawing the sheet's Cooldowns view (#543)", sheetRefreshes >= 1, tostring(sheetRefreshes))
 check("  leaving an explicit 'has none' snapshot", next(AltStableProfessionsDB[ME].profs) == nil)
 
 -- A PARTIAL answer (one line missing) is held back the same way.
@@ -170,8 +174,12 @@ fresh()
 setAlchemy({ [2329] = { name = "Elixir of Minor Strength", learned = true },
              [2330] = { name = "Minor Healing Potion", learned = true, cooldown = 7200 },
              [2331] = { name = "Elixir of Lesser Agility", learned = false } })
+local heldRefresh2, scanRefreshes = AltStable.RefreshSheet, 0
+AltStable.RefreshSheet = function() scanRefreshes = scanRefreshes + 1 end
 T.OnShow()
 WoW.flushTimers()
+AltStable.RefreshSheet = heldRefresh2
+check("a cooldown found by a scan redraws the sheet's Cooldowns view (#543)", scanRefreshes >= 1)
 e = AltStableProfessionsDB[ME]
 check("an open window is scanned", e and e.profs[171] ~= nil)
 eq("  learned recipes are recorded", e and count(e.profs[171].known), 2)
