@@ -421,6 +421,30 @@ check("builds compare as numbers, not text", gen.client_tables(numeric)[0] == "1
 empty = tempfile.mkdtemp()
 check("no tables at all is an error, not a run without the filter", raises(lambda: gen.client_tables(empty)))
 check("a missing folder is an error too", raises(lambda: gen.client_tables(os.path.join(empty, "nope"))))
+# --client-build (review of #553): the per-build check names its build, and an
+# incomplete set at it is an error, never a quiet run on the previous build's.
+check("a named build is used even when a newer one is complete",
+      gen.client_tables(cdb, "1.60.1.70450")[0] == "1.60.1.70450", repr(gen.client_tables(cdb, "1.60.1.70450")))
+check("  with its own files", all("70450" in p for p in gen.client_tables(cdb, "1.60.1.70450")[1].values()))
+
+
+def error_of(fn):
+    try:
+        fn()
+    except gen.DataError as e:
+        return str(e)
+    return None
+
+
+partial = error_of(lambda: gen.client_tables(cdb, "1.60.1.70999"))
+check("a named build missing a table is an error", partial is not None)
+check("  that names the missing table", partial is not None and "tradeskillcategory-1.60.1.70999" in partial
+      and "spellreagents" not in partial, repr(partial))
+check("a named build with no tables at all is an error", error_of(lambda: gen.client_tables(cdb, "1.60.1.71139")) is not None)
+check("load_client passes the named build on",
+      gen.load_client(cdb, lambda m: None, "1.60.1.70450")["build"] == "1.60.1.70450")
+check("and so does the command line, before any fetch",
+      raises(lambda: gen.main(["--check", "--client-db", cdb, "--client-build", "1.60.1.70999", "--reference", ""])))
 
 def season_of(directory):
     return gen.load_client(directory, lambda m: None)["season"]

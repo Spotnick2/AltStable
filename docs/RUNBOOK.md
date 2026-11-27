@@ -313,14 +313,19 @@ The build number is in the launcher under the Play button. Two cases, by the sha
 - **Except the recipe data, at every build.** `Plugins/Professions/RecipeData.lua` is generated
   from five client tables (DB2, from wago.tools), and the API diff holds none of their rows: on
   70938 the diff found nothing we use while SpellReagents gave five Tailoring recipes one more
-  cloth. So at a new build, same Interface or not:
+  cloth. So at a new build, same Interface or not, with `<build>` the full version
+  (`1.60.1.71139`; `wago.py builds` lists them):
   ```
-  python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory SpellReagents SpellCooldowns SpellCategories
-  python -I Tools\RecipeData\gen-recipes.py --check
+  python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory SpellReagents SpellCooldowns SpellCategories --build <build>
+  python -I Tools\RecipeData\gen-recipes.py --check --client-build <build>
   ```
-  The first saves the tables at the newest build (`wago.py builds` lists them). The second is
-  offline (cached Wowhead pages) and writes nothing: exit 0 means no recipe changed and there is
-  nothing to do; exit 1 lists the recipes added, removed or changed, and then a PR regenerates
+  The first saves the five tables at that build. Its exit code doesn't say whether it got them
+  (a table wago.tools hasn't published yet is `missing` or `error` in its JSON, still with exit 0), so the build
+  is named again in the second: `--client-build` uses that build's tables, and stops with an
+  error naming any it lacks, instead of falling back to the previous build's. If it stops,
+  wait and run both again. The check is offline (cached Wowhead pages) and writes nothing, and it logs the build
+  it read (`client tables <build>: ...`). Exit 0 means no recipe changed and there
+  is nothing to do. Exit 1 lists the recipes added, removed or changed, and then a PR regenerates
   the file (the same command without `--check`) and records it in `docs/forever-api-notes.md`.
   The shared new-build routine runs this step for the repos that generate data from client tables
   (wow-dev-tools#100); until it does, run it here when a build comes out.

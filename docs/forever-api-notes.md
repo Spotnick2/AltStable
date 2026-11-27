@@ -1075,8 +1075,9 @@ check above compared the wrong pair). Against 70532, two things the generator re
 
 `RecipeData.lua` is regenerated at 70938 from those and the cached Wowhead pages (nothing
 fetched). From here, the tables are got again at every build and checked with
-`gen-recipes.py --check` (`docs/RUNBOOK.md`, "When the client updates"): the API diff can't see
-them, as this build showed (#541, wow-dev-tools#100).
+`gen-recipes.py --check --client-build <build>` (`docs/RUNBOOK.md`, "When the client updates"):
+the API diff can't see them, as this build showed (#541, wow-dev-tools#100). First run at
+1.60.1.71139 (2026-11-27): 2211 recipes, 0 added, 0 removed, 0 changed.
 
 ## Build 1.60.1.70959 (2026-11-17) — C_Mail.IsCODEnabled, none we use
 

@@ -26,9 +26,12 @@ build twice a week or more (22 from 69977 to 71139, all Interface 16001).
   verifying that name needs the build's kit data.
 - **Every build, either case: the recipe tables.** The API diff holds no DB2 rows, and
   `RecipeData.lua` is generated from five of them (70938 changed five recipes' reagents with an
-  empty diff). Get the tables at the new build and run `gen-recipes.py --check`: the commands are
-  in the RUNBOOK's "When the client updates". Exit 0 is done; exit 1 lists the changed recipes and
-  calls for a regenerate PR. Until the shared routine does it (wow-dev-tools#100), it's this
+  empty diff). Get the tables at the new build (`wago.py get ... --build <build>`) and run
+  `gen-recipes.py --check --client-build <build>`: the commands are in the RUNBOOK's "When the
+  client updates". Always name the build in both: without `--client-build` the check falls back
+  to the newest complete set, which is the previous build's while wago.tools still lacks a table,
+  and passes on old inputs. Exit 0 is done; exit 1 lists the changed recipes and calls for a
+  regenerate PR; an error naming missing tables means try again later. Until the shared routine does it (wow-dev-tools#100), it's this
   repo's to run.
 - **Interface bump** (a new `## Interface:` for the TOCs): the full routine below, even when the
   diff is empty.
