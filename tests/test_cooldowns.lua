@@ -18,6 +18,10 @@ local function eq(name, got, want)
     check(name, got == want, "got " .. tostring(got) .. ", want " .. tostring(want))
 end
 
+local function plain(s)
+    return ((s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", ""))
+end
+
 AltStable, AltStableDB, AltStableConfig = {}, {}, {}
 dofile("Compat.lua")
 assert(loadfile("Core.lua"))()
@@ -65,6 +69,9 @@ do
     eq("  type", col.type, "cooldown")
     eq("  the item's icon", col.cdIcon, 133849)
     eq("  made once", CD.Column("cd_Leatherworking@Salt Shaker"), col)
+    eq("  a short name: 140 wide", col.width, 140)
+    check("  a long one wide enough for its name", CD.Column("cd_Alchemy@Mithril to Truesilver").width >= 40 + 7 * 21)
+    eq("  never wider than 220", CD.Column("cd_Alchemy@" .. string.rep("X", 60)).width, 220)
     eq("  found by its field", CD.ColumnForField(col.field), col)
     eq("  the soonest first on a first click", col.sortFirstAsc, true)
     eq("an unknown cooldown has its profession's icon", CD.Column("cd_Tailoring@Spellcloth").cdIcon,
@@ -119,19 +126,28 @@ end
 
 -- The cell: up, running, nothing recorded.
 do
-    local char = { ["cd_Alchemy@Transmute"] = NOW + 3600, ["cd_Tailoring@Mooncloth"] = NOW - 1 }
-    local text, l1, l2 = CD.Cell(char, "cd_Tailoring@Mooncloth", NOW)
+    local char = { name = "Ann", ["cd_Alchemy@Transmute"] = NOW + 3600, ["cd_Tailoring@Mooncloth"] = NOW - 1,
+                   ["cd_Alchemy@Transmutes"] = 0 }
+    local text = CD.Cell(char, "cd_Tailoring@Mooncloth", NOW)
+    local l1, l2, l3 = CD.Tip(char, "cd_Tailoring@Mooncloth", NOW)
     check("ready: Available", text:find("Available", 1, true) ~= nil, text)
     check("  with the check mark", text:find("ReadyCheck-Ready", 1, true) ~= nil, text)
     eq("  tooltip title", l1, "Mooncloth (Tailoring)")
     eq("  and Ready", l2, "Ready")
-    text, l1, l2 = CD.Cell(char, "cd_Alchemy@Transmute", NOW)
+    eq("  no note without the Recipe Book", l3, nil)
+    check("0, seen ready and never cast (#545): Available", CD.Cell(char, "cd_Alchemy@Transmutes", NOW):find("Available", 1, true) ~= nil)
+    eq("  at no time left", CD.Remaining(char, "cd_Alchemy@Transmutes", NOW), 0)
+    text = CD.Cell(char, "cd_Alchemy@Transmute", NOW)
+    l1, l2 = CD.Tip(char, "cd_Alchemy@Transmute", NOW)
     eq("running: the countdown", text, "1h 0m")
     eq("  when it comes up", l2, "Ready " .. date("%a %H:%M", NOW + 3600))
-    text, l1, l2 = CD.Cell(char, "cd_Leatherworking@Salt Shaker", NOW)
+    text = CD.Cell(char, "cd_Leatherworking@Salt Shaker", NOW)
+    l1, l2 = CD.Tip(char, "cd_Leatherworking@Salt Shaker", NOW)
     check("none: a dash", text:find("\226\128\148", 1, true) ~= nil, text)
     eq("  said so", l2, "No recorded cooldown")
     eq("  titled all the same", l1, "Salt Shaker (Leatherworking)")
+    check("the empty text without the Recipe Book says to enable it",
+          CD.EmptyText():find("Enable the Recipe Book", 1, true) ~= nil, CD.EmptyText())
 end
 
 -- The note: the toast's own rule.
@@ -156,6 +172,87 @@ do
     text = CD.ToastNote({})
     check("nothing shown: on", text:find("on", 1, true) ~= nil and not text:find("off", 1, true), text)
     eq("the rule is Toasts.lua's", AltStable.IsToastEnabled ~= nil, true)
+end
+
+-- With the Recipe Book (#545): its catalogue and standings, as the plugin
+-- hands them (stubbed here; the plugin's own rules are in test_professions).
+do
+    local TRANS = { key = "cd_Alchemy@Transmutes", prof = "Alchemy", line = 171, label = "Transmutes",
+                    learn = 275, spells = { 17187 } }
+    local SHAKER = { key = "cd_Leatherworking@Salt Shaker", prof = "Leatherworking", line = 165,
+                     label = "Salt Shaker", learn = 250, spells = {}, item = 15846 }
+    local MOON = { key = "cd_Tailoring@Mooncloth", prof = "Tailoring", line = 197, label = "Mooncloth",
+                   learn = 250, spells = { 18560 } }
+    local standing = {}   -- [name] = { [key] = { state, rank } }
+    AltStable.CooldownCatalogue = function() return { TRANS, SHAKER, MOON } end
+    AltStable.CooldownStanding = function(char, entry)
+        local s = standing[char.name] and standing[char.name][entry.key]
+        if s then return s[1], s[2] end
+    end
+    AltStable.CooldownRecipeLines = function(char, entry)
+        if entry == TRANS then return { { "Transmute: Arcanite", "|cff1eff00Known|r" } } end
+        return {}
+    end
+    standing.Kim = { ["cd_Alchemy@Transmutes"] = { "known", 290 } }
+    standing.Lee = { ["cd_Alchemy@Transmutes"] = { "learnable", 280 }, ["cd_Leatherworking@Salt Shaker"] = { "usable", 260 } }
+    standing.Low = { ["cd_Alchemy@Transmutes"] = { "low", 210 } }
+    standing.New = { ["cd_Tailoring@Mooncloth"] = { "unscanned", 255 } }
+    local store = {
+        kim = { name = "Kim" }, lee = { name = "Lee" }, low = { name = "Low" }, new = { name = "New" },
+        none = { name = "None" },                                          -- no such profession
+        old = { name = "Old", ["cd_Alchemy@Transmute"] = NOW + 600 },      -- an older version's field
+    }
+    TRANS.iconItem = 99001   -- an item the fallback table does not name
+    WoW.items[99001] = { icon = 133220 }
+    eq("a column's icon: the catalogue's item (what its lowest recipe makes)", CD.Column(TRANS.key).cdIcon, 133220)
+    eq("columns: the catalogue's, and an older label someone recorded",
+       table.concat(CD.KeysInUse(store), ","),
+       "cd_Alchemy@Transmute,cd_Alchemy@Transmutes,cd_Leatherworking@Salt Shaker,cd_Tailoring@Mooncloth")
+    eq("  the catalogue alone with nothing recorded", #CD.KeysInUse({}), 3)
+    check("listed: an owner with nothing recorded", CD.Listed(store.kim) and CD.Listed(store.new))
+    check("  not someone without the profession", not CD.Listed(store.none))
+    check("  a recorded cooldown still lists", CD.Listed(store.old))
+    eq("known, nothing recorded: Known (not Available)", plain(CD.Cell(store.kim, TRANS.key, NOW)), "Known")
+    eq("learnable", plain(CD.Cell(store.lee, TRANS.key, NOW)), "Learnable")
+    eq("an item the skill allows: Usable", plain(CD.Cell(store.lee, SHAKER.key, NOW)), "Usable")
+    eq("skill too low: Needs and the lowest skill", plain(CD.Cell(store.low, TRANS.key, NOW)), "Needs 275")
+    eq("not scanned", plain(CD.Cell(store.new, MOON.key, NOW)), "Not scanned")
+    eq("no profession: the dash", CD.Cell(store.none, TRANS.key, NOW), "|cff888888\226\128\148|r")
+    local recorded = { name = "Kim", ["cd_Alchemy@Transmutes"] = NOW + 60 }
+    eq("a recorded cooldown wins over the standing", CD.Cell(recorded, TRANS.key, NOW), "1m 0s")
+    eq("the count: only recorded cooldowns that are up (Known is not)", CD.ReadyCount(store, nil, NOW), 0)
+    -- An item's cooldown recorded for someone who can't use it yet (Codex
+    -- review of #546): not believed in the cell, the sort or the count.
+    standing.Raw = { ["cd_Leatherworking@Salt Shaker"] = { "low", 200 } }
+    local raw = { name = "Raw", ["cd_Leatherworking@Salt Shaker"] = NOW - 5 }
+    eq("a Shaker recorded under Leatherworking 250: Needs 250, not Available",
+       plain(CD.Cell(raw, SHAKER.key, NOW)), "Needs 250")
+    eq("  no time left to sort by", CD.Remaining(raw, SHAKER.key, NOW), nil)
+    eq("  not counted", CD.ReadyCount({ raw = raw }, nil, NOW), 0)
+    standing.Raw[SHAKER.key] = { "usable", 260 }
+    eq("  at the skill, the record is believed", CD.ReadyCount({ raw = raw }, nil, NOW), 1)
+    -- A RECIPE's recorded cooldown is believed whatever the snapshot says: a
+    -- snapshot older than the record (learned since) must not hide a real timer.
+    local lowRec = { name = "Low", ["cd_Alchemy@Transmutes"] = NOW + 60 }
+    eq("a recipe's recorded cooldown under a 'low' snapshot still counts down",
+       CD.Cell(lowRec, TRANS.key, NOW), "1m 0s")
+    local _, l2, l3, lines = CD.Tip(store.kim, TRANS.key, NOW)
+    eq("tooltip, known: not recorded yet", l2, "Known; its cooldown is not recorded yet")
+    eq("  how to read it", l3, "Open the Alchemy window on Kim to read it.")
+    eq("  and the recipes", lines and lines[1], "Transmute: Arcanite:  |cff1eff00Known|r")
+    _, l2 = CD.Tip(store.lee, TRANS.key, NOW)
+    eq("tooltip, learnable: the skill needed and had", l2, "Learnable: needs Alchemy 275, Lee has 280")
+    _, l2 = CD.Tip(store.low, TRANS.key, NOW)
+    eq("tooltip, too low", l2, "Needs Alchemy 275; Low has 210")
+    _, l2 = CD.Tip(store.lee, SHAKER.key, NOW)
+    eq("tooltip, usable", l2, "Meets Leatherworking 250; needs a Salt Shaker in the bags")
+    _, l2, l3 = CD.Tip(store.new, MOON.key, NOW)
+    eq("tooltip, not scanned", l2, "Not scanned")
+    eq("  what to do", l3, "Open the Tailoring window on New once.")
+    _, l2, l3 = CD.Tip(store.old, "cd_Alchemy@Transmute", NOW)
+    check("an older version's field says so", (l3 or ""):find("older version", 1, true) ~= nil, l3)
+    check("the empty text with the Recipe Book", CD.EmptyText():find("tracked cooldown", 1, true) ~= nil)
+    AltStable.CooldownCatalogue, AltStable.CooldownStanding, AltStable.CooldownRecipeLines = nil, nil, nil
 end
 
 WoW.finish("test_cooldowns", passed, failed)

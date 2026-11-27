@@ -5835,6 +5835,8 @@ do
     eq("  her Mooncloth counts down", Cell(1, 3), "10s")
     eq("  Bob's Shaker", Cell(2, 2), "1h 0m")
     local _, hdrs, _, rows = T.ColumnLayout()
+    -- Built on hover (#545): the tip's refresh, as OnEnter runs it.
+    rows[2].cellTips[2].refresh(rows[2].cellTips[2]); rows[1].cellTips[2].refresh(rows[1].cellTips[2])
     eq("  a cell's tooltip says when", rows[2].cellTips[2].line2, "Ready " .. date("%a %H:%M", NOW + 3600))
     eq("  and what", rows[2].cellTips[2].line1, "Salt Shaker (Leatherworking)")
     eq("  a dash says there is none", rows[1].cellTips[2].line2, "No recorded cooldown")
@@ -5978,9 +5980,8 @@ do
     check("the empty note is hidden while there are cooldowns", not empty:IsShown())
     build({ cy = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 } })
     eq("no cooldown anywhere: no columns", Labels(), "")
-    check("  the empty note says how they appear", empty:IsShown()
-          and (empty:GetText() or ""):find("seen running", 1, true) == nil
-          and (empty:GetText() or ""):find("sees it running", 1, true) ~= nil)
+    check("  the empty note says how they appear (no Recipe Book here: enable it, or sync)", empty:IsShown()
+          and (empty:GetText() or ""):find("Enable the Recipe Book", 1, true) ~= nil, empty:GetText())
     -- With no column at all, a long note: the window still holds the strip.
     note.text._GetStringWidth = 600
     VS.Update()
@@ -6007,6 +6008,26 @@ do
     T.ResizeFrameToContent()
     Click(levelsTab)
     check("  gone on Skill Levels", not empty:IsShown())
+
+    -- With the Recipe Book (#545, stubbed: its rules are tested in
+    -- test_professions): an owner with nothing recorded is a row, its cell
+    -- where it stands, and the catalogue's cooldowns are columns.
+    do
+        local MOON = { key = "cd_Tailoring@Mooncloth", prof = "Tailoring", line = 197, label = "Mooncloth",
+                       learn = 250, spells = { 18560 } }
+        AltStable.CooldownCatalogue = function() return { MOON } end
+        AltStable.CooldownStanding = function(char, entry)
+            if char.name == "Tai" and entry == MOON then return "learnable", 260 end
+        end
+        build({ tai = { guid = "tai", name = "Tai", class = "MAGE", level = 60, lastUpdate = 1 },
+                cy = { guid = "cy", name = "Cy", class = "WARRIOR", level = 40, lastUpdate = 1 } })
+        Click(cdTab)
+        eq("the Recipe Book's cooldowns are columns, none recorded", Labels(), "Mooncloth")
+        eq("  an owner with nothing recorded is a row; no owner, none", Names(), "Tai")
+        eq("  its cell says where it stands", Cell(1, 1), "Learnable")
+        check("  no empty note", not empty:IsShown())
+        AltStable.CooldownCatalogue, AltStable.CooldownStanding = nil, nil
+    end
 
     Open("summary")
     AltStableConfig.sheetGroupByRealm, AltStableConfig.hiddenCharacters = heldGroup, heldHidden

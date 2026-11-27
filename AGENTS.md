@@ -66,6 +66,10 @@ of fields, never live tables. Changing what a field means, or removing one, bump
 `cd_<Profession>@<label>` fields found, a column per cooldown (its field an id the settings
 sync accepts), the countdown text, the ready count and the login-toast note. The view itself
 (a child section of Skills, the view strip and its one-second clock) is in `SheetUI.lua`.
+With the Recipe Book loaded (#545) its columns are every cooldown, from the plugin's
+`AltStable.CooldownCatalogue` (RecipeData's `cd` labels, which `Tools/RecipeData/gen-recipes.py`
+writes from the client's SpellCooldowns/SpellCategories), and a character without a recorded
+one shows where it stands (`AltStable.CooldownStanding`: Known, Learnable, Needs N, ...).
 
 `Broker.lua` is the LibDataBroker-1.1 data source for Titan Panel and other displays (#466):
 gold text from `CharacterTotals`, the gold tooltip's lines, the minimap button's clicks.

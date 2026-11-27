@@ -58,7 +58,10 @@ the client does: it files each under a TradeSkillCategory named "SEASON OF
 DISCOVERY". So the run also reads client tables from wago.tools, fetched with the
 shared tool (the `wago-tools` skill), never by hand:
 
-    python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory SpellReagents
+    python C:\Projects\WoW\References\Tools\Wago\wago.py get SkillLineAbility TradeSkillCategory SpellReagents SpellCooldowns SpellCategories
+
+(SpellCooldowns and SpellCategories since #545: which recipes have a cooldown, and
+which share one - see CATEGORY_LABELS.)
 
 It saves them as forever-<table lowercase>-<build>.csv in
 C:\Projects\WoW\References\Forever\db (--client-db DIR); the newest build that has
@@ -461,7 +464,8 @@ def check_page(records, skill_line, path):
 # The client's own tables: Season of Discovery leftovers (#267), reagents (#268)
 # ---------------------------------------------------------------------------
 
-CLIENT_TABLES = ("skilllineability", "tradeskillcategory", "spellreagents")
+CLIENT_TABLES = ("skilllineability", "tradeskillcategory", "spellreagents",
+                 "spellcooldowns", "spellcategories")
 _DB_FILE = re.compile(r"^forever-(%s)-(\d+(?:\.\d+)+)\.csv$" % "|".join(CLIENT_TABLES))
 
 
@@ -544,17 +548,94 @@ def spell_reagents(rows):
     return out
 
 
+def spell_cooldowns(cd_rows, cat_rows):
+    """{spell: (category, category recovery ms, own recovery ms)} from SpellCooldowns
+    and SpellCategories, their default-difficulty rows. A table with no cooldown at
+    all is an error: every cooldown column would go, quietly."""
+    out = {}
+    for r in cd_rows:
+        if int(r.get("DifficultyID") or 0) == 0:
+            v = out.setdefault(int(r["SpellID"]), [0, 0, 0])
+            v[1], v[2] = int(r["CategoryRecoveryTime"] or 0), int(r["RecoveryTime"] or 0)
+    for r in cat_rows:
+        if int(r.get("DifficultyID") or 0) == 0:
+            out.setdefault(int(r["SpellID"]), [0, 0, 0])[0] = int(r["Category"] or 0)
+    if not any(v[1] or v[2] for v in out.values()):
+        raise DataError("SpellCooldowns has no cooldowns")
+    return {s: tuple(v) for s, v in out.items()}
+
+
 def load_client(directory, log):
-    """The client tables' answers: {"build", "season" (spell IDs), "reagents"}."""
+    """The client tables' answers: {"build", "season" (spell IDs), "reagents", "cooldowns"}."""
     build, paths = client_tables(directory)
     season = season_spells(_read_csv(paths["skilllineability"], ["Spell", "TradeSkillCategoryID"]),
                            _read_csv(paths["tradeskillcategory"], ["ID", "Name_lang", "ParentTradeSkillCategoryID"]))
     reagents = spell_reagents(_read_csv(paths["spellreagents"],
                                         ["SpellID"] + ["Reagent_%d" % i for i in range(8)]
                                         + ["ReagentCount_%d" % i for i in range(8)]))
-    log("client tables %s: %d Season of Discovery spells, reagents for %d spells"
-        % (build, len(season), len(reagents)))
-    return {"build": build, "season": season, "reagents": reagents}
+    cooldowns = spell_cooldowns(
+        _read_csv(paths["spellcooldowns"], ["SpellID", "CategoryRecoveryTime", "RecoveryTime"]),
+        _read_csv(paths["spellcategories"], ["SpellID", "Category"]))
+    log("client tables %s: %d Season of Discovery spells, reagents for %d spells, %d spells with cooldown rows"
+        % (build, len(season), len(reagents), len(cooldowns)))
+    return {"build": build, "season": season, "reagents": reagents, "cooldowns": cooldowns}
+
+
+# ---------------------------------------------------------------------------
+# Cooldowns (#545): which recipes have one, and the label they are filed under
+# ---------------------------------------------------------------------------
+
+# Tracked from ten minutes up: every profession cooldown Forever has (measured on
+# 1.60.1.71139: the shared transmute, Iron to Gold and Mithril to Truesilver at
+# one hour, Mooncloth). Below that a "cooldown" is a cast-time detail.
+COOLDOWN_MIN_MS = 600000
+
+# A shared cooldown category is one cooldown, whichever recipe started it: its
+# label here. A recipe in a long category this table doesn't name is an error -
+# a new shared cooldown needs a name chosen, not one made up from a recipe.
+#
+# 310 is "Transmutes", not "Transmute": older versions filed EVERY transmute's
+# timer as "Transmute", Iron to Gold's own hour included, so that field can't be
+# told apart (Codex review of the #545 plan). A new key leaves the old one to be
+# cleared by the character's next scan. Not "Transmutation": that is the French
+# client's old localized label.
+CATEGORY_LABELS = {
+    310: "Transmutes",  # "Transmute - Alchemy": the elemental transmutes, Arcanite, Legionite, Elemental Fire
+}
+
+
+def cooldown_label(name):
+    """A recipe's own cooldown label: its English name after "Transmute: " and the
+    like ("Transmute: Iron to Gold" -> "Iron to Gold"). No ":" (the sync splits a
+    field at the first one), "@" (it ends the profession) or "|" may stay."""
+    label = (name.split(": ", 1)[1] if ": " in name else name).strip()
+    if not label or any(c in label for c in ":@|"):
+        raise DataError("no usable cooldown label in %r" % name)
+    return label
+
+
+def apply_cooldowns(recipes, names, cooldowns):
+    """Marks every recipe with a cooldown of at least COOLDOWN_MIN_MS with cd = its
+    label, in place. Returns {label: [spell IDs]}. Two recipes with their own
+    cooldowns may not share a label, nor take a category's: one field would hold two
+    timers."""
+    groups, kinds = {}, {}
+    for sid in sorted(recipes):
+        cat, cat_ms, own_ms = cooldowns.get(sid, (0, 0, 0))
+        if cat and cat_ms >= COOLDOWN_MIN_MS:
+            if cat not in CATEGORY_LABELS:
+                raise DataError("recipe %d shares cooldown category %d, which CATEGORY_LABELS does not name"
+                                % (sid, cat))
+            label, kind = CATEGORY_LABELS[cat], "category %d" % cat
+        elif own_ms >= COOLDOWN_MIN_MS:
+            label, kind = cooldown_label(names.get(sid) or ""), "spell %d" % sid
+        else:
+            continue
+        if kinds.setdefault(label, kind) != kind:
+            raise DataError("cooldown label %r is both %s and %s" % (label, kinds[label], kind))
+        recipes[sid]["cd"] = label
+        groups.setdefault(label, []).append(sid)
+    return groups
 
 
 def apply_reagents(recipes, client):
@@ -620,7 +701,9 @@ def render_lua(recipes, source):
         "--                      src = Wowhead source codes or nil (unknown),",
         "--                      items = recipe items that teach it, or nil (matched by name),",
         "--                      favor = its price in Merchant's Favor (currency 3402), or nil,",
-        "--                      reagents = {item, count, item, count, ...} for one craft, or nil }",
+        "--                      reagents = {item, count, item, count, ...} for one craft, or nil,",
+        "--                      cd = the cooldown it is filed under (cd_<Profession>@<cd>), or nil }",
+        "-- A shared cooldown (every transmute) has one label; a recipe with its own has its own.",
         "-- Source codes: 1 crafted 2 drop 3 pvp 4 quest 5 vendor 6 trainer 7 discovery",
         "--               16 fished 21 pickpocketed; anything else is shown as \"other\".",
         "-- Season of Discovery recipes are left out: the client files them under their own",
@@ -648,6 +731,8 @@ def render_lua(recipes, source):
             # Flat (item, count, item, count...): a table per pair cost the client
             # 670 KB more than the file without reagents, flat 330 KB.
             fields.append("reagents=%s" % _lua_list(v for p in r["reagents"] for v in p))
+        if r.get("cd"):
+            fields.append("cd=%s" % json.dumps(r["cd"]))
         lines.append("[%d]={%s}," % (spell_id, ",".join(fields)))
     lines += ["},", "}", ""]
     return "\n".join(lines)
@@ -862,6 +947,9 @@ def main(argv=None):
     if disagree:
         log("  Wowhead disagreed on %d (the client's kept): %s%s"
             % (len(disagree), ", ".join(map(str, disagree[:40])), " ..." if len(disagree) > 40 else ""))
+    groups = apply_cooldowns(recipes, {sid: m.get("name") or "" for sid, m in meta.items()}, client["cooldowns"])
+    for label in sorted(groups):
+        log("cooldown %-22s %s" % (label, ", ".join(map(str, groups[label]))))
     old_text = ""
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as f:
