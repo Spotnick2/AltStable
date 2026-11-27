@@ -2458,6 +2458,16 @@ local function ComputeContentSize()
         local stripMin = SIDEBAR_WIDTH + viewStrip.MinWidth()
         if w < stripMin then w = stripMin end
     end
+    -- Nor than the footer: its left and right texts, and the middle one
+    -- centred between them. A tab with almost no column (Cooldowns with none,
+    -- or columns hidden, the sidebar compact) ran them into each other.
+    if totalsBar then
+        local function W(fs) return fs and (tonumber(fs:GetStringWidth()) or 0) or 0 end
+        local hb = totalsBar.hiddenBtn
+        local right = W(totalsBar.right) + ((hb and hb:IsShown()) and ((tonumber(hb:GetWidth()) or 0) + 4) or 0)
+        local footMin = SIDEBAR_WIDTH + 2 * (10 + math.max(W(totalsBar.left), right) + 16) + W(totalsBar.mid)
+        if w < footMin then w = footMin end
+    end
 
     -- Whether h-scroll is needed is decided by content width vs the
     -- viewport width AT THIS frame width — which we just computed.
@@ -6450,9 +6460,11 @@ local function CreateFrameIfNeeded()
         end)
 
         -- With no cooldown recorded anywhere: how they get here.
+        -- Across the whole grid, Name column included, wrapping inside it: a
+        -- view with no column is as narrow as the strip allows.
         local empty = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        empty:SetPoint("TOP", bodyScroll, "TOP", 0, -40)
-        empty:SetWidth(420)
+        empty:SetPoint("TOPLEFT", frozenScroll, "TOPLEFT", 16, -40)
+        empty:SetPoint("TOPRIGHT", bodyScroll, "TOPRIGHT", -16, -40)
         empty:SetJustifyH("CENTER"); empty:SetWordWrap(true)
         empty:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         empty:SetText("No cooldowns recorded yet.\n\nA recipe's cooldown appears once a scan of the "
@@ -6471,16 +6483,27 @@ local function CreateFrameIfNeeded()
             return out
         end
 
+        -- The Cooldowns tab is always as wide as its widest usual text, so a
+        -- count appearing on a tick never pushes it into the note: the strip's
+        -- width, and so the window's, doesn't change between layouts.
+        local function CdText(n)
+            return "Cooldowns" .. (n > 0 and ("  |cff1eff00\194\183 " .. n .. " available|r") or "")
+        end
+
         -- Repaint: the count, the tabs' states and widths, the note.
         function viewStrip.Update()
             viewStrip.ready = CD.ReadyCount(GetCharacterStore(), ShouldShowInGrid)
             local n = viewStrip.ready
             levelsTab.text:SetText(SectionById("skills").viewLabel)
-            cdTab.text:SetText("Cooldowns" .. (n > 0 and ("  |cff1eff00\194\183 " .. n .. " available|r") or ""))
+            cdTab.text:SetText(CdText(99))
+            local reserve = tonumber(cdTab.text:GetStringWidth()) or 0
+            cdTab.text:SetText(CdText(n))
             local ar, ag, ab = AltStable.GetAccentRGB()
             for _, b in ipairs(tabs) do
                 local chosen = activeSection and activeSection.id == b.id
-                b:SetWidth((tonumber(b.text:GetStringWidth()) or 0) + 32)
+                local w = tonumber(b.text:GetStringWidth()) or 0
+                if b == cdTab and reserve > w then w = reserve end
+                b:SetWidth(w + 32)
                 if chosen then b.fill:SetColorTexture(ar, ag, ab, 0.16)
                 elseif b.hover then b.fill:SetColorTexture(1, 1, 1, 0.08)
                 else b.fill:SetColorTexture(1, 1, 1, 0.03) end
@@ -6501,11 +6524,18 @@ local function CreateFrameIfNeeded()
         end
 
         -- Shown for Skills and its views, hidden for every other tab.
+        -- The count the rows were last sorted at: the clock's own, since a
+        -- hover repaints the badge (and viewStrip.ready) between ticks and
+        -- must not make the next tick skip the re-sort (Codex review of #544).
+        local sortedReady
+
         function viewStrip.Set(section)
             local on = section ~= nil and (section.id == "skills" or section.parent == "skills")
             viewStrip.on = on
             strip:SetShown(on)
             if on then viewStrip.Update() end
+            -- The switch builds the list right after this, at this count.
+            sortedReady = viewStrip.ready
             if not (section and section.cdFields) then empty:Hide() end
         end
 
@@ -6516,10 +6546,12 @@ local function CreateFrameIfNeeded()
         -- both scrollbars back to the start.
         local elapsed = 0
         function viewStrip.Tick()
-            local before = viewStrip.ready
             viewStrip.Update()
             if not (activeSection and activeSection.cdFields) then return end
-            if viewStrip.ready ~= before then BuildDisplayList() end
+            if viewStrip.ready ~= sortedReady then
+                BuildDisplayList()
+                sortedReady = viewStrip.ready
+            end
             UpdateRows()
         end
         strip:SetScript("OnUpdate", function(_, dt)

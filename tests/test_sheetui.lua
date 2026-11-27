@@ -5870,12 +5870,29 @@ do
     eq("a tick repaints the countdown", Cell(1, 3), "5s")
     eq("  same order while nothing came up", Names(), "Ann,Bob")
     WoW.now = NOW + 25
+    -- A hover between the expiry and the tick repaints the badge first; the
+    -- tick must still re-sort (Codex review of #544).
+    cdTab:GetScript("OnEnter")(cdTab); cdTab:GetScript("OnLeave")(cdTab)
+    eq("a hover repaints the badge", plain(cdTab.text:GetText()), "Cooldowns  \194\183 3 available")
+    eq("  without re-sorting", Names(), "Ann,Bob")
     VS.Tick()
     eq("both Mooncloths up: the count follows", plain(cdTab.text:GetText()), "Cooldowns  \194\183 3 available")
-    eq("  re-sorted: tied at ready, the higher item level first", Names(), "Bob,Ann")
+    eq("  re-sorted at the tick, after the hover: the higher item level first", Names(), "Bob,Ann")
     check("  Bob's Mooncloth shows Available", Cell(1, 3):find("Available", 1, true) ~= nil, Cell(1, 3))
     eq("  neither scrollbar was moved", moved, 0)
     body.SetVerticalScroll, body.SetHorizontalScroll = rv, rh
+    -- The badge appearing never widens the strip: text measured by its
+    -- length here, the tab keeps room for "· 99 available" (Codex review of #544).
+    local realSW = cdTab.text.GetStringWidth
+    cdTab.text.GetStringWidth = function(self) return #plain(self._text or "") * 6 end
+    WoW.now = NOW - 100                        -- nothing up
+    VS.Update()
+    local noBadge = VS.MinWidth()
+    eq("  no badge with nothing up", plain(cdTab.text:GetText()), "Cooldowns")
+    WoW.now = NOW + 25                         -- three up
+    VS.Update()
+    eq("the strip is as wide with a badge as without", VS.MinWidth(), noBadge)
+    cdTab.text.GetStringWidth = realSW
     WoW.now = NOW
 
     -- Hiding a cooldown's column keeps its characters (the Columns menu
@@ -5931,6 +5948,21 @@ do
           T.frame:GetWidth() .. " < " .. need)
     note.text._GetStringWidth = nil
     VS.Update()
+    -- The empty note spans the whole grid and wraps in it, not a fixed width
+    -- centred on the body that ran past a narrow window's edge.
+    local p1, r1 = empty:GetPoint(1)
+    local p2, r2 = empty:GetPoint(2)
+    check("  the empty note runs from the Name column", p1 == "TOPLEFT" and r1 == T.frame.frozenScroll)
+    check("  to the grid's right edge", p2 == "TOPRIGHT" and r2 == T.frame.bodyScroll)
+    -- The footer: its three texts never overlap, however few columns.
+    local bar = T.frame.totalsBar
+    bar.left._GetStringWidth = 500
+    T.ResizeFrameToContent()
+    local footNeed = AltStable.LAYOUT.SIDEBAR_WIDTH + 2 * (10 + 500 + 16) + bar.mid:GetStringWidth()
+    check("the window is at least as wide as the footer needs", T.frame:GetWidth() >= footNeed,
+          T.frame:GetWidth() .. " < " .. footNeed)
+    bar.left._GetStringWidth = nil
+    T.ResizeFrameToContent()
     Click(levelsTab)
     check("  gone on Skill Levels", not empty:IsShown())
 
