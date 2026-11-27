@@ -5,6 +5,7 @@
 ## Author: Spotnick
 ## Version: dev
 ## Dependencies: AltStable, ForeverProbe
+## X-FP-Globals: AltStableDB, UISpecialFrames
 ## SavedVariables: AltStableProbeDB
 ## SavedVariablesPerCharacter: AltStableProbeCharDB
 ## SavedVariablesMachine: AltStableProbeMachineDB

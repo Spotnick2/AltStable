@@ -6,9 +6,13 @@
     Tools/, which .pkgmeta ignores.
 
     AltStableProbe is a ForeverProbe module (#240): it has
-    ## Dependencies: ForeverProbe, so the host is deployed first, from the
-    ForeverProbe checkout ($env:FOREVERPROBE, else ..\ForeverProbe). Without it
-    the client loads no AltStableProbe at all.
+    ## Dependencies: ForeverProbe. ForeverProbe's own deploy.ps1 -Module (#549,
+    ForeverProbe#47) deploys the host first, then the module: it refuses a
+    module whose TOC doesn't depend on ForeverProbe, a listed file missing or
+    outside the folder, or a luac -p failure, and then copies nothing, the host
+    included. It stamps the copy's TOC with the commit (## X-FP-Commit), lints
+    the module's globals (warnings only) and removes files it no longer lists.
+    The checkout is $env:FOREVERPROBE, else ..\ForeverProbe.
 
     Usage:
         pwsh Tools/deploy-probe.ps1
@@ -68,25 +72,31 @@ if ($Remove) {
     exit 0
 }
 
-# The host first. Its own deploy refuses an incomplete checkout or a luac
-# failure, and prints the commit; then nothing of ours is touched.
-if (-not (Test-Path -LiteralPath (Join-Path $ForeverProbe "Tools\deploy.ps1"))) {
+# The host, then the module, through ForeverProbe's own deploy (#549): it checks
+# both first and copies nothing when either is refused. It copies the TOC and the
+# files it lists, and removes the ones it no longer lists, so a stale file goes
+# as /MIR's did. (read-wirelog.py stays in the repo: it reads WTF\, not this
+# copy.) SavedVariables live in WTF\, not here.
+# (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
+# settings from loading, and after the fix only overwrote the player's own.)
+$fpDeploy = Join-Path $ForeverProbe "Tools\deploy.ps1"
+if (-not (Test-Path -LiteralPath $fpDeploy)) {
     Write-Error "ForeverProbe checkout not found at $ForeverProbe (clone github.com/Spotnick2/ForeverProbe there, or set `$env:FOREVERPROBE)"
     exit 1
 }
-& pwsh -NoProfile -File (Join-Path $ForeverProbe "Tools\deploy.ps1") -AddOnsPath $AddOnsPath
-if ($LASTEXITCODE -ne 0) { Write-Error "ForeverProbe deploy refused; AltStableProbe was not touched"; exit 1 }
-
-# /MIR: we own this folder wholesale, so stale files get purged.
-# SavedVariables live in WTF\, not here, so purging is safe.
-# robocopy exit codes 0-7 are success; 8+ is an error.
-# (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
-# settings from loading, and after the fix only overwrote the player's own.)
-$from = Join-Path $RepoRoot "Tools\AltStableProbe"
+# A checkout from before ForeverProbe#47 has no -Module: pwsh -File leaves the
+# argument unbound, deploys the host alone and exits 0 (review of #555). Ask the
+# script for the parameter before running it.
+if (-not (Get-Command -Name $fpDeploy).Parameters.ContainsKey("Module")) {
+    Write-Error "The ForeverProbe checkout at $ForeverProbe is too old: its Tools\deploy.ps1 has no -Module (ForeverProbe#47). Pull its main, then run this again. Nothing was copied."
+    exit 1
+}
 $dest = Join-Path $AddOnsPath "AltStableProbe"
-Write-Host "Deploying AltStableProbe ..." -ForegroundColor Cyan
-robocopy $from $dest /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy failed for AltStableProbe (code $LASTEXITCODE)" }
+& pwsh -NoProfile -File $fpDeploy -AddOnsPath $AddOnsPath -Module (Join-Path $RepoRoot "Tools\AltStableProbe")
+# Its own error says what failed. A refusal at its checks copies nothing, but a
+# copy that fails after them (a locked file) can leave the host updated and the
+# probe partial, so this doesn't claim either.
+if ($LASTEXITCODE -ne 0) { Write-Error "the probe deploy did not complete (ForeverProbe's deploy.ps1 exited $LASTEXITCODE; its error is above). Run this again once it's fixed."; exit 1 }
 
 # Retired tools: remove what an older run installed, or it keeps loading - the
 # retired AltStableDevConfig re-seeded a whitelist the player had emptied
