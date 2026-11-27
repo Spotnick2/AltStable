@@ -433,6 +433,12 @@ end
 ------------------------------------------------------------
 
 -- Counted with another quest table or other counting rules (M.SNAP_VERSION).
+-- What a cell counted before the split says (#537).
+function L.SplitNote(whole)
+    return ("Counted before Blackrock Spire was split in two: %d/%d for Lower and Upper together. "
+        .. "Each half is counted at this character's next login with this version."):format(whole[1], whole[2])
+end
+
 function L.OtherVersion(snap)
     return type(snap) ~= "table" or snap.ver ~= M.SNAP_VERSION
 end
@@ -471,6 +477,15 @@ end
 -- raid's quest count (#487); a character from another account keeps an empty
 -- cell with the hover.
 function L.CellFill(col, key, row)
+    -- Blackrock Spire counted before the split (#537): the old row holds both
+    -- halves. Lower's cell gives that count, marked, Upper's only the mark.
+    if (key == 1583 or key == M.UBRS_KEY) and M.PreSplit(col.snap) then
+        local whole = col.snap.c and col.snap.c[1583]
+        if not whole then return "", nil, nil, nil, nil end
+        local info = { col = col, key = key, preSplit = whole }
+        if key == 1583 then return ("%d/%d*"):format(whole[1], whole[2]), 0.55, 0.55, 0.55, info end
+        return "*", 0.55, 0.55, 0.55, info
+    end
     if row then
         local r, g, b = L.CellRGB(row[1], row[2])
         return ("%d/%d"):format(row[1], row[2]), r, g, b, { col = col, key = key, row = row }
@@ -547,6 +562,11 @@ function L.CellOnEnter(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(L.ZoneName(key), 1, 1, 1)
     GameTooltip:AddLine(ClassHex(col.class) .. col.name .. "|r")
+    if info.preSplit then
+        GameTooltip:AddLine(L.SplitNote(info.preSplit), 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+        return
+    end
     if row then GameTooltip:AddLine(L.ProgressText(row[1], row[2]), 0.9, 0.9, 0.9) end
     local att = L.AttuneFor(col, key)
     if att then
@@ -1227,7 +1247,14 @@ function L.RenderCard()
     end
     ClassIcon(card.icon, col.class)
     card.who:SetText(ClassHex(col.class) .. col.name .. "|r")
-    if row then
+    -- Counted before the split (#537): the old count is both halves.
+    local whole = (key == 1583 or key == M.UBRS_KEY) and M.PreSplit(col.snap) and col.snap.c and col.snap.c[1583]
+    if whole then
+        card.count:SetText(("%d / %d quests, Lower and Upper together"):format(whole[1], whole[2]))
+        card.bar:SetValue(whole[2] > 0 and whole[1] / whole[2] or 0)
+        card.pct:SetText("")
+        card.left:SetText("|cff888888Counted before Blackrock Spire was split|r")
+    elseif row then
         card.count:SetText(("%d / %d quests"):format(row[1], row[2]))
         card.bar:SetValue(row[2] > 0 and row[1] / row[2] or 0)
         card.pct:SetText(Pct(row[1], row[2]) .. "%")

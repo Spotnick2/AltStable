@@ -602,7 +602,18 @@ do
         if not (q and q[1] == LOWER and q[2] == nil) then ok = false; bad[#bad + 1] = tostring(id) end
     end
     check("every Upper quest is a Blackrock Spire quest of the table", ok, table.concat(bad, ","))
-    eq("  twelve of them", #M.UPPER_BRS, 12)
+    eq("  eighteen of them", #M.UPPER_BRS, 18)
+    -- Each one's half (Codex review of #550): the combined total can't tell.
+    local probe = { faction = "Alliance", race = 1, class = 1, level = 60 }
+    local halves = {}
+    for _, id in ipairs({ 8966, 8989, 4742, 4743, 4701, 5089, 4982, 5002, 4788 }) do
+        if M.KeyOf(D.QUESTS[id], probe) ~= LOWER then halves[#halves + 1] = id .. " not Lower" end
+    end
+    for _, id in ipairs({ 8995, 4764, 4765, 4766, 4768, 4769, 4907, 5047, 5160, 5102, 4734 }) do
+        if M.KeyOf(D.QUESTS[id], probe) ~= UPPER then halves[#halves + 1] = id .. " not Upper" end
+    end
+    eq("  Mor Grayhoof's two and the seal Lower; Valthalak, the Rookery's, Pip's and Awbee's Upper",
+       table.concat(halves, ","), "")
     eq("1583 is Lower Blackrock Spire", L.ZoneName(LOWER), "Lower Blackrock Spire")
     eq("Upper Blackrock Spire's row", L.ZoneName(UPPER), "Upper Blackrock Spire")
     eq("  a dungeon", D.ZONES[UPPER][1], "dungeon")
@@ -653,6 +664,31 @@ do
     local a = M.Attunement(UPPER, spire, { [4742] = true })
     check("Upper's key chain: Seal of Ascension, 1 of 2 done", a and a.total == 2 and a.done == 1, a and a.done)
     eq("  for the Alliance too", #(M.AttuneChain(UPPER, { faction = "Alliance", race = 1, class = 1, level = 60 }) or {}), 2)
+    -- A snapshot counted before the split (r2) beside one counted after
+    -- (Codex review of #550): the old count is both halves, never "Lower".
+    check("an r2 snapshot is from before the split", M.PreSplit({ ver = D.VERSION .. "r2" }))
+    check("  and one with no rules' version", M.PreSplit({ ver = D.VERSION }))
+    check("  not this version's", not M.PreSplit({ ver = M.SNAP_VERSION }))
+    check("  nor a later rules' version", not M.PreSplit({ ver = D.VERSION .. "r4" }))
+    local oldCol = { guid = "Player-1-O", name = "Old", class = 1, level = 60,
+                     snap = { ver = D.VERSION .. "r2", faction = "Horde", race = 2, class = 1, level = 60,
+                              c = { [LOWER] = { 3, 30 } } } }
+    local newCol = { guid = "Player-1-N", name = "New", class = 1, level = 60,
+                     snap = { ver = M.SNAP_VERSION, faction = "Horde", race = 2, class = 1, level = 60,
+                              c = { [LOWER] = { 1, 20 }, [UPPER] = { 1, 14 } } } }
+    local text, _, _, _, info = L.CellFill(oldCol, LOWER, oldCol.snap.c[LOWER])
+    eq("before the split: Lower's cell gives both halves, marked", text, "3/30*")
+    check("  with what it is on hover", info and info.preSplit and info.preSplit[2] == 30)
+    text, _, _, _, info = L.CellFill(oldCol, UPPER, nil)
+    eq("  Upper's cell only the mark", text, "*")
+    eq("after the split: Lower's own count", (L.CellFill(newCol, LOWER, newCol.snap.c[LOWER])), "1/20")
+    eq("  and Upper's", (L.CellFill(newCol, UPPER, newCol.snap.c[UPPER])), "1/14")
+    WoW.tooltipLines = {}
+    L.CellOnEnter({ info = info })
+    local tipText = table.concat(WoW.tooltipLines, "\n")
+    check("the hover says the count is Lower and Upper together",
+          tipText:find("3/30 for Lower and Upper together", 1, true) ~= nil, tipText)
+    eq("  with nothing claimed as Upper's own", (L.CellFill({ snap = { ver = D.VERSION .. "r2", c = {} } }, UPPER, nil)), "")
     check("the export's row names hold Upper", (M.WriteZoneNames() or true) and M.DB().zones[UPPER]
           and M.DB().zones[UPPER].name == "Upper Blackrock Spire")
 end
@@ -1011,6 +1047,25 @@ do
     check("  and View quests is on, with nothing counted there", L.Card().view:IsEnabled())
     M.DB().chars[AG], M.DB().done[AG], M.DB().chars[SG] = nil, nil, nil
     AltStableDB[AG], AltStableDB[SG] = nil, nil
+end
+
+-- The card for a character counted before Blackrock Spire's split (#537,
+-- Codex review of #550): both halves together, never called Lower's.
+do
+    local OG = "Player-537-AAAA0001"
+    AltStableDB[OG] = { name = "Oldcount", class = "WARRIOR", level = 60, scannedHere = true }
+    M.DB().chars[OG] = { stamp = 80, ver = D.VERSION .. "r2", faction = "Horde", race = 2, class = 1, level = 60,
+                         c = { [1583] = { 3, 30 } } }
+    L.Select(1583, OG)
+    local count = L.Card() and L.Card().count:GetText() or ""
+    eq("the card, before the split: both halves together", count, "3 / 30 quests, Lower and Upper together")
+    check("  and says why", (L.Card().left:GetText() or ""):find("before Blackrock Spire was split", 1, true) ~= nil)
+    L.Select(M.UBRS_KEY, OG)
+    eq("  Upper's card says the same", L.Card().count:GetText(), "3 / 30 quests, Lower and Upper together")
+    M.DB().chars[OG].ver = M.SNAP_VERSION
+    L.Select(1583, OG)
+    eq("counted after it, Lower's own count", L.Card().count:GetText(), "3 / 30 quests")
+    M.DB().chars[OG], AltStableDB[OG] = nil, nil
 end
 
 local okD = pcall(plugin.OnDeactivate, main)

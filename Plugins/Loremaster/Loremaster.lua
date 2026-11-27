@@ -108,8 +108,15 @@ M.Link = Link
 -- Hand-kept, each placed by its objective on Wowhead Forever (2026-11-27) and
 -- checked against QuestData.lua by the tests: the Rookery eggs, Rend, General
 -- Drakkisath (and his brand), Goraluk Anvilcrack, the dragonspawn's eyes,
--- Valthalak's amulet. A quest whose half is unsure stays Lower: 4764
--- Doomrigger's Clasp, 4768 The Darkstone Tablet, 5160 The Matron Protectorate.
+-- Lord Valthalak; Doomrigger's Clasp (the Father Flame room) and The Darkstone
+-- Tablet (the Rookery), with the lead-in and delivery quests of their chains
+-- and Tinkee Steamboil's lead-in to the Rookery's eggs; the two quests Upper's
+-- NPCs start, Pip Quickwit (after The Beast) and Awbee's. Checked against
+-- Wowhead's Classic guides to both halves (owner's links, 2026-11-27):
+--   wowhead.com/classic/guide/classic-wow-lower-blackrock-spire-dungeon-quests
+--   wowhead.com/classic/guide/classic-wow-upper-blackrock-spire-dungeon-quests
+-- Mor Grayhoof (the two halves of Valthalak's amulet) is summoned in War
+-- Master Voone's room: Lower (Codex review of #550).
 -- Seal of Ascension (4742, 4743) is done in Lower and opens Upper (the
 -- owner): counted in Lower, shown as Upper's key chain (M.ATTUNE, below).
 M.UBRS_KEY = -1583
@@ -120,8 +127,20 @@ M.UPPER_BRS = {
     7761,               -- Blackhand's Command: the brand Drakkisath guards
     5127,               -- The Demon Forge: Goraluk Anvilcrack
     6569,               -- Oculus Illusions: Black Dragonspawn Eyes
-    8966, 8989, 8995,   -- Lord Valthalak's amulet: Mor Grayhoof, then Lord Valthalak
+    8995,               -- Mea Culpa, Lord Valthalak (Mor Grayhoof's 8966, 8989: Lower)
+    4766, 4764, 4765,   -- Mayara Brightwing, Doomrigger's Clasp (Father Flame), Delivery to Ridgewell
+    4769, 4768,         -- Vivian Lagrave, The Darkstone Tablet (the Rookery)
+    4907,               -- Tinkee Steamboil: leads to the Rookery's eggs
+    5047, 5160,         -- Pip Quickwit, The Matron Protectorate: Upper's NPCs start them
 }
+
+-- A snapshot counted before the split (its counts' rules older than r3): both
+-- halves are under 1583 in it. Shown as such until that character is counted
+-- again, never as Lower (Codex review of #550).
+function M.PreSplit(snap)
+    local r = type(snap) == "table" and tostring(snap.ver or ""):match("r(%d+)$")
+    return (tonumber(r) or 1) < 3
+end
 -- By quest record, for KeyOf (which has no ID). A module field, so the tests
 -- can count without the split.
 M.UPPER_Q = {}
