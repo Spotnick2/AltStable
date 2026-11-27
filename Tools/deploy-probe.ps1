@@ -6,9 +6,13 @@
     Tools/, which .pkgmeta ignores.
 
     AltStableProbe is a ForeverProbe module (#240): it has
-    ## Dependencies: ForeverProbe, so the host is deployed first, from the
-    ForeverProbe checkout ($env:FOREVERPROBE, else ..\ForeverProbe). Without it
-    the client loads no AltStableProbe at all.
+    ## Dependencies: ForeverProbe. ForeverProbe's own deploy.ps1 -Module (#549,
+    ForeverProbe#47) deploys the host first, then the module: it refuses a
+    module whose TOC doesn't depend on ForeverProbe, a listed file missing or
+    outside the folder, or a luac -p failure, and then copies nothing, the host
+    included. It stamps the copy's TOC with the commit (## X-FP-Commit), lints
+    the module's globals (warnings only) and removes files it no longer lists.
+    The checkout is $env:FOREVERPROBE, else ..\ForeverProbe.
 
     Usage:
         pwsh Tools/deploy-probe.ps1
@@ -68,25 +72,20 @@ if ($Remove) {
     exit 0
 }
 
-# The host first. Its own deploy refuses an incomplete checkout or a luac
-# failure, and prints the commit; then nothing of ours is touched.
+# The host, then the module, through ForeverProbe's own deploy (#549): it checks
+# both and copies nothing when either is refused. It copies the TOC and the
+# files it lists, and removes the ones it no longer lists, so a stale file goes
+# as /MIR's did. (read-wirelog.py stays in the repo: it reads WTF\, not this
+# copy.) SavedVariables live in WTF\, not here.
+# (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
+# settings from loading, and after the fix only overwrote the player's own.)
 if (-not (Test-Path -LiteralPath (Join-Path $ForeverProbe "Tools\deploy.ps1"))) {
     Write-Error "ForeverProbe checkout not found at $ForeverProbe (clone github.com/Spotnick2/ForeverProbe there, or set `$env:FOREVERPROBE)"
     exit 1
 }
-& pwsh -NoProfile -File (Join-Path $ForeverProbe "Tools\deploy.ps1") -AddOnsPath $AddOnsPath
-if ($LASTEXITCODE -ne 0) { Write-Error "ForeverProbe deploy refused; AltStableProbe was not touched"; exit 1 }
-
-# /MIR: we own this folder wholesale, so stale files get purged.
-# SavedVariables live in WTF\, not here, so purging is safe.
-# robocopy exit codes 0-7 are success; 8+ is an error.
-# (AltStableDevConfig is retired: it seeded a whitelist from code while #23 kept
-# settings from loading, and after the fix only overwrote the player's own.)
-$from = Join-Path $RepoRoot "Tools\AltStableProbe"
 $dest = Join-Path $AddOnsPath "AltStableProbe"
-Write-Host "Deploying AltStableProbe ..." -ForegroundColor Cyan
-robocopy $from $dest /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy failed for AltStableProbe (code $LASTEXITCODE)" }
+& pwsh -NoProfile -File (Join-Path $ForeverProbe "Tools\deploy.ps1") -AddOnsPath $AddOnsPath -Module (Join-Path $RepoRoot "Tools\AltStableProbe")
+if ($LASTEXITCODE -ne 0) { Write-Error "probe deploy refused; nothing was copied"; exit 1 }
 
 # Retired tools: remove what an older run installed, or it keeps loading - the
 # retired AltStableDevConfig re-seeded a whitelist the player had emptied

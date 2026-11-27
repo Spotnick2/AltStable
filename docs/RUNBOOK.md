@@ -272,7 +272,7 @@ and the probe reports it only for completeness.
 To check persistence on a new build:
 
 ```
-pwsh Tools/deploy-probe.ps1     # deploys ForeverProbe (the host), then AltStableProbe
+pwsh Tools/deploy-probe.ps1     # deploys ForeverProbe (the host), then AltStableProbe, through ForeverProbe's `deploy.ps1 -Module` (it stamps the TOC and lints the probe's globals)
 ```
 
 **The probe goes in on demand only.** This is the live client and the owner's play install. Deploy
