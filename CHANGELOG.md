@@ -1,5 +1,68 @@
 # Changelog
 
+## v1.16.0 - 2026-11-27
+
+**Profession cooldowns at a glance**: the Skills tab has a Cooldowns view with live countdowns,
+every cooldown your alts have or could learn. Also **recipe tooltips one character per line**, and
+**Blackrock Spire as Lower and Upper** in the Loremaster tab. Most of it came from players' comments
+on CurseForge. Built for client 1.60.1.71139, the live build. v1.16.0 syncs with everything v1.15.0
+does.
+
+### AltStable Companion
+
+The Armory's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+It can also keep your characters in a Google Sheet in your own Google Drive. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.2** is the current version.
+
+### New
+
+- **A Cooldowns view in the Skills tab** ([#543](https://github.com/Spotnick2/AltStable/issues/543),
+  [#545](https://github.com/Spotnick2/AltStable/issues/545)). The sidebar's Skill Levels is now
+  **Skills**, with two views at the top: **Skill Levels** and **Cooldowns · N available**.
+  - Cooldowns has a column per cooldown (the transmutes, Iron to Gold, Mithril to Truesilver,
+    Mooncloth, the Salt Shaker) and a row per character with Alchemy, Tailoring or Leatherworking.
+  - A cell says **Available**, counts down to the second, or says where the character stands:
+    **Known** (its cooldown not read yet), **Learnable**, **Needs 275** when its skill is too low,
+    **Usable** for the Salt Shaker, or **Not scanned**. Its tooltip gives the skill needed and the
+    character's, and where each recipe is learned.
+  - The Columns menu chooses which cooldowns show. A note at the top says whether the login
+    notifications are on; click it to change them.
+- **Recipe tooltips, one character per line**
+  ([#542](https://github.com/Spotnick2/AltStable/issues/542)): on a recipe item, each group (Known
+  by, Meets skill, Skill too low...) lists one character per line with its skill, like the item
+  counts above it. The old layout, names side by side, is still a choice.
+  - **Options, General, Item tooltips** now has the recipe settings: show them or not (the same
+    setting as the Recipe Book tab's box), who wants the recipe, and the layout. The preview shows
+    an example recipe.
+- **Blackrock Spire as Lower and Upper** in the Loremaster tab
+  ([#537](https://github.com/Spotnick2/AltStable/issues/537)): two rows in Dungeons. Upper's row
+  shows Seal of Ascension, the key to Upper, the way a raid shows its attunement; the quests stay
+  counted in Lower, where they're done. A character counted before this version shows its old count
+  in Lower's row, marked "*", until it logs in again.
+- **Rows nobody can count are named** in the Loremaster tab
+  ([#538](https://github.com/Spotnick2/AltStable/issues/538)): a group's header says how many of
+  its rows aren't listed, such as "Dungeons · 2 not listed", and its tooltip names them. A row
+  shows only when one of the characters shown has quests counted there: the Deadmines, for one, has
+  no quest for a Horde character.
+- **A Leatherworking box** in Options, Notifications
+  ([#540](https://github.com/Spotnick2/AltStable/pull/540)): the Salt Shaker's notification can be
+  turned off like the others, and shows Leatherworking's icon.
+
+### Changed
+
+- **Cooldowns are saved under the same name in every language**, so two of your accounts with
+  different client languages see the same cooldown. Each alt's next profession scan updates its
+  record; until then an older one may show as a separate column.
+
+### Fixed
+
+- **Iron to Gold and Mithril to Truesilver** could make the shared transmute cooldown look busy:
+  every transmute was saved under one name. They now have their own, one hour each.
+- **The Salt Shaker** was recorded as ready for a leatherworker under 250, who can't use it yet.
+- **Options, Modules**: the status beside "Legacy Challenges" ran into its name.
+
 ## v1.15.0 - 2026-11-26
 
 **A new look for the window**, the first part of a pass over AltStable's interface: the title bar

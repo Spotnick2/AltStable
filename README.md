@@ -74,8 +74,10 @@ lists them: with an alt picked and **Missing**, it's what that alt could buy.
 *The Recipe Book tab: who knows each recipe, and where to get the ones nobody has.*
 
 Recipe items in the game (at a vendor, in the auction house) can also show who already knows
-them, who has the skill to learn them and whose skill is too low. Crafted items show who can make
-them.
+them, who has the skill to learn them and whose skill is too low, one character per line with its
+skill. Crafted items show who can make them. **Options, General, Item tooltips** turns these lines
+on or off (the same setting as the Recipe Book tab's box), and lays them out one per line or side
+by side, with a preview.
 
 Click a recipe for its details in a pane beside the list: the crafted item and the level it needs,
 the skill thresholds, where the recipe comes from, who knows it and its reagents.
@@ -98,8 +100,18 @@ counts.
 When you open a profession window, any recipe whose reagents there differ from AltStable's own list
 takes the window's, so a game patch that changes a recipe shows right away.
 
-Profession cooldowns are tracked too, the Leatherworking Salt Shaker's included, and a notification
-tells you when one is ready.
+### When are my profession cooldowns ready?
+
+The **Skills** tab's **Cooldowns** view has a column per cooldown (the transmutes, Iron to Gold,
+Mithril to Truesilver, Mooncloth, the Leatherworking Salt Shaker) and a row per character with
+Alchemy, Tailoring or Leatherworking. A cell says **Available**, counts down to the second, or says
+where the character stands: **Known** (its cooldown not read yet), **Learnable**, **Needs 275** when
+its skill is too low, or **Not scanned**. Hover it for the skill needed and where each recipe is
+learned. The tab's top bar counts what's available, and **Columns** chooses which cooldowns show.
+
+A notification at login tells you which cooldowns came up while you were away. **Options,
+Notifications** chooses the professions it covers. A cooldown is read when the character opens its
+profession window, or carries the Salt Shaker.
 
 ### Which characters are saved to a raid, and when do they reset?
 
@@ -159,8 +171,13 @@ can ever do there, for its faction, race and class, at any level.
 - **Raid attunements** show under their raid: Onyxia's Lair's quest chain for your faction,
   Blackwing Lair's, Molten Core's and Naxxramas's. The card says "Attunement 3/16" or "Attuned",
   and the hover and View quests list the steps in order: done ones green, the next one gold. A step
-  counted under another zone names it ("counted under Blackrock Spire"). A raid with no quest counted for a character shows its steps
+  counted under another zone names it ("counted under Lower Blackrock Spire"). A raid with no quest counted for a character shows its steps
   done, dimmed, such as "0/15". The steps stay counted once, under their own zones.
+- **Blackrock Spire is two rows,** Lower and Upper. Upper's shows Seal of Ascension, its key, the
+  same way; the seal's quests count in Lower, where they're done.
+- **A row shows when a character shown has quests there.** A group's header says how many rows
+  aren't listed, such as "Dungeons · 2 not listed"; hover it for their names. The Deadmines, for
+  one, has no quest for a Horde character.
 
 ![The Loremaster tab: the map of Orgrimmar, a card with 11 of 62 quests done, and the zones of Kalimdor with each character's progress](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/loremaster.jpg)
 
@@ -210,7 +227,7 @@ The same entry is in the minimap's **AddOn Compartment**.
 
 ![The sheet's skill view: each character's level in every profession and secondary skill](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-skills.jpg)
 
-*Skill levels: every profession and secondary skill, for every character.*
+*The Skills tab's Skill Levels view: every profession and secondary skill, for every character.*
 
 ![The sheet's reputation view: each character's standing with Vanilla and Forever factions](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/sheet-reputations.jpg)
 
