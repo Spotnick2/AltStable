@@ -5187,18 +5187,31 @@ local function CreateFrameIfNeeded()
         -- Lays the lines out and sizes the box. Not named Show: the recipe's
         -- tooltip is shown and hidden for real (SetShown), and a Show
         -- overridden in Lua would be what that reaches in the test stubs.
+        -- Never wider than the page has room for (pv.maxW, set by Layout): a
+        -- right-hand text that would not fit wraps in what is left (Codex
+        -- review of #547: side by side ran past a narrow page's edge).
         function tip:Fit()
             local y, widest = -10, TIP_W
+            local cap = math.max(TIP_W, pv.maxW or math.huge)
             for i = 1, self.n do
                 local row = self.lines[i]
                 row.left:ClearAllPoints(); row.right:ClearAllPoints()
                 row.left:SetPoint("TOPLEFT", 11, y)
+                local h = row.left:GetStringHeight() or 0
+                row.right:SetWidth(0); row.right:SetWordWrap(false)
                 if row.double then
                     row.right:SetPoint("TOPRIGHT", -11, y)
-                    local w = (tonumber(row.left:GetStringWidth()) or 0) + (tonumber(row.right:GetStringWidth()) or 0) + 40
+                    local lw = tonumber(row.left:GetStringWidth()) or 0
+                    local w = lw + (tonumber(row.right:GetStringWidth()) or 0) + 40
+                    if w > cap then
+                        row.right:SetWidth(math.max(60, cap - lw - 40))
+                        row.right:SetWordWrap(true)
+                        w = cap
+                        h = math.max(h, row.right:GetStringHeight() or 0)
+                    end
                     if w > widest then widest = w end
                 end
-                y = y - math.max(row.left:GetStringHeight() or 0, 12) - 2
+                y = y - math.max(h, 12) - 2
             end
             self:SetWidth(widest)
             self:SetHeight(-y + 8)
@@ -5274,6 +5287,13 @@ local function CreateFrameIfNeeded()
         Y = Y - RESERVE
         local function Layout()
             local w = page:GetWidth() or 0
+            -- The most the preview may take: the page less its margins and the
+            -- indent it has below the controls. Fitted again when that moves.
+            local maxW = math.max(TIP_W, w - 2 * P - 22)
+            if pv.maxW ~= maxW then
+                pv.maxW = maxW
+                tip:Fit(); rtip:Fit()
+            end
             local pvW = math.max(PV_W, pv:GetWidth() or PV_W)
             local wide = w >= P + COL_W + 24 + pvW + P
             pv:ClearAllPoints()

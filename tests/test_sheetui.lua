@@ -6056,6 +6056,34 @@ do
     t = P(F.rtipText())
     check("  and the preview follows: the group and its names on one line",
           t:find("Skill too low|Cairne Bloodhoof (210, needs 250), Thrall (235, needs 250)", 1, true) ~= nil, t)
+    -- A narrow page (a clamped window): the preview below the controls stays
+    -- inside it, the long side-by-side text wrapping (Codex review of #547).
+    for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = 600 end
+    F.page._GetWidth = 400
+    F.refresh()
+    local _, _, _, px = F.preview:GetPoint(1)
+    check("narrow page: the preview sits below the controls", not F.preview.wide)
+    check("  its right edge inside the page", px + F.preview:GetWidth() <= 400,
+          px .. " + " .. F.preview:GetWidth())
+    local wrapped = false
+    for i = 1, F.rtip.n do
+        local r = F.rtip.lines[i].right
+        if r:IsShown() and r:GetWordWrap() and (r:GetWidth() or 0) > 0 then wrapped = true end
+    end
+    check("  the right-hand text wraps in what is left", wrapped)
+    -- The page shrinking under an open preview (its OnSizeChanged runs Layout
+    -- alone): fitted again to the new width.
+    F.page._GetWidth = 2000
+    F.refresh()
+    check("on a wide page the long text fits unwrapped", F.preview:GetWidth() > 600)
+    F.page._GetWidth = 400
+    F.layout()
+    _, _, _, px = F.preview:GetPoint(1)
+    check("  the page shrinks: fitted again, inside it", px + F.preview:GetWidth() <= 400,
+          px .. " + " .. F.preview:GetWidth())
+    for _, row in ipairs(F.rtip.lines) do row.right._GetStringWidth = nil end
+    F.page._GetWidth = nil
+    F.refresh()
     F.recipeRadios[1]:GetScript("OnClick")(F.recipeRadios[1])
     eq("one per line saves 'lines'", AltStableConfig.professionsTooltipLayout, "lines")
     F.recipes:SetChecked(false); F.recipes:GetScript("OnClick")(F.recipes)
