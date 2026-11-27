@@ -3093,11 +3093,11 @@ do
         pbtn:GetScript("OnClick")(pbtn)
         eq("  a plugin tab: its name", st:GetText(), "Test 150")
         _, rr = st:GetPoint(2)
-        check("  stopping short of the capture button, Columns hidden", rr == T.refBtn)
+        check("  stopping short of the search button, Columns hidden (#503)", rr == T.searchBtn)
         sheetBtn:GetScript("OnClick")(sheetBtn)
         local need = AltStable.GetTitleBarRequiredWidth()
         eq("  the title bar's floor: the sidebar, the name and every button, Columns included", need,
-           AltStable.LAYOUT.SIDEBAR_FULL_W + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + T.colBtn:GetWidth())
+           AltStable.LAYOUT.SIDEBAR_FULL_W + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + 18 + 6 + T.colBtn:GetWidth())
         -- A name wider than the columns: the window grows to the floor.
         st._GetStringWidth = 1200
         need = AltStable.GetTitleBarRequiredWidth()
@@ -3121,7 +3121,18 @@ do
     local _, capRel = T.refBtn:GetPoint(1)
     check("  the capture button left of the toggle", capRel == T.navBtn)
     local _, colRel = T.colBtn:GetPoint(1)
-    check("  and Columns left of the capture button", colRel == T.refBtn)
+    local _, findRel = T.searchBtn:GetPoint(1)
+    check("  the search button left of the capture button (#503)", findRel == T.refBtn)
+    check("  and Columns left of the search button", colRel == T.searchBtn)
+    T.searchBtn:GetScript("OnEnter")(T.searchBtn)
+    eq("  the search button says what it does", GameTooltip:IsOwned(T.searchBtn) and GameTooltip._text, "Find an item")
+    T.searchBtn:GetScript("OnLeave")(T.searchBtn)
+    local opened
+    local realShow = AltStable.ShowSearch
+    AltStable.ShowSearch = function(q) opened = { q = q } end
+    T.searchBtn:GetScript("OnClick")(T.searchBtn)
+    check("  and opens the search, with no query", opened ~= nil and opened.q == nil)
+    AltStable.ShowSearch = realShow
     T.navBtn:GetScript("OnEnter")(T.navBtn)
     eq("  its tooltip offers to collapse", GameTooltip:IsOwned(T.navBtn) and GameTooltip._text, "Collapse menu")
     T.navBtn:GetScript("OnLeave")(T.navBtn)

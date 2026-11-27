@@ -4909,6 +4909,7 @@ AltStable.HELP_LINES = {
     "|cffffff00/alts stale|r [days] - characters not played in that long (90 unless set in Options)",
     "|cffffff00/alts tooltip|r [ignore / unignore <item>] - items whose tooltips get no character counts",
     "|cffffff00/alts account|r <n> - this account's number in the sheet",
+    "|cffffff00/alts search|r [words] - find an item on every character",
     "|cffffff00/alts export|r - every character as a spreadsheet",
     "|cffffff00/alts config|r - options",
 }
@@ -5357,6 +5358,13 @@ SlashCmdList["ALTSTABLE"] = function(args)
     ----------------------------------------------------
     -- /alts export
     ----------------------------------------------------
+
+    -- /alts search [words]: find an item on every character (#503). The rest of
+    -- the line is the query, spaces and all.
+    if cmd == "search" or cmd == "find" then
+        if AltStable.ShowSearch then AltStable.ShowSearch(target) end
+        return
+    end
 
     if cmd == "export" then
         if AltStable.ShowExport then

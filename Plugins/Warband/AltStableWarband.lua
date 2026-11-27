@@ -202,8 +202,14 @@ local function GetDB(guid)
 end
 
 -- The record's watermark is the newest of its sections.
+-- Every write of a section passes here - bags and bank, inbox, outbox, and
+-- what a sync brought - so this is where an open item search hears that what
+-- the characters hold has changed (#503). Not RefreshSheet: a scan doesn't end
+-- in one, and a received correction under an equal stamp returns false and
+-- skips it.
 local function Restamp(db)
     db.stamp = math.max(db.bagsStamp or 0, db.bankStamp or 0, db.mailStamp or 0, db.outboxStamp or 0)
+    if AltStable.NotifyItemDataChanged then AltStable.NotifyItemDataChanged() end
 end
 
 -- Commit a freshly-built section map for the current player, but only if it
@@ -1259,7 +1265,19 @@ local function FillCell(cell, e)
         else cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 1) end
         cell.itemName = e.name
         cell:SetAlpha(1)
+        -- The item the search opened this view on (#503), lit wherever its
+        -- cell lands: cells are pooled, so it is painted when one is filled.
+        local lit = AT_WB.focus ~= nil and e.id == AT_WB.focus.itemID
+        if lit and not cell.lit then
+            cell.lit = cell:CreateTexture(nil, "OVERLAY")
+            cell.lit:SetPoint("TOPLEFT", -3, 3)
+            cell.lit:SetPoint("BOTTOMRIGHT", 3, -3)
+            cell.lit:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+            cell.lit:SetBlendMode("ADD")
+        end
+        if cell.lit then cell.lit:SetShown(lit) end
     else
+        if cell.lit then cell.lit:Hide() end
         -- A quiet box, not slot art: these are filters, not storage, and the
         -- textured slots outweighed the items (review, 2026-10-03).
         cell.icon:SetTexture(nil)
@@ -1311,6 +1329,9 @@ end
 -- ignored, hidden or not; Warband is every character not hidden (the sheet's
 -- totals leave hidden ones out too) on the chosen ruleset.
 local function CurrentFilter()
+    -- The item search's one-character view (#503) overrides the saved scope
+    -- and filters without changing them.
+    if AT_WB.focus then return { only = AT_WB.focus.guid } end
     if Scope() == "personal" then
         -- `personal` is the flag, not the GUID: with no GUID yet this shows
         -- nobody, never everybody (review of #154).
@@ -1536,6 +1557,7 @@ local function OpenMenu(spec)
         for i, key in ipairs(spec.keys) do
             local row = MakeButton(f, 180, 22, "", function()
                 CloseMenus()
+                AT_WB.ClearFocus()
                 AltStable.SetConfigValue(spec.setting, key)
                 AT_WB.scrollRow = 0
                 AT_WB.Refresh()
@@ -1583,6 +1605,7 @@ local function OpenFactionMenu() OpenMenu(FACTION_MENU) end
 -- Both filters back to their defaults (#461).
 local function ResetFilters()
     CloseMenus()
+    AT_WB.ClearFocus()
     AltStable.SetConfigValue("warbandRuleset", "current")
     AltStable.SetConfigValue("warbandFaction", "current")
     AT_WB.scrollRow = 0
@@ -1696,7 +1719,9 @@ local function SaveDialog()
         index = #tabs
     end
     AltStable.SetConfigValue("warbandTabs", tabs)
-    AltStable.SetConfigValue("warbandTab", index)
+    -- In the search's view the tab shown isn't the player's choice (#503):
+    -- the edit is saved, their own tab stays.
+    if not AT_WB.focus then AltStable.SetConfigValue("warbandTab", index) end
     CloseDialog()
     AT_WB.scrollRow = 0
     AT_WB.Refresh()        -- SetConfigValue does not refresh anything itself
@@ -1892,6 +1917,7 @@ local function TabMeta(key, tabs)
 end
 
 local function Select(key)
+    AT_WB.ClearFocus()   -- a tab chosen: the player's own view again (#503)
     AltStable.SetConfigValue("warbandTab", key)
     AT_WB.scrollRow = 0
     AT_WB.Refresh()
@@ -2003,6 +2029,23 @@ function AT_WB.Layout()
         if col.rows > longest then longest = col.rows end
     end
     local rowCount = math.max(longest, visible)
+    -- The search's item (#503), brought into view from THIS layout's width:
+    -- a window animation lays the tab out again at its final size, and that
+    -- last layout is the one that counts. Until the player scrolls.
+    local f = AT_WB.focus
+    if f and f.reveal then
+        for _, col in ipairs(cols) do
+            if col.key == AT_WB._sel then
+                for idx, e in ipairs(col.entries) do
+                    if e.id == f.itemID then
+                        local row = math.floor((idx - 1) / perRow)
+                        AT_WB.scrollRow = math.max(0, row - math.floor((visible - 1) / 2))
+                        break
+                    end
+                end
+            end
+        end
+    end
     local _, maxStart, start = ScrollBounds(rowCount, panel:GetHeight(), AT_WB.scrollRow)
     AT_WB.scrollRow = start
     AT_WB.UpdateScrollBar(maxStart, start)
@@ -2062,7 +2105,8 @@ local function ApplySearchDim()
     for i = 1, #AT_WB.cells do
         local cell = AT_WB.cells[i]
         if cell:IsShown() and cell.entry then
-            local match = (q == "")
+            -- The search's lit item is never dimmed (#503).
+            local match = (q == "") or (cell.lit ~= nil and cell.lit:IsShown())
             if not match then
                 local nm = cell.itemName
                 match = nm and nm:lower():find(q, 1, true) and true or false
@@ -2135,7 +2179,7 @@ end
 ------------------------------------------------------------
 
 local scopeBtns, viewBtns = {}, {}
-local prevBtn, nextBtn
+local prevBtn, nextBtn, backBtn
 
 local function UpdateControls()
     SetActive(viewBtns.single, View() ~= "combined")
@@ -2160,6 +2204,11 @@ local function StatusText()
     local w = AT_WB._window
     local paging = (w and #w.pages > M.COMBINED)
         and ("Tabs " .. w.first .. "-" .. (w.first + w.width - 1) .. " of " .. #w.pages .. "  ·  ") or ""
+    if AT_WB.focus then
+        local c = AltStableDB and AltStableDB[AT_WB.focus.guid]
+        return paging .. "Showing " .. ((c and c.name) or "this character")
+            .. (MailOn() and "  ·  Bags, bank + mail" or "  ·  Bags + bank") .. "  ·  Read-only"
+    end
     if Scope() == "personal" then
         local me = AltStableDB and UnitGUID and AltStableDB[UnitGUID("player")]
         return paging .. ((me and me.name) or "This character")
@@ -2192,14 +2241,71 @@ function AT_WB.RequestRefresh()
     end)
 end
 
+------------------------------------------------------------
+-- The item search's view (#503): one character, one item lit
+--
+-- Temporary: it overrides the filter (CurrentFilter) and the tab shown, and
+-- writes no setting, so "Back to previous view" - or any scope, tab or filter
+-- click, or leaving the tab - is the saved view again.
+------------------------------------------------------------
+
+-- `reveal`: scroll the item into view on every layout until the player
+-- scrolls, so the layout a window animation ends with, at the final size,
+-- is the one that places it.
+function AT_WB.Focus(guid, itemID)
+    if not (guid and itemID) then return end
+    AT_WB.focus = { guid = guid, itemID = itemID, reveal = true }
+    AT_WB.scrollRow = 0
+    if AT_WB.isActive then AT_WB.Refresh() end
+end
+
+function AT_WB.ClearFocus()
+    if not AT_WB.focus then return end
+    AT_WB.focus = nil
+    AT_WB.scrollRow = 0
+end
+
+-- Still a view the search could have opened: a character the sheet lists
+-- (`only` would show a hidden one) who still holds the item. Otherwise the
+-- saved view comes back.
+local function FocusStillValid(agg)
+    local f = AT_WB.focus
+    if not f then return true end
+    if not (AltStable.HasNamedRecord and AltStable.HasNamedRecord(f.guid)) then return false end
+    if AltStable.IsCharacterHidden and AltStable.IsCharacterHidden(f.guid) then return false end
+    return agg == nil or agg[f.itemID] ~= nil
+end
+
+-- The page the lit item is on, from this refresh's distribution: the first of
+-- the player's tabs that lists it, else Other. Derived each time, so editing
+-- a tab while the view is up moves the view with the item.
+local function FocusPage(perTab, tabs)
+    local id = AT_WB.focus.itemID
+    for i = 1, #tabs do
+        for _, e in ipairs(perTab[i] or {}) do
+            if e.id == id then return i end
+        end
+    end
+    return "other"
+end
+
 -- Recompute what is shown from current data, then lay out.
 function AT_WB.Refresh()
     if not panel or not panel:IsShown() then return end
     AT_WB.dirty = nil
+    if not FocusStillValid() then AT_WB.ClearFocus() end
     UpdateControls()
 
     local filter = CurrentFilter()
     local agg = gather(filter)
+    -- Checked before the empty view below: a holder with nothing left is
+    -- the same case as one whose last copy went (Codex review of the plan).
+    if not FocusStillValid(agg) then
+        AT_WB.ClearFocus()
+        filter = CurrentFilter()
+        agg = gather(filter)
+    end
+    if backBtn then backBtn:SetShown(AT_WB.focus ~= nil) end
     local tabs = Tabs()
     if not next(agg) then
         AT_WB._cols = {}
@@ -2221,8 +2327,15 @@ function AT_WB.Refresh()
 
     local perTab, other = M.Distribute(BuildEntries(agg), tabs)
     local pages = M.Pages(#tabs, #other > 0)
-    local sel = M.RepairSelection(Cfg("warbandTab", 1), pages)
-    if sel ~= Cfg("warbandTab", 1) then AltStable.SetConfigValue("warbandTab", sel) end
+    local sel
+    if AT_WB.focus then
+        -- Shown, never saved: the player's own tab is what comes back.
+        sel = FocusPage(perTab, tabs)
+    else
+        sel = M.RepairSelection(Cfg("warbandTab", 1), pages)
+        if sel ~= Cfg("warbandTab", 1) then AltStable.SetConfigValue("warbandTab", sel) end
+    end
+    AT_WB._sel = sel
 
     local keys
     if View() == "combined" then
@@ -2392,21 +2505,32 @@ local function BuildPanel(mainFrame)
     -- The bottom bar: Personal Bank / Warband, and what is being shown.
     scopeBtns.personal = MakeButton(panel, 110, 24, "Personal Bank", function()
         CloseMenus()
+        AT_WB.ClearFocus()
         AltStable.SetConfigValue("warbandScope", "personal"); AT_WB.scrollRow = 0; AT_WB.Refresh()
     end)
     scopeBtns.personal:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", PAD, 6)
     scopeBtns.warband = MakeButton(panel, 110, 24, "Warband", function()
+        AT_WB.ClearFocus()
         AltStable.SetConfigValue("warbandScope", "warband"); AT_WB.scrollRow = 0; AT_WB.Refresh()
     end)
     scopeBtns.warband:SetPoint("LEFT", scopeBtns.personal, "RIGHT", 4, 0)
     statusFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     statusFS:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD, 12)
     statusFS:SetTextColor(unpack(AltStable.C.TEXT_DIM))
+    -- Out of the item search's view (#503), back to the saved one.
+    backBtn = MakeButton(panel, 150, 22, "Back to previous view", function()
+        AT_WB.ClearFocus()
+        AT_WB.Refresh()
+    end)
+    backBtn:SetPoint("RIGHT", statusFS, "LEFT", -10, 0)
+    backBtn:Hide()
+    AT_WB.backBtn = backBtn
 
     -- Virtual scroll: the wheel shifts which rows are laid out (cells are direct
     -- panel children, so hover works — a real ScrollFrame ate the mouse events).
     panel:EnableMouseWheel(true)
     panel:SetScript("OnMouseWheel", function(_, delta)
+        if AT_WB.focus then AT_WB.focus.reveal = false end   -- the player scrolls now
         AT_WB.scrollRow = math.max(0, (AT_WB.scrollRow or 0) - delta * 2)
         AT_WB.Layout()
     end)
@@ -2445,6 +2569,7 @@ local function BuildPanel(mainFrame)
     scrollBar:SetThumbTexture(thumb)
     scrollBar:SetScript("OnValueChanged", function(self, value)
         if self._syncing then return end
+        if AT_WB.focus then AT_WB.focus.reveal = false end
         AT_WB.scrollRow = math.floor((value or 0) + 0.5)
         AT_WB.Layout()
     end)
@@ -2527,6 +2652,7 @@ end
 
 function AT_WB.Deactivate(mainFrame)
     AT_WB.isActive = false
+    AT_WB.ClearFocus()
     AT_WB.dirty = nil   -- Activate draws afresh
     if panel then panel:Hide() end
     CloseMenus()
@@ -2571,6 +2697,12 @@ local function BootstrapPlugin()
             AT_WB.Refresh()
         end,
         OnDeactivate  = function(mf) AT_WB.Deactivate(mf) end,
+        -- The item search opening this tab on an item (#503, the core's
+        -- _OpenPluginTab): called before the activating click, or alone when
+        -- the tab is already up.
+        OnOpen        = function(kind, guid, itemID)
+            if kind == "item" then AT_WB.Focus(guid, itemID) end
+        end,
         OnSerialize   = function(g, s) return SerializePlayer(g, s) end,
         OnDeserialize = function(g, b) return DeserializePlayer(g, b) end,
         -- Our blob is judged by its own stamps (the overall one, then the
@@ -2606,6 +2738,7 @@ local function BootstrapPlugin()
             OnMailClosed = OnMailClosed, OnMailSendSuccess = OnMailSendSuccess, OnMailFailed = OnMailFailed,
             OwnCharacterGuid = OwnCharacterGuid, Incoming = Incoming, MailOn = MailOn,
             EncodeOutbox = EncodeOutbox, ParseOutbox = ParseOutbox, AppendBreakdown = AppendBreakdown,
+            OpenDialog = OpenDialog, SaveDialog = SaveDialog,
         },
     })
 
