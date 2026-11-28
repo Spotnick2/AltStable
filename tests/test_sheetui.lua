@@ -6369,4 +6369,270 @@ do
     Open("summary")
 end
 
+------------------------------------------------------------
+-- Reputations, one row per faction (#566)
+------------------------------------------------------------
+-- A view of the Reputations tab, as Cooldowns is of Skills: the rows are the
+-- factions the listed characters hold, the columns the characters, chosen with
+-- the Columns menu and kept on this computer (repLayout).
+do
+    local T = AltStable._test
+    local savedDB, savedLayout = AltStableDB, AltStableConfig.repLayout
+    local savedHidden = AltStableConfig.sheetHiddenColumns
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId then btnFor[b.sectionId] = b end end
+    local function Open(id) T.ViewStrip.last = nil; btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local function Active() local cols = T.ColumnLayout(); return cols end
+    local function Rows()
+        local out = {}
+        for _, item in ipairs(T.DisplayList()) do out[#out + 1] = item end
+        return out
+    end
+    local function Names()
+        local out = {}
+        for _, item in ipairs(T.DisplayList()) do out[#out + 1] = item.data and item.data.name or "?" end
+        return table.concat(out, ",")
+    end
+    local function ColNames()
+        local out = {}
+        for _, c in ipairs(T.ColumnLayout()) do out[#out + 1] = c.char and c.char.name or c.field end
+        return table.concat(out, ",")
+    end
+    local function MenuHas(id)
+        for _, e in ipairs(T.ColumnMenuEntries(T.ActiveSection())) do if e.id == id then return e end end
+    end
+
+    AltStable.EnsureSheetVisible()
+    AltStableConfig.repLayout = nil
+    AltStableConfig.sheetHiddenColumns = nil
+    AltStableDB = {
+        a = { guid = "a", name = "Aa Surname", class = "MAGE", level = 60, realm = "R",
+              rep_72 = 6, rep_72_v = 100, rep_72_max = 12000, rep_47 = 5 },
+        b = { guid = "b", name = "Bb Other", class = "ROGUE", level = 20, realm = "R",
+              rep_72 = 8, rep_2779 = 4, rep_2779_v = 0, rep_2779_max = 3000 },
+        h = { guid = "h", name = "Hh Hidden", class = "WARRIOR", level = 30, realm = "R", rep_76 = 5 },
+        u = { guid = "u", realm = "R", rep_81 = 5 },            -- no name yet: not listed
+    }
+    AltStable.SetCharacterHidden("h", true)
+
+    -- The switch, from the character layout.
+    Open("rep")
+    eq("Reputations opens one row per character", T.ActiveSection().id, "rep")
+    local entry = MenuHas("__layout")
+    check("its Columns menu offers One row per faction", entry ~= nil and entry.text:find("One row per faction", 1, true) ~= nil)
+    check("  unchecked", entry and entry.text:find("60:60:60", 1, true) ~= nil)
+    check("  second, under the title", T.ColumnMenuEntries(T.ActiveSection())[2].id == "__layout")
+    T.colBtn._GetRight, T.colBtn._GetBottom = 900, 700
+    T.OpenColumnMenu(T.colBtn)
+    T.MenuClick("__layout")
+    eq("picking it saves the layout", AltStableConfig.repLayout, "factions")
+    eq("  and switches to the faction view", T.ActiveSection().id, "repFactions")
+    check("  the menu it came from closes", not T.MenuIsShown())
+    check("  the Columns button stays", T.colBtn:IsShown())
+    local lit
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId == "rep" then lit = b end end
+    local ar, ag, ab = AltStable.GetAccentRGB()
+    local lr, lg, lb = lit.lbl:GetTextColor()
+    check("  the sidebar still lights Reputations", lr == ar and lg == ag and lb == ab)
+
+    -- Columns: the listed characters, first names, class colour; rows: their factions.
+    eq("a column per listed character, by name", ColNames(), "Aa Surname,Bb Other")
+    local cols = T.ColumnLayout()
+    check("  headed by the first name", cols[1].label:find("Aa", 1, true) ~= nil and not cols[1].label:find("Surname", 1, true))
+    check("  class-coloured", cols[1].label:find(AltStable.ClassColor("MAGE"), 1, true) == 1)
+    check("  the full name and level in the header's tooltip",
+          cols[1].headerTip:find("Aa Surname", 1, true) == 1 and cols[1].headerTip:find("Level 60", 1, true) ~= nil)
+    eq("rows: the factions they hold, in the game's order", Names(), "Stormwind,Ironforge,High Order")
+    check("  not the hidden character's, nor the unnamed record's",
+          not Names():find("Orgrimmar", 1, true) and not Names():find("Thunder", 1, true))
+    eq("the frozen column is the faction, wider than Name", select(2, T.FrozenWidth()), 200)
+    eq("  its header says so", T.NameHeader().label:GetText(), "Faction")
+    -- The longest name fits its label (the stub's text width, 5 per letter:
+    -- MODELLED; the PR asks for a look in game).
+    local probe = T.frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    probe:SetText("Theramore Expeditionary Force")
+    check("  \"Theramore Expeditionary Force\" fits the faction column",
+          probe:GetUnboundedStringWidth() <= select(2, T.FrozenWidth())
+          and T.FrozenRows()[1].nameLabel:GetWidth() == select(2, T.FrozenWidth()))
+
+    -- The rows drawn: the cells, their hover, the frozen half.
+    local _, _, _, rows = T.ColumnLayout()
+    local first = rows[1]
+    eq("Stormwind for the mage: Honored", first.cells[1]:GetText(), AltStable._test.FormatReputation(6))
+    eq("  for the rogue: Exalted", first.cells[2]:GetText(), AltStable._test.FormatReputation(8))
+    local tip = first.repTips[1]
+    check("  its hover names the faction and the character",
+          tip.factionLabel:find("Stormwind", 1, true) == 1 and tip.factionLabel:find("Aa Surname", 1, true) ~= nil)
+    eq("  with the standing", tip.standing, "Honored")
+    eq("  and the progress", tip.progress, "100 / 12000")
+    eq("Ironforge for the rogue: nothing met, an empty cell", rows[2].cells[2]:GetText(), "")
+    check("  and no hover", rows[2].repTips[2].standing == nil)
+    local ho = T.DisplayList()[3].data
+    eq("High Order's real 0 progress is kept on its row", tostring(ho.c_b_v) .. "/" .. tostring(ho.c_b_max), "0/3000")
+    local frows = T.FrozenRows()
+    eq("the frozen half shows the faction", frows[1].nameLabel:GetText(), "|cffffffffStormwind|r")
+    check("  is no character: no menu on right-click", frows[1].nameTipBtn.charData == nil
+          and frows[1].nameTipBtn.factionData ~= nil)
+    check("  nor lights a character", frows[1].markGuid == nil and first.markGuid == nil)
+
+    -- Reuse within the view's own pool: a pooled row shows another faction.
+    AltStable.SetColumnShown("rep", "rep_72", false)
+    _, _, _, rows = T.ColumnLayout()
+    eq("hiding Stormwind (the character layout's own choice) drops its row", Names(), "Ironforge,High Order")
+    check("  the same pooled row now reads Ironforge's hover",
+          rows[1].repTips[1].factionLabel:find("Ironforge", 1, true) == 1 and rows[1].repTips[1].standing == "Friendly")
+    entry = MenuHas("rep_72")
+    check("  and the menu still lists it, unchecked, to bring it back",
+          entry ~= nil and entry.text:find("60:60:60", 1, true) ~= nil)
+    T.OpenColumnMenu(T.colBtn)
+    T.MenuClick("rep_72")
+    eq("  picking it brings it back", Names(), "Stormwind,Ironforge,High Order")
+    AltStable.CloseCharacterMenu()
+
+    -- Show all factions clears only the faction choices.
+    AltStableConfig.sheetHiddenColumns = { ["rep.rep_72"] = true, ["rep.rep_47"] = true, ["rep.rep_2779"] = true,
+                                            ["rep.level"] = true }
+    AltStable.RefreshSheet()
+    eq("every faction hidden: no rows", #Rows(), 0)
+    eq("  and why, with the way back", T.EmptyText(), "Every faction is hidden. Columns > Show all factions.")
+    check("  Show all factions is offered", MenuHas("__allFactions") and not MenuHas("__allFactions").disabled)
+    AltStable.ShowAllFactions()
+    eq("Show all factions brings them all", Names(), "Stormwind,Ironforge,High Order")
+    eq("  and keeps the character layout's hidden Level", AltStableConfig.sheetHiddenColumns["rep.level"], true)
+    check("  the empty text goes", T.EmptyText() == nil)
+    AltStableConfig.sheetHiddenColumns = nil
+
+    -- Sorting: by a character's standing, unmet last, ties in the game's order.
+    local hdrs = select(2, T.ColumnLayout())
+    hdrs[2]:GetScript("OnClick")(hdrs[2], "LeftButton")
+    eq("a character's header sorts by its standing, highest first", Names(), "Stormwind,High Order,Ironforge")
+    hdrs = select(2, T.ColumnLayout())
+    hdrs[2]:GetScript("OnClick")(hdrs[2], "LeftButton")
+    eq("  then lowest first, unmet still last", Names(), "High Order,Stormwind,Ironforge")
+    -- A tie in standing goes in the game's order, whichever the direction.
+    AltStableDB.b.rep_47 = 8
+    AltStable.RefreshSheet()
+    eq("  lowest first, a tie at Exalted in the game's order: Stormwind, Ironforge", Names(), "High Order,Stormwind,Ironforge")
+    hdrs = select(2, T.ColumnLayout())
+    hdrs[2]:GetScript("OnClick")(hdrs[2], "LeftButton")
+    eq("  highest first: the tie still in the game's order", Names(), "Stormwind,Ironforge,High Order")
+    AltStableDB.b.rep_47 = nil
+    AltStable.RefreshSheet()
+    T.NameHeader():GetScript("OnClick")(T.NameHeader(), "LeftButton")
+    eq("the Faction header: the game's order", Names(), "Stormwind,Ironforge,High Order")
+    T.NameHeader():GetScript("OnClick")(T.NameHeader(), "LeftButton")
+    eq("  then reversed", Names(), "High Order,Ironforge,Stormwind")
+    T.NameHeader():GetScript("OnClick")(T.NameHeader(), "LeftButton")
+
+    -- A character's header: its right-click opens that character's menu.
+    hdrs = select(2, T.ColumnLayout())
+    check("a character's header hears the right button", WoW.handlesClick(hdrs[1], "RightButton"))
+    hdrs[1]:GetScript("OnClick")(hdrs[1], "RightButton")
+    check("  which opens the character's menu", T.MenuIsShown())
+    AltStable.CloseCharacterMenu()
+    check("  sorting is unchanged by it", (T.SortState()) == "factionOrder")
+
+    -- Refreshed with the same columns, the headers follow the characters.
+    AltStableDB.a.level = 61
+    AltStable.RefreshSheet()
+    hdrs = select(2, T.ColumnLayout())
+    check("a refresh rebinds a header to the current record", hdrs[1].col.headerTip:find("Level 61", 1, true) ~= nil)
+    AltStable.SetShowingHidden(true)
+    AltStable.RefreshSheet()
+    eq("Show hidden: the hidden character's column comes", ColNames(), "Aa Surname,Bb Other,Hh Hidden")
+    check("  greyed", T.ColumnLayout()[3].label:find("|cff808080", 1, true) == 1)
+    check("  with its faction", Names():find("Orgrimmar", 1, true) ~= nil)
+    AltStable.SetShowingHidden(false)
+    AltStable.RefreshSheet()
+
+    -- A refresh keeps the place it was scrolled to.
+    for i = 1, 12 do
+        local g = "s" .. i
+        AltStableDB[g] = { guid = g, name = "Scroll" .. string.char(64 + i) .. " X", class = "PRIEST", level = 10,
+                           realm = "R", rep_72 = 5, rep_69 = 5, rep_54 = 5, rep_76 = 5, rep_81 = 5, rep_68 = 5,
+                           rep_530 = 5, rep_529 = 5, rep_609 = 5, rep_59 = 5, rep_576 = 5, rep_749 = 5,
+                           rep_270 = 5, rep_910 = 5, rep_589 = 5, rep_21 = 5, rep_369 = 5, rep_470 = 5,
+                           rep_577 = 5, rep_87 = 5, rep_349 = 5, rep_809 = 5, rep_909 = 5, rep_92 = 5, rep_93 = 5 }
+    end
+    AltStable.RefreshSheet()
+    local hs = T.HScrollBar()
+    local _, maxH = hs:GetMinMaxValues()
+    check("a wide roster scrolls sideways", (tonumber(maxH) or 0) > 0)
+    local body = T.BodyScroll()
+    -- The stub's scroll frame remembers nothing: it does here, for the test.
+    local realSetV = body.SetVerticalScroll
+    body.SetVerticalScroll = function(self, v) self._GetVerticalScroll = v; return realSetV(self, v) end
+    hs:SetValue(math.min(120, maxH))
+    body:SetVerticalScroll(40)
+    AltStable.RefreshSheet()
+    eq("a refresh keeps the horizontal place", hs:GetValue(), math.min(120, maxH))
+    eq("  and the vertical one", body:GetVerticalScroll(), 40)
+    body.SetVerticalScroll(body, 9999)
+    AltStable.RefreshSheet()
+    eq("  a vertical place past the end is clamped to the last row", body:GetVerticalScroll(), #T.DisplayList() * AltStable.LAYOUT.ROW_HEIGHT - body:GetHeight())
+    for i = 1, 12 do AltStableDB["s" .. i] = nil end
+    AltStable.RefreshSheet()
+    eq("  clamped when the roster shrinks", hs:GetValue(), math.min(120, select(2, hs:GetMinMaxValues())))
+    body.SetVerticalScroll = realSetV; body._GetVerticalScroll = nil
+
+    -- Empty states.
+    AltStableDB = { h = AltStableDB.h }
+    AltStable.RefreshSheet()
+    eq("no character shown: says so, and where the hidden ones are", T.EmptyText(),
+       "No characters are shown. Show hidden characters from the footer.")
+    AltStableDB = { n = { guid = "n", name = "New One", class = "MAGE", level = 1, realm = "R" } }
+    AltStable.RefreshSheet()
+    eq("no reputation recorded: says how they come", T.EmptyText(),
+       "No reputation recorded yet for the characters shown. Log in on a character to record its reputations.")
+
+    -- Round trips: a plugin and Skills, and back.
+    AltStableDB = savedDB
+    AltStable.RefreshSheet()
+    local plugin
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId == nil and b ~= btnFor.options then plugin = plugin or b end end
+    T.ViewStrip.last = nil
+    Open("skills")
+    check("leaving for Skills puts Name back", T.NameHeader().label:GetText() == "Name" and select(2, T.FrozenWidth()) == 140)
+    check("  and hides the empty text", T.EmptyText() == nil)
+    Open("rep")
+    eq("the sidebar's Reputations reopens the faction view", T.ActiveSection().id, "repFactions")
+    eq("  with the faction column", select(2, T.FrozenWidth()), 200)
+    -- Skills keeps Cooldowns through a visit to Reputations.
+    local _, cdTab = T.ViewTabs()
+    btnFor.skills:GetScript("OnClick")(btnFor.skills)
+    cdTab:GetScript("OnClick")(cdTab)
+    btnFor.rep:GetScript("OnClick")(btnFor.rep)
+    btnFor.skills:GetScript("OnClick")(btnFor.skills)
+    eq("Skills still reopens Cooldowns after Reputations", T.ActiveSection().id, "cooldowns")
+    -- A plugin tab and back.
+    local pbtn
+    for _, b in ipairs(T.sidebarBtns) do
+        if b.sectionId and not btnFor[b.sectionId] then pbtn = b end
+    end
+    for id, b in pairs(btnFor) do
+        if id ~= "summary" and id ~= "gear" and id ~= "skills" and id ~= "rep" and id ~= "options" then pbtn = pbtn or b end
+    end
+    btnFor.rep:GetScript("OnClick")(btnFor.rep)
+    if pbtn then
+        pbtn:GetScript("OnClick")(pbtn)
+        check("  a plugin tab takes over: no empty text, no faction grid", T.EmptyText() == nil and T.ActiveSection()._isPlugin)
+        btnFor.rep:GetScript("OnClick")(btnFor.rep)
+        eq("  and back, the faction view again", T.ActiveSection().id, "repFactions")
+        check("  with its rows, or the reason it has none", #Rows() > 0 or T.EmptyText() ~= nil)
+    end
+
+    -- Back to one row per character.
+    T.OpenColumnMenu(T.colBtn)
+    T.MenuClick("__layout")
+    eq("picking it again goes back to one row per character", T.ActiveSection().id, "rep")
+    eq("  saved", AltStableConfig.repLayout, nil)
+    eq("  Name is back", select(2, T.FrozenWidth()), 140)
+    Open("rep")
+    eq("  and Reputations opens that way", T.ActiveSection().id, "rep")
+
+    AltStable.SetCharacterHidden("h", false)
+    AltStableDB, AltStableConfig.repLayout, AltStableConfig.sheetHiddenColumns = savedDB, savedLayout, savedHidden
+    Open("summary")
+end
+
 WoW.finish("test_sheetui", passed, failed)

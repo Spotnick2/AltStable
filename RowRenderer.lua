@@ -249,6 +249,8 @@ local function FormatReputation(v)
     if not v then return "" end
     return (REP_COLOR[v] or "|cffffffff")..(REP_TEXT_SHORT[v] or "").." |r"
 end
+AltStable._test = AltStable._test or {}
+AltStable._test.FormatReputation = FormatReputation
 
 local function FormatMoney(copper)
     if not copper then return "" end
@@ -1385,6 +1387,35 @@ function AltStable.RenderRow(row, char, index, columns)
     row:Show()
 end
 
+-- Reputations by faction (#566): the row is a faction, each column a
+-- character, every cell the rep cell's own text and hover (the record carries
+-- each character's standing and progress under that character's column). Not
+-- a character row: no guid to light, no hidden dimming, no class tint. The
+-- hover names the faction and the character, set at every render since the
+-- row is pooled.
+function AltStable.RenderFactionRow(row, rec, index, columns)
+    SetRowGuid(row, nil)
+    DimRow(row, nil)
+    SetRowBg(row, index)
+    SetRowTipsShown(row, true)
+    if row.groupLabel then row.groupLabel:Hide() end
+    if row.dividers then for _, d in ipairs(row.dividers) do d:Show() end end
+    if row.classTint then row.classTint:SetColorTexture(0, 0, 0, 0) end
+    for i, col in ipairs(columns) do
+        local standing = tonumber(rec[col.field])
+        if row.cells[i] then row.cells[i]:SetText(FormatReputation(standing)) end
+        local tip = row.repTips[i]
+        if tip then
+            tip.standing = standing and REP_TEXT[standing] or nil
+            local v, m = tonumber(rec[col.field .. "_v"]), tonumber(rec[col.field .. "_max"])
+            tip.progress = (standing and v and m) and (v .. " / " .. m) or nil
+            local who = col.char and col.char.name
+            tip.factionLabel = (rec.name or "") .. (who and ("  |cffaaaaaa" .. who .. "|r") or "")
+        end
+    end
+    row:Show()
+end
+
 function AltStable.HideRow(row)
     -- Not a character any more, so it must not stay lit.
     SetRowGuid(row, nil)
@@ -1470,6 +1501,17 @@ function AltStable.CreateFrozenRow(parent, height, nameColWidth)
     local tipBtn = CreateFrame("Button", nil, row)
     tipBtn:SetAllPoints()
     tipBtn:SetScript("OnEnter", function()
+        -- A faction's row in Reputations by faction (#566): its full name and
+        -- the standing key.
+        local fd = tipBtn.factionData
+        if fd and not tipBtn.charData then
+            AnchorRowTooltip(tipBtn)
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(fd.name or "", 1, 1, 1)
+            if AltStable.AddRepStandingLegend then AltStable.AddRepStandingLegend(GameTooltip) end
+            GameTooltip:Show()
+            return
+        end
         -- A ruleset group's header names its servers.
         local g = tipBtn.groupData
         if not tipBtn.charData and g and g.realms and #g.realms > 0 then
@@ -1546,7 +1588,7 @@ function AltStable.RenderFrozenGroupRow(row, item)
     -- row drew a CHARACTER a frame ago - collapsing a realm is enough. Leaving
     -- charData behind gave the realm header that character's tooltip, and since
     -- #21 a right-click on the header would have offered to hide it.
-    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = item end
+    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = item; row.nameTipBtn.factionData = nil end
 
     -- Apply the bordered-box backdrop the first time we render this button.
     -- Doing it here (not in CreateFrozenRow) keeps creation lean and lets
@@ -1619,7 +1661,26 @@ function AltStable.RenderFrozenCharRow(row, char, index)
     row.nameLabel:ClearAllPoints()
     row.nameLabel:SetPoint("LEFT",10,0)
     row.nameLabel:SetText(AltStable.ClassColor(char.class)..(char.name or "").."|r")
-    if row.nameTipBtn then row.nameTipBtn.charData = char end
+    if row.nameTipBtn then row.nameTipBtn.charData = char; row.nameTipBtn.factionData = nil end
+    row:Show()
+end
+
+-- Reputations by faction (#566): the frozen half shows the faction's name,
+-- whole where the column's width allows (SheetUI widens it for this view).
+-- Not a character: no guid, no dimming, no tint, and no menu on right-click
+-- (charData nil, as on a group row).
+function AltStable.RenderFrozenFactionRow(row, rec, index)
+    SetRowGuid(row, nil)
+    DimRow(row, nil)
+    SetRowBg(row, index)
+    if row.classTint then row.classTint:SetColorTexture(0, 0, 0, 0) end
+    row.collapseBtn:Hide()
+    row.nameLabel:ClearAllPoints()
+    row.nameLabel:SetPoint("LEFT", 10, 0)
+    row.nameLabel:SetText("|cffffffff" .. (rec.name or "") .. "|r")
+    if row.nameTipBtn then
+        row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil; row.nameTipBtn.factionData = rec
+    end
     row:Show()
 end
 
@@ -1630,7 +1691,7 @@ function AltStable.HideFrozenRow(row)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Hide()
     row.nameLabel:SetText("")
-    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil end
+    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil; row.nameTipBtn.factionData = nil end
     row:Hide()
 end
 
@@ -1648,6 +1709,6 @@ function AltStable.RenderFrozenFillerRow(row, index)
     if row.classTint then row.classTint:SetColorTexture(0,0,0,0) end
     row.collapseBtn:Hide()
     row.nameLabel:SetText("")
-    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil end
+    if row.nameTipBtn then row.nameTipBtn.charData = nil; row.nameTipBtn.groupData = nil; row.nameTipBtn.factionData = nil end
     row:Show()
 end
