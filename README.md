@@ -29,7 +29,9 @@ The **Warband Bank** tab lays out every item in all your characters' bags, banks
 warband bank, with tabs you can arrange yourself. Show one tab at a time, or three side by side.
 Hover an item to see who holds how many, split between bags, bank and mail. You can show everyone on your
 current ruleset or a chosen one, of your faction, the other or both, or only the character you are on.
-Both filters are kept between sessions, and a reset button puts them back.
+Both filters are kept between sessions, and a reset button puts them back. Shift-click an item
+to link it in chat, as in your bags, or Ctrl-click it for the dressing room. The tab keeps only
+each item's ID, so a random-suffix or enchanted item links as its base item.
 
 ![The Warband Bank tab's Combined view: Trade Goods, Consumables and Equipment side by side, gathered from every character's bags and banks, with the tooltip-count option, the ruleset and faction menus and the tab list down the side](https://raw.githubusercontent.com/Spotnick2/AltStable/main/docs/images/warband-combined.jpg)
 
@@ -60,6 +62,30 @@ time, so the tooltip says when some weren't read yet. Mail you send or return to
 characters counts for it right away, until it next opens its mailbox. Unticking **Track mailbox items**
 (Options, General) leaves mail out. Equipped gear appears on the sheet
 rather than in these counts.
+
+### Where is that item, and who can make it?
+
+The magnifier in the title bar (or `/alts search [words]`) opens **Find an item**. Type at least two
+letters of an item's name: each result shows its total and who holds it, and its hover says where
+("5 in bags, 3 in the bank"). Worn gear counts too. With the Recipe Book module on, a result also
+lists who knows a recipe for it, and a recipe's name finds its item: "transmute" finds Arcanite
+Bar. An item nobody holds says "None recorded", then who can craft it.
+
+Filter by quality, slot, armour or weapon type, a required-level range or one character, and sort
+by total, name, quality, item level or where the item is. A filter alone is a search: "Slot: Chest"
+with levels 20 to 24 lists the chest items that need level 20 to 24, of any armour type (add a
+Type to narrow it). The filters are kept until you reload or log out.
+
+**Enter** opens the Warband Bank tab (it needs the Warband module) on the first character with the
+item in its bags, bank or mail, with the item lit. **Back to previous view** there returns to the
+Warband view you had before; it stays in that tab. An item that's only worn, or only craftable,
+keeps the search open and says who wears it or can craft it.
+
+**Shift+Enter** or a Shift-click puts its link in your chat box. While the camera presentation hides
+the game UI, it opens a line with the link selected instead, to copy with Ctrl+C. A
+**right-click** opens a menu: link it in chat, send it to your guild, party or raid, whisper it to
+your target or to a name you type, or copy it. The search counts the characters the sheet shows, so
+hidden and forgotten ones are left out.
 
 ### Who knows this recipe?
 
@@ -109,11 +135,16 @@ in the last hour. A character without the cooldown shows where it stands: **Know
 not read yet), **Learnable**, **Needs 275** when its skill is too low, or **Not scanned**. Hover it
 for the skill needed and where each recipe is learned. The tab's top bar counts what's available,
 and **Columns** chooses which cooldowns show. This takes the Recipe Book module (on by default);
-without it, the view lists only the cooldowns your characters have recorded.
+without it, the view lists only the profession cooldowns your characters have recorded.
+
+**Dedicated Study**, the Professions Legacy talent, has its own column once one of your characters
+has taken it, with its 23-hour countdown. It doesn't need the Recipe Book, and there's no window to
+open: it's read when the character logs in and whenever its cooldown changes.
 
 A notification at login tells you which cooldowns came up while you were away. **Options,
-Notifications** chooses the professions it covers. A cooldown is read when the character opens its
-profession window, or carries the Salt Shaker.
+Notifications** chooses the professions it covers (Dedicated Study's goes with the notifications
+as a whole). A profession cooldown is read when the character opens its profession window, or
+carries the Salt Shaker.
 
 ### Which characters are saved to a raid, and when do they reset?
 
@@ -380,6 +411,7 @@ The Companion has its own **Check for updates** under **Help → About**.
 |---|---|
 | `/alts` | Open the window |
 | `/alts help` | List the commands |
+| `/alts search` [words] | Find an item on every character (also `/alts find`) |
 | `/alts status` | Versions and counts, as one line to copy into a bug report |
 | `/alts portrait` | Capture this character for the Armory |
 | `/alts sync` [name] | Sync now, with everyone or one character |
