@@ -28,6 +28,7 @@ Skin.lua
 Prompt.lua
 Core.lua
 Scanner.lua
+Readings.lua
 Played.lua
 Drawn.lua
 LegacyTalents.lua

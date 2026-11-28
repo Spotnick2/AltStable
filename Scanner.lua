@@ -1012,8 +1012,9 @@ function AltStable.ScanCharacter()
     -- Guild
     --------------------------------------------------------
 
-    local guild = GetGuildInfo("player")
-    char.guild = guild or ""
+    -- And the rank (#515). Not "" while the roster is still loading: a guilded
+    -- character can read no guild for a moment at login (Readings.lua).
+    if AltStable.Readings then AltStable.Readings.Guild(char) end
 
     -- No spec: GetNumTalentTabs / GetTalentTabInfo are gone on Forever, so the
     -- old talent-tab scan wrote "" for every character. The talents are read
@@ -1286,9 +1287,17 @@ function AltStable.ScanCharacter()
         before[i] = GearItemString(prevGear[slot.key].link) or ""
         after[i] = char["gearstr_"..slot.key] or ""
     end
-    if table.concat(before, ",") ~= table.concat(after, ",") or not char.gearAt then
+    local gearChanged = table.concat(before, ",") ~= table.concat(after, ",")
+    if gearChanged or not char.gearAt then
         char.gearAt = time()
         if AltStable.GearUpdated then AltStable.GearUpdated(char.guid) end
+    end
+
+    -- Durability (#508), knowing whether the gear changed, and where the
+    -- character is (#395). Readings.lua.
+    if AltStable.Readings then
+        AltStable.Readings.Durability(char, gearChanged)
+        AltStable.Readings.Location(char)
     end
     -- When the gear was read, every scan: what GetCharacterGear calls
     -- capturedAt. lastUpdate cannot say it (plugins move it, and a scan with

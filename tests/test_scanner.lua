@@ -2394,4 +2394,54 @@ do
     WoW.reset()
 end
 
+------------------------------------------------------------
+-- Durability, location, guild rank in the scan (#508, #395, #515)
+------------------------------------------------------------
+-- The reads themselves are test_readings.lua's. Here: the scan makes them,
+-- tells durability whether the gear changed, and keeps what the client
+-- can't say yet at login.
+dofile("Readings.lua")
+do
+    WoW.reset()
+    AltStableDB = {}
+    WoW.items[2302] = { name = "Handstitched Leather Boots", quality = 1, ilvl = 8 }
+    WoW.items[2303] = { name = "Rough Boots", quality = 1, ilvl = 6 }
+    WoW.equipped[8] = "|cffffffff|Hitem:2302::::::::16:1485::::::|h[Handstitched Leather Boots]|h|r"
+    WoW.durability = { [8] = { 17, 30 } }
+    WoW.zone, WoW.subzone = "Orgrimmar", "The Drag"
+    WoW.inGuild, WoW.guildInfo = true, { "Parse Partout", "Member", 5 }
+    pcall(AltStable.ScanCharacter)
+    local c = AltStableDB[UnitGUID("player")]
+    eq("the scan reads durability", c and c.durMin, 56)
+    eq("  per slot below 100", c and c.dur_feet, 56)
+    eq("the scan reads the zone", c and c.zone, "Orgrimmar")
+    eq("  and subzone", c and c.subzone, "The Drag")
+    eq("the scan reads the guild", c and c.guild, "Parse Partout")
+    eq("  its rank", c and c.guildRank, "Member")
+    eq("  and the rank's index", c and c.guildRankIndex, 5)
+
+    -- At login the zone isn't known yet, nor the guild's details (measured).
+    WoW.zone, WoW.subzone, WoW.guildInfo = nil, "", nil
+    pcall(AltStable.ScanCharacter)
+    eq("a scan with no zone yet keeps the stored one", c and c.zone, "Orgrimmar")
+    eq("a scan in a guild with no name yet keeps it", c and c.guild, "Parse Partout")
+    eq("  and its rank", c and c.guildRank, "Member")
+
+    -- Unreadable durability: kept while the gear is the same, dropped after a swap.
+    WoW.durability = { [8] = { WoW.secret(5), 30 } }
+    pcall(AltStable.ScanCharacter)
+    eq("unreadable, the same boots: the snapshot stands", c and c.durMin, 56)
+    WoW.equipped[8] = "|cffffffff|Hitem:2303::::::::16:1485::::::|h[Rough Boots]|h|r"
+    pcall(AltStable.ScanCharacter)
+    eq("unreadable after a swap: unknown", c and c.durMin, nil)
+    eq("  the old boots' reading gone", c and c.dur_feet, nil)
+
+    WoW.inGuild = false
+    pcall(AltStable.ScanCharacter)
+    eq("not in a guild: no guild", c and c.guild, "")
+    eq("  and no rank", c and c.guildRank, nil)
+    AltStableDB = {}
+    WoW.reset()
+end
+
 WoW.finish("test_scanner", passed, failed)
