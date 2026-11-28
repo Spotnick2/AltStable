@@ -1791,6 +1791,29 @@ do
     local cell
     for _, c in ipairs(wb.cells) do if c:IsShown() and c.entry and c.entry.id == 101 then cell = c end end
     check("the linen is on screen", cell ~= nil)
+    -- A click hands the item's link to the game's handler (#556): Shift links
+    -- it in chat, Ctrl opens the dressing room - the handler decides.
+    if cell then
+        local handed = {}
+        local heldHandle = rawget(_G, "HandleModifiedItemClick")
+        rawset(_G, "HandleModifiedItemClick", function(link) handed[#handed + 1] = link end)
+        check("a cell takes clicks", cell:GetScript("OnClick") ~= nil)
+        eq("  on the left button's release, as the bags do", cell._clicks and cell._clicks[1], "LeftButtonUp")
+        cell:GetScript("OnClick")(cell, "LeftButton")
+        eq("a click hands the game one link", #handed, 1)
+        check("  the item's own", handed[1] ~= nil and handed[1]:find("|Hitem:101|h[Linen]|h", 1, true) ~= nil,
+              tostring(handed[1]))
+        -- Not cached yet: no link, so nothing is handed (no made-up link).
+        local realEntry = cell.entry
+        cell.entry = { id = 999, total = 1 }
+        cell:GetScript("OnClick")(cell, "LeftButton")
+        eq("an item not cached yet hands nothing", #handed, 1)
+        cell.entry = nil
+        cell:GetScript("OnClick")(cell, "LeftButton")
+        eq("an empty slot hands nothing", #handed, 1)
+        cell.entry = realEntry
+        rawset(_G, "HandleModifiedItemClick", heldHandle)
+    end
     if cell then
         cell:GetScript("OnEnter")(cell)
         -- Drawn again when the cell's count changes (its "shown in this tab"
