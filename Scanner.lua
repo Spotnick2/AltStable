@@ -32,13 +32,16 @@ local PRIMARY_PROFESSIONS = {
 -- client; on this skill list Enchanting, Tailoring, Herbalism, Leatherworking,
 -- Skinning and the three secondaries were (forever-api-notes.md). Riding is
 -- 762 in every version, not measured here. ScanSkills falls back to the
--- English name for an ID that is not in this table.
+-- English name for an ID that is not in this table. Lockpicking (633, rogues)
+-- and Comprehension (3012, Forever's scroll reading) are category 9, Secondary
+-- Skills, in the client's SkillLine table (70938), and Wowhead files
+-- Comprehension there too (#565); neither was measured on the skill list.
 local SKILL_BY_ID = {
     [171] = "Alchemy",   [164] = "Blacksmithing",  [333] = "Enchanting",
     [202] = "Engineering", [182] = "Herbalism",    [165] = "Leatherworking",
     [186] = "Mining",    [393] = "Skinning",       [197] = "Tailoring",
     [356] = "Fishing",   [185] = "Cooking",        [129] = "First Aid",
-    [762] = "Riding",
+    [762] = "Riding",    [633] = "Lockpicking",    [3012] = "Comprehension",
 }
 local KNOWN_SKILL, ID_BY_SKILL = {}, {}
 for id, name in pairs(SKILL_BY_ID) do KNOWN_SKILL[name] = true; ID_BY_SKILL[name] = id end
@@ -458,9 +461,16 @@ local SECONDARY_FIELDS = {
     ["Cooking"]   = { "cooking", "cookingMax" },
     ["First Aid"] = { "firstAid", "firstAidMax" },
     ["Riding"]    = { "riding", "ridingMax" },
+    ["Lockpicking"]   = { "lockpicking", "lockpickingMax" },       -- #565
+    ["Comprehension"] = { "comprehension", "comprehensionMax" },   -- #565
 }
 local SKILL_FIELD_SET = {}
 for _, f in pairs(SECONDARY_FIELDS) do SKILL_FIELD_SET[f[1]], SKILL_FIELD_SET[f[2]] = true, true end
+-- The skills whose header on the skill list hasn't been seen (#565): the
+-- measured list has Comprehension's line (docs/forever-api-notes.md) but not
+-- what it sits under. Missing from the list while ANY header is collapsed,
+-- they keep their saved values, whichever header hides them.
+local HEADER_UNKNOWN = { ["Lockpicking"] = true, ["Comprehension"] = true }
 local PROF_SLOT_FIELDS = { "prof1", "prof1Skill", "prof1Max", "prof2", "prof2Skill", "prof2Max" }
 -- The headers by their skill ID, which is their lines' skillLineCategoryID
 -- (docs/forever-api-notes.md: a Class Skills line has category 7; the list
@@ -559,12 +569,14 @@ function AltStable.ScanSkills(char)
     -- read cannot tell a hidden skill from an unlearned one, so the skills of
     -- THAT header which it did not see keep their saved values (restored after
     -- the loop); an expanded header's skills are read as they are.
-    local hidden, old = {}, nil
+    local hidden, old, anyCollapsed = {}, nil, false
     for i = 1, n do
         local info = GetSkillLineInfo(i)
-        if info and info.isHeader and info.isCollapsed
-           and (info.skillID == PROFESSIONS_HEADER or info.skillID == SECONDARY_HEADER) then
-            hidden[info.skillID], old = true, {}
+        if info and info.isHeader and info.isCollapsed then
+            anyCollapsed, old = true, old or {}
+            if info.skillID == PROFESSIONS_HEADER or info.skillID == SECONDARY_HEADER then
+                hidden[info.skillID] = true
+            end
         end
     end
     if old then
@@ -596,6 +608,10 @@ function AltStable.ScanSkills(char)
     char.firstAidMax = 0
     char.riding = 0
     char.ridingMax = 0
+    char.lockpicking = 0
+    char.lockpickingMax = 0
+    char.comprehension = 0
+    char.comprehensionMax = 0
 
     local primaryCount = 0
     local seen = {}
@@ -650,6 +666,14 @@ function AltStable.ScanSkills(char)
                 char.riding = rank or 0
                 char.ridingMax = maxRank or 0
 
+            elseif skillName == "Lockpicking" then
+                char.lockpicking = rank or 0
+                char.lockpickingMax = maxRank or 0
+
+            elseif skillName == "Comprehension" then
+                char.comprehension = rank or 0
+                char.comprehensionMax = maxRank or 0
+
             elseif PRIMARY_PROFESSIONS[skillName] then
 
                 primaryCount = primaryCount + 1
@@ -693,14 +717,14 @@ function AltStable.ScanSkills(char)
             end
         end
     end
-    if hidden[SECONDARY_HEADER] then
-        for name, f in pairs(SECONDARY_FIELDS) do
-            if not seen[name] then
-                char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0
-                if Recorded(char, name) then
-                    local rank, max = RankByID(name)
-                    if rank then SetRank(char, name, rank, max) end
-                end
+    for name, f in pairs(SECONDARY_FIELDS) do
+        local covered
+        if HEADER_UNKNOWN[name] then covered = anyCollapsed else covered = hidden[SECONDARY_HEADER] end
+        if covered and not seen[name] then
+            char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0
+            if Recorded(char, name) then
+                local rank, max = RankByID(name)
+                if rank then SetRank(char, name, rank, max) end
             end
         end
     end
