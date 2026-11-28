@@ -57,14 +57,17 @@ local function SetDurability(char, low, below)
 end
 
 -- gearChanged: whether an item changed since the last read (the scan knows).
-function R.Durability(char, gearChanged)
+-- fromScan: the equipment scan's own read, which ends the wait below.
+function R.Durability(char, gearChanged, fromScan)
+    if fromScan then R.equipPending = nil end
     local low, below, unreadable = nil, {}, false
     for _, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
         local cur, max = GetInventoryItemDurability(slot.id)
         if Secret(cur) or Secret(max) then
             unreadable = true
         elseif type(cur) == "number" and type(max) == "number" and max > 0 then
-            local pct = math.floor(math.max(0, cur) / max * 100)
+            -- Multiplied first: 29 / 50 * 100 is 57.99... in floating point.
+            local pct = math.floor(math.max(0, cur) * 100 / max)
             if pct < 100 then below[slot.key] = pct end
             if not low or pct < low then low = pct end
         end
@@ -140,6 +143,13 @@ local function Changed(guid)
 end
 
 R.DELAY = { durability = 1, guild = 2 }
+
+-- Equipment changed: the core rescans it 3 s later (PLAYER_EQUIPMENT_CHANGED),
+-- and until then the record still holds the old items. A durability-only
+-- read in between would put the new helm's durability beside the old helm
+-- for a sync to carry (Codex review of #573): it waits, and the equipment
+-- scan writes both together. EQUIP_WAIT lets go if that scan never comes.
+R.EQUIP_WAIT = 10
 local armed = {}
 
 local function Later(kind, read)
@@ -154,7 +164,7 @@ end
 
 local frame = CreateFrame("Frame")
 R.EVENTS = { "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA",
-             "UPDATE_INVENTORY_DURABILITY",
+             "UPDATE_INVENTORY_DURABILITY", "PLAYER_EQUIPMENT_CHANGED",
              "PLAYER_GUILD_UPDATE", "GUILD_RANKS_UPDATE", "GUILD_RANKS_UPDATE_ACTIVE_PLAYER" }
 for _, ev in ipairs(R.EVENTS) do frame:RegisterEvent(ev) end
 
@@ -164,8 +174,17 @@ function R.OnEvent(event, unit)
         -- touch only stamps the record (nothing is sent).
         local guid, char = Ours()
         if char and R.Location(char) then Changed(guid) end
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        local mine = {}
+        R.equipPending = mine
+        C_Timer.After(R.EQUIP_WAIT, function()
+            if R.equipPending == mine then R.equipPending = nil end
+        end)
     elseif event == "UPDATE_INVENTORY_DURABILITY" then
-        Later("durability", function(char) return R.Durability(char, false) end)
+        Later("durability", function(char)
+            if R.equipPending then return false end   -- the equipment scan reads it
+            return R.Durability(char, false)
+        end)
     elseif event == "PLAYER_GUILD_UPDATE" and unit ~= nil and unit ~= "player" then
         return
     else

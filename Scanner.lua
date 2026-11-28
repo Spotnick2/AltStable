@@ -1296,7 +1296,7 @@ function AltStable.ScanCharacter()
     -- Durability (#508), knowing whether the gear changed, and where the
     -- character is (#395). Readings.lua.
     if AltStable.Readings then
-        AltStable.Readings.Durability(char, gearChanged)
+        AltStable.Readings.Durability(char, gearChanged, true)
         AltStable.Readings.Location(char)
     end
     -- When the gear was read, every scan: what GetCharacterGear calls

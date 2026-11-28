@@ -2410,8 +2410,10 @@ do
     WoW.durability = { [8] = { 17, 30 } }
     WoW.zone, WoW.subzone = "Orgrimmar", "The Drag"
     WoW.inGuild, WoW.guildInfo = true, { "Parse Partout", "Member", 5 }
+    AltStable.Readings.equipPending = {}          -- an equipment change waiting for this scan
     pcall(AltStable.ScanCharacter)
     local c = AltStableDB[UnitGUID("player")]
+    eq("the scan ends the equipment wait (Codex review of #573)", AltStable.Readings.equipPending, nil)
     eq("the scan reads durability", c and c.durMin, 56)
     eq("  per slot below 100", c and c.dur_feet, 56)
     eq("the scan reads the zone", c and c.zone, "Orgrimmar")
