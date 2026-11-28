@@ -564,8 +564,17 @@ do
     AltStable.IsGameUIHidden = function() return true end
     WoW.chatBox = nil
     Enter()
-    eq("the game UI hidden: said", Window().status:GetText(), "Chat is hidden with the game UI.")
+    -- Presentation mode: chat is hidden, so the link to copy (owner, 2026-11-28).
+    local aside = Window().aside
+    check("the game UI hidden: the copy line instead", aside:IsShown() and aside.mode == "copy")
+    eq("  as a chat line that prints the link", aside:GetText(),
+       '/script DEFAULT_CHAT_FRAME:AddMessage("\\124Hitem:101\\124h[Linen Cloth]\\124h");')
+    check("  selected, for Ctrl+C", aside._highlighted == true and aside:HasFocus())
+    check("  in the search box's place", not Window().box:IsShown())
     check("  chat untouched", WoW.chatBox == nil)
+    aside:GetScript("OnEscapePressed")(aside)
+    check("Escape: the search box is back", Window().box:IsShown() and not aside:IsShown())
+    check("  with the keyboard", Window().box:HasFocus())
     AltStable.IsGameUIHidden = function() return false end
 
     -- A link the client hasn't cached: asked for, and said.
@@ -586,6 +595,187 @@ do
     shift = false
     ChatFrameUtil.InsertLink = realInsertLink
     AltStable.IsGameUIHidden = uiHidden
+    Window():Hide()
+end
+
+------------------------------------------------------------
+-- The row menu: send the link straight out, or copy it (owner, 2026-11-28).
+-- Sending needs no chat box, so it works in presentation mode too.
+------------------------------------------------------------
+do
+    World()
+    local uiHidden = AltStable.IsGameUIHidden
+    AltStable.IsGameUIHidden = function() return false end
+    local realShowMenu, menu = AltStable.ShowMenu, nil
+    AltStable.ShowMenu = function(list, onPick, ...)
+        menu = { list = list, pick = onPick }
+        return realShowMenu(list, onPick, ...)
+    end
+    local function Entry(id)
+        for _, x in ipairs(menu and menu.list or {}) do if x.id == id then return x end end
+    end
+    local function RightClick(i)
+        local row = Window().rows[i or 1]
+        menu = nil
+        row:GetScript("OnClick")(row, "RightButton")
+    end
+    local function LastSent() return WoW.chatSent and WoW.chatSent[#WoW.chatSent] end
+    WoW.chatSent, WoW.chatBox, WoW.target, WoW.chatLockdown = {}, nil, nil, nil
+    WoW.inGuild, WoW.inGroup, WoW.inRaid = nil, nil, nil
+
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    local row = Window().rows[1]
+    WoW.tooltipLines = {}
+    row:GetScript("OnEnter")(row)
+    local hint = false
+    for _, l in ipairs(WoW.tooltipLines) do
+        if l == "Right-click: send or copy the link" then hint = true end
+    end
+    check("the hover says what a right-click does", hint)
+    row:GetScript("OnLeave")(row)
+
+    local clicks = table.concat(Window().rows[1]._clicks or {}, ",")
+    check("a row hears the right button", clicks:find("RightButtonUp", 1, true) ~= nil)
+    check("  and the left", clicks:find("LeftButtonUp", 1, true) ~= nil)
+    RightClick()
+    check("a right-click opens the row's menu", menu ~= nil)
+    eq("  titled with the item", menu and menu.list[1].title and menu.list[1].text, "Linen Cloth")
+    check("  Shift+Enter's link, there too", Entry("link") and not Entry("link").disabled)
+    check("  no guild: greyed", Entry("GUILD") and Entry("GUILD").disabled)
+    eq("    and why", Entry("GUILD") and Entry("GUILD").why, "You aren't in a guild.")
+    check("  no group: party and raid greyed", Entry("PARTY").disabled and Entry("RAID").disabled)
+    check("  no target: no whisper to it", Entry("target") == nil)
+    check("  whisper to a name, and copy, always", Entry("whisper") and Entry("copy")
+          and not Entry("whisper").disabled and not Entry("copy").disabled)
+
+    WoW.inGuild, WoW.inGroup = true, true
+    RightClick()
+    check("in a guild and a group: guild and party open", not Entry("GUILD").disabled and not Entry("PARTY").disabled)
+    check("  raid still greyed", Entry("RAID").disabled)
+    menu.pick("GUILD")
+    eq("Send to guild: the link goes out", LastSent() and LastSent().text, "|Hitem:101|h[Linen Cloth]|h")
+    eq("  to the guild", LastSent() and LastSent().chatType, "GUILD")
+    eq("  and said", Window().status:GetText(), "Sent to guild: Linen Cloth.")
+    check("  no chat box needed", WoW.chatBox == nil)
+    RightClick(); menu.pick("PARTY")
+    eq("Send to party", LastSent() and LastSent().chatType, "PARTY")
+    WoW.inRaid = true
+    RightClick()
+    check("in a raid: raid opens", not Entry("RAID").disabled)
+    menu.pick("RAID")
+    eq("Send to raid", LastSent() and LastSent().chatType, "RAID")
+
+    -- The target: whispered by "Name Surname", the one at the menu's opening.
+    WoW.target = { name = "Brom Ironfoot" }
+    RightClick()
+    eq("a player targeted: whisper them", Entry("target") and Entry("target").text, "Whisper Brom Ironfoot")
+    WoW.target = { name = "Someone Else" }
+    menu.pick("target")
+    eq("  whispered", LastSent() and LastSent().chatType, "WHISPER")
+    eq("  the one targeted when the menu opened", LastSent() and LastSent().target, "Brom Ironfoot")
+    WoW.target = { name = "Grukk Bonecrusher", enemy = true }
+    RightClick()
+    check("the other faction: greyed", Entry("target") and Entry("target").disabled)
+    WoW.target = { name = "Hogger", player = false }
+    RightClick()
+    check("a creature targeted: no whisper to it", Entry("target") == nil)
+    WoW.target = nil
+
+    -- Whisper to a typed name.
+    local sent = #WoW.chatSent
+    RightClick(); menu.pick("whisper")
+    local aside = Window().aside
+    check("Whisper to...: a name box", aside:IsShown() and aside.mode == "name" and aside:GetText() == "")
+    check("  in the search box's place, with the keyboard", not Window().box:IsShown() and aside:HasFocus())
+    eq("  and says what for", Window().status:GetText(), "Whisper Linen Cloth to: type a name, then Enter.")
+    aside:SetText("  Kaleid Sumner ")
+    aside:GetScript("OnTextChanged")(aside, true)
+    eq("  a name typed stays (not read-only)", aside:GetText(), "  Kaleid Sumner ")
+    aside:GetScript("OnEnterPressed")(aside)
+    eq("Enter whispers the name, trimmed", LastSent() and LastSent().target, "Kaleid Sumner")
+    eq("  the link", LastSent() and LastSent().text, "|Hitem:101|h[Linen Cloth]|h")
+    check("  the search box is back", Window().box:IsShown() and not aside:IsShown())
+    eq("  and said", Window().status:GetText(), "Sent to Kaleid Sumner: Linen Cloth.")
+    sent = #WoW.chatSent
+    RightClick(); menu.pick("whisper")
+    aside:GetScript("OnEnterPressed")(aside)
+    eq("no name: nothing sent", #WoW.chatSent, sent)
+    RightClick(); menu.pick("whisper")
+    aside:SetText("Kaleid Sumner")
+    aside:GetScript("OnEscapePressed")(aside)
+    eq("Escape: nothing sent", #WoW.chatSent, sent)
+    check("  the search box is back", Window().box:IsShown() and not aside:IsShown())
+    check("  the instructions gone", Window().status:GetText() ~= "Whisper Linen Cloth to: type a name, then Enter.")
+    RightClick(); menu.pick("whisper")
+    aside:GetScript("OnEditFocusLost")(aside)
+    check("a click elsewhere puts the search box back", Window().box:IsShown() and not aside:IsShown())
+
+    -- Copy: the chat line, selected and read-only.
+    RightClick(); menu.pick("copy")
+    check("Copy the link: the copy line", aside:IsShown() and aside.mode == "copy")
+    eq("  the chat line", aside:GetText(),
+       '/script DEFAULT_CHAT_FRAME:AddMessage("\\124Hitem:101\\124h[Linen Cloth]\\124h");')
+    aside._highlighted = nil
+    aside:SetText("oops")
+    aside:GetScript("OnTextChanged")(aside, true)
+    check("  typed over: put back, selected", aside:GetText():find("^/script") and aside._highlighted)
+    aside._highlighted = nil
+    aside:GetScript("OnKeyUp")(aside, "LCTRL")
+    check("  still selected after a key", aside._highlighted == true)
+    aside:GetScript("OnEnterPressed")(aside)
+    check("  Enter puts the search box back", Window().box:IsShown() and not aside:IsShown())
+    eq("  nothing sent", #WoW.chatSent, sent)
+    eq("the chat line escapes quotes and backslashes",
+       S.ScriptLine('|cff|Hitem:1|h[A "B" \\C]|h|r'),
+       '/script DEFAULT_CHAT_FRAME:AddMessage("\\124cff\\124Hitem:1\\124h[A \\"B\\" \\\\C]\\124h\\124r");')
+
+    -- A copy line left open when the window closes: the keyboard let go, and
+    -- the search box next time.
+    RightClick(); menu.pick("copy")
+    Window():Hide()
+    check("closed while copying: the keyboard let go", WoW.focus ~= aside and WoW.focus ~= Window().box)
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    Window():Hide()
+    check("closed while searching: the keyboard let go", WoW.focus ~= Window().box)
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    check("closed and reopened: the search box", Window().box:IsShown() and not aside:IsShown())
+    RightClick(); menu.pick("copy")
+    AltStable.ShowSearch("wool"); WoW.flushTimers()
+    check("/alts search while copying: the search box takes it", Window().box:IsShown()
+          and Window().box:GetText() == "wool")
+    Type("linen"); WoW.flushTimers()
+
+    -- Chat locked down: said, nothing sent.
+    WoW.chatLockdown = true
+    RightClick(); menu.pick("GUILD")
+    eq("chat locked down: nothing sent", #WoW.chatSent, sent)
+    eq("  and said", Window().status:GetText(), "Chat can't be sent right now.")
+    WoW.chatLockdown = nil
+
+    -- An uncached link: asked for, nothing sent.
+    AltStableWarbandDB[ALT].bags[108] = 1
+    S.names[108] = "Mageweave"; S.folded[108] = "mageweave"
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    Type("mageweave"); WoW.flushTimers()
+    WoW.itemLoadRequests = {}
+    RightClick(); menu.pick("GUILD")
+    eq("an uncached link: nothing sent", #WoW.chatSent, sent)
+    check("  and asked for", Requested(108))
+
+    -- Presentation mode: sending still works; the chat box link is greyed.
+    Type("linen"); WoW.flushTimers()
+    AltStable.IsGameUIHidden = function() return true end
+    RightClick()
+    check("presentation mode: Link in chat greyed", Entry("link").disabled)
+    eq("  and why", Entry("link").why, "Chat is hidden in presentation mode: copy it instead.")
+    menu.pick("GUILD")
+    eq("  Send to guild still goes", LastSent() and LastSent().chatType, "GUILD")
+    eq("  (one more sent)", #WoW.chatSent, sent + 1)
+
+    AltStable.ShowMenu = realShowMenu
+    AltStable.IsGameUIHidden = uiHidden
+    if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
+    WoW.inGuild, WoW.inGroup, WoW.inRaid = nil, nil, nil
     Window():Hide()
 end
 

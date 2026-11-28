@@ -1371,7 +1371,13 @@ C_ChatInfo = {
     end,
     -- Present on the client; ChatThrottleLib hooks both.
     SendAddonMessageLogged = function() return 0 end,
-    SendChatMessage = function() end,
+    -- Chat sent, recorded: { text, chatType, languageID, target }.
+    SendChatMessage = function(text, chatType, languageID, target)
+        WoW.chatSent = WoW.chatSent or {}
+        table.insert(WoW.chatSent, { text = text, chatType = chatType, languageID = languageID, target = target })
+    end,
+    -- False in and out of combat in the open world (measured); a test sets it.
+    InChatMessagingLockdown = function() return WoW.chatLockdown == true end,
 }
 -- Battle.net, as measured on 70124 (#58, docs/SYNC-DISCOVERY.md):
 --   * game account ids are small handles LOCAL to this client (WoW.bn.myId is
@@ -1556,7 +1562,28 @@ function GetMoney() return 0 end
 -- The hearthstone's inn (#371): WoW.bindLocation, a string; nil is the
 -- client's empty answer.
 function GetBindLocation() return WoW.bindLocation or "" end
-function IsInGuild() return false end
+function IsInGuild() return WoW.inGuild == true end
+-- Groups and the target, for the item search's row menu (#503). A test sets
+-- WoW.inGroup / WoW.inRaid, and WoW.target = { name = "Name Surname",
+-- enemy = true?, player = false? }. GetUnitName joins the surname, as measured.
+function IsInGroup() return WoW.inGroup == true or WoW.inRaid == true end
+function IsInRaid() return WoW.inRaid == true end
+function UnitIsPlayer(unit)
+    if unit == "target" then return WoW.target ~= nil and WoW.target.player ~= false end
+    return unit == "player"
+end
+function UnitIsUnit(a, b) return a == b end
+function UnitIsFriend(_, unit)
+    if unit == "target" then return WoW.target ~= nil and not WoW.target.enemy end
+    return true
+end
+do
+    local getUnitNameBeforeTarget = GetUnitName
+    function GetUnitName(unit, ...)
+        if unit == "target" then return WoW.target and WoW.target.name end
+        return getUnitNameBeforeTarget(unit, ...)
+    end
+end
 
 SlashCmdList = {}
 UISpecialFrames = {}
