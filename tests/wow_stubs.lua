@@ -1870,6 +1870,10 @@ local function ProfessionsReset()
     -- An item's cooldown (#460), on the GetTime() clock: [itemID] = { start, duration }.
     -- None: start 0, duration 0, as the three readers below answer for an idle item.
     WoW.itemCooldowns = {}
+    -- A spell's cooldown (#557), the same way: [spellID] = { start, duration
+    -- [, isEnabled] }. None: 0, 0, enabled - measured for Dedicated Study
+    -- (1225469) idle on 1.60.1.71139.
+    WoW.spellCooldowns = {}
 end
 ProfessionsReset()
 local resetBeforeProfessions = WoW.reset
@@ -1998,6 +2002,17 @@ end
 C_Spell.GetItemCooldown = function(id)
     local s, d = itemCooldown(id)
     return { startTime = s, duration = d, isEnabled = true, isActive = s > 0 and d > 0, modRate = 1 }
+end
+-- The SpellCooldownInfo struct the 71139 dump declares.
+C_Spell.GetSpellCooldown = function(id)
+    local cd = WoW.spellCooldowns and WoW.spellCooldowns[id]
+    local s, d = cd and cd[1] or 0, cd and cd[2] or 0
+    local enabled = true
+    if cd and cd[3] ~= nil then enabled = cd[3] end
+    -- isActive only for plain numbers: a secret duration must reach the reader.
+    local active
+    if type(s) == "number" and type(d) == "number" then active = s > 0 and d > 0 end
+    return { startTime = s, duration = d, isEnabled = enabled, isActive = active, modRate = 1 }
 end
 
 ------------------------------------------------------------
