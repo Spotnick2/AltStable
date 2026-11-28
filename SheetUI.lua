@@ -436,19 +436,7 @@ local function PlayOpenAnimation(targetFrame)
     local startScale = userScale * 0.96
     local duration = 0.22
 
-    -- Lifted out of UIParent by the presentation, the sheet's own scale is
-    -- its effective one (LibShowcase I.Lift keeps it so): UIParent's times
-    -- this. The setting's scale alone written there left it the wrong size for
-    -- the whole presentation at any WoW UI scale but 1 (#563, Codex). Read at
-    -- each write, so a lift or a drop mid-fade lands right too.
-    local function Scale(s)
-        if targetFrame.GetParent and targetFrame:GetParent() == nil and UIParent then
-            s = s * UIParent:GetEffectiveScale()
-        end
-        targetFrame:SetScale(s)
-    end
     OpenAnimRunner = OpenAnimRunner or CreateFrame("Frame")
-    OpenAnimRunner.scale = Scale
     OpenAnimRunner:Hide()
     OpenAnimRunner.elapsed = 0
     -- Recorded on the runner so the fade can be COMPLETED from outside, which
@@ -459,13 +447,13 @@ local function PlayOpenAnimation(targetFrame)
     OpenAnimRunner.finalScale = userScale
 
     targetFrame:SetAlpha(0)
-    Scale(startScale)
+    targetFrame:SetScale(startScale)
     OpenAnimRunner:SetScript("OnUpdate", function(self, dt)
         self.elapsed = (self.elapsed or 0) + (dt or 0)
         local p = math.min(1, self.elapsed / duration)
         local eased = p * p * (3 - 2 * p) -- smoothstep
         targetFrame:SetAlpha(eased)
-        Scale(startScale + (userScale - startScale) * eased)
+        targetFrame:SetScale(startScale + (userScale - startScale) * eased)
         if p >= 1 then
             AltStable.FinishOpenAnimation()
         end
@@ -504,7 +492,7 @@ function AltStable.FinishOpenAnimation()
     runner:SetScript("OnUpdate", nil)
     runner:Hide()
     target:SetAlpha(1)
-    runner.scale(runner.finalScale or 1)        -- lifted: UIParent's times it (#563)
+    target:SetScale(runner.finalScale or 1)
     return true
 end
 

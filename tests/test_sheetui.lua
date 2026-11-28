@@ -325,9 +325,7 @@ do
     -- A scale that is NOT the fallback, or the settled-scale check below
     -- compares 1.0 against 1.0 and a hardcoded SetScale(1) passes it.
     AltStableConfig.scale = 1.4
-    -- Under UIParent, as the sheet is: a frame with no parent is a sheet the
-    -- presentation lifted, whose fade keeps its own scale (#563).
-    local sheet = CreateFrame("Frame", nil, UIParent)
+    local sheet = CreateFrame("Frame")
     sheet:SetAlpha(1)
 
     AltStable._PlayOpenAnimation(sheet)
@@ -2522,10 +2520,10 @@ do
     btnFor.summary:GetScript("OnClick")(btnFor.summary)
 
     -- THE PRESENTATION LIFTS THE SHEET out of UIParent, keeping its effective
-    -- scale as its own (LibShowcase I.Lift), and the open fade runs after it.
-    -- The fade used to end on the setting's scale, so at a WoW UI scale of
-    -- 0.64 a lifted sheet grew to 1 for the whole presentation; it now ends
-    -- where it started. The dividers follow the sheet as it is.
+    -- scale as its own (LibShowcase I.Lift), and the open fade runs after it,
+    -- ending on the setting's scale: lifted, the sheet's effective scale is
+    -- then not UIParent's times the setting (Codex, #569). The dividers follow
+    -- the sheet as it is, and are left alone while the fade runs.
     sheet:Hide()
     pcall(Cam.ForceRestore, Cam, "test")
     WoW.screenW, WoW.screenH = 1920, 1080
@@ -2537,14 +2535,16 @@ do
     AltStable.EnsureSheetVisible()
     check("presented, the sheet is lifted out of UIParent", Cam.uiHidden == true and sheet:GetParent() ~= UIParent,
           tostring(Cam.uiHidden) .. " " .. tostring(Cam.active) .. " " .. tostring(sheet:GetParent() == UIParent))
-    WoW.flushTimers()
-    local widthMidFade = select(3, T.ColumnLayout())[1]:GetWidth()
+    local widthAtStart = select(3, T.ColumnLayout())[1]:GetWidth()
+    local tick = T.OpenAnimTick()
+    check("  the fade is running", tick ~= nil)
+    if tick then tick(0.1) end
+    eq("  not resized while the fade runs", select(3, T.ColumnLayout())[1]:GetWidth(), widthAtStart)
     AltStable.FinishOpenAnimation()
-    check("the fade ends at the size the sheet had: UI scale x AltStable's",
-          near(sheet:GetEffectiveScale(), 0.64), tostring(sheet:GetEffectiveScale()))
-    eq("  not resized during the fade", select(3, T.ColumnLayout())[1]:GetWidth(), widthMidFade)
+    check("  and lifted, the sheet's scale isn't UIParent's times the setting",
+          not near(sheet:GetEffectiveScale(), 0.64), tostring(sheet:GetEffectiveScale()))
     WoW.flushTimers()
-    ok, why = allAt(768 / 1080 / 0.64)
+    ok, why = allAt(pixel())
     check("  and every divider is one pixel of the lifted sheet", ok, why)
 
     -- The scale changed while lifted, then the UI comes back: the drop puts
@@ -3232,7 +3232,7 @@ do
         eq("  the title bar's floor: the sidebar, the name and every button, Columns included", need,
            AltStable.LAYOUT.SIDEBAR_FULL_W + 14 + st:GetStringWidth() + 10 + 6 + 18 + 6 + 18 + 6 + 18 + 14 + 18 + 6 + 18 + 6 + T.colBtn:GetWidth())
         -- A name wider than the columns: the window grows to the floor.
-        st._GetStringWidth = 900      -- fits the display at the lifted sheet's real scale (#563)
+        st._GetStringWidth = 1200
         need = AltStable.GetTitleBarRequiredWidth()
         AltStable.RefreshSheet()
         check("  a sheet tab's window is at least that wide", f:GetWidth() >= need,
@@ -5220,7 +5220,7 @@ do
     Open("summary"); Tick(1)
     local grew = { resized = 0 }
     local grows = { id = "test159grows", label = "Grows", _isPlugin = true,
-                    OnActivate = function() AltStable.EnsureWindowMinSize(f:GetWidth() + 100, f:GetHeight()) end,
+                    OnActivate = function() AltStable.EnsureWindowMinSize(f:GetWidth() + 200, f:GetHeight()) end,
                     OnResize = function() grew.resized = grew.resized + 1 end,
                     OnDeactivate = function() end }
     AltStable.RegisterPlugin(grows)
@@ -5229,7 +5229,7 @@ do
     growBtn:GetScript("OnClick")(growBtn)
     check("a plugin that grows the window glides", Running())
     Tick(1)
-    eq("  to the size it asked for", f:GetWidth(), beforeW + 100)   -- room at the real scale (#563)
+    eq("  to the size it asked for", f:GetWidth(), beforeW + 200)
     eq("  laid out once, not again at the end", grew.resized, 0)
 
     -- Switching away mid-glide: the trip's deferred layout was for the tab
