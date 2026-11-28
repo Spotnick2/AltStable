@@ -25,15 +25,18 @@ It can also keep your characters in a Google Sheet in your own Google Drive. Get
     know a recipe for it, and a recipe's name finds its item: "transmute" finds Arcanite Bar.
     An item nobody holds says "None recorded", then who can craft it.
   - **Filters and sorting:** quality, slot, armour or weapon type, a required-level range, and one
-    character. A filter alone is a search: "Slot: Chest" with levels 20 to 24 finds the chests a
-    level-24 alt can wear. Sort by total, name, quality, item level or where the item is. The
-    filters are kept until you reload or log out.
-  - **Enter** opens the Warband Bank tab on the first character holding it, with the item lit.
-    **Back to previous view** returns to what you had.
-  - **Shift+Enter** or a Shift-click puts its link in your chat box. **Right-click** a result to
-    send the link to your guild, party or raid, whisper it to your target or to a name you type,
-    or copy it. With the game UI hidden by the camera presentation, sending still works, and the
-    link can be copied.
+    character. A filter alone is a search: "Slot: Chest" with levels 20 to 24 finds the chest
+    items that need level 20 to 24, of any armour type. Sort by total, name, quality, item level
+    or where the item is. The filters are kept until you reload or log out.
+  - **Enter** opens the Warband Bank tab (with the Warband module on) on the first character with
+    the item in its bags, bank or mail, with the item lit. **Back to previous view** returns to the
+    Warband view you had. An item that's only worn or only craftable keeps the search open and
+    says who wears it or can craft it.
+  - **Shift+Enter** or a Shift-click puts its link in your chat box. While the camera presentation
+    hides the game UI, it opens a line with the link selected instead, to copy with Ctrl+C.
+    **Right-click** a result for a menu: link it in chat, send it to your guild, party or raid
+    (this works with the game UI hidden too), whisper it to your target or to a name you type, or
+    copy it.
   - It counts the characters the sheet shows: hidden and forgotten characters are left out, and
     mail follows the same rules as the item tooltips.
 - **Shift-click an item in the Warband Bank tab** to link it in chat, as in your bags
