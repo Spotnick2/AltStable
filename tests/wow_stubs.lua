@@ -348,6 +348,14 @@ local NUMERIC = {
 for name, value in pairs(NUMERIC) do
     Methods[name] = function(self) return self["_" .. name] or value end
 end
+-- The whole text's width, however much of it is drawn: 5 per visible
+-- character (colour codes don't count). MODELLED, NOT MEASURED; a test pins
+-- it by writing the field.
+function Methods.GetUnboundedStringWidth(self)
+    if self._GetUnboundedStringWidth then return self._GetUnboundedStringWidth end
+    local t = tostring(self._text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    return 5 * #t
+end
 -- A FontString is SHORTER than a layout stride, and TEXT-DEPENDENT: an
 -- auto-sized one with no text has no height. An explicit SetHeight still wins,
 -- as on the client. MODELLED, NOT MEASURED.
