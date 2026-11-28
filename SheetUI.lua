@@ -399,9 +399,12 @@ do
         return Showcase ~= nil and Showcase:IsGameUIHidden() == true
     end
 
-    function AltStable.LiftAboveHiddenUI(frame, state)
+    -- `strata`: where it goes, FULLSCREEN_DIALOG unless said. The menus and
+    -- prompts are there; a window they open over (the item search, #503) asks
+    -- for DIALOG, the sheet's, or its menus come up under it.
+    function AltStable.LiftAboveHiddenUI(frame, state, strata)
         if not (frame and Showcase) then return end
-        if state then Showcase:Lift(frame, "FULLSCREEN_DIALOG") else Showcase:Drop(frame) end
+        if state then Showcase:Lift(frame, strata or "FULLSCREEN_DIALOG") else Showcase:Drop(frame) end
     end
 
     -- Suppress the "enable this experimental feature?" popup a test_* CVar write

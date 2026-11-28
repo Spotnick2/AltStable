@@ -339,7 +339,9 @@ end
 
 local Paint
 
-local function Rerun()
+-- fromData: a refresh of the data (a rebuild, names loading), not something
+-- the player did: what the status says (a send's answer) stays.
+local function Rerun(fromData)
     if not frame then return end
     S.queryPending = nil
     -- The selection follows its item, wherever a re-sort puts it.
@@ -351,14 +353,14 @@ local function Rerun()
         if e.id == keep then S.selected = i end
     end
     if not S.selected and #S.rows > 0 then S.selected = 1 end
-    S.message = nil
+    if not fromData then S.message = nil end
     Paint()
 end
 
 function S.Rebuild()
     S.snap = S.BuildSnapshot()
     QueueNames(S.snap)
-    Rerun()
+    Rerun(true)
 end
 
 local repaintArmed
@@ -367,7 +369,7 @@ function ScheduleRepaint()
     repaintArmed = true
     C_Timer.After(REPAINT_DELAY, function()
         repaintArmed = nil
-        if frame and frame:IsShown() then Rerun() end
+        if frame and frame:IsShown() then Rerun(true) end
     end)
 end
 
@@ -423,21 +425,27 @@ end
 -- Shift: the item's link into chat, never sent. Straight into the chat box,
 -- not ChatFrameUtil.InsertLink, which may hand it to the auction house's
 -- search instead.
-function S.Link(e)
-    e = e or Selected()
-    if not e then return false end
-    if AltStable.IsGameUIHidden and AltStable.IsGameUIHidden() then
-        -- Chat is under the hidden UI. Bringing it back would end the showcase
-        -- look, a bigger surprise than a refused link.
-        S.message = "Chat is hidden with the game UI."
-        Paint(); return false
-    end
+-- The item's link, or nil once it has been asked for (and the status says so).
+local function LinkOf(e)
     local _, link = AltStable.API.GetItemInfo(e.id)
     if not link then
         C_Item.RequestLoadItemDataByID(e.id)
         S.message = "Item link loading, try again."
-        Paint(); return false
+        Paint()
     end
+    return link
+end
+
+local function NameOf(e) return S.names[e.id] or ("item " .. e.id) end
+
+function S.Link(e)
+    e = e or Selected()
+    if not e then return false end
+    -- Presentation mode: chat is under the hidden UI, and bringing it back
+    -- would end the showcase look. The link to copy instead (owner, 2026-11-28).
+    if AltStable.IsGameUIHidden and AltStable.IsGameUIHidden() then return S.Copy(e) end
+    local link = LinkOf(e)
+    if not link then return false end
     local eb = ChatFrameUtil.GetActiveWindow()
     if not eb then
         eb = ChatFrameUtil.ChooseBoxForSend()
@@ -451,6 +459,212 @@ function S.Link(e)
     eb:Insert(link)
     eb:SetFocus()          -- Blizzard's own order for an open draft
     return true
+end
+
+-- The link sent straight out, from the row menu: no chat box needed, so it
+-- works in presentation mode too. A whisper's target is "Name Surname", the
+-- form a whisper was measured to route with (docs/forever-api-notes.md).
+S.SENT_TO = { GUILD = "guild", PARTY = "party", RAID = "raid" }
+
+-- SendChatMessage returns nothing, and a whisper to someone not online fails
+-- with a system message in chat, which presentation mode hides (Codex review
+-- of #561). So "Sending...", then "Sent" when chat echoes the link back, or
+-- what went wrong; nothing heard in SEND_WAIT seconds is said too.
+local SEND_WAIT = 5
+S.ECHOES = { GUILD = { "CHAT_MSG_GUILD" }, PARTY = { "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER" },
+             RAID = { "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER" }, WHISPER = { "CHAT_MSG_WHISPER_INFORM" } }
+
+local function StopListening()
+    local p = S.sending
+    S.sending = nil
+    if not (p and frame) then return end
+    for _, ev in ipairs(S.ECHOES[p.chatType] or {}) do frame.events:UnregisterEvent(ev) end
+    frame.events:UnregisterEvent("CHAT_MSG_SYSTEM")
+end
+
+local function Heard(text)
+    StopListening()
+    S.message = text
+    Paint()
+end
+
+-- Readable: a string that isn't secret. A secret one can't even be compared
+-- (PORTING-TBC-TO-FOREVER.md); it is left to the wait, which says nothing was
+-- confirmed.
+local function Readable(v)
+    local isSecret = rawget(_G, "issecretvalue")
+    if isSecret and isSecret(v) then return nil end
+    return type(v) == "string" and v or nil
+end
+
+-- "Name Surname", or with a "-realm" the client may add: compared without it,
+-- either case.
+local function SameName(a, b)
+    a, b = a:lower(), b:lower()
+    return a == b or a:match("^(.-)%-") == b
+end
+
+-- The event's arguments are chat's (CHAT_MSG_*): the text, then the other
+-- player's name (an outgoing whisper's recipient), ..., the 12th the
+-- sender's GUID. Only the pending send's own echo confirms it (Codex review
+-- of #561): a guildmate linking the same item, or a whisper to someone else,
+-- doesn't; and nothing readable to tell by leaves it unconfirmed.
+function S.OnChatEvent(event, text, who, ...)
+    local p = S.sending
+    if not p then return end
+    text = Readable(text)
+    if not text then return end
+    if event == "CHAT_MSG_SYSTEM" then
+        -- Blizzard's own test for it (ChatFrameOverrides.lua).
+        local err = rawget(_G, "ERR_CHAT_PLAYER_NOT_FOUND_S")
+        if p.target and type(err) == "string" and text:lower() == err:format(p.target):lower() then
+            Heard("No player named " .. p.target .. " is playing.")
+        end
+        return
+    end
+    if not text:find("|Hitem:" .. p.id .. "[:|]") then return end
+    if p.target then
+        -- An outgoing whisper: to the one this send was for.
+        who = Readable(who)
+        if not (who and SameName(who, p.target)) then return end
+    else
+        -- Guild, party, raid: said by this character.
+        local guid = Readable((select(10, ...)))
+        if not (guid and guid == UnitGUID("player")) then return end
+    end
+    Heard("Sent to " .. p.to .. ": " .. p.name .. ".")
+end
+
+function S.Send(e, chatType, target)
+    e = e or Selected()
+    if not e then return false end
+    if C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then
+        S.message = "Chat can't be sent right now."
+        Paint(); return false
+    end
+    local link = LinkOf(e)
+    if not link then return false end
+    StopListening()
+    local p = { chatType = chatType, target = target, id = e.id, name = NameOf(e),
+                to = target or S.SENT_TO[chatType] or chatType }
+    S.sending = p
+    for _, ev in ipairs(S.ECHOES[chatType] or {}) do frame.events:RegisterEvent(ev) end
+    if target then frame.events:RegisterEvent("CHAT_MSG_SYSTEM") end
+    C_ChatInfo.SendChatMessage(link, chatType, nil, target)
+    S.message = "Sending " .. p.name .. " to " .. p.to .. "..."
+    C_Timer.After(SEND_WAIT, function()
+        if S.sending == p then Heard("Chat didn't confirm sending " .. p.name .. " to " .. p.to .. ".") end
+    end)
+    Paint(); return true
+end
+
+-- A chat line that prints the link, as item sites give them: pasted into chat
+-- later, it shows the link, which a Shift-click then puts in a message.
+-- Copying is the player's Ctrl+C on a selected box: CopyToClipboard is
+-- forbidden to addons (PORTING-TBC-TO-FOREVER.md).
+function S.ScriptLine(link)
+    local s = link:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("|", "\\124")
+    return '/script DEFAULT_CHAT_FRAME:AddMessage("' .. s .. '");'
+end
+
+-- The box in place of the search box, for a moment: the copy line (selected,
+-- read-only) or a name to whisper (typed). Escape, Enter or a click elsewhere
+-- puts the search box back.
+local function StartAside(e, mode, text)
+    local a = frame.aside
+    a.mode, a.entry, a.fixed = mode, e, text
+    frame.box:Hide()
+    a._restoring = true; a:SetText(text); a._restoring = nil
+    a:Show()
+    a:SetFocus()
+    if mode == "copy" then a:HighlightText() end
+end
+
+function S.EndAside()
+    local a = frame and frame.aside
+    if not (a and a:IsShown()) then return end
+    a:Hide()                       -- first: losing focus ends it again
+    a.mode, a.entry, a.fixed = nil, nil, nil
+    frame.box:Show()
+    S.message = nil
+    Paint()
+    if frame:IsShown() then frame.box:SetFocus() end
+end
+
+-- What the open box is for, from its mode: a refresh while it is open can't
+-- put the search's status over it (Codex review of #561).
+function S.AsideText()
+    local a = frame and frame.aside
+    if not (a and a:IsShown() and a.entry) then return nil end
+    if a.mode == "copy" then return "Selected: press Ctrl+C. Pasted into chat, it shows the link." end
+    return "Whisper " .. NameOf(a.entry) .. " to: type a name, then Enter."
+end
+
+function S.Copy(e)
+    e = e or Selected()
+    if not e then return false end
+    local link = LinkOf(e)
+    if not link then return false end
+    StartAside(e, "copy", S.ScriptLine(link))
+    Paint(); return true
+end
+
+function S.AskName(e)
+    e = e or Selected()
+    if not e then return false end
+    StartAside(e, "name", "")
+    Paint(); return true
+end
+
+-- A menu this window opened, closed with it (Codex review of #561): in combat
+-- the menu doesn't take the keyboard, so Escape could close the search and
+-- leave the menu up, a pick still able to send. S.menu is set while it is up
+-- and cleared by its onClose (which runs before any next menu shows); a pick
+-- after the window closed does nothing. The menu is above this window in
+-- presentation mode too: see the lift in ShowSearch.
+function S.ShowOwnedMenu(list, onPick, anchor)
+    if not AltStable.ShowMenu then return false end
+    local shown = AltStable.ShowMenu(list, function(id)
+        if frame and frame:IsShown() then onPick(id) end
+    end, nil, { anchor = anchor, onClose = function() S.menu = nil end })
+    if not shown then return false end
+    S.menu = true
+    return shown
+end
+
+-- The row menu (right-click). Unavailable entries stay, greyed, with why.
+function S.MenuEntries(e)
+    local hidden = AltStable.IsGameUIHidden and AltStable.IsGameUIHidden()
+    local list = { { id = "title", text = NameOf(e), title = true } }
+    local function add(id, text, why)
+        list[#list + 1] = { id = id, text = text, disabled = why and true or nil, why = why }
+    end
+    add("link", "Link in chat", hidden and "Chat is hidden in presentation mode: copy it instead." or nil)
+    add("GUILD", "Send to guild", not IsInGuild() and "You aren't in a guild." or nil)
+    add("PARTY", "Send to party", not IsInGroup() and "You aren't in a group." or nil)
+    add("RAID", "Send to raid", not IsInRaid() and "You aren't in a raid." or nil)
+    if UnitIsPlayer("target") and not UnitIsUnit("target", "player") then
+        add("target", "Whisper " .. (GetUnitName("target", false) or "your target"),
+            not UnitIsFriend("player", "target") and "Whispers don't reach the other faction." or nil)
+    end
+    add("whisper", "Whisper to...")
+    add("copy", "Copy the link")
+    return list
+end
+
+function S.MenuPick(e, id, targetName)
+    if id == "link" then return S.Link(e)
+    elseif S.SENT_TO[id] then return S.Send(e, id)
+    elseif id == "target" then return targetName and S.Send(e, "WHISPER", targetName)
+    elseif id == "whisper" then return S.AskName(e)
+    elseif id == "copy" then return S.Copy(e) end
+end
+
+function S.OpenMenu(e)
+    if not (e and AltStable.ShowMenu) then return false end
+    -- The target as it is now: the pick comes later.
+    local targetName = UnitIsPlayer("target") and GetUnitName("target", false) or nil
+    return S.ShowOwnedMenu(S.MenuEntries(e), function(id) S.MenuPick(e, id, targetName) end)
 end
 
 local function Move(delta)
@@ -481,6 +695,8 @@ local function RowTooltip(row)
             GameTooltip:AddDoubleLine(ClassName(c), c.line or "", 1, 1, 1, 0.8, 0.8, 0.8)
         end
     end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Right-click: send or copy the link", 0.5, 0.5, 0.5)
     GameTooltip:Show()
 end
 
@@ -509,11 +725,15 @@ local function MakeRow(i)
     row.who:SetPoint("RIGHT", row, "RIGHT", -4, 0)
     row.who:SetJustifyH("LEFT")
     row.who:SetWordWrap(false)
-    row:RegisterForClicks("LeftButtonUp")
-    row:SetScript("OnClick", function(self)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function(self, button)
         if not self.entry then return end
         S.selected = self.index
-        if IsShiftKeyDown() then S.Link(self.entry) else S.Reveal(self.entry) end
+        if button == "RightButton" then
+            if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+            Paint()
+            S.OpenMenu(self.entry)
+        elseif IsShiftKeyDown() then S.Link(self.entry) else S.Reveal(self.entry) end
     end)
     row:SetScript("OnEnter", RowTooltip)
     row:SetScript("OnLeave", function(self) if GameTooltip:IsOwned(self) then GameTooltip:Hide() end end)
@@ -545,7 +765,7 @@ function Paint()
             row:Hide()
         end
     end
-    SetStatus(S.message or DefaultStatus())
+    SetStatus(S.AsideText() or S.message or DefaultStatus())
     frame.warn:SetShown(AltStable.ItemMapsFor == nil)
 end
 
@@ -622,6 +842,35 @@ local function BuildWindow()
     end)
     frame.box = box
 
+    -- In the search box's place for a moment (StartAside): the copy line, or
+    -- a name to whisper the link to.
+    local aside = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+    aside:SetSize(WIN_W - 44, 20)
+    aside:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -44)
+    aside:SetAutoFocus(false)
+    aside:SetMaxLetters(0)          -- a link cut short is a wrong link
+    aside:Hide()
+    -- The copy line is read-only: typing over it puts it back, selected.
+    aside:SetScript("OnTextChanged", function(self)
+        if self.mode ~= "copy" or self._restoring then return end
+        if self:GetText() ~= self.fixed then
+            self._restoring = true
+            self:SetText(self.fixed)
+            self:HighlightText()
+            self._restoring = nil
+        end
+    end)
+    -- Still selected after a key (Ctrl alone, an arrow), so Ctrl+C copies it all.
+    aside:SetScript("OnKeyUp", function(self) if self.mode == "copy" then self:HighlightText() end end)
+    aside:SetScript("OnEnterPressed", function(self)
+        local e, name = self.entry, (self.mode == "name") and (self:GetText() or ""):match("^%s*(.-)%s*$")
+        S.EndAside()
+        if e and name and name ~= "" then S.Send(e, "WHISPER", name) end
+    end)
+    aside:SetScript("OnEscapePressed", function() S.EndAside() end)
+    aside:SetScript("OnEditFocusLost", function() S.EndAside() end)
+    frame.aside = aside
+
     frame.rows = {}
     for i = 1, ROWS do frame.rows[i] = MakeRow(i) end
     frame:EnableMouseWheel(true)
@@ -638,8 +887,9 @@ local function BuildWindow()
     frame.status = status
 
     frame.events = CreateFrame("Frame")
-    frame.events:SetScript("OnEvent", function(_, event, id)
-        if event == "ITEM_DATA_LOAD_RESULT" then S.OnItemDataLoaded(id) end
+    frame.events:SetScript("OnEvent", function(_, event, id, ...)
+        if event == "ITEM_DATA_LOAD_RESULT" then S.OnItemDataLoaded(id)
+        else S.OnChatEvent(event, id, ...) end  -- a send's echo, or its error
     end)
 
     -- Closing lets everything go: the names, the queue, the snapshot. A load
@@ -650,9 +900,17 @@ local function BuildWindow()
     frame:SetScript("OnHide", function(self)
         if self:IsShown() then return end
         self.events:UnregisterEvent("ITEM_DATA_LOAD_RESULT")
+        StopListening()
+        -- Its menu goes with it: its onClose clears S.menu.
+        if S.menu and AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
         if AltStable.UnregisterCallback then AltStable.UnregisterCallback("CharactersChanged", OnCharactersChanged) end
         S.names, S.folded, S.queue, S.pending, S.outstanding = {}, {}, {}, {}, 0
         S.snap, S.rows, S.selected, S.message = nil, {}, nil, nil
+        -- A focused box keeps the keyboard after its window is gone (Prompt.lua):
+        -- every key would go on landing in it. The search box is back next time
+        -- (ShowSearch ends a copy line or a name left open).
+        self.box:ClearFocus()
+        self.aside:ClearFocus()
         if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
         -- Back under UIParent, as Export does (#434).
         if AltStable.LiftAboveHiddenUI then AltStable.LiftAboveHiddenUI(self, false) end
@@ -663,10 +921,14 @@ end
 -- Open the window, with a query when given one (/alts search <words>).
 function AltStable.ShowSearch(query)
     BuildWindow()
+    S.EndAside()                   -- the search box, not a copy line, takes the query
     -- With the game UI hidden (the showcase), a child of UIParent is invisible
     -- whatever its strata: lifted out first, as Export does (#434).
     if AltStable.LiftAboveHiddenUI and AltStable.IsGameUIHidden then
-        AltStable.LiftAboveHiddenUI(frame, AltStable.IsGameUIHidden())
+        -- To DIALOG, its strata with the UI shown and the lifted sheet's: the
+        -- menus it opens are FULLSCREEN_DIALOG, and lifted there too it drew
+        -- over them (seen in game, 2026-11-28).
+        AltStable.LiftAboveHiddenUI(frame, AltStable.IsGameUIHidden(), "DIALOG")
     end
     local wasShown = frame:IsShown()
     frame:Show()
