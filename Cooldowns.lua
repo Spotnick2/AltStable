@@ -70,6 +70,12 @@ end
 local function IconFor(prof, label)
     -- The Recipe Book's catalogue knows what each cooldown makes (#545).
     local entry = CD.Entry and CD.Entry("cd_" .. prof .. "@" .. label)
+    -- A talent's: its spell's icon (#557).
+    local spells = rawget(_G, "C_Spell")
+    if entry and entry.spell and type(spells) == "table" and type(spells.GetSpellTexture) == "function" then
+        local ok, icon = pcall(spells.GetSpellTexture, entry.spell)
+        if ok and icon then return icon end
+    end
     local item = (entry and entry.iconItem) or ICON_ITEMS[prof .. "@" .. label]
     if item and AltStable.API and AltStable.API.GetItemIconByID then
         local ok, icon = pcall(AltStable.API.GetItemIconByID, item)
@@ -84,11 +90,20 @@ end
 -- the item yet (a Salt Shaker carried under Leatherworking 250, or a record
 -- synced from an older client) is not believed: the cell says Needs 250, and
 -- the badge doesn't count it (Codex review of #546).
+-- Likewise a talent's recorded for a character whose reading no longer has the
+-- talent (a reset, or a record synced from before it): not believed (#557).
 local function Unusable(char, key)
     local entry = CD.Entry and CD.Entry(key)
+    if entry and entry.legacy then return CD.Standing(char, entry) == "untaken" end
     local standing = AltStable.CooldownStanding
     return entry ~= nil and entry.item ~= nil and standing ~= nil and standing(char, entry) == "low"
 end
+
+-- Whether a recorded cooldown counts at all: the one rule for the cell, the
+-- count, who is listed, which columns there are and the login toast (Codex
+-- review of #559: a record kept after a talent reset added a row, a column and
+-- a toast).
+function CD.Believed(char, key) return not Unusable(char, key) end
 
 function CD.Remaining(char, key, now)
     local expiry = type(char) == "table" and tonumber(char[key])
@@ -131,24 +146,49 @@ local function Catalogue()
     return f and f() or nil
 end
 
+-- The core's own cooldowns (#557): a Legacy talent's, no profession's, so
+-- listed with or without the Recipe Book. Dedicated Study, measured in the
+-- client's tables on 1.60.1.71139: spell 1225469, a 23 h category cooldown
+-- (SpellCooldowns 82,800,000 ms); the talent is node 110284 of the Professions
+-- tree (1187), one rank (AltStableConfig.legacyLayout).
+local STUDY = { key = "cd_Legacy@Dedicated Study", prof = "Legacy", label = "Dedicated Study",
+                spell = 1225469, node = 110284, legacy = true }
+CD.CORE = { STUDY }
+
 function CD.Entry(key)
+    for _, e in ipairs(CD.CORE) do
+        if e.key == key then return e end
+    end
     for _, e in ipairs(Catalogue() or {}) do
         if e.key == key then return e end
     end
 end
 
--- Where a character stands on a catalogued cooldown (the plugin's rule), and
--- its skill. nil: no such profession, or no plugin.
+-- A Legacy talent's cooldown, from the character's synced Legacy talents:
+--   "taken"     the node has a rank
+--   "untaken"   read, and it hasn't
+--   nil         no reading for this character yet
+local function TalentStanding(char, entry)
+    local LT = AltStable.LegacyTalents
+    local rank = LT and LT.Rank and LT.Rank(char, entry.node)
+    if rank == nil then return nil end
+    return rank > 0 and "taken" or "untaken"
+end
+
+-- Where a character stands on a catalogued cooldown (the plugin's rule, or a
+-- talent's), and its skill. nil: no such profession, or no plugin.
 local function Standing(char, entry)
+    if entry and entry.legacy then return TalentStanding(char, entry) end
     local f = AltStable.CooldownStanding
     if f and entry then return f(char, entry) end
 end
+CD.Standing = Standing
 
--- A record with at least one cooldown recorded.
+-- A record with at least one cooldown recorded, and believed.
 function CD.HasAny(char)
     if type(char) ~= "table" then return false end
     for k, v in pairs(char) do
-        if type(k) == "string" and tonumber(v) and CD.Parse(k) then return true end
+        if type(k) == "string" and tonumber(v) and CD.Parse(k) and not Unusable(char, k) then return true end
     end
     return false
 end
@@ -163,15 +203,20 @@ end
 function CD.Listed(char, shown)
     if not Shown(char, shown) then return false end
     if CD.HasAny(char) then return true end
+    -- A talent lists only who has taken it: every character with a Legacy
+    -- reading hasn't, and isn't the view's business for that (#557).
+    for _, e in ipairs(CD.CORE) do
+        if Standing(char, e) == "taken" then return true end
+    end
     for _, e in ipairs(Catalogue() or {}) do
         if Standing(char, e) then return true end
     end
     return false
 end
 
--- Every column: the catalogue's cooldowns, and any other a shown character has
--- recorded (an older version's label, a recipe newer than the data), by
--- profession, then label.
+-- Every column: the catalogue's cooldowns, a talent's once a shown character
+-- has taken it (#557), and any other a shown character has recorded (an older
+-- version's label, a recipe newer than the data), by profession, then label.
 function CD.KeysInUse(store, shown)
     local seen, keys = {}, {}
     for _, e in ipairs(Catalogue() or {}) do
@@ -180,8 +225,15 @@ function CD.KeysInUse(store, shown)
     end
     for _, char in pairs(store or {}) do
         if Shown(char, shown) then
+            for _, e in ipairs(CD.CORE) do
+                if not seen[e.key] and Standing(char, e) == "taken" then
+                    seen[e.key] = true
+                    keys[#keys + 1] = e.key
+                end
+            end
             for k, v in pairs(char) do
-                if not seen[k] and type(k) == "string" and tonumber(v) and CD.Parse(k) then
+                if not seen[k] and type(k) == "string" and tonumber(v) and CD.Parse(k)
+                   and not Unusable(char, k) then
                     seen[k] = true
                     keys[#keys + 1] = k
                 end
@@ -235,6 +287,8 @@ local STATE_TEXT = {
     learnable = "|cffffd200Learnable|r",
     usable    = "|cffffd200Usable|r",
     unscanned = "|cff888888Not scanned|r",
+    taken     = "|cffb0b0b0Taken|r",
+    untaken   = "|cff888888Not taken|r",
 }
 
 -- The cell. A recorded cooldown first: running, or up (a 0 is one seen ready
@@ -272,6 +326,14 @@ function CD.Tip(char, key, now)
             l3 = "Not one of this version's cooldowns: recorded by an older version of AltStable, "
                 .. "or for a recipe newer than its data."
         end
+    elseif state == "taken" then
+        l2 = "Taken; its cooldown is not recorded yet"
+        l3 = "Log in on " .. name .. " to read it."
+    elseif state == "untaken" then
+        l2 = "Not taken: a talent of the Professions Legacy tree"
+    elseif entry and entry.legacy then
+        l2 = "No recorded cooldown"
+        l3 = "No Legacy talents read for " .. name .. " yet: log in on it once."
     elseif state == "known" then
         l2 = "Known; its cooldown is not recorded yet"
         l3 = "Open the " .. prof .. " window on " .. name .. " to read it."
@@ -288,7 +350,7 @@ function CD.Tip(char, key, now)
         l2 = "No recorded cooldown"
     end
     local lines
-    if entry and AltStable.CooldownRecipeLines then
+    if entry and not entry.legacy and AltStable.CooldownRecipeLines then
         for _, l in ipairs(AltStable.CooldownRecipeLines(char, entry)) do
             lines = lines or {}
             lines[#lines + 1] = l[1] .. ":  " .. l[2]
@@ -324,3 +386,89 @@ function CD.ToastNote(profs)
     else state = "|cff1eff00on|r" end
     return "Login toasts: " .. state, lines
 end
+
+------------------------------------------------------------
+-- Recording Dedicated Study (#557), for the character being played
+--
+-- Unlike a recipe's, readable with no window open: C_Spell.GetSpellCooldown.
+-- Measured idle, on a character without the talent (1.60.1.71139): start 0,
+-- duration 0, enabled, not secret. The reading after a cast is NOT measured
+-- (nobody had the talent yet); it is read as the item cooldowns are (#460).
+--
+-- The Salt Shaker's rules (the Recipe Book's ReadItemCooldowns): a running one
+-- is an absolute expiry, and a shift under 60 s is no change; first seen and
+-- not running, it is written as now (Available, and the login toast says it
+-- once); a past expiry is kept. Not taken: a record held goes. Nothing changes
+-- on the global cooldown alone (2 s or less), a paused cooldown (isEnabled
+-- false), or a reading that fails or is secret; nor without a Legacy reading.
+------------------------------------------------------------
+
+local GCD_MAX = 2
+
+-- Start (on the GetTime() clock) and duration, or nil.
+local function SpellCooldown(spell)
+    local ok, s, d = pcall(function()
+        local spells = rawget(_G, "C_Spell")
+        local f = type(spells) == "table" and spells.GetSpellCooldown
+        local info = type(f) == "function" and f(spell)
+        if type(info) ~= "table" or info.isEnabled == false then return nil end
+        local plain = AltStable.API and AltStable.API.PlainNumber
+        if not plain then return nil end
+        return plain(info.startTime), plain(info.duration)
+    end)
+    if not ok or not s or not d or s < 0 or d < 0 then return nil end
+    return s, d
+end
+
+function CD.ReadStudy()
+    local guid = UnitGUID and UnitGUID("player")
+    local char = guid and type(AltStableDB) == "table" and AltStableDB[guid]
+    if type(char) ~= "table" then return false end
+    local key, now, changed = STUDY.key, time(), false
+    local state = Standing(char, STUDY)
+    if state == "untaken" then
+        if char[key] ~= nil then char[key] = nil; changed = true end
+    elseif state == "taken" then
+        local s, d = SpellCooldown(STUDY.spell)
+        if s and not (d > 0 and d <= GCD_MAX) then
+            local held = tonumber(char[key])
+            local left = (s > 0 and d > 0) and (s + d - (GetTime() or 0)) or 0
+            if left > 0 then
+                local expiry = math.floor(now + left + 0.5)
+                if not held or held <= now or math.abs(held - expiry) > 60 then
+                    char[key] = expiry; changed = true
+                end
+            elseif not held or held > now then
+                char[key] = now; changed = true
+            end
+        end
+    end
+    if changed then
+        -- A cooldown alone must reach peers too: the core sends a character
+        -- whose lastUpdate moved. And the view redraws.
+        if AltStable.TouchCharacter then AltStable.TouchCharacter(guid) end
+        if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    end
+    return changed
+end
+
+-- At a login or a reload, after the Legacy reading (LegacyTalents reads at
+-- 3 s; a reading that changes calls ReadStudy itself), and on every cooldown
+-- update, a burst read once.
+local STUDY_AFTER, STUDY_SETTLE = 5, 0.2
+local studyQueued = false
+local studyEvents = CreateFrame("Frame")
+studyEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+pcall(studyEvents.RegisterEvent, studyEvents, "SPELL_UPDATE_COOLDOWN")
+studyEvents:SetScript("OnEvent", function(_, event, a, b)
+    if event == "PLAYER_ENTERING_WORLD" then
+        if a or b then C_Timer.After(STUDY_AFTER, CD.ReadStudy) end
+    elseif not studyQueued then
+        studyQueued = true
+        C_Timer.After(STUDY_SETTLE, function() studyQueued = false; CD.ReadStudy() end)
+    end
+end)
+
+AltStable._test = AltStable._test or {}
+AltStable._test.StudyFrame = studyEvents
+AltStable._test.ResetStudy = function() studyQueued = false end

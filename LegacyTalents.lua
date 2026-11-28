@@ -247,6 +247,19 @@ function LT.Get(char)
     return type(char) == "table" and LT.Decode(char.legacyTalents) or nil
 end
 
+-- A node's rank in a character's reading: 0 when read and not listed, nil
+-- with no reading (#557: Dedicated Study's node).
+function LT.Rank(char, node)
+    local r = LT.Get(char)
+    if not r then return nil end
+    for _, t in ipairs(r.trees) do
+        for _, n in ipairs(t.nodes) do
+            if n.id == node then return n.rank or 0 end
+        end
+    end
+    return 0
+end
+
 -- "1/4": points spent of what the character could spend when it was read.
 function LT.Points(r)
     local spent = 0
@@ -312,6 +325,10 @@ function LT.Write(char, text)
     -- The sheet too: its Rested XP cell reads Well Rested's rank from here
     -- (#526; Codex review of #527). Redrawn only while it shows.
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+    -- Dedicated Study taken (or dropped) right now: its cooldown is read at
+    -- once, not at the next login (#557).
+    local cd = AltStable.Cooldowns
+    if cd and cd.ReadStudy then cd.ReadStudy() end
     return true
 end
 
