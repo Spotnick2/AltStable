@@ -99,6 +99,12 @@ local function Unusable(char, key)
     return entry ~= nil and entry.item ~= nil and standing ~= nil and standing(char, entry) == "low"
 end
 
+-- Whether a recorded cooldown counts at all: the one rule for the cell, the
+-- count, who is listed, which columns there are and the login toast (Codex
+-- review of #559: a record kept after a talent reset added a row, a column and
+-- a toast).
+function CD.Believed(char, key) return not Unusable(char, key) end
+
 function CD.Remaining(char, key, now)
     local expiry = type(char) == "table" and tonumber(char[key])
     if not expiry or Unusable(char, key) then return nil end
@@ -178,11 +184,11 @@ local function Standing(char, entry)
 end
 CD.Standing = Standing
 
--- A record with at least one cooldown recorded.
+-- A record with at least one cooldown recorded, and believed.
 function CD.HasAny(char)
     if type(char) ~= "table" then return false end
     for k, v in pairs(char) do
-        if type(k) == "string" and tonumber(v) and CD.Parse(k) then return true end
+        if type(k) == "string" and tonumber(v) and CD.Parse(k) and not Unusable(char, k) then return true end
     end
     return false
 end
@@ -226,7 +232,8 @@ function CD.KeysInUse(store, shown)
                 end
             end
             for k, v in pairs(char) do
-                if not seen[k] and type(k) == "string" and tonumber(v) and CD.Parse(k) then
+                if not seen[k] and type(k) == "string" and tonumber(v) and CD.Parse(k)
+                   and not Unusable(char, k) then
                     seen[k] = true
                     keys[#keys + 1] = k
                 end

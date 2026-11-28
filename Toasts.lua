@@ -337,7 +337,11 @@ local function ScanCooldowns()
                     -- login (review of #132).
                     if profKey and expiry and expiry > 0 and expiry <= now
                     and expiry > now - NOTIFIED_TTL
-                    and IsToastEnabled(profKey) then
+                    and IsToastEnabled(profKey)
+                    -- The Cooldowns view's rule: a record it doesn't believe
+                    -- (a talent reset since, a Shaker under its skill) says
+                    -- nothing here either (Codex review of #559).
+                    and not (AltStable.Cooldowns and not AltStable.Cooldowns.Believed(char, k)) then
                         local nKey = guid .. ":" .. k .. ":" .. expiry
                         if not shown[nKey] then
                             table.insert(ready, {

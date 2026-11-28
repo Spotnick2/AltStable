@@ -230,6 +230,18 @@ do
        plain(CD.Cell(raw, SHAKER.key, NOW)), "Needs 250")
     eq("  no time left to sort by", CD.Remaining(raw, SHAKER.key, NOW), nil)
     eq("  not counted", CD.ReadyCount({ raw = raw }, nil, NOW), 0)
+    do   -- nor toasted: the view's rule (Codex review of #559)
+        local realShow, realNotified, realDB = AltStable.ShowAggregateToast, AltStableConfig.toastsShown, AltStableDB
+        local toasted
+        AltStable.ShowAggregateToast = function(list) toasted = list end
+        AltStableConfig.toastsShown, AltStableDB = {}, { raw = raw }
+        AltStable.ScanCooldowns()
+        eq("  not toasted", toasted, nil)
+        standing.Raw[SHAKER.key] = { "usable", 260 }
+        AltStable.ScanCooldowns()
+        eq("  at the skill, toasted", toasted and #toasted, 1)
+        AltStable.ShowAggregateToast, AltStableConfig.toastsShown, AltStableDB = realShow, realNotified, realDB
+    end
     standing.Raw[SHAKER.key] = { "usable", 260 }
     eq("  at the skill, the record is believed", CD.ReadyCount({ raw = raw }, nil, NOW), 1)
     -- A RECIPE's recorded cooldown is believed whatever the snapshot says: a
@@ -299,6 +311,24 @@ do
     eq("  no time to sort by", CD.Remaining(dropped, STUDY, NOW), nil)
     eq("  not counted", CD.ReadyCount({ d = dropped }, nil, NOW), 0)
     eq("  a taken one's is", CD.ReadyCount({ r = { name = "R", legacyTalents = TAKEN, [STUDY] = NOW - 5 } }, nil, NOW), 1)
+    -- Nor does it list the character or add the column (Codex review of #559).
+    check("  not listed for it", not CD.Listed(dropped))
+    check("  not a recorded cooldown", not CD.HasAny(dropped))
+    eq("  no column from it", #CD.KeysInUse({ d = dropped, u = store.u }), 0)
+    check("  while another's record still lists", CD.Listed({ name = "Ann", ["cd_Tailoring@Mooncloth"] = NOW + 5 }))
+
+    -- The login toast: a taken one's that came up, not a reset one's.
+    local realShow, realNotified = AltStable.ShowAggregateToast, AltStableConfig.toastsShown
+    local toasted
+    AltStable.ShowAggregateToast = function(list) toasted = list end
+    AltStableConfig.toastsShown = {}
+    AltStableDB = { r = { guid = "r", name = "Rae", legacyTalents = TAKEN, [STUDY] = NOW - 60 },
+                    d = { guid = "d", name = "Ugo", legacyTalents = UNTAKEN, [STUDY] = NOW - 60 } }
+    AltStable.ScanCooldowns()
+    eq("the toast: one", toasted and #toasted, 1)
+    eq("  the one who has it", toasted and toasted[1] and toasted[1].charName, "Rae")
+    eq("  as Dedicated Study", toasted and toasted[1] and toasted[1].cdName, "Dedicated Study")
+    AltStable.ShowAggregateToast, AltStableConfig.toastsShown, AltStableDB = realShow, realNotified, {}
     local l1, l2, l3 = CD.Tip(store.t, STUDY, NOW)
     eq("tooltip title", l1, "Dedicated Study (Legacy)")
     eq("  taken: not recorded yet", l2, "Taken; its cooldown is not recorded yet")
