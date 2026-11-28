@@ -142,7 +142,32 @@ local SECTIONS = {
         fields = { "class","race","level" },
         repFields = true,
     },
+    -- Reputations, one row per faction (#566): a view of the tab, as Cooldowns
+    -- is of Skills, chosen with the Columns menu and kept (repLayout). The rows
+    -- are the factions the listed characters hold, the columns the characters.
+    -- `fields` empty, so the Columns button and the data refresh treat it as a
+    -- grid tab; its columns come from the characters (EligibleColumns).
+    {
+        id    = "repFactions",
+        label = "Reputations",
+        parent = "rep",
+        icon  = IC("reputations"),
+        headerHeight = 32,
+        fields = {},
+        transposed = true,
+        defaultSort = { field = "factionOrder", asc = true },
+    },
 }
+
+local function SectionWithId(id)
+    for _, s in ipairs(SECTIONS) do if s.id == id then return s end end
+end
+
+-- The Reputations layout (#566): one row per faction when the player chose it.
+-- This computer only: repLayout is not in the settings sync's registry.
+local function RepByFaction()
+    return AltStableConfig ~= nil and AltStableConfig.repLayout == "factions"
+end
 
 -- The sections with a sidebar button: not a view of another (#543).
 function viewStrip.NavSections()
@@ -160,6 +185,8 @@ end
 -- session (a Lua value, never saved).
 function viewStrip.Entry(section)
     if viewStrip.last and viewStrip.last.parent == section.id then return viewStrip.last end
+    -- Reputations opens in the layout the player chose, kept between sessions (#566).
+    if section.id == "rep" and RepByFaction() then return SectionWithId("repFactions") or section end
     return section
 end
 
@@ -175,11 +202,25 @@ end
 -- field -> column definition. Built once: AltStable.Columns is complete when
 -- this file loads (Columns.lua appends the factions at load, earlier in the
 -- .toc) and nothing changes it afterwards.
+-- Reputations, one row per faction (#566). The frozen column is the faction,
+-- wider than Name so "Theramore Expeditionary Force" reads whole, sorted in the
+-- game's order (the REPUTATIONS index each row carries). The scrolling columns
+-- are the characters, made per build like the Cooldowns view's (colsByField).
+local repView = {
+    colsByField = {},
+    FACTION_COL = { label = "Faction", field = "factionOrder", width = 200, align = "LEFT",
+                    type = "name", sortFirstAsc = true,
+                    orderWords = { "in the game's order", "reversed" } },
+}
+
 local columnByField
 local function ColumnFor(field)
     columnByField = columnByField or BuildFieldLookup()
-    -- A cooldown's column (#543) is made when found, so it isn't in the list.
+    -- A cooldown's column (#543) is made when found, so it isn't in the list,
+    -- and neither is a character's column in Reputations by faction (#566).
     return columnByField[field] or AltStable.Cooldowns.ColumnForField(field)
+        or repView.colsByField[field]
+        or (field == repView.FACTION_COL.field and repView.FACTION_COL or nil)
 end
 
 ------------------------------------------------------------
@@ -822,10 +863,80 @@ local function ShouldShowInGrid(char)
     return AltStable.IsShowingHidden and AltStable.IsShowingHidden() or false
 end
 
+-- Reputations by faction (#566): the characters the grid would list (named,
+-- not hidden unless Show hidden is on), grouped as the grid groups them, by
+-- name within a group. Group collapse is a character-row thing: ignored here,
+-- so nobody listed is ever left out.
+local function RepViewCharacters()
+    local chars = {}
+    for _, c in pairs(GetCharacterStore()) do
+        if type(c) == "table" and c.name and ShouldShowInGrid(c) then chars[#chars + 1] = c end
+    end
+    local byRealm, byFaction = GroupsByRealm(), GroupsByFaction()
+    -- Ruleset, then faction (the agreed order; Codex review of #574).
+    local function Key(c)
+        return (byRealm and tostring(AltStable.RulesetOf(c) or "") or "") .. "\031"
+            .. (byFaction and FactionGroupOf(c) or "")
+    end
+    table.sort(chars, function(a, b)
+        local ka, kb = Key(a), Key(b)
+        if ka ~= kb then return ka < kb end
+        if (a.name or "") ~= (b.name or "") then return (a.name or "") < (b.name or "") end
+        return tostring(a.guid) < tostring(b.guid)
+    end)
+    return chars
+end
+AltStable._test.RepViewCharacters = RepViewCharacters
+
+-- Reputations by faction (#566): the factions some of `chars` hold, in the
+-- game's order, BEFORE the hidden ones are taken out (the Columns menu lists
+-- them all, so the last hidden one can come back).
+local function RepHeldFactions(chars)
+    local has = {}
+    for _, c in ipairs(chars) do
+        for k in pairs(c) do
+            if type(k) == "string" and k:find("^rep_%d+$") then has[k] = true end
+        end
+    end
+    local out = {}
+    for i, r in ipairs(AltStable.REPUTATIONS) do
+        local f = AltStable.RepField(r.id)
+        if has[f] then out[#out + 1] = { id = r.id, field = f, label = r.label, order = i } end
+    end
+    return out
+end
+
+-- One character's column: headed by the first name ("Name Surname" on
+-- Forever), class-coloured, grey for a hidden one shown by Show hidden; the
+-- full name in the header's tooltip, the character itself for its right-click.
+local function RepCharColumn(char)
+    local name = char.name or ""
+    local first = name:match("^(%S+)") or name
+    local label = IsHidden(char) and ("|cff808080" .. first .. "|r")
+        or (AltStable.ClassColor(char.class) .. first .. "|r")
+    local about = {}
+    if char.level then about[#about + 1] = "Level " .. char.level end
+    local class = AltStable.ClassDisplayName and AltStable.ClassDisplayName(char)
+    if class and class ~= "" then about[#about + 1] = class end
+    return { label = label, field = "c_" .. tostring(char.guid), width = 60, align = "CENTER",
+             type = "rep", char = char,
+             headerTip = name .. (#about > 0 and ("  |cffaaaaaa" .. table.concat(about, " ") .. "|r") or "") }
+end
+
 -- Every column a tab can show, in order, before the player's choice: the
 -- column menu lists these, and the grid shows the ones not hidden.
 local function EligibleColumns(section)
     local out = {}
+    -- Reputations by faction (#566): a column per listed character, made now.
+    if section.transposed then
+        wipe(repView.colsByField)
+        for _, c in ipairs(RepViewCharacters()) do
+            local col = RepCharColumn(c)
+            repView.colsByField[col.field] = col
+            out[#out + 1] = col
+        end
+        return out
+    end
     -- The Cooldowns view (#543): a column per cooldown a listed character has.
     if section.cdFields then
         for _, key in ipairs(AltStable.Cooldowns.KeysInUse(GetCharacterStore(), ShouldShowInGrid)) do
@@ -902,6 +1013,18 @@ function AltStable.ShowAllColumns(sectionId)
     if AltStable.RefreshSheet then AltStable.RefreshSheet() end
 end
 
+-- Every faction shown again (#566), in both Reputations layouts: only the
+-- rep.rep_<id> choices are cleared, so the character layout's hidden Class,
+-- Race or Level stay hidden.
+function AltStable.ShowAllFactions()
+    local copy = {}
+    for k, v in pairs(HiddenColumns()) do
+        if v == true and not k:find("^rep%.rep_%d+$") then copy[k] = true end
+    end
+    AltStable.SetConfigValue("sheetHiddenColumns", copy)
+    if AltStable.RefreshSheet then AltStable.RefreshSheet() end
+end
+
 -- A check mark, bright for a shown column and faint for a hidden one: the
 -- texture's own vertex colour (the |T escape's last three numbers).
 local CHECK_ON  = "|TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:0:32:32:0:32:0:32:255:255:255|t "
@@ -911,7 +1034,29 @@ AltStable._test.ColumnChecks = function() return CHECK_ON, CHECK_OFF end
 -- The column menu of a tab, frame-free: a title, Name (always shown), each
 -- column the tab can show with its mark, then "Show all columns".
 local function ColumnMenuEntries(section)
+    -- Reputations' layout (#566), first in both of its views.
+    local layout = (section.id == "rep" or section.transposed)
+        and { id = "__layout", text = (section.transposed and CHECK_ON or CHECK_OFF) .. "One row per faction" }
+    -- By faction: the layout, then every faction a listed character holds,
+    -- hidden ones included so they can come back, then Show all factions.
+    -- No character entries: characters are hidden from their menu, as anywhere.
+    if section.transposed then
+        local out = { { title = true, text = "Reputations: factions and characters" }, layout,
+                      { title = true, text = "Factions" } }
+        local hidden, any = HiddenColumns(), false
+        for _, h in ipairs(RepHeldFactions(RepViewCharacters())) do
+            local on = hidden["rep." .. h.field] ~= true
+            out[#out + 1] = { id = h.field, text = (on and CHECK_ON or CHECK_OFF) .. h.label }
+        end
+        for k, v in pairs(hidden) do
+            if v == true and k:find("^rep%.rep_%d+$") then any = true end
+        end
+        out[#out + 1] = { id = "__allFactions", text = "Show all factions", disabled = not any,
+                          why = (not any) and "Every faction is shown." or nil }
+        return out
+    end
     local out = { { title = true, text = (section.label or section.id) .. " columns" } }
+    if layout then out[#out + 1] = layout end
     out[#out + 1] = { id = "__name", text = CHECK_ON .. AltStable.Columns[1].label, disabled = true,
                       why = "Always shown." }
     for _, col in ipairs(EligibleColumns(section)) do
@@ -939,6 +1084,19 @@ local function OpenColumnMenu(anchor, onClose)
     if not (section and section.fields) or not AltStable.ShowMenu then return false end
     return AltStable.ShowMenu(ColumnMenuEntries(section), function(id)
         if activeSection ~= section then return end
+        if id == "__layout" then
+            AltStable.SetRepLayout(not section.transposed)
+            return
+        end
+        if id == "__allFactions" then
+            AltStable.ShowAllFactions()
+            return
+        end
+        -- By faction, an entry is a faction: the character layout's own choice (#566).
+        if section.transposed then
+            AltStable.SetColumnShown("rep", id, HiddenColumns()["rep." .. id] == true)
+            return
+        end
         if id == "__all" then
             AltStable.ShowAllColumns(section.id)
             return
@@ -1114,7 +1272,10 @@ end
 -- not one, and neither is a column of another tab.
 local function SortFieldValid(field)
     if type(field) ~= "string" then return false end
-    if field == AltStable.Columns[1].field then return true end
+    -- The frozen column: Name, or the faction in Reputations by faction (#566).
+    if activeSection and activeSection.transposed then
+        if field == repView.FACTION_COL.field then return true end
+    elseif field == AltStable.Columns[1].field then return true end
     for _, col in ipairs(scrollableCols) do
         if col.field == field then return col.sortable ~= false end
     end
@@ -1155,6 +1316,64 @@ AltStable._test.SortState = function() return sortColumn, sortAsc end
 AltStable._test.ForgetSessionSorts = function() wipe(sectionSorts) end
 AltStable._test.DisplayList = function() return displayList end
 
+-- The rows: a record per faction held by a listed character (the columns' own
+-- characters) and not hidden with the character layout's own choice
+-- (rep.rep_<id>), carrying each character's standing and progress under that
+-- character's column field, so the rep cell reads them as it reads its own.
+-- Sorted in the game's order, or by one character's standing (unmet last
+-- either way, ties in the game's order). With nothing to show, the reason.
+local function BuildFactionRows()
+    local chars = {}
+    for _, col in ipairs(scrollableCols) do if col.char then chars[#chars + 1] = col.char end end
+    local held = RepHeldFactions(chars)
+    local hidden = HiddenColumns()
+    local rows = {}
+    for _, h in ipairs(held) do
+        if hidden["rep." .. h.field] ~= true then
+            local rec = { isFaction = true, name = h.label, factionOrder = h.order, factionField = h.field }
+            local vf, mf = AltStable.RepProgressFields(h.id)
+            for _, col in ipairs(scrollableCols) do
+                local c = col.char
+                if c then
+                    rec[col.field], rec[col.field .. "_v"], rec[col.field .. "_max"] = c[h.field], c[vf], c[mf]
+                end
+            end
+            rows[#rows + 1] = rec
+        end
+    end
+    local field, asc, byOrder = sortColumn, sortAsc, sortColumn == repView.FACTION_COL.field
+    table.sort(rows, function(a, b)
+        if not byOrder then
+            local va, vb = tonumber(a[field]), tonumber(b[field])
+            if va and vb then
+                if va ~= vb then
+                    if asc then return va < vb end
+                    return va > vb
+                end
+            elseif va then return true
+            elseif vb then return false end
+            return a.factionOrder < b.factionOrder
+        end
+        if asc then return a.factionOrder < b.factionOrder end
+        return a.factionOrder > b.factionOrder
+    end)
+    for _, rec in ipairs(rows) do displayList[#displayList + 1] = { kind = "faction", data = rec } end
+
+    if #chars == 0 then
+        repView.emptyText = "No characters are shown."
+            .. ((hiddenCount or 0) > 0 and " Show hidden characters from the footer." or "")
+    elseif #held == 0 then
+        repView.emptyText = "No reputation recorded yet for the characters shown. "
+            .. "Log in on a character to record its reputations."
+    elseif #rows == 0 then
+        repView.emptyText = "Every faction is hidden. Columns > Show all factions."
+    else
+        repView.emptyText = nil
+    end
+end
+AltStable._test.RepView = repView
+AltStable._test.RepHeldFactions = RepHeldFactions
+
 local function BuildDisplayList()
     wipe(displayList)
     totalChars=0; totalLevel=0; totalGold=0; goldUnknown=0; hiddenCount=0
@@ -1182,6 +1401,13 @@ local function BuildDisplayList()
     totalChars, totalLevel, totalGold = t.characters, t.levels, t.money
     goldUnknown, hiddenCount = t.unknown, t.hidden
     totalPlayed, playedUnknown = t.played, t.playedUnknown
+
+    -- Reputations by faction (#566): a row per faction, not per character.
+    -- The footer above is the characters' as on every tab.
+    if activeSection.transposed then
+        BuildFactionRows()
+        return
+    end
 
     local allChars = {}
     for _, char in next, store do
@@ -1310,6 +1536,10 @@ local function UpdateRows()
     HideAllRows()
     -- The Cooldowns view with nobody to list says how cooldowns get there (#543).
     if viewStrip.SetEmpty and activeSection.cdFields then viewStrip.SetEmpty(#displayList == 0) end
+    -- Reputations by faction with nothing to show says why, and what fixes it (#566).
+    if viewStrip.SetEmpty and activeSection.transposed then
+        viewStrip.SetEmpty(repView.emptyText ~= nil, repView.emptyText)
+    end
     local needed=CountVisibleRows()
     EnsureRows(needed)
     local offset=bodyScroll:GetVerticalScroll()
@@ -1318,10 +1548,24 @@ local function UpdateRows()
         local item=displayList[firstIndex+i-1]
         local row=rows[i]; local frow=frozenRows[i]
         if not row or not frow then break end
+        -- Each pooled pair at the place of the entry it shows (#566, Codex):
+        -- the scroll frames move the content by the offset, so a row left at
+        -- its own slot showed entry firstIndex+i-1 where entry i belongs - one
+        -- row skipped per row scrolled, and the bottom blank past the pool.
+        -- Unseen while a roster rarely scrolled; the faction view does.
+        local y = -((firstIndex + i - 2) * ROW_HEIGHT)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", bodyContent, "TOPLEFT", 0, y)
+        row:SetPoint("RIGHT", bodyContent, "RIGHT", 0, 0)
+        frow:ClearAllPoints()
+        frow:SetPoint("TOPLEFT", frozenBodyContent, "TOPLEFT", 0, y)
         if item then
             if item.kind=="group" then
                 AltStable.RenderGroupRow(row,item)
                 AltStable.RenderFrozenGroupRow(frow,item)
+            elseif item.kind=="faction" then
+                AltStable.RenderFactionRow(row,item.data,firstIndex+i-1,scrollableCols)
+                AltStable.RenderFrozenFactionRow(frow,item.data,firstIndex+i-1)
             else
                 AltStable.RenderRow(row,item.data,firstIndex+i-1,scrollableCols)
                 AltStable.RenderFrozenCharRow(frow,item.data,firstIndex+i-1)
@@ -1613,6 +1857,11 @@ local function LayoutColumns()
         AltStable.LayoutRowCells(row, scrollableCols, colWidths, colWidthsKey)
     end
 end
+-- The tab shown, its frozen rows and its scroll frames, for the tests (#566).
+AltStable._test.ActiveSection = function() return activeSection end
+AltStable._test.FrozenRows = function() return frozenRows end
+AltStable._test.HScrollBar = function() return hScrollBar end
+AltStable._test.BodyScroll = function() return bodyScroll end
 -- What was laid out, so a test can measure the headers and cells themselves.
 AltStable._test.ColumnLayout = function()
     return scrollableCols, headerButtons, headerDividers,
@@ -1716,6 +1965,8 @@ local function AddRepStandingLegend(tt)
         tt:AddLine("|cff" .. s[2] .. s[1] .. "|r  |cffcccccc" .. s[3] .. "|r", 1, 1, 1)
     end
 end
+-- For a faction's row in Reputations by faction (RowRenderer, #566).
+AltStable.AddRepStandingLegend = AddRepStandingLegend
 
 ------------------------------------------------------------
 -- Column headers (#160)
@@ -1859,8 +2110,18 @@ end
 -- A left click sorts. The columns are chosen with the Columns button (#523),
 -- no longer by right-clicking a header.
 local function WireHeader(btn)
+    -- A right-click on a character's header (Reputations by faction, #566)
+    -- opens that character's menu, as its Name cell does in the other layout.
+    -- Only such a header hears it (ConfigureHeader); every other one, left only.
     btn:RegisterForClicks("LeftButtonUp")
-    btn:SetScript("OnClick", function(self) SortByHeader(self) end)
+    btn:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            local char = self.col and self.col.char
+            if char and AltStable.ShowCharacterMenu then AltStable.ShowCharacterMenu(char) end
+            return
+        end
+        SortByHeader(self)
+    end)
     btn:SetScript("OnEnter", function(self)
         -- A header that does not sort does not look like a button.
         if self.sortable then self.hoverFill:Show() end
@@ -1901,6 +2162,9 @@ local function ConfigureHeader(btn, col)
     local kind, icon, isGlyph = HeaderKind(col)
     btn.col, btn.field, btn.kind = col, col.field, kind
     btn.sortable = col.sortable ~= false
+    -- A character's header (#566) also hears the right button, for its menu.
+    if col.char then btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    else btn:RegisterForClicks("LeftButtonUp") end
     btn:SetSize(col.width, currentHeaderHeight)
     btn.hoverFill:Hide()
 
@@ -2622,6 +2886,27 @@ local function ShowDataUnderlay(show)
     if AltStable._dataBG then AltStable._dataBG:SetShown(show) end
 end
 
+-- The frozen column for a tab (#566): Name (140), or the faction in
+-- Reputations by faction, wider so the names read whole. Its width goes to
+-- the frozen header, every pooled frozen row and its label; the scroll anchors
+-- and the window's size read FROZEN_WIDTH at the next layout. The frozen
+-- header is configured for the column, so it sorts by it and says what it is.
+local function ApplyFrozenColumn(section)
+    local col = (section and section.transposed) and repView.FACTION_COL or AltStable.Columns[1]
+    if NAME_COL_WIDTH == col.width and (not nameHeader or nameHeader.col == col) then return end
+    NAME_COL_WIDTH = col.width
+    FROZEN_WIDTH   = 10 + NAME_COL_WIDTH + 6
+    if frozenHeader then frozenHeader:SetWidth(FROZEN_WIDTH) end
+    for _, pool in pairs(rowPools) do
+        for _, frow in ipairs(pool.frozenRows) do
+            frow:SetWidth(FROZEN_WIDTH)
+            if frow.nameLabel then frow.nameLabel:SetWidth(NAME_COL_WIDTH) end
+        end
+    end
+    if nameHeader then ConfigureHeader(nameHeader, col) end
+end
+AltStable._test.FrozenWidth = function() return FROZEN_WIDTH, NAME_COL_WIDTH end
+
 local function SwitchSectionNow(section)
     -- If a plugin is currently active, deactivate it first
     if activeSection._isPlugin and activeSection.OnDeactivate then
@@ -2642,8 +2927,10 @@ local function SwitchSectionNow(section)
     if AltStable.UpdateColumnsButton then AltStable.UpdateColumnsButton() end
     -- The Skills view strip (#543): shown for Skills and its views, the view
     -- remembered for the sidebar button. Before the header is placed.
+    -- Skills' views only: Reputations' layout is a setting, not the last view
+    -- shown, and visiting it must not make Skills forget Cooldowns (#566).
     if section.id == "skills" then viewStrip.last = nil
-    elseif section.parent then viewStrip.last = section end
+    elseif section.parent == "skills" then viewStrip.last = section end
     if viewStrip.Set then viewStrip.Set(section) end
 
     ShowDataUnderlay(not section._isPlugin)
@@ -2667,6 +2954,7 @@ local function SwitchSectionNow(section)
         end
     end
 
+    ApplyFrozenColumn(section)
     BuildScrollableColsForSection(section)
     -- This tab's own sort (#160), checked against the columns it now has.
     if not section._isPlugin then LoadSortFor(section) end
@@ -2690,6 +2978,18 @@ end
 -- grid clips itself in its scroll frames on the way.
 local function SwitchSection(section)
     AnimateWindowChange(function() SwitchSectionNow(section) end, nil, true)
+end
+
+-- Reputations' layout (#566): saved on this computer (repLayout is not in the
+-- settings sync), and the tab switched to it in place when it is the one shown.
+-- The Columns menu it was picked from belongs to the view it leaves: closed.
+function AltStable.SetRepLayout(byFaction)
+    AltStable.SetConfigValue("repLayout", byFaction and "factions" or nil)
+    if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
+    if frame and activeSection and (activeSection.id == "rep" or activeSection.parent == "rep") then
+        local target = SectionWithId(byFaction and "repFactions" or "rep")
+        if target and activeSection ~= target then SwitchSection(target) end
+    end
 end
 
 ------------------------------------------------------------
@@ -6717,11 +7017,13 @@ local function CreateFrameIfNeeded()
         empty:SetJustifyH("CENTER"); empty:SetWordWrap(true)
         empty:SetTextColor(unpack(AltStable.C.TEXT_HELP))
         empty:Hide()
-        -- Its words depend on whether the Recipe Book is loaded (#545).
-        function viewStrip.SetEmpty(show)
-            if show then empty:SetText(CD.EmptyText()) end
+        -- Its words depend on whether the Recipe Book is loaded (#545), or are
+        -- given: Reputations by faction says why it is empty (#566).
+        function viewStrip.SetEmpty(show, text)
+            if show then empty:SetText(text or CD.EmptyText()) end
             empty:SetShown(show and true or false)
         end
+        AltStable._test.EmptyText = function() return empty:IsShown() and empty:GetText() or nil end
 
         -- The professions the shown cooldowns belong to, in order.
         local function ProfsInUse()
@@ -6779,7 +7081,7 @@ local function CreateFrameIfNeeded()
             viewStrip.on = on
             strip:SetShown(on)
             if on then viewStrip.Update() end
-            if not (section and section.cdFields) then empty:Hide() end
+            if not (section and (section.cdFields or section.transposed)) then empty:Hide() end
         end
 
         -- The clock: once a second while the strip shows (an OnUpdate does not
@@ -6884,7 +7186,10 @@ local function RebuildDataDrivenColumns()
     if not (activeSection and activeSection.fields) then return end
     local before = ColumnSignature()
     BuildScrollableColsForSection(activeSection)
-    if ColumnSignature() ~= before then
+    -- Reputations by faction rebuilds its headers every time: a character's
+    -- level, hidden state or record can change with the same columns, and the
+    -- header holds its label, tooltip and right-click target (#566).
+    if ColumnSignature() ~= before or activeSection.transposed then
         -- The faction the rows were sorted by may be the column that went.
         ResetSortIfInvalid()
         AdjustHeaderHeight(AltStable.HeaderHeightFor(scrollableCols, activeSection.headerHeight or HEADER_HEIGHT))
@@ -6893,6 +7198,13 @@ local function RebuildDataDrivenColumns()
 end
 
 local function Refresh()
+    -- Reputations by faction keeps its place through a refresh (a scan, a
+    -- sync): the offsets read now, put back after the last layout pass below,
+    -- clamped to what is left (#566). Every other tab starts over, as before.
+    local keepH, keepV
+    if activeSection and activeSection.transposed and bodyScroll then
+        keepH, keepV = hScrollBar and hScrollBar:GetValue() or 0, bodyScroll:GetVerticalScroll() or 0
+    end
     RebuildDataDrivenColumns()
     -- An open column chooser, listed again on every refresh: what it lists
     -- and marks (the tab's columns, the saved choices, whether Show all has
@@ -6910,6 +7222,16 @@ local function Refresh()
     -- Snap the frame so it grows/shrinks with the visible row count rather
     -- than leaving leftover dead space below the last row.
     ResizeFrameToContent()
+    if keepH then
+        local _, maxH = hScrollBar:GetMinMaxValues()
+        local maxV = math.max(0, #displayList * ROW_HEIGHT - (bodyScroll:GetHeight() or 0))
+        local h = math.max(0, math.min(keepH, tonumber(maxH) or 0))
+        local v = math.max(0, math.min(keepV, maxV))
+        hScrollBar:SetValue(h)
+        bodyScroll:SetHorizontalScroll(h); headerScroll:SetHorizontalScroll(h)
+        bodyScroll:SetVerticalScroll(v); frozenScroll:SetVerticalScroll(v)
+        UpdateRows()
+    end
 end
 
 -- The key binding (Bindings.xml, its own "AltStable" section, as Gnomesweeper's)
