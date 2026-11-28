@@ -2641,16 +2641,20 @@ Measured with `/fp steps as synced` (probe branch `probe/synced-fields`) on 2026
 level-21 character in Orgrimmar and Ragefire Chasm, and a guildless level-10 one in Dun Morogh. It
 answers what the synced-fields plan (#508) needed to know.
 
-- **Guild: wrong only before `PLAYER_LOGIN`.**
+- **Guild: membership first, the details a moment later.**
   - On the guilded character, the events that fire before `PLAYER_LOGIN` read `IsInGuild() == false`
-    first, then `true` with `GetGuildInfo("player")` still nil.
-  - From `PLAYER_LOGIN` (+0 s) on, every read was right: `"Parse Partout", "Member", 5`, at +0/1/2/5/10 s
-    and on every later `PLAYER_GUILD_UPDATE`, `GUILD_RANKS_UPDATE` and `GUILD_RANKS_UPDATE_ACTIVE_PLAYER`.
+    first. That was the only `false` seen on it.
+  - Then `IsInGuild() == true` with `GetGuildInfo("player")` still `nil, nil, 0`. This happens **after**
+    `PLAYER_LOGIN` too: a `GUILD_RANKS_UPDATE` about 1.2 and 1.5 s into the two guilded logins (Codex
+    review of #572). The next `PLAYER_GUILD_UPDATE` brought `"Parse Partout", "Member", 5`.
+  - The samples scheduled at +0 s (a `C_Timer.After(0)`, which ran after those events), +1, +2, +5
+    and +10 s had the name and rank, as did every later event.
   - The guildless character read `IsInGuild() == false` with `nil, nil, 0` throughout.
   - **The rank index is 0, not nil, without a guild**, and 0 is also the guild master's index. Read it
     only with a guild name.
-  - So after `PLAYER_LOGIN`, `IsInGuild()` tells "not in a guild" from "not loaded". The pre-login
-    window is the one to ignore.
+  - So after `PLAYER_LOGIN`, `IsInGuild()` tells "not in a guild" from "in one", but the name and rank
+    can still be missing: **in a guild with no name yet, keep what is stored.** The pre-login window is
+    ignored altogether. Nothing was sampled synchronously inside the `PLAYER_LOGIN` handler.
   - `PLAYER_GUILD_UPDATE` with `GUILD_RANKS_UPDATE_ACTIVE_PLAYER` also fired on zone changes, with no
     guild change. A promotion wasn't measured.
 - **Zone: nothing at login +2 s.**
