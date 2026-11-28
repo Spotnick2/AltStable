@@ -620,9 +620,8 @@ end
 -- the menu doesn't take the keyboard, so Escape could close the search and
 -- leave the menu up, a pick still able to send. S.menu is set while it is up
 -- and cleared by its onClose (which runs before any next menu shows); a pick
--- after the window closed does nothing.
--- Lifted in presentation mode, the menu and this window share a strata, and
--- this one was raised last: the menu goes above it.
+-- after the window closed does nothing. The menu is above this window in
+-- presentation mode too: see the lift in ShowSearch.
 function S.ShowOwnedMenu(list, onPick, anchor)
     if not AltStable.ShowMenu then return false end
     local shown = AltStable.ShowMenu(list, function(id)
@@ -630,8 +629,6 @@ function S.ShowOwnedMenu(list, onPick, anchor)
     end, nil, { anchor = anchor, onClose = function() S.menu = nil end })
     if not shown then return false end
     S.menu = true
-    local menu = rawget(_G, "AltStableCharacterMenu")
-    if menu and menu.Raise then menu:Raise() end
     return shown
 end
 
@@ -928,7 +925,10 @@ function AltStable.ShowSearch(query)
     -- With the game UI hidden (the showcase), a child of UIParent is invisible
     -- whatever its strata: lifted out first, as Export does (#434).
     if AltStable.LiftAboveHiddenUI and AltStable.IsGameUIHidden then
-        AltStable.LiftAboveHiddenUI(frame, AltStable.IsGameUIHidden())
+        -- To DIALOG, its strata with the UI shown and the lifted sheet's: the
+        -- menus it opens are FULLSCREEN_DIALOG, and lifted there too it drew
+        -- over them (seen in game, 2026-11-28).
+        AltStable.LiftAboveHiddenUI(frame, AltStable.IsGameUIHidden(), "DIALOG")
     end
     local wasShown = frame:IsShown()
     frame:Show()

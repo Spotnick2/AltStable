@@ -867,7 +867,15 @@ do
     -- Presentation mode: sending still works; the chat box link is greyed.
     Type("linen"); WoW.flushTimers()
     AltStable.IsGameUIHidden = function() return true end
+    -- Lifted to DIALOG, as it is with the UI shown: its menus, lifted to
+    -- FULLSCREEN_DIALOG, come up over it (seen under it in game, 2026-11-28).
+    Window():Hide()
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    check("presentation mode: the window lifted out from under UIParent", Window():GetParent() ~= UIParent)
+    eq("  to DIALOG", Window():GetFrameStrata(), "DIALOG")
     RightClick()
+    local root = rawget(_G, "AltStableCharacterMenu")
+    eq("  its menu over it", root and root:GetFrameStrata(), "FULLSCREEN_DIALOG")
     check("presentation mode: Link in chat greyed", Entry("link").disabled)
     eq("  and why", Entry("link").why, "Chat is hidden in presentation mode: copy it instead.")
     menu.pick("GUILD")
