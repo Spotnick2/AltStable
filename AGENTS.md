@@ -339,7 +339,8 @@ after LibGlass's, deployed through its own `Tools\deploy.ps1`, tests load it thr
 
 ## The mailbox (LibMailbox)
 
-`Core.lua`'s `ScanMail` (the synced `mail_count` / `mail_expiry` / `mail_money`) reads the inbox
+`Core.lua`'s `ScanMail` (the synced `mail_count` / `mail_expiry` / `mail_money`, and `mail_lost`: the
+soonest of those mails the client will delete rather than return, by `InboxItemCanDelete`) reads the inbox
 through **LibMailbox-1.0** (`..\LibMailbox`, github.com/Spotnick2/LibMailbox, shared with GlassMail;
 embedded like the others: `.pkgmeta` external `tag: r1`, its non-dot ignores repeated, gitignored,
 its XML loaded before our files, deployed through its own `Tools\deploy.ps1`, tests load it

@@ -100,6 +100,9 @@ WoW.onReset[#WoW.onReset + 1] = function()
     WoW.containers, WoW.bankTabs, WoW.accountTabs = {}, {}, {}
     WoW.currencies = {}
     WoW.bindLocation = nil
+    -- The synced-fields reads (#508, #395, #515, #517).
+    WoW.durability, WoW.inboxCanDelete = {}, {}
+    WoW.zone, WoW.subzone, WoW.guildInfo, WoW.inGuild = nil, nil, nil, nil
     WoW.tooltipPostCalls = {}
     WoW.loaded, WoW.loadCalls, WoW.sent = {}, {}, {}
     -- Tickers are NOT cleared: they are registered once at load, like the
@@ -1716,7 +1719,30 @@ ChatThrottleLib = {
         attempt()
     end,
 }
-function GetGuildInfo() return nil end
+-- name, rank name, rank index, as measured on 71139: without a guild (or not
+-- loaded yet) nil, nil, 0 - the index is 0, not nil. A test sets
+-- WoW.guildInfo = { "Guild", "Officer", 1 }.
+function GetGuildInfo()
+    local g = WoW.guildInfo
+    if g then return g[1], g[2], g[3] end
+    return nil, nil, 0
+end
+
+-- The synced-fields reads (#508, #395, #517), measured on 71139
+-- (docs/forever-api-notes.md). A test sets them:
+--   WoW.durability[slotID] = { current, max }  (absent: no durability, nil, nil)
+--   WoW.zone, WoW.subzone                       (zone nil at login, the rest "")
+--   WoW.inboxCanDelete[index] = true            (deleted at expiry, not returned)
+WoW.durability, WoW.inboxCanDelete = {}, {}
+function GetInventoryItemDurability(slot)
+    local d = WoW.durability[slot]
+    if d then return d[1], d[2] end
+    return nil, nil
+end
+function GetRealZoneText() return WoW.zone end
+function GetZoneText() return WoW.zone or "" end
+function GetSubZoneText() return WoW.subzone or "" end
+function InboxItemCanDelete(index) return WoW.inboxCanDelete[index] == true end
 
 -- Frames registered for an event come back as VARARGS (frame1, frame2, ...),
 -- never as a table. A stub that returned a table would let the exact bug this
