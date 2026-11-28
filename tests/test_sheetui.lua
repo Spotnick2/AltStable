@@ -6118,4 +6118,78 @@ do
     F.refresh()
 end
 
+------------------------------------------------------------
+-- Column dividers are one physical pixel wide (#563)
+------------------------------------------------------------
+-- A 1-unit divider is under a pixel wide where the sheet's scale is low, and
+-- both of its edges can snap to one pixel: the line vanished between some
+-- columns. One pixel = 768 / screen height / (UIParent's scale x AltStable's).
+do
+    local T = AltStable._test
+    local heldScale, heldUI = AltStableConfig.scale, UIParent:GetScale()
+    local heldW, heldH = WoW.screenW, WoW.screenH
+    local function near(a, b) return math.abs(a - b) < 1e-9 end
+    local function pixel() return 768 / WoW.screenH / (UIParent:GetEffectiveScale() * (AltStableConfig.scale or 1)) end
+    -- Every divider in use, header and rows, has the given width.
+    local function allAt(w)
+        local _, _, hdrDivs, rows = T.ColumnLayout()
+        local n, bad = 0, nil
+        for _, d in ipairs(hdrDivs) do n = n + 1; if not near(d:GetWidth(), w) then bad = d:GetWidth() end end
+        for _, row in ipairs(rows) do
+            for _, d in ipairs(row.dividers or {}) do n = n + 1; if not near(d:GetWidth(), w) then bad = d:GetWidth() end end
+        end
+        return n > 0 and bad == nil, tostring(n) .. " dividers, one at " .. tostring(bad) .. ", want " .. w
+    end
+
+    WoW.screenW, WoW.screenH = 1920, 1080
+    UIParent:SetScale(0.64)
+    AltStableConfig.scale = 1
+    eq("one pixel in the sheet's units", AltStable.HairlineWidth(), 768 / 1080 / 0.64)
+    AltStable.ApplyHairlines()
+    AltStable.EnsureSheetVisible()
+    local ok, why = allAt(pixel())
+    check("the header's and the rows' dividers are one pixel wide", ok, why)
+    check("  which is more than a unit at this scale", pixel() > 1)
+
+    AltStable.SetScale(0.8)
+    ok, why = allAt(pixel())
+    check("AltStable's own scale changed: every divider follows", ok, why)
+    eq("  at the new pixel", AltStable.HairlineWidth(), 768 / 1080 / (0.64 * 0.8))
+
+    UIParent:SetScale(1.0)
+    local watch = T.displayWatch
+    watch:GetScript("OnEvent")(watch, "UI_SCALE_CHANGED")
+    ok, why = allAt(pixel())
+    check("the WoW UI scale changed: every divider follows", ok, why)
+
+    WoW.screenW, WoW.screenH = 3840, 2160
+    watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
+    ok, why = allAt(pixel())
+    check("the display changed: every divider follows", ok, why)
+    check("  which is under a unit on a 4K screen", pixel() < 1)
+
+    -- Dividers made now get the pixel at once: a new row's, and the header's,
+    -- which every change of tab builds again.
+    local cols = T.ColumnLayout()
+    local row = AltStable.CreateRow(UIParent, 20, cols)
+    check("a new row has dividers", row.dividers[1] ~= nil)
+    check("  one pixel wide", near(row.dividers[1]:GetWidth(), pixel()), tostring(row.dividers[1]:GetWidth()))
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId then btnFor[b.sectionId] = b end end
+    for _, d in pairs(select(2, T.HeaderPools())) do d:SetWidth(5) end
+    btnFor.gear:GetScript("OnClick")(btnFor.gear)
+    local _, _, hdrDivs = T.ColumnLayout()
+    check("the Gear tab's header has dividers", hdrDivs[1] ~= nil)
+    check("  built one pixel wide", near(hdrDivs[1]:GetWidth(), pixel()), tostring(hdrDivs[1]:GetWidth()))
+    btnFor.summary:GetScript("OnClick")(btnFor.summary)
+
+    WoW.screenH = nil
+    eq("no screen size read: a unit, as before", AltStable.HairlineWidth(), 1)
+
+    WoW.screenW, WoW.screenH = heldW, heldH
+    UIParent:SetScale(heldUI)
+    AltStable.SetScale(heldScale or 1)
+    AltStableConfig.scale = heldScale
+end
+
 WoW.finish("test_sheetui", passed, failed)

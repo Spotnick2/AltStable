@@ -1567,6 +1567,19 @@ local function LayoutHeaders(widths)
     end)
 end
 
+-- Every column divider back to one physical pixel when the scale changed
+-- (#563): a WoW UI scale or display change, or AltStable's own scale. A divider
+-- is sized when it's made, and a pooled one is kept for good.
+function AltStable.ApplyHairlines()
+    local w = AltStable.HairlineWidth()
+    for _, div in pairs(dividerPool) do div:SetWidth(w) end
+    for _, pool in pairs(rowPools) do
+        for _, row in ipairs(pool.rows) do
+            for _, div in ipairs(row.dividerPool or {}) do div:SetWidth(w) end
+        end
+    end
+end
+
 local function LayoutColumns()
     LayoutHeaders(colWidths)
     local pool = AltStable.RowPoolFor(rowPools, activeSection.id, scrollableCols)
@@ -1946,7 +1959,7 @@ local function BuildHeaders()
         if i < #scrollableCols then
             local div = dividerPool[i]
             if not div then div = headerContent:CreateTexture(nil, "OVERLAY"); dividerPool[i] = div end
-            div:SetSize(1, currentHeaderHeight)
+            div:SetSize(AltStable.HairlineWidth(), currentHeaderHeight)
             div:SetColorTexture(unpack(AltStable.C.GRIDLINE))
             div:Show()
             headerDividers[i] = div
@@ -2203,6 +2216,7 @@ do
     -- the panel's size (Codex, #191) - Warband's columns and rail, the
     -- Roster's cards and scene would stay where the old size put them.
     watch:SetScript("OnEvent", function()
+        AltStable.ApplyHairlines()      -- a pixel is another size in units now (#563)
         if not frame then return end
         local w0, h0 = frame:GetWidth(), frame:GetHeight()
         AltStable.RefitWindow()

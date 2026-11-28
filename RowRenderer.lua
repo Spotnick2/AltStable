@@ -699,6 +699,24 @@ local function GetGroupBG() return AltStable.SkinGroupBand() end
 
 local DIVIDER_COLOR = AltStable.C.GRIDLINE
 
+-- ONE PHYSICAL PIXEL, in the sheet's own units (#563). A column divider used
+-- to be 1 unit wide. Where the sheet's scale puts less than a pixel in a unit
+-- (a lower WoW UI scale, or AltStable's own below 1), both of its edges can
+-- snap to the same pixel, and the line vanishes: always the same few columns,
+-- the ones whose x lands just past a half pixel. Exactly one pixel wide, the
+-- two edges always snap a pixel apart. 768 units are the screen's height at
+-- scale 1; the sheet's resting scale is UIParent's times AltStable's own
+-- (AltStable.SetScale), read from the setting rather than the frame, whose
+-- scale the open animation is still easing in. A lift above the hidden UI
+-- keeps the effective scale (LibShowcase I.Lift), so it holds there too.
+function AltStable.HairlineWidth()
+    local _, physH = GetPhysicalScreenSize()
+    local scale = (UIParent and UIParent:GetEffectiveScale() or 1)
+        * (tonumber(AltStableConfig and AltStableConfig.scale) or 1)
+    if type(physH) ~= "number" or physH <= 0 or scale <= 0 then return 1 end
+    return 768 / physH / scale
+end
+
 -- Row pools, one per sheet section. A pool remembers the columns its rows
 -- were set up for; when they change (a faction met on Reputations, a column
 -- hidden or shown, #378), its rows are set up again for the new ones
@@ -928,7 +946,7 @@ function AltStable.SetRowColumns(row, columns)
         local div = row.dividerPool[i]
         if not div then
             div = row:CreateTexture(nil, "ARTWORK")
-            div:SetSize(1, height)
+            div:SetSize(AltStable.HairlineWidth(), height)
             div:SetColorTexture(unpack(DIVIDER_COLOR))
             row.dividerPool[i] = div
         end

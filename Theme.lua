@@ -179,6 +179,8 @@ function AltStable.SetScale(scale)
         -- screen but cannot make 950 pixels fit in 900.
         if AltStable.RefitWindow then AltStable.RefitWindow() end
     end
+    -- The column dividers' one pixel is another size in the sheet's units (#563).
+    if AltStable.ApplyHairlines then AltStable.ApplyHairlines() end
 end
 
 ------------------------------------------------------------
