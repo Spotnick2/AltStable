@@ -384,11 +384,14 @@ function L.GroupOnEnter(self)
     GameTooltip:Show()
 end
 
--- One character's total over every row.
+-- One character's total over every row the data still has. A snapshot counted
+-- on older data can hold a row since retired (Craftsman's Writs, #552): the grid
+-- doesn't list it, so the total leaves it out too until the next count (Codex
+-- review of #571).
 function L.Totals(snap)
     local done, total = 0, 0
-    for _, row in pairs(snap and snap.c or {}) do
-        done, total = done + row[1], total + row[2]
+    for key, row in pairs(snap and snap.c or {}) do
+        if D.ZONES[key] then done, total = done + row[1], total + row[2] end
     end
     return done, total
 end

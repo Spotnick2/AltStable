@@ -573,6 +573,15 @@ local wg = findGroup(L.DisplayRows({ otherCol }), "other")
 check("  so the Other header lists it as not listed", wg and holds(wg.hidden, OTHER))
 L.SetFilter("all")
 
+-- A snapshot counted before #552 can still hold the retired Craftsman's Writs
+-- row (16941): the grid doesn't list it, and the total leaves it out too
+-- (Codex review of #571). The snapshot itself is kept as it is.
+check("Craftsman's Writs is no row any more", D.ZONES[16941] == nil)
+local oldSnap = { c = { [16941] = { 2, 2 }, [1519] = { 5, 10 } } }
+local td, tt = L.Totals(oldSnap)
+eq("a pre-#552 snapshot's total leaves the retired row out", td .. "/" .. tt, "5/10")
+check("  and the snapshot keeps it", oldSnap.c[16941] ~= nil)
+
 -- A search narrows what's "not listed" too.
 L.search = "deadmines"
 local srows = L.DisplayRows({ hordeCol })
