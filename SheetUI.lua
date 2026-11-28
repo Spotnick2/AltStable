@@ -873,9 +873,10 @@ local function RepViewCharacters()
         if type(c) == "table" and c.name and ShouldShowInGrid(c) then chars[#chars + 1] = c end
     end
     local byRealm, byFaction = GroupsByRealm(), GroupsByFaction()
+    -- Ruleset, then faction (the agreed order; Codex review of #574).
     local function Key(c)
-        return (byFaction and FactionGroupOf(c) or "") .. "\031"
-            .. (byRealm and tostring(AltStable.RulesetOf(c) or "") or "")
+        return (byRealm and tostring(AltStable.RulesetOf(c) or "") or "") .. "\031"
+            .. (byFaction and FactionGroupOf(c) or "")
     end
     table.sort(chars, function(a, b)
         local ka, kb = Key(a), Key(b)
@@ -1547,6 +1548,17 @@ local function UpdateRows()
         local item=displayList[firstIndex+i-1]
         local row=rows[i]; local frow=frozenRows[i]
         if not row or not frow then break end
+        -- Each pooled pair at the place of the entry it shows (#566, Codex):
+        -- the scroll frames move the content by the offset, so a row left at
+        -- its own slot showed entry firstIndex+i-1 where entry i belongs - one
+        -- row skipped per row scrolled, and the bottom blank past the pool.
+        -- Unseen while a roster rarely scrolled; the faction view does.
+        local y = -((firstIndex + i - 2) * ROW_HEIGHT)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", bodyContent, "TOPLEFT", 0, y)
+        row:SetPoint("RIGHT", bodyContent, "RIGHT", 0, 0)
+        frow:ClearAllPoints()
+        frow:SetPoint("TOPLEFT", frozenBodyContent, "TOPLEFT", 0, y)
         if item then
             if item.kind=="group" then
                 AltStable.RenderGroupRow(row,item)

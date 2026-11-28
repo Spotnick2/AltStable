@@ -6481,6 +6481,13 @@ do
     eq("hiding Stormwind (the character layout's own choice) drops its row", Names(), "Ironforge,High Order")
     check("  the same pooled row now reads Ironforge's hover",
           rows[1].repTips[1].factionLabel:find("Ironforge", 1, true) == 1 and rows[1].repTips[1].standing == "Friendly")
+    check("  the cell that showed Exalted for the rogue is empty now, with no hover",
+          rows[1].cells[2]:GetText() == "" and rows[1].repTips[2].standing == nil)
+    AltStable.SetColumnShown("rep", "rep_2779", false)
+    _, _, _, rows = T.ColumnLayout()
+    check("  one row left: the next pooled row is a filler, its hovers off",
+          #T.DisplayList() == 1 and not rows[2].repTips[2]:IsShown())
+    AltStable.SetColumnShown("rep", "rep_2779", true)
     entry = MenuHas("rep_72")
     check("  and the menu still lists it, unchecked, to bring it back",
           entry ~= nil and entry.text:find("60:60:60", 1, true) ~= nil)
@@ -6496,8 +6503,10 @@ do
     eq("every faction hidden: no rows", #Rows(), 0)
     eq("  and why, with the way back", T.EmptyText(), "Every faction is hidden. Columns > Show all factions.")
     check("  Show all factions is offered", MenuHas("__allFactions") and not MenuHas("__allFactions").disabled)
-    AltStable.ShowAllFactions()
-    eq("Show all factions brings them all", Names(), "Stormwind,Ironforge,High Order")
+    T.OpenColumnMenu(T.colBtn)
+    T.MenuClick("__allFactions")
+    AltStable.CloseCharacterMenu()
+    eq("Show all factions (from the menu) brings them all", Names(), "Stormwind,Ironforge,High Order")
     eq("  and keeps the character layout's hidden Level", AltStableConfig.sheetHiddenColumns["rep.level"], true)
     check("  the empty text goes", T.EmptyText() == nil)
     AltStableConfig.sheetHiddenColumns = nil
@@ -6529,6 +6538,8 @@ do
     check("a character's header hears the right button", WoW.handlesClick(hdrs[1], "RightButton"))
     hdrs[1]:GetScript("OnClick")(hdrs[1], "RightButton")
     check("  which opens the character's menu", T.MenuIsShown())
+    check("  that character's", table.concat(T.MenuLabels(), "|"):find("Aa Surname", 1, true) ~= nil,
+          table.concat(T.MenuLabels(), "|"))
     AltStable.CloseCharacterMenu()
     check("  sorting is unchanged by it", (T.SortState()) == "factionOrder")
 
@@ -6567,6 +6578,19 @@ do
     AltStable.RefreshSheet()
     eq("a refresh keeps the horizontal place", hs:GetValue(), math.min(120, maxH))
     eq("  and the vertical one", body:GetVerticalScroll(), 40)
+    -- Drawn where it is: at 40 the first row in view is the second faction,
+    -- and the pooled pair showing it sits at that faction's place (Codex review of #574).
+    local firstShown = T.DisplayList()[2].data.name
+    local _, _, _, prow = T.ColumnLayout()
+    local _, _, _, _, py = prow[1]:GetPoint(1)
+    eq("  the first pooled row shows the second faction", T.FrozenRows()[1].nameLabel:GetText(), "|cffffffff" .. firstShown .. "|r")
+    eq("  at the second faction's place", py, -AltStable.LAYOUT.ROW_HEIGHT)
+    local _, _, _, _, fy = T.FrozenRows()[1]:GetPoint(1)
+    eq("  its frozen half too", fy, -AltStable.LAYOUT.ROW_HEIGHT)
+    body:GetScript("OnVerticalScroll")(body, 5 * AltStable.LAYOUT.ROW_HEIGHT)
+    _, _, _, _, py = prow[1]:GetPoint(1)
+    eq("scrolled five rows: the first pooled row at the sixth faction's place", py, -5 * AltStable.LAYOUT.ROW_HEIGHT)
+    eq("  showing it", T.FrozenRows()[1].nameLabel:GetText(), "|cffffffff" .. T.DisplayList()[6].data.name .. "|r")
     body.SetVerticalScroll(body, 9999)
     AltStable.RefreshSheet()
     eq("  a vertical place past the end is clamped to the last row", body:GetVerticalScroll(), #T.DisplayList() * AltStable.LAYOUT.ROW_HEIGHT - body:GetHeight())
@@ -6575,6 +6599,19 @@ do
     eq("  clamped when the roster shrinks", hs:GetValue(), math.min(120, select(2, hs:GetMinMaxValues())))
     body.SetVerticalScroll = realSetV; body._GetVerticalScroll = nil
 
+    -- Grouped as the grid groups them: ruleset, then faction, then name.
+    local heldDB, heldFaction = AltStableDB, AltStableConfig.sheetGroupByFaction
+    AltStableConfig.sheetGroupByFaction = true
+    AltStableDB = {
+        p1 = { guid = "p1", name = "Apvp Al", faction = "Alliance", ruleset = "PvP", class = "MAGE", rep_72 = 5 },
+        p2 = { guid = "p2", name = "Bpvp Ho", faction = "Horde", ruleset = "PvP", class = "MAGE", rep_76 = 5 },
+        n1 = { guid = "n1", name = "Cnor Ho", faction = "Horde", ruleset = "Normal", class = "MAGE", rep_76 = 5 },
+        n2 = { guid = "n2", name = "Dnor Al", faction = "Alliance", ruleset = "Normal", class = "MAGE", rep_72 = 5 },
+    }
+    AltStable.RefreshSheet()
+    eq("characters by ruleset, then faction, then name", ColNames(), "Dnor Al,Cnor Ho,Apvp Al,Bpvp Ho")
+    AltStableDB, AltStableConfig.sheetGroupByFaction = heldDB, heldFaction
+    AltStable.RefreshSheet()
     -- Empty states.
     AltStableDB = { h = AltStableDB.h }
     AltStable.RefreshSheet()
@@ -6615,7 +6652,8 @@ do
     btnFor.rep:GetScript("OnClick")(btnFor.rep)
     if pbtn then
         pbtn:GetScript("OnClick")(pbtn)
-        check("  a plugin tab takes over: no empty text, no faction grid", T.EmptyText() == nil and T.ActiveSection()._isPlugin)
+        check("  a plugin tab takes over: no empty text, no faction grid",
+              T.EmptyText() == nil and T.ActiveSection()._isPlugin and not AltStable._dataBG:IsShown())
         btnFor.rep:GetScript("OnClick")(btnFor.rep)
         eq("  and back, the faction view again", T.ActiveSection().id, "repFactions")
         check("  with its rows, or the reason it has none", #Rows() > 0 or T.EmptyText() ~= nil)
