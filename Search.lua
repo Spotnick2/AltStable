@@ -281,12 +281,24 @@ end
 
 -- A row's second line: who holds it, then who can craft it. Nobody holding
 -- it is "None recorded": what is recorded, never a claim that nobody has it.
-function S.WhoLine(e)
-    local held = (#e.holders > 0) and S.HoldersLine(e) or "None recorded"
+function S.WhoLine(e, holders, crafters)
+    local held = (#e.holders > 0) and S.HoldersLine(e, holders) or "None recorded"
     if e.crafters and #e.crafters > 0 then
-        return held .. "  ·  can craft: " .. S.CraftersText(e)
+        return held .. "  ·  can craft: " .. S.CraftersText(e, crafters)
     end
     return held
+end
+
+-- The row's line, shortened until it fits: fewer holders first, so "can
+-- craft" isn't cut off the end (seen in game, 2026-11-28: "can cra..." on
+-- Linen Bandage). Past the shortest it is cut with "..."; the hover has all.
+S.WHO_FITS = { { 3, 2 }, { 2, 2 }, { 2, 1 }, { 1, 1 } }
+function S.FitWhoLine(fs, e)
+    local width = fs:GetWidth() or 0
+    for i, m in ipairs(S.WHO_FITS) do
+        fs:SetText(S.WhoLine(e, m[1], m[2]))
+        if width <= 0 or i == #S.WHO_FITS or fs:GetUnboundedStringWidth() <= width then return end
+    end
 end
 
 -- "12 in bags, 3 in the bank, 1 in the mail, 1 worn"
@@ -526,7 +538,7 @@ function Paint()
             row.name:SetText(nm or ("item " .. e.id))
             if qc then row.name:SetTextColor(qc.r, qc.g, qc.b) else row.name:SetTextColor(1, 1, 1) end
             row.total:SetText(tostring(e.total))
-            row.who:SetText(S.WhoLine(e))
+            S.FitWhoLine(row.who, e)
             row.sel:SetShown(idx == S.selected)
             row:Show()
         else

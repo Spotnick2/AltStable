@@ -729,6 +729,47 @@ if PT then
 end
 
 ------------------------------------------------------------
+-- A row's line fits its row: fewer holders first, so "can craft" isn't cut
+-- off the end (seen in game, 2026-11-28).
+------------------------------------------------------------
+do
+    local fs = UIParent:CreateFontString(nil, "OVERLAY")
+    local e = { holders = {
+        { name = "Kaleidria Kashmere", class = "HUNTER", total = 71 },
+        { name = "Elegia Mortalis", class = "PALADIN", total = 56 },
+        { name = "Karuzo Macphisto", class = "PRIEST", total = 49 },
+        { name = "Cowruzo Banks", class = "WARRIOR", total = 3 } },
+      crafters = {
+        { name = "Drakuza Memphisto", class = "MAGE", line = "First Aid" },
+        { name = "Drucida Komakino", class = "DRUID", line = "First Aid" },
+        { name = "Kalizo Mistwalker", class = "SHAMAN", line = "First Aid" } } }
+    local function W(h, c) fs:SetText(S.WhoLine(e, h, c)); return fs:GetUnboundedStringWidth() end
+    local full, two, oneCrafter, shortest = W(3, 2), W(2, 2), W(2, 1), W(1, 1)
+    check("(each step is shorter)", full > two and two > oneCrafter and oneCrafter > shortest)
+    fs._GetWidth = full; S.FitWhoLine(fs, e)
+    eq("a line that fits is whole", fs:GetText(), S.WhoLine(e))
+    fs._GetWidth = two; S.FitWhoLine(fs, e)
+    eq("too long: a holder fewer first", fs:GetText(), S.WhoLine(e, 2, 2))
+    fs._GetWidth = oneCrafter; S.FitWhoLine(fs, e)
+    eq("  then a crafter fewer", fs:GetText(), S.WhoLine(e, 2, 1))
+    fs._GetWidth = shortest; S.FitWhoLine(fs, e)
+    eq("  then one of each", fs:GetText(), S.WhoLine(e, 1, 1))
+    fs._GetWidth = 10; S.FitWhoLine(fs, e)
+    eq("narrower still: the shortest, cut with '...'", fs:GetText(), S.WhoLine(e, 1, 1))
+    check("  which still says who can craft it", fs:GetText():find("can craft", 1, true) ~= nil)
+
+    -- In the window: a row's line is fitted, not the whole list.
+    World()
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    local row = Window().rows[1]
+    row.who._GetWidth = 10
+    Type("linen cloth"); WoW.flushTimers()
+    eq("a row's line in the window is fitted", row.who:GetText(), S.WhoLine(S.rows[1], 1, 1))
+    row.who._GetWidth = nil
+    Window():Hide()
+end
+
+------------------------------------------------------------
 -- Keys, Escape, the slash command, the TOC
 ------------------------------------------------------------
 do
