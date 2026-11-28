@@ -1,5 +1,55 @@
 # Changelog
 
+## v1.17.0 - 2026-11-28
+
+**Find any item on every character**: type part of an item's name and see who holds it, where, and
+who can craft it. Also **Shift-click links in the Warband Bank tab** and the **Dedicated Study**
+Legacy talent in the Cooldowns view, both asked for by guild members. Built for client
+1.60.1.71139, the live build. v1.17.0 syncs with everything v1.16.0 does.
+
+### AltStable Companion
+
+The Armory's character portraits come from **AltStable Companion**, a free Windows app that turns
+your `/alts portrait` captures into the transparent cutouts the scene draws (and can enhance them).
+It can also keep your characters in a Google Sheet in your own Google Drive. Get it from
+[AltStable Companion releases](https://github.com/Spotnick2/AltStableCompanion/releases).
+**Companion v1.3.2** is the current version.
+
+### New
+
+- **Find an item on every character** ([#503](https://github.com/Spotnick2/AltStable/issues/503)):
+  the magnifier in the title bar, or `/alts search [words]`, opens a search window.
+  - Type at least two letters of an item's name. Each result shows its total and who holds it, and
+    its hover says where: "5 in bags, 3 in the bank". Worn gear counts too.
+  - **Who can craft it:** with the Recipe Book module on, a result also lists the characters who
+    know a recipe for it, and a recipe's name finds its item: "transmute" finds Arcanite Bar.
+    An item nobody holds says "None recorded", then who can craft it.
+  - **Filters and sorting:** quality, slot, armour or weapon type, a required-level range, and one
+    character. A filter alone is a search: "Slot: Chest" with levels 20 to 24 finds the chests a
+    level-24 alt can wear. Sort by total, name, quality, item level or where the item is. The
+    filters are kept until you reload or log out.
+  - **Enter** opens the Warband Bank tab on the first character holding it, with the item lit.
+    **Back to previous view** returns to what you had.
+  - **Shift+Enter** or a Shift-click puts its link in your chat box. **Right-click** a result to
+    send the link to your guild, party or raid, whisper it to your target or to a name you type,
+    or copy it. With the game UI hidden by the camera presentation, sending still works, and the
+    link can be copied.
+  - It counts the characters the sheet shows: hidden and forgotten characters are left out, and
+    mail follows the same rules as the item tooltips.
+- **Shift-click an item in the Warband Bank tab** to link it in chat, as in your bags
+  ([#556](https://github.com/Spotnick2/AltStable/issues/556)). Ctrl-click opens the dressing room.
+  The grid keeps only each item's ID, so a random-suffix or enchanted item links as its base item.
+- **Dedicated Study** in the Cooldowns view
+  ([#557](https://github.com/Spotnick2/AltStable/issues/557)): the Professions Legacy talent's
+  23-hour cooldown, for every character who has taken it, with the login notification like the
+  other cooldowns. It shows even with the Recipe Book module off, and the column appears once one
+  of your characters has the talent. A cooldown recorded before a talent reset is ignored.
+
+### Fixed
+
+- **The Salt Shaker's login notification** could fire for a leatherworker under 250, whom the
+  Cooldowns view already showed as "Needs 250".
+
 ## v1.16.0 - 2026-11-27
 
 **Profession cooldowns at a glance**: the Skills tab has a Cooldowns view with live countdowns,
