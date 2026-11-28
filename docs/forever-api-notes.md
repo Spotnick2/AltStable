@@ -2634,3 +2634,49 @@ Horde, level 30).
   localized: the 47 Classic ones plus Mount Hyjal 2482, Zephras Isle 2521 (parent 947), Riverglades
   2548 (parent 1415), Shen'dralas 2652 (parent 1414), and a second Zephras Isle 2665 (parent 0). No
   dungeon maps (type 4) in those ranges.
+
+## Guild, zone, durability, mail at expiry, XP lock — MEASURED (1.60.1.71139, #508 #395 #515 #517 #516)
+
+Measured with `/fp steps as synced` (probe branch `probe/synced-fields`) on 2026-11-28, on a guilded
+level-21 character in Orgrimmar and Ragefire Chasm, and a guildless level-10 one in Dun Morogh. It
+answers what the synced-fields plan (#508) needed to know.
+
+- **Guild: wrong only before `PLAYER_LOGIN`.**
+  - On the guilded character, the events that fire before `PLAYER_LOGIN` read `IsInGuild() == false`
+    first, then `true` with `GetGuildInfo("player")` still nil.
+  - From `PLAYER_LOGIN` (+0 s) on, every read was right: `"Parse Partout", "Member", 5`, at +0/1/2/5/10 s
+    and on every later `PLAYER_GUILD_UPDATE`, `GUILD_RANKS_UPDATE` and `GUILD_RANKS_UPDATE_ACTIVE_PLAYER`.
+  - The guildless character read `IsInGuild() == false` with `nil, nil, 0` throughout.
+  - **The rank index is 0, not nil, without a guild**, and 0 is also the guild master's index. Read it
+    only with a guild name.
+  - So after `PLAYER_LOGIN`, `IsInGuild()` tells "not in a guild" from "not loaded". The pre-login
+    window is the one to ignore.
+  - `PLAYER_GUILD_UPDATE` with `GUILD_RANKS_UPDATE_ACTIVE_PLAYER` also fired on zone changes, with no
+    guild change. A promotion wasn't measured.
+- **Zone: nothing at login +2 s.**
+  - At +2 s, `GetRealZoneText()` returned **nil**, and `GetZoneText()`, `GetSubZoneText()` and
+    `GetMinimapZoneText()` returned `""`. `C_Map.GetBestMapForUnit` already had a map: 1414 (Kalimdor),
+    1415 (Eastern Kingdoms).
+  - `ZONE_CHANGED_NEW_AREA` a second later brought the zone: "Orgrimmar" / "Valley of Strength";
+    "Dun Morogh" / "Thunderbrew Distillery".
+  - City subzones came with `ZONE_CHANGED_INDOORS` ("The Drag", "Cleft of Shadow").
+  - In a city's center the subzone **is** the zone: "Orgrimmar" / "Orgrimmar".
+  - **Inside an instance** (Ragefire Chasm): real zone, zone and minimap all name the instance, the
+    subzone is `""`, the map is nil, and `IsInInstance()` gives `true, "party"`.
+  - The open world between named areas wasn't measured.
+- **Durability: readable in combat, never secret.**
+  - `GetInventoryItemDurability(slot)` gave `current, max` for armour and weapons, the same in
+    combat as out of it. One wrist went from 21/25 to 20/25 in a fight.
+  - **Rings and the cloak answered nil, nil**: no durability.
+  - `UPDATE_INVENTORY_DURABILITY` fires **dozens of times a minute** in a city with nothing
+    changing. A reader has to compare before writing.
+- **Mail at expiry: `InboxItemCanDelete`.**
+  - Two player mails: `false` (returned on expiry).
+  - Two returned mails: `true` (deleted), though their `canReply` still read `true`. The header's
+    flags alone would call a returned mail a player's.
+  - The owner confirmed the mail frame's buttons match: Return for a player's mail, Delete for the
+    other kind.
+  - No Auction House mail was in the inbox. Blizzard's MailFrame.lua uses the same call to choose
+    between `TIME_UNTIL_DELETED` and `TIME_UNTIL_RETURNED`.
+- **XP lock: none.** `IsXPUserDisabled()` was `false` on both characters, and Wowhead Forever lists
+  neither XP-lock NPC (Behsten, Slahtz). #516 was closed on this.
