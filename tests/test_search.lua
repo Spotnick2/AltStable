@@ -659,17 +659,25 @@ do
     -- (Codex review of #561).
     eq("  said as sending", Window().status:GetText(), "Sending Linen Cloth to guild...")
     check("  no chat box needed", WoW.chatBox == nil)
-    local function Echo(event, text)
+    -- A chat event as the client sends it (CHAT_MSG_*): the text, the other
+    -- player's name, ..., the sender's GUID 12th.
+    local function Echo(event, text, who, guid)
         local ev = Window().events
-        ev:GetScript("OnEvent")(ev, event, text)
+        ev:GetScript("OnEvent")(ev, event, text, who, "", "", who, "", 0, 0, "", 0, 1, guid)
     end
-    Echo("CHAT_MSG_GUILD", "|cffffffff|Hitem:102::::|h[Wool Cloth]|h|r")
+    Echo("CHAT_MSG_GUILD", "|cffffffff|Hitem:102::::|h[Wool Cloth]|h|r", "Kaleid", ME)
     eq("another item's echo: still sending", Window().status:GetText(), "Sending Linen Cloth to guild...")
-    Echo("CHAT_MSG_GUILD", "look |cffffffff|Hitem:101::::|h[Linen Cloth]|h|r")
-    eq("its echo: sent", Window().status:GetText(), "Sent to guild: Linen Cloth.")
+    -- Someone else linking the same item isn't our send (Codex review of #561).
+    Echo("CHAT_MSG_GUILD", "mine too |Hitem:101::::|h[Linen Cloth]|h", "Brom", ALT)
+    eq("a guildmate linking the same item: still sending", Window().status:GetText(),
+       "Sending Linen Cloth to guild...")
+    Echo("CHAT_MSG_GUILD", "|Hitem:101::::|h[Linen Cloth]|h", "Kaleid", nil)
+    eq("  no sender to tell by: still sending", Window().status:GetText(), "Sending Linen Cloth to guild...")
+    Echo("CHAT_MSG_GUILD", "look |cffffffff|Hitem:101::::|h[Linen Cloth]|h|r", "Kaleid", ME)
+    eq("its echo, said by this character: sent", Window().status:GetText(), "Sent to guild: Linen Cloth.")
     AltStable.NotifyItemDataChanged(); WoW.flushTimers()
     eq("  still said after a refresh of the data", Window().status:GetText(), "Sent to guild: Linen Cloth.")
-    Echo("CHAT_MSG_GUILD", "|Hitem:101|h[Linen Cloth]|h")
+    Echo("CHAT_MSG_GUILD", "|Hitem:101|h[Linen Cloth]|h", "Kaleid", ME)
     eq("  heard once", Window().status:GetText(), "Sent to guild: Linen Cloth.")
     RightClick(); menu.pick("GUILD")
     WoW.flushTimers()
@@ -677,7 +685,7 @@ do
     RightClick(); menu.pick("GUILD")
     local realSecret = rawget(_G, "issecretvalue")
     rawset(_G, "issecretvalue", function() return true end)
-    Echo("CHAT_MSG_GUILD", "|Hitem:101|h[Linen Cloth]|h")
+    Echo("CHAT_MSG_GUILD", "|Hitem:101|h[Linen Cloth]|h", "Kaleid", ME)
     rawset(_G, "issecretvalue", realSecret)
     eq("a secret echo isn't compared", Window().status:GetText(), "Sending Linen Cloth to guild...")
     WoW.flushTimers()
@@ -726,8 +734,15 @@ do
     eq("  the link", LastSent() and LastSent().text, "|Hitem:101|h[Linen Cloth]|h")
     check("  the search box is back", Window().box:IsShown() and not aside:IsShown())
     eq("  said as sending", Window().status:GetText(), "Sending Linen Cloth to Kaleid Sumner...")
-    Echo("CHAT_MSG_WHISPER_INFORM", "|cffffffff|Hitem:101::::|h[Linen Cloth]|h|r")
-    eq("  whispered: sent", Window().status:GetText(), "Sent to Kaleid Sumner: Linen Cloth.")
+    Echo("CHAT_MSG_WHISPER_INFORM", "|Hitem:101::::|h[Linen Cloth]|h", "Brom Ironfoot", ME)
+    eq("  a whisper of it to someone else: still sending", Window().status:GetText(),
+       "Sending Linen Cloth to Kaleid Sumner...")
+    Echo("CHAT_MSG_WHISPER_INFORM", "|Hitem:101::::|h[Linen Cloth]|h", nil, ME)
+    eq("  no recipient to tell by: still sending", Window().status:GetText(),
+       "Sending Linen Cloth to Kaleid Sumner...")
+    Echo("CHAT_MSG_WHISPER_INFORM", "|cffffffff|Hitem:101::::|h[Linen Cloth]|h|r", "kaleid sumner-Realm", ME)
+    eq("  whispered to them (either case, a realm added): sent", Window().status:GetText(),
+       "Sent to Kaleid Sumner: Linen Cloth.")
     -- Someone not online: the system message chat would show (hidden in
     -- presentation mode) says so here.
     rawset(_G, "ERR_CHAT_PLAYER_NOT_FOUND_S", "No player named '%s' is currently playing.")

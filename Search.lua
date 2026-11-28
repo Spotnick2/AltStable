@@ -488,14 +488,32 @@ local function Heard(text)
     Paint()
 end
 
-function S.OnChatEvent(event, text)
+-- Readable: a string that isn't secret. A secret one can't even be compared
+-- (PORTING-TBC-TO-FOREVER.md); it is left to the wait, which says nothing was
+-- confirmed.
+local function Readable(v)
+    local isSecret = rawget(_G, "issecretvalue")
+    if isSecret and isSecret(v) then return nil end
+    return type(v) == "string" and v or nil
+end
+
+-- "Name Surname", or with a "-realm" the client may add: compared without it,
+-- either case.
+local function SameName(a, b)
+    a, b = a:lower(), b:lower()
+    return a == b or a:match("^(.-)%-") == b
+end
+
+-- The event's arguments are chat's (CHAT_MSG_*): the text, then the other
+-- player's name (an outgoing whisper's recipient), ..., the 12th the
+-- sender's GUID. Only the pending send's own echo confirms it (Codex review
+-- of #561): a guildmate linking the same item, or a whisper to someone else,
+-- doesn't; and nothing readable to tell by leaves it unconfirmed.
+function S.OnChatEvent(event, text, who, ...)
     local p = S.sending
     if not p then return end
-    -- A secret payload can't be compared (PORTING-TBC-TO-FOREVER.md): left
-    -- to the wait, which says nothing was confirmed.
-    local isSecret = rawget(_G, "issecretvalue")
-    if isSecret and isSecret(text) then return end
-    if type(text) ~= "string" then return end
+    text = Readable(text)
+    if not text then return end
     if event == "CHAT_MSG_SYSTEM" then
         -- Blizzard's own test for it (ChatFrameOverrides.lua).
         local err = rawget(_G, "ERR_CHAT_PLAYER_NOT_FOUND_S")
@@ -504,9 +522,17 @@ function S.OnChatEvent(event, text)
         end
         return
     end
-    if text:find("|Hitem:" .. p.id .. "[:|]") then
-        Heard("Sent to " .. p.to .. ": " .. p.name .. ".")
+    if not text:find("|Hitem:" .. p.id .. "[:|]") then return end
+    if p.target then
+        -- An outgoing whisper: to the one this send was for.
+        who = Readable(who)
+        if not (who and SameName(who, p.target)) then return end
+    else
+        -- Guild, party, raid: said by this character.
+        local guid = Readable((select(10, ...)))
+        if not (guid and guid == UnitGUID("player")) then return end
     end
+    Heard("Sent to " .. p.to .. ": " .. p.name .. ".")
 end
 
 function S.Send(e, chatType, target)
@@ -864,9 +890,9 @@ local function BuildWindow()
     frame.status = status
 
     frame.events = CreateFrame("Frame")
-    frame.events:SetScript("OnEvent", function(_, event, id)
+    frame.events:SetScript("OnEvent", function(_, event, id, ...)
         if event == "ITEM_DATA_LOAD_RESULT" then S.OnItemDataLoaded(id)
-        else S.OnChatEvent(event, id) end       -- a send's echo, or its error
+        else S.OnChatEvent(event, id, ...) end  -- a send's echo, or its error
     end)
 
     -- Closing lets everything go: the names, the queue, the snapshot. A load
