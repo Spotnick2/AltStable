@@ -518,6 +518,13 @@ local function Rerun(fromData)
         if e.id == keep then S.selected = i end
     end
     if not S.selected and #S.rows > 0 then S.selected = 1 end
+    -- What Enter and Shift act on stays in view: a new sort or filter can
+    -- move the selected item past the first page (Codex review of #562).
+    -- Not on a refresh of the data, which mustn't scroll a list being read.
+    -- (What the player does starts at the top: only below can it be.)
+    if S.selected and not fromData and S.selected > S.offset + ROWS then
+        S.offset = S.selected - ROWS
+    end
     if not fromData then S.message = nil end
     Paint()
 end
@@ -1272,6 +1279,8 @@ local function BuildWindow()
         -- (ShowSearch ends a copy line or a name left open).
         self.box:ClearFocus()
         self.aside:ClearFocus()
+        self.levelMin:ClearFocus()
+        self.levelMax:ClearFocus()
         if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
         -- Back under UIParent, as Export does (#434).
         if AltStable.LiftAboveHiddenUI then AltStable.LiftAboveHiddenUI(self, false) end

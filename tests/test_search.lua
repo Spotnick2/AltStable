@@ -1247,6 +1247,38 @@ do
     eq("  and no one else's holdings", v and #v.holders, 0)
     eq("someone with no part: none", S.ForCharacter(e, HID), nil)
 
+    -- The selection kept in view through a sort (Codex review of #562): what
+    -- Enter acts on is a row that shows.
+    Gear()
+    for i = 400, 414 do
+        WoW.items[i] = { name = ("Bolt %02d"):format(i - 400), classID = 7, quality = 1, icon = 9 }
+        AltStableWarbandDB[ALT].bags[i] = i - 399
+    end
+    Window():Hide()
+    AltStable.ShowSearch("bolt"); WoW.flushTimers()
+    eq("(15 bolts, the most held first)", S.rows[1] and S.rows[1].id, 414)
+    eq("(the first selected)", S.selected, 1)
+    Pick("sort", "name")
+    eq("sorted by name, the selected bolt is 15th", S.selected, 15)
+    eq("  scrolled to it", S.offset, 5)
+    local last = Window().rows[10]
+    check("  its row shows, lit", last.entry and last.entry.id == 414 and last.sel:IsShown())
+    -- A refresh of the data doesn't scroll a list being read.
+    S.offset = 0                                   -- scrolled back up, the 15th selected
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("a data refresh leaves the scroll where it is", S.offset, 0)
+    Pick("sort", "total")
+    eq("sorted back: first again, the list at the top", S.offset, 0)
+
+    -- A level box left focused lets go when the window closes (Codex review
+    -- of #562): its digits would go on landing in it.
+    for _, b in ipairs({ lo, hi }) do
+        b:SetFocus()
+        Window():Hide()
+        check("closed with a level box focused: the keyboard let go", WoW.focus ~= b)
+        AltStable.ShowSearch(); WoW.flushTimers()
+    end
+
     AltStable.ShowMenu = realShowMenu
     if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
     S.filters, S.sort = {}, "total"
