@@ -722,7 +722,11 @@ function AltStable.ScanSkills(char)
         if HEADER_UNKNOWN[name] then covered = anyCollapsed else covered = hidden[SECONDARY_HEADER] end
         if covered and not seen[name] then
             char[f[1]], char[f[2]] = old[f[1]] or 0, old[f[2]] or 0
-            if Recorded(char, name) then
+            -- The two whose header is unknown are asked for even with nothing
+            -- saved: right after the upgrade no alt has a rank for them yet,
+            -- and a collapsed header would otherwise hide them for good (review
+            -- of #570). No answer keeps what was there.
+            if HEADER_UNKNOWN[name] or Recorded(char, name) then
                 local rank, max = RankByID(name)
                 if rank then SetRank(char, name, rank, max) end
             end

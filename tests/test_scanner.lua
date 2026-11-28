@@ -282,6 +282,24 @@ do
     eq("the logout's rank update reads it too", rogue.lockpicking, 46)
     C_SkillInfo.GetSkillLineInfoByID = realByID
 
+    -- The first scan after the upgrade: an existing record with no rank saved
+    -- for either, and a collapsed header hiding them. They are asked for by ID
+    -- all the same (review of #570); no answer leaves them at 0.
+    local upgraded = { cooking = 7, cookingMax = 75 }
+    WoW.skillLines = {
+        collapsed(header("Professions", 11)),
+        collapsed(header("Secondary Skills", 9)),
+    }
+    C_SkillInfo.GetSkillLineInfoByID = function(id)
+        if id == 633 then return { rank = 12, maxRank = 70 } end
+    end
+    AltStable.ScanSkills(upgraded)
+    eq("first scan, collapsed: Lockpicking read by its ID though nothing was saved",
+       tostring(upgraded.lockpicking) .. "/" .. tostring(upgraded.lockpickingMax), "12/70")
+    eq("  Comprehension, no answer: 0, as it was", tostring(upgraded.comprehension) .. "/" .. tostring(upgraded.comprehensionMax), "0/0")
+    eq("  and a known secondary under the collapsed header keeps its value", upgraded.cooking, 7)
+    C_SkillInfo.GetSkillLineInfoByID = realByID
+
     -- Nothing collapsed: one not listed is gone, and clears.
     WoW.skillLines = { header("Secondary Skills", 9), line("Cooking", 185, 7, 75) }
     AltStable.ScanSkills(rogue)
