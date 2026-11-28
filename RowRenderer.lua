@@ -705,14 +705,20 @@ local DIVIDER_COLOR = AltStable.C.GRIDLINE
 -- snap to the same pixel, and the line vanishes: always the same few columns,
 -- the ones whose x lands just past a half pixel. Exactly one pixel wide, the
 -- two edges always snap a pixel apart. 768 units are the screen's height at
--- scale 1; the sheet's resting scale is UIParent's times AltStable's own
--- (AltStable.SetScale), read from the setting rather than the frame, whose
--- scale the open animation is still easing in. A lift above the hidden UI
--- keeps the effective scale (LibShowcase I.Lift), so it holds there too.
+-- scale 1 (Blizzard's ConvertPixelsToUI, PixelUtilSecure.lua, is the same
+-- sum). The scale is the sheet's own effective one, which is not always
+-- UIParent's times the setting: lifted above the hidden UI, the sheet has no
+-- parent (Codex, #569). Read at rest: SheetUI sizes the dividers again when
+-- the sheet's scale changes, outside the open fade (RefreshHairlines).
+-- Before the sheet exists, UIParent's times the setting.
 function AltStable.HairlineWidth()
     local _, physH = GetPhysicalScreenSize()
-    local scale = (UIParent and UIParent:GetEffectiveScale() or 1)
-        * (tonumber(AltStableConfig and AltStableConfig.scale) or 1)
+    local sheet = _G.AltStableSheet
+    local scale = sheet and sheet.GetEffectiveScale and sheet:GetEffectiveScale()
+    if type(scale) ~= "number" then
+        scale = (UIParent and UIParent:GetEffectiveScale() or 1)
+            * (tonumber(AltStableConfig and AltStableConfig.scale) or 1)
+    end
     if type(physH) ~= "number" or physH <= 0 or scale <= 0 then return 1 end
     return 768 / physH / scale
 end

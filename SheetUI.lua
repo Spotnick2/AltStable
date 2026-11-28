@@ -436,23 +436,36 @@ local function PlayOpenAnimation(targetFrame)
     local startScale = userScale * 0.96
     local duration = 0.22
 
-    targetFrame:SetAlpha(0)
-    targetFrame:SetScale(startScale)
-
+    -- Lifted out of UIParent by the presentation, the sheet's own scale is
+    -- its effective one (LibShowcase I.Lift keeps it so): UIParent's times
+    -- this. The setting's scale alone written there left it the wrong size for
+    -- the whole presentation at any WoW UI scale but 1 (#563, Codex). Read at
+    -- each write, so a lift or a drop mid-fade lands right too.
+    local function Scale(s)
+        if targetFrame.GetParent and targetFrame:GetParent() == nil and UIParent then
+            s = s * UIParent:GetEffectiveScale()
+        end
+        targetFrame:SetScale(s)
+    end
     OpenAnimRunner = OpenAnimRunner or CreateFrame("Frame")
+    OpenAnimRunner.scale = Scale
     OpenAnimRunner:Hide()
     OpenAnimRunner.elapsed = 0
     -- Recorded on the runner so the fade can be COMPLETED from outside, which
     -- is what FinishOpenAnimation below needs. In the closure alone, the only
-    -- thing that could end this animation was the animation itself.
+    -- thing that could end this animation was the animation itself. Before
+    -- the first write, which is then a fade's, not a resting scale (#563).
     OpenAnimRunner.target = targetFrame
     OpenAnimRunner.finalScale = userScale
+
+    targetFrame:SetAlpha(0)
+    Scale(startScale)
     OpenAnimRunner:SetScript("OnUpdate", function(self, dt)
         self.elapsed = (self.elapsed or 0) + (dt or 0)
         local p = math.min(1, self.elapsed / duration)
         local eased = p * p * (3 - 2 * p) -- smoothstep
         targetFrame:SetAlpha(eased)
-        targetFrame:SetScale(startScale + (userScale - startScale) * eased)
+        Scale(startScale + (userScale - startScale) * eased)
         if p >= 1 then
             AltStable.FinishOpenAnimation()
         end
@@ -484,11 +497,14 @@ function AltStable.FinishOpenAnimation()
     local runner = OpenAnimRunner
     if not runner or not runner.target then return false end
 
-    runner.target:SetAlpha(1)
-    runner.target:SetScale(runner.finalScale or 1)
+    -- Marked over before the last writes, so what they set counts as the
+    -- resting scale (the column dividers are sized from it, #563).
+    local target = runner.target
+    runner.target = nil
     runner:SetScript("OnUpdate", nil)
     runner:Hide()
-    runner.target = nil
+    target:SetAlpha(1)
+    runner.scale(runner.finalScale or 1)        -- lifted: UIParent's times it (#563)
     return true
 end
 
@@ -1568,8 +1584,9 @@ local function LayoutHeaders(widths)
 end
 
 -- Every column divider back to one physical pixel when the scale changed
--- (#563): a WoW UI scale or display change, or AltStable's own scale. A divider
--- is sized when it's made, and a pooled one is kept for good.
+-- (#563): a WoW UI scale or display change, or the sheet's own scale or
+-- parent (AltStable's scale, the presentation's lift and drop). A divider is
+-- sized when it's made, and a pooled one is kept for good.
 function AltStable.ApplyHairlines()
     local w = AltStable.HairlineWidth()
     for _, div in pairs(dividerPool) do div:SetWidth(w) end
@@ -1578,6 +1595,14 @@ function AltStable.ApplyHairlines()
             for _, div in ipairs(row.dividerPool or {}) do div:SetWidth(w) end
         end
     end
+end
+
+-- On every change of the sheet's scale or parent, except while the open fade
+-- runs: it sets the scale every frame, and its end (FinishOpenAnimation, the
+-- fade marked over first) sets the resting one, which sizes them once.
+local function RefreshHairlines()
+    if OpenAnimRunner and OpenAnimRunner.target then return end
+    AltStable.ApplyHairlines()
 end
 
 local function LayoutColumns()
@@ -2216,7 +2241,7 @@ do
     -- the panel's size (Codex, #191) - Warband's columns and rail, the
     -- Roster's cards and scene would stay where the old size put them.
     watch:SetScript("OnEvent", function()
-        AltStable.ApplyHairlines()      -- a pixel is another size in units now (#563)
+        RefreshHairlines()                -- a pixel is another size in units now (#563)
         if not frame then return end
         local w0, h0 = frame:GetWidth(), frame:GetHeight()
         AltStable.RefitWindow()
@@ -2800,6 +2825,11 @@ local function CreateFrameIfNeeded()
         hooksecurefunc(frame, "Hide", function()
             if hiddenByParent then Closed() end
         end)
+        -- The sheet's effective scale changes with its own scale: AltStable's
+        -- scale, and the presentation's lift and drop, which set the scale
+        -- right after the parent (LibShowcase I.Lift, I.DropRecord). The
+        -- column dividers follow (#563).
+        hooksecurefunc(frame, "SetScale", RefreshHairlines)
     end
 
     -- The camera presentation reparents this sheet out from under UIParent while
