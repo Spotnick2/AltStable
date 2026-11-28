@@ -273,8 +273,13 @@ do
     end
     AltStable.ScanSkills(rogue)
     eq("  and a hidden one is read by its ID", tostring(rogue.lockpicking) .. "/" .. tostring(rogue.lockpickingMax), "45/70")
+    -- A rank that moved since: the logout's update must read it, not keep
+    -- the scan's (Codex review of #570).
+    C_SkillInfo.GetSkillLineInfoByID = function(id)
+        if id == 633 then return { rank = 46, maxRank = 70 } end
+    end
     AltStable.UpdateSkillRanks(rogue)
-    eq("the logout's rank update reads it too", rogue.lockpicking, 45)
+    eq("the logout's rank update reads it too", rogue.lockpicking, 46)
     C_SkillInfo.GetSkillLineInfoByID = realByID
 
     -- Nothing collapsed: one not listed is gone, and clears.

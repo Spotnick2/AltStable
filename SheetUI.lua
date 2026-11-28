@@ -844,7 +844,9 @@ local function EligibleColumns(section)
     -- is offered once a character the grid lists has a rank in it.
     local function Recorded(field)
         for _, char in pairs(GetCharacterStore()) do
-            if type(char) == "table" and (tonumber(char[field]) or 0) > 0 and ShouldShowInGrid(char) then
+            -- Named, as the grid lists only named records (Codex review of #570).
+            if type(char) == "table" and char.name and (tonumber(char[field]) or 0) > 0
+               and ShouldShowInGrid(char) then
                 return true
             end
         end

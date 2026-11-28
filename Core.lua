@@ -1663,6 +1663,11 @@ local function ClearSyncedStateFields(t)
     t.played = nil; t.playedLevel = nil
     -- The Legacy talents (#500): the same.
     t.legacyTalents = nil; t.legacyAt = nil
+    -- Lockpicking and Comprehension (#565): an older peer's record has
+    -- neither, and the rank held here must not ride on its newer stamp
+    -- (Codex review of #570).
+    t.lockpicking = nil; t.lockpickingMax = nil
+    t.comprehension = nil; t.comprehensionMax = nil
     -- When the gear last changed (#281): an older peer's record has none, and
     -- the stamp of a gear set no longer on the record must not linger. Nor
     -- the time it was read.

@@ -6145,6 +6145,13 @@ do
     check("  nor Comprehension", f.comprehension == nil)
     check("  Riding is always offered", f.riding ~= nil)
 
+    -- A record with no name yet (a first scan) isn't listed, so it brings
+    -- no column with every cell blank (Codex review of #570).
+    AltStableDB.u = { guid = "u", realm = "R", level = 20, lockpicking = 40, lockpickingMax = 100 }
+    Open("summary"); Open("skills")
+    check("an unnamed record with Lockpicking: no column", Fields().lockpicking == nil)
+    AltStableDB.u = nil
+
     AltStableDB.r = { guid = "r", name = "Rogue Test", realm = "R", level = 20, lockpicking = 40, lockpickingMax = 100 }
     Open("summary"); Open("skills")
     f = Fields()
