@@ -2443,6 +2443,194 @@ do
 end
 
 ------------------------------------------------------------
+-- Column dividers are one physical pixel wide (#563)
+------------------------------------------------------------
+-- A 1-unit divider is under a pixel wide where the sheet's scale is low, and
+-- both of its edges can snap to one pixel: the line vanished between some
+-- columns. One pixel = 768 / screen height / the sheet's effective scale,
+-- measured here against the sheet itself, lifted or not (Codex, #569).
+do
+    local T = AltStable._test
+    local sheet = T.frame
+    local Cam = T.CameraPresentation
+    local heldScale, heldUI = AltStableConfig.scale, UIParent:GetScale()
+    local heldW, heldH = WoW.screenW, WoW.screenH
+    local heldAnim, heldCam = AltStableConfig.enableOpenAnimation, AltStableConfig.enableWorldCameraPresentation
+    local function near(a, b) return math.abs(a - b) < 1e-9 end
+    local function pixel() return 768 / WoW.screenH / sheet:GetEffectiveScale() end
+    -- Every divider in use, header and rows, has the given width.
+    local function allAt(w)
+        local _, _, hdrDivs, rows = T.ColumnLayout()
+        local n, bad = 0, nil
+        for _, d in ipairs(hdrDivs) do n = n + 1; if not near(d:GetWidth(), w) then bad = d:GetWidth() end end
+        for _, row in ipairs(rows) do
+            for _, d in ipairs(row.dividers or {}) do n = n + 1; if not near(d:GetWidth(), w) then bad = d:GetWidth() end end
+        end
+        return n > 0 and bad == nil, tostring(n) .. " dividers, one at " .. tostring(bad) .. ", want " .. w
+    end
+
+    AltStableConfig.enableOpenAnimation = false
+    AltStableConfig.enableWorldCameraPresentation = false
+    AltStable.FinishOpenAnimation()   -- an earlier block's fade, never ticked to its end
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    WoW.screenW, WoW.screenH = 1920, 1080
+    UIParent:SetScale(0.64)
+    AltStable.SetScale(1)
+    AltStable.EnsureSheetVisible()
+    WoW.flushTimers()
+    eq("one pixel in the sheet's units", AltStable.HairlineWidth(), 768 / 1080 / 0.64)
+    local ok, why = allAt(pixel())
+    check("the header's and the rows' dividers are one pixel wide", ok, why)
+    check("  which is more than a unit at this scale", pixel() > 1)
+
+    AltStable.SetScale(0.8)
+    WoW.flushTimers()
+    ok, why = allAt(pixel())
+    check("AltStable's own scale changed: every divider follows", ok, why)
+    eq("  at the new pixel", AltStable.HairlineWidth(), 768 / 1080 / (0.64 * 0.8))
+
+    UIParent:SetScale(1.0)
+    local watch = T.displayWatch
+    watch:GetScript("OnEvent")(watch, "UI_SCALE_CHANGED")
+    WoW.flushTimers()
+    ok, why = allAt(pixel())
+    check("the WoW UI scale changed: every divider follows", ok, why)
+
+    WoW.screenW, WoW.screenH = 3840, 2160
+    watch:GetScript("OnEvent")(watch, "DISPLAY_SIZE_CHANGED")
+    WoW.flushTimers()
+    ok, why = allAt(pixel())
+    check("the display changed: every divider follows", ok, why)
+    check("  which is under a unit on a 4K screen", pixel() < 1)
+
+    -- Dividers made now get the pixel at once: a new row's, and the header's,
+    -- which every change of tab builds again.
+    local cols = T.ColumnLayout()
+    local row = AltStable.CreateRow(sheet, 20, cols)
+    check("a new row has dividers", row.dividers[1] ~= nil)
+    check("  one pixel wide", near(row.dividers[1]:GetWidth(), pixel()), tostring(row.dividers[1]:GetWidth()))
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId then btnFor[b.sectionId] = b end end
+    for _, d in pairs(select(2, T.HeaderPools())) do d:SetWidth(5) end
+    btnFor.gear:GetScript("OnClick")(btnFor.gear)
+    local _, _, hdrDivs = T.ColumnLayout()
+    check("the Gear tab's header has dividers", hdrDivs[1] ~= nil)
+    check("  built one pixel wide", near(hdrDivs[1]:GetWidth(), pixel()), tostring(hdrDivs[1]:GetWidth()))
+    btnFor.summary:GetScript("OnClick")(btnFor.summary)
+
+    -- THE PRESENTATION LIFTS THE SHEET out of UIParent, keeping its effective
+    -- scale as its own (LibShowcase I.Lift), and the open fade runs after it,
+    -- ending on the setting's scale: lifted, the sheet's effective scale is
+    -- then not UIParent's times the setting (Codex, #569). The dividers follow
+    -- the sheet as it is, and are left alone while the fade runs.
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    WoW.screenW, WoW.screenH = 1920, 1080
+    UIParent:SetScale(0.64)
+    AltStable.SetScale(1)
+    AltStableConfig.enableOpenAnimation = true
+    AltStableConfig.enableWorldCameraPresentation = true
+    SetUIVisibility(true)
+    AltStable.EnsureSheetVisible()
+    check("presented, the sheet is lifted out of UIParent", Cam.uiHidden == true and sheet:GetParent() ~= UIParent,
+          tostring(Cam.uiHidden) .. " " .. tostring(Cam.active) .. " " .. tostring(sheet:GetParent() == UIParent))
+    local widthAtStart = select(3, T.ColumnLayout())[1]:GetWidth()
+    local tick = T.OpenAnimTick()
+    check("  the fade is running", tick ~= nil)
+    if tick then tick(0.1) end
+    eq("  not resized while the fade runs", select(3, T.ColumnLayout())[1]:GetWidth(), widthAtStart)
+    AltStable.FinishOpenAnimation()
+    check("  and lifted, the sheet's scale isn't UIParent's times the setting",
+          not near(sheet:GetEffectiveScale(), 0.64), tostring(sheet:GetEffectiveScale()))
+    WoW.flushTimers()
+    ok, why = allAt(pixel())
+    check("  and every divider is one pixel of the lifted sheet", ok, why)
+
+    -- The scale changed while lifted, then the UI comes back: the drop puts
+    -- the parent and the old scale back, and the dividers follow that.
+    AltStable.SetScale(1.25)
+    WoW.flushTimers()
+    ok, why = allAt(pixel())
+    check("AltStable's scale changed while lifted: the dividers follow", ok, why)
+    pcall(Cam.ForceRestore, Cam, "test")
+    check("the UI back, the sheet is under UIParent again", sheet:GetParent() == UIParent)
+    WoW.flushTimers()
+    ok, why = allAt(pixel())
+    check("  and its dividers are one pixel of the scale it has now", ok, why)
+
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    WoW.screenH = nil
+    eq("no screen size read: a unit, as before", AltStable.HairlineWidth(), 1)
+
+    WoW.screenW, WoW.screenH = heldW, heldH
+    UIParent:SetScale(heldUI)
+    AltStable.SetScale(heldScale or 1)
+    AltStableConfig.scale = heldScale
+    AltStableConfig.enableOpenAnimation, AltStableConfig.enableWorldCameraPresentation = heldAnim, heldCam
+    WoW.flushTimers()
+end
+
+
+------------------------------------------------------------
+-- Unticking World camera presentation lets go of the camera at once (#564)
+------------------------------------------------------------
+-- The Options page is inside the sheet, so the box is only clicked with the
+-- sheet open and the presentation running. It used to save the setting and
+-- nothing else: the camera kept orbiting until the sheet closed.
+do
+    local Cam = AltStable._test.CameraPresentation
+    local sheet = AltStable._test.frame
+    local box = AltStable._test.OptCamera.camera
+    local panel = AltStable._test.optionsPanel
+    local function click(on) box:SetChecked(on); box:GetScript("OnClick")(box) end
+
+    AltStableConfig.enableWorldCameraPresentation = true
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    SetUIVisibility(true)
+    WoW.cvars["cameraView"] = "1"
+    AltStable.EnsureSheetVisible()
+    panel:GetScript("OnShow")(panel)
+    check("the sheet is open with the presentation running",
+          sheet:IsShown() and Cam.active and Cam.mode ~= "exit")
+    check("  hiding the game UI", Cam.uiHidden == true)
+    check("  and the box ticked", box:GetChecked() == true)
+
+    click(false)
+    eq("unticking it saves the setting", AltStableConfig.enableWorldCameraPresentation, false)
+    eq("  and ends the presentation now", Cam.mode, "exit")
+    eq("  giving the game UI back", Cam.uiHidden, false)
+    check("  and the interface shows", UIParent:IsShown())
+    eq("  the camera back on the player's own view", WoW.camera.view, 1)
+    check("  while the sheet stays open", sheet:IsShown())
+    eq("  back under UIParent", sheet:GetParent(), UIParent)
+
+    pcall(Cam.ForceRestore, Cam, "test")
+    click(false)
+    check("unticked with nothing running, it starts nothing", not Cam.active)
+
+    click(true)
+    eq("ticking it again saves the setting", AltStableConfig.enableWorldCameraPresentation, true)
+    check("  but doesn't start a presentation with the sheet already open", not Cam.active)
+    sheet:Hide()
+    AltStable.EnsureSheetVisible()
+    check("  the next open does", Cam.active and Cam.mode ~= "exit")
+
+    click(false)
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    AltStable.EnsureSheetVisible()
+    check("unticked, the next open presents nothing", not Cam.active)
+
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    AltStableConfig.enableWorldCameraPresentation = nil
+    WoW.cvars["cameraView"] = nil
+end
+
+------------------------------------------------------------
 -- The capture button glows when a new portrait is due (#128)
 ------------------------------------------------------------
 

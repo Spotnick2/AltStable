@@ -24,3 +24,4 @@ Online.lua
 Legacy.lua
 Quests.lua
 Bank.lua
+Synced.lua
