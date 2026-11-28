@@ -655,8 +655,32 @@ do
     menu.pick("GUILD")
     eq("Send to guild: the link goes out", LastSent() and LastSent().text, "|Hitem:101|h[Linen Cloth]|h")
     eq("  to the guild", LastSent() and LastSent().chatType, "GUILD")
-    eq("  and said", Window().status:GetText(), "Sent to guild: Linen Cloth.")
+    -- Not "sent" until chat echoes it: SendChatMessage returns nothing
+    -- (Codex review of #561).
+    eq("  said as sending", Window().status:GetText(), "Sending Linen Cloth to guild...")
     check("  no chat box needed", WoW.chatBox == nil)
+    local function Echo(event, text)
+        local ev = Window().events
+        ev:GetScript("OnEvent")(ev, event, text)
+    end
+    Echo("CHAT_MSG_GUILD", "|cffffffff|Hitem:102::::|h[Wool Cloth]|h|r")
+    eq("another item's echo: still sending", Window().status:GetText(), "Sending Linen Cloth to guild...")
+    Echo("CHAT_MSG_GUILD", "look |cffffffff|Hitem:101::::|h[Linen Cloth]|h|r")
+    eq("its echo: sent", Window().status:GetText(), "Sent to guild: Linen Cloth.")
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("  still said after a refresh of the data", Window().status:GetText(), "Sent to guild: Linen Cloth.")
+    Echo("CHAT_MSG_GUILD", "|Hitem:101|h[Linen Cloth]|h")
+    eq("  heard once", Window().status:GetText(), "Sent to guild: Linen Cloth.")
+    RightClick(); menu.pick("GUILD")
+    WoW.flushTimers()
+    eq("no echo in time: said", Window().status:GetText(), "Chat didn't confirm sending Linen Cloth to guild.")
+    RightClick(); menu.pick("GUILD")
+    local realSecret = rawget(_G, "issecretvalue")
+    rawset(_G, "issecretvalue", function() return true end)
+    Echo("CHAT_MSG_GUILD", "|Hitem:101|h[Linen Cloth]|h")
+    rawset(_G, "issecretvalue", realSecret)
+    eq("a secret echo isn't compared", Window().status:GetText(), "Sending Linen Cloth to guild...")
+    WoW.flushTimers()
     RightClick(); menu.pick("PARTY")
     eq("Send to party", LastSent() and LastSent().chatType, "PARTY")
     WoW.inRaid = true
@@ -688,6 +712,12 @@ do
     check("Whisper to...: a name box", aside:IsShown() and aside.mode == "name" and aside:GetText() == "")
     check("  in the search box's place, with the keyboard", not Window().box:IsShown() and aside:HasFocus())
     eq("  and says what for", Window().status:GetText(), "Whisper Linen Cloth to: type a name, then Enter.")
+    -- A refresh while it is open keeps the instructions (Codex review of #561).
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("  still, after a refresh of the data", Window().status:GetText(),
+       "Whisper Linen Cloth to: type a name, then Enter.")
+    Type("linen"); S._test.Rerun()
+    eq("  and after a rerun", Window().status:GetText(), "Whisper Linen Cloth to: type a name, then Enter.")
     aside:SetText("  Kaleid Sumner ")
     aside:GetScript("OnTextChanged")(aside, true)
     eq("  a name typed stays (not read-only)", aside:GetText(), "  Kaleid Sumner ")
@@ -695,14 +725,40 @@ do
     eq("Enter whispers the name, trimmed", LastSent() and LastSent().target, "Kaleid Sumner")
     eq("  the link", LastSent() and LastSent().text, "|Hitem:101|h[Linen Cloth]|h")
     check("  the search box is back", Window().box:IsShown() and not aside:IsShown())
-    eq("  and said", Window().status:GetText(), "Sent to Kaleid Sumner: Linen Cloth.")
+    eq("  said as sending", Window().status:GetText(), "Sending Linen Cloth to Kaleid Sumner...")
+    Echo("CHAT_MSG_WHISPER_INFORM", "|cffffffff|Hitem:101::::|h[Linen Cloth]|h|r")
+    eq("  whispered: sent", Window().status:GetText(), "Sent to Kaleid Sumner: Linen Cloth.")
+    -- Someone not online: the system message chat would show (hidden in
+    -- presentation mode) says so here.
+    rawset(_G, "ERR_CHAT_PLAYER_NOT_FOUND_S", "No player named '%s' is currently playing.")
+    local function Listening(ev)
+        local t = Window().events._events
+        return t ~= nil and t[ev] ~= nil and t[ev] ~= false
+    end
+    RightClick(); menu.pick("whisper")
+    aside:SetText("Nobody Here")
+    aside:GetScript("OnEnterPressed")(aside)
+    check("a whisper listens for its echo and for not-found",
+          Listening("CHAT_MSG_WHISPER_INFORM") and Listening("CHAT_MSG_SYSTEM"))
+    Echo("CHAT_MSG_SYSTEM", "No player named 'Someone Else' is currently playing.")
+    eq("another name's error: still sending", Window().status:GetText(), "Sending Linen Cloth to Nobody Here...")
+    Echo("CHAT_MSG_SYSTEM", "No player named 'nobody here' is currently playing.")
+    eq("not online: said", Window().status:GetText(), "No player named Nobody Here is playing.")
+    check("  and no longer listening", not Listening("CHAT_MSG_WHISPER_INFORM") and not Listening("CHAT_MSG_SYSTEM"))
+    RightClick(); menu.pick("GUILD")
+    check("a guild send listens for its echo only", Listening("CHAT_MSG_GUILD") and not Listening("CHAT_MSG_SYSTEM"))
+    Echo("CHAT_MSG_SYSTEM", "No player named 'Nobody Here' is currently playing.")
+    eq("a guild send hears no whisper error", Window().status:GetText(), "Sending Linen Cloth to guild...")
+    WoW.flushTimers()
     sent = #WoW.chatSent
     RightClick(); menu.pick("whisper")
     aside:GetScript("OnEnterPressed")(aside)
     eq("no name: nothing sent", #WoW.chatSent, sent)
     RightClick(); menu.pick("whisper")
+    S.message = "Sent to guild: Linen Cloth."      -- an earlier answer, left behind
     aside:SetText("Kaleid Sumner")
     aside:GetScript("OnEscapePressed")(aside)
+    check("  an earlier answer doesn't come back", Window().status:GetText() ~= "Sent to guild: Linen Cloth.")
     eq("Escape: nothing sent", #WoW.chatSent, sent)
     check("  the search box is back", Window().box:IsShown() and not aside:IsShown())
     check("  the instructions gone", Window().status:GetText() ~= "Whisper Linen Cloth to: type a name, then Enter.")
@@ -713,6 +769,9 @@ do
     -- Copy: the chat line, selected and read-only.
     RightClick(); menu.pick("copy")
     check("Copy the link: the copy line", aside:IsShown() and aside.mode == "copy")
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("  its instructions, through a refresh", Window().status:GetText(),
+       "Selected: press Ctrl+C. Pasted into chat, it shows the link.")
     eq("  the chat line", aside:GetText(),
        '/script DEFAULT_CHAT_FRAME:AddMessage("\\124Hitem:101\\124h[Linen Cloth]\\124h");')
     aside._highlighted = nil
@@ -761,6 +820,34 @@ do
     RightClick(); menu.pick("GUILD")
     eq("an uncached link: nothing sent", #WoW.chatSent, sent)
     check("  and asked for", Requested(108))
+
+    -- The menu goes with the window (Codex review of #561): in combat it
+    -- doesn't take the keyboard, so Escape can close the search under it.
+    local function MenuUp()
+        local m = rawget(_G, "AltStableCharacterMenu")
+        return m ~= nil and m:IsShown()
+    end
+    Type("linen"); WoW.flushTimers()
+    RightClick()
+    check("(the menu is up, and the search's)", MenuUp() and S.menu ~= nil)
+    local latePick, before = menu.pick, #WoW.chatSent
+    Window():Hide()
+    check("the window closed: its menu closed", not MenuUp() and S.menu == nil)
+    latePick("GUILD")
+    eq("  a pick after it does nothing", #WoW.chatSent, before)
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    RightClick()
+    realShowMenu({ { id = "x", text = "Someone else's" } }, function() end)
+    check("another menu in its place: not the search's", S.menu == nil)
+    Window():Hide()
+    check("  and left open when the search closes", MenuUp())
+    AltStable.CloseCharacterMenu()
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    RightClick(); menu.pick("GUILD")
+    Window():Hide()
+    check("the window closed while sending: no longer listening", S.sending == nil)
+    AltStable.ShowSearch("linen"); WoW.flushTimers()
+    sent = #WoW.chatSent
 
     -- Presentation mode: sending still works; the chat box link is greyed.
     Type("linen"); WoW.flushTimers()

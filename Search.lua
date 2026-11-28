@@ -339,7 +339,9 @@ end
 
 local Paint
 
-local function Rerun()
+-- fromData: a refresh of the data (a rebuild, names loading), not something
+-- the player did: what the status says (a send's answer) stays.
+local function Rerun(fromData)
     if not frame then return end
     S.queryPending = nil
     -- The selection follows its item, wherever a re-sort puts it.
@@ -351,14 +353,14 @@ local function Rerun()
         if e.id == keep then S.selected = i end
     end
     if not S.selected and #S.rows > 0 then S.selected = 1 end
-    S.message = nil
+    if not fromData then S.message = nil end
     Paint()
 end
 
 function S.Rebuild()
     S.snap = S.BuildSnapshot()
     QueueNames(S.snap)
-    Rerun()
+    Rerun(true)
 end
 
 local repaintArmed
@@ -367,7 +369,7 @@ function ScheduleRepaint()
     repaintArmed = true
     C_Timer.After(REPAINT_DELAY, function()
         repaintArmed = nil
-        if frame and frame:IsShown() then Rerun() end
+        if frame and frame:IsShown() then Rerun(true) end
     end)
 end
 
@@ -463,6 +465,50 @@ end
 -- works in presentation mode too. A whisper's target is "Name Surname", the
 -- form a whisper was measured to route with (docs/forever-api-notes.md).
 S.SENT_TO = { GUILD = "guild", PARTY = "party", RAID = "raid" }
+
+-- SendChatMessage returns nothing, and a whisper to someone not online fails
+-- with a system message in chat, which presentation mode hides (Codex review
+-- of #561). So "Sending...", then "Sent" when chat echoes the link back, or
+-- what went wrong; nothing heard in SEND_WAIT seconds is said too.
+local SEND_WAIT = 5
+S.ECHOES = { GUILD = { "CHAT_MSG_GUILD" }, PARTY = { "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER" },
+             RAID = { "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER" }, WHISPER = { "CHAT_MSG_WHISPER_INFORM" } }
+
+local function StopListening()
+    local p = S.sending
+    S.sending = nil
+    if not (p and frame) then return end
+    for _, ev in ipairs(S.ECHOES[p.chatType] or {}) do frame.events:UnregisterEvent(ev) end
+    frame.events:UnregisterEvent("CHAT_MSG_SYSTEM")
+end
+
+local function Heard(text)
+    StopListening()
+    S.message = text
+    Paint()
+end
+
+function S.OnChatEvent(event, text)
+    local p = S.sending
+    if not p then return end
+    -- A secret payload can't be compared (PORTING-TBC-TO-FOREVER.md): left
+    -- to the wait, which says nothing was confirmed.
+    local isSecret = rawget(_G, "issecretvalue")
+    if isSecret and isSecret(text) then return end
+    if type(text) ~= "string" then return end
+    if event == "CHAT_MSG_SYSTEM" then
+        -- Blizzard's own test for it (ChatFrameOverrides.lua).
+        local err = rawget(_G, "ERR_CHAT_PLAYER_NOT_FOUND_S")
+        if p.target and type(err) == "string" and text:lower() == err:format(p.target):lower() then
+            Heard("No player named " .. p.target .. " is playing.")
+        end
+        return
+    end
+    if text:find("|Hitem:" .. p.id .. "[:|]") then
+        Heard("Sent to " .. p.to .. ": " .. p.name .. ".")
+    end
+end
+
 function S.Send(e, chatType, target)
     e = e or Selected()
     if not e then return false end
@@ -472,8 +518,17 @@ function S.Send(e, chatType, target)
     end
     local link = LinkOf(e)
     if not link then return false end
+    StopListening()
+    local p = { chatType = chatType, target = target, id = e.id, name = NameOf(e),
+                to = target or S.SENT_TO[chatType] or chatType }
+    S.sending = p
+    for _, ev in ipairs(S.ECHOES[chatType] or {}) do frame.events:RegisterEvent(ev) end
+    if target then frame.events:RegisterEvent("CHAT_MSG_SYSTEM") end
     C_ChatInfo.SendChatMessage(link, chatType, nil, target)
-    S.message = "Sent to " .. (target or S.SENT_TO[chatType] or chatType) .. ": " .. NameOf(e) .. "."
+    S.message = "Sending " .. p.name .. " to " .. p.to .. "..."
+    C_Timer.After(SEND_WAIT, function()
+        if S.sending == p then Heard("Chat didn't confirm sending " .. p.name .. " to " .. p.to .. ".") end
+    end)
     Paint(); return true
 end
 
@@ -510,13 +565,21 @@ function S.EndAside()
     if frame:IsShown() then frame.box:SetFocus() end
 end
 
+-- What the open box is for, from its mode: a refresh while it is open can't
+-- put the search's status over it (Codex review of #561).
+function S.AsideText()
+    local a = frame and frame.aside
+    if not (a and a:IsShown() and a.entry) then return nil end
+    if a.mode == "copy" then return "Selected: press Ctrl+C. Pasted into chat, it shows the link." end
+    return "Whisper " .. NameOf(a.entry) .. " to: type a name, then Enter."
+end
+
 function S.Copy(e)
     e = e or Selected()
     if not e then return false end
     local link = LinkOf(e)
     if not link then return false end
     StartAside(e, "copy", S.ScriptLine(link))
-    S.message = "Selected: press Ctrl+C. Pasted into chat, it shows the link."
     Paint(); return true
 end
 
@@ -524,8 +587,26 @@ function S.AskName(e)
     e = e or Selected()
     if not e then return false end
     StartAside(e, "name", "")
-    S.message = "Whisper " .. NameOf(e) .. " to: type a name, then Enter."
     Paint(); return true
+end
+
+-- A menu this window opened, closed with it (Codex review of #561): in combat
+-- the menu doesn't take the keyboard, so Escape could close the search and
+-- leave the menu up, a pick still able to send. S.menu is set while it is up
+-- and cleared by its onClose (which runs before any next menu shows); a pick
+-- after the window closed does nothing.
+-- Lifted in presentation mode, the menu and this window share a strata, and
+-- this one was raised last: the menu goes above it.
+function S.ShowOwnedMenu(list, onPick, anchor)
+    if not AltStable.ShowMenu then return false end
+    local shown = AltStable.ShowMenu(list, function(id)
+        if frame and frame:IsShown() then onPick(id) end
+    end, nil, { anchor = anchor, onClose = function() S.menu = nil end })
+    if not shown then return false end
+    S.menu = true
+    local menu = rawget(_G, "AltStableCharacterMenu")
+    if menu and menu.Raise then menu:Raise() end
+    return shown
 end
 
 -- The row menu (right-click). Unavailable entries stay, greyed, with why.
@@ -560,12 +641,7 @@ function S.OpenMenu(e)
     if not (e and AltStable.ShowMenu) then return false end
     -- The target as it is now: the pick comes later.
     local targetName = UnitIsPlayer("target") and GetUnitName("target", false) or nil
-    local shown = AltStable.ShowMenu(S.MenuEntries(e), function(id) S.MenuPick(e, id, targetName) end)
-    -- Lifted in presentation mode, the menu and this window share a strata,
-    -- and this one was raised last: the menu goes above it.
-    local menu = rawget(_G, "AltStableCharacterMenu")
-    if shown and menu and menu.Raise then menu:Raise() end
-    return shown
+    return S.ShowOwnedMenu(S.MenuEntries(e), function(id) S.MenuPick(e, id, targetName) end)
 end
 
 local function Move(delta)
@@ -666,7 +742,7 @@ function Paint()
             row:Hide()
         end
     end
-    SetStatus(S.message or DefaultStatus())
+    SetStatus(S.AsideText() or S.message or DefaultStatus())
     frame.warn:SetShown(AltStable.ItemMapsFor == nil)
 end
 
@@ -789,7 +865,8 @@ local function BuildWindow()
 
     frame.events = CreateFrame("Frame")
     frame.events:SetScript("OnEvent", function(_, event, id)
-        if event == "ITEM_DATA_LOAD_RESULT" then S.OnItemDataLoaded(id) end
+        if event == "ITEM_DATA_LOAD_RESULT" then S.OnItemDataLoaded(id)
+        else S.OnChatEvent(event, id) end       -- a send's echo, or its error
     end)
 
     -- Closing lets everything go: the names, the queue, the snapshot. A load
@@ -800,6 +877,9 @@ local function BuildWindow()
     frame:SetScript("OnHide", function(self)
         if self:IsShown() then return end
         self.events:UnregisterEvent("ITEM_DATA_LOAD_RESULT")
+        StopListening()
+        -- Its menu goes with it: its onClose clears S.menu.
+        if S.menu and AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
         if AltStable.UnregisterCallback then AltStable.UnregisterCallback("CharactersChanged", OnCharactersChanged) end
         S.names, S.folded, S.queue, S.pending, S.outstanding = {}, {}, {}, {}, 0
         S.snap, S.rows, S.selected, S.message = nil, {}, nil, nil
