@@ -487,12 +487,16 @@ local function MakeRow(i)
     row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -1)
     row.name:SetPoint("RIGHT", row, "RIGHT", -60, 0)
     row.name:SetJustifyH("LEFT")
+    -- One line each, cut with "...": a wrapped line ran over the next row (seen
+    -- in game, 2026-11-28). The hover has the whole list.
+    row.name:SetWordWrap(false)
     row.total = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     row.total:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -3)
     row.who = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.who:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 8, 1)
     row.who:SetPoint("RIGHT", row, "RIGHT", -4, 0)
     row.who:SetJustifyH("LEFT")
+    row.who:SetWordWrap(false)
     row:RegisterForClicks("LeftButtonUp")
     row:SetScript("OnClick", function(self)
         if not self.entry then return end
@@ -542,6 +546,19 @@ local function BuildWindow()
     frame:SetToplevel(true)
     if not (AltStable.SkinWindow and AltStable.SkinWindow(frame, "small")) then
         AltStable.ApplyBackdrop(frame, 0.05, 0.05, 0.08, 0.97)
+    end
+    -- Glass: the box and the list on the sheet's reading surface, opaque (see
+    -- SkinDataColor). The popup's glass alone let the sheet's rows show
+    -- through the results (seen in game, 2026-11-28); the title stays glass.
+    if AltStable.SkinIsGlass and AltStable.SkinIsGlass() and AltStable.SkinDataColor then
+        local surface = frame:CreateTexture(nil, "BACKGROUND", nil, -3)
+        surface:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, -36)
+        surface:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -6, 6)
+        surface:SetColorTexture(unpack(AltStable.SkinDataColor()))
+        -- Inside the window's rounded corners: its own (small) glass mask.
+        local g = frame._glass
+        if g and g.mask and surface.AddMaskTexture then surface:AddMaskTexture(g.mask) end
+        frame.surface = surface
     end
     frame:SetMovable(true)
     frame:EnableMouse(true)

@@ -172,6 +172,18 @@ do
     WoW.itemLoadRequests = {}
     AltStable.ShowSearch()
     check("the window opens", Window():IsShown())
+    -- Readable over the sheet (seen in game, 2026-11-28): the list on the
+    -- opaque reading surface, inside the window's corners, and a row's two
+    -- lines never wrapping into the next row.
+    local surface = Window().surface
+    check("(the glass skin is on)", AltStable.SkinIsGlass())
+    check("the list sits on a reading surface", surface ~= nil)
+    eq("  opaque", surface and surface._colorTexture and surface._colorTexture[4], 1)
+    eq("  the sheet's own", surface and surface._colorTexture and surface._colorTexture[1],
+       AltStable.SkinDataColor()[1])
+    eq("  inside the window's corners", surface and surface:GetMaskTexture(1), Window()._glass.mask)
+    check("a row's item name stays on one line", not Window().rows[1].name:GetWordWrap())
+    check("  and its holders line", not Window().rows[1].who:GetWordWrap())
     check("an uncached name is asked for", Requested(102))
     check("a cached one isn't", not Requested(101))
     Type("l")
