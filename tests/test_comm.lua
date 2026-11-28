@@ -2130,6 +2130,32 @@ do
 end
 WoW.reset()
 
+-- Lockpicking and Comprehension (#565): ride the wire as numbers, zeros
+-- included, and a newer record from an older client, which has neither,
+-- leaves them unknown rather than the rank held here (Codex review of #570).
+do
+    local wire = T.SerializeChar({ guid = "Player-Lp-2", name = "Lp", class = "ROGUE", level = 30,
+                                   lockpicking = 40, lockpickingMax = 70, comprehension = 0,
+                                   comprehensionMax = 0, lastUpdate = 100 })
+    local back = T.DeserializeChar(wire)
+    eq(back.lockpicking, 40, "Lockpicking rides the wire as a number")
+    eq(back.lockpickingMax, 70, "  and its max")
+    eq(back.comprehension, 0, "  a zero too")
+    AltStableDB = { ["Player-Lp-2"] = { guid = "Player-Lp-2", name = "Lp", class = "ROGUE", level = 30,
+                                        lockpicking = 40, lockpickingMax = 70, comprehension = 7,
+                                        comprehensionMax = 45, lastUpdate = 100 } }
+    T.DeserializeFullDB(T.SerializeChar(
+        { guid = "Player-Lp-2", name = "Lp", class = "ROGUE", level = 30, lastUpdate = 200 }
+    ) .. "\n" .. T.CHAR_SEP, "Peer")
+    local got = AltStableDB["Player-Lp-2"]
+    eq(got.lastUpdate, 200, "a newer record without them is accepted")
+    eq(got.lockpicking, nil, "  and the old Lockpicking doesn't linger")
+    eq(got.lockpickingMax, nil, "  nor its max")
+    eq(got.comprehension, nil, "  nor Comprehension")
+    eq(got.comprehensionMax, nil, "  nor its max")
+end
+WoW.reset()
+
 -- Durability, location, guild rank, mail lost (#508, #395, #515, #517): they
 -- ride the wire; the names stay text, all digits or not; an accepted record
 -- without them leaves them unknown, never the last value seen.

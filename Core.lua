@@ -1671,6 +1671,11 @@ local function ClearSyncedStateFields(t)
     t.played = nil; t.playedLevel = nil
     -- The Legacy talents (#500): the same.
     t.legacyTalents = nil; t.legacyAt = nil
+    -- Lockpicking and Comprehension (#565): an older peer's record has
+    -- neither, and the rank held here must not ride on its newer stamp
+    -- (Codex review of #570).
+    t.lockpicking = nil; t.lockpickingMax = nil
+    t.comprehension = nil; t.comprehensionMax = nil
     -- Durability, location and guild rank (#508, #395, #515): the same. Not
     -- the guild itself, an identity field the record overwrites when it has
     -- it (with ^dur_ below).

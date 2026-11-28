@@ -6306,4 +6306,67 @@ do
     F.refresh()
 end
 
+------------------------------------------------------------
+-- Lockpicking and Comprehension columns, once someone has them (#565)
+------------------------------------------------------------
+do
+    local T = AltStable._test
+    local savedDB = AltStableDB
+    local btnFor = {}
+    for _, b in ipairs(T.sidebarBtns) do if b.sectionId then btnFor[b.sectionId] = b end end
+    -- Skills' button opens the view last shown (Cooldowns, after earlier
+    -- blocks): forgotten, so it opens Skill Levels.
+    local function Open(id) T.ViewStrip.last = nil; btnFor[id]:GetScript("OnClick")(btnFor[id]) end
+    local function Fields()
+        local cols, out = T.ColumnLayout(), {}
+        for i, c in ipairs(cols) do out[c.field] = i end
+        return out
+    end
+    AltStable.EnsureSheetVisible()
+
+    AltStableDB = {
+        m = { guid = "m", name = "Mage Test", realm = "R", level = 20, riding = 0, lockpicking = 0, comprehension = 0 },
+    }
+    Open("summary"); Open("skills")
+    local f = Fields()
+    check("nobody has them: no Lockpicking column", f.lockpicking == nil)
+    check("  nor Comprehension", f.comprehension == nil)
+    check("  Riding is always offered", f.riding ~= nil)
+
+    -- A record with no name yet (a first scan) isn't listed, so it brings
+    -- no column with every cell blank (Codex review of #570).
+    AltStableDB.u = { guid = "u", realm = "R", level = 20, lockpicking = 40, lockpickingMax = 100 }
+    Open("summary"); Open("skills")
+    check("an unnamed record with Lockpicking: no column", Fields().lockpicking == nil)
+    AltStableDB.u = nil
+
+    AltStableDB.r = { guid = "r", name = "Rogue Test", realm = "R", level = 20, lockpicking = 40, lockpickingMax = 100 }
+    Open("summary"); Open("skills")
+    f = Fields()
+    check("a rogue with Lockpicking: its column", f.lockpicking ~= nil)
+    check("  after Riding", f.lockpicking and f.riding and f.lockpicking > f.riding)
+    check("  and still no Comprehension", f.comprehension == nil)
+
+    AltStable.SetCharacterHidden("r", true)
+    Open("summary"); Open("skills")
+    check("the rogue hidden: no Lockpicking column", Fields().lockpicking == nil)
+    AltStable.SetShowingHidden(true)
+    Open("summary"); Open("skills")
+    check("  shown again with Show hidden: back", Fields().lockpicking ~= nil)
+    AltStable.SetShowingHidden(false)
+    AltStable.SetCharacterHidden("r", false)
+
+    AltStableDB.m.comprehension, AltStableDB.m.comprehensionMax = 7, 45
+    Open("summary"); Open("skills")
+    f = Fields()
+    check("Comprehension recorded: its column, after Lockpicking",
+          f.comprehension ~= nil and f.lockpicking ~= nil and f.comprehension > f.lockpicking)
+    AltStable.SetColumnShown("skills", "comprehension", false)
+    check("  which the Columns menu can hide", Fields().comprehension == nil)
+    AltStable.SetColumnShown("skills", "comprehension", true)
+
+    AltStableDB = savedDB
+    Open("summary")
+end
+
 WoW.finish("test_sheetui", passed, failed)

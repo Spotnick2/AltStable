@@ -114,7 +114,7 @@ local SECTIONS = {
             "prof_Alchemy","prof_Blacksmithing","prof_Enchanting","prof_Engineering",
             "prof_Leatherworking","prof_Tailoring",
             "prof_Herbalism","prof_Mining","prof_Skinning",
-            "cooking","fishing","firstAid","riding","favor",
+            "cooking","fishing","firstAid","riding","lockpicking","comprehension","favor",
         },
     },
     -- The Skills tab's second view (#543): a tab of its own for the sort, the
@@ -844,11 +844,24 @@ local function EligibleColumns(section)
     -- say it either.
     -- After the Race slot even when Race itself is hidden.
     local ungrouped = not GroupsByRealm()
+    -- A skill only some characters have (Lockpicking, Comprehension; #565)
+    -- is offered once a character the grid lists has a rank in it.
+    local function Recorded(field)
+        for _, char in pairs(GetCharacterStore()) do
+            -- Named, as the grid lists only named records (Codex review of #570).
+            if type(char) == "table" and char.name and (tonumber(char[field]) or 0) > 0
+               and ShouldShowInGrid(char) then
+                return true
+            end
+        end
+        return false
+    end
     for _, field in ipairs(fields) do
         local col = ColumnFor(field)
         -- A column whose data comes from a plugin (Spec, #506) is offered
         -- only while that plugin is loaded.
         if col and col.available and not col.available() then col = nil end
+        if col and col.whenRecorded and not Recorded(col.field) then col = nil end
         if col then out[#out + 1] = col end
         if field == "race" and ungrouped then out[#out + 1] = ColumnFor("ruleset") end
     end

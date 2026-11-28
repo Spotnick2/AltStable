@@ -22,10 +22,12 @@ end
 -- rather than 28px icons towering over them.
 
 -- Profession skill column
-local function prof(label, skillField, maxField, icon)
+-- whenRecorded (#565): the column is offered only once a listed character has
+-- a rank in it (SheetUI's EligibleColumns).
+local function prof(label, skillField, maxField, icon, whenRecorded)
     return { label=label, field=skillField, maxField=maxField, width=38,
              align="RIGHT", type="profSkill", profIcon=icon, group="prof",
-             headerIconSize=20 }
+             headerIconSize=20, whenRecorded=whenRecorded or nil }
 end
 
 -- Sorting (#160):
@@ -139,6 +141,12 @@ AltStable.Columns = {
     prof("Fishing",       "fishing",             "fishingMax",             "Interface\\Icons\\Trade_Fishing"),
     prof("First Aid",     "firstAid",            "firstAidMax",            "Interface\\Icons\\Spell_Holy_SealOfSacrifice"),
     prof("Riding",        "riding",              "ridingMax",              "Interface\\Icons\\Ability_Mount_RidingHorse"),
+    -- Lockpicking and Comprehension (#565): offered only once a character the
+    -- grid lists has recorded one (`whenRecorded`, SheetUI's EligibleColumns),
+    -- since Lockpicking is a rogue's alone. Their headers are the skills' own
+    -- icons (SkillLine SpellIconFileID, 70938).
+    prof("Lockpicking",   "lockpicking",         "lockpickingMax",         136058, true),
+    prof("Comprehension", "comprehension",       "comprehensionMax",       135933, true),
     -- Merchant's Favor (#270), beside the professions it buys recipes for. Its
     -- header is the currency's own icon (iconFileID, measured on 70938).
     { label="Merchant's Favor", field="favor", width=38, align="RIGHT", type="favor",

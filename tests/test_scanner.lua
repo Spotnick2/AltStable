@@ -215,6 +215,98 @@ AltStable.ScanSkills(twins)
 check("nothing collapsed: an unlearned profession is cleared", twins.prof_Tailoring == nil and twins.prof2 == "")
 
 ------------------------------------------------------------
+-- Lockpicking and Comprehension (#565)
+------------------------------------------------------------
+-- Comprehension 3012 is on the measured list, rank 7 of 45 (forever-api-notes);
+-- which header holds it, or Lockpicking 633, wasn't seen. Here Comprehension
+-- sits under Professions and Lockpicking under Secondary Skills, and the other
+-- way round further down.
+do
+    local rogue = {}
+    WoW.skillLines = {
+        header("Professions", 11), line("Herbalism", 182, 27, 75),
+        line("Compréhension", 3012, 7, 45),
+        header("Secondary Skills", 9), line("Cooking", 185, 6, 75),
+        line("Lockpicking", 633, 40, 70),
+    }
+    AltStable.ScanSkills(rogue)
+    eq("Lockpicking is recorded, by ID", tostring(rogue.lockpicking) .. "/" .. tostring(rogue.lockpickingMax), "40/70")
+    eq("Comprehension too, on a French client", tostring(rogue.comprehension) .. "/" .. tostring(rogue.comprehensionMax), "7/45")
+    eq("  and it isn't a profession: the second slot stays empty", rogue.prof2, "")
+    eq("  nor does it touch the secondaries", rogue.cooking, 6)
+
+    local mage = {}
+    WoW.skillLines = { header("Secondary Skills", 9), line("Cooking", 185, 6, 75) }
+    AltStable.ScanSkills(mage)
+    eq("a character without them records 0", tostring(mage.lockpicking) .. "/" .. tostring(mage.comprehension), "0/0")
+
+    -- Under a collapsed header they keep their saved values, whichever header
+    -- it is: Professions collapsed hides Comprehension here...
+    WoW.skillLines = {
+        collapsed(header("Professions", 11)),
+        header("Secondary Skills", 9), line("Cooking", 185, 7, 75), line("Lockpicking", 633, 41, 70),
+    }
+    AltStable.ScanSkills(rogue)
+    eq("Professions collapsed: Comprehension, unlisted, stays", tostring(rogue.comprehension) .. "/" .. tostring(rogue.comprehensionMax), "7/45")
+    eq("  Lockpicking, listed, updates", rogue.lockpicking, 41)
+    -- ...and Secondary Skills collapsed hides Lockpicking.
+    WoW.skillLines = {
+        header("Professions", 11), line("Herbalism", 182, 28, 75), line("Comprehension", 3012, 8, 45),
+        collapsed(header("Secondary Skills", 9)),
+    }
+    AltStable.ScanSkills(rogue)
+    eq("Secondary Skills collapsed: Lockpicking, unlisted, stays", tostring(rogue.lockpicking) .. "/" .. tostring(rogue.lockpickingMax), "41/70")
+    eq("  Comprehension, listed, updates", rogue.comprehension, 8)
+    -- Under another header collapsed (Class Skills), the same.
+    WoW.skillLines = {
+        collapsed(header("Class Skills", 7)),
+        header("Professions", 11), line("Herbalism", 182, 28, 75), line("Comprehension", 3012, 8, 45),
+        header("Secondary Skills", 9), line("Cooking", 185, 7, 75),
+    }
+    AltStable.ScanSkills(rogue)
+    eq("Class Skills collapsed: Lockpicking, unlisted, stays", rogue.lockpicking, 41)
+    eq("  the known secondaries are read as listed", rogue.cooking, 7)
+    -- A hidden one is asked for by its ID, so a skill-up still lands (#426).
+    local realByID = rawget(C_SkillInfo, "GetSkillLineInfoByID")
+    C_SkillInfo.GetSkillLineInfoByID = function(id)
+        if id == 633 then return { rank = 45, maxRank = 70 } end
+    end
+    AltStable.ScanSkills(rogue)
+    eq("  and a hidden one is read by its ID", tostring(rogue.lockpicking) .. "/" .. tostring(rogue.lockpickingMax), "45/70")
+    -- A rank that moved since: the logout's update must read it, not keep
+    -- the scan's (Codex review of #570).
+    C_SkillInfo.GetSkillLineInfoByID = function(id)
+        if id == 633 then return { rank = 46, maxRank = 70 } end
+    end
+    AltStable.UpdateSkillRanks(rogue)
+    eq("the logout's rank update reads it too", rogue.lockpicking, 46)
+    C_SkillInfo.GetSkillLineInfoByID = realByID
+
+    -- The first scan after the upgrade: an existing record with no rank saved
+    -- for either, and a collapsed header hiding them. They are asked for by ID
+    -- all the same (review of #570); no answer leaves them at 0.
+    local upgraded = { cooking = 7, cookingMax = 75 }
+    WoW.skillLines = {
+        collapsed(header("Professions", 11)),
+        collapsed(header("Secondary Skills", 9)),
+    }
+    C_SkillInfo.GetSkillLineInfoByID = function(id)
+        if id == 633 then return { rank = 12, maxRank = 70 } end
+    end
+    AltStable.ScanSkills(upgraded)
+    eq("first scan, collapsed: Lockpicking read by its ID though nothing was saved",
+       tostring(upgraded.lockpicking) .. "/" .. tostring(upgraded.lockpickingMax), "12/70")
+    eq("  Comprehension, no answer: 0, as it was", tostring(upgraded.comprehension) .. "/" .. tostring(upgraded.comprehensionMax), "0/0")
+    eq("  and a known secondary under the collapsed header keeps its value", upgraded.cooking, 7)
+    C_SkillInfo.GetSkillLineInfoByID = realByID
+
+    -- Nothing collapsed: one not listed is gone, and clears.
+    WoW.skillLines = { header("Secondary Skills", 9), line("Cooking", 185, 7, 75) }
+    AltStable.ScanSkills(rogue)
+    eq("nothing collapsed: an unlisted one clears", tostring(rogue.lockpicking) .. "/" .. tostring(rogue.comprehension), "0/0")
+end
+
+------------------------------------------------------------
 -- Reputations (#8): keyed by faction ID, "met" = in the character's list
 ------------------------------------------------------------
 
@@ -2144,8 +2236,8 @@ do
     check("a Merchant's Favor column exists", col ~= nil)
     check("  in the professions' group, with the currency's icon",
           col and col.group == "prof" and col.profIcon == 135725)
-    check("  on the Skills tab, after Riding",
-          io.open("SheetUI.lua"):read("*a"):find('"riding","favor"', 1, true) ~= nil)
+    check("  on the Skills tab, after Riding, Lockpicking and Comprehension (#565)",
+          io.open("SheetUI.lua"):read("*a"):find('"riding","lockpicking","comprehension","favor"', 1, true) ~= nil)
     if col then
         local row = AltStable.CreateRow(nil, 20, { col })
         AltStable.RenderRow(row, { guid = "Player-Fav-1", name = "F", favor = 25 }, 1, { col })
