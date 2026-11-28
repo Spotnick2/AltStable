@@ -2443,6 +2443,63 @@ do
 end
 
 ------------------------------------------------------------
+-- Unticking World camera presentation lets go of the camera at once (#564)
+------------------------------------------------------------
+-- The Options page is inside the sheet, so the box is only clicked with the
+-- sheet open and the presentation running. It used to save the setting and
+-- nothing else: the camera kept orbiting until the sheet closed.
+do
+    local Cam = AltStable._test.CameraPresentation
+    local sheet = AltStable._test.frame
+    local box = AltStable._test.OptCamera.camera
+    local panel = AltStable._test.optionsPanel
+    local function click(on) box:SetChecked(on); box:GetScript("OnClick")(box) end
+
+    AltStableConfig.enableWorldCameraPresentation = true
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    SetUIVisibility(true)
+    WoW.cvars["cameraView"] = "1"
+    AltStable.EnsureSheetVisible()
+    panel:GetScript("OnShow")(panel)
+    check("the sheet is open with the presentation running",
+          sheet:IsShown() and Cam.active and Cam.mode ~= "exit")
+    check("  hiding the game UI", Cam.uiHidden == true)
+    check("  and the box ticked", box:GetChecked() == true)
+
+    click(false)
+    eq("unticking it saves the setting", AltStableConfig.enableWorldCameraPresentation, false)
+    eq("  and ends the presentation now", Cam.mode, "exit")
+    eq("  giving the game UI back", Cam.uiHidden, false)
+    check("  and the interface shows", UIParent:IsShown())
+    eq("  the camera back on the player's own view", WoW.camera.view, 1)
+    check("  while the sheet stays open", sheet:IsShown())
+    eq("  back under UIParent", sheet:GetParent(), UIParent)
+
+    pcall(Cam.ForceRestore, Cam, "test")
+    click(false)
+    check("unticked with nothing running, it starts nothing", not Cam.active)
+
+    click(true)
+    eq("ticking it again saves the setting", AltStableConfig.enableWorldCameraPresentation, true)
+    check("  but doesn't start a presentation with the sheet already open", not Cam.active)
+    sheet:Hide()
+    AltStable.EnsureSheetVisible()
+    check("  the next open does", Cam.active and Cam.mode ~= "exit")
+
+    click(false)
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    AltStable.EnsureSheetVisible()
+    check("unticked, the next open presents nothing", not Cam.active)
+
+    sheet:Hide()
+    pcall(Cam.ForceRestore, Cam, "test")
+    AltStableConfig.enableWorldCameraPresentation = nil
+    WoW.cvars["cameraView"] = nil
+end
+
+------------------------------------------------------------
 -- The capture button glows when a new portrait is due (#128)
 ------------------------------------------------------------
 
