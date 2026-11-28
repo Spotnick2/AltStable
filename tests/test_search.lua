@@ -1001,13 +1001,14 @@ if PT then
     AltStable.SetPluginEnabled("professions", true)
     C_AddOns.LoadAddOn = realLoad
     WoW.flushTimers()
-    eq("the Recipe Book switched on with the search open: found by recipe", RowIDs(), "12360,12359")
+    -- An item with no name yet sorts after the named ones (PR 3).
+    eq("the Recipe Book switched on with the search open: found by recipe", RowIDs(), "12359,12360")
 
     -- Warband off: Enter on a craft-only item still says who can craft it.
     local heldMaps = AltStable.ItemMapsFor
     AltStable.ItemMapsFor = nil
     AltStable.NotifyItemDataChanged(); WoW.flushTimers()
-    eq("(Warband off, still found by recipe)", RowIDs(), "12360,12359")
+    eq("(Warband off, still found by recipe)", RowIDs(), "12359,12360")
     Enter()
     eq("Warband off: Enter on a craft-only item names its crafters", strip(Window().status:GetText()),
        "Can craft: Brom (Alchemy). Bags, bank and mail need the Warband module.")
@@ -1066,6 +1067,221 @@ do
     Type("linen cloth"); WoW.flushTimers()
     eq("a row's line in the window is fitted", row.who:GetText(), S.WhoLine(S.rows[1], 1, 1))
     row.who._GetWidth = nil
+    Window():Hide()
+end
+
+------------------------------------------------------------
+-- Filters and sorting (PR 3): usable with no text, kept for the session.
+------------------------------------------------------------
+do
+    local function Gear()
+        World()
+        WoW.items[200].ilvl, WoW.items[200].minLevel, WoW.items[200].equipLoc = 18, 10, "INVTYPE_FINGER"
+        WoW.items[300] = { name = "Linen Robe", classID = 4, subClassID = 1, equipLoc = "INVTYPE_ROBE",
+                           quality = 2, ilvl = 20, minLevel = 15, icon = 5 }
+        WoW.items[301] = { name = "Leather Vest", classID = 4, subClassID = 2, equipLoc = "INVTYPE_CHEST",
+                           quality = 3, ilvl = 30, minLevel = 24, icon = 6 }
+        WoW.items[302] = { name = "Iron Sword", classID = 2, subClassID = 7, equipLoc = "INVTYPE_WEAPON",
+                           quality = 2, ilvl = 25, minLevel = 20, icon = 7 }
+        WoW.items[303] = { name = "Plate Helm", classID = 4, subClassID = 4, equipLoc = "INVTYPE_HEAD",
+                           quality = 4, ilvl = 40, minLevel = 25, icon = 8 }
+        -- 304 and 305: the client knows nothing of them (not cached).
+        local alt = AltStableWarbandDB[ALT]
+        alt.bags[300], alt.bags[302], alt.bags[304], alt.bags[305] = 1, 1, 1, 1
+        alt.mail = { [303] = 3 }
+        AltStableWarbandDB[ME].bank = { [301] = 1 }
+        S.filters, S.sort, S.meta = {}, "total", {}
+    end
+    local realShowMenu, menu = AltStable.ShowMenu, nil
+    AltStable.ShowMenu = function(list, onPick, again, opts)
+        menu = { list = list, pick = onPick, anchor = opts and opts.anchor }
+        return realShowMenu(list, onPick, again, opts)
+    end
+    local function Texts()
+        local t = {}
+        for _, x in ipairs(menu and menu.list or {}) do
+            if not x.title then t[#t + 1] = (x.text:gsub("^|T.-|t ", ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+        end
+        return table.concat(t, ",")
+    end
+    local function Pick(kind, id)
+        S.OpenFilterMenu(kind)
+        menu.pick(id)
+    end
+
+    Gear()
+    AltStable.ShowSearch(); WoW.flushTimers()
+    Type(""); WoW.flushTimers()
+    -- 304 and 305 load with no name: retired, the status free.
+    S.OnItemDataLoaded(304); S.OnItemDataLoaded(305); WoW.flushTimers()
+    eq("no text, no filter: nothing", #S.rows, 0)
+    eq("  and says how to start", Window().status:GetText(),
+       "Type at least two letters of an item's name, or choose a filter.")
+    local fb = Window().filterBtns
+    eq("the buttons say Any", fb.quality.label:GetText() .. "|" .. fb.slot.label:GetText() .. "|"
+       .. fb.type.label:GetText() .. "|" .. fb.char.label:GetText() .. "|" .. fb.sort.label:GetText(),
+       "Quality: Any|Slot: Any|Type: Any|All characters|Sort: Total")
+    check("  Clear greyed", not fb.clear:IsEnabled())
+
+    -- Quality, with no text.
+    S.OpenFilterMenu("quality")
+    eq("the quality menu hangs under its button", menu and menu.anchor, fb.quality)
+    eq("  every quality, Any first", Texts(), "Any,Poor,Common,Uncommon,Rare,Epic,Legendary")
+    menu.pick(2)
+    eq("a quality alone is a search", RowIDs(), "200,302,300")
+    eq("  the button says it", fb.quality.label:GetText(), "Quality: Uncommon")
+    check("  Clear open", fb.clear:IsEnabled())
+    Pick("quality", 0)
+    eq("Poor: none recorded (an unknown quality never matches)", #S.rows, 0)
+    eq("  and says so, not how to start", Window().status:GetText(), "None recorded.")
+    Pick("quality", "any")
+    S.OpenFilterMenu("slot")
+    check("(a filter menu is up, the search's)", S.menu ~= nil)
+    Window():Hide()
+    check("a filter menu closes with the window", S.menu == nil)
+    AltStable.ShowSearch(); WoW.flushTimers()
+
+    -- Slot: a robe is a chest.
+    Pick("slot", "CHEST")
+    eq("the Chest slot holds robes too", RowIDs(), "301,300")
+    Pick("slot", "any")
+
+    -- Type: the armour and weapon types recorded, not every type there is.
+    S.OpenFilterMenu("type")
+    eq("the type menu lists what is recorded", Texts(),
+       "Any,All armor,Cloth,Leather,Plate,All weapon,One-Handed Swords")
+    menu.pick("4:1")
+    eq("Cloth", RowIDs(), "300")
+    eq("  the button says it", fb.type.label:GetText(), "Type: Cloth")
+    Pick("type", "4")
+    eq("all armour (the ring has no subclass of its own here)", RowIDs(), "303,200,301,300")
+    Pick("type", "any")
+
+    -- The required-level range: inclusive; an unknown level never matches.
+    local lo, hi = Window().levelMin, Window().levelMax
+    check("the level boxes take digits only", lo:IsNumeric() and hi:IsNumeric())
+    lo:SetText("20"); lo:GetScript("OnTextChanged")(lo, true)
+    hi:SetText("24"); hi:GetScript("OnTextChanged")(hi, true)
+    eq("(not before the typing delay)", S.queryPending, true)
+    WoW.flushTimers()
+    eq("levels 20 to 24, both ends in", RowIDs(), "302,301")
+    hi:SetText(""); hi:GetScript("OnTextChanged")(hi, true); WoW.flushTimers()
+    eq("from 20 up", RowIDs(), "303,302,301")
+    lo:SetText(""); lo:GetScript("OnTextChanged")(lo, true)
+    hi:SetText("10"); hi:GetScript("OnTextChanged")(hi, true); WoW.flushTimers()
+    eq("up to 10: the ring, and cloth needing no level", RowIDs(), "101,103,200,102")
+    lo:SetText("0"); lo:GetScript("OnTextChanged")(lo, true); WoW.flushTimers()
+    eq("a 0 bound is no bound", S.filters.minLevel, nil)
+    hi:SetText(""); hi:GetScript("OnTextChanged")(hi, true); WoW.flushTimers()
+    lo:SetText(""); lo:GetScript("OnTextChanged")(lo, true); WoW.flushTimers()
+
+    -- Text and a filter together.
+    Type("linen"); WoW.flushTimers()
+    Pick("type", "4")
+    eq("text and a filter: both", RowIDs(), "300")
+    Type(""); WoW.flushTimers()
+
+    -- Sorting the armour.
+    Pick("sort", "name")
+    eq("by name", RowIDs(), "200,301,300,303")
+    eq("  the button says it", fb.sort.label:GetText(), "Sort: Name")
+    Pick("sort", "quality")
+    eq("by quality, best first; equal ones by name", RowIDs(), "303,301,200,300")
+    Pick("sort", "ilvl")
+    eq("by item level, highest first", RowIDs(), "303,301,300,200")
+    Pick("sort", "location")
+    eq("by location: bags, bank, mail, worn", RowIDs(), "300,301,303,200")
+    Pick("sort", "total")
+    eq("by total (the default)", RowIDs(), "303,200,301,300")
+    Pick("type", "any")
+
+    -- The character filter: one character's part, with their own total.
+    S.OpenFilterMenu("char")
+    eq("the characters listed, hidden left out", Texts(), "All characters,Brom,Kaleid")
+    menu.pick(ME)
+    eq("a character alone is a search: what they have", RowIDs(), "103,200,101,301")
+    eq("  the button says who", fb.char.label:GetText(), "Kaleid")
+    Type("linen"); WoW.flushTimers()
+    eq("  their own total", S.rows[1] and S.rows[1].total, 2)
+    eq("  their line", S.WhoLine(S.rows[1]):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""), "Kaleid 2")
+    eq("  Enter opens theirs, not the top holder's", S.RevealTarget(S.rows[1]).guid, ME)
+    Type(""); WoW.flushTimers()
+
+    -- Unknown last, and equal unknowns by id.
+    Pick("char", ALT)
+    Pick("sort", "quality")
+    eq("unknown quality and name last, by id", RowIDs(), "303,302,300,101,102,304,305")
+    Pick("sort", "ilvl")
+    eq("unknown item level last", RowIDs(), "303,302,300,101,102,304,305")
+
+    -- A character hidden since it was chosen: the filter goes.
+    AltStableConfig.hiddenCharacters[ALT] = true
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("the chosen character hidden: the filter goes", S.filters.char, nil)
+    eq("  and with it the results", #S.rows, 0)
+    AltStableConfig.hiddenCharacters[ALT] = nil
+
+    -- Kept for the session: closed and reopened, still there.
+    Pick("quality", 3)
+    Window():Hide()
+    AltStable.ShowSearch(); WoW.flushTimers()
+    eq("filters kept when the window reopens", RowIDs(), "301")
+    lo:SetText("5"); lo:GetScript("OnTextChanged")(lo, true); WoW.flushTimers()
+    fb.clear:GetScript("OnClick")(fb.clear)
+    check("Clear filters: all gone", not S.AnyFilter())
+    eq("  the level boxes emptied", lo:GetText() .. "|" .. hi:GetText(), "|")
+    eq("  the sort kept", S.sort, "ilvl")
+    eq("  nothing to show", #S.rows, 0)
+    S.sort = "total"
+
+    -- Where an item is first found, craft-only last.
+    eq("location: craft-only is last", S.LocationRank({ holders = {} }), 5)
+    eq("  bags before bank", S.LocationRank({ holders = { { bags = 0, bank = 1, mail = 0, worn = 0 },
+                                                         { bags = 1, bank = 0, mail = 0, worn = 0 } } }), 1)
+    local e = { id = 1, total = 3, by = { [ME] = { guid = ME, total = 3 } },
+                holders = { { guid = ME, total = 3 } },
+                crafters = { { guid = ALT, name = "Brom", line = "Alchemy" } } }
+    local v = S.ForCharacter(e, ALT)
+    eq("a crafter's part: nothing held", v and v.total, 0)
+    eq("  but their crafting", v and v.crafters[1].guid, ALT)
+    eq("  and no one else's holdings", v and #v.holders, 0)
+    eq("someone with no part: none", S.ForCharacter(e, HID), nil)
+
+    -- The selection kept in view through a sort (Codex review of #562): what
+    -- Enter acts on is a row that shows.
+    Gear()
+    for i = 400, 414 do
+        WoW.items[i] = { name = ("Bolt %02d"):format(i - 400), classID = 7, quality = 1, icon = 9 }
+        AltStableWarbandDB[ALT].bags[i] = i - 399
+    end
+    Window():Hide()
+    AltStable.ShowSearch("bolt"); WoW.flushTimers()
+    eq("(15 bolts, the most held first)", S.rows[1] and S.rows[1].id, 414)
+    eq("(the first selected)", S.selected, 1)
+    Pick("sort", "name")
+    eq("sorted by name, the selected bolt is 15th", S.selected, 15)
+    eq("  scrolled to it", S.offset, 5)
+    local last = Window().rows[10]
+    check("  its row shows, lit", last.entry and last.entry.id == 414 and last.sel:IsShown())
+    -- A refresh of the data doesn't scroll a list being read.
+    S.offset = 0                                   -- scrolled back up, the 15th selected
+    AltStable.NotifyItemDataChanged(); WoW.flushTimers()
+    eq("a data refresh leaves the scroll where it is", S.offset, 0)
+    Pick("sort", "total")
+    eq("sorted back: first again, the list at the top", S.offset, 0)
+
+    -- A level box left focused lets go when the window closes (Codex review
+    -- of #562): its digits would go on landing in it.
+    for _, b in ipairs({ lo, hi }) do
+        b:SetFocus()
+        Window():Hide()
+        check("closed with a level box focused: the keyboard let go", WoW.focus ~= b)
+        AltStable.ShowSearch(); WoW.flushTimers()
+    end
+
+    AltStable.ShowMenu = realShowMenu
+    if AltStable.CloseCharacterMenu then AltStable.CloseCharacterMenu() end
+    S.filters, S.sort = {}, "total"
     Window():Hide()
 end
 

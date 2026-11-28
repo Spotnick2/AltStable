@@ -64,6 +64,10 @@ for k, v in pairs({
     accountTabs = {},   -- purchased ACCOUNT bank tab ids (should never be scanned)
     tooltipPostCalls = {},  -- [Enum.TooltipDataType.X] = { fn, ... }
     loaded      = {},
+    itemClassNames = { [2] = "Weapon", [4] = "Armor", [7] = "Trade Goods" },
+    itemSubClassNames = { ["4:1"] = "Cloth", ["4:2"] = "Leather", ["4:3"] = "Mail",
+                          ["4:4"] = "Plate", ["4:6"] = "Shields", ["2:0"] = "One-Handed Axes",
+                          ["2:7"] = "One-Handed Swords", ["2:10"] = "Staves" },
     loadCalls   = {},
     tickers     = {},
     sent        = {},
@@ -515,6 +519,9 @@ end
 -- Enabled state: `nil` DISABLES, matching the client; never having been
 -- called, a widget is enabled.
 function Methods.SetEnabled(self, v) self._enabled = not not v; return self end
+-- EditBox: digits only (SimpleEditBoxAPI). Recorded; typing is the test's.
+function Methods.SetNumeric(self, v) self._numeric = not not v; return self end
+function Methods.IsNumeric(self) return self._numeric == true end
 function Methods.Enable(self) self._enabled = true; return self end
 function Methods.Disable(self) self._enabled = false; return self end
 function Methods.IsEnabled(self) return self._enabled ~= false end
@@ -1119,6 +1126,13 @@ C_Item = {
     GetItemCount = function(v) local it = WoW.items[itemID(v) or -1]; return it and (it.count or 0) or 0 end,
     GetItemStats = function(v) local it = WoW.items[itemID(v) or -1]; if not it then return end; return it.stats or {} end,
     GetItemQualityByID = function(v) local it = WoW.items[itemID(v) or -1]; return it and it.quality or nil end,
+    -- The client's names for item classes and subclasses (enUS), the ones the
+    -- item search's Type filter shows; a test may add more.
+    GetItemClassInfo = function(cls) return WoW.itemClassNames[cls] end,
+    GetItemSubClassInfo = function(cls, sub)
+        local n = WoW.itemSubClassNames[cls .. ":" .. sub]
+        return n, false
+    end,
     -- optional itemName (70532 dump): nil on a cache miss, until the load is asked for.
     GetItemNameByID = function(v) local it = WoW.items[itemID(v) or -1]; return it and it.name or nil end,
     RequestLoadItemDataByID = function(v)
