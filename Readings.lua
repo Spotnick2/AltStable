@@ -56,10 +56,23 @@ local function SetDurability(char, low, below)
     return changed
 end
 
+-- Whether what is worn is what the record says is worn (gearid_<slot>). After
+-- a swap the record holds the old items until the equipment scan (3 s later,
+-- restarted by every pet event): a durability-only read before it would put
+-- the new helm's durability beside the old helm for a sync to carry (Codex
+-- review of #573). So that read is made only while they match, and the scan
+-- writes the items and their durability together.
+function R.GearMatches(char)
+    for _, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
+        local id = GetInventoryItemID("player", slot.id)
+        if Secret(id) then return false end
+        if (tonumber(id) or 0) ~= (tonumber(char["gearid_" .. slot.key]) or 0) then return false end
+    end
+    return true
+end
+
 -- gearChanged: whether an item changed since the last read (the scan knows).
--- fromScan: the equipment scan's own read, which ends the wait below.
-function R.Durability(char, gearChanged, fromScan)
-    if fromScan then R.equipPending = nil end
+function R.Durability(char, gearChanged)
     local low, below, unreadable = nil, {}, false
     for _, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
         local cur, max = GetInventoryItemDurability(slot.id)
@@ -143,13 +156,6 @@ local function Changed(guid)
 end
 
 R.DELAY = { durability = 1, guild = 2 }
-
--- Equipment changed: the core rescans it 3 s later (PLAYER_EQUIPMENT_CHANGED),
--- and until then the record still holds the old items. A durability-only
--- read in between would put the new helm's durability beside the old helm
--- for a sync to carry (Codex review of #573): it waits, and the equipment
--- scan writes both together. EQUIP_WAIT lets go if that scan never comes.
-R.EQUIP_WAIT = 10
 local armed = {}
 
 local function Later(kind, read)
@@ -164,7 +170,7 @@ end
 
 local frame = CreateFrame("Frame")
 R.EVENTS = { "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA",
-             "UPDATE_INVENTORY_DURABILITY", "PLAYER_EQUIPMENT_CHANGED",
+             "UPDATE_INVENTORY_DURABILITY",
              "PLAYER_GUILD_UPDATE", "GUILD_RANKS_UPDATE", "GUILD_RANKS_UPDATE_ACTIVE_PLAYER" }
 for _, ev in ipairs(R.EVENTS) do frame:RegisterEvent(ev) end
 
@@ -174,15 +180,9 @@ function R.OnEvent(event, unit)
         -- touch only stamps the record (nothing is sent).
         local guid, char = Ours()
         if char and R.Location(char) then Changed(guid) end
-    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
-        local mine = {}
-        R.equipPending = mine
-        C_Timer.After(R.EQUIP_WAIT, function()
-            if R.equipPending == mine then R.equipPending = nil end
-        end)
     elseif event == "UPDATE_INVENTORY_DURABILITY" then
         Later("durability", function(char)
-            if R.equipPending then return false end   -- the equipment scan reads it
+            if not R.GearMatches(char) then return false end   -- the equipment scan writes it
             return R.Durability(char, false)
         end)
     elseif event == "PLAYER_GUILD_UPDATE" and unit ~= nil and unit ~= "player" then

@@ -170,7 +170,7 @@ do
     AltStableDB = { [guid] = { guid = guid, name = "Me" } }
     local c = AltStableDB[guid]
     for _, ev in ipairs({ "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA",
-                          "UPDATE_INVENTORY_DURABILITY", "PLAYER_EQUIPMENT_CHANGED", "PLAYER_GUILD_UPDATE",
+                          "UPDATE_INVENTORY_DURABILITY", "PLAYER_GUILD_UPDATE",
                           "GUILD_RANKS_UPDATE", "GUILD_RANKS_UPDATE_ACTIVE_PLAYER" }) do
         local listed = false
         for _, e in ipairs(R.EVENTS) do if e == ev then listed = true end end
@@ -199,26 +199,35 @@ do
     -- A swap with a durability read already queued (Codex review of #573):
     -- the record keeps the old item and its durability together until the
     -- equipment scan, which writes both.
+    -- The worn items are checked against the record's, however late the
+    -- equipment scan comes (a pet event restarts its timer).
+    local HELM = "|cffffffff|Hitem:10657::::::::21:::::::::|h[Helm]|h|r"
     touched = 0
     R.OnEvent("UPDATE_INVENTORY_DURABILITY")     -- queued, 1 s
-    Durable({ [1] = { 10, 40 } })                -- the new helm, worn
-    R.OnEvent("PLAYER_EQUIPMENT_CHANGED")
+    WoW.equipped[1] = HELM                       -- a helm put on: the record says none
+    Durable({ [1] = { 10, 40 } })
     WoW.flushTimers()
-    eq("a queued read after a swap writes nothing: the old pair stands", c.durMin, 75)
+    eq("a read while the worn items differ from the record's writes nothing", c.durMin, 75)
     eq("  and stamps nothing, so no delta carries a half", touched, 0)
-    R.OnEvent("PLAYER_EQUIPMENT_CHANGED")
-    R.Durability(c, true, true)                  -- the equipment scan
+    for _ = 1, 3 do R.OnEvent("UPDATE_INVENTORY_DURABILITY"); WoW.flushTimers() end
+    eq("  however many come before the equipment scan", c.durMin, 75)
+    c.gearid_head = 10657                        -- the equipment scan: the items...
+    R.Durability(c, true)                        -- ...and their durability, together
     eq("the equipment scan writes the new durability", c.durMin, 25)
     Durable({ [1] = { 5, 40 } })
     R.OnEvent("UPDATE_INVENTORY_DURABILITY")
     WoW.flushTimers()
     eq("  after it, durability events read again", c.durMin, 12)
-    R.OnEvent("PLAYER_EQUIPMENT_CHANGED")        -- and no scan follows
-    WoW.flushTimers()                            -- its wait runs out
-    Durable({ [1] = { 40, 40 } })
-    R.OnEvent("UPDATE_INVENTORY_DURABILITY")
-    WoW.flushTimers()
-    eq("a swap no scan followed holds the reads only for its wait", c.durMin, 100)
+    WoW.equipped[1] = nil                        -- taken off, not yet scanned
+    check("an item taken off doesn't match", not R.GearMatches(c))
+    WoW.equipped[1] = HELM
+    check("the same item worn matches", R.GearMatches(c))
+    WoW.equipped[1] = nil; c.gearid_head = nil
+    check("(nothing worn, nothing recorded: a match)", R.GearMatches(c))
+    local realID = GetInventoryItemID
+    GetInventoryItemID = function() return WoW.secret(1) end
+    check("an item that can't be read doesn't match, even then", not R.GearMatches(c))
+    GetInventoryItemID = realID
 
     touched = 0
     WoW.loggedIn, WoW.inGuild, WoW.guildInfo = true, true, { "Parse Partout", "Member", 5 }
