@@ -92,8 +92,9 @@ check("  96 is in the Horde mask", D.FACTION_MASK and math.floor(D.FACTION_MASK.
 -- until it logs in again (Codex on #399). If this fails because the COUNTING
 -- data changed (quests, masks, rows), update the pin. If only a display field
 -- changed (pinMap and the like), the generator must leave the version alone.
--- cabf3cd3: QuestieDB 1.1.3 and Questie 12.11.1 (#472); 9b0a9380 was 1.1.1.
-eq("the version is the one the counted snapshots carry", D.VERSION, "cabf3cd3")
+-- 9f8a2191: QuestieDB 1.1.6 and Questie's lists of 2026-11-27 (#552); cabf3cd3 was
+-- QuestieDB 1.1.3 and Questie 12.11.1 (#472), 9b0a9380 1.1.1.
+eq("the version is the one the counted snapshots carry", D.VERSION, "9f8a2191")
 check("the version is the body's hash", type(D.VERSION) == "string" and #D.VERSION == 8)
 check("the source is recorded", D.SOURCE and D.SOURCE.questiedb and D.SOURCE.commit and D.SOURCE.build)
 

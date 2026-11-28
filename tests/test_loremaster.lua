@@ -128,10 +128,12 @@ eq("past the cap: 98895 missed at 40", (M.ClosedWhy(98895, P("Alliance", 1, 8, 4
 eq("  at 39 still open", (M.ClosedWhy(98895, P("Alliance", 1, 8, 39), {})), nil)
 eq("a done quest is never closed", (M.ClosedWhy(4022, A30, Set(4022, 4023))), nil)
 
--- The data from QuestieDB 1.1.3 and Questie 12.11.1 (#472).
-eq("#472: the data is QuestieDB 1.1.3's", D.SOURCE.questiedb, "1.1.3")
-check("  the old Khan quests Questie blacklists on Forever are gone", Q[1374] == nil and Q[1380] == nil)
-check("  1381 stays only as a row the rules look at", Q[1381] ~= nil and Q[1381][6] == 2)
+-- The data from QuestieDB 1.1.6 and Questie's lists of 2026-11-27 (#472, #552).
+eq("#552: the data is QuestieDB 1.1.6's", D.SOURCE.questiedb, "1.1.6")
+check("  the old Khan quests Questie blacklists on Forever are gone", Q[1374] == nil and Q[1380] == nil
+      and Q[1381] == nil)
+check("  1375, blacklisted since, stays only as a row the rules look at", Q[1375] ~= nil and Q[1375][6] == 2)
+check("  7790 and 8152, no longer blacklisted on Forever, are back", Q[7790] ~= nil and Q[8152] ~= nil)
 check("  their Forever replacements count", Q[93128] ~= nil and Q[93128][6] == 0
       and Q[96222] ~= nil and Q[96222][6] == 0)
 check("  the other newly blacklisted quests are gone",
@@ -196,7 +198,8 @@ r = Only(P("Horde", 2, 8, 30))
 eq("Horde mage: Open, Horde only and its follow-up", r.c[12] and r.c[12][2], 3)
 
 -- Prerequisites through the whole chain (#429), on the shipped data: 92849 is
--- race 95 only, 92850 (Alliance) needs it, 99260 (Alliance) needs 92850.
+-- race 95 only, 92850 needs it (race 95 only too since QuestieDB 1.1.6, #552),
+-- 99260 (Alliance) needs 92850.
 do
     local human, skyborne = P("Alliance", 1, 8, 30), P("Alliance", 95, 8, 30)
     check("#429: a Human can't take 92849", not M.Eligible(Q[92849], human, {}))
@@ -204,8 +207,10 @@ do
     check("  nor 99260 two steps on", not M.Eligible(Q[99260], human, {}))
     check("  a race-95 character can take all three", M.Eligible(Q[92849], skyborne, Set(92727))
           and M.Eligible(Q[92850], skyborne, {}) and M.Eligible(Q[99260], skyborne, {}))
-    check("  a done 92849 counts as met through the chain",
-          M.Eligible(Q[92850], human, Set(92849)) and M.Eligible(Q[99260], human, Set(92849)))
+    check("  a done 92850 counts as met: 99260 opens for a Human who did it",
+          M.Eligible(Q[99260], human, Set(92850)))
+    check("  but a done 92849 alone doesn't: 92850 stays race 95's",
+          not M.Eligible(Q[92850], human, Set(92849)) and not M.Eligible(Q[99260], human, Set(92849)))
     -- A cycle (A needs B and a Horde-only one, B needs A, C needs B, Z needs
     -- A): for a Human A is impossible, so B, C and Z are too, whichever is
     -- asked first. Asking Z first walks Z, A, B, back to A: B leans on A while
@@ -552,18 +557,20 @@ check("  with no profession row at all, the header stays, n = 0", pg and pg.n ==
 L.SetFilter("all")
 
 -- A row whose quests count only once done (Codex review of #539): a level-60
--- human can take Craftsman's Writ: Runecloth Bag (94353), yet the row is not
--- counted, so not listed, until a writ is done - hence "counted", not "can take".
-local WRITS = 16941
+-- human can take Mechanical Romance (84137), yet Other, the row of quests
+-- QuestieDB files nowhere (all "unsure"), is not counted, so not listed, until
+-- one is done - hence "counted", not "can take". (Craftsman's Writs was the
+-- example until QuestieDB 1.1.6 made the writs repeatable, #552.)
+local OTHER = 0
 local human60 = { faction = "Alliance", race = 1, class = 1, level = 60 }
-check("a level-60 human may take a writ", M.Eligible(D.QUESTS[94353], human60, {}))
-check("  yet Craftsman's Writs is not counted before one is done", M.Count(human60, {}).c[WRITS] == nil)
-check("  and is once one is", M.Count(human60, { [94353] = true }).c[WRITS] ~= nil)
-local writCol = { guid = "Player-1-W", snap = { faction = "Alliance", race = 1, class = 1, level = 60,
+check("a level-60 human may take a zoneless quest", M.Eligible(D.QUESTS[84137], human60, {}))
+check("  yet Other is not counted before one is done", M.Count(human60, {}).c[OTHER] == nil)
+check("  and is once one is", M.Count(human60, { [84137] = true }).c[OTHER] ~= nil)
+local otherCol = { guid = "Player-1-W", snap = { faction = "Alliance", race = 1, class = 1, level = 60,
     c = { [ALCHEMY] = { 0, 1 } } } }
-L.SetFilter("profession")
-local wg = findGroup(L.DisplayRows({ writCol }), "profession")
-check("  so the Professions header lists it as not listed", wg and holds(wg.hidden, WRITS))
+L.SetFilter("other")
+local wg = findGroup(L.DisplayRows({ otherCol }), "other")
+check("  so the Other header lists it as not listed", wg and holds(wg.hidden, OTHER))
 L.SetFilter("all")
 
 -- A search narrows what's "not listed" too.
@@ -962,7 +969,7 @@ do
     local before = M.Count(P("Alliance", 1, 8, 60), masq).c
     eq("Onyxia's Lair counts nothing for a mage, the chain done", before[ony], nil)
     check("  Stormwind still counts The Great Masquerade's step", before[1519] and before[1519][1] >= 1)
-    eq("  D.VERSION is the one the table shipped with", D.VERSION, "cabf3cd3")
+    eq("  D.VERSION is the one the table shipped with", D.VERSION, "9f8a2191")
 
     -- The tab: a character with a local done set and a synced one.
     local AG, SG = "Player-487-AAAA0001", "Player-487-AAAA0002"
