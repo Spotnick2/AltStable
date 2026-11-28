@@ -1151,6 +1151,12 @@ end
 -- Deserialize character
 ------------------------------------------------------------
 
+-- Fields kept as the text that came, never turned into a number: names a
+-- player or the game chooses, which may be all digits (#515; zones for the
+-- same reason, #395). An older build still turns them into numbers when it
+-- relays them; accepted.
+local TEXT_FIELDS = { guild = true, guildRank = true, zone = true, subzone = true }
+
 local function DeserializeChar(msg)
 
     local c = {}
@@ -1176,7 +1182,9 @@ local function DeserializeChar(msg)
                 -- Local-only fields are ours alone (#281): a peer cannot
                 -- make a record our own scan, or our own account's.
                 if not RETIRED_FIELDS[k] and not Provenance.LOCAL_ONLY[k] then
-                    local num = tonumber(v)
+                    -- Except the names a player chooses, which can be all
+                    -- digits: a guild "1337", a rank "007" (#515).
+                    local num = not TEXT_FIELDS[k] and tonumber(v)
                     c[k] = num or v
                 end
             end
@@ -1668,6 +1676,12 @@ local function ClearSyncedStateFields(t)
     -- (Codex review of #570).
     t.lockpicking = nil; t.lockpickingMax = nil
     t.comprehension = nil; t.comprehensionMax = nil
+    -- Durability, location and guild rank (#508, #395, #515): the same. Not
+    -- the guild itself, an identity field the record overwrites when it has
+    -- it (with ^dur_ below).
+    t.durMin = nil
+    t.zone = nil; t.subzone = nil
+    t.guildRank = nil; t.guildRankIndex = nil
     -- When the gear last changed (#281): an older peer's record has none, and
     -- the stamp of a gear set no longer on the record must not linger. Nor
     -- the time it was read.
@@ -1683,7 +1697,8 @@ local function ClearSyncedStateFields(t)
         or k:find("^gearlink_") or k:find("^gearsubtype_")  -- both local-only (see note above)
         or k:find("^cd_") or k:find("^known_")   -- craft cooldowns (dynamic cd_<prof>@<label>) + legacy known_ flags
         or k:find("^si_")                        -- saved raid lockouts (si_<name>@<diff>)
-        or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money)
+        or k:find("^mail_")                      -- mail summary (mail_count / mail_expiry / mail_money / mail_lost)
+        or k:find("^dur_")                       -- durability below 100, per slot (#508)
         or k:find("^stat_")                      -- the stat snapshot: a stat that went unreadable must not linger
         or k:find("^rep_")                       -- reputations: a standing dropped at the source goes here too
         or k:find("^pet_")                       -- the pet (#75): the owner's scan keeps the last one seen, so absent means none
@@ -3441,9 +3456,25 @@ local function ScanMail()
 
     -- Only mail with something to lose (attachments or gold) and days left:
     -- { count, money, soonest } (soonest absolute, rounded to the minute), or nil.
-    local sum = LM.Summary(scan.mails, time())
+    local now = time()
+    local sum = LM.Summary(scan.mails, now)
     local count, money, soonest = 0, 0, nil
     if sum then count, money, soonest = sum.count, sum.money, sum.soonest end
+
+    -- Of those, the soonest that will be DELETED rather than returned to its
+    -- sender (#517): the client says which, as Blizzard's inbox does
+    -- (InboxItemCanDelete: a returned mail, the Auction House's, the game's).
+    -- The same mails as Summary counts, the same clock.
+    local lost
+    for _, m in ipairs(scan.mails or {}) do
+        local holds = type(m) == "table" and not m.secret
+            and ((m.itemCount and m.itemCount > 0) or (m.money and m.money > 0))
+            and m.daysLeft and m.daysLeft > 0
+        if holds and InboxItemCanDelete(m.index) == true then
+            local at = LM.Expires(m.daysLeft, now)
+            if not lost or at < lost then lost = at end
+        end
+    end
 
     local changed = false
     local function set(k, v)
@@ -3453,8 +3484,9 @@ local function ScanMail()
         set("mail_count",  count)
         set("mail_expiry", soonest)
         set("mail_money",  money)
+        set("mail_lost",   lost)
     else
-        for _, k in ipairs({ "mail_count", "mail_expiry", "mail_money" }) do
+        for _, k in ipairs({ "mail_count", "mail_expiry", "mail_money", "mail_lost" }) do
             if char[k] ~= nil then char[k] = nil; changed = true end
         end
     end

@@ -1617,7 +1617,28 @@ eq(mrec.mail_count, 2, "mail: only mails with items or money are counted (plain 
 eq(mrec.mail_expiry, math.floor((100000 + 3 * 86400) / 60) * 60, "mail: soonest expiry stored absolute, rounded to the minute")
 eq(mrec.mail_money, 5000, "mail: total attached money summed")
 
+eq(mrec.mail_lost, nil, "mail: none deleted at expiry: no mail_lost")
+
+-- Mail that will be DELETED at expiry rather than returned (#517): the
+-- client says which (InboxItemCanDelete), counted over the same mails.
+WoW.inboxCanDelete = { [2] = true, [3] = true }   -- 2: a returned mail with gold; 3: a plain letter
+T.ScanMail()
+eq(AltStableDB[mguid].mail_lost, math.floor((100000 + 10 * 86400) / 60) * 60,
+   "mail: the soonest mail deleted at expiry, rounded as the soonest expiry is")
+eq(AltStableDB[mguid].mail_expiry, math.floor((100000 + 3 * 86400) / 60) * 60,
+   "  the soonest of all unchanged")
+WoW.inboxCanDelete = { [1] = true, [2] = true }
+T.ScanMail()
+eq(AltStableDB[mguid].mail_lost, math.floor((100000 + 3 * 86400) / 60) * 60, "  the soonest of those")
+WoW.inboxCanDelete = { [3] = true }
+T.ScanMail()
+eq(AltStableDB[mguid].mail_lost, nil, "  a plain letter deleted at expiry loses nothing: none")
+WoW.inboxCanDelete = { [2] = true }
+T.ScanMail()
+mrec = AltStableDB[mguid]
+
 local mPayload = T.SerializeFullDB(false, 0)
+check(mPayload:find("mail_lost:" .. tostring(mrec.mail_lost), 1, true), "mail_lost serializes too")
 check(mPayload:find("mail_expiry:" .. tostring(mrec.mail_expiry), 1, true), "mail_ summary serializes into the char record for sync")
 
 -- Reconcile: an emptied mailbox clears the mail_ fields.
@@ -1625,6 +1646,8 @@ inbox = {}
 T.ScanMail()
 check(AltStableDB[mguid].mail_count == nil and AltStableDB[mguid].mail_expiry == nil,
       "mail: emptying the mailbox clears the mail_ summary")
+eq(AltStableDB[mguid].mail_lost, nil, "  mail_lost too")
+WoW.inboxCanDelete = {}
 -- And with it the "visit the mailbox again" line (#424): two mails, the
 -- soonest expired, then a visit that finds the box empty.
 do
@@ -2130,6 +2153,44 @@ do
     eq(got.lockpickingMax, nil, "  nor its max")
     eq(got.comprehension, nil, "  nor Comprehension")
     eq(got.comprehensionMax, nil, "  nor its max")
+end
+WoW.reset()
+
+-- Durability, location, guild rank, mail lost (#508, #395, #515, #517): they
+-- ride the wire; the names stay text, all digits or not; an accepted record
+-- without them leaves them unknown, never the last value seen.
+do
+    local full = { guid = "Player-Sf-2", name = "Sf", class = "MAGE", level = 30, lastUpdate = 100,
+                   durMin = 60, dur_head = 97, dur_chest = 60,
+                   zone = "Tirisfal Glades", subzone = "Gallows' End Tavern",
+                   guild = "1337", guildRank = "007", guildRankIndex = 3, mail_lost = 999960 }
+    local back = T.DeserializeChar(T.SerializeChar(full))
+    eq(back.durMin, 60, "the lowest durability rides the wire as a number")
+    eq(back.dur_head, 97, "  each slot below 100 too")
+    eq(back.zone, "Tirisfal Glades", "the zone arrives")
+    eq(back.subzone, "Gallows' End Tavern", "  the subzone, apostrophe and all")
+    eq(back.guildRank, "007", "a rank named in digits stays text")
+    eq(back.guild, "1337", "  so does a guild named in digits")
+    eq(back.guildRankIndex, 3, "the rank's index is a number")
+    eq(back.mail_lost, 999960, "the soonest mail lost rides the wire")
+    local digits = T.DeserializeChar(T.SerializeChar({ guid = "Player-Sf-3", name = "Sf", class = "MAGE",
+                                                       zone = "42", subzone = "7", lastUpdate = 1 }))
+    eq(digits.zone, "42", "  zones stay text too")
+    eq(digits.subzone, "7", "  and subzones")
+
+    local old = {}
+    for k, v in pairs(full) do old[k] = v end
+    AltStableDB = { ["Player-Sf-2"] = old }
+    T.DeserializeFullDB(T.SerializeChar(
+        { guid = "Player-Sf-2", name = "Sf", class = "MAGE", level = 30, lastUpdate = 200 }
+    ) .. "\n" .. T.CHAR_SEP, "Peer")
+    local now = AltStableDB["Player-Sf-2"]
+    eq(now.lastUpdate, 200, "a newer record without them is accepted")
+    for _, k in ipairs({ "durMin", "dur_head", "dur_chest", "zone", "subzone",
+                         "guildRank", "guildRankIndex", "mail_lost" }) do
+        eq(now[k], nil, "  " .. k .. " doesn't linger")
+    end
+    eq(now.guild, "1337", "  the guild, an identity field, stays until a record says otherwise")
 end
 WoW.reset()
 
