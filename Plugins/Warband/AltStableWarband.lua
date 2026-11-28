@@ -1175,6 +1175,20 @@ local function CellOnLeave()
     GameTooltip:Hide()
 end
 
+-- A click hands the item's link to the game's own handler (#556), as the bags
+-- do: Shift puts it in the chat box, Ctrl opens the dressing room. Only the ID
+-- is stored and synced, so the link is the base item's (no suffix, no
+-- enchant). An item not cached yet has no link: the GetItemInfo call itself
+-- asks the server for it (RequestMeta), so this click does nothing and the
+-- next one works. Never a made-up link string.
+local function CellOnClick(self)
+    local e = self.entry
+    if not e then return end      -- an empty slot
+    local link = GetItemInfo and select(2, GetItemInfo(e.id))
+    local handle = rawget(_G, "HandleModifiedItemClick")
+    if type(link) == "string" and handle then handle(link) end
+end
+
 local function ClearHover()
     if AT_WB.hoverEntry then
         AT_WB.hoverEntry, AT_WB.hoverCell = nil, nil
@@ -1247,6 +1261,8 @@ local function getCell(i)
         cell.count:SetPoint("BOTTOMRIGHT", -1, 1)
         cell:SetScript("OnEnter", CellOnEnter)
         cell:SetScript("OnLeave", CellOnLeave)
+        cell:RegisterForClicks("LeftButtonUp")
+        cell:SetScript("OnClick", CellOnClick)
         AT_WB.cells[i] = cell
     end
     return cell
