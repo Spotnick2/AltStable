@@ -4646,8 +4646,19 @@ local function CreateFrameIfNeeded()
     OptPage("appearance")
     OptSection("CAMERA & ANIMATION")
 
+    -- The Options page is inside the sheet, so this box is only ever clicked
+    -- with the sheet open, and the presentation is read only when it opens
+    -- (SyncOptions, at Enter). Unticked, it lets go of the camera at once, the
+    -- sheet staying open (#564: a player unticked it and the camera kept
+    -- orbiting). Ticked again, it starts at the next open, not mid-session.
     local optCameraCheck = MakeOptCheckRow("enableWorldCameraPresentation",
-        "World camera presentation", Y)
+        "World camera presentation", Y,
+        function(checked)
+            AltStable.SetConfigValue("enableWorldCameraPresentation", checked)
+            if not checked and AltStableCameraPresentation and AltStableCameraPresentation.Exit then
+                AltStableCameraPresentation:Exit("option-off")
+            end
+        end)
     OptDesc(optCameraCheck, "Frames your character when AltStable opens.")
     Y = Y - 36
 
