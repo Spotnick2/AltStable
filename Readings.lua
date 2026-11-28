@@ -56,17 +56,21 @@ local function SetDurability(char, low, below)
     return changed
 end
 
--- Whether what is worn is what the record says is worn (gearid_<slot>). After
+-- Whether what is worn is what the record says is worn: the whole item string
+-- (gearstr_<slot>, AltStable.GearItemString), so two helms of one id with
+-- another suffix or enchant are two helms (Codex review of #573). After
 -- a swap the record holds the old items until the equipment scan (3 s later,
 -- restarted by every pet event): a durability-only read before it would put
 -- the new helm's durability beside the old helm for a sync to carry (Codex
 -- review of #573). So that read is made only while they match, and the scan
 -- writes the items and their durability together.
 function R.GearMatches(char)
+    if not AltStable.GearItemString then return false end
     for _, slot in ipairs(AltStable.GEAR_SLOTS or {}) do
-        local id = GetInventoryItemID("player", slot.id)
-        if Secret(id) then return false end
-        if (tonumber(id) or 0) ~= (tonumber(char["gearid_" .. slot.key]) or 0) then return false end
+        local link = GetInventoryItemLink("player", slot.id)
+        if Secret(link) then return false end
+        local worn = link and AltStable.GearItemString(link) or ""
+        if worn ~= (char["gearstr_" .. slot.key] or "") then return false end
     end
     return true
 end

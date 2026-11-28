@@ -211,23 +211,29 @@ do
     eq("  and stamps nothing, so no delta carries a half", touched, 0)
     for _ = 1, 3 do R.OnEvent("UPDATE_INVENTORY_DURABILITY"); WoW.flushTimers() end
     eq("  however many come before the equipment scan", c.durMin, 75)
-    c.gearid_head = 10657                        -- the equipment scan: the items...
+    c.gearstr_head = AltStable.GearItemString(HELM)  -- the equipment scan: the items...
     R.Durability(c, true)                        -- ...and their durability, together
     eq("the equipment scan writes the new durability", c.durMin, 25)
     Durable({ [1] = { 5, 40 } })
     R.OnEvent("UPDATE_INVENTORY_DURABILITY")
     WoW.flushTimers()
     eq("  after it, durability events read again", c.durMin, 12)
+    -- Another helm of the same id, another suffix: another helm.
+    WoW.equipped[1] = "|cffffffff|Hitem:10657::::::::21:::1:1482:::::|h[Helm of the Eagle]|h|r"
+    Durable({ [1] = { 1, 40 } })
+    R.OnEvent("UPDATE_INVENTORY_DURABILITY")
+    WoW.flushTimers()
+    eq("a helm of the same id with another suffix doesn't match: nothing written", c.durMin, 12)
     WoW.equipped[1] = nil                        -- taken off, not yet scanned
     check("an item taken off doesn't match", not R.GearMatches(c))
     WoW.equipped[1] = HELM
     check("the same item worn matches", R.GearMatches(c))
-    WoW.equipped[1] = nil; c.gearid_head = nil
+    WoW.equipped[1] = nil; c.gearstr_head = nil
     check("(nothing worn, nothing recorded: a match)", R.GearMatches(c))
-    local realID = GetInventoryItemID
-    GetInventoryItemID = function() return WoW.secret(1) end
+    local realLink = GetInventoryItemLink
+    GetInventoryItemLink = function() return WoW.secret(1) end
     check("an item that can't be read doesn't match, even then", not R.GearMatches(c))
-    GetInventoryItemID = realID
+    GetInventoryItemLink = realLink
 
     touched = 0
     WoW.loggedIn, WoW.inGuild, WoW.guildInfo = true, true, { "Parse Partout", "Member", 5 }
