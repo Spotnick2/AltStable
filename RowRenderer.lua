@@ -699,6 +699,30 @@ local function GetGroupBG() return AltStable.SkinGroupBand() end
 
 local DIVIDER_COLOR = AltStable.C.GRIDLINE
 
+-- ONE PHYSICAL PIXEL, in the sheet's own units (#563). A column divider used
+-- to be 1 unit wide. Where the sheet's scale puts less than a pixel in a unit
+-- (a lower WoW UI scale, or AltStable's own below 1), both of its edges can
+-- snap to the same pixel, and the line vanishes: always the same few columns,
+-- the ones whose x lands just past a half pixel. Exactly one pixel wide, the
+-- two edges always snap a pixel apart. 768 units are the screen's height at
+-- scale 1 (Blizzard's ConvertPixelsToUI, PixelUtilSecure.lua, is the same
+-- sum). The scale is the sheet's own effective one, which is not always
+-- UIParent's times the setting: lifted above the hidden UI, the sheet has no
+-- parent (Codex, #569). Read at rest: SheetUI sizes the dividers again when
+-- the sheet's scale changes, outside the open fade (RefreshHairlines).
+-- Before the sheet exists, UIParent's times the setting.
+function AltStable.HairlineWidth()
+    local _, physH = GetPhysicalScreenSize()
+    local sheet = _G.AltStableSheet
+    local scale = sheet and sheet.GetEffectiveScale and sheet:GetEffectiveScale()
+    if type(scale) ~= "number" then
+        scale = (UIParent and UIParent:GetEffectiveScale() or 1)
+            * (tonumber(AltStableConfig and AltStableConfig.scale) or 1)
+    end
+    if type(physH) ~= "number" or physH <= 0 or scale <= 0 then return 1 end
+    return 768 / physH / scale
+end
+
 -- Row pools, one per sheet section. A pool remembers the columns its rows
 -- were set up for; when they change (a faction met on Reputations, a column
 -- hidden or shown, #378), its rows are set up again for the new ones
@@ -928,7 +952,7 @@ function AltStable.SetRowColumns(row, columns)
         local div = row.dividerPool[i]
         if not div then
             div = row:CreateTexture(nil, "ARTWORK")
-            div:SetSize(1, height)
+            div:SetSize(AltStable.HairlineWidth(), height)
             div:SetColorTexture(unpack(DIVIDER_COLOR))
             row.dividerPool[i] = div
         end
