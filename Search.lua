@@ -5,7 +5,10 @@
 -- bank, mail (the Warband plugin's records) and worn gear (the core's) - and
 -- who can craft it (the Professions plugin's known recipes, whose names match
 -- too: "transmute" finds Arcanite Bar). Enter opens the Warband tab on the
--- first holder with the item lit; Shift+Enter puts its link in chat.
+-- first holder with the item lit; Shift+Enter puts its link in chat. Filters
+-- (quality, slot, armour or weapon type, required level, one character) work
+-- with no text, and the rows sort by total, name, quality, item level or
+-- where the item is first found.
 --
 -- In the core, not a plugin: worn gear is the core's, and a search for worn
 -- gear works with every plugin off. What a plugin knows comes through what it
@@ -40,6 +43,8 @@ local MIN_CHARS     = 2
 local ROWS          = 10
 local ROW_H         = 34
 local WIN_W         = 470
+local BAR_Y         = 72      -- the two filter bars, under the search box
+local ROWS_TOP      = 128
 
 local frame                   -- the window, built on first open
 
@@ -214,31 +219,189 @@ local function PendingCount() return S.outstanding + #S.queue end
 -- Matching
 ------------------------------------------------------------
 
--- The rows for a query: items whose name holds it, most held first, then by
--- name, then by id (a stable order for equal names).
+------------------------------------------------------------
+-- Filters and sorting (PR 3 of #503). Kept for the session, never saved.
+-- A filter alone is a search: "a chest for my level-24 alt" needs no text.
+------------------------------------------------------------
+
+S.filters = {}       -- quality, slot, class (+ sub), minLevel, maxLevel, char
+S.sort = "total"
+S.meta = {}          -- [id] = what the client says of the item (see S.Meta)
+
+S.QUALITIES = { { 0, "Poor" }, { 1, "Common" }, { 2, "Uncommon" }, { 3, "Rare" },
+                { 4, "Epic" }, { 5, "Legendary" } }
+
+-- An equipment slot, by the item's equip location.
+S.SLOTS = {
+    { key = "HEAD", text = "Head", locs = { "INVTYPE_HEAD" } },
+    { key = "NECK", text = "Neck", locs = { "INVTYPE_NECK" } },
+    { key = "SHOULDER", text = "Shoulder", locs = { "INVTYPE_SHOULDER" } },
+    { key = "BACK", text = "Back", locs = { "INVTYPE_CLOAK" } },
+    { key = "CHEST", text = "Chest", locs = { "INVTYPE_CHEST", "INVTYPE_ROBE" } },
+    { key = "SHIRT", text = "Shirt", locs = { "INVTYPE_BODY" } },
+    { key = "TABARD", text = "Tabard", locs = { "INVTYPE_TABARD" } },
+    { key = "WRIST", text = "Wrist", locs = { "INVTYPE_WRIST" } },
+    { key = "HANDS", text = "Hands", locs = { "INVTYPE_HAND" } },
+    { key = "WAIST", text = "Waist", locs = { "INVTYPE_WAIST" } },
+    { key = "LEGS", text = "Legs", locs = { "INVTYPE_LEGS" } },
+    { key = "FEET", text = "Feet", locs = { "INVTYPE_FEET" } },
+    { key = "FINGER", text = "Finger", locs = { "INVTYPE_FINGER" } },
+    { key = "TRINKET", text = "Trinket", locs = { "INVTYPE_TRINKET" } },
+    { key = "ONEHAND", text = "One-hand", locs = { "INVTYPE_WEAPON" } },
+    { key = "TWOHAND", text = "Two-hand", locs = { "INVTYPE_2HWEAPON" } },
+    { key = "MAINHAND", text = "Main hand", locs = { "INVTYPE_WEAPONMAINHAND" } },
+    { key = "OFFHAND", text = "Off hand",
+      locs = { "INVTYPE_WEAPONOFFHAND", "INVTYPE_HOLDABLE", "INVTYPE_SHIELD" } },
+    { key = "RANGED", text = "Ranged",
+      locs = { "INVTYPE_RANGED", "INVTYPE_RANGEDRIGHT", "INVTYPE_THROWN", "INVTYPE_RELIC" } },
+    { key = "BAG", text = "Bag", locs = { "INVTYPE_BAG", "INVTYPE_QUIVER" } },
+    { key = "AMMO", text = "Ammo", locs = { "INVTYPE_AMMO" } },
+}
+S.SLOT_OF = {}
+for _, s in ipairs(S.SLOTS) do for _, loc in ipairs(s.locs) do S.SLOT_OF[loc] = s.key end end
+
+-- The armour and weapon types the Type filter offers (item class ids).
+S.TYPE_CLASSES = { { 4, "Armor" }, { 2, "Weapon" } }
+
+S.SORTS = { { "total", "Total" }, { "name", "Name" }, { "quality", "Quality" },
+            { "ilvl", "Item level" }, { "location", "Location" } }
+
+-- What the client says of an item. Its class, subclass and slot come at
+-- once (GetItemInfoInstant); its quality, item level and required level only
+-- once its data is cached, which the name queue sees to. Until then they are
+-- unknown, and an unknown never passes a filter on them.
+function S.Meta(id)
+    local m = S.meta[id]
+    if m and m.full then return m end
+    m = m or {}
+    if m.classID == nil then
+        local _, _, _, equipLoc, _, classID, subclassID = AltStable.API.GetItemInfoInstant(id)
+        m.equipLoc, m.classID, m.subclassID = equipLoc, classID, subclassID
+    end
+    local name, _, quality, ilvl, minLevel = AltStable.API.GetItemInfo(id)
+    if name then
+        m.quality, m.ilvl, m.minLevel, m.full = quality, ilvl, minLevel, true
+    else
+        m.quality = C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(id) or nil
+    end
+    S.meta[id] = m
+    return m
+end
+
+function S.AnyFilter()
+    local f = S.filters
+    return (f.quality or f.slot or f.class or f.minLevel or f.maxLevel or f.char) ~= nil
+end
+
+-- The item's own filters (the character filter is a view: S.ForCharacter).
+function S.Pass(id)
+    local f, m = S.filters, S.Meta(id)
+    if f.quality and m.quality ~= f.quality then return false end
+    if f.slot and S.SLOT_OF[m.equipLoc or ""] ~= f.slot then return false end
+    if f.class and (m.classID ~= f.class or (f.sub and m.subclassID ~= f.sub)) then return false end
+    if f.minLevel or f.maxLevel then
+        local lvl = m.full and tonumber(m.minLevel)
+        if not lvl then return false end            -- unknown never matches a range
+        if f.minLevel and lvl < f.minLevel then return false end
+        if f.maxLevel and lvl > f.maxLevel then return false end
+    end
+    return true
+end
+
+-- One character's part of an item: what they hold and whether they can craft
+-- it, with their own total; nil when neither. Its location, Enter and the
+-- hover all follow from it.
+function S.ForCharacter(e, guid)
+    local h = e.by[guid]
+    local crafters
+    for _, c in ipairs(e.crafters or {}) do
+        if c.guid == guid then crafters = { c }; break end
+    end
+    if not h and not crafters then return nil end
+    return { id = e.id, total = h and h.total or 0, holders = { h }, by = { [guid] = h },
+             crafters = crafters, aliases = e.aliases }
+end
+
+-- Where an item is first found: bags < bank < mail < worn < only craftable.
+function S.LocationRank(e)
+    local best = 5
+    for _, h in ipairs(e.holders) do
+        if h.bags > 0 then return 1 end
+        if h.bank > 0 then best = math.min(best, 2)
+        elseif h.mail > 0 then best = math.min(best, 3)
+        elseif h.worn > 0 then best = math.min(best, 4) end
+    end
+    return best
+end
+
+-- Unknown last, whichever way the key runs.
+local function ByKey(ka, kb, descending)
+    if ka == kb then return nil end
+    if ka == nil then return false end
+    if kb == nil then return true end
+    if descending then return ka > kb end
+    return ka < kb
+end
+
+local function FoldedName(id)
+    local f = S.folded[id]
+    return type(f) == "string" and f or nil
+end
+
+S.SORT_KEYS = {
+    total    = function(e) return e.total end, -- descending
+    quality  = function(e) return S.Meta(e.id).quality end,
+    ilvl     = function(e) local m = S.Meta(e.id); return m.full and m.ilvl or nil end,
+    location = function(e) return S.LocationRank(e) end,
+}
+local DESCENDING = { total = true, quality = true, ilvl = true }
+
+function S.Compare(a, b)
+    local key = S.SORT_KEYS[S.sort]
+    if key then
+        local r = ByKey(key(a), key(b), DESCENDING[S.sort])
+        if r ~= nil then return r end
+    end
+    -- Then by name, unnamed last, then by id: a stable order for equal names.
+    local r = ByKey(FoldedName(a.id), FoldedName(b.id), false)
+    if r ~= nil then return r end
+    return a.id < b.id
+end
+
+-- The rows for a query and the filters: items whose name (or a recipe
+-- making it) holds the text, and that pass the filters; sorted by S.sort.
 function S.Match(snap, query)
     local out = {}
     query = (query or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    if Chars(query) < MIN_CHARS then return out end
-    local q = Fold(query)
+    local text = Chars(query) >= MIN_CHARS
+    local filtered = S.AnyFilter()
+    if not (text or filtered) then return out end
+    local q = text and Fold(query)
+    local char = S.filters.char
+    -- A character hidden or forgotten since it was chosen: the filter goes.
+    if char and not Eligible(char, AltStableDB and AltStableDB[char]) then
+        S.filters.char, char = nil, nil
+        filtered = S.AnyFilter()
+        if not (text or filtered) then return out end
+    end
     for id, e in pairs(snap or {}) do
-        local f = S.folded[id]
-        local hit = f and f:find(q, 1, true)
-        -- Or a recipe making it: "transmute" finds Arcanite Bar, even before
-        -- the bar's own name has loaded ("item 12345" until then).
-        if not hit then
-            for _, a in ipairs(e.aliases or {}) do
-                if a:find(q, 1, true) then hit = true; break end
+        local hit = true
+        if text then
+            local f = S.folded[id]
+            hit = f and f:find(q, 1, true)
+            -- Or a recipe making it: "transmute" finds Arcanite Bar, even
+            -- before the bar's own name has loaded ("item 12345" until then).
+            if not hit then
+                for _, a in ipairs(e.aliases or {}) do
+                    if a:find(q, 1, true) then hit = true; break end
+                end
             end
         end
+        if hit and char then e = S.ForCharacter(e, char); hit = e ~= nil end
+        if hit and filtered then hit = S.Pass(id) end
         if hit then out[#out + 1] = e end
     end
-    table.sort(out, function(a, b)
-        if a.total ~= b.total then return a.total > b.total end
-        local na, nb = S.names[a.id] or "", S.names[b.id] or ""
-        if na ~= nb then return na < nb end
-        return a.id < b.id
-    end)
+    table.sort(out, S.Compare)
     return out
 end
 
@@ -332,12 +495,14 @@ end
 local function DefaultStatus()
     local n = PendingCount()
     if n > 0 then return ("Looking up %d item %s"):format(n, n == 1 and "name" or "names") end
-    if Chars(S.query or "") < MIN_CHARS then return "Type at least two letters of an item's name." end
+    if Chars(S.query or "") < MIN_CHARS and not S.AnyFilter() then
+        return "Type at least two letters of an item's name, or choose a filter."
+    end
     if #S.rows == 0 then return "None recorded." end
     return ("%d %s"):format(#S.rows, #S.rows == 1 and "item" or "items")
 end
 
-local Paint
+local Paint, QueueRerun
 
 -- fromData: a refresh of the data (a rebuild, names loading), not something
 -- the player did: what the status says (a send's answer) stays.
@@ -355,6 +520,19 @@ local function Rerun(fromData)
     if not S.selected and #S.rows > 0 then S.selected = 1 end
     if not fromData then S.message = nil end
     Paint()
+end
+
+-- Typed (the search box, a level bound): one rerun, TYPE_DELAY after the last
+-- key. S.queryPending says the rows are behind what the boxes say.
+local typeArmed
+function QueueRerun()
+    S.queryPending = true
+    if typeArmed then return end
+    typeArmed = true
+    C_Timer.After(TYPE_DELAY, function()
+        typeArmed = nil
+        if frame and frame:IsShown() and S.queryPending then S.offset = 0; Rerun() end
+    end)
 end
 
 function S.Rebuild()
@@ -644,6 +822,130 @@ function S.OpenMenu(e)
     return S.ShowOwnedMenu(S.MenuEntries(e), function(id) S.MenuPick(e, id, targetName) end)
 end
 
+-- The filter and sort menus, hung under their buttons.
+local CHECK_ON  = "|TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:0:32:32:0:32:0:32:255:255:255|t "
+local CHECK_OFF = "|TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:0:32:32:0:32:0:32:60:60:60|t "
+local function Mark(on, text) return (on and CHECK_ON or CHECK_OFF) .. text end
+
+local function QualityColor(q, text)
+    local c = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
+    if not c then return text end
+    return ("|cff%02x%02x%02x%s|r"):format((c.r or 1) * 255, (c.g or 1) * 255, (c.b or 1) * 255, text)
+end
+
+local function ClassLabel(cls)
+    local n = C_Item.GetItemClassInfo and C_Item.GetItemClassInfo(cls)
+    if type(n) == "string" and n ~= "" then return n end
+    for _, t in ipairs(S.TYPE_CLASSES) do if t[1] == cls then return t[2] end end
+    return "Class " .. cls
+end
+
+local function SubLabel(cls, sub)
+    local n = C_Item.GetItemSubClassInfo and C_Item.GetItemSubClassInfo(cls, sub)
+    if type(n) == "string" and n ~= "" then return n end
+    return ClassLabel(cls) .. " " .. sub
+end
+
+-- What each filter button says its value is.
+function S.FilterText(kind)
+    local f = S.filters
+    if kind == "quality" then
+        for _, x in ipairs(S.QUALITIES) do if x[1] == f.quality then return x[2] end end
+    elseif kind == "slot" then
+        for _, s in ipairs(S.SLOTS) do if s.key == f.slot then return s.text end end
+    elseif kind == "type" and f.class then
+        return f.sub and SubLabel(f.class, f.sub) or ClassLabel(f.class)
+    elseif kind == "char" and f.char then
+        local c = AltStableDB and AltStableDB[f.char]
+        return c and c.name
+    elseif kind == "sort" then
+        for _, x in ipairs(S.SORTS) do if x[1] == S.sort then return x[2] end end
+    end
+    return nil
+end
+
+function S.FilterEntries(kind)
+    local f, list = S.filters, {}
+    local function add(id, text, on) list[#list + 1] = { id = id, text = Mark(on, text) } end
+    if kind == "quality" then
+        list[1] = { title = true, text = "Quality" }
+        add("any", "Any", f.quality == nil)
+        for _, x in ipairs(S.QUALITIES) do add(x[1], QualityColor(x[1], x[2]), f.quality == x[1]) end
+    elseif kind == "slot" then
+        list[1] = { title = true, text = "Equipment slot" }
+        add("any", "Any", f.slot == nil)
+        for _, s in ipairs(S.SLOTS) do add(s.key, s.text, f.slot == s.key) end
+    elseif kind == "type" then
+        -- The armour and weapon types of the items recorded, not every type
+        -- the game has.
+        add("any", "Any", f.class == nil)
+        local subs = {}
+        for id in pairs(S.snap or {}) do
+            local m = S.Meta(id)
+            if m.classID and m.subclassID then
+                subs[m.classID] = subs[m.classID] or {}
+                subs[m.classID][m.subclassID] = true
+            end
+        end
+        for _, t in ipairs(S.TYPE_CLASSES) do
+            local cls = t[1]
+            if subs[cls] then
+                list[#list + 1] = { title = true, text = ClassLabel(cls) }
+                add(tostring(cls), "All " .. ClassLabel(cls):lower(), f.class == cls and f.sub == nil)
+                local sorted = {}
+                for sub in pairs(subs[cls]) do sorted[#sorted + 1] = sub end
+                table.sort(sorted, function(a, b) return SubLabel(cls, a) < SubLabel(cls, b) end)
+                for _, sub in ipairs(sorted) do
+                    add(cls .. ":" .. sub, SubLabel(cls, sub), f.class == cls and f.sub == sub)
+                end
+            end
+        end
+        table.insert(list, 1, { title = true, text = "Armor and weapon type" })
+    elseif kind == "char" then
+        list[1] = { title = true, text = "Character" }
+        add("any", "All characters", f.char == nil)
+        local chars = {}
+        for guid, c in pairs(AltStableDB or {}) do
+            if Eligible(guid, c) then chars[#chars + 1] = { guid = guid, name = c.name, class = c.class } end
+        end
+        table.sort(chars, function(a, b) return a.name < b.name end)
+        for _, c in ipairs(chars) do add(c.guid, ClassName(c), f.char == c.guid) end
+    elseif kind == "sort" then
+        list[1] = { title = true, text = "Sort by" }
+        for _, x in ipairs(S.SORTS) do add(x[1], x[2], S.sort == x[1]) end
+    end
+    return list
+end
+
+function S.FilterPick(kind, id)
+    local f = S.filters
+    if kind == "quality" then f.quality = (id ~= "any") and tonumber(id) or nil
+    elseif kind == "slot" then f.slot = (id ~= "any") and id or nil
+    elseif kind == "type" then
+        local cls, sub = tostring(id):match("^(%d+):?(%d*)$")
+        f.class, f.sub = tonumber(cls), tonumber(sub)
+    elseif kind == "char" then f.char = (id ~= "any") and id or nil
+    elseif kind == "sort" then S.sort = id
+    end
+    S.offset = 0
+    Rerun()
+end
+
+function S.ClearFilters()
+    S.filters = {}
+    if frame and frame.levelMin then
+        frame.levelMin:SetText(""); frame.levelMax:SetText("")
+    end
+    S.offset = 0
+    Rerun()
+end
+
+function S.OpenFilterMenu(kind)
+    if not frame then return false end
+    return S.ShowOwnedMenu(S.FilterEntries(kind), function(id) S.FilterPick(kind, id) end,
+                           frame.filterBtns[kind])
+end
+
 local function Move(delta)
     if #S.rows == 0 then return end
     S.selected = math.max(1, math.min(#S.rows, (S.selected or 1) + delta))
@@ -680,8 +982,8 @@ end
 local function MakeRow(i)
     local row = CreateFrame("Button", nil, frame)
     row:SetHeight(ROW_H)
-    row:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -78 - (i - 1) * ROW_H)
-    row:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -78 - (i - 1) * ROW_H)
+    row:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -ROWS_TOP - (i - 1) * ROW_H)
+    row:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -ROWS_TOP - (i - 1) * ROW_H)
     row.sel = row:CreateTexture(nil, "BACKGROUND")
     row.sel:SetAllPoints()
     row.sel:SetColorTexture(1, 1, 1, 0.08)
@@ -743,13 +1045,21 @@ function Paint()
         end
     end
     SetStatus(S.AsideText() or S.message or DefaultStatus())
+    -- The filter buttons say what they are set to.
+    local fb = frame.filterBtns
+    fb.quality.label:SetText("Quality: " .. (S.FilterText("quality") or "Any"))
+    fb.slot.label:SetText("Slot: " .. (S.FilterText("slot") or "Any"))
+    fb.type.label:SetText("Type: " .. (S.FilterText("type") or "Any"))
+    fb.char.label:SetText(S.FilterText("char") or "All characters")
+    fb.sort.label:SetText("Sort: " .. (S.FilterText("sort") or "Total"))
+    fb.clear:SetEnabled(S.AnyFilter())
     frame.warn:SetShown(AltStable.ItemMapsFor == nil)
 end
 
 local function BuildWindow()
     if frame then return end
     frame = CreateFrame("Frame", "AltStableSearch", UIParent, "BackdropTemplate")
-    frame:SetSize(WIN_W, 78 + ROWS * ROW_H + 34)
+    frame:SetSize(WIN_W, ROWS_TOP + ROWS * ROW_H + 34)
     frame:SetPoint("CENTER")
     frame:SetFrameStrata("DIALOG")
     frame:SetToplevel(true)
@@ -795,16 +1105,9 @@ local function BuildWindow()
     box:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -44)
     box:SetAutoFocus(false)
     -- Hooked: the template's own text handler shows and hides its hint.
-    local typeArmed
     box:HookScript("OnTextChanged", function(self, userInput)
         S.query = self:GetText() or ""
-        S.queryPending = true
-        if typeArmed then return end
-        typeArmed = true
-        C_Timer.After(TYPE_DELAY, function()
-            typeArmed = nil
-            if frame:IsShown() and S.queryPending then S.offset = 0; Rerun() end
-        end)
+        QueueRerun()
     end)
     -- Set, not hooked: the template's Enter and Escape only clear focus.
     -- Enter acts on what the box says now: typed within the delay, the rows
@@ -847,6 +1150,64 @@ local function BuildWindow()
     aside:SetScript("OnEscapePressed", function() S.EndAside() end)
     aside:SetScript("OnEditFocusLost", function() S.EndAside() end)
     frame.aside = aside
+
+    -- The filters and the sort (PR 3): two bars under the search box. The
+    -- first: quality, slot, type, character; the second: the level range,
+    -- the sort, Clear.
+    local function FilterButton(kind, w)
+        local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        b:SetSize(w, 22)
+        b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.label:SetPoint("LEFT", b, "LEFT", 6, 0)
+        b.label:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+        b.label:SetWordWrap(false)
+        if kind then b:SetScript("OnClick", function() S.OpenFilterMenu(kind) end) end
+        return b
+    end
+    frame.filterBtns = {}
+    local BW, GAP = math.floor((WIN_W - 24 - 3 * 6) / 4), 6
+    for i, kind in ipairs({ "quality", "slot", "type", "char" }) do
+        local b = FilterButton(kind, BW)
+        b:SetPoint("TOPLEFT", frame, "TOPLEFT", 12 + (i - 1) * (BW + GAP), -BAR_Y)
+        frame.filterBtns[kind] = b
+    end
+
+    local levelLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    levelLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -BAR_Y - 32)
+    levelLabel:SetText("Level")
+    -- A required-level bound: blank is none, both ends inclusive.
+    local function LevelBox(key)
+        local lb = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+        lb:SetSize(30, 20)
+        lb:SetAutoFocus(false)
+        lb:SetNumeric(true)
+        lb:SetMaxLetters(2)
+        lb:SetScript("OnTextChanged", function(self, userInput)
+            if not userInput then return end
+            local n = tonumber(self:GetText() or "")
+            S.filters[key] = (n and n > 0) and n or nil
+            QueueRerun()
+        end)
+        lb:SetScript("OnEnterPressed", function() frame.box:SetFocus() end)
+        lb:SetScript("OnEscapePressed", function() frame.box:SetFocus() end)
+        return lb
+    end
+    frame.levelMin = LevelBox("minLevel")
+    frame.levelMin:SetPoint("LEFT", levelLabel, "RIGHT", 10, 0)
+    local dash = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    dash:SetPoint("LEFT", frame.levelMin, "RIGHT", 4, 0)
+    dash:SetText("to")
+    frame.levelMax = LevelBox("maxLevel")
+    frame.levelMax:SetPoint("LEFT", dash, "RIGHT", 10, 0)
+
+    local clear = FilterButton(nil, 80)
+    clear:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -BAR_Y - 26)
+    clear.label:SetText("Clear filters")
+    clear:SetScript("OnClick", function() S.ClearFilters() end)
+    frame.filterBtns.clear = clear
+    local sort = FilterButton("sort", 2 * BW - 80 + GAP)
+    sort:SetPoint("RIGHT", clear, "LEFT", -GAP, 0)
+    frame.filterBtns.sort = sort
 
     frame.rows = {}
     for i = 1, ROWS do frame.rows[i] = MakeRow(i) end
