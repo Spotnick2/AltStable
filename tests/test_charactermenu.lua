@@ -653,6 +653,16 @@ do
     AltStable.LiftAboveHiddenUI(f, false)
     eq("a double drop changes nothing either", f:GetFrameStrata(), "LOW")
     eq("  scale intact", f:GetScale(), 0.8)
+
+    -- Where a lift goes: above the menus' layer only when nothing says
+    -- otherwise; a window menus open over asks for the sheet's (#503).
+    AltStable.LiftAboveHiddenUI(f, true)
+    eq("a lift goes to FULLSCREEN_DIALOG by default", f:GetFrameStrata(), "FULLSCREEN_DIALOG")
+    AltStable.LiftAboveHiddenUI(f, false)
+    AltStable.LiftAboveHiddenUI(f, true, "DIALOG")
+    eq("  or where it is asked to", f:GetFrameStrata(), "DIALOG")
+    AltStable.LiftAboveHiddenUI(f, false)
+    eq("  and is put back the same", f:GetFrameStrata(), "LOW")
 end
 
 ------------------------------------------------------------
